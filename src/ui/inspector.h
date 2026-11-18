@@ -12,6 +12,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace Rml
 {
@@ -24,8 +25,10 @@ namespace gnubase::ui
 	// Fills an element with the inspector of a track: its name (<textdisplay class="inspector-name">) above the
 	// sections of the set "inspector" (docs/features/docking.md): basics (mute, solo, record and monitor buttons, and
 	// volume and pan value fields), routing (input and output drop-down lists, and a MIDI track's device, bank and
-	// program by the user setting midi.devices), MIDI modifiers (MIDI and instrument tracks: bypass, value fields and
-	// the random generators' and ranges' targets), inserts (the channel's plugin slots) and notepad (the channel's
+	// program by the user setting midi.devices, and a MIDI or instrument track's input transformer: Off, Project, Track
+	// and, while it is on, Open Panel...), MIDI modifiers (MIDI and instrument tracks: bypass, value fields and
+	// the random generators' and ranges' targets), MIDI inserts and sends (MIDI and instrument tracks: their slots'
+	// effects and control panels), inserts (the channel's plugin slots) and notepad (the channel's
 	// notes in a <textarea>). A click on a section's header closes or opens it (.collapsed); what a track doesn't have
 	// gets the class unavailable. The controls send engine commands. The element has the class empty without a track.
 	// Beside the name, Edit Channel Settings (button.inspector-edit) runs editChannel with the track, for tracks with a
@@ -33,19 +36,22 @@ namespace gnubase::ui
 	class Inspector final : private Rml::EventListener
 	{
 	public:
-		// editChannel opens a track's channel settings, setupArticulations the articulation map setup (#175).
+		// editChannel opens a track's channel settings, setupArticulations the articulation map setup (#175),
+		// openInputTransformer the project input transformer (project) or the track's (#966).
 		Inspector(EngineBinding& binding, Rml::Element& root, std::function<void(uint64_t track)> editChannel = {},
-			std::function<void(uint64_t track)> setupArticulations = {});
+			std::function<void(uint64_t track)> setupArticulations = {},
+			std::function<void(uint64_t track, bool project)> openInputTransformer = {});
 		~Inspector() override;
 		Inspector(const Inspector&) = delete;
 		Inspector& operator=(const Inspector&) = delete;
 		Inspector(Inspector&&) = delete;
 		Inspector& operator=(Inspector&&) = delete;
 
-		// Shows a track (0: none) of the project as project.get returned it, the loads-th answer, which the binding
-		// handed on as EngineBinding::handed() returned read; call it once per step, it does nothing while neither
-		// changed. The project must stay until the next call.
-		void update(uint64_t track, const engine::Json& project, uint64_t loads, uint64_t read);
+		// Shows the first of the tracks (none when it is empty) of the project as project.get returned it, the loads-th
+		// answer, which the binding handed on as EngineBinding::handed() returned read; call it once per step, it does
+		// nothing while neither changed. The Track Versions section works on every one of the tracks that has versions.
+		// The project must stay until the next call.
+		void update(const std::vector<uint64_t>& tracks, const engine::Json& project, uint64_t loads, uint64_t read);
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
@@ -55,11 +61,34 @@ namespace gnubase::ui
 		// (channel.set modifiers).
 		void showModifiers(const engine::Json& modifiers);
 		void changeModifier(const std::string& control, const Rml::Event& event);
+		// The MIDI Inserts and MIDI Sends sections (pp. 1104-1106): show a section's slots, their effects and their
+		// control panels, and send a control's change (channel.set midiInserts and midiSends).
+		void showMidiEffects(const std::string& section, const engine::Json& rack);
+		void changeMidiEffect(const std::string& control, const Rml::Event& event);
+		// The Track Versions section (pp. 231-232): the active version's name and ID, and the list of them all.
+		void showVersions(const engine::Json& track);
+		// The selected tracks that have versions: a version command lists only those, since the engine refuses one
+		// that names a track without any.
+		std::vector<uint64_t> versioned() const;
+		// A version command on every selected track that has versions, one undo step.
+		void versionCommand(const char* command);
+		// Shows the MIDI inserts' divider at a place, 0 above the first slot to 4 below the last.
+		void showDivider(int gap);
+		// A drag of the divider: it follows the mouse, and its end sends where it went (channel.set midiInserts).
+		void dragDivider(Rml::Element& target, const Rml::Event& event);
 		void saveNotes();
 		// Sends a change of the channel (channel.set).
 		void sendChannel(engine::Json parameters);
 		// What a command does when it is done: if it was refused, the next update shows the channel again.
 		std::function<void(const engine::Result&)> whenRefused();
+		// Sends a value field's change as a step of its gesture (EngineBinding::sendStep) under key, with the value
+		// that the field shows (shown), which the binding keeps with the step's record.
+		void sendFieldStep(
+			int gesture, const std::string& key, float shown, std::string description, engine::Json commands);
+		// What a value field shows for the project's value: while the project is older than the field's own steps for
+		// that channel (#716), the value that the field sent last for it instead, also after another track showed in
+		// the same field meanwhile (#1421).
+		std::string fieldValue(const std::string& key, std::string value) const;
 		// Ends what is being edited without taking it, such as notes being typed.
 		void dropEdits();
 		// Reads the open in-place editors into m_inPlace (editor.inPlace).
@@ -70,15 +99,20 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::function<void(uint64_t track)> m_editChannel;
 		std::function<void(uint64_t track)> m_setupArticulations;
+		std::function<void(uint64_t track, bool project)> m_openInputTransformer;
 		uint64_t m_track = 0;
+		std::vector<uint64_t> m_selected; // the tracks the inspector shows, the first one's details
 		uint64_t m_loads = 0;
 		uint64_t m_read = 0;
-		const engine::Json* m_project = nullptr;         // update's
-		engine::Json m_devices = engine::Json::object(); // the user setting midi.devices
-		engine::Json m_channel;                          // the track's, null without one
+		const engine::Json* m_project = nullptr;            // update's
+		engine::Json m_devices = engine::Json::object();    // the user setting midi.devices
+		engine::Json m_channel;                             // the track's, null without one
+		engine::Json m_midiEffects = engine::Json::array(); // midiEffect.list's
 		bool m_showing = false;        // while show sets the controls, whose changes aren't the user's
 		bool m_dropping = false;       // while dropEdits ends edits, which then aren't taken
 		bool m_stale = false;          // a change was refused: show again
+		int m_dividerTo = -1;          // while the divider is dragged, where it goes
+		engine::Json m_dividerChannel; // and the id of the channel whose divider it is
 		Subscription m_reset;          // project.reset
 		Subscription m_devicesChanged; // settings.changed with midi.devices
 		bool m_devicesKnown = false;   // settings.changed came before settings.get's answer

@@ -1,20 +1,101 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "testutils/goldenimage.h"
+#include "testutils/stopandjoin.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <thread>
 
 using namespace gnubase::test;
+
+TEST_CASE("StopAndJoin joins a thread before an exception leaves its scope", "[unit]")
+{
+	bool finished = false;
+	std::thread worker([&] { finished = true; });
+	bool joinedBeforeCatch = false;
+	// Keep the throwing scope behind a callable so optimized MSVC observes the thread changed during unwinding.
+	const std::function<void()> fail = [&worker]
+	{
+		const StopAndJoin cleanup(worker);
+		throw std::runtime_error("simulated assertion failure");
+	};
+	try
+	{
+		fail();
+	}
+	catch (const std::runtime_error&)
+	{
+		joinedBeforeCatch = !worker.joinable();
+	}
+	// Keep the test safe even if the guard fails to join.
+	if (worker.joinable())
+		worker.join();
+	CHECK(joinedBeforeCatch);
+	CHECK(finished);
+}
+
+TEST_CASE("StopAndJoin signals a stop flag before joining on an exception", "[unit]")
+{
+	std::atomic<bool> stop{false};
+	bool observedStop = false;
+	std::thread worker(
+		[&]
+		{
+			// A broken join-before-stop guard must fail this test rather than hang it.
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			while (!stop && std::chrono::steady_clock::now() < deadline)
+				std::this_thread::yield();
+			observedStop = stop.load();
+		});
+	bool joinedBeforeCatch = false;
+	bool stoppedBeforeCatch = false;
+	const std::function<void()> fail = [&stop, &worker]
+	{
+		const StopAndJoin cleanup(stop, worker);
+		throw std::runtime_error("simulated assertion failure");
+	};
+	try
+	{
+		fail();
+	}
+	catch (const std::runtime_error&)
+	{
+		joinedBeforeCatch = !worker.joinable();
+		stoppedBeforeCatch = stop.load();
+	}
+	stop = true;
+	if (worker.joinable())
+		worker.join();
+	CHECK(joinedBeforeCatch);
+	CHECK(stoppedBeforeCatch);
+	CHECK(observedStop);
+}
+
+TEST_CASE("StopAndJoin can join explicitly and again on scope exit", "[unit]")
+{
+	std::thread worker([] {});
+	const StopAndJoin cleanup(worker);
+	cleanup.join();
+	cleanup.join();
+	const bool joined = !worker.joinable();
+	if (worker.joinable())
+		worker.join();
+	CHECK(joined);
+}
 
 TEST_CASE("a test run has a temp folder of its own", "[unit]")
 {
@@ -56,6 +137,15 @@ TEST_CASE("TempDir creates a folder and deletes it with its contents", "[unit]")
 		std::ofstream(path / "file.txt") << "content";
 	}
 	REQUIRE_FALSE(std::filesystem::exists(path));
+}
+
+TEST_CASE("runCommand runs a command line with quoted paths of any characters and returns its exit code", "[unit]")
+{
+	const TempDir dir;
+	const std::filesystem::path file = dir.path() / std::filesystem::u8path(u8"ä 日.txt");
+	CHECK(runCommand("echo hello> \"" + file.u8string() + "\"") == 0);
+	CHECK(readText(file).rfind("hello", 0) == 0);
+	CHECK(runCommand("exit 3") == 3);
 }
 
 TEST_CASE("writeZip and readZip write and read a zip archive's entries", "[unit]")

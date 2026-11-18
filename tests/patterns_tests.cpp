@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Patterns in the engine (#181, docs/features/pattern-editor.md): pattern.add, set and remove with their checks and
 // mode switches, pattern events playing their patterns (rendered: steps, ties, repeats, gate, offsets, swing,
-// directions, lane lengths and resolutions, mute and solo), Convert Pattern Event to MIDI Part, pattern presets, the
-// project file and the pattern editor content. tests/patterneditor_ui_tests.cpp drives the pattern editor in the app.
+// directions, lane lengths and resolutions, mute and solo), continuing them when split, sized and glued, on other
+// tracks and in the MIDI functions (#1040), Convert Pattern Event to MIDI Part, pattern presets, the project file and
+// the pattern editor content. tests/patterneditor_ui_tests.cpp drives the pattern editor in the app.
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/midi/patterns.h"
 #include "engine/time/tempomap.h"
 #include "testutils/testutils.h"
 
@@ -14,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -57,6 +60,35 @@ namespace
 		}
 
 		Json patterns() { return call("project.get").at("patterns"); }
+
+		Json partJson(uint64_t id)
+		{
+			const Json project = call("project.get");
+			for (const Json& each : project.at("midiParts"))
+				if (each.at("id") == id)
+					return each;
+			return nullptr;
+		}
+
+		Json patternJson(const Json& id)
+		{
+			for (const Json& each : patterns())
+				if (each.at("id") == id)
+					return each;
+			return nullptr;
+		}
+
+		// The names of a track's patterns.
+		std::vector<std::string> namesOn(uint64_t on)
+		{
+			std::vector<std::string> names;
+			for (const Json& each : patterns())
+				if (each.at("track") == on)
+					names.push_back(each.at("name").get<std::string>());
+			return names;
+		}
+
+		uint64_t addTrack() { return call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>(); }
 
 		// Sets the pattern's lanes: each {pitch, steps}.
 		void lanes(Json lanes, Json more = Json::object())
@@ -310,18 +342,217 @@ TEST_CASE("a shorter Number of Steps drops the steps that no longer fit and ends
 	CHECK(f.patterns().at(0).at("lanes").at(0).at("steps").size() == 3);
 }
 
-TEST_CASE("a split pattern event plays the pattern in both pieces", "[unit]")
+TEST_CASE("a split, sized or glued pattern event continues its pattern", "[unit]")
 {
 	Fixture f;
 	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}}, {{"length", 4}});
-	REQUIRE(f.starts() == std::vector<int64_t>{f.at(0), f.at(4), f.at(8), f.at(12)});
-	f.call("event.split", {{"events", {f.part}}, {"positions", {f.at(6)}}});
+	const std::vector<int64_t> played{f.at(0), f.at(4), f.at(8), f.at(12)};
+	REQUIRE(f.starts() == played);
+	// Each piece plays the pattern where the split cut it, not from its own start.
+	const auto right =
+		f.call("event.split", {{"events", {f.part}}, {"positions", {f.at(6)}}}).at("events").at(0).get<uint64_t>();
 	const Json parts = f.call("project.get").at("midiParts");
 	REQUIRE(parts.size() == 2);
 	for (const Json& part : parts)
 		CHECK(part.at("pattern") == f.pattern.at("id"));
-	// Each piece plays it from its own start.
-	CHECK(f.starts() == std::vector<int64_t>{f.at(0), f.at(4), f.at(6), f.at(10), f.at(14)});
+	CHECK(f.partJson(right).at("patternOffset") == 6 * g_quarter / 4);
+	CHECK(f.starts() == played);
+	// Glued again, it is the pattern event it was.
+	f.call("event.glue", {{"events", {f.part, right}}});
+	REQUIRE(f.call("project.get").at("midiParts").size() == 1);
+	CHECK(f.partJson(f.part).at("pattern") == f.pattern.at("id"));
+	CHECK(f.starts() == played);
+
+	// Sizing the start later hides the steps before it; earlier, it shows the pattern before its start.
+	f.call("event.resize", {{"events", {f.part}}, {"edge", "start"}, {"ticks", g_quarter / 2}});
+	CHECK(f.starts() == std::vector<int64_t>{f.at(4), f.at(8), f.at(12)});
+	f.call("history.undo");
+	f.lanes({{{"pitch", 36}, {"steps", steps({3})}}});
+	f.call("midiPart.set", {{"part", f.part}, {"position", g_bar}});
+	f.call("event.resize", {{"events", {f.part}}, {"edge", "start"}, {"ticks", -g_quarter / 2}});
+	CHECK(f.partJson(f.part).at("patternOffset") == -g_quarter / 2);
+	CHECK(f.starts() == std::vector<int64_t>{f.at(15), f.at(19), f.at(23), f.at(27), f.at(31)});
+}
+
+TEST_CASE("glued pieces of a pattern event of another transpose keep their pitches", "[unit]")
+{
+	Fixture f;
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}}, {{"length", 4}});
+	const auto right =
+		f.call("event.split", {{"events", {f.part}}, {"positions", {f.at(6)}}}).at("events").at(0).get<uint64_t>();
+	f.call("midiPart.set", {{"part", right}, {"transpose", 12}});
+	const auto pitches = [&]
+	{
+		std::vector<int> all;
+		for (const engine::RenderNote& note : f.rendered())
+			all.push_back(note.pitch);
+		return all;
+	};
+	REQUIRE(pitches() == std::vector<int>{36, 36, 48, 48});
+	const auto glued = f.call("event.glue", {{"events", {f.part, right}}}).at("event").get<uint64_t>();
+	CHECK(f.partJson(glued).at("pattern") == 0);
+	CHECK(f.starts() == std::vector<int64_t>{f.at(0), f.at(4), f.at(8), f.at(12)});
+	CHECK(pitches() == std::vector<int>{36, 36, 48, 48});
+}
+
+TEST_CASE("glued to ordinary parts, a pattern event's steps become notes", "[unit]")
+{
+	Fixture f;
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}}, {{"length", 4}});
+	f.call("midiPart.set", {{"part", f.part}, {"position", g_bar}});
+	const uint64_t plain = f.call("midiPart.add", {{"track", f.track}, {"position", 0}, {"length", g_bar}})
+							   .at("part")
+							   .at("id")
+							   .get<uint64_t>();
+	f.call("note.add",
+		{{"part", plain}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 70}, {"velocity", 0.5}}}}});
+	const std::vector<int64_t> played{f.at(0), f.at(16), f.at(20), f.at(24), f.at(28)};
+	REQUIRE(f.starts() == played);
+	const auto glued = f.call("event.glue", {{"events", {plain, f.part}}}).at("event").get<uint64_t>();
+	const Json part = f.partJson(glued);
+	CHECK(part.at("pattern") == 0);
+	CHECK(part.at("notes").size() == 5);
+	CHECK(f.starts() == played);
+}
+
+TEST_CASE("a negative offset plays a step early, before the event's end too, but not before its start", "[unit]")
+{
+	Fixture f;
+	// The first step plays at the start of the pattern, which starts with the event, the later ones early, and the
+	// first step of the repeat after the event's end before it.
+	f.lanes({{{"pitch", 36}, {"steps", {{{"index", 0}, {"offset", -0.5}}}}}}, {{"length", 4}});
+	CHECK(f.starts() == std::vector<int64_t>{f.at(0), f.at(3.5), f.at(7.5), f.at(11.5), f.at(15.5)});
+	const Json part = f.call("pattern.convert", {{"part", f.part}}).at("part");
+	REQUIRE(part.at("notes").size() == 5);
+	for (const Json& note : part.at("notes"))
+		CHECK(note.at("position").get<int64_t>() >= 0);
+}
+
+TEST_CASE("MIDI functions work on what pattern events play", "[unit]")
+{
+	Fixture f;
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}, {{"pitch", 38}, {"steps", steps({2})}}}, {{"length", 4}});
+	// Bounce makes the notes it played an ordinary part.
+	const Json bounced = f.call("midi.bounce", {{"parts", {f.part}}});
+	REQUIRE(bounced.at("parts").size() == 1);
+	const Json part = f.partJson(bounced.at("parts").at(0).get<uint64_t>());
+	CHECK(part.at("pattern") == 0);
+	CHECK(part.at("notes").size() == 8);
+	CHECK(f.rendered().size() == 8);
+	f.call("history.undo");
+	// Dissolve by pitch: a part per drum sound.
+	const Json dissolved = f.call("midi.dissolve", {{"parts", {f.part}}, {"by", "pitch"}});
+	REQUIRE(dissolved.at("parts").size() == 2);
+	for (const Json& id : dissolved.at("parts"))
+		CHECK(f.partJson(id.get<uint64_t>()).at("notes").size() == 4);
+	f.call("history.undo");
+	// Merge.
+	const Json merged = f.call("midi.merge", {{"start", 0}, {"end", f.at(16)}, {"tracks", {f.track}}});
+	REQUIRE(merged.at("parts").size() == 1);
+	CHECK(f.partJson(merged.at("parts").at(0).get<uint64_t>()).at("notes").size() == 8);
+	// The functions that change notes leave pattern events, whose steps the pattern editor edits, as they are.
+	CHECK(f.call("midi.fixVelocities", {{"parts", {f.part}}, {"velocity", 0.5}}).at("parts").empty());
+	// Their own controllers play, so the controller functions change them (#1091).
+	f.call("controller.add", {{"part", f.part}, {"controllers", {{{"position", 0}, {"number", 1}, {"value", 0.5}}}}});
+	CHECK(f.call("midi.deleteControllers", {{"parts", {f.part}}}).at("parts") == Json::array({f.part}));
+	CHECK(f.partJson(f.part).at("controllers").empty());
+	CHECK(f.partJson(f.part).at("pattern") == f.pattern.at("id"));
+}
+
+TEST_CASE("another pattern plays a part from its start, and results name the pattern of the part's track", "[unit]")
+{
+	Fixture f;
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}}, {{"length", 4}});
+	const auto right =
+		f.call("event.split", {{"events", {f.part}}, {"positions", {f.at(6)}}}).at("events").at(0).get<uint64_t>();
+	REQUIRE(f.partJson(right).at("patternOffset") == 6 * g_quarter / 4);
+	// The same pattern goes on; another one, a new one for the part and none start again (#1091).
+	CHECK(f.call("midiPart.set", {{"part", right}, {"pattern", f.pattern.at("id")}}).at("part").at("patternOffset") ==
+		6 * g_quarter / 4);
+	const Json fill = f.call("pattern.add", {{"track", f.track}, {"name", "Fill"}}).at("pattern");
+	CHECK(f.call("midiPart.set", {{"part", right}, {"pattern", fill.at("id")}}).at("part").at("patternOffset") == 0);
+	f.call("history.undo");
+	REQUIRE(f.partJson(right).at("patternOffset") == 6 * g_quarter / 4);
+	f.call("pattern.add", {{"part", right}});
+	CHECK(f.partJson(right).at("patternOffset") == 0);
+	f.call("history.undo");
+	f.call("midiPart.set", {{"part", right}, {"pattern", 0}});
+	CHECK(f.partJson(right).at("patternOffset") == 0);
+
+	// A pattern of another track plays as the copy on the part's track, which the results name.
+	const uint64_t other = f.addTrack();
+	const Json added =
+		f.call("midiPart.add", {{"track", other}, {"position", 0}, {"length", g_bar}, {"pattern", f.pattern.at("id")}})
+			.at("part");
+	CHECK(added.at("pattern") != f.pattern.at("id"));
+	CHECK(added.at("pattern") == f.partJson(added.at("id").get<uint64_t>()).at("pattern"));
+	const auto plain = f.call("midiPart.add", {{"track", other}, {"position", g_bar}, {"length", g_bar}})
+						   .at("part")
+						   .at("id")
+						   .get<uint64_t>();
+	const Json set = f.call("midiPart.set", {{"part", plain}, {"pattern", f.pattern.at("id")}}).at("part");
+	CHECK(set.at("pattern") == added.at("pattern"));
+	CHECK(f.partJson(plain).at("pattern") == added.at("pattern"));
+}
+
+TEST_CASE("a piece of a pattern event plays the sub-steps of a tie that wraps past the lane's end", "[unit]")
+{
+	// The last of 4 steps tied over 4, with a sub-step on each: three play at the start of the next lane cycle.
+	engine::Pattern pattern;
+	pattern.length = 4;
+	engine::PatternStep step;
+	step.index = 3;
+	step.length = 4;
+	step.repeats = 4;
+	pattern.lanes.emplace_back();
+	pattern.lanes.back().steps.push_back(step);
+	const int64_t sixteenth = g_quarter / 4;
+	const int64_t length = 12 * sixteenth;
+	const std::map<engine::ObjectId, engine::Note> whole = engine::midi::patternNotes(pattern, 0, length);
+	REQUIRE(whole.size() == 9);
+	// Each piece after a split, from there into the pattern, plays what the whole event plays there (#1091).
+	for (int64_t from = sixteenth; from < length; from += sixteenth)
+	{
+		std::vector<int64_t> expected;
+		for (const auto& [id, note] : whole)
+			if (note.position >= from)
+				expected.push_back(note.position - from);
+		std::vector<int64_t> played;
+		for (const auto& [id, note] : engine::midi::patternNotes(pattern, from, length - from))
+			played.push_back(note.position);
+		std::sort(expected.begin(), expected.end());
+		std::sort(played.begin(), played.end());
+		INFO("from " << from);
+		CHECK(played == expected);
+	}
+}
+
+TEST_CASE("pattern events copied or moved to another track play copies of the patterns on it", "[unit]")
+{
+	Fixture f;
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}});
+	f.call("pattern.add", {{"track", f.track}, {"name", "Fill"}});
+	// A track without pattern events of its own gets copies of all the patterns of the event's track (p. 936).
+	const uint64_t other = f.addTrack();
+	const auto copied =
+		f.call("event.copy", {{"events", {f.part}}, {"track", other}}).at("events").at(0).get<uint64_t>();
+	CHECK(f.namesOn(other) == std::vector<std::string>{"Pattern 1", "Fill"});
+	const Json played = f.patternJson(f.partJson(copied).at("pattern"));
+	CHECK(played.at("track") == other);
+	CHECK(played.at("lanes") == f.pattern.at("lanes"));
+	CHECK(f.partJson(f.part).at("pattern") == f.pattern.at("id"));
+
+	// A track with pattern events of its own gets only the event's pattern (p. 937); moving it is one undo step.
+	const uint64_t third = f.addTrack();
+	f.call("pattern.add",
+		{{"part", f.call("midiPart.add", {{"track", third}, {"position", 0}, {"length", g_bar}}).at("part").at("id")}});
+	f.call("event.move", {{"events", {f.part}}, {"track", third}});
+	CHECK(f.namesOn(third).size() == 2);
+	CHECK(f.namesOn(f.track).size() == 2);
+	CHECK(f.patternJson(f.partJson(f.part).at("pattern")).at("track") == third);
+	f.call("history.undo");
+	CHECK(f.namesOn(third).size() == 1);
+	CHECK(f.partJson(f.part).at("pattern") == f.pattern.at("id"));
 }
 
 TEST_CASE("a step's probability and velocity variance play as a note's, differently in each repeat", "[unit]")
@@ -406,17 +637,23 @@ TEST_CASE("patterns and pattern events are saved and loaded with the project", "
 	CHECK(f.rendered().size() == played.size());
 }
 
-TEST_CASE("a pattern that events on other tracks play is saved and loaded after its track is removed", "[integration]")
+TEST_CASE("Duplicate Track copies a track's patterns, and removing a track removes them", "[integration]")
 {
 	Fixture f;
 	const test::TempDir dir;
 	const std::string file = (dir.path() / "patterns.dawproject").u8string();
 	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}}, {{"length", 8}});
-	f.call("track.duplicate", {{"track", f.track}});
+	const auto copy = f.call("track.duplicate", {{"track", f.track}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(f.patterns().size() == 2);
+	const Json duplicate = f.patterns().at(1);
+	CHECK(duplicate.at("track") == copy);
+	CHECK(duplicate.at("name") == "Pattern 1");
+	CHECK(duplicate.at("lanes") == f.pattern.at("lanes"));
 	f.call("track.remove", {{"track", f.track}});
 	const Json before = f.call("project.get");
+	REQUIRE(before.at("patterns") == Json::array({duplicate}));
 	REQUIRE(before.at("midiParts").size() == 1);
-	REQUIRE(before.at("midiParts").at(0).at("pattern") == f.pattern.at("id"));
+	CHECK(before.at("midiParts").at(0).at("pattern") == duplicate.at("id"));
 	const std::vector<int64_t> played = f.starts();
 	REQUIRE(played == std::vector<int64_t>{f.at(0), f.at(8)});
 	f.call("project.save", {{"path", file}});
@@ -424,8 +661,165 @@ TEST_CASE("a pattern that events on other tracks play is saved and loaded after 
 	f.call("project.load", {{"path", file}});
 	const Json after = f.call("project.get");
 	CHECK(after.at("patterns") == before.at("patterns"));
-	CHECK(after.at("midiParts").at(0).at("pattern") == f.pattern.at("id"));
+	CHECK(after.at("midiParts").at(0).at("pattern") == duplicate.at("id"));
 	CHECK(f.starts() == played);
+}
+
+TEST_CASE("Duplicate Track copies patterns no event plays, and a track's copy of a pattern plays its copies", "[unit]")
+{
+	Fixture f;
+	f.call("pattern.add", {{"track", f.track}, {"name", "Fill"}});
+	const auto copy = f.call("track.duplicate", {{"track", f.track}}).at("track").at("id").get<uint64_t>();
+	CHECK(f.namesOn(copy) == std::vector<std::string>{"Pattern 1", "Fill"});
+	CHECK(f.namesOn(f.track) == std::vector<std::string>{"Pattern 1", "Fill"});
+	const Json project = f.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+		CHECK(f.patternJson(part.at("pattern")).at("track") == part.at("track"));
+
+	// Copied again, a pattern event plays the copy of its pattern its new track has (#1091) ...
+	const uint64_t other = f.addTrack();
+	f.call("event.copy", {{"events", {f.part}}, {"track", other}});
+	f.call("event.copy", {{"events", {f.part}}, {"track", other}});
+	CHECK(f.namesOn(other) == std::vector<std::string>{"Pattern 1", "Fill"});
+	// ... unless that copy changed since.
+	Json changed;
+	for (const Json& each : f.patterns())
+		if (each.at("track") == other && each.at("name") == "Pattern 1")
+			changed = each;
+	f.call("pattern.set", {{"pattern", changed.at("id")}, {"swing", 0.5}});
+	f.call("event.copy", {{"events", {f.part}}, {"track", other}});
+	CHECK(f.namesOn(other) == std::vector<std::string>{"Pattern 1", "Fill", "Pattern 1"});
+}
+
+TEST_CASE("Duplicate Track gives the pattern events of the track's other versions its copies of the patterns", "[unit]")
+{
+	Fixture f;
+	f.call("trackVersion.duplicate", {{"tracks", Json::array({f.track})}});
+	const auto copy = f.call("track.duplicate", {{"track", f.track}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(f.namesOn(copy).size() == 1);
+	Json copied;
+	for (const Json& each : f.patterns())
+		if (each.at("track") == copy)
+			copied = each;
+	// The copy's first version plays the copy's pattern as it was duplicated, not the original's as it is (#1202).
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}});
+	f.call("trackVersion.activate", {{"tracks", Json::array({copy})}, {"version", 1}});
+	CHECK(f.namesOn(copy).size() == 1);
+	size_t parts = 0;
+	const Json project = f.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("track") == copy)
+		{
+			++parts;
+			CHECK(part.at("pattern") == copied.at("id"));
+		}
+	CHECK(parts == 1);
+	CHECK(f.patternJson(copied.at("id")) == copied);
+}
+
+TEST_CASE("only a copy made from a pattern counts as the track's copy of it, not an equal pattern", "[unit]")
+{
+	Fixture f;
+	// Equal patterns of the event's track each get a copy of their own (#1202).
+	const Json twin = f.call("pattern.add", {{"track", f.track}, {"name", "Pattern 1"}}).at("pattern");
+	Json same = twin;
+	same["id"] = f.pattern.at("id");
+	REQUIRE(same == f.pattern);
+	const uint64_t other = f.addTrack();
+	f.call("event.copy", {{"events", {f.part}}, {"track", other}});
+	CHECK(f.namesOn(other) == std::vector<std::string>{"Pattern 1", "Pattern 1"});
+
+	// A track's own pattern that is equal to the event's doesn't play it.
+	const uint64_t third = f.addTrack();
+	const auto own = f.call("midiPart.add", {{"track", third}, {"position", 0}, {"length", g_bar}})
+						 .at("part")
+						 .at("id")
+						 .get<uint64_t>();
+	const Json mine = f.call("pattern.add", {{"part", own}}).at("pattern");
+	const auto copied =
+		f.call("event.copy", {{"events", {f.part}}, {"track", third}}).at("events").at(0).get<uint64_t>();
+	CHECK(f.namesOn(third).size() == 2);
+	CHECK(f.partJson(copied).at("pattern") != mine.at("id"));
+	CHECK(f.partJson(own).at("pattern") == mine.at("id"));
+	// Copied again, the event plays the copy made the first time.
+	const Json played = f.partJson(copied).at("pattern");
+	const auto again =
+		f.call("event.copy", {{"events", {f.part}}, {"track", third}}).at("events").at(0).get<uint64_t>();
+	CHECK(f.namesOn(third).size() == 2);
+	CHECK(f.partJson(again).at("pattern") == played);
+}
+
+TEST_CASE("a pattern event moved to another track and back plays its pattern again", "[unit]")
+{
+	Fixture f;
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}});
+	f.call("pattern.add", {{"track", f.track}, {"name", "Fill"}});
+	const uint64_t other = f.addTrack();
+	f.call("event.move", {{"events", {f.part}}, {"track", other}});
+	REQUIRE(f.namesOn(other) == std::vector<std::string>{"Pattern 1", "Fill"});
+	// Back on its track, which has no other pattern events, the patterns the copies were made from count as the
+	// track's copies of them (#1347).
+	f.call("event.move", {{"events", {f.part}}, {"track", f.track}});
+	CHECK(f.namesOn(f.track) == std::vector<std::string>{"Pattern 1", "Fill"});
+	CHECK(f.partJson(f.part).at("pattern") == f.pattern.at("id"));
+	// Not once the original changed since.
+	f.call("event.move", {{"events", {f.part}}, {"track", other}});
+	f.lanes({{{"pitch", 38}, {"steps", steps({4})}}});
+	f.call("event.move", {{"events", {f.part}}, {"track", f.track}});
+	CHECK(f.namesOn(f.track) == std::vector<std::string>{"Pattern 1", "Fill", "Pattern 1"});
+	CHECK(f.partJson(f.part).at("pattern") != f.pattern.at("id"));
+}
+
+TEST_CASE("track.export and track.import bring a track's patterns, which its pattern events play", "[integration]")
+{
+	Fixture f;
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "beat.dawproject").u8string();
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}});
+	f.call("pattern.add", {{"track", f.track}, {"name", "Fill"}});
+	f.call("trackVersion.duplicate", {{"tracks", Json::array({f.track})}});
+	f.call("track.export", {{"tracks", {f.track}}, {"path", file}});
+	const Json exported = f.pattern.at("lanes");
+	// Changed after the export: the imported events play the patterns as exported, not the project's of their ids.
+	f.lanes({{{"pitch", 40}, {"steps", steps({2})}}});
+	// The pattern events the track plays in each of its versions, each of which plays a pattern of the track as
+	// exported (#1347).
+	const auto played = [&f, &exported](uint64_t track)
+	{
+		size_t events = 0;
+		Json versions;
+		const Json project = f.call("project.get");
+		for (const Json& each : project.at("tracks"))
+			if (each.at("id") == track)
+				versions = each.at("versions");
+		for (const Json& version : versions)
+		{
+			f.call("trackVersion.activate", {{"tracks", Json::array({track})}, {"version", version.at("id")}});
+			const Json parts = f.call("project.get").at("midiParts");
+			for (const Json& part : parts)
+				if (part.at("track") == track && part.at("pattern") != 0)
+				{
+					++events;
+					const Json pattern = f.patternJson(part.at("pattern"));
+					REQUIRE(pattern.is_object());
+					CHECK(pattern.at("track") == track);
+					CHECK(pattern.at("lanes") == exported);
+				}
+		}
+		return events;
+	};
+	const auto imported = f.call("track.import", {{"path", file}}).at("tracks").at(0).get<uint64_t>();
+	CHECK(f.namesOn(imported) == std::vector<std::string>{"Pattern 1", "Fill"});
+	CHECK(played(imported) == 2);
+
+	// Imported onto a track, as a new version of it.
+	const uint64_t onto = f.addTrack();
+	const Json sources = f.call("track.importSources", {{"path", file}}).at("tracks");
+	f.call("track.import",
+		{{"path", file}, {"existing", "version"},
+			{"destinations", {{{"source", sources.at(0).at("id")}, {"track", onto}}}}});
+	CHECK(f.namesOn(onto) == std::vector<std::string>{"Pattern 1", "Fill"});
+	CHECK(played(onto) == 2);
 }
 
 TEST_CASE("pattern events open in the pattern editor", "[unit]")

@@ -2,10 +2,14 @@
 #include "engine/midi/logical.h"
 
 #include "engine/midi/functions.h"
+#include "engine/midi/midivalues.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -133,16 +137,20 @@ namespace gnubase::engine::midi
 			return value;
 		}
 
+		// Positions and lengths stay finite, also after many multiplications, and fit the ticks they become.
+		constexpr double g_maxLogicalTicks = 1e15;
+
 		void set(LogicalEvent& event, LogicalTarget target, double value) noexcept
 		{
 			const int whole = static_cast<int>(std::lround(std::clamp(value, -1e9, 1e9)));
+			const double ticks = std::clamp(value, -g_maxLogicalTicks, g_maxLogicalTicks);
 			switch (target)
 			{
 			case LogicalTarget::Position:
-				event.position = value;
+				event.position = ticks;
 				break;
 			case LogicalTarget::Length:
-				event.length = value;
+				event.length = ticks;
 				break;
 			case LogicalTarget::Subtype:
 				event.subtype = whole;
@@ -369,8 +377,28 @@ namespace gnubase::engine::midi
 		return static_cast<int>(low + static_cast<int64_t>(z % range));
 	}
 
+	uint64_t nextLogicalSeed() noexcept
+	{
+		// From a random start, so that each session's first Apply gives other values than the last one's did.
+		static std::atomic<uint64_t> seeds{[]() noexcept
+			{
+				try
+				{
+					std::random_device device;
+					return (uint64_t{device()} << 32U) ^ device();
+				}
+				catch (...)
+				{
+					return static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+				}
+			}()};
+		return seeds.fetch_add(1, std::memory_order_relaxed);
+	}
+
 	bool transform(const ActionLine* actions, size_t count, LogicalEvent& event, LogicalRandom& random) noexcept
 	{
+		const double position = event.position;
+		const double length = event.length;
 		for (size_t i = 0; i < count; ++i)
 		{
 			const ActionLine& action = actions[i];
@@ -383,9 +411,74 @@ namespace gnubase::engine::midi
 		event.subtype = std::clamp(event.subtype, 0, 127);
 		event.mainValue = std::clamp(event.mainValue, 0, 127);
 		event.secondaryValue = std::clamp(event.secondaryValue, 0, 127);
-		event.position = std::max(event.position, 0.0);
-		event.length = std::max(event.length, 1.0);
+		// A note shorter than a tick stays as it is unless an action changed its length.
+		if (event.position != position)
+			event.position = std::max(event.position, 0.0);
+		if (event.length != length)
+			event.length = std::max(event.length, 1.0);
 		return true;
+	}
+
+	void setLogicalValues(LogicalType type, uint8_t number, uint32_t value, LogicalEvent& event) noexcept
+	{
+		event.type = type;
+		event.subtype = number % 128;
+		event.mainValue = 0;
+		switch (type)
+		{
+		case LogicalType::Controller:
+		case LogicalType::PolyPressure:
+			event.mainValue = controllerToMidi1(value);
+			break;
+		case LogicalType::Aftertouch:
+			event.subtype = controllerToMidi1(value);
+			break;
+		case LogicalType::PitchBend:
+		{
+			const uint16_t bend = pitchBendToMidi1(value);
+			event.subtype = static_cast<int>(bend & 0x7FU);
+			event.mainValue = static_cast<int>(bend >> 7U);
+			break;
+		}
+		case LogicalType::Program:
+		case LogicalType::Note:
+			break;
+		}
+	}
+
+	void logicalValues(
+		const LogicalEvent& changed, const LogicalEvent& original, uint8_t& number, uint32_t& value) noexcept
+	{
+		const bool sameType = changed.type == original.type;
+		const bool subtypeSame = sameType && changed.subtype == original.subtype;
+		const bool mainSame = sameType && changed.mainValue == original.mainValue;
+		const auto main = static_cast<uint8_t>(changed.mainValue);
+		const auto subtype = static_cast<uint8_t>(changed.subtype);
+		number = subtype;
+		switch (changed.type)
+		{
+		case LogicalType::Controller:
+		case LogicalType::PolyPressure:
+			if (!mainSame)
+				value = controllerFromMidi1(main);
+			break;
+		case LogicalType::Program:
+			if (!sameType)
+				value = 0xFFFFFFFFU; // no bank
+			break;
+		case LogicalType::Aftertouch:
+			number = 0;
+			if (!subtypeSame)
+				value = controllerFromMidi1(subtype);
+			break;
+		case LogicalType::PitchBend:
+			number = 0;
+			if (!subtypeSame || !mainSame)
+				value = pitchBendFromMidi1(static_cast<uint16_t>((main << 7U) | subtype));
+			break;
+		case LogicalType::Note:
+			break;
+		}
 	}
 
 	const char* toString(LogicalType type)
@@ -422,7 +515,10 @@ namespace gnubase::engine::midi
 		for (size_t i = 0; i < filters.size(); ++i)
 		{
 			const FilterLine line = filterFromJson(filters[i], "rules.filters[" + std::to_string(i) + "]");
-			depth += line.open - line.close;
+			depth += line.open;
+			if (depth > g_maxLogicalBrackets)
+				throw std::invalid_argument("rules.filters: brackets nest at most 3 deep");
+			depth -= line.close;
 			if (depth < 0)
 				throw std::invalid_argument("rules.filters: a bracket closes that wasn't opened");
 			rules.filters.push_back(line);
@@ -537,7 +633,15 @@ namespace gnubase::engine::midi
 			}
 			if (item.contains("rules"))
 			{
-				LogicalRules rules = logicalRulesFromJson(item.at("rules"));
+				LogicalRules rules;
+				try
+				{
+					rules = logicalRulesFromJson(item.at("rules"));
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw std::invalid_argument(name + "." + error.what());
+				}
 				if (rules.function == LogicalFunction::Select)
 					throw std::invalid_argument(name + ": input transformers don't select");
 				// Live events have no position or length.

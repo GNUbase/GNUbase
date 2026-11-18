@@ -17,14 +17,17 @@ so MCP and Lua scripts can do all it does.
   - `frameRate`: the timecode's, one of the reference's rates with names such as `25` (the default), `29.97`,
     `29.97dfps` and `30dfps` (`time::frameRateNames`).
   - `startTime`: the time that seconds, timecode and user frames show at the project start, in seconds (0 up to 24
-    hours). `length`: how long the project is, in seconds (default 600, up to 24 hours). `barOffset`: added to the bar
-    numbers shown, -9999 to 9999.
+    hours). `length`: how long the project is, in seconds (default 600, up to 24 hours, `g_maxProjectLength`);
+    `track.import` moves it to the end of what it imports when that is later
+    ([track-presets.md](track-presets.md)). `barOffset`: added to the bar numbers shown, -9999 to 9999.
   - `timeFormat`: the primary time format (p. 69): `barsBeats` (the default), `seconds`, `timecode`, `samples` or
     `userFrames`.
 - They are saved in the project file's GNUbase entry (`gnubase.json` in the DAWproject container, as `toJson(Project)`
   writes it); files from before have the defaults. Undo and redo restore them with the other project settings
   (`ProjectSettings` in `history.h`) and announce them with `project.changed`.
-- **A new sample rate** keeps linear positions at their time, as before; media files keep their sample rate and play
+- **A new sample rate**, from 8000 to 768000 Hz (`g_lowestSampleRate`, `g_highestSampleRate`; so does a loaded
+  project's, since far outside them positions in ticks or samples leave an int64), keeps linear positions at their
+  time, as before; media files keep their sample rate and play
   at the wrong speed until they are conformed with `media.conform` ([pool.md](pool.md)). The dialog does both, as
   one undo step (below).
 - **The record bit depth** is in the render snapshot, so `audio.get` has it as `recordBitDepth` next to

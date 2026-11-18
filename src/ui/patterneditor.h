@@ -8,8 +8,10 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <memory>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -25,7 +27,10 @@ namespace gnubase::ui
 	// pattern management, Number of Steps, Step Resolution, Pattern Play Direction and the edit functions), the step
 	// display with a step lane per drum sound or pitch, and the parameter lane of the selected lane. show() gives it
 	// the project and the engine's editor view whenever they change. A gesture edits a copy of the pattern, which goes
-	// to the engine as one pattern.set when it ends. Use it on the UI thread; the binding must outlive it.
+	// to the engine as one pattern.set when it ends, with the lanes it didn't edit as the project has them then; the
+	// engine's pattern shows again if that is refused, or if the project changed while the gesture went on and it
+	// changed nothing. A project read before the last pattern.set was answered shows that pattern with the lanes it
+	// sent. Use it on the UI thread; the binding must outlive it.
 	class PatternEditor final : private Rml::EventListener
 	{
 	public:
@@ -36,7 +41,10 @@ namespace gnubase::ui
 		PatternEditor(PatternEditor&&) = delete;
 		PatternEditor& operator=(PatternEditor&&) = delete;
 
-		void show(const engine::Json& project, const engine::Json& view);
+		// read is EngineBinding::handed() when the project's project.get was answered.
+		void show(const engine::Json& project, const engine::Json& view, uint64_t read);
+		// The project as show() gave it last.
+		const engine::Json& project() const { return m_project; }
 
 	private:
 		enum class Gesture : uint8_t
@@ -54,6 +62,8 @@ namespace gnubase::ui
 		void click(Rml::Element& target);
 		void choose(Rml::Element& item);
 		void listen(bool document);
+		// Takes the active part's pattern from the project shown and renders it.
+		void load();
 		void render();
 		// Shows the steps' state, the selected lane and the parameter lane without making the step display's elements
 		// anew, as a gesture changes them.
@@ -70,8 +80,22 @@ namespace gnubase::ui
 		void addStep(int pitch, int index);
 		void removeStep(int pitch, int index);
 		void setValue(int index, double value);
-		// Sends the lanes as they are now in one pattern.set, an undo step named description.
-		void sendLanes(const std::string& description);
+		// The lanes a gesture didn't edit as the project has them now: a script, an MCP client or an undo may have
+		// changed them while it went on.
+		void takeOtherLanes();
+		// Whether the project shown was read before the answer to the last pattern.set of the pattern shown, or while
+		// it is on its way: it doesn't have the lanes sent (m_sent) yet (#1202).
+		bool behind() const;
+		// Whether a pattern.set of set() that changes the lanes in the engine, a mode switch or a shorter Number of
+		// Steps, is on its way: the editor takes no edit of the lanes until its answer brings them (#1410), and shows a
+		// project read before it as it is (#1532).
+		bool waiting() const;
+		// Sends the lanes as they are now in one pattern.set, an undo step named description, with changes of the
+		// pattern's other fields, which the pattern shown gets too; if it is refused, the engine's pattern shows again.
+		// Its callers ask waiting() first.
+		void sendLanes(const std::string& description, engine::Json changes = engine::Json::object());
+		// Sends changes of the pattern's other fields (mode, Number of Steps, Step Resolution, Play Direction); its
+		// answer's pattern shows until the project does.
 		void set(engine::Json changes);
 		// Tie Adjacent Steps and Split Tied Steps (p. 910), of the selected steps or else of all.
 		void tie(bool split);
@@ -85,11 +109,18 @@ namespace gnubase::ui
 		uint64_t m_part = 0;
 		std::string m_tool = "draw";
 		std::string m_parameter = "velocity";
-		int m_lane = -1;                           // the selected lane's pitch
-		std::set<std::pair<int, int>> m_selection; // the selected steps: pitch and index
+		int m_lane = -1;                                     // the selected lane's pitch
+		std::set<std::pair<int, int>> m_selection;           // the selected steps: pitch and index
+		std::tuple<uint64_t, uint64_t, std::string> m_shown; // the part, pattern and Step Resolution load() showed last
 		Gesture m_gesture = Gesture::None;
-		bool m_changed = false; // by the gesture going on
+		bool m_changed = false;  // by the gesture going on
+		bool m_stale = false;    // the project changed while it went on
+		std::set<int> m_edited;  // the pitches of the lanes it changed
+		uint64_t m_read = 0;     // when the project shown was read (EngineBinding::handed)
+		engine::Json m_sent;     // the pattern as the last pattern.set left it, as far as known; null if it was refused
+		uint64_t m_answered = 0; // when its answer was handed on, 0 while it is on its way
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
+		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 	};
 }

@@ -8,7 +8,12 @@ it up in `app::AppUi`.
   gives it, or a command of the UI's own (`ui::UiCommand`, added with `KeyCommands::add`), such as zooming or opening a
   window. Both share the engine's ids, "area.action"; a UI command can't take an engine command's id. Engine commands
   go through the UI's engine client (`EngineBinding::send`), so a key can do nothing that MCP and Lua can't, and
-  `engine.commandLog` shows what a key did as sent by `ui`. A failed command is logged.
+  `engine.commandLog` shows what a key did as sent by `ui`. A failed command is logged. While an action before it
+  waits for an answer, such as Delete for the zero crossings of a range just drawn, an engine command waits with it
+  (`EngineBinding::afterAwaited`, [ui-engine-binding.md](ui-engine-binding.md)), so the two go in the order pressed.
+  The event display's actions wait the same way; the UI commands of other views, such as the track list's
+  `track.duplicateSelected`, run at once (#1179): in a macro or a script, one of them right after Delete on a range just
+  drawn can run before the delete.
 - **Key map.** A binding (`ui::KeyBinding`) has keys, a command, the command's parameters and a focus zone (none for
   everywhere). `bind` checks the keys, and the command and its parameters with `check` (#446), which menu items and
   transport controls use too: the command must exist, an engine command's parameters must fit its schema, and a UI
@@ -22,8 +27,9 @@ it up in `app::AppUi`.
   digits, F1 to F24, the named keys (Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, the
   arrows Up, Down, Left, Right, Space), the punctuation keys `. , - +`, `Alt` on its own (with Alt held, as the
   keyboard sends it, so that MCP's `ui_key` can press it to open the menu bar, [main-menu.md](main-menu.md)), and the
-  keypad's own keys Num0 to Num9, NumEnter, `Num*`, `Num/`, `Num+`, `Num-` and `Num.`, which the reference uses for the transport. Letters and
-  punctuation follow the keyboard layout (SDL's key codes); digits are digits on French layouts too.
+  keypad's own keys Num0 to Num9, NumEnter, `Num*`, `Num/`, `Num+`, `Num-` and `Num.`, which the reference uses for
+  the transport. Letters and punctuation follow the keyboard layout (SDL's key codes); digits are digits on French
+  layouts too.
 - **Per platform.** `Mod` is the platform's command key: Cmd on macOS, Ctrl on Windows and Linux, the reference's
   "Ctrl/Cmd". `Ctrl` is the Control key everywhere, for the reference's few bindings with a real Ctrl on macOS; `Alt`
   is Option on macOS, `Meta` (or `Cmd`) the Command, Windows or Super key. `ui::keyName` writes keys as the platform
@@ -32,9 +38,9 @@ it up in `app::AppUi`.
 - **Elements first.** RmlUi gets every key first, at the focused element, from where it bubbles up. An element that
   uses a key stops its propagation: a text field keeps the keys typed into it, and also the arrow keys without
   modifiers that it can't use at its first or last line or character, which RmlUi lets through to move the focus
-  (`nav`): where they move it nowhere, `KeyCommands::press` runs no command for them. A focused button is clicked by Space
-  and Enter (not a toolbar or transport button, [widgets.md](widgets.md)), a focused knob, fader or slider turns with
-  the arrow keys, menus and dialogs keep their keys, Tab moves the focus: between the zones of a docking window
+  (`nav`): where they move it nowhere, `KeyCommands::press` runs no command for them. A focused button is clicked by
+  Space and Enter (not a toolbar or transport button, [widgets.md](widgets.md)), a focused knob, fader or slider turns
+  with the arrow keys, menus and dialogs keep their keys, Tab moves the focus: between the zones of a docking window
   ([docking.md](docking.md)), and between controls in text fields and dialogs. A key command runs only for a key that
   no element
   used: where `Rml::Context::ProcessKeyDown` says so, `SdlWindowSystem` passes the key on with its input event, and
@@ -137,8 +143,12 @@ event queue runs its command; and text fields, also their arrow keys at the ends
 a modal dialog keep their keys, while Space after a click on a toolbar or transport button starts and stops playback
 (`tests/transportbar_tests.cpp`).
 
-`tests/keycommandsdialog_tests.cpp` checks the user's key commands and macros, their presets and files, and the
-dialog below.
+`tests/keycommandsdialog_tests.cpp` checks the user's key commands and macros, their presets and files (including an
+import whose `format` or `version` has the wrong type), and the dialog below: its confirmations before Remove Key
+Command and Defaults, Clear All also clearing the assignments of commands the dialog doesn't list, renaming a macro by
+double-clicking it and pressing Return, File > Export > Key Command Assignments, the messages of an export or import
+that fails, a confirmation's Cancel and Escape leaving no question behind for the next one, and the tool modifiers
+asking before one action takes another's keys, from Assign and from the list.
 
 ## The user's key commands and macros
 
@@ -165,15 +175,28 @@ user settings ([settings.md](settings.md)), so MCP and Lua change them with `set
   from it, which replaces both.
 - **Files.** `keyCommands.export {path}` writes the settings' key commands and macros into a JSON file
   (`"format": "gnubase.keyCommands"`, version 1), and `keyCommands.import {path, name}` makes a preset of one, to take
-  them to another computer. The UI commands `keyCommands.exportFile` and `keyCommands.importFile` ask for the file
-  with the OS's file dialog; an imported preset is named after the file.
+  them to another computer. A file whose `format` or `version` has another type is refused with a readable message, not
+  the JSON library's type error. The UI commands `keyCommands.exportFile` and `keyCommands.importFile` ask for the file
+  with the OS's file dialog; an imported preset is named after the file. File > Export > Key Command Assignments (the UI
+  command `keyCommands.exportAssignments`, p. 1560) writes an HTML table of every command and the keys that run it now
+  (`KeyCommands::assignments`), which the user saves where they choose. Why an export or import failed shows in the
+  dialog's message, or, without the dialog, in an error dialog titled after the command. Export and Import clear the
+  message when they start, so an error of an earlier try doesn't stay after a retry that worked. The result callback of
+  `keyCommands.export` and `keyCommands.import` clears it too when the command worked, which is what clears it when
+  these commands run through MCP or Lua, without the dialog's buttons. The message wraps at spaces and breaks only a
+  word that doesn't fit a line of its own, such as a long file path, inside its box, off the buttons; it is at most
+  66 dp tall and scrolls beyond that. The dialog is at most 85% of the window's height, and moves back inside the
+  window when it grows past its edge: when the window is too short for all of it (the macros shown in a 1024x600
+  window), the rows above the message row scroll and the buttons stay in view.
 - The app reads both settings when it starts and follows `settings.changed`.
 
 ## The dialog
 
 The UI command `window.keyCommands` opens `resources/ui/key-commands.rml`, modal (Edit > Key Commands...). Its Lua gets
 the commands with their default keys from `gnubase.ui.keyCommands()` (`KeyCommands::commands`: the UI's commands, the
-engine's that change something and run without parameters, and the default bindings' commands with their parameters)
+engine's that change something and run without parameters, and the default bindings' commands with their parameters;
+not those that need one of their parameters though none is required, such as `chordPads.trigger` and `marker.locate`,
+whose schema says so with `minProperties`, `engine::needsOne`)
 and writes keys with `gnubase.ui.keyName`, which takes `keys` as the settings write them, or a key event's `key` with
 `ctrl`, `alt`, `shift` and `meta`, and returns `keys` and the `name` the platform shows (none for a modifier on its
 own).
@@ -186,20 +209,25 @@ own).
 - **Keys.** The selected command's keys and description. A key pressed into the key field ("Click here and press a
   key") is added to them, as Assign Additional Key does; if another command has it in the same zone, that command
   loses it, and the message says which. Escape still closes the dialog. Remove Key Command removes the key selected in
-  the keys list; Reset Key Command gives the command its default keys back, taking them from any command that has
-  them now. Defaults resets every command, Clear All removes every key.
+  the keys list and Defaults resets every command, each only after a confirmation the dialog's Lua opens with
+  `gnubase.ui.confirm` (confirm.rml); Cancel undoes either, as it drops the dialog's changes. The confirmation clears
+  its question (the global `ConfirmDialog`) however it closes, so a later one never answers to an earlier caller.
+  Reset Key Command gives the command its default keys back, taking them from any command that has them now. Clear All
+  removes every assignment, also those of commands the dialog doesn't list (its `kc.unlisted`).
 - **Macros.** Macros shows the macros section: New Macro, Duplicate Macro, Delete Macro, and Rename Macro with the
-  name in the field (the reference renames by double-clicking). Add Command adds the command selected in the list after
-  the selected command of the macro, or at its end; Remove Command, Move Up and Move Down change the macro's commands.
-  Macros are in the list under `macro`, so they get keys like any command. Run Macro runs the selected macro's
-  commands as the dialog shows them.
+  name in the field; double-clicking a macro in the list focuses that field to rename it, as in the reference (p.
+  1558), and Return there (the dialog's OK) or Rename Macro confirms the new name, which a name another macro has is
+  refused with a message. Add Command adds the command selected in the list after the selected command of the macro,
+  or at its end; Remove Command, Move Up and Move Down change the macro's commands. Macros are in the list under
+  `macro`, so they get keys like any command. Run Macro runs the selected macro's commands as the dialog shows them.
 - **Apply, OK, Cancel.** Apply sends what the dialog shows, in one `settings.set` with `ui.keyCommands` and
   `ui.macros`, or `settings.reset` for one that the dialog leaves empty (an empty Lua table would reach the engine as
-  an object); OK does the same and closes; Cancel and Escape drop it.
+  an object); OK does the same and closes; Cancel and Escape drop it. Both first rename the selected macro to the name
+  in its field if it differs, so Return after a double-click rename confirms it, and stay open with the message if the
+  name is taken.
 - **Presets.** The presets list, a name field, Save (applies what the dialog shows, then `keyCommands.savePreset`),
   Delete, and Import... and Export... (the file dialogs; Export applies first). Choosing a preset puts its key commands
   and macros into the dialog, for Apply or OK.
 
-Not yet: File > Export > Key Command Assignments, the HTML list of every key; the confirmations before Remove and
-Defaults (Cancel undoes either); keys in tooltips; a frame around the focused zone. While the on-screen keyboard shows,
-it takes most keys ([onscreen-keyboard.md](onscreen-keyboard.md)).
+Not yet: keys in tooltips; a frame around the focused zone. While the on-screen keyboard shows, it takes most keys
+([onscreen-keyboard.md](onscreen-keyboard.md)).

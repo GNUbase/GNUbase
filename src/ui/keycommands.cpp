@@ -13,6 +13,7 @@
 #include <array>
 #include <cctype>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -368,7 +369,8 @@ namespace gnubase::ui
 		for (const auto& [id, command] : m_uiCommands)
 			add(id, Json::object(), command.description);
 		for (const auto& [name, info] : m_engineCommands)
-			if (!info.query && engine::validate(Json::object(), info.parameters).empty())
+			if (!info.query && engine::validate(Json::object(), info.parameters).empty() &&
+				info.parameters.value("minProperties", 0) == 0)
 				add(name, Json::object(), info.description);
 		for (const Bound& binding : m_bindings)
 		{
@@ -380,6 +382,28 @@ namespace gnubase::ui
 			else if (ui != m_uiCommands.end())
 				about = ui->second.description;
 			add(binding.command, binding.parameters, about);
+		}
+		std::stable_sort(found.begin(), found.end(), [](const Json& a, const Json& b)
+			{ return a.at("command").get<std::string>() < b.at("command").get<std::string>(); });
+		return found;
+	}
+
+	Json KeyCommands::assignments() const
+	{
+		Json found = Json::array();
+		for (const Bound& bound : m_effective)
+		{
+			size_t index = found.size();
+			for (size_t each = 0; each < found.size(); ++each)
+				if (found[each].at("command") == bound.command && found[each].at("parameters") == bound.parameters)
+				{
+					index = each;
+					break;
+				}
+			if (index == found.size())
+				found.push_back(
+					{{"command", bound.command}, {"parameters", bound.parameters}, {"keys", Json::array()}});
+			found[index]["keys"].push_back(keyName(bound.keys, m_platform));
 		}
 		std::stable_sort(found.begin(), found.end(), [](const Json& a, const Json& b)
 			{ return a.at("command").get<std::string>() < b.at("command").get<std::string>(); });
@@ -494,7 +518,10 @@ namespace gnubase::ui
 				runCommand(window, zone);
 			return;
 		}
-		m_binding.send(command, parameters);
+		// After what the user did before that waits for an answer (EngineBinding::afterAwaited), e.g. an undo right
+		// after Delete on a range whose edges move to zero crossings.
+		const auto sent = std::make_shared<const std::pair<std::string, Json>>(command, parameters);
+		m_binding.afterAwaited([&binding = m_binding, sent] { binding.send(sent->first, sent->second); });
 	}
 
 	void KeyCommands::enableWhen(

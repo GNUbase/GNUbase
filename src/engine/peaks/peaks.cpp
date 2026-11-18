@@ -483,6 +483,30 @@ namespace gnubase::engine::peaks
 		return found && found->size == stamp.size && found->modified == stamp.modified;
 	}
 
+	namespace
+	{
+		// The replacement no reader may see half of, and that works while another thread reads the old file: on
+		// Windows the classic rename refuses any open target and the POSIX-semantic one a target whose handles don't
+		// share deletion, so the old file then moves aside under a temporary name first (#963, #1387); should the
+		// aside outlive the replacement, the worker cleans it up like a temporary a crash left behind. Anything that
+		// isn't a regular file, such as a directory in the way, keeps failing the write.
+		bool replacePeakFile(const std::filesystem::path& temporary, const std::filesystem::path& file)
+		{
+#ifdef _WIN32
+			if (detail::replaceFile(temporary.u8string(), file.u8string()))
+				return true;
+			std::error_code status;
+			if (!std::filesystem::is_regular_file(file, status))
+				return false;
+			std::filesystem::path aside = file;
+			aside += "." + hex(std::random_device()()) + ".tmp";
+			return detail::replaceFileMovingAside(temporary.u8string(), file.u8string(), aside.u8string());
+#else
+			return detail::replaceFile(temporary.u8string(), file.u8string());
+#endif
+		}
+	}
+
 	void writePeakFile(
 		const std::filesystem::path& file, const std::string& source, const SourceStamp& stamp, const PeakData& data)
 	{
@@ -529,22 +553,24 @@ namespace gnubase::engine::peaks
 				throw PeakFileError("can't write " + file.u8string());
 			}
 		}
-		std::error_code error;
-		std::filesystem::rename(temporary, file, error);
-		if (error)
+		if (!replacePeakFile(temporary, file))
 		{
+			// The cause first: a removal that fails stores its own error in errno.
+			const std::string problem = detail::lastError();
 			std::error_code ignored;
 			std::filesystem::remove(temporary, ignored);
-			throw PeakFileError("can't write " + file.u8string() + ": " + error.message());
+			throw PeakFileError("can't write " + file.u8string() + ": " + problem);
 		}
 	}
 
 	PeakFile readPeakFile(const std::filesystem::path& file)
 	{
-		std::ifstream stream(file, std::ios::binary | std::ios::ate);
-		if (!stream)
+		// Opened as the readers open files, so that the file can be renamed or deleted while it is read, on Windows
+		// too: writePeakFile renames over a peak file that another thread may be reading (#951, #963).
+		const detail::File handle = detail::openFile(file.u8string(), "rb");
+		if (!handle)
 			throw PeakFileError("can't open " + file.u8string());
-		const std::streamoff end = stream.tellg();
+		const int64_t end = detail::seekFile(handle.get(), 0, SEEK_END) ? detail::tellFile(handle.get()) : -1;
 		if (end < 0)
 			throw PeakFileError("can't read " + file.u8string());
 		const auto fileSize = static_cast<uint64_t>(end);
@@ -553,9 +579,8 @@ namespace gnubase::engine::peaks
 		const auto headerSize = static_cast<size_t>(std::min<uint64_t>(
 			fileSize, g_fixedHeader + g_maxSourceLength + (static_cast<uint64_t>(g_maxLevels) * g_levelEntry)));
 		std::string header(headerSize, '\0');
-		stream.seekg(0);
-		stream.read(header.data(), static_cast<std::streamsize>(header.size()));
-		if (static_cast<size_t>(stream.gcount()) != header.size())
+		if (!detail::seekFile(handle.get(), 0, SEEK_SET) ||
+			std::fread(header.data(), 1, header.size(), handle.get()) != header.size())
 			throw PeakFileError("can't read " + file.u8string());
 		Reader in(header, file);
 
@@ -604,9 +629,8 @@ namespace gnubase::engine::peaks
 			in.fail(left < values * 2 ? "it is too short" : "it is too long");
 
 		std::string body(static_cast<size_t>(left), '\0');
-		stream.seekg(static_cast<std::streamoff>(in.offset()));
-		stream.read(body.data(), static_cast<std::streamsize>(body.size()));
-		if (static_cast<size_t>(stream.gcount()) != body.size())
+		if (!detail::seekFile(handle.get(), static_cast<int64_t>(in.offset()), SEEK_SET) ||
+			std::fread(body.data(), 1, body.size(), handle.get()) != body.size())
 			throw PeakFileError("can't read " + file.u8string());
 		Reader rest(body, file);
 		for (Level& level : data.levels)

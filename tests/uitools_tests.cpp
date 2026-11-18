@@ -6,12 +6,15 @@
 #include "engine/engine.h"
 #include "mcp/server.h"
 #include "testutils/fakeui.h"
+#include "testutils/schemaguards.h"
+#include "testutils/slowframe.h"
 #include "ui/fonts.h"
 #include "ui/renderer.h"
 #include "ui/rmlui.h"
 #include "ui/shell.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
@@ -23,6 +26,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <future>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -205,8 +209,18 @@ TEST_CASE("the UI tools are listed, those that only read marked read-only", "[un
 						   .at("result")
 						   .at("tools");
 	Json readOnly = Json::object();
+	std::vector<std::string> unbounded;
+	std::vector<std::string> unchecked;
+	int patterns = 0;
 	for (const Json& tool : tools)
+	{
+		const auto name = tool.at("name").get<std::string>();
+		test::countPatterns(tool.at("inputSchema"), patterns, unbounded, name);
+		test::uncheckedKeywords(tool.at("inputSchema"), unchecked, name);
 		readOnly[tool.at("name").get<std::string>()] = tool.at("annotations").at("readOnlyHint");
+	}
+	CHECK(unbounded.empty());
+	CHECK(unchecked.empty());
 	for (const char* name : {"ui_windows", "ui_dom", "ui_screenshot", "ui_wait"})
 		CHECK(readOnly.value(name, false));
 	for (const char* name : {"ui_move", "ui_click", "ui_drag", "ui_drop", "ui_wheel", "ui_key", "ui_text", "ui_close",
@@ -268,6 +282,14 @@ TEST_CASE("ui_dom reads the DOM: ids, classes, attributes, text, values, visibil
 		CHECK(list[0].at("children").size() == 5);
 		CHECK(list[0].at("children")[0].at("text") == "Drums");
 		CHECK(fixture.call("ui_dom", {{"selector", "#nothing"}}).at("elements").empty());
+	}
+	SECTION("a drop-down list has its options, which aren't DOM children, with their value and text")
+	{
+		const Json found = fixture.call("ui_dom", {{"selector", "#sound"}, {"depth", 0}}).at("elements");
+		REQUIRE(found.size() == 1);
+		CHECK(found[0].at("value") == "pad");
+		CHECK(found[0].at("options") == Json::parse(R"([{"value": "piano", "text": "Grand piano", "selected": false},
+				{"value": "pad", "text": "Warm pad", "selected": true}])"));
 	}
 	SECTION("boxes are in the window's pixels, twice the dp on a Retina monitor")
 	{
@@ -351,6 +373,39 @@ TEST_CASE("ui_move hovers, ui_wheel scrolls and ui_drag drops one element on ano
 	CHECK(recorder.events.at("dragdrop").at("target") == "target");
 }
 
+TEST_CASE(
+	"UI tools scroll a target in a scrolled-away part of its container into view first, as a user would", "[unit]")
+{
+	Fixture fixture;
+	Rml::Element* list = fixture.main->GetElementById("items");
+	// Drums is in view: nothing scrolls.
+	CHECK(fixture.call("ui_click", {{"selector", "li"}, {"index", 0}}).at("element").at("text") == "Drums");
+	CHECK(list->GetScrollTop() == 0.0F);
+	// Guitar is below the list's visible part: the list scrolls just so far that it is in view, and Guitar gets the
+	// click, not what is below the list.
+	CHECK(fixture.call("ui_click", {{"selector", "li"}, {"index", 4}}).at("element").at("text") == "Guitar");
+	CHECK(list->GetScrollTop() == 40.0F);
+	CHECK(fixture.call("ui_move", {{"selector", "li"}, {"index", 0}}).at("element").at("text") == "Drums");
+	CHECK(list->GetScrollTop() == 0.0F);
+
+	// A drag within the list onto an item scrolled away: the list scrolls, and the button goes down on Bass where it is
+	// then, not on Keys, which took Bass's place.
+	Recorder recorder;
+	fixture.main->AddEventListener(Rml::EventId::Dragstart, &recorder);
+	fixture.main->AddEventListener(Rml::EventId::Dragdrop, &recorder);
+	CHECK(fixture.call("ui_drag", {{"from", {{"selector", "#bass"}}}, {"to", {{"selector", "#vocals"}}}})
+			  .at("element")
+			  .at("id") == "vocals");
+	CHECK(list->GetScrollTop() == 20.0F);
+	CHECK(recorder.events.at("dragstart").at("target") == "bass");
+	CHECK(recorder.events.at("dragdrop").at("target") == "vocals");
+	// Drums and Guitar can't both be in view: an error, and no input.
+	recorder.events = Json::object();
+	CHECK_THAT(fixture.fail("ui_drag", {{"from", {{"selector", "#drums"}}}, {"to", {{"selector", "#guitar"}}}}),
+		ContainsSubstring("#drums and the other end of the drag can't both be in view"));
+	CHECK(recorder.events.empty());
+}
+
 TEST_CASE("ui_click with action down holds the button across other tool calls until action up", "[unit]")
 {
 	Fixture fixture;
@@ -404,26 +459,28 @@ TEST_CASE("ui_click with a count of 2 is a double click however long the frames 
 	Recorder recorder;
 	fixture.main->AddEventListener(Rml::EventId::Dblclick, &recorder);
 	// The first press's frame takes longer than RmlUi's double click time, as in a slow build on a busy machine.
-	struct SlowFrame final : Rml::EventListener
-	{
-		void ProcessEvent(Rml::Event& /*event*/) override
-		{
-			if (std::exchange(slow, false))
-				std::this_thread::sleep_for(milliseconds(600));
-		}
-		bool slow = true;
-	} frame;
-	fixture.main->AddEventListener(Rml::EventId::Mouseup, &frame);
+	test::SlowFrame frame(*fixture.main);
 
 	fixture.call("ui_click", {{"selector", "#target"}, {"count", 2}});
 	CHECK(recorder.events.at("dblclick").at("target") == "target");
 
 	// The clock runs on afterwards: two clicks that are that far apart are two clicks.
 	recorder.events = Json::object();
-	frame.slow = true;
+	frame.again();
 	fixture.call("ui_click", {{"selector", "#target"}});
 	fixture.call("ui_click", {{"selector", "#target"}});
 	CHECK(!recorder.events.contains("dblclick"));
+
+	// A clock that a test froze stays frozen through a double click, which doesn't thaw it.
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	clock->advance(1.0); // clear of the clicks before
+	recorder.events = Json::object();
+	fixture.call("ui_click", {{"selector", "#target"}, {"count", 2}});
+	CHECK(recorder.events.at("dblclick").at("target") == "target");
+	CHECK(clock->frozen());
 }
 
 TEST_CASE("ui_drop drops files on an element, as the window system does", "[unit]")

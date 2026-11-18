@@ -3,6 +3,7 @@
 
 #include "engine/document/document.h"
 #include "engine/dsp/warp.h"
+#include "engine/schema.h"
 
 #include <vector>
 
@@ -10,11 +11,22 @@
 // Manual Adjust), free warp markers, and where that makes an audio event's audio play.
 namespace gnubase::engine
 {
+	class CommandContext;
+
 	// Whether a clip's audio plays warped: in musical mode, or with free warp markers.
 	bool warped(const Clip& clip);
 
+	// Sorts a clip's free warp markers and throws a CommandError unless each is within the clip, none passes another
+	// and no section between two of them, or one and the clip's ends, plays more than 4 times or less than a quarter
+	// as long, the real-time stretcher's range (dsp::WarpReader). length is the clip's in sample frames. A section
+	// that plays as it did with the markers before the edit, unchanged, give or take half a frame (the rounding of a
+	// marker inserted on their map, #1266), is left as it is even beyond the range: a project saved before the range
+	// was checked may have such sections, and an edit elsewhere in the clip doesn't make them its problem (#1129).
+	void checkMarkers(ClipWarp& warp, time::Samples length, const std::vector<WarpMarker>& unchanged);
+
 	// The clip's tempo in musical mode: its own, or without one the project's at the start of the first event that
-	// plays it (at the project start without one).
+	// plays it on the active track versions, without one there on an inactive version (at the project start without
+	// any).
 	double definitionTempo(const Project& project, const Clip& clip);
 
 	// How many project samples after an audio event's start the clip frame plays: through the clip's warp markers,
@@ -41,4 +53,18 @@ namespace gnubase::engine
 		time::Samples end = 0;
 	};
 	WarpedClipEdges warpedClipEdges(const Clip& clip, time::Samples length, const std::vector<dsp::WarpPoint>& map);
+
+	// An audio event's JSON (toJson), and for an event of a warped clip what follows its warp: playedLength, the
+	// project samples from its start to its end (eventSpan), and fadeRoom, the frames its fades may take together
+	// (fadeRoom). For project.get and the events' announcements, so the project window draws it where it plays.
+	Json audioEventJson(const Project& project, const AudioEvent& event);
+	// Adds playedLength and fadeRoom to the JSON of an event of a warped clip.
+	void addWarpedLengths(Json& json, const Project& project, const AudioEvent& event);
+
+	// Announces audioEvent.changed with audioEventJson for the events of after whose playedLength or fadeRoom differs
+	// from before, as after a tempo change or a warp edit, and for warped events that changed, whose announcements
+	// toJson made. ProjectModel calls it after every edit, undo and redo. It reads only before's sample rate, tempo,
+	// media, clips and audio events: undo and redo pass a before that holds only those (#1266), so a read of another
+	// field would see it empty there, and only there.
+	void announceWarpedEvents(const Project& before, const Project& after, CommandContext& context);
 }

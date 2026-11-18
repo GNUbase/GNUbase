@@ -303,6 +303,8 @@ namespace gnubase::ui
 				}
 				refresh(*window);
 			}
+			for (const std::function<void()>& task : m_displaysChanged)
+				task();
 			return;
 		}
 		default:
@@ -340,9 +342,19 @@ namespace gnubase::ui
 		}
 	}
 
-	void Shell::draw(Window& window)
+	void Shell::update(Window& window)
 	{
 		window.m_context->Update();
+		bool again = false;
+		for (const std::function<bool(Window&)>& task : m_afterUpdate)
+			again = task(window) || again;
+		if (again)
+			window.m_context->Update();
+	}
+
+	void Shell::draw(Window& window)
+	{
+		update(window);
 		if (!m_renderer.present(window.m_id, *window.m_context))
 			logging::warning("Window {} couldn't be drawn", window.m_id);
 		++window.m_frames;
@@ -420,6 +432,12 @@ namespace gnubase::ui
 			m_keyReleased(window, keys);
 	}
 
+	void Shell::inputHandled()
+	{
+		if (m_inputHandled)
+			m_inputHandled();
+	}
+
 	void Shell::every(std::chrono::milliseconds interval, std::function<void()> task)
 	{
 		m_tasks.push_back({interval, std::move(task), Clock::now() + interval});
@@ -494,7 +512,7 @@ namespace gnubase::ui
 		Window* window = find(id);
 		if (window == nullptr)
 			return std::nullopt;
-		window->m_context->Update();
+		update(*window);
 		return m_renderer.capture(id, *window->m_context);
 	}
 }

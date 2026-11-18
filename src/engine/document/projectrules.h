@@ -145,8 +145,8 @@ namespace gnubase::engine
 	bool operator==(const ProjectRules& a, const ProjectRules& b);
 
 	Json toJson(const ProjectRules& rules);
-	// Throws std::invalid_argument for rules that don't fit projectRulesSchema, have brackets that don't match or
-	// conditions and operations their target doesn't have.
+	// Throws std::invalid_argument for rules that don't fit projectRulesSchema, have brackets that don't match or nest
+	// deeper than midi::g_maxLogicalBrackets, or conditions and operations their target doesn't have.
 	ProjectRules projectRulesFromJson(const Json& json);
 	Json projectRulesSchema();
 

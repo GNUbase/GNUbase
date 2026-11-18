@@ -4,7 +4,8 @@
 // instrument track's built-in instrument, the channel strip's sections and the built-in plugins in its slots. They name
 // parameters by the targets automation lanes take, and give values with their display text. parameter.set is one undo
 // step and changes nothing if it fails (ProjectModel::add); playback takes the values from the render snapshot like
-// those of channel.set.
+// those of channel.set, and the parameters a link group links go on to the channel's other channels as channel.set
+// passes them on (docs/features/link-groups.md).
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
@@ -12,6 +13,7 @@
 #include "engine/engine.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/builtinplugin.h"
+#include "engine/processors/midieffects.h"
 
 #include <algorithm>
 #include <cmath>
@@ -88,6 +90,13 @@ namespace gnubase::engine
 			if (channel.format != ChannelFormat::None)
 				for (const processors::ParameterInfo& parameter : stripParameters())
 					parameters.push_back({{AutomationTargetType::Strip, parameter.id, 0, 0, 0}, parameter});
+			// The MIDI effects in its MIDI insert and send slots.
+			for (uint8_t number = 0; number < 2 * midi::g_effectSlots; ++number)
+				if (const processors::BuiltinInfo* effect =
+						processors::findMidiEffect(midiEffectSlot(channel, number).effect))
+					for (const processors::ParameterInfo& parameter : effect->parameters)
+						parameters.push_back(
+							{{AutomationTargetType::MidiEffect, parameter.id, number, 0, 0}, parameter});
 			// The plugins in its slots, top to bottom: built-in ones; others report theirs once they run (#283).
 			for (const ObjectId id : channel.slots)
 			{
@@ -109,15 +118,17 @@ namespace gnubase::engine
 				(*type != AutomationTargetType::Volume && *type != AutomationTargetType::Pan &&
 					*type != AutomationTargetType::PanLeft && *type != AutomationTargetType::PanRight &&
 					*type != AutomationTargetType::Mute && *type != AutomationTargetType::Instrument &&
-					*type != AutomationTargetType::Plugin && *type != AutomationTargetType::Strip))
-				throw CommandError(
-					"target.type must be volume, pan, panLeft, panRight, mute, instrument, plugin or strip");
+					*type != AutomationTargetType::Plugin && *type != AutomationTargetType::Strip &&
+					*type != AutomationTargetType::MidiEffect))
+				throw CommandError("target.type must be volume, pan, panLeft, panRight, mute, instrument, plugin, "
+								   "strip or midiEffect");
 			const bool plugin = *type == AutomationTargetType::Plugin;
+			const bool effect = *type == AutomationTargetType::MidiEffect;
 			const bool parameter =
-				*type == AutomationTargetType::Instrument || *type == AutomationTargetType::Strip || plugin;
+				*type == AutomationTargetType::Instrument || *type == AutomationTargetType::Strip || plugin || effect;
 			for (const auto& item : json.items())
 				require(item.key() == "type" || (item.key() == "parameter" && parameter) ||
-						(item.key() == "slot" && plugin),
+						(item.key() == "slot" && plugin) || (item.key() == "number" && effect),
 					"target." + item.key() + " doesn't belong to a " + json.at("type").get<std::string>() + " target");
 			AutomationTarget result;
 			result.type = *type;
@@ -132,6 +143,13 @@ namespace gnubase::engine
 				require(json.contains("slot") && json.at("slot").is_number_unsigned(),
 					"target.slot must be a slot id (see plugin.list)");
 				result.slot = json.at("slot").get<ObjectId>();
+			}
+			if (effect)
+			{
+				require(json.contains("number") && json.at("number").is_number_integer() &&
+						json.at("number").get<int64_t>() >= 0 && json.at("number").get<int64_t>() < 8,
+					"target.number must be a MIDI slot, 0 to 3 the inserts, 4 to 7 the sends");
+				result.number = json.at("number").get<uint8_t>();
 			}
 			return result;
 		}
@@ -152,8 +170,23 @@ namespace gnubase::engine
 			}
 			if (target.type == AutomationTargetType::Strip && channel.format != ChannelFormat::None)
 				throw CommandError("the channel strip has no parameter " + std::to_string(target.parameter));
+			if (target.type == AutomationTargetType::MidiEffect)
+			{
+				const std::string& effect = midiEffectSlot(channel, target.number).effect;
+				require(!effect.empty(), "MIDI slot " + std::to_string(target.number) + " holds no effect");
+				throw CommandError(effect + " has no parameter " + std::to_string(target.parameter));
+			}
+			// A channel without the parameter: a VCA channel has only its fader, a MIDI channel only its mute.
 			if (target.type != AutomationTargetType::Instrument)
-				throw CommandError("a MIDI channel has no volume, pan or channel strip sections");
+			{
+				const bool vca = project.trackById.at(channel.track).type == TrackType::Vca;
+				if (target.type == AutomationTargetType::Strip)
+					throw CommandError(vca ? "a VCA channel has no channel strip sections"
+										   : "a MIDI channel has no channel strip sections");
+				if (target.type == AutomationTargetType::Mute)
+					throw CommandError("a VCA channel's mute isn't a parameter");
+				throw CommandError(vca ? "a VCA channel has no pan" : "a MIDI channel has no volume or pan");
+			}
 			require(!channel.instrument.empty(), "channel " + idText(channel.id) + " plays no instrument");
 			throw CommandError(channel.instrument + " has no parameter " + std::to_string(target.parameter));
 		}
@@ -179,6 +212,12 @@ namespace gnubase::engine
 				return channel.mute ? 1.0 : 0.0;
 			case AutomationTargetType::Strip:
 				return stripValue(channel.sections, parameter.target.parameter);
+			case AutomationTargetType::MidiEffect:
+			{
+				const std::vector<double>& values = midiEffectSlot(channel, parameter.target.number).parameters;
+				return parameter.target.parameter < values.size() ? values[parameter.target.parameter]
+																  : parameter.info.defaultValue;
+			}
 			default:
 			{
 				const auto set = channel.instrumentParameters.find(parameter.target.parameter);
@@ -214,6 +253,15 @@ namespace gnubase::engine
 			case AutomationTargetType::Strip:
 				setStripValue(channel.sections, parameter.target.parameter, value);
 				break;
+			case AutomationTargetType::MidiEffect:
+			{
+				midi::EffectRack& rack =
+					parameter.target.number < midi::g_effectSlots ? channel.midiInserts : channel.midiSends;
+				std::vector<double>& values = rack.slots[parameter.target.number % midi::g_effectSlots].parameters;
+				if (parameter.target.parameter < values.size())
+					values[parameter.target.parameter] = value;
+				break;
+			}
 			default:
 				channel.instrumentParameters[parameter.target.parameter] = value;
 				break;
@@ -228,6 +276,61 @@ namespace gnubase::engine
 				{"maximum", info.maximum}, {"default", info.defaultValue}, {"unit", info.unit},
 				{"stepped", info.stepped}, {"options", info.options}, {"value", current},
 				{"text", processors::valueToText(info, current)}};
+		}
+
+		// The channel.set key a parameter's change passes on as, or none for the parameters a link group doesn't link:
+		// an instrument's, a plugin's and a MIDI effect's, and the pre section's, which channel.set doesn't pass on
+		// either (docs/features/link-groups.md).
+		const char* linkKey(const AutomationTarget& target)
+		{
+			switch (target.type)
+			{
+			case AutomationTargetType::Volume:
+				return "volume";
+			case AutomationTargetType::Pan:
+				return "pan";
+			case AutomationTargetType::Mute:
+				return "mute";
+			case AutomationTargetType::Strip:
+				if (isPreSection(target.parameter))
+					return nullptr;
+				return target.parameter < StripParameter::GateOn ? "eq" : "strip";
+			default:
+				return nullptr;
+			}
+		}
+
+		// Passes a parameter's new value on to the channels linked to the channel's, as channel.set does: the fader
+		// and the pan by as much as they moved, stopping at their ends, the mute as it is now, and a section's
+		// parameter to every channel that has the sections. Announces every channel it changed.
+		void passOn(Project& project, const Channel& channel, const ChannelParameter& parameter, double before,
+			double newValue, bool linked, CommandContext& context)
+		{
+			const char* const key = linkKey(parameter.target);
+			if (key == nullptr)
+				return;
+			for (const ObjectId other : linkedTo(project, channel.id, key, linked))
+			{
+				Channel& to = project.channels.at(other);
+				const Channel unchanged = to;
+				switch (parameter.target.type)
+				{
+				case AutomationTargetType::Volume:
+				case AutomationTargetType::Pan:
+					followLinkedMove(project, to, key, newValue - before);
+					break;
+				case AutomationTargetType::Mute:
+					to.mute = newValue != 0.0;
+					break;
+				default: // a section's parameter, which only a channel with audio has
+					if (to.format != ChannelFormat::None)
+						setStripValue(to.sections, parameter.target.parameter, newValue);
+					break;
+				}
+				if (to == unchanged)
+					continue;
+				context.emit("channel.changed", {{"channel", toJson(to)}});
+			}
 		}
 
 		// The mixer section a strip parameter is in.
@@ -278,6 +381,10 @@ namespace gnubase::engine
 					group = processors::findBuiltinPlugin(project.slots.at(parameter.target.slot).plugin)->name;
 				else if (parameter.target.type == AutomationTargetType::Strip)
 					group = sectionName(parameter.target.parameter);
+				else if (parameter.target.type == AutomationTargetType::MidiEffect)
+					group = std::string(parameter.target.number < midi::g_effectSlots ? "MIDI Insert " : "MIDI Send ") +
+						std::to_string((parameter.target.number % midi::g_effectSlots) + 1) + ": " +
+						processors::findMidiEffect(midiEffectSlot(channel, parameter.target.number).effect)->name;
 				add(parameter.target, describe(project, channel, parameter), group);
 			}
 			if (track->second.type != TrackType::Midi && track->second.type != TrackType::Instrument)
@@ -331,11 +438,13 @@ namespace gnubase::engine
 					throw CommandError("text \"" + text + "\" isn't a value of " + info.name);
 				newValue = *parsed;
 			}
+			const double before = value(project, channel, parameter);
 			setValue(project, channel, parameter, newValue);
 			if (parameter.target.type == AutomationTargetType::Plugin)
 				context.emit("plugin.changed", {{"slot", model.describeSlot(project, parameter.target.slot)}});
 			else
 				context.emit("channel.changed", {{"channel", toJson(channel)}});
+			passOn(project, channel, parameter, before, newValue, parameters.value("linked", true), context);
 			return {{"parameter", describe(project, channel, parameter)}};
 		}
 	}
@@ -346,9 +455,11 @@ namespace gnubase::engine
 		const Json targetSchema = objectSchema(
 			{{"type",
 				 {{"type", "string"},
-					 {"enum", {"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin", "strip"}}}},
+					 {"enum",
+						 {"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin", "strip",
+							 "midiEffect"}}}},
 				{"parameter", {{"type", "integer"}, {"minimum", 0}, {"maximum", UINT32_MAX}}},
-				{"slot", {{"type", "integer"}, {"minimum", 0}}}},
+				{"slot", {{"type", "integer"}, {"minimum", 0}}}, {"number", {{"type", "integer"}, {"minimum", 0}}}},
 			{"type"});
 		const Json parameterResult = {
 			{"type", "object"}, {"properties", {{"parameter", {{"type", "object"}}}}}, {"required", {"parameter"}}};
@@ -361,13 +472,16 @@ namespace gnubase::engine
 				"processor.list), then on channels with audio the channel strip's sections (targets of type strip: the "
 				"pre section's gain, phase and low and high cut, the equalizer's bypass and bands and the gate, "
 				"compressor and limiter, the values channel.set changes in pre, eq and strip; switches are 0 or 1, "
-				"cut slopes and the types of EQ bands 1 and 4 stepped choices), then those of the built-in "
+				"cut slopes and the types of EQ bands 1 and 4 stepped choices), then on MIDI and instrument tracks "
+				"those of the MIDI effects in their MIDI insert and send slots, with targets of type midiEffect that "
+				"name the slot (number: 0-3 the inserts, 4-7 the sends), then those of the built-in "
 				"plugins in its slots, top to bottom, with targets of type plugin that name the slot. Each "
 				"has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether "
 				"it is stepped (whole numbers only), options (the names of a stepped parameter's values from the "
 				"minimum on, if it has any), its static value and text, the value as it is displayed. Automation "
 				"overrides the static value while it plays. MIDI channels have only mute, which silences their notes "
-				"and controllers: their volume and pan are MIDI controllers (channel.set midiVolume and midiPan).",
+				"and controllers, and their MIDI effects: their volume and pan are MIDI controllers (channel.set "
+				"midiVolume and midiPan).",
 				objectSchema({{"channel", idSchema}}, {"channel"}),
 				{{"type", "object"}, {"properties", {{"parameters", {{"type", "array"}}}}},
 					{"required", {"parameters"}}},
@@ -384,9 +498,12 @@ namespace gnubase::engine
 				"either value or text: the name of one of its options, or a number, optionally followed by its unit, "
 				"in any case (\"-6 dB\"). Values beyond the range stop at its ends, and stepped parameters round to "
 				"whole numbers. Volume and pan changes glide over 5 ms. A channel that gets another instrument "
-				"starts with its parameters at their defaults. Returns the parameter.",
+				"starts with its parameters at their defaults. On a channel in a link group (linkGroup.add) a change "
+				"of the fader's volume, pan or mute or of the strip's equalizer or dynamics goes on to its other "
+				"channels as channel.set passes it on, the fader and the pan by as much as they moved, unless linked "
+				"is false; all in the same undo step. Returns the parameter.",
 				objectSchema({{"channel", idSchema}, {"target", targetSchema}, {"value", {{"type", "number"}}},
-								 {"text", {{"type", "string"}}}},
+								 {"text", {{"type", "string"}}}, {"linked", {{"type", "boolean"}}}},
 					{"channel", "target"}),
 				parameterResult, false},
 			[this](Project& project, CommandContext& context) { return setParameter(project, context, *this); });
@@ -394,7 +511,9 @@ namespace gnubase::engine
 			{"automationLane.targets", 1,
 				"What a track's automation lanes can automate, in the order automation tracks offer them: its "
 				"channel's parameters as parameter.list returns them, then on MIDI and instrument tracks pitch bend, "
-				"channel pressure and controllers 0 to 127 (MIDI channel 0, from 0 to 1, pitch bend's default 0.5). "
+				"channel pressure and controllers 0 to 127 (MIDI channel 0, from 0 to 1, pitch bend's default 0.5; a "
+				"MIDI "
+				"track whose midiChannel is set, channel.set, plays them on that channel). "
 				"Each also has group (Channel, the instrument's or plugin's name, Pre, Equalizer or Strip for the "
 				"channel strip's sections, or MIDI) and lane, the id of the "
 				"track's automation lane for it, or 0. Tracks without a channel have none.",

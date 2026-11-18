@@ -5,7 +5,6 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
-#include <cstdlib>
 #include <filesystem>
 #include <string>
 
@@ -16,13 +15,8 @@ namespace
 	// Runs gnubase-crashtest, which opens a log session in the folder and crashes the way it is told.
 	int crash(const std::filesystem::path& dir, const std::string& how)
 	{
-		const std::string command = "\"" + std::string(GNUBASE_CRASHTEST) + "\" \"" + dir.string() + "\" " + how;
-#ifdef _WIN32
-		// cmd.exe removes the outer quotes.
-		return std::system(("\"" + command + "\"").c_str()); // NOLINT(bugprone-command-processor): fixed helper command
-#else
-		return std::system(command.c_str()); // NOLINT(bugprone-command-processor): fixed helper command
-#endif
+		return gnubase::test::runCommand(
+			"\"" + std::string(GNUBASE_CRASHTEST) + "\" \"" + dir.u8string() + "\" " + how);
 	}
 }
 
@@ -31,11 +25,14 @@ TEST_CASE("a crash is recorded in the log", "[integration]")
 	const std::string how = GENERATE(as<std::string>{}, "segv", "abort");
 	CAPTURE(how);
 	const gnubase::test::TempDir dir;
-	CHECK(crash(dir.path(), how) != 0);
+	const int code = crash(dir.path(), how);
+	CHECK(code != 0);
 	const std::string log = gnubase::test::readText(dir.path() / "crash.log");
 	CHECK_THAT(log, ContainsSubstring("about to crash"));
 	CHECK_THAT(log, ContainsSubstring("Crash: "));
 #ifdef _WIN32
 	CHECK(!gnubase::test::readText(dir.path() / "crash.dmp").empty());
+	// The process ends with the code it would have without the handler: the exception's, or abort's 3.
+	CHECK(static_cast<unsigned>(code) == (how == "segv" ? 0xC0000005U : 3U));
 #endif
 }

@@ -5,6 +5,7 @@
 #include "scripting/runtime.h"
 #include "ui/colormenu.h"
 #include "ui/docking.h"
+#include "ui/drummachinepanel.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
@@ -23,6 +24,7 @@
 #include "ui/rmlui.h"
 #include "ui/rulertracks.h"
 #include "ui/sampleeditor.h"
+#include "ui/samplerpanel.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "ui/signaturetrack.h"
@@ -32,6 +34,7 @@
 #include "ui/tracklist.h"
 #include "ui/trackvisibility.h"
 #include "ui/transport.h"
+#include "ui/transportpanelfit.h"
 #include "ui/transposetrack.h"
 #include "ui/uisettings.h"
 #include "ui/workspacesmenu.h"
@@ -109,7 +112,8 @@ namespace gnubase::app
 		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the main menu
 		// bar (ui/mainmenu.h) and the track list beside the event display in its main zone, whose commands are key
 		// commands in the focus zone "project". Throws std::runtime_error if the document can't be loaded.
-		// Also displays the project markers and status line.
+		// Also displays the project markers and status line, and opens the Profile Manager if a profile switch is
+		// unfinished (profile.list).
 		ui::EventDisplay& showProject();
 		// The project window's track list, null before showProject.
 		ui::TrackList* trackList() { return m_trackList.get(); }
@@ -310,6 +314,9 @@ namespace gnubase::app
 			// The project window's selected audio events and parts (#145), for Quantize and Reset Quantize.
 			std::vector<uint64_t> events;
 			std::vector<uint64_t> audioParts;
+			// The project window's selection range (#1579): the audio events on its tracks, which Quantize warp
+			// quantizes between its start and end (project samples).
+			std::optional<std::pair<int64_t, int64_t>> range;
 			std::string lengthQuantize;
 			double insertVelocity = 100.0 / 127.0; // the editor's, for Fixed Velocity
 		};
@@ -318,18 +325,29 @@ namespace gnubase::app
 		// The quantize panel's commands for several audio tracks (#145): command with parameters on the project
 		// window's selected audio events and the events of its selected audio parts.
 		void quantizeAudioTracks(const std::string& command, engine::Json parameters);
+		// The project window's selected audio events and the events of its selected audio parts.
+		std::vector<uint64_t> selectedAudioEvents() const;
+		// The quantize panel's Hitpoint Tracks: [{track, name}] of the tracks of selectedAudioEvents whose clips have
+		// hitpoints, in the project's track order.
+		engine::Json hitpointTracks() const;
 		// The MIDI menu (#133, docs/features/midi-functions.md, appmidifunctions.cpp): MIDI > Functions on what
 		// quantizeTarget gives, and the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict
 		// Polyphony (resources/ui/midi-function.rml).
 		void addMidiFunctions();
 		// File > Import > Tracks, File > Export > Selected Tracks and the track preset commands (#164).
 		void addTrackFileCommands();
+		// The OS's file dialog for objects of the project: chosen gets the file unless a project.reset came while it
+		// was open, as the ids it acts on are the old project's then (#1586, #1648).
+		void chooseProjectFile(const ui::FileDialog& dialog, std::function<void(const std::filesystem::path&)> chosen);
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// The drum map of the active track of an editor (window, else lower), then the OS's file dialog to save it in
 		// and drumMap.export.
 		void saveDrumMap(ui::WindowId parent, const std::string& editor = "window");
 		void chooseDrumMapFile(ui::WindowId parent, uint64_t map);
+		// The Drum Map Setup (resources/ui/drum-maps.rml, #882), showing the drum map of the editor window's active
+		// track, else the lower zone's, if it has one.
+		void openDrumMaps(ui::Window& window);
 		// The active track of an editor (window, else lower), then the OS's file dialog for a pattern preset and
 		// pattern.export (save) or pattern.import.
 		void patternPreset(ui::WindowId parent, bool save, const std::string& editor = "window");
@@ -337,18 +355,25 @@ namespace gnubase::app
 		// window.
 		ui::Window& callingWindow();
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
-		// attributes go on the document before it shows, for its Lua.
+		// attributes go on the document before it shows, for its Lua. A dialog for objects of the project, with ids of
+		// tracks, parts or notes in its attributes, closes when project.reset replaces the project (#1464).
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
-			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
+			const std::vector<std::pair<std::string, std::string>>& attributes = {});
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track);
 		// The articulation map setup (resources/ui/articulation-maps.rml, #175) for a MIDI or instrument track, or with
-		// 0 for the first one selected in the track list, if any.
+		// 0 for the first one selected in the track list, if any; one at a time (openOnce).
 		void openArticulationMaps(ui::Window& window, uint64_t track);
+		// Shows why an articulation map's import or export failed in the setup's message, if the setup is open.
+		void showArticulationMapError(const engine::Result& result);
+		// Shows why a key commands file or the assignments list couldn't be exported or imported: in the key commands
+		// dialog's message if it is open, in an error dialog of that title over the window otherwise. An empty error
+		// takes the message away, as a command that worked does.
+		void showKeyCommandsError(ui::WindowId window, const std::string& title, const std::string& error);
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead, as it is, and the attributes go unused.
 		Rml::ElementDocument& openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,
-			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
+			const std::vector<std::pair<std::string, std::string>>& attributes = {});
 
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
@@ -381,6 +406,7 @@ namespace gnubase::app
 		std::unique_ptr<ui::GlobalEventLane> m_transposeLane; // as well
 		std::unique_ptr<ui::GlobalEventLane> m_chordLane;     // as well
 		std::unique_ptr<ui::GlobalEventLane> m_scaleLane;     // as well
+		std::unique_ptr<ui::GlobalEventLane> m_arrangerLane;  // as well
 		std::unique_ptr<ui::RulerLanes> m_rulerLanes;         // as well
 		std::unique_ptr<ui::InPlaceEditors> m_inPlace;        // as well
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
@@ -392,16 +418,24 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
+		ui::TransportPanelFit m_panelFit{m_shell, m_docking};   // the transport panel's width
 		std::unique_ptr<ui::StatusLine> m_statusLine;           // too
 		std::unique_ptr<ui::TrackList> m_trackList;             // and before the display
 		std::unique_ptr<ui::ColorMenu> m_colorMenu;             // before the track list
 		std::unique_ptr<ui::TrackVisibility> m_trackVisibility; // the project window's (#166)
 		std::unique_ptr<ui::InfoLine> m_infoLine;               // and this too
 		std::unique_ptr<ui::QuantizePanel> m_toolbarQuantize;   // the toolbar's quantize section
+		std::weak_ptr<ui::QuantizePanel> m_quantizePanel;       // the quantize panel, while it is open
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
+		// The dialogs openDialog opened for objects of the project, and project.reset, which closes them. An OS file
+		// dialog's answer for objects of the project is dropped when m_resets has changed since it opened
+		// (chooseProjectFile).
+		std::vector<Rml::ObserverPtr<Rml::Element>> m_projectDialogs;
+		uint64_t m_resets = 0;
+		ui::Subscription m_projectReset;
 		ui::ProjectFiles m_files;                          // the File menu's project commands
 		std::unique_ptr<ui::MainMenu> m_menu;              // the project window's
 		Rml::ObserverPtr<Rml::Element> m_studioSetup;      // the open studio setup dialog's document
@@ -410,13 +444,16 @@ namespace gnubase::app
 		Rml::ObserverPtr<Rml::Element> m_preferences;      // the open preferences dialog's document
 		std::weak_ptr<ui::PoolPanel> m_pool;               // the docking system owns it while it is there
 		std::weak_ptr<ui::Inspector> m_inspector;          // so too
+		std::weak_ptr<ui::SamplerPanel> m_sampler;         // so too
+		std::weak_ptr<ui::DrumMachinePanel> m_drums;       // so too
 		std::vector<ui::Subscription> m_poolResults;       // what the pool commands did, for the pool
 		std::vector<ui::Subscription> m_lockRecord;        // stops refused while recording is locked
 		Rml::ObserverPtr<Rml::Element> m_lockRecordDialog; // the open lock record dialog's document
 		Rml::ObserverPtr<Rml::Element> m_autoFades;        // the open auto fades dialog's document
 		Rml::ObserverPtr<Rml::Element> m_addTrack;         // the open add track dialog's document
 		Rml::ObserverPtr<Rml::Element> m_midiFunction;     // the open dialog of the MIDI menu's
-		Rml::ObserverPtr<Rml::Element> m_articulationMaps; // the articulation map setup's last document
+		Rml::ObserverPtr<Rml::Element> m_articulationMaps; // the articulation map setup (openOnce)
+		Rml::ObserverPtr<Rml::Element> m_drumMaps;         // the open drum map setup's document
 		// A mixer window: open while the shell has it; the app lets go of the mixer once the user closed the window.
 		struct MixerWindow
 		{
@@ -437,6 +474,7 @@ namespace gnubase::app
 		{
 			ui::WindowId window = 0;
 			std::unique_ptr<ui::SampleEditor> editor;
+			std::unique_ptr<ui::QuantizePanel> quantize; // its toolbar's quantize functions (#1344)
 		};
 		SampleEditorWindow m_sampleEditor;
 		std::weak_ptr<ui::MidiEditor> m_lowerEditor;         // the docking system owns it while it is there

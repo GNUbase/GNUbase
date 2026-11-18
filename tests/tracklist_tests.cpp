@@ -2,19 +2,28 @@
 // The track list (#81, docs/features/track-list.md) in the app's project window, driven with ui::Automation as MCP's
 // UI tools drive it: every control changes the engine's project, every change from elsewhere shows, and tracks are
 // selected, renamed, moved, sized, folded, duplicated, disabled and removed.
+#include "testutils/commandholds.h"
 #include "uiapp.h"
 
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/tracklist.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstddef>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -115,7 +124,8 @@ namespace
 			return elements(app, menuItem(command)).at(0).at("attributes").contains("disabled");
 		}
 
-		// Chooses the item of the open menu. Its items follow the selection when the shell steps.
+		// Chooses the item of the open menu once it is enabled: it follows rows built again behind the menu when the
+		// shell steps.
 		void choose(const std::string& command)
 		{
 			REQUIRE(app.waitUntil([&] { return !itemDisabled(command); }));
@@ -188,6 +198,185 @@ TEST_CASE("the track list shows a row per track, and its controls change the tra
 			return tracks.app.call("automationLane.list", {{"track", instrument}}).at("lanes")[0].at("read") == false;
 		}));
 	CHECK(lane.at("lane").at("read") == true);
+}
+
+// #1852: a row button shows what its click sends at once, as the inspector's toggles do, and keeps showing it while
+// the command is out: a project read from before the command doesn't take it back.
+TEST_CASE("the track list's buttons show their click at once, also against a project read from before it", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	Tracks tracks;
+	const test::ReleaseHolds releaseHolds{holds};
+	tracks.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(tracks.app.engine(), "holder");
+	ui::EngineBinding& binding = tracks.app.appUi().binding();
+	const uint64_t audio = tracks.add({{"type", "audio"}, {"name", "Vox"}});
+	const uint64_t other = tracks.add({{"type", "audio"}, {"name", "Bass"}});
+	tracks.rows(2);
+	const Json audioChannel = tracks.channel(audio).at("id");
+	const Json otherChannel = tracks.channel(other).at("id");
+	const auto checked = [&tracks](uint64_t track, const char* control, const char* state = "checked")
+	{ return hasClass(elements(tracks.app, row(track) + " button." + control).at(0), state); };
+	// The audio track's automation shown, a volume lane with a point, with its own Read on.
+	const Json lane =
+		tracks.app.call("automationLane.add", {{"track", audio}, {"target", {{"type", "volume"}}}}).at("lane").at("id");
+	tracks.app.call("automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
+	REQUIRE(tracks.app.waitUntil([&] { return checked(audio, "read"); })); // the list has read the lane
+	tracks.click(row(audio) + " .automation-toggle");
+	const std::string laneRead = row(audio) + " .automation-read";
+	const auto laneReads = [&tracks, &laneRead]
+	{
+		const Json found = elements(tracks.app, laneRead);
+		return found.size() == 1 && hasClass(found.at(0), "checked");
+	};
+	REQUIRE(tracks.app.waitUntil(laneReads));
+	tracks.list.select({audio});
+	// The channel in the project that the list shows.
+	const auto shown = [&tracks](const Json& channel)
+	{
+		const Json& channels = tracks.display.project().at("channels");
+		const auto found = std::find_if(
+			channels.begin(), channels.end(), [&channel](const Json& each) { return each.at("id") == channel; });
+		REQUIRE(found != channels.end());
+		return *found;
+	};
+
+	// A change from another client, whose history.changed waits in the binding until the shell steps: the read that
+	// the display sends for it then queues behind a hold, and the clicks' commands behind a second one.
+	tracks.app.call("channel.set", {{"channel", otherChannel}, {"volume", -6.0}});
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("project.get") != 0);
+	holder.send("test.hold");
+
+	// Each click shows at once, while the engine has none of them.
+	tracks.click(row(audio) + " button.mute");
+	CHECK(checked(audio, "mute"));
+	tracks.click(row(audio) + " button.solo");
+	CHECK(checked(audio, "solo"));
+	tracks.click(row(other) + " button.solo", {"alt"}); // solo defeat
+	CHECK(checked(other, "solo", "defeated"));
+	CHECK(!checked(other, "solo"));
+	// A second click goes from what the first one shows, not from the project read before it.
+	tracks.click(row(other) + " button.mute");
+	CHECK(checked(other, "mute"));
+	tracks.click(row(other) + " button.mute");
+	CHECK(!checked(other, "mute"));
+	CHECK(binding.waiting("channel.set") == 5);
+	tracks.click(laneRead);
+	CHECK(!laneReads());
+	// The clicks left the track selection as it was: the buttons work on their own rows.
+	CHECK(tracks.list.selection() == std::vector<uint64_t>{audio});
+
+	// The read from before the clicks comes in: the buttons stay as clicked.
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+	REQUIRE(shown(otherChannel).at("volume").get<double>() == Approx(-6.0));
+	REQUIRE(shown(audioChannel).at("mute") == false);
+	CHECK(checked(audio, "mute"));
+	CHECK(checked(audio, "solo"));
+	CHECK(checked(other, "solo", "defeated"));
+	CHECK(!checked(other, "mute"));
+	CHECK(!laneReads());
+
+	// The engine takes them, and the reads after them agree.
+	holds.release(2);
+	REQUIRE(tracks.app.waitUntil(
+		[&]
+		{
+			return binding.waiting("channel.set") == 0 && binding.waiting("project.get") == 0 &&
+				shown(audioChannel).at("mute") == true && shown(otherChannel).at("soloDefeat") == true;
+		}));
+	const Json audioNow = tracks.channel(audio);
+	const Json otherNow = tracks.channel(other);
+	CHECK(audioNow.at("mute") == true);
+	CHECK(audioNow.at("solo") == true);
+	CHECK(otherNow.at("soloDefeat") == true);
+	CHECK(otherNow.at("mute") == false);
+	CHECK(checked(audio, "mute"));
+	CHECK(checked(audio, "solo"));
+	CHECK(checked(other, "solo", "defeated"));
+	CHECK(!checked(other, "mute"));
+	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("automationLane.set") == 0; }));
+	CHECK(tracks.app.call("automationLane.list", {{"track", audio}}).at("lanes")[0].at("read") == false);
+	CHECK(!laneReads());
+}
+
+// #1852: what the engine makes of a click wins over what the click showed: an exclusive solo turns the other
+// channels' solo off, and a refused command shows the engine's state again, with no project read after it.
+TEST_CASE("the track list's buttons end with what the engine made of the click, also when it refuses it", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	Tracks tracks;
+	const test::ReleaseHolds releaseHolds{holds};
+	tracks.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(tracks.app.engine(), "holder");
+	tracks.app.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const uint64_t audio = tracks.add({{"type", "audio"}});
+	const uint64_t other = tracks.add({{"type", "audio"}});
+	const uint64_t synth =
+		tracks.add({{"type", "instrument"}, {"instrument", "testSynth"}, {"timeBase", "linear"}, {"name", "Synth"}});
+	const Json part = tracks.app.call("midiPart.add", {{"track", synth}, {"position", 0}, {"length", 4800}});
+	tracks.app.call("note.add",
+		{{"part", part.at("part").at("id")},
+			{"notes", {{{"position", 0}, {"length", 4800}, {"pitch", 60}, {"velocity", 0.8}}}}});
+	tracks.app.call("channel.set", {{"channel", tracks.channel(other).at("id")}, {"solo", true}});
+	tracks.rows(3);
+	const auto checked = [&tracks](uint64_t track, const char* control)
+	{ return hasClass(elements(tracks.app, row(track) + " button." + control).at(0), "checked"); };
+	REQUIRE(tracks.app.waitUntil([&] { return checked(other, "solo"); }));
+
+	// Exclusive solo (Ctrl): the clicked button shows at once, the other channel's solo goes off with the engine.
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	tracks.click(row(audio) + " button.solo", {"ctrl"});
+	CHECK(checked(audio, "solo"));
+	holds.release(1);
+	REQUIRE(tracks.app.waitUntil([&] { return !checked(other, "solo"); }));
+	CHECK(checked(audio, "solo"));
+	CHECK(tracks.channel(other).at("solo") == false);
+	CHECK(tracks.channel(audio).at("solo") == true);
+
+	// A frozen track can't record: the click shows Record Enable until the engine refuses it, then the engine's off,
+	// with no project read after it. A Mute the engine took meanwhile stays until the read after it comes.
+	const std::chrono::seconds rendering(60);
+	tracks.app.call("track.freeze", {{"tracks", {synth}}});
+	REQUIRE(
+		tracks.app.waitUntil([&] { return hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); }, rendering));
+	ui::EngineBinding& binding = tracks.app.appUi().binding();
+	const Json audioChannel = tracks.channel(audio).at("id");
+	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(2));
+	tracks.click(row(audio) + " button.mute");
+	tracks.click(row(synth) + " button.record");
+	CHECK(checked(audio, "mute"));
+	CHECK(checked(synth, "record"));
+	holder.send("test.hold"); // the read after the mute waits behind it
+	holds.release(2);
+	REQUIRE(holds.waitEntered(3));
+	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("channel.set") == 0; }));
+	CHECK(!checked(synth, "record"));
+	CHECK(checked(audio, "mute"));
+	const auto shownMute = [&tracks, &audioChannel]
+	{
+		for (const Json& channel : tracks.display.project().at("channels"))
+			if (channel.at("id") == audioChannel)
+				return channel.at("mute").get<bool>();
+		return false;
+	};
+	CHECK(!shownMute());
+	holds.release(3);
+	REQUIRE(tracks.app.waitUntil(shownMute));
+	CHECK(checked(audio, "mute"));
+	CHECK(!checked(synth, "record"));
+	CHECK(tracks.channel(synth).at("recordEnable") == false);
 }
 
 TEST_CASE("tracks are selected with clicks and the arrow keys, renamed with a double click and moved by a drag", "[ui]")
@@ -608,17 +797,12 @@ TEST_CASE("the track list's context menu follows the selection and stands the ro
 		return all;
 	};
 
-	// The menu opens with the right click, and its items follow the selection when the shell steps: before that, a
-	// click on an item that nothing was selected for does nothing. If the items ever follow it when the menu opens,
-	// this part and the check below that the item is enabled are what changes.
+	// The menu opens with the right click, and its items follow the selection at once, without a step of the shell
+	// in between: a script's click on an item right after the right click runs it (#1069).
 	tracks.rightClick(kept);
 	CHECK(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
-	CHECK(tracks.itemDisabled(command));
+	CHECK(!tracks.itemDisabled(command));
 	duplicate();
-	answered();
-	CHECK(names() == std::vector<std::string>{"Kept", "Gone"});
-	tracks.menuOpen();
-	tracks.choose(command);
 	tracks.rows(3);
 	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Gone"});
 
@@ -650,7 +834,64 @@ TEST_CASE("the track list's context menu follows the selection and stands the ro
 	duplicate();
 	answered();
 	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Kept"});
-	CHECK(elements(tracks.app, "#track-list listitem").size() == 3);
+}
+
+// The menu bar's items for selected tracks, as the DOM that MCP's UI tools read has them (#1120).
+TEST_CASE("the main menu's items follow what a key or a click changed without a step of the shell", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t a = tracks.add({{"type", "audio"}, {"name", "A"}});
+	const uint64_t b = tracks.add({{"type", "audio"}, {"name", "B"}});
+	tracks.rows(2);
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	const std::string item = "#project-menu menuitem[command=\"track.duplicateSelected\"]";
+	const auto disabled = [&tracks, &item]
+	{ return elements(tracks.app, item).at(0).at("attributes").contains("disabled"); };
+	REQUIRE(tracks.list.selection().empty());
+	REQUIRE(disabled());
+
+	// A key that selects a track on its press: the items follow at once, before the key is released (#1173), and stay
+	// so after its release.
+	tracks.app.ui().key(std::nullopt, "Down", ui::KeyAction::Down);
+	REQUIRE(tracks.list.selection().size() == 1);
+	CHECK(!disabled());
+	tracks.app.ui().key(std::nullopt, "Down", ui::KeyAction::Up);
+	CHECK(!disabled());
+
+	// A click selects its row in the click's default action, after the mouse button is released and after every
+	// listener of the click ran: the items follow it at once.
+	tracks.app.ui().click(std::nullopt, {row(b) + " .track-name", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(tracks.list.selection() == std::vector<uint64_t>{b});
+	CHECK(!disabled());
+	tracks.app.ui().click(std::nullopt, {row(b) + " .track-name", 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
+	REQUIRE(tracks.list.selection().empty());
+	CHECK(disabled());
+	tracks.app.ui().click(std::nullopt, {row(a) + " .track-name", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(tracks.list.selection() == std::vector<uint64_t>{a});
+	CHECK(!disabled());
+}
+
+// What a click's own listeners change (#1120): the toolbar's tool buttons drop the selection range through the event
+// display's listener on the document, and send no change event.
+TEST_CASE("the main menu's range items follow a tool button's click without a step of the shell", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t a = tracks.add({{"type", "audio"}, {"name", "A"}});
+	tracks.rows(1);
+	const std::string item = "#edit-menu menuitem[command=\"edit.cutTime\"]";
+	const auto disabled = [&tracks, &item]
+	{ return elements(tracks.app, item).at(0).at("attributes").contains("disabled"); };
+	tracks.display.setTool(ui::Tool::RangeSelection);
+	tracks.display.setRange(ui::RangeSelection{0, 48000, {a}});
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(tracks.display.range().has_value());
+	REQUIRE(!disabled());
+
+	// The tool button takes the range away; the item is disabled right after the click, not at the next step.
+	tracks.app.ui().click(
+		std::nullopt, {"button[tool=objectSelection]", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(!tracks.display.range().has_value());
+	CHECK(disabled());
 }
 
 TEST_CASE("track heights and folded folders are the project's: saved with it, not taken into another one", "[ui]")
@@ -692,7 +933,10 @@ TEST_CASE("track heights and folded folders are the project's: saved with it, no
 	tracks.rows(3);
 	REQUIRE(tracks.app.waitUntil(fresh));
 
-	// Loading the project brings its heights and folded folders back, but not a selection.
+	// Loading the project brings its heights and folded folders back, but not a selection, and not the heights the
+	// project before had for tracks the file has none for.
+	tracks.app.call("trackLayout.set", {{"heights", {{{"track", folder}, {"height", 100.0}}}}});
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.trackHeight(folder) == Approx(100.0); }));
 	tracks.click(row(audio) + " .track-name");
 	REQUIRE(tracks.list.selection() == std::vector<uint64_t>{audio});
 	tracks.app.call("project.load", {{"path", file}});
@@ -700,11 +944,353 @@ TEST_CASE("track heights and folded folders are the project's: saved with it, no
 		[&]
 		{
 			return tracks.display.trackHeight(audio) == Approx(ui::g_trackHeight + 20.0) &&
-				tracks.list.folded(folder) && tracks.list.selection().empty() &&
-				tracks.display.laneTracks() == std::vector<uint64_t>{folder, audio};
+				tracks.display.trackHeight(folder) == Approx(ui::g_trackHeight) && tracks.list.folded(folder) &&
+				tracks.list.selection().empty() && tracks.display.laneTracks() == std::vector<uint64_t>{folder, audio};
 		}));
 	tracks.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(tracks.box(row(audio)).at("height").get<int>() == static_cast<int>(ui::g_trackHeight) + 20);
+}
+
+// #991: trackLayout.set advances the project's revision, so the list sends only changes, and only those of the
+// tracks it changed.
+TEST_CASE("the track list sends the engine only the track heights and folded folders that change", "[ui]")
+{
+	Tracks tracks;
+	std::mutex mutex;
+	int changes = 0;
+	const engine::Listener listener(tracks.app.engine(),
+		[&](const engine::Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "trackLayout.changed")
+				++changes;
+		});
+	const uint64_t folder = tracks.add({{"type", "folder"}});
+	const uint64_t inside = tracks.add({{"type", "audio"}, {"parent", folder}});
+	const uint64_t second = tracks.add({{"type", "folder"}});
+	const uint64_t insideSecond = tracks.add({{"type", "audio"}, {"parent", second}});
+	const uint64_t audio = tracks.add({{"type", "audio"}});
+	const uint64_t other = tracks.add({{"type", "audio"}});
+	tracks.rows(6);
+	const test::TempDir dir;
+	tracks.app.call("project.save", {{"path", (dir.path() / "layout.dawproject").u8string()}});
+	const auto revision = tracks.app.call("project.revision").at("revision").get<uint64_t>();
+
+	// A press on the audio track's lower edge without a drag, and Unfold Tracks with nothing folded, send nothing.
+	const auto edge = [&tracks, audio]
+	{
+		const Json box = tracks.box(row(audio));
+		return ui::Point{box.at("x").get<int>() + 40, box.at("y").get<int>() + box.at("height").get<int>() - 2};
+	};
+	const ui::Point at = edge();
+	tracks.app.ui().press(std::nullopt, {"", 0, at}, ui::MouseButton::Left);
+	tracks.app.ui().release(std::nullopt, {"", 0, at}, ui::MouseButton::Left);
+	tracks.app.keys().run("track.unfoldAll", Json::object(), tracks.app.main(), nullptr);
+
+	// Toggle Folding with both folders selected folds them with one set, which comes after whatever they sent.
+	tracks.click(row(folder) + " .track-name");
+	tracks.click(row(second) + " .track-name", {"ctrl"});
+	REQUIRE(tracks.list.selection() == std::vector<uint64_t>{folder, second});
+	tracks.app.keys().run("track.toggleFolding", Json::object(), tracks.app.main(), nullptr);
+	REQUIRE(
+		tracks.app.waitUntil([&] { return tracks.app.call("trackLayout.get").at("folded") == Json{folder, second}; }));
+	CHECK(tracks.app.call("project.revision").at("revision").get<uint64_t>() == revision + 1);
+	{
+		const std::scoped_lock lock(mutex);
+		CHECK(changes == 1);
+	}
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.laneTracks().size() == 4; }));
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	const auto press = [&tracks](ui::Point at)
+	{ tracks.app.ui().press(std::nullopt, {"", 0, at}, ui::MouseButton::Left); };
+	const auto move = [&tracks](ui::Point to) { tracks.app.ui().move(std::nullopt, {"", 0, to}); };
+	const auto release = [&tracks](ui::Point at)
+	{ tracks.app.ui().release(std::nullopt, {"", 0, at}, ui::MouseButton::Left); };
+
+	// A press that moves only sideways, here on a track whose in-place editor makes it higher than its own height,
+	// and Fold Tracks with both folded send nothing either, and a drag from the same point (which shows that it is on
+	// the edge) sends the audio track's height, not the other track's, which only the list has (and another client
+	// may have removed meanwhile).
+	tracks.display.setInPlaceTracks({audio});
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	const ui::Point tall = edge();
+	press(tall);
+	move({tall.x + 30, tall.y});
+	release({tall.x + 30, tall.y});
+	CHECK(tracks.display.ownHeight(audio) == Approx(ui::g_trackHeight));
+	tracks.display.setInPlaceTracks({});
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	const ui::Point from = edge();
+	press(from);
+	move({from.x + 30, from.y});
+	release({from.x + 30, from.y});
+	tracks.app.keys().run("track.foldAll", Json::object(), tracks.app.main(), nullptr);
+	tracks.display.setTrackHeight(other, 100.0);
+	tracks.app.ui().drag(std::nullopt, {"", 0, from}, {"", 0, ui::Point{from.x, from.y + 20}});
+	const auto heights = [&tracks]() { return tracks.app.call("trackLayout.get").at("heights"); };
+	const auto height = [](uint64_t track, double dp) { return Json{{"track", track}, {"height", dp}}; };
+	REQUIRE(tracks.app.waitUntil([&] { return heights() == Json::array({height(audio, ui::g_trackHeight + 20.0)}); }));
+	CHECK(tracks.app.call("project.revision").at("revision").get<uint64_t>() == revision + 2);
+	{
+		const std::scoped_lock lock(mutex);
+		CHECK(changes == 2);
+	}
+
+	// Heights another client sets during a drag stay: the drag keeps its track's height when they come and sends
+	// only that.
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	ui::Point lower = edge();
+	press(lower);
+	move({lower.x, lower.y + 20});
+	tracks.app.call("trackLayout.set", {{"heights", {height(other, 120.0)}}});
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.ownHeight(other) == Approx(120.0); }));
+	CHECK(tracks.display.ownHeight(audio) == Approx(ui::g_trackHeight + 40.0));
+	tracks.app.call("trackLayout.set", {{"heights", {height(other, 150.0)}}});
+	release({lower.x, lower.y + 20});
+	REQUIRE(tracks.app.waitUntil(
+		[&] { return heights() == Json{height(audio, ui::g_trackHeight + 40.0), height(other, 150.0)}; }));
+
+	// With Ctrl it sends every track's height (reference manual p. 217: all tracks), also those of the tracks inside
+	// the folded folders (#1131).
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	lower = edge();
+	tracks.app.ui().drag(std::nullopt, {"", 0, lower}, {"", 0, ui::Point{lower.x, lower.y + 10}}, {"ctrl"});
+	const double all = ui::g_trackHeight + 50.0;
+	REQUIRE(tracks.app.waitUntil(
+		[&]
+		{
+			return heights() ==
+				Json{height(folder, all), height(inside, all), height(second, all), height(insideSecond, all),
+					height(audio, all), height(other, all)};
+		}));
+	CHECK(tracks.display.ownHeight(inside) == Approx(all));
+
+	// A drag that loading a project interrupts sends nothing to the loaded project, whose tracks have the same ids.
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	lower = edge();
+	press(lower);
+	move({lower.x, lower.y + 20});
+	tracks.app.call("project.load", {{"path", (dir.path() / "layout.dawproject").u8string()}});
+	REQUIRE(tracks.app.waitUntil(
+		[&] { return !tracks.list.folded(folder) && tracks.display.ownHeight(audio) == Approx(ui::g_trackHeight); }));
+	release({lower.x, lower.y + 20});
+	tracks.app.keys().run("track.foldAll", Json::object(), tracks.app.main(), nullptr);
+	REQUIRE(
+		tracks.app.waitUntil([&] { return tracks.app.call("trackLayout.get").at("folded") == Json{folder, second}; }));
+	CHECK(heights() == Json::array());
+}
+
+namespace
+{
+	Json layoutHeight(uint64_t track, double dp)
+	{
+		return {{"track", track}, {"height", dp}};
+	}
+
+	// Three audio tracks and height drags by hand on their lower edges (#1131).
+	struct HeightDrag
+	{
+		HeightDrag()
+			: audio(tracks.add({{"type", "audio"}})), other(tracks.add({{"type", "audio"}})),
+			  third(tracks.add({{"type", "audio"}}))
+		{
+			tracks.rows(3);
+		}
+
+		// The point on the track's lower edge; steps the shell first, which lays the rows out.
+		ui::Point edge(uint64_t track)
+		{
+			tracks.app.shell().step(std::chrono::milliseconds(0));
+			const Json box = tracks.box(row(track));
+			return {box.at("x").get<int>() + 40, box.at("y").get<int>() + box.at("height").get<int>() - 2};
+		}
+
+		void press(ui::Point at, const std::vector<std::string>& modifiers = {})
+		{
+			tracks.app.ui().press(std::nullopt, {"", 0, at}, ui::MouseButton::Left, modifiers);
+		}
+
+		void move(ui::Point to, const std::vector<std::string>& modifiers = {})
+		{
+			tracks.app.ui().move(std::nullopt, {"", 0, to}, modifiers);
+		}
+
+		void release(ui::Point at) { tracks.app.ui().release(std::nullopt, {"", 0, at}, ui::MouseButton::Left); }
+
+		double shown(uint64_t track) const { return tracks.display.ownHeight(track); }
+		Json heights() { return tracks.app.call("trackLayout.get").at("heights"); }
+		uint64_t revision() { return tracks.app.call("project.revision").at("revision").get<uint64_t>(); }
+
+		Tracks tracks;
+		uint64_t audio;
+		uint64_t other;
+		uint64_t third;
+	};
+}
+
+// #1131: a drag that ends at the height it started with sends nothing, unless another client gave the track another
+// height meanwhile: the release compares with the heights the engine has.
+TEST_CASE("a height drag compares its end with the heights the engine has, also those that came during it", "[ui]")
+{
+	HeightDrag drag;
+	const uint64_t revision = drag.revision();
+	const ui::Point at = drag.edge(drag.audio);
+
+	// Back where it started: nothing to send.
+	drag.press(at);
+	drag.move({at.x, at.y + 20});
+	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight + 20.0));
+	drag.move(at);
+	drag.release(at);
+	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight));
+	CHECK(drag.revision() == revision);
+	CHECK(drag.heights() == Json::array());
+
+	// Another client sets the track's height during the drag, which the drag keeps; another track's it takes at once,
+	// which shows that the change has come. Ending at the height it started with is a change then.
+	drag.press(at);
+	drag.move({at.x, at.y + 20});
+	drag.tracks.app.call(
+		"trackLayout.set", {{"heights", {layoutHeight(drag.audio, 100.0), layoutHeight(drag.other, 120.0)}}});
+	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.other) == Approx(120.0); }));
+	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight + 20.0));
+	drag.move(at);
+	drag.release(at);
+	REQUIRE(drag.tracks.app.waitUntil(
+		[&]
+		{
+			return drag.heights() == Json{layoutHeight(drag.audio, ui::g_trackHeight), layoutHeight(drag.other, 120.0)};
+		}));
+	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight));
+}
+
+// #1131: the limits keep a drag at the height the track has, which is nothing to send.
+TEST_CASE("a height drag that stays at the smallest or the largest height sends nothing", "[ui]")
+{
+	HeightDrag drag;
+	drag.tracks.app.call("trackLayout.set",
+		{{"heights",
+			{layoutHeight(drag.audio, engine::g_minTrackHeight), layoutHeight(drag.other, engine::g_maxTrackHeight)}}});
+	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.other) == Approx(engine::g_maxTrackHeight); }));
+	const uint64_t revision = drag.revision();
+
+	// The smallest: down shows that the press is on the edge, and up again goes past the limit to where it started.
+	const ui::Point small = drag.edge(drag.audio);
+	drag.press(small);
+	drag.move({small.x, small.y + 30});
+	REQUIRE(drag.shown(drag.audio) == Approx(engine::g_minTrackHeight + 30.0));
+	drag.move({small.x, small.y - 15});
+	CHECK(drag.shown(drag.audio) == Approx(engine::g_minTrackHeight));
+	drag.release({small.x, small.y - 15});
+
+	// The largest, whose lower edge the display scrolls to, the other way round.
+	drag.tracks.display.scrollVertically(engine::g_minTrackHeight + 100.0);
+	const ui::Point large = drag.edge(drag.other);
+	drag.press(large);
+	drag.move({large.x, large.y - 30});
+	REQUIRE(drag.shown(drag.other) == Approx(engine::g_maxTrackHeight - 30.0));
+	drag.move({large.x, large.y + 15});
+	CHECK(drag.shown(drag.other) == Approx(engine::g_maxTrackHeight));
+	drag.release({large.x, large.y + 15});
+	CHECK(drag.revision() == revision);
+	CHECK(drag.heights() ==
+		Json{layoutHeight(drag.audio, engine::g_minTrackHeight), layoutHeight(drag.other, engine::g_maxTrackHeight)});
+}
+
+// #1131: a release that doesn't reach the list's document leaves the drag under way; the next press ends it, with the
+// heights it changed, and the heights from the engine are no longer held back.
+TEST_CASE("a height drag whose release never came ends with the next press", "[ui]")
+{
+	HeightDrag drag;
+	const ui::Point at = drag.edge(drag.audio);
+	drag.press(at);
+	drag.move({at.x, at.y + 20});
+	drag.press({at.x, at.y + 20}); // on the lower edge again, where the drag left the mouse
+	drag.release({at.x, at.y + 20});
+	REQUIRE(drag.tracks.app.waitUntil(
+		[&] { return drag.heights() == Json::array({layoutHeight(drag.audio, ui::g_trackHeight + 20.0)}); }));
+	drag.tracks.app.call("trackLayout.set", {{"heights", {layoutHeight(drag.audio, 100.0)}}});
+	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.audio) == Approx(100.0); }));
+
+	// The same when the next press is on a track's name, not on a lower edge: the stale set of tracks held its heights
+	// back until then.
+	drag.tracks.app.shell().step(std::chrono::milliseconds(0));
+	const ui::Point again = drag.edge(drag.audio);
+	drag.press(again);
+	drag.move({again.x, again.y + 20});
+	drag.tracks.click(row(drag.other) + " .track-name");
+	drag.tracks.app.call("trackLayout.set", {{"heights", {layoutHeight(drag.audio, 150.0)}}});
+	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.audio) == Approx(150.0); }));
+}
+
+// #1131: a set that fails, here because another client removed a track that the list doesn't know of yet, changes
+// nothing in the project; the list shows the project's heights and folded folders again.
+TEST_CASE("the track list shows the engine's heights and folded folders again when a set fails", "[ui]")
+{
+	HeightDrag drag;
+	const ui::Point at = drag.edge(drag.audio);
+	drag.press(at, {"ctrl"});
+	drag.move({at.x, at.y + 20}, {"ctrl"});
+	CHECK(drag.shown(drag.third) == Approx(ui::g_trackHeight + 20.0));
+	drag.tracks.app.call("track.remove", {{"track", drag.third}}); // the list hears of it after the release
+	// Released where the drag left the mouse, so that it ends with heights the engine has not got: the set is sent and
+	// fails.
+	drag.release({at.x, at.y + 20});
+	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight + 20.0));
+	REQUIRE(drag.tracks.app.waitUntil(
+		[&]
+		{
+			return drag.shown(drag.audio) == Approx(ui::g_trackHeight) &&
+				drag.shown(drag.other) == Approx(ui::g_trackHeight);
+		}));
+	CHECK(drag.heights() == Json::array());
+
+	// The same for a folded folder that was removed.
+	drag.tracks.rows(2);
+	const uint64_t folder = drag.tracks.add({{"type", "folder"}});
+	drag.tracks.rows(3);
+	drag.tracks.app.call("track.remove", {{"track", folder}});
+	drag.tracks.list.setFolded(folder, true);
+	REQUIRE(drag.tracks.app.waitUntil([&] { return !drag.tracks.list.folded(folder); }));
+	CHECK(drag.tracks.app.call("trackLayout.get").at("folded") == Json::array());
+}
+
+// #1131: the engine keeps a removed folder's fold state for undo, and the list has to show it when the folder comes
+// back, whatever the list did meanwhile.
+TEST_CASE("a folded folder that undo brings back is folded in the list", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t folder = tracks.add({{"type", "folder"}});
+	const uint64_t inside = tracks.add({{"type", "audio"}, {"parent", folder}});
+	const uint64_t other = tracks.add({{"type", "audio"}});
+	tracks.rows(3);
+	tracks.click(row(folder) + " .tree-toggle");
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.app.call("trackLayout.get").at("folded") == Json{folder}; }));
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.laneTracks() == std::vector<uint64_t>{folder, other}; }));
+
+	// Remove the folder (and the track inside) and choose Unfold Tracks, which sends nothing with the folder gone.
+	tracks.app.call("track.remove", {{"track", folder}});
+	tracks.rows(1);
+	tracks.app.keys().run("track.unfoldAll", Json::object(), tracks.app.main(), nullptr);
+	REQUIRE(tracks.app.waitUntil([&] { return !tracks.list.folded(folder); }));
+	tracks.app.call("history.undo");
+	tracks.rows(3);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.list.folded(folder); }));
+	CHECK(tracks.app.call("trackLayout.get").at("folded") == Json{folder});
+	CHECK(tracks.display.laneTracks() == std::vector<uint64_t>{folder, other});
+	CHECK(tracks.order() == std::vector<uint64_t>{folder, inside, other});
+
+	// A track's height that changes while the folder is gone makes the list take the engine's layout, which leaves the
+	// folder out: undo brings it back folded just the same.
+	tracks.app.call("history.redo");
+	tracks.rows(1);
+	tracks.app.call("trackLayout.set", {{"heights", {{{"track", other}, {"height", 70.0}}}}});
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.ownHeight(other) == Approx(70.0); }));
+	tracks.app.call("history.undo");
+	tracks.rows(3);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.list.folded(folder); }));
+	CHECK(tracks.display.ownHeight(other) == Approx(70.0));
+	CHECK(tracks.display.laneTracks() == std::vector<uint64_t>{folder, other});
 }
 
 TEST_CASE("Remove Empty Tracks keeps an instrument track without parts that a MIDI track plays", "[ui]")
@@ -910,6 +1496,30 @@ TEST_CASE("group and effect tracks can show Switch Time Base in the track list",
 		REQUIRE(tracks.app.waitUntil(
 			[&] { return !elements(tracks.app, row(track) + " button.timeBase.checked").empty(); }));
 	}
+}
+
+TEST_CASE("the track controls settings dialog offers MIDI Channel for MIDI tracks only", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t midi = tracks.add({{"type", "midi"}});
+	tracks.rows(1);
+
+	// MIDI Channel is among the hidden controls of MIDI tracks (reference manual p. 349), not of audio tracks.
+	const auto open = [&tracks] { return !elements(tracks.app, "#track-controls-dialog").empty(); };
+	tracks.click("#track-controls-settings");
+	REQUIRE(tracks.app.waitUntil(open));
+	CHECK(elements(tracks.app, "#hidden-controls > [value=midiChannel]").empty()); // audio, the first type
+	tracks.click("#controls-types > [value=midi]");
+	tracks.click("#hidden-controls > [value=midiChannel]");
+	tracks.click("#controls-add");
+	CHECK(elements(tracks.app, "#visible-controls > [value=midiChannel]").size() == 1);
+	tracks.click("#controls-ok");
+	REQUIRE(tracks.app.waitUntil([&] { return !open(); }));
+
+	CHECK(
+		tracks.app.call("settings.get", {{"key", "ui.trackControls"}}).at("value").at("midi").back() == "midiChannel");
+	CHECK(tracks.app.waitUntil(
+		[&] { return elements(tracks.app, row(midi) + " select[control=midiChannel]").size() == 1; }));
 }
 
 TEST_CASE("the track controls settings dialog keeps the tempo track's controls and chooses them", "[ui]")
@@ -1350,4 +1960,191 @@ TEST_CASE("Freeze/Unfreeze Selected Tracks freezes and unfreezes them, Render in
 	REQUIRE(order.size() == 2);
 	CHECK(tracks.track(order[1]).at("name") == "Synth (Rendered)");
 	CHECK(tracks.track(order[1]).at("type") == "audio");
+}
+
+TEST_CASE(
+	"the default theme draws the rows in their tracks' colors: a strip, the selected row lit and outlined, folders "
+	"tinted",
+	"[ui]")
+{
+	// #1314, the mockup's track list (art/mockups/main-window.webp): the color strip a bar at the row's left edge, the
+	// selected row lit in its track's color with an outline in it, and folder rows tinted in the folder's color, all
+	// from the .track-color strip that code gives the track's color; a track without a color keeps the theme's
+	// selection. The other themes keep the 4 dp strip and their own selection.
+	test::UiApp app({1000, 680});
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	const auto add = [&app](const Json& parameters)
+	{ return app.call("track.add", parameters).at("track").at("id").get<uint64_t>(); };
+	const uint64_t folder = add({{"type", "folder"}, {"name", "Band"}, {"color", "#3a6ff0"}});
+	const uint64_t drums = add({{"type", "midi"}, {"name", "Drums"}, {"color", "#e12ad8"}, {"parent", folder}});
+	add({{"type", "audio"}, {"name", "Bass"}, {"color", "#24c1e0"}, {"parent", folder}});
+	const uint64_t lead = add({{"type", "midi"}, {"name", "Lead"}, {"color", "#8a4dff"}});
+	const uint64_t plain = add({{"type", "audio"}, {"name", "Vocals"}});
+	ui::TrackList& list = *app.appUi().trackList();
+	const auto row = [](uint64_t track) { return ".track-list listitem[value=\"" + std::to_string(track) + "\"]"; };
+	const auto box = [&app](const std::string& selector)
+	{
+		const Json found = app.ui().dom(std::nullopt, selector, 0).at("elements");
+		REQUIRE(found.size() == 1);
+		return found.at(0).at("box");
+	};
+	const auto width = [&box](const std::string& selector) { return box(selector).at("width").get<double>(); };
+	const auto settle = [&app]
+	{
+		app.shell().step(std::chrono::milliseconds(0));
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			list.select({lead}); // until the list has the track
+			return list.selection() == std::vector<uint64_t>{lead} &&
+				app.ui().dom(std::nullopt, ".track-list listitem", 0).at("elements").size() == 5;
+		}));
+	settle();
+
+	// The selected row and the folder's: the color over the whole row, under the name and the controls.
+	CHECK(std::abs(width(row(lead) + " .track-color") - width(row(lead))) <= 1.0);
+	CHECK(std::abs(width(row(folder) + " .track-color") - width(row(folder))) <= 1.0);
+	// The other rows: a bar at the left edge, a track without a color none.
+	const double strip = width(row(drums) + " .track-color");
+	CHECK(strip >= 4.0);
+	CHECK(strip <= 8.0);
+	const auto attributes = [&app, &row](uint64_t track)
+	{
+		return app.ui()
+			.dom(std::nullopt, row(track) + " .track-color", 0)
+			.at("elements")
+			.at(0)
+			.value("attributes", Json::object());
+	};
+	CHECK(!attributes(plain).contains("color"));
+
+	// The track list as it looks, cut from the window.
+	const ui::Image window = app.screenshot("track-list-rows-window", {1000, 680});
+	const Json area = box(".track-list .track-rows");
+	const int x = area.at("x").get<int>();
+	const int y = area.at("y").get<int>();
+	const int w = area.at("width").get<int>();
+	const int h = std::min(area.at("height").get<int>(), 5 * 44);
+	REQUIRE(x >= 0);
+	REQUIRE(y >= 0);
+	REQUIRE(x + w <= window.width);
+	REQUIRE(y + h <= window.height);
+	ui::Image rows{w, h, {}};
+	for (int line = y; line < y + h; ++line)
+	{
+		const auto begin = window.pixels.begin() + (((static_cast<std::ptrdiff_t>(line) * window.width) + x) * 4);
+		rows.pixels.insert(rows.pixels.end(), begin, begin + (static_cast<std::ptrdiff_t>(w) * 4));
+	}
+	test::UiApp::checkGolden("track-list-rows", rows);
+
+	// A drop-down list in a row's controls opens over the rows below it: no row keeps it under the next ones, for the
+	// eye or the mouse.
+	Json controls = app.call("settings.get", {{"key", "ui.trackControls"}}).at("value");
+	controls["midi"].push_back("midiChannel");
+	app.call("settings.set", {{"key", "ui.trackControls"}, {"value", controls}});
+	const std::string channel = row(drums) + " select[control=midiChannel]";
+	REQUIRE(app.waitUntil([&] { return app.ui().dom(std::nullopt, channel, 0).at("elements").size() == 1; }));
+	settle();
+	Rml::Context& context = app.main().context();
+	Rml::ElementFormControlSelect* select = nullptr;
+	for (int i = 0; select == nullptr && i < context.GetNumDocuments(); ++i)
+		select = dynamic_cast<Rml::ElementFormControlSelect*>(context.GetDocument(i)->QuerySelector(channel));
+	REQUIRE(select != nullptr);
+	app.ui().click(std::nullopt, {channel, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	settle();
+	REQUIRE(select->IsSelectBoxVisible());
+	// An option over another row, measured in the context's pixels as hit testing is; the list opens below the select,
+	// or above it where the window has no room below.
+	Rml::Element* drumsRow = select;
+	while (drumsRow != nullptr && drumsRow->GetTagName() != "listitem")
+		drumsRow = drumsRow->GetParentNode();
+	REQUIRE(drumsRow != nullptr);
+	REQUIRE(drumsRow->GetParentNode() != nullptr);
+	const auto middleOf = [](Rml::Element& element)
+	{
+		return element.GetAbsoluteOffset(Rml::BoxArea::Border) +
+			(element.GetBox().GetSize(Rml::BoxArea::Border) / 2.0F);
+	};
+	const auto inside = [](Rml::Element& element, Rml::Vector2f point)
+	{
+		const Rml::Vector2f from = element.GetAbsoluteOffset(Rml::BoxArea::Border);
+		const Rml::Vector2f to = from + element.GetBox().GetSize(Rml::BoxArea::Border);
+		return point.x >= from.x && point.x < to.x && point.y >= from.y && point.y < to.y;
+	};
+	// It stays open while the test looks at it. RmlUi lays an open list out when it draws it, and the shell doesn't
+	// draw a hidden window on every step everywhere (Linux CI): a screenshot draws it.
+	const auto keepOpen = [&]
+	{
+		if (!select->IsSelectBoxVisible())
+			select->ShowSelectBox();
+		context.Update();
+		app.screenshot("rows-select-open", {200, 200});
+	};
+	const auto overAnotherRow = [&]() -> Rml::Element*
+	{
+		keepOpen();
+		const Rml::Element* rows = drumsRow->GetParentNode();
+		for (int i = 0; i < select->GetNumOptions(); ++i)
+		{
+			const Rml::Vector2f middle = middleOf(*select->GetOption(i));
+			for (int r = 0; r < rows->GetNumChildren(); ++r)
+			{
+				Rml::Element* other = rows->GetChild(r);
+				if (other != drumsRow && other->GetTagName() == "listitem" && inside(*other, middle))
+					return select->GetOption(i);
+			}
+		}
+		return nullptr;
+	};
+	Rml::Element* option = nullptr;
+	const bool found = app.waitUntil(
+		[&]
+		{
+			option = overAnotherRow();
+			return option != nullptr;
+		});
+	INFO("list open " << select->IsSelectBoxVisible() << ", options " << select->GetNumOptions() << ", the row at "
+					  << drumsRow->GetAbsoluteOffset().y << " " << drumsRow->GetBox().GetSize().y
+					  << " px high, the first option at "
+					  << (select->GetNumOptions() > 0 ? select->GetOption(0)->GetAbsoluteOffset().y : -1.0F));
+	REQUIRE(found);
+	REQUIRE(option != nullptr);
+	keepOpen();
+	const Rml::Vector2f middle = middleOf(*option);
+	const Rml::Element* hit = context.GetElementAtPoint(middle);
+	while (hit != nullptr && hit != option)
+		hit = hit->GetParentNode();
+	CHECK(hit == option);
+	select->CancelSelectBox();
+	settle();
+
+	// The other themes: the 4 dp strip on every row, also the selected one and the folder's; and back to the default
+	// theme's.
+	for (const char* theme : {"dark", "light", "high-contrast", "gnubase"})
+	{
+		INFO("theme " << theme);
+		app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
+		REQUIRE(app.waitUntil([&app, theme] { return app.shell().theme() == theme; }));
+		settle();
+		const bool flat = std::string(theme) == "gnubase";
+		CHECK(std::abs(width(row(lead) + " .track-color") - (flat ? width(row(lead)) : 4.0)) <= 1.0);
+		CHECK(std::abs(width(row(folder) + " .track-color") - (flat ? width(row(folder)) : 4.0)) <= 1.0);
+	}
+
+	// At twice the dp ratio: the bar twice as wide, the selected row's color still across it.
+	app.setDpRatio(2.0F);
+	settle();
+	CHECK(std::abs(width(row(drums) + " .track-color") - (2 * strip)) <= 1.0);
+	CHECK(std::abs(width(row(lead) + " .track-color") - width(row(lead))) <= 1.0);
+	app.setDpRatio(1.0F);
+	settle();
+
+	// The selected track's color taken away: the theme's selection again, and a strip of no color.
+	app.call("track.set", {{"track", lead}, {"color", nullptr}});
+	REQUIRE(app.waitUntil([&] { return !attributes(lead).contains("color"); }));
+	settle();
+	CHECK(width(row(lead) + " .track-color") <= 8.0);
 }

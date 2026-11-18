@@ -4,6 +4,7 @@
 #include "engine/audio/audioengine.h"
 #include "engine/document/channelformat.h"
 #include "engine/document/projectmodel.h"
+#include "engine/document/serialize.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
 #include "engine/midi/devices.h"
@@ -160,16 +161,28 @@ namespace gnubase::engine
 			setup.format = recordFormat(project);
 			const std::string& file = m_project->file();
 			setup.folder = file.empty() ? recordings : mediaFolderFor(std::filesystem::u8path(file));
+			// With the chord track record-enabled, MIDI and instrument tracks that only monitor play in chord events
+			// too (reference manual p. 1345).
+			const bool chords = project.chords.recordEnable &&
+				std::any_of(project.trackById.begin(), project.trackById.end(),
+					[](const auto& entry) { return entry.second.type == TrackType::Chord; });
 			for (const ObjectId id : project.trackOrder())
 			{
 				const Track& track = project.trackById.at(id);
 				const auto channel = project.channels.find(track.channel);
-				if (!track.enabled || channel == project.channels.end() || !channel->second.recordEnable)
+				if (!track.enabled || channel == project.channels.end())
 					continue;
+				const bool notes = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+				if (!channel->second.recordEnable)
+				{
+					if (notes && chords && channel->second.monitor)
+						setup.midiTracks.push_back({id, track.channel, true});
+					continue;
+				}
 				if (track.type == TrackType::Audio && channel->second.input != 0)
 					setup.tracks.push_back({id, track.name, {}});
-				else if (track.type == TrackType::Midi || track.type == TrackType::Instrument)
-					setup.midiTracks.push_back({id, track.channel});
+				else if (notes)
+					setup.midiTracks.push_back({id, track.channel, false});
 			}
 			return setup;
 		};
@@ -216,6 +229,21 @@ namespace gnubase::engine
 		// If the destructor stops the engine meanwhile, the request is queued anyway: harmless, since the command
 		// thread fails the requests it didn't run when it stops.
 		m_clock.start(g_autoSaveCheck, [this] { post("project.autoSave", {{"due", true}}); });
+	}
+
+	Jobs::Work Engine::prepareMixdown(const Json& parameters)
+	{
+		return m_audio->mixdownWork(parameters, toJson(m_project->project()));
+	}
+
+	Json Engine::startJob(std::string kind, Jobs::Work work)
+	{
+		return {{"job", m_jobs->start(std::move(kind), std::move(work))}};
+	}
+
+	bool Engine::jobCancelled(JobId job) const
+	{
+		return m_jobs->cancelled(job);
 	}
 
 	Engine::~Engine()
@@ -347,6 +375,26 @@ namespace gnubase::engine
 		return m_audio->position();
 	}
 
+	void Engine::setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read)
+	{
+		m_audio->setSampleReader(std::move(read));
+	}
+
+	void Engine::setRenderPluginFactory(plugins::SlotInstances::Factory factory)
+	{
+		m_audio->setRenderPluginFactory(std::move(factory));
+	}
+
+	void Engine::setOfflineSampleWait(std::chrono::milliseconds wait)
+	{
+		m_audio->setOfflineSampleWait(wait);
+	}
+
+	void Engine::setJobProgressHook(std::function<void(uint64_t job, const std::string& kind)> hook)
+	{
+		m_jobs->setProgressHook(std::move(hook));
+	}
+
 	void Engine::readMeters(MeterFrame& frame)
 	{
 		m_audio->readMeters(frame);
@@ -447,6 +495,7 @@ namespace gnubase::engine
 	{
 		CommandContext context(request.parameters);
 		context.m_engine = this;
+		context.m_internal = request.sender == nullptr;
 		Result result;
 		result.request = request.id;
 		std::vector<std::shared_ptr<detail::Mailbox>> clients;

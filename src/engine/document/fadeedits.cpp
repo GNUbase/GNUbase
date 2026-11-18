@@ -68,9 +68,12 @@ namespace gnubase::engine
 			return result;
 		}
 
-		void checkFades(const Fade& in, const Fade& out, time::Samples length, const std::string& what)
+		// Fades that no longer fit, as a warped event's after a tempo change, may still change as long as they don't
+		// grow together.
+		void checkFades(const Fade& in, const Fade& out, const Fade& wasIn, const Fade& wasOut, time::Samples length,
+			const std::string& what)
 		{
-			require(in.length + out.length <= length,
+			require(in.length + out.length <= std::max(length, wasIn.length + wasOut.length),
 				"the fade in and the fade out together must fit into the " + what + " (" + std::to_string(length) +
 					" sample frames)");
 		}
@@ -81,7 +84,7 @@ namespace gnubase::engine
 			AudioEvent& event = find(project.audioEvents, parameters, "event", "audio event");
 			const Fade in = fade(parameters, "fadeIn", event.fadeIn);
 			const Fade out = fade(parameters, "fadeOut", event.fadeOut);
-			checkFades(in, out, fadeRoom(project, event), "event");
+			checkFades(in, out, event.fadeIn, event.fadeOut, fadeRoom(project, event), "event");
 			event.fadeIn = in;
 			event.fadeOut = out;
 			Json result = {{"event", toJson(event)}};
@@ -95,7 +98,7 @@ namespace gnubase::engine
 			Clip& clip = find(project.clips, parameters, "clip", "clip");
 			const Fade in = fade(parameters, "fadeIn", clip.fadeIn);
 			const Fade out = fade(parameters, "fadeOut", clip.fadeOut);
-			checkFades(in, out, project.media.at(clip.media).length, "clip");
+			checkFades(in, out, clip.fadeIn, clip.fadeOut, project.media.at(clip.media).length, "clip");
 			clip.fadeIn = in;
 			clip.fadeOut = out;
 			Json result = {{"clip", toJson(clip)}};
@@ -474,8 +477,9 @@ namespace gnubase::engine
 				"Changes an audio event's fade in (from its start) or fade out (up to its end): length in the clip's "
 				"sample frames (0: none) and shape: linear, exponential (slow, then fast), logarithmic (fast, then "
 				"slow), sCurve (half a cosine) or equalPower (a quarter sine). Together they fit into the event (on a "
-				"warped event, into the sample frames it plays for at the clip's sample rate). A "
-				"crossfade replaces the fades at the ends it joins while it plays.",
+				"warped event, into the sample frames it plays for at the clip's sample rate); fades that no longer "
+				"fit, as a warped event's after a tempo change or a warp marker move, may still change if they don't "
+				"grow together. A crossfade replaces the fades at the ends it joins while it plays.",
 				object({{"event", id}, {"fadeIn", fade}, {"fadeOut", fade}}, {"event"}), result("event"), false},
 			setEventFades);
 		add(engine,

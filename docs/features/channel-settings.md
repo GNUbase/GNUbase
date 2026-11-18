@@ -57,7 +57,8 @@ pictures and the notepad too with Set up Window Layout, which keeps the window's
   Follow off, the window and the track list's selection go their own ways.
 - **Add Effect Track to Send** (p. 554). The destination list of every send, in the mixers and in the window, ends with
   Add Effect Track to Send: it opens the add track dialog on the effect page in that window, with the track and the
-  send (the document's `tracks` and `send` attributes), and the dialog's Add Track passes them to `track.add`. The list
+  send (the document's `tracks`, `send` and `below` attributes), and the dialog's Add Track passes them to
+  `track.add`: the new effect track goes below the track whose send it is. The list
   shows the send's destination again when the project comes back.
 
 ## Not yet
@@ -80,6 +81,7 @@ write states, the routing and the selection (p. 458).
   for the sends, skip a send to the channel itself, take one undo step, and respect `linked` false. In the app: the
   mixer's `e` opens the window for its channel and selects the track; the sections it shows; a control sending
   `channel.set`; previous, next and Go to Output; following the track selection and not following it; the UI command;
-  a removed track; Copy and Paste Channel Settings; Add Effect Track to Send through the add track dialog; and the
+  a removed track; Copy and Paste Channel Settings; Add Effect Track to Send through the add track dialog, below the
+  track whose send it is; and the
   inspector's `e`.
 - `tests/linkgroups_tests.cpp`: the link group's JSON with `eq`, `dynamics` and `sends`.

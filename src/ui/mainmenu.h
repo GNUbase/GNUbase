@@ -39,7 +39,13 @@ namespace gnubase::ui
 		MainMenu& operator=(MainMenu&&) = delete;
 
 		// Disables the items whose command can't run now and enables the others, and shows their keys. The app calls
-		// it in every step of the shell, so the DOM that MCP's UI tools read is up to date too.
+		// it in every step of the shell and after each input of ui::Automation (Shell::onInputHandled), so the DOM
+		// that MCP's UI tools read is up to date right after a click or a key, whatever changed (#1173). The menu
+		// calls it too when a click reaches its document, before it looks for the clicked item, for what the click's
+		// listeners changed (#1120). That update sees the listeners that ran before the menu's own on the document:
+		// those of the elements below the document, the document's capture phase listeners and its listeners added
+		// before the menu's. A bubble phase click listener added to the document after the menu runs after the
+		// lookup, and what it changes shows only in the update after the input.
 		void update();
 
 	private:

@@ -38,7 +38,8 @@ namespace gnubase::ui
 		// Moves the clock on by seconds, as if that much time passed, e.g. for a mouse button held down before a drag
 		// (Automation::drag).
 		void advance(double seconds) { m_advanced += seconds; }
-		// Stops the clock where it is, for tests that need time to stand still, or lets it run on from there.
+		// Stops the clock where it is, or lets it run on from there: for tests that need time to stand still, and for
+		// the presses of an injected double click (Automation::click).
 		void freeze(bool frozen);
 		bool frozen() const { return m_frozen.has_value(); }
 		bool LogMessage(Rml::Log::Type type, const Rml::String& message) override;

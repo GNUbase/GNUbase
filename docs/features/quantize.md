@@ -25,8 +25,9 @@ and the toolbar's section.
 - **Edit menu.** Quantize (`edit.quantize`, Q), Reset Quantize (`edit.resetQuantize`), Quantize Panel
   (`window.quantizePanel`) and Advanced Quantize: Quantize MIDI Event Lengths (`edit.quantizeLengths`), Quantize MIDI
   Event Ends (`edit.quantizeEnds`), Freeze MIDI Quantize (`edit.freezeQuantize`) and Create Groove Quantize Preset
-  (`edit.createGrooveQuantize`, which makes a preset of the first MIDI part with `quantize.extractGroove` and makes
-  it the project's settings). They are UI commands that send `quantize.apply`, `quantize.reset`, `quantize.lengths`,
+  (`edit.createGrooveQuantize`, which makes a preset of the first MIDI part, or without one of the first selected
+  audio event's hitpoints ([audio-quantize.md](audio-quantize.md)), with `quantize.extractGroove` and makes it the
+  project's settings). They are UI commands that send `quantize.apply`, `quantize.reset`, `quantize.lengths`,
   `quantize.ends` and `quantize.freeze`, so what they do is what MCP and Lua can do.
 - **What they quantize.** Run from an editor (the editor window, the lower zone while it shows the Editor tab, or an
   in-place editor in the project window, [in-place-editor.md](in-place-editor.md)), the
@@ -46,8 +47,7 @@ and the toolbar's section.
   (`QuantizeGrid`, as quantizing finds them) with the catch range around each. Every change is a `quantize.set`. Apply
   and Reset run `edit.quantize` and `edit.resetQuantize`; with Auto Apply on, every change runs `edit.quantize` too.
 - **Toolbar.** Apply Quantize, the Quantize Presets menu, Soft Quantize and Open Quantize Panel, after the snap
-  controls. The section shows in windows at least 1000 dp wide (`resources/styles/quantize.rcss`), where the toolbar
-  has room for it.
+  controls. The section shows where the toolbar has room for it ([docking.md](docking.md)).
 
 Audio events and parts, Warp Quantize On/Off and the panel's section for several audio tracks are in
 [audio-quantize.md](audio-quantize.md).

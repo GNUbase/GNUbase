@@ -20,6 +20,8 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
 |---|---|---|
 | Audio | Audio Inputs, Configuration, Output Routing, Name, Count | `input`, `format`, `output`, `name` |
 | Instrument | Instrument (the built-in instruments of `processor.list`), Output Routing, Name, Count | `instrument`, `output`, `name` |
+| Sampler | Output Routing, Name, Count (p. 144): sampler tracks, added with `sampler.create` instead of `track.add` | `output`, `name` |
+| Drum | Output Routing, Name, Count (p. 146): drum tracks, added with `drum.create` instead of `track.add` ([drum-track.md](drum-track.md)) | `output`, `name` |
 | MIDI | Output Routing (the instrument tracks' channels), Name, Count | `output`, `name` |
 | Group, Effect | Configuration, Output Routing, Add to Project 'Group' / 'FX' Folder, Name, Count | `format`, `output`, `projectFolder`, `name` |
 | Folder | Group Channel, Configuration and Output Routing (for the group channel only), Name, Count | `groupChannel`, `format`, `output`, `name` |
@@ -32,22 +34,26 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
   `processor.list`. Each starts at the engine's default: the first input bus, the main output, stereo, no instrument,
   bars and beats. An empty name takes the engine's default name ("Audio 01", "Audio 02" and so on).
 - **Add Track** adds Count tracks (1 to 100, as in the reference) with the page's settings, all with the same
-  parameters, in one `history.transaction` named "Add Track", so one undo removes them. New tracks go below the
-  selected track (p. 198), the lowest one if several are, in its folder and in the order they were added, as
-  `track.add`'s `parent` and `index`: the UI command passes it as the document attribute `below`. Tracks that stay at
-  the top level (marker, tempo, signature, arranger, transpose and chord tracks) go below the selected track's
-  top-level folder, and tracks for the project's Group or FX folder into that folder. Without a selected track they
-  go to the end of the project. The dialog closes, unless Keep Dialog Open
-  is checked: then it shows the page again, with the new group and instrument channels among the outputs, for adding
-  more of another type, below the tracks it just added. A track the engine refuses, such as an eleventh marker track, adds nothing, and the dialog
-  stays open with the engine's message. Cancel and Escape close it.
+  parameters, in one `history.transaction` named "Add Track", so one undo removes them. New tracks go below the selected
+  track (p. 198), the lowest one if several are, in its folder and in the order they were added, as `track.add`'s
+  `parent` and `index`: the UI command passes it as the document attribute `below`. Tracks that stay at the top level
+  (marker, tempo, signature, arranger, transpose and chord tracks) go below the selected track's top-level folder, and
+  tracks for the project's Group or FX folder into that folder. Without a selected track they go to the end of the
+  project. The dialog closes, unless Keep Dialog Open is checked: then it shows the page again, with the new group and
+  instrument channels among the outputs, for adding more of another type, below the tracks it just added; tracks that
+  went into the project's Group or FX folder leave `below` where it was, so the next tracks go below the selection, not
+  into that folder. A track the engine refuses, such as an eleventh marker track, adds nothing, and the dialog stays
+  open with the engine's message. Cancel and Escape close it.
 
 - **For selected tracks.** Group Track to Selected Tracks and Effect Track to Selected Tracks in the track list's
   context menu open the dialog on the group or effect page with the document attributes `type` and `tracks` (the
   selected tracks' ids); Add Track then passes them as `track.add` `tracks`, so they play or send into the new track
   ([routing.md](routing.md)). With a Count above 1 they go to the first new track only, for group and effect tracks
   alike: each new group would take them from the one before, and each new effect track would take another send of
-  every selected track. Keep Dialog Open's next Add Track adds tracks without them.
+  every selected track. Keep Dialog Open's next Add Track adds tracks without them. Add Effect Track to Send, in the
+  mixer's and the channel settings window's send destination lists ([routing.md](routing.md)), opens the effect page
+  the same way, with the track and the send (`tracks`, `send` and `below` attributes): the new effect track goes
+  below the track whose send it is.
 
 ## Double click
 
@@ -55,12 +61,15 @@ A double click in the empty part of the track list, below the last track, or in 
 track adds a track, as a double click in the empty part of the reference's track list does (p. 198):
 
 - With a selected audio or MIDI track (the lowest one if several are), a track of the same type with the same input
-  and output (an audio track's input bus and output, a MIDI track's output), below it in its folder.
+  and output (an audio track's input bus and output, a MIDI track's MIDI input, all or none, and output), below it
+  in its folder.
 - With another selected track, a MIDI track below it.
 - Without a selected track, a MIDI track at the end of the project.
 
 `ui::TrackList` adds it (`EventDisplay::onAddTrack` hands it the event display's double click), with one
-`track.add`.
+`track.add`; a selected MIDI track whose MIDI input is none takes a `channel.set` for the new channel after it,
+which `track.add` doesn't take, in the same undo step (both go as `history.transaction`s whose merge key joins
+them).
 
 ## In the engine
 
@@ -81,7 +90,7 @@ track adds a track, as a double click in the empty part of the reference's track
 ## Not yet
 
 The track color (the default color until the color picker joins the dialog), the reference's other track types
-(sampler, drum, and the video track with their tickets; the arranger, transpose and chord tracks are there, once
+(the video track with its ticket; the arranger, transpose and chord tracks are there, once
 per project, [arranger.md](arranger.md), [transpose.md](transpose.md), [chord-track.md](chord-track.md)), an
 instrument or effect plugin chosen on the page (M05), MIDI inputs and MIDI 2.0 output groups, the event type
 (pattern events), the project's VCA folder, and track presets.
@@ -96,8 +105,10 @@ instrument or effect plugin chosen on the page (M05), MIDI inputs and MIDI 2.0 o
   keeps the dialog open. Group and Effect Track to Selected Tracks route the selected tracks into the new track;
   Group Track to Selected Tracks with a Count of 2 into the first one only, and not again with Keep Dialog Open.
 - `tests/addtrack_tests.cpp` also adds tracks below a selected track in a folder with the dialog (in order, with
-  Keep Dialog Open below those, and a marker track below the folder), and double-clicks in the track list and the
-  event display with a selected audio track, a selected MIDI track and none.
+  Keep Dialog Open below those, and a marker track below the folder), with Keep Dialog Open below the selection
+  after an effect track into the project's FX folder, and double-clicks in the track list and the
+  event display with a selected audio track, a selected MIDI track (its MIDI input, in one undo step) and none.
+- `tests/channelsettings_tests.cpp` adds an effect track to a send below the track whose send it is.
 - `tests/eventediting_tests.cpp` double-clicks below the tracks of an event display without a track list.
 - `tests/document_tests.cpp` checks `track.add`'s routing and what it refuses, and ruler tracks;
   `tests/dawproject_tests.cpp` saves and loads a ruler track.

@@ -39,13 +39,27 @@ echo "#pragma once" > "$tmp/header.h"
 echo 0 > "$tmp/status"
 : > "$tmp/calls"
 options=--warnings-as-errors=*
+# The wrapper's PATH. Without sha256sum (macOS) it hashes with shasum -a 256: $tmp/bin holds only the tools the wrapper
+# and the stubs need, and a stub shasum that hashes with cksum, so that the tests run where shasum is missing too.
+path=$PATH
+bash=$(command -v bash)
+mkdir "$tmp/bin"
+for tool in cat cksum mkdir touch; do
+	printf '#!/bin/sh\nexec "%s" "$@"\n' "$(command -v "$tool")" > "$tmp/bin/$tool"
+done
+cat > "$tmp/bin/shasum" << EOF
+#!/bin/sh
+[ "\$*" = "-a 256" ] || exit 2
+exec cksum
+EOF
+chmod +x "$tmp/bin/"*
 
 failures=0
 # check <description> <expected exit status> <expected clang-tidy calls so far>: runs the wrapper as CMake does.
 check()
 {
-	bash "$src/tools/clang-tidy-cache.sh" "$tmp/cache" "$tmp/clang-tidy" "$options" "$tmp/source.cpp" -- \
-		"$tmp/clang++" -c "$tmp/source.cpp" -o "$tmp/source.o" > "$tmp/output" 2>&1
+	PATH=$path "$bash" "$src/tools/clang-tidy-cache.sh" "$tmp/cache" "$tmp/clang-tidy" "$options" \
+		"$tmp/source.cpp" -- "$tmp/clang++" -c "$tmp/source.cpp" -o "$tmp/source.o" > "$tmp/output" 2>&1
 	status=$?
 	calls=$(wc -l < "$tmp/calls" | tr -d ' ')
 	if [ "$status" -eq "$2" ] && [ "$calls" -eq "$3" ]; then
@@ -94,6 +108,20 @@ echo 3 > "$tmp/status"
 check "without a key clang-tidy's exit status is passed on" 3 10
 [ "$(entries)" -eq "$stored" ] && echo "ok: nothing is stored without a key" ||
 	{ echo "FAILED: nothing is stored without a key"; failures=$((failures + 1)); }
+
+rm "$tmp/nokey"
+echo 0 > "$tmp/status"
+path=$tmp/bin
+check "without sha256sum, shasum -a 256 makes the key" 0 11
+check "and its result is reused" 0 11
+rm "$tmp/bin/shasum"
+check "without sha256sum and shasum the wrapper fails" 1 11
+if grep -q "neither sha256sum nor shasum" "$tmp/output"; then
+	echo "ok: it says why"
+else
+	echo "FAILED: it says why"
+	failures=$((failures + 1))
+fi
 
 [ "$failures" -eq 0 ] && echo "all clang-tidy cache tests passed" && exit 0
 echo "$failures clang-tidy cache test(s) failed"

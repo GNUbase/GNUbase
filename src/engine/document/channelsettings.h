@@ -17,5 +17,9 @@ namespace gnubase::engine
 	// with them (automationLane.removed, plugin.removed). The caller announces the channel and the new slots.
 	void replaceSlots(Project& project, CommandContext& context, ObjectId id, const std::vector<Slot>& slots);
 
+	// Removes the automation lanes of the MIDI slots of a channel whose effect changes from before to after, in the
+	// same undo step (automationLane.removed): they automate another effect's parameters, or none.
+	void removeMidiEffectLanes(Project& project, CommandContext& context, const Channel& before, const Channel& after);
+
 	void registerChannelSettingsCommands(ProjectModel& model, Engine& engine);
 }

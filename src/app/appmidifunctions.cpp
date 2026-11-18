@@ -4,6 +4,7 @@
 // the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part, Velocity, Delete Notes and Restrict Polyphony, and
 // the rule editor and project input transformer (#178).
 #include "app/appui.h"
+#include "engine/media/backup.h"
 
 #include "engine/midi/quantize.h"
 #include "engine/midi/quantizesettings.h"
@@ -40,7 +41,7 @@ namespace gnubase::app
 			const char* description;
 		};
 
-		constexpr std::array<MidiFunction, 13> g_midiFunctions{{
+		constexpr std::array<MidiFunction, 14> g_midiFunctions{{
 			{"midi.functionsLegato", "midi.legato", nullptr, true,
 				"Extends the selected MIDI notes or parts' notes to the next notes, by Legato Overlap "
 				"(editing.legatoOverlap), or to the next selected notes with editing.legatoBetweenSelected."},
@@ -68,6 +69,9 @@ namespace gnubase::app
 				"Reverses the playback order of the selected MIDI notes or parts' events."},
 			{"midi.functionsMirror", "midi.invert", nullptr, true,
 				"Mirrors the selected MIDI notes or parts' events in time."},
+			// O-Note Conversion (#882, p. 1240), in the MIDI menu itself.
+			{"midi.convertONotes", "midi.oNoteConversion", nullptr, true,
+				"Gives the selected MIDI notes or parts' notes their drum sounds' O-notes as pitches."},
 		}};
 
 		// Ids as a dialog's attribute: "1,2,3".
@@ -97,7 +101,29 @@ namespace gnubase::app
 		std::vector<std::pair<std::string, std::string>> attributes;
 		if (track != 0)
 			attributes.emplace_back("track", std::to_string(track));
-		m_articulationMaps = openDialog(window, "articulation-maps.rml", attributes).GetObserverPtr();
+		const bool reused = m_articulationMaps.get() != nullptr && m_articulationMaps->GetParentNode() != nullptr;
+		Rml::ElementDocument& document = openOnce(window, "articulation-maps.rml", m_articulationMaps, attributes);
+		// Open already: now the setup of this track, whose map its Lua selects (#1265), or of none, which hides Assign
+		// to Track as a fresh one does (#1354). For the same track it keeps the map shown.
+		const std::string attribute = track != 0 ? std::to_string(track) : std::string();
+		if (reused && document.GetAttribute<Rml::String>("track", "") != attribute)
+		{
+			if (track != 0)
+				document.SetAttribute("track", attribute);
+			else
+				document.RemoveAttribute("track");
+			document.DispatchEvent("trackchange", Rml::Dictionary());
+		}
+	}
+
+	void AppUi::showArticulationMapError(const engine::Result& result)
+	{
+		Rml::Element* document = m_articulationMaps.get();
+		Rml::Element* message = document != nullptr && document->GetParentNode() != nullptr
+			? document->GetElementById("articulation-maps-message")
+			: nullptr;
+		if (!result.ok() && message != nullptr)
+			message->SetInnerRML(Rml::StringUtilities::EncodeRml(result.error));
 	}
 
 	void AppUi::addMidiFunctions()
@@ -271,15 +297,7 @@ namespace gnubase::app
 						// The setup shows the imported map as it follows articulationMap.added, and why an import
 						// failed in its message.
 						m_binding.send("articulationMap.import", {{"path", result.files.front().u8string()}},
-							[this](const engine::Result& imported)
-							{
-								Rml::Element* document = m_articulationMaps.get();
-								Rml::Element* message = document != nullptr && document->GetParentNode() != nullptr
-									? document->GetElementById("articulation-maps-message")
-									: nullptr;
-								if (!imported.ok() && message != nullptr)
-									message->SetInnerRML(Rml::StringUtilities::EncodeRml(imported.error));
-							});
+							[this](const engine::Result& imported) { showArticulationMapError(imported); });
 					});
 				return Json::object();
 			});
@@ -291,20 +309,16 @@ namespace gnubase::app
 				dialog.kind = ui::FileDialogKind::Save;
 				dialog.title = "Export Articulation Map";
 				dialog.filters = {{"Articulation maps", "articulationmap"}};
-				dialog.location =
-					std::filesystem::u8path(parameters.value("name", std::string("Map")) + ".articulationmap");
+				dialog.location = std::filesystem::u8path(
+					engine::safeFileName(parameters.value("name", std::string("Map"))) + ".articulationmap");
 				dialog.parent = m_main.id();
-				m_shell.showFileDialog(dialog,
-					[this, map](const ui::FileDialogResult& result)
+				chooseProjectFile(dialog,
+					[this, map](std::filesystem::path file)
 					{
-						if (!result.error.empty())
-							logging::warning("The file dialog failed: {}", result.error);
-						if (result.files.empty())
-							return;
-						std::filesystem::path file = result.files.front();
 						if (file.extension() != ".articulationmap")
 							file += ".articulationmap";
-						m_binding.send("articulationMap.export", {{"map", map}, {"path", file.u8string()}});
+						m_binding.send("articulationMap.export", {{"map", map}, {"path", file.u8string()}},
+							[this](const engine::Result& exported) { showArticulationMapError(exported); });
 					});
 				return Json::object();
 			});
@@ -315,7 +329,7 @@ namespace gnubase::app
 
 		// Merge MIDI in Loop (pp. 1119-1120): onto the first selected MIDI or instrument track, or a new one.
 		m_keys.add({"midi.mergeInLoop",
-			"Opens the MIDI Merge Options dialog, which merges the MIDI events between the locators into a new part.",
+			"Opens the MIDI Merge Options dialog, which merges the MIDI events between the locators into new parts.",
 			[this, openFunction](ui::Window& window, Rml::Element* /*zone*/)
 			{
 				Json parameters = Json::object();
@@ -344,7 +358,10 @@ namespace gnubase::app
 					openFunction(window, "dissolve", {{"parts", parts}});
 			}});
 		m_keys.enableWhen("midi.dissolvePart", hasParts);
-		m_keys.add({"midi.bounceMidi", "Combines the selected MIDI parts of each track into one part.",
+		m_keys.add({"midi.bounceMidi",
+			"Combines the selected MIDI parts of each track into one part with the root key and Global Transpose "
+			"setting they share, or else the project's, and those whose transpose, velocity, root key or Global "
+			"Transpose setting the notes can't hold into one for each.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
 			{
 				// The engine bounces the parts of one track; several tracks are one undo step.

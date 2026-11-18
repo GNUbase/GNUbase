@@ -51,22 +51,43 @@ TEST_CASE("every engine command is reachable through MCP and Lua, with a schema 
 
 namespace
 {
-	// The generated references go to the build folder, where CI picks them up (docs/api-reference.md).
+	// The generated references go to the build folder, where CI picks them up (docs/api-reference.md). They are read
+	// there, in the artifact and on the web, so their links must lead somewhere from anywhere: no relative ones.
 	void writeGenerated(const char* name, const std::string& text)
 	{
+		CAPTURE(name);
+		for (std::size_t link = text.find("]("); link != std::string::npos; link = text.find("](", link + 2))
+		{
+			const std::string target = text.substr(link + 2, text.find(')', link) - link - 2);
+			CAPTURE(target);
+			CHECK((target.rfind("https://", 0) == 0 || target.rfind('#', 0) == 0));
+		}
 		const std::filesystem::path folder = GNUBASE_GENERATED_DOCS_DIR;
 		std::filesystem::create_directories(folder);
-		std::ofstream(folder / name, std::ios::binary) << text;
+		std::ofstream file(folder / name, std::ios::binary);
+		file << text;
+		file.close();
+		CHECK(file.good());
 	}
+
+	// An MCP server with every tool: the engine commands, script_run and the windowed app's UI tools.
+	struct AllTools
+	{
+		gnubase::test::FakeUi ui{{}};
+		Engine engine;
+		gnubase::mcp::Server server{engine};
+
+		AllTools()
+		{
+			gnubase::app::addScriptTool(server, engine);
+			gnubase::app::addUiTools(server, ui.shell);
+		}
+	};
 
 	std::string catalogue()
 	{
-		gnubase::test::FakeUi ui({}); // for the windowed app's UI tools
-		Engine engine;
-		gnubase::mcp::Server server(engine);
-		gnubase::app::addScriptTool(server, engine);
-		gnubase::app::addUiTools(server, ui.shell);
-		return gnubase::mcp::catalogue(server);
+		AllTools all;
+		return gnubase::mcp::catalogue(all.server);
 	}
 }
 
@@ -75,6 +96,7 @@ TEST_CASE("the MCP tool catalogue lists every tool with its arguments, and the r
 	const std::string text = catalogue();
 	CHECK(text.find("### track\n\n#### `track_add`\n\nEngine command `track.add`.") != std::string::npos);
 	CHECK(text.find("#### `script_run`\n\n") != std::string::npos); // tools that aren't engine commands too
+	CHECK(text.find("(Lua API reference: https://gnubase.github.io/GNUbase/lua.html)") != std::string::npos);
 	CHECK(text.find("### ui\n\n#### `ui_click`\n\n") != std::string::npos);
 	CHECK(text.find("#### `project_get`\n\nEngine command `project.get`. Read-only.") != std::string::npos);
 	CHECK(text.find("- `type`: one of \"audio\" | \"instrument\"") != std::string::npos);
@@ -86,8 +108,19 @@ TEST_CASE("the MCP tool catalogue lists every tool with its arguments, and the r
 
 TEST_CASE("the MCP tool catalogue is generated from the MCP server", "[unit]")
 {
-	const std::string text = catalogue();
-	CHECK(text.find("### track\n\n#### `track_add`") != std::string::npos);
+	AllTools all;
+	const std::string text = gnubase::mcp::catalogue(all.server);
+	const Json tools = all.server.handle(Json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}})
+						   .value_or(Json())
+						   .at("result")
+						   .at("tools");
+	CHECK(tools.size() > 100);
+	for (const Json& tool : tools)
+	{
+		const std::string name = tool.at("name").get<std::string>();
+		CAPTURE(name);
+		CHECK(text.find("#### `" + name + "`\n") != std::string::npos);
+	}
 	writeGenerated("mcp-tools.md",
 		"# MCP tool catalogue\n\nGenerated from what the MCP server lists, with `script_run`: every tool by area, its "
 		"engine command, whether it only reads, its arguments and its result.\n\n" +

@@ -27,7 +27,9 @@ namespace gnubase::ui
 	// Fills the key editor's controller display: a lane per entry of the editor view's lanes, each showing the notes'
 	// velocities, off velocities, play probabilities or velocity variances as bars, or controller events of a type
 	// as steps, under the note display and on its time axis; a menu per lane to change its type, select its events,
-	// remove it and apply or reset play probability and velocity variance; and buttons for the Create Controller Lane
+	// remove it and apply or reset play probability and velocity variance; a context menu that a right click below a
+	// lane's name opens, to add lanes and remove that one (reference manual p. 1261); and buttons for the Create
+	// Controller Lane
 	// and Controller Lane Setup menus, with the lane presets of the user setting ui.controllerLanePresets. The key
 	// editor's tool edits the lanes: Object Selection selects controller events and drags values, Draw paints values
 	// and events, Erase removes events, Line draws in its mode with controller.line. Every edit goes to the engine.
@@ -43,8 +45,10 @@ namespace gnubase::ui
 		ControllerLanes& operator=(ControllerLanes&&) = delete;
 
 		// The project, the editor view and the time axis of the note display, project ticks. Keeps the view and the
-		// parts it shows, not the whole project.
-		void show(const engine::Json& project, const engine::Json& view, int64_t from, int64_t to);
+		// parts it shows, not the whole project. With shown, by pitch, only the notes of the pitches it has (the drum
+		// sounds the drum editor's list shows).
+		void show(const engine::Json& project, const engine::Json& view, int64_t from, int64_t to,
+			const std::vector<bool>& shown = {});
 		// Only another time axis: moves the bars and steps shown.
 		void setRange(int64_t from, int64_t to);
 		// The key editor's tool by name (keyToolName) and the line tool's mode: line, parabola, sine, triangle, square
@@ -59,6 +63,7 @@ namespace gnubase::ui
 			int64_t end = 0;
 			bool editable = false;
 			engine::Json json; // the part as project.get lists it
+			uint64_t map = 0;  // its track's articulation map, 0 for none
 		};
 
 		// A bar or step of a lane: a note's value or a controller event's, 0 to 1 from the lane's bottom to its top.
@@ -72,6 +77,7 @@ namespace gnubase::ui
 			int channel = 0; // controller events' MIDI channel
 			bool editable = false;
 			bool selected = false;
+			std::string color; // a sound slot's color, empty for the theme's
 		};
 
 		struct Lane
@@ -103,6 +109,32 @@ namespace gnubase::ui
 		void dialogEvent(Rml::Event& event);
 
 		void render();
+		// The Articulations lane's area (#1112, pp. 1287-1289): the sound slots lane, then a row per articulation of
+		// laneMap with its directions and attributes. Its items, in the order of the area's rows, go into items.
+		std::string articulationArea(std::vector<Item>& items) const;
+		// The map whose articulations the Articulations lane shows: the active part's track's, else the first one's.
+		const engine::Json* laneMap() const;
+		// A press on the Articulations lane: the object selection tool selects the direction or the attribute pressed
+		// with its note, the draw tool adds the row's articulation where it is pressed or removes the one pressed, the
+		// erase tool removes it, the mute tool mutes or unmutes it (#1684). The lane takes the keyboard focus.
+		void pressArticulation(Rml::Event& event);
+		void selectArticulation(const Rml::Element* item, bool add);
+		void muteArticulation(const Rml::Element* item);
+		// Whether a note's attribute shows selected on the lane: its note is selected, and the attribute is one pressed
+		// on the lane, or none of the note's was.
+		bool attributeSelected(uint64_t part, uint64_t note, const std::string& name) const;
+		// Delete or Backspace while the Articulations lane has the keyboard focus: removes its selected directions and
+		// attributes, not the notes (p. 1289).
+		void deleteArticulations();
+		// The direction whose event pop-up menu opens (p. 1290), none for an element that isn't an editable direction.
+		void directionMenu(const Rml::Element* direction);
+		// The Articulations lane's controls: collapseGroups, expandGroups and soundSlots (pp. 1287-1288).
+		void articulationControl(const std::string& action);
+		// The state class .focused of the lane that has the keyboard focus (p. 100), which the themes frame.
+		void showKeyLane();
+		// The groups of the lane's map collapsed into a row each (p. 1287), by index.
+		std::set<int> collapsedGroups() const;
+		void setCollapsedGroups(const std::set<int>& groups);
 		void placeItems(); // the bars and steps of m_items on the time axis
 		std::vector<Item> items(const Lane& lane) const;
 		// The lane under the event's target and the point in its area: project ticks and a value from 0 to 1.
@@ -112,7 +144,8 @@ namespace gnubase::ui
 		static int64_t cell(double ticks, int64_t step); // the start of the step the ticks are in
 		int64_t grid() const;
 		int64_t lengthQuantize() const;
-		const Part* partAt(int64_t ticks) const;
+		// The editable part at the ticks, the active one first; with a map, only the parts whose track has it.
+		const Part* partAt(int64_t ticks, const engine::Json* map = nullptr) const;
 		const engine::Json* partJson(uint64_t id) const;
 		bool noteSelected(uint64_t part, uint64_t note) const;
 		// The MIDI channel that a lane's new events in a part get: that of its first event from one position to another
@@ -139,6 +172,7 @@ namespace gnubase::ui
 		engine::Json m_view = engine::Json::object();
 		int64_t m_grid = 0; // the project's quantize grid, ticks
 		std::vector<Part> m_parts;
+		std::map<uint64_t, engine::Json> m_maps;                 // the project's articulation maps by id
 		std::map<uint64_t, size_t> m_partIndex;                  // m_parts by id
 		std::set<std::pair<uint64_t, uint64_t>> m_noteSelection; // the view's selection: parts and notes
 		std::set<std::pair<uint64_t, uint64_t>> m_controllerSelection;
@@ -150,8 +184,14 @@ namespace gnubase::ui
 		engine::Json m_presets = engine::Json::array();
 		bool m_presetsKnown = false;
 		std::vector<Subscription> m_subscriptions;
-		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // lane, create and setup menus
+		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // lane, create, setup and lane context menus
 		std::optional<size_t> m_menuLane;                    // the lane whose menu opened
+		// The direction whose event pop-up menu opened on the Articulations lane: its part and id.
+		std::optional<std::pair<uint64_t, uint64_t>> m_menuDirection;
+		std::optional<size_t> m_keyLane; // the Articulations lane that has the keyboard focus
+		// The view's attributes selected on the Articulations lane, by part and note (its selection's articulations,
+		// #1688): what Delete removes of a selected note. A selected note without them has all selected.
+		std::map<std::pair<uint64_t, uint64_t>, std::set<std::string>> m_attributeSelection;
 		Rml::ObserverPtr<Rml::Element> m_dialog;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 		// The document that a gesture hears the mouseup in, wherever in it the mouse goes up.

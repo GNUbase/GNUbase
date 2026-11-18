@@ -4,6 +4,7 @@
 // nothing if it fails (ProjectModel::addEdit). Playback (rendersnapshot.cpp) plays a pattern event's patternNotes.
 #include "engine/midi/patterns.h"
 
+#include "engine/document/drumtrack.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
@@ -278,7 +279,8 @@ namespace gnubase::engine::midi
 		}
 
 		// A new pattern of the track (New Pattern, p. 899). Drum mode starts with the lanes of a kick, a snare and
-		// closed and open hi-hats, named after the track's drum map's sounds, or General MIDI's.
+		// closed and open hi-hats, named after the track's drum map's sounds, or General MIDI's; on a drum track with
+		// the lanes of the pads that play.
 		Pattern newPattern(const Project& project, ObjectId track, PatternMode mode)
 		{
 			Pattern pattern;
@@ -290,6 +292,20 @@ namespace gnubase::engine::midi
 			pattern.name = "Pattern " + std::to_string(count);
 			if (mode != PatternMode::Drum)
 				return pattern;
+			// A drum track's: a lane per pad that plays, named after it (#182).
+			if (const Channel* drums = drumChannelOf(project, track))
+			{
+				const std::vector<int> pads = playingDrumPads(*drums);
+				for (const int pad : pads)
+				{
+					PatternLane lane;
+					lane.pitch = pad;
+					lane.name = drumPadName(project, *drums, pad);
+					pattern.lanes.push_back(std::move(lane));
+				}
+				if (!pads.empty())
+					return pattern;
+			}
 			const DrumMap* map = drumMapOf(project, track);
 			const DrumMap gm = gmDrumMap();
 			for (const int pitch : {36, 38, 42, 46})
@@ -351,6 +367,7 @@ namespace gnubase::engine::midi
 			if (part != nullptr)
 			{
 				part->pattern = pattern.id;
+				part->patternOffset = 0; // the new pattern plays from the part's start
 				context.emit("midiPart.changed", {{"part", toJson(*part)}});
 			}
 			return result;
@@ -399,14 +416,16 @@ namespace gnubase::engine::midi
 			require(found != project.midiParts.end(), "no MIDI part " + parameters.at("part").dump());
 			MidiPart& part = found->second;
 			require(part.pattern != 0, "the part isn't a pattern event");
-			const Pattern& pattern = findPattern(project, part.pattern);
+			findPattern(project, part.pattern);
+			const std::map<ObjectId, Note> played = playedNotes(project, part);
 			part.notes.clear();
-			for (auto [index, note] : patternNotes(pattern, partTicks(project, part)))
+			for (auto [index, note] : played)
 			{
 				note.id = project.newId();
 				part.notes[note.id] = note;
 			}
 			part.pattern = 0;
+			part.patternOffset = 0;
 			Json result = {{"part", toJson(part)}};
 			context.emit("midiPart.changed", result);
 			return result;
@@ -479,11 +498,12 @@ namespace gnubase::engine::midi
 		}
 	}
 
-	std::map<ObjectId, Note> patternNotes(const Pattern& pattern, time::Ticks length)
+	std::map<ObjectId, Note> patternNotes(const Pattern& pattern, time::Ticks from, time::Ticks length)
 	{
 		std::map<ObjectId, Note> notes;
 		const bool solo =
 			std::any_of(pattern.lanes.begin(), pattern.lanes.end(), [](const PatternLane& lane) { return lane.solo; });
+		const time::Ticks to = from + length;
 		for (const PatternLane& lane : pattern.lanes)
 		{
 			if (lane.mute || (solo && !lane.solo))
@@ -494,10 +514,20 @@ namespace gnubase::engine::midi
 			const double swing = std::clamp(pattern.swing + lane.swing, -1.0, 1.0);
 			const PlayDirection direction =
 				lane.direction == PlayDirection::Forward ? pattern.direction : lane.direction;
-			for (int64_t repeat = 0; repeat * cycle < length; ++repeat)
+			// Swing and offsets move a step by less than two steps, and the sub-steps of a tie that wraps past the
+			// lane's end play up to its length into the next cycle: the repeats whose notes can fall between from and
+			// to. Before the pattern's start (from below 0: a start sized earlier) its repeats go on.
+			int longest = 1;
+			for (const PatternStep& each : lane.steps)
+				longest = std::max(longest, each.length);
+			const time::Ticks low = from - ((longest + 1) * step);
+			int64_t repeat = low >= 0 ? low / cycle : 0;
+			if (from < 0)
+				repeat = ((low + 1) / cycle) - 1; // rounded down
+			for (; repeat * cycle < to + (2 * step); ++repeat)
 			{
 				const bool backward = direction == PlayDirection::Backward ||
-					(direction == PlayDirection::Alternating && repeat % 2 == 1);
+					(direction == PlayDirection::Alternating && ((repeat % 2) + 2) % 2 == 1);
 				for (const PatternStep& each : lane.steps)
 				{
 					// Backward, a step with the steps tied to it plays where the last of them is forward.
@@ -510,11 +540,15 @@ namespace gnubase::engine::midi
 					const double sub = static_cast<double>(each.length * step) / each.repeats;
 					for (int r = 0; r < each.repeats; ++r)
 					{
+						time::Ticks position = std::llround(start + (r * sub));
+						// A pattern that starts with the event plays a step moved before it at its start.
+						if (from >= 0)
+							position = std::max<time::Ticks>(position, 0);
+						if (position < from || position >= to)
+							continue;
 						Note note;
 						note.id = notes.size() + 1;
-						note.position = std::llround(start + (r * sub));
-						if (note.position >= length)
-							continue;
+						note.position = position - from;
 						note.length = std::max<time::Ticks>(std::llround(sub * each.gate), 1);
 						note.pitch = static_cast<uint8_t>(lane.pitch);
 						note.velocity = velocityFromMidi1(static_cast<uint8_t>(each.velocity));
@@ -526,6 +560,80 @@ namespace gnubase::engine::midi
 			}
 		}
 		return notes;
+	}
+
+	std::map<ObjectId, Note> playedNotes(const Project& project, const MidiPart& part)
+	{
+		const auto pattern = project.patterns.find(part.pattern);
+		if (part.pattern == 0 || pattern == project.patterns.end())
+			return part.notes;
+		return patternNotes(pattern->second, part.patternOffset, partTicks(project, part));
+	}
+
+	void adoptPatterns(Project& project, CommandContext& context)
+	{
+		std::map<std::pair<ObjectId, ObjectId>, ObjectId> copies; // by the track and the pattern copied
+		for (auto& [id, part] : project.midiParts)
+		{
+			const auto found = project.patterns.find(part.pattern);
+			if (part.pattern == 0 || found == project.patterns.end() || found->second.track == part.track)
+				continue;
+			const ObjectId source = found->second.track;
+			if (copies.count({part.track, part.pattern}) == 0)
+			{
+				const bool own = std::any_of(project.midiParts.begin(), project.midiParts.end(),
+					[&project, track = part.track](const auto& each)
+					{
+						const auto played = project.patterns.find(each.second.pattern);
+						return each.second.track == track && played != project.patterns.end() &&
+							played->second.track == track;
+					});
+				std::vector<Pattern> copied;
+				for (const Pattern* each : patternsOf(project, source))
+					if (each->id == part.pattern || (!own && copies.count({part.track, each->id}) == 0))
+						copied.push_back(*each);
+				for (Pattern& copy : copied)
+				{
+					const ObjectId original = copy.id;
+					const ObjectId origin = copy.copiedFrom;
+					copy.track = part.track;
+					copy.copiedFrom = original;
+					// A copy of it that the track has already, from a copy before and unchanged since, plays it again,
+					// as does the pattern it is a copy of, on its way back (#1347); an equal pattern that isn't its
+					// copy doesn't.
+					const auto same = std::find_if(project.patterns.begin(), project.patterns.end(),
+						[&copy, origin](const auto& each)
+						{
+							Pattern other = each.second;
+							other.id = copy.id;
+							if (origin != 0 && each.first == origin)
+								other.copiedFrom = copy.copiedFrom;
+							return other == copy;
+						});
+					if (same != project.patterns.end())
+					{
+						copies[{part.track, original}] = same->first;
+						continue;
+					}
+					copy.id = project.newId();
+					project.patterns[copy.id] = copy;
+					copies[{part.track, original}] = copy.id;
+					announce(copy, "pattern.added", context);
+				}
+			}
+			part.pattern = copies.at({part.track, part.pattern});
+			context.emit("midiPart.changed", {{"part", toJson(part)}});
+		}
+		for (auto it = project.patterns.begin(); it != project.patterns.end();)
+		{
+			if (project.trackById.count(it->second.track) != 0)
+			{
+				++it;
+				continue;
+			}
+			context.emit("pattern.removed", {{"pattern", it->first}});
+			it = project.patterns.erase(it);
+		}
 	}
 
 	Pattern patternFromJson(const Json& json, Pattern pattern)
@@ -613,7 +721,12 @@ namespace gnubase::engine::midi
 			"1-10 (sub-steps), offset -0.5 to 0.5 steps, probability 0-1, velocityVariance 0-1, gate 0.01-1 (of its "
 			"length)}: one starting at each index; in mono mode one step at a time. Pattern events are MIDI parts "
 			"with a pattern (midiPart.add and midiPart.set pattern), which play it from their start over and over "
-			"instead of their notes, each lane on its own.";
+			"instead of their notes, each lane on its own; their patternOffset (project.get) is how many ticks of the "
+			"pattern went before their start, after a split or a start sized, so that they continue it. A pattern "
+			"event on another track than its pattern's, copied, moved or on a duplicated track, plays a copy on its "
+			"own track: a track without pattern events gets copies of all the patterns of the pattern's track (p. "
+			"936), and a copy the track has already, made from that pattern in an earlier copy or move and unchanged "
+			"since, plays it again (a track's own equal pattern doesn't). Removing a track removes its patterns.";
 		const auto object = [](Json properties, std::vector<std::string> required)
 		{
 			return Json{{"type", "object"}, {"properties", std::move(properties)}, {"required", std::move(required)},
@@ -628,9 +741,11 @@ namespace gnubase::engine::midi
 			{"pattern.add", 1,
 				"Adds a pattern to a MIDI or instrument track (New Pattern, p. 899): Pattern 1, 2 and so on, 16 steps "
 				"of 1/16; in drum mode (the default) with lanes for a kick, a snare and closed and open hi-hats, "
-				"named after the track's drum map's sounds, in melodic mode without lanes. copy duplicates a pattern "
+				"named after the track's drum map's sounds (on a drum track a lane per pad that plays, named after the "
+				"pad), in melodic mode without lanes. copy duplicates a pattern "
 				"instead (Duplicate Pattern), on its track unless track is given. With part, the pattern is that "
-				"part's track's and the part plays it: it becomes a pattern event. Then changed by the settings "
+				"part's track's and the part plays it from its start: it becomes a pattern event. Then changed by the "
+				"settings "
 				"given. " +
 					patternText + " Emits pattern.added (and midiPart.changed with part) and returns the pattern.",
 				object(addProperties, {}), patternResult, false},

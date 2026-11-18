@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/automation.h"
+#include "engine/audio/stripsections.h"
+#include "engine/document/stripparameters.h"
 #include "engine/engine.h"
+#include "engine/graph/events.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -385,4 +388,54 @@ TEST_CASE("the strip's limiter adds its look-ahead to the channel's latency whil
 	CHECK(latency(StripPart::Whole, true) == 48); // 1 ms at 48 kHz
 	CHECK(latency(StripPart::Fader, true) == 48);
 	CHECK(latency(StripPart::Source, true) == 0); // the limiter comes after the plugin slots
+}
+
+TEST_CASE("the strip's limiter delays only while its look-ahead counts in the channel's latency", "[unit]")
+{
+	// However its value reads, the limiter runs only while the graph reports its look-ahead: a channel.set that turns
+	// it on reaches the old strip, which reports none, before the program with the new strips arrives (#878).
+	constexpr uint32_t frames = 64;
+	constexpr size_t lookAhead = 48; // 1 ms at 48 kHz
+	constexpr float ceiling = 0.1F;  // the threshold of -20 dB
+	const std::vector<float> input(frames, 0.5F);
+	const auto render = [&input](bool on, bool counts)
+	{
+		StripSections sections;
+		sections.prepare(48000.0, frames);
+		graph::EventBuffer events(4);
+		const auto value = [&events](uint32_t parameter, double newValue)
+		{
+			graph::ProcessEvent event;
+			event.type = graph::ProcessEvent::Type::Parameter;
+			event.parameter = g_stripEvents + parameter;
+			event.parameterValue = newValue;
+			events.add(event);
+		};
+		value(StripParameter::LimiterThreshold, -20.0);
+		value(StripParameter::LimiterOn, on ? 1.0 : 0.0);
+		std::vector<float> audio = input;
+		float* const channels[1] = {audio.data()};
+		sections.processPost(events, counts, channels, 1, frames);
+		CHECK(sections.latency(counts) == (counts ? lookAhead : 0));
+		return audio;
+	};
+
+	// Without the look-ahead counted it doesn't run at all, on or off: nothing is delayed and nothing is limited.
+	CHECK(render(true, false) == input);
+	CHECK(render(false, false) == input);
+
+	// With it, it delays by the look-ahead whether it limits or not, and while it limits no sample leaves above the
+	// threshold.
+	const std::vector<float> bypassed = render(false, true);
+	REQUIRE(bypassed.size() == frames);
+	for (size_t i = 0; i < frames; ++i)
+		CHECK(bypassed[i] == (i < lookAhead ? 0.0F : input[i - lookAhead]));
+	const std::vector<float> limited = render(true, true);
+	REQUIRE(limited.size() == frames);
+	for (size_t i = 0; i < frames; ++i)
+		if (i < lookAhead)
+			CHECK(limited[i] == 0.0F);
+		else
+			CHECK(limited[i] <= ceiling); // no sample leaves above the threshold
+	CHECK_THAT(limited.back(), WithinAbs(ceiling, 1e-6));
 }

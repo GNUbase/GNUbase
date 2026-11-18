@@ -15,8 +15,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -521,6 +523,262 @@ TEST_CASE("a cue leaves a voice alone that the audio thread starts reading meanw
 	CHECK(playback.dropouts() == 0);
 }
 
+TEST_CASE("an exact cue while playback runs on elsewhere leaves the voice it reads alone", "[integration]")
+{
+	// A locate while playing, or an audition that replaces another, cues the streams exactly at the new position
+	// while the audio thread still plays on from the old one until it goes there: both need a voice.
+	const gnubase::test::TempDir dir;
+	const std::string path = writeRamp(dir, "mono", 1, 48000);
+	constexpr ObjectId channel = 1;
+	constexpr ObjectId media = 2;
+	PlaylistEntry entry;
+	entry.end = 48000;
+	entry.media = media;
+	Playlist sections;
+	sections.layers.push_back({entry});
+	const auto playlist = std::make_shared<const Playlist>(std::move(sections));
+	Playback playback(4);
+	playback.setTracks({{channel, playlist}}, {{media, path}}, 48000.0);
+	constexpr uint32_t blockSize = 256;
+	Blocks blocks(playlist, channel, playback, blockSize);
+	constexpr auto timeout = std::chrono::seconds(5);
+
+	Playback::Cue cue;
+	cue.window = blockSize;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	for (int i = 0; i < 3; ++i)
+		blocks.play();
+	cue.position = 24000;
+	cue.playsOn = blocks.position;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	for (int i = 0; i < 2; ++i) // until the audio thread takes the locate
+		blocks.play();
+	CHECK(blocks.wrong == 0);
+	blocks.position = 24000;
+	blocks.play();
+
+	CHECK(blocks.wrong == 0);
+	CHECK(playback.dropouts() == 0);
+}
+
+TEST_CASE("an exact cue while playback runs on elsewhere leaves the voices waiting ahead of it alone", "[integration]")
+{
+	// Playback reaches the start of the next entry before it goes where the exact cue is: the voice waiting there for
+	// it must still be there. Two files with the same ramp, so that every frame plays ramp(position).
+	const gnubase::test::TempDir dir;
+	const std::string first = writeRamp(dir, "first", 1, 48000);
+	const std::string second = writeRamp(dir, "second", 1, 48000);
+	constexpr ObjectId channel = 1;
+	const auto section = [](ObjectId media, gnubase::time::Samples start, gnubase::time::Samples end)
+	{
+		PlaylistEntry entry;
+		entry.start = start;
+		entry.end = end;
+		entry.media = media;
+		entry.frame = start;
+		return entry;
+	};
+	Playlist sections;
+	sections.layers.push_back({section(2, 0, 1000), section(3, 1000, 48000)});
+	const auto playlist = std::make_shared<const Playlist>(std::move(sections));
+	Playback playback(4);
+	playback.setTracks({{channel, playlist}}, {{2, first}, {3, second}}, 48000.0);
+	constexpr uint32_t blockSize = 256;
+	Blocks blocks(playlist, channel, playback, blockSize);
+	constexpr auto timeout = std::chrono::seconds(5);
+
+	Playback::Cue cue;
+	cue.window = blockSize;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	blocks.play();
+	// The cue thread: a voice of the second file waits at 1000.
+	cue.position = blocks.position;
+	cue.playing = true;
+	cue.window = 4800;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	// A locate into the second file while playing: cued exactly there, playback plays on past 1000 meanwhile.
+	cue.position = 24000;
+	cue.playing = false;
+	cue.window = blockSize;
+	cue.playsOn = blocks.position;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	for (int i = 0; i < 5; ++i)
+		blocks.play();
+	CHECK(blocks.position > 1000);
+	CHECK(blocks.wrong == 0);
+	blocks.position = 24000;
+	blocks.play();
+
+	CHECK(blocks.wrong == 0);
+	CHECK(playback.dropouts() == 0);
+}
+
+TEST_CASE("an exact cue with nothing playing on reuses the voice the audio thread read", "[integration]")
+{
+	// Offline rendering cues exactly before every block, also where playback jumps: it needs no more voices than
+	// the block plays, here one, which the jump takes along.
+	const gnubase::test::TempDir dir;
+	const std::string path = writeRamp(dir, "mono", 1, 48000);
+	constexpr ObjectId channel = 1;
+	constexpr ObjectId media = 2;
+	PlaylistEntry entry;
+	entry.end = 48000;
+	entry.media = media;
+	Playlist sections;
+	sections.layers.push_back({entry});
+	const auto playlist = std::make_shared<const Playlist>(std::move(sections));
+	Playback playback(4);
+	playback.setTracks({{channel, playlist}}, {{media, path}}, 48000.0);
+	constexpr uint32_t blockSize = 256;
+	Blocks blocks(playlist, channel, playback, blockSize);
+	constexpr auto timeout = std::chrono::seconds(5);
+
+	Playback::Cue cue;
+	cue.window = blockSize;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	blocks.play();
+	cue.position = 24000;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	blocks.position = 24000;
+	blocks.play();
+
+	CHECK(blocks.wrong == 0);
+	CHECK(playback.voices() == 1);
+}
+
+namespace
+{
+	// The whole ramp file of media 2.
+	std::shared_ptr<const Playlist> wholeRamp()
+	{
+		PlaylistEntry entry;
+		entry.end = 48000;
+		entry.media = 2;
+		Playlist sections;
+		sections.layers.push_back({entry});
+		return std::make_shared<const Playlist>(std::move(sections));
+	}
+
+	// One entry with the whole ramp file on channel 1, played through four voices in blocks of 256 frames.
+	struct OneEntry
+	{
+		OneEntry() { playback.setTracks({{1, playlist}}, {{2, writeRamp(dir, "mono", 1, 48000)}}, 48000.0); }
+
+		gnubase::test::TempDir dir;
+		std::shared_ptr<const Playlist> playlist = wholeRamp();
+		RacingPlayback playback{4};
+		Blocks blocks{playlist, 1, playback, 256};
+	};
+}
+
+TEST_CASE("an exact cue at the frame that playback plays on from gets a voice of its own", "[integration]")
+{
+	// An audition that starts at exactly the frame the one before reads next, or a locate there: the voice there plays
+	// on with the old position until playback goes to the new one, which needs a voice of its own.
+	constexpr auto timeout = std::chrono::seconds(5);
+	OneEntry one;
+	Playback::Cue cue;
+	cue.window = 256;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	for (int i = 0; i < 3; ++i)
+		one.blocks.play();
+	const int64_t next = one.blocks.position;
+	cue.position = next;
+	cue.playsOn = next;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	for (int i = 0; i < 2; ++i) // until the audio thread goes to the new position
+		one.blocks.play();
+	CHECK(one.blocks.wrong == 0);
+	one.blocks.position = next;
+	one.blocks.play();
+
+	CHECK(one.blocks.wrong == 0);
+	CHECK(one.playback.dropouts() == 0);
+}
+
+TEST_CASE(
+	"an exact cue while playback runs on elsewhere leaves the voice alone that waits where it goes", "[integration]")
+{
+	// A locate while the one before still waits for the audio thread: playback plays on until it goes to the first
+	// locate's position, whose voice waits there, so the second locate needs a voice of its own.
+	constexpr auto timeout = std::chrono::seconds(5);
+	OneEntry one;
+	Playback::Cue cue;
+	cue.window = 256;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	one.blocks.play();
+	cue.position = 24000;
+	cue.playsOn = one.blocks.position;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	cue.position = 36000;
+	cue.playsOn = 24000;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	one.blocks.position = 24000;
+	one.blocks.play();
+	CHECK(one.blocks.wrong == 0);
+	one.blocks.position = 36000;
+	one.blocks.play();
+
+	CHECK(one.blocks.wrong == 0);
+	CHECK(one.playback.dropouts() == 0);
+}
+
+TEST_CASE(
+	"a cue at a start leaves the voice alone that the audio thread starts reading there meanwhile", "[integration]")
+{
+	// The cue thread while a count-in ends or a start goes out: it reads where playback starts before the audio
+	// thread plays its first block and the voices after that block. The voice the audio thread started reading must
+	// stay where it reads, not go back to the start, which would leave the second block silent.
+	constexpr auto timeout = std::chrono::seconds(5);
+	OneEntry one;
+	Playback::Cue cue;
+	cue.window = 256;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	cue.playing = true;
+	cue.starting = true;
+	cue.window = 4800;
+	one.playback.whileCueing = [&one] { one.blocks.play(); };
+	one.playback.cue(cue);
+	CHECK(!one.playback.whileCueing);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	one.blocks.play();
+
+	CHECK(one.blocks.position == 512);
+	CHECK(one.blocks.wrong == 0);
+	CHECK(one.playback.dropouts() == 0);
+}
+
+TEST_CASE("a cue at a start gives an entry there without a voice one at the start itself", "[integration]")
+{
+	// As for a playing transport, but playback hasn't got past the start yet: a voice 0.1 seconds ahead would leave
+	// that much silent.
+	constexpr auto timeout = std::chrono::seconds(5);
+	OneEntry one;
+	Playback::Cue cue;
+	cue.playing = true;
+	cue.starting = true;
+	cue.window = 4800;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	one.blocks.play();
+
+	CHECK(one.blocks.wrong == 0);
+	CHECK(one.playback.dropouts() == 0);
+}
+
 TEST_CASE("auditioning plays only the pressed audio track, past its channel and without the transport", "[integration]")
 {
 	const int blockSize = GENERATE(64, 100);
@@ -538,9 +796,9 @@ TEST_CASE("auditioning plays only the pressed audio track, past its channel and 
 	const Json transport = run(song.client, "transport.get");
 
 	CHECK(run(song.client, "audition.start", {{"track", track}, {"position", 50}}) ==
-		Json{{"track", track}, {"media", 0}, {"mode", "play"}});
+		Json{{"track", track}, {"media", 0}, {"clip", 0}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 1000}});
-	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
+	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"clip", 0}, {"mode", "off"}});
 	run(song.client, "audio.render", {{"frames", 200}});
 
 	for (int channel = 0; channel < 2; ++channel)
@@ -574,9 +832,9 @@ TEST_CASE("auditioning up to an end plays the track to there and then nothing", 
 		ContainsSubstring("end must be after position"));
 	// The sample editor's Play back Slice: from 100 to 1000, which is in the middle of a block of 64.
 	CHECK(run(song.client, "audition.start", {{"track", track.id}, {"position", 100}, {"end", 1000}}) ==
-		Json{{"track", track.id}, {"media", 0}, {"mode", "play"}});
+		Json{{"track", track.id}, {"media", 0}, {"clip", 0}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 1200}});
-	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
+	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"clip", 0}, {"mode", "off"}});
 	for (int channel = 0; channel < 2; ++channel)
 	{
 		const std::vector<float> output = song.capture(channel, 1200);
@@ -611,12 +869,12 @@ TEST_CASE("auditioning a media file plays its frames, also outside the events th
 
 	// From frame 500, before the event, to 3900 and on past the file's end, where it plays nothing.
 	CHECK(run(song.client, "audition.start", {{"media", media}, {"position", 500}, {"end", 900}}) ==
-		Json{{"track", 0}, {"media", media}, {"mode", "play"}});
+		Json{{"track", 0}, {"media", media}, {"clip", 0}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 500}});
 	CHECK(run(song.client, "audition.start", {{"media", media}, {"position", 3900}}) ==
-		Json{{"track", 0}, {"media", media}, {"mode", "play"}});
+		Json{{"track", 0}, {"media", media}, {"clip", 0}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 300}});
-	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
+	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"clip", 0}, {"mode", "off"}});
 	for (int channel = 0; channel < 2; ++channel)
 	{
 		const std::vector<float> output = song.capture(channel, 800);
@@ -667,10 +925,14 @@ TEST_CASE("scrubbing a media file plays its frames and leaves the cursor alone",
 	song.addTrack(2);
 	const ObjectId media = idOf(run(song.client, "media.add", {{"path", writeRamp(dir, "mono", 1, 4000)}}), "media");
 	const Json transport = run(song.client, "transport.get");
+	for (const double seconds : {0.0, -0.01})
+		CHECK_THAT(
+			song.client.call("audition.scrub", {{"media", media}, {"position", 1000}, {"seconds", seconds}}).error,
+			ContainsSubstring("parameters.seconds must be more than 0"));
 
 	// No event plays the file. 480 frames back in 0.01 seconds play backwards at normal speed.
 	CHECK(run(song.client, "audition.scrub", {{"media", media}, {"position", 1000}}) ==
-		Json{{"track", 0}, {"media", media}, {"mode", "scrub"}});
+		Json{{"track", 0}, {"media", media}, {"clip", 0}, {"mode", "scrub"}});
 	run(song.client, "audition.scrub", {{"media", media}, {"position", 520}, {"seconds", 0.01}});
 	run(song.client, "audio.render", {{"frames", 600}});
 	run(song.client, "audition.stop");
@@ -732,13 +994,13 @@ TEST_CASE("auditioning a clip plays its media file with the clip's fades", "[int
 		return frame >= 3500 ? static_cast<float>(4000 - frame) / 500.0f : 1.0f;
 	};
 
-	// Played from its start to its end; the result names the clip's media file.
+	// Played from its start to its end; the result names the clip and its media file.
 	CHECK(run(song.client, "audition.start", {{"clip", clip}, {"position", 0}}) ==
-		Json{{"track", 0}, {"media", media}, {"mode", "play"}});
+		Json{{"track", 0}, {"media", media}, {"clip", clip}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 4000}});
 	// Scrubbed 480 frames back from frame 1000, at normal speed, in the fade in.
 	CHECK(run(song.client, "audition.scrub", {{"clip", clip}, {"position", 1000}}) ==
-		Json{{"track", 0}, {"media", media}, {"mode", "scrub"}});
+		Json{{"track", 0}, {"media", media}, {"clip", clip}, {"mode", "scrub"}});
 	run(song.client, "audition.scrub", {{"clip", clip}, {"position", 520}, {"seconds", 0.01}});
 	run(song.client, "audio.render", {{"frames", 600}});
 	run(song.client, "audition.stop");
@@ -800,7 +1062,7 @@ TEST_CASE("auditioning needs a device and an audio track", "[integration]")
 		ContainsSubstring("position must be 0 to"));
 	CHECK_THAT(client.call("audition.scrub", {{"track", midi}, {"position", g_maxPosition + 1}}).error,
 		ContainsSubstring("position must be 0 to"));
-	CHECK(run(client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
+	CHECK(run(client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"clip", 0}, {"mode", "off"}});
 }
 
 TEST_CASE("scrubbing plays an audio track forwards and backwards at the speed positions come, and moves the cursor",
@@ -817,7 +1079,7 @@ TEST_CASE("scrubbing plays an audio track forwards and backwards at the speed po
 	// The first scrub only sets where it starts and moves the cursor there; 480 frames back in 0.01 seconds (480
 	// frames) play backwards at normal speed.
 	CHECK(run(song.client, "audition.scrub", {{"track", track.id}, {"position", 1000}}) ==
-		Json{{"track", track.id}, {"media", 0}, {"mode", "scrub"}});
+		Json{{"track", track.id}, {"media", 0}, {"clip", 0}, {"mode", "scrub"}});
 	CHECK(run(song.client, "transport.get").at("position") == 1000);
 	run(song.client, "audition.scrub", {{"track", track.id}, {"position", 520}, {"seconds", 0.01}});
 	CHECK(run(song.client, "transport.get").at("position") == 520);
@@ -926,4 +1188,264 @@ TEST_CASE("an audition that stops closes the files it played", "[integration]")
 	CHECK(audition.voices() > 0);
 	audition.stop();
 	CHECK(audition.voices() == 0);
+}
+
+TEST_CASE(
+	"an audition that stops frees what it played, also from the middle of an audio block", "[integration][realtime]")
+{
+	// The audio thread plays block after block, so that most stops come while it is in the middle of one with the
+	// state before: stop frees that state, and the playlist its player plays, once the block is done.
+	const gnubase::test::TempDir dir;
+	PlaylistEntry entry;
+	entry.end = 48000;
+	entry.media = 1;
+	Playlist sections;
+	sections.layers.push_back({entry});
+	const auto playlist = std::make_shared<const Playlist>(std::move(sections));
+	const Playback::Track track{2, playlist};
+	const std::map<ObjectId, std::string> paths{{1, writeRamp(dir, "mono", 1, 48000)}};
+	Audition audition;
+	std::atomic<bool> playing{true};
+	std::thread audio(
+		[&audition, &playing]
+		{
+			constexpr uint32_t frames = 64;
+			std::vector<float> output(size_t{2} * frames);
+			const std::array<float*, 2> outputs{output.data(), output.data() + frames};
+			const std::vector<int> ports{0, 1};
+			while (playing)
+				audition.process(outputs.data(), 2, ports, frames);
+		});
+	const long users = playlist.use_count(); // the test's own
+	size_t kept = 0;
+	for (int i = 0; i < 50; ++i)
+	{
+		audition.play({3, 0, 0}, track, paths, 48000.0, 0, 48000, 2, 64);
+		audition.stop();
+		if (playlist.use_count() != users)
+			++kept;
+	}
+	playing = false;
+	audio.join();
+	CHECK(kept == 0);
+}
+
+namespace
+{
+	// An audition that runs audio blocks while the cue thread cues it: after the cue has read where the audio thread
+	// plays and before it cues the streams from there, as when the audio thread runs on in between.
+	class RacingAudition : public Audition
+	{
+	public:
+		std::function<void()> whileCueing; // runs once, in the next cue
+
+	protected:
+		void playedRead() override
+		{
+			if (whileCueing)
+				std::exchange(whileCueing, nullptr)();
+		}
+	};
+}
+
+TEST_CASE("an audition whose first block plays while the cue thread cues it plays on without a gap", "[integration]")
+{
+	// The cue thread reads where the audio thread plays before the audition's first block, so that it has played
+	// nothing of it yet, and cues its stream after that block, when the stream is already read past the start: it
+	// must leave it there, not cue it back to where the audition starts, which would leave the second block silent.
+	const gnubase::test::TempDir dir;
+	PlaylistEntry entry;
+	entry.end = 48000;
+	entry.media = 1;
+	Playlist sections;
+	sections.layers.push_back({entry});
+	const Playback::Track track{2, std::make_shared<const Playlist>(std::move(sections))};
+	constexpr uint32_t frames = 256;
+	RacingAudition audition;
+	audition.play({3, 0, 0}, track, {{1, writeRamp(dir, "mono", 1, 48000)}}, 48000.0, 0, 48000, 1, frames);
+	// play() waits for the streams at most two seconds: a slow disk thread gets more, and is reported as that.
+	REQUIRE(audition.waitUntilBuffered(std::chrono::seconds(5)));
+	std::vector<float> output(size_t{frames} * 2, 0.0f);
+	const auto playBlock = [&audition, &output](size_t block)
+	{
+		const std::vector<int> ports{0};
+		const std::array<float*, 1> out{output.data() + (block * frames)};
+		audition.process(out.data(), 1, ports, frames);
+	};
+	audition.whileCueing = [&playBlock] { playBlock(0); };
+	audition.cue(4800, true);
+	CHECK(!audition.whileCueing); // the first block played in the cue
+	REQUIRE(audition.waitUntilBuffered(std::chrono::milliseconds(5000)));
+	playBlock(1);
+	size_t i = 0;
+	while (i < output.size() && output[i] == ramp(static_cast<int64_t>(i), 0))
+		++i;
+	INFO("the ramp stops at frame " << i);
+	CHECK(i == output.size());
+}
+
+namespace
+{
+	// Waits until the device has played frames frames, at most 10 seconds.
+	void playUntil(Song& song, int64_t frames)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (run(song.client, "audio.get").at("position").get<int64_t>() < frames &&
+			std::chrono::steady_clock::now() < deadline)
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+
+	int64_t played(Song& song)
+	{
+		return run(song.client, "audio.get").at("position").get<int64_t>();
+	}
+}
+
+TEST_CASE("scrubbing a track while the transport plays leaves the playback without dropouts", "[integration][realtime]")
+{
+	// Each scrub moves the cursor while the transport plays: cued exactly, as transport.locate does it, the tracks
+	// play on from there without a frame of silence.
+	const gnubase::test::TempDir dir;
+	Song song(256);
+	const TestTrack scrubbed = song.addTrack(2);
+	const TestTrack other = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "stereo", 2, 96000));
+	song.add({scrubbed.id, 0, 0, 96000, 2}, clip);
+	song.add({other.id, 0, 0, 96000, 2}, clip);
+	run(song.client, "transport.play");
+	run(song.client, "audio.start");
+	playUntil(song, 2400);
+	// As a drag sends them, a scrub every 10 milliseconds, here forwards by a hundredth of a second each.
+	for (int i = 0; i < 20; ++i)
+	{
+		run(song.client, "audition.scrub", {{"track", scrubbed.id}, {"position", 24000 + (i * 480)}});
+		playUntil(song, played(song) + 480);
+	}
+	run(song.client, "audition.stop");
+	playUntil(song, played(song) + 2400);
+	run(song.client, "audio.stop");
+	CHECK(run(song.client, "transport.get").at("playing") == true);
+	CHECK(run(song.client, "audio.get").at("playbackDropouts") == 0);
+}
+
+TEST_CASE("a locate while the transport plays leaves the playback without dropouts", "[integration][realtime]")
+{
+	// Cued exactly at the new position while the audio thread plays on from the old one until it goes there.
+	const gnubase::test::TempDir dir;
+	Song song(256);
+	const TestTrack track = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "stereo", 2, 96000));
+	song.add({track.id, 0, 0, 96000, 2}, clip);
+	run(song.client, "transport.play");
+	run(song.client, "audio.start");
+	playUntil(song, 2400);
+	for (int i = 0; i < 20; ++i)
+	{
+		run(song.client, "transport.locate", {{"position", 24000 + (i * 480)}});
+		playUntil(song, played(song) + 480);
+	}
+	run(song.client, "audio.stop");
+	CHECK(run(song.client, "audio.get").at("playbackDropouts") == 0);
+}
+
+TEST_CASE("playback that starts away from the cursor starts without a dropout", "[integration][realtime]")
+{
+	// With a pre-roll, playback starts half a second before the cursor, which the cue thread cues while the transport
+	// stands. Once transport.play has cued the start, the cue thread cues there too, until the audio thread plays
+	// from there, rather than at the cursor, where it would take the start's voice away.
+	const gnubase::test::TempDir dir;
+	Song song(256);
+	const TestTrack track = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "stereo", 2, 96000));
+	song.add({track.id, 0, 0, 96000, 2}, clip);
+	run(song.client, "transport.set", {{"preRoll", true}, {"preRollAmount", 24000}});
+	run(song.client, "audio.start");
+	for (int i = 0; i < 10; ++i)
+	{
+		run(song.client, "transport.locate", {{"position", 48000}});
+		playUntil(song, played(song) + 960); // the cue thread cues the cursor
+		run(song.client, "transport.play");
+		playUntil(song, played(song) + 2400);
+		run(song.client, "transport.stop");
+	}
+	run(song.client, "audio.stop");
+	CHECK(run(song.client, "audio.get").at("playbackDropouts") == 0);
+}
+
+TEST_CASE("recording from stop with a count-in starts without a dropout", "[integration][realtime]")
+{
+	// While the transport counts in, the cue thread cues where playback starts after it, half a second before the
+	// cursor with the pre-roll, rather than at the cursor, where it would take the start's voice away.
+	const gnubase::test::TempDir dir;
+	Song song(256);
+	const TestTrack track = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "stereo", 2, 96000));
+	song.add({track.id, 0, 0, 96000, 2}, clip);
+	run(song.client, "transport.set", {{"preRoll", true}, {"preRollAmount", 24000}});
+	// A sixteenth at 120 BPM: the count-in takes 6000 frames, so the cue thread cues during it.
+	run(song.client, "metronome.set",
+		{{"countIn",
+			{{"enabled", true}, {"bars", 1}, {"signature", "custom"},
+				{"customSignature", {{"numerator", 1}, {"denominator", 16}}}}}});
+	run(song.client, "audio.start");
+	for (int i = 0; i < 10; ++i)
+	{
+		run(song.client, "transport.locate", {{"position", 48000}});
+		playUntil(song, played(song) + 960); // the cue thread cues the cursor
+		run(song.client, "transport.record");
+		playUntil(song, played(song) + 6000 + 2400);
+		CHECK(run(song.client, "transport.get").at("playing") == true);
+		run(song.client, "transport.stop");
+	}
+	run(song.client, "audio.stop");
+	CHECK(run(song.client, "audio.get").at("playbackDropouts") == 0);
+}
+
+TEST_CASE("an audition that starts while another plays starts without a dropout", "[integration][realtime]")
+{
+	// audition.start twice without audition.stop: the cue thread, which cues the streams for the first, keeps away
+	// from them until the second is out, so the second starts exactly at its position and plays on from there.
+	const gnubase::test::TempDir dir;
+	Song song(256);
+	run(song.client, "audio.setDevice", {{"blockSize", 256}, {"inputChannels", 0}, {"captureSeconds", 20}});
+	const TestTrack track = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "stereo", 2, 96000));
+	song.add({track.id, 0, 0, 96000, 2}, clip);
+	run(song.client, "audio.start");
+	run(song.client, "audition.start", {{"track", track.id}, {"position", 0}});
+	playUntil(song, played(song) + 9600);
+	run(song.client, "audition.start", {{"track", track.id}, {"position", 48000}});
+	playUntil(song, played(song) + 9600);
+	run(song.client, "audition.stop");
+	playUntil(song, played(song) + 2400);
+	run(song.client, "audio.stop");
+
+	// The output: silence, the ramp from frame 0 on, the ramp from frame 48000 on, silence; nothing left out.
+	const std::vector<float> output = song.capture(0, played(song));
+	size_t i = 0;
+	while (i < output.size() && output[i] == 0.0f)
+		++i;
+	int64_t frame = 0;
+	int64_t second = -1; // where the second audition started in the output
+	for (; i < output.size() && output[i] != 0.0f; ++i)
+	{
+		if (output[i] == ramp(frame, 0))
+		{
+			++frame;
+		}
+		else if (second < 0 && output[i] == ramp(48000, 0))
+		{
+			second = static_cast<int64_t>(i);
+			frame = 48001;
+		}
+		else
+		{
+			break;
+		}
+	}
+	INFO("the ramp stops at output frame " << i << ", ramp frame " << frame);
+	CHECK(second >= 0);
+	CHECK(frame > 48000 + 4800);
+	CHECK(std::all_of(output.begin() + static_cast<std::ptrdiff_t>(std::min(i, output.size())), output.end(),
+		[](float sample) { return sample == 0.0f; }));
 }

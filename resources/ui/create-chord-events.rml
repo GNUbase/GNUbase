@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The Create Chord Events dialog (docs/features/chord-track.md, reference manual p. 1343): ui::TrackList opens it
-     with Project > Chord Track > Create Chord Events for the selected MIDI and instrument tracks, and on OK makes chord
+     with Project > Chord Track > Create Chord Events for the selected MIDI parts (or tracks), and on OK makes chord
      events from their notes with chord.fromMidi and these options. Ignore Notes Shorter Than is in ticks of 480 to a
      quarter note. -->
 <rml>

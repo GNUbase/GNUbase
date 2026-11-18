@@ -30,6 +30,8 @@ namespace gnubase::engine::settings
 	inline constexpr Key<double> g_audioListenLevel{"audio.listenLevel"};
 	inline constexpr Key<bool> g_audioStopAfterPunchOut{"audio.stopAfterPunchOut"};
 	inline constexpr Key<bool> g_audioMutePreSends{"audio.mutePreSends"};
+	// An editing preference the audio engine reads to build the playlists (makePlaylist).
+	inline constexpr Key<bool> g_editingTreatMutedAudioLikeDeleted{"editing.treatMutedAudioLikeDeleted"};
 	inline constexpr Key<bool> g_meterResetOnStart{"meter.resetOnStart"};
 	inline constexpr Key<bool> g_meterRmsAes17{"meter.rmsAes17"};
 	inline constexpr Key<int64_t> g_meterRmsResolution{"meter.rmsResolution"};

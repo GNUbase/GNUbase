@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <exception>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -79,10 +80,11 @@ namespace gnubase::engine
 			std::vector<std::string> outputs;
 			try
 			{
+				std::set<std::string> taken = takenNames(folder); // one listing for all channels
 				for (int channel = 0; channel < (split ? info.channels : 1); ++channel)
 				{
 					const std::string name = split ? stem + separator + channelName(info.channels, channel) : stem;
-					outputs.push_back(createFreeFile(folder, fs::u8path(name + ".wav")).u8string());
+					outputs.push_back(createFreeFile(folder, fs::u8path(name + ".wav"), taken).u8string());
 					written.push_back(outputs.back());
 				}
 				convertSampleRate(path, outputs, sampleRate);

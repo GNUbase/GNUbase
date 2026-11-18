@@ -22,12 +22,16 @@ namespace gnubase::engine::graph
 			Program,         // key: the program; value: the bank, or 0xFFFFFFFF for none
 			SysEx,           // data and size: the whole message, from 0xF0 to 0xF7
 			Parameter,
+			// A note's per-note expression (#176): key and channel are the note's, parameter the expression's id
+			// (plugin::NoteExpression), parameterValue its value in that expression's unit.
+			NoteExpression,
 		};
 
 		uint32_t offset = 0; // frame within the block
 		Type type = Type::NoteOn;
 		uint8_t channel = 0;           // MIDI channel, 0-15
 		uint8_t key = 0;               // notes: the pitch; see Type for the others
+		bool drumSound = false;        // notes played into a track: key is a drum sound's pitch, not an I-note
 		uint16_t velocity = 0;         // notes, 0-65535
 		uint32_t value = 0;            // 0-4294967295; see Type
 		uint32_t parameter = 0;        // parameter changes: the processor's parameter id
@@ -38,6 +42,19 @@ namespace gnubase::engine::graph
 		const uint8_t* data = nullptr; // SysEx; valid during the block
 		uint32_t size = 0;
 	};
+
+	// Whether a controller is a pedal that holds notes: sustain (64), sostenuto (66) or hold 2 (69).
+	inline bool holdsNotes(uint8_t controller)
+	{
+		return controller == 64 || controller == 66 || controller == 69;
+	}
+
+	// Whether an event ends notes: a note-off, or a pedal that holds notes going up (below 64 in MIDI 1.0).
+	inline bool endsNotes(const ProcessEvent& event)
+	{
+		return event.type == ProcessEvent::Type::NoteOff ||
+			(event.type == ProcessEvent::Type::Controller && holdsNotes(event.key) && event.value < 0x80000000U);
+	}
 
 	// The events of one block from one or more sources, sorted by offset. Each source's events keep their order, so a
 	// note of no length or a note-on followed by pressure on it arrives as sent. At one offset a source's events go
@@ -62,24 +79,25 @@ namespace gnubase::engine::graph
 		// The events added from now on come from another source.
 		void nextSource() noexcept { m_after = 0; }
 
-		// Adds a note-off as add does; in a full buffer it takes the place of the last event that isn't one, so that no
-		// note hangs. Returns false and drops it only if the buffer holds note-offs only.
-		bool addNoteOff(const ProcessEvent& event) noexcept
+		// Adds an event that ends notes (endsNotes: a note-off or a pedal's release) as add does; in a full buffer it
+		// takes the place of the last event that doesn't end notes, so that no note hangs. Returns false and drops it
+		// only if all the buffer's events end notes.
+		bool addEnd(const ProcessEvent& event) noexcept
 		{
-			if (m_size == m_events.size() && !dropLastNotNoteOff())
+			if (m_size == m_events.size() && !dropLastNotEnd())
 				return false;
 			insert(event);
 			return true;
 		}
 
-		// Adds the events of another source. In a full buffer a note-off takes the place of the last event that isn't
-		// one, so that no note hangs; other events are dropped.
+		// Adds the events of another source. In a full buffer an event that ends notes takes the place of the last
+		// one that doesn't, so that no note hangs; other events are dropped.
 		void merge(const EventBuffer& source) noexcept
 		{
 			nextSource();
 			for (const ProcessEvent& event : source)
-				if (event.type == ProcessEvent::Type::NoteOff)
-					addNoteOff(event);
+				if (endsNotes(event))
+					addEnd(event);
 				else
 					add(event);
 		}
@@ -125,11 +143,11 @@ namespace gnubase::engine::graph
 			m_after = i + 1;
 		}
 
-		bool dropLastNotNoteOff() noexcept
+		bool dropLastNotEnd() noexcept
 		{
 			for (size_t i = m_size; i > 0; --i)
 			{
-				if (m_events[i - 1].type == ProcessEvent::Type::NoteOff)
+				if (endsNotes(m_events[i - 1]))
 					continue;
 				for (size_t j = i; j < m_size; ++j)
 					m_events[j - 1] = m_events[j];

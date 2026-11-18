@@ -19,9 +19,9 @@
 namespace gnubase::ui
 {
 	// The pool (#93, docs/features/pool.md): a toolbar, a message line, the info line and a tree of the pool's folders
-	// and clips from pool.get, with the columns Media, Used, Status, Info and Path. The names of folders and clips are
-	// fields that rename them (poolFolder.set, clip.set) with Enter or when they lose the focus; clips dragged onto a
-	// folder's row move there. The toolbar's Import and Find Missing Files run the UI commands pool.import and
+	// and clips from pool.get, with the columns Media, Used, Status, Key, Info and Path. The names of folders and clips
+	// are fields that rename them (poolFolder.set, clip.set) with Enter or when they lose the focus; clips dragged onto
+	// a folder's row move there. The toolbar's Import and Find Missing Files run the UI commands pool.import and
 	// pool.findMissing through run, which own the file dialogs; its other buttons send engine commands. It follows
 	// history.changed and project.saved, whichever client changed the pool, but reads the pool only while shown says
 	// it shows: the app calls update in every step, which reads it once it shows again. Use it on the UI thread; the
@@ -59,13 +59,18 @@ namespace gnubase::ui
 		void request();
 		void show(const engine::Json& pool);
 		void rename(Rml::Element& field);
+		// The Key column's change of a clip's row: clip.set rootKey, unless the clip shows that key.
+		void setKey(const std::string& row, const std::string& key);
+		// Gives a clip's Key list all its choices, when it gets the focus.
+		void fillKey(Rml::Element& list);
 		void drop(const std::string& folder);
 		void addFolder();
 		// Sends a command of the panel's own; a failure shows in the message line as the action's.
 		void send(const char* action, const std::string& command, const engine::Json& parameters);
 		void showMessage(const std::string& text, bool error);
-		// Opens prepare-archive.rml, which asks whether to copy the external files, as many as external.
-		void askPrepareArchive(int external);
+		// Opens prepare-archive.rml, which asks whether to copy the external files that are there, as many as
+		// external, and says how many others are missing.
+		void askPrepareArchive(int external, int missing);
 		// A job of a pool command ended (job.finished, or job.get for one that ended before report heard of it).
 		void jobEnded(const engine::Json& job);
 		// Cancels the jobs of pool commands that run.

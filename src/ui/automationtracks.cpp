@@ -462,7 +462,7 @@ namespace gnubase::ui
 		const AutomationView* view = automationAt(lane);
 		if (view == nullptr || !alive())
 			return;
-		std::sort(points.begin(), points.end(),
+		std::stable_sort(points.begin(), points.end(),
 			[](const CurvePoint& a, const CurvePoint& b) { return a.position < b.position; });
 		for (int i = 0; i < m_automationArea->GetNumChildren(); ++i)
 			if (const Rml::Element* element = m_automationArea->GetChild(i);

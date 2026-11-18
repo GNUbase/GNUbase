@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -47,6 +48,9 @@ namespace gnubase::rt
 								[inUse](const std::unique_ptr<const T>& retired) { return retired.get() != inUse; }),
 				m_retired.end());
 		}
+
+		// Writer: how many old snapshots are not freed yet, since the reader used one at the last collect.
+		size_t retired() const { return m_retired.size(); }
 
 		// Writer: the newest snapshot.
 		const T& latest() const { return *m_current; }

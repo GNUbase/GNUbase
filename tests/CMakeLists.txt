@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 add_library(gnubase-testutils STATIC
+	testutils/commandholds.h
 	testutils/fakeui.cpp testutils/fakeui.h
 	testutils/goldenimage.cpp testutils/goldenimage.h
+	testutils/heldjob.cpp testutils/heldjob.h
+	testutils/library.h
+	testutils/schemaguards.h
+	testutils/slowframe.h
+	testutils/stopandjoin.h
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
-target_link_libraries(gnubase-testutils PRIVATE miniz)
+target_link_libraries(gnubase-testutils PRIVATE Catch2::Catch2 miniz)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	target_sources(gnubase-testutils PRIVATE
 		testutils/fakertkit.cpp testutils/fakertkit.h)
@@ -27,8 +33,10 @@ add_executable(gnubase-tests
 	analysis_tests.cpp
 	app_tests.cpp
 	arranger_tests.cpp
+	arranger_ui_tests.cpp
 	articulationmaps_tests.cpp
 	articulationmaps_ui_tests.cpp
+	articulationnames_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
 	audiofunctions_tests.cpp
@@ -63,6 +71,8 @@ add_executable(gnubase-tests
 	docking_tests.cpp
 	document_tests.cpp
 	drumeditor_ui_tests.cpp
+	drummachine_tests.cpp
+	drummachine_ui_tests.cpp
 	drummaps_tests.cpp
 	editors_tests.cpp
 	effects_tests.cpp
@@ -75,6 +85,7 @@ add_executable(gnubase-tests
 	fade_tests.cpp
 	fades_ui_tests.cpp
 	fileimport_tests.cpp
+	files_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
 	harmony_tests.cpp
@@ -128,7 +139,10 @@ add_executable(gnubase-tests
 	mixerviews_tests.cpp
 	mixerwindow_tests.cpp
 	monitoring_tests.cpp
+	mpeinput_tests.cpp
 	multicore_tests.cpp
+	noteexpression_tests.cpp
+	noteexpression_ui_tests.cpp
 	onscreenkeyboard_tests.cpp
 	parameter_tests.cpp
 	patterneditor_ui_tests.cpp
@@ -145,6 +159,7 @@ add_executable(gnubase-tests
 	profiles_tests.cpp
 	profiles_ui_tests.cpp
 	processor_tests.cpp
+	projectdialogs_ui_tests.cpp
 	projectfiles_tests.cpp
 	projectrules_tests.cpp
 	projectrules_ui_tests.cpp
@@ -161,6 +176,7 @@ add_executable(gnubase-tests
 	sampleeditor_tests.cpp
 	sampleeditor_ui_tests.cpp
 	sampler_tests.cpp
+	sampler_ui_tests.cpp
 	scripting_tests.cpp
 	scripts_ui_tests.cpp
 	sequencing_tests.cpp
@@ -224,7 +240,6 @@ target_link_libraries(gnubase-tests PRIVATE
 	gnubase-pluginhost-core
 	gnubase-scripting
 	gnubase-testutils
-	miniz
 	pugixml::pugixml)
 
 # The UI's tests (#48, #49) use SDL directly.
@@ -242,6 +257,8 @@ add_executable(gnubase-ipcpeer ipcpeer.cpp)
 target_link_libraries(gnubase-ipcpeer PRIVATE gnubase-ipc)
 gnubase_target_defaults(gnubase-ipcpeer)
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_IPCPEER="$<TARGET_FILE:gnubase-ipcpeer>")
+# The test of the test run's temp folder runs a test case of its own in a child process (tests/testrun_tempfolder.cpp).
+target_compile_definitions(gnubase-tests PRIVATE GNUBASE_TESTS="$<TARGET_FILE:gnubase-tests>")
 add_dependencies(gnubase-tests gnubase-ipcpeer)
 # The test plugins and the loader tests that load them into the test process (plugins/README.md).
 if(GNUBASE_TEST_PLUGINS)
@@ -300,9 +317,10 @@ if(NOT GNUBASE_SANITIZERS)
 	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_APP="$<TARGET_FILE:gnubase>")
 endif()
 
-# Every tests/lua/*.lua is a ctest test that the app runs headless; its test cases use gnubase.test (the Lua API reference, docs/api-reference.md).
-# They run in the source folder, so a failure names tests/lua/<file>.lua and the line. Sanitizer builds run them too,
-# with the app built under the same sanitizers, so building gnubase-tests builds the app.
+# Every tests/lua/*.lua is a ctest test that the app runs headless; its test cases use gnubase.test (the Lua API
+# reference, docs/api-reference.md). They run in the source folder, so a failure names tests/lua/<file>.lua and the
+# line. Sanitizer builds run them too, with the app built under the same sanitizers, so building gnubase-tests builds
+# the app.
 add_dependencies(gnubase-tests gnubase)
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/output")
 file(GLOB luaTests CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/lua/*.lua")
@@ -375,6 +393,7 @@ endfunction()
 gnubase_add_shell_test("the clang-tidy cache reruns clang-tidy only when an input changed" clang_tidy_cache_tests.sh)
 gnubase_add_shell_test("the keyword guard blocks private keywords in commits and pull requests" keyword_guard_tests.sh)
 gnubase_add_shell_test("the license header check lists files without the SPDX header" spdx_check_tests.sh)
+gnubase_add_shell_test("tidy-changed.sh checks the changed lines and compiles the changed files" tidy_changed_tests.sh)
 
 # Benchmarks print measurements for design notes; they are not part of the test run.
 option(GNUBASE_BENCHMARKS "Build the benchmarks in tests/bench" OFF)

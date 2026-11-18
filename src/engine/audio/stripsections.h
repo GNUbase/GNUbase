@@ -45,13 +45,13 @@ namespace gnubase::engine
 
 		// Audio thread: the sections before the plugin slots, and those after them, with the block's events, sorted
 		// by offset; each takes the events of its own parameters. The pre gain's value is a linear gain. lookAhead:
-		// the limiter's look-ahead counts in the channel's latency (see latency), so the limiter keeps running while
-		// it is off, bypassed.
+		// the limiter's look-ahead counts in the channel's latency (see latency), so the limiter runs only while it
+		// is set, bypassed while it is off: it never delays a channel by more than the latency the graph reports.
 		void processPre(const graph::EventBuffer& events, float* const* audio, int channels, uint32_t frames) noexcept;
 		void processPost(const graph::EventBuffer& events, bool lookAhead, float* const* audio, int channels,
 			uint32_t frames) noexcept;
 
-		// The delay processPost adds while the limiter is on or its automation plays: its look-ahead. After prepare.
+		// The delay processPost adds while the limiter's look-ahead counts (processPost's lookAhead). After prepare.
 		uint32_t latency(bool limiter) const { return limiter ? m_limiter.latency() : 0; }
 
 	private:

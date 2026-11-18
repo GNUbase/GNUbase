@@ -13,8 +13,10 @@
 #include <link.h>
 #endif
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -51,6 +53,21 @@ namespace gnubase::test
 			},
 			nullptr);
 #endif
+	}
+
+	std::filesystem::path patchedResources(const std::filesystem::path& folder, const std::string& document,
+		const std::string& from, const std::string& to)
+	{
+		const std::filesystem::path resources = folder / "resources";
+		std::filesystem::copy(GNUBASE_RESOURCES_DIR, resources, std::filesystem::copy_options::recursive);
+		const std::filesystem::path file = resources / "ui" / document;
+		std::string text = readText(file);
+		const size_t at = text.find(from);
+		INFO(file.u8string());
+		REQUIRE(at != std::string::npos);
+		text.replace(at, from.size(), to);
+		std::ofstream(file, std::ios::binary) << text;
+		return resources;
 	}
 
 	UiApp::UiApp(ui::Size size, std::vector<std::unique_ptr<midi::Backend>> midiBackends,
@@ -100,6 +117,11 @@ namespace gnubase::test
 		m_ui->shell().showOsFileDialogs(false); // tests answer them (Shell::answerFileDialog)
 		m_automation = std::make_unique<ui::Automation>(m_ui->shell());
 		shell().step(std::chrono::milliseconds(0));
+		// macOS fits a window to its monitor (#1078): the test lays out differently there than elsewhere.
+		const ui::Rect opened = shell().bounds(m_ui->mainWindow().id());
+		if (opened.width < m_size.width || opened.height < m_size.height)
+			WARN("The main window opened at " << opened.width << "x" << opened.height << ", not at the " << m_size.width
+											  << "x" << m_size.height << " asked for: the monitor is smaller.");
 	}
 
 	engine::Json UiApp::call(const std::string& command, const engine::Json& parameters)
@@ -124,13 +146,25 @@ namespace gnubase::test
 	bool UiApp::waitUntil(const std::function<bool()>& done, std::chrono::milliseconds timeout)
 	{
 		const auto deadline = std::chrono::steady_clock::now() + timeout;
-		while (!done())
+		while (true)
 		{
-			if (std::chrono::steady_clock::now() >= deadline)
+			const bool late = std::chrono::steady_clock::now() >= deadline;
+			try
+			{
+				if (done())
+					return true;
+			}
+			catch (const engine::Json::exception&)
+			{
+				// The UI hasn't received the data done() reads yet, such as a display's project before its first
+				// answer (#1499): not done yet. Past the deadline the error is the failure's message.
+				if (late)
+					throw;
+			}
+			if (late)
 				return false;
 			shell().step(std::chrono::milliseconds(10));
 		}
-		return true;
 	}
 
 	void UiApp::setDpRatio(float ratio)
@@ -168,6 +202,22 @@ namespace gnubase::test
 		CHECK(diff.equal);
 	}
 
+	std::vector<std::string> UiApp::shownSections(const std::string& container)
+	{
+		std::vector<std::string> shown;
+		Rml::Context& context = main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (const Rml::Element* sections = context.GetDocument(i)->GetElementById(container))
+				for (int child = 0; child < sections->GetNumChildren(); ++child)
+				{
+					const Rml::Element* section = sections->GetChild(child);
+					if (section->HasAttribute("section") && !section->IsClassSet("hidden") &&
+						!section->IsClassSet("no-room"))
+						shown.push_back(section->GetAttribute<Rml::String>("section", ""));
+				}
+		return shown;
+	}
+
 	namespace
 	{
 		Rml::Context& contextOf(UiApp& app, std::optional<ui::WindowId> window)
@@ -179,11 +229,53 @@ namespace gnubase::test
 		}
 	}
 
+	NoteProbe::NoteProbe(UiApp& app, uint64_t track) : m_app(app)
+	{
+		app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+		const engine::Json tracks = app.call("project.get").at("tracks");
+		const auto found = std::find_if(tracks.begin(), tracks.end(),
+			[track](const engine::Json& each) { return each.at("id").get<uint64_t>() == track; });
+		REQUIRE(found != tracks.end());
+		app.call("channel.set", {{"channel", found->at("channel")}, {"instrument", "noteProbe"}});
+		app.call("audio.render", {{"frames", 128}}); // the new graph
+		app.call("midi.capture", {{"start", true}});
+	}
+
+	bool NoteProbe::plays(const std::vector<std::vector<int>>& expected)
+	{
+		return m_app.waitUntil(
+			[&]
+			{
+				m_app.call("audio.render", {{"frames", 128}});
+				const engine::Json captured = m_app.call("midi.capture");
+				for (const engine::Json& message : captured.at("captured"))
+				{
+					const auto bytes = message.at("bytes").get<std::vector<int>>();
+					if ((bytes.at(0) & 0xE0) == 0x80)
+						m_played.push_back(bytes);
+				}
+				return m_played == expected;
+			});
+	}
+
 	double controlValue(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector)
 	{
 		const engine::Json found = app.ui().dom(window, selector, 0).at("elements");
 		REQUIRE(found.size() == 1);
 		return std::stod(found.at(0).at("attributes").at("value").get<std::string>());
+	}
+
+	engine::Json selectOptions(UiApp& app, const std::string& selector, std::optional<ui::WindowId> window)
+	{
+		return app.ui().dom(window, selector, 0).at("elements").at(0).at("options");
+	}
+
+	std::string selectedOption(UiApp& app, const std::string& selector)
+	{
+		for (const engine::Json& option : selectOptions(app, selector))
+			if (option.at("selected").get<bool>())
+				return option.at("text").get<std::string>();
+		return {};
 	}
 
 	double lateSteps(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector, int steps,
@@ -223,11 +315,14 @@ namespace gnubase::test
 			[this, direction, perAnswer]
 			{
 				for (int step = 0; step < perAnswer; ++step)
-				{
-					m_moved += 2 * direction;
-					m_context.ProcessMouseMove(m_at.x, m_at.y + m_moved, 0);
-				}
+					nudge(direction);
 			});
+	}
+
+	void LateDrag::nudge(int direction)
+	{
+		m_moved += 2 * direction;
+		m_context.ProcessMouseMove(m_at.x, m_at.y + m_moved, 0);
 	}
 
 	void LateDrag::release(bool stays)

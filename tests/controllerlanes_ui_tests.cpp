@@ -7,7 +7,6 @@
 #include "ui/automation.h"
 #include "uiapp.h"
 
-#include <RmlUi/Core/Context.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -15,7 +14,6 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -163,24 +161,6 @@ namespace
 
 		size_t steps() { return app.call("history.get").at("steps").size(); }
 
-		// The editor window's context: through it a test presses a button and keeps it down, as a mouseup lost
-		// outside the window leaves it, where RmlUi has no element to send the mouseup to.
-		Rml::Context& context()
-		{
-			const ui::Window* shown = app.shell().find(app.appUi().editorWindowId());
-			if (shown == nullptr)
-				throw std::logic_error("the editor window doesn't show");
-			return shown->context();
-		}
-
-		void press(const ui::Target& target)
-		{
-			const ui::Point point = target.point.value_or(ui::Point{});
-			context().ProcessMouseMove(point.x, point.y, 0);
-			context().ProcessMouseButtonDown(0, 0);
-			app.shell().step(std::chrono::milliseconds(0));
-		}
-
 		// The right end of the editor window's toolbar's empty space, where a click does nothing.
 		ui::Target spare()
 		{
@@ -232,6 +212,63 @@ TEST_CASE("the velocity lane shows the notes' velocities as bars that the tools 
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("velocity").get<double>() < 0.05; }));
 	CHECK(f.note(ids[1]).at("velocity").get<double>() == Approx(0.25).margin(0.03));
 	CHECK(f.note(ids[3]).at("velocity").get<double>() == Approx(0.75).margin(0.03));
+}
+
+TEST_CASE(
+	"the lanes' buttons lie inside their header and the footer, in every theme and with the keyboard focus", "[ui]")
+{
+	// #1774: a button's 64 dp minimum width made the lane-type button wider than its 48 dp header, which cut it off,
+	// and the footer's buttons were 2 dp higher than the footer.
+	Fixture f;
+	f.choose("#controller-lane-create", R"(#controller-create-menu menuitem[lane-type="controller"][lane-number="1"])");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane-type").size() == 2; }));
+	const auto right = [](const Json& box) { return box.at("x").get<int>() + box.at("width").get<int>(); };
+	const auto bottom = [](const Json& box) { return box.at("y").get<int>() + box.at("height").get<int>(); };
+	const auto inside = [&](const Json& inner, const Json& outer)
+	{
+		INFO(inner.dump() << " in " << outer.dump());
+		CHECK(inner.at("x").get<int>() >= outer.at("x").get<int>());
+		CHECK(inner.at("y").get<int>() >= outer.at("y").get<int>());
+		CHECK(right(inner) <= right(outer));
+		CHECK(bottom(inner) <= bottom(outer));
+	};
+	// The lane with the keyboard focus, which the themes frame inside its header: the Articulations lane takes it on a
+	// click, and needs the track's articulation map.
+	const Json map = f.app.call("articulationMap.add",
+		{{"name", "Strings"}, {"articulations", {{{"name", "Arco"}, {"type", "direction"}, {"group", 0}}}},
+			{"slots", {{{"name", "Arco"}}}}});
+	f.app.call("track.set", {{"track", f.track}, {"articulationMap", map.at("map").at("id")}});
+	Json lanes = f.view().at("lanes");
+	lanes.push_back({{"type", "articulations"}});
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", lanes}});
+	// An articulation's row, not the sound slots row, which shows before the map's rows do and then moves (#1887).
+	const std::string row = ".controller-lane[lane-kind=articulations] .articulation-row[articulation-row]";
+	REQUIRE(
+		f.app.waitUntil([&] { return f.elements(".controller-lane-type").size() == 3 && !f.elements(row).empty(); }));
+	for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
+	{
+		INFO("theme " << theme);
+		f.app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
+		REQUIRE(f.app.waitUntil([&f, theme] { return f.app.shell().theme() == theme; }));
+		for (const bool focus : {false, true})
+		{
+			INFO("keyboard focus " << focus);
+			// A click on the Articulations lane gives it the keyboard focus, as in the app; a click on the toolbar's
+			// spare space takes it away. The frame must be there when the boxes are read.
+			f.click(focus ? of(row) : f.spare());
+			REQUIRE(
+				f.app.waitUntil([&] { return f.elements(".controller-lane.focused").size() == (focus ? 1U : 0U); }));
+			const Json headers = f.elements(".controller-lane-header");
+			const Json types = f.elements(".controller-lane-type");
+			REQUIRE(headers.size() == 3);
+			REQUIRE(types.size() == 3);
+			for (size_t lane = 0; lane < 3; ++lane)
+				inside(types.at(lane).at("box"), headers.at(lane).at("box"));
+			const Json footer = f.box(".controller-lanes-footer");
+			inside(f.box("#controller-lane-create"), footer);
+			inside(f.box("#controller-lane-setup"), footer);
+		}
+	}
 }
 
 TEST_CASE("controller lanes come from the menus and the tools add, select, change and erase events", "[ui]")
@@ -409,6 +446,47 @@ TEST_CASE("the lane menus change and remove lanes, select their events and apply
 	f.choose("#controller-lane-create", "#controller-create-menu menuitem[lane-action=velocityOnly]");
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("showLanes") == true && f.lanes().size() == 1; }));
 	CHECK(f.lanes()[0].at("type") == "velocity");
+}
+
+TEST_CASE("a right click below a lane's name adds lanes and removes that one", "[ui]")
+{
+	// Reference manual p. 1261.
+	Fixture f;
+	REQUIRE(f.lanes().size() == 1);
+	// A right click in a lane's header, below its name button, opens the lane's context menu there.
+	const auto rightClickBelow = [&](size_t lane)
+	{
+		const Json header = f.elements(".controller-lane-header").at(lane).at("box");
+		const Json button = f.elements(".controller-lane-type").at(lane).at("box");
+		const int x = header.at("x").get<int>() + (header.at("width").get<int>() / 2);
+		const int below = button.at("y").get<int>() + button.at("height").get<int>();
+		const int bottom = header.at("y").get<int>() + header.at("height").get<int>();
+		REQUIRE(below < bottom);
+		f.app.ui().click(
+			f.window, {"", 0, ui::Point{x, below + ((bottom - below) / 2)}}, ui::MouseButton::Right, 1, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// The context menu adds a lane of a type...
+	rightClickBelow(0);
+	REQUIRE(f.app.waitUntil([&] { return f.visible("#controller-lane-context-menu menuitem[lane-action=remove]"); }));
+	f.click(of(R"(#controller-lane-context-menu menuitem[lane-type="controller"][lane-number="1"])"));
+	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 2; }));
+	CHECK(f.lanes()[1] == Json{{"type", "controller"}, {"number", 1}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane-area").size() == 2; }));
+
+	// ...and removes the lane it opened for: the new one, right-clicked below its name.
+	rightClickBelow(1);
+	REQUIRE(f.app.waitUntil([&] { return f.visible("#controller-lane-context-menu menuitem[lane-action=remove]"); }));
+	f.click(of("#controller-lane-context-menu menuitem[lane-action=remove]"));
+	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 1; }));
+	CHECK(f.lanes()[0].at("type") == "velocity");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane-area").size() == 1; }));
+
+	// The left click on the name button still opens the lane's own menu, not the context menu.
+	f.click(of(".controller-lane-type[lane-menu=\"0\"]"));
+	REQUIRE(f.app.waitUntil([&] { return f.visible("#controller-lane-menu menuitem[lane-action=selectAll]"); }));
+	CHECK_FALSE(f.visible("#controller-lane-context-menu menuitem[lane-action=remove]"));
 }
 
 TEST_CASE("Auto Select Controllers selects the controllers of the notes selected, and they move with them", "[ui]")
@@ -739,8 +817,9 @@ TEST_CASE("a drag on a lane released outside the lanes ends there, and one whose
 
 	// A paint whose mouseup never came (released outside the window) ends without its effect at the next press.
 	f.tool("draw");
-	f.press(f.at(0, 10.5, 0.5));
-	f.click(f.spare());
+	f.app.ui().press(f.window, f.at(0, 10.5, 0.5), ui::MouseButton::Left);
+	f.app.ui().press(f.window, f.spare(), ui::MouseButton::Left);
+	f.app.ui().release(f.window, f.spare(), ui::MouseButton::Left);
 	settle();
 	CHECK(f.controllers().size() == 1);
 	CHECK(f.steps() == before);
@@ -766,4 +845,25 @@ TEST_CASE("a paint on a controller lane goes into the part where it was pressed,
 	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 5; }));
 	for (size_t i = 0; i < 5; ++i)
 		CHECK(f.controllers()[i].at("position") == static_cast<int64_t>(i) * g_sixteenth);
+}
+
+TEST_CASE("a controller step that another event now starts with loses its width", "[ui]")
+{
+	// #1580: the lanes keep their elements while their RML is the same, so a width the step no longer has must go.
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	const Json added = f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 2 * g_sixteenth}, {"number", 1}, {"value", 0.5}},
+					{{"position", 4 * g_sixteenth}, {"number", 1}, {"value", 0.25}}}}});
+	const std::string first = Fixture::area(0) + " .controller-step[controller=\"" +
+		std::to_string(added.at("controllers").at(0).at("id").get<uint64_t>()) + "\"]";
+	const double width = f.box(Fixture::area(0)).at("width").get<double>();
+	REQUIRE(f.app.waitUntil([&] { return f.shows(0); }));
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.box(first).at("width").get<double>() - (width / 8.0)) <= 2.0; }));
+	f.app.call("controller.set",
+		{{"part", f.part},
+			{"controllers", {{{"id", added.at("controllers").at(1).at("id")}, {"position", 2 * g_sixteenth}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.box(first).at("width").get<double>() < width / 16.0; }));
 }

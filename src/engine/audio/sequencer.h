@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/heardagain.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/graph/processor.h"
 #include "engine/midi/effects.h"
+#include "engine/midi/mpeinput.h"
+#include "engine/processors/builtinplugin.h"
 #include "engine/processors/midieffects.h"
 #include "platform/rt/snapshotpublisher.h"
+#include "plugin/events.h"
+#include "plugin/extensions.h"
+#include "plugin/plugin.h"
 
 #include <array>
 #include <atomic>
@@ -13,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace gnubase::engine
@@ -39,44 +46,150 @@ namespace gnubase::engine
 		ChaseIndex index; // the part's own controller events
 	};
 
-	// A track's controller events for chasing (makeChaseTrack): all of them, and those of each MIDI part.
+	// A track's controller events for chasing (makeChaseTrack): all of them, those of each MIDI part, and its sound
+	// slots' output events (g_soundSlotPart).
 	struct ChaseTrack
 	{
 		ChaseIndex all;
 		std::vector<ChasePart> parts; // sorted by start
+		ChaseIndex slots;
+		// A MIDI track's AutomationPlayer::heardAgain, or none: raised for the block in which the track is heard again
+		// after playback moved while it was silent, when the sequencer chases its parts where playback is.
+		std::shared_ptr<const std::atomic<HeardAgain>> heardAgain;
+		// The kinds (ChaseLane::kind) its channel sends again when it is heard again after a move (channelChaseKinds),
+		// before the chase: their latest event is chased whichever track it is on, as at a jump.
+		std::vector<uint16_t> channelKinds;
 	};
 
 	// Command thread: the chase index of a track's controller events (sorted by position, each with the index of its
-	// part in parts) and MIDI parts (sorted by start).
+	// part in parts, or g_soundSlotPart for a sound slot's output events, which go to ChaseTrack::slots) and MIDI parts
+	// (sorted by start).
 	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts);
 
-	// A MIDI effect a track's sequencer runs (MidiSequence::effects).
+	// Command thread: the kinds of controller events (ChaseLane::kind) that a MIDI channel's own values and automation
+	// send (channelAutomation): its program, with bank select if it has a bank, its MIDI volume and pan, and its
+	// controller and pitch bend automation.
+	std::vector<uint16_t> channelChaseKinds(const RenderChannel& channel);
+
+	// An event of a chase kind (ChaseLane::kind), at offset 0 and without a value.
+	graph::ProcessEvent chaseKindEvent(uint16_t kind) noexcept;
+
+	// What a track's sequencer is to the MIDI effects in its slots: their plugin host, which hands the built-in ones
+	// the project's tempo map of the block they process.
+	class MidiEffectHost final : public plugin::Host, public processors::HostTempoMap
+	{
+	public:
+		void requestRestart() override {}
+		void requestProcess() override {}
+		void requestCallback() override {}
+		void* extension(std::string_view id) override { return plugin::provide<processors::HostTempoMap>(this, id); }
+
+		const time::TempoMap* tempoMap() const noexcept override { return m_tempoMap; }
+		// Audio thread: the tempo map of the block the effects process next.
+		void setTempoMap(const time::TempoMap* tempoMap) noexcept { m_tempoMap = tempoMap; }
+
+	private:
+		const time::TempoMap* m_tempoMap = nullptr;
+	};
+
+	// An instance of a MIDI effect, a plugin with a note port in and out, with its lifecycle as a plugin slot has it
+	// (plugins::PluginSlot): the command thread activates it, the audio thread starts it processing before its first
+	// block, and where it goes, after the last block that processes it, it stops processing and is deactivated before
+	// it is destroyed. Its host must outlive it.
+	class MidiEffectInstance
+	{
+	public:
+		// The plugin is initialized.
+		explicit MidiEffectInstance(std::unique_ptr<plugin::Plugin> plugin);
+		~MidiEffectInstance();
+		MidiEffectInstance(const MidiEffectInstance&) = delete;
+		MidiEffectInstance& operator=(const MidiEffectInstance&) = delete;
+		MidiEffectInstance(MidiEffectInstance&&) = delete;
+		MidiEffectInstance& operator=(MidiEffectInstance&&) = delete;
+
+		// Its parameters, for the values the automation sent its slot last, or nullptr.
+		plugin::Params* params() const noexcept { return m_params; }
+
+		// Command thread, while no block processes it: activates it for blocks of up to maxFrames, again if it was
+		// active.
+		void activate(double sampleRate, uint32_t maxFrames);
+		// Audio thread: one block, after it starts processing if it hasn't yet. Error while it isn't active or
+		// doesn't start.
+		plugin::ProcessStatus process(const plugin::Process& process) noexcept;
+		// Audio thread: forgets the past (plugin::Plugin::reset), the notes it holds too, if it processes.
+		void startAfresh() noexcept;
+
+	private:
+		void deactivate();
+
+		std::unique_ptr<plugin::Plugin> m_plugin;
+		plugin::Params* m_params = nullptr;
+		bool m_active = false;
+		bool m_started = false;
+	};
+
+	// A MIDI effect a track's sequencer runs (MidiSequence::effects), a built-in one (processors::BuiltinPlugin),
+	// active.
 	struct RunningEffect
 	{
-		std::shared_ptr<processors::MidiEffect> effect;
-		std::vector<double> parameters; // by id; the effect gets them when the sequence comes in
-		uint64_t serial = 0;            // the instance's: another instance has another one
+		std::shared_ptr<MidiEffectInstance> effect;
+		const processors::BuiltinInfo* info = nullptr; // which effect it is
+		uint64_t serial = 0;                           // the instance's: another instance has another one
+		size_t slot = 0;                               // its slot in its section
+		bool elsewhere = false; // a send that plays to another instrument track (MidiSequence::sendOutputs)
+		bool send = false;      // a MIDI send, not an insert
 	};
+
+	class MidiSequencer;
 
 	// What a MIDI or instrument track plays, in the project's samples.
 	struct MidiSequence
 	{
-		std::vector<RenderNote> notes;             // sorted by start, then pitch
+		std::vector<RenderNote> notes;             // sorted by start, key switches first, then pitch
 		std::vector<RenderController> controllers; // sorted by position
+		std::vector<RenderExpression> expressions; // the notes' expression points, sorted by position (#176)
 		// The tracks whose controller events a jump chases here: an instrument track's own and those of the MIDI
-		// tracks routed to it, so they are chased by time across them; none for a MIDI track routed to an instrument.
+		// tracks routed to it that the mute button doesn't mute, so they are chased by time across them. A MIDI track
+		// routed to an instrument chases its own into its strip (chaseIntoStrip).
 		std::vector<ChaseTrack> chase;
+		// A MIDI track routed to an instrument: its chase goes to stripChase() instead of its output, so its strip
+		// knows which pedals are down, and a mute button keeps the values for unmuting (ChannelStrip).
+		bool chaseIntoStrip = false;
 		std::vector<uint32_t> noteOrder;  // filled in by setSequence: indices into notes with a length, by pitch, then
 										  // start
 		std::vector<ChaseLane> noteLanes; // filled in by setSequence: runs of noteOrder, by channel and pitch
 		midi::Modifiers modifiers;        // for the notes played into the track (input); notes has them applied
-		std::vector<LiveHarmony> liveInput; // Live Input: what the notes played into the track move to, by position
-		midi::EffectRack inserts;           // the track's MIDI inserts and sends (docs/features/midi-effects.md)
+		std::vector<LiveHarmony> liveInput;  // Live Input: what the notes played into the track move to, by position
+		std::vector<LiveDrumNote> drumInput; // RenderChannel::drumInput: by I-note, then by sound; or empty
+		int8_t inputChannel = -1; // the MIDI channel the events played into the track go out on, or -1 for theirs
+		// The track's articulation map (#175): its remote triggers select the sound slot of the notes played into the
+		// track; without slots for none.
+		ArticulationMap articulations;
+		midi::EffectRack inserts; // the track's MIDI inserts and sends (docs/features/midi-effects.md)
 		midi::EffectRack sends;
-		// Filled in by setSequence: the inserts that play, in order, then the sends that play.
+		// Per send slot, the instrument track's channel its effect plays to (a MidiSendTap takes it there), or 0
+		// for the track's own output.
+		std::array<uint64_t, midi::g_effectSlots> sendOutputs{};
+		// Sends before modifiers that change notes: the notes of the parts without the modifiers and their expression
+		// points (RenderChannel).
+		std::vector<RenderNote> preNotes;
+		std::vector<RenderExpression> preExpressions;
+		// Filled in by setSequence: the inserts that play, in order, then the sends that play. The first inputCount
+		// inserts are above the divider: they play the track's input alone, before the rest (MidiSequencer::process).
 		std::vector<RunningEffect> effects;
+		// Filled in by setSequence: per slot, the inserts' then the sends', the effect it holds, also while it doesn't
+		// play, or none.
+		std::array<const processors::BuiltinInfo*, 2 * midi::g_effectSlots> slotEffects{};
+		size_t inputCount = 0;
 		size_t insertCount = 0;
-		uint64_t serial = 0; // filled in by setSequence: counts the sequences it was given
+		// Filled in by setSequence when sends play before modifiers that change notes: a sequencer that plays the
+		// track's events without them, for those sends.
+		std::shared_ptr<MidiSequencer> pre;
+		bool sendBuffers = false; // filled in by setSequence: MidiSequencer::sendOutput has room, from now on
+		uint64_t serial = 0;      // filled in by setSequence: counts the sequences it was given
+		// Filled in by setSequence: changes when another map is assigned or the map's slots change, so that the
+		// notes played into the track start from the default slot again.
+		uint64_t slotsSerial = 0;
 	};
 
 	// Which events a jump chases (the midi.chase* user settings): the controller events in effect where playback
@@ -87,12 +200,15 @@ namespace gnubase::engine
 		bool controllers = false; // control changes, each number by itself
 		bool programs = false;
 		bool pitchBend = false;
-		bool beyondParts = true; // controller events from the whole track, not just the part under the position
+		// Controller events from the whole track, not just the parts under the position and the sound slots' output
+		// events, which are the track's.
+		bool beyondParts = true;
 	};
 
 	// Plays a track's MIDI parts as events at their sample offsets, after the events it receives (from MIDI tracks
 	// routed to an instrument track). Where events meet at one sample, note-offs come first, then controller events,
-	// then note-ons; a note that starts while the same pitch sounds ends it first.
+	// then note-ons, then the expression of the notes that sound (#176); a note that starts while the same pitch sounds
+	// ends it first.
 	//
 	// It remembers which notes sound, and ends them where they end, where the transport stops and where playback
 	// jumps: a start, a locate or a cycle jump. The engine keeps one sequencer per channel across graph rebuilds, so a
@@ -107,6 +223,16 @@ namespace gnubase::engine
 	// controller events alone, up to and including those at the cursor. A chase takes a binary search per kind of
 	// event.
 	//
+	// A silent MIDI track's parts aren't in the sequence, so a jump while it is silent doesn't chase them. When it is
+	// heard again (ChaseTrack::heardAgain), the sequencer chases them in that block, where playback is, as the jump
+	// would have: of each kind the latest event before the position on the tracks chased, if it is the heard track's or
+	// of a kind its channel's values and automation have just sent (ChaseTrack::channelKinds), which come first, in its
+	// events; stopped, up to and including the cursor. A MIDI channel's bank select chased that way brings the
+	// channel's latest program after it, or after the earlier of CC 0 and CC 32, whichever track has it, as a jump
+	// sends them. A track that only its mute button muted had its parts in the sequence, and its strip sends what the
+	// mute dropped: only the kinds its channel sent are chased, whose dropped values the strip forgets. After a chase
+	// that didn't fit, it chases everything there again. Notes aren't chased.
+	//
 	// The track's own events, those of its input and of its parts, go through its MIDI inserts in order, each effect
 	// playing what the one before it played, and each MIDI send plays its effect on them beside that, before or after
 	// the inserts. When the effects that play change (one added, removed, replaced, switched off or bypassed), it ends
@@ -120,19 +246,40 @@ namespace gnubase::engine
 	{
 	public:
 		static constexpr size_t g_notes = size_t{16} * 128; // a note per MIDI channel and pitch
+		// The parameter ids below it, per effect, whose automated values a new instance of the effect takes (a test
+		// checks that every MIDI effect's are).
+		static constexpr size_t g_automated = 16;
 		// What is chased by itself: a control change per channel and number, a program and a pitch bend per channel.
 		static constexpr size_t g_chased = g_notes + (size_t{16} * 2);
 
-		MidiSequencer();
+		// effects makes the MIDI effects' plugins by "builtin:" and the effect's id; nullptr: the
+		// processors::BuiltinFactory every sequencer shares.
+		explicit MidiSequencer(std::shared_ptr<plugin::Factory> effects = nullptr);
 
 		// Command thread: what to play from the next block on. Indexes the notes for chasing, and makes the MIDI
-		// effects its slots hold, keeping those that play in the same slot as before.
+		// effects its slots hold, keeping those that play in the same slot as before, unless an effect before them in
+		// their chain is new or gone: they would hold notes whose note-offs they never get (#1157).
 		void setSequence(std::unique_ptr<MidiSequence> sequence);
 
-		// Any thread: what jumps chase from the next block on. Nothing until set.
+		// Command thread: what jumps chase from the next block on. Nothing until set.
 		void setChase(const MidiChase& chase) noexcept;
+		// Any thread: whether a jump chases events of the kind of event (a controller, program or pitch bend), as
+		// set.
+		bool chasesKindOf(const graph::ProcessEvent& event) const noexcept;
 
+		// The controller events its last block chased with MidiSequence::chaseIntoStrip, at the offset of the jump or
+		// of the segment where its track is heard again (ChaseTrack::heardAgain); empty without. Cleared and filled in
+		// by process, so the strip that runs it reads them after it in the same block.
+		std::shared_ptr<const graph::EventBuffer> stripChase() const { return m_stripChase; }
+
+		// Runs the inserts above the divider on its input first, with their automation at its samples, so that the
+		// input then holds what they played: the audio engine records it after the graph's block (reference manual
+		// p. 1105).
 		void process(const graph::ProcessContext& context) noexcept override;
+
+		// Audio thread, after process: what the MIDI send in a slot played in the block, where it plays to another
+		// instrument track; empty otherwise.
+		const graph::EventBuffer& sendOutput(size_t slot) const noexcept { return m_sendOut[slot % m_sendOut.size()]; }
 
 		// Audio thread: whether the note, channel * 128 + pitch, sounds.
 		bool sounds(uint16_t index) const noexcept;
@@ -142,11 +289,8 @@ namespace gnubase::engine
 		const uint16_t* soundingEnd() const noexcept { return m_sounding.data() + m_soundingCount; }
 
 		// Audio thread: whether the note sounds, from the track's parts, held through its input (a note-on came in
-		// and no note-off yet; a stop ends those too) or played by its MIDI effects.
-		bool holds(uint16_t index) const noexcept
-		{
-			return m_inputHeld[index] || m_effectsHeld[index] || sounds(index);
-		}
+		// and no note-off yet; a stop ends those too) or played by its MIDI effects to its output.
+		bool holds(uint16_t index) const noexcept;
 
 		// Audio thread: forgets the notes it holds without ending them, after the instrument they sounded on ended
 		// them (InstrumentChannel::releaseNotesOf).
@@ -154,7 +298,7 @@ namespace gnubase::engine
 		{
 			m_soundingCount = 0;
 			m_inputHeld.fill(false);
-			m_effectsHeld.fill(false);
+			forgetEffects();
 		}
 
 		// Audio thread, before the first block of a graph, after its releases: the serial of the instrument channel its
@@ -167,7 +311,7 @@ namespace gnubase::engine
 			if (instrument == m_instrument)
 				return;
 			m_inputHeld.fill(false);
-			m_effectsHeld.fill(false);
+			forgetEffects();
 			m_instrument = instrument;
 		}
 
@@ -177,8 +321,19 @@ namespace gnubase::engine
 		// Audio thread: the events played into the track in this block (midi.inject), as from its MIDI input. They go
 		// out after the events it receives and before its parts' events, also while the transport stands, their notes
 		// as the track's MIDI modifiers play them; a note-off and poly pressure go where their note-on went, also
-		// after the modifiers changed. The audio engine fills them before the graph processes a block.
+		// after the modifiers changed. With an articulation map its remote triggers select sound slots instead of
+		// playing, and the notes play with the selected slot's MIDI modifiers before the track's (#175). The audio
+		// engine fills them before the graph processes a block.
 		graph::EventBuffer& input() noexcept { return m_input; }
+		// Audio thread: an event of midi.inject's into input through an MPE setup (midi::MpeSetup::pack), as from a
+		// port with it: the track keeps the state of the notes' channels while the setup stays. False, adding nothing,
+		// if input has no room for all that the event adds (midi::MpeInput::maxEvents).
+		bool injectMpe(uint64_t setup, const graph::ProcessEvent& event) noexcept;
+
+		// Audio thread: the notes played straight to the track's instrument in this block (midi.inject direct, #1614),
+		// as they are: neither its input's mapping and modifiers nor its MIDI effects change them, and they aren't its
+		// MIDI input, so nothing records them. The audio engine fills them before the graph processes a block.
+		graph::EventBuffer& direct() noexcept { return m_direct; }
 
 	protected:
 		void prepare(double sampleRate, uint32_t maxFrames) override;
@@ -187,17 +342,71 @@ namespace gnubase::engine
 		// The track's own events: its input's and, by the transport, its parts'.
 		void playOwn(
 			const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept;
-		// Runs the effects on the events in m_own and adds what they play to out.
+		// Runs an effect on in, with the parameter events of its automation (m_effectEvents), into to. Logs the events
+		// its event lists drop as it starts to drop them. In a block the effect fails, an insert passes in on as it is,
+		// as a third-party effect that fails would otherwise swallow the block's note-offs, and a send plays nothing,
+		// as the inserts' notes play already. An effect that failed its last block is reset before it processes, so
+		// that it doesn't play on the notes whose note-offs passed it meanwhile. Returns true as the effect starts to
+		// fail, which it logs, and as it processes again: then the notes its slot holds end, as those it played
+		// itself get no note-off, and the effects after it start afresh (reset), as they hold the notes it played
+		// before or passed on meanwhile.
+		bool runEffect(const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to,
+			uint32_t frames, const graph::TransportBlock& transport) noexcept;
+		// Runs the inserts above the divider on m_input, which then holds what they play.
+		void runInputEffects(const MidiSequence& sequence, const graph::ProcessContext& context) noexcept;
+		// Runs the effects below the divider on the events in m_own and adds what they play to out.
 		void runEffects(
 			const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept;
-		// When the sequence is new: gives the effects their parameters and, if other effects play, ends every note it
-		// sounds.
+		// Ends the notes held holds, at offset 0 in out, unless another of the effects' outputs to the track's output
+		// holds them too (shared), and forgets them.
+		void endHeld(std::array<bool, g_notes>& held, graph::EventBuffer& out, bool shared) noexcept;
+		// When the sequence is new: ends the notes that the effects that go played, at the track's output unless one
+		// that stays holds them too, and at the instrument tracks the sends played to. The inserts' output counts as
+		// gone when any insert is new or gone, as the effects that arrive didn't see the note-ons. When an insert above
+		// the divider goes, the notes the inserts there played (m_inputPlayed) end in the track's input too, where the
+		// track records them. A new instance takes the values its slot's automation sent last (m_automated), which the
+		// lanes don't send again.
 		void takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept;
-		// An event of its input as the modifiers play it; false if left out. A second note-on for a held key whose
+		// Remembers the values the automation sends the effects' parameters in the block (m_automated).
+		void remember(const MidiSequence& sequence, const graph::EventBuffer& events) noexcept;
+		// Forgets the notes the inserts and the sends to the track's output hold.
+		void forgetEffects() noexcept;
+		// An event of its input as the modifiers play it, on the track's MIDI channel if it has one
+		// (MidiSequence::inputChannel); false if left out. A second note-on for a held key whose
 		// note goes elsewhere this time sets ends to where the first one went, which still sounds: that note ends
-		// first, so that no note hangs.
+		// first, so that no note hangs, unless another held key plays it too: a note that several held keys play
+		// ends with the last of their note-offs (Live Input moves keys onto one note).
 		bool modifyInput(
 			const MidiSequence& sequence, int64_t position, graph::ProcessEvent& event, uint16_t& ends) noexcept;
+		// A note-on on the channel of its input: the keys there that aren't held lose the note their expression went
+		// to, which has faded as far as MPE is concerned.
+		void forgetReleased(uint8_t channel) noexcept;
+		// Remote triggers on its input (#175, reference manual pp. 1263, 1268): whether the event is one of the
+		// articulation map's, which selects its sound slot instead of playing. A new slot sends the off events of the
+		// one before, then its own on events.
+		bool triggerSlot(
+			const MidiSequence& sequence, const graph::ProcessEvent& event, graph::EventBuffer& out) noexcept;
+		// Audio thread, of the sequencer for sends before the modifiers once it plays (MidiSequence::pre): takes the
+		// sound slot that the track's sequencer's remote triggers selected, which its own triggers select from then on.
+		// It is made anew whenever such sends start to play, after triggers that it didn't get.
+		void takeSlot(const MidiSequencer& track) noexcept;
+		// again sends the off and on events of the slot that is selected, as for a new one.
+		void selectSlot(const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset, graph::EventBuffer& out,
+			bool again = false) noexcept;
+		// Ends the add-on slots on (m_inputAddOns) that have an articulation of a group of slot, but slot itself: their
+		// off events on the channel their on events went to (#1667).
+		void endAddOns(
+			const ArticulationMap& map, const SoundSlot& slot, uint32_t offset, graph::EventBuffer& out) noexcept;
+		// The channel the notes played into the track play on: the selected slot's, else the default slot's own, else
+		// channel (the track's or the trigger's).
+		uint8_t notesChannel(const ArticulationMap& map, uint8_t channel) const noexcept;
+		// The add-on slots on follow the notes to another channel: their off events on the channel their on events
+		// went to, their on events on the new one (#1718). track is the track's MIDI channel, -1 for none: then each
+		// goes by the channel of the trigger that turned it on.
+		void moveAddOns(const ArticulationMap& map, int track, uint32_t offset, graph::EventBuffer& out) noexcept;
+		// A slot's on or off output events, on channel.
+		static void sendSlotEvents(
+			const SoundSlot& slot, bool off, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept;
 		void play(
 			const MidiSequence& sequence, const graph::TransportSegment& segment, graph::EventBuffer& out) noexcept;
 		// Each returns false if the event buffer was full; then the note didn't start or end (though noteOn may have
@@ -207,8 +416,13 @@ namespace gnubase::engine
 		// Notes it can't end for a full buffer end as soon as there is room.
 		void endAll(uint32_t offset, graph::EventBuffer& out) noexcept;
 		// Finds the controller events to chase at a position; sendChased sends them, false if the buffer filled first.
-		// Stopped, it takes the events at the position too.
-		void findChased(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept;
+		// Stopped, it takes the events at the position too. heardAgain: only those of the tracks heard again in this
+		// block, of a soloed-out or disabled one's every kind, of one muted by its button only the kinds its channel
+		// sent (ChaseTrack::channelKinds), and the latest of those kinds whichever track has it.
+		void findChased(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped,
+			bool heardAgain = false) noexcept;
+		// A chase of the tracks heard again in this block, unless a jump chases there anyway.
+		void chaseHeardAgain(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept;
 		void consider(const ChaseIndex& index, uint16_t track, int64_t position, uint8_t chase, bool stopped) noexcept;
 		bool sendChased(uint32_t offset, graph::EventBuffer& out) noexcept;
 		// Starts the notes that sound at a position; false if the buffer was full before it started them all.
@@ -228,6 +442,10 @@ namespace gnubase::engine
 			uint8_t channel = 0;
 		};
 
+		// The effects' plugin host, which the effects keep: before the sequences and slots that hold them, so it goes
+		// after them. Their factory.
+		MidiEffectHost m_host;
+		std::shared_ptr<plugin::Factory> m_factory;
 		rt::SnapshotPublisher<MidiSequence> m_sequence;
 		std::atomic<uint8_t> m_chase{0};            // MidiChase as flags
 		std::array<int64_t, g_notes> m_ends{};      // where each sounding note ends
@@ -242,34 +460,127 @@ namespace gnubase::engine
 		size_t m_chasedCount = 0;
 		size_t m_chasedSent = 0;
 		std::array<uint32_t, g_notes> m_chasedNotes{}; // while chasing: the notes to start, as indices into notes
+		std::array<bool, g_chased> m_resent{}; // while chasing tracks heard again: the kinds their channels sent
 		graph::EventBuffer m_input;
-		std::array<bool, g_notes> m_inputHeld{}; // notes its input sent a note-on for and no note-off since
-		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out.
+		graph::EventBuffer m_direct;                      // see direct
+		std::shared_ptr<graph::EventBuffer> m_stripChase; // see stripChase
+		std::array<bool, g_notes> m_inputHeld{};          // notes its input sent a note-on for and no note-off since
+		// Notes the inserts above the divider played a note-on for and no note-off since, before the modifiers.
+		std::array<bool, g_notes> m_inputPlayed{};
+		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out, or no
+		// note-on came. It stays after the note-off, for the note's expression while it fades (forgetReleased).
 		std::array<uint16_t, g_notes> m_inputTo{};
-		std::array<bool, g_notes> m_inputDown{}; // the keys of its input, as channel * 128 + pitch, that are held
-		uint64_t m_random = 0;                   // the random modifiers' seed for the next note of its input
-		uint64_t m_instrument = 0;               // playOn: where its notes went in the graph that runs
+		std::array<bool, g_notes> m_inputDown{};     // the keys of its input, as channel * 128 + pitch, that are held
+		std::array<uint16_t, g_notes> m_inputKeys{}; // how many held keys play each note, as channel * 128 + pitch
+		uint64_t m_random = 0;                       // the random modifiers' seed for the next note of its input
+		// The sound slot its input's remote triggers selected, -1 for none yet (the default slot plays), the channel
+		// its on events went to, and without latch the slot again while the key that selected it is held, else -1.
+		int m_inputSlot = -1;
+		uint8_t m_inputSlotChannel = 0;
+		int m_inputSlotHeld = -1;
+		uint64_t m_inputSlotsSerial = 0; // the MidiSequence::slotsSerial they belong to
+		// midi.inject's MPE input (injectMpe) and the setup it is for.
+		midi::MpeInput m_injectedMpe;
+		uint64_t m_injectedMpeSetup = 0;
+		int8_t m_inputSlotTrack = -1;   // the MidiSequence::inputChannel they belong to
+		uint8_t m_inputSlotTrigger = 0; // the channel of the trigger that selected the slot
+		bool m_tookSlot = false;        // a sequencer for sends before the modifiers: takeSlot ran
+		// The add-on slots its input's remote triggers turned on and nothing turned off yet, by index, with the
+		// channel their on events went to (#1667) and that of their trigger (#1718). ponytail: at most 16 at once, one
+		// per group as a rule; one more sends no off events.
+		struct InputAddOn
+		{
+			int slot = -1;
+			uint8_t channel = 0;
+			uint8_t trigger = 0;
+		};
+		std::array<InputAddOn, 16> m_inputAddOns{};
+		size_t m_inputAddOnCount = 0;
+		uint64_t m_instrument = 0; // playOn: where its notes went in the graph that runs
 
 		// Command thread: the effect in each slot, the inserts' then the sends', while it plays.
 		struct SlotEffect
 		{
 			std::string id;
-			std::shared_ptr<processors::MidiEffect> effect;
+			std::shared_ptr<MidiEffectInstance> effect;
 			uint64_t serial = 0;
+			uint64_t output = 0; // sends: MidiSequence::sendOutputs
+			bool input = false;  // inserts: above the divider
+			uint8_t source = 0;  // sends: where their events come from (setSequence)
 		};
 		std::array<SlotEffect, 2 * midi::g_effectSlots> m_slots;
 		uint64_t m_effectSerial = 0;   // the last RunningEffect::serial given
 		uint64_t m_sequenceSerial = 0; // the last MidiSequence::serial given
-		double m_sampleRate = 0.0;     // prepare's, for new effects; 0: not prepared yet
+		// The articulation map's id and slots of the last sequence given, and its MidiSequence::slotsSerial.
+		ObjectId m_mapId = 0;
+		std::vector<SoundSlot> m_mapSlots;
+		uint64_t m_slotsSerial = 0;
+		double m_sampleRate = 0.0; // prepare's, for new effects; 0: not prepared yet
 		uint32_t m_maxFrames = 0;
 		// Audio thread: allocated by setSequence before the first sequence with effects.
 		graph::EventBuffer m_own;    // the track's own events, for the effects
 		graph::EventBuffer m_chainA; // what the effects play, in turns
 		graph::EventBuffer m_chainB;
-		uint64_t m_serial = 0;                                   // the sequence it took last
-		std::array<uint64_t, 2 * midi::g_effectSlots> m_chain{}; // the serials of the effects that played
-		size_t m_chainCount = 0;                                 // how many
-		std::array<bool, g_notes> m_effectsHeld{}; // notes the effects played a note-on for and no note-off since
+		// The block's parameter events for the effects (midi::g_effectEvents), which its automation sends among its
+		// events in, and an effect's events in with its own of them.
+		graph::EventBuffer m_effectEvents;
+		graph::EventBuffer m_effectIn;
+		// An effect's events in and its transport as the plugin API has them, and per slot, the inserts' then the
+		// sends', what its effect played, whose SysEx bytes stay there until it plays again, and the serial of the
+		// effect that fails its blocks there, and of the one that drops events there, 0 for none.
+		plugin::EventList m_pluginIn;
+		std::array<plugin::EventList, 2 * midi::g_effectSlots> m_pluginOut;
+		std::vector<plugin::TransportSegment> m_pluginTransport;
+		std::array<uint64_t, 2 * midi::g_effectSlots> m_failing{};
+		std::array<uint64_t, 2 * midi::g_effectSlots> m_dropping{};
+		plugin::EventList m_automatedIn; // the values the automation sent a new instance's slot last, and nothing out
+		plugin::EventList m_automatedOut;
+		uint64_t m_serial = 0; // the sequence it took last
+		// The serials of the inserts that played, in order, of the effect each send slot played, 0 for none, and the
+		// highest serial that played.
+		std::array<uint64_t, midi::g_effectSlots> m_inserts{};
+		size_t m_insertCount = 0;
+		size_t m_inputCount = 0; // of them above the divider
+		bool m_inputGo = false;  // one of those went: runInputEffects ends the notes they played (m_inputPlayed)
+		std::array<uint64_t, midi::g_effectSlots> m_sends{};
+		std::array<bool, midi::g_effectSlots> m_sendElsewhere{}; // those sends played to another instrument track
+		uint64_t m_newest = 0;
+		bool m_effects = false; // whether effects played: else the track's own events went to the output
+		// Notes the inserts' output played a note-on for and no note-off since: with effects but no inserts, the
+		// track's own events.
+		std::array<bool, g_notes> m_insertsHeld{};
+		// Per slot, the inserts' then the sends', the values the automation sent its effect's parameters last (NaN:
+		// none), and the effect they were for.
+		std::array<std::array<double, g_automated>, 2 * midi::g_effectSlots> m_automated{};
+		std::array<const processors::BuiltinInfo*, 2 * midi::g_effectSlots> m_automatedEffect{};
+		MidiChase m_chaseSetting;             // setChase's, for the sequencer of the sends before the modifiers
+		std::shared_ptr<MidiSequencer> m_pre; // command thread: MidiSequence::pre while sends need it
+		graph::EventBuffer m_preOut;          // audio thread: what it played in the block
+		graph::EventBuffer m_none;            // nothing, for its events in
+		// Per send slot, what it played in the block to another instrument track, and the notes it holds where it
+		// plays (m_sendElsewhere): there or at the track's output.
+		std::array<graph::EventBuffer, midi::g_effectSlots> m_sendOut;
+		std::array<std::array<bool, g_notes>, midi::g_effectSlots> m_sendHeld{};
+	};
+
+	// A MIDI send's way to another instrument track (graph::NodeKind::MidiSend): it outputs what the send's effect
+	// played in the block (MidiSequencer::sendOutput), after the track's sequencer, and remembers the notes it holds
+	// there, so that the instrument ends them when the send goes (InstrumentChannel::releaseNotesOf).
+	class MidiSendTap : public graph::Processor
+	{
+	public:
+		MidiSendTap(std::shared_ptr<MidiSequencer> source, size_t slot);
+
+		void process(const graph::ProcessContext& context) noexcept override;
+
+		// Audio thread: whether a note-on for the note, channel * 128 + pitch, went through and no note-off since.
+		bool holds(uint16_t index) const noexcept { return m_held[index]; }
+		void forget() noexcept { m_held.fill(false); }
+
+	private:
+		std::shared_ptr<MidiSequencer> m_source;
+		size_t m_slot = 0;
+		std::array<bool, MidiSequencer::g_notes> m_held{};
 	};
 
 	// An instrument track's channel: its own parts' events and those of the MIDI tracks routed to it, played by its
@@ -289,9 +600,13 @@ namespace gnubase::engine
 		// rerouted), and before the sequencers' playOn: ends the notes that track's sequencer started here, from its
 		// parts or its input, at the next block, except those this channel's own sequencer or one of the staying
 		// tracks' also holds. A staying track counts only if it played here in the graph that ran last: one that
-		// arrives in this graph holds notes from somewhere else. The departed sequencer forgets them.
-		void releaseNotesOf(
-			MidiSequencer& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying) noexcept;
+		// arrives in this graph holds notes from somewhere else. Nor those the other tracks' MIDI sends that stay here
+		// (stayingSends) hold. The departed sequencer forgets them.
+		void releaseNotesOf(MidiSequencer& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying,
+			const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends) noexcept;
+		// The same for another track's MIDI send that played here and goes: the notes it holds here end.
+		void releaseNotesOf(MidiSendTap& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying,
+			const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends) noexcept;
 
 		// Audio thread, after the block's process: the events its instrument got (midi.capture).
 		const graph::EventBuffer& played() const noexcept { return m_events; }
@@ -300,6 +615,11 @@ namespace gnubase::engine
 		void prepare(double sampleRate, uint32_t maxFrames) override;
 
 	private:
+		// Ends the held notes that departed holds and no other source does.
+		template <typename Departed> void release(const Departed& departed,
+			const std::vector<std::shared_ptr<MidiSequencer>>& staying,
+			const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends) noexcept;
+
 		std::shared_ptr<MidiSequencer> m_sequencer;
 		std::shared_ptr<graph::Processor> m_instrument;
 		uint64_t m_serial = 0;

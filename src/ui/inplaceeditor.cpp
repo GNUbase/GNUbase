@@ -176,7 +176,7 @@ namespace gnubase::ui
 			addPartControls(track, editor);
 			m_display.setInPlaceTracks(tracks());
 		}
-		editor.keys->show(m_display.project(), view);
+		editor.keys->show(m_display.project(), view, m_display.read());
 		showPartControls(editor);
 		place(track, editor);
 	}
@@ -321,14 +321,10 @@ namespace gnubase::ui
 			}
 		// ponytail: the key editor's axis is linear in ticks, so it matches the ruler at the edges and wherever the
 		// tempo doesn't change in the view; a tempo-mapped axis in KeyEditor when tempo changes need it.
-		if (m_timeLoads != m_display.loads())
-		{
-			m_time = projectTime(project);
-			m_timeLoads = m_display.loads();
-		}
+		const TimeContext& time = m_display.time();
 		const double start = view.start + (offset * view.scale);
 		editor.keys->setTimeRange(
-			std::make_pair(m_time.tempo.toTicks(start), m_time.tempo.toTicks(start + (width * view.scale))));
+			std::make_pair(time.tempo.toTicks(start), time.tempo.toTicks(start + (width * view.scale))));
 	}
 
 	void InPlaceEditors::ProcessEvent(Rml::Event& event)
@@ -349,6 +345,28 @@ namespace gnubase::ui
 		}
 		// The key editor below has seen it; the event display mustn't select or edit what is under the editor.
 		event.StopPropagation();
+		if (event.GetId() == Rml::EventId::Dblclick)
+		{
+			// A double click on the lanes' footer strip, the place below the controller display (p. 1261), closes
+			// the editor; one on the strip's buttons doesn't.
+			const Rml::Element* editor = nullptr;
+			bool footer = false;
+			bool button = false;
+			for (const Rml::Element* up = event.GetTargetElement(); up != nullptr && up != m_area.get();
+				up = up->GetParentNode())
+			{
+				if (up->IsClassSet("controller-lanes-footer"))
+					footer = true;
+				else if (up->GetTagName() == "button")
+					button = true;
+				else if (up->IsClassSet("in-place-editor"))
+					editor = up;
+			}
+			if (editor != nullptr && footer && !button)
+				m_binding.send("editor.inPlace",
+					{{"tracks", {std::stoull(editor->GetAttribute<Rml::String>("track", "0"))}}, {"open", false}});
+			return;
+		}
 		if (event.GetId() != Rml::EventId::Click)
 			return;
 		Rml::Element* editor = nullptr;

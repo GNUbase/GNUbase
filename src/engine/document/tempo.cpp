@@ -224,6 +224,12 @@ namespace gnubase::engine
 		constexpr double g_secondsPerMinute = 60.0;
 		constexpr double g_minDetectSeconds = 7.0; // reference manual p. 1460
 		constexpr double g_chord = 0.03;           // seconds: notes that start this close together are one tap
+		// Rounds a retimed position that lands on exactly half a tick up, whichever part it is in: far above the
+		// conversions' floating point error, which grows with the tick count, and far below a tick, so shared copies at
+		// the same tempo round their ties alike instead of a tick apart. No offset rules out a tie for every tempo
+		// ratio, but this one, the golden ratio's fractional part over 1000, is one no simple ratio and no family of
+		// tempos one would type produces, so only a ratio chosen to hit it could (#865).
+		constexpr double g_retimeTieOffset = 0.000618033988749895;
 
 		// The tempo track playing beats (seconds, in order) distance ticks apart: a step tempo event at each beat but
 		// the last replaces the tempo events from the first beat to the last; beats before the project start don't
@@ -419,10 +425,19 @@ namespace gnubase::engine
 		// the copies a split changes.
 		const auto retimePart = [&project, &before](MidiPart& part)
 		{
-			const time::Ticks startBefore = before.toTicks(part.position.value, project.sampleRate);
-			const time::Ticks start = project.tempo.toTicks(part.position.value, project.sampleRate);
-			const auto retime = [&](time::Ticks position)
-			{ return project.tempo.toTicks(before.toSeconds(startBefore + position)) - start; };
+			// Retime through the part start's exact time and round the relative position once, so that shared copies
+			// at the same tempo round to the same ticks instead of a tick apart from each of their own starts; the
+			// tie offset rounds a position on exactly half a tick the same way whatever the start (#865).
+			const double startSeconds = static_cast<double>(part.position.value) / project.sampleRate;
+			const double startBefore = before.toTicksExact(startSeconds);
+			const double start = project.tempo.toTicksExact(startSeconds);
+			const auto retime = [&](time::Ticks position) -> time::Ticks
+			{
+				const double exact =
+					project.tempo.toTicksExact(before.toSecondsExact(startBefore + static_cast<double>(position))) -
+					start;
+				return static_cast<time::Ticks>(std::floor(exact + 0.5 + g_retimeTieOffset));
+			};
 			bool moved = false;
 			const auto update = [&moved](time::Ticks& value, time::Ticks to)
 			{
@@ -451,35 +466,46 @@ namespace gnubase::engine
 		std::set<ObjectId> changed;
 		if (project.tempo != before)
 		{
-			for (auto& [id, part] : project.midiParts)
-				if (part.position.base == time::TimeBase::Linear && retimePart(part))
-					changed.insert(id);
-			// The linear parts of inactive track versions too, which aren't shared copies.
-			for (auto& [id, track] : project.trackById)
-				for (TrackVersion& version : track.versions)
-					for (MidiPart& part : version.midiParts)
-						if (part.position.base == time::TimeBase::Linear)
-							retimePart(part);
+			// The linear parts of inactive track versions too, which aren't there to see and so aren't reported.
+			forEveryEventAndPart(
+				project, [](const AudioEvent&, bool) {}, [](const AudioPart&, bool) {},
+				[&](MidiPart& part, bool plays)
+				{
+					if (part.position.base != time::TimeBase::Linear || !retimePart(part))
+						return;
+					if (plays)
+						changed.insert(part.id);
+				});
 		}
 		// Shared copies that now hold different notes, such as copies before and after a tempo event, or a linear and
 		// a musical copy, can't share them all. Copies that still hold the same notes as each other stay shared: the
 		// largest set of matching copies (the first of equal ones) keeps the group and its note and controller ids,
 		// every other set gets a group of its own with new ids, and a copy that matches no other becomes a real copy,
-		// as event.toRealCopy makes it.
-		std::map<ObjectId, std::vector<std::vector<MidiPart*>>> groups; // the sets of matching copies, in id order
-		for (auto& entry : project.midiParts)
+		// as event.toRealCopy makes it. The same goes for the shared copies an inactive version holds, a group of their
+		// own (track-versions.md), which aren't reported.
+		std::map<ObjectId, std::vector<std::vector<MidiPart*>>> groups; // the sets of matching copies
+		std::set<const MidiPart*> playing;
+		forEveryEventAndPart(
+			project, [](const AudioEvent&, bool) {}, [](const AudioPart&, bool) {},
+			[&groups, &playing](MidiPart& part, bool plays)
+			{
+				if (part.shared == 0)
+					return;
+				if (plays)
+					playing.insert(&part);
+				std::vector<std::vector<MidiPart*>>& sets = groups[part.shared];
+				const auto matching = std::find_if(sets.begin(), sets.end(), [&part](const std::vector<MidiPart*>& set)
+					{ return set.front()->notes == part.notes && set.front()->controllers == part.controllers; });
+				if (matching != sets.end())
+					matching->push_back(&part);
+				else
+					sets.push_back({&part});
+			});
+		const auto report = [&changed, &playing](const MidiPart& part)
 		{
-			MidiPart& part = entry.second;
-			if (part.shared == 0)
-				continue;
-			std::vector<std::vector<MidiPart*>>& sets = groups[part.shared];
-			const auto matching = std::find_if(sets.begin(), sets.end(), [&part](const std::vector<MidiPart*>& set)
-				{ return set.front()->notes == part.notes && set.front()->controllers == part.controllers; });
-			if (matching != sets.end())
-				matching->push_back(&part);
-			else
-				sets.push_back({&part});
-		}
+			if (playing.count(&part) != 0)
+				changed.insert(part.id);
+		};
 		for (auto& entry : groups)
 		{
 			const std::vector<std::vector<MidiPart*>>& sets = entry.second;
@@ -495,19 +521,19 @@ namespace gnubase::engine
 					if (set->size() < 2)
 					{
 						source.shared = 0; // the last of its copies is a part like any other
-						changed.insert(source.id);
+						report(source);
 					}
 					continue;
 				}
 				renumber(project, source);
 				source.shared = set->size() < 2 ? 0 : project.newId();
-				changed.insert(source.id);
+				report(source);
 				for (auto other = std::next(set->begin()); other != set->end(); ++other)
 				{
 					(*other)->shared = source.shared;
 					(*other)->notes = source.notes;
 					(*other)->controllers = source.controllers;
-					changed.insert((*other)->id);
+					report(**other);
 				}
 			}
 		}

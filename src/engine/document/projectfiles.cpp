@@ -145,6 +145,8 @@ namespace gnubase::engine
 
 	void ProjectModel::opened(Project project, const std::string& file, CommandContext& context)
 	{
+		if (!m_trackRenders.empty())
+			throw CommandError("the project contains tracks being rendered");
 		// An auto save opens untitled and unsaved, so that saving it neither overwrites the auto save nor makes Auto
 		// Saves the project folder.
 		const bool autoSave = isAutoSave(fs::u8path(file));
@@ -154,11 +156,13 @@ namespace gnubase::engine
 		m_clipboard.reset();           // it holds the old project's track and clip ids
 		m_automationClipboard.reset(); // so does this one
 		context.emit("project.reset");
+		if (m_chordPadsOpened)
+			m_chordPadsOpened(context);
 		announceHistory(context);
+		m_openedRevision = m_revision + 1; // the revision publish() makes, so that its snapshot is the new project's
 		publish();
 		m_savedRevision = autoSave ? 0 : m_revision; // publish() made m_revision at least 1
 		m_autoSavedRevision = m_revision;
-		m_openedRevision = m_revision;
 		m_lastSave = m_clock->now();
 		m_autoSaveFailure.reset();
 		if (!m_file.empty())
@@ -233,24 +237,29 @@ namespace gnubase::engine
 				"Saves the project as a new version of its file and goes on with that: in the same folder, with the "
 				"same name and the next number after the highest one there, \"Song-01.dawproject\" after "
 				"\"Song.dawproject\", \"Song-03.dawproject\" after \"Song-02.dawproject\". The earlier versions stay "
-				"as they are. Returns the new file. Fails for a project without a file: save it first.",
-				objectSchema({{"embedMedia", embedMedia}}), fileResult, false},
+				"as they are. Returns the new file and, as project.save, the media files that are missing. Fails for a "
+				"project without a file: save it first.",
+				objectSchema({{"embedMedia", embedMedia}}),
+				objectSchema({{"file", stringSchema}, {"missing", {{"type", "array"}, {"items", stringSchema}}}},
+					{"file", "missing"}),
+				false},
 			[this](CommandContext& context)
 			{
 				require(!m_file.empty(), "the project has no file yet: save it with a path first");
 				const fs::path file = nextVersion(fs::u8path(m_file));
 				DawProjectSaveOptions options;
 				options.embedMedia = context.parameters().value("embedMedia", true);
+				std::vector<std::string> missing;
 				try
 				{
-					saveDawProject(m_project, file.u8string(), options);
+					missing = saveDawProject(m_project, file.u8string(), options);
 				}
 				catch (const std::exception& error)
 				{
 					throw CommandError(error.what());
 				}
 				saved(file.u8string(), context);
-				return Json{{"file", m_file}};
+				return Json{{"file", m_file}, {"missing", missing}};
 			});
 
 		addControl(engine,

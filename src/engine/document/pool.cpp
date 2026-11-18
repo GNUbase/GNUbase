@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -459,6 +460,7 @@ namespace gnubase::engine
 					total += static_cast<double>(std::max<time::Samples>(file.length, 1));
 				double done = 0.0;
 				Json relink = Json::array();
+				std::set<std::string> taken = takenNames(folder);
 				for (const Conversion& file : files)
 				{
 					job.checkCancelled();
@@ -467,7 +469,7 @@ namespace gnubase::engine
 					const auto frames = static_cast<double>(std::max<time::Samples>(file.length, 1));
 					job.progress(done / total, detail);
 					const std::string path =
-						createFreeFile(folder, fs::u8path(source.stem().u8string() + ".wav")).u8string();
+						createFreeFile(folder, fs::u8path(source.stem().u8string() + ".wav"), taken).u8string();
 					written.push_back(path);
 					convertSampleRate(file.path, {path}, sampleRate,
 						[&job, &detail, done, frames, total](double fraction)
@@ -545,7 +547,8 @@ namespace gnubase::engine
 		const Json folderSchema = objectSchema({{"id", integer}, {"name", string}, {"parent", integer}});
 		const Json clipSchema = objectSchema({{"id", integer}, {"name", string}, {"folder", integer},
 			{"media", integer}, {"used", integer}, {"path", string}, {"sampleRate", number}, {"channels", integer},
-			{"length", integer}, {"missing", boolean}, {"external", boolean}});
+			{"length", integer}, {"missing", boolean}, {"external", boolean}, {"rootKey", string},
+			{"audioEvents", integer}, {"rootKeysDiffer", boolean}});
 		add(engine,
 			{"pool.get", 1,
 				"The pool (reference manual pp. 739-744): its folders, and every clip with the folder it is in, the "
@@ -553,13 +556,18 @@ namespace gnubase::engine
 				"channel count and length in sample frames, whether the file is missing and whether it is external, "
 				"outside the project folder (every file of a project that has no file yet). The totals of the info "
 				"line: audioFiles, usedFiles (media files that an event plays), missingFiles, externalFiles and "
-				"totalSize, the bytes of the files on disk.",
+				"totalSize, the bytes of the files on disk; and missingExternalFiles, how many of the external files "
+				"are missing, which Prepare Archive can't copy. A clip's rootKey is the root key its audio events "
+				"share (the Key column, p. 417), \"\" when they have none or differ, which rootKeysDiffer tells "
+				"apart; audioEvents counts the audio events that play it, those of inactive track versions too, "
+				"which clip.set rootKey sets.",
 				objectSchema({}),
 				objectSchema({{"folders", {{"type", "array"}, {"items", folderSchema}}},
 								 {"clips", {{"type", "array"}, {"items", clipSchema}}}, {"audioFiles", integer},
 								 {"usedFiles", integer}, {"missingFiles", integer}, {"externalFiles", integer},
-								 {"totalSize", integer}},
-					{"folders", "clips", "audioFiles", "usedFiles", "missingFiles", "externalFiles", "totalSize"}),
+								 {"totalSize", integer}, {"missingExternalFiles", integer}},
+					{"folders", "clips", "audioFiles", "usedFiles", "missingFiles", "externalFiles", "totalSize",
+						"missingExternalFiles"}),
 				true},
 			[this](Project& project, CommandContext&)
 			{
@@ -570,6 +578,7 @@ namespace gnubase::engine
 				// and again per file: the panel asks after every edit.
 				std::set<ObjectId> missingMedia;
 				int externalFiles = 0;
+				int missingExternalFiles = 0;
 				std::uintmax_t totalSize = 0;
 				for (const auto& [id, media] : project.media)
 				{
@@ -580,9 +589,30 @@ namespace gnubase::engine
 					else if (const std::uintmax_t size = entry.file_size(error); !error)
 						totalSize += size;
 					if (external(media))
+					{
 						++externalFiles;
+						if (missingMedia.count(id) != 0)
+							++missingExternalFiles;
+					}
 				}
 				const std::map<ObjectId, int> uses = clipUses(project);
+				// The root key a clip's audio events share, whether they differ, and how many there are.
+				struct Keys
+				{
+					int key = -1;
+					bool differ = false;
+					int events = 0;
+				};
+				std::map<ObjectId, Keys> keys;
+				forEveryAudioEvent(project,
+					[&keys](const AudioEvent& event)
+					{
+						Keys& clip = keys[event.clip];
+						if (clip.events++ == 0)
+							clip.key = event.rootKey;
+						else if (clip.key != event.rootKey)
+							clip.differ = true;
+					});
 				std::set<ObjectId> usedMedia;
 				Json clips = Json::array();
 				for (const auto& [id, clip] : project.clips)
@@ -590,19 +620,24 @@ namespace gnubase::engine
 					const MediaFile& media = project.media.at(clip.media);
 					const auto used = uses.find(id);
 					const int count = used == uses.end() ? 0 : used->second;
+					const auto keyed = keys.find(id);
+					const Keys found = keyed == keys.end() ? Keys{} : keyed->second;
 					if (count > 0)
 						usedMedia.insert(clip.media);
 					clips.push_back({{"id", id}, {"name", clip.name}, {"folder", clip.folder}, {"media", clip.media},
 						{"used", count}, {"path", media.path}, {"sampleRate", media.sampleRate},
 						{"channels", media.channels}, {"length", media.length},
-						{"missing", missingMedia.count(clip.media) != 0}, {"external", external(media)}});
+						{"missing", missingMedia.count(clip.media) != 0}, {"external", external(media)},
+						{"rootKey", rootKeyName(found.differ ? -1 : found.key)}, {"audioEvents", found.events},
+						{"rootKeysDiffer", found.differ}});
 				}
 				Json folders = Json::array();
 				for (const auto& [id, folder] : project.poolFolders)
 					folders.push_back(toJson(folder));
 				return Json{{"folders", std::move(folders)}, {"clips", std::move(clips)},
 					{"audioFiles", project.media.size()}, {"usedFiles", usedMedia.size()},
-					{"missingFiles", missingMedia.size()}, {"externalFiles", externalFiles}, {"totalSize", totalSize}};
+					{"missingFiles", missingMedia.size()}, {"externalFiles", externalFiles}, {"totalSize", totalSize},
+					{"missingExternalFiles", missingExternalFiles}};
 			});
 
 		add(engine,
@@ -669,9 +704,15 @@ namespace gnubase::engine
 			});
 		add(engine,
 			{"clip.set", 1,
-				"Renames a clip or moves it into a pool folder (0: the pool's Audio folder). The file keeps its name.",
-				objectSchema({{"clip", integer}, {"name", string}, {"folder", integer}}, {"clip"}), result({"clip"}),
-				false},
+				"Renames a clip or moves it into a pool folder (0: the pool's Audio folder). The file keeps its name. "
+				"rootKey (\"\" for none, C, C# and so on to B) is the pool's Key column (reference manual p. 417): "
+				"every audio event that plays the clip gets it as its root key (audioEvent.set rootKey), also those "
+				"that inactive track versions hold; the audio file stays as it is. Refused for a clip that no audio "
+				"event plays, which has nowhere to keep a root key (pool.get audioEvents 0).",
+				objectSchema({{"clip", integer}, {"name", string}, {"folder", integer},
+								 {"rootKey", Json{{"type", "string"}, {"enum", rootKeyNames()}}}},
+					{"clip"}),
+				result({"clip"}), false},
 			[](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
@@ -679,6 +720,32 @@ namespace gnubase::engine
 				clip.name = folderName(parameters, clip.name);
 				clip.folder = parameters.value("folder", clip.folder);
 				requireFolder(project, clip.folder);
+				if (parameters.contains("rootKey"))
+				{
+					const std::string name = parameters.at("rootKey").get<std::string>();
+					const std::optional<int> found = rootKeyFromName(name);
+					require(found.has_value(), "unknown root key " + name);
+					const int key = found.value_or(-1);
+					bool played = false;
+					forEveryAudioEvent(
+						project, [&](const AudioEvent& event) { played = played || event.clip == clip.id; });
+					require(played, "no audio event plays clip " + std::to_string(clip.id) + ", so it has no root key");
+					// Those of inactive track versions lie inside their track, which is announced as changed.
+					std::set<ObjectId> tracks;
+					forEveryAudioEvent(project,
+						[&](AudioEvent& event)
+						{
+							if (event.clip != clip.id || event.rootKey == key)
+								return;
+							event.rootKey = key;
+							if (project.audioEvents.count(event.id) != 0)
+								context.emit("audioEvent.changed", {{"event", toJson(event)}});
+							else
+								tracks.insert(event.track);
+						});
+					for (const ObjectId track : tracks)
+						context.emit("track.changed", {{"track", toJson(project.trackById.at(track))}});
+				}
 				Json changed = {{"clip", toJson(clip)}};
 				context.emit("clip.changed", changed);
 				return changed;
@@ -796,13 +863,22 @@ namespace gnubase::engine
 									std::remove_if(version.audioEvents.begin(), version.audioEvents.end(),
 										[clipId](const AudioEvent& event) { return event.clip == clipId; }),
 									version.audioEvents.end());
-						// Sampler tracks play nothing (#180).
+						// Sampler tracks and drum pads play nothing (#180, #182).
 						for (auto& [channelId, channel] : project.channels)
-							if (channel.sample == clipId)
-							{
-								channel.sample = 0;
+						{
+							bool played = false;
+							forEveryInstrumentClip(channel,
+								[clipId, &played](ObjectId& clip)
+								{
+									if (clip == clipId)
+									{
+										clip = 0;
+										played = true;
+									}
+								});
+							if (played)
 								context.emit("channel.changed", {{"channel", toJson(channel)}});
-							}
+						}
 						project.clips.erase(clipId);
 						context.emit("clip.removed", {{"clip", clipId}});
 						clips.push_back(clipId);

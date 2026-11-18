@@ -101,6 +101,7 @@ add_library(gnubase-engine STATIC
 	audio/audition.cpp audio/audition.h
 	audio/automation.cpp audio/automation.h
 	audio/fades.cpp audio/fades.h
+	audio/heardagain.h
 	audio/metercommands.cpp
 	audio/meters.cpp audio/meters.h
 	audio/midiports.cpp audio/midiports.h
@@ -109,6 +110,7 @@ add_library(gnubase-engine STATIC
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/recorder.cpp audio/recorder.h
+	audio/sampleloader.cpp audio/sampleloader.h
 	audio/sequencer.cpp audio/sequencer.h
 	audio/stripsections.cpp audio/stripsections.h
 	audio/transport.cpp audio/transport.h
@@ -129,6 +131,7 @@ add_library(gnubase-engine STATIC
 	document/chordpads.cpp document/chordpads.h
 	document/chordtrack.cpp document/chordtrack.h
 	document/document.cpp document/document.h
+	document/drumtrack.cpp document/drumtrack.h
 	document/editors.cpp document/editors.h
 	document/eventedits.cpp
 	document/fadeedits.cpp
@@ -195,10 +198,13 @@ add_library(gnubase-engine STATIC
 	midi/logicalcommands.cpp midi/logicalcommands.h
 	midi/midivalues.cpp midi/midivalues.h
 	midi/modifiers.cpp midi/modifiers.h
+	midi/mpeinput.cpp midi/mpeinput.h
+	midi/padvoices.h
 	midi/patterns.cpp midi/patterns.h
 	midi/quantize.cpp midi/quantize.h
 	midi/quantizecommands.cpp midi/quantizecommands.h
 	midi/quantizesettings.cpp midi/quantizesettings.h
+	midi/trackchannel.h
 	midifile/midiconvert.cpp midifile/midiconvert.h
 	midifile/smf.cpp midifile/smf.h
 	peaks/peakcache.cpp peaks/peakcache.h
@@ -208,6 +214,7 @@ add_library(gnubase-engine STATIC
 	plugins/slotinstances.cpp plugins/slotinstances.h
 	processors/builtin.cpp processors/builtin.h
 	processors/builtinplugin.cpp processors/builtinplugin.h
+	processors/drummachine.cpp processors/drummachine.h
 	processors/effects.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h

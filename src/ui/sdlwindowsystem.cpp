@@ -3,6 +3,7 @@
 
 #include "platform/log.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/TextInputContext.h>
 #include <RmlUi_Platform_SDL.h>
 #include <SDL3/SDL.h>
@@ -171,6 +172,7 @@ namespace gnubase::ui
 			case SDL_EVENT_DISPLAY_DESKTOP_MODE_CHANGED:
 			case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
 			case SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED:
+			case SDL_EVENT_DISPLAY_USABLE_BOUNDS_CHANGED: // e.g. a taskbar moved to another edge
 				return WindowEventKind::DisplaysChanged;
 			default:
 				return std::nullopt;
@@ -253,16 +255,18 @@ namespace gnubase::ui
 		return name != nullptr ? name : "";
 	}
 
-	int SdlWindowSystem::ask(
-		const std::string& title, const std::string& message, const std::vector<std::string>& buttons)
+	int SdlWindowSystem::ask(const std::string& title, const std::string& message,
+		const std::vector<std::string>& buttons, Severity severity)
 	{
 		std::vector<SDL_MessageBoxButtonData> data;
 		data.reserve(buttons.size());
 		for (size_t i = 0; i < buttons.size(); ++i)
 			data.push_back(
-				{i == 0 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0, static_cast<int>(i), buttons[i].c_str()});
-		const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, title.c_str(), message.c_str(),
-			static_cast<int>(data.size()), data.data(), nullptr};
+				{i == 0 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT : 0U,
+					static_cast<int>(i), buttons[i].c_str()});
+		const SDL_MessageBoxData box{
+			severity == Severity::Warning ? SDL_MESSAGEBOX_WARNING : SDL_MESSAGEBOX_INFORMATION, nullptr, title.c_str(),
+			message.c_str(), static_cast<int>(data.size()), data.data(), nullptr};
 		int chosen = -1;
 		return SDL_ShowMessageBox(&box, &chosen) ? chosen : -1;
 	}
@@ -616,6 +620,18 @@ namespace gnubase::ui
 			{
 				m_altHeldOnGaining = 0;
 				return std::nullopt;
+			}
+			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT)
+				m_leftHeld.insert(id);
+			else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT)
+				m_leftHeld.erase(id);
+			// SDL doesn't release the mouse buttons with the focus, and the button may go up over another application,
+			// e.g. after Alt+Tab: the context's drag ends here instead of following the mouse without a button
+			// (#1191). The mouse leaves first, so that the button going up clicks nothing.
+			if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST && m_leftHeld.erase(id) != 0)
+			{
+				target->second->ProcessMouseLeave();
+				target->second->ProcessMouseButtonUp(0, RmlSDL::GetKeyModifierState());
 			}
 			const bool unused = RmlSDL::InputEventHandler(target->second, window, event);
 			WindowEvent input{WindowEventKind::Input, id};

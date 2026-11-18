@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -169,6 +170,30 @@ TEST_CASE("a channel's volume scales its output; the project's maximum volume cl
 	CHECK(project.at("maxVolume") == 12.0);
 	CHECK(project.at("channels")[0].at("volume") == 10.0);
 	CHECK_THAT(reject(mixer.client, "project.set", {{"maxVolume", 9.0}}), ContainsSubstring("maxVolume"));
+
+	// Volume automation comes down too (#961), so that the project, saved, opens with GNUbase's own data: points
+	// above the fader top would make it fall back to project.xml.
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "Loud.dawproject";
+	run(mixer.client, "project.set", {{"maxVolume", 12.0}});
+	const Json channel = run(mixer.client, "project.get").at("channels")[0];
+	run(mixer.client, "channel.set", {{"channel", channel.at("id")}, {"pre", {{"gain", 4.0}}}});
+	const Json lane =
+		run(mixer.client, "automationLane.add", {{"track", channel.at("track")}, {"target", {{"type", "volume"}}}})
+			.at("lane");
+	run(mixer.client, "automationPoint.add",
+		{{"lane", lane.at("id")},
+			{"points", {{{"position", 0}, {"value", 10.0}}, {{"position", 960}, {"value", -3.0}}}}});
+	run(mixer.client, "project.set", {{"maxVolume", 6.0}});
+	CHECK(run(mixer.client, "project.get").at("automation")[0].at("points")[0].at("value") == 6.0);
+	run(mixer.client, "project.save", {{"path", file.u8string()}});
+	run(mixer.client, "project.new");
+	run(mixer.client, "project.load", {{"path", file.u8string()}});
+	const Json reopened = run(mixer.client, "project.get");
+	CHECK(reopened.at("channels")[0].at("pre").at("gain") == 4.0); // GNUbase's own data, not project.xml's
+	REQUIRE(reopened.at("automation").size() == 1);
+	CHECK(reopened.at("automation")[0].at("points")[0].at("value") == 6.0);
+	CHECK(reopened.at("automation")[0].at("points")[1].at("value") == -3.0);
 
 	// The bottom of the fader is silence.
 	Mixer silent;
@@ -416,7 +441,7 @@ TEST_CASE("a MIDI channel's volume and pan reach its instrument as CC 7 and CC 1
 	CHECK(render.midiVolume == 90);
 	CHECK(render.midiPan == 32);
 
-	// The channel's strip sends them when they are new or change, and again when playback starts.
+	// The channel's strip sends each when it is new or changes, and both again when playback starts.
 	auto state = std::make_shared<ChannelState>();
 	state->automation.setAutomation(channelAutomation(render, 6.0));
 	ChannelStrip strip(state, std::make_shared<MidiSequencer>());
@@ -438,9 +463,10 @@ TEST_CASE("a MIDI channel's volume and pan reach its instrument as CC 7 and CC 1
 	const graph::TransportBlock stopped;
 	CHECK(controllers(stopped) == Sent{{7, 90}, {10, 32}});
 	CHECK(controllers(stopped).empty());
+	// A new volume alone, so a part's own CC 10 stays.
 	render.midiVolume = 100;
 	state->automation.setAutomation(channelAutomation(render, 6.0));
-	CHECK(controllers(stopped) == Sent{{7, 100}, {10, 32}});
+	CHECK(controllers(stopped) == Sent{{7, 100}});
 	CHECK(controllers({true, 0, &segment, 1}) == Sent{{7, 100}, {10, 32}});
 	render.midiVolume.reset();
 	render.midiPan.reset();

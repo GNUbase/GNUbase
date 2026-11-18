@@ -2,6 +2,7 @@
 // The audio part editor in the app (#146, docs/features/audio-part-editor.md), driven with ui::Automation as MCP's UI
 // tools drive it: opening it, the part display with its lanes, events and waveforms, every tool, the info line and
 // opening an event in the sample editor. tests/audioparteditor_tests.cpp checks the engine's side.
+#include "engine/time/tempomap.h"
 #include "ui/audioparteditor.h"
 #include "ui/enginebinding.h"
 #include "ui/keycommands.h"
@@ -19,6 +20,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -65,8 +67,10 @@ namespace
 			second = addEvent(g_second, g_second);
 			part = app.call("event.toPart", {{"events", {first, second}}}).at("events").at(0).get<uint64_t>();
 			app.call("event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", g_second / 2}});
+			// Two steps of the shell: the project window's first frames, which take a quarter second each in a Debug
+			// build and several seconds on a machine busy compiling.
 			REQUIRE(app.waitUntil(
-				[&] { return display.project().is_object() && display.project().at("audioParts").size() == 1; }));
+				[&] { return display.project().at("audioParts").size() == 1; }, std::chrono::seconds(30)));
 		}
 
 		// Half a second of the clip from offset on.
@@ -311,6 +315,41 @@ namespace
 		}
 
 		double shownX(uint64_t id) { return box(eventSelector(id)).at("x").get<double>(); }
+
+		// Whether the event shows on the lane.
+		bool onLane(uint64_t id, int lane)
+		{
+			return std::abs(box(eventSelector(id)).at("y").get<double>() -
+					   box(".ape-lane[lane=\"" + std::to_string(lane) + "\"]").at("y").get<double>()) <= 1.5;
+		}
+
+		// The lane under a point of the display, of the first count, or -1.
+		int laneUnder(const ui::Target& target, int count)
+		{
+			for (int lane = 0; lane < count; ++lane)
+			{
+				const Json row = box(".ape-lane[lane=\"" + std::to_string(lane) + "\"]");
+				if (row.at("y").get<double>() <= pointOf(target).y &&
+					pointOf(target).y < row.at("y").get<double>() + row.at("height").get<double>())
+					return lane;
+			}
+			return -1;
+		}
+
+		// Waits until the audio part editor has a project in which the event is as found says.
+		void knows(uint64_t id, const std::function<bool(const Json&)>& found)
+		{
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					const ui::AudioPartEditor* editor = audioPartEditor();
+					if (editor == nullptr)
+						return false;
+					const Json known = editor->project().value("audioEvents", Json::array());
+					return std::any_of(known.begin(), known.end(),
+						[&](const Json& each) { return each.at("id") == id && found(each); });
+				}));
+		}
 
 		// The middle of what the selector finds.
 		ui::Point middle(const std::string& selector)
@@ -875,23 +914,229 @@ TEST_CASE("a move of the audio part editor goes on when a command adds an event 
 	CHECK(f.steps() == before + 2); // the split and the move
 }
 
-TEST_CASE("a move of the audio part editor goes by the mouse's way when the display's range changes during it", "[ui]")
+TEST_CASE("a move of the audio part editor keeps its event under the mouse when the display's range changes", "[ui]")
 {
 	Fixture f;
 	f.open();
-	const ui::Target from = f.at(0.25, 0);
-	f.press(from);
+	// The first event pressed a quarter second into it.
+	f.press(f.at(0.25, 0));
 	f.moveTo(f.at(0.77, 0));
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
 	// The other event out of the part, up to 3.5 seconds: the display reaches it, and shows the same seconds narrower.
 	f.app.call("event.move", {{"events", {f.second}}, {"delta", 2 * g_second}});
 	REQUIRE(f.app.waitUntil([&] { return f.has(eventSelector(f.second), "outside"); }));
-	// The mouse hasn't moved, but its way is more seconds now: 0.91, on the grid 0.875, where a release would take it.
-	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.875, 0, 3.5)).x) <= 2.0);
-	const double width = f.box(".ape-display").at("width").get<double>();
-	f.moveTo({"", 0, ui::Point{pointOf(from).x + static_cast<int>(std::lround(width / 3.5)), pointOf(from).y}});
+	// The mouse hasn't moved, and is over 1.35 seconds now: the pressed point goes there, the event to 1.1, on the
+	// grid 1.125, where a release would take it.
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(1.125, 0, 3.5)).x) <= 2.0);
+	// The mouse over 1.6 seconds: the event to 1.35, on the grid 1.375. By the mouse's way on the display it would go
+	// 1.16 seconds, on the grid 1.125.
+	f.moveTo(f.at(1.6, 0, 3.5));
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(1.375, 0, 3.5)).x) <= 2.0);
 	f.release();
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
-	CHECK(f.event(f.first).at("position") == g_second);
+	CHECK(f.event(f.first).at("position") == (g_second * 11) / 8);
+	f.settle();
+}
+
+// The press is kept as an offset into the pressed event, so that nothing a command does to the event or to the
+// display's range takes the pressed point away from the mouse (#1124).
+TEST_CASE(
+	"a move of the audio part editor keeps its pressed point under the mouse when a command moves its event", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.press(f.at(0.25, 0));
+	f.moveTo(f.at(0.77, 0));
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	// From MCP or Lua, with the button held: the pressed event off the grid, to 0.075 seconds.
+	f.app.call("event.move", {{"events", {f.first}}, {"delta", (g_second * 3) / 40}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const ui::AudioPartEditor* editor = f.audioPartEditor();
+			if (editor == nullptr)
+				return false;
+			const Json known = editor->project().value("audioEvents", Json::array());
+			return std::any_of(known.begin(), known.end(), [&](const Json& each)
+				{ return each.at("id") == f.first && each.at("position") == (g_second * 3) / 40; });
+		}));
+	// The command's move doesn't carry the move along: the quarter second pressed is still under the mouse, the event
+	// at 0.52 seconds, on the grid 0.5, where the release takes it.
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != (g_second * 3) / 40; }));
+	CHECK(f.event(f.first).at("position") == g_second / 2);
+	f.settle();
+}
+
+TEST_CASE("a move of the audio part editor keeps its pressed point under the mouse when the part moves with its events",
+	"[ui]")
+{
+	Fixture f;
+	f.open();
+	f.press(f.at(0.25, 0));
+	f.moveTo(f.at(0.77, 0));
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	// A second to the right, from MCP or Lua, with the button held: the events go with the part and the display's range
+	// with them, so that nothing moves on the display.
+	f.app.call("event.move", {{"events", {f.part}}, {"delta", g_second}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const ui::AudioPartEditor* editor = f.audioPartEditor();
+			if (editor == nullptr)
+				return false;
+			const Json known = editor->project().value("audioEvents", Json::array());
+			return std::any_of(known.begin(), known.end(),
+				[&](const Json& each) { return each.at("id") == f.first && each.at("position") == g_second; });
+		}));
+	// The event at 1.5 seconds now, half a second from its part's start as before, under the mouse and not a second
+	// further.
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != g_second; }));
+	CHECK(f.event(f.first).at("position") == (g_second * 3) / 2);
+}
+
+TEST_CASE("a move of the audio part editor keeps its pressed point under the mouse when an undo moves the part", "[ui]")
+{
+	Fixture f;
+	// The part from 1 to 3 seconds: the display starts at 1.
+	f.app.call("event.move", {{"events", {f.part}}, {"delta", g_second}});
+	f.openParts({f.part}); // not open(): settle() expects the display to start at 0
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.shownX(f.first) - pointOf(f.at(0.0, 0)).x) <= 1.5; }));
+	f.press(f.at(0.25, 0));
+	f.moveTo(f.at(0.77, 0));
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	// The part's move undone with the button held: the events go back a second, and the display's range with them.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const ui::AudioPartEditor* editor = f.audioPartEditor();
+			if (editor == nullptr)
+				return false;
+			const Json known = editor->project().value("audioParts", Json::array());
+			return std::any_of(
+				known.begin(), known.end(), [&](const Json& each) { return each.at("position").get<int64_t>() == 0; });
+		}));
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+	CHECK(f.event(f.first).at("position") == g_second / 2);
+}
+
+TEST_CASE(
+	"a move of the audio part editor keeps its pressed point under the mouse when the display's start changes", "[ui]")
+{
+	Fixture f;
+	// The part from 1 to 3 seconds: the display starts at 1.
+	f.app.call("event.move", {{"events", {f.part}}, {"delta", g_second}});
+	f.openParts({f.part}); // not open(): settle() expects the display to start at 0
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.shownX(f.first) - pointOf(f.at(0.0, 0)).x) <= 1.5; }));
+	f.press(f.at(0.25, 0));
+	f.moveTo(f.at(0.77, 0)); // the event at 1.52 seconds, on the grid 1.5
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	// The part's start a second to the left, its events where they are: the display starts at 0 and shows 3 seconds.
+	f.app.call("event.resize", {{"events", {f.part}}, {"edge", "start"}, {"delta", -g_second}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const ui::AudioPartEditor* editor = f.audioPartEditor();
+			if (editor == nullptr)
+				return false;
+			const Json known = editor->project().value("audioParts", Json::array());
+			return std::any_of(
+				known.begin(), known.end(), [&](const Json& each) { return each.at("position").get<int64_t>() == 0; });
+		}));
+	// The mouse is over 1.155 seconds now: the pressed point goes there, the event to 0.905, on the grid 0.875.
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.875, 0, 3.0)).x) <= 2.0);
+	// The mouse over 1.6 seconds: the event to 1.35, on the grid 1.375, where a release takes it.
+	f.moveTo(f.at(1.6, 0, 3.0));
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(1.375, 0, 3.0)).x) <= 2.0);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != g_second; }));
+	CHECK(f.event(f.first).at("position") == (g_second * 11) / 8);
+}
+
+// The lane under the mouse and the display's width come from the layout, which a scroll, a new lane's scrollbar and a
+// resize change while the mouse stays (#1124).
+TEST_CASE(
+	"a wheel scroll during a Ctrl drag of the audio part editor shows the event on the lane under the mouse", "[ui]")
+{
+	Fixture f;
+	// An event far down: the lanes don't fit, and the display scrolls.
+	f.app.call("event.set", {{"events", {f.second}}, {"lane", 30}});
+	f.open();
+	const int ctrl = Rml::Input::KM_CTRL;
+	const ui::Target mouse = f.at(0.25, 1);
+	f.press(f.at(0.25, 0), ctrl);
+	f.moveTo(mouse, ctrl);
+	const double top = f.box(".ape-lane[lane=\"0\"]").at("y").get<double>();
+	REQUIRE(std::abs(f.box(eventSelector(f.first)).at("y").get<double>() -
+				f.box(".ape-lane[lane=\"1\"]").at("y").get<double>()) <= 1.5);
+	// At once: by default RmlUi scrolls by the wheel over several frames, which would change the lane under the mouse
+	// while the test looks.
+	f.context().SetDefaultScrollBehavior(Rml::ScrollBehavior::Instant, 1.0F);
+	f.context().ProcessMouseWheel(Rml::Vector2f(0.0F, 3.0F), 0);
+	REQUIRE(f.box(".ape-lane[lane=\"0\"]").at("y").get<double>() <= top - 60.0);
+	// The lane under the mouse now, which the mouse hasn't moved to.
+	const int under = f.laneUnder(mouse, 31);
+	REQUIRE(under > 1);
+	CHECK(f.onLane(f.first, under));
+	f.release(ctrl);
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("lane") == under; }));
+	f.settle();
+}
+
+TEST_CASE(
+	"a move of the audio part editor measures on the display's width once a new lane's scrollbar changes it", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.snapOff();
+	// Near the display's right edge: measured on the old width, the move would be off by the mouse's share of the
+	// width times the scrollbar's, several pixels here.
+	const ui::Target mouse = f.at(1.77, 0);
+	f.press(f.at(0.25, 0));
+	f.moveTo(mouse);
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(1.52, 0)).x) <= 2.5);
+	const double width = f.box(".ape-display").at("width").get<double>();
+	// From MCP or Lua, with the button held: an event far down adds lanes and the body's scrollbar, which narrows the
+	// display. The mouse hasn't moved, and is over another time now.
+	f.app.call("event.set", {{"events", {f.second}}, {"lane", 30}});
+	REQUIRE(f.app.waitUntil([&] { return f.box(".ape-display").at("width").get<double>() < width - 1.0; }));
+	const Json shown = f.box(".ape-display");
+	const double seconds = (pointOf(mouse).x - shown.at("x").get<double>()) / shown.at("width").get<double>() * 2.0;
+	CHECK(std::abs(f.shownX(f.first) -
+			  (shown.at("x").get<double>() + ((seconds - 0.25) / 2.0 * shown.at("width").get<double>()))) <= 1.5);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+	CHECK(std::abs(f.event(f.first).at("position").get<double>() - ((seconds - 0.25) * g_second)) <= g_second / 50.0);
+}
+
+TEST_CASE("a move of the audio part editor measures on the display's width once the window's size changes", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.snapOff();
+	const ui::Target mouse = f.at(0.77, 0);
+	f.press(f.at(0.25, 0));
+	f.moveTo(mouse);
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.52, 0)).x) <= 2.5);
+	const double width = f.box(".ape-display").at("width").get<double>();
+	// The window narrower, with the button held and the mouse where it was.
+	const Rml::Vector2i size = f.context().GetDimensions();
+	f.context().SetDimensions({size.x - 300, size.y});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json shown = f.box(".ape-display");
+	REQUIRE(shown.at("width").get<double>() < width - 1.0);
+	const double seconds = (pointOf(mouse).x - shown.at("x").get<double>()) / shown.at("width").get<double>() * 2.0;
+	CHECK(std::abs(f.shownX(f.first) -
+			  (shown.at("x").get<double>() + ((seconds - 0.25) / 2.0 * shown.at("width").get<double>()))) <= 1.5);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+	CHECK(std::abs(f.event(f.first).at("position").get<double>() - ((seconds - 0.25) * g_second)) <= g_second / 50.0);
 }
 
 TEST_CASE("a Ctrl drag of the audio part editor keeps its element in order and goes on with its event as it is", "[ui]")
@@ -911,21 +1156,251 @@ TEST_CASE("a Ctrl drag of the audio part editor keeps its element in order and g
 	for (const Json& each : f.events())
 		project.push_back(each.at("id").dump());
 	CHECK(shown == project);
-	// A command takes the pressed event a lane down: the drag's one lane more goes from there.
+	// A command takes the pressed event a lane down, to the lane under the mouse: it shows there, not a lane further.
 	f.app.call("event.set", {{"events", {f.second}}, {"lane", 1}});
+	f.knows(f.second, [](const Json& each) { return each.at("lane") == 1; });
+	CHECK(f.onLane(f.second, 1));
+	// The release leaves it there, and the selection as it is: it ends a drag, not a click.
+	f.release(ctrl);
+	f.settle();
+	CHECK(f.event(f.second).at("lane") == 1);
+	CHECK(f.event(f.second).at("position") == g_second);
+	CHECK(f.selection().empty());
+}
+
+// The press is kept as a time in the pressed event's clip, so that a resize or a split of the event during the drag
+// doesn't take the pressed point away from the mouse either (#1226).
+TEST_CASE("a move of the audio part editor goes on when a command resizes or splits its event during the drag", "[ui]")
+{
+	const std::string how = GENERATE("normal sizing", "sizing moves contents", "split");
+	CAPTURE(how);
+	Fixture f;
+	f.open();
+	// The first event pressed a quarter second into it.
+	f.press(f.at(0.25, 0));
+	f.moveTo(f.at(0.77, 0));
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	// From MCP or Lua, with the button held: the pressed event's start an eighth of a second later, or the event split
+	// there, before the pressed point.
+	if (how == "split")
+	{
+		f.app.call("event.split", {{"events", {f.first}}, {"positions", {g_second / 8}}});
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".ape-event").size() == 3; }));
+	}
+	else
+	{
+		f.app.call("event.resize",
+			{{"events", {f.first}}, {"edge", "start"}, {"delta", g_second / 8},
+				{"mode", how == "normal sizing" ? "normal" : "moveContents"}});
+		f.knows(f.first, [](const Json& each) { return each.at("position") == g_second / 8; });
+	}
+	// Normal sizing leaves the content where it is: the pressed point is an eighth of a second into the event now, and
+	// under the mouse it takes the start to 0.645 seconds, on the grid 0.625. Sizing that moves the contents moves the
+	// pressed point with the start, which goes to 0.5 as before; so does the event before the split, which the press
+	// is past now.
+	const double to = how == "normal sizing" ? 0.625 : 0.5;
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(to, 0)).x) <= 2.0);
+	const Json before = f.event(f.first).at("position");
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != before; }));
+	CHECK(f.event(f.first).at("position").get<double>() == to * g_second);
+	f.settle();
+}
+
+TEST_CASE("a move of the audio part editor moves the other selected events as far as the pressed one", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.click(f.at(0.25, 0));
+	f.selects({f.first});
+	f.click(f.at(1.25, 0), 1, {"shift"});
+	f.selects({f.first, f.second});
+	f.press(f.at(0.25, 0));
+	f.moveTo(f.at(0.77, 0));
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	REQUIRE(std::abs(f.shownX(f.second) - pointOf(f.at(1.5, 0)).x) <= 2.0);
+	// From MCP or Lua, with the button held: only the pressed event a quarter second later.
+	f.app.call("event.move", {{"events", {f.first}}, {"delta", g_second / 4}});
+	f.knows(f.first, [](const Json& each) { return each.at("position") == g_second / 4; });
+	// The pressed event stays under the mouse, at 0.5 seconds: the move is a quarter second shorter, and the other
+	// event goes back by as much, to 1.25 seconds.
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	CHECK(std::abs(f.shownX(f.second) - pointOf(f.at(1.25, 0)).x) <= 2.0);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.second).at("position") != g_second; }));
+	CHECK(f.event(f.first).at("position") == g_second / 2);
+	CHECK(f.event(f.second).at("position") == (g_second * 5) / 4);
+	f.settle();
+}
+
+TEST_CASE(
+	"a wheel scroll during a move of the audio part editor keeps its time and follows the lane under the mouse", "[ui]")
+{
+	Fixture f;
+	// An event far down: the lanes don't fit, and the display scrolls.
+	f.app.call("event.set", {{"events", {f.second}}, {"lane", 30}});
+	f.open();
+	const ui::Target mouse = f.at(0.77, 1);
+	const double x = pointOf(f.at(0.5, 1)).x;
+	f.press(f.at(0.25, 0));
+	f.moveTo(mouse);
+	const double top = f.box(".ape-lane[lane=\"0\"]").at("y").get<double>();
+	REQUIRE(f.onLane(f.first, 1));
+	REQUIRE(std::abs(f.shownX(f.first) - x) <= 2.0);
+	// At once, as in the Ctrl drag's test.
+	f.context().SetDefaultScrollBehavior(Rml::ScrollBehavior::Instant, 1.0F);
+	f.context().ProcessMouseWheel(Rml::Vector2f(0.0F, 3.0F), 0);
+	REQUIRE(f.box(".ape-lane[lane=\"0\"]").at("y").get<double>() <= top - 60.0);
+	// The event on the lane under the mouse now, at the time it was at.
+	const int under = f.laneUnder(mouse, 31);
+	REQUIRE(under > 1);
+	CHECK(f.onLane(f.first, under));
+	CHECK(std::abs(f.shownX(f.first) - x) <= 2.0);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("lane") == under; }));
+	CHECK(f.event(f.first).at("position") == g_second / 2);
+	f.settle();
+}
+
+// On a musical track a tempo change moves the events in seconds and changes the display's scale with them.
+TEST_CASE("a move of the audio part editor on a musical track keeps its pressed point under the mouse when the tempo "
+		  "changes",
+	"[ui]")
+{
+	Fixture f;
+	// The events keep their time: the part takes four quarters, the second event starts at the third.
+	f.app.call("track.set", {{"track", f.track}, {"timeBase", "musical"}});
+	f.openParts({f.part}); // not open(): settle() reads the positions in samples
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return std::abs(f.shownX(f.first) - pointOf(f.at(0.0, 0)).x) <= 1.5 &&
+				std::abs(f.shownX(f.second) - pointOf(f.at(1.0, 0)).x) <= 1.5;
+		}));
+	// The second event pressed a quarter second into it.
+	f.press(f.at(1.25, 0));
+	f.moveTo(f.at(1.77, 0));
+	REQUIRE(std::abs(f.shownX(f.second) - pointOf(f.at(1.5, 0)).x) <= 2.0);
+	// Half the tempo, with the button held: the part and the second event's start take twice the seconds, the display
+	// shows four seconds, and the events keep their length in samples.
+	f.app.call("project.set", {{"tempo", 60.0}});
 	REQUIRE(f.app.waitUntil(
 		[&]
 		{
 			const ui::AudioPartEditor* editor = f.audioPartEditor();
-			if (editor == nullptr)
-				return false;
-			const Json known = editor->project().value("audioEvents", Json::array());
-			return std::any_of(known.begin(), known.end(),
-				[&](const Json& each) { return each.at("id") == f.second && each.at("lane") == 1; });
+			return editor != nullptr && editor->project().contains("tempo") &&
+				editor->project().at("tempo").at(0).at("bpm") == 60.0;
 		}));
+	// The mouse hasn't moved, and is over 3.54 seconds now: the pressed point goes there, the event, which starts at 2
+	// seconds now, to 3.29, on the grid's sixteenths, a quarter second at 60 BPM, to 3.25.
+	CHECK(std::abs(f.shownX(f.second) - pointOf(f.at(3.25, 0, 4.0)).x) <= 2.0);
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.0, 0, 4.0)).x) <= 2.0);
+	// The mouse over 2.5 seconds: the event to 2.25, where the release takes it, two quarters and a sixteenth.
+	f.moveTo(f.at(2.5, 0, 4.0));
+	CHECK(std::abs(f.shownX(f.second) - pointOf(f.at(2.25, 0, 4.0)).x) <= 2.0);
+	const Json before = f.event(f.second).at("position");
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.second).at("position") != before; }));
+	CHECK(f.event(f.second).at("position") == (gnubase::time::g_ticksPerQuarter * 9) / 4);
+	CHECK(f.event(f.first).at("position") == 0);
+}
+
+TEST_CASE(
+	"a move of the audio part editor keeps its pressed point under the mouse when its event's clip changes", "[ui]")
+{
+	Fixture f;
+	f.open();
+	// The first event pressed a quarter second into it.
+	f.press(f.at(0.25, 0));
+	f.moveTo(f.at(0.77, 0));
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	// From MCP or Lua, with the button held: the event plays another clip of the file from half a second on, where it
+	// is, as when it is flattened into a new file.
+	const auto other = f.app.call("clip.add", {{"media", f.app.call("project.get").at("clips").at(0).at("media")}})
+						   .at("clip")
+						   .at("id");
+	f.app.call("audioEvent.set", {{"event", f.first}, {"clip", other}, {"offset", g_second / 2}});
+	f.knows(f.first, [&](const Json& each) { return each.at("clip") == other; });
+	// The press keeps its place in the event: the event stays at 0.5 seconds, and the release takes it there.
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+	CHECK(f.event(f.first).at("position") == g_second / 2);
+	f.settle();
+}
+
+TEST_CASE("a Ctrl drag of the audio part editor along its event's lane moves nothing and keeps the selection", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const int ctrl = Rml::Input::KM_CTRL;
+	const size_t before = f.steps();
+	f.press(f.at(1.25, 0), ctrl);
+	f.moveTo(f.at(1.6, 0), ctrl);
 	f.release(ctrl);
-	REQUIRE(f.app.waitUntil([&] { return f.event(f.second).at("lane") == 2; }));
+	// Not a click: the event stays out of the selection (commands from the release come before this one), and nothing
+	// moves.
+	CHECK(f.selection().empty());
+	CHECK(f.steps() == before);
 	CHECK(f.event(f.second).at("position") == g_second);
+	CHECK(f.event(f.second).at("lane") == 0);
+}
+
+// RmlUi's hit test gives an event the pixel rows at both edges of its box. At its bottom edge the display's next lane
+// starts, and at a scale whose pixels aren't whole dp its top edge may read as the lane above: a press there is on the
+// event's lane all the same, and the drag goes from there (#1226).
+TEST_CASE("a move of the audio part editor pressed on its event's edge keeps the event's lane", "[ui]")
+{
+	const std::string edge = GENERATE("bottom", "bottom, dragged a pixel up", "top");
+	const bool ctrl = GENERATE(false, true);
+	const double scale = GENERATE(1.0, 1.2);
+	CAPTURE(edge, ctrl, scale);
+	Fixture f;
+	// The first event on lane 1, with nothing on lane 0 above it: a move read a lane up or down from there shows.
+	f.app.call("event.set", {{"events", {f.first}}, {"lane", 1}});
+	const float ratio = f.app.main().context().GetDensityIndependentPixelRatio();
+	f.app.call("settings.set", {{"key", "ui.scale"}, {"value", scale}});
+	f.open();
+	REQUIRE(f.app.waitUntil(
+		[&] { return std::abs(f.context().GetDensityIndependentPixelRatio() - (ratio * scale)) < 0.01; }));
+	f.settle();
+	const int modifiers = ctrl ? Rml::Input::KM_CTRL : 0;
+	// The event's first or last pixel row, from its box as RmlUi has it: the DOM tool rounds it.
+	Rml::Element* shown = f.context().GetDocument(0)->QuerySelector(eventSelector(f.first));
+	REQUIRE(shown != nullptr);
+	const float top = shown->GetAbsoluteOffset(Rml::BoxArea::Border).y;
+	const float bottom = top + shown->GetBox().GetSize(Rml::BoxArea::Border).y;
+	const int row = static_cast<int>(edge == "top" ? std::ceil(top) : std::floor(bottom));
+	const auto onRow = [&](double seconds, int y)
+	{ return ui::Target{"", 0, ui::Point{pointOf(f.at(seconds, 1)).x, y}}; };
+	if (scale == 1.0 && edge != "top")
+		REQUIRE(f.laneUnder(onRow(0.25, row), 3) == 2); // the row is the next lane's first
+	f.press(onRow(0.25, row), modifiers);
+	const ui::Target along = onRow(0.77, edge == "bottom, dragged a pixel up" ? row - 1 : row);
+	f.moveTo(along, modifiers);
+	CHECK(f.onLane(f.first, 1));
+	if (!ctrl)
+		CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 1)).x) <= 2.0);
+	// The press is a pixel at most into the event's lane: the middle of the lane beyond the edge takes the event there.
+	const int beyond = edge == "top" ? 0 : 2;
+	f.moveTo(f.at(0.77, beyond), modifiers);
+	CHECK(f.onLane(f.first, beyond));
+	f.moveTo(along, modifiers);
+	CHECK(f.onLane(f.first, 1));
+	const size_t before = f.steps();
+	f.release(modifiers);
+	if (ctrl)
+	{
+		// Along the lane, a Ctrl drag moves nothing.
+		CHECK(f.steps() == before);
+		CHECK(f.event(f.first).at("position") == 0);
+	}
+	else
+	{
+		REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+		CHECK(f.event(f.first).at("position") == g_second / 2);
+	}
+	CHECK(f.event(f.first).at("lane") == 1);
 	f.settle();
 }
 
@@ -973,17 +1448,61 @@ TEST_CASE("a move of the audio part editor ends without its effect when its even
 	CHECK(f.steps() == before + (removed ? 1 : 0));
 }
 
+// The engine drops the events of a part that leaves the part editing mode from the selection, so a plain move has
+// nothing left to move then; a Ctrl drag of an event that isn't selected moves the pressed event itself.
+TEST_CASE("a Ctrl drag of the audio part editor moves nothing when its part leaves the part editing mode", "[ui]")
+{
+	Fixture f;
+	f.addOtherPart();
+	f.openParts({f.part, f.other});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".ape-event").size() == 3; }));
+	REQUIRE(f.selection().empty());
+	const int ctrl = Rml::Input::KM_CTRL;
+	const double top = f.box(eventSelector(f.first)).at("y").get<double>();
+	const size_t before = f.steps();
+	f.press(f.at(0.25, 0, 3.5), ctrl);
+	f.moveTo(f.at(0.25, 1, 3.5), ctrl);
+	const double laneHeight = f.box(".ape-lane[lane=\"1\"]").at("y").get<double>() - top;
+	REQUIRE(std::abs(f.box(eventSelector(f.first)).at("y").get<double>() - (top + laneHeight)) <= 1.5);
+	// Only the other part in the part editing mode: the pressed event's part leaves it, as the event that isn't
+	// pressed shows.
+	f.app.call("editor.set", {{"editor", "window"}, {"activePart", f.other}, {"editingMode", "activePart"}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(eventSelector(f.second), "inactive"); }));
+	// The event goes back to its lane, and the mouse no longer takes it along.
+	REQUIRE(
+		f.app.waitUntil([&] { return std::abs(f.box(eventSelector(f.first)).at("y").get<double>() - top) <= 1.5; }));
+	f.moveTo(f.at(0.27, 1, 3.5), ctrl);
+	f.release(ctrl);
+	CHECK(f.event(f.first).at("lane") == 0); // commands from the release come before this one
+	CHECK(std::abs(f.box(eventSelector(f.first)).at("y").get<double>() - top) <= 1.5);
+	CHECK(f.steps() == before);
+}
+
 TEST_CASE("the audio part editor keeps showing a move while it renders during the drag", "[ui]")
 {
 	Fixture f;
 	f.open();
 	f.press(f.at(0.25, 0));
 	f.moveTo(f.at(0.77, 0));
-	// The project shown again, whenever the press's selection came back.
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	// The project shown again, whenever the press's selection came back, with snap off: the move shows off the grid
+	// before the mouse moves again, the mouse's 0.52 seconds.
 	f.snapOff();
-	CHECK(std::abs(f.box(eventSelector(f.first)).at("x").get<double>() - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.52, 0)).x) <= 2.5);
+	// And back on the grid with snap on, and on a coarser one, of half notes (a second), with the grid changed.
+	f.app.call("snap.set", {{"on", true}});
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0; }));
+	f.app.call("quantize.set", {{"settings", {{"grid", "1/2"}}}});
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.shownX(f.first) - pointOf(f.at(1.0, 0)).x) <= 2.0; }));
+	f.snapOff();
+	const double shown = f.shownX(f.first);
 	f.release();
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+	// Where the move showed it: the mouse's way off the grid, within a pixel.
+	const double perSecond = f.box(".ape-display").at("width").get<double>() / 2.0; // px
+	CHECK(std::abs(f.event(f.first).at("position").get<double>() - (0.52 * g_second)) <= (1.5 * g_second) / perSecond);
+	f.settle();
+	CHECK(std::abs(f.shownX(f.first) - shown) <= 1.5);
 }
 
 TEST_CASE("a press in the window ends a gesture of the audio part editor whose mouseup never came", "[ui]")

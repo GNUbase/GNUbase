@@ -10,10 +10,12 @@
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/StringUtilities.h>
 
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <locale>
 #include <sstream>
+#include <vector>
 
 namespace gnubase::ui
 {
@@ -106,11 +108,31 @@ namespace gnubase::ui
 				same = option->GetAttribute<Rml::String>("value", "") == options[static_cast<size_t>(i)].first &&
 					option->GetInnerRML() == Rml::StringUtilities::EncodeRml(options[static_cast<size_t>(i)].second);
 			}
+			// A change that the selection below sends may fill the same list again: that fill is dropped, and the list
+			// keeps this one's options. So is one from the change of another list that such a change fills, at any
+			// depth: the lists being filled are kept until their fills end (#1748).
+			static std::vector<const Rml::Element*> filling;
+			if (std::find(filling.begin(), filling.end(), &element) != filling.end())
+				return;
 			if (!same)
 			{
-				select->RemoveAll();
+				// The new options come before the old ones go, with the value selected among them, so that the list
+				// doesn't lose its selection in between: that would send a change to "", which a list of root keys
+				// takes for a choice of none (#1644).
+				filling.push_back(&element);
+				const int old = select->GetNumOptions();
+				int chosen = -1;
 				for (const auto& [optionValue, text] : options)
-					select->Add(Rml::StringUtilities::EncodeRml(text), optionValue);
+				{
+					const int index = select->Add(Rml::StringUtilities::EncodeRml(text), optionValue);
+					if (chosen < 0 && optionValue == value)
+						chosen = index;
+				}
+				if (chosen >= 0)
+					select->SetSelection(chosen);
+				for (int i = 0; i < old; ++i)
+					select->Remove(0);
+				filling.pop_back();
 			}
 			if (select->GetValue() != value)
 				select->SetValue(value);

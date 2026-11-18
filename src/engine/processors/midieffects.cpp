@@ -35,13 +35,16 @@ namespace gnubase::engine::processors
 			return static_cast<uint16_t>(((event.channel % 16) * 128) + (event.key % 128));
 		}
 
-		graph::ProcessEvent noteEvent(Type type, uint16_t index, uint16_t velocity, uint32_t offset)
+		// A note the effect plays for one played into it: drumSound as that one's, so that an auditioned drum sound's
+		// notes stay drum sounds' pitches (midi.inject drumSounds).
+		graph::ProcessEvent noteEvent(Type type, uint16_t index, uint16_t velocity, uint32_t offset, bool drumSound)
 		{
 			graph::ProcessEvent event;
 			event.offset = offset;
 			event.type = type;
 			event.channel = static_cast<uint8_t>(index / 128);
 			event.key = static_cast<uint8_t>(index % 128);
+			event.drumSound = drumSound;
 			event.velocity = velocity;
 			return event;
 		}
@@ -219,7 +222,7 @@ namespace gnubase::engine::processors
 			if (isHeld)
 				held->velocity = event.velocity;
 			else if (m_heldCount < m_held.size())
-				m_held[m_heldCount++] = {event.channel, event.key, event.velocity};
+				m_held[m_heldCount++] = {event.channel, event.key, event.velocity, event.drumSound};
 			if (!m_running)
 			{
 				m_running = true;
@@ -301,8 +304,8 @@ namespace gnubase::engine::processors
 		for (int octave = 0; octave < m_octaves; ++octave)
 			for (size_t n = 0; n < m_heldCount; ++n)
 				if (notes[n].key + (12 * octave) <= 127)
-					pattern[count++] = {
-						notes[n].channel, static_cast<uint8_t>(notes[n].key + (12 * octave)), notes[n].velocity};
+					pattern[count++] = {notes[n].channel, static_cast<uint8_t>(notes[n].key + (12 * octave)),
+						notes[n].velocity, notes[n].drumSound};
 		if (m_mode == Down)
 			std::reverse(pattern.data(), pattern.data() + count);
 		const double start = m_next;
@@ -322,8 +325,8 @@ namespace gnubase::engine::processors
 			index = static_cast<size_t>(number % count);
 		}
 		const Note& note = pattern[index];
-		if (!out.add(
-				noteEvent(Type::NoteOn, static_cast<uint16_t>((note.channel * 128) + note.key), note.velocity, offset)))
+		if (!out.add(noteEvent(Type::NoteOn, static_cast<uint16_t>((note.channel * 128) + note.key), note.velocity,
+				offset, note.drumSound)))
 			return true; // the step is left out
 		m_sounding = true;
 		m_playing = note;
@@ -334,8 +337,8 @@ namespace gnubase::engine::processors
 	bool Arpeggiator::end(uint32_t offset, graph::EventBuffer& out) noexcept
 	{
 		if (m_sounding &&
-			out.add(
-				noteEvent(Type::NoteOff, static_cast<uint16_t>((m_playing.channel * 128) + m_playing.key), 0, offset)))
+			out.add(noteEvent(Type::NoteOff, static_cast<uint16_t>((m_playing.channel * 128) + m_playing.key), 0,
+				offset, m_playing.drumSound)))
 			m_sounding = false;
 		return !m_sounding;
 	}
@@ -363,7 +366,7 @@ namespace gnubase::engine::processors
 		if (event.type == Type::NoteOff)
 		{
 			if (m_chordOf[index] == g_none)
-				context.eventsOut.addNoteOff(event); // a note from before the effect
+				context.eventsOut.addEnd(event); // a note from before the effect
 			else
 				release(index, event, context.eventsOut);
 			return;
@@ -384,7 +387,7 @@ namespace gnubase::engine::processors
 				continue;
 			const auto note = static_cast<uint16_t>(index + interval);
 			if (m_sounding[note]++ == 0)
-				context.eventsOut.add(noteEvent(Type::NoteOn, note, event.velocity, event.offset));
+				context.eventsOut.add(noteEvent(Type::NoteOn, note, event.velocity, event.offset, event.drumSound));
 		}
 	}
 
@@ -401,8 +404,8 @@ namespace gnubase::engine::processors
 				continue;
 			--m_sounding[note];
 			if (m_sounding[note] == 0)
-				out.addNoteOff(
-					noteEvent(Type::NoteOff, note, event.type == Type::NoteOff ? event.velocity : 0, event.offset));
+				out.addEnd(noteEvent(Type::NoteOff, note, event.type == Type::NoteOff ? event.velocity : 0,
+					event.offset, event.drumSound));
 		}
 		m_chordOf[index] = g_none;
 	}
@@ -415,41 +418,35 @@ namespace gnubase::engine::processors
 		// An event as the rules see it; false for those they don't: note-offs, SysEx and parameter changes.
 		bool toLogical(const graph::ProcessEvent& event, LogicalEvent& out) noexcept
 		{
-			out = LogicalEvent{};
-			out.channel = (event.channel % 16) + 1;
-			out.subtype = event.key % 128;
+			LogicalType type = LogicalType::Note;
 			switch (event.type)
 			{
 			case Type::NoteOn:
-				out.type = LogicalType::Note;
-				out.mainValue = midi::noteOnVelocityToMidi1(event.velocity);
-				return true;
+				break;
 			case Type::PolyPressure:
-				out.type = LogicalType::PolyPressure;
-				out.mainValue = midi::controllerToMidi1(event.value);
-				return true;
+				type = LogicalType::PolyPressure;
+				break;
 			case Type::Controller:
-				out.type = LogicalType::Controller;
-				out.mainValue = midi::controllerToMidi1(event.value);
-				return true;
+				type = LogicalType::Controller;
+				break;
 			case Type::Program:
-				out.type = LogicalType::Program;
-				return true;
+				type = LogicalType::Program;
+				break;
 			case Type::ChannelPressure:
-				out.type = LogicalType::Aftertouch;
-				out.subtype = midi::controllerToMidi1(event.value);
-				return true;
+				type = LogicalType::Aftertouch;
+				break;
 			case Type::PitchBend:
-			{
-				const uint16_t bend = midi::pitchBendToMidi1(event.value);
-				out.type = LogicalType::PitchBend;
-				out.subtype = static_cast<int>(bend & 0x7FU);
-				out.mainValue = static_cast<int>(bend >> 7U);
-				return true;
-			}
+				type = LogicalType::PitchBend;
+				break;
 			default:
 				return false;
 			}
+			out = LogicalEvent{};
+			out.channel = (event.channel % 16) + 1;
+			midi::setLogicalValues(type, event.key, event.value, out);
+			if (type == LogicalType::Note)
+				out.mainValue = midi::noteOnVelocityToMidi1(event.velocity);
+			return true;
 		}
 
 		// The event the rules made of source, which was original: values they didn't change keep their full
@@ -459,56 +456,46 @@ namespace gnubase::engine::processors
 		{
 			graph::ProcessEvent out = source;
 			out.channel = static_cast<uint8_t>(changed.channel - 1);
-			const bool sameType = changed.type == original.type;
-			const bool subtypeSame = sameType && changed.subtype == original.subtype;
-			const bool mainSame = sameType && changed.mainValue == original.mainValue;
-			const auto main = static_cast<uint8_t>(changed.mainValue);
-			const auto subtype = static_cast<uint8_t>(changed.subtype);
 			switch (changed.type)
 			{
 			case LogicalType::Note:
-				out.key = subtype;
-				if (!sameType)
+			{
+				const auto main = static_cast<uint8_t>(changed.mainValue);
+				out.key = static_cast<uint8_t>(changed.subtype);
+				if (changed.type != original.type)
 					out.type = main > 0 ? Type::NoteOn : Type::NoteOff;
 				if (out.type == Type::NoteOff)
 					out.velocity = midi::velocityFromMidi1(64);
-				else if (!mainSame)
+				else if (changed.type != original.type || changed.mainValue != original.mainValue)
 					out.velocity = midi::velocityFromMidi1(std::max<uint8_t>(main, 1));
-				break;
+				return out;
+			}
 			case LogicalType::PolyPressure:
+				out.type = Type::PolyPressure;
+				break;
 			case LogicalType::Controller:
-				out.type = changed.type == LogicalType::Controller ? Type::Controller : Type::PolyPressure;
-				out.key = subtype;
-				if (!mainSame)
-					out.value = midi::controllerFromMidi1(main);
+				out.type = Type::Controller;
 				break;
 			case LogicalType::Program:
 				out.type = Type::Program;
-				out.key = subtype;
-				if (!sameType)
-					out.value = 0xFFFFFFFFU; // no bank
 				break;
 			case LogicalType::Aftertouch:
 				out.type = Type::ChannelPressure;
-				out.key = 0;
-				if (!subtypeSame)
-					out.value = midi::controllerFromMidi1(subtype);
 				break;
 			case LogicalType::PitchBend:
 				out.type = Type::PitchBend;
-				out.key = 0;
-				if (!subtypeSame || !mainSame)
-					out.value = midi::pitchBendFromMidi1(static_cast<uint16_t>((main << 7U) | subtype));
 				break;
 			}
+			midi::logicalValues(changed, original, out.key, out.value);
 			return out;
 		}
 
-		// Adds a note-off before the other events in a full buffer, any other event as it fits.
+		// Adds an event that ends notes (a note-off, a pedal's release) before the other events in a full buffer, any
+		// other event as it fits.
 		void put(graph::EventBuffer& out, const graph::ProcessEvent& event) noexcept
 		{
-			if (event.type == Type::NoteOff)
-				out.addNoteOff(event);
+			if (graph::endsNotes(event))
+				out.addEnd(event);
 			else
 				out.add(event);
 		}
@@ -527,7 +514,29 @@ namespace gnubase::engine::processors
 	{
 		m_held.fill(Held{});
 		m_sounding.fill(0);
+		m_made.fill(false);
 		m_random = {};
+	}
+
+	void LogicalStage::playMade(const graph::ProcessEvent& event, graph::EventBuffer& out) noexcept
+	{
+		if (event.type != Type::NoteOn && event.type != Type::NoteOff)
+		{
+			out.add(event);
+			return;
+		}
+		// The note another event made is held until another one makes its note-off, and counts as a held note does.
+		const uint16_t note = indexOf(event);
+		const bool on = event.type == Type::NoteOn;
+		if (m_made[note] == on)
+		{
+			if (!on && m_sounding[note] == 0)
+				put(out, event); // ends nothing that sounds
+			return;
+		}
+		m_made[note] = on;
+		if (on ? m_sounding[note]++ == 0 : release(note))
+			put(out, event);
 	}
 
 	bool LogicalStage::uses(const Held& held, uint16_t source, uint16_t note) noexcept
@@ -565,13 +574,21 @@ namespace gnubase::engine::processors
 				held.down = false;
 			return;
 		}
+		if (event.type == Type::NoteExpression && held.played)
+		{
+			if (held.passed)
+				out.add(event);
+			if (held.to != g_none && (!held.passed || held.to != index))
+				out.add(movedTo(event, held.to));
+			return;
+		}
 		if (!logical)
 		{
 			out.add(event);
 			return;
 		}
 		const LogicalFunction function = rules.function;
-		const bool pass = function == LogicalFunction::Insert || function == LogicalFunction::Select ||
+		bool pass = function == LogicalFunction::Insert || function == LogicalFunction::Select ||
 			(!found && function != LogicalFunction::InsertExclusive);
 		bool emit = found &&
 			(function == LogicalFunction::Transform || function == LogicalFunction::Insert ||
@@ -589,12 +606,29 @@ namespace gnubase::engine::processors
 			if (pass)
 				out.add(event);
 			if (emit)
-				out.add(changed);
+				playMade(changed, out);
 			return;
 		}
+		// A note-on that doesn't fit goes, and so does its note-off, which then leaves room for those of the notes
+		// that do sound.
+		if (out.size() + (pass ? 1 : 0) + (emit ? 1 : 0) > out.capacity())
+			pass = emit = false;
 		const uint16_t to = emit && changed.type == Type::NoteOn ? indexOf(changed) : g_none;
 		const Held previous = held;
-		held = {to, pass, true};
+		held = {to, pass, true, true};
+		// The released notes whose note this one starts again lose it, as their release has ended: their expression
+		// would change the new note (#1685).
+		for (size_t other = 0; other < m_held.size(); ++other)
+		{
+			Held& released = m_held.at(other);
+			if (other == index || released.down || !released.played)
+				continue;
+			const auto starts = [&](uint16_t note) { return (pass && note == index) || (to != g_none && note == to); };
+			if (released.passed && starts(static_cast<uint16_t>(other)))
+				released.passed = false;
+			if (released.to != g_none && starts(released.to))
+				released.to = g_none;
+		}
 		// Played again before its note-off: ends what the earlier one started and this one doesn't, and plays again
 		// what both do.
 		for (const uint16_t note : {index, previous.to != index ? previous.to : g_none})
@@ -604,7 +638,7 @@ namespace gnubase::engine::processors
 			if (uses(held, index, note))
 				--m_sounding[note]; // counted again below
 			else if (release(note))
-				put(out, noteEvent(Type::NoteOff, note, 0, event.offset));
+				put(out, noteEvent(Type::NoteOff, note, 0, event.offset, event.drumSound));
 		}
 		// A note another note already plays sounds once.
 		const auto start = [&](uint16_t note) { return m_sounding[note]++ == 0 || uses(previous, index, note); };

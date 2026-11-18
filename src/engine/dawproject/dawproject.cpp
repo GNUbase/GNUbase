@@ -7,9 +7,11 @@
 #include "engine/document/renderinplace.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
+#include "engine/document/warp.h"
 #include "engine/engine.h"
 #include "engine/media/backup.h"
 #include "engine/processors/builtin.h"
+#include "platform/files.h"
 
 #include <miniz.h>
 #include <pugixml.hpp>
@@ -24,6 +26,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -78,7 +81,7 @@ namespace gnubase::engine
 		{
 			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::Plugin &&
 				target.type != AutomationTargetType::Strip && target.type != AutomationTargetType::PanLeft &&
-				target.type != AutomationTargetType::PanRight;
+				target.type != AutomationTargetType::PanRight && target.type != AutomationTargetType::MidiEffect;
 		}
 
 		// The built-in effect a slot's plugin id names, or nullptr.
@@ -177,6 +180,8 @@ namespace gnubase::engine
 			char buffer[65536];
 			while (const size_t got = std::fread(buffer, 1, sizeof buffer, file.get()))
 				bytes.insert(bytes.end(), buffer, buffer + got);
+			if (std::ferror(file.get()) != 0) // such as a folder, which opens outside Windows
+				throw DawProjectError("can't read " + path);
 			return bytes;
 		}
 
@@ -204,6 +209,8 @@ namespace gnubase::engine
 			void add(const std::string& name, const void* data, size_t size, bool compress)
 			{
 				const mz_uint level = compress ? MZ_DEFAULT_LEVEL : MZ_NO_COMPRESSION;
+				// No lock: miniz is built without time stamps (MINIZ_NO_TIME), as it would take them from localtime(),
+				// whose static result projects saved at the same time would race for outside Windows.
 				if (mz_zip_writer_add_mem(&m_zip, name.c_str(), data, size, level) == MZ_FALSE)
 					throw DawProjectError("can't write " + name + " into " + m_path);
 			}
@@ -264,6 +271,26 @@ namespace gnubase::engine
 				return text;
 			}
 
+			// Whether target has the entry's content already: its size and CRC-32. Extracting over such a file would
+			// fail or cut it short under a reader that plays it, as when the same track preset loads again (#1503).
+			bool holds(const std::string& name, const std::string& target)
+			{
+				mz_zip_archive_file_stat stat{};
+				std::error_code error;
+				if (mz_zip_reader_file_stat(&m_zip, locate(name), &stat) == MZ_FALSE ||
+					std::filesystem::file_size(std::filesystem::u8path(target), error) != stat.m_uncomp_size || error)
+					return false;
+				const detail::File file = detail::openFile(target, "rb");
+				if (!file)
+					return false;
+				mz_ulong crc = MZ_CRC32_INIT;
+				std::vector<unsigned char> buffer(size_t{1} << 16);
+				size_t read = 0;
+				while ((read = std::fread(buffer.data(), 1, buffer.size(), file.get())) > 0)
+					crc = mz_crc32(crc, buffer.data(), read);
+				return std::ferror(file.get()) == 0 && crc == stat.m_crc32;
+			}
+
 			void extract(const std::string& name, const std::string& target)
 			{
 				const mz_uint index = locate(name);
@@ -298,6 +325,26 @@ namespace gnubase::engine
 		time::Ticks fromBeats(double beats)
 		{
 			return std::llround(beats * static_cast<double>(time::g_ticksPerQuarter));
+		}
+
+		// The points of a piecewise linear map without those on the line through the points around them.
+		std::vector<dsp::WarpPoint> withoutStraightPoints(const std::vector<dsp::WarpPoint>& points)
+		{
+			if (points.size() <= 2)
+				return points;
+			std::vector<dsp::WarpPoint> kept{points.front()};
+			for (size_t i = 1; i + 1 < points.size(); ++i)
+			{
+				const dsp::WarpPoint& a = kept.back();
+				const dsp::WarpPoint& b = points[i];
+				const dsp::WarpPoint& c = points[i + 1];
+				const double cross =
+					((b.source - a.source) * (c.target - a.target)) - ((b.target - a.target) * (c.source - a.source));
+				if (std::abs(cross) > 1e-4 * std::abs((c.source - a.source) * (c.target - a.target)))
+					kept.push_back(b);
+			}
+			kept.push_back(points.back());
+			return kept;
 		}
 
 		// The tempo and the time signatures in DAWproject's terms: the first tempo and signature in the transport, the
@@ -441,10 +488,21 @@ namespace gnubase::engine
 			Exporter(const Project& project, bool embed, const std::filesystem::path& fileFolder)
 				: m_project(project), m_embed(embed)
 			{
-				// Embedded files keep their names, made unique where two would collide.
+				// Embedded files keep their names, made unique where two would collide. A file that isn't there to
+				// embed is referred to by its absolute path, as a freeze file is (saveDawProject), so that a project or
+				// a track preset with a missing file can still be saved (#1567). One that the file system can't say is
+				// there, such as in a folder without permission, is embedded, and reading it fails the save (#1614).
 				std::set<std::string> taken;
 				for (const auto& [id, media] : project.media)
 				{
+					std::error_code error;
+					if (embed && !std::filesystem::exists(pathOf(media.path), error) && !error)
+					{
+						const std::filesystem::path absolute = std::filesystem::absolute(pathOf(media.path), error);
+						m_mediaPaths[id] = error ? media.path : absolute.lexically_normal().u8string();
+						m_referenced.insert(id);
+						continue;
+					}
 					if (!embed)
 					{
 						m_mediaPaths[id] = referencePath(media.path, fileFolder);
@@ -461,6 +519,19 @@ namespace gnubase::engine
 			}
 
 			const std::map<ObjectId, std::string>& mediaPaths() const { return m_mediaPaths; }
+
+			// Whether the file goes into the file, rather than being referred to where it is.
+			bool embedded(ObjectId media) const { return m_embed && m_referenced.count(media) == 0; }
+
+			// The paths of the media files that were to be embedded but are referred to, as they are missing.
+			std::vector<std::string> missing() const
+			{
+				std::vector<std::string> paths;
+				paths.reserve(m_referenced.size());
+				for (const ObjectId id : m_referenced)
+					paths.push_back(m_project.media.at(id).path);
+				return paths;
+			}
 
 			std::string projectXml()
 			{
@@ -774,6 +845,7 @@ namespace gnubase::engine
 				case AutomationTargetType::Strip:
 				case AutomationTargetType::PanLeft:
 				case AutomationTargetType::PanRight:
+				case AutomationTargetType::MidiEffect:
 					break;
 				}
 				const auto value = [&target](double v)
@@ -851,7 +923,13 @@ namespace gnubase::engine
 			{
 				const Clip& clip = m_project.clips.at(event.clip);
 				const MediaFile& media = m_project.media.at(clip.media);
-				const double seconds = static_cast<double>(event.length) / media.sampleRate;
+				const bool warp = warped(clip);
+				double seconds = static_cast<double>(event.length) / media.sampleRate;
+				if (warp)
+				{
+					const EventSpan span = eventSpan(m_project, event);
+					seconds = static_cast<double>(span.end - span.start) / m_project.sampleRate;
+				}
 				double duration = seconds;
 				if (track.timeBase == time::TimeBase::Musical)
 				{
@@ -861,8 +939,10 @@ namespace gnubase::engine
 				pugi::xml_node element = clips.append_child("Clip");
 				element.append_attribute("time") = laneTime(track, event.position.value) - origin;
 				element.append_attribute("duration") = duration;
-				element.append_attribute("playStart") = static_cast<double>(event.offset) / media.sampleRate;
-				element.append_attribute("contentTimeUnit") = "seconds";
+				// A warped event's content is its Warps, which count from its start.
+				element.append_attribute("playStart") =
+					warp ? 0.0 : static_cast<double>(event.offset) / media.sampleRate;
+				element.append_attribute("contentTimeUnit") = warp && clip.warp.musical ? "beats" : "seconds";
 				if (event.mute)
 					element.append_attribute("enable") = false;
 				// Fades and crossfades as fade times; their shapes are GNUbase-only.
@@ -877,15 +957,48 @@ namespace gnubase::engine
 				element.append_attribute("name") = clip.name.c_str();
 				if (!event.color.empty())
 					element.append_attribute("color") = event.color.c_str();
-				pugi::xml_node audio = element.append_child("Audio");
+				pugi::xml_node content = element;
+				if (warp)
+				{
+					content = element.append_child("Warps");
+					content.append_attribute("timeUnit") = clip.warp.musical ? "beats" : "seconds";
+					content.append_attribute("contentTimeUnit") = "seconds";
+				}
+				pugi::xml_node audio = content.append_child("Audio");
 				audio.append_attribute("id") = xmlId("a", event.id).c_str();
 				audio.append_attribute("channels") = media.channels;
 				audio.append_attribute("sampleRate") = std::llround(media.sampleRate);
 				audio.append_attribute("duration") = static_cast<double>(media.length) / media.sampleRate;
 				pugi::xml_node file = audio.append_child("File");
 				file.append_attribute("path") = m_mediaPaths.at(media.id).c_str();
-				if (!m_embed)
+				if (!embedded(media.id))
 					file.append_attribute("external") = true;
+				if (warp)
+					writeWarps(content, event, clip.warp.musical, media.sampleRate);
+			}
+
+			// Where the warp puts a warped event's audio: the seconds of the file (contentTime) that play at each time
+			// from its start, in beats in musical mode, which then follow the tempo, else in seconds. The points of its
+			// warp map where it bends.
+			void writeWarps(pugi::xml_node warps, const AudioEvent& event, bool musical, double rate) const
+			{
+				const double start =
+					static_cast<double>(time::toSamples(event.position, m_project.tempo, m_project.sampleRate)) /
+					m_project.sampleRate;
+				const time::Ticks startTicks = m_project.tempo.toTicks(start);
+				std::vector<dsp::WarpPoint> points; // source: the file's seconds, target: the time from the start
+				for (const dsp::WarpPoint& point : warpMap(m_project, event))
+				{
+					const double after = point.target / rate;
+					points.push_back({point.source / rate,
+						musical ? toBeats(m_project.tempo.toTicks(start + after) - startTicks) : after});
+				}
+				for (const dsp::WarpPoint& point : withoutStraightPoints(points))
+				{
+					pugi::xml_node warp = warps.append_child("Warp");
+					warp.append_attribute("time") = point.target;
+					warp.append_attribute("contentTime") = point.source;
+				}
 			}
 
 			// An event's start and end in seconds, and its clip's sample rate.
@@ -921,7 +1034,8 @@ namespace gnubase::engine
 				if (crossfadeApplies(m_project, event))
 					return crossfadeSeconds(
 						event.crossfade.length, in.rate, seconds(m_project.audioEvents.at(event.crossfade.from)), in);
-				return static_cast<double>(std::min(event.fadeIn.length, event.length)) / in.rate; // as it plays
+				return static_cast<double>(std::min(event.fadeIn.length, fadeRoom(m_project, event))) /
+					in.rate; // as it plays
 			}
 
 			double fadeOutSeconds(const AudioEvent& event) const
@@ -930,7 +1044,7 @@ namespace gnubase::engine
 				for (const auto& [id, to] : m_project.audioEvents)
 					if (to.crossfade.from == event.id && crossfadeApplies(m_project, to))
 						return crossfadeSeconds(to.crossfade.outLength, out.rate, out, seconds(to));
-				return static_cast<double>(std::min(event.fadeOut.length, event.length)) / out.rate;
+				return static_cast<double>(std::min(event.fadeOut.length, fadeRoom(m_project, event))) / out.rate;
 			}
 
 			void writeMidiClip(pugi::xml_node clips, const Track& track, const MidiPart& part)
@@ -1025,6 +1139,7 @@ namespace gnubase::engine
 
 			const Project& m_project;
 			std::map<ObjectId, std::string> m_mediaPaths; // the path project.xml uses for each media file
+			std::set<ObjectId> m_referenced;              // the media files that aren't there to embed
 			bool m_embed;
 		};
 
@@ -1047,6 +1162,7 @@ namespace gnubase::engine
 				for (const pugi::xml_node lanes : arrangement.children("Lanes"))
 					readLanes(lanes, {});
 				readMarkers(arrangement.child("Markers"));
+				shareWarpedClips();
 				joinCrossfades();
 				return std::move(m_project);
 			}
@@ -1118,15 +1234,54 @@ namespace gnubase::engine
 					if (inside.empty() || inside.is_absolute() || inside.has_root_name() ||
 						*inside.begin() == std::filesystem::path(".."))
 						throw DawProjectError("unsafe media path in the file: " + xmlPath);
-					target = m_mediaFolder / inside;
+					if (m_mediaFolder.empty()) // not extracted: the entry's name in the file
+						return m_resolved[xmlPath] = inside.u8string();
+					target = freeTarget(m_mediaFolder / inside, xmlPath);
 					std::error_code error;
 					std::filesystem::create_directories(target.parent_path(), error);
-					m_zip.extract(xmlPath, target.u8string());
+					if (!std::filesystem::exists(target, error))
+						m_zip.extract(xmlPath, target.u8string());
+					if (const auto identity = files::fileIdentity(target))
+						m_extracted.insert(*identity);
 				}
 				return m_resolved[xmlPath] = target.u8string();
 			}
 
 		private:
+			// Where an entry goes: not onto a file another entry of this load was extracted to, nor onto a file that is
+			// there with other content, which a project may play, as when a track preset is saved again with another
+			// file of the same name (#1567); a file with the entry's content already is used as it is. Entries whose
+			// names differ only in the case of a non-ASCII letter are two entries in the file, but the file systems
+			// of Windows and macOS read them as one name, so the later one would extract over the earlier: it goes to
+			// a numbered name of its own there, as the save numbers entries of one name. The file system says which
+			// paths are one file, so this only renames where the names really clash.
+			std::filesystem::path freeTarget(const std::filesystem::path& target, const std::string& entry)
+			{
+				const auto free = [&](const std::filesystem::path& candidate)
+				{
+					std::error_code error;
+					return !extractedTo(candidate) &&
+						(!std::filesystem::exists(candidate, error) || m_zip.holds(entry, candidate.u8string()));
+				};
+				if (free(target))
+					return target;
+				for (int copy = 2;; ++copy)
+				{
+					const std::filesystem::path candidate =
+						target.parent_path() / pathOf(std::to_string(copy) + "-" + target.filename().u8string());
+					if (free(candidate))
+						return candidate;
+				}
+			}
+
+			// Whether target is a file one of this load's extractions wrote: one lookup of its identity in the set of
+			// the identities extracted so far, rather than a comparison with each of them (files::fileIdentity).
+			bool extractedTo(const std::filesystem::path& target) const
+			{
+				const auto identity = files::fileIdentity(target);
+				return identity.has_value() && m_extracted.count(*identity) != 0;
+			}
+
 			struct Context
 			{
 				ObjectId track = 0;
@@ -1470,6 +1625,7 @@ namespace gnubase::engine
 					case AutomationTargetType::Controller:
 					case AutomationTargetType::PitchBend:
 					case AutomationTargetType::ChannelPressure:
+					case AutomationTargetType::MidiEffect:
 						point.value = std::clamp(value, 0.0, 1.0);
 						break;
 					}
@@ -1567,7 +1723,11 @@ namespace gnubase::engine
 					{
 						const pugi::xml_node audio = name == "Audio" ? child : child.child("Audio");
 						const double offset = content.seconds ? playStart : secondsBetween(0.0, playStart, false);
-						addAudioEvent(lane, start, duration, offset, audio, content);
+						AudioEvent* event = addAudioEvent(lane, start, duration, offset, audio, content);
+						if (event != nullptr && name == "Warps")
+							readWarps(child, *event, {lane.seconds, content.seconds, start, duration, playStart});
+						if (event != nullptr)
+							fitFades(*event);
 					}
 				}
 			}
@@ -1663,17 +1823,29 @@ namespace gnubase::engine
 
 				MediaFile media;
 				media.id = m_project.newId();
-				media.path = resolvedPath(xmlPath, file.attribute("external").as_bool(false));
-				try
+				const bool external = file.attribute("external").as_bool(false);
+				media.path = resolvedPath(xmlPath, external);
+				// An embedded file that isn't extracted isn't read: its path is the entry's name in the file.
+				std::optional<AudioFileInfo> info;
+				if (external || !m_mediaFolder.empty())
 				{
-					const AudioFileInfo info = AudioFileReader::open(media.path)->info();
-					media.sampleRate = info.sampleRate;
-					media.channels = info.channels;
-					media.length = info.frames;
+					try
+					{
+						info = AudioFileReader::open(media.path)->info();
+					}
+					catch (const AudioFileError&)
+					{
+						info.reset(); // a missing or unreadable file
+					}
 				}
-				catch (const AudioFileError&)
+				if (info)
 				{
-					// A missing or unreadable file: keep what project.xml says about it.
+					media.sampleRate = info->sampleRate;
+					media.channels = info->channels;
+					media.length = info->frames;
+				}
+				else // what project.xml says about it
+				{
 					media.sampleRate = audio.attribute("sampleRate").as_double(48000.0);
 					media.channels = audio.attribute("channels").as_int(2);
 					media.length = std::llround(audio.attribute("duration").as_double() * media.sampleRate);
@@ -1707,13 +1879,13 @@ namespace gnubase::engine
 				content.fadeOut = secondsBetween(last - fadeOut, last, false);
 			}
 
-			void addAudioEvent(const Context& lane, double start, double duration, double offset,
+			AudioEvent* addAudioEvent(const Context& lane, double start, double duration, double offset,
 				const pugi::xml_node& audio, const Context& content)
 			{
 				const bool mute = !content.enabled;
 				const ObjectId clipId = clipFor(audio);
 				if (clipId == 0)
-					return;
+					return nullptr;
 				const MediaFile& media = m_project.media.at(m_project.clips.at(clipId).media);
 				AudioEvent event;
 				event.id = m_project.newId();
@@ -1727,15 +1899,186 @@ namespace gnubase::engine
 				event.offset = std::clamp<time::Samples>(
 					std::llround(offset * media.sampleRate), 0, std::max<time::Samples>(0, media.length - 1));
 				const double seconds = secondsBetween(start, start + duration, lane.seconds);
-				event.length =
-					std::min<time::Samples>(std::llround(seconds * media.sampleRate), media.length - event.offset);
-				// Linear fades, shortened to fit if they don't.
+				const time::Samples played = std::llround(seconds * media.sampleRate);
+				event.length = std::min<time::Samples>(played, media.length - event.offset);
+				// Linear fades, within what the clip plays for: fitFades shortens them to the event's room.
 				event.fadeIn.length = std::clamp<time::Samples>(
-					std::llround(content.fadeIn * media.sampleRate), 0, std::max<time::Samples>(0, event.length));
+					std::llround(content.fadeIn * media.sampleRate), 0, std::max<time::Samples>(0, played));
 				event.fadeOut.length = std::clamp<time::Samples>(std::llround(content.fadeOut * media.sampleRate), 0,
-					std::max<time::Samples>(0, event.length - event.fadeIn.length));
-				if (event.length > 0)
-					m_project.audioEvents[event.id] = event;
+					std::max<time::Samples>(0, played - event.fadeIn.length));
+				if (event.length <= 0)
+					return nullptr;
+				return &(m_project.audioEvents[event.id] = event);
+			}
+
+			// Shortens an event's fades to fit if they don't: into its length, or on a warped event what it plays
+			// for, where they play (fadeRoom, #1183).
+			void fitFades(AudioEvent& event) const
+			{
+				const time::Samples room = fadeRoom(m_project, event);
+				event.fadeIn.length = std::min(event.fadeIn.length, room);
+				event.fadeOut.length = std::min(event.fadeOut.length, room - event.fadeIn.length);
+			}
+
+			// Where a clip with Warps lies: its lane's and its content's units, its start and duration in the lane's
+			// unit and its playStart in the content's.
+			struct WarpsClip
+			{
+				bool laneSeconds = false; // the lane counts in seconds
+				bool contentSeconds = false;
+				double start = 0.0;
+				double duration = 0.0;
+				double playStart = 0.0;
+			};
+
+			// A Warps element's points (time in its timeUnit from the content's start, contentTime in seconds of the
+			// audio) as the warp of a clip of the event's own: in beats musical mode, whose definition puts the beats
+			// where the points do, in seconds free warp markers. Points that GNUbase's warp can't play, such as
+			// markers beyond the real-time range, leave the event unwarped.
+			// ponytail: in seconds the clip's ends stay put, so a warp that stretches the whole clip doesn't fit.
+			void readWarps(const pugi::xml_node& warps, AudioEvent& event, const WarpsClip& where)
+			{
+				if (std::string(warps.attribute("contentTimeUnit").as_string("seconds")) != "seconds")
+					return;
+				const pugi::xml_attribute unit = warps.attribute("timeUnit");
+				const bool beats = unit.empty() ? !where.contentSeconds : std::string(unit.as_string()) == "beats";
+				std::vector<dsp::WarpPoint> points; // source: the audio's seconds, target: the content's time
+				for (const pugi::xml_node warp : warps.children("Warp"))
+					points.push_back({warp.attribute("contentTime").as_double(), warp.attribute("time").as_double()});
+				std::sort(points.begin(), points.end(),
+					[](const dsp::WarpPoint& a, const dsp::WarpPoint& b) { return a.target < b.target; });
+				if (points.size() < 2)
+					return;
+				for (size_t i = 1; i < points.size(); ++i)
+					if (points[i].source <= points[i - 1].source || points[i].target <= points[i - 1].target ||
+						!std::isfinite(points[i].source) || !std::isfinite(points[i].target))
+						return;
+				Clip clip = m_project.clips.at(event.clip);
+				const MediaFile& media = m_project.media.at(clip.media);
+				const double rate = media.sampleRate;
+				const auto frameAt = [&points, rate](double time) { return dsp::warpSource(points, time) * rate; };
+				double end = where.playStart + where.duration;
+				if (!beats)
+					end =
+						where.playStart + secondsBetween(where.start, where.start + where.duration, where.laneSeconds);
+				else if (where.laneSeconds)
+					end = where.playStart + toBeats(m_project.tempo.toTicks(where.start + where.duration)) -
+						toBeats(m_project.tempo.toTicks(where.start));
+				// Untrusted values: within the audio before they are rounded (#1184).
+				const double first = frameAt(where.playStart);
+				const double last = frameAt(end);
+				const auto frames = static_cast<double>(media.length);
+				if (!std::isfinite(first) || !std::isfinite(last) || first < 0.0 || first >= frames || last <= first)
+					return;
+				const auto offset = std::llround(first);
+				const time::Samples length =
+					std::min<time::Samples>(std::llround(std::min(last, frames)) - offset, media.length - offset);
+				if (offset >= media.length || length <= 0)
+					return;
+				const ObjectId shared = clip.id;
+				clip.id = m_project.newId();
+				clip.warp = {};
+				if (beats &&
+					!beatsFromWarps(
+						clip.warp, frameAt, points.front().target, dsp::warpTarget(points, 0.0), rate, media.length))
+					return;
+				if (!beats)
+				{
+					// The first point's audio stays where it is; the others' play as far after it as their time says.
+					const double shift = frameAt(points.front().target) - (points.front().target * rate);
+					for (const dsp::WarpPoint& point : withoutStraightPoints(points))
+					{
+						const WarpMarker marker{
+							std::llround(point.source * rate), std::llround((point.target * rate) + shift)};
+						if (marker.position > 0 && marker.position < media.length)
+							clip.warp.markers.push_back(marker);
+					}
+					try
+					{
+						checkMarkers(clip.warp, media.length, {});
+					}
+					catch (const CommandError&)
+					{
+						return;
+					}
+				}
+				m_project.clips[clip.id] = clip;
+				m_warpedCopies[shared].push_back(clip.id);
+				event.clip = clip.id;
+				event.offset = offset;
+				event.length = length;
+			}
+
+			// readWarps gives each warped event a copy of its file's clip: events whose copies warp alike share one,
+			// and a file's clip that no event plays any more takes the warp of the first copy (#1183).
+			void shareWarpedClips()
+			{
+				for (const auto& [shared, copies] : m_warpedCopies)
+				{
+					const ObjectId file = shared;
+					const bool played = std::any_of(m_project.audioEvents.begin(), m_project.audioEvents.end(),
+						[file](const auto& entry) { return entry.second.clip == file; });
+					std::map<ObjectId, ObjectId> into; // a copy that goes, and the clip its events play instead
+					std::vector<ObjectId> kept;
+					for (const ObjectId copy : copies)
+					{
+						const ClipWarp& warp = m_project.clips.at(copy).warp;
+						const auto same = std::find_if(kept.begin(), kept.end(),
+							[this, &warp](ObjectId each) { return m_project.clips.at(each).warp == warp; });
+						if (same != kept.end())
+						{
+							into[copy] = *same;
+						}
+						else if (!played && kept.empty())
+						{
+							m_project.clips.at(file).warp = warp;
+							into[copy] = file;
+							kept.push_back(file);
+						}
+						else
+						{
+							kept.push_back(copy);
+						}
+					}
+					for (auto& entry : m_project.audioEvents)
+						if (const auto found = into.find(entry.second.clip); found != into.end())
+							entry.second.clip = found->second;
+					for (const auto& entry : into)
+						m_project.clips.erase(entry.first);
+				}
+			}
+
+			// Musical mode with a definition whose beat 0 is the content's first whole beat within the audio, its tempo
+			// that of that beat and edited beats where the content's tempo bends. false if a beat's tempo is out of
+			// range, which also bounds the beats of a file's untrusted Warps. zero is the time where the audio starts.
+			template <typename FrameAt> static bool beatsFromWarps(
+				ClipWarp& warp, const FrameAt& frameAt, double from, double zero, double rate, time::Samples length)
+			{
+				double first = std::max(std::floor(from), std::ceil(zero));
+				if (frameAt(first) < 0.0) // rounding
+					first += 1.0;
+				const double framesPerBeat = frameAt(first + 1.0) - frameAt(first);
+				if (!(framesPerBeat > 0.0))
+					return false;
+				warp.musical = true;
+				warp.tempo = rate * 60.0 / framesPerBeat;
+				warp.gridStart = std::llround(frameAt(first));
+				if (warp.tempo < time::g_minBpm || warp.tempo > time::g_maxBpm || warp.gridStart >= length)
+					return false;
+				std::vector<dsp::WarpPoint> grid; // source: the beat, target: the frame
+				for (int64_t beat = 0; frameAt(first + static_cast<double>(beat)) < static_cast<double>(length); ++beat)
+				{
+					const double frame = frameAt(first + static_cast<double>(beat));
+					if (const double tempo = beat == 0 ? warp.tempo : rate * 60.0 / (frame - grid.back().target);
+						tempo < time::g_minBpm || tempo > time::g_maxBpm)
+						return false;
+					grid.push_back({static_cast<double>(beat), frame});
+				}
+				grid.push_back({grid.back().source + 1.0, grid.back().target + framesPerBeat});
+				for (const dsp::WarpPoint& point : withoutStraightPoints(grid))
+					if (point.source > 0.0 && point.source < grid.back().source)
+						warp.beats.push_back({std::llround(point.source), std::llround(point.target)});
+				return true;
 			}
 
 			// The arrangement's markers become position markers on a marker track at the top, numbered in timeline
@@ -1792,14 +2135,17 @@ namespace gnubase::engine
 				std::string destination;
 			};
 			std::vector<SendDestination> m_sendDestinations;
-			std::map<std::string, ObjectId> m_clips; // media path in project.xml -> clip
+			std::map<std::string, ObjectId> m_clips;                  // media path in project.xml -> clip
+			std::map<ObjectId, std::vector<ObjectId>> m_warpedCopies; // a file's clip -> the copies readWarps made
 			// project.xml parameter id -> the track whose channel has it, and which one it is
 			std::map<std::string, std::pair<ObjectId, AutomationTargetType>> m_parameters;
 			std::map<std::string, std::string> m_resolved; // media path in project.xml -> path on disk
+			std::set<files::FileIdentity> m_extracted;     // the files this load extracted, for freeTarget
 		};
 	}
 
-	void saveDawProject(const Project& project, const std::string& path, const DawProjectSaveOptions& options)
+	std::vector<std::string> saveDawProject(
+		const Project& project, const std::string& path, const DawProjectSaveOptions& options)
 	{
 		const std::filesystem::path fileFolder =
 			std::filesystem::absolute(pathOf(path)).parent_path().lexically_normal();
@@ -1814,10 +2160,13 @@ namespace gnubase::engine
 		// Frozen tracks' freeze files go with the media files: into the file, or else referred to relative to the file
 		// if they are in its folder, so that they move with it. Files from before "frozen" have only the paths in the
 		// project. One that isn't there to embed is referred to by its absolute path: a relative one could name an
-		// embedded file, as the file's entries are looked up in any case.
+		// embedded file, as the file's entries are looked up in any case. Such files are missing as media files are,
+		// and one that the file system can't say is there is embedded, so that reading it fails the save (#1736).
 		Json frozen = Json::object();
+		std::set<std::string> missingFreezes;
 		// Each file goes in once, under a name that no other one has, also in another case: they are extracted into
-		// one folder.
+		// one folder. Where the file system folds a letter's case that this folding doesn't (a non-ASCII one on
+		// Windows and macOS), the extraction keeps the entries apart (Importer::freeTarget).
 		std::map<std::string, std::string> embeddedFreezes; // freeze file -> entry in the file
 		std::set<std::string> taken;                        // the entries in lowercase
 		for (const auto& [id, track] : project.trackById)
@@ -1826,10 +2175,11 @@ namespace gnubase::engine
 				continue;
 			std::string stored = referencePath(track.frozen->path, fileFolder);
 			std::error_code error;
-			if (options.embedMedia && !std::filesystem::is_regular_file(pathOf(track.frozen->path), error))
+			if (options.embedMedia && !std::filesystem::exists(pathOf(track.frozen->path), error) && !error)
 			{
 				const std::filesystem::path absolute = std::filesystem::absolute(pathOf(track.frozen->path), error);
 				stored = error ? track.frozen->path : absolute.lexically_normal().u8string();
+				missingFreezes.insert(track.frozen->path);
 			}
 			else if (options.embedMedia)
 			{
@@ -1865,6 +2215,8 @@ namespace gnubase::engine
 			if (options.embedMedia)
 				for (const auto& [id, mediaPath] : exporter.mediaPaths())
 				{
+					if (!exporter.embedded(id))
+						continue;
 					const std::vector<char> bytes = readBytes(project.media.at(id).path);
 					zip.add(mediaPath, bytes.data(), bytes.size(), false);
 				}
@@ -1890,9 +2242,12 @@ namespace gnubase::engine
 			std::filesystem::remove(pathOf(temporary), ignored);
 			throw DawProjectError("can't save " + path + ": " + error.message());
 		}
+		std::vector<std::string> missing = exporter.missing();
+		missing.insert(missing.end(), missingFreezes.begin(), missingFreezes.end());
+		return missing;
 	}
 
-	Project loadDawProject(const std::string& path, const std::string& mediaFolder)
+	Project loadDawProject(const std::string& path, const std::string& mediaFolder, bool extractMedia)
 	{
 		ZipReader zip(path);
 		const std::string xml = zip.text("project.xml");
@@ -1904,7 +2259,8 @@ namespace gnubase::engine
 		if (!root)
 			throw DawProjectError(path + " has no DAWproject project");
 
-		Importer importer(zip, std::filesystem::absolute(pathOf(path)).parent_path(), pathOf(mediaFolder));
+		Importer importer(zip, std::filesystem::absolute(pathOf(path)).parent_path(),
+			extractMedia ? pathOf(mediaFolder) : std::filesystem::path());
 		Project fromXml = importer.load(root);
 		if (!zip.contains(g_extensionEntry))
 			return fromXml;
@@ -1935,7 +2291,19 @@ namespace gnubase::engine
 			for (auto& entry : project.channels)
 				if (lockedByFreeze(project, entry.second))
 					entry.second.monitor = entry.second.recordEnable = false;
+			// A clip in musical mode without a tempo, which only a file edited elsewhere holds, would take the
+			// project's at its first event whenever it plays, so its length in beats would change with the tempo,
+			// such as by a MIDI file import (#1288). It keeps the tempo it has now.
+			for (auto& entry : project.clips)
+				if (entry.second.warp.musical && entry.second.warp.tempo <= 0.0)
+					entry.second.warp.tempo = definitionTempo(project, entry.second);
 			return project;
+		}
+		catch (const std::overflow_error&)
+		{
+			// An unsupported id range must fail the load, rather than silently lose native data through the XML
+			// fallback.
+			throw;
 		}
 		catch (const std::exception&)
 		{

@@ -14,6 +14,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Input.h>
@@ -26,6 +27,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -653,6 +655,60 @@ TEST_CASE("context menus open at the mouse on a right click, inside the window, 
 	CHECK_FALSE(visible(app, "#track-menu"));
 }
 
+TEST_CASE("an open menu whose items change moves inside the window, from where it opened until input came", "[ui]")
+{
+	// #1665: the items that the opening press changes, as a lane's context menu's for the lane's type, place the menu
+	// as if they had been there when it opened: one that shrinks goes back to the mouse. After the next input it stays
+	// where it is while it fits, as a menu whose search leaves items out, and moves only as far as it must when it
+	// grows. Each move asks for the update that shows the menu there.
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	Rml::Context& context = *document.GetContext();
+	Rml::Element& gone = *document.GetElementById("gone");
+	Rml::Element& menu = *document.GetElementById("track-menu");
+	const auto top = [&menu] { return menu.GetAbsoluteOffset(Rml::BoxArea::Border).y; };
+
+	// The menu's height without and with the item.
+	const auto height = [&app]
+	{
+		app.ui().click(std::nullopt, at("#track"), ui::MouseButton::Right, 1, {});
+		const int shown = element(app, "#track-menu").at("box").at("height").get<int>();
+		app.ui().key(std::nullopt, "Escape");
+		return shown;
+	};
+	const int shorter = height();
+	gone.SetClass("hidden", false);
+	const int taller = height();
+	REQUIRE(taller > shorter + 5);
+
+	// A press where the shorter menu fits under the mouse and the taller one doesn't: the press hides the item.
+	ui::widgets::Listener press([&gone](Rml::Event& /*event*/) { gone.SetClass("hidden", true); });
+	Rml::Element& low = *document.GetElementById("low");
+	low.AddEventListener(Rml::EventId::Mousedown, &press);
+	const int bottom = windowSize(app).height;
+	const int y = bottom - shorter - 5;
+	context.ProcessMouseMove(20, y, 0);
+	context.ProcessMouseButtonDown(1, 0);
+	low.RemoveEventListener(Rml::EventId::Mousedown, &press);
+	context.Update();
+	CHECK(context.GetNextUpdateDelay() == 0.0);
+	context.Update();
+	CHECK(top() == Catch::Approx(y));
+	context.ProcessMouseButtonUp(1, 0);
+
+	// After that input: grown, it moves up as far as it must; shrunk again, it stays.
+	gone.SetClass("hidden", false);
+	context.Update();
+	CHECK(context.GetNextUpdateDelay() == 0.0);
+	context.Update();
+	CHECK(top() == Catch::Approx(bottom - taller));
+	gone.SetClass("hidden", true);
+	context.Update();
+	context.Update();
+	CHECK(top() == Catch::Approx(bottom - taller));
+	CHECK(insideWindow(app, "#track-menu"));
+}
+
 TEST_CASE("a right click with a modifier key opens the element's modifier context menu if it has one", "[ui]")
 {
 	test::UiApp app;
@@ -1074,7 +1130,26 @@ TEST_CASE("tooltips show an element's title once the mouse rests on it", "[ui]")
 	CHECK_FALSE(visible(app, "tooltip"));
 }
 
-TEST_CASE("a tooltip doesn't outlive the element it belongs to", "[ui]")
+TEST_CASE("a tooltip that moves inside the window asks for the update that shows it there", "[ui]")
+{
+	// #1665: it moves once laid out with its text; the frames come by themselves, without the UI tools' updates.
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	Rml::Element& tooltip = *document.QuerySelector("tooltip");
+	const ui::Size window = windowSize(app);
+	app.ui().move(std::nullopt, at("#corner"));
+	REQUIRE(app.waitUntil([&tooltip] { return tooltip.IsClassSet("shown"); }));
+	CHECK(app.waitUntil(
+		[&tooltip, window]
+		{
+			const Rml::Vector2f end =
+				tooltip.GetAbsoluteOffset(Rml::BoxArea::Border) + tooltip.GetBox().GetSize(Rml::BoxArea::Border);
+			return end.x <= static_cast<float>(window.width) && end.y <= static_cast<float>(window.height);
+		},
+		std::chrono::seconds(1)));
+}
+
+TEST_CASE("a tooltip doesn't outlive the element it belongs to", "[ui][slow]")
 {
 	test::UiApp app;
 	Rml::ElementDocument& document = app.show("popups.rml");
@@ -1094,6 +1169,244 @@ TEST_CASE("a tooltip doesn't outlive the element it belongs to", "[ui]")
 	REQUIRE(app.waitUntil([&app] { return visible(app, "tooltip"); }));
 	remove("corner");
 	CHECK(app.waitUntil([&app] { return !visible(app, "tooltip"); }));
+}
+
+TEST_CASE("an element that replaces the one under a resting mouse gets its tooltip", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	Rml::ElementList tooltips;
+	document.GetElementsByTagName(tooltips, "tooltip");
+	REQUIRE(tooltips.size() == 1);
+	const Rml::Element& tooltip = *tooltips.front();
+	// Waits with the shell's steps alone: the automation's calls update the context themselves, which would find the
+	// new element under the mouse and hide the problem.
+	const auto showsAfterSteps = [&app, &tooltip](const char* title)
+	{
+		const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (std::chrono::steady_clock::now() < end)
+		{
+			app.shell().step(std::chrono::milliseconds(10));
+			if (tooltip.IsClassSet("shown") && tooltip.GetInnerRML() == title)
+				return true;
+		}
+		return false;
+	};
+	// The element with the id "track" is removed and a new one with the same id, so in the same place, and another
+	// title takes its place.
+	const auto replace = [&document](const char* title)
+	{
+		Rml::Element* old = document.GetElementById("track");
+		Rml::ElementPtr created = document.CreateElement("div");
+		created->SetId("track");
+		created->SetClassNames("panel");
+		created->SetAttribute("title", title);
+		document.AppendChild(std::move(created));
+		old->GetParentNode()->RemoveChild(old);
+		document.GetContext()->RequestNextUpdate(0.0); // as code that changes elements does
+	};
+
+	// Replaced before the tooltip is due.
+	app.ui().move(std::nullopt, at("#track"));
+	replace("Audio 02");
+	CHECK(showsAfterSteps("Audio 02"));
+
+	// Replaced while its tooltip shows: the new one gets its own.
+	replace("Audio 03");
+	CHECK(showsAfterSteps("Audio 03"));
+
+	// The element under the mouse is taken out and kept, as docking's parked panels are, and another with a title
+	// takes its place: the same.
+	Rml::Element* old = document.GetElementById("track");
+	Rml::ElementPtr created = document.CreateElement("div");
+	created->SetId("track");
+	created->SetClassNames("panel");
+	created->SetAttribute("title", "Audio 04");
+	document.AppendChild(std::move(created));
+	Rml::ElementPtr parked = old->GetParentNode()->RemoveChild(old);
+	document.GetContext()->RequestNextUpdate(0.0);
+	CHECK(showsAfterSteps("Audio 04"));
+	parked.reset();
+}
+
+TEST_CASE("a tooltip asks for one more update when its element is gone, not for update after update", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	Rml::Context& context = *document.GetContext();
+	// The context's updates after an action: the first finds the element gone, the second is the one that asked for
+	// and looks for the element under the mouse, and none asks for a third. Checked on the tooltip alone, without
+	// waiting for frames: the app draws for other reasons too.
+	const auto updateTwice = [&context]
+	{
+		context.Update();
+		context.Update();
+	};
+	const auto asksNoMore = [&context, &updateTwice]
+	{
+		updateTwice();
+		return context.GetNextUpdateDelay() == std::numeric_limits<double>::infinity();
+	};
+	const auto remove = [&document](const char* id)
+	{
+		Rml::Element* element = document.GetElementById(id);
+		element->GetParentNode()->RemoveChild(element);
+		document.GetContext()->RequestNextUpdate(0.0); // as code that changes elements does
+	};
+
+	// Removed with nothing in its place, once before the tooltip is due and once while it shows.
+	app.ui().move(std::nullopt, at("#track"));
+	remove("track");
+	CHECK(asksNoMore());
+	CHECK_FALSE(visible(app, "tooltip"));
+
+	app.ui().move(std::nullopt, at("#corner"));
+	REQUIRE(app.waitUntil([&app] { return visible(app, "tooltip"); }));
+	remove("corner");
+	CHECK(asksNoMore());
+	CHECK_FALSE(visible(app, "tooltip"));
+
+	// The mouse moved onto a bare part of an ancestor, where the element's tooltip went with a Mouseout and none comes.
+	app.ui().move(std::nullopt, at("#titled"));
+	app.ui().move(std::nullopt, point(2, 2));
+	CHECK(asksNoMore());
+
+	// An element taken out and kept: its :hover goes with no Mouseout that reaches the document.
+	app.ui().move(std::nullopt, at("#titled"));
+	Rml::Element* titled = document.GetElementById("titled");
+	Rml::ElementPtr parked = titled->GetParentNode()->RemoveChild(titled);
+	context.RequestNextUpdate(0.0);
+	// The group under the mouse now has a title: its tooltip waits for its rest, without update after update.
+	updateTwice();
+	CHECK(context.GetNextUpdateDelay() > 0.1);
+	parked.reset();
+}
+
+TEST_CASE("an element without a title that replaces the one under a resting mouse gets no tooltip", "[ui][slow]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	Rml::ElementList tooltips;
+	document.GetElementsByTagName(tooltips, "tooltip");
+	REQUIRE(tooltips.size() == 1);
+	const Rml::Element& tooltip = *tooltips.front();
+	const auto replaceWithoutTitle = [&document]
+	{
+		Rml::Element* old = document.GetElementById("track");
+		Rml::ElementPtr created = document.CreateElement("div");
+		created->SetId("track");
+		created->SetClassNames("panel");
+		document.AppendChild(std::move(created));
+		old->GetParentNode()->RemoveChild(old);
+		document.GetContext()->RequestNextUpdate(0.0); // as code that changes elements does
+	};
+	// Whether the tooltip shows at any step of a second.
+	const auto showsWithin = [&app, &tooltip](std::chrono::milliseconds time)
+	{
+		const auto end = std::chrono::steady_clock::now() + time;
+		while (std::chrono::steady_clock::now() < end)
+		{
+			app.shell().step(std::chrono::milliseconds(10));
+			if (tooltip.IsClassSet("shown"))
+				return true;
+		}
+		return false;
+	};
+
+	// Replaced before the tooltip is due.
+	app.ui().move(std::nullopt, at("#track"));
+	replaceWithoutTitle();
+	CHECK_FALSE(showsWithin(std::chrono::seconds(1)));
+
+	// Replaced while its tooltip shows: it goes and none comes. A track with a title is back for that.
+	Rml::Element* track = document.GetElementById("track");
+	track->SetAttribute("title", "Audio 02");
+	app.ui().move(std::nullopt, at("#plain"));
+	app.ui().move(std::nullopt, at("#track"));
+	REQUIRE(app.waitUntil([&tooltip] { return tooltip.IsClassSet("shown"); }));
+	replaceWithoutTitle();
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(showsWithin(std::chrono::seconds(1)));
+	CHECK_FALSE(tooltip.IsClassSet("shown"));
+}
+
+TEST_CASE("the tooltip goes when the mouse moves to a bare part of an ancestor of its element", "[ui][slow]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	const ui::Target bare = point(2, 2); // the body's own area: nothing covers it
+
+	// Before the tooltip is due: none comes. The ancestor was in the hover chain already, so RmlUi sends no Mouseover.
+	app.ui().move(std::nullopt, at("#track"));
+	app.ui().move(std::nullopt, bare);
+	CHECK_FALSE(app.waitUntil([&app] { return visible(app, "tooltip"); }, std::chrono::seconds(1)));
+
+	// While it shows: it goes.
+	app.ui().move(std::nullopt, at("#track"));
+	REQUIRE(app.waitUntil([&app] { return visible(app, "tooltip"); }));
+	app.ui().move(std::nullopt, bare);
+	CHECK(app.waitUntil([&app] { return !visible(app, "tooltip"); }));
+
+	// Within an element with a title the tooltip stays: from its member to its own area, the element keeps :hover.
+	app.ui().move(std::nullopt, at("#member"));
+	REQUIRE(app.waitUntil([&app] { return visible(app, "tooltip"); }));
+	CHECK(element(app, "tooltip").at("text") == "Group");
+	const Json group = element(app, "#group").at("box");
+	app.ui().move(std::nullopt,
+		point(group.at("x").get<int>() + group.at("width").get<int>() - 5,
+			group.at("y").get<int>() + group.at("height").get<int>() - 5));
+	CHECK_FALSE(app.waitUntil([&app] { return !visible(app, "tooltip"); }, std::chrono::seconds(1)));
+
+	// An element that is taken out from under the mouse and kept, as docking's parked panels are, takes its tooltip
+	// with it: RmlUi clears its hover state, but its pointer stays valid.
+	app.ui().move(std::nullopt, at("#track"));
+	REQUIRE(app.waitUntil([&app] { return visible(app, "tooltip"); }));
+	Rml::Element* track = document.GetElementById("track");
+	Rml::ElementPtr parked = track->GetParentNode()->RemoveChild(track);
+	document.GetContext()->RequestNextUpdate(0.0);
+	CHECK(app.waitUntil([&app] { return !visible(app, "tooltip"); }));
+	CHECK_FALSE(app.waitUntil([&app] { return visible(app, "tooltip"); }, std::chrono::seconds(1)));
+	parked.reset();
+}
+
+TEST_CASE("a titled ancestor's tooltip comes after its titled member's has gone", "[ui][slow]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	const Json group = element(app, "#group").at("box");
+	// A point of the group's own area, covered by none of its members.
+	const ui::Target bare = point(group.at("x").get<int>() + group.at("width").get<int>() - 5,
+		group.at("y").get<int>() + group.at("height").get<int>() - 5);
+	const auto shows = [&app](const char* text)
+	{
+		return app.waitUntil(
+			[&app, text] { return visible(app, "tooltip") && element(app, "tooltip").at("text") == text; });
+	};
+
+	// From the member onto the group's own area, which was in the hover chain already, so RmlUi sends no Mouseover:
+	// the member's tooltip goes at once and the group's comes after the rest.
+	app.ui().move(std::nullopt, at("#titled"));
+	REQUIRE(shows("Titled"));
+	app.ui().move(std::nullopt, bare);
+	CHECK_FALSE(visible(app, "tooltip"));
+	CHECK(shows("Group"));
+
+	// The same when the member under the resting mouse is removed, and the tooltip comes under the mouse where it
+	// rests, not where it entered the member (RmlUi sends no event for moves within an element).
+	const Json box = element(app, "#titled").at("box");
+	const int x = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
+	const int top = box.at("y").get<int>() + 1;
+	const int bottom = box.at("y").get<int>() + box.at("height").get<int>() - 2;
+	app.ui().move(std::nullopt, point(x, top));
+	app.ui().move(std::nullopt, point(x, bottom));
+	REQUIRE(shows("Titled"));
+	Rml::Element* titled = document.GetElementById("titled");
+	titled->GetParentNode()->RemoveChild(titled);
+	document.GetContext()->RequestNextUpdate(0.0);
+	CHECK(app.waitUntil([&app] { return !visible(app, "tooltip"); }));
+	CHECK(shows("Group"));
+	CHECK(
+		app.waitUntil([&app, bottom] { return element(app, "tooltip").at("box").at("y").get<int>() >= bottom + 15; }));
 }
 
 namespace
@@ -1842,4 +2155,57 @@ TEST_CASE(
 	model.changed("color");
 	CHECK(app.waitUntil([&number] { return number(6) == 255.0F && number(1) == 240.0F; }));
 	CHECK(looksLike(app, "#picker .color-new", {0, 0, 255}));
+}
+
+TEST_CASE("a fill of a drop-down list from the change that its own fill sends is dropped", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("buttons.rml");
+	Rml::ElementPtr created = document.CreateElement("div");
+	created->SetInnerRML(R"(<select id="first"/><select id="second"/>)");
+	document.AppendChild(std::move(created));
+	auto& first = *rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("first"));
+	auto& second = *rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("second"));
+	// The change that the first fill's selection sends fills the other list, then the first one again: the fill of
+	// the other list in between doesn't let the second fill of the first one in (#1719).
+	ui::widgets::Listener refill(
+		[&first, &second](Rml::Event&)
+		{
+			ui::widgets::fill(second, {{"x", "X"}}, "x");
+			ui::widgets::fill(first, {{"z", "Z"}}, "z");
+		});
+	first.AddEventListener(Rml::EventId::Change, &refill);
+	ui::widgets::fill(first, {{"a", "A"}, {"b", "B"}}, "b");
+	first.RemoveEventListener(Rml::EventId::Change, &refill);
+	CHECK(first.GetNumOptions() == 2);
+	CHECK(first.GetValue() == "b");
+	CHECK(second.GetNumOptions() == 1);
+	CHECK(second.GetValue() == "x");
+}
+
+TEST_CASE(
+	"a fill of a drop-down list from a change that a fill of another list sends during its own is dropped", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("buttons.rml");
+	Rml::ElementPtr created = document.CreateElement("div");
+	created->SetInnerRML(R"(<select id="first"/><select id="second"/>)");
+	document.AppendChild(std::move(created));
+	auto& first = *rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("first"));
+	auto& second = *rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("second"));
+	ui::widgets::fill(first, {{"p", "P"}}, "p");
+	// The first list's change fills the second one, whose change fills the first one again, while the first fill
+	// still has the old option to remove: that fill is dropped two levels deep too, so the first fill doesn't remove
+	// its options and leave the list without a selection (#1748).
+	ui::widgets::Listener fillSecond([&second](Rml::Event&) { ui::widgets::fill(second, {{"x", "X"}}, "x"); });
+	ui::widgets::Listener fillFirst([&first](Rml::Event&) { ui::widgets::fill(first, {{"z", "Z"}}, "z"); });
+	first.AddEventListener(Rml::EventId::Change, &fillSecond);
+	second.AddEventListener(Rml::EventId::Change, &fillFirst);
+	ui::widgets::fill(first, {{"a", "A"}, {"b", "B"}}, "b");
+	first.RemoveEventListener(Rml::EventId::Change, &fillSecond);
+	second.RemoveEventListener(Rml::EventId::Change, &fillFirst);
+	CHECK(first.GetNumOptions() == 2);
+	CHECK(first.GetValue() == "b");
+	CHECK(second.GetNumOptions() == 1);
+	CHECK(second.GetValue() == "x");
 }

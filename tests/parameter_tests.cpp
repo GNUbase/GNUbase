@@ -11,6 +11,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -22,6 +23,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -64,6 +66,22 @@ namespace
 		const TestTrack synth = addTrack(client, "instrument");
 		run(client, "channel.set", {{"channel", synth.channel}, {"instrument", "testSynth"}});
 		return synth;
+	}
+
+	// Waits until a slot's plugin is active, then builds the graph with it, as the engine does on its own then: until
+	// that, the slot passes its audio unchanged (#1777).
+	void waitUntilActive(Client& client, ObjectId slot)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+		std::string status;
+		while (status != "active" && std::chrono::steady_clock::now() < deadline)
+		{
+			status = run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status").get<std::string>();
+			if (status != "active")
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+		REQUIRE(status == "active");
+		run(client, "audio.updatePlugins");
 	}
 
 	Json instrumentTarget(uint32_t parameter)
@@ -216,10 +234,20 @@ TEST_CASE("the channel strip's sections have parameters that parameter.set and c
 	CHECK(groups.at(10) == "Equalizer");
 	CHECK(groups.at(70) == "Strip");
 
-	// Only audio channels have them.
+	// Only audio channels have them, and a refusal names the kind of channel it is: a MIDI channel has only its mute,
+	// a VCA channel only its fader (#878).
 	const TestTrack midi = addTrack(client, "midi");
 	CHECK_THAT(reject(client, "parameter.get", {{"channel", midi.channel}, {"target", stripTarget(0)}}),
-		ContainsSubstring("MIDI"));
+		ContainsSubstring("a MIDI channel has no channel strip sections"));
+	CHECK_THAT(reject(client, "parameter.get", {{"channel", midi.channel}, {"target", {{"type", "volume"}}}}),
+		ContainsSubstring("a MIDI channel has no volume or pan"));
+	const TestTrack vca = addTrack(client, "vca");
+	CHECK_THAT(reject(client, "parameter.get", {{"channel", vca.channel}, {"target", stripTarget(0)}}),
+		ContainsSubstring("a VCA channel has no channel strip sections"));
+	CHECK_THAT(reject(client, "parameter.get", {{"channel", vca.channel}, {"target", {{"type", "pan"}}}}),
+		ContainsSubstring("a VCA channel has no pan"));
+	CHECK_THAT(reject(client, "parameter.get", {{"channel", vca.channel}, {"target", {{"type", "mute"}}}}),
+		ContainsSubstring("a VCA channel's mute isn't a parameter"));
 	CHECK_THAT(reject(client, "parameter.get", {{"channel", audio.channel}, {"target", stripTarget(99)}}),
 		ContainsSubstring("no parameter 99"));
 }
@@ -404,6 +432,92 @@ TEST_CASE("a built-in plugin's parameters report the values set, then its state'
 				  {"target", {{"type", "plugin"}, {"slot", other}, {"parameter", processors::GainPan::Gain}}}})
 			  .at("parameter")
 			  .at("value") == 0.0);
+}
+
+TEST_CASE("a built-in plugin's state values out of range report and play clamped, NaN and infinite ones as the default",
+	"[integration]")
+{
+	// A gain and pan plugin on a monitored audio track that passes on a sine, with a state from a file.
+	struct Played
+	{
+		std::vector<float> left;
+		std::vector<float> right;
+		Json gain;
+		Json pan;
+		Json listed;
+	};
+	const auto play = [](double gain, double pan)
+	{
+		Engine engine;
+		Client client(engine);
+		run(client, "audio.setDevice",
+			{{"blockSize", 256}, {"captureSeconds", 1},
+				{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 441.0}, {"Level", 0.5}}}}}});
+		const TestTrack audio = addTrack(client, "audio");
+		const ObjectId slot = run(client, "plugin.insert", {{"channel", audio.channel}, {"plugin", "builtin:gainPan"}})
+								  .at("slot")
+								  .at("id")
+								  .get<ObjectId>();
+		Project project = projectFromJson(run(client, "project.get"));
+		std::vector<uint8_t> state;
+		for (const auto& [id, value] :
+			{std::pair{uint32_t{processors::GainPan::Gain}, gain}, std::pair{uint32_t{processors::GainPan::Pan}, pan}})
+		{
+			const size_t at = state.size();
+			state.resize(at + sizeof(id) + sizeof(value));
+			std::memcpy(state.data() + at, &id, sizeof(id));
+			std::memcpy(state.data() + at + sizeof(id), &value, sizeof(value));
+		}
+		project.slots.at(slot).state = std::make_shared<const std::vector<uint8_t>>(state);
+		const gnubase::test::TempDir dir;
+		const std::string file = (dir.path() / "state.dawproject").u8string();
+		saveDawProject(project, file, {});
+		run(client, "project.load", {{"path", file}});
+		run(client, "channel.set", {{"channel", audio.channel}, {"monitor", true}});
+		// The loaded state's plugin is a new instance, which loads on a job thread.
+		waitUntilActive(client, slot);
+
+		const auto target = [slot](uint32_t parameter)
+		{ return Json{{"type", "plugin"}, {"slot", slot}, {"parameter", parameter}}; };
+		Played played;
+		played.gain = get(client, audio.channel, target(processors::GainPan::Gain)).at("value");
+		played.pan = get(client, audio.channel, target(processors::GainPan::Pan)).at("value");
+		const Json listed = run(client, "parameter.list", {{"channel", audio.channel}});
+		for (const Json& parameter : listed.at("parameters"))
+			if (parameter.at("target").at("type") == "plugin")
+				played.listed.push_back(parameter.at("value"));
+		run(client, "transport.play");
+		run(client, "audio.render", {{"frames", 4800}});
+		const auto capture = [&client](int channel)
+		{
+			return run(client, "audio.capture", {{"channel", channel}, {"start", 0}, {"frames", 4800}})
+				.at("samples")
+				.get<std::vector<float>>();
+		};
+		played.left = capture(0);
+		played.right = capture(1);
+		return played;
+	};
+
+	const Played valid = play(12.0, 0.0); // the gain's maximum, the pan's default
+	CHECK(valid.gain == 12.0);
+	CHECK(valid.pan == 0.0);
+	REQUIRE(valid.left.size() == 4800);
+	float loudest = 0.0F;
+	for (const float sample : valid.left)
+		loudest = std::max(loudest, std::abs(sample));
+	CHECK(loudest > 1.0F); // the input, 0.5, 12 dB up
+	for (const auto& [gain, pan] : {std::pair{50.0, std::numeric_limits<double>::quiet_NaN()},
+			 std::pair{1000.0, -std::numeric_limits<double>::infinity()}})
+	{
+		INFO("gain " << gain << ", pan " << pan);
+		const Played damaged = play(gain, pan);
+		CHECK(damaged.gain == 12.0);
+		CHECK(damaged.pan == 0.0);
+		CHECK(damaged.listed == valid.listed);
+		CHECK(damaged.left == valid.left);
+		CHECK(damaged.right == valid.right);
+	}
 }
 
 TEST_CASE("parameter values set on an instrument play", "[integration]")

@@ -49,6 +49,8 @@ namespace gnubase::ui
 			shown->SetClass("menu-keys", true);
 			item.keys = shown->GetObserverPtr();
 		}
+		// In the bubble phase, after the listeners of the elements below the document, and of the document's added
+		// before the menu; the document's bubble phase click listeners added later run after it (see update()).
 		document.AddEventListener(Rml::EventId::Click, this);
 		update();
 	}
@@ -88,6 +90,9 @@ namespace gnubase::ui
 
 	void MainMenu::ProcessEvent(Rml::Event& event)
 	{
+		// The items follow what the click's listeners changed before it looks for its item (#1120). What the click's
+		// default actions and the item's own command change follows after the input (update).
+		update();
 		Rml::Element* element = closestWith(event.GetTargetElement(), "command");
 		if (element == nullptr || element->HasAttribute("disabled"))
 			return;

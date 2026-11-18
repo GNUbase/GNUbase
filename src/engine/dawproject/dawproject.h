@@ -5,6 +5,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 // DAWproject (https://github.com/bitwig/dawproject), GNUbase's project format: a ZIP file with project.xml and
 // metadata.xml, which other applications read too, the media files, and gnubase.json, GNUbase's extension entry.
@@ -25,13 +26,17 @@ namespace gnubase::engine
 
 	// project.xml gets everything DAWproject can describe. gnubase.json gets the whole project and a checksum of
 	// project.xml, so GNUbase gets back exactly what it saved: ids, input busses, time bases, MIDI tracks, exact
-	// sample positions. Throws DawProjectError or AudioFileError.
-	void saveDawProject(const Project& project, const std::string& path, const DawProjectSaveOptions& options);
+	// sample positions. Returns the paths of the media files and then the freeze files that are missing, which the file
+	// refers to where they were instead of embedding them (#1614, #1736). Throws DawProjectError or AudioFileError.
+	std::vector<std::string> saveDawProject(
+		const Project& project, const std::string& path, const DawProjectSaveOptions& options);
 
 	// Embedded media files are extracted to mediaFolder. If gnubase.json is there and project.xml is unchanged since
 	// GNUbase wrote it, the project is restored from gnubase.json; otherwise, as when another application wrote the
-	// file or changed it, it is built from project.xml. Throws DawProjectError.
-	Project loadDawProject(const std::string& path, const std::string& mediaFolder);
+	// file or changed it, it is built from project.xml. With extractMedia false nothing is extracted, and embedded
+	// media files keep their names inside the file as paths: for reading what a file holds without its media.
+	// Throws DawProjectError.
+	Project loadDawProject(const std::string& path, const std::string& mediaFolder, bool extractMedia = true);
 
 	// A tempo track file (#160, reference manual p. 1462): the tempo track's events and the time signature events, in
 	// an XML file of their own. It describes them as project.xml does, a Transport and an Arrangement with the tempo

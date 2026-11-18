@@ -15,10 +15,14 @@
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
+#include "ui/timeformat.h"
 #include "ui/transport.h"
+#include "ui/transportpanelfit.h"
 
+#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -28,11 +32,18 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <functional>
+#include <future>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <type_traits>
 #include <utility>
+#include <vector>
 
 using namespace gnubase;
 using Catch::Matchers::ContainsSubstring;
@@ -81,8 +92,8 @@ namespace
 	}
 
 	// The project window with its transport bar shown. The shell fits windows into their monitor, 1024 pixels wide on
-	// CI, where a dp ratio of 1 cuts off the transport bar's last sections: at 0.8 they all fit.
-	ui::EventDisplay& showBar(test::UiApp& app, float dpRatio = 0.8F)
+	// CI, where a dp ratio of 1 cuts off the transport bar's last sections: at 0.75, about 1365 dp, they all fit.
+	ui::EventDisplay& showBar(test::UiApp& app, float dpRatio = 0.75F)
 	{
 		app.setDpRatio(dpRatio);
 		ui::EventDisplay& display = app.appUi().showProject();
@@ -197,7 +208,7 @@ TEST_CASE("Space starts and stops playback after a click on a toolbar or transpo
 TEST_CASE("a narrow window cuts off the transport bar's last sections instead of drawing them over each other", "[ui]")
 {
 	test::UiApp app({1024, 700});
-	showBar(app, 1.0F); // about 1180 dp of sections in 1024 dp
+	showBar(app, 1.0F); // about 1240 dp of sections in 1024 dp
 	Rml::Context& context = app.main().context();
 	Rml::Element* bar = nullptr;
 	for (int i = 0; i < context.GetNumDocuments(); ++i)
@@ -240,6 +251,568 @@ TEST_CASE("a narrow window cuts off the transport bar's last sections instead of
 	}
 	click(app, "#punch-in");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("punchIn") == true; }));
+}
+
+TEST_CASE("every control of the default transport bar fits a 1024-pixel window at a dp ratio of 0.8", "[ui]")
+{
+	// 1280 dp, a 1920-pixel display at 150 % (#1450): the bar holds bars and beats, timecode and a new project's
+	// locators.
+	test::UiApp app({1024, 700});
+	showBar(app, 0.8F);
+	Rml::Context& context = app.main().context();
+	Rml::Element* bar = nullptr;
+	for (int i = 0; i < context.GetNumDocuments(); ++i)
+		if (Rml::Element* found = context.GetDocument(i)->GetElementById("transport-bar"))
+			bar = found;
+	REQUIRE(bar != nullptr);
+	const float right = bar->GetAbsoluteLeft() + bar->GetOffsetWidth();
+	Rml::ElementList controls;
+	bar->QuerySelectorAll(controls, ".transport-section > *");
+	REQUIRE(!controls.empty());
+	for (Rml::Element* control : controls)
+	{
+		INFO(control->GetId());
+		CHECK(control->GetAbsoluteLeft() + control->GetOffsetWidth() <= right);
+	}
+}
+
+namespace
+{
+	// Opens a new transport panel with F2, at a dp ratio, and checks that it has the width of its sections once the
+	// controls show the project: every control inside the window and the window ending a section gap after the last
+	// one, or, where the sections are wider than the primary monitor's usable area, as wide as that area (#1424,
+	// #1474). shown says when the panel shows what the test set up; reopen closes the panel right after the fit and
+	// opens it again, with the bounds the fit kept, which it follows from (#1527).
+	void checkPanelFits(
+		test::UiApp& app, float dpRatio, const std::function<bool()>& shown = [] { return true; }, bool reopen = false)
+	{
+		INFO("dp ratio " << dpRatio);
+		app.setDpRatio(dpRatio);
+		app.ui().key(std::nullopt, "F2");
+		// The panel follows its sections whenever they change, so it fits once it shows what the test set up.
+		if (reopen)
+		{
+			REQUIRE(app.waitUntil(shown, std::chrono::seconds(2)));
+			app.ui().key(std::nullopt, "F2");
+			REQUIRE(app.appUi().transportPanel() == nullptr);
+			app.ui().key(std::nullopt, "F2");
+		}
+		ui::Window* panel = app.appUi().transportPanel();
+		REQUIRE(panel != nullptr);
+		Rml::Context& context = panel->context();
+		Rml::Element* transport = nullptr;
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* found = context.GetDocument(i)->GetElementById("transport"))
+				transport = found;
+		REQUIRE(transport != nullptr);
+		const int usable = app.shell().displays().front().usable.width;
+		// Where the last control ends and whether every one is inside the window, in pixels.
+		const auto measure = [&]
+		{
+			context.Update();
+			const auto width = static_cast<float>(panel->pixelSize().width);
+			float last = 0;
+			bool inside = true;
+			Rml::ElementList controls;
+			transport->QuerySelectorAll(controls, ".transport-section > *");
+			for (Rml::Element* control : controls)
+			{
+				const float end = control->GetAbsoluteLeft() + control->GetOffsetWidth();
+				inside = inside && end <= width;
+				last = std::max(last, end);
+			}
+			return std::make_pair(last, inside);
+		};
+		// After the controls' first queries: the next step hands their answers on, and the panel follows from then.
+		app.call("engine.version");
+		app.shell().step(std::chrono::milliseconds(0));
+		const auto fitted = [&]
+		{
+			const auto [last, inside] = measure();
+			const float gap = static_cast<float>(panel->pixelSize().width) - last;
+			return inside ? gap <= (16.0F * dpRatio) + 1.0F : app.shell().bounds(panel->id()).width == usable;
+		};
+		app.waitUntil([&] { return shown() && fitted(); }, std::chrono::seconds(2));
+		CHECK(shown());
+		const auto [last, inside] = measure();
+		const auto width = static_cast<float>(panel->pixelSize().width);
+		INFO("last control ends at " << last << " of " << width << " pixels; usable width " << usable);
+		CHECK(last > 0);
+		CHECK(app.shell().bounds(panel->id()).width <= usable); // never wider than the monitor has room for
+		if (inside)
+			CHECK(width - last <= (16.0F * dpRatio) + 1.0F);
+		else // the sections are wider than the monitor has room for
+			CHECK(app.shell().bounds(panel->id()).width == usable);
+	}
+}
+
+TEST_CASE("a new transport panel takes the width of its sections", "[ui]")
+{
+	// At a dp ratio of 1 the sections are wider than CI's 1024-pixel monitor, and the panel takes its usable width.
+	for (const float dpRatio : {0.5F, 0.75F, 1.0F})
+	{
+		test::UiApp app({1024, 700});
+		app.appUi().showProject();
+		checkPanelFits(app, dpRatio);
+	}
+}
+
+TEST_CASE("a new transport panel takes the width of the project it shows", "[ui]")
+{
+	// The locator and range displays grow with their text: in timecode, with the locators an hour out, the sections are
+	// wider than in bars and beats from the project start, the defaults the controls show before the engine answers.
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	app.call("project.set", {{"timeFormat", "timecode"}});
+	app.call("transport.set", {{"left", int64_t{48000} * 3600}, {"right", int64_t{48000} * 7200}});
+	checkPanelFits(
+		app, 0.5F, [&app] { return shows(app, "#left-locator", app.appUi().transportPanel()->id()) == "01:00:00:00"; });
+}
+
+TEST_CASE("a transport panel closed right after its fit comes back as wide", "[ui]")
+{
+	// The fit keeps the bounds at once, not on the docking system's next save: closed and opened again, the panel has
+	// the width of the project it shows, wider than the controls' defaults.
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	app.call("project.set", {{"timeFormat", "timecode"}});
+	app.call("transport.set", {{"left", int64_t{48000} * 3600}, {"right", int64_t{48000} * 7200}});
+	checkPanelFits(
+		app, 0.5F,
+		[&app]
+		{
+			const ui::Window* panel = app.appUi().transportPanel();
+			return panel != nullptr && shows(app, "#left-locator", panel->id()) == "01:00:00:00";
+		},
+		true);
+}
+
+namespace
+{
+	// The transport panel's width in its bounds, once it is open.
+	int panelWidth(test::UiApp& app)
+	{
+		const ui::Window* panel = app.appUi().transportPanel();
+		return panel != nullptr ? app.shell().bounds(panel->id()).width : 0;
+	}
+}
+
+TEST_CASE("an open transport panel follows the width of its sections until the user sizes it", "[ui]")
+{
+	// In bars and beats from the project start the sections are narrower than in timecode with the locators an hour
+	// out; at a dp ratio of 0.5 both fit CI's 1024-pixel monitor.
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	checkPanelFits(app, 0.5F);
+	const int narrow = panelWidth(app);
+	const int left = app.shell().bounds(app.appUi().transportPanel()->id()).x;
+
+	// A time format picked later and the locators moved far out: the panel grows where it is.
+	app.call("project.set", {{"timeFormat", "timecode"}});
+	app.call("transport.set", {{"left", int64_t{48000} * 3600}, {"right", int64_t{48000} * 7200}});
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) > narrow; }, std::chrono::seconds(2)));
+	const int wide = panelWidth(app);
+	CHECK(app.shell().bounds(app.appUi().transportPanel()->id()).x == left);
+	// Closed and opened again, it has the width it had and still follows its sections.
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.appUi().transportPanel() == nullptr);
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) == wide; }, std::chrono::seconds(2)));
+
+	// A section hidden in the setup pane makes it narrower, and shown again wider.
+	const auto hidden = [&app](const Json& sections)
+	{
+		Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
+		layout["windows"]["transportPanel"]["sections"]["transport"]["hidden"] = sections;
+		app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+	};
+	hidden(Json::array({"click"}));
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) < wide; }, std::chrono::seconds(2)));
+	hidden(Json::array());
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) == wide; }, std::chrono::seconds(2)));
+
+	// Sized by the user, it keeps its width: back in bars and beats it doesn't get narrower, also when it opens again.
+	ui::Rect sized = app.shell().bounds(app.appUi().transportPanel()->id());
+	sized.width = wide + 40;
+	app.shell().setBounds(app.appUi().transportPanel()->id(), sized);
+	app.call("project.set", {{"timeFormat", "barsBeats"}});
+	app.call("transport.set", {{"left", 0}, {"right", int64_t{48000} * 8}});
+	REQUIRE(
+		app.waitUntil([&app] { return shows(app, "#left-locator", app.appUi().transportPanel()->id()) == "1.1.1.0"; },
+			std::chrono::seconds(2)));
+	const auto settle = [&app] { app.waitUntil([] { return false; }, std::chrono::milliseconds(300)); };
+	settle();
+	CHECK(panelWidth(app) == wide + 40);
+	app.ui().key(std::nullopt, "F2");
+	app.ui().key(std::nullopt, "F2");
+	settle();
+	CHECK(panelWidth(app) == wide + 40);
+}
+
+namespace
+{
+	// Keeps the engine's command thread busy until it goes: what the UI sends meanwhile is answered later, as by a
+	// command thread busy with a long command.
+	class BusyEngine
+	{
+	public:
+		explicit BusyEngine(engine::Engine& engine)
+		{
+			engine.post("engine.version", Json::object(),
+				[released = m_release.get_future().share()](const engine::Result&) { released.wait(); });
+		}
+		~BusyEngine() { m_release.set_value(); }
+		BusyEngine(const BusyEngine&) = delete;
+		BusyEngine& operator=(const BusyEngine&) = delete;
+		BusyEngine(BusyEngine&&) = delete;
+		BusyEngine& operator=(BusyEngine&&) = delete;
+
+	private:
+		std::promise<void> m_release;
+	};
+
+	// A project whose transport controls are wider than their defaults: timecode, with the locators an hour out.
+	void wideProject(test::UiApp& app)
+	{
+		app.call("project.set", {{"timeFormat", "timecode"}});
+		app.call("transport.set", {{"left", int64_t{48000} * 3600}, {"right", int64_t{48000} * 7200}});
+	}
+
+	bool showsWideProject(test::UiApp& app)
+	{
+		const ui::Window* panel = app.appUi().transportPanel();
+		return panel != nullptr && shows(app, "#left-locator", panel->id()) == "01:00:00:00";
+	}
+
+	// Steps the shell for a while, adding the transport panel's width after every step.
+	void recordWidths(test::UiApp& app, std::vector<int>& widths, std::chrono::milliseconds time)
+	{
+		app.waitUntil(
+			[&]
+			{
+				widths.push_back(panelWidth(app));
+				return false;
+			},
+			time);
+	}
+}
+
+TEST_CASE("a fitted transport panel opens as wide as it was, also while the engine is busy", "[ui]")
+{
+	// Until the engine answers, the controls show their defaults, narrower than the project's: the panel follows its
+	// sections only once they show the project, so it doesn't get narrower and then as wide as it was (#1612).
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	wideProject(app);
+	checkPanelFits(app, 0.5F, [&app] { return showsWideProject(app); });
+	const int wide = panelWidth(app);
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.appUi().transportPanel() == nullptr);
+	std::vector<int> widths;
+	{
+		const BusyEngine busy(app.engine());
+		app.ui().key(std::nullopt, "F2");
+		recordWidths(app, widths, std::chrono::milliseconds(200));
+		CHECK_FALSE(showsWideProject(app));
+	}
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			widths.push_back(panelWidth(app));
+			return showsWideProject(app);
+		}));
+	recordWidths(app, widths, std::chrono::milliseconds(300));
+	for (const int width : widths)
+		CHECK(width == wide);
+}
+
+TEST_CASE("a new transport panel is centred for the project it shows, also when the engine answers late", "[ui]")
+{
+	// Fitted to the controls' defaults at once, centred, and once they show the project centred again for its width.
+	test::UiApp app({1024, 700});
+	app.setDpRatio(0.5F);
+	app.appUi().showProject();
+	wideProject(app);
+	{
+		const BusyEngine busy(app.engine());
+		app.ui().key(std::nullopt, "F2");
+		REQUIRE(app.appUi().transportPanel() != nullptr);
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+	const int defaults = panelWidth(app);
+	REQUIRE(app.waitUntil([&] { return showsWideProject(app) && panelWidth(app) > defaults; }));
+	const ui::Rect bounds = app.shell().bounds(app.appUi().transportPanel()->id());
+	CHECK(bounds == ui::centred(bounds.size(), app.shell().displays().front()));
+}
+
+TEST_CASE("each fit of the transport panel saves the window layout once", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	checkPanelFits(app, 0.5F);
+	REQUIRE(app.waitUntil([&app]
+		{ return app.call("settings.get", {{"key", "ui.layout"}}).at("value") == app.appUi().docking().layout(); }));
+	int saves = 0;
+	const ui::Subscription counting = app.appUi().binding().on("settings.changed",
+		[&saves](const engine::Event& event)
+		{
+			if (event.data.at("values").contains("ui.layout"))
+				++saves;
+		});
+	int fits = 0;
+	int last = panelWidth(app);
+	wideProject(app);
+	app.waitUntil(
+		[&]
+		{
+			if (const int width = panelWidth(app); width != last)
+			{
+				++fits;
+				last = width;
+			}
+			return false;
+		},
+		std::chrono::seconds(1));
+	REQUIRE(fits > 0);
+	CHECK(saves == fits);
+}
+
+TEST_CASE("a transport panel keeps a width set right before its window's close button", "[ui]")
+{
+	// The close request saves the bounds before the window goes, not only once the shell closed it (#1612).
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	checkPanelFits(app, 0.5F);
+	const ui::WindowId id = app.appUi().transportPanel()->id();
+	ui::Rect sized = app.shell().bounds(id);
+	sized.width += 40;
+	app.shell().setBounds(id, sized);
+	app.shell().requestClose(id);
+	REQUIRE(app.appUi().transportPanel() == nullptr);
+	app.ui().key(std::nullopt, "F2");
+	std::vector<int> widths;
+	recordWidths(app, widths, std::chrono::milliseconds(300));
+	for (const int width : widths)
+		CHECK(width == sized.width);
+}
+
+TEST_CASE("Reset All in its setup pane makes a transport panel the user sized follow its sections again", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	checkPanelFits(app, 0.5F);
+	const int fitted = panelWidth(app);
+	const ui::WindowId id = app.appUi().transportPanel()->id();
+	ui::Rect sized = app.shell().bounds(id);
+	sized.width += 40;
+	app.shell().setBounds(id, sized);
+	std::vector<int> widths;
+	recordWidths(app, widths, std::chrono::milliseconds(300));
+	CHECK(panelWidth(app) == sized.width); // sized by the user
+
+	// As the user does: Reset All in the setup pane that a right click on a section of the panel opens.
+	app.ui().click(id, at("[section=click]"), ui::MouseButton::Right, 1, {});
+	click(app, "#transport-setup [setup-reset]", id);
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) == fitted; }, std::chrono::seconds(2)));
+	// And it follows from there: wider for a wider project.
+	wideProject(app);
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) > fitted; }, std::chrono::seconds(2)));
+}
+
+namespace
+{
+	// The transport panel's fit (ui/transportpanelfit.h) on the fake window system, with a monitor 1920 points wide
+	// at a scale of 1, and a panel of two sections of 300 dp, until the second one's class makes it wider: wide
+	// 600 dp, wider 900 dp, and huge 2500 dp, wider than the monitor.
+	struct FakePanel
+	{
+		engine::Engine engine;
+		test::FakeUi ui{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1040}, 1.0F}}};
+		ui::WindowId main = ui.shell.open({}).id();
+		ui::EngineBinding binding{engine, [this] { ui.shell.wake(); }};
+		ui::Docking docking{
+			engine, binding, ui.shell, std::filesystem::path(GNUBASE_RESOURCES_DIR) / "ui" / "panel-window.rml"};
+		ui::TransportPanelFit fit{ui.shell, docking};
+		ui::Window* panel = nullptr;
+		Rml::Element* second = nullptr;
+
+		// Opens a new panel as the app does, 1100 points wide in the middle of the monitor, and fits it at once; with
+		// its sections hidden, which the class shown on the body shows, if not shown.
+		void open(bool shown = true, int width = 1100)
+		{
+			ui::WindowSpec spec;
+			spec.size = {width, 48};
+			panel = &ui.shell.open(spec);
+			Rml::ElementDocument* document = panel->context().LoadDocumentFromMemory(R"(<rml><head><style>
+				body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+				.transport-section { position: absolute; top: 0; width: 300dp; height: 20dp; display: none; }
+				body.shown .transport-section { display: block; }
+				#second { left: 300dp; }
+				#second.wide { width: 600dp; }
+				#second.wider { width: 900dp; }
+				#second.huge { width: 2500dp; }
+				</style></head><body><div class="transport-section"></div><div class="transport-section" id="second">
+				</div></body></rml>)");
+			REQUIRE(document != nullptr);
+			document->Show();
+			document->SetClass("shown", shown);
+			second = document->GetElementById("second");
+			fit.open(*panel, *document, true);
+		}
+		// The second section takes another width, as a display of the controls does with its text, and the shell
+		// steps.
+		void resize(const std::string& width)
+		{
+			second->SetClassNames("transport-section " + width);
+			panel->context().RequestNextUpdate(0);
+			step();
+		}
+		void step() { ui.shell.step(std::chrono::milliseconds(0)); }
+		ui::Rect bounds() const { return ui.shell.bounds(panel->id()); }
+		// A panel of that width in the middle of the monitor.
+		ui::Rect centred(int width) const { return ui::centred({width, 48}, ui.shell.displays().front()); }
+	};
+}
+
+TEST_CASE(
+	"a new transport panel is centred for what it shows also where the window system moves windows later", "[unit]")
+{
+	// As SDL's on X11, the window system moves the panel only after the first fit looked at its bounds again (#1701).
+	FakePanel fake;
+	fake.ui.windows.setBoundsLater(true);
+	fake.open();
+	CHECK(fake.bounds() == fake.centred(1100));
+	fake.ui.windows.applyBounds();
+	fake.step();
+	REQUIRE(fake.bounds() == fake.centred(600));
+
+	// The controls show the project, which is wider: centred again, where the first fit put it.
+	fake.second->SetClass("wide", true);
+	fake.fit.follow();
+	fake.step();
+	fake.ui.windows.applyBounds();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(900));
+}
+
+TEST_CASE("a new transport panel is centred for what it shows also before the window system moved it", "[unit]")
+{
+	// The controls show the project before the window system gave the panel the first fit's bounds (#1765).
+	FakePanel fake;
+	fake.ui.windows.setBoundsLater(true);
+	fake.open();
+	REQUIRE(fake.bounds() == fake.centred(1100));
+	fake.second->SetClass("wide", true);
+	fake.fit.follow();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(1100));
+	fake.ui.windows.applyBounds();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(900));
+}
+
+TEST_CASE("a new transport panel whose first fit found no sections is centred where it opened, not where the last one "
+		  "was",
+	"[unit]")
+{
+	// The panel before was fitted in the middle of the monitor, which then got smaller.
+	FakePanel fake;
+	fake.open();
+	REQUIRE(fake.bounds() == fake.centred(600));
+	fake.ui.windows.setDisplays({{1, "Monitor", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F}});
+	fake.step();
+
+	// A new one, as wide as the fit before, shows no sections at first: nothing to fit (#1765).
+	fake.open(false, 600);
+	REQUIRE(fake.bounds() == fake.centred(600));
+	fake.panel->context().GetDocument(0)->SetClass("shown", true);
+	fake.second->SetClass("wide", true);
+	fake.fit.follow();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(900));
+}
+
+TEST_CASE("the shell leaves a transport panel's fit alone once it is gone", "[unit]")
+{
+	static_assert(
+		!std::is_copy_constructible_v<ui::TransportPanelFit> && !std::is_move_constructible_v<ui::TransportPanelFit>);
+	FakePanel fake;
+	fake.open();
+	const ui::Rect fitted = fake.bounds();
+	{
+		ui::TransportPanelFit gone{fake.ui.shell, fake.docking};
+		gone.open(*fake.panel, *fake.panel->context().GetDocument(0), false);
+		gone.follow();
+	}
+	// Its tasks stay with the shell, which updates the panel and finds other monitors: they do nothing now (#1765).
+	fake.second->SetClass("wide", true);
+	fake.panel->context().RequestNextUpdate(0);
+	fake.step();
+	fake.ui.windows.setDisplays({{1, "Monitor", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F}});
+	fake.step();
+	CHECK(fake.bounds() == fitted);
+}
+
+TEST_CASE(
+	"a transport panel follows its sections while the window system hasn't given it the last fit's width", "[unit]")
+{
+	FakePanel fake;
+	fake.open();
+	fake.fit.follow();
+	fake.step();
+	REQUIRE(fake.bounds().width == 600);
+
+	// The window keeps its width for a while after each fit, and the sections get wider twice meanwhile.
+	fake.ui.windows.setBoundsLater(true);
+	fake.resize("wide");
+	CHECK(fake.bounds().width == 600);
+	fake.resize("wider");
+	CHECK(fake.bounds().width == 600);
+	fake.ui.windows.applyBounds();
+	fake.step();
+	CHECK(fake.bounds().width == 1200);
+	CHECK(fake.docking.fittedWidth("transportPanel") == 1200);
+}
+
+TEST_CASE("an open transport panel asks for the monitors only when its sections or its bounds change", "[unit]")
+{
+	FakePanel fake;
+	fake.open();
+	fake.fit.follow();
+	fake.step();
+	REQUIRE(fake.bounds().width == 600);
+
+	// In every frame while the transport runs, the panel's context updates with the same sections.
+	const int asked = fake.ui.windows.displaysAsked();
+	constexpr int frames = 40;
+	for (int frame = 0; frame < frames; ++frame)
+	{
+		fake.panel->context().RequestNextUpdate(0);
+		fake.step();
+	}
+	// The docking system looks for moved windows twice a second, which asks for them too.
+	CHECK(fake.ui.windows.displaysAsked() - asked < frames / 4);
+
+	const int unchanged = fake.ui.windows.displaysAsked();
+	fake.resize("wide");
+	CHECK(fake.ui.windows.displaysAsked() > unchanged);
+	CHECK(fake.bounds().width == 900);
+}
+
+TEST_CASE("a transport panel as wide as its monitor gets narrower with the monitor's usable area", "[unit]")
+{
+	FakePanel fake;
+	fake.open();
+	fake.second->SetClass("huge", true);
+	fake.fit.follow();
+	fake.step();
+	REQUIRE(fake.bounds().width == 1920);
+
+	// Another resolution: the panel is still within reach, so the shell leaves it where it is, and it fits again.
+	fake.ui.windows.setDisplays({{1, "Monitor", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F}});
+	fake.step();
+	CHECK(fake.bounds().width == 1600);
+	CHECK(fake.docking.fittedWidth("transportPanel") == 1600);
 }
 
 TEST_CASE("the transport bar goes to markers, the project's ends and the selection", "[ui]")
@@ -375,6 +948,121 @@ TEST_CASE("the time displays show the cursor in their formats and take positions
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(transport(app).at("left") == 96000);
 	CHECK(shows(app, "#left-locator") == "2.1.1.0");
+}
+
+TEST_CASE("the time displays keep their width while the cursor moves, and their format's width after a change, in "
+		  "every theme",
+	"[ui][slow]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	Rml::Context& context = app.main().context();
+	const auto rml = [&context](const char* id)
+	{
+		Rml::Element* found = nullptr;
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* in = context.GetDocument(i)->GetElementById(id))
+				found = in;
+		REQUIRE(found != nullptr);
+		return found;
+	};
+	const auto width = [&app](const char* selector)
+	{ return element(app, selector).at("box").at("width").get<double>(); };
+	const auto x = [&app](const char* selector) { return element(app, selector).at("box").at("x").get<double>(); };
+	// The widest texts the widths hold (base.rcss, #1379): a signature with two-digit beats and sixteenths, and bars
+	// from -999 on.
+	app.call("signature.add", {{"bar", 0}, {"numerator", 99}, {"denominator", 1}});
+	app.call("project.set", {{"barOffset", -1000}});
+	const ui::TimeContext time = ui::projectTime(app.call("project.get")); // 120 BPM at 48 kHz and 25 fps
+	REQUIRE(time.barOffset == -1000);
+	const int64_t bar = 9504000; // 99 whole notes at 120 BPM
+	// Positions whose texts have more and fewer digits (#1335), and each format's widest (#1379): bar -999 and 9999,
+	// just under 100 hours and 11 digits of samples.
+	const std::vector<int64_t> common = {0, 1234, 72001, 431999, 863999, 864000, 2000000, 95999999};
+	const std::vector<std::pair<const char*, std::pair<std::vector<int64_t>, size_t>>> formats = {
+		{"barsBeats", {{bar - 100, (10999 * bar) - 100}, 14}},                  // -999.99.16.118, 9999.99.16.118
+		{"seconds", {{17279999952}, 12}},                                       // 99:59:59.999
+		{"timecode", {{17279999000}, 11}},                                      // 99:59:59:24
+		{"samples", {{99999999999}, 11}}, {"userFrames", {{17279999000}, 11}}}; // 99:59:59:29
+	// RmlUi cuts the font size to whole pixels before it asks for the face, and FreeType rounds the hinted advances: at
+	// a dp ratio of 1 a 13 dp digit is 8 px, at 0.85 an 11 px face's is 7 px of 11.05, the most a character takes of
+	// its em (#1379).
+	for (const float dpRatio : {1.0F, 0.85F})
+		for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
+		{
+			INFO("dp ratio " << dpRatio << ", theme " << theme);
+			app.setDpRatio(dpRatio);
+			app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
+			// The shell applies the setting in a task, and a name it has no theme for would keep the default (#1424).
+			REQUIRE(app.waitUntil([&app, theme] { return app.shell().theme() == theme; }));
+			app.shell().step(std::chrono::milliseconds(0));
+			// The default theme's primary display is larger than the secondary, the others' as large (#1342).
+			const float primarySize = rml("primary-time")->GetComputedValues().font_size();
+			const float secondarySize = rml("secondary-time")->GetComputedValues().font_size();
+			if (std::string_view(theme) == "gnubase")
+				CHECK(primarySize > secondarySize);
+			else
+				CHECK(primarySize == secondarySize);
+			// The cursor's displays are as high as the transport's other displays, the larger primary display higher.
+			const float height = rml("signature")->GetOffsetHeight();
+			CHECK(rml("left-locator")->GetOffsetHeight() == height);
+			CHECK(rml("secondary-time")->GetOffsetHeight() == height);
+			CHECK(rml("primary-time")->GetOffsetHeight() >= height);
+			for (const auto& [name, widest] : formats)
+			{
+				INFO("format " << name);
+				const std::optional<ui::TimeFormat> format = ui::timeFormatFromName(name);
+				REQUIRE(format.has_value());
+				const ui::TimeFormat displayed = format.value_or(ui::TimeFormat::BarsBeats);
+				// A format change may change the width.
+				app.call("project.set", {{"timeFormat", name}});
+				app.call("settings.set",
+					{{"key", "ui.timeFormats"},
+						{"value", {{"primary", name}, {"secondary", name}, {"timeDisplay", "barsBeats"}}}});
+				REQUIRE(app.waitUntil(
+					[&, name = name]
+					{
+						return element(app, "#secondary-time")
+								   .value("classes", Json::array())
+								   .dump()
+								   .find(std::string("format-") + name) != std::string::npos;
+					}));
+				std::vector<int64_t> positions = common;
+				positions.insert(positions.end(), widest.first.begin(), widest.first.end());
+				std::array<double, 4> first{};
+				bool measured = false;
+				size_t longest = 0;
+				for (const int64_t position : positions)
+				{
+					INFO("position " << position);
+					app.call("transport.locate", {{"position", position}});
+					const std::string text =
+						ui::formatTime(displayed, static_cast<double>(position) / time.sampleRate, time);
+					longest = std::max(longest, text.size());
+					REQUIRE(app.waitUntil(
+						[&] { return shows(app, "#primary-time") == text && shows(app, "#secondary-time") == text; }));
+					app.shell().step(std::chrono::milliseconds(0));
+					// The displays and the controls to their right stay where they are, and the text fits.
+					const std::array<double, 4> now = {
+						width("#primary-time"), width("#secondary-time"), x("#exchange-formats"), x("#tempo")};
+					if (!measured)
+						first = now;
+					measured = true;
+					CHECK(now == first);
+					// The text, measured in the display's font, fits its content box, its line too: the box's height
+					// follows the font size (#1342).
+					for (const char* id : {"primary-time", "secondary-time"})
+					{
+						Rml::Element* display = rml(id);
+						const Rml::Vector2f content = display->GetBox().GetSize(Rml::BoxArea::Content);
+						CHECK(static_cast<float>(Rml::ElementUtilities::GetStringWidth(display, text)) <=
+							content.x + 0.5F);
+						CHECK(display->GetLineHeight() <= content.y + 0.5F);
+					}
+				}
+				CHECK(longest == widest.second); // the widest text the width holds was shown
+			}
+		}
 }
 
 TEST_CASE("the transport bar and the transport panel show the same time formats", "[ui]")
@@ -820,6 +1508,10 @@ TEST_CASE("positions typed or wheeled past the largest project position stop the
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "1.1.1.0"; }));
 	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1e13F);
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == int64_t{24000} * 1000000000; }));
+	const int64_t beforeNaN = position(app);
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, std::numeric_limits<float>::quiet_NaN());
+	settle(app);
+	CHECK(position(app) == beforeNaN);
 }
 
 TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
@@ -853,6 +1545,47 @@ TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
 	REQUIRE(app.waitUntil([&app, dragged] { return tempo(app) == dragged; }));
 	app.call("history.undo");
 	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "120"; }));
+}
+
+TEST_CASE("a drag or wheel gesture on the tempo field in tempo track mode changes the event at the cursor", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.call("project.set", {{"tempoTrackActive", true}});
+	app.call("tempo.add", {{"position", 4 * g_quarter}, {"bpm", 100.0}, {"ramp", false}});
+	// The cursor after the event, three seconds in: the field shows its tempo, and a gesture changes that event,
+	// not the first one (reference manual p. 1446).
+	app.call("transport.locate", {{"position", 3 * 48000}});
+	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "100"; }));
+	const size_t before = undoSteps(app);
+	const auto events = [&app] { return app.call("project.get").at("tempo"); };
+
+	// A drag up raises the tempo of the event at the cursor in many steps of the field, and sets it once, at its end.
+	const Json box = element(app, "#tempo").at("box");
+	const int x = static_cast<int>(box.at("x").get<double>() + (box.at("width").get<double>() / 2));
+	const int y = static_cast<int>(box.at("y").get<double>() + (box.at("height").get<double>() / 2));
+	app.ui().drag(std::nullopt, at("#tempo"), {std::string(), 0, ui::Point{x, y - 40}});
+	REQUIRE(app.waitUntil([&events] { return events()[1].at("bpm").get<double>() > 100.0; }));
+	CHECK(events()[0].at("bpm").get<double>() == 120.0); // the first event stays
+	settle(app);
+	CHECK(undoSteps(app) == before + 1);
+	const double dragged = events()[1].at("bpm").get<double>();
+
+	// Turns of the wheel in a row are one step on the same event too.
+	for (int turn = 0; turn < 3; ++turn)
+		app.ui().wheel(std::nullopt, at("#tempo"), 0, -1);
+	REQUIRE(app.waitUntil(
+		[&events, dragged] { return std::abs(events()[1].at("bpm").get<double>() - (dragged + 3.0)) < 0.001; }));
+	CHECK(events()[0].at("bpm").get<double>() == 120.0);
+	settle(app);
+	CHECK(undoSteps(app) == before + 2);
+
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&events, dragged] { return events()[1].at("bpm").get<double>() == dragged; }));
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&events] { return events()[1].at("bpm").get<double>() == 100.0; }));
+	CHECK(events()[0].at("bpm").get<double>() == 120.0);
+	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "100"; }));
 }
 
 TEST_CASE("the tempo field changes the tempo only when a number is typed, also the one it shows", "[ui]")

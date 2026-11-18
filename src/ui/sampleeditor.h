@@ -33,12 +33,13 @@ namespace gnubase::ui
 	};
 
 	// Fills an element with the sample editor of the engine's sampleEditor view: the toolbar with the tools, Snap to
-	// Zero Crossing and the window layout's switches, the info line, the overview of the whole clip, the inspector's
-	// Range, Process and Hitpoints sections, the waveform display with the event's edges, the selection range, the
-	// snap point and the hitpoints, and the regions list. Its time axis is the clip's sample frames; the display shows
-	// m_start on from the left at m_scale frames per dp, and first fits the whole clip. Every change goes to the engine
-	// (sampleEditor.set, clip.*Region, clip.*Hitpoint*, event.fromHitpoints, event.setSnapPoint, audition.*,
-	// transport.*). Use it on the UI thread; the binding must outlive it.
+	// Zero Crossing, an element for the quantize functions (#toolbar-quantize, which app::AppUi fills with a
+	// ui::QuantizePanel, reference manual p. 367) and the window layout's switches, the info line, the overview of the
+	// whole clip, the inspector's Range, Process and Hitpoints sections, the waveform display with the event's edges,
+	// the selection range, the snap point and the hitpoints, and the regions list. Its time axis is the clip's sample
+	// frames; the display shows m_start on from the left at m_scale frames per dp, and first fits the whole clip. Every
+	// change goes to the engine (sampleEditor.set, clip.*Region, clip.*Hitpoint*, event.fromHitpoints,
+	// event.setSnapPoint, audition.*, transport.*). Use it on the UI thread; the binding must outlive it.
 	class SampleEditor final : private Rml::EventListener
 	{
 	public:
@@ -50,6 +51,8 @@ namespace gnubase::ui
 		SampleEditor& operator=(SampleEditor&&) = delete;
 
 		SampleTool tool() const { return m_tool; }
+		// The audio event it edits, or 0 for none.
+		uint64_t event() const { return hasEvent() ? m_event : 0; }
 		void setTool(SampleTool tool);
 
 		// The display's view: the clip frame at its left edge and frames per dp.

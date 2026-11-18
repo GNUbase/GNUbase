@@ -2,6 +2,7 @@
 #include "engine/document/projectrules.h"
 
 #include "engine/document/projectmodel.h"
+#include "engine/document/trackvisibility.h"
 #include "engine/engine.h"
 #include "engine/rulepresets.h"
 #include "engine/settings/store.h"
@@ -10,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <map>
 #include <memory>
 #include <set>
 #include <stdexcept>
@@ -364,6 +366,7 @@ namespace gnubase::engine
 				return std::any_of(
 					map.begin(), map.end(), [track](const auto& entry) { return entry.second.track == track; });
 			};
+			const std::vector<ObjectId> hidden = hiddenTracks(project);
 			const auto addTrack = [&](const auto& self, ObjectId id) -> void
 			{
 				const Track& track = project.trackById.at(id);
@@ -397,10 +400,11 @@ namespace gnubase::engine
 				}
 				if (empty)
 					p.insert("isEmpty");
-				const auto& hidden = project.trackVisibility.hidden;
-				if (std::find(hidden.begin(), hidden.end(), id) != hidden.end())
+				if (std::binary_search(hidden.begin(), hidden.end(), id))
 					p.insert("isHidden");
-				if (!track.versions.empty())
+				// More than one version: a track's only one is no track version, also when it stores it to keep an ID
+				// it shares, as imported tracks do (#1629).
+				if (track.versions.size() > 1)
 					p.insert("hasTrackVersion");
 				if (const auto follow = project.chords.follow.find(id);
 					follow != project.chords.follow.end() && follow->second.mode != "off")
@@ -731,7 +735,9 @@ namespace gnubase::engine
 				if (project.trackById.at(track).parent == 0 || !removed(project.trackById.at(track).parent))
 					top.push_back(track);
 			// The active marker track goes last, as in track.removeEmpty, so that track.remove activates a marker track
-			// that stays rather than one that goes next.
+			// that stays rather than one that goes next. Moving it to the end of the top tracks is enough: marker
+			// tracks can't be inside a folder, so no folder that goes takes the active marker track along before the
+			// other marker tracks.
 			const auto active = std::find(top.begin(), top.end(), project.activeMarkerTrack);
 			if (active != top.end())
 				std::rotate(active, std::next(active), top.end());
@@ -762,8 +768,11 @@ namespace gnubase::engine
 					parts.insert(element->id);
 			// Each action's result stops at the longest project, so that values stay finite and fit the ticks they
 			// become. They may go below the project's start between two actions.
-			const double longest = logicalTicks(project, {time::TimeBase::Linear, time::g_maxPosition});
+			const double longest = static_cast<double>(longestProjectTicks(project)) / g_logicalTick;
 			const auto bounded = [longest](double value) { return std::clamp(value, -longest, longest); };
+			// The time base a marker track has once its track.set ran: tracks come first, and marker.set takes
+			// positions in it.
+			std::map<ObjectId, time::TimeBase> timeBases;
 			Commands commands;
 			for (const Element* element : found.elements)
 			{
@@ -837,6 +846,9 @@ namespace gnubase::engine
 						track["name"] = name;
 					if (recolored)
 						track["color"] = color;
+					if (track.contains("timeBase"))
+						timeBases[element->id] =
+							track.at("timeBase") == "linear" ? time::TimeBase::Linear : time::TimeBase::Musical;
 					if (!track.empty())
 					{
 						track["track"] = element->id;
@@ -884,17 +896,28 @@ namespace gnubase::engine
 						set["name"] = name;
 					if (recolored)
 						set["color"] = color;
+					const auto newBase = timeBases.find(marker.track);
+					const time::TimeBase base = newBase != timeBases.end() ? newBase->second : marker.position.base;
 					const auto at = [&](double logical)
 					{
 						const time::Position ticks{
 							time::TimeBase::Musical, std::llround(std::max(logical, 0.0) * g_logicalTick)};
-						return time::rebase(ticks, marker.position.base, project.tempo, project.sampleRate).value;
+						return time::rebase(ticks, base, project.tempo, project.sampleRate).value;
 					};
 					if (position != element->position || length != element->length)
 					{
+						// Stopped at the project's start, a cycle marker keeps its length, as a part does.
+						position = std::max(position, 0.0);
 						set["position"] = at(position);
 						if (marker.type == MarkerType::Cycle)
-							set["end"] = std::max(at(position + std::max(length, 0.0)), at(position) + 1);
+						{
+							// At least one sample long, as marker.set wants it, also on a musical track.
+							Marker moved = marker;
+							moved.position = {base, at(position)};
+							moved.end = {base, at(position + std::max(length, 0.0))};
+							keepMinimumLength(project, moved);
+							set["end"] = moved.end.value;
+						}
 					}
 					if (!set.empty())
 					{
@@ -968,7 +991,10 @@ namespace gnubase::engine
 		for (size_t i = 0; i < filters.size(); ++i)
 		{
 			const ProjectFilterLine line = filterFromJson(filters[i], "rules.filters[" + std::to_string(i) + "]");
-			depth += line.open - line.close;
+			depth += line.open;
+			if (depth > midi::g_maxLogicalBrackets)
+				throw std::invalid_argument("rules.filters: brackets nest at most 3 deep");
+			depth -= line.close;
 			if (depth < 0)
 				throw std::invalid_argument("rules.filters: a bracket closes that wasn't opened");
 			rules.filters.push_back(line);
@@ -1078,20 +1104,21 @@ namespace gnubase::engine
 			"name or colorName (a color name of the project's colors; condition equal, unequal, contains or "
 			"containsNot), position or length (in ticks of 480 to a quarter note from the project's start; condition "
 			"equal, unequal, bigger, biggerOrEqual, less, lessOrEqual, insideRange or outsideRange with parameter2; "
-			"tracks have neither) or property (isMuted, isSelected, isEmpty, isHidden, hasTrackVersion, "
-			"followsChordTrack, isDisabled or parentIsSelected; condition propertyIsSet or propertyIsNotSet); open and "
-			"close brackets 0 to 3; join and or or to the next line, and binding more tightly than or. function "
-			"delete, transform, select or deselect. actions, each {target, operation, parameter1, parameter2} in "
-			"order: position or length (add, subtract, multiplyBy, divideBy, roundBy, setRandom, setRelativeRandom "
-			"or setFixed), name (replace, append, prepend with parameter1; generateName: parameter1 and a number from "
-			"parameter2, one up for each element renamed; replaceSearchString: parameter1 by parameter2; eraseBefore "
-			"and eraseAfter parameter1; eraseFrontCharacter, eraseEndCharacter), trackOperation (mute, solo, record or "
-			"monitor with parameter1 on, off or toggle; timeDomain musical, linear or toggle) or color (setFixed: a "
-			"project color's name or #rrggbb; increment, decrement: the next or previous project color). pre and post: "
-			"up to 4 key commands each, {command, parameters}, that the UI runs before and after; the engine keeps "
-			"them with the rules. Tracks are found from top to bottom, then parts, audio events and markers. preset "
-			"names a preset instead of rules. selected: the ids of the selected tracks, parts, events and markers, for "
-			"isSelected and parentIsSelected.";
+			"tracks have neither) or property (isMuted, isSelected, isEmpty, isHidden, hasTrackVersion (more than one "
+			"version), followsChordTrack, isDisabled or parentIsSelected; condition propertyIsSet or "
+			"propertyIsNotSet); open and close brackets 0 to 3, which must match and nest at most 3 deep; join and or "
+			"or to the next line, and binding more tightly than or. function delete, transform, select or deselect. "
+			"actions, each {target, operation, parameter1, parameter2} in order: position or length (add, subtract, "
+			"multiplyBy, divideBy, roundBy, setRandom, setRelativeRandom or setFixed), name (replace, append, prepend "
+			"with parameter1; generateName: parameter1 and a number from parameter2, one up for each element renamed; "
+			"replaceSearchString: parameter1 by parameter2; eraseBefore and eraseAfter parameter1; "
+			"eraseFrontCharacter, eraseEndCharacter), trackOperation (mute, solo, record or monitor with parameter1 "
+			"on, off or toggle; timeDomain musical, linear or toggle) or color (setFixed: a project color's name or "
+			"#rrggbb; increment, decrement: the next or previous project color). pre and post: up to 4 key commands "
+			"each, {command, parameters}, that the UI runs before and after; the engine keeps them with the rules. "
+			"Tracks are found from top to bottom, then parts, audio events and markers. preset names a preset instead "
+			"of rules. selected: the ids of the selected tracks, parts, events and markers, for isSelected and "
+			"parentIsSelected.";
 		const Json properties = {
 			{"rules", rulesSchema}, {"preset", stringSchema}, {"selected", ids}, {"seed", {{"type", "integer"}}}};
 		const Json foundSchema = {{"type", "object"},
@@ -1107,7 +1134,7 @@ namespace gnubase::engine
 				"that stay, except that a locked event moves with an audio part that moves; delete keeps an audio "
 				"part that holds a locked event. Audio events keep their clip's name, track operations change tracks "
 				"only. Positions and lengths stop at the longest project. seed makes the random operations "
-				"repeatable." +
+				"repeatable; without it each call gives new random values." +
 					rulesText + " Use project.findByRules for select and deselect. Returns what the filters found.",
 				objectSchema(properties), foundSchema, false},
 			"Project Rule Editor",
@@ -1121,7 +1148,9 @@ namespace gnubase::engine
 				const Found found = find(project, rules, elements);
 				const Commands commands = rules.function == ProjectFunction::Delete
 					? deleting(project, found)
-					: transforming(project, rules, found, parameters.value("seed", uint64_t{0}));
+					: transforming(project, rules, found,
+						  parameters.contains("seed") ? parameters.at("seed").get<uint64_t>()
+													  : midi::nextLogicalSeed());
 				const Json result = found.json();
 				for (const auto& [command, commandParameters] : commands)
 					model.runEdit(command, project, commandParameters, context);

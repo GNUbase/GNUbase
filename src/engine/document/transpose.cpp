@@ -166,8 +166,9 @@ namespace gnubase::engine
 		add(engine,
 			{"transpose.setTrack", 1,
 				"Changes the transpose track's controls: mute (Mute Transpose Events: the events don't play), "
-				"keepInOctave (Keep Transpose in Octave Range: global transposition stays within 7 semitones either "
-				"way, 8 up plays 4 down) and lock (the events can't be added, changed or removed).",
+				"keepInOctave (Keep Transpose in Octave Range: what a part that follows plays — the root key's step, "
+				"the transpose events and the part's own transpose together — stays within 7 semitones either way, "
+				"8 up plays 4 down) and lock (the events can't be added, changed or removed).",
 				objectSchema({{"mute", booleanSchema}, {"keepInOctave", booleanSchema}, {"lock", booleanSchema}}),
 				transposeResult, false},
 			[](Project& project, CommandContext& context)
@@ -184,18 +185,41 @@ namespace gnubase::engine
 			});
 		add(engine,
 			{"transpose.assignRootKey", 1,
-				"Set Root Key for Unassigned Events: every MIDI part without a root key gets the project root key "
-				"(project.set rootKey), so that it follows later changes of it. Refused without a project root key.",
+				"Set Root Key for Unassigned Events: every MIDI part and audio event without a root key gets the "
+				"project root key (project.set rootKey), so that it follows later changes of it. Refused without a "
+				"project root key.",
 				objectSchema({}), Json::object(), false},
 			[](Project& project, CommandContext& context)
 			{
 				require(project.rootKey >= 0, "the project has no root key");
-				for (auto& [id, part] : project.midiParts)
-					if (part.rootKey < 0)
+				// The parts stashed in inactive track versions get it too, so that activating such a version shows
+				// them with it (#896). They lie inside their track, which is announced as changed.
+				std::set<ObjectId> tracks;
+				forEveryEventAndPart(
+					project,
+					[&project, &context, &tracks](AudioEvent& event, bool plays)
 					{
+						if (event.rootKey >= 0)
+							return;
+						event.rootKey = project.rootKey;
+						if (plays)
+							context.emit("audioEvent.changed", {{"event", toJson(event)}});
+						else
+							tracks.insert(event.track);
+					},
+					[](const AudioPart&, bool) {},
+					[&project, &context, &tracks](MidiPart& part, bool plays)
+					{
+						if (part.rootKey >= 0)
+							return;
 						part.rootKey = project.rootKey;
-						context.emit("midiPart.changed", {{"part", toJson(part)}});
-					}
+						if (plays)
+							context.emit("midiPart.changed", {{"part", toJson(part)}});
+						else
+							tracks.insert(part.track);
+					});
+				for (const ObjectId track : tracks)
+					context.emit("track.changed", {{"track", toJson(project.trackById.at(track))}});
 				return Json::object();
 			});
 		add(engine,

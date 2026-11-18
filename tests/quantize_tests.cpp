@@ -897,6 +897,43 @@ TEST_CASE("reset quantize leaves notes moved with note.set since", "[integration
 	CHECK(run(f.client, "project.get").at("midiParts")[0].at("notes")[0].at("velocity") == 1.0);
 }
 
+TEST_CASE("the pieces of a split quantized note no longer reset", "[integration]")
+{
+	// Review of #1470: note.split and event.split's splitNotes drop both pieces' quantize origin.
+	Fixture f;
+	const ObjectId part = f.addPart(0);
+	f.addNotes(part, {quarters(1, 10)});
+	run(f.client, "quantize.apply", {{"part", part}, {"settings", {{"grid", "1/4"}}}});
+	REQUIRE(f.positions(part) == std::vector<Ticks>{0});
+	const auto notes = [&f]
+	{
+		std::vector<Ticks> all;
+		const Json project = run(f.client, "project.get");
+		for (const Json& p : project.at("midiParts"))
+			for (const Json& note : p.at("notes"))
+				all.push_back(p.at("position").get<Ticks>() + note.at("position").get<Ticks>());
+		std::sort(all.begin(), all.end());
+		return all;
+	};
+	SECTION("note.split")
+	{
+		const Json note = run(f.client, "project.get").at("midiParts")[0].at("notes")[0];
+		run(f.client, "note.split", {{"part", part}, {"notes", {note.at("id")}}, {"position", g_sixteenth / 2}});
+	}
+	SECTION("event.split with splitNotes")
+	{
+		// At 120 BPM and 48 kHz a sixteenth is 6000 samples.
+		run(f.client, "event.split", {{"events", {part}}, {"positions", {3000}}, {"splitNotes", true}});
+	}
+	REQUIRE(notes() == std::vector<Ticks>{0, g_sixteenth / 2});
+	Json parts = Json::array();
+	const Json project = run(f.client, "project.get");
+	for (const Json& p : project.at("midiParts"))
+		parts.push_back(p.at("id"));
+	CHECK(run(f.client, "quantize.reset", {{"parts", parts}}).at("notes").empty());
+	CHECK(notes() == std::vector<Ticks>{0, g_sixteenth / 2});
+}
+
 TEST_CASE("quantize.apply keeps notes inside their part", "[integration]")
 {
 	Fixture f;
@@ -1064,6 +1101,32 @@ TEST_CASE("the preset shown is saved with the project", "[integration]")
 	CHECK(shownPreset(elsewhere.client) == "1/16");
 	run(elsewhere.client, "quantize.savePreset", {{"name", "Sixteenths"}, {"settings", {{"strength", 0.5}}}});
 	CHECK(shownPreset(elsewhere.client) == "1/16");
+}
+
+TEST_CASE("a preset with fractional settings read from the files is still the one shown", "[integration]")
+{
+	const test::TempDir settings;
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "fractional.dawproject").u8string();
+	// Doubles no binary fraction holds exactly, unlike the whole numbers and halves the other tests use. Swing needs
+	// every digit a double has, so a file that kept fewer of them would leave the settings without their preset.
+	constexpr double swing = 1.0 / 3.0;
+	const Json fractional = {{"grid", "1/8"}, {"swing", swing}, {"strength", 0.33}};
+	{
+		Fixture f(settings.path());
+		REQUIRE(run(f.client, "quantize.set", {{"settings", fractional}}).at("preset") == nullptr);
+		run(f.client, "quantize.savePreset", {{"name", "Loose swing"}});
+		CHECK(shownPreset(f.client) == "Loose swing");
+		run(f.client, "project.save", {{"path", file}});
+	}
+
+	// A new engine reads the preset from the settings folder and the project's settings from its file.
+	Fixture next(settings.path());
+	run(next.client, "project.load", {{"path", file}});
+	const Json loaded = run(next.client, "quantize.get");
+	CHECK(loaded.at("settings").at("swing") == swing);
+	CHECK(loaded.at("settings").at("strength") == 0.33);
+	CHECK(loaded.at("preset") == "Loose swing");
 }
 
 namespace

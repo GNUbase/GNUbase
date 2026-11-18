@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/rendersnapshot.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -790,6 +791,26 @@ TEST_CASE("failed commands leave the project and its snapshot unchanged", "[unit
 	CHECK(engine.renderSnapshots().acquire().revision == revision);
 }
 
+TEST_CASE("projects run at 8000 to 768000 Hz when set and when loaded", "[unit]")
+{
+	// Far outside, the conversions between ticks and samples leave an int64_t.
+	Engine engine;
+	Client client(engine);
+	for (const double rate : {g_lowestSampleRate, g_highestSampleRate})
+	{
+		run(client, "project.set", {{"sampleRate", rate}});
+		CHECK(projectFromJson(run(client, "project.get")).sampleRate == rate);
+	}
+	Json saved = run(client, "project.get");
+	for (const double rate : {g_lowestSampleRate - 1.0, g_highestSampleRate + 1.0, 1e-6, 1e16})
+	{
+		CAPTURE(rate);
+		CHECK_THAT(reject(client, "project.set", {{"sampleRate", rate}}), ContainsSubstring("8000 to 768000"));
+		saved["sampleRate"] = rate;
+		CHECK_THROWS_WITH(projectFromJson(saved), ContainsSubstring("8000 to 768000"));
+	}
+}
+
 TEST_CASE("ids are never reused, and objects in use can't be removed", "[unit]")
 {
 	Engine engine;
@@ -899,6 +920,7 @@ TEST_CASE("muted channels are silent; soloed ones silence the others, except whe
 	// track its instrument.
 	CHECK(set(group, {{"solo", true}}).at("solo") == true);
 	CHECK(silentOnes() == std::vector<ObjectId>{other, instrument, midi});
+	CHECK(renderChannel(engine.renderSnapshots().acquire(), midi).notes.empty()); // a soloed-out MIDI track's
 	set(group, {{"solo", false}});
 	set(audio, {{"solo", true}});
 	CHECK(silentOnes() == std::vector<ObjectId>{other, instrument, midi});
@@ -906,13 +928,13 @@ TEST_CASE("muted channels are silent; soloed ones silence the others, except whe
 	set(midi, {{"solo", true}});
 	CHECK(silentOnes() == std::vector<ObjectId>{group, audio, other});
 	CHECK(renderChannel(engine.renderSnapshots().acquire(), midi).notes.size() == 1);
-	// Soloing two tracks plays both; a muted one stays silent, though what it plays through is heard, and a silent
-	// MIDI track's notes don't play.
+	// Soloing two tracks plays both; a muted one stays silent, though what it plays through is heard. A muted MIDI
+	// track's notes play into its strip, whose mute drops them (sequencing_tests.cpp).
 	set(other, {{"solo", true}});
 	CHECK(silentOnes() == std::vector<ObjectId>{group, audio});
 	set(midi, {{"mute", true}});
 	CHECK(silentOnes() == std::vector<ObjectId>{group, audio, midi});
-	CHECK(renderChannel(engine.renderSnapshots().acquire(), midi).notes.empty());
+	CHECK(renderChannel(engine.renderSnapshots().acquire(), midi).notes.size() == 1);
 
 	run(client, "history.undo", {{"steps", 2}});
 	CHECK(channelOf(client, midi).at("mute") == false);

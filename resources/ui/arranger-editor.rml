@@ -84,15 +84,7 @@
 			width: 120dp;
 		}
 
-		.locate-arrow
-		{
-			visibility: hidden;
-		}
-
-		.arranger-row.current .locate-arrow
-		{
-			visibility: visible;
-		}
+		/* The row of the step or event playing is highlighted by the theme (.arranger-row.current). */
 	</style>
 	<script>
 		ArrangerEditor = ArrangerEditor or {}
@@ -167,10 +159,12 @@
 
 			rows = {}
 			local chain = activeChain(arranger)
+			-- The chain step buttons call arranger.goToStep, which needs arranger mode on (#880): disabled without it.
+			local off = arranger.mode and "" or ' disabled=""'
 			for index, step in ipairs(chain and chain.steps or {}) do
 				local s = index - 1
 				rows[#rows + 1] = '<div class="arranger-row' .. (playing.step == s and " current" or "") .. '" id="step-' ..
-					s .. '"><button class="locate" title="Go to step" onclick="ArrangerEditor.goTo(' .. s ..
+					s .. '"><button class="locate" title="Go to step"' .. off .. ' onclick="ArrangerEditor.goTo(' .. s ..
 					')"><span class="locate-arrow">&gt;</span></button><span class="name">' ..
 					escape(names[step.event] or "") .. '</span><span class="repeats">' .. step.repeats ..
 					'</span><button class="fewer" onclick="ArrangerEditor.repeats(' .. index ..
@@ -181,6 +175,20 @@
 					')">Remove</button></div>'
 			end
 			document:GetElementById("chain-steps").inner_rml = table.concat(rows)
+
+			-- The toolbar's chain step buttons work only in arranger mode with a chain that has steps; First and Last
+			-- Repeat also need a step of that chain playing, so repeatOf finds its repeats (#880).
+			local steps = chain and chain.steps or {}
+			local canStep = arranger.mode and #steps > 0
+			local canRepeat = canStep and playing.step >= 0 and playing.step < #steps
+			for _, id in ipairs({"first-step", "previous-step", "next-step"}) do
+				local button = document:GetElementById(id)
+				if canStep then button:RemoveAttribute("disabled") else button:SetAttribute("disabled", "") end
+			end
+			for _, id in ipairs({"first-repeat", "last-repeat"}) do
+				local button = document:GetElementById(id)
+				if canRepeat then button:RemoveAttribute("disabled") else button:SetAttribute("disabled", "") end
+			end
 		end
 
 		local function chainSteps()
@@ -230,7 +238,7 @@
 		function editor.repeatOf(last)
 			local chain = activeChain(editor.arranger)
 			local playing = gnubase.transport.get().arranger
-			if chain == nil or playing.step < 0 then return end
+			if chain == nil or playing.step < 0 or playing.step >= #chain.steps then return end
 			editor.goTo(playing.step, last and chain.steps[playing.step + 1].repeats - 1 or 0)
 		end
 

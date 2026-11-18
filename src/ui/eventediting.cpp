@@ -23,7 +23,9 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -118,7 +120,7 @@ namespace gnubase::ui
 
 	int64_t EventDisplay::samples(double seconds) const
 	{
-		return std::llround(seconds * m_time.sampleRate);
+		return positionSamples(seconds, m_time.sampleRate);
 	}
 
 	std::optional<int64_t> EventDisplay::selectionStart() const
@@ -154,7 +156,8 @@ namespace gnubase::ui
 		return grid;
 	}
 
-	time::Position EventDisplay::snapAt(double seconds, std::optional<double> from) const
+	time::Position EventDisplay::snapAt(
+		double seconds, std::optional<double> from, const std::vector<time::Samples>& magnets) const
 	{
 		engine::SnapTarget target;
 		target.position = samples(seconds);
@@ -172,13 +175,25 @@ namespace gnubase::ui
 				target.magnets.push_back(samples(*shown.snapPoint));
 		}
 		target.magnets.insert(target.magnets.end(), m_markers.begin(), m_markers.end());
+		target.magnets.insert(target.magnets.end(), magnets.begin(), magnets.end());
 		return engine::snap(m_snap, snapGrid(), target);
 	}
 
-	double EventDisplay::snapped(double seconds, std::optional<double> from) const
+	double EventDisplay::snapped(
+		double seconds, std::optional<double> from, const std::vector<time::Samples>& magnets) const
 	{
-		return static_cast<double>(time::toSamples(snapAt(seconds, from), m_time.tempo, m_time.sampleRate)) /
+		return static_cast<double>(time::toSamples(snapAt(seconds, from, magnets), m_time.tempo, m_time.sampleRate)) /
 			m_time.sampleRate;
+	}
+
+	double EventDisplay::gridLineBefore(double seconds) const
+	{
+		const engine::SnapGrid grid = snapGrid();
+		const time::Samples at = samples(seconds);
+		time::Position line = engine::nearestGridLine(m_snap.grid(), grid, at);
+		if (time::toSamples(line, m_time.tempo, m_time.sampleRate) > at)
+			line.value -= engine::gridStep(m_snap.grid(), grid, at).value;
+		return static_cast<double>(time::toSamples(line, m_time.tempo, m_time.sampleRate)) / m_time.sampleRate;
 	}
 
 	int64_t EventDisplay::clampMove(time::TimeBase base, int64_t shift) const
@@ -214,8 +229,98 @@ namespace gnubase::ui
 		return {{{"delta", shift}}, static_cast<double>(shift) / m_time.sampleRate};
 	}
 
+	bool EventDisplay::toolModifier(const char* action, Rml::Event& event) const
+	{
+		return modifiers(action, modifiersOf(event));
+	}
+
+	std::map<uint64_t, uint64_t> EventDisplay::editGroups() const
+	{
+		std::map<uint64_t, uint64_t> groups;
+		if (!m_project.is_object())
+			return groups;
+		std::map<uint64_t, uint64_t> parents;
+		std::set<uint64_t> grouping;
+		for (const Json& track : m_project.value("tracks", Json::array()))
+		{
+			const auto id = track.at("id").get<uint64_t>();
+			parents[id] = track.value("parent", uint64_t{0});
+			if (track.value("groupEditing", false))
+				grouping.insert(id);
+		}
+		if (grouping.empty())
+			return groups;
+		for (const auto& [track, parent] : parents)
+			for (uint64_t folder = parent; folder != 0; folder = parents[folder])
+				if (grouping.count(folder) != 0)
+					groups[track] = folder;
+		return groups;
+	}
+
+	std::vector<uint64_t> EventDisplay::withEditGroups(std::vector<uint64_t> events) const
+	{
+		const std::map<uint64_t, uint64_t> groups = editGroups();
+		if (groups.empty() || events.empty())
+			return events;
+		// The lane on its track that each event and part plays on: where events overlap, the playback priority.
+		std::map<uint64_t, int> lanes;
+		for (const char* kind : {"audioEvents", "midiParts", "audioParts"})
+			for (const Json& item : m_project.value(kind, Json::array()))
+				lanes[item.at("id").get<uint64_t>()] = item.value("lane", 0);
+		// The shown events of the edit groups by group, start and end (to the sample) and lane, once: after Slice
+		// every slice of a multi-track recording is selected (#1668).
+		using Place = std::tuple<uint64_t, int64_t, int64_t, int>;
+		const auto placeOf = [&](const Shown& shown, uint64_t group)
+		{
+			return Place{group, std::llround(shown.start * m_time.sampleRate),
+				std::llround(shown.end * m_time.sampleRate), lanes[shown.id]};
+		};
+		std::map<Place, std::vector<const Shown*>> places;
+		std::vector<std::pair<const Shown*, uint64_t>> selected; // with its group
+		const std::set<uint64_t> wanted(events.begin(), events.end());
+		for (const Shown& shown : m_events)
+		{
+			if (shown.lane >= m_laneTracks.size())
+				continue;
+			const auto group = groups.find(m_laneTracks[shown.lane]);
+			if (group == groups.end())
+				continue;
+			places[placeOf(shown, group->second)].push_back(&shown);
+			if (wanted.count(shown.id) != 0)
+				selected.emplace_back(&shown, group->second);
+		}
+		std::vector<uint64_t> grouped = events;
+		for (const auto& [one, group] : selected)
+			for (const Shown* other : places.at(placeOf(*one, group)))
+				if (m_laneTracks[other->lane] != m_laneTracks[one->lane])
+					grouped.push_back(other->id);
+		return grouped;
+	}
+
+	std::vector<uint64_t> EventDisplay::withEditGroupTracks(const std::vector<uint64_t>& tracks) const
+	{
+		const std::map<uint64_t, uint64_t> groups = editGroups();
+		std::set<uint64_t> folders;
+		for (const uint64_t track : tracks)
+			if (const auto found = groups.find(track); found != groups.end())
+				folders.insert(found->second);
+		if (folders.empty())
+			return tracks;
+		std::vector<uint64_t> all;
+		for (const Json& track : m_project.value("tracks", Json::array()))
+		{
+			const auto id = track.at("id").get<uint64_t>();
+			const auto found = groups.find(id);
+			if (std::find(tracks.begin(), tracks.end(), id) != tracks.end() ||
+				(found != groups.end() && folders.count(found->second) != 0))
+				all.push_back(id);
+		}
+		return all;
+	}
+
 	void EventDisplay::select(std::vector<uint64_t> events)
 	{
+		events = withEditGroups(std::move(events));
 		std::sort(events.begin(), events.end());
 		events.erase(std::unique(events.begin(), events.end()), events.end());
 		m_selection = std::move(events);
@@ -242,6 +347,15 @@ namespace gnubase::ui
 		for (const uint64_t id : m_selection)
 			ids += (ids.empty() ? "" : " ") + std::to_string(id);
 		m_root->SetAttribute("selection", ids);
+		for (const std::function<void()>& listener : m_selectionListeners)
+			listener();
+	}
+
+	void EventDisplay::showRefusal(const std::string& error)
+	{
+		logging::warning("An edit of events failed: {}", error);
+		if (m_refusal != nullptr && alive())
+			m_refusal->SetAttribute("text", error);
 	}
 
 	void EventDisplay::edit(const std::string& command, Json parameters, bool selectResult)
@@ -252,7 +366,7 @@ namespace gnubase::ui
 				if (alive.expired())
 					return;
 				if (!result.ok())
-					logging::warning("An edit of events failed: {}", result.error);
+					showRefusal(result.error);
 				else if (selectResult)
 					select(result.value.at("events").get<std::vector<uint64_t>>());
 			});
@@ -602,6 +716,11 @@ namespace gnubase::ui
 		return lane;
 	}
 
+	bool EventDisplay::inLowerHalf(size_t lane, double y) const
+	{
+		return y + m_view.top >= (m_laneTops[lane] + m_laneTops[lane + 1]) * 0.5;
+	}
+
 	int EventDisplay::edgeAt(const Shown& shown, double x) const
 	{
 		const double left = (shown.start - m_view.start) / m_view.scale;
@@ -632,12 +751,27 @@ namespace gnubase::ui
 			select({shown->id});
 	}
 
+	void EventDisplay::clickRange(Rml::Vector2f press, Rml::Event& release)
+	{
+		// As toolDown and toolUp have a press and release with the range tool.
+		const auto y = [this](float pixels) { return (pixels - m_lanes->GetAbsoluteTop()) / dpRatio(); };
+		m_pressX = dpFrom(*m_lanes, press.x);
+		m_pressY = y(press.y);
+		m_pressed = modifiersOf(release);
+		if (!m_selection.empty())
+			select({});
+		m_rangeBase = std::nullopt;
+		setRangeFrom(dpFrom(*m_lanes, release.GetParameter<float>("mouse_x", press.x)),
+			y(release.GetParameter<float>("mouse_y", press.y)));
+		zeroCrossRange();
+	}
+
 	void EventDisplay::areaDown(Rml::Event& event, double x, double y)
 	{
 		m_dragMoved = false;
 		m_dragStarted = false;
 		m_dragToggles = false;
-		m_clickSelection.reset();
+		m_clickToggles = false;
 		m_pressTime = now();
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
@@ -674,8 +808,8 @@ namespace gnubase::ui
 		const bool atStart = edge < 0;
 		const bool atEnd = edge > 0;
 		// The tool modifiers for a press on an event (Set Cursor Position, Split Event, Copy, Shared Copy, and Disable
-		// Snapping at an edge) act on it rather than adding it to the selection, whatever keys they are set to; so
-		// does a copy's with Ctrl, a restricted copy.
+		// Snapping at an edge) act on it, whatever keys they are set to; so does a copy's with Ctrl, a restricted
+		// copy. A drag's tool modifiers that are Ctrl or Shift do so only when the press becomes a drag (#474).
 		const bool clickModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent");
 		const bool toolModifier = clickModifier || copyKeys(m_pressed) || copyKeys(withoutCtrl(m_pressed)) ||
 			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
@@ -700,17 +834,10 @@ namespace gnubase::ui
 			return;
 		}
 		// Keys that are Ctrl or Shift and only a drag's tool modifier: released without a drag, the press adds the
-		// event to the selection or takes it out, as without them (#474).
-		if (add && !clickModifier)
-		{
-			std::vector<uint64_t> events = m_selection;
-			if (selected)
-				events.erase(std::remove(events.begin(), events.end(), shown->id), events.end());
-			else
-				events.push_back(shown->id);
-			m_clickSelection = std::move(events);
-		}
-		if (!selected)
+		// event to the selection or takes it out, as without them (#474). Until the drag starts the selection stays
+		// as it is (narrowToPressed).
+		m_clickToggles = add && !clickModifier;
+		if (!selected && !m_clickToggles)
 			select({shown->id});
 		if (atStart)
 			m_drag = Drag::ResizeStart;
@@ -727,7 +854,7 @@ namespace gnubase::ui
 		if (lane && automationAt(*lane) != nullptr) // a press edits points with the tool chosen, combined or not
 			return toolName(m_tool);
 		const Tool tool = toolAt(y);
-		if (scrubEdgeAt(x, y) != 0) // the play tool in scrub mode resizes there
+		if (scrubEdgeAt(x, y) != 0) // the play tool in scrub mode resizes at an audio event's lower corners
 			return "resize";
 		if (tool != Tool::ObjectSelection)
 			return toolName(tool);
@@ -798,6 +925,7 @@ namespace gnubase::ui
 			// The selection shows the size the release gives it, with the keys held now (#732).
 			m_pressed = modifiersOf(event);
 			m_resizeDx = dx;
+			narrowToPressed();
 			previewResize(resizeParameters(dx, m_drag));
 			return;
 		}
@@ -810,6 +938,7 @@ namespace gnubase::ui
 		if (!m_dragStarted && now() - m_pressTime < g_dragDelay)
 			return;
 		m_dragStarted = true;
+		narrowToPressed();
 		const std::pair<double, double> shift = restricted(dx, dy, constrained);
 		const bool vertical = constrained && shift.first == 0.0;
 		const auto moved = moveShift(vertical ? 0.0 : shift.first);
@@ -819,6 +948,15 @@ namespace gnubase::ui
 			: std::nullopt;
 		m_dragLanes = laneShift(shift.second);
 		setLanes();
+	}
+
+	// A press that left the selection as it was for a click (m_clickToggles) drags the pressed event, as a press
+	// without the keys does, unless it is selected (#1018).
+	void EventDisplay::narrowToPressed()
+	{
+		if (std::exchange(m_clickToggles, false) &&
+			!std::binary_search(m_selection.begin(), m_selection.end(), m_dragEvent))
+			selectWhere([this](const Shown& shown) { return shown.id == m_dragEvent; });
 	}
 
 	// Ctrl (Cmd) keeps a drag across or up and down, whichever it went further (reference manual pp. 256, 271).
@@ -915,22 +1053,45 @@ namespace gnubase::ui
 		const bool moved = std::exchange(m_dragMoved, false);
 		const bool started = std::exchange(m_dragStarted, false) || now() - m_pressTime >= g_dragDelay;
 		const bool toggles = std::exchange(m_dragToggles, false);
-		std::optional<std::vector<uint64_t>> clicked = std::exchange(m_clickSelection, std::nullopt);
+		// A drag released after the drag delay with no move since: it moves the pressed event, as areaMove would.
+		if (drag == Drag::Events && moved && started)
+			narrowToPressed();
+		const bool clicked = std::exchange(m_clickToggles, false);
 		m_drag = Drag::None;
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
 		setLanes(); // without the drag's preview
 		// A click with Ctrl or Shift on a selected event, also one that moved a little before the drag delay.
+		// Taken out with Group Editing, its whole edit group goes (#1668): select() would bring it back through the
+		// others.
+		const auto withGroup = [this]
+		{
+			std::vector<uint64_t> group = withEditGroups({m_dragEvent});
+			std::sort(group.begin(), group.end());
+			return group;
+		};
 		if (toggles && (!moved || (drag == Drag::Events && !started)))
 		{
+			const std::vector<uint64_t> group = withGroup();
 			std::vector<uint64_t> events = m_selection;
-			events.erase(std::remove(events.begin(), events.end(), m_dragEvent), events.end());
+			events.erase(std::remove_if(events.begin(), events.end(),
+							 [&group](uint64_t id) { return std::binary_search(group.begin(), group.end(), id); }),
+				events.end());
 			select(std::move(events));
 			return;
 		}
 		if (clicked && (!moved || (drag == Drag::Events && !started)))
 		{
-			select(std::move(*clicked));
+			// From the selection as it is now, of the events still there (#1018).
+			const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), m_dragEvent);
+			const std::vector<uint64_t> group = selected ? withGroup() : std::vector<uint64_t>{m_dragEvent};
+			selectWhere(
+				[this, selected, &group](const Shown& shown)
+				{
+					return std::binary_search(group.begin(), group.end(), shown.id)
+						? !selected
+						: std::binary_search(m_selection.begin(), m_selection.end(), shown.id);
+				});
 			return;
 		}
 		if (!moved)
@@ -1105,7 +1266,7 @@ namespace gnubase::ui
 				if (alive.expired())
 					return;
 				if (!result.ok())
-					logging::warning("An edit of events failed: {}", result.error);
+					showRefusal(result.error);
 				if (release == m_resizeReleases) // the last one: its preview goes with the next project
 					m_resizeLanded = true;
 				if (!result.ok() || !previewed)
@@ -1184,7 +1345,7 @@ namespace gnubase::ui
 					return;
 				if (!result.ok())
 				{
-					logging::warning("An edit of events failed: {}", result.error);
+					showRefusal(result.error);
 					return;
 				}
 				if (!copy)

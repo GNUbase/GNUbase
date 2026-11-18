@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <utility>
 
 namespace gnubase::ui
@@ -48,7 +49,8 @@ namespace gnubase::ui
 		{
 			if (width <= 0.0F || x1 - x0 <= 2.0F * width || y1 - y0 <= 2.0F * width)
 			{
-				quad(mesh, x0, y0, x1, y1, width <= 0.0F ? body : outline);
+				if (const Colour colour = width <= 0.0F ? body : outline; colour.alpha != 0)
+					quad(mesh, x0, y0, x1, y1, colour);
 				return;
 			}
 			// The outline as a ring: the outer corners, then the inner ones, two triangles per side.
@@ -63,7 +65,8 @@ namespace gnubase::ui
 				mesh.indices.insert(mesh.indices.end(),
 					{base + side, base + next, base + 4 + next, base + side, base + 4 + next, base + 4 + side});
 			}
-			quad(mesh, x0 + width, y0 + width, x1 - width, y1 - width, body);
+			if (body.alpha != 0) // a transparent body, as at an event opacity of 0, adds nothing
+				quad(mesh, x0 + width, y0 + width, x1 - width, y1 - width, body);
 		}
 
 		// A line of the given width from a to b, with square ends, so that lines meeting at an angle leave no gap.
@@ -91,13 +94,97 @@ namespace gnubase::ui
 			const auto value = element.GetAttribute<double>(name, fallback);
 			return std::isfinite(value) ? value : fallback;
 		}
+
+		// A premultiplied colour scaled by a factor from 0 to 1, as if drawn that much more transparent.
+		Colour scaled(Colour colour, double factor)
+		{
+			const auto part = [factor](uint8_t value)
+			{ return static_cast<uint8_t>(std::lround(static_cast<double>(value) * factor)); };
+			return {part(colour.red), part(colour.green), part(colour.blue), part(colour.alpha)};
+		}
+
+		// The lanes in a frame of lanes with these tops (dp, each lane's and the bottom of the last): the first whose
+		// bottom is below the frame's top, and the one after the last whose top is above its bottom.
+		std::pair<size_t, size_t> lanesIn(const std::vector<double>& tops, double top, double bottom, float dpRatio)
+		{
+			if (tops.size() < 2)
+				return {0, 0};
+			const auto first =
+				static_cast<size_t>(std::upper_bound(tops.begin() + 1, tops.end(), top / dpRatio) - (tops.begin() + 1));
+			size_t last = first;
+			while (last + 1 < tops.size() && tops[last] * dpRatio < bottom)
+				++last;
+			return {first, last};
+		}
+
+		// The longest of the lengths, 0 for none.
+		template <typename Items> double longestOf(const Items& items)
+		{
+			double longest = 0.0;
+			for (const auto& item : items)
+				longest = std::max(longest, item.length);
+			return longest;
+		}
+
+		// The end of the text's first characters that fit in width pixels: 0 if none does. Cuts between UTF-8
+		// characters only.
+		size_t fitting(Rml::FontEngineInterface& fonts, Rml::FontFaceHandle font, const std::string& text,
+			const Rml::TextShapingContext& shaping, float width)
+		{
+			if (static_cast<float>(fonts.GetStringWidth(font, text, shaping)) <= width)
+				return text.size();
+			std::vector<size_t> ends; // after each character
+			for (size_t i = 1; i <= text.size(); ++i)
+				if (i == text.size() || (static_cast<unsigned char>(text[i]) & 0xC0U) != 0x80U)
+					ends.push_back(i);
+			// The longest prefix that fits, by binary search over the characters' ends.
+			size_t fits = 0;
+			size_t low = 0;
+			size_t high = ends.size();
+			while (low < high)
+			{
+				const size_t middle = (low + high) / 2;
+				if (static_cast<float>(fonts.GetStringWidth(font, text.substr(0, ends[middle]), shaping)) <= width)
+				{
+					fits = ends[middle];
+					low = middle + 1;
+				}
+				else
+				{
+					high = middle;
+				}
+			}
+			return fits;
+		}
+	}
+
+	Colour brightened(Colour colour, double brightness)
+	{
+		const double level = std::isfinite(brightness) ? std::clamp(brightness, 0.0, 1.0) : 0.5;
+		if (level <= 0.5)
+			return scaled(colour, level / 0.5);
+		// Toward white at the colour's own alpha: premultiplied, white is the alpha in every channel.
+		const double toward = (level - 0.5) / 0.5;
+		const auto part = [&colour, toward](uint8_t value)
+		{
+			return static_cast<uint8_t>(std::lround(static_cast<double>(value) +
+				((static_cast<double>(colour.alpha) - static_cast<double>(value)) * toward)));
+		};
+		return {part(colour.red), part(colour.green), part(colour.blue), colour.alpha};
 	}
 
 	void registerCanvas(RmlUi& rmlui)
 	{
 		Rml::StyleSheetSpecification::RegisterProperty("stroke-color", "transparent", false).AddParser("color");
 		Rml::StyleSheetSpecification::RegisterProperty("stroke-width", "1px", false).AddParser("length");
+		Rml::StyleSheetSpecification::RegisterProperty("own-fill-opacity", "1", false).AddParser("number");
+		Rml::StyleSheetSpecification::RegisterProperty("own-color-tint", "none", false)
+			.AddParser("keyword", "none")
+			.AddParser("color");
+		Rml::StyleSheetSpecification::RegisterProperty("event-inset", "0px", false).AddParser("length");
 		rmlui.registerElement<EventLanes>("event-lanes");
+		rmlui.registerElement<EventNames>("event-names");
+		rmlui.registerElement<PartContents>("part-contents");
 		rmlui.registerElement<Waveform>("waveform");
 		rmlui.registerElement<Curve>("curve");
 		rmlui.registerElement<FadeLines>("fade-lines");
@@ -134,6 +221,52 @@ namespace gnubase::ui
 		const Rml::Property* colour = GetProperty("stroke-color");
 		return colour == nullptr ? Colour()
 								 : colour->Get<Rml::Colourb>().ToPremultiplied(GetComputedValues().opacity());
+	}
+
+	Canvas::OwnColors Canvas::ownColors()
+	{
+		OwnColors own;
+		if (const Rml::Property* property = GetProperty("own-fill-opacity"))
+		{
+			const auto opacity = property->Get<float>();
+			own.fillOpacity = std::isfinite(opacity) ? std::clamp(opacity, 0.0F, 1.0F) : 1.0F;
+		}
+		const Rml::Property* tint = GetProperty("own-color-tint");
+		if (tint != nullptr && tint->unit == Rml::Unit::COLOUR)
+			own.tint = tint->Get<Rml::Colourb>();
+		own.opacity = GetComputedValues().opacity();
+		return own;
+	}
+
+	Colour Canvas::OwnColors::fill(uint32_t rgba) const
+	{
+		const auto alpha = static_cast<uint8_t>(std::lround(static_cast<float>(rgba & 0xffU) * fillOpacity));
+		return Rml::Colourb(static_cast<uint8_t>(rgba >> 24U), static_cast<uint8_t>(rgba >> 16U),
+			static_cast<uint8_t>(rgba >> 8U), alpha)
+			.ToPremultiplied(opacity);
+	}
+
+	std::optional<Colour> Canvas::OwnColors::line(uint32_t rgba) const
+	{
+		if (!tint)
+			return std::nullopt;
+		// The tint laid over the own color by the tint's alpha.
+		const Rml::Colourb with = *tint;
+		const auto over = [&with](uint32_t own, uint8_t to)
+		{
+			return static_cast<uint8_t>(std::lround(static_cast<float>(own) +
+				((static_cast<float>(to) - static_cast<float>(own)) * static_cast<float>(with.alpha) / 255.0F)));
+		};
+		return Rml::Colourb(over((rgba >> 24U) & 0xffU, with.red), over((rgba >> 16U) & 0xffU, with.green),
+			over((rgba >> 8U) & 0xffU, with.blue), static_cast<uint8_t>(rgba & 0xffU))
+			.ToPremultiplied(opacity);
+	}
+
+	float Canvas::eventInset()
+	{
+		const Rml::Property* inset = GetProperty("event-inset");
+		const float pixels = inset == nullptr ? 0.0F : ResolveLength(inset->GetNumericValue());
+		return pixels > 0.0F ? std::round(pixels) : 0.0F;
 	}
 
 	float Canvas::strokeWidth()
@@ -192,6 +325,8 @@ namespace gnubase::ui
 	void Canvas::OnAttributeChange(const Rml::ElementAttributes& changed)
 	{
 		Rml::Element::OnAttributeChange(changed);
+		if (drawsWith(changed))
+			this->changed();
 		if (changed.find("start") == changed.end() && changed.find("scale") == changed.end() &&
 			changed.find("scroll-top") == changed.end())
 			return;
@@ -207,6 +342,18 @@ namespace gnubase::ui
 	{
 		Rml::Element::OnPropertyChange(changed);
 		m_dirty = true; // colors, widths or fonts
+	}
+
+	void Canvas::followFont()
+	{
+		// RmlUi gives fonts a new version when their glyphs must be generated again, e.g. after RmlUi released them.
+		const Rml::FontFaceHandle font = GetFontFaceHandle();
+		const int version = font == 0 ? -1 : Rml::GetFontEngineInterface()->GetVersion(font);
+		if (version != m_fontVersion)
+		{
+			m_fontVersion = version;
+			changed();
+		}
 	}
 
 	void EventLanes::setLanes(std::vector<Lane> lanes)
@@ -229,19 +376,20 @@ namespace gnubase::ui
 	{
 		if (m_lanes.empty())
 			return;
-		const Colour body = fill();
-		const float opacity = GetComputedValues().opacity();
-		const auto own = [opacity](uint32_t rgba)
-		{
-			return Rml::Colourb(static_cast<uint8_t>(rgba >> 24U), static_cast<uint8_t>(rgba >> 16U),
-				static_cast<uint8_t>(rgba >> 8U), static_cast<uint8_t>(rgba))
-				.ToPremultiplied(opacity);
-		};
+		const double bodyOpacity = std::clamp(number(*this, "body-opacity", 1.0), 0.0, 1.0);
+		const Colour body = scaled(fill(), bodyOpacity);
 		const Colour outline = stroke();
-		const float width = outline.alpha == 0 ? 0.0F : strokeWidth();
-		// Events reaching beyond the frame end just outside it, so their outline there stays out of view.
-		const float first = -(width + 1.0F);
-		const float last = static_cast<float>(frame.right - frame.left) + width + 1.0F;
+		// Read once per build, not per event.
+		const OwnColors own = ownColors();
+		const float stroked = strokeWidth();
+		const float width = outline.alpha == 0 ? 0.0F : stroked;
+		// An own-color-tint outlines events with a color in stroke-width, also without a stroke-color.
+		const float tinted = own.tint ? stroked : width;
+		const float inset = eventInset();
+		// Events reaching beyond the frame end just outside it, so their outline there stays out of view, whichever
+		// width it has: the tinted one is never narrower.
+		const float first = -(tinted + 1.0F);
+		const float last = static_cast<float>(frame.right - frame.left) + tinted + 1.0F;
 		const double from = frame.from();
 		const double to = frame.to();
 		Rml::Mesh mesh;
@@ -250,10 +398,16 @@ namespace gnubase::ui
 			std::upper_bound(m_tops.begin() + 1, m_tops.end(), frame.top / frame.dpRatio) - (m_tops.begin() + 1));
 		for (; lane < m_lanes.size() && m_tops[lane] * frame.dpRatio < frame.bottom; ++lane)
 		{
-			const float y0 = frame.y(std::round(m_tops[lane] * frame.dpRatio));
-			const float y1 = frame.y(std::round(m_tops[lane + 1] * frame.dpRatio));
+			float y0 = frame.y(std::round(m_tops[lane] * frame.dpRatio));
+			float y1 = frame.y(std::round(m_tops[lane + 1] * frame.dpRatio));
 			if (y1 <= y0)
 				continue;
+			// Off the lane's edges, if it is high enough to keep a pixel between them.
+			if (y1 - y0 > 2.0F * inset)
+			{
+				y0 += inset;
+				y1 -= inset;
+			}
 			// By start, none longer than the longest: the first event reaching into the frame starts at most that
 			// much before it.
 			const std::vector<TimeSpan>& events = m_lanes[lane].events;
@@ -265,7 +419,196 @@ namespace gnubase::ui
 					continue;
 				const float x0 = std::max(frame.x(event->start), first);
 				const float x1 = std::max(std::min(frame.x(event->end()), last), x0 + 1.0F);
-				outlined(mesh, x0, y0, x1, y1, event->color == 0 ? body : own(event->color), outline, width);
+				if (event->color == 0)
+				{
+					outlined(mesh, x0, y0, x1, y1, body, outline, width);
+					continue;
+				}
+				const std::optional<Colour> line = own.line(event->color);
+				outlined(mesh, x0, y0, x1, y1, scaled(own.fill(event->color), bodyOpacity), line ? *line : outline,
+					line ? tinted : width);
+			}
+		}
+		meshes.push_back({std::move(mesh), {}});
+	}
+
+	bool EventLanes::drawsWith(const Rml::ElementAttributes& changed) const
+	{
+		return changed.count("body-opacity") != 0;
+	}
+
+	void EventNames::setLanes(std::vector<Lane> lanes)
+	{
+		m_lanes = std::move(lanes);
+		m_tops.assign(1, 0.0);
+		m_longest.clear();
+		for (const Lane& lane : m_lanes)
+		{
+			m_tops.push_back(m_tops.back() + lane.height);
+			m_longest.push_back(longestOf(lane.names));
+		}
+		changed();
+	}
+
+	bool EventNames::drawsWith(const Rml::ElementAttributes& changed) const
+	{
+		return changed.count("hide-truncated") != 0;
+	}
+
+	void EventNames::OnRender()
+	{
+		followFont();
+		Canvas::OnRender();
+	}
+
+	void EventNames::build(const Frame& frame, Rml::TexturedMeshList& meshes)
+	{
+		const Rml::FontFaceHandle font = GetFontFaceHandle();
+		if (m_lanes.empty() || font == 0)
+			return;
+		Rml::FontEngineInterface& fonts = *Rml::GetFontEngineInterface();
+		const Rml::ComputedValues& computed = GetComputedValues();
+		const Rml::TextShapingContext shaping{
+			computed.language(), computed.direction(), computed.font_kerning(), computed.letter_spacing()};
+		const Colour text = fill();
+		const float inset = eventInset();
+		const float margin = std::round(computed.font_size() / 4.0F);
+		const Rml::FontMetrics& metrics = fonts.GetFontMetrics(font);
+		const float lineHeight = std::ceil(metrics.ascent + metrics.descent);
+		const bool hideTruncated = HasAttribute("hide-truncated");
+		const double from = frame.from();
+		const double to = frame.to();
+		Rml::TexturedMeshList glyphs;
+		const auto [firstLane, endLane] = lanesIn(m_tops, frame.top, frame.bottom, frame.dpRatio);
+		for (size_t lane = firstLane; lane < endLane; ++lane)
+		{
+			const float top = frame.y(std::round(m_tops[lane] * frame.dpRatio));
+			const float bottom = frame.y(std::round(m_tops[lane + 1] * frame.dpRatio));
+			// Off the lane's top as events are, if it is high enough for the line then.
+			const float y = bottom - top - (2.0F * inset) >= lineHeight ? top + inset : top;
+			if (bottom - y < lineHeight)
+				continue; // no room for a line of text
+			const std::vector<Name>& names = m_lanes[lane].names;
+			auto name = std::lower_bound(names.begin(), names.end(), from - m_longest[lane],
+				[](const Name& item, double position) { return item.start < position; });
+			for (; name != names.end() && name->start < to; ++name)
+			{
+				if (name->end() <= from || name->text.empty())
+					continue;
+				const float x0 = frame.x(name->start) + margin;
+				const float room = frame.x(name->end()) - margin - x0;
+				if (room <= 0.0F)
+					continue;
+				const size_t fits = fitting(fonts, font, name->text, shaping, room);
+				if (fits == 0 || (hideTruncated && fits < name->text.size()))
+					continue;
+				fonts.GenerateString(*GetRenderManager(), font, 0, name->text.substr(0, fits),
+					{x0, y + std::round(static_cast<float>(metrics.ascent))}, text, computed.opacity(), shaping,
+					glyphs);
+			}
+		}
+		std::move(glyphs.begin(), glyphs.end(), std::back_inserter(meshes));
+	}
+
+	void PartContents::setLanes(std::vector<Lane> lanes)
+	{
+		m_lanes = std::move(lanes);
+		m_tops.assign(1, 0.0);
+		m_longest.clear();
+		m_ranges.clear();
+		for (const Lane& lane : m_lanes)
+		{
+			m_tops.push_back(m_tops.back() + lane.height);
+			m_longest.push_back(longestOf(lane.parts));
+			std::vector<Range>& ranges = m_ranges.emplace_back();
+			for (const Part& part : lane.parts)
+			{
+				Range range{127, 0, longestOf(part.notes)};
+				for (const Note& note : part.notes)
+				{
+					range.lowest = std::min(range.lowest, note.pitch);
+					range.highest = std::max(range.highest, note.pitch);
+				}
+				ranges.push_back(range);
+			}
+		}
+		changed();
+	}
+
+	bool PartContents::drawsWith(const Rml::ElementAttributes& changed) const
+	{
+		return changed.count("brightness") != 0;
+	}
+
+	void PartContents::build(const Frame& frame, Rml::TexturedMeshList& meshes)
+	{
+		if (m_lanes.empty())
+			return;
+		const Colour notes = brightened(fill(), number(*this, "brightness", 0.5));
+		const Colour bars = stroke();
+		const float barWidth = std::max(1.0F, strokeWidth());
+		const float inset = eventInset();
+		const double from = frame.from();
+		const double to = frame.to();
+		Rml::Mesh mesh;
+		const auto [firstLane, endLane] = lanesIn(m_tops, frame.top, frame.bottom, frame.dpRatio);
+		for (size_t lane = firstLane; lane < endLane; ++lane)
+		{
+			float y0 = frame.y(std::round(m_tops[lane] * frame.dpRatio));
+			float y1 = frame.y(std::round(m_tops[lane + 1] * frame.dpRatio));
+			if (y1 - y0 > 2.0F * inset)
+			{
+				y0 += inset;
+				y1 -= inset;
+			}
+			const float height = y1 - y0;
+			if (height < 1.0F)
+				continue;
+			const std::vector<Part>& parts = m_lanes[lane].parts;
+			const auto start = std::lower_bound(parts.begin(), parts.end(), from - m_longest[lane],
+				[](const Part& part, double position) { return part.start < position; });
+			for (auto part = start; part != parts.end() && part->start < to; ++part)
+			{
+				if (part->end() <= from)
+					continue;
+				const Range& range = m_ranges[lane][static_cast<size_t>(part - parts.begin())];
+				const double left = std::max(part->start, from);
+				const double right = std::min(part->end(), to);
+				// Each pitch a row, the highest at the top: a line a pitch's share of the box high, at most a sixth.
+				const int pitches = range.highest - range.lowest + 1;
+				const float line = std::max(
+					1.0F, std::round(std::min(height / static_cast<float>(std::max(pitches, 1)), height / 6.0F)));
+				const float step = pitches > 1 ? (height - line) / static_cast<float>(pitches - 1) : 0.0F;
+				if (notes.alpha != 0)
+				{
+					auto note = std::lower_bound(part->notes.begin(), part->notes.end(), left - range.longest,
+						[](const Note& item, double position) { return item.start < position; });
+					for (; note != part->notes.end() && note->start < right; ++note)
+					{
+						const double end = std::min(note->start + note->length, right);
+						if (end <= left)
+							continue;
+						const float x0 = frame.x(std::max(note->start, left));
+						const float x1 = std::max(frame.x(end), x0 + 1.0F);
+						const float top = pitches > 1
+							? std::round(y0 + (step * static_cast<float>(range.highest - note->pitch)))
+							: std::round(y0 + ((height - line) / 2.0F));
+						quad(mesh, x0, top, x1, top + line, notes);
+					}
+				}
+				if (bars.alpha == 0)
+					continue;
+				const auto controller = std::lower_bound(part->controllers.begin(), part->controllers.end(), left,
+					[](const Controller& item, double position) { return item.position < position; });
+				for (auto item = controller; item != part->controllers.end() && item->position < right; ++item)
+				{
+					// Inside the part: a bar at its end ends there too.
+					const float x =
+						std::max(frame.x(left), std::min(frame.x(item->position), frame.x(right) - barWidth));
+					const float high = std::max(
+						1.0F, std::round(static_cast<float>(std::clamp(item->value, 0.0, 1.0)) * height / 4.0F));
+					quad(mesh, x, y1 - high, x + barWidth, y1, bars);
+				}
 			}
 		}
 		meshes.push_back({std::move(mesh), {}});
@@ -278,12 +621,34 @@ namespace gnubase::ui
 		changed();
 	}
 
+	void Waveform::setColor(uint32_t color)
+	{
+		if (m_span.color == color)
+			return;
+		m_span.color = color;
+		changed();
+	}
+
 	void Waveform::build(const Frame& frame, Rml::TexturedMeshList& meshes)
 	{
 		if (m_channels.empty() || !(m_span.length > 0.0))
 			return;
-		const Colour colour = fill();
-		const float height = frame.size.y / static_cast<float>(m_channels.size());
+		const std::optional<Colour> own = m_span.color == 0 ? std::nullopt : ownColors().line(m_span.color);
+		const Colour colour = brightened(own ? *own : fill(), number(*this, "brightness", 0.5));
+		if (colour.alpha == 0)
+			return;
+		// event-inset off the lane's edges, inside the padding, as <event-lanes> keeps events, unless that would leave
+		// the waveform no pixel. That includes the lanes no higher than twice the inset, where events drop it, as the
+		// content box is no higher than the lane.
+		const float inset = eventInset();
+		float area = frame.size.y;
+		float offset = 0.0F;
+		if (frame.size.y - (2.0F * inset) >= 1.0F)
+		{
+			offset = inset;
+			area = frame.size.y - (2.0F * inset);
+		}
+		const float height = area / static_cast<float>(m_channels.size());
 		const double first = std::max(frame.left, std::round(m_span.start / frame.unitsPerPixel));
 		const double last = std::min(frame.right, std::round(m_span.end() / frame.unitsPerPixel));
 		Rml::Mesh mesh;
@@ -294,7 +659,7 @@ namespace gnubase::ui
 			if (columns == 0)
 				continue;
 			const double perColumn = m_span.length / static_cast<double>(columns);
-			const double middle = frame.y(0.0) + (height * (static_cast<float>(channel) + 0.5F));
+			const double middle = frame.y(0.0) + offset + (height * (static_cast<float>(channel) + 0.5F));
 			const double half = height / 2.0;
 			const auto y = [&](int16_t sample)
 			{ return static_cast<float>(std::round(middle - (sample / 32767.0 * half))); };
@@ -332,6 +697,11 @@ namespace gnubase::ui
 			}
 		}
 		meshes.push_back({std::move(mesh), {}});
+	}
+
+	bool Waveform::drawsWith(const Rml::ElementAttributes& changed) const
+	{
+		return changed.count("brightness") != 0;
 	}
 
 	void Curve::setPoints(std::vector<CurvePoint> points, bool handles, bool dashed)
@@ -644,14 +1014,7 @@ namespace gnubase::ui
 
 	void Ruler::OnRender()
 	{
-		// RmlUi gives fonts a new version when their glyphs must be generated again, e.g. after RmlUi released them.
-		const Rml::FontFaceHandle font = GetFontFaceHandle();
-		const int version = font == 0 ? -1 : Rml::GetFontEngineInterface()->GetVersion(font);
-		if (version != m_fontVersion)
-		{
-			m_fontVersion = version;
-			changed();
-		}
+		followFont();
 		Canvas::OnRender();
 	}
 

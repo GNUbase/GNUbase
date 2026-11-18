@@ -8,6 +8,7 @@
 #include "engine/engine.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
+#include "ui/docking.h"
 #include "ui/eventdisplay.h"
 #include "ui/tracklist.h"
 
@@ -269,7 +270,7 @@ namespace
 
 		Json project() { return app.call("project.get"); }
 
-		test::UiApp app{{1000, 500}};
+		test::UiApp app{{1024, 500}}; // with room for the toolbar's color menu
 		ui::EventDisplay& display;
 	};
 }
@@ -303,10 +304,11 @@ TEST_CASE("the track list and the event display show track and event colors", "[
 	REQUIRE(
 		window.app.waitUntil([&] { return window.laneColors()[1] == std::vector<uint32_t>{0x00ff00ff, 0xff8000ff}; }));
 
-	// Back to the default color: the strip shows nothing of its own.
+	// Back to the default color: the strip shows nothing of its own, and loses the attribute that themes select
+	// (#1314).
 	window.app.call("track.set", {{"track", audio}, {"color", nullptr}});
 	REQUIRE(window.app.waitUntil(
-		[&] { return window.elements(strip).at(0).at("attributes").at("color").get<std::string>().empty(); }));
+		[&] { return !window.elements(strip).at(0).value("attributes", Json::object()).contains("color"); }));
 	CHECK(window.find(strip)->GetLocalProperty("background-color") == nullptr);
 }
 
@@ -322,6 +324,10 @@ TEST_CASE("the color menu colors the selected events, or else the selected track
 						  .at("id")
 						  .get<uint64_t>();
 	REQUIRE(window.app.waitUntil([&] { return window.elements("#track-list listitem").size() == 2; }));
+
+	// At 1024 pixels the toolbar has no room for its color section after the quantize section, which goes here.
+	window.app.appUi().docking().setSectionHidden("project", "toolbar", "quantize", true);
+	window.app.shell().step(std::chrono::milliseconds(0));
 
 	// With tracks selected and no events: the colors of the set, and Set Track Color to Default.
 	window.app.appUi().trackList()->select({audio, midi});

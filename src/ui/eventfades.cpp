@@ -45,10 +45,12 @@ namespace gnubase::ui
 		}
 	}
 
-	void EventDisplay::readFades(const Json& event, double rate)
+	void EventDisplay::readFades(const Json& event, double rate, double timeRate)
 	{
 		AudioFades fades;
 		fades.rate = rate;
+		fades.fadeRoom = event.value("fadeRoom", event.at("length").get<int64_t>());
+		fades.timeRate = timeRate;
 		fades.length = event.at("length").get<int64_t>();
 		fades.in = fadeOf(event.at("fadeIn"));
 		fades.out = fadeOf(event.at("fadeOut"));
@@ -91,7 +93,7 @@ namespace gnubase::ui
 		const AudioFades& fades = m_fades.at(event);
 		if (!(fades.rate > 0.0))
 			return 0.0;
-		const double length = static_cast<double>(fades.length) / fades.rate;
+		const double length = static_cast<double>(fades.fadeRoom) / fades.rate;
 		const double own = static_cast<double>((in ? fades.in : fades.out).length) / fades.rate;
 		const double other = static_cast<double>((in ? fades.out : fades.in).length) / fades.rate;
 		const bool dragged = (m_drag == Drag::FadeIn && in) || (m_drag == Drag::FadeOut && !in);
@@ -143,7 +145,7 @@ namespace gnubase::ui
 			const AudioFades& fades = m_fades.at(id);
 			const engine::Fade& other = in ? fades.out : fades.in;
 			const int64_t length = std::clamp<int64_t>(
-				std::llround(draggedFade(id, in) * fades.rate), 0, std::max<int64_t>(0, fades.length - other.length));
+				std::llround(draggedFade(id, in) * fades.rate), 0, std::max<int64_t>(0, fades.fadeRoom - other.length));
 			commands.push_back({{"command", "audioEvent.setFades"},
 				{"parameters", {{"event", id}, {in ? "fadeIn" : "fadeOut", {{"length", length}}}}}});
 		}
@@ -218,6 +220,19 @@ namespace gnubase::ui
 		m_fadeLines->setLanes(std::move(lanes));
 	}
 
+	bool EventDisplay::openSelectedCrossfade()
+	{
+		for (const uint64_t id : selectedAudio())
+			for (const auto& [to, fades] : m_fades)
+				if ((to == id && fades.crossfade.from != 0) || (fades.crossfade.from == id))
+				{
+					openFadeDialog(
+						"crossfade.rml", {{"from", std::to_string(fades.crossfade.from)}, {"to", std::to_string(to)}});
+					return true;
+				}
+		return false;
+	}
+
 	bool EventDisplay::openCrossfadeAt(const Shown& shown, double seconds)
 	{
 		// The crossfades into and out of the event, where the two events overlap (reference manual p. 389).
@@ -256,6 +271,7 @@ namespace gnubase::ui
 			dialog->SetAttribute(name, value);
 		dialog->Show(Rml::ModalFlag::Modal);
 		m_dialog = dialog->GetObserverPtr();
+		m_dialogForObjects = !attributes.empty(); // events, or from and to
 	}
 
 	void EventDisplay::addFadeActions()
@@ -329,19 +345,14 @@ namespace gnubase::ui
 				}},
 			// Crossfade (reference manual pp. 388-389): crossfades the selected events, or opens the crossfade editor
 			// for the crossfade that one of them has.
-			{"audio.crossfade", [this]
+			{"audio.crossfade",
+				[this]
 				{
 					const std::vector<uint64_t> events = selectedAudio();
-					for (const uint64_t id : events)
-						for (const auto& [to, fades] : m_fades)
-							if ((to == id && fades.crossfade.from != 0) || (fades.crossfade.from == id))
-							{
-								openFadeDialog("crossfade.rml",
-									{{"from", std::to_string(fades.crossfade.from)}, {"to", std::to_string(to)}});
-								return;
-							}
-					if (!events.empty())
+					if (!openSelectedCrossfade() && !events.empty())
 						edit("event.crossfade", {{"events", events}});
-				}}});
+				}},
+			// The quantize panel's Open Crossfade Editor (p. 379): only the editor.
+			{"audio.crossfadeEditor", [this] { openSelectedCrossfade(); }}});
 	}
 }

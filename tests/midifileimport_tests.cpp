@@ -7,11 +7,14 @@
 #include "engine/time/tempomap.h"
 #include "testutils/testutils.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -130,6 +133,419 @@ TEST_CASE("midiFile.import places the file at a position", "[integration]")
 		ContainsSubstring("position must not be negative"));
 }
 
+namespace
+{
+	gnubase::time::TempoMap tempoOf(const Json& project)
+	{
+		std::vector<gnubase::time::TempoPoint> points;
+		for (const Json& point : project.at("tempo"))
+			points.push_back(
+				{point.at("position").get<Ticks>(), point.at("bpm").get<double>(), point.at("ramp").get<bool>()});
+		return gnubase::time::TempoMap(points);
+	}
+}
+
+TEST_CASE("midiFile.import inside a tempo ramp keeps the ramp before the position", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 100.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", 8 * g_quarter}, {"bpm", 140.0}, {"ramp", true}});
+	Json project = run(client, "project.get");
+	const gnubase::time::TempoMap before = tempoOf(project);
+	const double sampleRate = project.at("sampleRate").get<double>();
+
+	// A file without tempo, a quarter note long, dropped in the middle of the ramp.
+	midifile::File file;
+	file.tracks.push_back(track("Piano", {note(0, 0, 60, true), note(480, 0, 60, false)}));
+	const std::string path = save(dir, "song.mid", file);
+	const int64_t position = before.toSamples(4 * g_quarter, sampleRate);
+	run(client, "midiFile.import", {{"path", path}, {"position", position}});
+	project = run(client, "project.get");
+	const gnubase::time::TempoMap after = tempoOf(project);
+
+	// The ramp plays on up to the position, so the file starts where it was dropped, at its own 120 BPM.
+	const Ticks start = before.toTicks(position, sampleRate);
+	const Json& part = project.at("midiParts")[0];
+	CHECK(part.at("position").get<Ticks>() + part.at("notes")[0].at("position").get<Ticks>() == start);
+	CHECK(std::abs(after.toSamples(2 * g_quarter, sampleRate) - before.toSamples(2 * g_quarter, sampleRate)) <= 1);
+	CHECK(after.bpmAt(3 * g_quarter) == Catch::Approx(before.bpmAt(3 * g_quarter)));
+	CHECK(std::abs(after.toSamples(start, sampleRate) - position) <= 1);
+	CHECK(after.bpmAt(start) == 120.0);
+	// After the file's end, a quarter note after its start wherever the position lands, the project's ramp goes on as
+	// it was.
+	const Ticks end = start + g_quarter;
+	CHECK(after.bpmAt(end - 1) == 120.0);
+	CHECK(after.bpmAt(end) == Catch::Approx(before.bpmAt(end)));
+	CHECK(after.bpmAt(end + (g_quarter / 2)) == Catch::Approx(before.bpmAt(end + (g_quarter / 2))));
+	CHECK(after.bpmAt(7 * g_quarter) == Catch::Approx(before.bpmAt(7 * g_quarter)));
+	CHECK(after.bpmAt(8 * g_quarter) == 140.0);
+}
+
+TEST_CASE("midiFile.import keeps the project's tempo and signatures after the file's end", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 100.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", 16 * g_quarter}, {"bpm", 90.0}, {"ramp", false}});
+	run(client, "signature.add", {{"bar", 4}, {"numerator", 3}, {"denominator", 4}});
+
+	// 60 BPM in 2/4 for two bars, dropped at bar 2 (a bar of 4/4 at 100 BPM is 2.4 seconds).
+	midifile::File file;
+	file.tracks.push_back(track("Tempo",
+		{midifile::metaEvent(0, midifile::g_metaTempo, {0x0F, 0x42, 0x40}),
+			midifile::metaEvent(0, midifile::g_metaTimeSignature, {2, 2, 24, 8})}));
+	file.tracks.push_back(track("Piano", {note(0, 0, 60, true), note(1920, 0, 60, false)}));
+	const std::string path = save(dir, "song.mid", file);
+	run(client, "midiFile.import", {{"path", path}, {"position", 115200}});
+	const Json project = run(client, "project.get");
+
+	// The file's tempo and signature over its two bars, then the project's again from where it ends.
+	const Json& tempo = project.at("tempo");
+	REQUIRE(tempo.size() == 4);
+	CHECK(tempo[1].at("position") == 4 * g_quarter);
+	CHECK(tempo[1].at("bpm") == 60.0);
+	CHECK(tempo[2].at("position") == 8 * g_quarter);
+	CHECK(tempo[2].at("bpm") == 100.0);
+	CHECK(tempo[3].at("position") == 16 * g_quarter);
+	CHECK(tempo[3].at("bpm") == 90.0);
+	const Json& signatures = project.at("signatures");
+	REQUIRE(signatures.size() == 4);
+	CHECK(signatures[1].at("bar") == 1);
+	CHECK(signatures[1].at("numerator") == 2);
+	CHECK(signatures[2].at("bar") == 3); // at 8 quarter notes, after two bars of 2/4
+	CHECK(signatures[2].at("numerator") == 4);
+	CHECK(signatures[3].at("bar") == 5); // at 16 quarter notes, where the project's 3/4 was
+	CHECK(signatures[3].at("numerator") == 3);
+}
+
+TEST_CASE(
+	"midiFile.import keeps a constant project tempo and signature for the parts after the file's end", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempo", 100.0}});
+	const Ticks bar = 4 * g_quarter;
+	const auto keys =
+		run(client, "track.add", {{"type", "midi"}, {"name", "Keys"}}).at("track").at("id").get<ObjectId>();
+	run(client, "midiPart.add", {{"track", keys}, {"position", 19 * bar}, {"length", bar}});
+	Json project = run(client, "project.get");
+	const double sampleRate = project.at("sampleRate").get<double>();
+
+	// A bar of 3/4 without tempo, at 120 BPM, dropped at bar 10.
+	midifile::File file;
+	file.tracks.push_back(track("Tempo", {midifile::metaEvent(0, midifile::g_metaTimeSignature, {3, 2, 24, 8})}));
+	file.tracks.push_back(track("Piano", {note(0, 0, 60, true), note(1440, 0, 60, false)}));
+	const std::string path = save(dir, "song.mid", file);
+	const Ticks start = 9 * bar;
+	run(client, "midiFile.import",
+		{{"path", path}, {"position", gnubase::time::TempoMap(100.0).toSamples(start, sampleRate)}});
+	project = run(client, "project.get");
+
+	// The file's 120 BPM and 3/4 for its bar, then the project's 100 BPM and 4/4 again.
+	const Json& tempo = project.at("tempo");
+	REQUIRE(tempo.size() == 3);
+	CHECK(tempo[1].at("position") == start);
+	CHECK(tempo[1].at("bpm") == 120.0);
+	CHECK(tempo[2].at("position") == start + (3 * g_quarter));
+	CHECK(tempo[2].at("bpm") == 100.0);
+	const Json& signatures = project.at("signatures");
+	REQUIRE(signatures.size() == 3);
+	CHECK(signatures[1].at("bar") == 9);
+	CHECK(signatures[1].at("numerator") == 3);
+	CHECK(signatures[2].at("bar") == 10);
+	CHECK(signatures[2].at("numerator") == 4);
+	CHECK(signatures[2].at("denominator") == 4);
+	CHECK(project.at("tempoTrackActive") == true);
+
+	// Undo gives back the project's tempo, signature and tempo mode, redo the merged ones again.
+	const auto tempoState = [&client]
+	{
+		const Json tempo = run(client, "project.get");
+		return Json{{"tempo", tempo.at("tempo")}, {"signatures", tempo.at("signatures")},
+			{"tempoTrackActive", tempo.at("tempoTrackActive")}};
+	};
+	const Json merged = tempoState();
+	run(client, "history.undo");
+	const Json undone = tempoState();
+	REQUIRE(undone.at("tempo").size() == 1);
+	CHECK(undone.at("tempo")[0].at("bpm") == 100.0);
+	CHECK(undone.at("signatures").size() == 1);
+	CHECK(undone.at("tempoTrackActive") == false);
+	CHECK(run(client, "project.get").at("midiParts").size() == 1);
+	run(client, "history.redo");
+	CHECK(tempoState() == merged);
+	CHECK(run(client, "project.get").at("midiParts").size() == 2);
+}
+
+TEST_CASE("midiFile.import keeps a constant project tempo and signature for any content after the file's end",
+	"[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempo", 100.0}});
+	const double sampleRate = run(client, "project.get").at("sampleRate").get<double>();
+	const Ticks bar = 4 * g_quarter;
+	// The file goes at bar 10 and is a bar of 3/4 at 120 BPM long, a second and a half; in the project's 100 BPM that
+	// bar would end later. Bar 20, in ticks and in samples, is after the file's end.
+	const Ticks start = 9 * bar;
+	const int64_t startSamples = gnubase::time::TempoMap(100.0).toSamples(start, sampleRate);
+	const int64_t endSamples = startSamples + std::llround(1.5 * sampleRate);
+	const Ticks later = 19 * bar;
+	const int64_t laterSamples = gnubase::time::TempoMap(100.0).toSamples(later, sampleRate);
+	const auto addTrack = [&client](const char* type, const char* timeBase)
+	{ return run(client, "track.add", {{"type", type}, {"timeBase", timeBase}}).at("track").at("id").get<ObjectId>(); };
+	bool after = true;
+	bool slow = false; // the file at 60 BPM, slower than the project
+
+	// An audio event of length samples (at the project's 48 kHz) on a new audio track; position is in the track's time
+	// base. If musical, its clip plays in musical mode at the project's 100 BPM, so that it plays as long as it is.
+	// Returns the track.
+	const auto addAudioEvent = [&client, &dir, &addTrack](int64_t position, const char* timeBase = "linear",
+								   int64_t length = 4000, bool musical = false)
+	{
+		test::Audio audio;
+		audio.samples.assign(static_cast<size_t>(length), 0.25F);
+		const std::filesystem::path wav = dir.path() / ("tone" + std::to_string(length) + ".wav");
+		test::writeWav(wav, audio);
+		const Json media = run(client, "media.add", {{"path", wav.u8string()}});
+		const Json clip = run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id");
+		const ObjectId audioTrack = addTrack("audio", timeBase);
+		run(client, "audioEvent.add",
+			{{"track", audioTrack}, {"clip", clip}, {"position", position}, {"offset", 0}, {"length", length}});
+		if (musical)
+			run(client, "clip.setWarp", {{"clip", clip}, {"musical", true}, {"tempo", 100.0}});
+		return audioTrack;
+	};
+
+	SECTION("An audio event on a linear track")
+	{
+		addAudioEvent(laterSamples);
+	}
+	SECTION("An audio event that starts before the file's end and ends after it, in the file's tempo")
+	{
+		// In the project's tempo it would end before the file's end.
+		addAudioEvent(endSamples - 2000);
+	}
+	SECTION("An audio event on a musical track after the end of a file slower than the project")
+	{
+		// It keeps its ticks: a quarter note after the file's end. Its end in samples in the project's tempo is before
+		// the file's end in the file's 60 BPM, which must not matter.
+		slow = true;
+		addAudioEvent(start + (4 * g_quarter), "musical");
+	}
+	// An audio event on a musical track keeps its start in ticks and its length in samples: it counts by where it ends
+	// in the file's tempo. The file at 120 BPM ends 72000 samples after its start, at 60 BPM 144000.
+	SECTION("An audio event on a musical track that ends after the end of a faster file only in the file's tempo")
+	{
+		// It starts 60000 samples after the file's start and ends at 73000. In the project's 100 BPM it would end
+		// 2.95 quarter notes after the start, before the file's 3.
+		addAudioEvent(start + ((5 * g_quarter) / 2), "musical", 13000);
+	}
+	SECTION("An audio event on a musical track that ends before the end of a slower file only in the file's tempo")
+	{
+		// It starts 120000 samples after the file's start and ends at 140000. In the project's 100 BPM it would end
+		// 3.19 quarter notes after the start, after the file's 3.
+		slow = true;
+		after = false;
+		addAudioEvent(start + ((5 * g_quarter) / 2), "musical", 20000);
+	}
+	SECTION("An audio event on a musical track that starts before the file and ends after it in the file's tempo")
+	{
+		// A bar before the file's start in the project's 100 BPM, 115200 samples, so it ends 84800 samples after the
+		// file's start: 2.94 quarter notes in the project's tempo.
+		addAudioEvent(start - bar, "musical", 200000);
+	}
+	SECTION("An audio event on a musical track whose clip plays in musical mode counts by its end in ticks")
+	{
+		// It is 0.45 quarter notes long in its clip's 100 BPM and ends 2.95 quarter notes after the file's start,
+		// before the file's 3. By its start in the file's 120 BPM plus its length in samples it would end at 72960
+		// samples, after the file's end at 72000.
+		after = false;
+		addAudioEvent(start + ((5 * g_quarter) / 2), "musical", 12960, true);
+	}
+	// An audio event on a linear track whose clip plays in musical mode keeps its start in samples and its length in
+	// beats: it counts by its start in ticks in the file's tempo plus those beats. The file ends 3 quarter notes after
+	// its start.
+	SECTION("An audio event on a linear track in musical mode that ends after the end of a slower file only in the "
+			"file's tempo")
+	{
+		// It starts 2 seconds after the file's start, 2 quarter notes at the file's 60 BPM, and is a quarter and a half
+		// long, so it ends 3.5 quarter notes after the start. In samples in the project's 100 BPM it would end 0.9
+		// seconds later, 139200 samples after the start, before the file's end at 144000.
+		slow = true;
+		addAudioEvent(startSamples + 96000, "linear", 43200, true);
+	}
+	SECTION("An audio event on a linear track in musical mode that ends before the end of a faster file only in the "
+			"file's tempo")
+	{
+		// It starts half a second after the file's start, a quarter note at the file's 120 BPM, and is 1.75 quarter
+		// notes long, so it ends 2.75 quarter notes after the start. In samples in the project's 100 BPM it would end
+		// 1.05 seconds later, 74400 samples after the start, after the file's end at 72000.
+		after = false;
+		addAudioEvent(startSamples + 24000, "linear", 50400, true);
+	}
+	SECTION("An audio event on a linear track in musical mode that starts before the file and ends after it in the "
+			"file's tempo")
+	{
+		// It starts a quarter note before the file's start, 28800 samples in the project's 100 BPM, and is 5 quarter
+		// notes long, so it ends 4 quarter notes after the start. In samples in the project's 100 BPM it would end 3
+		// seconds later, 115200 samples after the start, before the file's end at 144000 in the file's 60 BPM.
+		slow = true;
+		addAudioEvent(startSamples - 28800, "linear", 144000, true);
+	}
+	// By its end in ticks in the project's tempo before the import, as on a musical track, these two would count the
+	// other way (#1288).
+	SECTION("An audio event on a linear track in musical mode that ends before the end of a slower file only by its "
+			"start in the file's tempo")
+	{
+		// It starts 2 quarter notes after the file's start at the file's 60 BPM and is half a quarter note long, so it
+		// ends 2.5 quarter notes after the start. In ticks in the project's 100 BPM it would end 3.83 quarter notes
+		// after the start, after the file's 3.
+		slow = true;
+		after = false;
+		addAudioEvent(startSamples + 96000, "linear", 14400, true);
+	}
+	SECTION("An audio event on a linear track in musical mode that ends after the end of a faster file only by its "
+			"start in the file's tempo")
+	{
+		// It starts 2.5 quarter notes after the file's start at the file's 120 BPM and is 0.7 quarter notes long, so it
+		// ends 3.2 quarter notes after the start. In ticks in the project's 100 BPM it would end 2.78 quarter notes
+		// after the start, before the file's 3.
+		addAudioEvent(startSamples + 60000, "linear", 20160, true);
+	}
+	SECTION("A MIDI part on another version of its track")
+	{
+		const ObjectId keys = addTrack("midi", "musical");
+		run(client, "midiPart.add", {{"track", keys}, {"position", later}, {"length", bar}});
+		run(client, "trackVersion.add", {{"tracks", {keys}}});
+		REQUIRE(run(client, "project.get").at("midiParts").empty());
+	}
+	SECTION("An audio event on another version of its track")
+	{
+		run(client, "trackVersion.add", {{"tracks", {addAudioEvent(laterSamples)}}});
+		REQUIRE(run(client, "project.get").at("audioEvents").empty());
+	}
+	SECTION("An audio part on another version of its track")
+	{
+		const ObjectId audio = addTrack("audio", "musical");
+		run(client, "audioPart.add", {{"track", audio}, {"position", later}, {"length", bar}});
+		run(client, "trackVersion.add", {{"tracks", {audio}}});
+		REQUIRE(run(client, "project.get").at("audioParts").empty());
+	}
+	SECTION("An audio part on a linear track")
+	{
+		run(client, "audioPart.add",
+			{{"track", addTrack("audio", "linear")}, {"position", laterSamples}, {"length", 48000}});
+	}
+	SECTION("A MIDI part on a linear track")
+	{
+		run(client, "midiPart.add",
+			{{"track", addTrack("midi", "linear")}, {"position", laterSamples}, {"length", 48000}});
+	}
+	SECTION("A marker on a linear marker track")
+	{
+		run(client, "marker.add", {{"track", addTrack("marker", "linear")}, {"position", laterSamples}});
+	}
+	SECTION("An arranger event")
+	{
+		addTrack("arranger", "musical");
+		run(client, "arranger.add", {{"position", later}, {"end", later + bar}});
+	}
+	SECTION("A chord event")
+	{
+		addTrack("chord", "musical");
+		run(client, "chord.add", {{"position", later}, {"chord", "Dm7"}});
+	}
+	SECTION("A scale event")
+	{
+		addTrack("chord", "musical");
+		run(client, "chord.add", {{"position", later}, {"scale", "D dorian"}});
+	}
+	SECTION("A chord event right at the file's end, which it plays from")
+	{
+		addTrack("chord", "musical");
+		run(client, "chord.add", {{"position", start + (3 * g_quarter)}, {"chord", "Dm7"}});
+	}
+	SECTION("A scale event right at the file's end")
+	{
+		addTrack("chord", "musical");
+		run(client, "chord.add", {{"position", start + (3 * g_quarter)}, {"scale", "D dorian"}});
+	}
+	SECTION("A transpose event right at the file's end, in the file's tempo, on a linear transpose track")
+	{
+		addTrack("transpose", "linear");
+		run(client, "transpose.add", {{"position", endSamples}, {"value", 2}});
+	}
+	SECTION("An automation point right at the file's end, in the file's tempo, on a linear track")
+	{
+		const ObjectId audio = addTrack("audio", "linear");
+		const Json lane = run(client, "automationLane.add", {{"track", audio}, {"target", {{"type", "volume"}}}});
+		run(client, "automationPoint.add",
+			{{"lane", lane.at("lane").at("id")}, {"points", {{{"position", endSamples}, {"value", -6.0}}}}});
+	}
+	SECTION("A transpose event on a linear transpose track")
+	{
+		addTrack("transpose", "linear");
+		run(client, "transpose.add", {{"position", laterSamples}, {"value", 2}});
+	}
+	SECTION("An automation point on a linear track")
+	{
+		const ObjectId audio = addTrack("audio", "linear");
+		const Json lane = run(client, "automationLane.add", {{"track", audio}, {"target", {{"type", "volume"}}}});
+		run(client, "automationPoint.add",
+			{{"lane", lane.at("lane").at("id")}, {"points", {{{"position", laterSamples}, {"value", -6.0}}}}});
+	}
+	SECTION("Content that ends before the file's end in the file's tempo counts for nothing")
+	{
+		after = false;
+		// A linear event that ends before the file's end, and one on a musical track that ends before it in the
+		// file's tempo, though after it in the project's.
+		addAudioEvent(endSamples - 6000);
+		addAudioEvent(start + ((5 * g_quarter) / 2), "musical");
+		addTrack("chord", "musical");
+		run(client, "chord.add", {{"position", bar}, {"chord", "Dm7"}});
+		addTrack("arranger", "musical");
+		run(client, "arranger.add", {{"position", 0}, {"end", 2 * bar}});
+	}
+
+	// A bar of 3/4, without tempo at 120 BPM or at 60 BPM if slow, dropped at bar 10.
+	midifile::File file;
+	std::vector<midifile::Event> meta = {midifile::metaEvent(0, midifile::g_metaTimeSignature, {3, 2, 24, 8})};
+	if (slow)
+		meta.push_back(midifile::metaEvent(0, midifile::g_metaTempo, {0x0F, 0x42, 0x40}));
+	file.tracks.push_back(track("Tempo", std::move(meta)));
+	file.tracks.push_back(track("Piano", {note(0, 0, 60, true), note(1440, 0, 60, false)}));
+	const std::string path = save(dir, "song.mid", file);
+	run(client, "midiFile.import", {{"path", path}, {"position", startSamples}});
+	const Json project = run(client, "project.get");
+
+	// The file's tempo and 3/4 for its bar, then the project's 100 BPM and 4/4 again if anything follows the file;
+	// otherwise the file's go on.
+	const Json& tempo = project.at("tempo");
+	REQUIRE(tempo.size() == (after ? 3U : 2U));
+	CHECK(tempo[1].at("position") == start);
+	CHECK(tempo[1].at("bpm") == (slow ? 60.0 : 120.0));
+	const Json& signatures = project.at("signatures");
+	REQUIRE(signatures.size() == (after ? 3U : 2U));
+	CHECK(signatures[1].at("bar") == 9);
+	CHECK(signatures[1].at("numerator") == 3);
+	if (after)
+	{
+		CHECK(tempo[2].at("position") == start + (3 * g_quarter));
+		CHECK(tempo[2].at("bpm") == 100.0);
+		CHECK(signatures[2].at("bar") == 10);
+		CHECK(signatures[2].at("numerator") == 4);
+		CHECK(signatures[2].at("denominator") == 4);
+	}
+}
+
 TEST_CASE("midiFile.import keeps a type 0 file in one track unless it dissolves it", "[integration]")
 {
 	const test::TempDir dir;
@@ -205,13 +621,17 @@ TEST_CASE("midiFile.import extracts the first patch and volume and pan into the 
 	const test::TempDir dir;
 	Engine engine;
 	Client client(engine);
-	// Channel 1: bank 2, program 5, volume 100 and pan 30, then more of each; channel 2's stay in their part.
+	// Channel 1: bank 2, program 5, volume 100 and pan 30, then more of each. Channel 2: program 48 and volume 80.
+	// Channels 1 and 3 in one track: only channel 1's go into the settings.
 	midifile::File file;
 	file.tracks.push_back(track("Piano",
 		{control(0, 0, 0, 0), control(0, 0, 32, 2), program(0, 0, 5), control(0, 0, 7, 100), control(0, 0, 10, 30),
 			note(0, 0, 60, true), control(240, 0, 7, 90), program(240, 0, 6), note(480, 0, 60, false)}));
 	file.tracks.push_back(
 		track("Strings", {program(0, 1, 48), control(0, 1, 7, 80), note(0, 1, 60, true), note(480, 1, 60, false)}));
+	file.tracks.push_back(track("Both",
+		{program(0, 2, 33), program(0, 0, 7), note(0, 0, 60, true), note(0, 2, 64, true), note(480, 0, 60, false),
+			note(480, 2, 64, false)}));
 	const std::string path = save(dir, "song.mid", file);
 
 	const Json imported =
@@ -219,26 +639,85 @@ TEST_CASE("midiFile.import extracts the first patch and volume and pan into the 
 	const Json project = run(client, "project.get");
 	const auto channelOf = [&project](const Json& track)
 	{ return find(project.at("channels"), "id", find(project.at("tracks"), "id", track).at("channel")); };
+	const auto partOf = [&project, &imported](size_t index)
+	{ return find(project.at("midiParts"), "id", imported.at("parts")[index]); };
+	// Each track plays on its file track's MIDI channel, whose first patch, volume and pan are its settings.
 	const Json& piano = channelOf(imported.at("tracks")[0]);
+	CHECK(piano.at("midiChannel") == 0);
 	CHECK(piano.at("program") == 5);
 	CHECK(piano.at("bank") == 2);
 	CHECK(piano.at("midiVolume") == 100);
 	CHECK(piano.at("midiPan") == 30);
-	const Json& pianoPart = find(project.at("midiParts"), "id", imported.at("parts")[0]);
+	const Json pianoPart = partOf(0);
 	REQUIRE(pianoPart.at("controllers").size() == 2); // the second volume and program change
 	for (const Json& controller : pianoPart.at("controllers"))
 		CHECK(controller.at("position") == g_quarter / 2);
 	const Json& strings = channelOf(imported.at("tracks")[1]);
-	CHECK(strings.at("program").is_null());
-	CHECK(strings.at("midiVolume").is_null());
-	CHECK(find(project.at("midiParts"), "id", imported.at("parts")[1]).at("controllers").size() == 2);
+	CHECK(strings.at("midiChannel") == 1);
+	CHECK(strings.at("program") == 48);
+	CHECK(strings.at("bank").is_null());
+	CHECK(strings.at("midiVolume") == 80);
+	CHECK(strings.at("midiPan").is_null());
+	CHECK(partOf(1).at("controllers").empty());
+	// A track of several channels plays on Any, whose settings go out on channel 1.
+	const Json& both = channelOf(imported.at("tracks")[2]);
+	CHECK(both.at("midiChannel").is_null());
+	CHECK(both.at("program") == 7);
+	REQUIRE(partOf(2).at("controllers").size() == 1);
+	CHECK(partOf(2).at("controllers")[0].at("channel") == 2);
+
+	// Without extraction the tracks still play on their file tracks' channels.
+	run(client, "history.undo");
+	const Json plain = run(client, "midiFile.import", {{"path", path}});
+	const Json unextracted = run(client, "project.get");
+	const Json& stringsTrack = find(unextracted.at("tracks"), "id", plain.at("tracks")[1]);
+	const Json& stringsChannel = find(unextracted.at("channels"), "id", stringsTrack.at("channel"));
+	CHECK(stringsChannel.at("midiChannel") == 1);
+	CHECK(stringsChannel.at("program").is_null());
+
+	// Into a track of the project as a single part: from the channel that track plays on, which stays.
+	run(client, "history.undo");
+	const auto target = run(client, "track.add", {{"type", "midi"}}).at("track").at("id").get<ObjectId>();
+	const Json targetChannel = find(run(client, "project.get").at("tracks"), "id", target).at("channel");
+	run(client, "channel.set", {{"channel", targetChannel}, {"midiChannel", 1}});
+	run(client, "midiFile.import",
+		{{"path", path}, {"singlePart", true}, {"track", target}, {"extractPatch", true}, {"extractVolumePan", true}});
+	const Json single = find(run(client, "project.get").at("channels"), "id", targetChannel);
+	CHECK(single.at("midiChannel") == 1);
+	CHECK(single.at("program") == 48);
+	CHECK(single.at("midiVolume") == 80);
 
 	// Instrument tracks have no such settings: the events stay (the bank selects in the program change).
+	run(client, "history.undo");
+	run(client, "history.undo");
 	run(client, "history.undo");
 	const Json instrument = run(client, "midiFile.import",
 		{{"path", path}, {"extractPatch", true}, {"extractVolumePan", true}, {"trackType", "instrument"}});
 	CHECK(find(run(client, "project.get").at("midiParts"), "id", instrument.at("parts")[0]).at("controllers").size() ==
 		5);
+}
+
+TEST_CASE("midiFile.import with singlePart gives a new MIDI track the file's MIDI channel, or Any for several",
+	"[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	midifile::File one;
+	one.tracks.push_back(track("Strings", {note(0, 1, 60, true), note(480, 1, 60, false)}));
+	one.tracks.push_back(track("More Strings", {control(0, 1, 1, 64), note(0, 1, 64, true), note(480, 1, 64, false)}));
+	midifile::File several = one;
+	several.tracks.push_back(track("Piano", {note(0, 0, 67, true), note(480, 0, 67, false)}));
+	const auto midiChannel = [&client](const std::string& path)
+	{
+		const Json imported = run(client, "midiFile.import", {{"path", path}, {"singlePart", true}});
+		REQUIRE(imported.at("tracks").size() == 1);
+		const Json project = run(client, "project.get");
+		const Json& added = find(project.at("tracks"), "id", imported.at("tracks")[0]);
+		return find(project.at("channels"), "id", added.at("channel")).at("midiChannel");
+	};
+	CHECK(midiChannel(save(dir, "one.mid", one)) == 1);
+	CHECK(midiChannel(save(dir, "several.mid", several)).is_null());
 }
 
 TEST_CASE("midiFile.import keeps a track that the extraction leaves empty, without a part", "[integration]")

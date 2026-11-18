@@ -1,0 +1,42 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Background render progress (docs/features/render-in-place.md): the job's progress and detail, with Cancel.
+     ProjectFiles reuses the backup progress lifecycle, displaying this document without making it modal. -->
+<rml>
+<head>
+	<title>Rendering Audio</title>
+	<style>
+		dialog
+		{
+			width: 360dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#render-progress
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="render-progress-dialog">
+		<div class="dialog-titlebar">Rendering Audio</div>
+		<div class="row">Rendering audio...</div>
+		<div class="row"><progress id="render-progress" value="0"/></div>
+		<div class="row" id="render-progress-file"></div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+		</div>
+	</dialog>
+</body>
+</rml>

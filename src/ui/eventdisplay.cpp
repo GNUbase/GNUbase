@@ -3,6 +3,7 @@
 
 #include "platform/log.h"
 #include "ui/rmlui.h"
+#include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -14,11 +15,14 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 
 namespace gnubase::ui
@@ -30,6 +34,7 @@ namespace gnubase::ui
 		// Zoom limits, in seconds per dp: about half a sample at 48 kHz, and an hour in a minute of dp.
 		constexpr double g_minScale = 1e-5;
 		constexpr double g_maxScale = 60.0;
+		constexpr double g_cutDistance = 4.0; // dp between the cutting positions for them to show
 		constexpr double g_minTrackZoom = 0.25;
 		constexpr double g_maxTrackZoom = 8.0;
 		constexpr double g_zoomStep = 2.0;          // zoom in and out
@@ -38,6 +43,12 @@ namespace gnubase::ui
 		constexpr double g_wheelScroll = 0.1;       // of the view's width per line, scrolling across
 		constexpr double g_dragZoomDistance = 40.0; // dp dragged in the ruler to zoom by a factor of 2
 		constexpr double g_overviewEdge = 4.0;      // dp either side of the overview rectangle's edges
+
+		// The event display's preferences (reference manual pp. 1603-1604, 1607; #1313).
+		constexpr std::array<const char*, 10> g_displayKeys = {"ui.showEventNames", "ui.hideTruncatedEventNames",
+			"ui.highlightSelectedEventBorders", "ui.eventOpacity", "ui.smallestTrackHeightForData",
+			"ui.smallestTrackHeightForName", "ui.waveformBrightness", "ui.partDataMode", "ui.showControllers",
+			"ui.noteBrightness"};
 
 		// What the display listens to in its root element and in its document.
 		constexpr std::array<Rml::EventId, 6> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
@@ -98,8 +109,11 @@ namespace gnubase::ui
 		m_mutedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "muted-events");
 		m_selectedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "selected-events");
 		m_waveforms = std::make_unique<EventWaveforms>(binding, add(*m_area, "div", "waveforms"));
+		m_contents = &addCanvas<PartContents>(*m_area, "part-contents", "part-contents");
+		m_names = &addCanvas<EventNames>(*m_area, "event-names", "event-names");
 		m_fadeLines = &addCanvas<FadeLines>(*m_area, "fade-lines", "fades");
 		m_partMarks = &add(*m_area, "div", "part-marks");
+		m_cuts = &add(*m_area, "div", "cutting-positions");
 		m_automationArea = &add(*m_area, "div", "automation-lanes");
 		m_editor = &add(*m_area, "div", "automation-editor");
 		m_rangeElement = &add(*m_area, "div", "range-selection");
@@ -107,9 +121,13 @@ namespace gnubase::ui
 		m_crossVertical = &add(*m_area, "div", "cross-hair-vertical");
 		m_crossHorizontal = &add(*m_area, "div", "cross-hair-horizontal");
 		m_cursorLine = &add(timeline, "div", "project-cursor");
+		m_stepCursor = &add(timeline, "div", "step-input-cursor");
+		m_stepCursor->SetClass("hidden", true);
+		add(*m_stepCursor, "div", "step-input-handle");
 		for (const Rml::EventId id : g_rootEvents)
 			root.AddEventListener(id, this);
-		root.AddEventListener(g_fileDropEvent, this);
+		// On the document, for files dropped on the track list too.
+		m_document->AddEventListener(g_fileDropEvent, this);
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->AddEventListener(id, this);
 		findControls();
@@ -126,6 +144,19 @@ namespace gnubase::ui
 		addToolActions();
 		addTimeWarpActions();
 		addAutomationActions();
+		// While Snap to Zero Crossing is still moving the range's edges, actions wait, so that an edit right after a
+		// range is drawn, such as Delete, edits the range where its edges go; engine key commands wait with them.
+		for (auto& [name, action] : m_actions)
+			action = [this, run = std::move(action)]
+			{
+				// The binding holds it, which may outlive the display.
+				m_binding.afterAwaited(
+					[run, alive = std::weak_ptr<bool>(m_alive)]
+					{
+						if (!alive.expired())
+							run();
+					});
+			};
 		setToolModifiers(Json::object());
 
 		for (const char* event : {"history.changed", "project.reset"})
@@ -135,6 +166,15 @@ namespace gnubase::ui
 					requestProject();
 					requestMarkers();
 				}));
+		// A dialog for the old project's events or parts closes: OK would act on whatever has those ids in the new
+		// project (#1586).
+		m_subscriptions.push_back(m_binding.on("project.reset",
+			[this](const engine::Event&)
+			{
+				if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get());
+					dialog != nullptr && m_dialogForObjects)
+					closeDialog(*dialog, "cancel");
+			}));
 		// The ruler follows snap.changed; keep the cached primary format without another project.get.
 		m_subscriptions.push_back(m_binding.on("project.changed",
 			[this](const engine::Event& event)
@@ -145,6 +185,14 @@ namespace gnubase::ui
 			}));
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
+		m_subscriptions.push_back(
+			m_binding.on("chordPads.changed", [this](const engine::Event& event) { followChordPads(event.data); }));
+		m_binding.send("chordPads.get", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					followChordPads(result.value);
+			});
 		m_subscriptions.push_back(m_binding.on("snap.changed",
 			[this](const engine::Event& event)
 			{
@@ -186,6 +234,21 @@ namespace gnubase::ui
 					m_zoomHorizontalOnly = zoom->get<bool>();
 					m_zoomHorizontalOnlyKnown = true;
 				}
+				if (const auto muted = values.find("editing.treatMutedAudioLikeDeleted"); muted != values.end())
+				{
+					m_treatMutedKnown = true;
+					setTreatMutedAudioLikeDeleted(muted->get<bool>());
+				}
+				bool display = false;
+				for (const char* key : g_displayKeys)
+					if (const auto value = values.find(key); value != values.end())
+					{
+						takeDisplayPreference(key, *value);
+						m_displayKnown.insert(key);
+						display = true;
+					}
+				if (display)
+					showDisplayPreferences();
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
@@ -204,6 +267,22 @@ namespace gnubase::ui
 					showPresets();
 				}
 			});
+		// Shown once all have answered, not once each.
+		m_displayAsked = g_displayKeys.size();
+		for (const char* key : g_displayKeys)
+			m_binding.send("settings.get", {{"key", key}},
+				[this, alive, name = std::string(key)](const engine::Result& result)
+				{
+					if (alive.expired())
+						return;
+					if (result.ok() && m_displayKnown.count(name) == 0) // newer changes win
+						takeDisplayPreference(name, result.value.at("value"));
+					if (m_displayAsked == 0)
+						return;
+					--m_displayAsked;
+					if (m_displayAsked == 0)
+						showDisplayPreferences();
+				});
 		m_binding.send("settings.get", {{"key", "ui.folderData"}},
 			[this, alive](const engine::Result& result)
 			{
@@ -236,6 +315,12 @@ namespace gnubase::ui
 				if (!alive.expired() && result.ok() && !m_zoomHorizontalOnlyKnown)
 					m_zoomHorizontalOnly = result.value.at("value").get<bool>();
 			});
+		m_binding.send("settings.get", {{"key", "editing.treatMutedAudioLikeDeleted"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_treatMutedKnown) // newer changes win
+					setTreatMutedAudioLikeDeleted(result.value.at("value").get<bool>());
+			});
 		requestMarkers();
 		showAutoScroll();
 		showTools();
@@ -255,7 +340,7 @@ namespace gnubase::ui
 			return;
 		for (const Rml::EventId id : g_rootEvents)
 			m_root->RemoveEventListener(id, this);
-		m_root->RemoveEventListener(g_fileDropEvent, this);
+		m_document->RemoveEventListener(g_fileDropEvent, this);
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->RemoveEventListener(id, this);
 	}
@@ -378,6 +463,7 @@ namespace gnubase::ui
 		m_laneTakes.clear();
 		m_events.clear();
 		m_independent.clear();
+		m_audioSpans.clear();
 		m_mutedPieces.clear();
 		m_fades.clear();
 		readAutomation(project);
@@ -440,9 +526,26 @@ namespace gnubase::ui
 		for (const Json& file : project.at("media"))
 			media[file.at("id").get<uint64_t>()] = &file;
 		std::map<uint64_t, uint64_t> clipMedia;
+		std::map<uint64_t, std::string> clipNames;
 		for (const Json& clip : project.at("clips"))
+		{
 			clipMedia[clip.at("id").get<uint64_t>()] = clip.at("media").get<uint64_t>();
+			clipNames[clip.at("id").get<uint64_t>()] = clip.value("name", std::string());
+		}
+		// The name an event shows: an audio event its clip's, as it has none of its own (#1313).
+		const auto nameOf = [&clipNames](const Json& event)
+		{
+			if (const auto clip = event.find("clip"); clip != event.end())
+			{
+				const auto found = clipNames.find(clip->get<uint64_t>());
+				return found == clipNames.end() ? std::string() : found->second;
+			}
+			return event.value("name", std::string());
+		};
 		m_folderData.assign(m_tracks.size(), {});
+		m_trackNames.assign(m_tracks.size(), {});
+		m_trackContents.assign(m_tracks.size(), {});
+		m_contentsHeights.clear();
 		m_end = 0.0;
 		// The display lane of an event's own lane, if its track's lanes show.
 		const auto takeLane = [&takeLanes](const Json& event)
@@ -450,15 +553,18 @@ namespace gnubase::ui
 			const auto found = takeLanes.find({event.at("track").get<uint64_t>(), event.value("lane", 0)});
 			return found == takeLanes.end() ? std::optional<size_t>() : found->second;
 		};
+		// An event's own color, or else its track's (reference manual p. 114).
+		const auto colorOf = [&colors](const Json& event)
+		{
+			const Json& own = event.at("color");
+			return own.is_string() ? spanColor(own.get<std::string>()) : colors[event.at("track").get<uint64_t>()];
+		};
 		// With onTrackLane false, the track's lane gets no span for it: audio events show there where they are in
 		// front.
 		const auto addEvent = [&](const Json& event, double start, double end, bool onTrackLane = true)
 		{
 			const auto track = event.at("track").get<uint64_t>();
-			// Its own color, or else its track's (reference manual p. 114).
-			const Json& own = event.at("color");
-			TimeSpan span{start, end - start};
-			span.color = own.is_string() ? spanColor(own.get<std::string>()) : colors[track];
+			const TimeSpan span{start, end - start, colorOf(event)};
 			// The folders around the track show it as a data block.
 			for (uint64_t folder = parents[track]; folder != 0; folder = parents[folder])
 				if (const auto lane = lanes.find(folder); lane != lanes.end() &&
@@ -467,38 +573,55 @@ namespace gnubase::ui
 			if (lanes.count(track) == 0)
 				return;
 			if (onTrackLane)
+			{
 				m_tracks[lanes[track]].events.push_back(span);
+				m_trackNames[lanes[track]].names.push_back({start, end - start, nameOf(event)});
+			}
 			m_events.push_back({event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false),
 				std::nullopt, !onTrackLane, !onTrackLane});
 			if (const std::optional<size_t> taken = takeLane(event))
 			{
 				m_tracks[*taken].events.push_back(span);
+				m_trackNames[*taken].names.push_back({start, end - start, nameOf(event)});
 				m_events.push_back({event.at("id").get<uint64_t>(), *taken, start, end, event.value("mute", false),
 					std::nullopt, false, !onTrackLane});
 			}
 			m_end = std::max(m_end, end);
 		};
-		// Audio parts (#471) show as parts; their events only as the waveforms within them.
-		std::map<uint64_t, std::pair<double, double>> audioParts;
+		// Audio parts (#471) show as parts; their events only as the waveforms within them, in the part's color
+		// (#1312).
+		struct AudioPart
+		{
+			double start = 0.0;
+			double end = 0.0;
+			uint32_t color = 0;
+			bool independent = false; // it has events, and all of them are Independent (#1644)
+			bool follows = false;     // one of them follows global transposition
+		};
+		std::map<uint64_t, AudioPart> audioParts;
 		for (const Json& part : project.at("audioParts"))
 		{
 			const auto track = part.at("track").get<uint64_t>();
 			const auto position = part.at("position").get<int64_t>();
 			const double start = seconds(position, linear[track]);
 			const double end = seconds(position + part.at("length").get<int64_t>(), linear[track]);
-			audioParts[part.at("id").get<uint64_t>()] = {start, end};
+			audioParts[part.at("id").get<uint64_t>()] = {start, end, colorOf(part), false, false};
 			addEvent(part, start, end);
 		}
 		std::vector<EventWaveforms::Event> waves;
-		// Audio events in the order they are stacked, the one in front last, so that a click finds it (#99). Muted
-		// ones play nothing and hide nothing (makePlaylist): they come behind every other.
+		// Audio events in the order they are stacked, the one in front last, so that a click finds it (#99). With
+		// editing.treatMutedAudioLikeDeleted, muted ones play nothing and hide nothing (makePlaylist): they come behind
+		// every other. Without it, they keep their place in the stack and silence what lies behind them.
 		std::vector<const Json*> stacked;
 		for (const Json& event : project.at("audioEvents"))
 			stacked.push_back(&event);
-		const auto front = [](const Json* event)
+		const bool asDeleted = m_treatMutedAudioLikeDeleted;
+		const auto front = [asDeleted](const Json* event)
 		{
 			const auto own = event->value("front", uint64_t{0});
-			return std::make_pair(!event->value("mute", false), own != 0 ? own : event->at("id").get<uint64_t>());
+			const auto id = event->at("id").get<uint64_t>();
+			return std::make_tuple(
+				asDeleted && !event->value("mute", false), own != 0 ? own : id, event->value("rank", int64_t{0}), id);
 		};
 		std::stable_sort(
 			stacked.begin(), stacked.end(), [&front](const Json* a, const Json* b) { return front(a) < front(b); });
@@ -508,6 +631,7 @@ namespace gnubase::ui
 			TimeSpan span;
 			EventWaveforms::Event wave; // with media 0 for none
 			bool mute = false;
+			std::string name;
 		};
 		std::map<size_t, std::vector<Piece>> pieces; // by lane
 		for (const Json* stackedEvent : stacked)
@@ -517,25 +641,40 @@ namespace gnubase::ui
 			const auto file = media.find(clipMedia[event.at("clip").get<uint64_t>()]);
 			const double rate = file == media.end() ? 0.0 : file->second->at("sampleRate").get<double>();
 			const double start = seconds(event.at("position").get<int64_t>(), linear[track]);
-			const double length = rate > 0.0 ? event.at("length").get<double>() / rate : 0.0;
+			// A warped event ends where its warp puts its end (playedLength, in project samples); its waveform is
+			// drawn stretched evenly to fit, at waveRate clip frames a second.
+			// ponytail: an even stretch, not the warp's own, until the waveforms follow the warp map.
+			const auto played = event.find("playedLength");
+			double length = rate > 0.0 ? event.at("length").get<double>() / rate : 0.0;
+			if (played != event.end())
+				length = played->get<double>() / m_time.sampleRate;
+			const double waveRate =
+				played != event.end() && length > 0.0 ? event.at("length").get<double>() / length : rate;
+			m_audioSpans[event.at("id").get<uint64_t>()] = {track, start, start + length};
+			const bool independent = event.value("globalTranspose", std::string()) == "independent"; // #1368
 			if (const auto part = audioParts.find(event.value("part", uint64_t{0})); part != audioParts.end())
 			{
-				const double from = std::max(start, part->second.first);
-				const double to = std::min(start + length, part->second.second);
+				// The part shows the mark of Independent events (p. 421) when all its events are.
+				part->second.follows = part->second.follows || !independent;
+				part->second.independent = independent && !part->second.follows;
+				const double from = std::max(start, part->second.start);
+				const double to = std::min(start + length, part->second.end);
 				if (file != media.end() && rate > 0.0 && lanes.count(track) != 0 && to > from)
-					waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {from, to - from}, file->first, rate,
-						file->second->at("channels").get<int>(),
-						event.at("offset").get<int64_t>() + static_cast<int64_t>(std::llround((from - start) * rate))});
+					waves.push_back(
+						{event.at("id").get<uint64_t>(), lanes[track], {from, to - from, part->second.color},
+							file->first, waveRate, file->second->at("channels").get<int>(),
+							event.at("offset").get<int64_t>() +
+								static_cast<int64_t>(std::llround((from - start) * waveRate))});
 				continue;
 			}
 			addEvent(event, start, start + length, false);
+			if (independent)
+				m_independent.insert(event.at("id").get<uint64_t>());
 			if (lanes.count(track) != 0)
 			{
-				const Json& own = event.at("color");
-				Piece piece{{start, length, own.is_string() ? spanColor(own.get<std::string>()) : colors[track]}, {},
-					event.value("mute", false)};
+				Piece piece{{start, length, colorOf(event)}, {}, event.value("mute", false), nameOf(event)};
 				if (file != media.end() && rate > 0.0)
-					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, rate,
+					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], piece.span, file->first, waveRate,
 						file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()};
 				std::vector<Piece> covered;
 				for (const Piece& other : pieces[lanes[track]])
@@ -563,43 +702,80 @@ namespace gnubase::ui
 			const Json& snapPoint = event.at("snapPoint");
 			const double into = snapPoint.is_null() || rate <= 0.0
 				? -1.0
-				: (snapPoint.get<double>() - event.at("offset").get<double>()) / rate;
+				: (snapPoint.get<double>() - event.at("offset").get<double>()) / waveRate;
 			for (auto shown = m_events.rbegin(); shown != m_events.rend() && shown->id == event.at("id"); ++shown)
 				if (into >= 0.0 && into < length)
 					shown->snapPoint = start + into;
 			if (rate > 0.0)
-				readFades(event, rate);
+				readFades(event, rate, waveRate);
 			if (const std::optional<size_t> taken = takeLane(event); taken && file != media.end() && rate > 0.0)
-				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length}, file->first, rate,
-					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
+				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length, colorOf(event)}, file->first,
+					waveRate, file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
 		}
 		for (const auto& [lane, shown] : pieces)
 			for (const Piece& piece : shown)
 			{
 				m_tracks[lane].events.push_back(piece.span);
+				m_trackNames[lane].names.push_back({piece.span.start, piece.span.length, piece.name});
 				if (piece.mute)
 					m_mutedPieces.emplace_back(lane, piece.span);
 				if (piece.wave.media == 0)
 					continue;
 				EventWaveforms::Event wave = piece.wave;
 				wave.offset += std::llround((piece.span.start - wave.time.start) * wave.sampleRate);
-				wave.time = {piece.span.start, piece.span.length};
+				wave.time = piece.span;
 				waves.push_back(wave);
 			}
 		m_waveforms->setEvents(waves);
+		for (const auto& [id, part] : audioParts)
+			if (part.independent)
+				m_independent.insert(id);
 		for (const Json& part : project.at("midiParts"))
 		{
 			const auto track = part.at("track").get<uint64_t>();
 			const auto position = part.at("position").get<int64_t>();
-			addEvent(part, seconds(position, linear[track]),
-				seconds(position + part.at("length").get<int64_t>(), linear[track]));
+			const double start = seconds(position, linear[track]);
+			const double end = seconds(position + part.at("length").get<int64_t>(), linear[track]);
+			addEvent(part, start, end);
 			if (part.value("globalTranspose", std::string()) == "independent")
 				m_independent.insert(part.at("id").get<uint64_t>());
+			// What it holds, in seconds (#1313): notes and the other events at their ticks from the part's start.
+			PartContents::Part contents{start, end - start, {}, {}};
+			const auto from = m_time.tempo.toTicks(start);
+			if (const auto notes = part.find("notes"); notes != part.end())
+				for (const Json& note : *notes)
+				{
+					const auto at = from + note.at("position").get<int64_t>();
+					const double noteStart = m_time.tempo.toSeconds(at);
+					contents.notes.push_back(
+						{noteStart, m_time.tempo.toSeconds(at + note.at("length").get<int64_t>()) - noteStart,
+							note.at("pitch").get<int>()});
+				}
+			if (const auto controllers = part.find("controllers"); controllers != part.end())
+				for (const Json& controller : *controllers)
+					contents.controllers.push_back(
+						{m_time.tempo.toSeconds(from + controller.at("position").get<int64_t>()),
+							controller.value("value", 1.0)});
+			std::sort(contents.notes.begin(), contents.notes.end(),
+				[](const PartContents::Note& a, const PartContents::Note& b) { return a.start < b.start; });
+			std::sort(contents.controllers.begin(), contents.controllers.end(),
+				[](const PartContents::Controller& a, const PartContents::Controller& b)
+				{ return a.position < b.position; });
+			if (const auto lane = lanes.find(track); lane != lanes.end())
+				m_trackContents[lane->second].parts.push_back(contents);
+			if (const std::optional<size_t> taken = takeLane(part))
+				m_trackContents[*taken].parts.push_back(contents);
 		}
 		for (std::vector<EventLanes::Lane>* list : {&m_tracks, &m_folderData})
 			for (EventLanes::Lane& lane : *list)
 				std::sort(lane.events.begin(), lane.events.end(),
 					[](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
+		for (EventNames::Lane& lane : m_trackNames)
+			std::stable_sort(lane.names.begin(), lane.names.end(),
+				[](const EventNames::Name& a, const EventNames::Name& b) { return a.start < b.start; });
+		for (PartContents::Lane& lane : m_trackContents)
+			std::stable_sort(lane.parts.begin(), lane.parts.end(),
+				[](const PartContents::Part& a, const PartContents::Part& b) { return a.start < b.start; });
 		// Events that are gone leave the selection.
 		std::vector<uint64_t> selection;
 		for (const uint64_t id : m_selection)
@@ -671,6 +847,7 @@ namespace gnubase::ui
 		m_mutedLanes->setLanes(std::move(muted));
 		m_selectedLanes->setLanes(std::move(selected));
 		m_folderLanes->setLanes(std::move(folders));
+		showNamesAndContents(lanes);
 		m_lanes->setLanes(std::move(lanes));
 		// The overview line has every event in one row, as high as the line is.
 		std::sort(all.begin(), all.end(), [](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
@@ -714,6 +891,39 @@ namespace gnubase::ui
 		m_cursor = static_cast<double>(sample) / m_time.sampleRate;
 		if (alive())
 			m_cursorLine->SetProperty(Rml::PropertyId::Left, dp((m_cursor - m_view.start) / m_view.scale));
+	}
+
+	std::optional<std::pair<uint64_t, int64_t>> EventDisplay::trackAt(float x, float y) const
+	{
+		if (!alive())
+			return std::nullopt;
+		const double across = dpFrom(*m_lanes, x);
+		const double down = (y - m_lanes->GetAbsoluteTop()) / dpRatio();
+		if (across < 0.0 || down < 0.0 || across > width() || down > height())
+			return std::nullopt;
+		const size_t lane = laneAt(down + m_view.top);
+		if (lane >= m_laneTracks.size())
+			return std::nullopt;
+		const double seconds = std::max(m_view.start + (across * m_view.scale), 0.0);
+		return std::make_pair(m_laneTracks[lane], static_cast<int64_t>(std::llround(m_time.tempo.toTicks(seconds))));
+	}
+
+	void EventDisplay::followChordPads(const Json& pads)
+	{
+		m_stepInput = pads.value("stepInput", false);
+		m_stepTicks = pads.value("stepPosition", int64_t{0});
+		placeStepCursor();
+	}
+
+	void EventDisplay::placeStepCursor()
+	{
+		if (!alive() || m_stepCursor == nullptr)
+			return;
+		if (m_stepCursor->IsClassSet("hidden") == m_stepInput)
+			m_stepCursor->SetClass("hidden", !m_stepInput);
+		const double seconds = m_time.tempo.toSeconds(m_stepTicks);
+		if (m_stepInput)
+			m_stepCursor->SetProperty(Rml::PropertyId::Left, dp((seconds - m_view.start) / m_view.scale));
 	}
 
 	void EventDisplay::follow()
@@ -843,19 +1053,24 @@ namespace gnubase::ui
 			return;
 		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_ruler), static_cast<Rml::Element*>(m_lanes),
 				 static_cast<Rml::Element*>(m_mutedLanes), static_cast<Rml::Element*>(m_selectedLanes),
-				 static_cast<Rml::Element*>(m_fadeLines)})
+				 static_cast<Rml::Element*>(m_fadeLines), static_cast<Rml::Element*>(m_contents),
+				 static_cast<Rml::Element*>(m_names)})
 		{
 			canvas->SetAttribute("start", m_view.start);
 			canvas->SetAttribute("scale", m_view.scale);
 		}
 		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_lanes), static_cast<Rml::Element*>(m_mutedLanes),
-				 static_cast<Rml::Element*>(m_selectedLanes), static_cast<Rml::Element*>(m_fadeLines)})
+				 static_cast<Rml::Element*>(m_selectedLanes), static_cast<Rml::Element*>(m_fadeLines),
+				 static_cast<Rml::Element*>(m_contents), static_cast<Rml::Element*>(m_names)})
 			canvas->SetAttribute("scroll-top", m_view.top);
-		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio()});
+		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio(),
+			static_cast<double>(m_display.dataHeight), m_display.waveformBrightness / 100.0});
 		setCursor(m_cursorSample);
+		placeStepCursor();
 		showRange();
 		placeAutomation();
 		placePartMarks();
+		placeCuttingPositions();
 
 		// The overview line shows the whole project, and the view as a rectangle.
 		const double across = m_overview->GetClientWidth() / dpRatio();
@@ -897,6 +1112,38 @@ namespace gnubase::ui
 			}
 	}
 
+	void EventDisplay::setCuttingPositions(std::vector<int64_t> positions)
+	{
+		if (positions == m_cuttingPositions)
+			return;
+		m_cuttingPositions = std::move(positions);
+		placeCuttingPositions();
+	}
+
+	void EventDisplay::placeCuttingPositions()
+	{
+		if (!alive())
+			return;
+		const double scale = m_view.scale > 0.0 ? m_view.scale : g_minScale;
+		const auto seconds = [this](int64_t samples) { return static_cast<double>(samples) / m_time.sampleRate; };
+		std::vector<double> lines;
+		for (const int64_t position : m_cuttingPositions)
+			if (const double x = (seconds(position) - m_view.start) / scale;
+				x >= 0.0 && x <= width() && (lines.empty() || x - lines.back() >= g_cutDistance))
+				lines.push_back(x);
+		if (lines.size() != m_cutsShown)
+		{
+			std::string rml;
+			for (size_t i = 0; i < lines.size(); ++i)
+				rml += R"(<div class="cutting-position"/>)";
+			m_cuts->SetInnerRML(rml);
+			m_cutsShown = lines.size();
+		}
+		for (size_t i = 0; i < lines.size(); ++i)
+			if (Rml::Element* line = m_cuts->GetChild(static_cast<int>(i)))
+				line->SetProperty(Rml::PropertyId::Left, dp(lines[i]));
+	}
+
 	double EventDisplay::ownHeight(uint64_t track) const
 	{
 		const auto height = m_heights.find(track);
@@ -925,9 +1172,9 @@ namespace gnubase::ui
 		setView(m_view);
 	}
 
-	void EventDisplay::setTrackHeights(double height)
+	void EventDisplay::setTrackHeights(const std::vector<uint64_t>& tracks, double height)
 	{
-		for (const uint64_t track : m_laneTracks)
+		for (const uint64_t track : tracks)
 			m_heights[track] = std::clamp(height, g_minTrackHeight, g_maxTrackHeight);
 		setLanes();
 		setView(m_view);
@@ -963,11 +1210,98 @@ namespace gnubase::ui
 		showProject();
 	}
 
+	void EventDisplay::takeDisplayPreference(const std::string& key, const Json& value)
+	{
+		DisplayPreferences& display = m_display;
+		if (key == "ui.showEventNames")
+			display.names = value.get<bool>();
+		else if (key == "ui.hideTruncatedEventNames")
+			display.hideTruncated = value.get<bool>();
+		else if (key == "ui.highlightSelectedEventBorders")
+			display.highlightBorders = value.get<bool>();
+		else if (key == "ui.eventOpacity")
+			display.eventOpacity = value.get<int>();
+		else if (key == "ui.smallestTrackHeightForData")
+			display.dataHeight = value.get<int>();
+		else if (key == "ui.smallestTrackHeightForName")
+			display.nameHeight = value.get<int>();
+		else if (key == "ui.waveformBrightness")
+			display.waveformBrightness = value.get<int>();
+		else if (key == "ui.partDataMode")
+			display.partDataMode = value.get<std::string>();
+		else if (key == "ui.showControllers")
+			display.controllers = value.get<bool>();
+		else if (key == "ui.noteBrightness")
+			display.noteBrightness = value.get<int>();
+	}
+
+	void EventDisplay::showDisplayPreferences()
+	{
+		if (!alive())
+			return;
+		// Highlight Borders of Selected Events: a state for the style sheets to show.
+		m_root->SetClass("highlight-selected-borders", m_display.highlightBorders);
+		// Event Opacity: the events' bodies, also selected and muted ones and folders' data blocks.
+		for (EventLanes* lanes : {m_lanes, m_mutedLanes, m_selectedLanes, m_folderLanes})
+			lanes->SetAttribute("body-opacity", m_display.eventOpacity / 100.0);
+		if (m_display.hideTruncated)
+			m_names->SetAttribute("hide-truncated", true);
+		else
+			m_names->RemoveAttribute("hide-truncated");
+		m_contents->SetAttribute("brightness", m_display.noteBrightness / 100.0);
+		m_contentsHeights.clear();
+		setLanes();
+		apply();
+	}
+
+	void EventDisplay::showNamesAndContents(const std::vector<EventLanes::Lane>& lanes)
+	{
+		std::vector<float> heights;
+		heights.reserve(lanes.size());
+		for (const EventLanes::Lane& lane : lanes)
+			heights.push_back(lane.height);
+		// A drag sets the lanes again on every move: the names and contents stay as they are while the lanes do.
+		if (!heights.empty() && heights == m_contentsHeights)
+			return;
+		m_contentsHeights = heights;
+		std::vector<EventNames::Lane> names(lanes.size());
+		std::vector<PartContents::Lane> contents(lanes.size());
+		const bool data = m_display.partDataMode != "off";
+		for (size_t i = 0; i < lanes.size(); ++i)
+		{
+			names[i].height = lanes[i].height;
+			contents[i].height = lanes[i].height;
+			if (i < m_laneAutomation.size() && m_laneAutomation[i] != 0)
+				continue;
+			// Smallest Track Height to Show Name and to Show Data, in dp as the lanes are high now.
+			if (m_display.names && lanes[i].height >= static_cast<float>(m_display.nameHeight) &&
+				i < m_trackNames.size())
+				names[i].names = m_trackNames[i].names;
+			if (data && lanes[i].height >= static_cast<float>(m_display.dataHeight) && i < m_trackContents.size())
+			{
+				contents[i].parts = m_trackContents[i].parts;
+				if (!m_display.controllers)
+					for (PartContents::Part& part : contents[i].parts)
+						part.controllers.clear();
+			}
+		}
+		m_names->setLanes(std::move(names));
+		m_contents->setLanes(std::move(contents));
+	}
+
 	void EventDisplay::setFolderMode(const std::string& mode)
 	{
 		if (mode == m_folderMode)
 			return;
 		m_folderMode = mode;
+		showProject();
+	}
+
+	void EventDisplay::setTreatMutedAudioLikeDeleted(bool on)
+	{
+		if (on == m_treatMutedAudioLikeDeleted)
+			return;
+		m_treatMutedAudioLikeDeleted = on;
 		showProject();
 	}
 
@@ -1108,6 +1442,9 @@ namespace gnubase::ui
 		case Rml::EventId::Mousedown:
 			if (inInPlaceEditor(target))
 				break; // the editor's (ui/inplaceeditor.h)
+			runWaitingActions();
+			if (!alive())
+				break;
 			if (target != nullptr && event.GetParameter<int>("button", 0) == 0)
 				mouseDown(event, *target);
 			else if (event.GetParameter<int>("button", 0) == 1 && inside(target, m_area))
@@ -1209,7 +1546,7 @@ namespace gnubase::ui
 			m_dragAt = dpFrom(*m_ruler, x);
 			m_dragTime = m_view.start + (m_dragAt * m_view.scale);
 			m_drag = Drag::Ruler;
-			m_binding.send("transport.locate", {{"position", std::llround(m_dragTime * m_time.sampleRate)}});
+			m_binding.send("transport.locate", {{"position", positionSamples(m_dragTime, m_time.sampleRate)}});
 		}
 		else if (inside(&target, m_overview))
 		{

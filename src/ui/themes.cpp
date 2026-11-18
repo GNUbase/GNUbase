@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/themes.h"
 
+#include "engine/schema.h"
 #include "platform/files.h"
 #include "platform/log.h"
 
@@ -101,6 +102,24 @@ namespace gnubase::ui
 				throw std::runtime_error(
 					"the theme style sheet " + file.u8string() + " must have all its rules inside " + query + " { }");
 		}
+
+		// The name the UI shows for a theme: its manifest's displayName, or its id when the manifest has none, so
+		// that documents never name a theme (docs/features/themes.md).
+		std::string displayName(const std::filesystem::path& folder)
+		{
+			std::string id = folder.filename().u8string();
+			const std::filesystem::path file = folder / "manifest.json";
+			const std::optional<std::string> text = files::readFile(file);
+			const engine::Json manifest = text ? engine::Json::parse(*text, nullptr, false) : engine::Json();
+			if (manifest.is_object())
+			{
+				const auto name = manifest.find("displayName");
+				if (name != manifest.end() && name->is_string() && !name->get<std::string>().empty())
+					return name->get<std::string>();
+			}
+			logging::warning("The theme {} has no manifest {} with a name to show for it", id, file.u8string());
+			return id;
+		}
 	}
 
 	Themes::Themes(const std::filesystem::path& resources)
@@ -119,9 +138,9 @@ namespace gnubase::ui
 			throw std::runtime_error("no themes in " + (resources / "themes").u8string());
 		for (const std::filesystem::path& folder : folders)
 		{
-			const std::string name = folder.filename().u8string();
-			checkTheme(name, folder / "theme.rcss");
-			m_names.push_back(name);
+			const std::string id = folder.filename().u8string();
+			checkTheme(id, folder / "theme.rcss");
+			m_themes.push_back({id, displayName(folder)});
 			styleSheets.push_back((folder / "theme.rcss").generic_u8string());
 		}
 
@@ -130,7 +149,7 @@ namespace gnubase::ui
 				throw std::runtime_error("RmlUi cannot read the style sheet " + file);
 		m_loader = std::make_unique<Loader>(std::move(styleSheets));
 		Rml::RegisterPlugin(m_loader.get());
-		logging::info("Themes: {} from {}", m_names.size(), resources.u8string());
+		logging::info("Themes: {} from {}", m_themes.size(), resources.u8string());
 	}
 
 	Themes::~Themes()
@@ -138,8 +157,8 @@ namespace gnubase::ui
 		Rml::UnregisterPlugin(m_loader.get());
 	}
 
-	bool Themes::has(std::string_view name) const
+	bool Themes::has(std::string_view id) const
 	{
-		return std::find(m_names.begin(), m_names.end(), name) != m_names.end();
+		return std::any_of(m_themes.begin(), m_themes.end(), [id](const Theme& theme) { return theme.id == id; });
 	}
 }

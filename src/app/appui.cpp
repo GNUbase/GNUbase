@@ -2,11 +2,14 @@
 #include "app/appui.h"
 
 #include "app/uitools.h"
+#include "platform/files.h"
 #include "platform/log.h"
 #include "ui/chordpads.h"
+#include "ui/displays.h"
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
 #include "ui/inspector.h"
+#include "ui/keyeditor.h"
 #include "ui/poolpanel.h"
 #include "ui/timeformat.h"
 #include "ui/widgets.h"
@@ -43,6 +46,83 @@ namespace gnubase::app
 			return ui::Themes(resources);
 		}
 
+		// The tracks that track.import or track.export left out (skipped) for the message that tells, or empty.
+		std::string leftOut(const engine::Json& result)
+		{
+			const engine::Json& skipped = result.at("skipped");
+			if (skipped.empty())
+				return {};
+			std::string names;
+			for (const engine::Json& track : skipped)
+				names += (names.empty() ? "" : ", ") + track.at("name").get<std::string>();
+			return std::string(skipped.size() == 1 ? "the track " : "the tracks ") + names +
+				", which can't be imported or exported yet";
+		}
+
+		// The key command assignments as an HTML table (reference manual p. 1560): every command with the keys that run
+		// it, by category. File > Export > Key Command Assignments writes it.
+		std::string keyAssignmentsHtml(const engine::Json& assignments)
+		{
+			const auto escape = [](const std::string& text)
+			{
+				std::string escaped;
+				for (const char character : text)
+				{
+					if (character == '&')
+						escaped += "&amp;";
+					else if (character == '<')
+						escaped += "&lt;";
+					else if (character == '>')
+						escaped += "&gt;";
+					else if (character == '"')
+						escaped += "&quot;";
+					else
+						escaped += character;
+				}
+				return escaped;
+			};
+			const auto parameters = [](const engine::Json& values)
+			{
+				if (!values.is_object() || values.empty())
+					return std::string();
+				std::vector<std::string> names;
+				for (const auto& item : values.items())
+					names.push_back(item.key());
+				std::sort(names.begin(), names.end());
+				std::string text = " (";
+				bool first = true;
+				for (const std::string& name : names)
+				{
+					if (!first)
+						text += ", ";
+					first = false;
+					const engine::Json& value = values.at(name);
+					text += name + ": " + (value.is_string() ? value.get<std::string>() : value.dump());
+				}
+				return text + ")";
+			};
+			std::ostringstream html;
+			html << "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+					"<title>Key Command Assignments</title>\n<style>\n"
+					"body { font-family: sans-serif; margin: 2em; }\n"
+					"table { border-collapse: collapse; }\n"
+					"th, td { border: 1px solid #808080; padding: 0.3em 0.8em; text-align: left; vertical-align: top; "
+					"}\n"
+					"th { background: #eeeeee; }\n</style>\n</head>\n<body>\n<h1>Key Command Assignments</h1>\n"
+					"<table>\n<thead><tr><th>Category</th><th>Command</th><th>Key</th></tr></thead>\n<tbody>\n";
+			for (const engine::Json& entry : assignments)
+			{
+				const std::string command = entry.at("command").get<std::string>();
+				std::string keys;
+				for (const engine::Json& key : entry.at("keys"))
+					keys += (keys.empty() ? "" : ", ") + escape(key.get<std::string>());
+				html << "<tr><td>" << escape(command.substr(0, command.find('.'))) << "</td><td>"
+					 << escape(command + parameters(entry.at("parameters"))) << "</td><td>" << keys << "</td></tr>\n";
+			}
+			html << "</tbody>\n</table>\n</body>\n</html>\n";
+			return html.str();
+		}
+
 		struct ProjectPanel
 		{
 			const char* id;
@@ -68,7 +148,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 91> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 92> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -113,6 +193,8 @@ namespace gnubase::app
 				nullptr},
 			{"audio.crossfade",
 				"Crossfades the selected audio events, or opens the crossfade editor for their crossfade.", "X"},
+			{"audio.crossfadeEditor", "Opens the crossfade editor for the crossfade of the selected audio events.",
+				nullptr},
 			{"audio.removeFadeIn", "Removes the fade in of the selected audio events.", nullptr},
 			{"audio.removeFadeOut", "Removes the fade out of the selected audio events.", nullptr},
 			{"audio.removeFades", "Removes the fades and crossfades of the selected audio events.", nullptr},
@@ -205,6 +287,8 @@ namespace gnubase::app
 			{"signature", "enter.signature", "Edits the time signature in the transport bar.", "Shift+C"},
 		}};
 
+		// A new transport panel's size until it takes the width of its shown sections (ui::TransportPanelFit), and the
+		// one it keeps without a display or without a shown section.
 		constexpr ui::Size g_transportPanelSize{1100, 48};
 		// The time display window at each of its sizes (ui.timeDisplay); the theme sizes its digits to fit.
 		constexpr std::array<ui::Size, 5> g_timeDisplaySizes{
@@ -219,7 +303,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 37> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 32> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected (unless "
 				"ui.upDownSelectsTracksOnly).",
@@ -243,16 +327,17 @@ namespace gnubase::app
 				"then follows the chord track.",
 				nullptr},
 			{"track.createChordEventsSelected",
-				"Create Chord Events: chord events from the selected audio tracks' events, and from the MIDI notes of "
-				"the selected MIDI and instrument tracks with the Create Chord Events dialog's options.",
+				"Create Chord Events: chord events from the selected audio events and from the MIDI notes of the "
+				"selected MIDI parts, with the Create Chord Events dialog's options; with none selected, from those "
+				"of the selected tracks. Audio events in audio parts don't count.",
 				nullptr},
 			{"track.mapToChordTrackSelected",
-				"Map to Chord Track: moves the notes of the selected MIDI and instrument tracks to the chord track's "
-				"chords, by the Map to Chord Track dialog's mapping mode.",
+				"Map to Chord Track: moves the notes of the selected MIDI parts, or with none selected those of the "
+				"selected tracks, to the chord track's chords, by the Map to Chord Track dialog's mapping mode.",
 				nullptr},
 			{"track.assignVoicesSelected",
-				"Assign Voices to Notes: moves the notes of the selected MIDI and instrument tracks to the voices of "
-				"the chord track's voicings.",
+				"Assign Voices to Notes: moves the notes of the selected MIDI parts, or with none selected those of "
+				"the selected tracks, to the voices of the chord track's voicings.",
 				nullptr},
 			{"track.toggleFolding", "Folds or unfolds the selected folders.", nullptr},
 			{"track.foldAll", "Folds every folder.", nullptr},
@@ -287,13 +372,18 @@ namespace gnubase::app
 			// Lanes (docs/features/comping.md).
 			{"track.toggleLanesSelected",
 				"Shows the lanes of the selected tracks, or hides them if every one shows them.", nullptr},
-			// Track versions (docs/features/track-versions.md).
-			{"track.newVersion", "Gives the selected tracks a new, empty version.", nullptr},
-			{"track.duplicateVersion", "Gives the selected tracks a copy of their active version.", nullptr},
-			{"track.deleteVersion", "Deletes the active version of the selected tracks.", nullptr},
-			{"track.selectSameVersionId",
+		}};
+
+		// The track version commands (docs/features/track-versions.md), their own key command category as in the
+		// reference (manual p. 231).
+		constexpr std::array<ProjectCommand, 6> g_trackVersionCommands{{
+			{"trackVersions.new", "Gives the selected tracks a new, empty version.", nullptr},
+			{"trackVersions.duplicate", "Gives the selected tracks a copy of their active version.", nullptr},
+			{"trackVersions.rename", "Names the active version of the selected tracks.", nullptr},
+			{"trackVersions.remove", "Deletes the active version of the selected tracks.", nullptr},
+			{"trackVersions.selectSameId",
 				"Selects the tracks with a version of the ID of the first selected track's active version.", nullptr},
-			{"track.assignCommonVersionId", "Gives the active versions of the selected tracks a common ID.", nullptr},
+			{"trackVersions.assignCommonId", "Gives the active versions of the selected tracks a common ID.", nullptr},
 		}};
 	}
 
@@ -313,6 +403,16 @@ namespace gnubase::app
 				  const auto position = event.data.at("position").get<size_t>();
 				  m_canUndo = position > 0;
 				  m_canRedo = position < event.data.at("steps").get<size_t>();
+			  })),
+		  m_projectReset(m_binding.on("project.reset",
+			  [this](const engine::Event&)
+			  {
+				  for (const Rml::ObserverPtr<Rml::Element>& open : m_projectDialogs)
+					  if (auto* document = dynamic_cast<Rml::ElementDocument*>(open.get());
+						  document != nullptr && document->GetParentNode() != nullptr)
+						  document->Close();
+				  m_projectDialogs.clear();
+				  ++m_resets;
 			  })),
 		  m_files(m_keys, m_binding, m_shell, resources / "ui")
 	{
@@ -341,6 +441,9 @@ namespace gnubase::app
 					m_menu->update();
 				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
 					pool->update();
+				// The cutting positions show while the quantize panel is open.
+				if (m_eventDisplay && m_quantizePanel.expired())
+					m_eventDisplay->setCuttingPositions({});
 				for (MixerWindow& shown : m_mixers)
 					if (shown.mixer && m_shell.find(shown.window) == nullptr)
 						shown.mixer.reset(); // the user closed its window
@@ -386,13 +489,21 @@ namespace gnubase::app
 				if (m_inPlace)
 					m_inPlace->update();
 				followSelection();
-				// The inspector shows the first selected track.
-				if (const std::shared_ptr<ui::Inspector> inspector = m_inspector.lock(); inspector && m_eventDisplay)
+				// The inspector and the sampler panel show the first selected track.
+				if (m_eventDisplay)
 				{
 					const std::vector<uint64_t> tracks =
 						m_trackList ? m_trackList->selection() : std::vector<uint64_t>();
-					inspector->update(tracks.empty() ? 0 : tracks.front(), m_eventDisplay->project(),
-						m_eventDisplay->loads(), m_eventDisplay->read());
+					const uint64_t first = tracks.empty() ? 0 : tracks.front();
+					if (const std::shared_ptr<ui::Inspector> inspector = m_inspector.lock())
+						inspector->update(
+							tracks, m_eventDisplay->project(), m_eventDisplay->loads(), m_eventDisplay->read());
+					if (const std::shared_ptr<ui::SamplerPanel> sampler = m_sampler.lock())
+						sampler->update(
+							first, m_eventDisplay->project(), m_eventDisplay->loads(), m_eventDisplay->read());
+					if (const std::shared_ptr<ui::DrumMachinePanel> drums = m_drums.lock())
+						drums->update(
+							first, m_eventDisplay->project(), m_eventDisplay->loads(), m_eventDisplay->read());
 				}
 				return follows;
 			});
@@ -410,6 +521,13 @@ namespace gnubase::app
 				m_keys.released(keys);
 				if (keys.key == Rml::Input::KI_UNKNOWN)
 					m_winding.stop(); // the keyboard focus lost: also a button held
+			});
+		// What a script's click or key changed shows in the menu before the script reads the DOM, as after a step.
+		m_shell.onInputHandled(
+			[this]
+			{
+				if (m_menu)
+					m_menu->update();
 			});
 		m_keys.add({"window.markers", "Opens or closes the markers window.",
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
@@ -484,7 +602,19 @@ namespace gnubase::app
 					auto inspector = std::make_shared<ui::Inspector>(
 						m_binding, element, [this](uint64_t track)
 						{ m_shell.post([this, track] { openChannelSettings(track); }); }, [this](uint64_t track)
-						{ m_shell.post([this, track] { openArticulationMaps(m_main, track); }); });
+						{ m_shell.post([this, track] { openArticulationMaps(m_main, track); }); },
+						[this](uint64_t track, bool project)
+						{
+							m_shell.post(
+								[this, track, project]
+								{
+									if (project)
+										openDialog(m_main, "rule-editor.rml", {{"target", "project"}});
+									else
+										openDialog(m_main, "rule-editor.rml",
+											{{"target", "track"}, {"track", std::to_string(track)}});
+								});
+						});
 					m_inspector = inspector;
 					return std::shared_ptr<void>(inspector);
 				};
@@ -496,6 +626,7 @@ namespace gnubase::app
 					Rml::Element& page = editor || !m_trackVisibility ? element : m_trackVisibility->showPanel(element);
 					auto shown = std::make_shared<ui::MidiEditor>(
 						m_binding, page, "lower", editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
+					shown->setDrumMapSetup([this] { m_shell.post([this] { openDrumMaps(m_main); }); });
 					if (editor)
 						m_lowerEditor = shown;
 					return std::shared_ptr<void>(shown);
@@ -525,8 +656,104 @@ namespace gnubase::app
 				return pool;
 			}});
 		// The chord pads (reference manual pp. 1346-1391, docs/features/chord-pads.md) in the lower zone.
-		m_docking.add({"chordPads", "Chord Pads", "project", "lower",
-			[this](Rml::Element& element) { return std::make_shared<ui::ChordPadsPanel>(m_binding, element); }});
+		m_docking.add({"chordPads", "Chord Pads", "project", "lower", [this](Rml::Element& element)
+			{
+				return std::make_shared<ui::ChordPadsPanel>(
+					m_binding, element,
+					[this](float x, float y)
+					{
+						return m_eventDisplay ? m_eventDisplay->trackAt(x, y)
+											  : std::optional<std::pair<uint64_t, int64_t>>();
+					},
+					[this] { return m_eventDisplay ? m_eventDisplay->selection() : std::vector<uint64_t>(); },
+					[this](std::function<void(const std::string&)> import)
+					{
+						// Import from MIDI Loop (p. 1379): the loop chosen in the window the pads show in.
+						const ui::Window* window = m_docking.windowOf("chordPads");
+						ui::FileDialog dialog;
+						dialog.title = "Import from MIDI Loop";
+						dialog.filters = {{"MIDI files", "mid;midi;smf"}, {"All files", "*"}};
+						dialog.parent = (window != nullptr ? *window : m_main).id();
+						m_shell.showFileDialog(dialog,
+							[import = std::move(import)](const ui::FileDialogResult& result)
+							{
+								if (!result.error.empty())
+									logging::warning("The file dialog failed: {}", result.error);
+								if (!result.files.empty())
+									import(result.files.front().u8string());
+							});
+					});
+			}});
+		// The sampler panel (reference manual pp. 710-730, docs/features/sampler-track.md) in the lower zone, for the
+		// selected sampler track. Import Audio File asks for the file in the window it shows in.
+		m_docking.add({"sampler", "Sampler", "project", "lower", [this](Rml::Element& element)
+			{
+				auto sampler = std::make_shared<ui::SamplerPanel>(m_binding, element,
+					[this](uint64_t track, bool keepSettings)
+					{
+						const ui::Window* window = m_docking.windowOf("sampler");
+						ui::FileDialog dialog;
+						dialog.title = "Import Audio File";
+						dialog.filters = {
+							{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}};
+						dialog.parent = (window != nullptr ? *window : m_main).id();
+						chooseProjectFile(dialog,
+							[this, track, keepSettings](const std::filesystem::path& file)
+							{
+								// The panel shows why the file didn't load; without it, the file loads all the same.
+								const std::string path = file.u8string();
+								if (const std::shared_ptr<ui::SamplerPanel> panel = m_sampler.lock())
+									panel->load(track, path, keepSettings);
+								else
+									m_binding.send("sampler.load",
+										{{"track", track}, {"path", path}, {"keepSettings", keepSettings}});
+							});
+					});
+				m_sampler = sampler;
+				return sampler;
+			}});
+		// The drum machine (reference manual pp. 938-977, docs/features/drum-track.md) in the lower zone, for the
+		// selected drum track. Load asks for the file in the window it shows in, Add Drum Track opens the add track
+		// dialog there.
+		m_docking.add({"drumMachine", "Drum Machine", "project", "lower", [this](Rml::Element& element)
+			{
+				auto drums = std::make_shared<ui::DrumMachinePanel>(
+					m_binding, element,
+					[this](uint64_t track, int pad)
+					{
+						const ui::Window* window = m_docking.windowOf("drumMachine");
+						ui::FileDialog dialog;
+						dialog.title = "Load Sample";
+						dialog.filters = {
+							{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}};
+						dialog.parent = (window != nullptr ? *window : m_main).id();
+						chooseProjectFile(dialog,
+							[this, track, pad](const std::filesystem::path& file)
+							{
+								const std::string path = file.u8string();
+								if (const std::shared_ptr<ui::DrumMachinePanel> panel = m_drums.lock())
+									panel->load(track, pad, path);
+								else
+									m_binding.send("drum.loadPad", {{"track", track}, {"pad", pad}, {"path", path}});
+							});
+					},
+					[this]
+					{
+						ui::Window* window = m_docking.windowOf("drumMachine");
+						m_keys.run("project.addDrumTrack", engine::Json::object(), window != nullptr ? *window : m_main,
+							nullptr);
+					},
+					[this](uint64_t track, const std::string& mode)
+					{
+						// The track preset dialog for the drum track shown, as the track list's Load and Save Track
+						// Preset open it for the selected tracks.
+						ui::Window* window = m_docking.windowOf("drumMachine");
+						openDialog(window != nullptr ? *window : m_main, "track-preset.rml",
+							{{"mode", mode}, {"tracks", std::to_string(track)}});
+					});
+				m_drums = drums;
+				return drums;
+			}});
 		m_docking.addKeyCommands(m_keys);
 		// What the pool's commands did, sent from its toolbar, the Media menu or Find Missing Files, shows in the
 		// pool, which opens for it: its window comes to the front if it is in one of its own.
@@ -549,6 +776,10 @@ namespace gnubase::app
 				else
 					m_docking.open("chordPads");
 			}});
+		m_keys.add({"window.sampler", "Shows the sampler panel, which edits the selected sampler track.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("sampler"); }});
+		m_keys.add({"window.drumMachine", "Shows the drum machine, which edits the selected drum track.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("drumMachine"); }});
 		m_keys.add({"window.history", "Shows the edit history, where steps are undone and redone.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});
 		m_keys.add({"window.pool", "Shows the pool, the project's clips and media files.",
@@ -604,9 +835,16 @@ namespace gnubase::app
 			"Opens the preferences dialog, which shows and changes the user's preferences, page by page, and their "
 			"presets.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openPreferences(window); }});
-		// For the preferences dialog: the themes there are, and the tool modifiers that ui.toolModifiers overrides.
-		m_lua.addFunction(
-			"ui.themes", [this](const engine::Json&) { return engine::Json{{"themes", m_themes.names()}}; });
+		// For the preferences dialog: the themes there are, each with the name the UI shows for it, and the tool
+		// modifiers that ui.toolModifiers overrides.
+		m_lua.addFunction("ui.themes",
+			[this](const engine::Json&)
+			{
+				engine::Json themes = engine::Json::array();
+				for (const ui::Theme& theme : m_themes.themes())
+					themes.push_back({{"id", theme.id}, {"name", theme.name}});
+				return engine::Json{{"themes", std::move(themes)}};
+			});
 		m_lua.addFunction("ui.toolModifierDefaults",
 			[](const engine::Json&) { return engine::Json{{"modifiers", ui::EventDisplay::defaultToolModifiers()}}; });
 		// For the add track dialog's Time Offset: a position typed in a time format, as position displays show it in
@@ -744,6 +982,22 @@ namespace gnubase::app
 		m_keys.add({"project.addTrack", "Opens the add track dialog.",
 			[this, below](ui::Window& window, Rml::Element* /*zone*/)
 			{ openOnce(window, "add-track.rml", m_addTrack, below()); }});
+		// Add Sampler Track (reference manual pp. 143-144): the add track dialog's Sampler page.
+		m_keys.add({"project.addSamplerTrack", "Opens the add track dialog on its Sampler page.",
+			[this, below](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				std::vector<std::pair<std::string, std::string>> attributes = below();
+				attributes.emplace_back("type", "sampler");
+				openOnce(window, "add-track.rml", m_addTrack, attributes);
+			}});
+		// Add Drum Track (reference manual pp. 145-146): the add track dialog's Drum page.
+		m_keys.add({"project.addDrumTrack", "Opens the add track dialog on its Drum page.",
+			[this, below](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				std::vector<std::pair<std::string, std::string>> attributes = below();
+				attributes.emplace_back("type", "drum");
+				openOnce(window, "add-track.rml", m_addTrack, attributes);
+			}});
 		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the add
 		// track dialog's page for the new track, which the selected tracks play or send into.
 		for (const auto& [id, type, description] :
@@ -820,6 +1074,15 @@ namespace gnubase::app
 				m_keys.run(command->get<std::string>(), commandParameters, callingWindow(), nullptr);
 				return engine::Json::object();
 			});
+		// Opens the confirmation dialog (resources/ui/confirm.rml) over the calling document: the caller sets the
+		// global ConfirmDialog to {title, message, ok, onOk} first, and the dialog runs onOk only for OK, not for
+		// Cancel.
+		m_lua.addFunction("ui.confirm",
+			[this](const engine::Json&)
+			{
+				openDialog(callingWindow(), "confirm.rml");
+				return engine::Json::object();
+			});
 		for (const ProjectCommand& command : g_projectCommands)
 		{
 			m_keys.add(
@@ -865,10 +1128,29 @@ namespace gnubase::app
 			if (command.keys != nullptr)
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
 		}
+		for (const ProjectCommand& command : g_trackVersionCommands)
+		{
+			m_keys.add(
+				{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
+					{
+						if (m_trackList)
+							m_trackList->actions().at(id)();
+					}});
+			// They work on the selected audio, instrument and MIDI tracks.
+			m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*)
+				{ return m_trackList != nullptr && m_trackList->selectsVersions(); });
+			if (command.keys != nullptr)
+				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
+		}
 
 		// Set Root Key for Unassigned Events in the context menu of the transpose track (reference manual p. 416).
-		m_keys.enableWhen("transpose.assignRootKey", [this](ui::Window&, Rml::Element*)
-			{ return m_trackList != nullptr && m_trackList->selectsType("transpose"); });
+		m_keys.enableWhen("transpose.assignRootKey",
+			[this](ui::Window&, Rml::Element*)
+			{
+				return m_trackList != nullptr && m_trackList->selectsType("transpose") && m_eventDisplay != nullptr &&
+					m_eventDisplay->project().is_object() &&
+					!m_eventDisplay->project().value("rootKey", std::string()).empty();
+			});
 
 		// Undo and Redo in the menus while the history has a step to undo or redo.
 		m_keys.enableWhen("history.undo", [this](ui::Window&, Rml::Element*) { return m_canUndo; });
@@ -945,6 +1227,30 @@ namespace gnubase::app
 			m_keys.bind({wind.keys, wind.id});
 		}
 		m_shell.eachStep([this] { return m_winding.step(); });
+		// The MIDI editors render before their layout and keep their width when their window or zone resizes: their
+		// expression lines follow the width the update of their own window gave them (#1671), not the box another
+		// window's update finds before theirs is laid out again (#1768). The in-place editors' setTimeRange does so as
+		// the project window scrolls and zooms.
+		m_shell.afterUpdate(
+			[this](ui::Window& window)
+			{
+				bool changed = false;
+				for (ui::MidiEditor* editor : {editorWindow(), lowerZoneEditor()})
+					if (ui::KeyEditor* keys = editor != nullptr ? editor->keyEditor() : nullptr)
+						changed = keys->fitLines(window.context()) || changed;
+				if (m_inPlace)
+					for (const uint64_t track : m_inPlace->tracks())
+						if (ui::KeyEditor* keys = m_inPlace->keyEditor(track))
+							changed = keys->fitLines(window.context()) || changed;
+				return changed;
+			});
+		// Reset All in its setup pane makes the transport panel follow its sections again (#1612).
+		m_docking.onReset(
+			[this](const std::string& window, const std::string&)
+			{
+				if (window == "transportPanel")
+					m_panelFit.reset();
+			});
 		// The time display window's context menu (reference manual p. 313).
 		m_keys.add({"timeDisplay.beatCountOnly",
 			"Shows only the beat in its bar in the time display window, or the whole position again.",
@@ -990,6 +1296,20 @@ namespace gnubase::app
 		addWorkspaces();
 	}
 
+	void AppUi::showKeyCommandsError(ui::WindowId window, const std::string& title, const std::string& error)
+	{
+		if (!error.empty())
+			logging::warning("{}: {}", title, error);
+		Rml::Element* document = m_keyDialog.get();
+		Rml::Element* message = document != nullptr && document->GetParentNode() != nullptr
+			? document->GetElementById("keycommands-message")
+			: nullptr;
+		if (message != nullptr)
+			message->SetInnerRML(Rml::StringUtilities::EncodeRml(error));
+		else if (!error.empty())
+			m_files.showNotice(window, title, error);
+	}
+
 	void AppUi::addKeyCommandsDialog()
 	{
 		// The key commands dialog (#161, docs/features/key-commands.md, reference manual pp. 1554-1559), which
@@ -1011,20 +1331,57 @@ namespace gnubase::app
 					dialog.filters = {{"Key commands files", "json"}};
 					dialog.parent = window.id();
 					m_shell.showFileDialog(dialog,
-						[this, exporting](const ui::FileDialogResult& result)
+						[this, exporting, id = window.id(), title = dialog.title](const ui::FileDialogResult& result)
 						{
 							if (!result.error.empty())
 								logging::warning("The file dialog failed: {}", result.error);
 							if (result.files.empty())
 								return;
 							const std::filesystem::path& file = result.files.front();
+							const auto finished = [this, id, title](const engine::Result& done)
+							{
+								// A command that worked takes the message of an earlier failure away.
+								showKeyCommandsError(id, title, done.ok() ? std::string() : done.error);
+							};
 							if (exporting)
-								m_binding.send("keyCommands.export", {{"path", file.u8string()}});
+								m_binding.send("keyCommands.export", {{"path", file.u8string()}}, finished);
 							else
 								m_binding.send("keyCommands.import",
-									{{"path", file.u8string()}, {"name", file.stem().u8string()}});
+									{{"path", file.u8string()}, {"name", file.stem().u8string()}}, finished);
 						});
 				}});
+		// File > Export > Key Command Assignments (reference manual p. 1560): an HTML list of every key that runs a
+		// command, which the user saves where they choose.
+		m_keys.add({"keyCommands.exportAssignments",
+			"Exports the list of every key command assignment as an HTML file that the user chooses.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				ui::FileDialog dialog;
+				dialog.kind = ui::FileDialogKind::Save;
+				dialog.title = "Export Key Command Assignments";
+				dialog.filters = {{"HTML files", "html"}};
+				dialog.parent = window.id();
+				m_shell.showFileDialog(dialog,
+					[this, id = window.id(), title = dialog.title](const ui::FileDialogResult& result)
+					{
+						if (!result.error.empty())
+							logging::warning("The file dialog failed: {}", result.error);
+						if (result.files.empty())
+							return;
+						std::filesystem::path file = result.files.front();
+						if (file.extension().empty())
+							file += ".html";
+						try
+						{
+							files::writeAtomically(file, keyAssignmentsHtml(m_keys.assignments()));
+						}
+						catch (const std::exception& error)
+						{
+							showKeyCommandsError(
+								id, title, std::string("Can't write the key command assignments: ") + error.what());
+						}
+					});
+			}});
 		// For the dialog: the commands with their default keys, and keys as the settings and the platform write them.
 		m_lua.addFunction(
 			"ui.keyCommands", [this](const engine::Json&) { return engine::Json{{"commands", m_keys.commands()}}; });
@@ -1138,6 +1495,7 @@ namespace gnubase::app
 	{
 		if (const ui::Window* window = shown.shown(m_shell))
 		{
+			m_docking.saveWindows(); // its bounds as the user left them
 			shown.controls.reset();
 			m_shell.close(window->id());
 			shown.window = 0;
@@ -1176,8 +1534,15 @@ namespace gnubase::app
 		}
 		shown.window = window.id();
 		if (root == controls)
+		{
 			m_docking.attach("transportPanel", *document);
+			// Once the controls show the project, their displays grow with their text, and the panel follows (#1474,
+			// #1527, #1612).
+			m_panelFit.open(window, *controls, !spec.bounds);
+			shown.controls->onShown([this] { m_panelFit.follow(); });
+		}
 		else
+		{
 			shown.controls->onSize(
 				[this, id = window.id()](int size)
 				{
@@ -1189,6 +1554,7 @@ namespace gnubase::app
 					bounds.height = sized.height;
 					m_shell.setBounds(id, bounds);
 				});
+		}
 	}
 
 	void AppUi::toggleTransportPanel()
@@ -1231,6 +1597,7 @@ namespace gnubase::app
 		m_transposeLane.reset();
 		m_chordLane.reset();
 		m_scaleLane.reset();
+		m_arrangerLane.reset();
 		m_rulerLanes.reset();
 		m_inPlace.reset();
 		// The transport bar's sections are there when the docking system reads them.
@@ -1245,6 +1612,13 @@ namespace gnubase::app
 		m_infoLine.reset();
 		m_toolbarQuantize.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		// The quantize panel lists the tracks of the selected audio events with hitpoints (#1344).
+		m_eventDisplay->onSelectionShown(
+			[this]
+			{
+				if (const std::shared_ptr<ui::QuantizePanel> panel = m_quantizePanel.lock())
+					panel->showHitpointTracks(hitpointTracks());
+			});
 		if (Rml::Element* quantize = document->GetElementById("toolbar-quantize"))
 			m_toolbarQuantize = std::make_unique<ui::QuantizePanel>(m_binding, *quantize,
 				ui::QuantizePanel::Layout::Toolbar,
@@ -1271,6 +1645,7 @@ namespace gnubase::app
 		m_transposeLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding);
 		m_chordLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Chord);
 		m_scaleLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Scale);
+		m_arrangerLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Arranger);
 		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
 		m_inPlace = std::make_unique<ui::InPlaceEditors>(*m_eventDisplay, m_binding);
 		if (m_infoLine)
@@ -1293,6 +1668,14 @@ namespace gnubase::app
 					if (rename)
 						m_markerLines->rename(marker);
 				});
+		// A profile switch that GNUbase couldn't finish nor undo at the start: the Profile Manager tells the user
+		// (docs/features/profiles.md).
+		m_binding.send("profile.list", engine::Json::object(),
+			[this](const engine::Result& result)
+			{
+				if (result.ok() && result.value.value("unfinished", false))
+					m_keys.run("window.profiles", engine::Json::object(), m_main, nullptr);
+			});
 		return *m_eventDisplay;
 	}
 
@@ -1390,7 +1773,7 @@ namespace gnubase::app
 			throw std::runtime_error("cannot load the tempo track editor from " + file.u8string());
 		}
 		document->Show();
-		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_binding, *document);
+		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_engine, m_binding, *document);
 		m_docking.saveWindows();
 		return m_tempoEditor.get();
 	}
@@ -1534,7 +1917,7 @@ namespace gnubase::app
 		// Later in the step: the click may be in the channel settings window, which opening it would rebuild.
 		actions.editChannel = [this](uint64_t track) { m_shell.post([this, track] { openChannelSettings(track); }); };
 		// Add Effect Track to Send (p. 554): the add track dialog's effect page, in the mixer's window, later in the
-		// step, outside the drop-down list's event.
+		// step, outside the drop-down list's event. The new track goes below the track whose send it is.
 		actions.addEffectTrack = [this](Rml::Element& from, uint64_t track, int send)
 		{
 			for (const ui::Window* window : m_shell.windows())
@@ -1545,7 +1928,7 @@ namespace gnubase::app
 							if (ui::Window* found = m_shell.find(id))
 								openOnce(*found, "add-track.rml", m_addTrack,
 									{{"type", "effect"}, {"tracks", std::to_string(track)},
-										{"send", std::to_string(send)}});
+										{"send", std::to_string(send)}, {"below", std::to_string(track)}});
 						});
 		};
 		actions.wentTo = [this](uint64_t track)
@@ -1732,6 +2115,17 @@ namespace gnubase::app
 			}});
 		m_keys.add({"drumMap.save", "Saves the drum map of the editor's active track as a drum map file.",
 			[this](ui::Window& window, Rml::Element*) { saveDrumMap(window.id()); }});
+		// The Drum Map Setup (pp. 1235-1237), also from the drum editor's Map menu. Its Save chooses the file for the
+		// map it shows (gnubase.ui.saveDrumMap); its Load runs drumMap.load.
+		m_keys.add({"drumMap.setup",
+			"Opens the Drum Map Setup, which lists the project's drum maps and changes them and their sounds.",
+			[this](ui::Window& window, Rml::Element*) { openDrumMaps(window); }});
+		m_lua.addFunction("ui.saveDrumMap",
+			[this](const engine::Json& parameters)
+			{
+				chooseDrumMapFile(callingWindow().id(), parameters.value("map", uint64_t{0}));
+				return engine::Json::object();
+			});
 		// The pattern editor (#181, reference manual p. 895): the selected MIDI parts in the editor window's pattern
 		// editor, and Preset Management's Save Preset and Load Preset (pp. 932-933) for the editor's active track.
 		m_keys.add({"editor.openPattern", "Opens the selected MIDI parts in the pattern editor window.",
@@ -1784,6 +2178,7 @@ namespace gnubase::app
 		const bool shown = m_sampleEditor.window != 0 && m_shell.find(m_sampleEditor.window) != nullptr;
 		if (open == shown)
 			return;
+		m_sampleEditor.quantize.reset();
 		m_sampleEditor.editor.reset();
 		if (shown)
 		{
@@ -1810,6 +2205,15 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_sampleEditor.editor = std::make_unique<ui::SampleEditor>(m_binding, *root);
+		// The quantize functions of the sample editor's toolbar (p. 367), on the event it edits (quantizeTarget).
+		if (Rml::Element* quantize = document->GetElementById("toolbar-quantize"))
+			m_sampleEditor.quantize =
+				std::make_unique<ui::QuantizePanel>(m_binding, *quantize, ui::QuantizePanel::Layout::Toolbar,
+					[this](const std::string& command)
+					{
+						if (ui::Window* window = m_shell.find(m_sampleEditor.window))
+							m_keys.run(command, engine::Json::object(), *window, nullptr);
+					});
 	}
 
 	void AppUi::followEditor(const engine::Json& view)
@@ -1859,6 +2263,16 @@ namespace gnubase::app
 		// Open in Lower Zone opens the Editor tab in the lower zone (reference manual, p. 1198).
 		m_editor.editor = std::make_unique<ui::MidiEditor>(
 			m_binding, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
+		m_editor.editor->setDrumMapSetup(
+			[this]
+			{
+				m_shell.post(
+					[this]
+					{
+						ui::Window* window = m_shell.find(m_editor.window);
+						openDrumMaps(window != nullptr ? *window : m_main);
+					});
+			});
 		m_docking.attach("editorWindow", *document);
 	}
 
@@ -1874,6 +2288,7 @@ namespace gnubase::app
 		}
 		if (m_sampleEditor.window != 0 && m_shell.find(m_sampleEditor.window) == nullptr)
 		{
+			m_sampleEditor.quantize.reset();
 			m_sampleEditor.editor.reset();
 			m_sampleEditor.window = 0;
 			m_binding.send("sampleEditor.close");
@@ -1940,20 +2355,27 @@ namespace gnubase::app
 		return shown.window != 0 && m_shell.find(shown.window) != nullptr ? shown.mixer.get() : nullptr;
 	}
 
+	void AppUi::chooseProjectFile(
+		const ui::FileDialog& dialog, std::function<void(const std::filesystem::path&)> chosen)
+	{
+		m_shell.showFileDialog(dialog,
+			[this, chosen = std::move(chosen), resets = m_resets](const ui::FileDialogResult& result)
+			{
+				if (!result.error.empty())
+					logging::warning("The file dialog failed: {}", result.error);
+				if (!result.files.empty() && resets == m_resets)
+					chosen(result.files.front());
+			});
+	}
+
 	void AppUi::choosePicture(uint64_t track)
 	{
 		ui::FileDialog dialog;
 		dialog.title = "Choose Track Picture";
 		dialog.filters = {{"Images", "png;jpg;jpeg;svg"}, {"All files", "*"}};
 		dialog.parent = m_main.id();
-		m_shell.showFileDialog(dialog,
-			[this, track](const ui::FileDialogResult& result)
-			{
-				if (!result.error.empty())
-					logging::warning("The file dialog failed: {}", result.error);
-				if (!result.files.empty())
-					m_binding.send("track.set", {{"track", track}, {"picture", result.files.front().u8string()}});
-			});
+		chooseProjectFile(dialog, [this, track](const std::filesystem::path& file)
+			{ m_binding.send("track.set", {{"track", track}, {"picture", file.u8string()}}); });
 	}
 
 	void AppUi::addTrackFileCommands()
@@ -1961,10 +2383,11 @@ namespace gnubase::app
 		const auto selection = [this]
 		{ return m_trackList != nullptr ? m_trackList->selection() : std::vector<uint64_t>(); };
 		const auto hasSelection = [selection](ui::Window&, Rml::Element*) { return !selection().empty(); };
-		// File > Import > Tracks from Project or Track Archive (reference manual pp. 201-202): below the first
-		// selected track, or at the bottom.
+		// File > Import > Tracks from Project or Track Archive (reference manual pp. 201-205): the file chosen opens in
+		// the Import Options dialog, which imports below the first selected track or at the bottom.
 		m_keys.add({"file.importTracks",
-			"Imports the tracks of a project or track archive below the first selected track, or at the bottom.",
+			"Imports tracks of a project or track archive through the Import Options dialog, below the first selected "
+			"track or at the bottom.",
 			[this, selection](ui::Window& window, Rml::Element* /*zone*/)
 			{
 				ui::FileDialog dialog;
@@ -1973,16 +2396,18 @@ namespace gnubase::app
 				dialog.filters = {{"DAWproject files", "dawproject"}, {"All files", "*"}};
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this, below = selection()](const ui::FileDialogResult& chosen)
+					[this, selection, id = window.id()](const ui::FileDialogResult& chosen)
 					{
 						if (!chosen.error.empty())
 							logging::warning("The file dialog failed: {}", chosen.error);
-						if (chosen.files.empty())
+						ui::Window* parent = m_shell.find(id);
+						if (chosen.files.empty() || parent == nullptr)
 							return;
-						engine::Json parameters = {{"path", chosen.files.front().u8string()}};
-						if (!below.empty())
-							parameters["track"] = below.front();
-						m_binding.send("track.import", parameters);
+						// The selection now: a project.reset while the file dialog was open replaced the one before.
+						const std::vector<uint64_t> below = selection();
+						openDialog(*parent, "track-import.rml",
+							{{"path", chosen.files.front().u8string()},
+								{"below", below.empty() ? std::string() : std::to_string(below.front())}});
 					});
 			}});
 		// File > Export > Selected Tracks (reference manual pp. 205-206): a track archive, with copies of the media.
@@ -1995,17 +2420,28 @@ namespace gnubase::app
 				dialog.filters = {{"DAWproject files", "dawproject"}};
 				dialog.location = "Tracks.dawproject";
 				dialog.parent = window.id();
-				m_shell.showFileDialog(dialog,
-					[this, tracks = selection()](const ui::FileDialogResult& chosen)
+				chooseProjectFile(dialog,
+					[this, tracks = selection(), id = window.id()](std::filesystem::path file)
 					{
-						if (!chosen.error.empty())
-							logging::warning("The file dialog failed: {}", chosen.error);
-						if (chosen.files.empty())
-							return;
-						std::filesystem::path file = chosen.files.front();
 						if (file.extension().empty())
 							file += ".dawproject";
-						m_binding.send("track.export", {{"tracks", tracks}, {"path", file.u8string()}});
+						m_binding.send("track.export", {{"tracks", tracks}, {"path", file.u8string()}},
+							[this, id](const engine::Result& result)
+							{
+								if (!result.ok())
+								{
+									m_files.showError(id, result.error);
+									return;
+								}
+								// The tracks left out and the media files missing, both if both (#1736).
+								std::string notice;
+								if (const std::string left = leftOut(result.value); !left.empty())
+									notice = "The tracks were exported without " + left + ".";
+								if (const std::string missing = ui::missingMedia(result.value); !missing.empty())
+									notice += (notice.empty() ? "" : " ") + missing;
+								if (!notice.empty())
+									m_files.showNotice(id, "Export Selected Tracks", notice);
+							});
 					});
 			}});
 		m_keys.enableWhen("file.exportTracks", hasSelection);
@@ -2049,14 +2485,11 @@ namespace gnubase::app
 				dialog.title = save ? "Save Pattern Preset" : "Load Pattern Preset";
 				dialog.filters = {{"Pattern presets", "patternpreset"}};
 				dialog.parent = parent;
-				m_shell.showFileDialog(dialog,
-					[this, save, track](const ui::FileDialogResult& result)
+				chooseProjectFile(dialog,
+					[this, save, track](const std::filesystem::path& file)
 					{
-						if (!result.error.empty())
-							logging::warning("The file dialog failed: {}", result.error);
-						if (!result.files.empty())
-							m_binding.send(save ? "pattern.export" : "pattern.import",
-								{{"track", track}, {"path", result.files.front().u8string()}});
+						m_binding.send(
+							save ? "pattern.export" : "pattern.import", {{"track", track}, {"path", file.u8string()}});
 					});
 			});
 	}
@@ -2088,6 +2521,12 @@ namespace gnubase::app
 			});
 	}
 
+	void AppUi::openDrumMaps(ui::Window& window)
+	{
+		// The editors' views say whose map to show first; the dialog reads them when it opens.
+		openOnce(window, "drum-maps.rml", m_drumMaps);
+	}
+
 	void AppUi::chooseDrumMapFile(ui::WindowId parent, uint64_t map)
 	{
 		ui::FileDialog dialog;
@@ -2095,14 +2534,9 @@ namespace gnubase::app
 		dialog.title = "Save Drum Map";
 		dialog.filters = {{"Drum maps", "drm"}};
 		dialog.parent = parent;
-		m_shell.showFileDialog(dialog,
-			[this, map](const ui::FileDialogResult& result)
+		chooseProjectFile(dialog,
+			[this, map](std::filesystem::path file)
 			{
-				if (!result.error.empty())
-					logging::warning("The file dialog failed: {}", result.error);
-				if (result.files.empty())
-					return;
-				std::filesystem::path file = result.files.front();
 				if (file.extension() != ".drm")
 					file += ".drm";
 				m_binding.send("drumMap.export", {{"map", map}, {"path", file.u8string()}});
@@ -2141,7 +2575,7 @@ namespace gnubase::app
 	}
 
 	Rml::ElementDocument& AppUi::openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,
-		const std::vector<std::pair<std::string, std::string>>& attributes) const
+		const std::vector<std::pair<std::string, std::string>>& attributes)
 	{
 		// One dialog: a second document would share the first one's table in the UI's Lua. A closed document has left
 		// its context, until the context releases it.
@@ -2195,14 +2629,31 @@ namespace gnubase::app
 	}
 
 	Rml::ElementDocument& AppUi::openDialog(
-		ui::Window& window, const char* name, const std::vector<std::pair<std::string, std::string>>& attributes) const
+		ui::Window& window, const char* name, const std::vector<std::pair<std::string, std::string>>& attributes)
 	{
 		const std::filesystem::path file = m_resources / "ui" / name;
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
 		if (document == nullptr)
 			throw std::runtime_error("cannot load the dialog " + file.u8string());
+		// The attributes with ids of the project's objects. The articulation map setup follows project.reset itself,
+		// dropping its track.
+		constexpr std::array<std::string_view, 7> ids = {
+			"below", "destination", "notes", "parts", "send", "track", "tracks"};
+		bool forObjects = false;
 		for (const auto& [attribute, value] : attributes)
+		{
 			document->SetAttribute(attribute, value);
+			forObjects = forObjects ||
+				(!value.empty() && std::find(ids.begin(), ids.end(), attribute) != ids.end() &&
+					std::string_view(name) != "articulation-maps.rml");
+		}
+		if (forObjects)
+		{
+			m_projectDialogs.erase(std::remove_if(m_projectDialogs.begin(), m_projectDialogs.end(),
+									   [](const Rml::ObserverPtr<Rml::Element>& open) { return !open; }),
+				m_projectDialogs.end());
+			m_projectDialogs.push_back(document->GetObserverPtr());
+		}
 		document->Show(Rml::ModalFlag::Modal);
 		return *document;
 	}

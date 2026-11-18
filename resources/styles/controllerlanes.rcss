@@ -5,15 +5,20 @@
    the Create Controller Lane and Controller Lane Setup buttons. The list scrolls like the note display, so that both
    have a scroll bar and their time axes line up. Bars and steps get .selected and .inactive (outside the part
    editing mode), the root .lanes-hidden while Show/Hide Controller Lanes hides them; the themes color them. */
+/* In a low editor they shrink before the note display (.key-editor-body), down to the footer, and the list scrolls
+   (#1775). */
 .controller-lanes
 {
-	flex-shrink: 0;
+	flex: 0 100 auto;
+	min-height: 22dp; /* the footer's height */
 	display: flex;
 	flex-direction: column;
 }
 
 .controller-lane-list
 {
+	flex: 0 1 auto;
+	min-height: 0;
 	overflow-y: scroll;
 	max-height: 200dp;
 }
@@ -37,9 +42,11 @@
 	overflow: hidden;
 }
 
+/* As wide as the header inside its frame, not a text button's 64 dp, which the header would cut off (#1774). */
 .controller-lane-type
 {
-	width: 48dp;
+	min-width: 0;
+	width: 100%;
 	padding: 2dp;
 	font-size: 8dp;
 	white-space: normal;
@@ -63,10 +70,158 @@
 	width: 3dp;
 }
 
+/* The Articulations lane (docs/features/articulation-maps.md): as tall as its rows, the sound slots lane and a row
+   per articulation, with the lane's name and the articulations' names beside them. Code places the slots,
+   directions and attributes in percent of the area's width; a reset (.reset) is as wide as this gives it. */
+.controller-lane[lane-kind=articulations]
+{
+	display: block;
+	position: relative;
+	height: auto;
+	min-height: 14dp;
+}
+
+.controller-lane-row
+{
+	display: flex;
+	flex-direction: row;
+}
+
+/* The frame of the lane with the keyboard focus (#1688), over the lane, as the docking zones' frame, so that it takes
+   no room from the area, which lines up with the other lanes' areas; the themes draw it. The lane is a block around
+   the row of its header and area, as RmlUi gives an absolute child of a flex box as tall as its content no height. */
+.controller-lane-frame
+{
+	display: none;
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 10;
+	pointer-events: none;
+}
+
+.controller-lane.focused .controller-lane-frame
+{
+	display: block;
+}
+
+.controller-lane[lane-kind=articulations] .controller-lane-type
+{
+	display: block; /* not on a line of the header's, which is taller than the row beside it */
+	height: 14dp;
+	padding: 0 2dp;
+	white-space: nowrap;
+}
+
+.articulation-name
+{
+	height: 14dp;
+	padding: 0 2dp;
+	font-size: 8dp;
+	line-height: 14dp;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.articulation-row
+{
+	position: relative;
+	box-sizing: border-box; /* the sound slots lane's line is inside its height, so the names stay beside the rows */
+	height: 14dp;
+}
+
+.sound-slot, .articulation-item
+{
+	position: absolute;
+	top: 1dp;
+	bottom: 1dp;
+	box-sizing: border-box;
+	overflow: hidden;
+}
+
+.sound-slot
+{
+	font-size: 8dp;
+	line-height: 12dp;
+	white-space: nowrap;
+}
+
+.articulation-item.reset
+{
+	width: 4dp;
+	overflow: visible; /* its arrow beside it, not over it (#1688) */
+}
+
+/* A collapsed group's row (#1580, p. 1287): its articulations with their names. */
+.articulation-row.collapsed .articulation-item
+{
+	font-size: 8dp;
+	line-height: 12dp;
+	white-space: nowrap;
+}
+
+/* Collapse All Groups, Expand All Groups and Show/Hide Sound Slots Lane under the articulations' names (#1658,
+   pp. 1287-1288). */
+.articulation-controls
+{
+	display: flex;
+	flex-direction: row;
+	height: 14dp;
+}
+
+.articulation-control
+{
+	min-width: 0;
+	width: 14dp;
+	height: 14dp;
+	padding: 0;
+}
+
+.articulation-control svg.icon
+{
+	width: 10dp;
+	height: 10dp;
+	vertical-align: 0;
+}
+
+/* The arrow in a direction's upper left corner that opens its event pop-up menu (p. 1290), shown while the mouse is
+   over the direction or it is selected. */
+.articulation-menu-arrow
+{
+	visibility: hidden;
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 8dp;
+	height: 8dp;
+}
+
+.articulation-item.reset .articulation-menu-arrow
+{
+	left: 4dp;
+}
+
+.articulation-item.direction:hover .articulation-menu-arrow,
+.articulation-item.direction.selected .articulation-menu-arrow
+{
+	visibility: visible;
+}
+
 .controller-lanes-footer
 {
 	flex-shrink: 0;
 	display: flex;
 	flex-direction: row;
 	height: 22dp;
+}
+
+/* As high as the footer, not a button's 24 dp, which would reach past it onto what is below; the footer keeps the note
+   display's room in an in-place editor (#1774). */
+.controller-lanes-footer button
+{
+	height: 22dp;
+	padding-top: 3dp;
+	padding-bottom: 3dp;
 }

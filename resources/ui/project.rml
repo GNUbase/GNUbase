@@ -12,11 +12,13 @@
      dialogs are zoom-preset.rml, zoom-presets.rml and repeat-events.rml, next to this
      file. ui::TrackList fills #track-list under its global track controls (docs/features/track-list.md): #add-track
      opens the add track dialog (add-track.rml), #track-controls-settings the track controls settings dialog
-     (track-controls.rml); #track-list-menu is its context menu.
+     (track-controls.rml); #track-list-menu is its context menu, and #track-versions-menu the Track Versions pop-up menu
+     the arrow at a versioned track's name opens (docs/features/track-versions.md).
      app::AppUi fills the transport bar with the transport controls (transport.rml), which show where Tap Tempo puts
      the tempo in #tap-tempo-message, over the event display.
      The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md), which the
      display drives too, with the toolbox #toolbox, the context menu #event-display-menu and #tool-notification, and
+     #edit-refused, which says why the engine refused an edit of events (docs/features/event-display.md), and
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
      ui::StatusLine fills #record-format, #record-time and #lost-device (docs/features/status-line.md). ui::InfoLine fills
      #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md), #toolbar-setup
@@ -40,11 +42,6 @@
 		#toolbar button
 		{
 			margin-right: 2dp;
-		}
-
-		#toolbar #auto-scroll-settings, #toolbar #play-tool
-		{
-			margin-right: 12dp;
 		}
 
 		#toolbar .spacer
@@ -103,7 +100,7 @@
 		<button menu="window-menu">Window</button>
 	</menubar>
 	<!-- The toolbar's sections, which its setup pane #toolbar-setup shows, hides and orders (reference manual p. 1575). -->
-	<div id="toolbar" class="toolbar" strip="toolbar" sections="toolbar" contextmenu="toolbar-setup">
+	<div id="toolbar" class="toolbar" strip="toolbar" sections="toolbar" fit="room" contextmenu="toolbar-setup">
 		<div class="toolbar-section" section="tools" label="Tool Buttons">
 			<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-combine-selection.svg"/></button>
 			<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
@@ -116,7 +113,8 @@
 			<button tool="mute" class="icon-only" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></button>
 			<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
 			<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
-			<button id="play-tool" tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
+			<button tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
+			<button tool="timeWarp" tool-menu="time-warp-toolbar-menu" class="icon-only" title="Time Warp"><svg class="icon" src="../icons/tool-timewarp.svg"/></button>
 		</div>
 		<div class="toolbar-section" section="autoScroll" label="Auto-Scroll">
 			<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
@@ -142,11 +140,11 @@
 			<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
 		</div>
 		<div class="toolbar-section" section="trackVisibility" label="Track Visibility Configurations">
-			<button id="track-visibility-configurations" class="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
+			<button id="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
 		</div>
 		<div class="toolbar-section" section="rootKey" label="Project Root Key">
 			<!-- The Project Root Key (reference manual p. 414, docs/features/transpose.md), which the display shows -->
-			<button id="root-key" class="toolbar-root-key" menu="root-key-menu" title="Project Root Key">-</button>
+			<button id="root-key" menu="root-key-menu" title="Project Root Key">-</button>
 		</div>
 		<div class="spacer"/>
 		<div class="toolbar-section" section="zones" label="Window Zone Controls">
@@ -177,6 +175,7 @@
 					<button class="ruler-format icon-only" menu="ruler-format-menu" title="Ruler Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 					<notification id="tool-notification" class="tool-notification tooltip"/>
 					<notification id="tap-tempo-message" class="tap-tempo-message tool-notification tooltip" duration="2"/>
+					<notification id="edit-refused" class="edit-refused tool-notification tooltip" duration="4"/>
 				</div>
 			</div>
 			<splitter for="lower" resize="next"/>
@@ -222,6 +221,7 @@
 				<menuitem command="file.exportTempo">Tempo Track...</menuitem>
 				<menuitem command="file.exportMarkers">Markers...</menuitem>
 				<menuitem command="file.exportTracks">Selected Tracks...</menuitem>
+				<menuitem command="keyCommands.exportAssignments">Key Command Assignments...</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
@@ -358,6 +358,10 @@
 	<menu id="color-menu"/>
 	<menu id="project-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<!-- Sampler tracks (reference manual pp. 143-144, docs/features/sampler-track.md) -->
+		<menuitem command="project.addSamplerTrack">Add Sampler Track...</menuitem>
+		<!-- Drum tracks (reference manual pp. 145-146, docs/features/drum-track.md) -->
+		<menuitem command="project.addDrumTrack">Add Drum Track...</menuitem>
 		<menuseparator/>
 		<menuitem command="project.colorsSetup">Project Colors Setup...</menuitem>
 		<!-- docs/features/midi-rules.md -->
@@ -390,6 +394,10 @@
 		</menuitem>
 		<!-- The chord pads (reference manual p. 1346, docs/features/chord-pads.md) -->
 		<menuitem command="window.chordPads">Show/Hide Chord Pads</menuitem>
+		<!-- The sampler panel (reference manual p. 712, docs/features/sampler-track.md) -->
+		<menuitem command="window.sampler">Show Sampler</menuitem>
+		<!-- The drum machine (reference manual p. 938, docs/features/drum-track.md) -->
+		<menuitem command="window.drumMachine">Show Drum Machine</menuitem>
 		<menuseparator/>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
@@ -399,12 +407,13 @@
 		     ui::TrackList fills the list with the first one's versions, which a click activates. -->
 		<menuitem id="track-versions-submenu">Track Versions
 			<menu>
-				<menuitem command="track.newVersion">New Version</menuitem>
-				<menuitem command="track.duplicateVersion">Duplicate Version</menuitem>
-				<menuitem command="track.deleteVersion">Delete Version</menuitem>
+				<menuitem command="trackVersions.new">New Version</menuitem>
+				<menuitem command="trackVersions.duplicate">Duplicate Version</menuitem>
+				<menuitem command="trackVersions.rename">Rename Version...</menuitem>
+				<menuitem command="trackVersions.remove">Delete Version</menuitem>
 				<menuseparator/>
-				<menuitem command="track.selectSameVersionId">Select Tracks with Same Version ID</menuitem>
-				<menuitem command="track.assignCommonVersionId">Assign Common Version ID</menuitem>
+				<menuitem command="trackVersions.selectSameId">Select Tracks with Same Version ID</menuitem>
+				<menuitem command="trackVersions.assignCommonId">Assign Common Version ID</menuitem>
 				<menuseparator/>
 				<menuitem id="track-versions-list-submenu">Activate Version
 					<menu id="track-versions-list"/>
@@ -485,6 +494,9 @@
 		<menuitem command="midi.ruleEditor">Rule Editor...</menuitem>
 		<!-- docs/features/articulation-maps.md -->
 		<menuitem command="midi.articulationMapSetup">Articulation Map Setup...</menuitem>
+		<!-- docs/features/drum-editor.md -->
+		<menuitem command="drumMap.setup">Drum Map Setup...</menuitem>
+		<menuitem command="midi.convertONotes">O-Note Conversion</menuitem>
 		<menuseparator/>
 		<menuitem command="midi.mergeInLoop">Merge MIDI in Loop...</menuitem>
 		<menuitem command="midi.dissolvePart">Dissolve Part...</menuitem>
@@ -517,6 +529,8 @@
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<menuitem command="project.addSamplerTrack">Add Sampler Track...</menuitem>
+		<menuitem command="project.addDrumTrack">Add Drum Track...</menuitem>
 		<!-- Track presets (reference manual pp. 199, 238-243, docs/features/track-presets.md) -->
 		<menuitem command="project.addTrackFromPreset">Add Track from Preset...</menuitem>
 		<menuitem command="track.saveTrackPreset">Save Track Preset...</menuitem>
@@ -574,6 +588,9 @@
 	</menu>
 	<!-- The parameter selector of an automation track, which ui::TrackList fills (reference manual p. 880) -->
 	<menu id="automation-parameter-menu"/>
+	<!-- The Track Versions pop-up menu (reference manual p. 231), which ui::TrackList fills with the versions of the
+	     track whose arrow opened it and with its functions, and runs the clicks on -->
+	<menu id="track-versions-menu"/>
 	<menu id="transport-menu">
 		<menuitem command="transport.play">Start</menuitem>
 		<menuitem command="transport.stop">Stop</menuitem>
@@ -738,6 +755,11 @@
 		<menuitem line-mode="triangle">Triangle</menuitem>
 		<menuitem line-mode="square">Square</menuitem>
 	</menu>
+	<menu id="time-warp-toolbar-menu">
+		<menuitem warp-mode="warpGrid">Warp Grid</menuitem>
+		<menuitem warp-mode="warpGridFollow">Warp Grid (musical events follow)</menuitem>
+		<menuitem warp-mode="freeWarp">Free Warp</menuitem>
+	</menu>
 	<menu id="play-menu">
 		<menuitem play-mode="play">Play</menuitem>
 		<menuitem play-mode="scrub">Scrub</menuitem>
@@ -773,8 +795,7 @@
 				<menuitem tool="line">Line</menuitem>
 				<menuitem tool="play">Play</menuitem>
 				<menuitem tool="timeWarp">Time Warp</menuitem>
-				<!-- The time warp tool's modes (reference manual p. 1465, docs/features/time-warp.md), here rather than
-				     behind a toolbar button, which the toolbar has no room for at 1024 pixels -->
+				<!-- The time warp tool's modes, also behind its toolbar button (reference manual p. 1465). -->
 				<menuitem id="time-warp-submenu">Time Warp Mode
 					<menu id="time-warp-menu">
 						<menuitem warp-mode="warpGrid">Warp Grid</menuitem>

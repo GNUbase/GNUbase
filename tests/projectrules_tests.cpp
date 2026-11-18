@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/document.h"
 #include "engine/document/projectrules.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "testutils/testutils.h"
@@ -9,6 +10,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -207,6 +209,18 @@ TEST_CASE("project rules as JSON: factory presets round-trip, and wrong rules ar
 	Json open = filter("containerType", "equal", "part");
 	open["open"] = 1;
 	CHECK_THAT(refused(rules({open}, "select")), ContainsSubstring("not closed"));
+	// Brackets nest at most 3 deep, as the MIDI rules' do (#1143).
+	Json deep = filter("containerType", "equal", "part");
+	deep["open"] = 3;
+	Json deeper = filter("containerType", "equal", "part");
+	deeper["open"] = 1;
+	deeper["close"] = 3;
+	Json last = filter("containerType", "equal", "part");
+	last["close"] = 1;
+	CHECK_THAT(refused(rules({deep, deeper, last}, "select")), ContainsSubstring("nest at most 3 deep"));
+	deeper["open"] = 0;
+	deeper["close"] = 2;
+	CHECK(refused(rules({deep, deeper, last}, "select")) == "accepted");
 	CHECK_THAT(refused(rules({}, "transform", {action("name", "add", "x")})), ContainsSubstring("no operation add"));
 	CHECK_THAT(refused(rules({}, "transform", {action("trackOperation", "mute", "maybe")})),
 		ContainsSubstring("on, off or toggle"));
@@ -215,6 +229,21 @@ TEST_CASE("project rules as JSON: factory presets round-trip, and wrong rules ar
 	for (int i = 0; i < 5; ++i)
 		many["pre"].push_back({{"command", "edit.selectAll"}});
 	CHECK(refused(many) != "accepted");
+}
+
+TEST_CASE("the project rule commands tell callers how deep brackets nest", "[integration]")
+{
+	// The generated Lua and MCP references show the refusal callers can get (#1203).
+	const Fixture f;
+	std::vector<std::string> described;
+	for (const CommandInfo& info : f.engine.commands())
+		if (info.description.find("nest at most 3 deep") != std::string::npos)
+			described.push_back(info.name);
+	for (const char* name : {"project.applyRules", "project.findByRules"})
+	{
+		INFO(name);
+		CHECK(std::find(described.begin(), described.end(), name) != described.end());
+	}
 }
 
 TEST_CASE("project.findByRules finds tracks, parts and events", "[integration]")
@@ -382,6 +411,23 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		run(f.client, "project.applyRules", move);
 		CHECK(f.object("midiParts", f.full).at("position") == first);
 	}
+	SECTION("without a seed, each Apply gives new random values")
+	{
+		// Two random positions out of 480001 agree about once in 480000: of three Applies, the last two agree with
+		// the first about once in 10^11 (#1203).
+		const Json move = {{"rules",
+			rules({filter("containerType", "equal", "part")}, "transform",
+				{action("position", "setRandom", 0, 480000)})}};
+		std::vector<Json> positions;
+		for (int i = 0; i < 3; ++i)
+		{
+			run(f.client, "project.applyRules", move);
+			positions.push_back(f.object("midiParts", f.full).at("position"));
+			run(f.client, "history.undo");
+		}
+		CHECK(std::any_of(positions.begin() + 1, positions.end(),
+			[&positions](const Json& position) { return position != positions.front(); }));
+	}
 	SECTION("generated names count only what is renamed")
 	{
 		// A locked part takes no number: the found part after it has the first one.
@@ -418,6 +464,14 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		CHECK(exists("audioParts", part));
 		CHECK(exists("audioEvents", locked));
 		CHECK(!exists("audioEvents", loose));
+		// Undo brings the unlocked event back, redo takes it again.
+		run(f.client, "history.undo");
+		CHECK(exists("audioEvents", loose));
+		CHECK(f.object("audioEvents", loose).at("part") == part);
+		run(f.client, "history.redo");
+		CHECK(exists("audioParts", part));
+		CHECK(exists("audioEvents", locked));
+		CHECK(!exists("audioEvents", loose));
 		// Unlocked, the part goes and its events with it.
 		run(f.client, "event.set", {{"events", {locked}}, {"lock", false}});
 		run(f.client, "project.applyRules", {{"rules", rules({filter("containerType", "equal", "part")}, "delete")}});
@@ -440,6 +494,10 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		CHECK(atLongest(run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0).at("position")));
 		run(f.client, "history.undo");
 		CHECK(f.object("midiParts", f.full).at("position") == g_beatTicks);
+		run(f.client, "history.redo");
+		CHECK(atLongest(f.object("midiParts", f.full).at("position")));
+		CHECK(atLongest(f.object("midiParts", f.full).at("length")));
+		run(f.client, "history.undo");
 
 		// On a linear track the limit is in samples.
 		const ObjectId linear = f.add({{"type", "marker"}, {"timeBase", "linear"}});
@@ -456,6 +514,125 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		actions.push_back(action("position", "multiplyBy", 0));
 		run(f.client, "project.applyRules", {{"rules", rules({later}, "transform", actions)}});
 		CHECK(f.object("midiParts", f.full).at("position") == 0);
+	}
+	SECTION("a cycle marker's length stops at one sample")
+	{
+		// On a musical track one sample is about 72 ticks at 48 kHz and 430 at 8 kHz; at 1 BPM a tick is longer
+		// than a sample.
+		const bool linear = GENERATE(false, true);
+		const double rate = GENERATE(48000.0, g_lowestSampleRate);
+		const int tempo = GENERATE(0, 1, 2); // 120 BPM, a tempo change at the marker, 1 BPM
+		const Json zero = GENERATE(as<Json>{}, action("length", "setFixed", 0), action("length", "multiplyBy", 0),
+			action("length", "subtract", 1e9));
+		CAPTURE(linear, rate, tempo, zero);
+		run(f.client, "project.set", {{"sampleRate", rate}});
+		if (tempo == 1)
+		{
+			run(f.client, "project.set", {{"tempoTrackActive", true}});
+			run(f.client, "tempo.add", {{"position", g_beatTicks}, {"bpm", 37.0}, {"ramp", false}});
+		}
+		else if (tempo == 2)
+		{
+			run(f.client, "project.set", {{"tempo", 1}});
+		}
+		ObjectId track = f.markers;
+		if (linear)
+		{
+			track = f.add({{"type", "marker"}, {"timeBase", "linear"}});
+			run(f.client, "marker.add",
+				{{"type", "cycle"}, {"track", track}, {"position", 48000}, {"end", 96000}, {"name", "Chorus"}});
+		}
+		const Json before = run(f.client, "marker.list", {{"track", track}}).at("markers").at(0);
+		const size_t undoSteps = history();
+		run(f.client, "project.applyRules",
+			{{"rules", rules({filter("mediaType", "equal", "marker")}, "transform", {zero})}});
+		const Json marker = run(f.client, "marker.list", {{"track", track}}).at("markers").at(0);
+		const Project project = projectFromJson(run(f.client, "project.get"));
+		Marker expected = project.markers.at(marker.at("id").get<ObjectId>());
+		CHECK(expected.position.value == before.at("position"));
+		// One sample after the position, the nearest tick to it on a musical track.
+		expected.end = expected.position;
+		REQUIRE(keepMinimumLength(project, expected));
+		CHECK(marker.at("end") == expected.end.value);
+		CHECK(gnubase::time::toSamples(expected.end, project.tempo, rate) >
+			gnubase::time::toSamples(expected.position, project.tempo, rate));
+		CHECK(history() == undoSteps + 1);
+	}
+	SECTION("a marker track that changes its time domain takes its moved markers in the new one")
+	{
+		const Json markers = filter("mediaType", "equal", "marker");
+		const auto cycle = [&f] { return run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0); };
+		const size_t undoSteps = history();
+		// Musical to linear at 120 BPM and 48 kHz: from one beat to two, a beat later, is 1 s to 1.5 s.
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({markers}, "transform",
+					{action("trackOperation", "timeDomain", "linear"), action("position", "add", 480)})}});
+		CHECK(f.object("tracks", f.markers).at("timeBase") == "linear");
+		CHECK(cycle().at("position") == 48000);
+		CHECK(cycle().at("end") == 72000);
+		// Linear to musical without a length: one sample long in ticks.
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({markers}, "transform",
+					{action("trackOperation", "timeDomain", "musical"), action("length", "setFixed", 0)})}});
+		CHECK(f.object("tracks", f.markers).at("timeBase") == "musical");
+		CHECK(cycle().at("position") == 2 * g_beatTicks);
+		const gnubase::time::TempoMap tempo(120.0);
+		CHECK(tempo.toSamples(cycle().at("end").get<int64_t>(), 48000.0) == 48001);
+		CHECK(history() == undoSteps + 2);
+		run(f.client, "history.undo", {{"steps", 2}});
+		CHECK(f.object("tracks", f.markers).at("timeBase") == "musical");
+		CHECK(cycle().at("position") == g_beatTicks);
+		CHECK(cycle().at("end") == 2 * g_beatTicks);
+	}
+	SECTION("a cycle marker moved before the project's start keeps its length, as a part does")
+	{
+		const bool linear = GENERATE(false, true);
+		const double earlier = GENERATE(720.0, 1440.0); // 1.5 and 3 beats
+		CAPTURE(linear, earlier);
+		ObjectId track = f.markers;
+		if (linear)
+		{
+			run(f.client, "track.remove", {{"track", f.markers}});
+			track = f.add({{"type", "marker"}, {"timeBase", "linear"}});
+			run(f.client, "marker.add", {{"type", "cycle"}, {"track", track}, {"position", 24000}, {"end", 48000}});
+		}
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({filter("position", "bigger", 0)}, "transform", {action("position", "subtract", earlier)})}});
+		const Json marker = run(f.client, "marker.list", {{"track", track}}).at("markers").at(0);
+		CHECK(marker.at("position") == 0);
+		CHECK(marker.at("end") == (linear ? 24000 : g_beatTicks));
+		CHECK(f.object("midiParts", f.full).at("position") == 0);
+		CHECK(f.object("midiParts", f.full).at("length") == g_beatTicks);
+	}
+	SECTION("positions stop at the longest project at the lowest sample rate")
+	{
+		// At 999 BPM g_maxPosition samples at 8 kHz are about 10^18 ticks, which still fit an int64_t.
+		run(f.client, "project.set", {{"sampleRate", g_lowestSampleRate}});
+		run(f.client, "project.set", {{"tempo", 999}});
+		const ObjectId linear = f.add({{"type", "marker"}, {"timeBase", "linear"}});
+		run(f.client, "marker.add", {{"type", "position"}, {"track", linear}, {"position", 8000}});
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({filter("position", "bigger", 0)}, "transform",
+					{action("position", "multiplyBy", 1e12), action("length", "multiplyBy", 1e12)})}});
+		const int64_t longest = gnubase::time::TempoMap(999.0).toTicks(
+			static_cast<double>(gnubase::time::g_maxPosition) / g_lowestSampleRate);
+		const auto atLongest = [longest](const Json& value)
+		{ return std::abs(value.get<int64_t>() - longest) <= 1024; };
+		const int64_t position = f.object("midiParts", f.full).at("position").get<int64_t>();
+		CHECK(atLongest(position));
+		CHECK(atLongest(f.object("midiParts", f.full).at("length")));
+		CHECK(atLongest(run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0).at("position")));
+		const int64_t samples =
+			run(f.client, "marker.list", {{"track", linear}}).at("markers").at(0).at("position").get<int64_t>();
+		CHECK(std::abs(samples - gnubase::time::g_maxPosition) <= 2);
+		run(f.client, "history.undo");
+		CHECK(f.object("midiParts", f.full).at("position") == g_beatTicks);
+		run(f.client, "history.redo");
+		CHECK(f.object("midiParts", f.full).at("position") == position);
 	}
 	SECTION("audio events in a part that moves keep their place in it")
 	{
@@ -515,6 +692,14 @@ TEST_CASE("project.applyRules removes the active marker track after the other ma
 		CHECK(activatedMarkerTracks(listener) == Ids{holding});
 		run(f.client, "history.undo");
 		CHECK(run(f.client, "project.get").at("activeMarkerTrack") == active);
+		activatedMarkerTracks(listener);
+		// Redo removes them again: the marker track that stays is active again, announced once. Redo restores the
+		// stored change rather than running the removals again, so this checks the outcome, not their order.
+		run(f.client, "history.redo");
+		CHECK(f.object("tracks", first).is_null());
+		CHECK(f.object("tracks", second).is_null());
+		CHECK(run(f.client, "project.get").at("activeMarkerTrack") == holding);
+		CHECK(activatedMarkerTracks(listener) == Ids{holding});
 	}
 	SECTION("without a marker track left, none is active")
 	{
@@ -580,4 +765,23 @@ TEST_CASE("project rule presets: factory presets, and the user's kept in the set
 		run(next.client, "projectRules.savePreset", {{"name", "Mine/Again"}, {"rules", mine}});
 	}
 	CHECK(readJson(file).at("values").at("projectRules.presets").size() == 3); // Broken stays
+}
+
+// #1533, #1622: isHidden is set for the tracks the track visibility hides, those inside a hidden folder too, and no
+// longer for one that left the folder.
+TEST_CASE("project.findByRules finds the hidden tracks, those inside a hidden folder too", "[integration]")
+{
+	Fixture f;
+	using Ids = std::vector<ObjectId>;
+	const auto hidden = [&f]
+	{
+		return f.find({{"rules", rules({filter("property", "propertyIsSet", "isHidden")}, "select")}})
+			.at("tracks")
+			.get<Ids>();
+	};
+	CHECK(hidden().empty());
+	run(f.client, "trackVisibility.set", {{"hidden", {f.folder}}});
+	CHECK(hidden() == Ids{f.folder, f.vocals});
+	run(f.client, "track.move", {{"track", f.vocals}, {"parent", 0}, {"index", 0}});
+	CHECK(hidden() == Ids{f.folder});
 }

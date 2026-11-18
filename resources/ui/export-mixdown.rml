@@ -3,7 +3,7 @@
      it with File > Export > Audio Mixdown (the UI command file.exportMixdown). Its Lua lists the output busses and the
      audio, instrument, group and effect channels, the main mix checked, and on Export sends mixdown.export for the
      checked ones over the locator range, with the name, folder and file format chosen; the dialog closes unless the
-     export failed, whose reason it shows. The export holds the UI until it is done. -->
+     export failed, whose reason it shows. The background job shows progress with Cancel while editing remains available. -->
 <rml>
 <head>
 	<title>Export Audio Mixdown</title>
@@ -179,7 +179,9 @@
 				parameters.normalize = tonumber(valueOf(document, "mixdown-peak")) or 0
 			end
 			local problem
-			if #channels == 0 then
+			if parameters.name == "" then
+				problem = "Enter a name for the exported file"
+			elseif #channels == 0 then
 				problem = "Choose a channel to export"
 			else
 				local ok, failure = pcall(gnubase.mixdown.export, parameters)

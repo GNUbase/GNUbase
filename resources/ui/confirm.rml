@@ -1,0 +1,75 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- A confirmation the UI's Lua asks for with gnubase.ui.confirm (docs/features/key-commands.md): the caller sets the
+     global ConfirmDialog to {title, message, ok, onOk, onCancel} and calls gnubase.ui.confirm{}, which opens this
+     dialog over its own. OK runs onOk and closes; Cancel and Escape run onCancel and close, so the caller goes on only
+     for a confirmed choice, and can undo what it did optimistically when the choice is cancelled. -->
+<rml>
+<head>
+	<title>Confirm</title>
+	<style>
+		dialog
+		{
+			width: 360dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		Confirm = {}
+
+		local function escape(text)
+			return (tostring(text or ""):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		function Confirm.open(document)
+			local request = ConfirmDialog or {}
+			document:GetElementById("confirm-title").inner_rml = escape(request.title or "Confirm")
+			document:GetElementById("confirm-message").inner_rml = escape(request.message)
+			document:GetElementById("confirm-ok").inner_rml = escape(request.ok or "OK")
+		end
+
+		function Confirm.ok(document)
+			local request = ConfirmDialog
+			ConfirmDialog = nil
+			document:Close()
+			if request and request.onOk then
+				request.onOk()
+			end
+		end
+
+		-- The dialog closed: for Cancel or Escape, ConfirmDialog is still set, so run the caller's onCancel, if it has
+		-- one. OK cleared ConfirmDialog before it closed, so this does nothing then (and onOk already ran).
+		function Confirm.closed()
+			local request = ConfirmDialog
+			ConfirmDialog = nil
+			if request and request.onCancel then
+				request.onCancel()
+			end
+		end
+	</script>
+</head>
+<body onload="Confirm.open(document)" onunload="Confirm.closed()">
+	<dialog id="confirm-dialog">
+		<div class="dialog-titlebar" id="confirm-title">Confirm</div>
+		<div class="row" id="confirm-message"></div>
+		<div class="row buttons">
+			<button id="confirm-cancel" result="cancel">Cancel</button>
+			<button id="confirm-ok" class="primary" onclick="Confirm.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

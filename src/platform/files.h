@@ -58,6 +58,25 @@ namespace gnubase::files
 	// A file's contents, or nullopt if it can't be read. Not for audio threads.
 	std::optional<std::string> readFile(const std::filesystem::path& file);
 
+	// Which file a path names on disk: the volume and file index on Windows, the device and inode elsewhere. Two
+	// paths have the same identity exactly when the file system sees them as one file, however each spells the name
+	// (a letter's case, or, where the file system folds it, a normal form). This is what std::filesystem::equivalent
+	// compares, but as one value per file, so a set of files is searched in one step instead of a path being compared
+	// with each of them. Nullopt if the file isn't there or can't be opened. Not for audio threads.
+	struct FileIdentity
+	{
+		uint64_t device = 0;
+		uint64_t number = 0;
+
+		bool operator==(const FileIdentity& other) const { return device == other.device && number == other.number; }
+		bool operator<(const FileIdentity& other) const
+		{
+			return device < other.device || (device == other.device && number < other.number);
+		}
+	};
+
+	std::optional<FileIdentity> fileIdentity(const std::filesystem::path& file);
+
 	// An exclusive lock between processes, and between the threads of one, held while the object lives: an OS lock on
 	// the lock file, created if needed and kept afterwards. The OS releases it if the process dies.
 	class FileLock

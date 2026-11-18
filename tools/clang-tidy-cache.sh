@@ -8,6 +8,14 @@
 # definitions and inactive code too. Only a pass is stored, as an empty file named after the key; a finding is never
 # stored, so it fails every run. Without a key (the compiler isn't clang, or preprocessing fails) clang-tidy just runs.
 set -u
+if command -v sha256sum > /dev/null; then
+	hash=(sha256sum)
+elif command -v shasum > /dev/null; then
+	hash=(shasum -a 256) # macOS
+else
+	echo "$0: neither sha256sum nor shasum is installed" >&2
+	exit 1
+fi
 cache=$1
 shift
 for ((end = 1; end <= $#; end++)); do
@@ -20,7 +28,7 @@ key=$(
 	{
 		printf '%s\0' "$@" && "$1" --version && "$1" --dump-config "$file" &&
 			"${@:end+1}" -w -E -frewrite-includes -o -
-	} 2>/dev/null | sha256sum
+	} 2>/dev/null | "${hash[@]}"
 ) && key=$cache/${key%% *} || key=
 if [ -n "$key" ] && [ -f "$key" ]; then
 	touch "$key" # marks it as used, for CI to drop the others

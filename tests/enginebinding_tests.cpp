@@ -151,11 +151,11 @@ TEST_CASE("the steps of one control go one at a time, the newest of a gesture re
 	CHECK(read("volume") == -10.0);
 	CHECK(position() == before + 1); // one undo step
 
-	// Steps without a gesture are steps of their own: none is replaced. Another control's don't wait for them.
+	// Steps without a gesture are steps of their own: none is replaced. Starting another control flushes them first.
 	for (int step = 1; step <= 3; ++step)
 		binding.sendStep(0, "volume", "Change Volume", set("volume", -20.0 - step));
 	binding.sendStep(0, "pan", "Change Pan", set("pan", 0.5));
-	CHECK(binding.waiting("history.transaction") == 2);
+	CHECK(binding.waiting("history.transaction") == 4);
 	updateUntil(binding, [&binding] { return !binding.sending("volume") && !binding.sending("pan"); });
 	CHECK(read("volume") == -23.0);
 	CHECK(read("pan") == 0.5);
@@ -203,6 +203,169 @@ TEST_CASE("the steps of one control go one at a time, the newest of a gesture re
 	CHECK(binding.waiting("history.transaction") == 1);
 	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
 	CHECK(read("volume") == -2.0);
+
+	// A gesture's steps under two merge names, such as the info line's for two selections (#1556): the newest of a
+	// name replaces only a waiting step of that name, so the first name's last value still goes, as an undo step of
+	// its own.
+	const int64_t merged = position();
+	binding.sendStep(14, "field", "Change Volume", set("volume", -3.0), {}, nullptr, "one");
+	binding.sendStep(14, "field", "Change Volume", set("volume", -4.0), {}, nullptr, "one");
+	binding.sendStep(14, "field", "Change Pan", set("pan", -0.25), {}, nullptr, "two");
+	updateUntil(binding, [&binding] { return !binding.sending("field"); });
+	CHECK(read("volume") == -4.0);
+	CHECK(read("pan") == -0.25);
+	CHECK(position() == merged + 2);
+	REQUIRE(client.call("history.undo").ok());
+	CHECK(read("volume") == -4.0);
+	CHECK(read("pan") == 0.5);
+}
+
+TEST_CASE("a control's steps leave no record behind once a read after their last answer was handed on", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const auto set = [&channel](const char* key, double value)
+	{ return Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {key, value}}}}}); };
+	const auto read = [&client](const char* key)
+	{ return client.call("project.get").value.at("channels").at(0).at(key).get<double>(); };
+	const Json unknown = Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", 999999}}}}});
+	// A read through the binding, as the event display reads the project after each history.changed; returns the
+	// handed() that the views keep with it.
+	const auto readProject = [&binding]
+	{
+		uint64_t handed = 0;
+		binding.send(
+			"project.get", Json::object(), [&binding, &handed](const engine::Result&) { handed = binding.handed(); });
+		updateUntil(binding, [&handed] { return handed != 0; });
+		return handed;
+	};
+
+	// A drag: the newest step replaces the waiting one, and the last is taken. The record stays until a read after
+	// the last answer is in, so that a view showing an older read again meanwhile, e.g. the inspector after a track
+	// change, leaves the control as it is (#1305).
+	binding.sendStep(7, "volume", "Change Volume", set("volume", -1.0));
+	binding.sendStep(7, "volume", "Change Volume", set("volume", -2.0));
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(read("volume") == -2.0);
+	binding.update();
+	binding.update();
+	CHECK(binding.ahead("volume", 0)); // still ahead of a read from before the drag
+	const uint64_t fresh = readProject();
+	CHECK(!binding.ahead("volume", fresh));
+	CHECK(binding.ahead("volume", 0)); // the views showing what this update handed on still ask about it
+	// Another project read out keeps it too: the view that sent it may show an older read until it is in.
+	binding.send("project.get");
+	binding.update();
+	CHECK(binding.ahead("volume", 0));
+	updateUntil(binding, [&binding] { return binding.waiting("project.get") == 0; });
+	binding.update(); // the next one lets the record go (#746)
+	CHECK(!binding.ahead("volume", 0));
+	CHECK(!binding.sending("volume"));
+
+	// A read sent before the last step is answered before it: the record stays for the next one.
+	uint64_t early = 0;
+	binding.send(
+		"project.get", Json::object(), [&binding, &early](const engine::Result&) { early = binding.handed(); });
+	binding.sendStep(7, "pan", "Change Pan", set("pan", 0.5));
+	updateUntil(binding, [&binding] { return !binding.sending("pan"); });
+	CHECK(read("pan") == 0.5);
+	CHECK(early != 0);
+	binding.update();
+	CHECK(binding.ahead("pan", early));
+	readProject();
+	binding.update();
+	CHECK(!binding.ahead("pan", 0));
+
+	// A refused last step: its record goes too; an earlier taken step keeps the control ahead until then.
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -3.0));
+	binding.sendStep(9, "volume", "Change Volume", unknown);
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	binding.update();
+	CHECK(binding.ahead("volume", 0));
+	readProject();
+	binding.update();
+	CHECK(!binding.ahead("volume", 0));
+	CHECK(read("volume") == -3.0); // the refused step changed nothing
+
+	// A failed project read is none: the view that sent it shows its older read still, so the record stays (#1370).
+	binding.sendStep(11, "pan", "Change Pan", set("pan", -0.5));
+	updateUntil(binding, [&binding] { return !binding.sending("pan"); });
+	bool failed = false;
+	binding.send("project.get", {{"unknown", 1}}, [&failed](const engine::Result& result) { failed = !result.ok(); });
+	updateUntil(binding, [&failed] { return failed; });
+	binding.update();
+	CHECK(binding.ahead("pan", 0));
+	readProject();
+	binding.update();
+	CHECK(!binding.ahead("pan", 0));
+
+	// A later gesture makes the record again and works as before.
+	binding.sendStep(10, "volume", "Change Volume", set("volume", -4.0));
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(read("volume") == -4.0);
+	CHECK(binding.ahead("volume", 0));
+}
+
+TEST_CASE("a control's record keeps what the control shows while it is ahead, and lets it go with the record", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const auto set = [&channel](const char* key, double value)
+	{ return Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {key, value}}}}}); };
+	const auto readProject = [&binding]
+	{
+		uint64_t handed = 0;
+		binding.send(
+			"project.get", Json::object(), [&binding, &handed](const engine::Result&) { handed = binding.handed(); });
+		updateUntil(binding, [&handed] { return handed != 0; });
+		return handed;
+	};
+
+	// A drag of two events' values: each step's values are merged into what the record keeps, the newest of each.
+	binding.sendStep(7, "volume", "Change Volume", set("volume", -1.0), {}, Json{{"1", "-1"}, {"2", "-3"}});
+	binding.sendStep(7, "volume", "Change Volume", set("volume", -2.0), {}, Json{{"1", "-2"}});
+	const Json dragged = {{"1", "-2"}, {"2", "-3"}};
+	REQUIRE(binding.shown("volume", 0) != nullptr);
+	CHECK(*binding.shown("volume", 0) == dragged);
+	CHECK(binding.shown("pan", 0) == nullptr);
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	binding.update();
+	REQUIRE(binding.shown("volume", 0) != nullptr); // still ahead of a read from before the drag
+	CHECK(*binding.shown("volume", 0) == dragged);
+	const uint64_t fresh = readProject();
+	CHECK(binding.shown("volume", fresh) == nullptr);
+	binding.update();
+	CHECK(binding.shown("volume", 0) == nullptr); // gone with the record (#1471)
+
+	// A later gesture keeps its own; a value that isn't an object replaces what is kept, and a step without one
+	// keeps nothing.
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -4.0), {}, Json{{"1", "-4"}});
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -5.0), {}, -5.0);
+	REQUIRE(binding.shown("volume", 0) != nullptr);
+	CHECK(*binding.shown("volume", 0) == -5.0);
+	binding.sendStep(0, "pan", "Change Pan", set("pan", 0.5));
+	CHECK(binding.ahead("pan", 0));
+	CHECK(binding.shown("pan", 0) == nullptr);
+	CHECK(binding.settle(std::chrono::seconds(10)));
+
+	// A step taken and no read since: the next step keeps what the record has, as the project may not have it yet.
+	binding.sendStep(9, "transpose", "Change Transpose", set("volume", -6.0), {}, Json{{"1", "-6"}});
+	updateUntil(binding, [&binding] { return !binding.sending("transpose"); });
+	binding.sendStep(10, "transpose", "Change Transpose", set("volume", -7.0), {}, Json{{"2", "-7"}});
+	REQUIRE(binding.shown("transpose", 0) != nullptr);
+	CHECK(*binding.shown("transpose", 0) == Json{{"1", "-6"}, {"2", "-7"}});
+	// Once a read after its last taken step is in, the project has what the record kept, and an undo since may have
+	// changed it: the next step starts the record's values afresh, also before the record goes (#1550).
+	updateUntil(binding, [&binding] { return !binding.sending("transpose"); });
+	readProject();
+	binding.sendStep(11, "transpose", "Change Transpose", set("volume", -8.0), {}, Json{{"2", "-8"}});
+	REQUIRE(binding.shown("transpose", 0) != nullptr);
+	CHECK(*binding.shown("transpose", 0) == Json{{"2", "-8"}});
+	CHECK(binding.settle(std::chrono::seconds(10)));
 }
 
 TEST_CASE(
@@ -232,6 +395,15 @@ TEST_CASE(
 	CHECK(!binding.sending("volume"));
 	CHECK(binding.waiting("track.add") == 0);
 	CHECK(position() == before + 4);
+
+	// Only a step in flight, one that waits and a query: settling sends the one that waits, too.
+	binding.sendStep(0, "volume", "Change Volume", volume(-3.0));
+	binding.sendStep(0, "volume", "Change Volume", volume(-4.0));
+	binding.send("project.get");
+	CHECK(binding.settle(std::chrono::seconds(10)));
+	CHECK(!binding.sending("volume"));
+	CHECK(position() == before + 6);
+	CHECK(client.call("project.get").value.at("channels").at(0).at("volume") == -4.0);
 }
 
 TEST_CASE("the UI follows the events of every client while it subscribes", "[unit]")
@@ -581,4 +753,198 @@ TEST_CASE("events, results and posted work draw every window in the step they re
 	CHECK(state->GetInnerRML() == "queried");
 	CHECK(window.frames() == frames + 1);
 	CHECK(other.frames() == otherFrames);
+}
+
+TEST_CASE("settling waits for a query that what the user did waits for, and for what its answer sends", "[unit]")
+{
+	// As the event display's actions wait for snap.zeroCrossings (#1086): settling returns only once the action that
+	// the answer runs has been sent and answered. The query takes a while, so that settling starts before its answer.
+	engine::Engine engine;
+	engine.registerCommand(
+		{"test.slowRead", 1, "Reads slowly.", engine::CommandInfo{}.parameters, Json::object(), true},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(milliseconds(200));
+			return Json::object();
+		});
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const auto tracks = [&client] { return client.call("project.get").value.at("tracks").size(); };
+	bool answered = false;
+	binding.sendAwaited("test.slowRead", Json::object(),
+		[&binding, &answered](const engine::Result& /*result*/)
+		{
+			answered = true;
+			binding.send("track.add", {{"type", "audio"}});
+		});
+	CHECK(binding.settle(std::chrono::seconds(10)));
+	CHECK(answered);
+	CHECK(binding.waiting("track.add") == 0);
+	CHECK(tracks() == 1);
+}
+
+TEST_CASE("what the user does while an awaited query is out runs after its answer, in order", "[unit]")
+{
+	engine::Engine engine;
+	engine.registerCommand(
+		{"test.slowRead", 1, "Reads slowly.", engine::CommandInfo{}.parameters, Json::object(), true},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(milliseconds(200));
+			return Json::object();
+		});
+	ui::EngineBinding binding(engine);
+	std::vector<std::string> ran;
+	// Without an awaited query out, at once.
+	binding.afterAwaited([&ran] { ran.emplace_back("at once"); });
+	CHECK(ran == std::vector<std::string>{"at once"});
+	CHECK(!binding.holding());
+
+	// While one is out, after its done, in the order given; what a held one runs itself runs at once.
+	ran.clear();
+	binding.sendAwaited(
+		"test.slowRead", Json::object(), [&ran](const engine::Result& /*result*/) { ran.emplace_back("answer"); });
+	binding.afterAwaited(
+		[&binding, &ran]
+		{
+			ran.emplace_back("first");
+			binding.afterAwaited([&ran] { ran.emplace_back("inside first"); });
+		});
+	binding.afterAwaited([&ran] { ran.emplace_back("second"); });
+	CHECK(ran.empty());
+	CHECK(binding.holding());
+	updateUntil(binding, [&binding] { return !binding.holding(); });
+	CHECK(ran == std::vector<std::string>{"answer", "first", "inside first", "second"});
+
+	// A held one that sends an awaited query again holds those after it until that is answered too.
+	ran.clear();
+	binding.sendAwaited("test.slowRead", Json::object(), {});
+	binding.afterAwaited(
+		[&binding, &ran]
+		{
+			ran.emplace_back("first");
+			binding.sendAwaited("test.slowRead", Json::object(),
+				[&ran](const engine::Result& /*result*/) { ran.emplace_back("again"); });
+		});
+	binding.afterAwaited([&ran] { ran.emplace_back("second"); });
+	updateUntil(binding, [&binding] { return !binding.holding(); });
+	CHECK(ran == std::vector<std::string>{"first", "again", "second"});
+
+	// releaseHeld runs them without waiting.
+	ran.clear();
+	binding.sendAwaited("test.slowRead", Json::object(), {});
+	binding.afterAwaited([&ran] { ran.emplace_back("released"); });
+	binding.releaseHeld();
+	CHECK(ran == std::vector<std::string>{"released"});
+	CHECK(binding.settle(std::chrono::seconds(10)));
+}
+
+TEST_CASE("awaiting what is held waits for the awaited answers only, not for other commands out", "[unit]")
+{
+	// As a press in the event display does (#1179): a slow command that isn't a query, sent after the awaited query,
+	// is still out once the held action has run, and awaitHeld returns then rather than waiting for it.
+	engine::Engine engine;
+	engine.registerCommand(
+		{"test.slowRead", 1, "Reads slowly.", engine::CommandInfo{}.parameters, Json::object(), true},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(milliseconds(100));
+			return Json::object();
+		});
+	engine.registerCommand(
+		{"test.slowWrite", 1, "Writes slowly.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(milliseconds(1500));
+			return Json::object();
+		});
+	ui::EngineBinding binding(engine);
+	// Nothing held: at once.
+	CHECK(binding.awaitHeld(std::chrono::seconds(0)));
+
+	bool ran = false;
+	binding.sendAwaited("test.slowRead", Json::object(), {});
+	binding.send("test.slowWrite");
+	binding.afterAwaited([&ran] { ran = true; });
+	CHECK(binding.awaitHeld(std::chrono::seconds(10)));
+	CHECK(ran);
+	CHECK(binding.waiting("test.slowWrite") == 1);
+
+	// What is still held after the timeout stays held.
+	ran = false;
+	binding.sendAwaited("test.slowRead", Json::object(), {});
+	binding.afterAwaited([&ran] { ran = true; });
+	CHECK(!binding.awaitHeld(std::chrono::milliseconds(0)));
+	CHECK(!ran);
+	CHECK(binding.holding());
+	CHECK(binding.settle(std::chrono::seconds(10)));
+	CHECK(ran);
+}
+
+TEST_CASE("a view's value step follows the previous view's waiting step", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const auto set = [&channel](double value)
+	{
+		return Json::array(
+			{Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"volume", value}}}}});
+	};
+	const auto volume = [&]
+	{ return client.call("project.get").value.at("channels").at(0).at("volume").get<double>(); };
+	const auto position = [&] { return client.call("history.get").value.at("position").get<int64_t>(); };
+	const double initial = volume();
+	const int64_t before = position();
+	const std::string first = binding.stepOwner("mixer") + "channel volume";
+	const std::string second = binding.stepOwner("inspector") + "channel volume";
+	bool returning = false;
+	SECTION("the next view has no step in flight")
+	{
+	}
+	SECTION("switching back while the next view's earlier step is still in flight")
+	{
+		returning = true;
+		binding.sendStep(3, second, "Earlier second view", set(-10.0));
+	}
+	binding.sendStep(1, first, "First view", set(-1.0));
+	binding.sendStep(1, first, "First view", set(-2.0));
+	binding.sendStep(2, second, "Second view", set(-3.0));
+	REQUIRE(binding.settle(std::chrono::seconds(5)));
+	CHECK(volume() == -3.0);
+	CHECK(position() == before + (returning ? 3 : 2));
+	REQUIRE(client.call("history.undo").ok());
+	CHECK(volume() == -2.0);
+	REQUIRE(client.call("history.undo").ok());
+	CHECK(volume() == (returning ? -10.0 : initial));
+	if (returning)
+	{
+		REQUIRE(client.call("history.undo").ok());
+		CHECK(volume() == initial);
+	}
+}
+
+TEST_CASE("answered steps of repeated view owners are discarded after a fresh project read", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	std::vector<std::string> closed;
+	for (int view = 0; view < 20; ++view)
+	{
+		const std::string key = binding.stepOwner("mixer") + "channel volume";
+		binding.sendStep(1, key, "View volume",
+			Json::array(
+				{Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"volume", -view - 1}}}}}));
+		updateUntil(binding, [&] { return !binding.sending(key); });
+		CHECK(binding.ahead(key, 0));
+		binding.send("project.get");
+		updateUntil(binding, [&] { return binding.waiting("project.get") == 0; });
+		binding.update();
+		closed.push_back(key);
+		for (const auto& owner : closed)
+			CHECK(!binding.ahead(owner, 0));
+	}
 }

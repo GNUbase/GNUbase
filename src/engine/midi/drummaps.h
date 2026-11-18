@@ -3,6 +3,7 @@
 
 #include "engine/document/document.h"
 
+#include <array>
 #include <cstdint>
 #include <string>
 
@@ -16,7 +17,7 @@ namespace gnubase::engine
 namespace gnubase::engine::midi
 {
 	// The GM Map (p. 1237): General MIDI's percussion names, every I-note and O-note its own pitch, channel 10 and a
-	// 1/16 snap. Its id is 0.
+	// 1/16 snap. Its id is 0 until it gets the project's (0 is no map).
 	DrumMap gmDrumMap();
 	// New Map (p. 1236): "Empty Map", the sounds named Sound 1, Sound 2 and so on, on the track's channel.
 	DrumMap emptyDrumMap();
@@ -25,6 +26,8 @@ namespace gnubase::engine::midi
 	const DrumMap* drumMapOf(const Project& project, ObjectId track);
 	// The pitch that a note played in on a track becomes: the first sound, by pitch, whose I-note it is, or itself.
 	uint8_t inputPitch(const Project& project, ObjectId track, uint8_t played);
+	// inputPitch for each of the 128 notes played in, through the map.
+	std::array<uint8_t, g_drumSounds> inputPitches(const DrumMap& map);
 
 	// A drum map file (.drm): XML with the map's name, its sounds and their order.
 	std::string writeDrumMapFile(const DrumMap& map);

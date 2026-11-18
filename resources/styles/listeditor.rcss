@@ -100,6 +100,16 @@
 	flex-basis: 100dp;
 }
 
+/* The warning sign for articulations the track's map doesn't have (p. 1291), over the end of the Attributes column,
+   so that the columns stay in line. */
+.list-row svg.articulation-warning
+{
+	flex: 0 0 12dp;
+	width: 12dp;
+	height: 12dp;
+	margin: 4dp 0 4dp -14dp;
+}
+
 .list-event-lane
 {
 	position: relative;

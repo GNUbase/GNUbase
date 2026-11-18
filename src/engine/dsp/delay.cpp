@@ -60,8 +60,9 @@ namespace gnubase::engine::dsp
 	void Delay::reset() noexcept
 	{
 		for (std::vector<float>& line : m_lines)
-			std::fill(line.begin(), line.end(), 0.0f);
+			std::fill_n(line.begin(), std::min(m_written, line.size()), 0.0f);
 		m_write = 0;
+		m_written = 0;
 		m_delay.finish();
 		m_feedbackGain.finish();
 		m_wet.finish();
@@ -182,5 +183,6 @@ namespace gnubase::engine::dsp
 			}
 			m_write = m_write + 1 == m_length ? 0 : m_write + 1;
 		}
+		m_written = std::min(m_written + (end - begin), m_length);
 	}
 }

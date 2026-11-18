@@ -53,4 +53,15 @@ namespace gnubase::engine::midi
 	{
 		return static_cast<uint16_t>(scaleDown(value, 32, 14));
 	}
+
+	// MPE's pitch range of its notes' pitch bend, in semitones (#176).
+	inline constexpr int g_mpePitchRange = 48;
+
+	// A pitch bend as semitones of a pitch range, and back; semitones beyond the range bend to its end.
+	double bendToSemitones(uint32_t bend, double range);
+	uint32_t semitonesToBend(double semitones, double range);
+
+	// A controller or pressure value as 0-1, and back, clamped to 0-1.
+	double controllerToUnit(uint32_t value);
+	uint32_t controllerFromUnit(double value);
 }

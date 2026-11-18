@@ -21,6 +21,20 @@ MCP and Lua scripts can do all it does.
     entry, which Apply and OK don't send, so they don't reopen the device with a source the user didn't pick (#398).
   - *MIDI Port Setup*: the ports of every MIDI backend (`midi.ports`) with Show As, Visible, State (active, inactive or
     not present) and, for inputs, In 'All MIDI Inputs'.
+  - *Note Expression Input* (#1514, reference manual pp. 1295-1298): the MIDI Input list picks an input, and below it
+    are that input's MPE settings (`mpe` in `midi.ports` and `midi.setPort`, [note-expression.md](note-expression.md)):
+    the MIDI Message and Note Expression Assignment of Pressure, Horizontal/X and Vertical/Y (#1674), the Send Initial
+    Value of X and Y, Use for Tuning and Pitch Range, Multi-Channel Input Mode (off, MPE's lower or upper zone, channel
+    rotation), Used Channels and First Channel (only for channel rotation). Use for Tuning shows X's assignment as
+    Tuning and disables it; off, X shows its own assignment again (None until another is chosen, #1749), and choosing
+    Tuning for X turns it on. At the bottom the MIDI Activity display shows the input's last eight messages (channel,
+    kind, values) as the event `midi.activity` brings them; the dialog turns `midi.activityListen` on while it is open
+    and off when it closes. An input that is a known MPE device shows it (Detected Device), and the devices list has a
+    page named after the device below Note Expression Input, which is this page with its input. Each input has its own
+    fields, so switching inputs keeps what the user changed; Apply and OK send the changed inputs' settings; a pitch
+    range that isn't a whole number from 1 to 96 is an error, and that input's settings stay as they were. Used Channels
+    offers 16 for channel rotation; a zone gets at most 15, which the page shows after Apply. Apply builds the page
+    again from the engine, still showing the input that was selected.
 - **Apply, OK, Cancel.** The pages keep what the user changes until Apply or OK sends it; Cancel and Escape drop it.
   Only what changed is sent: another driver with `audio.setDevice` (the old device's page doesn't apply to the new
   one, so the reference's "Switch" is this Apply) with `remember`, so the app opens it again when it starts, and
@@ -66,7 +80,13 @@ MCP and Lua scripts can do all it does.
   the extra processing buffer and power scheme options, disk preload and the MIDI input and output monitors.
 - **Tests:** `tests/studiosetup_tests.cpp` opens the dialog through its UI command on the dummy device and a dummy MIDI
   keyboard and drives it with `ui::Automation`: it shows the driver, the device's settings and its ports; a new sample
-  rate, a renamed and a hidden port and a renamed MIDI input that leaves all MIDI inputs reach the engine with OK;
+  rate, a renamed and a hidden port and a renamed MIDI input that leaves all MIDI inputs reach the engine with OK; the
+  Note Expression Input page sets up the keyboard's channel rotation, and an invalid pitch range keeps it open; it
+  sets each dimension's MIDI Message and Note Expression Assignment, with Use for Tuning and X's Tuning following each
+  other and X's own assignment coming back with Use for Tuning off; a detected LinnStrument has its page, which shows
+  its input with the preset, and the MIDI Activity display shows the device's messages, and none of them on another
+  input's fields, and no activity once the dialog is closed;
+  with two keyboards, switching between them keeps each one's edits, and after Apply the page still shows the second;
   Cancel drops a change, Apply changes multi-processing while the device runs, a bad record shift keeps the dialog
   open with the message, and Reset reopens the device. With a fake audio backend (`test::UiApp` takes audio backends
   as it takes MIDI backends), Apply switches to its device's driver with `audio.setDevice`, and OK sends no

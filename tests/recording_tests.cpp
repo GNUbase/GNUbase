@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Audio recording (#96, reference manual pp. 335-346): record-enabled tracks record their input bus into files
 // written off the audio thread, cycle laps become takes, the audio record modes, and audio pre-record.
+#include "engine/audio/recorder.h"
 #include "engine/audiofile/audiofile.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
@@ -11,12 +12,18 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <mutex>
 #include <optional>
+#include <set>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -179,6 +186,40 @@ namespace
 	Json sineInput()
 	{
 		return {{"processor", "sine"}, {"parameters", {{"Frequency", 440.0}, {"Level", 0.5}}}};
+	}
+
+	// Hands a Recorder prepared for one channel and g_blockFrames frames block number index of the device's input,
+	// recorded at its own position or not recorded.
+	constexpr uint32_t g_blockFrames = 64;
+
+	void processBlock(
+		gnubase::engine::Recorder& recorder, gnubase::engine::PlayedPositions& played, uint64_t index, bool recording)
+	{
+		namespace engine = gnubase::engine;
+		std::vector<float> input(g_blockFrames, 0.25f);
+		const float* const inputs[] = {input.data()};
+		const gnubase::audio::MidiBuffer midiIn;
+		gnubase::audio::MidiBuffer midiOut;
+		const engine::MidiTap::Sequencers sequencers;
+		const uint64_t position = index * g_blockFrames;
+		const engine::graph::TransportSegment segment{0, g_blockFrames, static_cast<int64_t>(position), recording};
+		engine::graph::TransportBlock transport;
+		transport.playing = true;
+		transport.segments = &segment;
+		transport.segmentCount = 1;
+		transport.recording = recording;
+		played.add(position, g_blockFrames, transport);
+		recorder.process({inputs, nullptr, g_blockFrames, position, 0, midiIn, midiOut}, played, 0, sequencers);
+	}
+
+	// A setup that records one mono track into folder.
+	gnubase::engine::RecordSetup recordInto(const std::filesystem::path& folder)
+	{
+		gnubase::engine::RecordSetup setup;
+		setup.folder = folder;
+		setup.format.sampleFormat = gnubase::engine::SampleFormat::Float32;
+		setup.tracks = {{1, "Audio", {0}}};
+		return setup;
 	}
 }
 
@@ -491,6 +532,30 @@ TEST_CASE("only record-enabled audio tracks record, and nothing records without 
 	CHECK(std::filesystem::directory_iterator(setup.dir.path() / "Audio") != std::filesystem::directory_iterator());
 }
 
+TEST_CASE("tracks of the same name record into files of their own, next to the ones in the folder", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	const Json other = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 2}});
+	run(client, "channel.set", {{"channel", other.at("channel").at("id")}, {"recordEnable", true}});
+	const std::vector<ObjectId> tracks{setup.track, idOf(other, "track")};
+	for (const ObjectId track : tracks)
+		run(client, "track.set", {{"track", track}, {"name", "Vocals"}});
+	const std::filesystem::path audio = setup.dir.path() / "Audio";
+	std::filesystem::create_directories(audio);
+	std::ofstream(audio / "VOCALS.wav") << "there"; // differs only in case: taken on every file system
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(setup.stop().is_object());
+
+	std::set<std::string> names;
+	for (const ObjectId track : tracks)
+		for (const Json& event : eventsOn(client, track))
+			names.insert(std::filesystem::u8path(pathOf(client, event)).filename().u8string());
+	CHECK(names == std::set<std::string>{"Vocals-2.wav", "Vocals-3.wav"});
+	CHECK(gnubase::test::readText(audio / "VOCALS.wav") == "there");
+}
+
 TEST_CASE("a recording isn't added to a project opened while it was recorded", "[integration]")
 {
 	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
@@ -671,4 +736,175 @@ TEST_CASE("the audio record mode is a transport setting", "[integration]")
 		"cycleHistoryReplace");
 	CHECK_THAT(reject(client, "transport.set", {{"audioRecordMode", "merge"}}), ContainsSubstring("audioRecordMode"));
 	CHECK(run(client, "transport.get").at("audioRecordMode") == "cycleHistoryReplace");
+}
+
+TEST_CASE("Recorder::setup doesn't wait for the disk thread, which reports a recording under its lock", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	bool finishing = false;
+	bool setUp = false;
+	bool sawSetUp = false;
+	{
+		// The disk thread holds its lock while it reports the recording: it waits there for setup to come back.
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json&)
+			{
+				if (name != "recording.finished")
+					return;
+				std::unique_lock lock(mutex);
+				finishing = true;
+				changed.notify_all();
+				sawSetUp = changed.wait_for(lock, 5s, [&] { return setUp; });
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(dir.path()));
+
+		// A recorded block, then one that isn't: the recording ends.
+		engine::PlayedPositions played(size_t{4} * g_blockFrames);
+		processBlock(recorder, played, 0, true);
+		processBlock(recorder, played, 1, false);
+		{
+			std::unique_lock lock(mutex);
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return finishing; }));
+		}
+		recorder.setup({});
+		{
+			const std::scoped_lock lock(mutex);
+			setUp = true;
+		}
+		changed.notify_all();
+	}
+	CHECK(sawSetUp);
+}
+
+TEST_CASE("a recording the audio thread started keeps its setup when the next one comes first", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path first = dir.path() / "first";
+	const std::filesystem::path second = dir.path() / "second";
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::vector<std::filesystem::path> paths;
+	bool released = false;
+	{
+		// The disk thread waits in the report of the first recording while the audio thread starts the second one
+		// and the next setup comes.
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				if (name != "recording.finished")
+					return;
+				std::unique_lock lock(mutex);
+				for (const Json& track : data.at("tracks"))
+					paths.push_back(std::filesystem::u8path(track.at("path").get<std::string>()));
+				changed.notify_all();
+				changed.wait_for(lock, 5s, [&] { return released; });
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(first));
+		engine::PlayedPositions played(size_t{8} * g_blockFrames);
+		processBlock(recorder, played, 0, true);
+		processBlock(recorder, played, 1, false);
+		{
+			std::unique_lock lock(mutex);
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return !paths.empty(); }));
+		}
+		processBlock(recorder, played, 2, true);
+		recorder.setup(recordInto(second));
+		processBlock(recorder, played, 3, false);
+		{
+			std::unique_lock lock(mutex);
+			released = true;
+			changed.notify_all();
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return paths.size() == 2; }));
+		}
+	}
+	for (const std::filesystem::path& path : paths)
+		CHECK(path.parent_path() == first);
+	CHECK(!std::filesystem::exists(second));
+}
+
+TEST_CASE("the retrospective buffer doesn't wait while the disk thread creates a recording's files", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	// A file where the record folder should be: the disk thread reports the failure while it creates the files, and
+	// waits there for the retrospective buffer to answer.
+	const std::filesystem::path notAFolder = dir.path() / "file";
+	std::ofstream(notAFolder) << "not a folder";
+	std::mutex mutex;
+	std::condition_variable changed;
+	bool failing = false;
+	bool answered = false;
+	bool sawAnswer = false;
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json&)
+			{
+				if (name != "recording.failed")
+					return;
+				std::unique_lock lock(mutex);
+				if (failing)
+					return;
+				failing = true;
+				changed.notify_all();
+				sawAnswer = changed.wait_for(lock, 5s, [&] { return answered; });
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(notAFolder));
+		engine::PlayedPositions played(size_t{4} * g_blockFrames);
+		processBlock(recorder, played, 0, true);
+		{
+			std::unique_lock lock(mutex);
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return failing; }));
+		}
+		CHECK(recorder.retrospective(1).empty());
+		recorder.clearRetrospective(0);
+		{
+			const std::scoped_lock lock(mutex);
+			answered = true;
+		}
+		changed.notify_all();
+	}
+	CHECK(sawAnswer);
+}
+
+TEST_CASE("the retrospective buffer leaves a recording's start to the disk thread", "[unit]")
+{
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	// A file where the record folder should be: the thread that starts a recording reports the failure.
+	const std::filesystem::path notAFolder = dir.path() / "file";
+	std::ofstream(notAFolder) << "not a folder";
+	const std::thread::id commandThread = std::this_thread::get_id();
+	std::atomic<bool> startedOnCommandThread{false};
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json&)
+			{
+				if (name == "recording.failed" && std::this_thread::get_id() == commandThread)
+					startedOnCommandThread = true;
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(notAFolder));
+		// The command comes right after the chunk that starts a recording, well within the disk thread's poll.
+		engine::PlayedPositions played(size_t{64} * g_blockFrames);
+		for (uint64_t index = 0; index < 32; index += 2)
+		{
+			processBlock(recorder, played, index, true);
+			if (index % 4 == 0)
+				CHECK(recorder.retrospective(1).empty());
+			else
+				recorder.clearRetrospective(0);
+			processBlock(recorder, played, index + 1, false);
+		}
+	}
+	CHECK_FALSE(startedOnCommandThread);
 }

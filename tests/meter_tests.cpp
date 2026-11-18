@@ -5,6 +5,7 @@
 #include "engine/audio/meters.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "testutils/stopandjoin.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -28,6 +29,7 @@ using Catch::Approx;
 using Catch::Matchers::ContainsSubstring;
 using gnubase::engine::Client;
 using gnubase::engine::Engine;
+using gnubase::engine::g_maxMeterChannels;
 using gnubase::engine::Json;
 using gnubase::engine::LevelMeter;
 using gnubase::engine::LevelReading;
@@ -36,6 +38,7 @@ using gnubase::engine::LoudnessReading;
 using gnubase::engine::MeterFrame;
 using gnubase::engine::ObjectId;
 using gnubase::engine::Result;
+using gnubase::test::StopAndJoin;
 
 namespace
 {
@@ -160,24 +163,28 @@ namespace
 		return channel;
 	}
 
-	// Ends a thread that runs until done, also when a test leaves with a failed REQUIRE.
-	class StopAndJoin
+	// How long the race tests play their rounds at most, on the wall clock. Each round waits for the other thread, and
+	// when more threads run than there are cores (CI runs four tests at a time), each wait can cost a time slice: the
+	// rounds could then take many minutes, beyond the 300 s after which ctest fails a test, with correct code. An
+	// overloaded run checks fewer rounds instead, and says so; an unloaded one plays all of them well within this (each
+	// test took under a second in a Debug build on an x86-64 desktop).
+	constexpr auto g_raceBudget = std::chrono::seconds(20);
+
+	class RaceClock
 	{
 	public:
-		StopAndJoin(std::atomic<bool>& done, std::thread& thread) : m_done(done), m_thread(thread) {}
-		~StopAndJoin()
-		{
-			m_done = true;
-			if (m_thread.joinable())
-				m_thread.join();
-		}
-		StopAndJoin(const StopAndJoin&) = delete;
-		StopAndJoin& operator=(const StopAndJoin&) = delete;
+		[[nodiscard]] bool running() const { return std::chrono::steady_clock::now() < m_end; }
 
 	private:
-		std::atomic<bool>& m_done;
-		std::thread& m_thread;
+		std::chrono::steady_clock::time_point m_end = std::chrono::steady_clock::now() + g_raceBudget;
 	};
+
+	// Says how many rounds a race test checked when the budget ended them early.
+	void reportRounds(int checked, int rounds)
+	{
+		if (checked < rounds)
+			WARN("the wall-clock budget ended the rounds after " << checked << " of " << rounds);
+	}
 }
 
 TEST_CASE("a level meter reads a sine's peak and RMS level and keeps their maxima", "[unit]")
@@ -838,7 +845,7 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 {
 	// Without a reset the maximum read limits no peak, if the audio thread publishes it before it raises the held peak
 	// and the reader takes the peak before it reads the maximum. Each round one block, the loudest so far, races one
-	// frame's read; that frame or the next one has its peak.
+	// frame's read; that frame or the next one has its peak. The rounds end early under load (RaceClock).
 	constexpr int rounds = 50000;
 	const auto level = [](int round) { return static_cast<float>(round) / rounds; };
 	LevelMeter meter;
@@ -854,6 +861,8 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 			{
 				while (started < round && !done)
 					std::this_thread::yield();
+				if (started < round)
+					return; // the rounds ended before this one
 				const float racing = meter.readFrame().peak[0];
 				while (played < round && !done)
 					std::this_thread::yield();
@@ -864,7 +873,8 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 			}
 		});
 	const StopAndJoin stop(done, reader);
-	for (int round = 1; round <= rounds; ++round)
+	const RaceClock clock;
+	for (int round = 1; round <= rounds && clock.running(); ++round)
 	{
 		const float sample = level(round);
 		const float* const channel = &sample;
@@ -874,7 +884,82 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 		while (checked < round)
 			std::this_thread::yield();
 	}
+	done = true;
 	reader.join();
+	reportRounds(checked, rounds);
+	CHECK(checked > 0);
+	CHECK(lost == 0);
+}
+
+TEST_CASE("a frame loses no peak of the first block after a reset, also when it is quieter than the held one", "[unit]")
+{
+	// Each round a loud block is held, a reset follows, as Reset on Start does it on the audio thread, and then a
+	// quieter block, while the reader reads frames all the time; one of the round's frames has the quieter block's
+	// peak, which the first block after a reset hands over in place of the held one. Raising the held peak instead, the
+	// quieter block wrote nothing, and a frame that took the loud peak could read the reset's maximum of 0 while the
+	// block's maximum still waited in the audio thread's store buffer, so that its peak never reached a frame. Nothing
+	// can force that reordering, but this gives it room: all channels play and the last one is checked, so that only
+	// the loads in read() lie between the reader taking the peak and loading the maximum, and the reader keeps the
+	// maxima's cache line contended. With raise in place of the handover it failed in nearly every run of optimized
+	// builds on x86-64 desktops (MSVC, GCC and Clang), though not in unoptimized ones: of CI's jobs only the Release
+	// builds (windows-x64, linux-x64-gcc) can be expected to catch it, though that isn't measured on CI's runners yet,
+	// while a local Debug run and the sanitizer jobs, which build Debug, say nothing about raise. The rounds end early
+	// under load (RaceClock).
+	constexpr int rounds = 50000;
+	constexpr auto last = static_cast<size_t>(g_maxMeterChannels - 1);
+	// Both levels are new every round, so that a frame with the quieter peak, whether it took it or limited the loud
+	// one to it, took a peak written after the round began, and reads the round from playing.
+	const auto loudLevel = [](int round) { return 0.5f + (0.5f * static_cast<float>(round) / rounds); };
+	const auto quietLevel = [](int round) { return 0.5f * static_cast<float>(round) / rounds; };
+	LevelMeter meter;
+	std::atomic<bool> done{false};
+	std::atomic<int> playing{0};     // the round whose blocks play
+	std::atomic<uint32_t> frames{0}; // read so far, wrapping around
+	std::atomic<int> heard{0};       // the last round whose quieter peak a frame had
+	std::thread reader(
+		[&]
+		{
+			do
+			{
+				const float peak = meter.readFrame().peak[last];
+				// The round can't end before this frame counts, so a frame with its quieter peak still finds it here.
+				if (const int round = playing; peak == quietLevel(round))
+					heard = round;
+				// Now and then the reader lets the audio thread run, should they share a core (CI runs tests in
+				// parallel); otherwise each round could take the reader's whole time slice.
+				if (++frames % 16 == 0)
+					std::this_thread::yield();
+			} while (!done);
+		});
+	const StopAndJoin stop(done, reader);
+	const RaceClock clock;
+	int checked = 0;
+	int lost = 0;
+	for (int round = 1; round <= rounds && clock.running(); ++round)
+	{
+		const float loud = loudLevel(round);
+		const float quiet = quietLevel(round);
+		std::array<const float*, g_maxMeterChannels> loudChannels{};
+		std::array<const float*, g_maxMeterChannels> quietChannels{};
+		loudChannels.fill(&loud);
+		quietChannels.fill(&quiet);
+		playing = round;
+		meter.process(loudChannels.data(), g_maxMeterChannels, 1, g_rate);
+		meter.reset();
+		meter.process(quietChannels.data(), g_maxMeterChannels, 1, g_rate);
+		// A read-modify-write, which orders the blocks before the frames counted after it: the frame under way may
+		// have taken the peaks before the quieter block, the next one takes its peak if no frame did.
+		const uint32_t read = frames.fetch_add(0);
+		while (frames - read < 2)
+			std::this_thread::yield();
+		if (heard != round)
+			++lost;
+		checked = round;
+	}
+	done = true;
+	reader.join();
+	reportRounds(checked, rounds);
+	CHECK(checked > 0);
 	CHECK(lost == 0);
 }
 

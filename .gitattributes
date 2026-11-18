@@ -82,3 +82,7 @@ tools/git-hooks/* text eol=lf
 
 # Golden text files compare line by line
 tests/golden/*.txt text eol=lf
+
+# tools/skin/generate.py writes the themes with LF line endings on every platform, so a run leaves them unchanged and
+# CI can compare its output with them byte for byte.
+resources/themes/** text eol=lf

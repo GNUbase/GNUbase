@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <iterator>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -70,31 +71,79 @@ namespace gnubase::ui
 		transmit(std::move(command), std::move(parameters), std::move(done), true);
 	}
 
-	void EngineBinding::sendWaitingSteps(const std::string& before)
+	engine::RequestId EngineBinding::sendAwaited(
+		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done)
+	{
+		sendWaitingSteps(command);
+		return transmit(std::move(command), std::move(parameters), std::move(done), false, true);
+	}
+
+	void EngineBinding::afterAwaited(std::function<void()> run)
+	{
+		if (m_awaited == 0 && (m_held.empty() || m_runningHeld))
+			run();
+		else
+			m_held.push_back(std::move(run));
+	}
+
+	void EngineBinding::releaseHeld()
+	{
+		runHeld(true);
+	}
+
+	bool EngineBinding::runHeld(bool force)
+	{
+		bool ran = false;
+		while (!m_held.empty() && (force || m_awaited == 0))
+		{
+			const std::function<void()> run = std::move(m_held.front());
+			m_held.pop_front();
+			const bool running = std::exchange(m_runningHeld, true);
+			run();
+			m_runningHeld = running;
+			ran = true;
+		}
+		return ran;
+	}
+
+	void EngineBinding::sendWaitingSteps(const std::string& before, const std::string* except)
 	{
 		// A command that may change something goes after the steps the user made before it, e.g. an undo right after a
 		// drag undoes all of the drag.
 		if (m_queries.count(before) == 0)
 			for (auto& [what, steps] : m_steps)
-				while (!steps.waiting.empty())
-					sendNextStep(what);
+				if (except == nullptr || what != *except)
+					while (!steps.waiting.empty())
+						sendNextStep(what);
 	}
 
-	engine::RequestId EngineBinding::transmit(
-		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done, bool quiet)
+	engine::RequestId EngineBinding::transmit(std::string command, engine::Json parameters,
+		std::function<void(const engine::Result&)> done, bool quiet, bool awaited)
 	{
 		std::string name = command;
 		const engine::RequestId id = m_client.send(std::move(command), std::move(parameters));
-		m_waiting.emplace(id, Waiting{std::move(name), std::move(done), quiet});
+		m_waiting.emplace(id, Waiting{std::move(name), std::move(done), quiet, awaited});
+		if (awaited)
+			++m_awaited;
 		return id;
 	}
 
 	void EngineBinding::sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
-		std::function<void(const engine::Result&)> done)
+		std::function<void(const engine::Result&)> done, const engine::Json& shown, const std::string& merge)
 	{
-		Step step{gesture != 0 ? what + " " + std::to_string(gesture) : std::string(), std::move(description),
-			std::move(commands), std::move(done)};
+		Step step{gesture != 0 ? (merge.empty() ? what : merge) + " " + std::to_string(gesture) : std::string(),
+			std::move(description), std::move(commands), std::move(done)};
 		Steps& steps = m_steps[what];
+		// Other keys' older steps go first, even when returning to a control with an earlier step still in flight.
+		// Leave this key's own queue alone so an ongoing gesture keeps coalescing its waiting value.
+		sendWaitingSteps({}, &what);
+		// While no step of the record is out and a project read after its last taken one is in, the project has what
+		// it kept, and a change from elsewhere since, such as an undo, may have changed that: the record keeps only
+		// the new step's then, not an older value of another event until the record goes (#1550).
+		if (steps.inFlight.empty() && steps.waiting.empty() && steps.taken < m_projectRead)
+			steps.shown = nullptr;
+		if (!shown.is_null())
+			steps.shown.merge_patch(shown);
 		if (!step.merge.empty() && !steps.waiting.empty() && steps.waiting.back().merge == step.merge)
 			steps.waiting.back() = std::move(step); // the newer value of the same gesture
 		else
@@ -110,7 +159,7 @@ namespace gnubase::ui
 		Step step = std::move(steps.waiting.front());
 		steps.waiting.pop_front();
 		steps.inFlight.push_back(std::move(step.done));
-		// The map's entries stay for the binding's life, so the key outlives the answer.
+		// An entry goes only in update() and only once no step of it waits for its answer, so the key outlives it.
 		const std::string* key = &entry->first;
 		transmit(
 			"history.transaction",
@@ -151,6 +200,14 @@ namespace gnubase::ui
 		return sending(what) || (steps != m_steps.end() && steps->second.taken > read);
 	}
 
+	const engine::Json* EngineBinding::shown(const std::string& what, uint64_t read) const
+	{
+		const auto steps = m_steps.find(what);
+		if (steps == m_steps.end() || steps->second.shown.is_null() || !ahead(what, read))
+			return nullptr;
+		return &steps->second.shown;
+	}
+
 	size_t EngineBinding::waiting(const std::string& command) const
 	{
 		return static_cast<size_t>(std::count_if(m_waiting.begin(), m_waiting.end(),
@@ -167,7 +224,7 @@ namespace gnubase::ui
 	Subscription EngineBinding::onResult(std::string command, std::function<void(const engine::Result&)> handler)
 	{
 		const uint64_t id = m_nextId++;
-		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler), false});
+		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler), false, false});
 		return {*this, id};
 	}
 
@@ -187,6 +244,18 @@ namespace gnubase::ui
 
 	bool EngineBinding::update()
 	{
+		// The records of controls whose steps have all been answered go away, so a session leaves no entry per channel
+		// and parameter a gesture touched (#746). Only once a project read answered after the last step that the
+		// engine took was handed on and no other is out, since until then a view may have no read newer than the
+		// control and show an older one again, e.g. the inspector after a track change (#1305). One update late, so
+		// that the views showing what the last update handed on still ask sending() and ahead() about them; a step in
+		// flight keeps its record, so the keys the answers carry outlive them (sendNextStep).
+		const bool reading = waiting("project.get") != 0;
+		for (auto entry = m_steps.begin(); entry != m_steps.end();)
+			entry = entry->second.inFlight.empty() && entry->second.waiting.empty() && !reading &&
+					entry->second.taken < m_projectRead
+				? m_steps.erase(entry)
+				: std::next(entry);
 		m_woken = false; // before taking the messages, so one that arrives meanwhile wakes the UI again
 		bool handled = false;
 		while (std::optional<engine::Message> message = m_client.poll())
@@ -213,13 +282,29 @@ namespace gnubase::ui
 
 	bool EngineBinding::settle(std::chrono::milliseconds timeout)
 	{
+		return handOnUntil(timeout,
+			[this]
+			{
+				// Only sooner: answerStep sends a waiting step once the one in flight is answered, which settle waits
+				// for.
+				sendWaitingSteps({});
+				return std::all_of(m_waiting.begin(), m_waiting.end(), [this](const auto& waiting)
+					{ return !waiting.second.awaited && m_queries.count(waiting.second.command) != 0; });
+			});
+	}
+
+	bool EngineBinding::awaitHeld(std::chrono::milliseconds timeout)
+	{
+		return handOnUntil(timeout, [this] { return m_held.empty(); });
+	}
+
+	bool EngineBinding::handOnUntil(std::chrono::milliseconds timeout, const std::function<bool()>& done)
+	{
 		const auto deadline = std::chrono::steady_clock::now() + timeout;
 		for (;;)
 		{
-			sendWaitingSteps({}); // as before a command that isn't a query
 			update();
-			if (std::all_of(m_waiting.begin(), m_waiting.end(),
-					[this](const auto& waiting) { return m_queries.count(waiting.second.command) != 0; }))
+			if (done())
 				return true;
 			const auto left =
 				std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
@@ -246,6 +331,10 @@ namespace gnubase::ui
 			return false;
 		const Waiting waiting = std::move(found->second);
 		m_waiting.erase(found);
+		if (waiting.awaited)
+			--m_awaited;
+		if (waiting.command == "project.get" && result.ok()) // a failed one leaves the views with their older read
+			m_projectRead = m_handed;
 		if (waiting.done)
 			waiting.done(result);
 		else if (!result.ok())
@@ -266,7 +355,9 @@ namespace gnubase::ui
 			if (handler = m_resultHandlers.find(id); handler != m_resultHandlers.end())
 				handler->second.done = std::move(call);
 		}
-		return handled;
+		// What the user did meanwhile, once the last awaited answer is in and its done has run.
+		const bool ranHeld = waiting.awaited && runHeld(false);
+		return handled || ranHeld;
 	}
 
 	bool EngineBinding::dispatch(const engine::Event& event)

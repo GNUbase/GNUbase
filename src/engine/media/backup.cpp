@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -78,41 +79,29 @@ namespace gnubase::engine
 			throw std::runtime_error("can't create " + file.u8string() + ": " + problem);
 		}
 
-		// createFreeFile, skipping names that differ only in case from the ones in taken, and adding the new one.
-		fs::path createFreeFile(const fs::path& folder, const fs::path& name, std::set<std::string>& taken)
-		{
-			for (int number = 1;; ++number)
-			{
-				const fs::path candidate = numbered(name, number);
-				if (taken.count(foldedName(candidate)) == 0 && createExclusively(folder / candidate))
-				{
-					taken.insert(foldedName(candidate));
-					return folder / candidate;
-				}
-			}
-		}
-
 		// Copies a file in chunks, so that a job can report progress and stop in between. Throws std::runtime_error.
 		void copyFile(const fs::path& from, const fs::path& to, const std::function<void(size_t)>& copied)
 		{
-			std::ifstream input(from, std::ios::binary);
+			// Opened as the readers open files, so that the file can be replaced or deleted while the backup reads
+			// it, on Windows too: these are the project's media and freeze files, which the user or another program
+			// may move while the job runs; the copy reads the old file to its end (#963).
+			const detail::File input = detail::openFile(from.u8string(), "rb");
 			if (!input)
 				throw std::runtime_error("can't read " + from.u8string());
 			std::ofstream output(to, std::ios::binary | std::ios::trunc); // made for this copy by createFreeFile
 			if (!output)
 				throw std::runtime_error("can't create " + to.u8string());
 			std::vector<char> buffer(g_copyChunk);
-			while (input)
+			for (;;)
 			{
-				input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-				const auto count = static_cast<size_t>(input.gcount());
+				const size_t count = std::fread(buffer.data(), 1, buffer.size(), input.get());
 				if (count == 0)
 					break;
 				if (!output.write(buffer.data(), static_cast<std::streamsize>(count)))
 					throw std::runtime_error("can't write " + to.u8string());
 				copied(count);
 			}
-			if (input.bad())
+			if (std::ferror(input.get()) != 0)
 				throw std::runtime_error("can't read " + from.u8string());
 			output.close();
 			if (!output)
@@ -291,11 +280,13 @@ namespace gnubase::engine
 		};
 
 		// Lists what is in listed, a folder in the Mixdown folder root, into mixdowns, with the folders in it and what
-		// they hold, but not skipped, the backup's own folder, nor links to folders. A file or folder that can't be
-		// read goes into missing as {path}.
-		void listMixdowns(const fs::path& root, const fs::path& listed, const fs::path& skipped,
+		// they hold, but not skipped, the backup's own folder, nor links to folders. A folder that can't be listed goes
+		// into missing as {path, folder: true} and is left out with what it holds, also the folders in it that went
+		// into missing before its listing failed; false if that is listed.
+		bool listMixdowns(const fs::path& root, const fs::path& listed, const fs::path& skipped,
 			std::vector<Mixdown>& mixdowns, Json& missing)
 		{
+			const size_t reported = missing.size();
 			std::error_code error;
 			for (auto entry = fs::directory_iterator(listed, error); !error && entry != fs::directory_iterator();
 				entry.increment(error))
@@ -309,8 +300,10 @@ namespace gnubase::engine
 					// A link to a folder isn't followed: one to a folder above it would copy that again and again.
 					if (!fs::is_directory(entry->symlink_status(ignored)))
 						continue;
+					const auto at = static_cast<std::ptrdiff_t>(mixdowns.size());
 					mixdowns.push_back({path.lexically_relative(root), true, 0});
-					listMixdowns(root, path, skipped, mixdowns, missing);
+					if (!listMixdowns(root, path, skipped, mixdowns, missing))
+						mixdowns.erase(mixdowns.begin() + at, mixdowns.end());
 				}
 				else if (entry->is_regular_file(ignored))
 				{
@@ -319,7 +312,11 @@ namespace gnubase::engine
 				}
 			}
 			if (error)
-				missing.push_back({{"path", listed.u8string()}});
+			{
+				missing.erase(missing.begin() + static_cast<std::ptrdiff_t>(reported), missing.end());
+				missing.push_back({{"path", listed.u8string()}, {"folder", true}});
+			}
+			return !error;
 		}
 
 		// Removes what a backup wrote if it doesn't complete.
@@ -367,6 +364,27 @@ namespace gnubase::engine
 				m_folders.push_back(folder);
 			}
 
+			// Creates a folder named name in folder, which exists, or else under the first free numbered name, as
+			// createFreeFile, and adds its name to taken. It goes again if the backup doesn't complete. Throws
+			// std::runtime_error.
+			fs::path createFreeFolder(const fs::path& folder, const fs::path& name, std::set<std::string>& taken)
+			{
+				for (int number = 1;; ++number)
+				{
+					const fs::path candidate = numbered(name, number);
+					std::error_code error;
+					if (taken.count(foldedName(candidate)) != 0 || fs::exists(folder / candidate, error))
+						continue;
+					fs::create_directory(folder / candidate, error);
+					if (error)
+						throw std::runtime_error(
+							"can't create " + (folder / candidate).u8string() + ": " + error.message());
+					taken.insert(foldedName(candidate));
+					m_folders.push_back(folder / candidate);
+					return folder / candidate;
+				}
+			}
+
 		private:
 			fs::path m_folder;
 			fs::path m_audio;
@@ -410,15 +428,44 @@ namespace gnubase::engine
 		return !relative.empty() && *relative.begin() != fs::path("..") && relative != fs::path(".");
 	}
 
-	fs::path createFreeFile(const fs::path& folder, const fs::path& name)
+	std::set<std::string> takenNames(const fs::path& folder)
 	{
 		// One listing instead of a failed create for every file of that name: a folder can hold thousands of
-		// recordings, and the recorder holds its lock meanwhile. If the listing fails, creating the file still finds
-		// out what's taken.
+		// recordings, and a recording's input waits for its files meanwhile.
 		std::set<std::string> taken;
 		std::error_code error;
 		for (fs::directory_iterator entry(folder, error), end; !error && entry != end; entry.increment(error))
-			taken.insert(foldedName(entry->path().filename()));
+		{
+			std::string name;
+			try
+			{
+				name = foldedName(entry->path().filename());
+			}
+			catch (const std::system_error&)
+			{
+				continue; // not valid UTF-16 (Windows): no name made here can match it
+			}
+			taken.insert(std::move(name));
+		}
+		return taken;
+	}
+
+	fs::path createFreeFile(const fs::path& folder, const fs::path& name, std::set<std::string>& taken)
+	{
+		for (int number = 1;; ++number)
+		{
+			const fs::path candidate = numbered(name, number);
+			if (taken.count(foldedName(candidate)) == 0 && createExclusively(folder / candidate))
+			{
+				taken.insert(foldedName(candidate));
+				return folder / candidate;
+			}
+		}
+	}
+
+	fs::path createFreeFile(const fs::path& folder, const fs::path& name)
+	{
+		std::set<std::string> taken = takenNames(folder);
 		return createFreeFile(folder, name, taken);
 	}
 
@@ -442,9 +489,13 @@ namespace gnubase::engine
 			file.to.clear();
 			const fs::path source = pathOf(file.from);
 			std::error_code error;
-			std::ifstream input(source, std::ios::binary | std::ios::ate);
-			readable.push_back(fs::is_regular_file(source, error) && input.good());
-			const std::streamoff size = readable.back() ? static_cast<std::streamoff>(input.tellg()) : 0;
+			// Opened as the readers open files, so that the file can be replaced or deleted while it is read, on
+			// Windows too (#963).
+			const detail::File input = detail::openFile(source.u8string(), "rb");
+			readable.push_back(input && fs::is_regular_file(source, error));
+			int64_t size = 0;
+			if (readable.back() && detail::seekFile(input.get(), 0, SEEK_END))
+				size = detail::tellFile(input.get());
 			sizes.push_back(size > 0 ? static_cast<std::uintmax_t>(size) : 0);
 			total += sizes.back();
 		}
@@ -456,6 +507,7 @@ namespace gnubase::engine
 			fs::create_directories(folder, error);
 			if (error)
 				throw std::runtime_error("can't create " + folder.u8string() + ": " + error.message());
+			std::set<std::string> taken = takenNames(folder);
 			std::uintmax_t finished = 0; // bytes of the files done
 			for (size_t i = 0; i < files.size(); ++i)
 			{
@@ -466,7 +518,7 @@ namespace gnubase::engine
 					const fs::path source = pathOf(file.from);
 					const std::string detail = source.filename().u8string();
 					job.progress(static_cast<double>(finished) / static_cast<double>(total), detail);
-					const fs::path target = createFreeFile(folder, source.filename());
+					const fs::path target = createFreeFile(folder, source.filename(), taken);
 					made.push_back(target.u8string());
 					std::uintmax_t done = finished;
 					copyFile(source, target,
@@ -650,9 +702,11 @@ namespace gnubase::engine
 			}
 			else
 			{
-				std::ifstream file(pathOf(media.path), std::ios::binary | std::ios::ate);
-				const std::streamoff size = file ? static_cast<std::streamoff>(file.tellg()) : 0;
-				plan.bytes = size > 0 ? static_cast<std::uintmax_t>(size) : 0;
+				// The estimate asks the file system rather than opening the file: it mustn't hold a handle in a
+				// media file the project may be playing, not even briefly (#963).
+				std::error_code sizeError;
+				const auto size = fs::file_size(pathOf(media.path), sizeError);
+				plan.bytes = sizeError ? 0 : size;
 			}
 			total += plan.bytes;
 			plans.push_back(plan);
@@ -727,8 +781,9 @@ namespace gnubase::engine
 			}
 			else
 			{
-				const std::ifstream readable(source, std::ios::binary);
-				if (!readable || fs::is_directory(source, error))
+				// Opened as the readers open files, so the check doesn't lock a file the project plays (#963).
+				if (const detail::File readable = detail::openFile(source.u8string(), "rb");
+					!readable || fs::is_directory(source, error))
 				{
 					missing.push_back({{"media", media.id}, {"path", media.path}});
 					done += plan.bytes;
@@ -777,8 +832,8 @@ namespace gnubase::engine
 			const fs::path source = pathOf(path);
 			detail = source.filename().u8string();
 			job.progress(static_cast<double>(done) / static_cast<double>(total), detail);
-			const std::ifstream readable(source, std::ios::binary);
-			if (!readable || fs::is_directory(source, error))
+			if (const detail::File readable = detail::openFile(source.u8string(), "rb");
+				!readable || fs::is_directory(source, error))
 			{
 				done += bytes;
 				continue;
@@ -804,32 +859,35 @@ namespace gnubase::engine
 				missing.push_back({{"track", id}, {"path", track.frozen->path}});
 		}
 
-		// Under free names, as media: names that differ only in case, from a file system that tells them apart, don't
-		// overwrite each other on one that doesn't.
-		std::map<std::string, std::set<std::string>> takenMixdowns; // folded folder -> folded names in it
+		// Files and folders under free names, as media: names that differ only in case, from a file system that tells
+		// them apart, don't overwrite each other or clash, as a file A and a folder a, on one that doesn't. A folder
+		// comes before what it holds (sorted).
+		std::map<fs::path, fs::path> folderCopies;               // folder in the Mixdown folder -> its copy
+		std::map<fs::path, std::set<std::string>> takenMixdowns; // copied folder -> folded names in it
+		if (!mixdowns.empty())
+			cleanup.createFolders(folder / "Mixdown");
 		for (const Mixdown& mixdown : mixdowns)
 		{
 			job.checkCancelled();
-			const fs::path target = folder / "Mixdown" / mixdown.relative;
+			const auto parentCopy = folderCopies.find(mixdown.relative.parent_path());
+			const fs::path parent = parentCopy != folderCopies.end() ? parentCopy->second : folder / "Mixdown";
+			std::set<std::string>& takenNames = takenMixdowns[parent];
 			if (mixdown.folder)
 			{
-				cleanup.createFolders(target);
+				folderCopies[mixdown.relative] =
+					cleanup.createFreeFolder(parent, mixdown.relative.filename(), takenNames);
 				continue;
 			}
 			const fs::path source = mixdownFolder / mixdown.relative;
-			std::ifstream readable(source, std::ios::binary);
-			if (!readable)
+			if (const detail::File readable = detail::openFile(source.u8string(), "rb"); !readable)
 			{
 				missing.push_back({{"path", source.u8string()}});
 				done += mixdown.bytes;
 				continue;
 			}
-			readable.close();
-			cleanup.createFolders(target.parent_path());
 			detail = mixdown.relative.filename().u8string();
 			job.progress(static_cast<double>(done) / static_cast<double>(total), detail);
-			const fs::path copy = createFreeFile(
-				target.parent_path(), target.filename(), takenMixdowns[foldedName(target.parent_path())]);
+			const fs::path copy = createFreeFile(parent, mixdown.relative.filename(), takenNames);
 			cleanup.add(copy);
 			copyFile(source, copy, advance);
 		}

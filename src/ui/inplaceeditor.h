@@ -4,7 +4,6 @@
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
 #include "ui/keyeditor.h"
-#include "ui/timeformat.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
@@ -82,9 +81,6 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_area; // .in-place-editors in the event area
 		std::map<uint64_t, Editor> m_editors;
 		uint64_t m_loads = 0; // the display's project.get answers shown
-		// The display's project's tempo map, read once per project.get answer (m_timeLoads), not once a frame.
-		TimeContext m_time;
-		uint64_t m_timeLoads = 0;
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 	};

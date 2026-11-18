@@ -660,6 +660,57 @@ TEST_CASE("notes, expressions, MIDI 1.0, MIDI 2.0 and sysex reach a VST3 plugin 
 	stop(*plugin);
 }
 
+TEST_CASE(
+	"a released note's expression reaches a VST3 plugin with the note's id, until its key plays again", "[integration]")
+{
+	Vst3Fixture fixture;
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	start(*plugin);
+	Runner runner(*plugin);
+	const auto tuning = [](uint32_t offset)
+	{
+		plugin::Event event = noteEvent(plugin::EventType::NoteExpression, offset, 60, 0.0);
+		event.expression = plugin::expressionId(plugin::NoteExpression::Tuning);
+		event.value = 2.0;
+		return event;
+	};
+	const auto expressions = [&runner]
+	{
+		std::vector<int32_t> ids;
+		for (const plugin::Event& event : runner.out)
+			if (event.type == plugin::EventType::NoteExpression)
+				ids.push_back(event.noteId);
+		return ids;
+	};
+	const auto noteOnId = [&runner]
+	{
+		const plugin::Event* noteOn =
+			find(runner.out, [](const plugin::Event& e) { return e.type == plugin::EventType::NoteOn && e.key == 60; });
+		REQUIRE(noteOn != nullptr);
+		return noteOn->noteId;
+	};
+	// While the released note fades, MPE's expression still applies to it.
+	runner.run(ramp(64),
+		{noteEvent(plugin::EventType::NoteOn, 10, 60, 0.5), noteEvent(plugin::EventType::NoteOff, 20, 60, 0.0),
+			tuning(30)});
+	const int32_t first = noteOnId();
+	CHECK(expressions() == std::vector<int32_t>{first});
+	runner.run(ramp(64), {tuning(5)});
+	CHECK(expressions() == std::vector<int32_t>{first});
+	// The key plays again: the new note gets the expression, the released one none.
+	runner.run(ramp(64), {noteEvent(plugin::EventType::NoteOn, 10, 60, 0.5), tuning(20)});
+	const int32_t second = noteOnId();
+	CHECK(second != first);
+	CHECK(expressions() == std::vector<int32_t>{second});
+	// A note-off ends the note that sounds, not the released one again.
+	runner.run(ramp(64), {noteEvent(plugin::EventType::NoteOff, 10, 60, 0.0)});
+	const plugin::Event* noteOff =
+		find(runner.out, [](const plugin::Event& e) { return e.type == plugin::EventType::NoteOff && e.key == 60; });
+	REQUIRE(noteOff != nullptr);
+	CHECK(noteOff->noteId == second);
+	stop(*plugin);
+}
+
 TEST_CASE("pitch bend, pressure, bank selects and program changes reach a VST3 plugin as VST3 hosts pass them",
 	"[integration]")
 {

@@ -2,42 +2,60 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Runs clang-tidy on the C++ files a branch changes, so that most of CI's clang-tidy findings turn up before a push:
 # the changed and new .cpp files under src/ and tests/, and the .cpp file next to each changed header. It reports only
-# findings on the lines the branch changed, since the rest passed CI already (and Windows' headers bring a few findings
-# that CI's don't). It needs a compile database, not a build: it configures one in build/tidy, again when a changed
-# file isn't in it yet. CI checks more (every line of every file that includes a changed header), so CI has the last
-# word. On Linux, and so in WSL, it also compiles those files with GCC as CI's linux-x64-gcc job does (build/tidy-gcc).
+# findings on the lines the branch changed and 5 around each change, since the rest passed CI already (and Windows'
+# headers bring a few findings that CI's don't), and readability-function-size's on the whole changed files, as that
+# check reports on a function's first line (below). It needs a compile database, not a build: it configures one
+# in build/tidy, again when a CMake file is newer than it. CI checks more (every line of every file that includes a
+# changed header), so CI has the last word. On Linux, and so in WSL, it also compiles those files whole, with Clang
+# and -Werror from the same compile database, as CI's asan-ubsan, tsan and clang-tidy jobs build them, and with GCC in
+# Release as CI's linux-x64-gcc job does (build/tidy-gcc).
 # Usage: tools/tidy-changed.sh [base]    base: where the branch starts from (default origin/main)
 # Linux uses a clang-tidy 22 on the PATH (CONTRIBUTING.md). CI's clang-tidy runs on Linux, where libstdc++ and the
 # non-Windows #ifdef branches bring findings that Windows doesn't see (bugprone-unchecked-optional-access never fires
 # with Microsoft's std::optional), so on Windows (Git Bash) the check runs in WSL when it has clang-tidy 22 (pipx, as
-# for tools/ci-local.sh): on the commit at HEAD, in a clone in ~/gnubase-tidy/<checkout folder name>. Without it,
-# Windows uses Visual Studio 2026's Ninja, compiler and clang-tidy. Not macOS yet: its universal build gives every file
-# two -arch flags, which clang-tidy refuses.
+# for tools/ci-local.sh) and the tools of the Linux setup (CONTRIBUTING.md): on the commit at HEAD, in a clone in
+# ~/gnubase-tidy/<checkout folder name>. Without them, Windows checks the working tree with Visual Studio 2026's
+# Ninja, compiler and clang-tidy. Not macOS yet: its universal build gives every file two -arch flags, which
+# clang-tidy refuses.
 # CLANG_TIDY overrides the clang-tidy to use, which on Windows also keeps the check out of WSL; GNUBASE_WSL names the
 # WSL distribution (default Ubuntu). Exit status: 0 no findings, 1 findings, 2 error.
 set -u
 
 # Started by Windows inside WSL (below) with the repository, the commit at HEAD, where the branch starts and the
 # checkout folder's name: moves the clone to that commit and checks it there. It fetches from the repository, not the
-# checkout: a worktree's .git file holds a Windows path, which git in WSL can't follow.
+# checkout: a worktree's .git file holds a Windows path, which git in WSL can't follow. A second run with the same
+# clone waits for the first (a lock next to it), and clones that no run used for 30 days go, so that those of
+# short-lived worktrees don't pile up.
 if [ "${1:-}" = --wsl ]; then
 	repository=$2 commit=$3 start=$4 mirror=$HOME/gnubase-tidy/$5
 	export PATH="$HOME/.local/bin:$PATH" GIT_LFS_SKIP_SMUDGE=1 # pipx; clang-tidy needs no test audio
-	mkdir -p "$HOME/gnubase-tidy" || exit 2
+	mkdir -p "$HOME/gnubase-tidy" && exec 9> "$mirror.lock" || exit 2
+	if ! flock -n 9; then
+		echo "Another run uses ~/gnubase-tidy/$5, waiting until it ends."
+		flock 9 || exit 2
+	fi
+	find "$HOME/gnubase-tidy" -maxdepth 1 -name '*.log' -mtime +30 | while IFS= read -r log; do
+		old=${log%.log}
+		(flock -n 8 && rm -rf "$old" "$log") 8> "$old.lock"
+	done
 	if ! { { [ -d "$mirror/.git" ] || git clone -q --no-checkout "$repository" "$mirror"; } && cd "$mirror" &&
 		git fetch -q --no-tags "$repository" "$commit" && git checkout -q --force --detach FETCH_HEAD &&
-		git submodule sync -q && git submodule update -q --init --recursive &&
-		git submodule update -q --init --checkout ext/vst3sdk &&
-		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk; } > "$mirror.log" 2>&1; then
+		git submodule sync -q && git submodule update -q --init --recursive && { [ ! -d ext/vst3sdk ] || {
+			git submodule update -q --init --checkout ext/vst3sdk &&
+				git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk; }; }; } \
+		> "$mirror.log" 2>&1; then
 		echo "Preparing the clone in WSL failed, see ~/gnubase-tidy/$5.log"
 		exit 2
 	fi
 	echo "clang-tidy runs in WSL on HEAD $(git rev-parse --short HEAD), in ~/gnubase-tidy/$5, as CI's runs on Linux."
-	bash tools/tidy-changed.sh "$start" 2>&1 | sed "s|$mirror/||g"
+	# The run's own messages name its logs in the clone, not in the Windows checkout; sed -u passes each line on as
+	# it comes, also when the output isn't a terminal.
+	GNUBASE_TIDY_CLONE="~/gnubase-tidy/$5/" bash tools/tidy-changed.sh "$start" 2>&1 | sed -u "s|$mirror/||g"
 	exit "${PIPESTATUS[0]}"
 fi
 
 root=$(git rev-parse --show-toplevel) || exit 2
+logs=${GNUBASE_TIDY_CLONE:-} # where build/ is, for messages: in the clone in WSL for a run there
 cd "$root" || exit 2
 start=$(git merge-base "${1:-origin/main}" HEAD) || exit 2
 build=build/tidy
@@ -47,15 +65,22 @@ options="-DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_CONFIGURATION_TYPES=Debug"
 case "$(uname -s)" in
 MINGW* | MSYS* | CYGWIN*)
 	distro=${GNUBASE_WSL:-Ubuntu}
-	if [ -z "${CLANG_TIDY:-}" ] && MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash -c \
-		'PATH=$HOME/.local/bin:$PATH clang-tidy --version' 2>/dev/null | tr -d '\0' | grep -q 'version 22\.'; then
-		[ -z "$(git status --porcelain -- src tests)" ] ||
-			echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)."
-		wslPath() { cygpath -m "$1" | sed -E 's|^([A-Za-z]):|/mnt/\L\1|'; }
-		MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash "$(wslPath "$root")/tools/tidy-changed.sh" --wsl \
-			"$(wslPath "$(git rev-parse --path-format=absolute --git-common-dir)")" "$(git rev-parse HEAD)" "$start" \
-			"$(basename "$root")"
-		exit
+	inWsl() { MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash -c "PATH=\$HOME/.local/bin:\$PATH; $1" 2>/dev/null | tr -d '\0'; }
+	if [ -z "${CLANG_TIDY:-}" ] && inWsl 'clang-tidy --version' | grep -q 'version 22\.'; then
+		# The run there also configures and compiles: without the Linux setup (CONTRIBUTING.md) it stays on Windows.
+		missing=$(inWsl 'for tool in git cmake ninja clang++ g++ python3 flock; do
+			command -v $tool >/dev/null || printf " %s" $tool; done')
+		if [ -n "$missing" ]; then
+			echo "WSL has clang-tidy 22 but not$missing (CONTRIBUTING.md), so clang-tidy runs on Windows."
+		else
+			[ -z "$(git status --porcelain -- src tests '*CMakeLists.txt' '*.cmake' .clang-tidy)" ] ||
+				echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)."
+			wslPath() { cygpath -m "$1" | sed -E 's|^([A-Za-z]):|/mnt/\L\1|'; }
+			MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash "$(wslPath "$root")/tools/tidy-changed.sh" --wsl \
+				"$(wslPath "$(git rev-parse --path-format=absolute --git-common-dir)")" "$(git rev-parse HEAD)" \
+				"$start" "$(basename "$root")"
+			exit
+		fi
 	fi
 	vs=$("$(cygpath -u "$PROGRAMFILES") (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest \
 		-property installationPath | tr -d '\r')
@@ -97,7 +122,7 @@ fi
 reconfigure()
 {
 	echo "Configuring $build for its compile database"
-	mkdir -p "$build" && configure > "$build/configure.log" 2>&1 || { echo "Configuring failed, see $build/configure.log"; exit 2; }
+	mkdir -p "$build" && configure > "$build/configure.log" 2>&1 || { echo "Configuring failed, see $logs$build/configure.log"; exit 2; }
 }
 [ -f "$build/compile_commands.json" ] || reconfigure
 
@@ -110,16 +135,15 @@ mapfile -t candidates < <(
 	} | sed -n -e 's/\.h$/.cpp/p' -e '/\.cpp$/p' | sort -u | while IFS= read -r file; do [ -f "$file" ] && echo "$file"; done
 )
 inDatabase() { grep -qF "/$1\"" "$build/compile_commands.json"; }
-# A file new to CMake since the last configure. A file that no target of this platform builds stays missing, so only
-# a CMake file newer than the database reconfigures.
+# A CMake file newer than the database: a file new to CMake, or a target with a new definition, include folder or
+# option, whose files the database would otherwise give the flags from before. A file that no target of this platform
+# builds stays missing from it.
 cmakeChanged()
 {
 	[ -n "$(find . \( -path ./build -o -path ./ext \) -prune -o \( -name CMakeLists.txt -o -name '*.cmake' \) \
 		-newer "${1:-$build/compile_commands.json}" -print -quit)" ]
 }
-for file in "${candidates[@]}"; do
-	inDatabase "$file" || { cmakeChanged && reconfigure; break; }
-done
+cmakeChanged && reconfigure
 files=() skipped=()
 for file in "${candidates[@]}"; do
 	if inDatabase "$file"; then files+=("$file"); else skipped+=("$file"); fi
@@ -127,18 +151,23 @@ done
 [ ${#skipped[@]} -gt 0 ] && echo "Not checked, in no target of this platform: ${skipped[*]}"
 
 # The changed lines as clang-tidy's line filter: {"name": file, "lines": [[first, last], ...]} per file; a new file
-# without "lines" counts with all of them.
+# without "lines" counts with all of them. Each range takes 5 lines more on both sides, and a deletion the 5 lines on
+# both sides of it: some checks report a finding a change causes on an unchanged line next to it, such as
+# readability-inconsistent-ifelse-braces on the unbraced first "if" of a chain that gained a braced "else if", or on
+# the unchanged "if" or "else" line of a branch that lost its braces, directly above the deleted "{" (#1400). A "+++ "
+# line is the file's name only in the header after "diff --git": in a hunk it is an added line that starts with "++ ".
 filter=$(
 	{
-		changes -U0 | awk '
-			/^\+\+\+ b\// { file = substr($0, 7) }
-			/^@@ / {
+		changes -U0 | awk -v margin=5 '
+			/^diff --git / { header = 1; file = "" }
+			header && /^\+\+\+ / { header = 0; file = /^\+\+\+ b\// ? substr($0, 7) : "" } # "+++ /dev/null": deleted
+			/^@@ / && file != "" {
 				split(substr($3, 2), range, ",")
 				count = range[2] == "" ? 1 : range[2]
-				if (count > 0) {
-					separator = file in lines ? "," : ""
-					lines[file] = lines[file] separator "[" range[1] "," (range[1] + count - 1) "]"
-				}
+				first = range[1] > margin ? range[1] - margin : 1
+				last = range[1] + (count > 0 ? count - 1 : 0) + margin
+				separator = file in lines ? "," : ""
+				lines[file] = lines[file] separator "[" first "," last "]"
 			}
 			END { for (file in lines) print file "\t" lines[file] }'
 		git ls-files --others --exclude-standard -- src tests | sed 's/$/\t/'
@@ -148,7 +177,7 @@ filter=$(
 		done
 	done | paste -s -d, -
 )
-# Nothing but deletions: no line to check (an empty filter would let clang-tidy report every line).
+# No changed line, say only deleted files: nothing to check (an empty filter would let clang-tidy report every line).
 if [ ${#files[@]} -eq 0 ] || [ -z "$filter" ]; then
 	echo "No changed C++ lines to check."
 	exit 0
@@ -156,8 +185,12 @@ fi
 echo "clang-tidy on ${#files[@]} file(s): ${files[*]}"
 
 # One clang-tidy per file and hardware thread; each prints its findings in one piece when it's done.
+# readability-function-size reports on a function's first line, which a change further down in the function leaves
+# out of the line filter (#1585), so a second run checks only that, on the whole file: main has no such findings.
 printf '%s\n' "${files[@]}" | xargs -P "$(nproc)" -I{} bash -c \
 	'out=$("$0" -p "$1" --quiet --warnings-as-errors="*" --line-filter="[$2]" "$3" 2>&1); status=$?
+	size=$("$0" -p "$1" --quiet --warnings-as-errors="*" --checks="-*,readability-function-size" "$3" 2>&1) ||
+		{ out=$(printf "%s\n%s" "$out" "$size"); [ $status -ne 0 ] || status=1; }
 	[ $status -ne 0 ] && printf "%s\n" "$out"; exit $status' "$tidy" "$build" "$filter" {}
 status=$?
 [ $status -eq 0 ] && echo "No findings."
@@ -165,10 +198,12 @@ status=$?
 [ $status -ne 0 ] && [ $status -ne 123 ] && exit 2
 result=$((status == 0 ? 0 : 1))
 
-# CI also builds with GCC 13 in Release, whose optimizer warns where Clang doesn't (-Werror=array-bounds, say), and
-# clang-tidy already reports what Clang can't compile. So on Linux (CLANG_TIDY or not) the same files are compiled with
-# GCC as CI builds them, whole files rather than changed lines, from a second compile database in build/tidy-gcc.
-# Without LTO, as CI builds: with it, GCC's compile step stops before the optimizer and its warnings come at link time.
+# CI also builds with Clang and -Werror in its sanitizer and clang-tidy jobs, which reports warnings that neither
+# clang-tidy's line filter nor MSVC shows (an unused lambda capture, #1455), and with GCC 13 in Release, whose
+# optimizer warns where Clang doesn't (-Werror=array-bounds, say). So on Linux (CLANG_TIDY or not) the same files are
+# compiled whole, as CI builds them: with Clang from the compile database in build/tidy (Debug, as the sanitizer jobs
+# build), and with GCC from a second one in build/tidy-gcc, without LTO as CI builds: with it, GCC's compile step stops
+# before the optimizer and its warnings come at link time.
 if [ "$(uname -s)" = Linux ]; then
 	gcc=build/tidy-gcc
 	if [ ! -f "$gcc/compile_commands.json" ] || cmakeChanged "$gcc/compile_commands.json" ||
@@ -176,16 +211,23 @@ if [ "$(uname -s)" = Linux ]; then
 		echo "Configuring $gcc for GCC's compile commands"
 		mkdir -p "$gcc" && cmake --preset linux-gcc -B "$gcc" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-DCMAKE_CONFIGURATION_TYPES=Release -DGNUBASE_LTO=OFF > "$gcc/configure.log" 2>&1 ||
-			{ echo "Configuring failed, see $gcc/configure.log"; exit 2; }
+			{ echo "Configuring failed, see $logs$gcc/configure.log"; exit 2; }
 	fi
-	echo "GCC on the same file(s)"
-	# Each file's compile command, to run in its folder with the object going nowhere.
-	commands=$gcc/commands
-	python3 - "$gcc/compile_commands.json" "${files[@]}" > "$commands" <<'EOF' || { echo "Reading $gcc's compile commands failed."; exit 2; }
+	# GCC at -O3 takes up to about 2 GB for one of the larger files: no more compiles at once than WSL's free memory
+	# holds, so that many changed files don't run it out of memory.
+	jobs=$(awk -v cores="$(nproc)" '/^MemAvailable:/ { n = int($2 / 2097152); print (n < 1 ? 1 : n > cores ? cores : n) }' \
+		/proc/meminfo)
+	# compile <compiler> <build folder>: compiles the files with the folder's compile commands; 1 on an error.
+	compile()
+	{
+		echo "$1 on the same file(s)"
+		# Each file's compile command, to run in its folder with the object going nowhere.
+		local commands=$2/commands compiled them
+		python3 - "$1" "$2/compile_commands.json" "${files[@]}" > "$commands" <<'EOF' || { echo "Reading $2's compile commands failed."; exit 2; }
 import json, shlex, sys
-entries = json.load(open(sys.argv[1]))
+entries = json.load(open(sys.argv[2]))
 missing = []
-for name in sys.argv[2:]:
+for name in sys.argv[3:]:
 	entry = next((e for e in entries if e["file"].endswith("/" + name)), None)
 	if entry is None:
 		missing.append(name)
@@ -194,18 +236,16 @@ for name in sys.argv[2:]:
 	args[args.index("-o") + 1] = "/dev/null"
 	sys.stdout.write("cd " + shlex.quote(entry["directory"]) + " && " + shlex.join(args) + "\0")
 if missing:
-	print("Not compiled with GCC, in no target of its build: " + " ".join(missing), file=sys.stderr)
+	print("Not compiled with " + sys.argv[1] + ", in no target of its build: " + " ".join(missing), file=sys.stderr)
 EOF
-	# GCC at -O3 takes up to about 2 GB for one of the larger files: no more compiles at once than WSL's free memory
-	# holds, so that many changed files don't run it out of memory.
-	jobs=$(awk -v cores="$(nproc)" '/^MemAvailable:/ { n = int($2 / 2097152); print (n < 1 ? 1 : n > cores ? cores : n) }' \
-		/proc/meminfo)
-	compiled=$(tr -cd '\0' < "$commands" | wc -c)
-	[ "$compiled" -lt ${#files[@]} ] && them="the others" || them="them"
-	if [ "$compiled" -gt 0 ]; then
+		compiled=$(tr -cd '\0' < "$commands" | wc -c)
+		[ "$compiled" -lt ${#files[@]} ] && them="the others" || them="them"
+		[ "$compiled" -gt 0 ] || return 0
 		xargs -0 -P "${jobs:-1}" -n 1 bash -c \
 			'out=$(eval "$0" 2>&1); s=$?; [ $s -ne 0 ] && printf "%s\n" "$out"; exit $s' < "$commands" &&
-			echo "GCC compiles $them." || { echo "GCC failed (above)."; result=1; }
-	fi
+			echo "$1 compiles $them." || { echo "$1 failed (above)."; return 1; }
+	}
+	compile Clang "$build" || result=1
+	compile GCC "$gcc" || result=1
 fi
 exit $result

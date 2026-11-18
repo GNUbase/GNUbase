@@ -9,26 +9,59 @@ mixers whose channel visibility follows the tracks'.
 `trackVisibility.get` and `trackVisibility.set` (`src/engine/document/trackvisibility.h`) keep
 `Project::trackVisibility`:
 
-- `hidden`: the tracks the project window hides, by id, sorted. Any track type; the track list also hides the tracks
-  inside a hidden folder. Hidden tracks play as usual.
+- `hidden`: the tracks the project window hides, by id, sorted. Any track type; a folder in the list hides the tracks
+  inside it too, nested ones included, and they are in the list, so what `trackVisibility.get` returns holds them all.
+  The project keeps the folder without them (`withoutInside`) and adds them where the list is read (`withInside`,
+  `hiddenTracks`): a track that joins a hidden folder later, by `track.add`, `track.move` or an undo step, is in the
+  list right away, and in the configurations with the folder too, and one that leaves the folder leaves them, unless it
+  was hidden on its own before (#1533). After every edit and undo step, `trackVisibility.changed` goes out when what
+  `trackVisibility.get` returns changed, as when a hidden track goes, and the mixers that follow sync, hiding the
+  channel of a track that joined a hidden folder or a group channel a hidden folder gets (`followTrackFolders`, #1475,
+  #1539). A transaction whose track edits change what the visibility it left hides announces it once, with what it left,
+  however many `trackVisibility.set` and `mixer.set` (on the lower zone's mixer or the synced mixer window, when it
+  changes the hidden tracks) it has (#1622, #1759, #1809); otherwise each of them announces it on its own, and the
+  track edits don't: a `track.add` into a hidden folder followed by two `trackVisibility.set`, the last showing every
+  track, announces it twice. Hidden tracks play as usual. `Project::trackVisibility` itself, and `trackVisibility` in
+  `project.get`, hold the stored form, the folder without the tracks it hides: readers go through `hiddenTracks` or
+  `trackVisibility.get`, which add them.
 - `sync`: the mixer window (`window1` to `window4`) whose channel visibility follows the tracks', or empty (Sync
   Visibility of Project and Mixer, p. 82): one window at a time. The lower zone's mixer (`lower`) always follows
   (p. 81).
-- `configurations` and `configuration`: the track visibility configurations, each a name and its hidden tracks, and
-  the active one's name; `modified` (read only) says whether the hidden tracks differ from it, which the toolbar shows
-  with an asterisk. `configurations` replaces the list (Add, Update, Rename, Delete and reorder are all that);
-  `configuration` makes one active and, without `hidden`, hides its tracks.
+- `configurations` and `configuration`: the track visibility configurations, each a name and its hidden tracks, and the
+  active one's name; `modified` (read only) says whether the hidden tracks differ from it, which the toolbar shows with
+  an asterisk. `configurations` replaces the list (Add, Update, Rename, Delete and reorder are all that);
+  `configuration` makes one active and, without `hidden`, hides its tracks, with those inside its folders now, also in
+  a transaction after a `track.add` or `track.move` (#1539). Folders are kept as in `hidden`: a track hidden on its own
+  inside a hidden folder stays in the configuration when it leaves the folder. Which tracks are hidden on their own
+  comes from the configuration of the same name. The one new name in a list without the active one is its rename, as
+  Rename Configuration sends it, and takes them from the active one; of several new names, none does (#1694). Any
+  other new name takes them from `hidden` when given the tracks hidden now, as Add Configuration sends it, and keeps
+  folders only otherwise. The active one given the tracks hidden now, in a call that doesn't make another one active,
+  as Update Configuration sends it, takes them from `hidden` too. Add Configuration also sends the active one,
+  unchanged, which keeps its own then: a track it hides only with its folder still leaves it with the folder, though
+  `hidden` holds it on its own (#1622, #1694). A configuration keeps the ids of removed tracks, applied too, so
+  undoing the removal brings the track back into it, hidden: after undo and redo steps, `trackVisibility.changed` goes
+  out when what `trackVisibility.get` returns changed, and the mixers that follow sync in any case (#1475, #1622).
 
-**Following the mixers.** In a mixer that follows, a track's channel is hidden while the track is
-(`syncMixers`), and `mixer.set` on such a mixer hides and shows the tracks of its track channels (`followMixer`,
-called from `mixer.set` in `mixerviews.cpp`), which the other mixer that follows takes too. Busses aren't tracks: each
-mixer keeps its own busses' visibility, and tracks without a channel (marker, ruler, tempo, signature tracks, folders
-without a group channel) keep theirs. Turning the sync on gives the window the tracks' visibility. Every change emits
-`trackVisibility.changed`, and `mixer.changed` for each mixer view that changed.
+**Following the mixers.** In a mixer that follows, a track's channel is hidden while the track is (`syncMixers`), and
+`mixer.set` on such a mixer hides and shows the tracks of its track channels (`followMixer`, called from `mixer.set` in
+`mixerviews.cpp`), which the other mixer that follows takes too. Hiding a folder's group channel there hides the tracks
+inside the folder with it, and while a folder is hidden, an inside track's channel shown there hides again (#906).
+Showing a hidden folder's group channel again shows the tracks inside it, though their channels are still hidden there,
+as the folder hid them (#1366). Busses aren't tracks: each mixer keeps its own busses' visibility, and tracks without a
+channel (marker, ruler, tempo, signature tracks, folders without a group channel) keep theirs. Turning the sync on gives
+the window the tracks' visibility. Every change emits `trackVisibility.changed`, and `mixer.changed` for each mixer view
+that changed.
 
 Like the mixer views, it is a setting, not an undo step, saved with the project in GNUbase's extra entry
 (`trackVisibility` in `project.get`), empty for files from before. Tracks that are gone are left out of what
-`trackVisibility.get` returns, and refused by `trackVisibility.set`; names of configurations are unique and not empty.
+`trackVisibility.get` returns, and refused by `trackVisibility.set`; names of configurations are unique and not empty. A
+loaded project's values are checked the same way (`sanitizeTrackVisibility`): an unknown `sync`, a configuration name
+that is empty or there twice, an active name that isn't there and ids that aren't tracks are dropped, and hidden folders
+hide the tracks inside them (#906); the mixers that follow then hide those tracks' channels, and a mixer without a view
+gets one only for channels to hide (#1366). Files saved before #1533 hold the tracks inside hidden folders in `hidden`
+and in the configurations, as tracks hidden on their own, which is how they load: such a track stays hidden when it
+leaves the folder, as it did when the file was saved, until the folder is shown and hidden again (#1622).
 
 ## The UI
 
@@ -42,15 +75,16 @@ and sends `trackVisibility.set`.
 .visibility-page[page=track]              the Visibility tab's Track page; .hidden while the other one shows
   #track-visibility-sync                  Sync Visibility of Project and Mixer: On/Off, .checked while on; menu #track-visibility-sync-menu
   .track-visibility-list
-    button.track-visibility-item[track][level]   .checked while the track shows
+    button.track-visibility-item[track][level]   .checked while the track shows; a .track-visibility-indent sizes its indent
 .visibility-page[page=editor]             the Editor page: the lower zone editor's visibility (midi-editors.md)
 .visibility-tabs > button.visibility-tab[page]   .checked for the page that shows
 ```
 
 - **Visibility tab** (pp. 80–82): the project window's Visibility panel in the left zone has the pages Track and
   Editor, with their tabs at the bottom. A click on a track's check hides it with the tracks inside it, or shows it
-  with them and the folders around it; Shift-click shows only that track. The = button's menu has Sync Project and
-  Mixer 1 to 4; the checked one again switches the sync off.
+  with them and the folders around it; Shift-click shows only that track. Tracks indent by their level in folders,
+  however deep: the code sizes each `.track-visibility-indent` from the level, as the tree views do (#906). The =
+  button's menu has Sync Project and Mixer 1 to 4; the checked one again switches the sync off.
 - **Track list**: `ui::TrackList` follows `trackVisibility.changed` too. Rows of hidden tracks get the state class
   `.filtered`, which the style sheet hides, and the event display leaves their lanes out
   (`EventDisplay::setHiddenTracks`), like folded folders' tracks; Up and Down skip them.
@@ -59,9 +93,15 @@ and sends `trackVisibility.set`.
   that window or off. The lower zone's mixer simply follows.
 - **Track Visibility Configurations** (pp. 58, 455): Add Configuration asks for a name
   (`resources/ui/visibility-configuration.rml`) and keeps the tracks hidden now under it, as the active one; Update
-  Configuration takes the hidden tracks into the active one; Rename Configuration asks for its new name; Delete
-  Configuration deletes it. A configuration chosen in the menu hides its tracks. The toolbar shows them in windows at
-  least 1100 dp wide (`resources/styles/base.rcss`), where it has room next to the quantize section.
+  Configuration takes the hidden tracks into the active one; Rename Configuration asks for its new name, and OK with the
+  name left as it is changes nothing (#1759); Delete Configuration deletes it. A configuration chosen in the menu hides
+  its tracks. OK in the dialog with a name that `trackVisibility.set` would refuse, one that is empty or taken, shows
+  why in `#visibility-configuration-error` and keeps the dialog open (#906). The toolbar shows them where it has room
+  for them ([docking.md](docking.md)).
+- **After an undo step** the page reads the tracks (`project.get`) and the visibility (`trackVisibility.get`), which
+  the engine answers on its own thread: a frame can take the first reply without the second, so what a click, an
+  Update or a dialog sends leaves out the ids that aren't tracks anymore, which `trackVisibility.set` would refuse
+  (#907).
 
 ## Not yet
 
@@ -74,11 +114,30 @@ dividing the track list, whose upper part the sync leaves alone.
 ## Checks
 
 - `tests/trackvisibility_tests.cpp`: hidden tracks sorted, refused for unknown ids, not undo steps, without tracks that
-  are gone, saved and loaded with the configurations; the lower zone's mixer and the synced window following both
+  are gone, saved and loaded with the configurations; a hidden folder hiding the tracks inside it in the mixers that
+  follow both ways, showing the folder's group channel again showing them, and configurations keeping them, with a track
+  that joined the folder later, not modified then, a track that joins a hidden folder later by `track.add` or
+  `track.move` hidden right away with its channel, also after a `mixer.set`, and an applied configuration keeping a
+  removed track for undo, announced and with its channel hidden when the undo brings it back, and a track that an undo
+  step puts back into a folder hidden since hidden with it (#1475); a track that leaves a hidden folder by `track.move`,
+  undo or redo showing again and leaving a configuration that isn't active, one hidden on its own staying hidden
+  (#1533); a hidden folder's new group channel hidden in the lower zone's mixer, a removed hidden track announced, and a
+  configuration applied in a transaction after a `track.add` into its folder (#1539); a configuration added, updated or
+  renamed keeping the tracks hidden on their own inside its folders, and a transaction announcing the visibility once
+  (#1622); only the one new name that replaces the active one taking its tracks hidden on their own, the active one
+  keeping its own when a configuration is added, and a file from before #1533 whose track inside a hidden folder stays
+  hidden when it leaves the folder (#1694); a transaction announcing the visibility once only when its track edits
+  change what it hides (#1759); the values from a file checked as the command checks them, the lower zone's mixer hiding
+  the channels of the tracks that joined from their folders; the lower zone's mixer and the synced window following both
   ways, busses and tracks without a channel keeping their state, one window at a time; configurations added, applied,
   modified, updated, renamed and deleted, names checked, gone tracks left out.
+- `tests/projectrules_tests.cpp`: the project rules' `isHidden` set for a track inside a hidden folder, and no longer
+  once it left the folder (#1533, #1622).
 - `tests/trackvisibility_ui_tests.cpp` drives the app with `ui::Automation`: the Track page's checks hiding tracks in
   the track list and the lower zone's mixer, a channel hidden there hiding its track, Shift-click, the Track and Editor
-  tabs; the = menu syncing a mixer window, whose Visibility tab shows the link, hides tracks and switches it off; the
-  toolbar's configurations menu adding through the dialog, showing the asterisk, updating, applying, renaming and
-  deleting.
+  tabs, the indents by folder level; the = menu syncing a mixer window, whose Visibility tab shows the link, hides
+  tracks and switches it off; the toolbar's configurations menu adding through the dialog, which stays open for a name
+  that is empty or taken and changes nothing for the name left as it is in Rename Configuration (#1759), showing the
+  asterisk, updating, applying, renaming and deleting; the page keeping working after a hidden track is removed, also
+  with a visibility from before the removal still in hand (#907), which an event stands in for, for the checks and for
+  Update, Add, Rename and Delete Configuration (#1475).

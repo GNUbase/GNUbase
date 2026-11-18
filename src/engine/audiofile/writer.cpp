@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -385,23 +386,21 @@ namespace gnubase::engine
 		public:
 			FlacWriter(const std::string& path, const WriteOptions& options)
 				: m_options(options), m_path(path), m_bits(bitsOf(options.sampleFormat)),
-				  m_encoder(FLAC__stream_encoder_new())
+				  m_encoder(FLAC__stream_encoder_new(), FLAC__stream_encoder_delete)
 			{
 				if (m_encoder == nullptr)
 					throw AudioFileError("can't create a FLAC encoder");
-				FLAC__stream_encoder_set_channels(m_encoder, static_cast<uint32_t>(options.channels));
-				FLAC__stream_encoder_set_bits_per_sample(m_encoder, static_cast<uint32_t>(m_bits));
-				FLAC__stream_encoder_set_sample_rate(m_encoder, static_cast<uint32_t>(std::lround(options.sampleRate)));
-				FLAC__stream_encoder_set_compression_level(m_encoder, 5);
+				FLAC__stream_encoder_set_channels(m_encoder.get(), static_cast<uint32_t>(options.channels));
+				FLAC__stream_encoder_set_bits_per_sample(m_encoder.get(), static_cast<uint32_t>(m_bits));
+				FLAC__stream_encoder_set_sample_rate(
+					m_encoder.get(), static_cast<uint32_t>(std::lround(options.sampleRate)));
+				FLAC__stream_encoder_set_compression_level(m_encoder.get(), 5);
 				// From here on the encoder owns the file and closes it when it finishes, or when it is deleted after
 				// rejecting the settings.
 				std::FILE* file = createFile(path).release();
-				if (FLAC__stream_encoder_init_FILE(m_encoder, file, nullptr, nullptr) !=
+				if (FLAC__stream_encoder_init_FILE(m_encoder.get(), file, nullptr, nullptr) !=
 					FLAC__STREAM_ENCODER_INIT_STATUS_OK)
-				{
-					FLAC__stream_encoder_delete(m_encoder);
 					throw AudioFileError("can't write " + path + ": the FLAC encoder rejected the settings");
-				}
 			}
 
 			~FlacWriter() override
@@ -413,7 +412,6 @@ namespace gnubase::engine
 				catch (const AudioFileError&) // NOLINT(bugprone-empty-catch): a destructor can't report it
 				{
 				}
-				FLAC__stream_encoder_delete(m_encoder);
 			}
 
 			FlacWriter(const FlacWriter&) = delete;
@@ -426,9 +424,9 @@ namespace gnubase::engine
 				for (size_t i = 0; i < samples; ++i)
 					m_samples[i] = toInteger(buffer[i], m_bits);
 				if (FLAC__stream_encoder_process_interleaved(
-						m_encoder, m_samples.data(), static_cast<uint32_t>(frames)) == 0)
+						m_encoder.get(), m_samples.data(), static_cast<uint32_t>(frames)) == 0)
 					throw AudioFileError("can't write " + m_path + ": " +
-						FLAC__StreamEncoderStateString[FLAC__stream_encoder_get_state(m_encoder)]);
+						FLAC__StreamEncoderStateString[FLAC__stream_encoder_get_state(m_encoder.get())]);
 			}
 
 			void close() override
@@ -436,7 +434,7 @@ namespace gnubase::engine
 				if (m_closed)
 					return;
 				m_closed = true;
-				if (FLAC__stream_encoder_finish(m_encoder) == 0)
+				if (FLAC__stream_encoder_finish(m_encoder.get()) == 0)
 					throw AudioFileError("can't complete " + m_path);
 			}
 
@@ -444,7 +442,7 @@ namespace gnubase::engine
 			WriteOptions m_options;
 			std::string m_path;
 			int m_bits;
-			FLAC__StreamEncoder* m_encoder;
+			std::unique_ptr<FLAC__StreamEncoder, decltype(&FLAC__stream_encoder_delete)> m_encoder;
 			std::vector<FLAC__int32> m_samples;
 			bool m_closed = false;
 		};

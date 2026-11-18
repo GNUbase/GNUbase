@@ -10,12 +10,14 @@
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/fonts.h"
+#include "ui/rmlui.h"
 #include "ui/shell.h"
 #include "ui/signaturetrack.h"
 #include "ui/timeformat.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
@@ -27,6 +29,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -258,6 +261,31 @@ TEST_CASE("the signature lane shows the time signature events, where clicks add,
 	const uint64_t signatureTrack = fixture.call("project.get").at("tracks")[1].at("id").get<uint64_t>();
 	fixture.call("track.remove", {{"track", signatureTrack}});
 	REQUIRE(fixture.waitUntil([&row] { return row.IsClassSet("hidden"); }));
+}
+
+TEST_CASE("two presses on a time signature event open it only less than half a second apart", "[unit]")
+{
+	Fixture fixture;
+	fixture.call("track.add", {{"type", "signature"}});
+	fixture.call("signature.add", change(2, 3, 4));
+	REQUIRE(fixture.waitUntil(
+		[&fixture] { return fixture.events().size() == 2 && fixture.row().GetOffsetHeight() > 0.0F; }));
+	const auto* field = dynamic_cast<Rml::ElementFormControl*>(fixture.document.QuerySelector(".signature-field"));
+	REQUIRE(field != nullptr);
+	// RmlUi's clock, which times the presses, stands still but for advance().
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+
+	clock->advance(1.0);
+	fixture.click(centre(*fixture.events()[1]));
+	clock->advance(0.6);
+	fixture.click(centre(*fixture.events()[1]));
+	CHECK(!field->IsClassSet("shown"));
+	clock->advance(0.4);
+	fixture.click(centre(*fixture.events()[1]));
+	CHECK(fixture.waitUntil([field] { return field->IsClassSet("shown"); }));
 }
 
 TEST_CASE("the tempo track editor's time signature display adds and edits time signature events", "[ui]")

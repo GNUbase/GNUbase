@@ -8,6 +8,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace Rml
@@ -32,7 +34,7 @@ namespace gnubase::ui
 		{
 			uint64_t id = 0; // the audio event's
 			size_t lane = 0;
-			TimeSpan time; // seconds
+			TimeSpan time; // seconds, and the event's color, its own or its track's (#1312)
 			uint64_t media = 0;
 			double sampleRate = 0.0; // the media file's
 			int channels = 1;
@@ -49,6 +51,8 @@ namespace gnubase::ui
 			double width = 0.0;           // of the lanes, in dp
 			double height = 0.0;
 			float dpRatio = 1.0F;
+			double minimumHeight = 0.0; // dp: lower lanes show no waveforms (Smallest Track Height to Show Data, #1313)
+			double brightness = 0.5;    // the waveforms' (Waveform Brightness, #1313)
 		};
 
 		EventWaveforms(EngineBinding& binding, Rml::Element& container);
@@ -74,6 +78,8 @@ namespace gnubase::ui
 			Question asked;              // the latest question, in flight or answered
 			bool pending = false;        // asked is in flight
 			bool stale = false;          // the file's peaks changed since asked
+			// Where the element was put, in dp: set again only when it moves, as a set property builds it again.
+			std::optional<std::pair<double, double>> placed; // top and height
 		};
 
 		void update(Wave& wave);

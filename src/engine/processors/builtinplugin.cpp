@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/processors/builtinplugin.h"
+#include "engine/dsp/dsp.h"
+#include "engine/plugins/pluginslot.h"
+#include "engine/processors/midieffects.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,6 +13,11 @@ namespace gnubase::engine::processors
 {
 	namespace
 	{
+		bool isMidiEffect(const BuiltinInfo& info)
+		{
+			return findMidiEffect(info.id) == &info;
+		}
+
 		plugin::Descriptor describe(const BuiltinInfo& info)
 		{
 			plugin::Descriptor descriptor;
@@ -19,7 +27,10 @@ namespace gnubase::engine::processors
 			descriptor.name = info.name;
 			descriptor.vendor = "GNUbase";
 			descriptor.version = GNUBASE_VERSION;
-			descriptor.features = {info.instrument ? "instrument" : "audio-effect"};
+			if (isMidiEffect(info))
+				descriptor.features = {"note-effect"};
+			else
+				descriptor.features = {info.instrument ? "instrument" : "audio-effect"};
 			return descriptor;
 		}
 
@@ -38,14 +49,18 @@ namespace gnubase::engine::processors
 	}
 
 	BuiltinPlugin::BuiltinPlugin(const BuiltinInfo& info, plugin::Host& host, uint32_t channels)
-		: m_info(info), m_host(host), m_channels(channels), m_descriptor(describe(info)),
-		  m_values(info.parameters.size()), m_pending(info.parameters.size())
+		: m_info(info), m_host(host), m_noteEffect(isMidiEffect(info)), m_channels(channels),
+		  m_descriptor(describe(info)), m_values(info.parameters.size()), m_pending(info.parameters.size())
 	{
 	}
 
 	bool BuiltinPlugin::init()
 	{
-		m_processor = createBuiltin(m_info.id);
+		if (m_noteEffect)
+			m_processor = createMidiEffect(m_info.id);
+		else
+			m_processor = createBuiltin(m_info.id);
+		m_tempoMap = plugin::extension<HostTempoMap>(m_host);
 		for (size_t i = 0; i < m_info.parameters.size(); ++i)
 		{
 			m_values[i] = m_info.parameters[i].defaultValue;
@@ -75,6 +90,8 @@ namespace gnubase::engine::processors
 
 	plugin::ProcessStatus BuiltinPlugin::process(const plugin::Process& process) noexcept
 	{
+		if (m_noteEffect)
+			return processNotes(process);
 		const uint32_t inputs = m_info.instrument ? 0 : 1;
 		if (!m_processor || process.audioInputCount != inputs || process.audioOutputCount != 1 ||
 			process.audioOutputs[0].channelCount != m_channels ||
@@ -104,15 +121,64 @@ namespace gnubase::engine::processors
 		return plugin::ProcessStatus::Continue;
 	}
 
+	plugin::ProcessStatus BuiltinPlugin::processNotes(const plugin::Process& process) noexcept
+	{
+		// Audio ports a host passes anyway are left as they are.
+		if (!m_processor || process.transportCount == 0 || process.frames > m_maxFrames)
+			return plugin::ProcessStatus::Error;
+		m_events.clear();
+		m_eventsOut.clear();
+		applyPending();
+		for (const plugin::Event& event : process.eventsIn)
+		{
+			graph::ProcessEvent converted;
+			if (!plugins::toGraphEvent(event, process.eventsIn, converted))
+				continue;
+			if (converted.type == graph::ProcessEvent::Type::Parameter)
+			{
+				const int index = indexOf(converted.parameter);
+				if (index < 0)
+					continue;
+				m_values[static_cast<size_t>(index)] = converted.parameterValue;
+			}
+			m_events.add(converted);
+		}
+		const graph::TransportBlock transport = convert(process);
+		m_processor->process({nullptr, 0, process.frames, m_events, m_eventsOut, transport});
+		for (const graph::ProcessEvent& event : m_eventsOut)
+			plugins::convertEvent(event, process.frames, process.eventsOut, true);
+		return plugin::ProcessStatus::Continue;
+	}
+
 	void* BuiltinPlugin::extension(std::string_view id)
 	{
+		if (m_noteEffect && id == plugin::NotePorts::extensionId())
+			return static_cast<plugin::NotePorts*>(this);
 		return plugin::provide<plugin::AudioPorts, plugin::Params, plugin::State, plugin::Latency, plugin::Tail>(
 			this, id);
 	}
 
 	uint32_t BuiltinPlugin::audioPortCount(bool input) const
 	{
+		if (m_noteEffect)
+			return 0;
 		return input && m_info.instrument ? 0 : 1;
+	}
+
+	uint32_t BuiltinPlugin::notePortCount(bool /*input*/) const
+	{
+		return m_noteEffect ? 1 : 0;
+	}
+
+	bool BuiltinPlugin::notePortInfo(bool input, uint32_t index, plugin::NotePortInfo& info) const
+	{
+		if (index >= notePortCount(input))
+			return false;
+		info.id = 0;
+		info.name = input ? "MIDI In" : "MIDI Out";
+		info.dialects = plugin::NotePortInfo::Notes | plugin::NotePortInfo::Midi2;
+		info.preferred = plugin::NotePortInfo::Midi2;
+		return true;
 	}
 
 	bool BuiltinPlugin::audioPortInfo(bool input, uint32_t index, plugin::AudioPortInfo& info) const
@@ -210,6 +276,16 @@ namespace gnubase::engine::processors
 	namespace
 	{
 		constexpr size_t g_stateEntry = sizeof(uint32_t) + sizeof(double);
+
+		// A value from a state or a file for parameter, clamped to its range and a stepped parameter's rounded to a
+		// step; none if it isn't a number, NaN or infinite, so that a damaged or hand-edited state plays and reports
+		// what the plugin can take.
+		std::optional<double> usable(const ParameterInfo& parameter, double value)
+		{
+			if (!std::isfinite(value))
+				return std::nullopt;
+			return dsp::clampParameter(value, parameter.minimum, parameter.maximum, parameter.stepped);
+		}
 	}
 
 	std::map<uint32_t, double> BuiltinPlugin::stateValues(const std::vector<uint8_t>& state)
@@ -232,12 +308,14 @@ namespace gnubase::engine::processors
 		const ParameterInfo& parameter, const std::map<uint32_t, double>& set, const std::vector<uint8_t>* state)
 	{
 		if (const auto value = set.find(parameter.id); value != set.end())
-			return value->second;
+			if (const std::optional<double> checked = usable(parameter, value->second))
+				return *checked;
 		if (state != nullptr)
 		{
 			const std::map<uint32_t, double> values = stateValues(*state);
 			if (const auto saved = values.find(parameter.id); saved != values.end())
-				return saved->second;
+				if (const std::optional<double> checked = usable(parameter, saved->second))
+					return *checked;
 		}
 		return parameter.defaultValue;
 	}
@@ -247,7 +325,13 @@ namespace gnubase::engine::processors
 		if (size % g_stateEntry != 0)
 			return false;
 		for (const auto& [id, value] : stateValues(std::vector<uint8_t>(data, data + size)))
-			setValue(id, value);
+		{
+			const int index = indexOf(id);
+			if (index < 0)
+				continue;
+			if (const std::optional<double> checked = usable(m_info.parameters[static_cast<size_t>(index)], value))
+				setValue(id, *checked);
+		}
 		if (auto* hostParams = plugin::extension<plugin::HostParams>(m_host))
 			hostParams->rescanParams(plugin::HostParams::Values);
 		return true;
@@ -327,7 +411,10 @@ namespace gnubase::engine::processors
 
 	graph::TransportBlock BuiltinPlugin::convert(const plugin::Process& process) noexcept
 	{
-		return toTransportBlock(process, m_segments);
+		graph::TransportBlock block = toTransportBlock(process, m_segments);
+		if (m_tempoMap != nullptr)
+			block.tempoMap = m_tempoMap->tempoMap();
+		return block;
 	}
 
 	graph::TransportBlock toTransportBlock(
@@ -364,13 +451,16 @@ namespace gnubase::engine::processors
 	{
 		for (const BuiltinInfo& info : builtins())
 			m_descriptors.push_back(describe(info));
+		for (const BuiltinInfo& info : midiEffects())
+			m_descriptors.push_back(describe(info));
 	}
 
 	std::unique_ptr<plugin::Plugin> BuiltinFactory::create(std::string_view id, plugin::Host& host)
 	{
-		for (const BuiltinInfo& info : builtins())
-			if (id == "builtin:" + info.id)
-				return std::make_unique<BuiltinPlugin>(info, host, m_channels);
+		for (const std::vector<BuiltinInfo>* infos : {&builtins(), &midiEffects()})
+			for (const BuiltinInfo& info : *infos)
+				if (id == "builtin:" + info.id)
+					return std::make_unique<BuiltinPlugin>(info, host, m_channels);
 		return nullptr;
 	}
 }

@@ -24,9 +24,9 @@ namespace gnubase::test
 		std::filesystem::path m_path;
 	};
 
-	// Keeps a file from being read while it exists, as another program that locks it (Windows) or a missing read
-	// permission (elsewhere) would. Its size and time stay readable. Not active where it can't be done, e.g. for root,
-	// who reads anything.
+	// Keeps a file from being read, or a folder from being listed, while it exists, as another program that locks it
+	// (Windows) or a missing read permission (elsewhere) would. Its size and time stay readable. Not active where it
+	// can't be done, e.g. for root, who reads anything.
 	class Unreadable
 	{
 	public:
@@ -42,6 +42,7 @@ namespace gnubase::test
 
 	private:
 		std::filesystem::path m_file;
+		bool m_folder = false;
 		bool m_active = false;
 #ifdef _WIN32
 		void* m_handle = nullptr; // the file's HANDLE
@@ -89,6 +90,10 @@ namespace gnubase::test
 
 	// The whole file, or an empty string if it cannot be read.
 	std::string readText(const std::filesystem::path& file);
+
+	// Runs a command line, UTF-8, with the system's shell (cmd.exe on Windows, sh elsewhere), and returns its exit
+	// code, or -1 if it didn't exit (POSIX: ended by a signal).
+	int runCommand(const std::string& command);
 
 	// The build's test output folder, for files a test writes to look at, such as screenshots.
 	std::filesystem::path outputDirectory();

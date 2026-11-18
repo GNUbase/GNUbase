@@ -196,6 +196,7 @@ namespace gnubase::ui
 				if (result.ok())
 				{
 					m_project = result.value;
+					m_read = m_binding.handed();
 					// The view leaves out parts that are gone; ask again, so that it has their removal too.
 					requestView();
 				}
@@ -263,13 +264,13 @@ namespace gnubase::ui
 			setInner(root->QuerySelector(".editor-global-tracks"), globalTracksRml());
 			showContent();
 			if (m_keys)
-				m_keys->show(m_project, m_view);
+				m_keys->show(m_project, m_view, m_read);
 			if (m_list)
 				m_list->show(m_project, m_view);
 			if (m_audio)
 				m_audio->show(m_project, m_view);
 			if (m_pattern)
-				m_pattern->show(m_project, m_view);
+				m_pattern->show(m_project, m_view, m_read);
 			fillMenus();
 		}
 		else if (m_part == EditorPart::Visibility)
@@ -331,7 +332,15 @@ namespace gnubase::ui
 			// The drum editor (#129) is the key editor with the drum map's sounds as its rows.
 			added->SetClass("key-editor", true);
 			m_keys = std::make_unique<KeyEditor>(m_binding, *added, m_name, shown == "drum");
+			m_keys->setDrumMapSetup(m_drumMapSetup);
 		}
+	}
+
+	void MidiEditor::setDrumMapSetup(std::function<void()> open)
+	{
+		m_drumMapSetup = std::move(open);
+		if (m_keys)
+			m_keys->setDrumMapSetup(m_drumMapSetup);
 	}
 
 	// The chord the selected notes make, as the Chord Editing section's Chord Type field shows it (p. 1216).

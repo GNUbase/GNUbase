@@ -34,6 +34,7 @@ namespace gnubase::ui
 		std::string name;
 		const engine::Json* channel = nullptr; // the channel's JSON in the project, null for busses
 		std::string picture;                   // the track's
+		std::string color;                     // the track's, "#rrggbb", or empty for the theme's
 	};
 
 	// The channel.set parameters of a click on a channel's solo button (reference manual p. 466), from the channel's

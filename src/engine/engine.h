@@ -2,6 +2,8 @@
 #pragma once
 
 #include "engine/clock.h"
+#include "engine/jobs/jobs.h"
+#include "engine/plugins/slotinstances.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/midi/port.h"
@@ -36,6 +38,11 @@ namespace gnubase::engine
 		class HostManager;
 	}
 	struct RenderSnapshot;
+
+	namespace processors
+	{
+		struct Sample;
+	}
 
 	namespace peaks
 	{
@@ -133,6 +140,19 @@ namespace gnubase::engine
 				m_unlogged = true;
 		}
 
+		// For a command registered with ProjectModel::addEdit that found nothing to change, such as a settings command
+		// given the values the project has: the project's revision stays, so that it doesn't count as modified, no
+		// undo step is recorded and no snapshot is published. The command must have changed nothing and emitted
+		// nothing. Inside another command, the outer one decides.
+		void markUnchanged()
+		{
+			if (m_outer == nullptr)
+				m_unchanged = true;
+		}
+		bool unchanged() const { return m_unchanged; }
+		// Engine-posted work can finish its own jobs; clients cannot invoke those completion handlers.
+		bool internal() const { return m_outer != nullptr ? m_outer->internal() : m_internal; }
+
 		// If the command fails, leaves the failure out of engine.commandLog and the error log: for a command that the
 		// engine runs on its own and whose failure was reported already, such as a due auto save that fails again.
 		// Inside another command, the outer one decides.
@@ -149,6 +169,8 @@ namespace gnubase::engine
 		CommandContext* m_outer = nullptr;
 		Engine* m_engine = nullptr; // set on the outermost context
 		std::vector<Event> m_events;
+		bool m_internal = false;
+		bool m_unchanged = false;    // markUnchanged
 		bool m_unlogged = false;     // leaveOutOfLog
 		bool m_quietFailure = false; // failQuietly
 	};
@@ -206,6 +228,10 @@ namespace gnubase::engine
 
 		// The plugin host processes and the plugins that run in them.
 		plugins::HostManager& pluginHosts();
+		// Command thread: prepare a render from the current snapshot, or start background work.
+		Jobs::Work prepareMixdown(const Json& parameters);
+		Json startJob(std::string kind, Jobs::Work work);
+		bool jobCancelled(JobId job) const;
 
 		// The folder of the user settings; empty when they are kept in memory only. Features whose user settings
 		// have files of their own, such as the quantize presets, keep them there.
@@ -242,6 +268,24 @@ namespace gnubase::engine
 		// For tests: moves the engine's clock forward and returns once its tick ran (Clock::advance), so that whatever
 		// the tick queued, such as a due auto save, is queued before what the test does next.
 		void advanceClock(Clock::Duration by) { m_clock.advance(by); }
+		// For tests: stops the engine's clock where it is, so that only advanceClock moves it on (Clock::hold).
+		void holdClock() { m_clock.hold(); }
+		// For tests: reads the samplers' samples asked for from now on with read instead of processors::sharedSample,
+		// e.g. to hold a read back (AudioEngine::setSampleReader). Any thread.
+		void setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read);
+		// Substitute the private render's plugin factory for tests; set before issuing render commands.
+		void setRenderPluginFactory(plugins::SlotInstances::Factory factory);
+		// For tests: how long an offline render waits for the samplers' samples before it logs a warning and waits
+		// again, 30 s unless set, 20 rounds at most before it fails (AudioEngine::setOfflineSampleWait). Any thread.
+		void setOfflineSampleWait(std::chrono::milliseconds wait);
+		// For tests: calls hook on a job's thread after each job.progress the job sends, outside every lock, e.g. to
+		// hold the job there until the test ran what must come before the job goes on (tests/testutils/heldjob.h).
+		// Events and commands go on meanwhile, unlike in a Listener that blocks; job.cancel, project.load and
+		// project.new don't wait for a job that the hook holds, but the engine's shutdown does, as it joins every job's
+		// thread. An exception from the hook comes out of the job's JobContext::progress, as if its work threw it
+		// there: uncaught, a std::exception ends the job as failed, JobCancelled as cancelled. Empty for none. Any
+		// thread.
+		void setJobProgressHook(std::function<void(uint64_t job, const std::string& kind)> hook);
 
 	private:
 		friend class Client;

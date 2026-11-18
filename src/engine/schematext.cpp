@@ -1,35 +1,66 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/schematext.h"
 
+#include "engine/schema.h"
+
 #include <algorithm>
+#include <optional>
 #include <ostream>
 
 namespace gnubase::engine
 {
 	std::string schemaType(const Json& schema)
 	{
+		const Json type = schema.value("type", Json());
+		std::string text;
 		if (const auto choices = schema.find("enum"); choices != schema.end())
 		{
-			std::string text;
+			text = "one of ";
+			bool first = true;
 			for (const Json& choice : *choices)
-				text += (text.empty() ? "" : " | ") + choice.dump();
-			return "one of " + text;
+			{
+				text += (first ? "" : " | ") + choice.dump();
+				first = false;
+			}
 		}
-		const Json type = schema.value("type", Json());
-		if (type.is_array())
+		else if (type.is_array())
 		{
-			std::string text;
 			for (const Json& name : type)
 				text += (text.empty() ? "" : " or ") + name.get<std::string>();
-			return text;
 		}
-		if (!type.is_string())
-			return "any";
+		else if (type.is_string())
+		{
+			text = type.get<std::string>();
+		}
+		else
+		{
+			text = "any";
+		}
+		const std::optional<size_t> maxLength = maxStringLength(schema);
 		if (const auto pattern = schema.find("pattern"); pattern != schema.end())
-			return type.get<std::string>() + " matching `" + pattern->get<std::string>() + "`";
-		if (type == "array" && schema.contains("items"))
-			return "array of " + schemaType(schema.at("items"));
-		return type.get<std::string>();
+			text += " matching `" + pattern->get<std::string>() + "`" +
+				(maxLength ? ", at most " + std::to_string(*maxLength) + " characters" : "");
+		else if (maxLength)
+			text += " of at most " + std::to_string(*maxLength) + " characters";
+		else if (type == "array" && schema.contains("items"))
+			text += " of " + schemaType(schema.at("items"));
+		const auto bound = [&](const char* key, const char* phrase, const char* unit = "")
+		{
+			if (const auto value = schema.find(key); value != schema.end())
+			{
+				text += std::string(", ") + phrase + " " + value->dump();
+				if (*unit != '\0')
+					text += std::string(" ") + unit + (*value == 1 ? "" : "s");
+			}
+		};
+		bound("minLength", "at least", "character");
+		bound("minItems", "at least", "item");
+		bound("maxItems", "at most", "item");
+		bound("minimum", "at least");
+		bound("maximum", "at most");
+		bound("exclusiveMinimum", "more than");
+		bound("exclusiveMaximum", "less than");
+		return text;
 	}
 
 	void writeProperties(std::ostream& out, const Json& schema, const std::string& heading)

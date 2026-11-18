@@ -133,19 +133,29 @@
 			dialog.document = document
 			if not dialog.subscribed then
 				dialog.subscribed = true
-				local refresh = function()
+				dialog.follow = function()
 					if dialog.document ~= nil then
 						dialog.refresh()
 					end
 				end
-				gnubase.on("workspace.changed", refresh)
-				gnubase.on("project.reset", refresh)
+				gnubase.on("workspace.changed", dialog.follow)
+				gnubase.on("project.reset", dialog.follow)
 			end
 			dialog.refresh()
 		end
+
+		-- The handlers go with the document: the next one that opens loads this script again.
+		function dialog.close()
+			dialog.document = nil
+			if dialog.subscribed then
+				gnubase.off("workspace.changed", dialog.follow)
+				gnubase.off("project.reset", dialog.follow)
+				dialog.subscribed = false
+			end
+		end
 	</script>
 </head>
-<body onload="WorkspacesOrganizer.load(document)" onunload="WorkspacesOrganizer.document = nil">
+<body onload="WorkspacesOrganizer.load(document)" onunload="WorkspacesOrganizer.close()">
 	<dialog id="workspaces-dialog">
 		<div class="dialog-titlebar">Workspaces</div>
 		<div class="lists">

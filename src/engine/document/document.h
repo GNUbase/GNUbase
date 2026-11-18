@@ -12,6 +12,7 @@
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 #include "engine/time/timecode.h"
+#include "plugin/events.h"
 
 #include <array>
 #include <cstddef>
@@ -21,6 +22,7 @@
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 // The project document: a tree of objects with stable ids. Only the engine's command thread reads and changes it,
@@ -205,6 +207,24 @@ namespace gnubase::engine
 	// An audio channel has this many sends (reference manual p. 542).
 	inline constexpr size_t g_maxSends = 8;
 
+	// A pad of a drum track's drum machine (#182): its name, or empty for its sample's or a General MIDI sound's, the
+	// pool clip it plays, or 0, and the note whose General MIDI sound names it without either: a copy's goes by the
+	// sound of the pad it was copied from (drum.copyPad, #1567), -1 by its own note's. And its color, "#rrggbb" or
+	// empty for none (Set Color, reference manual pp. 942-943).
+	struct DrumPad
+	{
+		std::string name;
+		ObjectId sample = 0;
+		int sound = -1;
+		std::string color;
+
+		bool operator==(const DrumPad& other) const
+		{
+			return name == other.name && sample == other.sample && sound == other.sound && color == other.color;
+		}
+		bool operator!=(const DrumPad& other) const { return !(*this == other); }
+	};
+
 	// The mixer channel of a track. MIDI tracks have a MIDI channel: no audio channels, and their output is an
 	// instrument track's channel.
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
@@ -231,6 +251,9 @@ namespace gnubase::engine
 		// (docs/features/midi-devices.md).
 		std::optional<int> program = std::nullopt;
 		std::optional<int> bank = std::nullopt;
+		// MIDI channels: the MIDI channel (0 to 15) that the program, bank, MIDI volume and pan go out on, or none:
+		// Any, which sends them on channel 1 (docs/features/mixer.md).
+		std::optional<int> midiChannel = std::nullopt;
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::string device = {};
 		// MIDI and instrument tracks: the MIDI modifiers, which change how the track's notes play
@@ -256,11 +279,16 @@ namespace gnubase::engine
 		// Sampler tracks, instrument tracks that play the built-in sampler (#180): the pool clip whose media file the
 		// sampler plays, or 0 for none (docs/features/sampler-track.md).
 		ObjectId sample = 0;
+		// Drum tracks, instrument tracks that play the built-in drum machine (#182): the pads with a name or a
+		// sample, by pad, which is the MIDI note that plays it (docs/features/drum-track.md).
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::map<int, DrumPad> pads = {};
 		// Audio, MIDI and instrument tracks: the monitor and record enable buttons
 		// (docs/features/latency-and-monitoring.md, docs/features/midi-recording.md).
 		bool monitor = false;
 		bool recordEnable = false;
-		// MIDI and instrument tracks: where their MIDI input comes from, "all" (all MIDI inputs) or "none".
+		// MIDI and instrument tracks: where their MIDI input comes from, "all" (all MIDI inputs), "chordPads" (only
+		// the chord pads, reference manual p. 1367) or "none".
 		std::string midiInput = "all";
 		// The mute and solo buttons (docs/features/solo-mute-listen.md): a muted channel is silent, unless mute
 		// automation plays (docs/features/automation.md); while any channel is soloed, only soloed ones, where they
@@ -432,10 +460,6 @@ namespace gnubase::engine
 		time::Samples target = 0;
 	};
 
-	// How a clip's audio is warped in real time (#144, docs/features/warp.md). Its definition is its tempo (BPM of
-	// quarter notes; 0 until one is set or musical mode is turned on), beats per bar, the clip frame of its first beat
-	// and the beats edited from there. In musical mode its beats follow the project's tempo. Its warp markers move
-	// sections of its audio in time. preset is the time stretch algorithm (dsp::stretchPresetNames()).
 	// The warp markers a clip had before warp quantizing (#145) first changed them, and what it made of them.
 	// While the clip still has those, quantizing starts from the original ones and resetting puts them back.
 	struct WarpQuantizeOrigin
@@ -444,6 +468,10 @@ namespace gnubase::engine
 		std::vector<WarpMarker> quantized;
 	};
 
+	// How a clip's audio is warped in real time (#144, docs/features/warp.md). Its definition is its tempo (BPM of
+	// quarter notes; 0 until one is set or musical mode is turned on), beats per bar, the clip frame of its first beat
+	// and the beats edited from there. In musical mode its beats follow the project's tempo. Its warp markers move
+	// sections of its audio in time. preset is the time stretch algorithm (dsp::stretchPresetNames()).
 	struct ClipWarp
 	{
 		bool musical = false;
@@ -454,6 +482,9 @@ namespace gnubase::engine
 		std::vector<WarpMarker> markers; // by position, targets increasing
 		std::string preset = "quality";
 		std::optional<WarpQuantizeOrigin> quantizeOrigin;
+		// The positions of the markers that quantize.createWarpMarkers made (#1579), for the Reset of the Warp Marker
+		// Creation Rules to remove (reference manual p. 380).
+		std::vector<time::Samples> created;
 	};
 
 	// What audio events play: for now, a whole media file. Its fades apply to every event that plays it, at the
@@ -495,13 +526,34 @@ namespace gnubase::engine
 		double curve = 0.0;
 	};
 
-	// Plays a section of a clip on an audio track.
-	struct EventQuantizeOrigin
+	// What quantizing and the quantize panel's length changes make of an audio event (#910): where it plays, the
+	// section of its clip it plays, and the crossfade into it from the event before. As a note's timing, so that
+	// resetting can put all of it back.
+	struct EventTiming
 	{
-		time::Position original;
-		time::Position quantized;
+		time::Position position; // in the track's time base
+		time::Samples offset = 0;
+		time::Samples length = 0;
+		Crossfade crossfade;
 	};
 
+	// An audio event's original and quantized timings (#145), while its quantized position has not been changed again.
+	struct EventQuantizeOrigin
+	{
+		EventTiming original;
+		EventTiming quantized;
+	};
+
+	// What an audio event was before quantize.slice first cut it (#1579): the Reset of the Slice Rules puts it back
+	// (reference manual p. 378).
+	struct SliceOrigin
+	{
+		EventTiming timing;
+		std::optional<time::Samples> snapPoint;
+		Fade fadeOut; // event.split gives it to the last slice
+	};
+
+	// Plays a section of a clip on an audio track.
 	struct AudioEvent
 	{
 		ObjectId id = 0;
@@ -530,15 +582,37 @@ namespace gnubase::engine
 		// Where it is in the stack of its track's events (#99): where events overlap, the one whose frontOf is highest
 		// plays. 0 orders it by its id, so an event added later is in front; event.toFront gives it a new id here.
 		ObjectId front = 0;
-		// Where it was before quantizing (#145) first moved it, and where quantizing put it. While it is there,
-		// quantizing starts from the original position and resetting puts it back; moved by other means, it is
-		// where it is.
+		// Where it is among the events at its place (frontOf), higher in front: the pieces of a split share their
+		// event's place, each right in front of the piece it was split from (#1281). Only events at the same place
+		// compare it, and a split renumbers its place's events.
+		int64_t rank = 0;
+		// Where it was before quantizing (#145) first moved it, and where quantizing and the quantize panel's
+		// length changes (#910) left it. While it is there, quantizing starts from the original position and
+		// resetting puts it back; moved by other means, it is where it is.
 		std::optional<EventQuantizeOrigin> quantizeOrigin;
+		// An event that quantize.slice cut keeps what it was before (#1579), and its slices, also those split from
+		// them since, the event's id in slicedFrom, so that the Reset of the Slice Rules puts them back together.
+		std::optional<SliceOrigin> sliceOrigin;
+		ObjectId slicedFrom = 0;
+		// Global transposition (#1368, reference manual pp. 414-421), as a MIDI part's: its root key (-1 for none, 0 C
+		// to 11 B) and Global Transpose Independent. Playback shifts its pitch in real time (dsp::WarpReader).
+		int rootKey = -1;
+		bool independent = false;
+		// Its own Transpose on the info line (#1555, p. 420), in semitones from -24 to 24, the stretcher's real-time
+		// range: it adds to global transposition as a MIDI part's transpose does, also while it is Independent.
+		int transpose = 0;
 	};
 
 	inline ObjectId frontOf(const AudioEvent& event)
 	{
 		return event.front != 0 ? event.front : event.id;
+	}
+
+	// Its place in the stack with its rank and id, to order events by: of events at the same place and rank, such as
+	// the pieces of an event split before #1189, the one with the higher id is in front, as in playback (makePlaylist).
+	inline std::tuple<ObjectId, int64_t, ObjectId> stackKey(const AudioEvent& event)
+	{
+		return {frontOf(event), event.rank, event.id};
 	}
 
 	// A container of audio events on an audio track (#471, reference manual p. 250). Its events are the audio events
@@ -579,6 +653,45 @@ namespace gnubase::engine
 	// A note's release velocity unless it has one of its own: MIDI 1.0's 64, the center.
 	inline constexpr uint16_t g_defaultReleaseVelocity = 0x8000;
 
+	// A point of a note's per-note expression (#176): the value of one of the plugin API's common expressions from its
+	// position on, in ticks from the note's start, so that it moves with the note. Values are in the expression's
+	// unit: volume a linear gain 0-4, pan 0-1 (0.5 the center), tuning semitones from -120 to 120, the others 0-1.
+	struct ExpressionPoint
+	{
+		plugin::NoteExpression type = plugin::NoteExpression::Volume;
+		time::Ticks position = 0;
+		double value = 0.0;
+
+		bool operator==(const ExpressionPoint& other) const
+		{
+			return type == other.type && position == other.position && value == other.value;
+		}
+	};
+
+	// What a note plays of an expression that it has no point of at its start: unity gain, the center, no tuning and
+	// no pressure, and brightness at the center, MPE's initial values of the last three, which playback sends before
+	// a note that doesn't start with its own (#176). Vibrato and expression have none: the plugin decides.
+	constexpr std::optional<double> defaultExpression(plugin::NoteExpression type)
+	{
+		switch (type)
+		{
+		case plugin::NoteExpression::Volume:
+			return 1.0;
+		case plugin::NoteExpression::Pan:
+		case plugin::NoteExpression::Brightness:
+			return 0.5;
+		case plugin::NoteExpression::Tuning:
+		case plugin::NoteExpression::Pressure:
+			return 0.0;
+		default:
+			return std::nullopt;
+		}
+	}
+
+	// The expressions' names, by plugin::NoteExpression.
+	inline constexpr std::array<const char*, 7> g_expressionNames = {
+		"volume", "pan", "tuning", "vibrato", "expression", "brightness", "pressure"};
+
 	// Note and controller values have the resolution of MIDI 2.0 (#19): MIDI 1.0 values fit without loss.
 	struct Note
 	{
@@ -594,7 +707,20 @@ namespace gnubase::engine
 		double velocityVariance = 0.0; // -1 to 1, how far playback varies the velocity, up or down (#128)
 		// The attributes of the track's articulation map that the note has, by name (#175)
 		std::vector<std::string> articulations;
+		// Those of its attributes that are muted (#1684, reference manual p. 1289): they select no sound slot.
+		std::vector<std::string> mutedArticulations;
+		std::vector<ExpressionPoint> expressions; // its per-note expression (#176), sorted by position
 	};
+
+	// A note's expression points measured from from instead of its start, for a note whose start moves there and
+	// whose expression stays where it is: the value each expression has at from, or at the start for a from before
+	// it, becomes a point at 0, and the later points move back by from.
+	std::vector<ExpressionPoint> expressionsFrom(const std::vector<ExpressionPoint>& points, time::Ticks from);
+
+	// Cuts a note at ticks from its start, inside it: the note keeps what comes before the cut, its expression points
+	// too, and the rest, which this returns without an id, starts at the cut with the expression from there on
+	// (expressionsFrom). Both lose their quantize origin.
+	Note splitNote(Note& note, time::Ticks at);
 
 	// The MIDI events besides notes, all held as controller events.
 	enum class ControllerType : uint8_t
@@ -623,6 +749,7 @@ namespace gnubase::engine
 		uint8_t channel = 0;       // 0-15
 		std::vector<uint8_t> data; // SysEx
 		std::string articulation;  // Articulation
+		bool muted = false;        // Articulation: muted (#1684, p. 1289), it selects no sound slot
 	};
 
 	// Holds notes and controllers on an instrument or MIDI track. Notes and controllers outside it are not played.
@@ -655,6 +782,9 @@ namespace gnubase::engine
 		// A pattern event (#181): the pattern it plays from its start, over and over, instead of its notes; 0 for an
 		// ordinary part.
 		ObjectId pattern = 0;
+		// Where in its pattern a pattern event starts, in ticks: how far the pattern went before it, after a split or
+		// a start sized later (earlier: below 0), so that it continues the pattern.
+		time::Ticks patternOffset = 0;
 	};
 
 	// A frozen track's rendered audio (#116, reference manual pp. 219-220): a file of the project's media folder's
@@ -714,11 +844,16 @@ namespace gnubase::engine
 		std::optional<Freeze> frozen = {};
 		ObjectId drumMap = 0;         // MIDI and instrument tracks: the drum map their notes play through, or 0 (#129)
 		ObjectId articulationMap = 0; // MIDI and instrument tracks: their articulation map, or 0 (#175)
+		// MIDI and instrument tracks: the name list that names their pitches as drum sounds without a drum map
+		// (reference manual p. 1239): false for No Names, true for GM Default, General MIDI's percussion names.
+		bool gmNames = false;
 		// Audio, instrument and MIDI tracks: their versions in the order they were made; none for a track that has
 		// only its first one, v1 with ID 1 (versionsOf). Initialized like picture.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::vector<TrackVersion> versions = {};
 		int activeVersion = 1; // the ID of the active version
+		// Folders: Group Editing mode (reference manual p. 274, #1579). Last, so that Track{...} can leave it out.
+		bool groupEditing = false;
 	};
 
 	// Whether tracks of a type have versions: audio, instrument and MIDI tracks.
@@ -730,24 +865,56 @@ namespace gnubase::engine
 	// A track's versions, with its first one if it has none of its own yet.
 	std::vector<TrackVersion> versionsOf(const Track& track);
 
+	// Calls the three visitors with every audio event, audio part and MIDI part of the project: those that play, and
+	// those that inactive track versions hold. Each visitor gets its item and whether it plays, so that a rewrite
+	// across the whole project reaches the inactive versions too, and still announces only what is there to see.
+	// Project may be const.
+	template <typename P, typename AudioEvents, typename AudioParts, typename MidiParts>
+	void forEveryEventAndPart(P& project, AudioEvents audioEvents, AudioParts audioParts, MidiParts midiParts)
+	{
+		for (auto& entry : project.audioEvents)
+			audioEvents(entry.second, true);
+		for (auto& entry : project.audioParts)
+			audioParts(entry.second, true);
+		for (auto& entry : project.midiParts)
+			midiParts(entry.second, true);
+		for (auto& track : project.trackById)
+			for (auto& version : track.second.versions)
+			{
+				for (auto& event : version.audioEvents)
+					audioEvents(event, false);
+				for (auto& part : version.audioParts)
+					audioParts(part, false);
+				for (auto& part : version.midiParts)
+					midiParts(part, false);
+			}
+	}
+
 	// Calls visit with every audio event of the project, those that inactive track versions hold too: their clips are
 	// in use. Project may be const.
 	template <typename P, typename Visit> void forEveryAudioEvent(P& project, Visit visit)
 	{
-		for (auto& entry : project.audioEvents)
-			visit(entry.second);
-		for (auto& entry : project.trackById)
-			for (auto& version : entry.second.versions)
-				for (auto& event : version.audioEvents)
-					visit(event);
+		forEveryEventAndPart(
+			project, [&visit](auto& event, bool) { visit(event); }, [](const auto&, bool) {}, [](const auto&, bool) {});
 	}
 
-	// Calls visit with the pool clip of every sampler track (#180): their clips are in use too. Project may be const.
+	// Calls visit with the pool clips a channel's instrument plays: a sampler's (#180), a drum machine's pads' (#182).
+	// Channel may be const.
+	template <typename C, typename Visit> void forEveryInstrumentClip(C& channel, Visit visit)
+	{
+		if (channel.sample != 0)
+			visit(channel.sample);
+		for (auto& entry : channel.pads)
+			if (entry.second.sample != 0)
+				visit(entry.second.sample);
+	}
+
+	// Calls visit with the pool clip of every sampler track (#180) and drum track pad (#182): their clips are in use
+	// too. Project may be const.
 	template <typename P, typename Visit> void forEverySamplerClip(P& project, Visit visit)
 	{
 		for (auto& entry : project.channels)
-			if (entry.second.sample != 0)
-				visit(entry.second.sample);
+			forEveryInstrumentClip(entry.second, visit);
 	}
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -901,30 +1068,105 @@ namespace gnubase::engine
 	struct ChordPad
 	{
 		std::string chord;
-		int voicing = 0; // -12 to 12
+		// Per player (ChordPads::players), the inversion of its voicing, -12 to 12; a player beyond the list has 0.
+		// Changing the voicing changes the selected player's only (reference manual p. 1378).
+		std::vector<int> voicings;
 		bool adaptive = true;
 		bool locked = false;
+	};
+
+	// A chord pads player (reference manual pp. 1376-1377): the voicings the pads play. A basic player has an octave
+	// offset, a piano or guitar player a voicing style of its library (midi::voicingStyles).
+	struct ChordPlayer
+	{
+		std::string name = "Basic Player";
+		std::string library = "basic"; // basic, piano or guitar
+		std::string style;             // of the library: empty for its first
+		int octaveOffset = 0;          // basic: -3 to 3
+		bool muted = false;            // Select/Mute Player (p. 1389): a muted player plays nothing
+		// The MIDI or instrument track the player plays (p. 1377): it gets this player's voicings, the other tracks
+		// the selected player's; 0 for none.
+		ObjectId track = 0;
+	};
+
+	// The chord pads' pattern (reference manual pp. 1379-1380): notes on the voices of the chord, from the lowest (0,
+	// the bass) up, that repeat every length ticks while a pad plays.
+	struct PadPatternNote
+	{
+		time::Ticks position = 0; // from the pattern's start
+		time::Ticks length = 0;
+		int voice = 0;
+		int velocity = 100; // 1 to 127
+	};
+
+	struct PadPattern
+	{
+		std::string name;
+		time::Ticks length = 0; // 0: none
+		int voices = 0;         // 3 to 5
+		std::vector<PadPatternNote> notes;
 	};
 
 	// The chord pads (#174, reference manual pp. 1346-1391), saved with the project. A new project has twelve pads with
 	// the major preset on C.
 	struct ChordPads
 	{
-		std::vector<ChordPad> pads = {{"C", 0, true, false}, {"Dm", 0, true, false}, {"Em", 0, true, false},
-			{"F", 0, true, false}, {"G", 0, true, false}, {"Am", 0, true, false}, {"Bdim", 0, true, false},
-			{"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false},
-			{"", 0, true, false}};
-		int rootKey = 0;              // 0 C to 11 B
-		int reference = -1;           // the adaptive voicing reference pad, or -1
-		int octaveOffset = 0;         // the basic player's Octave Offset, -3 to 3
-		int velocity = 100;           // of pads triggered with the mouse
+		std::vector<ChordPad> pads = {{"C", {}, true, false}, {"Dm", {}, true, false}, {"Em", {}, true, false},
+			{"F", {}, true, false}, {"G", {}, true, false}, {"Am", {}, true, false}, {"Bdim", {}, true, false},
+			{"", {}, true, false}, {"", {}, true, false}, {"", {}, true, false}, {"", {}, true, false},
+			{"", {}, true, false}};
+		int rootKey = 0;                                    // 0 C to 11 B
+		int reference = -1;                                 // the adaptive voicing reference pad, or -1
+		std::vector<ChordPlayer> players = {ChordPlayer()}; // at least one
+		int player = 0;                                     // the selected player, whose voicings the pads play
+		int velocity = 100;                                 // of pads triggered with the mouse
 		bool remote = false;          // notes from MIDI inputs on the remote keys trigger the pads
 		int remoteStart = 36;         // C1: the first pad's remote key
 		int remoteEnd = 47;           // B1: the last remote key
-		std::string preset = "major"; // the preset loaded last
+		std::string preset = "major"; // the preset loaded last, a scale-based one or the user's (chordPads.presets)
+		std::string scale = "major";  // its scale, which the degrees and the assistant's levels are in
 		bool stepInput = false;       // triggered pads become chord events (chordPads.step)
 		bool moveInsert = false;
 		time::Ticks stepPosition = 0;
+		// Chord Pad Output Mode (reference manual p. 1347): on, the pads play into every MIDI and instrument track
+		// that monitors or is record-enabled; off, only into those whose MIDI input is the chord pads.
+		bool outputMode = true;
+		bool latch = false;                 // Latch Chords (p. 1386): a pad plays until it is triggered again
+		std::string overlaps = "holdFirst"; // holdFirst, legato or stopFirst (p. 1379)
+		bool filterNotes = false;           // Filter Notes From MIDI Thru: remote keys without a chord play nothing
+		// The chord modifiers' remote keys (p. 1387) and whether they are active: previous and next voicing, fewer
+		// and more tensions, transpose down and up, by default C2 to F2, above the pads' range.
+		bool modifiers = false;
+		std::array<int, 6> modifierKeys = {48, 49, 50, 51, 52, 53};
+		std::string remotePort;    // the MIDI input the remote keys come from (midi.portSettings key), empty for all
+		bool snapPlayback = false; // Snap Playback to Musical Grid (p. 1349): to the quantize grid while playing
+		// The player mode (p. 1378): plainChords or pattern, which plays the pattern with the chord's notes, with the
+		// velocities of the pattern or of the MIDI keyboard (velocityFromKeyboard).
+		std::string mode = "plainChords";
+		PadPattern pattern;
+		bool velocityFromKeyboard = false;
+		bool flats = false; // Enh. Shift (p. 1363): the pads spell their notes with flats, such as Db for C#
+		// The sections player mode (mode "sections", pp. 1381-1385) and the Player Remote Control tab (p. 1389): the
+		// remote keys of the five sections (-1 for none), from the chord's lowest note up, and of five subsections,
+		// each a section moved by an offset in semitones; sectionPlay sections (a pad key and a section key),
+		// chordPads (a section key plays the section of the pad triggered last) or combination (either first);
+		// latchPads (Latch Chord Pads: the sections go on after the pad key goes up); spread (Chord Note
+		// Distribution: a chord of more notes than sections spreads them over the sections, else the top section
+		// takes the rest); the muted sections; and the remote keys that select the previous and the next player and
+		// mute the selected one.
+		std::array<int, 5> sectionKeys = {55, 56, 57, 58, 59}; // G2 to B2
+		std::array<int, 5> subsectionKeys = {-1, -1, -1, -1, -1};
+		std::array<int, 5> subsectionSections = {0, 1, 2, 3, 4};
+		std::array<int, 5> subsectionOffsets = {12, 12, 12, 12, 12};
+		std::string sectionPlay = "sections";
+		bool latchPads = false;
+		bool spread = false;
+		std::array<bool, 5> mutedSections = {false, false, false, false, false};
+		std::array<int, 3> playerKeys = {-1, -1, -1}; // previous, next, mute
+		// Modify All Pad Voicings, Modify All Pad Tensions and Transpose All Pads (p. 1387): what moves them, none,
+		// aftertouch (channel pressure), pitchBend or controller, with its number.
+		std::array<std::string, 3> controlSources = {"none", "none", "none"};
+		std::array<int, 3> controlNumbers = {1, 1, 1};
 	};
 
 	// What an automation lane changes.
@@ -941,13 +1183,15 @@ namespace gnubase::engine
 		Controller,      // a MIDI control change: number and channel; 0 to 1
 		PitchBend,       // channel; 0 to 1, 0.5 is no bend
 		ChannelPressure, // channel; 0 to 1
+		MidiEffect,      // a parameter of the MIDI effect in one of the channel's MIDI slots, in its range: number and
+						 // parameter
 	};
 
 	struct AutomationTarget
 	{
 		AutomationTargetType type = AutomationTargetType::Volume;
-		uint32_t parameter = 0; // Instrument, Plugin and Strip: the parameter's id
-		uint8_t number = 0;     // Controller: 0-127
+		uint32_t parameter = 0; // Instrument, Plugin, Strip and MidiEffect: the parameter's id
+		uint8_t number = 0;     // Controller: 0-127; MidiEffect: the slot, 0-3 the MIDI inserts, 4-7 the MIDI sends
 		uint8_t channel = 0;    // the MIDI types: 0-15
 		ObjectId slot = 0;      // Plugin: the slot
 	};
@@ -1101,14 +1345,24 @@ namespace gnubase::engine
 		int length = 100;   // percent of the notes' length
 		int velocity = 100; // percent of the notes' velocity
 		int transpose = 0;  // semitones
+		bool addOn = false; // its output events add to the slot of the other groups (pp. 1272, 1281)
+		int attack = 0;     // Attack Compensation: ms the notes start earlier (p. 1271)
+		int separation = 0; // ms its key switches go before the notes, 0 for one sample (p. 1271)
+		int minPitch = 0;   // the notes' pitch and velocity (MIDI 1) are kept in these ranges (pp. 1271-1272)
+		int maxPitch = 127;
+		int minVelocity = 1;
+		int maxVelocity = 127;
 	};
 
 	inline bool operator==(const SoundSlot& a, const SoundSlot& b)
 	{
-		return std::tie(a.name, a.color, a.articulations, a.trigger, a.outputs, a.channel, a.length, a.velocity,
-				   a.transpose) ==
-			std::tie(
-				b.name, b.color, b.articulations, b.trigger, b.outputs, b.channel, b.length, b.velocity, b.transpose);
+		const auto tie = [](const SoundSlot& slot)
+		{
+			return std::tie(slot.name, slot.color, slot.articulations, slot.trigger, slot.outputs, slot.channel,
+				slot.length, slot.velocity, slot.transpose, slot.addOn, slot.attack, slot.separation, slot.minPitch,
+				slot.maxPitch, slot.minVelocity, slot.maxVelocity);
+		};
+		return tie(a) == tie(b);
 	}
 
 	struct ArticulationMap
@@ -1197,12 +1451,17 @@ namespace gnubase::engine
 		PlayDirection direction = PlayDirection::Forward;
 		double swing = 0.0; // -1 to 1: how far every second step moves, in half steps
 		std::vector<PatternLane> lanes;
+		// The pattern of another track that midi::adoptPatterns made it a copy of, 0 for none. Not saved: in a loaded
+		// project no pattern is a copy.
+		ObjectId copiedFrom = 0;
 	};
 
 	inline bool operator==(const Pattern& a, const Pattern& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.mode, a.length, a.resolution, a.direction, a.swing, a.lanes) ==
-			std::tie(b.id, b.track, b.name, b.mode, b.length, b.resolution, b.direction, b.swing, b.lanes);
+		return std::tie(a.id, a.track, a.name, a.mode, a.length, a.resolution, a.direction, a.swing, a.lanes,
+				   a.copiedFrom) ==
+			std::tie(
+				b.id, b.track, b.name, b.mode, b.length, b.resolution, b.direction, b.swing, b.lanes, b.copiedFrom);
 	}
 
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
@@ -1234,13 +1493,15 @@ namespace gnubase::engine
 	struct VisibilityConfiguration
 	{
 		std::string name;
-		std::vector<ObjectId> hidden;
+		std::vector<ObjectId> hidden; // stored like TrackVisibility::hidden
 	};
 
 	// What the project window's track list hides (#166, docs/features/track-visibility.md, reference manual pp. 80-82).
 	struct TrackVisibility
 	{
-		std::vector<ObjectId> hidden; // tracks, sorted
+		// The hidden tracks, sorted, as stored: a hidden folder without the tracks inside it that it hides, unless
+		// they were hidden on their own (#1533). Read them with hiddenTracks or trackVisibility.get, which add them.
+		std::vector<ObjectId> hidden;
 		// The mixer window whose channel visibility follows the tracks' (window1 to window4), or empty; the lower
 		// zone's mixer always does.
 		std::string sync;
@@ -1289,6 +1550,15 @@ namespace gnubase::engine
 		int barOffset = 0;                    // added to the bar numbers shown
 		std::string timeFormat = "barsBeats"; // the primary time format: one of g_rulerTimeFormats
 	};
+
+	// The longest a project can be, in seconds: 24 hours, which its start time stays under too (reference manual
+	// p. 128).
+	inline constexpr double g_maxProjectLength = 86400.0;
+
+	// The sample rates a project can have, in Hz: from the lowest common one to the highest that export writes. Far
+	// outside them the conversions between ticks and samples leave a time::Ticks or a time::Samples.
+	inline constexpr double g_lowestSampleRate = 8000.0;
+	inline constexpr double g_highestSampleRate = 768000.0;
 
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct Project
@@ -1345,6 +1615,10 @@ namespace gnubase::engine
 		// first and after their last point too, where their parameters have their static values. A setting saved with
 		// the project, not part of undo.
 		bool virginTerritory = false;
+		// A track preset's (track.savePreset keep): which of their MIDI channel and patch (program and bank) its MIDI
+		// tracks keep, "channel" or "patch", the other left at its default, which loading the preset leaves as the
+		// track has it (reference manual p. 238); empty: both, and in projects.
+		std::string presetKeeps;
 
 		// The quantize settings that apply when none are given, and whether recording quantizes (#132). Settings,
 		// not part of undo.
@@ -1359,6 +1633,10 @@ namespace gnubase::engine
 		// The color last given to events or parts, for editing.autoTrackColor's lastApplied: not part of undo or the
 		// file.
 		std::string lastAppliedColor;
+		// Solo Instrument (reference manual p. 1223): the selected notes of the drum editors that have it on. Of the
+		// tracks with a drum map that these notes are on, only the notes with their pitches play. Set from the editor
+		// views (editors.cpp); not part of undo or the file.
+		std::vector<std::pair<ObjectId, ObjectId>> soloNotes; // each a part and a note of it
 		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
 		std::map<std::string, MixerView> mixers;
 		// What the track list hides (#166). A setting, not part of undo.
@@ -1371,7 +1649,8 @@ namespace gnubase::engine
 		// The metronome and count-in (#101). Settings, not part of undo.
 		metronome::MetronomeSettings metronome;
 
-		ObjectId newId() { return nextId++; }
+		// Reserves the last signed integer for nextId; throws when Lua could no longer receive a positive id.
+		ObjectId newId();
 
 		// Every track id from top to bottom, folders before the tracks they contain.
 		std::vector<ObjectId> trackOrder() const;
@@ -1389,6 +1668,11 @@ namespace gnubase::engine
 	// The main mix, or 0 if the project has no output bus.
 	ObjectId mainMix(const Project& project);
 
+	// How many ticks from its start the longest project lasts at its tempo: g_maxPosition samples long. At 999 BPM and
+	// the lowest sample rate that is about 10^18 ticks, which still fits a time::Ticks. Edits that compute positions,
+	// such as the rule editors', stop there.
+	time::Ticks longestProjectTicks(const Project& project);
+
 	// Makes the first top-level output bus the main mix if no bus is.
 	void keepMainMix(Project& project);
 
@@ -1403,8 +1687,23 @@ namespace gnubase::engine
 	// ends it.
 	std::vector<ObjectId> vcaChain(const Project& project, ObjectId channel);
 
+	// The channels a change of key on a channel goes on to (docs/features/link-groups.md): the other channels of its
+	// link group if the group links key (and linked), the channels of the group it controls if it is a VCA fader and
+	// key is one of its buttons, and from each of them on in the same way. key is one channel.set changes: volume,
+	// pan, eq, strip, sends, or one of its buttons (mute, solo, soloDefeat, listen, monitor, recordEnable).
+	std::vector<ObjectId> linkedTo(const Project& project, ObjectId channel, const std::string& key, bool linked);
+
+	// Moves the fader (key volume) or the pan (key pan) of a channel linked to one whose own moved by moved, as
+	// channel.set and parameter.set both pass it on (docs/features/link-groups.md): by as much, stopping at its ends,
+	// on a channel that has it. A channel with audio has both, a VCA fader's channel only the fader.
+	void followLinkedMove(const Project& project, Channel& to, const std::string& key, double moved);
+
 	// Gives a part's notes and controllers new ids.
 	void renumber(Project& project, MidiPart& part);
+
+	// Takes a part out of its shared copies before its contents change for its own sake: its events get new ids
+	// (renumber), so that it no longer shares them.
+	void detach(Project& project, MidiPart& part);
 
 	// What is wrong with a bus of the project, or empty: its number of ports, a child bus's parent and channels.
 	std::string busProblem(const Project& project, const Bus& bus);
@@ -1431,13 +1730,16 @@ namespace gnubase::engine
 	// The step from a part's root key to the project root key, the nearer way (-5 to 6 semitones): 0 for an
 	// Independent part and unless both have a root key. project.get gives it as each part's rootKeyTranspose.
 	int rootKeyTranspose(const Project& project, const MidiPart& part);
+	int rootKeyTranspose(const Project& project, const AudioEvent& event); // #1368
 
-	// The semitones that global transposition adds to a part's notes at a position (project samples): nothing for an
-	// Independent part; otherwise the step from the part's root key to the project root key, the nearer way (-5 to
-	// 6; nothing unless both have one), plus the value of the transpose event playing there unless the transpose track
-	// is muted, kept within 7 semitones either way with Keep Transpose in Octave Range. The part's own transpose adds
-	// to that.
+	// The semitones a part's notes play transposed by at a position (project samples): an Independent part's own
+	// transpose as it is; a part that follows global transposition plays its own transpose plus the step from its
+	// root key to the project root key, the nearer way (-5 to 6; nothing unless both have one), plus the value of
+	// the transpose event playing there unless the transpose track is muted — with Keep Transpose in Octave Range
+	// the whole sum kept within 7 semitones either way, 8 up playing 4 down (#896, reference manual pp. 419-421).
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at);
+	// The same for an audio event, with its own Transpose (#1555): the semitones playback shifts its pitch by (#1368).
+	int globalTranspose(const Project& project, const AudioEvent& event, time::Samples at);
 
 	// Whether folder is the pool's Audio folder (0) or a pool folder whose parents lead there without passing
 	// excluded: false for a folder that isn't there, one in a loop, and excluded or a folder inside it.
@@ -1445,6 +1747,17 @@ namespace gnubase::engine
 
 	// Whether a channel can be a send's destination: a group or effect channel, or a folder's group channel.
 	bool isSendDestination(const Project& project, ObjectId channel);
+
+	// The MIDI insert (number 0 to 3) or send (4 to 7) slot of a channel, as AutomationTarget::number counts them.
+	inline const midi::EffectSlot& midiEffectSlot(const Channel& channel, uint8_t number)
+	{
+		const midi::EffectRack& rack = number < midi::g_effectSlots ? channel.midiInserts : channel.midiSends;
+		return rack.slots[number % midi::g_effectSlots];
+	}
+
+	// Whether a MIDI send from a channel to another one (midi::EffectSlot::output) would come back to it: whether
+	// channel is to or is reached from it through the outputs of MIDI sends.
+	bool midiSendLoops(const Project& project, ObjectId channel, ObjectId to);
 
 	// Whether audio from a channel to another one, through an output or a send, would come back to it: whether
 	// channel is to or is reached from it through outputs and the destinations of sends, on or off. Routing never
@@ -1468,15 +1781,15 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.device, a.modifiers,
-				   a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.sample, a.monitor,
-				   a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections,
-				   a.sends) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.midiChannel, a.device,
+				   a.modifiers, a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.sample,
+				   a.pads, a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots,
+				   a.notes, a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.device, b.modifiers,
-				b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample, b.monitor,
-				b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections,
-				b.sends);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.midiChannel, b.device,
+				b.modifiers, b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample, b.pads,
+				b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes,
+				b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -1546,9 +1859,10 @@ namespace gnubase::engine
 
 	inline bool operator==(const ClipWarp& a, const ClipWarp& b)
 	{
-		return std::tie(
-				   a.musical, a.tempo, a.beatsPerBar, a.gridStart, a.beats, a.markers, a.preset, a.quantizeOrigin) ==
-			std::tie(b.musical, b.tempo, b.beatsPerBar, b.gridStart, b.beats, b.markers, b.preset, b.quantizeOrigin);
+		return std::tie(a.musical, a.tempo, a.beatsPerBar, a.gridStart, a.beats, a.markers, a.preset, a.quantizeOrigin,
+				   a.created) ==
+			std::tie(b.musical, b.tempo, b.beatsPerBar, b.gridStart, b.beats, b.markers, b.preset, b.quantizeOrigin,
+				b.created);
 	}
 
 	inline bool operator==(const Clip& a, const Clip& b)
@@ -1569,18 +1883,30 @@ namespace gnubase::engine
 		return std::tie(a.position, a.volume, a.curve) == std::tie(b.position, b.volume, b.curve);
 	}
 
+	inline bool operator==(const EventTiming& a, const EventTiming& b)
+	{
+		return std::tie(a.position, a.offset, a.length, a.crossfade) ==
+			std::tie(b.position, b.offset, b.length, b.crossfade);
+	}
+
 	inline bool operator==(const EventQuantizeOrigin& a, const EventQuantizeOrigin& b)
 	{
 		return a.original == b.original && a.quantized == b.quantized;
 	}
 
+	inline bool operator==(const SliceOrigin& a, const SliceOrigin& b)
+	{
+		return a.timing == b.timing && a.snapPoint == b.snapPoint && a.fadeOut == b.fadeOut;
+	}
+
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front,
-				   a.quantizeOrigin) ==
+				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front, a.rank,
+				   a.quantizeOrigin, a.sliceOrigin, a.slicedFrom, a.rootKey, a.independent, a.transpose) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front, b.quantizeOrigin);
+				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front, b.rank,
+				b.quantizeOrigin, b.sliceOrigin, b.slicedFrom, b.rootKey, b.independent, b.transpose);
 	}
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)
@@ -1602,24 +1928,24 @@ namespace gnubase::engine
 	inline bool operator==(const Note& a, const Note& b)
 	{
 		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity, a.origin,
-				   a.probability, a.velocityVariance, a.articulations) ==
+				   a.probability, a.velocityVariance, a.articulations, a.mutedArticulations, a.expressions) ==
 			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity, b.origin,
-				b.probability, b.velocityVariance, b.articulations);
+				b.probability, b.velocityVariance, b.articulations, b.mutedArticulations, b.expressions);
 	}
 
 	inline bool operator==(const Controller& a, const Controller& b)
 	{
-		return std::tie(a.id, a.position, a.type, a.number, a.value, a.channel, a.data, a.articulation) ==
-			std::tie(b.id, b.position, b.type, b.number, b.value, b.channel, b.data, b.articulation);
+		return std::tie(a.id, a.position, a.type, a.number, a.value, a.channel, a.data, a.articulation, a.muted) ==
+			std::tie(b.id, b.position, b.type, b.number, b.value, b.channel, b.data, b.articulation, b.muted);
 	}
 
 	// A MIDI part's own properties, without its notes and controllers.
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
 		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane,
-				   a.transpose, a.velocity, a.rootKey, a.independent, a.pattern) ==
+				   a.transpose, a.velocity, a.rootKey, a.independent, a.pattern, a.patternOffset) ==
 			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane,
-				b.transpose, b.velocity, b.rootKey, b.independent, b.pattern);
+				b.transpose, b.velocity, b.rootKey, b.independent, b.pattern, b.patternOffset);
 	}
 
 	inline bool operator==(const ProjectColor& a, const ProjectColor& b)
@@ -1697,15 +2023,41 @@ namespace gnubase::engine
 
 	inline bool operator==(const ChordPad& a, const ChordPad& b)
 	{
-		return std::tie(a.chord, a.voicing, a.adaptive, a.locked) == std::tie(b.chord, b.voicing, b.adaptive, b.locked);
+		return std::tie(a.chord, a.voicings, a.adaptive, a.locked) ==
+			std::tie(b.chord, b.voicings, b.adaptive, b.locked);
+	}
+
+	inline bool operator==(const PadPatternNote& a, const PadPatternNote& b)
+	{
+		return std::tie(a.position, a.length, a.voice, a.velocity) ==
+			std::tie(b.position, b.length, b.voice, b.velocity);
+	}
+
+	inline bool operator==(const PadPattern& a, const PadPattern& b)
+	{
+		return std::tie(a.name, a.length, a.voices, a.notes) == std::tie(b.name, b.length, b.voices, b.notes);
+	}
+
+	inline bool operator==(const ChordPlayer& a, const ChordPlayer& b)
+	{
+		return std::tie(a.name, a.library, a.style, a.octaveOffset, a.track, a.muted) ==
+			std::tie(b.name, b.library, b.style, b.octaveOffset, b.track, b.muted);
 	}
 
 	inline bool operator==(const ChordPads& a, const ChordPads& b)
 	{
-		return std::tie(a.pads, a.rootKey, a.reference, a.octaveOffset, a.velocity, a.remote, a.remoteStart,
-				   a.remoteEnd, a.preset, a.stepInput, a.moveInsert, a.stepPosition) ==
-			std::tie(b.pads, b.rootKey, b.reference, b.octaveOffset, b.velocity, b.remote, b.remoteStart, b.remoteEnd,
-				b.preset, b.stepInput, b.moveInsert, b.stepPosition);
+		return std::tie(a.pads, a.rootKey, a.reference, a.players, a.player, a.velocity, a.remote, a.remoteStart,
+				   a.remoteEnd, a.preset, a.scale, a.stepInput, a.moveInsert, a.stepPosition, a.outputMode, a.latch,
+				   a.overlaps, a.filterNotes, a.modifiers, a.modifierKeys, a.remotePort, a.snapPlayback, a.mode,
+				   a.pattern, a.velocityFromKeyboard, a.flats, a.sectionKeys, a.subsectionKeys, a.subsectionSections,
+				   a.subsectionOffsets, a.sectionPlay, a.latchPads, a.spread, a.mutedSections, a.playerKeys,
+				   a.controlSources, a.controlNumbers) ==
+			std::tie(b.pads, b.rootKey, b.reference, b.players, b.player, b.velocity, b.remote, b.remoteStart,
+				b.remoteEnd, b.preset, b.scale, b.stepInput, b.moveInsert, b.stepPosition, b.outputMode, b.latch,
+				b.overlaps, b.filterNotes, b.modifiers, b.modifierKeys, b.remotePort, b.snapPlayback, b.mode, b.pattern,
+				b.velocityFromKeyboard, b.flats, b.sectionKeys, b.subsectionKeys, b.subsectionSections,
+				b.subsectionOffsets, b.sectionPlay, b.latchPads, b.spread, b.mutedSections, b.playerKeys,
+				b.controlSources, b.controlNumbers);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)
@@ -1728,12 +2080,12 @@ namespace gnubase::engine
 
 	inline bool operator==(const Track& a, const Track& b)
 	{
-		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
-				   a.articulationMap, a.versions, a.activeVersion) ==
-			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
-				b.articulationMap, b.versions, b.activeVersion);
+		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.groupEditing,
+				   a.autoFades, a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
+				   a.articulationMap, a.gmNames, a.versions, a.activeVersion) ==
+			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.groupEditing,
+				b.autoFades, b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
+				b.articulationMap, b.gmNames, b.versions, b.activeVersion);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

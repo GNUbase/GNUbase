@@ -43,6 +43,8 @@ namespace gnubase::engine::graph
 			return "listenBus";
 		case NodeKind::Send:
 			return "send";
+		case NodeKind::MidiSend:
+			return "midiSend";
 		}
 		return "unknown";
 	}
@@ -134,6 +136,17 @@ namespace gnubase::engine::graph
 				graph.audio.push_back({node, entry[static_cast<size_t>(send.destination)]});
 			}
 		}
+
+		for (size_t i = 0; i < snapshot.channels.size(); ++i)
+			for (const int output : snapshot.channels[i].midiSendOutputs)
+			{
+				if (output < 0)
+					continue;
+				const int node = static_cast<int>(graph.nodes.size());
+				graph.nodes.push_back({NodeKind::MidiSend, snapshot.channels[i].id, ChannelFormat::None, nullptr});
+				graph.events.push_back({entry[i], node});
+				graph.events.push_back({node, entry[static_cast<size_t>(output)]});
+			}
 
 		const auto mainMix = std::find_if(
 			snapshot.busses.begin(), snapshot.busses.end(), [](const RenderBus& bus) { return bus.mainMix; });

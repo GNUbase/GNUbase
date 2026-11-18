@@ -86,6 +86,7 @@ namespace gnubase::engine::processors
 			uint8_t channel = 0;
 			uint8_t key = 0;
 			uint16_t velocity = 0;
+			bool drumSound = false; // graph::ProcessEvent::drumSound
 		};
 
 		// Both return false when the output is full and they must be called again; a step whose note-on doesn't fit
@@ -151,10 +152,12 @@ namespace gnubase::engine::processors
 	// Applies rules to events one at a time, as the transformer effect and each module of an input transformer do. A
 	// note-off goes where the note-on went, so a note changed by the rules ends where it sounds, and so does the poly
 	// pressure of a held note unless the rules find it; a note-on that became another type of event loses its note-off.
-	// Where two held notes play one note, it plays once and ends with the last of them. In a full output, note-offs
-	// take the places of other events.
-	// Velocities stay from 1 to 127, and a controller turned into a note plays a note-on for values above 0 and a
-	// note-off for 0. SysEx passes.
+	// A note's expression goes where its note-on went, also after its note-off (MPE's release, #1618), and nowhere for
+	// a note the rules filtered out; that of a key whose note-on the stage hasn't had passes. Where two held notes play
+	// one note, it plays once and ends with the last of them. In a full output, note-offs take the places of other
+	// events, and a note-on that doesn't fit is left out with its note-off, so that notes hang only if more of them end
+	// in one block than it holds. Velocities stay from 1 to 127, and a controller turned into a note plays a note-on
+	// for values above 0 and a note-off for 0, once each while the note is held, counting as a held note. SysEx passes.
 	class LogicalStage
 	{
 	public:
@@ -171,14 +174,19 @@ namespace gnubase::engine::processors
 			uint16_t to = g_none; // where the note-on went, as channel * 128 + pitch, besides itself if it passed
 			bool passed = false;  // the note-on itself passed
 			bool down = false;    // a note-on came and no note-off yet
+			bool played = false;  // a note-on came, also if its note-off did since: where its expression goes
 		};
 
 		// Whether held, a note-on of source, plays note; source's note-on itself counts if it passed.
 		static bool uses(const Held& held, uint16_t source, uint16_t note) noexcept;
 		// Counts a note-on of note less; true when none is left and the note ends.
 		bool release(uint16_t note) noexcept;
+		// Adds what the rules made of an event other than a note-on: a note-on or note-off counts with the held notes,
+		// a note-off before the other events in a full output.
+		void playMade(const graph::ProcessEvent& event, graph::EventBuffer& out) noexcept;
 
 		std::array<Held, MidiEffect::g_notes> m_held{};
+		std::array<bool, MidiEffect::g_notes> m_made{}; // per note out, whether another event's note-on holds it
 		std::array<uint16_t, MidiEffect::g_notes> m_sounding{}; // per note out, how many held notes play it
 		midi::LogicalRandom m_random;
 	};

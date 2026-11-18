@@ -4,17 +4,23 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
+#include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/processors/builtinplugin.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,6 +30,7 @@
 
 using namespace gnubase::engine;
 using Catch::Matchers::ContainsSubstring;
+using gnubase::test::waitForJob;
 
 namespace
 {
@@ -36,12 +43,27 @@ namespace
 		const Result result = client.call(command, std::move(parameters));
 		INFO(command << " failed: " << result.error);
 		REQUIRE(result.ok());
+		if (result.value.contains("job") &&
+			(command == "track.freeze" || command == "track.renderInPlace" || command == "mixdown.export"))
+		{
+			const Json job = gnubase::test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
+			INFO(job.dump());
+			REQUIRE(job.at("state") == "done");
+			return job.at("result");
+		}
 		return result.value;
 	}
 
 	std::string reject(Client& client, const std::string& command, Json parameters)
 	{
 		const Result result = client.call(command, std::move(parameters));
+		if (result.ok() && result.value.contains("job"))
+		{
+			const Json job = gnubase::test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
+			INFO(job.dump());
+			REQUIRE(job.at("state") == "failed");
+			return job.at("error").get<std::string>();
+		}
 		INFO(command << " succeeded: " << result.value.dump());
 		REQUIRE(!result.ok());
 		return result.error;
@@ -82,6 +104,17 @@ namespace
 		for (size_t i = 0; i < actual.size(); ++i)
 			peak = std::max(peak, std::abs(actual[i] - expected[i]));
 		return peak;
+	}
+
+	// How far a render is from the original reduced by reductionDb dB: 0 when actual has that reduction, to float
+	// precision. A freeze rendered before its plugin plays is unchanged, corresponding to 0 dB reduction.
+	float turnedDownBy(const std::vector<float>& actual, const std::vector<float>& original, float reductionDb)
+	{
+		std::vector<float> expected = original;
+		const float factor = std::pow(10.0f, -reductionDb / 20.0f);
+		for (float& sample : expected)
+			sample *= factor;
+		return nullTest(actual, expected);
 	}
 
 	float peakOf(const std::vector<float>& samples)
@@ -150,19 +183,18 @@ namespace
 		{
 			const Json slot =
 				run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:gainPan"}}).at("slot").at("id");
-			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-			while (run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status") != "active" &&
-				std::chrono::steady_clock::now() < deadline)
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-			REQUIRE(run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status") == "active");
-			run(client, "audio.updatePlugins");
-			run(client, "parameter.set",
-				{{"channel", channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}},
-					{"value", gain}});
+			activate({channel});
+			setGain(channel, slot.get<ObjectId>(), gain);
 			return slot.get<ObjectId>();
 		}
 
-		// The main mix from 0 to 40000 as a 32-bit float file's samples.
+		void setGain(ObjectId channel, ObjectId slot, double gain)
+		{
+			run(client, "parameter.set",
+				{{"channel", channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}},
+					{"value", gain}});
+		}
+
 		// Waits until the plugin slots of these channels have their plugins active, and the graph has them. An
 		// unfreeze makes the plugins of the track's slots again, on the plugin job thread: until they are active, the
 		// slots pass their audio on unchanged (#951).
@@ -186,6 +218,7 @@ namespace
 			run(client, "audio.updatePlugins");
 		}
 
+		// The main mix from 0 to 40000 as a 32-bit float file's samples.
 		std::vector<float> mainMix()
 		{
 			const Json result = run(client, "mixdown.export",
@@ -322,13 +355,19 @@ TEST_CASE("undo brings back the freeze file that was frozen then", "[integration
 	const Json first = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
 	const std::vector<float> frozen = project.mainMix();
 
+	// The unfreeze makes the plugin again. Frozen again once the plugin plays and with a gain other than 0 dB (which
+	// the slot passes on before it plays), the new freeze file can only come from the plugin.
 	run(project.client, "track.unfreeze", {{"tracks", {audio.track}}});
-	run(project.client, "parameter.set",
-		{{"channel", audio.channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}},
-			{"value", 0.0}});
+	project.activate({audio.channel});
+	project.setGain(audio.channel, slot, -18.0);
 	run(project.client, "audio.render", {{"frames", 4096}});
 	const Json second = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
 	REQUIRE(second.at("tracks").at(0).at("frozen").at("path") != first.at("tracks").at(0).at("frozen").at("path"));
+	const std::vector<float> firstFile = samplesOf(first.at("tracks").at(0).at("frozen").at("path").get<std::string>());
+	const std::vector<float> secondFile =
+		samplesOf(second.at("tracks").at(0).at("frozen").at("path").get<std::string>());
+	REQUIRE(peakOf(firstFile) > 0.1f);
+	REQUIRE(turnedDownBy(secondFile, firstFile, 12.0f) < 1e-5f); // -18 dB instead of -6 dB
 	CHECK(nullTest(project.mainMix(), frozen) > 0.1f);
 
 	for (int step = 0; step < 3; ++step) // the freeze, the gain and the unfreeze
@@ -386,17 +425,18 @@ TEST_CASE("scrubbing a frozen track reads the freeze file of that time", "[integ
 	};
 	CHECK(scrubs(1000 + frames, firstFile));
 
-	// Frozen again with another gain, the scrub reads the new file.
+	// Frozen again with another gain, the scrub reads the new file. The unfreeze makes the plugin again, so the freeze
+	// waits until it plays and uses a gain other than 0 dB (which the slot passes on before it plays).
 	run(project.client, "track.unfreeze", {{"tracks", {audio.track}}});
-	run(project.client, "parameter.set",
-		{{"channel", audio.channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}},
-			{"value", 0.0}});
+	project.activate({audio.channel});
+	project.setGain(audio.channel, slot, -18.0);
 	run(project.client, "audio.render", {{"frames", 4096}});
 	const Json second = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
 	const std::string secondPath = second.at("tracks").at(0).at("frozen").at("path").get<std::string>();
 	REQUIRE(secondPath != first.at("tracks").at(0).at("frozen").at("path"));
 	const std::vector<float> secondFile = samplesOf(secondPath);
-	REQUIRE(firstDifference(secondFile, firstFile) >= 0);
+	REQUIRE(peakOf(firstFile) > 0.1f);
+	REQUIRE(turnedDownBy(secondFile, firstFile, 12.0f) < 1e-5f); // -18 dB instead of -6 dB
 	CHECK(scrubs(1000, secondFile));
 
 	// Undone back to the first freeze, it reads the first file again.
@@ -443,9 +483,12 @@ TEST_CASE("a frozen track stays frozen in the project file", "[integration]")
 
 	SECTION("referring to it where it was, if it isn't there")
 	{
+		// The result lists it once for the tracks that play it, as it does missing media files (#1736).
+		run(project.client, "track.duplicate", {{"track", audio.track}});
 		fs::remove(fs::u8path(freeze.at("path").get<std::string>()));
 		const fs::path file = project.folder.path() / "missing.dawproject";
-		run(project.client, "project.save", {{"path", file.u8string()}});
+		CHECK(run(project.client, "project.save", {{"path", file.u8string()}}).at("missing") ==
+			Json::array({freeze.at("path")}));
 		run(project.client, "project.load", {{"path", file.u8string()}});
 		CHECK(project.track(audio.track).at("frozen") == freeze);
 	}
@@ -510,6 +553,91 @@ TEST_CASE("freeze files of the same name, also in another case, keep apart in th
 	CHECK(fs::u8path(loaded(three.track)) == gone);
 }
 
+TEST_CASE("embedded files that differ only in the case of a non-ASCII letter keep apart on load", "[integration]")
+{
+	Session project;
+	const Session::Track one = project.addTrack("One");
+	project.insertGain(one.channel, -6.0);
+	const Session::Track two = project.addTrack("Two");
+	run(project.client, "audio.render", {{"frames", 4096}});
+	const Json frozen = run(project.client, "track.freeze", {{"tracks", {one.track, two.track}}, {"tail", 0}});
+	const auto pathOf = [&frozen](size_t i)
+	{ return fs::u8path(frozen.at("tracks").at(i).at("frozen").at("path").get<std::string>()); };
+
+	// Übung.wav and übung.wav in two folders go into the file as two entries, which the zip tells apart, but the
+	// file systems of Windows and macOS see as one name: loading must not extract the second over the first. On a
+	// file system that keeps the names apart, as Linux's do, this passes also without that care. It holds for every
+	// embedded file: two media files of those names, each played by an event, go in as audio/Übung.wav and
+	// audio/übung.wav, as the save makes media names unique only in the same case.
+	const fs::path oneName = fs::u8path("Übung.wav");
+	const fs::path twoName = fs::u8path("übung.wav");
+	const gnubase::test::TempDir third;
+	const gnubase::test::TempDir fourth;
+	const auto addMedia = [&project](const fs::path& file, float level, ObjectId track)
+	{
+		gnubase::test::Audio audio;
+		audio.channels = 2;
+		audio.samples.assign(2000, level);
+		gnubase::test::writeWav(file, audio);
+		const Json added = run(project.client, "media.add", {{"path", file.u8string()}});
+		const Json clip = run(project.client, "clip.add", {{"media", added.at("media").at("id")}});
+		run(project.client, "audioEvent.add",
+			{{"track", track}, {"clip", clip.at("clip").at("id")}, {"position", 20000}});
+		return added.at("media").at("id").get<ObjectId>();
+	};
+	const ObjectId oneMedia = addMedia(third.path() / oneName, 0.25f, one.track);
+	const ObjectId twoMedia = addMedia(fourth.path() / twoName, -0.75f, two.track);
+	const std::vector<float> oneMediaSamples = samplesOf((third.path() / oneName).u8string());
+	const std::vector<float> twoMediaSamples = samplesOf((fourth.path() / twoName).u8string());
+
+	run(project.client, "project.save", {{"embedMedia", false}});
+	const fs::path saved = project.media.path() / "project.dawproject";
+	const gnubase::test::TempDir first;
+	const gnubase::test::TempDir second;
+	fs::copy_file(pathOf(0), first.path() / oneName);
+	fs::copy_file(pathOf(1), second.path() / twoName);
+	const std::vector<float> oneSamples = samplesOf((first.path() / oneName).u8string());
+	const std::vector<float> twoSamples = samplesOf((second.path() / twoName).u8string());
+	REQUIRE(firstDifference(oneSamples, twoSamples) >= 0);
+	Project file = loadDawProject(saved.u8string(), (project.folder.path() / "media").u8string());
+	const auto refer = [&file](ObjectId track, const fs::path& path)
+	{
+		std::optional<Freeze>& freeze = file.trackById.at(track).frozen;
+		REQUIRE(freeze.has_value());
+		if (freeze)
+			freeze->path = path.u8string();
+	};
+	refer(one.track, first.path() / oneName);
+	refer(two.track, second.path() / twoName);
+	DawProjectSaveOptions options;
+	options.embedMedia = true;
+	saveDawProject(file, saved.u8string(), options);
+
+	run(project.client, "project.load", {{"path", saved.u8string()}});
+	const auto loaded = [&project](ObjectId track)
+	{ return project.track(track).at("frozen").at("path").get<std::string>(); };
+	CHECK(firstDifference(samplesOf(loaded(one.track)), oneSamples) == -1);
+	CHECK(firstDifference(samplesOf(loaded(two.track)), twoSamples) == -1);
+	const auto loadedMedia = [&project](ObjectId id)
+	{
+		std::string path;
+		const Json current = run(project.client, "project.get");
+		for (const Json& media : current.at("media"))
+			if (media.at("id") == id)
+				path = media.at("path").get<std::string>();
+		REQUIRE(!path.empty());
+		return path;
+	};
+	// Extracted next to the file, each from its own entry, which kept its name in the file: the second track's, which
+	// loads later, is numbered only where the file system reads the two names as one.
+	const fs::path extracted = project.media.path() / "project media" / "audio";
+	const bool folds = fs::equivalent(extracted / oneName, extracted / twoName);
+	CHECK(fs::u8path(loadedMedia(oneMedia)) == extracted / oneName);
+	CHECK(fs::u8path(loadedMedia(twoMedia)) == extracted / (folds ? fs::u8path("2-übung.wav") : twoName));
+	CHECK(firstDifference(samplesOf(loadedMedia(oneMedia)), oneMediaSamples) == -1);
+	CHECK(firstDifference(samplesOf(loadedMedia(twoMedia)), twoMediaSamples) == -1);
+}
+
 TEST_CASE("a backup carries the freeze files along", "[integration]")
 {
 	Session project;
@@ -528,13 +656,7 @@ TEST_CASE("a backup carries the freeze files along", "[integration]")
 	};
 	const fs::path folder = project.folder.path() / "backup";
 	const Json job = run(project.client, "project.backup", {{"folder", folder.u8string()}, {"name", "copy"}});
-	Json state;
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-	do
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		state = run(project.client, "job.get", {{"job", job.at("job").at("id")}}).at("job");
-	} while (state.at("state") == "running" && std::chrono::steady_clock::now() < deadline);
+	Json state = waitForJob(project.client, job.at("job").at("id").get<uint64_t>());
 	INFO(state.dump());
 	REQUIRE(state.at("state") == "done");
 	CHECK(state.at("result").at("missing").empty());
@@ -550,11 +672,7 @@ TEST_CASE("a backup carries the freeze files along", "[integration]")
 	fs::remove(fs::u8path(path));
 	const Json again =
 		run(project.client, "project.backup", {{"folder", (project.folder.path() / "again").u8string()}});
-	do
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		state = run(project.client, "job.get", {{"job", again.at("job").at("id")}}).at("job");
-	} while (state.at("state") == "running" && std::chrono::steady_clock::now() < deadline);
+	state = waitForJob(project.client, again.at("job").at("id").get<uint64_t>());
 	REQUIRE(state.at("state") == "done");
 	// Reported for each track that plays it.
 	const Json missing = state.at("result").at("missing");
@@ -747,10 +865,71 @@ TEST_CASE("render in place puts what a track plays on a new audio track", "[inte
 	}
 }
 
+TEST_CASE("a rendered event under a transpose event is independent of it", "[integration]")
+{
+	// The render holds the transposition: following the transpose track, it would be transposed again (#1368).
+	Session project;
+	const Session::Track mono = project.addTrack("Mono", 1);
+	run(project.client, "transpose.add", {{"position", 0}, {"value", 5}});
+	const Json result =
+		run(project.client, "track.renderInPlace", {{"tracks", {mono.track}}, {"sourceTracks", "mute"}});
+	const Json rendered = result.at("events").at(0);
+	const Json state = run(project.client, "project.get");
+	for (const Json& event : state.at("audioEvents"))
+		if (event.at("id") == rendered)
+			CHECK(event.at("globalTranspose") == "independent");
+	const RenderSnapshot& snapshot = project.engine.renderSnapshots().acquire();
+	bool found = false;
+	for (const RenderChannel& channel : snapshot.channels)
+		for (const RenderAudioEvent& event : channel.audioEvents)
+			if (event.id == rendered.get<ObjectId>())
+			{
+				found = true;
+				CHECK(snapshot.media.at(static_cast<size_t>(event.media)).pitch.empty());
+			}
+	CHECK(found);
+}
+
+TEST_CASE("a rendered event without transpose events gets the project root key and follows it", "[integration]")
+{
+	// As a recorded event (#1368, reference manual p. 420): changing the root key afterwards shifts the render.
+	Session project;
+	const Session::Track mono = project.addTrack("Mono", 1);
+	run(project.client, "project.set", {{"rootKey", "D"}});
+	const Json result =
+		run(project.client, "track.renderInPlace", {{"tracks", {mono.track}}, {"sourceTracks", "mute"}});
+	const auto rendered = result.at("events").at(0).get<ObjectId>();
+	bool found = false;
+	const Json state = run(project.client, "project.get");
+	for (const Json& event : state.at("audioEvents"))
+		if (event.at("id") == rendered)
+		{
+			found = true;
+			CHECK(event.at("rootKey") == "D");
+			CHECK(event.at("globalTranspose") == "follow");
+		}
+	CHECK(found);
+	using Pitch = std::vector<dsp::PitchPoint>;
+	const auto pitch = [&project, rendered]() -> std::optional<Pitch>
+	{
+		const RenderSnapshot& snapshot = project.engine.renderSnapshots().acquire();
+		for (const RenderChannel& channel : snapshot.channels)
+			for (const RenderAudioEvent& event : channel.audioEvents)
+				if (event.id == rendered)
+					return snapshot.media.at(static_cast<size_t>(event.media)).pitch;
+		return std::nullopt;
+	};
+	CHECK(pitch() == Pitch{});
+	run(project.client, "project.set", {{"rootKey", "E"}});
+	CHECK(pitch() == Pitch{{0.0, 2.0}});
+}
+
 TEST_CASE("render in place refuses what it can't render", "[integration]")
 {
 	Session project;
 	const Session::Track audio = project.addTrack("Ramp");
+	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"name", ""}}),
+		ContainsSubstring("parameters.name must be at least 1 character"));
 	const auto empty = run(project.client, "track.add", {{"type", "audio"}}).at("track").at("id").get<ObjectId>();
 	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"start", 0}}),
 		ContainsSubstring("both"));
@@ -786,4 +965,367 @@ TEST_CASE("render in place refuses what it can't render", "[integration]")
 	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"processing", "dry"}}),
 		ContainsSubstring("frozen"));
 	CHECK(tracks() == 3);
+}
+
+TEST_CASE("a frozen instrument track's MIDI send to another instrument track stays out of the graph", "[integration]")
+{
+	Session project;
+	const Session::Track synth = project.addSynth();
+	const Session::Track other = project.addSynth();
+	REQUIRE(run(project.client, "track.freeze", {{"tracks", {synth.track}}, {"tail", 0}}).at("tracks").size() == 1);
+	run(project.client, "channel.set",
+		{{"channel", synth.channel},
+			{"midiSends",
+				{{"slots",
+					{{{"effect", "transformer"}, {"parameters", {{"value", 1}}}, {"output", other.channel}}}}}}});
+	run(project.client, "midi.capture", {{"start", true}});
+	run(project.client, "transport.locate", {{"position", 0}});
+	run(project.client, "transport.play");
+	run(project.client, "audio.render", {{"frames", 48000}});
+	// The other track plays its own notes, none a semitone up from the frozen one's.
+	const Json captured = run(project.client, "midi.capture").at("captured");
+	INFO(captured.dump());
+	CHECK(!captured.empty());
+	for (const Json& message : captured)
+		CHECK(message.at("bytes").at(1).get<int>() % 12 != 1);
+	// The send keeps its output, which plays again once the track is unfrozen.
+	run(project.client, "track.unfreeze", {{"tracks", {synth.track}}});
+	run(project.client, "midi.capture", {{"start", true}});
+	run(project.client, "transport.locate", {{"position", 0}});
+	run(project.client, "audio.render", {{"frames", 48000}});
+	const Json again = run(project.client, "midi.capture").at("captured");
+	INFO(again.dump());
+	CHECK(std::any_of(again.begin(), again.end(),
+		[](const Json& message) { return message.at("bytes").at(1).get<int>() % 12 == 1; }));
+}
+
+TEST_CASE("background renders lock their tracks and let another client edit elsewhere", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const auto other = session.addTrack("Other");
+	Client remote(session.engine, "remote");
+	const std::string command = GENERATE(std::string("track.freeze"), std::string("track.renderInPlace"));
+	const Json before = run(session.client, "history.get");
+	const Json finished = gnubase::test::whileHeld(session.engine, session.client, command,
+		{{"tracks", {source.track}}, {"tail", 0}},
+		[&](uint64_t)
+		{
+			CHECK_THAT(reject(remote, "channel.set", {{"channel", source.channel}, {"pre", {{"gain", -6}}}}),
+				ContainsSubstring("being rendered"));
+			CHECK_THAT(reject(remote, "track.endRender", {{"token", 1}}), ContainsSubstring("only a render job"));
+			CHECK_THAT(reject(remote, "track.remove", {{"track", source.track}}), ContainsSubstring("being rendered"));
+			run(remote, "channel.set", {{"channel", other.channel}, {"volume", -9}});
+			// The fader is after both render points, so it remains editable too.
+			run(remote, "channel.set", {{"channel", source.channel}, {"volume", -7}});
+			CHECK(run(remote, "history.get").at("position") == before.at("position").get<int>() + 2);
+		});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+	CHECK(run(remote, "history.get").at("position") == before.at("position").get<int>() + 3);
+	run(remote, "channel.set", {{"channel", source.channel}, {"volume", -3}});
+}
+
+TEST_CASE("background track renders name their completed undo step", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const bool freeze = GENERATE(true, false);
+	run(session.client, freeze ? "track.freeze" : "track.renderInPlace", {{"tracks", {source.track}}, {"tail", 0}});
+	CHECK(
+		run(session.client, "history.get").at("steps").back().at("action") == (freeze ? "Freeze" : "Render in place"));
+}
+
+TEST_CASE("render locks allow version names and live input settings", "[integration]")
+{
+	Session session;
+	const bool audio = GENERATE(false, true);
+	const auto source = audio ? session.addTrack("Source") : session.addSynth();
+	const Json input =
+		run(session.client, "bus.add", {{"direction", "input"}, {"format", "stereo"}}).at("bus").at("id");
+	const std::string command = GENERATE(std::string("track.freeze"), std::string("track.renderInPlace"));
+	const Json finished = gnubase::test::whileHeld(session.engine, session.client, command,
+		{{"tracks", {source.track}}, {"tail", 0}},
+		[&](uint64_t)
+		{
+			run(session.client, "trackVersion.set", {{"tracks", {source.track}}, {"name", "Renamed while rendering"}});
+			if (audio)
+			{
+				run(session.client, "channel.set", {{"channel", source.channel}, {"input", input}});
+			}
+			else
+			{
+				run(session.client, "channel.set", {{"channel", source.channel}, {"midiInput", "none"}});
+				run(session.client, "channel.set",
+					{{"channel", source.channel}, {"inputTransformer", {{"mode", "track"}}}});
+			}
+			run(session.client, "history.undo");
+			run(session.client, "history.redo");
+		});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+}
+
+TEST_CASE("undo and redo cannot change a rendering track's audio input", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const bool redo = GENERATE(false, true);
+	const std::string command = GENERATE(std::string("track.freeze"), std::string("track.renderInPlace"));
+	run(session.client, "channel.set", {{"channel", source.channel}, {"pre", {{"gain", -6}}}});
+	if (redo)
+		run(session.client, "history.undo");
+	const Json before = run(session.client, "history.get");
+	const Json project = run(session.client, "project.get");
+	const Json finished =
+		gnubase::test::whileHeld(session.engine, session.client, command, {{"tracks", {source.track}}, {"tail", 0}},
+			[&](uint64_t)
+			{
+				CHECK_THAT(reject(session.client, redo ? "history.redo" : "history.undo", Json::object()),
+					ContainsSubstring("being rendered"));
+				CHECK(run(session.client, "history.get") == before);
+				CHECK(run(session.client, "project.get") == project);
+			});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+}
+
+TEST_CASE("private renders instantiate only selected channels and their audio dependencies", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const auto unrelated = session.addTrack("Unrelated");
+	const Json group = run(session.client, "track.add", {{"type", "group"}, {"name", "Group"}});
+	const ObjectId groupChannel = group.at("channel").at("id").get<ObjectId>();
+	run(session.client, "channel.set", {{"channel", source.channel}, {"output", groupChannel}});
+	session.insertGain(source.channel, -6);
+	run(session.client, "plugin.insert", {{"channel", unrelated.channel}, {"plugin", "builtin:gainPan"}});
+	session.activate({unrelated.channel});
+	const auto made = std::make_shared<std::atomic<int>>(0);
+	session.engine.setRenderPluginFactory(
+		[made](const std::string& plugin, uint32_t channels, gnubase::plugin::Host& host)
+		{
+			++*made;
+			return processors::BuiltinFactory(channels).create(plugin, host);
+		});
+	const Json result = run(session.client, "mixdown.export",
+		{{"folder", session.folder.path().u8string()}, {"name", "Group"}, {"channels", {groupChannel}}, {"start", 0},
+			{"end", 7000}, {"sampleFormat", "float32"}});
+	CHECK(made->load() == 1);
+	CHECK(peakOf(samplesOf(result.at("files").at(0).at("path").get<std::string>())) > 0.1f);
+}
+
+TEST_CASE("a private render fails if a live active plugin cannot be instantiated", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	session.insertGain(source.channel, -6);
+	session.engine.setRenderPluginFactory(
+		[](const std::string&, uint32_t, gnubase::plugin::Host&) -> std::unique_ptr<gnubase::plugin::Plugin>
+		{ return nullptr; });
+	const std::string command = GENERATE(std::string("track.freeze"), std::string("track.renderInPlace"));
+	const Json history = run(session.client, "history.get");
+	CHECK_THAT(reject(session.client, command, {{"tracks", {source.track}}, {"tail", 0}}), ContainsSubstring("plugin"));
+	CHECK(run(session.client, "history.get") == history);
+	CHECK(run(session.client, "track.renderLocks").at("locks").empty());
+}
+
+TEST_CASE("cancelling a background track render unlocks without an undo step or files", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const std::string command = GENERATE(std::string("track.freeze"), std::string("track.renderInPlace"));
+	const Json before = run(session.client, "project.get");
+	const Json history = run(session.client, "history.get");
+	const Json finished =
+		gnubase::test::whileHeld(session.engine, session.client, command, {{"tracks", {source.track}}, {"tail", 0}},
+			[&](uint64_t job) { run(session.client, "job.cancel", {{"job", job}}); });
+	CHECK(finished.at("state") == "cancelled");
+	CHECK(run(session.client, "project.get") == before);
+	CHECK(run(session.client, "history.get") == history);
+	run(session.client, "track.remove", {{"track", source.track}});
+}
+
+TEST_CASE("a background mixdown keeps its starting audio while clients edit the project", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const auto expected = session.mainMix();
+	Client remote(session.engine, "remote");
+	const Json finished = gnubase::test::whileHeld(session.engine, session.client, "mixdown.export",
+		{{"folder", session.folder.path().u8string()}, {"name", "snapshot"}, {"start", 0}, {"end", 40000},
+			{"sampleFormat", "float32"}},
+		[&](uint64_t)
+		{
+			run(remote, "channel.set", {{"channel", source.channel}, {"volume", -12}});
+			run(remote, "track.remove", {{"track", source.track}});
+			CHECK(run(remote, "track.renderLocks").at("locks").empty());
+		});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+	CHECK(firstDifference(samplesOf(finished.at("result").at("files").at(0).at("path").get<std::string>()), expected) ==
+		-1);
+}
+
+TEST_CASE("a render range locks intersecting audio and transactions but allows events outside it", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const auto outside =
+		run(session.client, "audioEvent.add", {{"track", source.track}, {"clip", session.clip}, {"position", 10000}})
+			.at("event")
+			.at("id");
+	const Json project = run(session.client, "project.get");
+	const auto inside = project.at("audioEvents").at(0).at("id");
+	const Json finished = gnubase::test::whileHeld(session.engine, session.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"start", 1000}, {"end", 7000}},
+		[&](uint64_t)
+		{
+			CHECK_THAT(reject(session.client, "audioEvent.set", {{"event", inside}, {"volume", -3}}),
+				ContainsSubstring("being rendered"));
+			run(session.client, "audioEvent.set", {{"event", outside}, {"volume", -3}});
+			CHECK_THAT(
+				reject(session.client, "history.transaction",
+					{{"description", "Change locked audio"},
+						{"commands",
+							{{{"command", "audioEvent.set"}, {"parameters", {{"event", inside}, {"mute", true}}}}}}}),
+				ContainsSubstring("being rendered"));
+			run(session.client, "history.undo"); // the unrelated event's edit
+			CHECK_THAT(reject(session.client, "track.move", {{"track", source.track}, {"parent", 0}, {"index", 0}}),
+				ContainsSubstring("being rendered"));
+		});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+	CHECK(finished.at("result").at("tracks").size() == 1);
+}
+
+TEST_CASE("a failed background render removes files and unlocks its tracks", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const Json before = run(session.client, "history.get");
+	const auto progress = std::make_shared<int>(0);
+	session.engine.setJobProgressHook(
+		[progress](uint64_t, const std::string&)
+		{
+			if (++*progress == 3)
+				throw std::runtime_error("render failed");
+		});
+	const auto started = session.client.call("track.freeze", {{"tracks", {source.track}}, {"tail", 0}});
+	REQUIRE(started.ok());
+	const Json finished = waitForJob(session.client, started.value.at("job").at("id").get<uint64_t>());
+	CHECK(finished.at("state") == "failed");
+	CHECK(finished.at("error") == "render failed");
+	CHECK(run(session.client, "track.renderLocks").at("locks").empty());
+	CHECK(run(session.client, "history.get") == before);
+	CHECK(fs::directory_iterator(session.media.path() / "Freeze") == fs::directory_iterator());
+	run(session.client, "track.remove", {{"track", source.track}});
+}
+
+TEST_CASE("a background instrument render locks the MIDI tracks feeding it", "[integration]")
+{
+	Session session;
+	const auto synth = session.addSynth();
+	const Json midi =
+		run(session.client, "track.add", {{"type", "midi"}, {"timeBase", "linear"}, {"output", synth.channel}});
+	const auto track = midi.at("track").at("id");
+	const auto channel = midi.at("channel").at("id");
+	const Json unrelated = run(session.client, "track.add", {{"type", "midi"}, {"output", 0}}).at("channel").at("id");
+	const Json finished = gnubase::test::whileHeld(session.engine, session.client, "track.freeze",
+		{{"tracks", {synth.track}}, {"tail", 0}},
+		[&](uint64_t)
+		{
+			// Newly routed inputs and newly inserted slots have no id in the render's starting input.
+			CHECK_THAT(reject(session.client, "channel.set", {{"channel", unrelated}, {"output", synth.channel}}),
+				ContainsSubstring("being rendered"));
+			CHECK_THAT(
+				reject(session.client, "plugin.insert", {{"channel", synth.channel}, {"plugin", "builtin:gainPan"}}),
+				ContainsSubstring("being rendered"));
+			CHECK_THAT(reject(session.client, "track.remove", {{"track", track}}), ContainsSubstring("being rendered"));
+			CHECK_THAT(reject(session.client, "channel.set", {{"channel", channel}, {"output", 0}}),
+				ContainsSubstring("being rendered"));
+			const Json locks = run(session.client, "track.renderLocks").at("locks").at(0).at("tracks");
+			CHECK(std::find(locks.begin(), locks.end(), track) != locks.end());
+		});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+	run(session.client, "track.remove", {{"track", track}});
+}
+
+TEST_CASE("undo cannot move a rendering track but can undo a move elsewhere", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const auto other = session.addTrack("Other");
+	run(session.client, "track.move", {{"track", source.track}, {"parent", 0}, {"index", 1}});
+	const Json finished = gnubase::test::whileHeld(session.engine, session.client, "track.freeze",
+		{{"tracks", {source.track}}, {"tail", 0}},
+		[&](uint64_t)
+		{
+			CHECK_THAT(reject(session.client, "history.undo", Json::object()), ContainsSubstring("being rendered"));
+			run(session.client, "track.move", {{"track", other.track}, {"parent", 0}, {"index", 1}});
+			run(session.client, "history.undo");
+		});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+}
+
+TEST_CASE("engine shutdown releases running track renders before the sample loader", "[integration]")
+{
+	const std::string command = GENERATE(std::string("track.freeze"), std::string("track.renderInPlace"));
+	const gnubase::test::TempDir folder;
+	const fs::path path = folder.path() / "sample.wav";
+	gnubase::test::writeWav(path, {std::vector<float>(12000, 0.25f), 2, 48000});
+	std::promise<void> rendering;
+	const auto atProgress = rendering.get_future();
+	std::atomic<bool> stopped{false};
+	auto engine = std::make_unique<Engine>();
+	Engine* renderingEngine = engine.get();
+	{
+		Client client(*engine);
+		run(client, "audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 0}});
+		run(client, "project.save", {{"path", (folder.path() / "project.dawproject").u8string()}});
+		const Json media = run(client, "media.add", {{"path", path.u8string()}}).at("media");
+		const Json clip = run(client, "clip.add", {{"media", media.at("id")}}).at("clip").at("id");
+		const Json sampler = run(client, "sampler.create").at("track").at("id");
+		run(client, "sampler.load", {{"track", sampler}, {"clip", clip}});
+		const Json part = run(
+			client, "midiPart.add", {{"track", sampler}, {"position", 0}, {"length", gnubase::time::g_ticksPerQuarter}})
+							  .at("part")
+							  .at("id");
+		run(client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", 0}, {"length", gnubase::time::g_ticksPerQuarter}, {"pitch", 60},
+						{"velocity", 0.8}}}}});
+		const Json audio = run(client, "track.add", {{"type", "audio"}}).at("track").at("id");
+		run(client, "audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 0}});
+
+		engine->setJobProgressHook(
+			[&, renderingEngine](uint64_t, const std::string&)
+			{
+				rendering.set_value();
+				// Keep the render past its first block until shutdown refuses command posting. Its cleanup then
+				// cannot remove the TrackRender from the project, including the second, unstarted work function.
+				for (;;)
+				{
+					const auto reply = std::make_shared<std::promise<Result>>();
+					auto result = reply->get_future();
+					renderingEngine->post("engine.version", Json::object(),
+						[reply](Result value) { reply->set_value(std::move(value)); });
+					if (!result.get().ok())
+					{
+						stopped = true;
+						throw JobCancelled();
+					}
+				}
+			});
+		const Result started = client.call(command, {{"tracks", {sampler, audio}}, {"tail", 0}});
+		REQUIRE(started.ok());
+		REQUIRE(atProgress.wait_for(std::chrono::seconds(30)) == std::future_status::ready);
+	}
+	engine.reset();
+	CHECK(stopped.load());
+	const fs::path output = folder.path() / (command == "track.freeze" ? "Freeze" : "Audio");
+	CHECK(fs::directory_iterator(output) == fs::directory_iterator());
 }

@@ -28,6 +28,11 @@ namespace Rml
 // Project handling in the UI (#77). docs/features/project-files.md describes it.
 namespace gnubase::ui
 {
+	// What a save's result (project.save, track.export and the like) says of the media files that were missing, which
+	// the file refers to where they were instead of having them in it (#1614): a message for the user, or empty if
+	// none was.
+	std::string missingMedia(const engine::Json& result);
+
 	// The File menu's project commands as UI commands with the reference's keys: file.new (the start screen),
 	// file.open, file.save, file.saveAs, file.saveNewVersion, file.saveTemplate, file.backup and file.revert, plus
 	// file.quit. They ask through the OS's file dialogs (Shell::showFileDialog) and GNUbase's own (the documents
@@ -35,10 +40,10 @@ namespace gnubase::ui
 	// project-error.rml in folder), and do everything with engine commands. Opening another project, reverting and
 	// quitting ask first if the project has unsaved changes, and a command that fails shows its error, as does an auto
 	// save that fails. A dialog that comes while another is open, such as the unsaved changes question or an error,
-	// waits for it instead of being dropped. A backup shows its progress, which Cancel stops, and whether it couldn't
-	// read files or open the backup. Quitting asks however it is asked for: File > Quit, the main window's close button
-	// or the OS (Shell::onQuitRequest). Use it on the UI thread; the key commands, the binding and the shell must
-	// outlive it.
+	// waits for it instead of being dropped; an error whose window went while it waited shows in the main window. A
+	// backup shows its progress, which Cancel stops, and whether it couldn't read files or open the backup. Quitting
+	// asks however it is asked for: File > Quit, the main window's close button or the OS (Shell::onQuitRequest). Use
+	// it on the UI thread; the key commands, the binding and the shell must outlive it.
 	class ProjectFiles final : private Rml::EventListener
 	{
 	public:
@@ -55,6 +60,12 @@ namespace gnubase::ui
 		// Starts a new empty project unless the user wants to keep unsaved changes, asking in the window, then runs
 		// then (File > Import > MIDI File into a new project, #478). A failure shows its error instead.
 		void newProject(Window& window, std::function<void()> then);
+		// Logs the error and shows it in a dialog in the window (project-error.rml): also for the File menu's other
+		// commands that read or write files, such as importing and exporting tracks.
+		void showError(WindowId window, const std::string& error);
+		// Shows a message in the same dialog under another title, for a command that worked but left something out,
+		// such as File > Export > Selected Tracks.
+		void showNotice(WindowId window, const std::string& title, const std::string& message);
 
 	private:
 		using Closed = std::function<void(Rml::ElementDocument& dialog, const std::string& result)>;
@@ -68,8 +79,17 @@ namespace gnubase::ui
 		{
 			WindowId window = 0;
 			const char* file = nullptr;
+			bool error = false; // an error or notice, which shows in the main window if its window went, and stays
+								// queued while quitting, as what it says may bear on the quit question's answer
 			Shown shown;
 			Closed closed;
+		};
+		// A running backup that it started: where it was asked for, and its progress there, if it shows.
+		struct Backup
+		{
+			WindowId window = 0;
+			Rml::ObserverPtr<Rml::Element> progress;
+			bool rendering = false;
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -78,17 +98,21 @@ namespace gnubase::ui
 		// that closed or went with its window (openWaiting), unless that is a failed auto save's error, which makes
 		// way; with wait false it doesn't open then.
 		void openDialog(WindowId window, const char* file, Shown shown, Closed closed, bool wait = true);
-		// Opens the dialogs that wait, in order, once no dialog is open; those whose window is gone don't open.
+		// Loads one of the dialogs into the window and shows it, modal, with ProcessEvent hearing it close; null, with
+		// a warning if the window is there, if it can't.
+		Rml::ElementDocument* loadDialog(WindowId window, const char* file);
+		// Opens the dialogs that wait, in order, once no dialog is open; those whose window is gone don't open,
+		// unless they are an error or notice, which shows in the main window instead.
 		void openWaiting();
+		// The main window, or null once it is gone.
+		Window* mainWindow();
 		// Closes the open dialog, if any, with the result.
 		void closeDialog(const std::string& result);
 		// Asks the engine for the project's file (project.location).
 		void readLocation();
 		// A command's done that shows its error in a dialog in the window if it failed (project-error.rml), so that a
-		// failed save isn't taken for done.
+		// failed save isn't taken for done, and which media files a save found missing (missingMedia).
 		std::function<void(const engine::Result&)> reportFailure(Window& window);
-		// Logs the error and shows it in a dialog in the window (project-error.rml).
-		void showError(WindowId window, const std::string& error);
 		// Shows the error in project-error.rml in the window once the event that asked is done. A failed auto save's
 		// error (autoSave) takes the place of an earlier one's but doesn't open over any other modal dialog in the
 		// window: it waits for them to close (waitForDialogs). It counts as shown only once it opened and while no
@@ -110,13 +134,17 @@ namespace gnubase::ui
 		// at every interval, until it fails for another reason or after an auto save succeeded or the project was
 		// saved or opened, as the engine says with repeated.
 		void autoSaveFailed(const engine::Json& failure);
-		// Runs action now if the project has no unsaved changes, or else once the user agreed to discard them. asked,
-		// if given, runs once the engine said whether to ask: with the question's document when it opened, else null.
+		// Runs action now if the project has no unsaved changes, or else once the user agreed to discard them. A
+		// question that waited asks the engine again once it opens: if the project was saved meanwhile, it closes
+		// unanswered and action runs at once. asked, if given, runs once the engine said whether to ask: with the
+		// question's document as it opens, before that second look, else null.
 		void unlessUnsaved(Window& window, std::function<void()> action,
 			std::function<void(Rml::ElementDocument* question)> asked = {});
 		// Quits GNUbase unless the user wants to keep unsaved changes, asking in the window. A dialog that is open
-		// closes as cancelled first (closeDialog). Further quit requests while the question is coming or open do
-		// nothing, so that one question answers them; once it is answered or gone, the next one asks again.
+		// closes as cancelled first (closeDialog), but not a backup's progress: the backup runs on unless GNUbase
+		// quits, and not the dialogs that wait, unless they are errors: the questions and start screens that wait go,
+		// so that the quit question is next. Further quit requests while the question is coming or open do nothing,
+		// so that one question answers them; once it is answered or gone, the next one asks again.
 		void quit(Window& window);
 		void open(Window& window);
 		void saveAs(Window& window);
@@ -125,14 +153,19 @@ namespace gnubase::ui
 		// Shows backup-project.rml in the window, with name as the Project Name, and backs up with its options on OK.
 		void askBackupOptions(Window& window, const std::string& folder, const std::string& name);
 		// project.backup, asked for in the window, returned: shows its error, or the job's progress in a dialog
-		// (backup-progress.rml) whose Cancel stops it.
+		// (backup-progress.rml) whose Cancel stops it. That dialog is outside openDialog's turns, so that it keeps no
+		// other dialog waiting. Each window shows one backup's progress at a time: a second backup asked for in a
+		// window that shows one already runs without; one whose window went before it started shows in the main window.
+		// Its progress closed or gone with its window, it is cancelled.
 		void backupStarted(WindowId window, const engine::Result& result);
 		// A backup's job ended (job.finished, or job.get for one that ended before backupStarted heard of it): if it is
-		// one of those this UI started, closes its progress and shows in its window why it failed, which files it
-		// couldn't read and why the backup wasn't opened, if it was to be. Other clients' backups show nothing (#944).
+		// one of those this UI started, closes its progress and shows in its window, or in the main window if that
+		// went, why it failed, which files it couldn't read and why the backup wasn't opened, if it was to be. Other
+		// clients' backups show nothing (#944).
 		void backupEnded(const engine::Json& job);
-		// The open dialog if it is a backup's progress, or null.
-		Rml::ElementDocument* progressDialog() const;
+		// A backup's progress closed, or unloaded with its window, before the backup ended: cancels the backup, which
+		// then shows nothing more. False if progress isn't a running backup's progress.
+		bool cancelBackupOf(Rml::Element* progress);
 		void showStartScreen(Rml::ElementDocument& dialog, const engine::Json& templates, const engine::Json& recent);
 
 		EngineBinding& m_binding;
@@ -141,19 +174,19 @@ namespace gnubase::ui
 		std::string m_file; // the project's file (project.location), empty for none
 		Subscription m_saved;
 		Subscription m_reset;
+		Subscription m_jobStarted;
 		Subscription m_jobProgress;
 		Subscription m_jobFinished;
 		Subscription m_autoSaveFailed;
 		Subscription m_autoSaved;
-		bool m_autoSaveFailureShown = false; // since the last auto save that failed for a new reason
-		bool m_autoSaveErrorOpen = false;    // the open dialog is a failed auto save's error
-		std::map<uint64_t, WindowId>
-			m_backups;              // the running backups it started, by job, with where they were asked for
-		uint64_t m_progressJob = 0; // the backup whose progress the open dialog shows, if any
+		bool m_autoSaveFailureShown = false;     // since the last auto save that failed for a new reason
+		bool m_autoSaveErrorOpen = false;        // the open dialog is a failed auto save's error
+		std::map<uint64_t, Backup> m_backups;    // the running backups it started, by job
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the open dialog's document
 		Closed m_closed;
-		std::deque<WaitingDialog> m_waitingDialogs;    // the dialogs that wait for it, oldest first
-		bool m_quitting = false;                       // a quit request waits for the engine to say whether to ask
+		std::deque<WaitingDialog> m_waitingDialogs; // the dialogs that wait for it, oldest first
+		uint64_t m_questions = 0; // how often unlessUnsaved asked the engine, so that a question knows a newer one came
+		bool m_quitting = false;  // a quit request waits for the engine to say whether to ask
 		Rml::ObserverPtr<Rml::Element> m_quitQuestion; // and then for the question, while it is m_dialog
 		std::vector<std::string> m_templates;          // the start screen's templates, by name
 		std::vector<std::string> m_recent;             // and its recent projects, by file

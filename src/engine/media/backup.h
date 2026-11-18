@@ -5,6 +5,7 @@
 #include "engine/schema.h"
 
 #include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,15 @@ namespace gnubase::engine
 	// Creating fails if the file is there, even if another job or program creates it at the same moment, so two writers
 	// never get the same file. Throws std::runtime_error.
 	std::filesystem::path createFreeFile(const std::filesystem::path& folder, const std::filesystem::path& name);
+
+	// The names in folder, folded (foldedName), for making several free files with one listing. Leaves out names that
+	// can't be converted to UTF-8, and is empty if the folder can't be listed: creating the file still finds out
+	// what's taken.
+	std::set<std::string> takenNames(const std::filesystem::path& folder);
+
+	// createFreeFile, skipping the names in taken as well and adding the new one's.
+	std::filesystem::path createFreeFile(
+		const std::filesystem::path& folder, const std::filesystem::path& name, std::set<std::string>& taken);
 
 	// A media file and its copy.
 	struct MediaCopy

@@ -4,8 +4,11 @@
 // screen in the app's UI.
 #include "engine/engine.h"
 #include "platform/log.h"
+#include "testutils/commandholds.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -19,7 +22,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -872,6 +874,24 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 	CHECK(fs::is_regular_file(dir.path() / "NUL.dawproject"));
 }
 
+TEST_CASE("a save that refers to missing media files instead of having them in it says so", "[ui]")
+{
+	// #1614: the file keeps no copy of a file that is gone, which the user learns.
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path gone = dir.path() / "gone.wav";
+	app.call("media.add", {{"path", utf8(gone)}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 10}});
+	fileMenu(app, "file.saveAs");
+	answer(app, {dir.path() / "Song.dawproject"});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(
+		elements(app, "#project-error-message").at(0).at("text").get<std::string>(), ContainsSubstring("gone.wav"));
+	CHECK(fs::is_regular_file(dir.path() / "Song.dawproject"));
+	click(app, "#project-error-dialog button[result=ok]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
+}
+
 TEST_CASE("a save or backup that fails shows its error", "[ui]")
 {
 	test::UiApp app({900, 640});
@@ -897,19 +917,20 @@ TEST_CASE("a save or backup that fails shows its error", "[ui]")
 	click(app, "#project-error-dialog button[result=ok]");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
 
-	// A backup that is to be opened isn't if the project changed while the job ran, and says so.
-	test::writeWav(dir.path() / "take.wav", {std::vector<float>(5760000, 0.25f), 2, 48000}); // 1 min
+	// A backup that is to be opened isn't if the project changed while the job ran, and says so. The job is held at
+	// its first progress until the edit ran, so that it can't ask to open the backup first (#1154).
+	test::writeWav(dir.path() / "take.wav", {std::vector<float>(96000, 0.25f), 2, 48000}); // 1 s
 	app.call("media.add", {{"path", utf8(dir.path() / "take.wav")}});
 	app.call("project.save", Json::object());
 	const Json song = location(app);
+	test::HeldJob held(app.engine(), "project.backup");
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "Opened"});
 	click(app, "#backup-keep-active");
-	// Without click's step, so that the edit is queued right after project.backup, before the job can ask to open
-	// the backup.
-	app.ui().click(std::nullopt, {"#backup-project-dialog button.primary", 0, std::nullopt},
-		gnubase::ui::MouseButton::Left, 1, {});
+	click(app, "#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
 	app.call("project.set", {{"name", "Edited"}});
+	CHECK(held.release());
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }, std::chrono::seconds(30)));
 	CHECK_THAT(elements(app, "#project-error-message").at(0).at("text").get<std::string>(),
 		ContainsSubstring("wasn't opened"));
@@ -1344,6 +1365,43 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
 }
 
+TEST_CASE("a quit question cancelled before the engine answered its second look lets the next quit request ask", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	test::UiApp app({900, 640});
+	const test::ReleaseHolds releaseHolds{holds};
+	app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", CommandInfo{}.parameters, Json::object(), false},
+		[&holds](CommandContext&) { return holds.hold(); });
+	Client holder(app.engine(), "holder");
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}});
+	gnubase::ui::EngineBinding& binding = app.appUi().binding();
+
+	// The engine answers whether to ask, and then holds: the question opens, and the engine answers its second look
+	// at project.revision only once the test lets it go, as on a busy machine.
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	app.ui().close(std::nullopt, false);
+	REQUIRE(app.waitUntil([&binding] { return binding.waiting("project.revision") != 0; }));
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+
+	// Cancel before the engine answered, and quit again, as dialog.lua's test does at once (#1454): the request asks
+	// again instead of finding the question still coming.
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+	app.ui().close(std::nullopt, true);
+	for (int i = 0; i < 5; ++i)
+		app.shell().step(std::chrono::milliseconds(0));
+	holds.release(2);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
 TEST_CASE("a quit question that goes with its window doesn't keep the next quit request from asking", "[ui]")
 {
 	test::UiApp app({1200, 700});
@@ -1454,6 +1512,267 @@ TEST_CASE("the unsaved changes question and a failed command's error wait while 
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
 	closeError(app);
 	CHECK(location(app) == utf8(fs::absolute(file)));
+}
+
+namespace
+{
+	// The history panel in a window of its own, as the tests around here take a panel's own window.
+	gnubase::ui::Window& panelWindow(test::UiApp& app)
+	{
+		app.appUi().docking().setFloating("history", true);
+		const gnubase::ui::Window* floating = app.appUi().docking().windowOf("history");
+		REQUIRE(floating != nullptr);
+		gnubase::ui::Window* window = app.shell().find(floating->id());
+		REQUIRE(window != nullptr);
+		return *window;
+	}
+
+	// Lets the shell run what it posted and the engine answered before, as the waiting tests above do.
+	void settle(test::UiApp& app)
+	{
+		app.call("project.revision"); // after the engine answered whatever the UI asked
+		for (int i = 0; i < 5; ++i)
+			app.shell().step(std::chrono::milliseconds(0));
+	}
+}
+
+TEST_CASE("a quit request drops the questions and start screens that wait, so that its question is next", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "Song.dawproject";
+	app.call("project.save", {{"path", utf8(file)}});
+	app.call("track.add", {{"type", "audio"}});
+
+	// File > Open's question waits while the start screen is open.
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+	app.keys().run("file.open", Json::object(), app.main(), nullptr);
+	answer(app, {file});
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// The quit request closes the start screen and drops the question that waits: its own question opens, and one
+	// Discard quits instead of opening the project the dropped question was about and asking again.
+	closeLastWindow(app);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
+TEST_CASE("an error whose window closed while it waited shows in the main window", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+
+	// A save asked for in a panel's own window fails while the start screen is open: its error waits for it.
+	gnubase::ui::Window& panel = panelWindow(app);
+	const gnubase::ui::WindowId panelId = panel.id();
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+	app.keys().run("file.saveAs", Json::object(), panel, nullptr);
+	answer(app, {notFolder / "Song.dawproject"});
+	settle(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	// Closing the panel window takes the error's window along before the start screen closes: the error shows in
+	// the main window instead of only being logged, so that the failed save isn't taken for done.
+	app.ui().close(panelId, false);
+	REQUIRE(app.waitUntil([&app, panelId] { return app.shell().find(panelId) == nullptr; }));
+	click(app, "#start-screen button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK(!errorMessage(app).empty());
+	closeError(app);
+}
+
+TEST_CASE("a question that waited doesn't ask once the project was saved meanwhile", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path other = dir.path() / "Other.dawproject";
+	app.call("track.add", {{"type", "audio"}});
+	app.call("project.save", {{"path", utf8(other)}}); // one track
+	app.call("project.new");
+	app.call("track.add", {{"type", "audio"}});
+	app.call("track.add", {{"type", "audio"}});
+
+	// File > Open's question waits while the start screen is open.
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+	app.keys().run("file.open", Json::object(), app.main(), nullptr);
+	answer(app, {other});
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// The project is saved while the question waits: once the start screen closes, there is nothing left to
+	// discard, so the project opens without the question.
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	click(app, "#start-screen button[result=cancel]");
+	REQUIRE(app.waitUntil([&app, &other] { return location(app) == utf8(fs::absolute(other)); }));
+	CHECK(app.call("project.get").at("tracks").size() == 1);
+	CHECK(!shown(app, "#discard-changes-dialog"));
+}
+
+TEST_CASE("a quit question that waits and goes with its window lets the next quit request ask again", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+	app.call("track.add", {{"type", "audio"}});
+
+	// A save that fails leaves its error waiting while Save as Template is open.
+	fileMenu(app, "file.saveTemplate");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#save-template-dialog"); }));
+	app.keys().run("file.saveAs", Json::object(), app.main(), nullptr);
+	answer(app, {notFolder / "Song.dawproject"});
+	settle(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	// Quit in a panel's own window: the error stays and opens as Save as Template closes, and the question waits
+	// behind it for the panel's window.
+	gnubase::ui::Window& panel = panelWindow(app);
+	const gnubase::ui::WindowId panelId = panel.id();
+	app.keys().run("file.quit", Json::object(), panel, nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// Closing the panel window takes the question that waits along: it is skipped, which leaves GNUbase running
+	// and lets the next quit request ask again.
+	app.ui().close(panelId, false);
+	REQUIRE(app.waitUntil([&app, panelId] { return app.shell().find(panelId) == nullptr; }));
+	closeError(app);
+	settle(app);
+	REQUIRE(app.shell().running());
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	closeLastWindow(app);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
+TEST_CASE(
+	"a quit question that opens after a newer question came still answers, so Cancel leaves quitting working", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "Song.dawproject";
+	app.call("project.save", {{"path", utf8(file)}});
+	app.call("track.add", {{"type", "audio"}});
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+
+	// A failed save's error waits while Save as Template is open.
+	fileMenu(app, "file.saveTemplate");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#save-template-dialog"); }));
+	app.keys().run("file.saveAs", Json::object(), app.main(), nullptr);
+	answer(app, {notFolder / "Other.dawproject"});
+	settle(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	// Quit: Save as Template closes for the error, and the quit question waits behind the error.
+	app.keys().run("file.quit", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// File > Open comes before the error is dismissed: its question is the newer one, waiting behind the quit's.
+	app.keys().run("file.open", Json::object(), app.main(), nullptr);
+	answer(app, {file});
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// The error is dismissed and the quit question opens, although a newer question came: its asked runs, so that
+	// Cancel doesn't leave GNUbase unable to quit.
+	closeError(app);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	settle(app); // the question's second look at project.revision answered by now
+	Rml::Element* first = question(app);
+	const Rml::ObserverPtr<Rml::Element> quitQuestion =
+		first != nullptr ? first->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+	REQUIRE(quitQuestion.get() != nullptr);
+	click(app, "#discard-changes-dialog button[result=cancel]");
+
+	// The newer question opens in its turn, another document; Cancel answers it too.
+	REQUIRE(app.waitUntil(
+		[&app, &quitQuestion] { return question(app) != nullptr && question(app) != quitQuestion.get(); }));
+	settle(app);
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+	REQUIRE(app.shell().running());
+
+	// The next quit request asks again, and Discard quits.
+	closeLastWindow(app);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
+TEST_CASE("a dialog that goes with its window lets the next one open", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "Song.dawproject";
+	app.call("project.save", {{"path", utf8(file)}});
+	app.call("track.add", {{"type", "audio"}});
+
+	// The start screen in a panel's own window keeps File > Open's question in the main window waiting.
+	gnubase::ui::Window& panel = panelWindow(app);
+	const gnubase::ui::WindowId panelId = panel.id();
+	app.keys().run("file.new", Json::object(), panel, nullptr);
+	REQUIRE(app.waitUntil(
+		[&app, panelId] { return app.ui().dom(panelId, "#start-screen", 0).at("elements").size() == 1; }));
+	app.keys().run("file.open", Json::object(), app.main(), nullptr);
+	answer(app, {file});
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// Closing the panel window takes the start screen along: the question opens in the main window.
+	app.ui().close(panelId, false);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").empty(); }));
+}
+
+TEST_CASE("the dialogs that wait open in the order they came", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "Song.dawproject";
+	app.call("project.save", {{"path", utf8(file)}});
+	app.call("track.add", {{"type", "audio"}});
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+
+	// While the start screen is open, File > Open's question comes first and a failed save's error second.
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+	app.keys().run("file.open", Json::object(), app.main(), nullptr);
+	answer(app, {file});
+	app.keys().run("file.saveAs", Json::object(), app.main(), nullptr);
+	answer(app, {notFolder / "Other.dawproject"});
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	// Once the start screen closes, the question opens first, and the error follows it.
+	click(app, "#start-screen button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	CHECK(elements(app, "#project-error-dialog").empty());
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	closeError(app);
 }
 
 TEST_CASE("the start screen creates projects, from templates too, and opens recent ones", "[ui]")
@@ -1591,55 +1910,6 @@ namespace
 		return std::any_of(
 			log.begin(), log.end(), [&command](const Json& entry) { return entry.at("command") == command; });
 	}
-
-	// Holds a backup at its first job.progress until release, for a minute at most, so that it can't end before a
-	// job.cancel: a Listener runs on the thread that sends the event, here the job's. Meanwhile events wait for it,
-	// also a command's, so the test sends only queries until it releases the job.
-	class HeldBackup
-	{
-	public:
-		explicit HeldBackup(Engine& engine)
-			: m_listener(engine,
-				  [this](const Event& event)
-				  {
-					  if (event.name != "job.progress" || event.data.at("kind") != "project.backup")
-						  return;
-					  std::unique_lock lock(m_mutex);
-					  m_held = true;
-					  m_changed.wait_for(lock, std::chrono::minutes(1), [this] { return m_released; });
-				  })
-		{
-		}
-
-		~HeldBackup() { release(); }
-		HeldBackup(const HeldBackup&) = delete;
-		HeldBackup& operator=(const HeldBackup&) = delete;
-		HeldBackup(HeldBackup&&) = delete;
-		HeldBackup& operator=(HeldBackup&&) = delete;
-
-		// Whether the backup got to its first job.progress.
-		bool held()
-		{
-			const std::scoped_lock lock(m_mutex);
-			return m_held;
-		}
-
-		void release()
-		{
-			{
-				const std::scoped_lock lock(m_mutex);
-				m_released = true;
-			}
-			m_changed.notify_all();
-		}
-
-	private:
-		std::mutex m_mutex;
-		std::condition_variable m_changed;
-		bool m_held = false;
-		bool m_released = false;
-		Listener m_listener; // last, so that it stops before the rest goes
-	};
 }
 
 TEST_CASE("Back up Project shows its own backups' progress and outcome, and Cancel stops them", "[ui][slow]")
@@ -1669,14 +1939,14 @@ TEST_CASE("Back up Project shows its own backups' progress and outcome, and Canc
 	CHECK(!parameters.contains("name"));
 	CHECK(!shown(app, "#project-error-dialog"));
 
-	// Done, a backup with files that couldn't be read says which.
-	app.call("media.add",
-		{{"path", utf8(dir.path() / "gone.wav")}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 48000}});
+	// Done, a backup with files that couldn't be read says which, also two of the same name (#1001).
+	for (const fs::path& gone : {dir.path() / "gone.wav", dir.path() / "elsewhere" / "gone.wav"})
+		app.call("media.add", {{"path", utf8(gone)}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 48000}});
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "Missing"});
 	click(app, "#backup-project-dialog button.primary");
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
-	CHECK_THAT(errorMessage(app), ContainsSubstring("gone.wav"));
+	CHECK(errorMessage(app) == "The project was backed up without 2 files that couldn't be read: gone.wav, gone.wav.");
 	CHECK(!shown(app, "#backup-progress-dialog"));
 	closeError(app);
 	CHECK(fs::exists(dir.path() / "Missing" / "My Song.dawproject"));
@@ -1687,7 +1957,7 @@ TEST_CASE("Back up Project shows its own backups' progress and outcome, and Canc
 	const fs::path take = dir.path() / "take.wav";
 	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
 	app.call("media.add", {{"path", utf8(take)}});
-	HeldBackup held(app.engine());
+	test::HeldJob held(app.engine(), "project.backup");
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "Cancelled"});
 	click(app, "#backup-project-dialog button.primary");
@@ -1696,7 +1966,7 @@ TEST_CASE("Back up Project shows its own backups' progress and outcome, and Canc
 	CHECK(elements(app, "#backup-progress").size() == 1);
 	click(app, "#backup-progress-dialog button[result=cancel]");
 	REQUIRE(app.waitUntil([&app] { return ran(app, "job.cancel"); }));
-	held.release();
+	CHECK(held.release());
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
 	const Json cancelled = lastJob(app);
 	CHECK(cancelled.at("kind") == "project.backup");
@@ -1714,4 +1984,267 @@ TEST_CASE("Back up Project shows its own backups' progress and outcome, and Canc
 	handleEarlierEvents(app);
 	CHECK(!shown(app, "#project-error-dialog"));
 	CHECK(!shown(app, "#backup-progress-dialog"));
+}
+
+TEST_CASE(
+	"a running backup's progress keeps no other project dialog waiting, and a quit that is cancelled leaves it running",
+	"[ui][slow]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	app.call("track.add", {{"type", "audio"}}); // an unsaved change, so that quitting asks
+	const fs::path take = dir.path() / "take.wav";
+	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
+	app.call("media.add", {{"path", utf8(take)}});
+	test::HeldJob held(app.engine(), "project.backup");
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Backup"});
+	click(app, "#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-progress-dialog"); }));
+
+	// Another project dialog opens while the progress shows, such as another backup's options (#1001).
+	app.keys().run("file.backup", Json::object(), app.main(), nullptr);
+	answer(app, {dir.path() / "Other"});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-project-dialog"); }));
+	click(app, "#backup-project-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-project-dialog"); }));
+	CHECK(shown(app, "#backup-progress-dialog"));
+
+	// Quitting asks about the unsaved changes without cancelling the backup first: cancelled, it leaves it running.
+	app.keys().run("file.quit", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+	REQUIRE(app.shell().running());
+	CHECK(shown(app, "#backup-progress-dialog"));
+	CHECK(!ran(app, "job.cancel"));
+	CHECK(held.release());
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
+	CHECK(lastJob(app).at("state") == "done");
+	CHECK(!shown(app, "#project-error-dialog"));
+}
+
+TEST_CASE("a backup that couldn't read a folder in the Mixdown folder counts it as a folder", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path project = dir.path() / "Song";
+	fs::create_directories(project / "Mixdown" / "Hidden");
+	app.call("project.save", {{"path", utf8(project / "Song.dawproject")}});
+	const test::Unreadable hidden(project / "Mixdown" / "Hidden");
+	if (!hidden.active())
+		SKIP("the folder can be listed here anyway, e.g. by root");
+	app.call("media.add",
+		{{"path", utf8(dir.path() / "gone.wav")}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 48000}});
+
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Backup"});
+	click(app, "#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK(errorMessage(app) ==
+		"The project was backed up without 1 file and 1 folder that couldn't be read: gone.wav, Hidden.");
+	closeError(app);
+}
+
+TEST_CASE("a backup started in another window while one's progress shows shows its own progress there", "[ui][slow]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path take = dir.path() / "take.wav";
+	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
+	app.call("media.add", {{"path", utf8(take)}});
+	// A panel in a window of its own.
+	app.appUi().docking().setFloating("history", true);
+	const gnubase::ui::Window* floating = app.appUi().docking().windowOf("history");
+	REQUIRE(floating != nullptr);
+	const gnubase::ui::WindowId panel = floating->id();
+	gnubase::ui::Window* window = app.shell().find(panel);
+	REQUIRE(window != nullptr);
+	// Both backups are held at their first progress until the second one was cancelled, so that the first can't end
+	// before and the second still runs then. Only the jobs wait: the commands that the UI sends meanwhile, such as
+	// the window layout that docking saves, go on (#1272).
+	test::HeldJob held(app.engine(), "project.backup", std::chrono::minutes(1), 2);
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "First"});
+	click(app, "#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&held] { return held.job() != 0; }, std::chrono::seconds(30)));
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-progress-dialog"); }));
+
+	// File > Back up Project in the panel's own window, while the first backup's progress shows in the main window
+	// (#1109).
+	const auto shownInPanel = [&app, panel](const std::string& selector)
+	{
+		const Json found = app.ui().dom(panel, selector, 0).at("elements");
+		return found.size() == 1 && found[0].at("visible").get<bool>();
+	};
+	const auto clickInPanel = [&app, panel, &shownInPanel](const std::string& selector)
+	{
+		REQUIRE(app.waitUntil([&shownInPanel, &selector] { return shownInPanel(selector); }));
+		app.ui().click(panel, {selector, 0, std::nullopt}, gnubase::ui::MouseButton::Left, 1, {});
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	app.keys().run("file.backup", Json::object(), *window, nullptr);
+	answer(app, {dir.path() / "Second"});
+	clickInPanel("#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
+	// A command that sends an event, as docking's layout saves do, isn't held behind the backups.
+	app.call("settings.set", {{"key", "ui.removeTracksWarning"}, {"value", false}});
+
+	// Each window shows its own backup's progress, and the second's Cancel stops only that one.
+	REQUIRE(app.waitUntil([&shownInPanel] { return shownInPanel("#backup-progress-dialog"); }));
+	CHECK(shown(app, "#backup-progress-dialog"));
+	clickInPanel("#backup-progress-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return ran(app, "job.cancel"); }));
+	CHECK(!shownInPanel("#backup-progress-dialog"));
+	CHECK(shown(app, "#backup-progress-dialog"));
+	{
+		INFO("a backup's hold lapsed before the second backup was cancelled"); // #1339
+		REQUIRE(held.release());
+	}
+	// The first backup's whole run, as long as lastJob waits on a busy machine.
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }, std::chrono::seconds(60)));
+	lastJob(app); // once none runs
+	const Json jobs = app.call("job.list").at("jobs");
+	std::vector<std::string> states;
+	for (const Json& job : jobs)
+		if (job.at("kind") == "project.backup")
+			states.push_back(job.at("state").get<std::string>());
+	CHECK(states == std::vector<std::string>{"done", "cancelled"});
+	CHECK(fs::exists(dir.path() / "First" / "Audio" / "take.wav"));
+	CHECK(!fs::exists(dir.path() / "Second"));
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
+}
+
+TEST_CASE("a backup whose progress's window closes is cancelled, and another one from there reports in the main window",
+	"[ui][slow]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path take = dir.path() / "take.wav";
+	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
+	app.call("media.add", {{"path", utf8(take)}});
+	app.call("media.add",
+		{{"path", utf8(dir.path() / "gone.wav")}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 48000}});
+	app.appUi().docking().setFloating("history", true);
+	const gnubase::ui::Window* floating = app.appUi().docking().windowOf("history");
+	REQUIRE(floating != nullptr);
+	const gnubase::ui::WindowId panel = floating->id();
+	gnubase::ui::Window* window = app.shell().find(panel);
+	REQUIRE(window != nullptr);
+	const auto shownInPanel = [&app, panel](const std::string& selector)
+	{
+		const Json found = app.ui().dom(panel, selector, 0).at("elements");
+		return found.size() == 1 && found[0].at("visible").get<bool>();
+	};
+	const auto backUpInPanel = [&app, &shownInPanel, window, panel](const fs::path& folder)
+	{
+		app.keys().run("file.backup", Json::object(), *window, nullptr);
+		answer(app, {folder});
+		REQUIRE(app.waitUntil([&shownInPanel] { return shownInPanel("#backup-project-dialog button.primary"); }));
+		app.ui().click(
+			panel, {"#backup-project-dialog button.primary", 0, std::nullopt}, gnubase::ui::MouseButton::Left, 1, {});
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// Two backups asked for in the panel's own window: the first shows its progress there, the second runs without
+	// (#1109). Both are held at their first progress until the window closed, so that neither can end first.
+	test::HeldJob held(app.engine(), "project.backup", std::chrono::minutes(1), 2);
+	backUpInPanel(dir.path() / "First");
+	REQUIRE(app.waitUntil([&held] { return held.job() != 0; }, std::chrono::seconds(30)));
+	REQUIRE(app.waitUntil([&shownInPanel] { return shownInPanel("#backup-progress-dialog"); }));
+	backUpInPanel(dir.path() / "Second");
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
+
+	// Closing that window, which docks the panel back, takes the progress with it: its backup stops, as its Cancel
+	// would, rather than run on unseen. The other one runs on and, its window gone, says in the main window that it
+	// couldn't read gone.wav (#1206).
+	app.shell().requestClose(panel);
+	REQUIRE(app.waitUntil([&app, panel] { return app.shell().find(panel) == nullptr; }));
+	REQUIRE(app.waitUntil([&app] { return ran(app, "job.cancel"); }));
+	CHECK(held.release());
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }, std::chrono::seconds(60)));
+	CHECK(errorMessage(app) == "The project was backed up without 1 file that couldn't be read: gone.wav.");
+	closeError(app);
+	lastJob(app); // once none runs
+	const Json jobs = app.call("job.list").at("jobs");
+	std::vector<std::string> states;
+	for (const Json& job : jobs)
+		if (job.at("kind") == "project.backup")
+			states.push_back(job.at("state").get<std::string>());
+	CHECK(states == std::vector<std::string>{"cancelled", "done"});
+	CHECK(!fs::exists(dir.path() / "First"));
+	CHECK(fs::exists(dir.path() / "Second" / "Audio" / "take.wav"));
+	CHECK(!shown(app, "#backup-progress-dialog"));
+}
+
+TEST_CASE(
+	"a backup whose window closed before it started shows its refusal or progress in the main window", "[ui][slow]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	test::UiApp app({1200, 700});
+	const test::ReleaseHolds releaseHolds{holds};
+	app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", CommandInfo{}.parameters, Json::object(), false},
+		[&holds](CommandContext&) { return holds.hold(); });
+	Client holder(app.engine(), "holder");
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path take = dir.path() / "take.wav";
+	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
+	app.call("media.add", {{"path", utf8(take)}});
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+	gnubase::ui::EngineBinding& binding = app.appUi().binding();
+
+	// Back up Project in a panel's own window, whose OK the engine answers only once the window closed: the n-th
+	// hold keeps project.backup waiting.
+	size_t asked = 0;
+	const auto backUpInClosingPanel = [&](const fs::path& folder)
+	{
+		gnubase::ui::Window& window = panelWindow(app);
+		const gnubase::ui::WindowId panel = window.id();
+		app.keys().run("file.backup", Json::object(), window, nullptr);
+		answer(app, {folder});
+		REQUIRE(app.waitUntil(
+			[&app, panel]
+			{
+				const Json found = app.ui().dom(panel, "#backup-project-dialog button.primary", 0).at("elements");
+				return found.size() == 1 && found[0].at("visible").get<bool>();
+			}));
+		holder.send("test.hold");
+		REQUIRE(holds.waitEntered(++asked));
+		app.ui().click(
+			panel, {"#backup-project-dialog button.primary", 0, std::nullopt}, gnubase::ui::MouseButton::Left, 1, {});
+		REQUIRE(app.waitUntil([&binding] { return binding.waiting("project.backup") != 0; }));
+		app.shell().requestClose(panel);
+		REQUIRE(app.waitUntil([&app, panel] { return app.shell().find(panel) == nullptr; }));
+		holds.release(asked);
+	};
+
+	// Refused, it says why in the main window.
+	backUpInClosingPanel(notFolder);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(errorMessage(app), ContainsSubstring("is a file"));
+	closeError(app);
+
+	// Started, it shows its progress in the main window, whose Cancel stops it, rather than run unseen (#1372). The
+	// job is held at its first progress until then, so that it can't end first.
+	test::HeldJob held(app.engine(), "project.backup");
+	backUpInClosingPanel(dir.path() / "Backup");
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-progress-dialog"); }));
+	click(app, "#backup-progress-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return ran(app, "job.cancel"); }));
+	CHECK(held.release());
+	CHECK(lastJob(app).at("state") == "cancelled");
+	CHECK(!fs::exists(dir.path() / "Backup"));
+	CHECK(!shown(app, "#backup-progress-dialog"));
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
 }

@@ -48,33 +48,77 @@ namespace gnubase::logging::detail
 		LPTOP_LEVEL_EXCEPTION_FILTER g_previousFilter = nullptr;
 		_crt_signal_t g_previousAbortHandler = SIG_DFL;
 
-		void writeMinidump(EXCEPTION_POINTERS* exception) noexcept
+		// The minidump is written by a thread that waits for a crash from the start, and the crashed thread ends the
+		// process with TerminateProcess once the dump is written or after g_dumpTimeoutMs (#1849). It used to write the
+		// dump itself and then let the process end through the filter's return or abort's _exit, which runs the DLLs'
+		// detach code after ending the other threads wherever they were: the C runtime's clean-up there can block on a
+		// lock one of them held. TerminateProcess runs no code of the process. The timeout covers a dump thread that
+		// doesn't get to run; a MiniDumpWriteDump that blocks while it has the other threads suspended, the waiting
+		// crashed thread among them, isn't bounded by it. The first crash is the one the dump shows.
+		constexpr DWORD g_dumpTimeoutMs = 30000;
+		HANDLE g_dumpThread = nullptr;
+		HANDLE g_crashed = nullptr; // set by the crashed thread, or by uninstallCrashHandler to end the dump thread
+		HANDLE g_dumped = nullptr;
+		EXCEPTION_POINTERS* g_exception = nullptr;
+		DWORD g_crashedThread = 0;
+		bool g_uninstalling = false;
+		LONG g_crashing = 0; // 1 once a thread crashed
+
+		void writeMinidump() noexcept
 		{
 			auto* const file = CreateFileW(
 				g_dumpFile.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 			if (file == INVALID_HANDLE_VALUE)
 				return;
-			MINIDUMP_EXCEPTION_INFORMATION info{GetCurrentThreadId(), exception, FALSE};
+			MINIDUMP_EXCEPTION_INFORMATION info{g_crashedThread, g_exception, FALSE};
 			MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file, MiniDumpNormal,
-				exception != nullptr ? &info : nullptr, nullptr, nullptr);
+				g_exception != nullptr ? &info : nullptr, nullptr, nullptr);
 			CloseHandle(file);
+		}
+
+		DWORD WINAPI dumpThread(void* /*unused*/)
+		{
+			WaitForSingleObject(g_crashed, INFINITE);
+			if (!g_uninstalling)
+				writeMinidump();
+			SetEvent(g_dumped);
+			return 0;
+		}
+
+		[[noreturn]] void endCrashed(EXCEPTION_POINTERS* exception, UINT exitCode) noexcept
+		{
+			const bool first = InterlockedCompareExchange(&g_crashing, 1, 0) == 0;
+			if (first)
+			{
+				g_exception = exception;
+				g_crashedThread = GetCurrentThreadId();
+			}
+			if (g_dumpThread != nullptr)
+			{
+				if (first)
+					SetEvent(g_crashed);
+				WaitForSingleObject(g_dumped, g_dumpTimeoutMs);
+			}
+			else if (first)
+				writeMinidump();
+			TerminateProcess(GetCurrentProcess(), exitCode);
+			std::_Exit(static_cast<int>(exitCode)); // not reached
 		}
 
 		LONG WINAPI onUnhandledException(EXCEPTION_POINTERS* exception)
 		{
 			std::array<char, 64> text{};
-			std::snprintf(text.data(), text.size(), "\nCrash: exception 0x%08lX, minidump written\n",
+			std::snprintf(text.data(), text.size(), "\nCrash: exception 0x%08lX, writing a minidump\n",
 				exception->ExceptionRecord->ExceptionCode);
 			report(text.data());
-			writeMinidump(exception);
-			return EXCEPTION_EXECUTE_HANDLER;
+			endCrashed(exception, exception->ExceptionRecord->ExceptionCode);
 		}
 
 		// abort() raises SIGABRT and never reaches the unhandled exception filter.
 		void onAbort(int /*signal*/)
 		{
-			report("\nCrash: abort, minidump written\n");
-			writeMinidump(nullptr);
+			report("\nCrash: abort, writing a minidump\n");
+			endCrashed(nullptr, 3); // abort's exit code
 		}
 #else
 		constexpr std::array<int, 5> g_signals{SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT};
@@ -122,6 +166,15 @@ namespace gnubase::logging::detail
 		std::filesystem::path dumpFile = logFile;
 		g_dumpFile = dumpFile.replace_extension(".dmp").wstring();
 		_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT); // no message box, no system crash reporter
+		if (g_dumpThread == nullptr)
+		{
+			g_uninstalling = false;
+			g_crashing = 0;
+			g_crashed = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+			g_dumped = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+			if (g_crashed != nullptr && g_dumped != nullptr)
+				g_dumpThread = CreateThread(nullptr, 0, &dumpThread, nullptr, 0, nullptr);
+		}
 		g_previousFilter = SetUnhandledExceptionFilter(&onUnhandledException);
 		g_previousAbortHandler = std::signal(SIGABRT, &onAbort);
 #else
@@ -143,6 +196,20 @@ namespace gnubase::logging::detail
 #ifdef _WIN32
 		SetUnhandledExceptionFilter(g_previousFilter);
 		std::signal(SIGABRT, g_previousAbortHandler);
+		if (g_dumpThread != nullptr)
+		{
+			g_uninstalling = true;
+			SetEvent(g_crashed);
+			WaitForSingleObject(g_dumpThread, INFINITE);
+			CloseHandle(g_dumpThread);
+			g_dumpThread = nullptr;
+		}
+		for (HANDLE* event : {&g_crashed, &g_dumped})
+			if (*event != nullptr)
+			{
+				CloseHandle(*event);
+				*event = nullptr;
+			}
 #else
 		for (size_t i = 0; i < g_signals.size(); ++i)
 			sigaction(g_signals[i], &g_previousActions[i], nullptr);

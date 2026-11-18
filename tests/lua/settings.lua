@@ -25,6 +25,15 @@ test.case("values are checked against the setting's schema", function()
 	test.equal(gnubase.settings.get{key = "ui.scale"}.value, 1)
 end)
 
+test.case("the event display's preferences are settings like any other (#1313)", function()
+	test.equal(gnubase.settings.get{key = "ui.showEventNames"}.value, true)
+	test.equal(gnubase.settings.get{key = "ui.partDataMode"}.value, "lines")
+	gnubase.settings.set{key = "ui.partDataMode", value = "off"}
+	test.equal(gnubase.settings.get{key = "ui.partDataMode"}.value, "off")
+	test.raises(function() gnubase.settings.set{key = "ui.eventOpacity", value = 120} end,
+		"ui.eventOpacity must be at most 100")
+end)
+
 test.case("reset puts a setting back to its default", function()
 	gnubase.settings.set{key = "ui.scale", value = 2}
 	test.equal(gnubase.settings.reset{key = "ui.scale"}.values, {["ui.scale"] = 1})

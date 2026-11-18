@@ -8,6 +8,7 @@
 #include "engine/processors/builtin.h"
 #include "engine/processors/builtinplugin.h"
 #include "engine/processors/gainpan.h"
+#include "engine/processors/midieffects.h"
 #include "plugin/checkedplugin.h"
 #include "plugin/events.h"
 #include "plugin/extensions.h"
@@ -22,8 +23,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -143,7 +147,7 @@ TEST_CASE("the plugin API describes a built-in processor through its factory and
 {
 	BuiltinFactory factory;
 	TestHost host;
-	REQUIRE(factory.count() == engine::processors::builtins().size());
+	REQUIRE(factory.count() == engine::processors::builtins().size() + engine::processors::midiEffects().size());
 	CHECK(factory.descriptor(0).format == "builtin");
 	CHECK(factory.create("builtin:unknown", host) == nullptr);
 
@@ -224,6 +228,104 @@ TEST_CASE("the plugin API describes a built-in processor through its factory and
 		REQUIRE(synth->init());
 		CHECK(synth->descriptor().features == std::vector<std::string>{"instrument"});
 		CHECK(extension<AudioPorts>(*synth)->audioPortCount(true) == 0);
+	}
+}
+
+TEST_CASE("no built-in processor has a built-in MIDI effect's id, so a builtin: id names one of them", "[unit]")
+{
+	// The factory looks among the processors first: a MIDI effect with a processor's id would get the processor.
+	for (const engine::processors::BuiltinInfo& effect : engine::processors::midiEffects())
+		for (const engine::processors::BuiltinInfo& processor : engine::processors::builtins())
+			CHECK(effect.id != processor.id);
+}
+
+TEST_CASE("the built-in MIDI effects are builtin: plugins with note ports, parameters and state", "[unit]")
+{
+	using engine::processors::ChordGenerator;
+	BuiltinFactory factory;
+	TestHost host;
+	const std::unique_ptr<Plugin> plugin = createActive(factory, "builtin:chordGenerator", host);
+	CHECK(plugin->descriptor().features == std::vector<std::string>{"note-effect"});
+	// Audio plugin slots don't take them: they play in the MIDI insert and send slots.
+	CHECK(engine::processors::findBuiltinPlugin("builtin:chordGenerator") == nullptr);
+	CHECK(extension<AudioPorts>(*plugin)->audioPortCount(true) == 0);
+	CHECK(extension<AudioPorts>(*plugin)->audioPortCount(false) == 0);
+	const NotePorts* notePorts = extension<NotePorts>(*plugin);
+	REQUIRE(notePorts != nullptr);
+	for (const bool input : {true, false})
+	{
+		REQUIRE(notePorts->notePortCount(input) == 1);
+		NotePortInfo info;
+		REQUIRE(notePorts->notePortInfo(input, 0, info));
+		CHECK(info.dialects == (NotePortInfo::Notes | NotePortInfo::Midi2));
+		CHECK(!notePorts->notePortInfo(input, 1, info));
+	}
+	REQUIRE(extension<Params>(*plugin)->paramCount() ==
+		engine::processors::findMidiEffect("chordGenerator")->parameters.size());
+
+	SECTION("notes in, chords out, the chord changing at its sample, controllers passing at full resolution")
+	{
+		EventList in(64, 0, 0);
+		EventList out(64, 0, 0);
+		const auto note = [&in](uint32_t offset, EventType type, int16_t key)
+		{
+			Event event;
+			event.offset = offset;
+			event.type = type;
+			event.channel = 2;
+			event.key = key;
+			event.value = 40000 / 65535.0;
+			REQUIRE(in.push(event));
+		};
+		note(0, EventType::NoteOn, 60);
+		Event controller;
+		controller.offset = 3;
+		controller.type = EventType::Midi2;
+		controller.data[0] = 0x40B20700U; // a MIDI 2.0 control change of controller 7 on channel 3
+		controller.data[1] = 0x12345678U;
+		REQUIRE(in.push(controller));
+		REQUIRE(in.push(paramValue(10, ChordGenerator::Chord, 1.0))); // minor
+		note(20, EventType::NoteOn, 70);
+		const TransportSegment segment;
+		Process process = blockWith(in, out);
+		process.frames = g_frames;
+		process.transport = &segment;
+		process.transportCount = 1;
+		REQUIRE(plugin->process(process) == ProcessStatus::Continue);
+
+		std::vector<std::pair<uint32_t, int>> notes;
+		for (const Event& event : out)
+		{
+			if (event.type == EventType::NoteOn)
+			{
+				notes.emplace_back(event.offset, event.key);
+				CHECK(event.channel == 2);
+				CHECK(std::lround(event.value * 65535.0) == 40000);
+			}
+			else
+			{
+				REQUIRE(event.type == EventType::Midi2);
+				CHECK(event.offset == 3);
+				CHECK(event.data[0] == controller.data[0]);
+				CHECK(event.data[1] == controller.data[1]);
+			}
+		}
+		CHECK(notes == std::vector<std::pair<uint32_t, int>>{{0, 60}, {0, 64}, {0, 67}, {20, 70}, {20, 73}, {20, 77}});
+	}
+
+	SECTION("its state restores its parameters in another instance")
+	{
+		EventList values(4);
+		EventList ignored(4);
+		values.push(paramValue(0, ChordGenerator::Chord, 3.0));
+		extension<Params>(*plugin)->flushParams(values, ignored);
+		std::vector<uint8_t> state;
+		REQUIRE(extension<State>(*plugin)->saveState(state, StateContext::Project));
+		const std::unique_ptr<Plugin> other = createActive(factory, "builtin:chordGenerator", host);
+		REQUIRE(extension<State>(*other)->loadState(state.data(), state.size(), StateContext::Project));
+		double value = 0.0;
+		REQUIRE(extension<Params>(*other)->paramValue(ChordGenerator::Chord, value));
+		CHECK(value == 3.0);
 	}
 }
 
@@ -373,6 +475,60 @@ TEST_CASE("the plugin API restores a plugin's state in another instance", "[unit
 	const std::vector<float> copyOut = copyRunner.process();
 	CHECK(sourceOut == copyOut);
 	CHECK_THAT(sourceOut[0], WithinAbs(0.25 * std::pow(10.0, -12.0 / 20.0), 1e-6));
+}
+
+TEST_CASE("a built-in plugin's state values are clamped, stepped ones rounded, and NaN, infinite ones and unknown ids "
+		  "skipped",
+	"[unit]")
+{
+	using engine::dsp::Delay;
+	using engine::processors::BuiltinPlugin;
+	// Pairs of id and value, as saveState writes them.
+	const auto stateOf = [](const std::vector<std::pair<uint32_t, double>>& values)
+	{
+		std::vector<uint8_t> state;
+		for (const auto& [id, value] : values)
+		{
+			const size_t at = state.size();
+			state.resize(at + sizeof(id) + sizeof(value));
+			std::memcpy(state.data() + at, &id, sizeof(id));
+			std::memcpy(state.data() + at + sizeof(id), &value, sizeof(value));
+		}
+		return state;
+	};
+	const std::vector<uint8_t> state = stateOf({{Delay::Time, 99999.0}, {Delay::Sync, 0.4}, {Delay::PingPong, 0.6},
+		{Delay::Note, std::nan("")}, {Delay::Feedback, -std::numeric_limits<double>::infinity()}, {999, 1.0}});
+
+	BuiltinFactory factory;
+	TestHost host;
+	const std::unique_ptr<Plugin> delay = createActive(factory, "builtin:delay", host);
+	REQUIRE(extension<State>(*delay)->loadState(state.data(), state.size(), StateContext::Project));
+	const auto valueOf = [&delay](uint32_t param)
+	{
+		double value = -1.0;
+		CHECK(extension<Params>(*delay)->paramValue(param, value));
+		return value;
+	};
+	const engine::processors::BuiltinInfo* info = engine::processors::findBuiltinPlugin("builtin:delay");
+	REQUIRE(info != nullptr);
+	const auto parameter = [info](uint32_t id) -> const engine::processors::ParameterInfo&
+	{
+		return *std::find_if(info->parameters.begin(), info->parameters.end(),
+			[id](const engine::processors::ParameterInfo& p) { return p.id == id; });
+	};
+	CHECK(valueOf(Delay::Time) == 5000.0);
+	CHECK(valueOf(Delay::Sync) == 0.0);
+	CHECK(valueOf(Delay::PingPong) == 1.0);
+	CHECK(valueOf(Delay::Note) == parameter(Delay::Note).defaultValue);
+	CHECK(valueOf(Delay::Feedback) == parameter(Delay::Feedback).defaultValue);
+
+	// Playback and parameter.get: a value set comes first, then the state's, then the default, each as loaded.
+	const std::map<uint32_t, double> set{{Delay::Time, -5.0}, {Delay::Sync, 0.7}, {Delay::PingPong, std::nan("")}};
+	CHECK(BuiltinPlugin::staticValue(parameter(Delay::Time), set, &state) == 1.0);
+	CHECK(BuiltinPlugin::staticValue(parameter(Delay::Sync), set, &state) == 1.0);
+	CHECK(BuiltinPlugin::staticValue(parameter(Delay::PingPong), set, &state) == 1.0);
+	CHECK(BuiltinPlugin::staticValue(parameter(Delay::Note), set, &state) == parameter(Delay::Note).defaultValue);
+	CHECK(BuiltinPlugin::staticValue(parameter(Delay::Sync), {}, nullptr) == parameter(Delay::Sync).defaultValue);
 }
 
 TEST_CASE("plugin events have one layout with room for namespaces and expression ids", "[unit]")

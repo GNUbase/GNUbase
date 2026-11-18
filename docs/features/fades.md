@@ -27,4 +27,6 @@ The dialogs are documents with Lua that reads what they edit when they show (the
 
 ## DAWproject
 
+- A warped event's fades fit into its `fadeRoom` from `project.get` ([warp.md](warp.md)), which the fade handles and
+  the fade editor dialog keep them within, instead of its length.
 - Fade lengths are written to `project.xml` as the clips' `fadeInTime` and `fadeOutTime` in seconds, a crossfade that plays as the fades of its two events (one that rests writes the events' own fades); shapes, crossfade modes, clip fades and auto fade settings live in `gnubase.json`. A project from another application, or one without a valid `gnubase.json`, gets linear fades from these attributes, in seconds or beats, each clip only its own; where an event starts inside the one before it and ends after it, and both have a fade at the ends that meet, the two fades become an equal gain crossfade.

@@ -9,8 +9,10 @@ the pool and conforming files to the project's sample rate. The engine commands 
 
 - **`pool.get`** (query) returns the pool folders and every clip with its folder, how many audio events use it
   (`used`), its media file's path, sample rate, channel count and length, `missing` (the file isn't there) and
-  `external` (outside the project folder; every file of a project that has no file yet), plus the info line's totals:
-  `audioFiles`, `usedFiles` (media files an event plays), `missingFiles`, `externalFiles` and `totalSize` in bytes.
+  `external` (outside the project folder; every file of a project that has no file yet), `rootKey`, `rootKeysDiffer`
+  and `audioEvents` (see the Key column below), plus the info line's totals: `audioFiles`, `usedFiles` (media files
+  an event plays), `missingFiles`, `externalFiles` and `totalSize` in bytes, plus `missingExternalFiles`, the
+  external files that are missing, which Prepare Archive can't copy.
   It looks at each media file on disk once (a `std::filesystem::directory_entry` for whether it is there and its
   size), not once per clip and again per file, since the panel asks after every edit.
 - **Folders.** `poolFolder.add` (name, default New Folder; parent), `poolFolder.set` (rename, or move into another
@@ -20,6 +22,11 @@ the pool and conforming files to the project's sample rate. The engine commands 
   (`Project::poolFolders`), so they are in undo and in the project file's GNUbase entry. A file with a folder inside
   one that isn't there loads with it at the top; of folders inside each other in a loop, the first one (by id) goes
   to the top and the others stay inside it, as do folders that are only inside the loop.
+- **The Key column** (#1555, #1644, p. 417, [transpose.md](transpose.md)). `clip.set` `rootKey` gives every audio
+  event that plays the clip that root key, also those in inactive track versions; the file stays as it is. `pool.get`
+  gives each clip `rootKey`, the root key its audio events share (`""` when they have none or differ),
+  `rootKeysDiffer` (they differ) and `audioEvents`, how many audio events play it, those in inactive track versions
+  too: a clip without any has nowhere to keep a key, so `clip.set` refuses its `rootKey` (#1719).
 - **`pool.removeUnused`** removes the clips that no audio event uses, then the media files no clip uses, as one undo
   step. The files stay on disk.
 - **`media.locate`** looks for missing media files in a folder and the folders inside it, by file name: the same
@@ -37,8 +44,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
   32-bit float WAV file at the project's rate (as `media.convert` does) and points the media file at it, the
   reference's Convert Files with New + Replace in Pool. Clip fades, and the offsets, lengths, fades, crossfades,
   snap points and volume curves of the events that play it, are in the file's sample frames, so they are scaled to
-  the new rate and events play the same section. A crossfade's `length` is in the frames of the event it goes into and its
-  `outLength` in those of the event it comes from, so each scales with its own file. A media file given twice in
+  the new rate and events play the same section. A crossfade's `length` is in the frames of the event it goes into
+  and its `outLength` in those of the event it comes from, so each scales with its own file. A media file given twice in
   `media` is conformed once; one given that is missing is refused. The originals stay on disk; it needs a saved
   project and is one undo step. Converting runs as a job (see below); `media.relinkResampled` then points the media
   files at the new files and scales what plays them. That command takes the new file's sample rate and length,
@@ -89,11 +96,15 @@ the pool and conforming files to the project's sample rate. The engine commands 
 - **What it shows.** A toolbar, the message line, the info line (Audio Files, Used, Total Size, External Files,
   Missing) and a tree (`<listview id="pool">`, [widgets.md](widgets.md)) with the Audio folder, its folders and their
   clips, folders first and each by name, ASCII letters in either case alike (alpha before Bass), in the columns Media,
-  Used (empty when unused), Status (Missing or External), Info (sample rate, channels, length) and Path. Rows have the
-  state classes `.folder` or `.clip`, and clips `.missing` and `.unused`. It follows `history.changed` and
-  `project.saved`, so changes from MCP, Lua or undo show, but reads the pool only while it shows
-  (`Docking::showing`, [docking.md](docking.md)): behind another tab or in a hidden zone it notes that the pool
-  changed, and `AppUi`'s step reads it once the panel shows again.
+  Used (empty when unused), Status (Missing or External), Key (a drop-down list of the root key of the clip's audio
+  events, `select[field=rootKey]`, which sets it with `clip.set`; #1555, p. 417), Info (sample rate, channels,
+  length) and Path. The Key list is empty when the events' root keys differ, where "-" clears them, and disabled for
+  a clip that no audio event plays; it holds only the key it shows until it gets the focus, when it gets all 13, so
+  that a pool of thousands of clips doesn't hold 13 options for each (#1644). Rows have the state classes `.folder`
+  or `.clip`, and clips `.missing` and `.unused`. It follows `history.changed` and `project.saved`, so changes from
+  MCP, Lua or undo show, but reads the pool only while it shows (`Docking::showing`, [docking.md](docking.md)):
+  behind another tab or in a hidden zone it notes that the pool changed, and `AppUi`'s step reads it once the panel
+  shows again.
 - **Messages.** `#pool-message` says what the last pool command did: how many missing files Find Missing Files found,
   what Remove Unused Media and Remove Missing Files removed, how many files Conform Files converted, or why one
   failed, with the state class `.error`, which the themes color as danger. The app hears the results of
@@ -122,14 +133,15 @@ the pool and conforming files to the project's sample rate. The engine commands 
 
 ## Not yet
 
-The Trash folder and emptying it, which deletes files from disk (p. 747), and the confirmation the reference asks
-before removing (Remove from Pool is what GNUbase does); renaming files on disk with their clips; the Video folder,
-regions, the Record folder and Set Pool Record Folder; the Resolve Missing Files dialog when a project with missing
-files opens, Browse for File and the Search for File dialog (`media.relink` and `media.locate` do their work); the
-search section; auditioning; the Musical Mode, Tempo, Sign., Key, Algorithm, Type, Date, Origin Time, Image and Reel
-Name columns and choosing columns; Insert into Project and dragging clips into the project window; Minimize File,
-New Version, Reconstruct, pool files and libraries; converting to other bit depths, channels and file formats (only
-the sample rate is conformed); a theme color for missing clips.
+The Trash folder and emptying it, which deletes files from disk (p. 747), and the confirmation the reference asks before
+removing (Remove from Pool is what GNUbase does); renaming files on disk with their clips; the Video folder, regions,
+the Record folder and Set Pool Record Folder; the Resolve Missing Files dialog when a project with missing files opens,
+Browse for File and the Search for File dialog (`media.relink` and `media.locate` do their work); the search section;
+auditioning; the Musical Mode, Tempo, Sign., Algorithm, Type, Date, Origin Time, Image and Reel Name columns and
+choosing columns (the View/Attributes menu, whose Root Key option switches the Key column on, #1735); Insert into
+Project and dragging clips into the project window; Minimize File, New Version, Reconstruct, pool files and libraries;
+converting to other bit depths, channels and file formats (only the sample rate is conformed); a theme color for missing
+clips.
 
 ## Checks
 
@@ -145,28 +157,32 @@ saved project's files are moved into another folder while it is closed, the load
 event plays the same section, the saved project keeps the new path, and undo brings back the old one. Another test
 has `media.locate` skip a same-named file of another length, prefer the same spelling over another case, match ASCII
 letters in any case but not Ö for ö, and look for a media file given twice once. Both run as jobs, which the tests
-wait for: `transport.locate` sent right behind `media.locate` on a folder of 2500 files is answered before the job
-ends, whose progress names the folder; `job.cancel` stops `media.locate` and `media.conform` with nothing changed
-and no file left in the media folder; a missing file removed while `media.locate` looks for it, a media file
-relinked by hand while `media.conform` converts it, and a new project sample rate set meanwhile keep the edit, and
-the conformed file is removed; `media.locate` relinks a file it found although another one it found no longer fits by the time of the relink (undo took its media file back to another sample rate while the job looked), which it reports as `changed`; `media.relinkResampled` refuses unknown media files, files of another channel count,
-missing or empty files and a media file given twice, and skips entries whose `from`, `fromSampleRate` or
-`projectSampleRate` or `project` no longer fit, and a media file given twice even when an entry wouldn't apply;
-`media.conform` refuses a given media file that is missing and can't be part of a transaction, and with a merge key
-joins the last step only if that one has the key; `media.relink` skips entries with `length` whose file went, has
-another length or doesn't fit, relinking the others, and every entry for another project; and a project opened
-while `media.locate`, `media.conform` or `media.prepareArchive` runs (another version of the song, same media ids
-and paths) is left as it was and unmodified, the job's files removed. Only WAV files count as files in the media
-folder, not the peak files the peak worker writes next to conformed files whenever it gets to them. The
-commands that must run while a job works are sent behind a `media.convert` of a long file, which keeps the command
-thread busy, so they run right after the command that started the job, however the test's thread is scheduled.
-`tests/poolpanel_tests.cpp` drives the panel in the app's UI with `ui::Automation`: Media > Open Pool Window and its
-key, the rows and columns, renaming
-by typing, dragging a clip onto a folder, New Folder and Remove Unused Media with its message, undo from another
-client, Import Medium through the Import Options dialog; names sorted in any case, a clip let go outside the panel not
-moved by a click on a folder's name or a drag from outside, a name typed away kept, no reading while another tab
-shows; Conform Files from the Media menu on a project that was never saved opening the pool with the error, and on a
-saved one showing the job's result once it is done, its progress, and Stop, which cancels it without moving the list; Find Missing Files'
-result from its job; a failed job's message; and, with a panel and binding of its own, a job that ended before its
-command's result came (the `job.get` path) and found files that changed meanwhile counted among those looked for.
-`tests/docking_tests.cpp` checks `Docking::showing`, `tests/enginebinding_tests.cpp` `EngineBinding::onResult`.
+wait for: `transport.locate` is answered while `media.locate` on a folder of 2500 files runs, whose progress names
+the folder; `job.cancel` stops `media.locate` and `media.conform` with nothing changed and no file left in the media
+folder; a missing file removed while `media.locate` looks for it, a media file relinked by hand while `media.conform`
+converts it, and a new project sample rate set meanwhile keep the edit, and the conformed file is removed;
+`media.locate` relinks a file it found although another one it found no longer fits by the time of the relink (undo took
+its media file back to another sample rate while the job looked), which it reports as `changed`; `media.relinkResampled`
+refuses unknown media files, files of another channel count, missing or empty files and a media file given twice, and
+skips entries whose `from`, `fromSampleRate` or `projectSampleRate` or `project` no longer fit, and a media file given
+twice even when an entry wouldn't apply; `media.conform` refuses a given media file that is missing and can't be part of
+a transaction, and with a merge key joins the last step only if that one has the key; `media.relink` skips entries with
+`length` whose file went, has another length or doesn't fit, relinking the others, and every entry for another project;
+and a project opened while `media.locate`, `media.conform` or `media.prepareArchive` runs (another version of the song,
+same media ids and paths) is left as it was and unmodified, the job's files removed. Only WAV files count as files in
+the media folder, not the peak files the peak worker writes next to conformed files whenever it gets to them. The
+commands that must run while a job works, `job.cancel` among them, run while `test::HeldJob`
+(`tests/testutils/heldjob.h`) holds the job at its first `job.progress`, so that the job can't get further first,
+however the threads are scheduled (#1154): `test::whileHeld` starts the job, runs them while it is held, checks that the
+job still runs and that its hold didn't lapse, and waits for it to end. It holds only the job's thread, through
+`Engine::setJobProgressHook`, which runs on the job's thread outside every lock: events and commands, also those that
+send events, go on meanwhile. `tests/poolpanel_tests.cpp` drives the panel in the app's UI with `ui::Automation`:
+Media > Open Pool Window and its key, the rows and columns, renaming by typing, dragging a clip onto a folder, New
+Folder and Remove Unused Media with its message, undo from another client, Import Medium through the Import Options
+dialog; names sorted in any case, a clip let go outside the panel not moved by a click on a folder's name or a drag from
+outside, a name typed away kept, no reading while another tab shows; Conform Files from the Media menu on a project that
+was never saved opening the pool with the error, and on a saved one showing the job's result once it is done, its
+progress, and Stop, which cancels it without moving the list; Find Missing Files' result from its job; a failed job's
+message; and, with a panel and binding of its own, a job that ended before its command's result came (the `job.get`
+path) and found files that changed meanwhile counted among those looked for. `tests/docking_tests.cpp` checks
+`Docking::showing`, `tests/enginebinding_tests.cpp` `EngineBinding::onResult`.

@@ -108,6 +108,19 @@ TEST_CASE("values travel between Lua tables and JSON", "[unit]")
 		lua.run("gnubase.fake.echo{f = print}", "function.lua").value_or(""), ContainsSubstring("can't be sent"));
 }
 
+TEST_CASE("Lua cannot scrub with zero, negative or non-finite seconds", "[unit]")
+{
+	Engine engine;
+	std::ostringstream output;
+	Runtime lua(engine, Trust::Trusted, output);
+	run(lua, R"(
+		for _, seconds in ipairs({0, -1, 0/0, math.huge, -math.huge}) do
+			local ok, message = pcall(gnubase.audition.scrub, {media = 1, position = 0, seconds = seconds})
+			assert(not ok and message:find("parameters.seconds", 1, true), message)
+		end
+	)");
+}
+
 TEST_CASE("an empty Lua table is an empty list where a command takes a list", "[unit]")
 {
 	Engine engine;
@@ -148,6 +161,29 @@ TEST_CASE("Lua handles engine events and waits for them", "[unit]")
 		assert(event.name == "fake.changed" and event.data.value == 1)
 		assert(#gnubase.events() == 1) -- the second one
 		assert(gnubase.waitFor("fake.changed", 0.01) == nil)
+	)");
+
+	// gnubase.off unsubscribes a handler, also from inside one, while the others still get the event.
+	run(lua, R"(
+		local seen = {}
+		local first = function(event) seen[#seen + 1] = "first" end
+		local once
+		once = function(event)
+			seen[#seen + 1] = "once"
+			gnubase.off("fake.changed", once)
+		end
+		local last = function(event) seen[#seen + 1] = "last" end
+		gnubase.on("fake.changed", first)
+		gnubase.on("fake.changed", once)
+		gnubase.on("fake.changed", last)
+		gnubase.fake.emit{value = 1}
+		assert(table.concat(seen, ",") == "first,once,last", table.concat(seen, ","))
+		gnubase.off("fake.changed", first)
+		gnubase.off("fake.changed", first) -- once more does nothing
+		gnubase.off("other.changed", last) -- nor for an event it isn't registered for
+		gnubase.fake.emit{value = 2}
+		assert(table.concat(seen, ",") == "first,once,last,last", table.concat(seen, ","))
+		gnubase.events()
 	)");
 
 	// Coroutines can call commands as well.
@@ -202,6 +238,36 @@ TEST_CASE("a time limit asks whether a late script keeps running, and ends with 
 	lua.setTimeLimit(std::chrono::milliseconds(0));
 	run(lua, "local t = os.clock() + 0.1 while os.clock() < t do end late()");
 	CHECK(asked == 3);
+}
+
+TEST_CASE("a late script that was stopped can't catch the error and go on", "[unit]")
+{
+	Engine engine;
+	std::ostringstream output;
+	Runtime lua(engine, Trust::Untrusted, output);
+	int asked = 0;
+	lua.setTimeLimit(std::chrono::milliseconds(20),
+		[&asked]
+		{
+			++asked;
+			return false;
+		});
+	// The error comes inside the pcall, which catches it: it comes again right after, without asking.
+	CHECK_THAT(lua.run("while true do pcall(function() while true do end end) end", "catches.lua").value_or(""),
+		ContainsSubstring("ran longer than"));
+	CHECK(asked == 1);
+	// Also when the pcall loop runs in a coroutine other than the one that was late.
+	asked = 0;
+	CHECK_THAT(lua.run(R"(coroutine.wrap(function()
+		local late = coroutine.create(function() while true do end end)
+		while true do pcall(function() coroutine.resume(late) while true do end end) end
+	end)())",
+					  "resumes.lua")
+				   .value_or(""),
+		ContainsSubstring("ran longer than"));
+	CHECK(asked == 1);
+	run(lua, "local caught = pcall(function() end) assert(caught)"); // the next run starts afresh
+	CHECK(asked == 1);
 }
 
 TEST_CASE("code runs in an environment of its own that reads the globals it doesn't have", "[unit]")

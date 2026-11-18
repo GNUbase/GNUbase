@@ -66,7 +66,7 @@ namespace gnubase::engine
 		int rootKey = -1;
 		TransposeTrack transpose;
 		ChordTrack chords;
-		ChordPads chordPads;
+		ChordPads chordPads; // stepPosition is excluded; ProjectChange records it separately
 		midi::InputTransformerModules inputTransformer;
 	};
 
@@ -78,6 +78,11 @@ namespace gnubase::engine
 		std::optional<ProjectSettings> settingsAfter;
 		std::optional<std::string> timeFormatBefore; // both set only when the edit changed the format
 		std::optional<std::string> timeFormatAfter;
+		// The chord pads' step input position, which ProjectSettings leave out too: both set when the edit moved it.
+		// Moving it is navigation, so a change of nothing else is no undo step (empty), but an edit that moves it, such
+		// as chordPads.step, takes it back on undo (#1089).
+		std::optional<time::Ticks> stepPositionBefore;
+		std::optional<time::Ticks> stepPositionAfter;
 		std::vector<ObjectChange<Track>> tracks;
 		std::vector<ObjectChange<Channel>> channels;
 		std::vector<ObjectChange<Slot>> slots;
@@ -115,6 +120,8 @@ namespace gnubase::engine
 		ProjectChange change;
 		std::string merge; // a transaction's merge key: later transactions with the same key join this step
 		uint64_t id = 0;   // given by History::record, growing with each step
+		// NOLINTNEXTLINE(readability-redundant-member-init): aggregate callers may omit this field, also with GCC
+		std::vector<ObjectId> movedTracks{}; // explicit track moves, including moves within one folder
 	};
 
 	// The steps before position() are done; the ones after it were undone and can be redone.

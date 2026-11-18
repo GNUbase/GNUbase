@@ -13,6 +13,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -36,6 +37,11 @@ namespace gnubase::test
 	// SDL_GPU runs: it loads the drivers once more and never closes them. Does nothing elsewhere.
 	void keepVulkanDriversLoaded();
 
+	// Copies the shipped resources into folder/resources and replaces one string in a UI document there. A missing
+	// string fails the test. The caller keeps folder alive while an app uses the returned resources path.
+	std::filesystem::path patchedResources(const std::filesystem::path& folder, const std::string& document,
+		const std::string& from, const std::string& to);
+
 	// GNUbase's UI as the app shows it (app::AppUi), with the engine on the dummy device and the user settings in a
 	// temporary folder: GNUbase's fonts and themes, the user settings and the engine binding, and the main window,
 	// hidden and drawn with 4x MSAA, which every GPU has with the same sample positions. Tests drive it with
@@ -44,8 +50,11 @@ namespace gnubase::test
 	class UiApp
 	{
 	public:
-		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1. The engine takes MIDI and
-		// audio from these backends, by default the system's; the audio backends must include the dummy device's.
+		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1. Every runner opens it at
+		// that size, except that macOS fits it to the monitor: CI's macOS runner opens windows at most 1024x684, and
+		// the test warns when its window is smaller than asked (#1078). A test that needs a lane or a control in view
+		// in a larger window scrolls it there, or asks for a window that fits. The engine takes MIDI and audio from
+		// these backends, by default the system's; the audio backends must include the dummy device's.
 		explicit UiApp(ui::Size size = {640, 480},
 			std::vector<std::unique_ptr<midi::Backend>> midiBackends = midi::makeBackends(),
 			std::vector<std::unique_ptr<audio::Backend>> audioBackends = audio::makeBackends());
@@ -73,6 +82,8 @@ namespace gnubase::test
 		Rml::ElementDocument& show(const std::string& name);
 
 		// Steps the shell until done() is true; false if it isn't within the timeout.
+		// A JSON error from done() means "not ready yet"; if it still throws past the timeout, the error is rethrown.
+		// Predicates may read UI state that hasn't arrived yet without a JSON type guard.
 		bool waitUntil(const std::function<bool()>& done, std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
 		// Lays the windows out at this dp ratio, whatever the monitor's scale, so that screenshots have the same pixels
@@ -87,6 +98,12 @@ namespace gnubase::test
 		// may differ by more than 8 of 255.
 		static void checkGolden(const std::string& name, const ui::Image& image);
 
+		// The sections the main window shows in the container with this id, such as "toolbar", in their order: those
+		// neither hidden nor out of room (docs/features/docking.md). A section cut off at the edge of a container that
+		// doesn't fit its sections to its width, such as the transport bar, counts as shown. A golden image's tolerance
+		// can hide a whole toolbar button, so tests with goldens of the project window check these too (#1342).
+		std::vector<std::string> shownSections(const std::string& container);
+
 	private:
 		void start(std::vector<std::unique_ptr<midi::Backend>> midiBackends,
 			std::vector<std::unique_ptr<audio::Backend>> audioBackends);
@@ -99,8 +116,36 @@ namespace gnubase::test
 		std::unique_ptr<ui::Automation> m_automation;
 	};
 
+	// The instrument noteProbe on a track, rendered by hand: plays() hears the note ons and offs that reach the
+	// track's instrument, such as those of a key of a key editor's keyboard. Sets the dummy device up and captures
+	// MIDI.
+	class NoteProbe
+	{
+	public:
+		NoteProbe(UiApp& app, uint64_t track);
+
+		// Renders until the note ons and offs heard since clear() are the expected ones (bytes of each message).
+		bool plays(const std::vector<std::vector<int>>& expected);
+
+		// Forgets what was heard.
+		void clear() { m_played.clear(); }
+
+	private:
+		UiApp& m_app;
+		std::vector<std::vector<int>> m_played;
+	};
+
 	// The value attribute of a value control (a fader, a knob, a value field) as a number.
 	double controlValue(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector);
+
+	// The options of the first drop-down list that the selector matches in the window (the main window by default), as
+	// the UI tools' DOM has them: each its value, text and whether it's selected. A JSON error while none matches,
+	// which waitUntil waits out.
+	engine::Json selectOptions(
+		UiApp& app, const std::string& selector, std::optional<ui::WindowId> window = std::nullopt);
+
+	// The text of that drop-down list's selected option, empty if none is.
+	std::string selectedOption(UiApp& app, const std::string& selector);
 
 	// Changes a value control step by step while the engine answers late (#716): after each step the engine has done
 	// what the UI sent, and the UI hands the answers on only after the next step sent its commands, so that the
@@ -120,6 +165,10 @@ namespace gnubase::test
 		// Moves the mouse by steps of two pixels, down (1) or up (-1), perAnswer steps for each time the engine
 		// answers. Returns the control's value.
 		double move(int steps, int direction, int perAnswer = 1);
+
+		// Moves the mouse by one step of two pixels, down (1) or up (-1), without waiting for the engine, e.g. while
+		// the test holds it.
+		void nudge(int direction);
 
 		// Releases the button. If stays, checks that the control then stays where the drag left it while the engine
 		// answers late; it doesn't if another client set its value during the drag.

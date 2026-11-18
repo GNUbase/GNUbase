@@ -130,3 +130,18 @@ TEST_CASE("the Profile Manager exports and imports profiles through the file dia
 	REQUIRE(app.waitUntil([&app] { return listed(app) == std::vector<std::string>{"Default", "Home*"}; }));
 	click(app, "#profile-close");
 }
+
+TEST_CASE("the Profile Manager opens after the start when a profile switch couldn't be finished or undone", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	// What a switch whose files couldn't be put back keeps (docs/features/profiles.md).
+	std::filesystem::create_directories(app.engine().settingsDirectory() / "profile-switch" / "active");
+	app.appUi().showProject();
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json message = elements(app, "#profile-message");
+			return !message.empty() && message.at(0).value("text", "").find("didn't finish") != std::string::npos;
+		}));
+	click(app, "#profile-close");
+}

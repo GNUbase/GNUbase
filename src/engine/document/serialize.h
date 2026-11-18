@@ -11,7 +11,8 @@
 
 // The project document as JSON: what project.get returns and the events carry, and what the DAWproject extension
 // entry stores. projectFromJson(toJson(project)) gives back the same project, except for the newer build's grid types
-// in its snap settings (SnapSettings::newerGrids), which only saving writes (saveDawProject).
+// in its snap settings (SnapSettings::newerGrids), which only saving writes (saveDawProject), and the heights and
+// fold states that the track layout keeps of removed tracks for undo, which projectFromJson leaves out (#1131).
 namespace gnubase::engine
 {
 	// Note velocities and controller values are 0 to 1 in JSON, whatever the internal resolution.
@@ -87,6 +88,12 @@ namespace gnubase::engine
 	Json toJson(const AudioEvent& event);
 	Json toJson(const AudioPart& part);
 	Json toJson(const Note& note);
+	// A note's expression points (Note::expressions) from [{type, position, value}], sorted by position; name names
+	// them in errors. Throws std::invalid_argument for unknown types, negative positions and values out of range, or
+	// while loading a project leaves out points of unknown types and clamps the others, as the note's other values.
+	std::vector<ExpressionPoint> expressionsFromJson(const Json& json, const std::string& name, bool loading = false);
+	// The schema of a note's expressions in commands.
+	Json expressionsSchema();
 	Json toJson(const Controller& controller);
 	// A controller's type and the values the type uses, without checking them; the others are zero. Its id and
 	// position are left to the caller.
@@ -106,10 +113,15 @@ namespace gnubase::engine
 	Json toJson(const AutomationLane& lane); // with its points, sorted by position
 	Json toJson(const MixerView& view);      // {"hidden": [ids], "hiddenTypes": [types]}
 	// {hidden, sync, configurations: [{name, hidden}], configuration}; trackVisibilityFromJson takes what is valid
-	// JSON.
+	// JSON and leaves out the rest, and the project load checks the values as trackVisibility.set does
+	// (sanitizeTrackVisibility).
 	Json toJson(const TrackVisibility& visibility);
 	TrackVisibility trackVisibilityFromJson(const Json& json);
-	// {heights: [{track, height}], folded}; trackLayoutFromJson takes what is valid and leaves out the rest.
+	// A track's height in the track list, in dp before vertical zoom: trackLayout.set's range.
+	inline constexpr double g_minTrackHeight = 20.0;
+	inline constexpr double g_maxTrackHeight = 400.0;
+	// {heights: [{track, height}], folded}; trackLayoutFromJson takes what is valid and leaves out the rest, and
+	// brings heights into the range.
 	Json toJson(const TrackLayout& layout);
 	TrackLayout trackLayoutFromJson(const Json& json);
 	// {workspaces: [{name, layout}], active: {type, name}}; workspacesFromJson takes what is valid.

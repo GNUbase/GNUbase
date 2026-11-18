@@ -103,12 +103,13 @@ sound, bleed, flams) are yet to come.
 ## Checks
 
 - `tests/hitpoints_tests.cpp`: detection accuracy on two synthesized drum loops whose hits are known (straight eighths
-  with a ghost note and an open hi-hat at 48 kHz; swung sixteenths with soft attacks under a noise floor, in stereo
-  at 44.1 kHz): every hit found within 5 ms and nothing else, and none in silence or steady tones; measuring at each
-  onset gives what the detection found; detecting as a job, cancelled, with the clip removed meanwhile and without
-  its file; filtering, locking, disabling, resetting, inserting and moving hitpoints with their errors, undo and the
-  project file, inserted and moved ones measured where they go; `clip.setHitpoints` and its errors; slices, events,
-  regions, markers, the groove and MIDI notes.
+  with a ghost note and an open hi-hat at 48 kHz; swung sixteenths with soft attacks under a noise floor, in stereo at
+  44.1 kHz): every hit found within 5 ms and nothing else, and none in silence or steady tones; measuring at each
+  onset gives what the detection found; detecting as a job, cancelled, with another project opened or the clip removed
+  meanwhile, while `test::whileHeld` holds the job at its first `job.progress`, and without its file; filtering,
+  locking, disabling, resetting, inserting and moving hitpoints with their errors, undo and the project file, inserted
+  and moved ones measured where they go; `clip.setHitpoints` and its errors; slices, events, regions, markers, the
+  groove and MIDI notes.
 - `tests/playback_tests.cpp`: auditioning a clip, and up to an end, as Play back Slice does.
 - `tests/hitpoints_ui_tests.cpp` drives the sample editor with `ui::Automation`: Edit Hitpoints showing the detected
   hitpoints at their frames, the threshold slider's drag as one undo step, Remove All; the handle, Shift, Ctrl and

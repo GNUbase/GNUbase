@@ -60,7 +60,8 @@ and auditioning chord events.
 - **Live Input** (`chord.follow` `liveInput`, p. 1338): `chords` or `scales` moves the notes played into a MIDI or
   instrument track to the nearest note (down on a tie) of the chord or scale playing at the transport position. The
   render snapshot carries the chord track's pitch classes by position to the audio thread (`RenderChannel::liveInput`,
-  `LiveHarmony`), where the sequencer maps each note-on without allocating; its note-off ends what it played.
+  `LiveHarmony`), where the sequencer maps each note-on without allocating; its note-off ends what it played, once no
+  other held key plays that note too.
 - **Create Chord Events** (`chord.fromMidi`, pp. 1342-1343): chord events from the MIDI notes of parts or tracks.
   Wherever the sounding notes change, the chord they make (at least three pitch classes that a chord type on one of
   them holds, the others as tensions; the fewest tensions, then the lowest note as the root) becomes a chord event if
@@ -72,18 +73,29 @@ and auditioning chord events.
   the triads, sus chords and sevenths on every root by the strength of its pitch classes (from the power spectrum,
   100 Hz to 4 kHz); a quarter note whose chord differs from the one before starts a chord event, silence makes none.
   The events keep the audio event and the five chords that fit best (`detected`), as the chord assistant's Detected
-  tab lists them, and replace the chord events within the audio event.
+  tab lists them, and replace the chord events within the audio event. Once the audio event is removed, `chord.get`
+  lists neither, until undo brings the audio event back.
 - **Recording chord events** (p. 1345): with the chord track record-enabled, a recording's notes (`recording.add`)
-  make chord events as Create Chord Events does, replacing those over the takes. The notes come from the MIDI and
-  instrument tracks that record.
+  make chord events as Create Chord Events does, each take's (a cycle recording's lap) replacing those over it, take
+  after take, so that laps don't mix and the last lap that recorded notes wins. The notes come from the MIDI and
+  instrument tracks that record and, while the chord track is record-enabled, from those that only monitor: the
+  recorder records their input too (`MidiRecordTrack::chordsOnly`), and `recording.add` takes it (`chordsOnly`) for
+  chord events only, without a part. That input also stays in the track's retrospective buffer, marked as recorded
+  (`Retrospective::recorded`), so that a recording that starts within the MIDI record catch range of the one before
+  doesn't catch it again. Inserting the buffer (`midi.insertRetrospective`) is no recording of the chord track: it
+  makes no chord events (`recording.add` `chordEvents` false), so what was edited on the chord track in between stays.
 - **Map to Chord Track** (`chord.map`, p. 1341): moves the notes of parts to the chord track's chords for good, by a
   follow mode: each part's own chords (C where none are found) map to the chord events playing at each note.
 - **Assign Voices to Notes** (`chord.assignVoices`, p. 1342): moves each note to the nearest pitch of the voicing of
   the chord event playing at its start.
-- **Auditioning** (`chord.audition`, pp. 1329-1330): plays a chord event's voicing, a scale event's notes or a chord
-  on the audition track as if from its MIDI input (`midi.inject`), until `on` false. With Acoustic Feedback the render
+- **Auditioning** (`chord.audition`, pp. 1329-1330): plays a chord event's voicing, a scale event's notes or a chord on
+  the audition track as if from its MIDI input (`midi.inject`), until `on` false; a frozen audition track takes no MIDI,
+  so it is refused there. The held chord's note-offs are only skipped once its channel is no longer an unfrozen MIDI or
+  instrument track's (a frozen track takes no MIDI); if they can't be sent otherwise (too much MIDI waits for the
+  device), the command fails and the chord stays held for the next call to end. With Acoustic Feedback the render
   snapshot also plays the chord events' voicings on the audition track (`renderChordTrack`), each to the next, the last
-  a bar long.
+  a bar long, on the track's MIDI channel if it is a MIDI track set to one, where auditioning plays too
+  ([mixer.md](mixer.md)).
 - **The project file** keeps all of it in GNUbase's entry. It is read as the commands would make it (#939): unknown
   chords are undefined, unknown scales and events before the project start are left out, an unknown follow mode is
   `off` (it would otherwise play like Chords), and other unknown settings are their defaults.
@@ -91,7 +103,7 @@ and auditioning chord events.
 ## Playback
 
 The render snapshot maps each note of a track that follows the chord track (`ChordFollower`,
-`document/chordtrack.h`) before the MIDI modifiers and global transposition: from the source harmony at the note's
+`document/chordtrack.h`, made once per track) before the MIDI modifiers and global transposition: from the source harmony at the note's
 start to the chord event playing there (with Shift Chords, at the note's start minus the shift), the source's chords
 with their automatic scales and the track's voicings. Every mode but Voicings and Single Voice first moves the pitch
 by the step between the roots, the nearer way (-5 to 6 semitones); Root Notes stops there, Chords moves it to the
@@ -118,10 +130,12 @@ chord track is muted. The notes themselves stay as they are.
   (`chordAudition`).
 - **Add Track** has Chord, once per project: a second one is refused with the engine's message.
 - **Project > Chord Track**: Chords to MIDI (`track.chordsToMidiSelected`: `chord.toMidi` onto the first selected MIDI
-  or instrument track), Create Chord Events (`track.createChordEventsSelected`: `chord.fromAudio` from the selected
-  audio tracks' events, and `chord.fromMidi` from the selected MIDI and instrument tracks with the options of the
-  Create Chord Events dialog, `create-chord-events.rml`), Map to Chord Track (`track.mapToChordTrackSelected`, with
-  the mapping mode of `map-to-chord-track.rml`) and Assign Voices to Notes (`track.assignVoicesSelected`).
+  or instrument track), Create Chord Events (`track.createChordEventsSelected`: `chord.fromAudio` from audio events,
+  and `chord.fromMidi` from MIDI parts with the options of the Create Chord Events dialog, `create-chord-events.rml`),
+  Map to Chord Track (`track.mapToChordTrackSelected`, with the mapping mode of `map-to-chord-track.rml`) and Assign
+  Voices to Notes (`track.assignVoicesSelected`). They take the selected MIDI parts and audio events (pp. 1341-1344),
+  or with none selected those of the selected tracks; audio events in audio parts never count (p. 1344), and selected
+  audio parts are a selection of nothing, not a reason to fall back to the tracks.
 - **The Inspector's Chords section** has a MIDI or instrument track's Follow Chord Track, the voice and master of
   Single Voice, This Track's Voicings and Live Input while the project has a chord track; the chord track's own
   **Chord Track section** has Adaptive Voicings, Automatic Scales, Acoustic Feedback, the voicing library and its
@@ -130,18 +144,24 @@ chord track is muted. The notes themselves stay as they are.
 
 ## Checks
 
-`tests/harmony_tests.cpp`: chord names and text input with `C7sus4`, chord intervals, scales and automatic scales
-that hold every note of their chords, recognizing chords, basic, piano and guitar voicings, and every Follow Chord
-Track mode with Single Voice over the I-vi-IV-V progression. `tests/chordtrack_tests.cpp`: chord and scale events
-(adding the track, timeline order, voicings and scales, the settings, undo, the track's removal), Chords to MIDI with
-the last chord a bar long off the bar line, Follow Chord Track over reference progressions, on drum-mapped tracks,
-with Mute Chord Track, Shift Chords, voicing libraries, This Track's Voicings and Single Voice with a master, follow
-settings that go with their track and come with its copy, Create Chord Events with Detect Arpeggios and Interpret
-Sustain Pedal, Map to Chord Track and Assign Voices to Notes, chord events from a synthesized audio file, recorded
-chord events, Live Input and auditioning on the dummy device with the note probe, Acoustic Feedback, and saving and
-loading, also of a hand-edited file. `tests/chordtrack_ui_tests.cpp`: Add Track's Chord page and its refusal of a
-second one, drawing, typing, dragging, double-clicking and erasing chord events on the lane, the scale lane, the
-track list's chord track controls, Project > Chord Track's items and dialogs, and the Inspector's chord settings.
+`tests/harmony_tests.cpp`: chord names and text input with `C7sus4`, chord intervals, scales and automatic scales that
+hold every note of their chords, recognizing chords, basic, piano and guitar voicings, and every Follow Chord Track mode
+with Single Voice over the I-vi-IV-V progression. `tests/chordtrack_tests.cpp`: chord and scale events (adding the
+track, timeline order, voicings and scales, the settings, undo, the track's removal), Chords to MIDI with the last chord
+a bar long off the bar line, Follow Chord Track over reference progressions, on drum-mapped tracks, with Mute Chord
+Track, Shift Chords, voicing libraries, This Track's Voicings and Single Voice with a master, follow settings that go
+with their track and come with its copy, Create Chord Events with Detect Arpeggios and Interpret Sustain Pedal, Map to
+Chord Track and Assign Voices to Notes, chord events from a synthesized audio file and after its removal, recorded chord
+events, also a cycle recording's laps and from a track that only monitors (whose input stays in its retrospective
+buffer, which a later recording's catch range and an insert of the buffer don't make chord events from again), Live
+Input (also two keys on one note) and auditioning on the dummy device with the note probe, note-offs that don't fit, a
+held chord on a removed or frozen audition track and the refusal to audition on a frozen one, Acoustic Feedback (also on
+a MIDI track's channel), and saving and loading, also of a hand-edited file. `tests/chordtrack_ui_tests.cpp`: Add
+Track's Chord page and its refusal of a second one, drawing, typing, dragging, double-clicking and erasing chord events
+on the lane, the scale lane, the track list's chord track controls, Project > Chord Track's items and dialogs, whose
+options reach the commands, on the selected parts (a selected audio part counts as one, also for Map to Chord Track and
+Assign Voices to Notes with a MIDI track selected) or the selected tracks' parts and loose audio events, pressing chord
+and scale events with Acoustic Feedback, and the Inspector's chord settings.
 
 ## Not yet
 
@@ -152,8 +172,6 @@ track list's chord track controls, Project > Chord Track's items and dialogs, an
   Scale Setup dialog; Resolve Display Conflicts.
 - The Follow Chord Track dialog in the Inspector (the engine's `sync` has its choices) and Start Voicing.
 - Note voices on the info line after Assign Voices to Notes.
-- Dragging chord events onto MIDI effects or instrument pads, Create Chord Events from selected parts (the engine
-  takes parts) and dropping parts or audio events onto the chord track.
+- Dragging chord events onto MIDI effects or instrument pads, and dropping parts or audio events onto the chord track.
 - Detect Arpeggios finds arpeggios a bar at a time: two arpeggiated chords in a bar make one or none. Chord detection
   from audio works on quarter notes of the beat grid.
-- Recording chord events from a track that only monitors: the notes come from tracks that record.

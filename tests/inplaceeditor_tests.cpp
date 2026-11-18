@@ -2,12 +2,19 @@
 // The in-place editor's engine side (#131, docs/features/in-place-editor.md): editor.inPlace opens and closes a MIDI
 // track's in-place editor, an editor view named inPlace:<track> that shows every MIDI part of its track.
 // tests/inplaceeditor_ui_tests.cpp drives it in the app.
+#include "engine/dawproject/dawproject.h"
+#include "engine/document/document.h"
 #include "engine/engine.h"
+#include "scripting/runtime.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
+#include <limits>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -159,10 +166,27 @@ TEST_CASE("the in-place editor refuses tracks without notes and changing its par
 	// The schema names them, for MCP clients and Lua.
 	for (const engine::CommandInfo& info : f.engine.commands())
 		if (info.name == "editor.get")
+		{
 			CHECK(info.parameters.at("properties").at("editor").at("pattern") == "^(lower|window|inPlace:[0-9]+)$");
+			// inPlace: and a track id of at most 20 digits, as many as a 64-bit id has (#1059, #1159).
+			CHECK(info.parameters.at("properties").at("editor").at("maxLength") == 28);
+		}
 	CHECK_THAT(f.fails("editor.get", {{"editor", "lowerZone"}}), ContainsSubstring("lower|window|inPlace:"));
+	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::string(19, '9')}}),
+		ContainsSubstring("no track " + std::string(19, '9')));
+	// The largest 64-bit id has 20 digits; a larger number is no id (#1159).
+	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:18446744073709551615"}}),
+		ContainsSubstring("no track 18446744073709551615"));
+	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:18446744073709551616"}}),
+		ContainsSubstring("editor must be lower, window or inPlace:<track>"));
 	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::string(20, '9')}}),
-		ContainsSubstring("lower, window or inPlace:"));
+		ContainsSubstring("editor must be lower, window or inPlace:<track>"));
+	// A track's editor has one name: no leading zeros.
+	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:0" + std::to_string(midi)}}),
+		ContainsSubstring("editor must be lower, window or inPlace:<track>"));
+	// A longer name gets the schema's length error, before the pattern ever sees it.
+	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::string(21, '9')}}),
+		ContainsSubstring("parameters.editor must be at most 28 characters"));
 	CHECK_THAT(f.fails("editor.open", {{"editor", Fixture::name(midi)}, {"parts", {part}}}),
 		ContainsSubstring("editor.inPlace"));
 
@@ -173,10 +197,103 @@ TEST_CASE("the in-place editor refuses tracks without notes and changing its par
 		ContainsSubstring("shows its track's parts"));
 	CHECK_THAT(f.fails("editor.set", {{"editor", Fixture::name(midi)}, {"globalTracks", Json::array()}}),
 		ContainsSubstring("only the editor window"));
+	// It shows one track: the Part Editing Mode menu's All Parts and Active Part, not activeTrack.
+	CHECK_THAT(f.fails("editor.set", {{"editor", Fixture::name(midi)}, {"editingMode", "activeTrack"}}),
+		ContainsSubstring("allParts or activePart"));
+	CHECK(f.view(midi).at("editingMode") == "allParts");
+	CHECK(f.call("editor.set", {{"editor", Fixture::name(midi)}, {"editingMode", "activePart"}}).at("editingMode") ==
+		"activePart");
 	// A track without parts opens with none.
 	const uint64_t empty = f.track("instrument");
 	CHECK(f.call("editor.inPlace", {{"tracks", {empty}}, {"open", true}}).at("tracks") == Json::array({midi, empty}));
 	CHECK(f.view(empty).at("parts") == Json::array());
+}
+
+TEST_CASE("a track whose id approaches Lua's integer limit has an in-place editor", "[integration]")
+{
+	// Keep large ids exact in editor names while leaving space for the project's new objects.
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "large-ids.dawproject").u8string();
+	{
+		Fixture f;
+		f.call("project.save", {{"path", file}});
+	}
+	engine::Project project = engine::loadDawProject(file, (dir.path() / "media").u8string());
+	project.nextId = 9'000'000'000'000'000'000ULL;
+	engine::saveDawProject(project, file, engine::DawProjectSaveOptions());
+
+	Fixture f;
+	f.call("project.load", {{"path", file}});
+	const uint64_t midi = f.track("midi");
+	REQUIRE(midi >= 9'000'000'000'000'000'000ULL);
+	const uint64_t part = f.part(midi, 0);
+	const std::string name = Fixture::name(midi);
+	REQUIRE(name.size() == 27);
+	std::ostringstream output;
+	scripting::Runtime lua(f.engine, scripting::Trust::Trusted, output);
+	const auto failure = lua.run("local track = gnubase.project.get().tracks[1].id\n"
+								 "assert(math.type(track) == 'integer' and track == " +
+			std::to_string(midi) +
+			")\n"
+			"gnubase.editor.inPlace{tracks = {track}, open = true}\n"
+			"assert(gnubase.editor.get{editor = 'inPlace:' .. track}.open)\n"
+			"gnubase.editor.close{editor = 'inPlace:' .. track}",
+		"large-id.lua");
+	INFO(failure.value_or(""));
+	REQUIRE(!failure.has_value());
+
+	std::mutex mutex;
+	std::vector<std::string> announced;
+	const engine::Listener listener(f.engine,
+		[&](const engine::Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "editor.changed")
+				announced.push_back(event.data.at("editor").get<std::string>());
+		});
+	CHECK(f.call("editor.inPlace", {{"tracks", {midi}}, {"open", true}}).at("tracks") == Json::array({midi}));
+	CHECK(ids(f.view(midi).at("parts")) == std::vector<uint64_t>{part});
+	f.call("editor.set", {{"editor", name}, {"activePart", part}});
+	CHECK_FALSE(f.call("editor.close", {{"editor", name}}).at("open").get<bool>());
+	const std::scoped_lock lock(mutex);
+	CHECK(std::find(announced.begin(), announced.end(), name) != announced.end());
+}
+
+TEST_CASE("project loads refuse ids that cannot reach Lua as positive integers", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "large-ids.dawproject").u8string();
+	Fixture f;
+	f.track("midi");
+	f.call("project.save", {{"path", file}});
+	const auto original = test::readZip(file);
+	for (const uint64_t id : {9'223'372'036'854'775'808ULL, 18'446'744'073'709'551'615ULL})
+	{
+		for (const bool counter : {false, true})
+		{
+			auto entries = original;
+			Json extension = Json::parse(entries.at("gnubase.json"));
+			Json& project = extension.at("project");
+			if (counter)
+				project["nextId"] = id;
+			else
+				project.at("tracks").at(0)["id"] = id;
+			entries["gnubase.json"] = extension.dump();
+			test::writeZip(file, entries);
+			CAPTURE(id, counter);
+			CHECK_THAT(f.fails("project.load", {{"path", file}}), ContainsSubstring("Lua's integer range"));
+		}
+	}
+}
+
+TEST_CASE("object id allocation stops before exceeding Lua's integer range", "[unit]")
+{
+	engine::Project project;
+	const auto limit = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+	project.nextId = limit - 1;
+	CHECK(project.newId() == limit - 1);
+	CHECK_THROWS_WITH(project.newId(), ContainsSubstring("Lua's integer range"));
+	CHECK(project.nextId == limit);
 }
 
 TEST_CASE("a removed track's in-place editor closes, and a new project closes them all", "[unit]")

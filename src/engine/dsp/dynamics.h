@@ -134,13 +134,15 @@ namespace gnubase::engine::dsp
 		void reset() noexcept;
 		void setParameter(uint32_t id, double value) noexcept;
 		void process(float* const* audio, int channels, uint32_t begin, uint32_t end) noexcept;
-		// Bypassed, it only delays: its gain returns to unity with its release, and nothing is clamped. Its delay
-		// stays, so it can be switched on and off while it plays.
+		// Bypassed, it only delays: the output skips the gain and the clamp, but the detector and its gain keep
+		// running, so when the bypass ends during a loud passage the gain is ready from the first frame and nothing
+		// is hard-clipped. Its delay stays, so it can be switched on and off while it plays.
 		void setBypass(bool bypass) noexcept { m_bypass = bypass; }
 
 		// The delay in samples, from prepare on.
 		uint32_t latency() const { return m_lookahead; }
-		// The gain applied to the last frame, before the final clamp: for tests and meters.
+		// The gain computed for the last frame, before the final clamp: for tests and meters. While bypassed it is
+		// not applied to the output, but it keeps following the input.
 		double gain() const { return m_gain; }
 
 	private:

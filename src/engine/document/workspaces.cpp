@@ -46,9 +46,10 @@ namespace gnubase::engine
 		Json activeOf(const ProjectWorkspaces& workspaces, CommandContext& context)
 		{
 			const std::string& type = workspaces.activeType;
-			if (type.empty() ||
-				indexOf(listOf(workspaces, context, type), workspaces.active) ==
-					listOf(workspaces, context, type).size())
+			if (type.empty())
+				return {{"type", ""}, {"name", ""}};
+			const Json list = listOf(workspaces, context, type);
+			if (indexOf(list, workspaces.active) == list.size())
 				return {{"type", ""}, {"name", ""}};
 			return {{"type", type}, {"name", workspaces.active}};
 		}
@@ -185,7 +186,6 @@ namespace gnubase::engine
 			{
 				const auto name = context.parameters().at("name").get<std::string>();
 				const auto type = context.parameters().at("type").get<std::string>();
-				require(!name.empty(), "name must not be empty");
 				const Json layout = userSetting(context, "ui.layout");
 				changeList(workspaces, context, engine, type,
 					[&](Json& list)
@@ -277,7 +277,6 @@ namespace gnubase::engine
 				const auto type = context.parameters().at("type").get<std::string>();
 				const auto name = context.parameters().at("name").get<std::string>();
 				const auto newName = context.parameters().at("newName").get<std::string>();
-				require(!newName.empty(), "newName must not be empty");
 				changeList(workspaces, context, engine, type,
 					[&](Json& list)
 					{

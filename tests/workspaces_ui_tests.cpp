@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -361,6 +362,34 @@ TEST_CASE("the Workspaces menu adds, updates and recalls workspaces, and the org
 	click(app, "#workspaces-close");
 }
 
+TEST_CASE("the Workspaces menu follows the global workspaces that another client changes", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.call("workspace.add", {{"name", "Mixing"}, {"type", "global"}});
+	const auto updateDisabled = [&app]
+	{ return elements(app, "menuitem[command=window.updateWorkspace]").at(0).at("attributes").contains("disabled"); };
+	openMenu(app);
+	REQUIRE(app.waitUntil([&app] { return menuItems(app) == std::vector<std::string>{"-", "G Mixing*"}; }));
+	CHECK(!updateDisabled());
+	app.ui().key(std::nullopt, "Escape");
+
+	// Another client, such as another GNUbase process, deletes the active workspace: No Workspace is checked, and
+	// Update Workspace has nothing to update.
+	const Json workspaces = app.call("settings.get", {{"key", "ui.workspaces"}}).at("value");
+	app.call("settings.set", {{"key", "ui.workspaces"}, {"value", Json::array()}});
+	openMenu(app);
+	REQUIRE(app.waitUntil([&app] { return menuItems(app) == std::vector<std::string>{"-*"}; }));
+	CHECK(updateDisabled());
+	app.ui().key(std::nullopt, "Escape");
+
+	// Once it is back, it is active again.
+	app.call("settings.set", {{"key", "ui.workspaces"}, {"value", workspaces}});
+	openMenu(app);
+	REQUIRE(app.waitUntil([&app] { return menuItems(app) == std::vector<std::string>{"-", "G Mixing*"}; }));
+	CHECK(!updateDisabled());
+}
+
 TEST_CASE("the Windows dialog lists the open windows, activates and closes them", "[ui]")
 {
 	test::UiApp app({1000, 700});
@@ -404,7 +433,7 @@ TEST_CASE("the Windows dialog lists the open windows, activates and closes them"
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#windows-list listitem", app.main().id()).size() == 3; }));
 
 	// All closes every window but the project window.
-	press("#windows-mode"); // its options aren't in the DOM that the UI tools see
+	press("#windows-mode");
 	app.ui().key(app.main().id(), "Down");
 	press("#windows-mode");
 	REQUIRE(app.waitUntil(
@@ -418,6 +447,16 @@ TEST_CASE("the Windows dialog lists the open windows, activates and closes them"
 	CHECK(app.shell().windows().size() == 1);
 	REQUIRE(app.waitUntil(closeDisabled));
 	press("#windows-ok");
+}
+
+TEST_CASE("the Windows dialog lists a window that opens right after it, before it follows the windows", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.keys().run("window.windows", Json::object(), app.main(), nullptr);
+	REQUIRE(elements(app, "#windows-list listitem", app.main().id()).size() == 1);
+	REQUIRE(app.appUi().toggleMarkers() != nullptr);
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#windows-list listitem", app.main().id()).size() == 2; }));
 }
 
 TEST_CASE("the script console is a workspace window", "[ui]")
@@ -441,4 +480,50 @@ TEST_CASE("the script console is a workspace window", "[ui]")
 	REQUIRE(app.waitUntil([&open] { return !open(); }));
 	app.call("workspace.activate", {{"type", "global"}, {"name", "Scripting"}});
 	REQUIRE(app.waitUntil(open));
+}
+
+TEST_CASE("the Windows dialog's mode select and buttons are one column inside the dialog, in every theme", "[ui]")
+{
+	// The select is as wide as the buttons below it and lies inside the dialog's frame, not 160 dp beside a column as
+	// wide as the buttons (#1788).
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	click(app, "#menu-bar button[menu=window-menu]");
+	click(app, "#window-menu menuitem[command=window.windows]");
+	REQUIRE(app.waitUntil([&app] { return exists(app, "#windows-mode"); }));
+	const auto box = [&app](const std::string& selector)
+	{
+		const Json found = elements(app, selector).at(0).at("box");
+		return std::vector<double>{found.at("x").get<double>(), found.at("y").get<double>(),
+			found.at("x").get<double>() + found.at("width").get<double>(),
+			found.at("y").get<double>() + found.at("height").get<double>()};
+	};
+	const auto inside = [&box](const std::string& inner, const std::string& outer)
+	{
+		const std::vector<double> a = box(inner);
+		const std::vector<double> b = box(outer);
+		INFO(inner << " [" << a[0] << ", " << a[1] << ", " << a[2] << ", " << a[3] << "] in " << outer << " [" << b[0]
+				   << ", " << b[1] << ", " << b[2] << ", " << b[3] << "]");
+		return a[0] >= b[0] - 0.5 && a[1] >= b[1] - 0.5 && a[2] <= b[2] + 0.5 && a[3] <= b[3] + 0.5;
+	};
+	for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
+	{
+		INFO("theme " << theme);
+		app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
+		REQUIRE(app.waitUntil([&app, theme] { return app.shell().theme() == theme; }));
+		app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(exists(app, "#windows-mode"));
+		CHECK(inside("#windows-dialog .actions", "#windows-dialog .content"));
+		CHECK(inside("#windows-dialog .content", "#windows-dialog"));
+		const std::vector<double> mode = box("#windows-mode");
+		for (const char* each :
+			{"#windows-mode", "#windows-activate", "#windows-minimize", "#windows-restore", "#windows-close"})
+		{
+			INFO(each);
+			CHECK(inside(each, "#windows-dialog .actions"));
+			const std::vector<double> other = box(each);
+			CHECK(std::abs((mode[2] - mode[0]) - (other[2] - other[0])) <= 1.0);
+		}
+	}
 }

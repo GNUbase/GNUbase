@@ -26,7 +26,8 @@ clip's sample frames; `start` and `end` default to the whole clip.
   ([sample-editor.md](sample-editor.md)), named `regionName` and a number counting from `autoNumberStart` across the
   events; `strip` (the default) splits each event at the sections' edges (`event.split`) and removes the silent parts
   (`event.remove`); `fades` gives the events that remain a fade in and out of that many milliseconds, at most half
-  their length each (`audioEvent.setFades`). It runs those commands as part of it (`ProjectModel::runEdit`). Stripping
+  of what each plays for in frames at the clip's sample rate (its length, unless it plays warped: `fadeRoom`,
+  [warp.md](warp.md)) each (`audioEvent.setFades`). It runs those commands as part of it (`ProjectModel::runEdit`). Stripping
   an event that is silent or locked is an error.
 - **Spectrum** (`analysis::PowerSpectrum`, `analysis::spectrumCurve`): Welch's average power spectrum, as
   `audio.analyze` measures it, at points 1/24 octave apart from 20 Hz up to the Nyquist frequency. Each point has the
@@ -61,7 +62,8 @@ API.
 #spectrum-analyzer-dialog       spectrum-analyzer.rml
   select#sa-channel             the channel shown
   #sa-value                     channel, frequency, note and level under the mouse, and D, the difference to the
-                                reference
+                                reference; clip.spectrum's error for a clip whose file can't be read, as #ds-message
+                                and the Statistics tables show theirs
   #sa-graph.sa-graph            a .sa-bar[index] per point from -120 dB at the bottom to 0 dB at the top;
                                 .reference for the one right-clicked, until a click
   #sa-close
@@ -95,4 +97,5 @@ whose overtone is louder, not their strongest frequency.
 - `tests/audiofunctions_ui_tests.cpp` drives the dialogs with `ui::Automation`: Analyze and its sections along the
   event, Add as Regions and Process for the first event, Auto, Linked and the open threshold for the second;
   Cancel, and Process All Selected Events with Apply Fades; the Statistics window's values; the Spectrum Analyzer's
-  bars, the values under the mouse, the reference of a right click and D, and a click dropping it.
+  bars, the values under the mouse, the reference of a right click and D, a click dropping it, the error of a clip
+  whose file can't be read, and the channel of a stereo clip that its selector chooses.

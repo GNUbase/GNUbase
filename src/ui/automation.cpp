@@ -9,8 +9,12 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/ElementText.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Input.h>
+#include <RmlUi/Core/Rectangle.h>
+#include <RmlUi/Core/ScrollTypes.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
@@ -95,6 +99,20 @@ namespace gnubase::ui
 				result["attributes"] = std::move(attributes);
 			if (auto* control = rmlui_dynamic_cast<Rml::ElementFormControl*>(&element))
 				result["value"] = control->GetValue();
+			// A drop-down list's options aren't DOM children.
+			if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(&element))
+			{
+				Json options = Json::array();
+				for (int i = 0; i < select->GetNumOptions(); ++i)
+				{
+					Rml::Element& option = *select->GetOption(i);
+					std::string text;
+					collectText(option, text);
+					options.push_back({{"value", option.GetAttribute<Rml::String>("value", "")},
+						{"text", collapsed(text)}, {"selected", i == select->GetSelection()}});
+				}
+				result["options"] = std::move(options);
+			}
 			if (const Rml::StringList pseudoClasses = element.GetActivePseudoClasses(); !pseudoClasses.empty())
 				result["pseudoClasses"] = pseudoClasses;
 			result["visible"] = visible(element);
@@ -185,13 +203,29 @@ namespace gnubase::ui
 			return chosen;
 		}
 
-		Point targetPoint(Window& window, const Target& target)
+		// The target's point, or the centre of its element as it is now. As a user would, an element whose centre its
+		// scrolling containers hide is scrolled into view first, so the input lands on it rather than on what is in its
+		// place; a visible centre scrolls nothing. With scroll false a hidden centre is an error instead: the other end
+		// of a drag scrolled it out of view.
+		Point targetPoint(Window& window, const Target& target, bool scroll = true)
 		{
 			if (target.point)
 				return *target.point;
 			if (target.selector.empty())
 				throw std::invalid_argument("needs a selector or x and y");
-			const Rect bounds = box(targetElement(window, target));
+			Rml::Element& element = targetElement(window, target);
+			Rect bounds = box(element);
+			Rml::Rectanglei clip;
+			if (Rml::ElementUtilities::GetClippingRegion(&element, clip) &&
+				!clip.Contains({bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)}))
+			{
+				if (!scroll)
+					throw std::invalid_argument(
+						target.selector + " and the other end of the drag can't both be in view");
+				element.ScrollIntoView({Rml::ScrollAlignment::Nearest, Rml::ScrollAlignment::Nearest,
+					Rml::ScrollBehavior::Instant, Rml::ScrollParentage::All});
+				bounds = box(element);
+			}
 			return {bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)};
 		}
 
@@ -237,9 +271,10 @@ namespace gnubase::ui
 			SystemInterface* m_clock;
 		};
 
-		// The element under the mouse after input, which the window draws again.
-		Json under(Window& window)
+		// The element under the mouse after input, which the window draws again, once the shell's input handler ran.
+		Json under(Shell& shell, Window& window)
 		{
+			shell.inputHandled();
 			window.requestRender();
 			return {{"element", nodeOrNull(window.context().GetHoverElement())}};
 		}
@@ -328,7 +363,7 @@ namespace gnubase::ui
 		Window& shown = resolve(window);
 		const Point at = targetPoint(shown, to);
 		updated(shown).ProcessMouseMove(at.x, at.y, modifierState(modifiers));
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::click(std::optional<WindowId> window, const Target& target, MouseButton button, int count,
@@ -350,15 +385,17 @@ namespace gnubase::ui
 			context.ProcessMouseButtonDown(buttonIndex(button), state);
 			context.ProcessMouseButtonUp(buttonIndex(button), state);
 		}
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::drag(
 		std::optional<WindowId> window, const Target& from, const Target& to, const std::vector<std::string>& modifiers)
 	{
 		Window& shown = resolve(window);
-		const Point start = targetPoint(shown, from);
+		targetPoint(shown, from); // scrolls the start into view
 		const Point end = targetPoint(shown, to);
+		// Scrolling the end into view can move the start, e.g. within one list: where it is now, if still in view.
+		const Point start = targetPoint(shown, from, false);
 		const int state = modifierState(modifiers);
 		Rml::Context& context = updated(shown);
 		context.ProcessMouseMove(start.x, start.y, state);
@@ -369,7 +406,7 @@ namespace gnubase::ui
 			context.ProcessMouseMove(start.x + ((end.x - start.x) * step / g_dragSteps),
 				start.y + ((end.y - start.y) * step / g_dragSteps), state);
 		context.ProcessMouseButtonUp(0, state);
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::press(
@@ -379,7 +416,7 @@ namespace gnubase::ui
 		const int state = modifierState(modifiers);
 		Rml::Context& context = movedTo(shown, at, state);
 		context.ProcessMouseButtonDown(buttonIndex(button), state);
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::release(
@@ -389,7 +426,7 @@ namespace gnubase::ui
 		const int state = modifierState(modifiers);
 		Rml::Context& context = movedTo(shown, at, state);
 		context.ProcessMouseButtonUp(buttonIndex(button), state);
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::wheel(
@@ -399,7 +436,7 @@ namespace gnubase::ui
 		const int state = modifierState(modifiers);
 		Rml::Context& context = movedTo(shown, at, state);
 		context.ProcessMouseWheel(Rml::Vector2f(dx, dy), state);
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::drop(
@@ -414,6 +451,7 @@ namespace gnubase::ui
 		Json result = {
 			{"element", nodeOrNull(context.GetElementAtPoint({static_cast<float>(at.x), static_cast<float>(at.y)}))}};
 		dropFiles(shown, at, files);
+		m_shell.inputHandled();
 		return result;
 	}
 
@@ -429,6 +467,7 @@ namespace gnubase::ui
 			context.ProcessKeyUp(pressed.key, pressed.modifiers);
 			m_shell.keyReleased(shown, pressed);
 		}
+		m_shell.inputHandled();
 		shown.requestRender();
 		return {{"focus", nodeOrNull(context.GetFocusElement())}};
 	}
@@ -438,6 +477,7 @@ namespace gnubase::ui
 		Window& shown = resolve(window);
 		Rml::Context& context = updated(shown);
 		context.ProcessTextInput(text);
+		m_shell.inputHandled();
 		shown.requestRender();
 		return {{"focus", nodeOrNull(context.GetFocusElement())}};
 	}

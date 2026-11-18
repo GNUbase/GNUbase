@@ -2,7 +2,9 @@
 #include "ui/poolpanel.h"
 
 #include "platform/log.h"
+#include "ui/infoline.h"
 #include "ui/widgets.h"
+#include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -160,7 +162,8 @@ namespace gnubase::ui
 		rml += R"(</div><div class="pool-status"><div id="pool-message" class="pool-message"/>)"
 			   R"(<button id="pool-stop">Stop</button></div><div id="pool-info" class="pool-info"/>)"
 			   R"(<div class="pool-header"><span class="name">Media</span><span class="used">Used</span>)"
-			   R"(<span class="status">Status</span><span class="info">Info</span><span class="path">Path</span></div>)"
+			   R"(<span class="status">Status</span><span class="key">Key</span><span class="info">Info</span>)"
+			   R"(<span class="path">Path</span></div>)"
 			   R"(<listview id="pool" class="pool-list" multiple/></div>)";
 		element.SetInnerRML(rml);
 		Rml::Element* root = element.GetFirstChild();
@@ -169,7 +172,8 @@ namespace gnubase::ui
 		for (const Rml::EventId id :
 			{Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Mousedown, Rml::EventId::Mouseup})
 			root->AddEventListener(id, this);
-		root->AddEventListener(Rml::EventId::Blur, this, true); // blur doesn't bubble
+		root->AddEventListener(Rml::EventId::Blur, this, true); // blur and focus don't bubble
+		root->AddEventListener(Rml::EventId::Focus, this, true);
 		root->AddEventListener(g_treeToggleEvent, this);
 		update();
 	}
@@ -184,6 +188,7 @@ namespace gnubase::ui
 			{Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Mousedown, Rml::EventId::Mouseup})
 			m_root->RemoveEventListener(id, this);
 		m_root->RemoveEventListener(Rml::EventId::Blur, this, true);
+		m_root->RemoveEventListener(Rml::EventId::Focus, this, true);
 		m_root->RemoveEventListener(g_treeToggleEvent, this);
 	}
 
@@ -206,16 +211,18 @@ namespace gnubase::ui
 					{
 						if (alive.expired() || !pool.ok())
 							return;
-						const auto external = pool.value.at("externalFiles").get<int>();
+						// Missing files can't be copied: only those that are there are asked about (#1001).
+						const auto missing = pool.value.at("missingExternalFiles").get<int>();
+						const auto external = pool.value.at("externalFiles").get<int>() - missing;
 						if (external == 0)
 							m_binding.send("media.prepareArchive");
 						else
-							askPrepareArchive(external);
+							askPrepareArchive(external, missing);
 					});
 			});
 	}
 
-	void PoolPanel::askPrepareArchive(int external)
+	void PoolPanel::askPrepareArchive(int external, int missing)
 	{
 		if (m_question || !m_root)
 			return; // asking already
@@ -231,8 +238,13 @@ namespace gnubase::ui
 		}
 		if (Rml::Element* message = dialog->GetElementById("prepare-archive-message"))
 			message->SetInnerRML(counted(static_cast<size_t>(external), "file") +
-				(external == 1 ? " of the project is" : " of the project are") +
-				" outside the project folder. Copy them into its Audio folder?");
+				(external == 1 ? " of the project is outside the project folder."
+							   : " of the project are outside the project folder.") +
+				(missing == 0 ? ""
+							  : " " + std::to_string(missing) +
+							(missing == 1 ? " more is missing and can't be copied."
+										  : " more are missing and can't be copied.")) +
+				(external == 1 ? " Copy it into its Audio folder?" : " Copy them into its Audio folder?"));
 		m_question = dialog->GetObserverPtr();
 		dialog->AddEventListener(g_dialogCloseEvent, this);
 		dialog->Show(Rml::ModalFlag::Modal);
@@ -267,6 +279,14 @@ namespace gnubase::ui
 					else
 						m_binding.send(button.command);
 				}
+		}
+		else if (event == Rml::EventId::Change && target->GetAttribute<Rml::String>("field", "") == "rootKey")
+		{
+			setKey(rowValue(target), event.GetParameter<Rml::String>("value", ""));
+		}
+		else if (event == Rml::EventId::Focus && target->GetAttribute<Rml::String>("field", "") == "rootKey")
+		{
+			fillKey(*target); // the Key column's list gets its choices once it is used
 		}
 		else if (field && (event == Rml::EventId::Blur || event.GetParameter<bool>("linebreak", false)))
 		{
@@ -467,7 +487,30 @@ namespace gnubase::ui
 			std::string info;
 			std::string path;
 			bool missing = false;
+			std::string key;      // a clip's root key (pool.get rootKey)
+			bool differ = false;  // its audio events' root keys differ (rootKeysDiffer)
+			bool keyable = false; // audio events play it, which keep its key (audioEvents)
 		};
+
+		// The Key column's choices (reference manual p. 417): all of them while the list has the focus, else only the
+		// one it shows, so that a pool of thousands of clips doesn't hold 13 options for each (#1644). Differing root
+		// keys show empty.
+		widgets::Options keyOptions(const std::string& key, bool differ, bool all)
+		{
+			const widgets::Options& keys = rootKeyOptions(differ);
+			if (all)
+				return keys;
+			const std::string value = differ ? g_differentRootKeys : key;
+			const auto shown =
+				std::find_if(keys.begin(), keys.end(), [&value](const auto& option) { return option.first == value; });
+			return shown == keys.end() ? widgets::Options() : widgets::Options{*shown};
+		}
+
+		// What the Key column shows for a clip of pool.get.
+		std::string keyValue(const Json& clip)
+		{
+			return clip.value("rootKeysDiffer", false) ? g_differentRootKeys : clip.value("rootKey", std::string());
+		}
 
 		// The tree's rows: the Audio folder, then in each folder its folders and its clips.
 		std::vector<Row> rows(const Json& pool)
@@ -489,14 +532,14 @@ namespace gnubase::ui
 				return items;
 			};
 			std::vector<Row> result;
-			result.push_back({"f0", 0, "Audio", "", "", "", "", false});
+			result.push_back({"f0", 0, "Audio", "", "", "", "", false, "", false, false});
 			const std::function<void(uint64_t, int)> add = [&](uint64_t parent, int level)
 			{
 				for (const Json* folder : sorted(folders, parent))
 				{
 					const auto id = folder->at("id").get<uint64_t>();
 					result.push_back({"f" + std::to_string(id), level, folder->at("name").get<std::string>(), "", "",
-						"", "", false});
+						"", "", false, "", false, false});
 					add(id, level + 1);
 				}
 				for (const Json* clip : sorted(clips, parent))
@@ -505,7 +548,9 @@ namespace gnubase::ui
 					const int used = clip->at("used").get<int>();
 					result.push_back({"c" + std::to_string(clip->at("id").get<uint64_t>()), level,
 						clip->at("name").get<std::string>(), used == 0 ? "" : std::to_string(used), status(*clip),
-						info(*clip), clip->at("path").get<std::string>(), missing});
+						info(*clip), clip->at("path").get<std::string>(), missing,
+						clip->value("rootKey", std::string()), clip->value("rootKeysDiffer", false),
+						clip->value("audioEvents", 0) > 0});
 				}
 			};
 			add(0, 1);
@@ -534,7 +579,9 @@ namespace gnubase::ui
 					(folder && m_collapsed.count(row.value) == 0 ? " expanded" : "") + R"( class=")" +
 					(folder ? "folder" : "clip") + R"("><span class="name">)" +
 					(row.value == "f0" ? encode(row.name) : R"(<input type="text"/>)") +
-					R"(</span><span class="used"/><span class="status"/><span class="info"/><span class="path"/></listitem>)";
+					R"(</span><span class="used"/><span class="status"/><span class="key">)" +
+					(folder ? "" : R"(<select field="rootKey" title="Root Key"/>)") +
+					R"(</span><span class="info"/><span class="path"/></listitem>)";
 			}
 			view->SetInnerRML(rml);
 			m_values = std::move(values);
@@ -550,6 +597,20 @@ namespace gnubase::ui
 			if (Rml::Element* field = name->GetFirstChild();
 				field != nullptr && field->GetTagName() == "input" && !field->IsPseudoClassSet("focus"))
 				field->SetAttribute("value", data.name);
+			// The Key column (reference manual p. 417): the root key the clip's events share. A clip that no audio
+			// event plays has nowhere to keep one (#1644).
+			if (Rml::Element* key = row->QuerySelector("select[field=rootKey]"))
+			{
+				if (key->HasAttribute("disabled") == data.keyable)
+				{
+					if (data.keyable)
+						key->RemoveAttribute("disabled");
+					else
+						key->SetAttribute("disabled", "");
+				}
+				widgets::fill(*key, keyOptions(data.key, data.differ, key->IsPseudoClassSet("focus")),
+					data.differ ? std::string(g_differentRootKeys) : data.key);
+			}
 			const std::string texts[] = {data.used, data.status, data.info, data.path};
 			for (size_t column = 0; column < std::size(g_columns); ++column)
 				setText(*row->QuerySelector(std::string("span.") + g_columns[column]), texts[column]);
@@ -591,6 +652,27 @@ namespace gnubase::ui
 				send("Rename", folder ? "poolFolder.set" : "clip.set",
 					{{folder ? "folder" : "clip", id}, {"name", name}});
 		}
+	}
+
+	void PoolPanel::setKey(const std::string& row, const std::string& key)
+	{
+		if (row.size() < 2 || row[0] != 'c' || key == g_differentRootKeys)
+			return;
+		const uint64_t id = idOf(row);
+		for (const Json& clip : m_pool.value("clips", Json::array()))
+			if (clip.at("id").get<uint64_t>() == id && keyValue(clip) != key)
+				send("Root Key", "clip.set", {{"clip", id}, {"rootKey", key}});
+	}
+
+	void PoolPanel::fillKey(Rml::Element& list)
+	{
+		const std::string row = rowValue(&list);
+		const uint64_t id = idOf(row);
+		for (const Json& clip : m_pool.value("clips", Json::array()))
+			if (row.size() > 1 && row[0] == 'c' && clip.at("id").get<uint64_t>() == id)
+				widgets::fill(list,
+					keyOptions(clip.value("rootKey", std::string()), clip.value("rootKeysDiffer", false), true),
+					keyValue(clip));
 	}
 
 	void PoolPanel::drop(const std::string& folder)

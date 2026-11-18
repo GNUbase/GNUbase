@@ -57,11 +57,11 @@ namespace gnubase::app
 		m_docking.addWindow(
 			"timeDisplay", [this] { return m_timeDisplay.window; },
 			opener([this] { return timeDisplay() != nullptr; }, [this] { toggleTimeDisplay(); }));
-		// Windows that follow what they show, which a workspace only places while they are open.
 		m_docking.addWindow(
 			"scriptConsole", [this] { return m_scriptConsoleWindow; },
 			opener(
 				[this] { return m_shell.find(m_scriptConsoleWindow) != nullptr; }, [this] { toggleScriptConsole(); }));
+		// Windows that follow what they show, which a workspace only places while they are open.
 		m_docking.addWindow("channelSettings", [this] { return m_channelSettings.window; });
 		m_docking.addWindow("editor", [this] { return m_editor.window; });
 		m_docking.addWindow("sampleEditor", [this] { return m_sampleEditor.window; });
@@ -89,8 +89,8 @@ namespace gnubase::app
 		m_keys.add({"window.windows",
 			"Opens the Windows dialog, which activates, minimizes, restores and closes windows.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openOnce(window, "windows.rml", m_windowsDialog); }});
-		// The Windows dialog follows the windows that open or close while it is open. The shell copies the task for
-		// each step, so the windows it lists live outside.
+		// The Windows dialog follows the windows that open or close while it is open, also those that opened between
+		// its load and its first step. The shell copies the task for each step, so the windows it lists live outside.
 		m_shell.eachStep(
 			[this, listed = std::make_shared<std::vector<ui::WindowId>>()]
 			{
@@ -105,11 +105,10 @@ namespace gnubase::app
 					ids.push_back(window->id());
 				if (ids == shown)
 					return false;
-				const bool opened = shown.empty(); // the dialog lists them as it loads
 				shown = std::move(ids);
-				if (!opened)
-					if (const std::optional<std::string> error = m_lua.run("WindowsDialog.refresh()", "windows"))
-						logging::warning("The Windows dialog can't follow the windows: {}", *error);
+				if (const std::optional<std::string> error = m_lua.run("WindowsDialog.refresh()", "windows"))
+					logging::warning("The Windows dialog can't follow the windows: {}", *error);
+				m_shell.requestRender(); // the list, wherever the dialog is
 				return false;
 			});
 		// Edit > Profile Manager (docs/features/profiles.md), whose Import and Export ask the OS for the file.

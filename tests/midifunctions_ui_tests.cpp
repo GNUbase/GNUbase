@@ -58,9 +58,7 @@ namespace
 			REQUIRE(app.waitUntil(
 				[this, added]
 				{
-					const Json parts = display.project().is_object()
-						? display.project().value("midiParts", Json::array())
-						: Json::array();
+					const Json parts = display.project().value("midiParts", Json::array());
 					return std::any_of(
 						parts.begin(), parts.end(), [added](const Json& p) { return p.at("id") == added; });
 				},

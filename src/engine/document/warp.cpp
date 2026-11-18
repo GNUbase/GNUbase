@@ -196,8 +196,8 @@ namespace gnubase::engine
 				beat = edit.beat;
 				frame = edit.frame;
 			}
-			require(warp.gridStart >= 0 && warp.gridStart < length && frame < length,
-				"the grid must be within the clip (0 to " + std::to_string(length - 1) + ")");
+			require(warp.gridStart < length && frame < length,
+				"the grid must start before the clip ends (" + std::to_string(length) + ")");
 		}
 
 		void sortBeats(ClipWarp& warp)
@@ -217,25 +217,6 @@ namespace gnubase::engine
 				"from " +
 					std::to_string(from.position) + " to " + std::to_string(to.position) + " would play " +
 					std::to_string(ratio) + " times as long");
-		}
-
-		void checkMarkers(ClipWarp& warp, time::Samples length)
-		{
-			std::sort(warp.markers.begin(), warp.markers.end(),
-				[](const WarpMarker& a, const WarpMarker& b) { return a.position < b.position; });
-			WarpMarker before;
-			for (const WarpMarker& marker : warp.markers)
-			{
-				require(marker.position > 0 && marker.position < length && marker.target > 0 && marker.target < length,
-					"a warp marker and where it goes must be within the clip (1 to " + std::to_string(length - 1) +
-						")");
-				require(marker.position > before.position && marker.target > before.target,
-					"warp markers can't pass each other: the marker at " + std::to_string(marker.position) +
-						" must go after " + std::to_string(before.target));
-				checkRatio(before, marker);
-				before = marker;
-			}
-			checkRatio(before, {length, length});
 		}
 
 		WarpMarker& markerAt(ClipWarp& warp, time::Samples position)
@@ -316,6 +297,94 @@ namespace gnubase::engine
 		}
 	}
 
+	void checkMarkers(ClipWarp& warp, time::Samples length, const std::vector<WarpMarker>& unchanged)
+	{
+		std::sort(warp.markers.begin(), warp.markers.end(),
+			[](const WarpMarker& a, const WarpMarker& b) { return a.position < b.position; });
+		// The warp the markers made before the edit, from the clip's start to its end.
+		std::vector<dsp::WarpPoint> map{{0.0, 0.0}};
+		for (const WarpMarker& marker : unchanged)
+			map.push_back({static_cast<double>(marker.position), static_cast<double>(marker.target)});
+		map.push_back({static_cast<double>(length), static_cast<double>(length)});
+		std::sort(map.begin(), map.end(),
+			[](const dsp::WarpPoint& a, const dsp::WarpPoint& b) { return a.source < b.source; });
+		// Within half a frame of the map: no further than rounding puts a marker inserted on it (#1266).
+		const auto onMap = [&map](const WarpMarker& marker)
+		{
+			return std::abs(static_cast<double>(marker.target) -
+					   dsp::warpTarget(map, static_cast<double>(marker.position))) <= 0.5;
+		};
+		// Whether the section from one marker to the next plays as before, give or take that rounding: both ends on
+		// the map with no point of it in between (the map is sorted: a binary search, as dsp::warpTarget's).
+		const auto asBefore = [&map, &onMap](const WarpMarker& from, const WarpMarker& to)
+		{
+			const auto next = std::upper_bound(map.begin(), map.end(), static_cast<double>(from.position),
+				[](double source, const dsp::WarpPoint& point) { return source < point.source; });
+			return next != map.end() && next->source >= static_cast<double>(to.position) && onMap(from) && onMap(to);
+		};
+		WarpMarker before;
+		for (const WarpMarker& marker : warp.markers)
+		{
+			require(marker.position > 0 && marker.position < length && marker.target > 0 && marker.target < length,
+				"a warp marker and where it goes must be within the clip (1 to " + std::to_string(length - 1) + ")");
+			require(marker.position > before.position && marker.target > before.target,
+				"warp markers can't pass each other: the marker at " + std::to_string(marker.position) +
+					" must go after " + std::to_string(before.target));
+			if (!asBefore(before, marker))
+				checkRatio(before, marker);
+			before = marker;
+		}
+		if (const WarpMarker end{length, length}; !asBefore(before, end))
+			checkRatio(before, end);
+	}
+
+	namespace
+	{
+		// A warped event's playedLength and fadeRoom (audioEventJson).
+		std::pair<time::Samples, time::Samples> warpedLengths(const Project& project, const AudioEvent& event)
+		{
+			const EventSpan span = eventSpan(project, event);
+			return {span.end - span.start, fadeRoom(project, event)};
+		}
+	}
+
+	void addWarpedLengths(Json& json, const Project& project, const AudioEvent& event)
+	{
+		if (!warped(project.clips.at(event.clip)))
+			return;
+		const auto [playedLength, room] = warpedLengths(project, event);
+		json["playedLength"] = playedLength;
+		json["fadeRoom"] = room;
+	}
+
+	Json audioEventJson(const Project& project, const AudioEvent& event)
+	{
+		Json json = toJson(event);
+		addWarpedLengths(json, project, event);
+		return json;
+	}
+
+	void announceWarpedEvents(const Project& before, const Project& after, CommandContext& context)
+	{
+		// Only the tempo, the media, the clips and the events move them (#1183).
+		if (before.audioEvents == after.audioEvents && before.clips == after.clips && before.tempo == after.tempo &&
+			before.media == after.media && before.sampleRate == after.sampleRate)
+			return;
+		for (const auto& [id, event] : after.audioEvents)
+		{
+			const auto previous = before.audioEvents.find(id);
+			const bool now = warped(after.clips.at(event.clip));
+			const bool was = previous != before.audioEvents.end() && warped(before.clips.at(previous->second.clip));
+			if (!now && !was)
+				continue;
+			// An event that changed is announced with toJson's fields alone: again with its lengths.
+			if (previous != before.audioEvents.end() && previous->second == event && now == was &&
+				warpedLengths(after, event) == warpedLengths(before, previous->second))
+				continue;
+			context.emit("audioEvent.changed", {{"event", audioEventJson(after, event)}});
+		}
+	}
+
 	bool warped(const Clip& clip)
 	{
 		return clip.warp.musical || !clip.warp.markers.empty();
@@ -325,14 +394,22 @@ namespace gnubase::engine
 	{
 		if (clip.warp.tempo > 0.0)
 			return clip.warp.tempo;
-		std::optional<time::Ticks> first;
-		for (const auto& [id, event] : project.audioEvents)
-			if (event.clip == clip.id)
+		// The events that play decide, so that they play as before. Without one, inactive track versions' events do:
+		// they play the clip as soon as their version is active (#1461, #1534).
+		std::optional<time::Ticks> playing;
+		std::optional<time::Ticks> inactive;
+		forEveryEventAndPart(
+			project,
+			[&](const AudioEvent& event, bool plays)
 			{
+				if (event.clip != clip.id)
+					return;
 				const time::Ticks at = time::toTicks(event.position, project.tempo, project.sampleRate);
+				std::optional<time::Ticks>& first = plays ? playing : inactive;
 				first = std::min(first.value_or(at), at);
-			}
-		return project.tempo.bpmAt(first.value_or(0));
+			},
+			[](const AudioPart&, bool) {}, [](const MidiPart&, bool) {});
+		return project.tempo.bpmAt(playing.value_or(inactive.value_or(0)));
 	}
 
 	double warpedOffset(const Project& project, const AudioEvent& event, double frame)
@@ -408,34 +485,45 @@ namespace gnubase::engine
 		const Json boolean = {{"type", "boolean"}};
 		const Json preset = {{"type", "string"}, {"enum", dsp::stretchPresetNames()}};
 		const Json ids = {{"type", "array"}, {"items", integer}};
+		const Json markersSchema = {{"type", "array"},
+			{"items", objectSchema({{"position", integer}, {"target", integer}}, {"position", "target"})}};
 		const Json warpSchema = objectSchema(
 			{{"musical", boolean}, {"tempo", number}, {"beatsPerBar", integer}, {"gridStart", integer},
 				{"beats",
 					{{"type", "array"},
 						{"items", objectSchema({{"beat", integer}, {"frame", integer}}, {"beat", "frame"})}}},
-				{"markers",
-					{{"type", "array"},
-						{"items", objectSchema({{"position", integer}, {"target", integer}}, {"position", "target"})}}},
-				{"preset", preset}},
+				{"markers", markersSchema}, {"preset", preset},
+				{"quantizeOrigin",
+					objectSchema(
+						{{"original", markersSchema}, {"quantized", markersSchema}}, {"original", "quantized"})},
+				{"created", ids}},
 			{"musical", "tempo", "beatsPerBar", "gridStart", "beats", "markers", "preset"});
 		const Json resultSchema = objectSchema({{"clip", integer}, {"warp", warpSchema}}, {"clip", "warp"});
 		const std::string warpText =
 			"A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo "
-			"(BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats "
+			"(BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0, which may "
+			"precede the audio) and beats "
 			"(the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere "
 			"than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its "
 			"position where the clip frame target would play without it) and preset, the time stretch algorithm of "
-			"real-time warping. Emits clip.changed. Returns the clip's id and its warp.";
+			"real-time warping; after warp quantizing also quantizeOrigin, the markers before it (original) and as it "
+			"left them (quantized), and created, the positions of the markers quantize.createWarpMarkers made. Emits "
+			"clip.changed. Returns the clip's id and its warp.";
+		const std::string markerRules =
+			"Markers can't pass each other, and no section between two of them, or one and the clip's start or end, "
+			"may play more than 4 times or less than a quarter as long, the real-time stretcher's range; a section "
+			"that plays as it did, as in a project from before the range was checked, may stay beyond it. ";
 
 		addEdit(engine,
 			{"clip.setWarp", 1,
 				"Changes a clip's musical mode and definition (the Definition and Warp sections of the sample "
 				"editor, the pool's Musical Mode column, reference manual pp. 616, 648-650): musical turns musical "
 				"mode on or off, which in a clip without a tempo takes the project's at the start of its first event "
-				"so that nothing changes until the tempo does; tempo (1-999 BPM); bars and beats, its length from the "
+				"on the active track versions, or without one there on an inactive version, so that nothing changes "
+				"until the tempo does; tempo (1-999 BPM); bars and beats, its length from the "
 				"grid start to its end in bars and quarters, which sets the tempo that makes it that long; "
-				"beatsPerBar (1-64); gridStart (a clip frame; the edited beats move with it); preset (the algorithm "
-				"preset of real-time warping). What isn't given stays. " +
+				"beatsPerBar (1-64); gridStart (a clip frame, 0 or more; the edited beats move with it); preset (the "
+				"algorithm preset of real-time warping). What isn't given stays. " +
 					warpText,
 				objectSchema(
 					{{"clip", integer}, {"musical", boolean}, {"tempo", number}, {"bars", integer}, {"beats", integer},
@@ -454,6 +542,8 @@ namespace gnubase::engine
 				if (parameters.contains("gridStart"))
 				{
 					const auto start = parameters.at("gridStart").get<time::Samples>();
+					// Only Set Definition from Tempo puts the grid start before the audio, by up to a quarter.
+					require(start >= 0, "gridStart must be 0 or more");
 					for (BeatEdit& edit : warp.beats)
 						edit.frame += start - warp.gridStart;
 					warp.gridStart = start;
@@ -588,6 +678,7 @@ namespace gnubase::engine
 					warp.beats.begin(), warp.beats.end(), [beat](const BeatEdit& e) { return e.beat == beat; });
 				if (mode == "start")
 				{
+					require(frame >= 0, "the grid start must be 0 or more");
 					for (BeatEdit& each : warp.beats)
 						each.frame += frame - warp.gridStart;
 					warp.gridStart = frame;
@@ -631,10 +722,53 @@ namespace gnubase::engine
 			});
 
 		addEdit(engine,
+			{"audioEvent.addWarpMarker", 1,
+				"Free Warp in the project window (reference manual p. 1467): inserts a marker at the audio under "
+				"position and makes it play at to, both project sample positions. Maps through the event's musical "
+				"mode, definition and existing markers. Anchors a trimmed event's offset if inserting the marker "
+				"would otherwise move it. " +
+					markerRules + warpText,
+				objectSchema({{"event", integer}, {"position", integer}, {"to", integer}}, {"event", "position", "to"}),
+				resultSchema, false},
+			"Insert warp marker",
+			[this](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const auto id = parameters.at("event").get<ObjectId>();
+				const auto found = project.audioEvents.find(id);
+				require(found != project.audioEvents.end(), "no audio event " + std::to_string(id));
+				const AudioEvent& event = found->second;
+				const auto start =
+					static_cast<double>(time::toSamples(event.position, project.tempo, project.sampleRate));
+				const auto frame = [&project, &event, start](time::Samples at)
+				{ return warpedFrameAt(project, event, static_cast<double>(at) - start); };
+				const auto position = std::llround(frame(parameters.at("position").get<time::Samples>()));
+				// A marker's target is in the definition grid's frames, before the free warp markers. Remove
+				// their inverse from the frame at the release, while keeping musical mode and the event offset.
+				const auto target = std::llround(
+					EventWarp(project, event).warpedFrame(frame(parameters.at("to").get<time::Samples>())));
+				const Clip& clip = project.clips.at(event.clip);
+				if (event.offset > 0 && position > event.offset &&
+					std::none_of(clip.warp.markers.begin(), clip.warp.markers.end(),
+						[&event, position](const WarpMarker& marker)
+						{ return marker.position >= event.offset && marker.position < position; }))
+				{
+					// Inserting into the segment containing the event's offset would also move the offset. Keep
+					// its old mapping, so the dragged audio actually reaches the requested time after insertion.
+					const auto offset =
+						std::llround(EventWarp(project, event).warpedFrame(static_cast<double>(event.offset)));
+					runEdit("clip.addWarpMarker", project,
+						{{"clip", event.clip}, {"position", event.offset}, {"target", offset}}, context);
+				}
+				return runEdit("clip.addWarpMarker", project,
+					{{"clip", event.clip}, {"position", position}, {"target", target}}, context);
+			});
+
+		addEdit(engine,
 			{"clip.addWarpMarker", 1,
 				"Inserts a free warp marker into a clip at position (a clip frame) that plays it at target, default "
-				"position (Free Warp, reference manual pp. 654-655). Markers can't pass each other. " +
-					warpText,
+				"position (Free Warp, reference manual pp. 654-655). " +
+					markerRules + warpText,
 				objectSchema({{"clip", integer}, {"position", integer}, {"target", integer}}, {"clip", "position"}),
 				resultSchema, false},
 			"Insert warp marker",
@@ -642,20 +776,21 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				Clip& clip = clipOf(project, parameters);
+				const std::vector<WarpMarker> unchanged = clip.warp.markers;
 				const auto position = parameters.at("position").get<time::Samples>();
 				require(std::none_of(clip.warp.markers.begin(), clip.warp.markers.end(),
 							[position](const WarpMarker& marker) { return marker.position == position; }),
 					"there is a warp marker at " + std::to_string(position) + " already");
 				clip.warp.markers.push_back({position, parameters.value("target", position)});
-				checkMarkers(clip.warp, mediaOf(project, clip).length);
+				checkMarkers(clip.warp, mediaOf(project, clip).length, unchanged);
 				return warpResult(clip, context);
 			});
 
 		addEdit(engine,
 			{"clip.setWarpMarker", 1,
 				"Moves the free warp marker of a clip at position so that it plays at target, a clip frame "
-				"(Correcting Warp Marker Positions, reference manual p. 656). Markers can't pass each other. " +
-					warpText,
+				"(Correcting Warp Marker Positions, reference manual p. 656). " +
+					markerRules + warpText,
 				objectSchema(
 					{{"clip", integer}, {"position", integer}, {"target", integer}}, {"clip", "position", "target"}),
 				resultSchema, false},
@@ -664,9 +799,10 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				Clip& clip = clipOf(project, parameters);
+				const std::vector<WarpMarker> unchanged = clip.warp.markers;
 				markerAt(clip.warp, parameters.at("position").get<time::Samples>()).target =
 					parameters.at("target").get<time::Samples>();
-				checkMarkers(clip.warp, mediaOf(project, clip).length);
+				checkMarkers(clip.warp, mediaOf(project, clip).length, unchanged);
 				return warpResult(clip, context);
 			});
 
@@ -682,11 +818,18 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				Clip& clip = clipOf(project, parameters);
+				// A marker the user adds at the frame of a removed one that quantize.createWarpMarkers made is the
+				// user's own: the Reset of the Warp Marker Creation Rules leaves it (#1668).
+				std::vector<time::Samples>& created = clip.warp.created;
 				if (!parameters.contains("positions"))
+				{
 					clip.warp.markers.clear();
+					created.clear();
+				}
 				for (const Json& position : parameters.value("positions", Json::array()))
 				{
 					const WarpMarker& marker = markerAt(clip.warp, position.get<time::Samples>());
+					created.erase(std::remove(created.begin(), created.end(), marker.position), created.end());
 					clip.warp.markers.erase(clip.warp.markers.begin() + (&marker - clip.warp.markers.data()));
 				}
 				return warpResult(clip, context);
@@ -710,6 +853,7 @@ namespace gnubase::engine
 						continue;
 					clip.warp.musical = false;
 					clip.warp.markers.clear();
+					clip.warp.created.clear();
 					context.emit("clip.changed", {{"clip", toJson(clip)}});
 					clips.push_back(clip.id);
 				}

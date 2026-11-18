@@ -44,15 +44,45 @@ namespace gnubase::engine
 			return ids;
 		}
 
-		// As trackLayout.get returns it: without the tracks that are gone.
-		Json layoutJson(const Project& project)
+		// The ids with the tracks inside the folders among them, nested too, sorted and once each: a hidden folder
+		// hides them all in the track list, and the mixers that follow hide their channels with it (#906).
+		std::vector<ObjectId> withInside(const Project& project, std::vector<ObjectId> ids)
 		{
-			TrackLayout layout;
-			for (const auto& [track, height] : project.trackLayout.heights)
-				if (project.trackById.count(track) != 0)
-					layout.heights[track] = height;
-			layout.folded = existing(project, project.trackLayout.folded);
-			return toJson(layout);
+			const std::set<ObjectId> given(ids.begin(), ids.end());
+			std::vector<ObjectId> pending(given.begin(), given.end());
+			std::set<ObjectId> all = given;
+			while (!pending.empty())
+			{
+				const ObjectId id = pending.back();
+				pending.pop_back();
+				const auto track = project.trackById.find(id);
+				if (track == project.trackById.end())
+					continue;
+				for (const ObjectId child : track->second.children)
+					if (all.insert(child).second)
+						pending.push_back(child);
+			}
+			return {all.begin(), all.end()};
+		}
+
+		// The ids without the tracks that a folder among them brings in, sorted and once each: those hide with the
+		// folder where the lists are read (withInside) and leave with it, when they leave the folder (#1533). The ids
+		// of keep stay, hidden on their own before the folder was.
+		std::vector<ObjectId> withoutInside(
+			const Project& project, const std::vector<ObjectId>& ids, const std::vector<ObjectId>& keep = {})
+		{
+			const std::set<ObjectId> all(ids.begin(), ids.end());
+			std::vector<ObjectId> result;
+			for (const ObjectId id : all)
+			{
+				bool inside = false;
+				for (auto track = project.trackById.find(id); !inside && track != project.trackById.end();
+					track = project.trackById.find(track->second.parent))
+					inside = all.count(track->second.parent) != 0;
+				if (!inside || std::find(keep.begin(), keep.end(), id) != keep.end())
+					result.push_back(id);
+			}
+			return result;
 		}
 
 		const VisibilityConfiguration* active(const TrackVisibility& visibility)
@@ -63,45 +93,80 @@ namespace gnubase::engine
 			return nullptr;
 		}
 
-		// As trackVisibility.get returns it: without the tracks that are gone, and whether the tracks hidden differ
-		// from the active configuration's.
-		Json visibilityJson(const Project& project)
+		// trackVisibilityJson for the visibility with the project's tracks.
+		Json visibilityJson(const Project& project, TrackVisibility visibility)
 		{
-			TrackVisibility visibility = project.trackVisibility;
-			visibility.hidden = existing(project, visibility.hidden);
+			visibility.hidden = existing(project, withInside(project, visibility.hidden));
 			for (VisibilityConfiguration& configuration : visibility.configurations)
-				configuration.hidden = existing(project, configuration.hidden);
+				configuration.hidden = existing(project, withInside(project, configuration.hidden));
 			const VisibilityConfiguration* configuration = active(visibility);
 			Json json = toJson(visibility);
 			json["modified"] = configuration != nullptr && configuration->hidden != visibility.hidden;
 			return json;
 		}
+	}
 
-		// Gives the mixers that follow the track visibility, but except, its state: a track's channel is hidden
-		// there while the track is. Busses keep theirs.
-		void syncMixers(Project& project, CommandContext& context, const std::string& except = {})
+	Json trackVisibilityJson(const Project& project)
+	{
+		return visibilityJson(project, project.trackVisibility);
+	}
+
+	std::vector<ObjectId> hiddenTracks(const Project& project)
+	{
+		return existing(project, withInside(project, project.trackVisibility.hidden));
+	}
+
+	namespace
+	{
+		// Gives the mixers that follow the track visibility their state: a track's channel is hidden there while
+		// the track is. Busses keep theirs. Returns the mixers whose view changed.
+		std::vector<std::string> syncMixerViews(Project& project)
 		{
-			const std::set<ObjectId> tracks(
-				project.trackVisibility.hidden.begin(), project.trackVisibility.hidden.end());
+			const std::vector<ObjectId> hiddenIds = hiddenTracks(project);
+			const std::set<ObjectId> tracks(hiddenIds.begin(), hiddenIds.end());
+			std::vector<std::string> changed;
 			for (const std::string& mixer : {std::string("lower"), project.trackVisibility.sync})
 			{
-				if (mixer.empty() || mixer == except)
+				if (mixer.empty())
 					continue;
-				MixerView& view = project.mixers[mixer];
+				// A mixer without a view yet gets one only for channels to hide, so a load adds none to the project.
+				const auto view = project.mixers.find(mixer);
+				const std::vector<ObjectId> before =
+					view != project.mixers.end() ? view->second.hidden : std::vector<ObjectId>();
 				std::vector<ObjectId> hidden;
-				for (const ObjectId id : view.hidden)
+				for (const ObjectId id : before)
 					if (project.channels.count(id) == 0)
 						hidden.push_back(id);
 				for (const auto& [id, channel] : project.channels)
 					if (tracks.count(channel.track) != 0)
 						hidden.push_back(id);
 				std::sort(hidden.begin(), hidden.end());
-				if (hidden == view.hidden)
+				if (hidden == before)
 					continue;
-				view.hidden = std::move(hidden);
-				context.emit("mixer.changed", mixerViewJson(project, mixer));
+				project.mixers[mixer].hidden = std::move(hidden);
+				changed.push_back(mixer);
 			}
+			return changed;
 		}
+
+		// syncMixerViews with mixer.changed for each view that changed. For silent, the view changes without it:
+		// mixer.set, which called followMixer, emits the view itself right after (#906).
+		void syncMixers(Project& project, CommandContext& context, const std::string& silent = {})
+		{
+			for (const std::string& mixer : syncMixerViews(project))
+				if (mixer != silent)
+					context.emit("mixer.changed", mixerViewJson(project, mixer));
+		}
+	}
+
+	Json trackLayoutJson(const Project& project)
+	{
+		TrackLayout layout;
+		for (const auto& [track, height] : project.trackLayout.heights)
+			if (project.trackById.count(track) != 0)
+				layout.heights[track] = height;
+		layout.folded = existing(project, project.trackLayout.folded);
+		return toJson(layout);
 	}
 
 	void followMixer(Project& project, const std::string& mixer, CommandContext& context)
@@ -110,18 +175,73 @@ namespace gnubase::engine
 		if (mixer != "lower" && mixer != visibility.sync)
 			return;
 		const std::vector<ObjectId>& channels = project.mixers[mixer].hidden;
-		std::set<ObjectId> hidden(visibility.hidden.begin(), visibility.hidden.end());
+		const auto shows = [&channels](ObjectId channel)
+		{ return std::find(channels.begin(), channels.end(), channel) == channels.end(); };
+		const std::vector<ObjectId> before = withInside(project, visibility.hidden);
+		std::set<ObjectId> hidden(before.begin(), before.end());
+		// A hidden track whose channel shows again shows with the tracks inside it: those of a folder whose group
+		// channel shows again, though their channels are still hidden in the mixer, as the folder hid them (#1366).
+		std::vector<ObjectId> shown;
 		for (const auto& [id, channel] : project.channels)
-			if (std::find(channels.begin(), channels.end(), id) != channels.end())
+			if (shows(id) && hidden.count(channel.track) != 0)
+				shown.push_back(channel.track);
+		shown = withInside(project, std::move(shown));
+		for (const auto& [id, channel] : project.channels)
+			if (!shows(id) && !std::binary_search(shown.begin(), shown.end(), channel.track))
 				hidden.insert(channel.track);
 			else
 				hidden.erase(channel.track);
-		std::vector<ObjectId> tracks(hidden.begin(), hidden.end());
-		if (tracks == visibility.hidden)
-			return;
-		visibility.hidden = std::move(tracks);
-		context.emit("trackVisibility.changed", visibilityJson(project));
+		for (const ObjectId id : shown)
+			hidden.erase(id);
+		const std::vector<ObjectId> tracks = withInside(project, {hidden.begin(), hidden.end()});
+		visibility.hidden = withoutInside(project, tracks, visibility.hidden);
+		if (tracks != before)
+			context.emit("trackVisibility.changed", trackVisibilityJson(project));
+		// Also without a change of the tracks: a channel of a track inside a folder that is hidden still shows in
+		// the mixer the change came from, which the tracks hide again (#906). mixer.set emits the view itself.
 		syncMixers(project, context, mixer);
+	}
+
+	void followTrackFolders(Project& project, CommandContext& context, const Project& before)
+	{
+		// With the visibility the edit left: the commands that change it announce that themselves (#1539). Once: a
+		// trackVisibility.set in a transaction after the track edit announced it already (#1622).
+		if (Json now = trackVisibilityJson(project); now != visibilityJson(before, project.trackVisibility))
+		{
+			context.discardEvents("trackVisibility.changed");
+			context.emit("trackVisibility.changed", std::move(now));
+		}
+		syncMixers(project, context);
+	}
+
+	void followTrackFolders(Project& project, CommandContext& context, const Json& before)
+	{
+		if (Json now = trackVisibilityJson(project); now != before)
+			context.emit("trackVisibility.changed", std::move(now));
+		syncMixers(project, context);
+	}
+
+	void sanitizeTrackVisibility(Project& project)
+	{
+		TrackVisibility& visibility = project.trackVisibility;
+		// An unknown sync would make syncMixers a mixer view of its own, which the project would then save (#906).
+		if (std::find(g_syncs.begin(), g_syncs.end(), visibility.sync) == g_syncs.end())
+			visibility.sync.clear();
+		std::vector<VisibilityConfiguration> configurations;
+		std::set<std::string> names;
+		for (VisibilityConfiguration& configuration : visibility.configurations)
+			if (!configuration.name.empty() && names.insert(configuration.name).second)
+			{
+				configuration.hidden = existing(project, std::move(configuration.hidden));
+				configurations.push_back(std::move(configuration));
+			}
+		visibility.configurations = std::move(configurations);
+		if (active(visibility) == nullptr)
+			visibility.configuration.clear();
+		visibility.hidden = existing(project, std::move(visibility.hidden));
+		// The mixers that follow hide the channels of the tracks inside the hidden folders, as after
+		// trackVisibility.set (#1366). The project's load announces the whole project, its mixer views too.
+		syncMixerViews(project);
 	}
 
 	void registerTrackVisibilityCommands(ProjectModel& model, Engine& engine)
@@ -139,26 +259,33 @@ namespace gnubase::engine
 					{"configuration", {{"type", "string"}}}, {"modified", {{"type", "boolean"}}}}},
 			{"required", {"hidden", "sync", "configurations", "configuration", "modified"}}};
 		const std::string text =
-			"hidden: the tracks (by id) the project window's track list and event display don't show (a folder's "
-			"tracks hide with it there). sync: the mixer window (window1 to window4) whose channel visibility follows "
-			"the tracks', and back (Sync Visibility of Project and Mixer), or empty; the lower zone's mixer always "
-			"follows, so a hidden track's channel is hidden in it, and a channel hidden there hides its track. "
-			"configurations: the track visibility configurations, each a name and its hidden tracks; configuration: "
+			"hidden: the tracks (by id) the project window's track list and event display don't show; the tracks "
+			"inside a folder in it hide with it, nested ones too, also those that join it later, and are in the list "
+			"while "
+			"they are in the folder: one that leaves the folder leaves the list too, unless it was hidden on its own. "
+			"sync: the mixer window (window1 "
+			"to window4) whose channel visibility follows the tracks', and back (Sync Visibility of Project and "
+			"Mixer), or empty; the lower zone's mixer always follows, so a hidden track's channel is hidden in it, "
+			"and a channel hidden there hides its track. "
+			"configurations: the track visibility configurations, each a name and its hidden tracks, folders the same "
+			"way; "
+			"configuration: "
 			"the active one's name, or empty; modified: whether the hidden tracks differ from the active "
 			"configuration's. Tracks that are gone are left out.";
 
 		engine.registerCommand(
 			{"trackVisibility.get", 1, "What the project window hides (reference manual pp. 58, 80-82). " + text,
 				{{"type", "object"}, {"additionalProperties", false}}, resultSchema, true},
-			[&model](CommandContext&) { return visibilityJson(model.project()); });
+			[&model](CommandContext&) { return trackVisibilityJson(model.project()); });
 
 		model.addEdit(engine,
 			{"trackVisibility.set", 1,
 				"Changes what the project window hides; what isn't given stays. " + text +
 					" configurations replaces the list; names are unique and not empty. Without the active one in it, "
-					"none is active. configuration makes one active and, without hidden, hides its tracks. A setting, "
-					"not an undo step, saved with the project. Emits trackVisibility.changed, and mixer.changed for "
-					"the mixers that follow.",
+					"none is active; the one new name in such a list is its rename and takes the tracks the active one "
+					"hides on their own inside its folders. configuration makes one active and, without hidden, hides "
+					"its tracks. A setting, not an undo step, saved with the project. Emits trackVisibility.changed, "
+					"and mixer.changed for the mixers that follow.",
 				{{"type", "object"},
 					{"properties",
 						{{"hidden", idsSchema}, {"sync", syncSchema}, {"configurations", configurationsSchema},
@@ -174,12 +301,45 @@ namespace gnubase::engine
 				{
 					std::vector<VisibilityConfiguration> configurations;
 					std::set<std::string> names;
-					for (const Json& item : parameters.at("configurations"))
+					const Json& items = parameters.at("configurations");
+					const std::vector<ObjectId> current = hiddenTracks(project);
+					const std::vector<ObjectId> none;
+					const VisibilityConfiguration* const wasActive = active(visibility);
+					const auto isOld = [&visibility](const Json& item)
+					{
+						return std::any_of(visibility.configurations.begin(), visibility.configurations.end(),
+							[&item](const VisibilityConfiguration& old) { return item.at("name") == old.name; });
+					};
+					// The one new name that replaces the active one is its rename; of several, none is (#1694).
+					const bool renamed = wasActive != nullptr &&
+						std::none_of(items.begin(), items.end(),
+							[&visibility](const Json& item) { return item.at("name") == visibility.configuration; }) &&
+						std::count_if(
+							items.begin(), items.end(), [&isOld](const Json& item) { return !isOld(item); }) == 1;
+					// Only Update Configuration, which keeps the active one active, gives it the stored form of hidden:
+					// Add Configuration sends it too, unchanged, while it makes the new one active (#1694).
+					const bool update = !parameters.contains("configuration") ||
+						parameters.at("configuration") == visibility.configuration;
+					for (const Json& item : items)
 					{
 						const auto name = item.at("name").get<std::string>();
 						require(!name.empty(), "a configuration needs a name");
 						require(names.insert(name).second, "two configurations are named " + name);
-						configurations.push_back({name, tracksFrom(project, item.at("hidden"))});
+						const auto old = std::find_if(visibility.configurations.begin(),
+							visibility.configurations.end(), [&name](const VisibilityConfiguration& configuration)
+							{ return configuration.name == name; });
+						// The tracks hidden on their own inside its folders, which stay when they leave them (#1533):
+						// the configuration's of the name, or the active one's that Rename Configuration renamed; a
+						// new one with the tracks hidden now, as Add Configuration sends it, and the active one that
+						// Update Configuration sends take the visibility's (#1622).
+						const VisibilityConfiguration* from = renamed ? wasActive : nullptr;
+						if (old != visibility.configurations.end())
+							from = &*old;
+						const std::vector<ObjectId> ids = tracksFrom(project, item.at("hidden"));
+						const std::vector<ObjectId>* keep = from != nullptr ? &from->hidden : &none;
+						if (ids == current && (from == nullptr || (from == wasActive && name == from->name && update)))
+							keep = &visibility.hidden;
+						configurations.push_back({name, withoutInside(project, ids, *keep)});
 					}
 					visibility.configurations = std::move(configurations);
 					if (active(visibility) == nullptr)
@@ -188,18 +348,22 @@ namespace gnubase::engine
 				if (parameters.contains("configuration"))
 				{
 					visibility.configuration = parameters.at("configuration").get<std::string>();
-					const VisibilityConfiguration* configuration = active(visibility);
-					require(visibility.configuration.empty() || configuration != nullptr,
+					const auto configuration = std::find_if(visibility.configurations.begin(),
+						visibility.configurations.end(), [&visibility](const VisibilityConfiguration& item)
+						{ return item.name == visibility.configuration; });
+					require(visibility.configuration.empty() || configuration != visibility.configurations.end(),
 						"no configuration " + visibility.configuration);
-					if (configuration != nullptr && !parameters.contains("hidden"))
-						visibility.hidden = existing(project, configuration->hidden);
+					// With the ids of removed tracks, which an undo brings back (#1475).
+					if (configuration != visibility.configurations.end() && !parameters.contains("hidden"))
+						visibility.hidden = configuration->hidden;
 				}
 				if (parameters.contains("hidden"))
-					visibility.hidden = tracksFrom(project, parameters.at("hidden"));
+					visibility.hidden =
+						withoutInside(project, tracksFrom(project, parameters.at("hidden")), visibility.hidden);
 				if (parameters.contains("sync"))
 					visibility.sync = parameters.at("sync").get<std::string>();
 				syncMixers(project, context);
-				Json result = visibilityJson(project);
+				Json result = trackVisibilityJson(project);
 				context.emit("trackVisibility.changed", result);
 				return result;
 			});
@@ -212,7 +376,8 @@ namespace gnubase::engine
 				{{"type", "object"},
 					{"properties",
 						{{"track", {{"type", "integer"}}},
-							{"height", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}}}},
+							{"height",
+								{{"type", "number"}, {"minimum", g_minTrackHeight}, {"maximum", g_maxTrackHeight}}}}},
 					{"required", {"track", "height"}}, {"additionalProperties", false}}}};
 		const Json foldedSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
 		const Json resultSchema = {{"type", "object"},
@@ -227,13 +392,15 @@ namespace gnubase::engine
 			{"trackLayout.get", 1,
 				"The track list's track heights and folded folders (reference manual pp. 217, 225). " + text,
 				{{"type", "object"}, {"additionalProperties", false}}, resultSchema, true},
-			[&model](CommandContext&) { return layoutJson(model.project()); });
+			[&model](CommandContext&) { return trackLayoutJson(model.project()); });
 
 		model.addEdit(engine,
 			{"trackLayout.set", 1,
 				"Changes the track list's track heights and folded folders; what isn't given stays. " + text +
 					" heights sets the given tracks' heights, the others keep theirs; folded replaces the folded "
-					"folders. Settings, not an undo step, saved with the project. Emits trackLayout.changed.",
+					"folders. Settings, not an undo step, saved with the project. Emits trackLayout.changed, as undo "
+					"and redo do when a track with a height or a fold state comes back or goes. Values the project has "
+					"already change nothing: no event, and the project doesn't count as modified.",
 				{{"type", "object"}, {"properties", {{"heights", heightsSchema}, {"folded", foldedSchema}}},
 					{"additionalProperties", false}},
 				resultSchema, false},
@@ -242,6 +409,7 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				TrackLayout& layout = project.trackLayout;
+				const TrackLayout before = layout;
 				if (parameters.contains("heights"))
 					for (const Json& item : parameters.at("heights"))
 					{
@@ -257,7 +425,13 @@ namespace gnubase::engine
 						require(project.trackById.at(id).type == TrackType::Folder,
 							"track " + std::to_string(id) + " is not a folder");
 				}
-				Json result = layoutJson(project);
+				Json result = trackLayoutJson(project);
+				// The layout the project has already is no change, which would count the project as modified (#1131).
+				if (layout.heights == before.heights && layout.folded == before.folded)
+				{
+					context.markUnchanged();
+					return result;
+				}
 				context.emit("trackLayout.changed", result);
 				return result;
 			});
