@@ -817,6 +817,25 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK_THAT(reject(client, "transport.set", {{"postRollAmount", -1}}), ContainsSubstring("postRollAmount"));
 }
 
+TEST_CASE("the transport's position schemas give the positions' bounds", "[unit]")
+{
+	// For MCP clients and Lua, and the same bound as the handlers' (#592).
+	Engine engine;
+	int found = 0;
+	for (const CommandInfo& info : engine.commands())
+		for (const auto& [command, property] : {std::pair{"transport.locate", "position"},
+				 std::pair{"transport.set", "left"}, std::pair{"transport.set", "right"}})
+			if (info.name == command)
+			{
+				INFO(command << " " << property);
+				const Json& schema = info.parameters.at("properties").at(property);
+				CHECK(schema.at("minimum") == 0);
+				CHECK(schema.at("maximum") == g_maxPosition);
+				++found;
+			}
+	CHECK(found == 3);
+}
+
 TEST_CASE("record starts playback and recording, punches in and out, and stop ends both", "[integration]")
 {
 	Engine engine;
@@ -1116,6 +1135,16 @@ TEST_CASE("go to project end locates to the end of the last event", "[integratio
 	run(client, "audioEvent.add",
 		{{"track", audio.at("track").at("id")}, {"clip", clip.at("clip").at("id")}, {"position", 12345}});
 	CHECK(run(client, "transport.locate", {{"target", "projectEnd"}}).at("position") == 12345 + 48000);
+
+	// One whose end in project samples is past what a time::Samples holds: the end stops at the largest position
+	// (#596).
+	const Json longest = run(client, "media.add",
+		{{"path", "/audio/longest.wav"}, {"sampleRate", 24000.0}, {"channels", 1}, {"length", Samples{1} << 62}});
+	const Json longClip = run(client, "clip.add", {{"media", longest.at("media").at("id")}});
+	const Json other = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}});
+	run(client, "audioEvent.add",
+		{{"track", other.at("track").at("id")}, {"clip", longClip.at("clip").at("id")}, {"position", 0}});
+	CHECK(run(client, "transport.locate", {{"target", "projectEnd"}}).at("position") == g_maxPosition);
 
 	// An event past the largest position: the cursor stops there, as do locators set to it.
 	run(client, "audioEvent.add",
