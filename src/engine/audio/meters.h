@@ -170,7 +170,7 @@ namespace gnubase::engine
 		uint64_t m_measuredFrames = 0; // since the last reset
 		uint64_t m_playingSteps = 0;   // since playback last started
 		bool m_wasMeasuring = false;
-		int m_freshSamples = 0; // samples since playback started while the interpolator still holds older ones
+		int m_freshSamples = 0; // the samples left after playback started until the interpolator holds only newer ones
 		uint32_t m_resetsSeen = 0;
 		int m_channels = 0;
 		double m_sampleRate = 0.0; // that it was last prepared for

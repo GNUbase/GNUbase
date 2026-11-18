@@ -469,12 +469,16 @@ TEST_CASE("a level meter channel that comes back starts without what it measured
 
 TEST_CASE("the loudness blocks start where playback starts, not with audio from while it stood", "[unit]")
 {
+	// Also loud low frequencies while it stood, which the K-weighting's high pass would carry into the first blocks.
+	const auto [frequency, level] = GENERATE(table<double, double>({{1000.0, -10.0}, {60.0, 0.0}}));
+	const double stood = GENERATE(3.0, 3.05); // also ending off the 100 ms grid
+	INFO(stood << " s of " << frequency << " Hz at " << level << " dBFS while it stood");
 	LoudnessMeter meter;
 	meter.prepare(g_rate);
 	Signal quiet;
 	quiet.sine(5.0, -30.0);
 	Signal loud;
-	loud.sine(GENERATE(3.0, 3.05), -10.0); // also ending off the 100 ms grid
+	loud.sine(stood, level, frequency);
 	quiet.play(meter);
 	loud.play(meter, false); // stopped
 	quiet.play(meter);
@@ -524,6 +528,24 @@ TEST_CASE("the loudness meter measures up to where playback stops, also within a
 	// 27 blocks at -30 LUFS from 0.4 to 3 s, and the one that ends at the stop.
 	const double last = std::pow(10.0, loudness(0.05, 0.4) / 10.0);
 	CHECK(reading.integrated.value_or(0.0) == Approx(10.0 * std::log10(((27.0 * 0.001) + last) / 28.0)).margin(0.1));
+}
+
+TEST_CASE("the true peak reads between the samples from the 24th sample after playback starts", "[unit]")
+{
+	LoudnessMeter meter;
+	meter.prepare(g_rate);
+	Signal stopped;
+	stopped.silence(0.1);
+	stopped.play(meter, false);
+	// The 12th and 13th samples after the start at -6 dBFS, with silence around: the peak between them lies 11.5
+	// samples before the 24th, the first sample whose interpolator holds only audio from after the start.
+	Signal played;
+	played.silence(11.0 / g_rate);
+	played.impulse(0.5f);
+	played.impulse(0.5f);
+	played.silence(0.2);
+	played.play(meter);
+	CHECK(decibels(meter.read().truePeakMax[0]) > decibels(0.5) + 1.5);
 }
 
 TEST_CASE("a loudness meter channel that comes back starts without what it measured before", "[unit]")

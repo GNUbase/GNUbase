@@ -356,13 +356,16 @@ namespace gnubase::engine
 		}
 		if (measuring && !m_wasMeasuring)
 		{
-			// Playback starts: a fresh step, and blocks of only the steps from here on, so no block or true peak holds
-			// audio from while the transport stood.
+			// Playback starts: a fresh step, blocks of only the steps from here on and fresh K-weighting filters, whose
+			// high pass would carry loud low frequencies on for about 10 ms, so no block or true peak holds audio from
+			// while the transport stood.
 			m_stepEnergy = 0.0;
 			m_stepFrames = 0;
 			m_playingSteps = 0;
+			m_filterState = {};
 			m_windowTruePeak.fill(0.0f);
-			m_freshSamples = g_taps / 4;
+			// The interpolator holds only new samples from the g_taps / 4th on.
+			m_freshSamples = (g_taps / 4) - 1;
 		}
 		m_wasMeasuring = measuring;
 		std::array<float, g_maxMeterChannels> blockTruePeak{}; // for the frame's reading
