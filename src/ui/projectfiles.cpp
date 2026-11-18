@@ -843,8 +843,15 @@ namespace gnubase::ui
 		// SDL follows the main window's close request with its own quit request when that is the last window, and
 		// the user may ask again while the question is open: the question that is coming or open answers them all.
 		// A question that was answered, or went with its window, is no longer the open dialog: the request asks again.
-		if (m_quitting || (m_quitQuestion.get() != nullptr && m_quitQuestion.get() == m_dialog.get()))
+		if (m_quitting)
 			return;
+		if (m_quitQuestion.get() != nullptr && m_quitQuestion.get() == m_dialog.get())
+		{
+			// The request seems ignored when the question is in a window that is minimized, behind others or on
+			// another monitor: bring it to the front (#615, #688).
+			m_shell.raise(m_quitQuestionWindow);
+			return;
+		}
 		// A dialog that is open, such as the start screen, would keep the question from opening: quitting cancels it.
 		closeDialog("cancel");
 		// The questions and start screens that wait for it go too, so that the quit question is next instead of one
@@ -865,10 +872,14 @@ namespace gnubase::ui
 		// Quitting closes every window, so it waits until the event that asked for it is done with them.
 		unlessUnsaved(
 			window, [this] { m_shell.post([this] { m_shell.quit(); }); },
-			[this](Rml::ElementDocument* question)
+			[this, id = window.id()](Rml::ElementDocument* question)
 			{
 				m_quitting = false;
 				m_quitQuestion = question != nullptr ? question->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+				m_quitQuestionWindow = id;
+				// A quit request from the OS finds the window minimized or behind others: the user sees the question.
+				if (question != nullptr)
+					m_shell.raise(id);
 			});
 	}
 

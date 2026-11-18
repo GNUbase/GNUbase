@@ -781,6 +781,20 @@ namespace
 		return nullptr;
 	}
 
+	// Whether SDL's window is minimized.
+	bool minimizedWindow(gnubase::ui::WindowId id)
+	{
+		SDL_Window* window = SDL_GetWindowFromID(static_cast<SDL_WindowID>(id));
+		return window != nullptr && (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) != 0;
+	}
+
+	// Minimizes the window and steps until SDL says so.
+	void minimizeWindow(test::UiApp& app, gnubase::ui::WindowId id)
+	{
+		app.shell().minimize(id);
+		REQUIRE(app.waitUntil([id] { return minimizedWindow(id); }));
+	}
+
 	// What SDL sends when the user closes the last visible window (SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE): the window's
 	// close request, and then its own quit request, which GNUbase handles in the same step.
 	void closeLastWindow(test::UiApp& app)
@@ -1365,6 +1379,66 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
 }
 
+TEST_CASE("a quit request brings the window with the question to the front, also when asked again", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}});
+	const gnubase::ui::WindowId main = app.main().id();
+
+	// The OS's quit request while the main window is minimized: the question restores it.
+	minimizeWindow(app, main);
+	app.ui().close(std::nullopt, true);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	CHECK(!minimizedWindow(main));
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+
+	// File > Quit's key in a panel's own window asks there; a further request brings that window to the front.
+	app.appUi().docking().setFloating("history", true);
+	const gnubase::ui::Window* floating = app.appUi().docking().windowOf("history");
+	REQUIRE(floating != nullptr);
+	const gnubase::ui::WindowId panel = floating->id();
+	gnubase::ui::Window* window = app.shell().find(panel);
+	REQUIRE(window != nullptr);
+	app.keys().run("file.quit", Json::object(), *window, nullptr);
+	REQUIRE(app.waitUntil(
+		[&app, panel] { return app.ui().dom(panel, "#discard-changes-dialog", 0).at("elements").size() == 1; }));
+	app.call("project.revision"); // after the engine answered the question's second look
+	minimizeWindow(app, panel);
+	app.ui().close(std::nullopt, true);
+	REQUIRE(app.waitUntil([panel] { return !minimizedWindow(panel); }));
+	CHECK(app.ui().dom(panel, "#discard-changes-dialog", 0).at("elements").size() == 1);
+	CHECK(!shown(app, "#discard-changes-dialog")); // still one question, not in the main window
+}
+
+TEST_CASE("a quit request right after Cancel asks again, before the answered question is gone", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}});
+
+	closeLastWindow(app);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	Rml::Element* first = question(app);
+	const Rml::ObserverPtr<Rml::Element> answered =
+		first != nullptr ? first->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+	REQUIRE(answered.get() != nullptr);
+	app.call("project.revision"); // after the engine answered the question's second look
+	app.shell().step(std::chrono::milliseconds(0));
+
+	// Cancel and ask again without a step in between: RmlUi still holds the answered document, which the request
+	// must not take for its question.
+	app.ui().click(std::nullopt, {"#discard-changes-dialog button[result=cancel]", 0, std::nullopt},
+		gnubase::ui::MouseButton::Left, 1, {});
+	app.keys().run("file.quit", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app, &answered] { return answered.get() == nullptr; }));
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	REQUIRE(app.shell().running());
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
 TEST_CASE("a quit question cancelled before the engine answered its second look lets the next quit request ask", "[ui]")
 {
 	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
@@ -1421,6 +1495,7 @@ TEST_CASE("a quit question that goes with its window doesn't keep the next quit 
 	// Closing the window, which docks the panel again, takes the question along unanswered.
 	app.ui().close(panel, false);
 	REQUIRE(app.waitUntil([&app, panel] { return app.shell().find(panel) == nullptr; }));
+	CHECK(app.appUi().docking().windowOf("history") == nullptr); // the panel is docked again
 	REQUIRE(app.shell().running());
 
 	closeLastWindow(app);

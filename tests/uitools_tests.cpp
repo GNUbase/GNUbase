@@ -8,6 +8,7 @@
 #include "testutils/fakeui.h"
 #include "testutils/schemaguards.h"
 #include "testutils/slowframe.h"
+#include "ui/automation.h"
 #include "ui/fonts.h"
 #include "ui/renderer.h"
 #include "ui/rmlui.h"
@@ -628,6 +629,31 @@ TEST_CASE("ui_close asks to close a window, or to quit, as the OS does, in the U
 	shell.onQuitRequest({});
 	fixture.call("ui_close", {{"quit", true}});
 	CHECK(stepUntil([&shell] { return !shell.running(); }));
+}
+
+TEST_CASE("Automation::close posts the request: nothing closes or runs before the shell's next step", "[unit]")
+{
+	std::vector<ui::WindowId> closing;  // before the fixture, whose shell holds the handlers
+	std::vector<ui::WindowId> quitting; // that record into them
+	Fixture fixture;
+	ui::Shell& shell = fixture.ui.shell;
+	const ui::WindowId other = fixture.open({800, 100, 400, 300}, "boxes.rml")->id();
+	shell.onCloseRequest([&closing](ui::Window& window) { closing.push_back(window.id()); });
+	shell.onQuitRequest([&quitting](ui::Window& window) { quitting.push_back(window.id()); });
+	ui::Automation automation(shell);
+
+	// The call returns with the window open and no handler run, as it would if it acted at once.
+	automation.close(other, false);
+	automation.close(std::nullopt, true);
+	CHECK(shell.find(other) != nullptr);
+	CHECK(closing.empty());
+	CHECK(quitting.empty());
+
+	// The next step runs both, in the order they were asked.
+	shell.step(milliseconds(0));
+	CHECK(shell.find(other) == nullptr);
+	CHECK(closing == std::vector<ui::WindowId>{other});
+	CHECK(quitting.size() == 1);
 }
 
 TEST_CASE("ui_file_dialog lists the file dialogs that wait and answers them as the user would", "[unit]")

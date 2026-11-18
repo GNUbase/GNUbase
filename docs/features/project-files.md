@@ -128,6 +128,8 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   and the user may close the window again while the question waits. After Cancel the next request asks again, even when
   the Cancel came before the engine answered the question's second look at `project.revision` (#1454), and so it does
   when the question went unanswered with its window, such as a panel's own window where File > Quit's key asked.
+  The window with the question comes to the front, restored if it is minimized (`Shell::raise`), when the question
+  opens and again for each request that finds it open, so that a request never seems ignored (#615, #688).
 - **Start screen.** `start-screen.rml`, the minimal version of the reference's hub: the templates with Create, Create
   Empty Project, the recent projects that are still there with Open, and Open Other..., which asks for a file. A double
   click on a row does what its button does. File > New Project opens it, and the app at its start when no project was
@@ -185,12 +187,10 @@ keep audio recorded since the last save on Revert; Close and several open projec
 the last edit in auto save names; Run Setup on Create
 New Project and Open Last Project on Startup.
 
-Quit requests (#615): the unsaved changes question opens in the main window, also when the request comes from the OS
-(the Dock's Quit, Close from the taskbar while the main window is minimized, a signal) and the main window is
-minimized or behind other windows, so that GNUbase seems to ignore the request; the main window should come to the
-front, restored, when the question opens. And a signal waits for the question like the other requests, although on a
-Linux shutdown or a `kill` nobody may answer it before SIGKILL: whether a signal should rather quit after an auto save
-is still to decide.
+Quit requests (#615): a signal waits for the unsaved changes question like the other requests, although on a Linux
+shutdown or a `kill` nobody may answer it before SIGKILL: whether a signal should rather quit after an auto save is
+still to decide. What the OS does with the question's window (the Dock's Quit with the main window minimized, a Linux
+session's logout) is only checked on the fake window system and SDL's dummy driver, not on macOS or Linux desktops.
 
 ## Checks
 
