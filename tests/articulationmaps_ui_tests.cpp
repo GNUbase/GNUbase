@@ -111,6 +111,7 @@ namespace
 TEST_CASE("the articulation map setup adds and edits maps, and the inspector assigns them", "[ui]")
 {
 	Fixture f;
+	f.app.setDpRatio(0.5F); // the populated map and its actions fit on the monitor
 	// The inspector's section opens the setup for the track; the sections above it closed, so that it is in view.
 	for (const char* section : {"basics", "routing", "modifiers"})
 		f.click(".inspector [section=" + std::string(section) + "] .section-header");
@@ -893,6 +894,7 @@ TEST_CASE("the articulation map setup opened right after a new project has no tr
 TEST_CASE("the articulation map setup filters its maps, combines articulations and has the sound slot actions", "[ui]")
 {
 	Fixture f;
+	f.app.setDpRatio(0.5F); // the populated map and its actions fit on the monitor
 	const Json strings =
 		f.app
 			.call("articulationMap.add",
@@ -1000,6 +1002,7 @@ TEST_CASE("the articulation map setup filters its maps, combines articulations a
 TEST_CASE("the articulation map setup's slot actions send what they say, and its rows follow the changes", "[ui]")
 {
 	Fixture f;
+	f.app.setDpRatio(0.5F); // the populated map and its actions fit on the monitor
 	const Json strings =
 		f.app
 			.call("articulationMap.add",

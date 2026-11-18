@@ -205,12 +205,12 @@ namespace gnubase::ui
 
 		bool pointInView(Window& window, Rml::Element& element, const Point& point)
 		{
+			// RmlUi's hit test includes the boundary, which a rounded centre can lie on, e.g. an end marker.
 			const Size size = window.pixelSize();
-			if (point.x < 0 || point.y < 0 || point.x >= size.width || point.y >= size.height)
+			if (point.x < 0 || point.y < 0 || point.x > size.width || point.y > size.height)
 				return false;
 			Rml::Rectanglei clip;
-			return !Rml::ElementUtilities::GetClippingRegion(&element, clip) ||
-				(point.x >= clip.Left() && point.y >= clip.Top() && point.x < clip.Right() && point.y < clip.Bottom());
+			return !Rml::ElementUtilities::GetClippingRegion(&element, clip) || clip.Contains({point.x, point.y});
 		}
 
 		// The target's point, or the centre of its element as it is now. As a user would, an element whose centre its

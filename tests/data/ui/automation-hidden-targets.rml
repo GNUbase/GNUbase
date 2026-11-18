@@ -18,6 +18,10 @@
 		#below, #beside { position: absolute; width: 20dp; height: 20dp; }
 		#below { top: 500dp; left: 10dp; }
 		#beside { top: 100dp; left: 660dp; }
+		#window-edge { position: absolute; left: 636dp; top: 200dp; width: 9dp; }
+		#clip-edge-container { left: 450dp; overflow: hidden; }
+		#clip-edge { position: absolute; left: 96dp; top: 0; width: 9dp; }
+		#edge-child { position: absolute; left: 4dp; top: 0; width: 1dp; height: 20dp; }
 	</style>
 </head>
 <body>
@@ -34,5 +38,7 @@
 	</div>
 	<div class="target" id="below"/>
 	<div class="target" id="beside"/>
+	<div class="target" id="window-edge"><div id="edge-child"/></div>
+	<div class="container" id="clip-edge-container"><div class="target" id="clip-edge"/></div>
 </body>
 </rml>

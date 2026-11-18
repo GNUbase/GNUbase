@@ -425,6 +425,16 @@ TEST_CASE("ui_click rejects a target whose centre stays hidden after scrolling",
 	}
 }
 
+TEST_CASE("ui_click accepts centres on the boundary that RmlUi can hit", "[unit]")
+{
+	Fixture fixture;
+	const ui::Window* window = fixture.open({100, 100, 640, 480}, "automation-hidden-targets.rml");
+	CHECK(fixture.call("ui_click", {{"window", window->id()}, {"selector", "#window-edge"}}).at("element").at("id") ==
+		"edge-child");
+	CHECK(fixture.call("ui_click", {{"window", window->id()}, {"selector", "#clip-edge"}}).at("element").at("id") ==
+		"clip-edge");
+}
+
 TEST_CASE("ui_drag rejects a start that stays hidden without blaming the other end", "[unit]")
 {
 	Fixture fixture;
