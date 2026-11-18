@@ -1848,6 +1848,47 @@ TEST_CASE("the expression editor on a short note right of the note display's mid
 	CHECK(std::abs(editor.at("x").get<double>() - note.at("x").get<double>()) <= 1.0);
 }
 
+TEST_CASE("the expression editor on a short note just inside the note display's right edge stays in it as the window "
+		  "narrows",
+	"[ui]")
+{
+	// Its button's width is in dp and the note's place in percent: a seventh narrower, the note starts nearer the right
+	// edge than the editor is wide, and the window's update places it again, although a pixel with a sixth more ticks
+	// renders nothing again (#1746).
+	Fixture f;
+	const ui::WindowId window = f.app.appUi().editorWindowId();
+	const ui::Window* shown = f.app.shell().find(window);
+	REQUIRE(shown != nullptr);
+	f.app.call("quantize.set", {{"settings", {{"grid", "1/128"}}}}); // which the click on the note snaps it to
+	f.settle();
+	const double grid = f.box(".key-editor-grid").at("width").get<double>();
+	// The first 128th at least 73dp from the right edge, less than 84: the editor's 72dp fit there, a seventh narrower
+	// they don't.
+	const double fromRight = 73.0 * shown->context().GetDensityIndependentPixelRatio();
+	const auto steps = static_cast<int64_t>(std::ceil(fromRight / grid * 128));
+	REQUIRE(static_cast<double>(steps) * grid / 128 < fromRight * 84 / 73);
+	const std::vector<uint64_t> ids = f.add({{g_bar - (steps * g_bar / 128), 60, g_sixteenth / 2}});
+	f.settle();
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionDoubleClick", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	f.click(of(noteSelector(ids[0])), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(std::abs(f.box(".key-expression-editor").at("x").get<double>() -
+				f.box(noteSelector(ids[0])).at("x").get<double>()) <= 1.0);
+
+	const ui::Rect bounds = f.app.shell().bounds(window);
+	const uint64_t frames = shown->frames();
+	f.app.shell().setBounds(window, {bounds.x, bounds.y, bounds.width - f.desktop(grid / 7), bounds.height});
+	REQUIRE(f.app.waitUntil(
+		[&] { return shown->frames() > frames && f.box(".key-editor-grid").at("width").get<double>() < grid * 0.9; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json editor = f.box(".key-expression-editor");
+	const Json narrowed = f.box(".key-editor-grid");
+	CHECK(editor.at("x").get<double>() + editor.at("width").get<double>() <=
+		narrowed.at("x").get<double>() + narrowed.at("width").get<double>() + 0.5);
+}
+
 TEST_CASE("the note expression lines join the steps narrower than a pixel", "[ui]")
 {
 	// A recorded MPE note has a point every few milliseconds (#1671): the overlay and the expression editor draw a

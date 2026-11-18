@@ -87,7 +87,8 @@ namespace gnubase::ui
 		// window or zone changes its width (#1671). Lines that an update laid out with their own ticks only for a
 		// quarter more or fewer (#1716), others for any other ticks (#1768). True when it built them, so that the
 		// window updates again (Shell::afterUpdate). The first scroll to the notes waits for that layout too, and
-		// is true when it scrolled.
+		// is true when it scrolled. It places the expression editor again for a grid of another width, and is true
+		// then.
 		bool fitLines(const Rml::Context& updated);
 
 		// Scrolls the note display so that the pitch is in the middle; false before the display has its size. The
@@ -349,8 +350,9 @@ namespace gnubase::ui
 		std::unique_ptr<ControllerLanes> m_lanes;
 		bool m_expressionOpen = false;                  // the expression editor (p. 1308)
 		std::pair<uint64_t, uint64_t> m_expressionNote; // the note double-clicked to open it: part, id
-		std::map<int64_t, double> m_painted;            // the draw tool's points in it, project ticks
-		int64_t m_paintFrom = 0;                        // the range it swept, project ticks
+		float m_expressionWide = 0.0F;       // the grid's width placeExpression placed it for, which fitLines follows
+		std::map<int64_t, double> m_painted; // the draw tool's points in it, project ticks
+		int64_t m_paintFrom = 0;             // the range it swept, project ticks
 		int64_t m_paintTo = -1;
 		uint64_t m_read = 0;                // show()'s read
 		uint64_t m_expressionEdits = 0;     // the expression editor's edits sent

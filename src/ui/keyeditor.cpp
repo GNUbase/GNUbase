@@ -1022,7 +1022,20 @@ namespace gnubase::ui
 		const bool unscrolled = !m_scrolled;
 		scrollToNotes();
 		const bool refit = refitLines(true);
-		return refit || (unscrolled && m_scrolled);
+		// The expression editor's anchor comes from the grid's width (placeExpression), which a resize changes without
+		// a render: placed again for it, so that it stays inside the note display (#1746).
+		bool placed = false;
+		if (const Rml::Element* editor =
+				m_expressionOpen ? m_root.get()->QuerySelector(".key-expression-editor") : nullptr;
+			editor != nullptr && editor->GetParentNode() != nullptr)
+		{
+			const float wide = editor->GetParentNode()->GetBox().GetSize(Rml::BoxArea::Border).x;
+			placed = wide != m_expressionWide;
+			m_expressionWide = wide;
+			if (placed)
+				placeExpression();
+		}
+		return refit || placed || (unscrolled && m_scrolled);
 	}
 
 	bool KeyEditor::linesShown() const
@@ -1065,8 +1078,9 @@ namespace gnubase::ui
 		// right edge, it grows to the left from their end, so that it stays inside the note display there too (#1713).
 		// Anywhere else it starts at the notes, so that it keeps still as an in-place editor's range scrolls (#1746).
 		Rml::Element* grid = editor->GetParentNode();
-		const double range = static_cast<double>(m_to - m_from);
+		const auto range = static_cast<double>(m_to - m_from);
 		const double wide = grid != nullptr ? grid->GetBox().GetSize(Rml::BoxArea::Border).x : 0.0;
+		m_expressionWide = static_cast<float>(wide);
 		const double least = Rml::ResolveValue(editor->GetComputedValues().min_width(), static_cast<float>(wide));
 		if (wide > 0.0 &&
 			(static_cast<double>(from - m_from) / range * wide) +

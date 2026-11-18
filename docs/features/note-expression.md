@@ -186,9 +186,10 @@ first.
   notes narrower than its button it spreads their time over its whole width, so that its lines no longer lie over the
   notes' time behind it and join their steps by the note display's coarser pixels, and only where it would end past
   the note display's right edge it moves left to stay inside (#1713), so that an in-place editor's keeps still as the
-  project window scrolls (#1746). Its button at the top left is Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point
-  where it clicks, and a drag draws points along the way where the value changes (not one per mouse position), replacing
-  those of the expression in the range it went over; at the right edge it draws at the last note's last tick. With
+  project window scrolls (#1746); a window or zone that changes its width places it again. Its button at the top left
+  is Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point where it clicks, and a drag
+  draws points along the way where the value changes (not one per mouse position), replacing those of the expression in
+  the range it went over; at the right edge it draws at the last note's last tick. With
   Shift, tuning goes in semitone steps (Vertical Snap). The erase tool deletes the points of the expression it is
   dragged over, a click those within a few dp: it is GNUbase's own, standing in until points can be selected and deleted
   with Edit > Delete as the reference manual does (pp. 1310-1311). An edit reaches every selected note at the time where
