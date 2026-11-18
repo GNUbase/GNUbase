@@ -1616,13 +1616,21 @@ namespace gnubase::engine
 
 	template <typename Departed> void InstrumentChannel::release(const Departed& departed,
 		const std::vector<std::shared_ptr<MidiSequencer>>& staying,
-		const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends) noexcept
+		const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends, const std::vector<PassedNotes>& passed) noexcept
 	{
+		// Whether a staying track holds the note here.
+		const auto stays = [this, &staying, &passed](uint16_t index) noexcept
+		{
+			for (size_t i = 0; i < staying.size(); ++i)
+				if (staying[i]->playsOn() == m_serial && staying[i]->holds(index) &&
+					(i >= passed.size() || !passed[i] || (*passed[i])[index]))
+					return true;
+			return false;
+		};
 		for (uint16_t index = 0; index < MidiSequencer::g_notes; ++index)
 		{
 			if (!m_held[index] || m_ending[index] || !departed.holds(index) || m_sequencer->holds(index) ||
-				std::any_of(staying.begin(), staying.end(), [this, index](const std::shared_ptr<MidiSequencer>& source)
-					{ return source->playsOn() == m_serial && source->holds(index); }) ||
+				stays(index) ||
 				std::any_of(stayingSends.begin(), stayingSends.end(),
 					[index](const std::shared_ptr<MidiSendTap>& send) { return send->holds(index); }))
 				continue;
@@ -1633,17 +1641,17 @@ namespace gnubase::engine
 
 	void InstrumentChannel::releaseNotesOf(MidiSequencer& departed,
 		const std::vector<std::shared_ptr<MidiSequencer>>& staying,
-		const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends) noexcept
+		const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends, const std::vector<PassedNotes>& passed) noexcept
 	{
-		release(departed, staying, stayingSends);
+		release(departed, staying, stayingSends, passed);
 		departed.forget();
 	}
 
 	void InstrumentChannel::releaseNotesOf(MidiSendTap& departed,
 		const std::vector<std::shared_ptr<MidiSequencer>>& staying,
-		const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends) noexcept
+		const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends, const std::vector<PassedNotes>& passed) noexcept
 	{
-		release(departed, staying, stayingSends);
+		release(departed, staying, stayingSends, passed);
 		departed.forget();
 	}
 

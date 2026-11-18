@@ -53,8 +53,9 @@ namespace gnubase::engine
 		ChaseIndex all;
 		std::vector<ChasePart> parts; // sorted by start
 		ChaseIndex slots;
-		// A MIDI track's AutomationPlayer::heardAgain, or none: raised for the block in which the track is heard again
-		// after playback moved while it was silent, when the sequencer chases its parts where playback is.
+		// A MIDI or instrument track's AutomationPlayer::heardAgain, or none: raised for the block in which the track
+		// is heard again after playback moved while it was silent, or ran while it was soloed out or disabled, when
+		// the sequencer chases its parts where playback is.
 		std::shared_ptr<const std::atomic<HeardAgain>> heardAgain;
 		// The kinds (ChaseLane::kind) its channel sends again when it is heard again after a move (channelChaseKinds),
 		// before the chase: their latest event is chased whichever track it is on, as at a jump.
@@ -223,15 +224,16 @@ namespace gnubase::engine
 	// controller events alone, up to and including those at the cursor. A chase takes a binary search per kind of
 	// event.
 	//
-	// A silent MIDI track's parts aren't in the sequence, so a jump while it is silent doesn't chase them. When it is
-	// heard again (ChaseTrack::heardAgain), the sequencer chases them in that block, where playback is, as the jump
-	// would have: of each kind the latest event before the position on the tracks chased, if it is the heard track's or
-	// of a kind its channel's values and automation have just sent (ChaseTrack::channelKinds), which come first, in its
-	// events; stopped, up to and including the cursor. A MIDI channel's bank select chased that way brings the
-	// channel's latest program after it, or after the earlier of CC 0 and CC 32, whichever track has it, as a jump
-	// sends them. A track that only its mute button muted had its parts in the sequence, and its strip sends what the
-	// mute dropped: only the kinds its channel sent are chased, whose dropped values the strip forgets. After a chase
-	// that didn't fit, it chases everything there again. Notes aren't chased.
+	// A soloed-out or disabled MIDI track's parts aren't in the sequence, nor a disabled instrument track's, so a jump
+	// or playback while it isn't heard doesn't chase or play them. When it is heard again (ChaseTrack::heardAgain),
+	// the sequencer chases them in that block, where playback is, as the jump would have: of each kind the latest event
+	// before the position on the tracks chased, if it is the heard track's or of a kind its channel's values and
+	// automation have just sent (ChaseTrack::channelKinds), which come first, in its events; stopped, up to and
+	// including the cursor. A MIDI channel's bank select chased that way brings the channel's latest program after it,
+	// or after the earlier of CC 0 and CC 32, whichever track has it, as a jump sends them. A track that only its mute
+	// button muted had its parts in the sequence, and its strip sends what the mute dropped: only the kinds its channel
+	// sent are chased, whose dropped values the strip forgets. After a chase that didn't fit, it chases everything
+	// there again. Notes aren't chased.
 	//
 	// The track's own events, those of its input and of its parts, go through its MIDI inserts in order, each effect
 	// playing what the one before it played, and each MIDI send plays its effect on them beside that, before or after
@@ -596,17 +598,24 @@ namespace gnubase::engine
 
 		uint64_t serial() const noexcept { return m_serial; }
 
+		// The notes a staying MIDI track's strip let through to the instrument and that haven't ended, by
+		// channel * 128 + pitch (ChannelState::midiHeld): its mute drops notes that its sequencer holds.
+		using PassedNotes = std::shared_ptr<const std::array<bool, MidiSequencer::g_notes>>;
+
 		// Audio thread, before the first block of the graph without a MIDI track that was routed here (removed or
 		// rerouted), and before the sequencers' playOn: ends the notes that track's sequencer started here, from its
 		// parts or its input, at the next block, except those this channel's own sequencer or one of the staying
 		// tracks' also holds. A staying track counts only if it played here in the graph that ran last: one that
-		// arrives in this graph holds notes from somewhere else. Nor those the other tracks' MIDI sends that stay here
-		// (stayingSends) hold. The departed sequencer forgets them.
+		// arrives in this graph holds notes from somewhere else; and, with its passed notes (passed, in the order of
+		// staying), only if its strip let the note through: a note its mute dropped doesn't sound here. Nor those
+		// the other tracks' MIDI sends that stay here (stayingSends) hold. The departed sequencer forgets them.
 		void releaseNotesOf(MidiSequencer& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying,
-			const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends) noexcept;
+			const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends,
+			const std::vector<PassedNotes>& passed = {}) noexcept;
 		// The same for another track's MIDI send that played here and goes: the notes it holds here end.
 		void releaseNotesOf(MidiSendTap& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying,
-			const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends) noexcept;
+			const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends,
+			const std::vector<PassedNotes>& passed = {}) noexcept;
 
 		// Audio thread, after the block's process: the events its instrument got (midi.capture).
 		const graph::EventBuffer& played() const noexcept { return m_events; }
@@ -618,7 +627,8 @@ namespace gnubase::engine
 		// Ends the held notes that departed holds and no other source does.
 		template <typename Departed> void release(const Departed& departed,
 			const std::vector<std::shared_ptr<MidiSequencer>>& staying,
-			const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends) noexcept;
+			const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends,
+			const std::vector<PassedNotes>& passed) noexcept;
 
 		std::shared_ptr<MidiSequencer> m_sequencer;
 		std::shared_ptr<graph::Processor> m_instrument;

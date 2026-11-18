@@ -1287,10 +1287,17 @@ namespace gnubase::engine
 		result.reserve(m_releases.size());
 		for (const PendingRelease& pending : m_releases)
 		{
-			Release release{pending.channel, pending.departed, pending.departedSend, {}, {}};
+			Release release{pending.channel, pending.departed, pending.departedSend, {}, {}, {}};
 			const Instrument& instrument = m_instruments.at(pending.instrument);
 			for (const ObjectId source : instrument.sources)
+			{
 				release.staying.push_back(m_sequencers.at(source));
+				// A note its mute dropped doesn't sound on the instrument, though its sequencer holds it.
+				const auto state = m_channelStates.find(source);
+				release.passed.push_back(state != m_channelStates.end()
+						? InstrumentChannel::PassedNotes(state->second, &state->second->midiHeld)
+						: nullptr);
+			}
 			for (const auto& entry : instrument.sends)
 				release.stayingSends.push_back(entry.second);
 			result.push_back(std::move(release));
@@ -1309,9 +1316,11 @@ namespace gnubase::engine
 			m_running = program.generation;
 			for (const Release& release : program.releases)
 				if (release.departedSend)
-					release.channel->releaseNotesOf(*release.departedSend, release.staying, release.stayingSends);
+					release.channel->releaseNotesOf(
+						*release.departedSend, release.staying, release.stayingSends, release.passed);
 				else
-					release.channel->releaseNotesOf(*release.departed, release.staying, release.stayingSends);
+					release.channel->releaseNotesOf(
+						*release.departed, release.staying, release.stayingSends, release.passed);
 			for (size_t i = 0; i < program.sequencers.size(); ++i)
 				program.sequencers[i].second->playOn(program.destinations[i]);
 			m_started.store(program.generation, std::memory_order_release);
