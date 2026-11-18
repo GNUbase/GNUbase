@@ -1229,6 +1229,25 @@ namespace gnubase::app
 					!m_eventDisplay->project().value("rootKey", std::string()).empty();
 			});
 
+		// The Transport menu's record modes show the one that is set (#531); Lock and Unlock Record stay commands.
+		m_transportChanged.emplace(
+			m_binding.on("transport.changed", [this](const engine::Event& event) { m_transport = event.data; }));
+		m_binding.send("transport.get", engine::Json::object(),
+			[this](const engine::Result& result)
+			{
+				if (result.ok())
+					m_transport = result.value;
+			});
+		m_keys.checkWhen("transport.set",
+			[this](const engine::Json& parameters)
+			{
+				if (parameters.size() != 1 || !m_transport.is_object())
+					return false;
+				const std::string key = parameters.begin().key();
+				return (key == "audioRecordMode" || key == "midiRecordMode" || key == "midiCycleRecordMode") &&
+					m_transport.value(key, engine::Json()) == parameters.begin().value();
+			});
+
 		// Undo and Redo in the menus while the history has a step to undo or redo.
 		m_keys.enableWhen("history.undo", [this](ui::Window&, Rml::Element*) { return m_canUndo; });
 		m_keys.enableWhen("history.redo", [this](ui::Window&, Rml::Element*) { return m_canRedo; });

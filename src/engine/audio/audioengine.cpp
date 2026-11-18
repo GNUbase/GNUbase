@@ -495,6 +495,9 @@ namespace gnubase::engine
 			m_audition.cue(block, false);
 			m_playback.waitUntilBuffered(g_offlineWait);
 			m_audition.waitUntilBuffered(g_offlineWait);
+			// And for the recorder's disk thread: a recording made offline loses no input (#531).
+			if (!m_recorder.waitForChunks(g_offlineWait))
+				logging::warning("The render didn't wait any longer for the recorder: input to record may be lost");
 			if (m_dummy != nullptr)
 			{
 				m_dummy->render(*this, block);
@@ -3263,7 +3266,13 @@ namespace gnubase::engine
 		command("transport.stop",
 			"Stops playback and recording. With returnToStart the cursor goes back to where playback started or was "
 			"last located to. While lockRecord is on (see transport.set), a recording stops only with confirmed: the "
-			"user confirmed it.",
+			"user confirmed it. A recording's takes come into the project later, not with this command: once the "
+			"input still on its way has come in and the files are closed, the engine runs recording.add, which "
+			"announces recording.added; a file that can't be created or written is announced with recording.failed. "
+			"Wait for recording.added before project.save, or the project is saved without the takes; it follows "
+			"unless no file could be written, which only recording.failed reports. project.load, project.new or "
+			"project.revert before it drop them with recording.failed, and their files stay in the old project's "
+			"media folder.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
@@ -3277,7 +3286,8 @@ namespace gnubase::engine
 			"punchIn before the left locator, recording starts at the left locator instead. From stop, with the "
 			"metronome's count-in on (metronome.set countIn), the metronome counts in first and playback starts at "
 			"the exact sample where the count-in ends; transport.stop ends a count-in. record false punches out "
-			"and playback goes on, refused while lockRecord is on. Record-enabled tracks may monitor their input "
+			"and playback goes on, refused while lockRecord is on; the takes come later, with recording.added, as "
+			"for transport.stop. Record-enabled tracks may monitor their input "
 			"meanwhile, by the user setting audio.autoMonitoring (see channel.set).",
 			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)

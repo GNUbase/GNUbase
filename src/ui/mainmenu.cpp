@@ -5,6 +5,7 @@
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -81,6 +82,14 @@ namespace gnubase::ui
 				element->RemoveAttribute("disabled");
 			else if (!enabled && !element->HasAttribute("disabled"))
 				element->SetAttribute("disabled", "");
+			// Only where checkWhen says: the window menu's panel items are the docking's (ui/docking.h).
+			if (const std::optional<bool> checked = m_keys.checked(item.command, item.parameters))
+			{
+				if (*checked && !element->HasAttribute("checked"))
+					element->SetAttribute("checked", "");
+				else if (!*checked && element->HasAttribute("checked"))
+					element->RemoveAttribute("checked");
+			}
 			const std::vector<std::string> keys = m_keys.keysFor(item.command, item.parameters);
 			const std::string text = keys.empty() ? std::string() : Rml::StringUtilities::EncodeRml(keys.front());
 			if (shown->GetInnerRML() != text)

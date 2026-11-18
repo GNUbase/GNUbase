@@ -143,7 +143,8 @@ namespace gnubase::engine
 		// For a command registered with ProjectModel::addEdit that found nothing to change, such as a settings command
 		// given the values the project has: the project's revision stays, so that it doesn't count as modified, no
 		// undo step is recorded and no snapshot is published. The command must have changed nothing and emitted
-		// nothing. Inside another command, the outer one decides.
+		// nothing but announcements of what it didn't do, such as recording.add's recording.failed. Inside another
+		// command, the outer one decides.
 		void markUnchanged()
 		{
 			if (m_outer == nullptr)
