@@ -733,6 +733,9 @@ TEST_CASE("a key of the keyboard held while the lower zone's Editor panel goes e
 		f.window = docking.windowOf("editor")->id();
 		f.app.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
 		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr; }));
+		// The key editor is built before the engine answers: a press needs its view and the project, which the one
+		// part in the panel's window shows.
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".editor-part").size() == 1; }));
 		REQUIRE(f.app.waitUntil([&] { return f.elements(".key-editor-keys").size() == 1; }));
 		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && keyEditor()->scrollToPitch(60); }));
 		f.app.shell().step(std::chrono::milliseconds(0));
@@ -753,6 +756,56 @@ TEST_CASE("a key of the keyboard held while the lower zone's Editor panel goes e
 	floatAndPress();
 	docking.setFloating("editor", false);
 	REQUIRE(f.app.waitUntil([&] { return docking.windowOf("editor") == nullptr; }));
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+}
+
+TEST_CASE("a key of the keyboard held while the lower zone's Editor panel is hidden or floated ends its pitch", "[ui]")
+{
+	// The panel in the lower zone of the project window, its key editor kept when the panel goes: the held key's pitch
+	// ends however the panel goes, at the latest when the mouse is released.
+	Fixture f({1024, 600}, "instrument");
+	f.app.setDpRatio(1.0F);
+	f.probe();
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.appUi().showProject();
+	f.window = std::nullopt;
+	ui::Docking& docking = f.app.appUi().docking();
+	const auto keyEditor = [&]() -> ui::KeyEditor*
+	{
+		ui::MidiEditor* editor = f.app.appUi().lowerZoneEditor();
+		return editor != nullptr ? editor->keyEditor() : nullptr;
+	};
+	const auto pressDocked = [&]
+	{
+		f.app.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
+		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr; }));
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".editor-part").size() == 1; }));
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".key-editor-keys").size() == 1; }));
+		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && keyEditor()->scrollToPitch(60); }));
+		f.app.shell().step(std::chrono::milliseconds(0));
+		const Json keyboard = f.box(".key-editor-keys");
+		f.app.ui().press(f.window, f.key(keyboard.at("x").get<int>() + 2, 60), ui::MouseButton::Left, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+		CHECK(f.plays({{0x90, 60, 100}}));
+	};
+
+	// The tab hidden.
+	pressDocked();
+	docking.setTabHidden("editor", true);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().release(f.window, ui::Target{"", 0, ui::Point{500, 300}}, ui::MouseButton::Left, {});
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+	docking.setTabHidden("editor", false);
+	f.app.shell().step(std::chrono::milliseconds(0));
+
+	// The panel opened in a window of its own.
+	f.clearSound();
+	pressDocked();
+	docking.setFloating("editor", true);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(docking.windowOf("editor") != nullptr);
+	f.app.ui().release(f.window, ui::Target{"", 0, ui::Point{500, 300}}, ui::MouseButton::Left, {});
 	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
 }
 
