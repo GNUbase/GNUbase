@@ -105,13 +105,25 @@ namespace gnubase::engine
 				throw CommandError(message);
 		}
 
+		// The global tracks of the reference manual, p. 1144, that GNUbase has.
 		bool isGlobal(const Project& project, ObjectId id)
 		{
 			const auto found = project.trackById.find(id);
-			return found != project.trackById.end() &&
-				(found->second.type == TrackType::Marker || found->second.type == TrackType::Ruler ||
-					found->second.type == TrackType::Arranger || found->second.type == TrackType::Transpose ||
-					found->second.type == TrackType::Chord);
+			if (found == project.trackById.end())
+				return false;
+			switch (found->second.type)
+			{
+			case TrackType::Tempo:
+			case TrackType::Signature:
+			case TrackType::Chord:
+			case TrackType::Ruler:
+			case TrackType::Arranger:
+			case TrackType::Marker:
+			case TrackType::Transpose:
+				return true;
+			default:
+				return false;
+			}
 		}
 
 		bool isPart(const Project& project, ObjectId id)
@@ -651,7 +663,8 @@ namespace gnubase::engine
 			"active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing "
 			"reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; "
 			"keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the "
-			"marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): "
+			"global tracks (tempo, signature, chord, ruler, arranger, marker and transpose tracks) the editor window "
+			"shows above its events. The key editor's (pp. 1189-1220): "
 			"selection, the selected notes, each {part, note}, of the editable parts, with articulations, the "
 			"attributes selected of it on the Articulations lane, where not all are; stepInput and midiInput, what "
 			"editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, "
@@ -773,7 +786,8 @@ namespace gnubase::engine
 				"(content audioPart, also one given with it) every audio part, and activates the last, "
 				"hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, "
 				"activePart a part shown. editingMode (an in-place editor's allParts or activePart), keepContents and "
-				"globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. "
+				"globalTracks (tempo, signature, chord, ruler, arranger, marker and transpose tracks, the editor "
+				"window only) also apply to a closed editor. "
 				"selection replaces the selected notes, of the "
 				"editable MIDI parts, controllerSelection the selected controller events and eventSelection the "
 				"selected "

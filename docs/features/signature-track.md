@@ -12,7 +12,9 @@ signature map itself, which converts between ticks and bars and beats, is the ti
   (or `"cursor"`: the bar the project cursor is in, Insert Time Signature Event) or changes the one there; two equal
   signatures in a row are two events. `signature.set` changes events named by their bars, all at once (`to`,
   `numerator`, `denominator`); `signature.remove` removes them. Each is an undo step that emits `signature.changed`
-  with the project's signatures, as `project.get` has them; undo and redo emit `project.changed`.
+  with the project's signatures, as `project.get` has them; undo and redo emit `project.changed`. A bar whose start
+  is past the longest possible project (`longestProjectTicks`, about 2.9 billion bars of 4/4 at 120 BPM and 48 kHz)
+  is refused, before the bars' ticks could overflow.
 - **Bars move, positions stay.** Events, parts, markers and automation keep their positions in ticks or samples, so
   a signature change moves the bars under them. The bars and beats ruler, the grid, snapping, bar-wise lengths and
   bar positions everywhere follow the signature map.
@@ -30,7 +32,18 @@ signature map itself, which converts between ticks and bars and beats, is the ti
   selects it (Ctrl adds or removes it) and a drag moves the selected ones to the nearest bar (`signature.set`); the
   draw tool adds an event at the nearest bar with the signature there (`signature.add`) and opens it for editing, the
   erase tool removes events but the first. A double click opens an event: a `.signature-field` over it, where Enter
-  sets the signature typed, such as "7/8"; a press elsewhere in the row closes it.
+  sets the signature typed, such as "7/8"; a press elsewhere in the row closes it, and a press on empty space with the
+  select tool deselects the events. The project window selects events, markers or time signature events: selecting
+  events deselects the time signature events and the other way round, and Backspace and Delete (`edit.delete`)
+  remove the selected time signature events. A drag or a signature the engine refuses, such as a move onto a bar
+  that has an event, shows why in the event display's `#edit-refused` (`EventDisplay::showRefusal`).
+- **Insert Time Signature Event** (p. 1469): the UI command `signature.insertAtCursor`, without a key until the user
+  gives it one, opens `resources/ui/insert-signature.rml` with the signature at the project cursor; OK adds a time
+  signature event with the numerator and denominator typed at the bar the cursor is in (`signature.add` with `bar:
+  "cursor"`), or changes the one there. What isn't a whole number, or a signature the engine refuses, shows
+  `#insert-signature-message` and keeps the dialog open.
+- **Global tracks in the MIDI editors** (p. 1144): the signature and tempo tracks are global tracks that the editor
+  window can show ([midi-editors.md](midi-editors.md)).
 - **The tempo track editor's time signature display** (pp. 1468-1469): the same row under the editor's ruler, with
   the editor's tools. The info line shows the first selected time signature event instead of a tempo event: its bar
   as the ruler numbers it and its signature, which a signature typed changes for the selected events. Backspace and
@@ -44,14 +57,16 @@ signature map itself, which converts between ticks and bars and beats, is the ti
 ## Not yet
 
 Click patterns and the click itself (the metronome, #101, whose golden test covers signature changes), the signature
-track's Lock and options, its Inspector list (p. 183), the Insert Time Signature Event key command and dialog, the bars
-in the signature track's background and signature events in the middle of a bar.
+track's Lock and options, its Inspector list (p. 183), the bars in the signature track's background (p. 163) and
+signature events in the middle of a bar.
 
 ## Tests
 
 `tests/signature_tests.cpp`: the signature track's limits, adding, changing, moving and removing events, the first
-event, events at the cursor, a pickup bar with events keeping their positions, undo and saving and loading.
+event, events at the cursor, bars past the longest project, a pickup bar with events keeping their positions, undo and
+saving and loading.
 `tests/signaturetrack_ui_tests.cpp`: typed signatures, the bars and beats ruler across signature changes, the row on
 the signature track's lane with clicks that add, edit, move and erase events, and the tempo track editor's time
-signature display with its info line, draw tool and Delete. `tests/timeformat_tests.cpp`: lengths in bars across
+signature display with its info line, draw tool and Delete, the project window's lane with Delete, Backspace, a press
+on empty space and a refused drag, and Insert Time Signature Event. `tests/timeformat_tests.cpp`: lengths in bars across
 signature changes. `tests/tracklist_tests.cpp`: the track list's commands leaving the signature track out.

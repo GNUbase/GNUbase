@@ -113,6 +113,14 @@ TEST_CASE("time signature events change the bars from theirs on, and the first o
 	CHECK_THAT(reject(client, "signature.add", change(3, 100, 4)), ContainsSubstring("numerator"));
 	CHECK_THAT(reject(client, "signature.add", change(3, 4, 3)), ContainsSubstring("denominator"));
 	CHECK_THAT(reject(client, "signature.add", change(-1, 4, 4)), ContainsSubstring("negative"));
+	// Bars past the longest possible project, about 2.9 billion bars of 4/4 at 120 BPM and 48 kHz, are refused
+	// before the bars' ticks overflow (#729).
+	CHECK_THAT(reject(client, "signature.add", change(4'000'000'000, 4, 4)), ContainsSubstring("longest"));
+	CHECK_THAT(reject(client, "signature.add", change(int64_t{1} << 62, 4, 4)), ContainsSubstring("longest"));
+	CHECK_THAT(reject(client, "signature.set", {{"events", {{{"bar", 5}, {"to", 4'000'000'000}}}}}),
+		ContainsSubstring("longest"));
+	run(client, "signature.add", change(2'000'000'000, 4, 4));
+	run(client, "signature.remove", {{"bars", {2'000'000'000}}});
 	CHECK_THAT(reject(client, "signature.remove", {{"bars", {0}}}), ContainsSubstring("first"));
 	CHECK_THAT(reject(client, "signature.set", {{"events", {{{"bar", 0}, {"to", 1}}}}}), ContainsSubstring("first"));
 	CHECK_THAT(reject(client, "signature.set", {{"events", {{{"bar", 2}, {"to", 0}}}}}), ContainsSubstring("first"));

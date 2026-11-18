@@ -461,12 +461,17 @@ namespace gnubase::app
 				}
 				if (m_keyboard && m_shell.find(m_keyboardWindow) == nullptr)
 					m_keyboard.reset(); // so too: its notes end
-				// The project window selects events or markers: an event selected deselects the markers.
+				// The project window selects events, markers or time signature events: an event selected deselects
+				// the others.
 				if (m_eventDisplay && m_markerLines && m_eventDisplay->selection() != m_eventSelection)
 				{
 					m_eventSelection = m_eventDisplay->selection();
 					if (!m_eventSelection.empty())
+					{
 						m_markerLines->deselect();
+						if (m_signatureLane)
+							m_signatureLane->row().setSelection({});
+					}
 				}
 				// So does a range selected, e.g. between markers with the range tool: Delete deletes what was selected
 				// last.
@@ -572,6 +577,34 @@ namespace gnubase::app
 								const auto cursor = transport.value.at("position").get<int64_t>();
 								openDialog(*found, "insert-tempo.rml",
 									{{"bpm", ui::tempoText(ui::currentTempo(context, cursor))}});
+							});
+					});
+			}});
+		// Insert Time Signature Event (p. 1469): a key command without a key, whose dialog starts at the signature at
+		// the cursor and adds the signature typed at the bar the cursor is in (signature.add).
+		m_keys.add({"signature.insertAtCursor",
+			"Asks for a time signature and adds a time signature event with it at the bar the project cursor is in.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				m_binding.send("project.get", engine::Json::object(),
+					[this, id = window.id()](const engine::Result& project)
+					{
+						if (!project.ok())
+							return;
+						m_binding.send("transport.get", engine::Json::object(),
+							[this, id, context = ui::projectTime(project.value)](const engine::Result& transport)
+							{
+								ui::Window* found = m_shell.find(id);
+								if (found == nullptr || !transport.ok())
+									return;
+								const double seconds = static_cast<double>(std::max<int64_t>(
+														   transport.value.at("position").get<int64_t>(), 0)) /
+									context.sampleRate;
+								const time::TimeSignature signature =
+									context.signatures.signatureAt(context.tempo.toTicks(seconds));
+								openDialog(*found, "insert-signature.rml",
+									{{"numerator", std::to_string(signature.numerator)},
+										{"denominator", std::to_string(signature.denominator)}});
 							});
 					});
 			}});
@@ -1088,8 +1121,11 @@ namespace gnubase::app
 			m_keys.add(
 				{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
 					{
-						// Delete removes the selected markers, which the project window selects instead of events.
+						// Delete removes the selected markers or time signature events, which the project window
+						// selects instead of events.
 						if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
+							return;
+						if (id == "edit.delete" && m_signatureLane && m_signatureLane->row().removeSelected())
 							return;
 						if (m_eventDisplay)
 							m_eventDisplay->actions().at(id)();

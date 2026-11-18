@@ -61,9 +61,18 @@ namespace gnubase::engine
 		{
 			std::sort(changes.begin(), changes.end(),
 				[](const time::SignatureChange& a, const time::SignatureChange& b) { return a.bar < b.bar; });
+			// Each event's bar starts within the longest possible project, so the bars' ticks don't overflow (#729).
+			const time::Ticks longest = longestProjectTicks(project);
+			time::Ticks start = 0;
 			for (size_t i = 1; i < changes.size(); ++i)
+			{
 				require(changes[i].bar != changes[i - 1].bar,
 					"two time signature events at bar " + std::to_string(changes[i].bar));
+				const time::Ticks barLength = time::SignatureMap(changes[i - 1].signature).barStart(1);
+				require(changes[i].bar - changes[i - 1].bar <= (longest - start) / barLength,
+					"bar " + std::to_string(changes[i].bar) + " is past the end of the longest possible project");
+				start += (changes[i].bar - changes[i - 1].bar) * barLength;
+			}
 			project.signatures = time::SignatureMap(changes);
 			Json result = {{"signatures", signaturesJson(project)}};
 			context.emit("signature.changed", result);

@@ -821,8 +821,8 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, false, true},
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
-					"folder, marker, ruler, tempo, transpose, chord), in order: mute, solo, record, monitor (audio, "
-					"instrument "
+					"folder, marker, ruler, tempo, signature, transpose, chord), in order: mute, solo, record, monitor "
+					"(audio, instrument "
 					"and MIDI tracks), read (automation), timeBase, midiChannel (MIDI tracks: their channel.set "
 					"midiChannel, Any or "
 					"1 to 16), on the tempo track tempoTrack (Activate Tempo "
@@ -835,7 +835,8 @@ namespace gnubase::engine::settings
 					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock), for the chord track "
 					"chordRecord (Record Enable), chordMute (Mute Chord Track), chordAudition (Select Track for "
 					"Auditioning) and showScales (Show Scales), and for folders groupEditing (Group Editing). "
-					"Mute and solo always show on tracks with a channel; a type left out shows none.",
+					"The signature track has no controls yet. Mute and solo always show on tracks with a channel; a "
+					"type left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "array"},

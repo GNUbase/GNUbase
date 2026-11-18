@@ -335,3 +335,99 @@ TEST_CASE("the tempo track editor's time signature display adds and edits time s
 	app.ui().key(window, "Delete");
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("signatures").size() == 1; }));
 }
+
+TEST_CASE(
+	"on the project window's signature lane, Delete removes the selected events and a refused drag says why", "[ui]")
+{
+	test::UiApp app{{1000, 600}};
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "signature"}});
+	app.call("signature.add", change(2, 3, 4));
+	app.call("signature.add", change(3, 3, 4));
+	ui::SignatureRow& row = app.appUi().signatureLane()->row();
+	const auto events = [&row]
+	{
+		Rml::ElementList found;
+		row.element()->QuerySelectorAll(found, ".signature-event");
+		return found;
+	};
+	REQUIRE(app.waitUntil([&] { return events().size() == 3 && row.element()->GetOffsetHeight() > 0.0F; }));
+	const auto signatures = [&app] { return app.call("project.get").at("signatures"); };
+
+	// A drag onto a bar that has an event is refused, and the display says why (#729).
+	app.ui().drag(std::nullopt, centre(*events()[1]), centre(*events()[2]));
+	app.shell().step(milliseconds(0));
+	const Rml::Element* refusal = row.element()->GetOwnerDocument()->GetElementById("edit-refused");
+	REQUIRE(refusal != nullptr);
+	REQUIRE(app.waitUntil([refusal]
+		{ return refusal->GetAttribute<Rml::String>("text", "").find("two time signature") != Rml::String::npos; }));
+	CHECK(signatures()[1] == change(2, 3, 4));
+	CHECK(row.selection() == std::vector<int64_t>{2});
+
+	// A press on empty space in the row, between the first two events, deselects them.
+	Rml::Element& first = *events()[0];
+	app.ui().click(std::nullopt,
+		point((first.GetAbsoluteLeft() + first.GetOffsetWidth() + events()[1]->GetAbsoluteLeft()) / 2.0F,
+			first.GetAbsoluteTop() + (first.GetOffsetHeight() / 2.0F)),
+		ui::MouseButton::Left, 1, {});
+	app.shell().step(milliseconds(0));
+	CHECK(row.selection().empty());
+
+	// Delete and Backspace remove the selected ones, as in the tempo track editor.
+	app.ui().click(std::nullopt, centre(*events()[1]), ui::MouseButton::Left, 1, {});
+	app.shell().step(milliseconds(0));
+	REQUIRE(row.selection() == std::vector<int64_t>{2});
+	app.ui().key(std::nullopt, "Delete");
+	REQUIRE(app.waitUntil([&] { return signatures().size() == 2; }));
+	CHECK(signatures()[1].at("bar") == 3);
+	REQUIRE(app.waitUntil([&] { return events().size() == 2; }));
+	app.ui().click(std::nullopt, centre(*events()[1]), ui::MouseButton::Left, 1, {});
+	app.shell().step(milliseconds(0));
+	app.ui().key(std::nullopt, "Backspace");
+	REQUIRE(app.waitUntil([&] { return signatures().size() == 1; }));
+}
+
+TEST_CASE("Insert Time Signature Event asks for a signature and adds an event at the cursor's bar", "[ui]")
+{
+	test::UiApp app{{1000, 600}};
+	app.appUi().showProject();
+	app.call("signature.add", change(2, 3, 4));
+	// 5 seconds at 120 BPM: in bar 3, the 3/4 bar from 4 seconds.
+	app.call("transport.locate", {{"position", 5 * 48000}});
+	const auto value = [&app](const std::string& selector)
+	{
+		const Json found = app.ui().dom(std::nullopt, selector, 0).at("elements");
+		return found.empty() ? std::string() : found[0].value("attributes", Json::object()).value("value", "");
+	};
+	const auto open = [&app]
+	{ return !app.ui().dom(std::nullopt, "#insert-signature-dialog", 0).at("elements").empty(); };
+	const auto type = [&app](const std::string& selector, const std::string& text)
+	{
+		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+		app.ui().key(std::nullopt, "Mod+A");
+		app.ui().text(std::nullopt, text);
+	};
+
+	// The dialog starts at the signature at the cursor (reference manual p. 1469).
+	app.keys().run("signature.insertAtCursor", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil(open));
+	CHECK(value("#insert-signature-numerator") == "3");
+	CHECK(value("#insert-signature-denominator") == "4");
+
+	// What isn't a signature says so and keeps it open.
+	type("#insert-signature-numerator", "x");
+	app.ui().click(std::nullopt, {"#insert-signature-ok", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json found = app.ui().dom(std::nullopt, "#insert-signature-message", 0).at("elements");
+			return !found.empty() && found[0].value("text", std::string()).find("whole numbers") != std::string::npos;
+		}));
+	CHECK(open());
+
+	type("#insert-signature-numerator", "7");
+	type("#insert-signature-denominator", "8");
+	app.ui().click(std::nullopt, {"#insert-signature-ok", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("signatures")[1] == change(2, 7, 8); }));
+	REQUIRE(app.waitUntil([&open] { return !open(); }));
+}

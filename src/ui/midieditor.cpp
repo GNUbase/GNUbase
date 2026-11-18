@@ -383,8 +383,10 @@ namespace gnubase::ui
 		const Json& shown = m_view.at("globalTracks");
 		for (const Json& track : m_project.at("tracks"))
 		{
+			// The engine's global tracks (editor.set globalTracks, reference manual p. 1144).
 			const std::string type = track.at("type").get<std::string>();
-			if (type != "marker" && type != "ruler")
+			if (type != "tempo" && type != "signature" && type != "chord" && type != "ruler" && type != "arranger" &&
+				type != "marker" && type != "transpose")
 				continue;
 			const auto trackId = track.at("id").get<uint64_t>();
 			const std::string name = encode(track.at("name").get<std::string>());

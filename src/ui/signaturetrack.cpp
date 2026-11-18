@@ -121,7 +121,7 @@ namespace gnubase::ui
 			m_onSelect();
 	}
 
-	void SignatureRow::removeSelected()
+	bool SignatureRow::removeSelected()
 	{
 		Json bars = Json::array();
 		for (const int64_t bar : m_selection)
@@ -129,6 +129,21 @@ namespace gnubase::ui
 				bars.push_back(bar);
 		if (!bars.empty())
 			m_binding.send("signature.remove", {{"bars", bars}});
+		return !m_selection.empty();
+	}
+
+	void SignatureRow::set(Json events, std::function<void()> done)
+	{
+		m_binding.send("signature.set", {{"events", std::move(events)}},
+			[this, done = std::move(done), alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired())
+					return;
+				if (!result.ok() && m_onRefusal)
+					m_onRefusal(result.error);
+				else if (result.ok() && done)
+					done();
+			});
 	}
 
 	void SignatureRow::edit(int64_t bar)
@@ -228,9 +243,7 @@ namespace gnubase::ui
 			const std::optional<std::pair<int, int>> signature = parseSignature(m_field->GetValue());
 			const std::optional<int64_t> bar = std::exchange(m_editing, std::nullopt);
 			if (signature && bar)
-				m_binding.send("signature.set",
-					{{"events",
-						{{{"bar", *bar}, {"numerator", signature->first}, {"denominator", signature->second}}}}});
+				set({{{"bar", *bar}, {"numerator", signature->first}, {"denominator", signature->second}}});
 			show();
 		}
 		else if (event == Rml::EventId::Blur && inField && m_editing)
@@ -290,7 +303,10 @@ namespace gnubase::ui
 			return;
 		}
 		if (tool != TempoTool::Draw)
+		{
+			select({});
 			return;
+		}
 		// The draw tool adds an event at the nearest bar, with the signature there, to edit.
 		const double x = (event.GetParameter<float>("mouse_x", 0.0F) - m_element->GetAbsoluteLeft()) / ratio();
 		const int64_t bar = nearestBar(m_start + (x * m_scale));
@@ -331,12 +347,7 @@ namespace gnubase::ui
 		}
 		if (events.empty())
 			return;
-		m_binding.send("signature.set", {{"events", events}},
-			[this, moved, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
-			{
-				if (!alive.expired() && result.ok())
-					select(moved);
-			});
+		set(std::move(events), [this, moved] { select(moved); });
 	}
 
 	// The lane.
@@ -344,6 +355,13 @@ namespace gnubase::ui
 	SignatureLane::SignatureLane(EventDisplay& display, EngineBinding& binding)
 		: m_display(display), m_binding(binding), m_row(binding, display.eventArea())
 	{
+		m_row.onRefusal([this](const std::string& error) { m_display.showRefusal(error); });
+		m_row.onSelect(
+			[this]
+			{
+				if (!m_row.selection().empty() && !m_display.selection().empty())
+					m_display.select({});
+			});
 		m_row.setTool(
 			[this]
 			{
