@@ -161,8 +161,9 @@ TEST_CASE("File > Export > Quick Audio Export writes the whole project into the 
 
 	addTrack(app, dir);
 	quickExport();
-	// Then the file's folder opens, as in the reference (manual p. 1479).
-	REQUIRE(app.waitUntil([&opened] { return !opened.empty(); }));
+	// Then the file's folder opens, as in the reference (manual p. 1479). The job renders the whole 30 s tail before it
+	// trims it, which takes longer than waitUntil's default 5 s under TSan.
+	REQUIRE(app.waitUntil([&opened] { return !opened.empty(); }, std::chrono::seconds(60)));
 	const std::filesystem::path file = dir.path() / "song.wav";
 	CHECK(std::filesystem::equivalent(opened.front(), dir.path()));
 	REQUIRE(std::filesystem::exists(file));
