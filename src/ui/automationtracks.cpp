@@ -35,6 +35,34 @@ namespace gnubase::ui
 			return {static_cast<float>(value), Rml::Unit::DP};
 		}
 
+		// What a track's automationLane.targets depend on in the project: the track, its channel, the channel's
+		// plugins and the track's lanes, without their points.
+		std::string targetsKey(const Json& project, uint64_t track)
+		{
+			Json key = Json::array({project.value("maxVolume", Json())}); // volume's range
+			uint64_t channel = 0;
+			for (const Json& each : project.at("tracks"))
+				if (each.at("id") == track)
+				{
+					key.push_back(each);
+					channel = each.value("channel", uint64_t{0});
+				}
+			Json slots = Json::array();
+			for (const Json& each : project.at("channels"))
+				if (each.at("id") == channel)
+				{
+					key.push_back(each);
+					slots = each.value("slots", Json::array());
+				}
+			for (const Json& each : project.at("slots"))
+				if (std::find(slots.begin(), slots.end(), each.at("id")) != slots.end())
+					key.push_back(each);
+			for (const Json& lane : project.at("automation"))
+				if (lane.at("track") == track)
+					key.push_back({lane.at("id"), lane.at("target")});
+			return key.dump();
+		}
+
 		bool has(const std::string& keys, const char* key)
 		{
 			return keys.find(key) != std::string::npos;
@@ -190,9 +218,13 @@ namespace gnubase::ui
 		}
 		for (auto lane = m_selectedPoints.begin(); lane != m_selectedPoints.end();)
 			lane = lane->second.empty() ? m_selectedPoints.erase(lane) : std::next(lane);
-		// The names, ranges and static values may have changed with the project.
+		// The names, ranges and static values may have changed with the track's channel, its plugins or its lanes.
 		for (const auto& [track, lanesShown] : m_openAutomation)
-			requestTargets(track);
+			if (std::string key = targetsKey(project, track); m_targetsKeys[track] != key)
+			{
+				m_targetsKeys[track] = std::move(key);
+				requestTargets(track);
+			}
 	}
 
 	void EventDisplay::requestTargets(uint64_t track, std::function<void()> then)
@@ -270,10 +302,12 @@ namespace gnubase::ui
 
 	void EventDisplay::showUsedAutomation()
 	{
-		m_openAutomation.clear();
+		// The automation tracks that show stay, unused ones too.
 		for (const auto& [id, lane] : m_automation)
 			if (!lane.points.empty())
-				m_openAutomation[lane.track].push_back(id);
+				if (std::vector<uint64_t>& open = m_openAutomation[lane.track];
+					std::find(open.begin(), open.end(), id) == open.end())
+					open.push_back(id);
 		for (const auto& [track, lanes] : m_openAutomation)
 			requestTargets(track);
 		reload();
@@ -682,6 +716,37 @@ namespace gnubase::ui
 		return points;
 	}
 
+	std::set<uint64_t> EventDisplay::covered(
+		const AutomationView& lane, const std::vector<std::pair<uint64_t, CurvePoint>>& moved) const
+	{
+		std::set<uint64_t> result;
+		if (m_gesture != AutomationGesture::Move || moved.empty())
+			return result;
+		std::set<uint64_t> ids;
+		for (const auto& [id, point] : moved)
+			ids.insert(id);
+		size_t first = lane.ids.size();
+		size_t last = 0;
+		for (size_t i = 0; i < lane.ids.size(); ++i)
+			if (ids.count(lane.ids[i]) != 0)
+			{
+				first = std::min(first, i);
+				last = i;
+			}
+		// A selection with unselected points in it replaces nothing; that it can't move past other points (reference
+		// manual p. 878) is not done yet.
+		for (size_t i = first; i <= last && i < lane.ids.size(); ++i)
+			if (ids.count(lane.ids[i]) == 0)
+				return result;
+		const auto [low, high] = std::minmax_element(moved.begin(), moved.end(),
+			[](const auto& a, const auto& b) { return a.second.position < b.second.position; });
+		for (size_t i = 0; i < lane.ids.size(); ++i)
+			if ((i < first || i > last) && lane.points[i].position >= low->second.position &&
+				lane.points[i].position <= high->second.position)
+				result.insert(lane.ids[i]);
+		return result;
+	}
+
 	std::vector<CurvePoint> EventDisplay::replaced(
 		const AutomationView& lane, double start, double end, const std::vector<CurvePoint>& points)
 	{
@@ -784,6 +849,9 @@ namespace gnubase::ui
 				selectPoints({});
 			return false;
 		}
+		if (m_tool == Tool::Zoom || m_tool == Tool::Play) // as on the track's own lane
+			return false;
+		m_clickSelectsPoint = false;
 		m_drag = Drag::Automation;
 		m_gestureLane = index;
 		m_gesture = AutomationGesture::None;
@@ -804,6 +872,8 @@ namespace gnubase::ui
 				std::map<uint64_t, std::set<uint64_t>> points = m_selectedPoints;
 				const bool selected = points[lane->id].count(id) != 0;
 				m_dragToggles = add && selected;
+				// Released without moving, a plain click selects only the point (reference manual p. 875).
+				m_clickSelectsPoint = !add && selected && (points.size() > 1 || points[lane->id].size() > 1);
 				if (add && !selected)
 					points[lane->id].insert(id);
 				else if (!selected)
@@ -819,7 +889,10 @@ namespace gnubase::ui
 				m_gesture = AutomationGesture::Editor;
 				return true;
 			}
+			// A click on an empty spot adds a point; without Ctrl or Shift it ends the selection first.
 			m_pointsBase = add ? m_selectedPoints : std::map<uint64_t, std::set<uint64_t>>();
+			if (!add && !m_selectedPoints.empty())
+				selectPoints({});
 			m_gesture = AutomationGesture::Add;
 			return true;
 		case Tool::Draw:
@@ -868,10 +941,16 @@ namespace gnubase::ui
 		case AutomationGesture::Move:
 		case AutomationGesture::Editor:
 		{
-			std::vector<CurvePoint> points = lane->points;
-			for (const auto& [id, point] : transformed(x, y))
-				points[static_cast<size_t>(std::find(lane->ids.begin(), lane->ids.end(), id) - lane->ids.begin())] =
-					point;
+			const std::vector<std::pair<uint64_t, CurvePoint>> moved = transformed(x, y);
+			const std::set<uint64_t> replaced = covered(*lane, moved);
+			std::vector<CurvePoint> points;
+			for (size_t i = 0; i < lane->points.size(); ++i)
+				if (replaced.count(lane->ids[i]) == 0)
+				{
+					const auto found = std::find_if(moved.begin(), moved.end(),
+						[&](const std::pair<uint64_t, CurvePoint>& each) { return each.first == lane->ids[i]; });
+					points.push_back(found == moved.end() ? lane->points[i] : found->second);
+				}
 			preview(m_gestureLane, std::move(points));
 			break;
 		}
@@ -962,15 +1041,23 @@ namespace gnubase::ui
 				points[lane->id].erase(m_dragEvent);
 				selectPoints(std::move(points));
 			}
+			if (!m_dragMoved && std::exchange(m_clickSelectsPoint, false))
+				selectPoints({{lane->id, {m_dragEvent}}});
 			if (!m_dragMoved)
 				break;
+			const std::vector<std::pair<uint64_t, CurvePoint>> moved = transformed(x, y);
+			Json commands = Json::array();
+			if (const std::set<uint64_t> replaced = covered(*lane, moved); !replaced.empty())
+				commands.push_back(
+					{{"command", "automationPoint.remove"}, {"parameters", {{"lane", lane->id}, {"points", replaced}}}});
 			Json changes = Json::array();
-			for (const auto& [id, point] : transformed(x, y))
+			for (const auto& [id, point] : moved)
 				changes.push_back({{"id", id}, {"position", pointPosition(*lane, point.position)},
 					{"value", targetValue(lane->info, point.value)}});
+			commands.push_back(
+				{{"command", "automationPoint.set"}, {"parameters", {{"lane", lane->id}, {"points", changes}}}});
 			automationEdit(gesture == AutomationGesture::Move ? "Move Automation Points" : "Edit Automation Points",
-				*lane,
-				{{{"command", "automationPoint.set"}, {"parameters", {{"lane", lane->id}, {"points", changes}}}}});
+				*lane, std::move(commands));
 			break;
 		}
 		case AutomationGesture::Erase:

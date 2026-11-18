@@ -643,6 +643,8 @@ namespace gnubase::ui
 		if (range)
 			range->tracks = withEditGroupTracks(range->tracks);
 		m_range = std::move(range);
+		if (m_range && !m_selectedPoints.empty()) // as selecting events does, so that Delete edits the range
+			selectPoints({});
 		showRange();
 	}
 
