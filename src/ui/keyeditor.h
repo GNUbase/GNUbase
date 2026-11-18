@@ -136,8 +136,9 @@ namespace gnubase::ui
 		void ProcessEvent(Rml::Event& event) override;
 		void press(Rml::Event& event);
 		void drag(Rml::Event& event);
-		// The selected notes where a move or resize has taken them, at m_draggedTo: after every mouse move, and when
-		// the display shows the project again during the gesture (#1789).
+		// The selected notes where a move or resize has taken them, at the time and pitch now under m_draggedTo: after
+		// every mouse move, when the display shows the project again during the gesture (#1789) and when an in-place
+		// editor's range changes during it (#1808).
 		void placeDragged();
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
@@ -248,6 +249,7 @@ namespace gnubase::ui
 
 		// The note display's point under the mouse: project ticks and pitch.
 		std::pair<double, int> at(const Rml::Event& event) const;
+		std::pair<double, int> at(float mouseX, float mouseY) const; // the mouse's point in the window, in pixels
 		// With a pitch, the drum editor snaps it to its sound's snap while the grid type is drumMap.
 		int64_t snap(double ticks, bool off, int pitch = -1) const;
 		// How far a gesture moves the pressed note's edge, snapped; a move rows away in the display's order snaps to
@@ -317,10 +319,10 @@ namespace gnubase::ui
 
 		Gesture m_gesture = Gesture::None;
 		std::pair<double, int> m_pressedAt;
-		float m_pressedX = 0.0F;                           // the mouse's x at the press, in pixels
-		float m_pressedY = 0.0F;                           // the mouse's y at the press, in pixels
-		std::optional<Note> m_pressed;                     // the note pressed, as it was
-		std::optional<std::pair<double, int>> m_draggedTo; // a move's or resize's ticks and pitch at the last move
+		float m_pressedX = 0.0F;                            // the mouse's x at the press, in pixels
+		float m_pressedY = 0.0F;                            // the mouse's y at the press, in pixels
+		std::optional<Note> m_pressed;                      // the note pressed, as it was
+		std::optional<std::pair<float, float>> m_draggedTo; // the mouse at a move's or resize's last move, in pixels
 		bool m_snapOff = false;
 		bool m_dragged = false;     // a drag event came since the press: the mouse leaving the window keeps the gesture
 		float m_pitchZoom = 1.0F;   // the pitch rows' scale, which the keyboard's left part drags (p. 1261)

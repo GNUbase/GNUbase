@@ -1334,13 +1334,18 @@ namespace gnubase::ui
 
 	std::pair<double, int> KeyEditor::at(const Rml::Event& event) const
 	{
+		return at(event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F));
+	}
+
+	std::pair<double, int> KeyEditor::at(float mouseX, float mouseY) const
+	{
 		Rml::Element* grid = m_root.get()->QuerySelector(".key-editor-grid");
 		if (grid == nullptr)
 			return {0.0, 0};
 		const Rml::Vector2f origin = grid->GetAbsoluteOffset(Rml::BoxArea::Border);
 		const Rml::Vector2f size = grid->GetBox().GetSize(Rml::BoxArea::Border);
-		const float x = (event.GetParameter("mouse_x", 0.0F) - origin.x) / std::max(size.x, 1.0F);
-		const float y = (event.GetParameter("mouse_y", 0.0F) - origin.y) / std::max(size.y, 1.0F);
+		const float x = (mouseX - origin.x) / std::max(size.x, 1.0F);
+		const float y = (mouseY - origin.y) / std::max(size.y, 1.0F);
 		const int rows = static_cast<int>(m_order.size());
 		const int row = std::clamp(static_cast<int>(std::floor(y * static_cast<float>(rows))), 0, rows - 1);
 		return {static_cast<double>(m_from) + (x * static_cast<double>(m_to - m_from)),
@@ -2079,10 +2084,6 @@ namespace gnubase::ui
 			paint(event);
 			return;
 		}
-		const auto [ticks, pitch] = at(event);
-		const Rml::Element* notes = m_root.get()->QuerySelector(".key-editor-notes");
-		if (notes == nullptr)
-			return;
 		if (m_gesture == Gesture::Draw)
 		{
 			if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && m_drum)
@@ -2099,6 +2100,7 @@ namespace gnubase::ui
 			}
 			else if (drawn != nullptr)
 			{
+				const double ticks = at(event).first;
 				const int64_t step = lengthQuantize(m_pressedAt.second);
 				const auto steps = std::max<int64_t>(
 					1, static_cast<int64_t>(std::ceil((ticks - m_pressedAt.first) / static_cast<double>(step))));
@@ -2109,7 +2111,7 @@ namespace gnubase::ui
 		}
 		if (m_gesture == Gesture::Erase)
 			return;
-		m_draggedTo = std::make_pair(ticks, pitch);
+		m_draggedTo = std::make_pair(event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F));
 		placeDragged();
 	}
 
@@ -2120,7 +2122,8 @@ namespace gnubase::ui
 			m_root.get() != nullptr ? m_root.get()->QuerySelector(".key-editor-notes") : nullptr;
 		if (notes == nullptr || !m_pressed || !m_draggedTo || (m_gesture != Gesture::Move && !resize))
 			return;
-		const auto [ticks, pitch] = *m_draggedTo;
+		// The time under the mouse now, which the release takes: an in-place editor's range can have changed since.
+		const auto [ticks, pitch] = at(m_draggedTo->first, m_draggedTo->second);
 		const int rows = m_gesture == Gesture::Move
 			? m_rowOf.at(static_cast<size_t>(pitch)) - m_rowOf.at(static_cast<size_t>(m_pressedAt.second))
 			: 0;

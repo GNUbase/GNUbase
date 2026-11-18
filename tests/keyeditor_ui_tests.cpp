@@ -1010,7 +1010,19 @@ TEST_CASE("a resize released outside the key editor ends without its effect", "[
 	f.app.shell().step(std::chrono::milliseconds(0));
 	f.app.ui().move(f.window, f.at(9.5, 60));
 	f.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(f.app.waitUntil([&] { return width() > before + 10; }));
+	{
+		double now = 0.0;
+		const bool wider = f.app.waitUntil(
+			[&]
+			{
+				now = width();
+				return now > before + 10;
+			});
+		// A press that starts a move instead of a resize, or a re-render that loses the preview, shows here (#1808).
+		INFO("the note " << now << " px wide, " << before << " before the resize, the key editor "
+						 << (f.has(".key-editor", "in-gesture") ? "in" : "not in") << " a gesture");
+		REQUIRE(wider);
+	}
 	// The display shown again during the resize, as when the engine's answers to the last edit come in only now, still
 	// shows the note where the mouse takes it, although the mouse doesn't move (#1789).
 	f.app.call("note.add",
@@ -1027,6 +1039,33 @@ TEST_CASE("a resize released outside the key editor ends without its effect", "[
 	CHECK_FALSE(f.app.waitUntil(
 		[&] { return f.note(ids[0]).at("length") != 6 * g_sixteenth; }, std::chrono::milliseconds(300)));
 	f.settle();
+}
+
+TEST_CASE("a move shows its notes at the time under the mouse as the editor's range changes during it", "[ui]")
+{
+	// An in-place editor's range follows the project window's scroll and zoom (setTimeRange): during a move the notes
+	// go where the release would put them at once, not only at the next mouse move (#1808).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_sixteenth}});
+	const Json grid = f.box(".key-editor-grid");
+	const auto x = [&] { return f.box(noteSelector(ids[0])).at("x").get<double>(); };
+	const auto shownAt = [&](double fraction)
+	{ return grid.at("x").get<double>() + (fraction * grid.at("width").get<double>()); };
+	f.app.ui().press(f.window, f.at(0.5, 60), ui::MouseButton::Left);
+	f.app.ui().move(f.window, f.at(4.0, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().move(f.window, f.at(4.25, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	// From half a sixteenth to 4.25: the note 4 sixteenths on, snapped.
+	REQUIRE(f.app.waitUntil([&] { return std::abs(x() - shownAt(4.0 / 16.0)) <= 1.5; }));
+	// The range twice as long: the mouse is at 8.5 sixteenths now, the note 8 sixteenths on.
+	f.app.appUi().editorWindow()->keyEditor()->setTimeRange(std::make_pair(int64_t{0}, 2 * g_bar));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(x() - shownAt(8.0 / 32.0)) <= 1.5);
+	f.app.ui().release(f.window, f.at(4.25, 60), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("position") == 8 * g_sixteenth; }));
+	CHECK(f.note(ids[0]).at("pitch") == 60);
 }
 
 TEST_CASE("the key editor's draw and the drag on the keyboard's left part go on past the window's edge until the "

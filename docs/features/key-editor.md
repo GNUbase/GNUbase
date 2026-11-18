@@ -130,9 +130,9 @@ selects and deselects no notes.
 | Glue | A click glues the note to the next one of its pitch; the first one's values stay, the next one's expression joins its own (`note.glue`) | p. 1215 |
 | Mute | On the Articulations lane, a click mutes a direction or attribute, or unmutes it ([articulation-maps.md](articulation-maps.md), #1684); in the note display nothing yet, as notes have no mute (#679) | pp. 1193, 1289 |
 
-- **Gestures that leave the editor.** While a press in the note display or on the keyboard's left part goes on, the
-  grid or the keyboard's left part is an RmlUi drag element (`.key-editor.in-gesture`): its drag events come wherever
-  the mouse is, also outside the window, where the platform captures the mouse while the button is held and nothing is
+- **Gestures that leave the editor.** While a press in the note display or on the keyboard's left part goes on, the grid
+  or the keyboard's left part is an RmlUi drag element (`.key-editor.in-gesture`): its drag events come wherever the
+  mouse is, also outside the window, where the platform captures the mouse while the button is held and nothing is
   hovered, and its dragend comes where the button goes up, with the modifier keys held then. The draw tool's and the
   drumstick's drags, the expression editor's draw and erase and the drag on the keyboard's left part follow the mouse
   out there and end at the release as in the editor; the drumstick's delete drag deletes up to it. A move or resize
@@ -141,11 +141,13 @@ selects and deselects no notes.
   before the mouse moved, gets no dragend: it ends without its effect as the mouse leaves the window (the document's
   mouseout; dragged out of the window, the drag events come first), so its notes don't follow the mouse back (#1756).
   One whose release never comes at all ends without its effect at the next press anywhere in the editor's window (the
-  document's mousedown in the capture phase), before the press reaches its target. The class goes when the gesture
-  ends, as RmlUi doesn't scroll on a touch move during a drag, and the document's computed values follow it both ways,
-  as the list editor's do: the grid is a drag element only during a gesture. The display shown again while a move or resize goes on, as when the engine's answers to an earlier edit come
-  in, keeps the notes where the mouse took them, also when the mouse holds still (#1789). A click that selects shows
-  its selection at once, and the views that come in before the engine answered it, which can be older, such as the
+  document's mousedown in the capture phase), before the press reaches its target. The class goes when the gesture ends,
+  as RmlUi doesn't scroll on a touch move during a drag, and the document's computed values follow it both ways, as the
+  list editor's do: the grid is a drag element only during a gesture. The display shown again while a move or resize
+  goes on, as when the engine's answers to an earlier edit come in, keeps the notes where the mouse took them, also when
+  the mouse holds still (#1789), and an in-place editor's range changing during it, as the project window scrolls or
+  zooms, takes them to the time now under the mouse, where the release puts them (#1808). A click that selects shows its
+  selection at once, and the views that come in before the engine answered it, which can be older, such as the
   editor.changed of the selection before, leave it as it is: a drag right after the click moves the notes it selected
   (#1817).
 - **Info line** (p. 1199). Start, end and length in bars and beats, the pitch as a name such as C3 (typing a number
@@ -197,7 +199,8 @@ menu.
   ending without its effect, the note not following the mouse back and a later click moving nothing, and a draw
   released there drawing; a move and a draw whose release was lost ending as the mouse leaves the window, and a draw
   whose mouseup never came at the next press; a resize released there ending without its effect, its note keeping the
-  length the mouse gives it while the display is shown again during it; the erase, trim (and with Alt), split
+  length the mouse gives it while the display is shown again during it; a move's notes at the time under the mouse
+  as the range changes during it; the erase, trim (and with Alt), split
   and glue tools, and the split tool splitting the selected notes of two parts at one position in one undo step; the
   transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input
   selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and
