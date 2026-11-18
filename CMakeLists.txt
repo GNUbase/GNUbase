@@ -43,8 +43,9 @@ endif()
 # MSBuild compiles a project's files one at a time by default. Its multi-tool task runs one cl per file instead, and
 # EnforceProcessCountAcrossBuilds shares one limit, a cl per logical processor, across all projects that build at once,
 # even across MSBuild instances (#705). With /MP each of the four projects the build presets build at once ("jobs")
-# started a cl per logical processor: 94 at once on 32 threads, in the same time. To lower the limit, pass
-# -p:MultiProcMaxCount=<n> to MSBuild. Ninja runs one cl per file already.
+# started a cl per logical processor. Measured on 32 logical processors, a clean Debug build of gnubase-tests with
+# --parallel 4 ran up to 94 cl at once with /MP and took 271 s; with the shared limit it ran at most 32 and took 269 s.
+# To lower the limit, pass -p:MultiProcMaxCount=<n> to MSBuild. Ninja runs one cl per file already.
 if(CMAKE_GENERATOR MATCHES "^Visual Studio")
 	list(APPEND CMAKE_VS_GLOBALS UseMultiToolTask=true EnforceProcessCountAcrossBuilds=true)
 endif()
