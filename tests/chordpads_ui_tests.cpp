@@ -1032,6 +1032,31 @@ TEST_CASE("a chord pads panel opened while MIDI Learn listens shows it and stops
 	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learn-range", "checked"); }));
 	window.click("#chord-pads-learn-range");
 	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("listening").is_null(); }));
+	// Saving or deleting a preset shows the pads again without a new chordPads.get: the button keeps showing what the
+	// engine listens for, also when that changed after the panel's last chordPads.get.
+	const auto presetShown = [&](bool shown)
+	{
+		return window.app.waitUntil(
+			[&]
+			{
+				const Json options = window.elements("#chord-pads-preset")[0].value("options", Json::array());
+				return shown ==
+					std::any_of(options.begin(), options.end(),
+						[](const Json& option) { return option.value("value", "") == "Learned"; });
+			});
+	};
+	window.call("chordPads.listen", {{"learn", "range"}});
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learn-range", "checked"); }));
+	window.call("chordPads.savePreset", {{"name", "Learned"}});
+	REQUIRE(presetShown(true));
+	window.step();
+	CHECK(window.hasClass("#chord-pads-learn-range", "checked"));
+	window.click("#chord-pads-learn-range");
+	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("listening").is_null(); }));
+	window.call("chordPads.deletePreset", {{"name", "Learned"}});
+	REQUIRE(presetShown(false));
+	window.step();
+	CHECK_FALSE(window.hasClass("#chord-pads-learn-range", "checked"));
 }
 
 TEST_CASE(

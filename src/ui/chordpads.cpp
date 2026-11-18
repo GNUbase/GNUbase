@@ -595,8 +595,18 @@ namespace gnubase::ui
 		m_binding.send("chordPads.get", Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				if (!alive.expired() && result.ok())
-					show(result.value);
+				if (alive.expired() || !result.ok())
+					return;
+				// chordPads.get says what the engine listens for, also to a panel built after MIDI Learn started
+				// through MCP or Lua (#1896). Only its answer: the pads kept for showing again later would bring back
+				// what it said then, while chordPads.listen sends no chordPads.changed.
+				Json pads = result.value;
+				if (const auto listening = pads.find("listening"); listening != pads.end())
+				{
+					m_listening = *listening;
+					pads.erase(listening);
+				}
+				show(pads);
 			});
 	}
 
@@ -616,10 +626,6 @@ namespace gnubase::ui
 		if (patternOf(m_pads) != patternOf(pads))
 			m_patternError.clear();
 		m_pads = pads;
-		// chordPads.get says what the engine listens for, also to a panel built after MIDI Learn started through MCP
-		// or Lua (#1896); chordPads.changed doesn't.
-		if (pads.contains("listening"))
-			m_listening = pads.at("listening");
 		if (m_rootKeysSending == 0)
 			m_rootKeySent.reset(); // the pads have the key the wheel sent last
 		const Json& items = pads.at("pads");

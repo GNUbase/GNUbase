@@ -660,7 +660,9 @@ namespace gnubase::engine
 				"as input arrives: the studio setup dialog turns it on while it is open, for its Note Expression "
 				"Input page (#1749). listener names who listens, such as the dialog's studioSetup; without it, the "
 				"calls share one. It is on while any listener has it on, so turning it off for one leaves the "
-				"others' (#1832). Off by default; turning it on starts afresh, without what came before.",
+				"others' (#1832). Off by default; turning it on while no listener has it on starts afresh, without "
+				"what "
+				"came before, and a second listener's on keeps what the first one still reads.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["on"],
 					"properties": {"on": {"type": "boolean"}, "listener": {"type": "string"}}})"),
 				Json::object(), false},

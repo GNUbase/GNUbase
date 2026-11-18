@@ -249,7 +249,8 @@ a remote start above the end, goes back to the one the pads have.
   Assign from MIDI Input show their click at once and go from what they show (#1851): until the engine has answered
   every `chordPads.listen` the panel sent, the panel shows what it asked for last, not the engine's
   `chordPads.listening` of an earlier click, so a second click before the first one's answer stops listening again.
-  A panel built while the engine listens already shows it, from `chordPads.get`'s `listening` (#1896).
+  A panel built while the engine listens already shows it, from `chordPads.get`'s `listening` (#1896); it takes that
+  only from a new read, so pads shown again after a preset was saved don't bring back what an older read said.
 - The settings toggles (Output, Step, Insert, Flats, Snap, Remote, Lock, Adaptive, Reference,
   Keyboard Velocity, Filter Notes, Latch, Modifiers, Latch Pads, Spread and the sections' Mute) go from what they show
   and show their click at once as well (#1896): the panel lights them, and until the engine has answered every command
