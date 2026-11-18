@@ -968,7 +968,11 @@ TEST_CASE("the inspector's S solos exclusively and switches solo defeat, and its
 
 TEST_CASE("the toolbar's state buttons deactivate all mute, solo and listen states", "[ui]")
 {
-	Window window(1300); // wide enough for every toolbar section
+	Window window;
+	// CI's monitors can be too narrow for every toolbar section, so only the state buttons are shown.
+	ui::Docking& docking = window.app.appUi().docking();
+	for (const std::string& section : docking.sections("project", "toolbar"))
+		docking.setSectionHidden("project", "toolbar", section, section != "states");
 	const uint64_t audio = window.addTrack({{"type", "audio"}});
 	const uint64_t other = window.addTrack({{"type", "audio"}});
 	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
