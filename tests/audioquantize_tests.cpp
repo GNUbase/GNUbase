@@ -1165,6 +1165,8 @@ TEST_CASE(
 	// from it. Removing the piece, the second's crossfade from it goes to the first, the whole original again, rather
 	// than ending with the piece (#1723).
 	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	// Another event of the clip, with a lower id than the first, out of the way until a section places it.
+	const ObjectId copy = loop.add(client, 90000, 0, 1000);
 	const ObjectId first = loop.add(client, 1000, 0, 20000);
 	const ObjectId second = loop.add(client, 19000, 18000, 30000);
 	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
@@ -1179,12 +1181,43 @@ TEST_CASE(
 	run(client, "quantize.crossfade", {{"events", {first, right}}});
 	REQUIRE(crossfadeOf(client, right).at("from") == first);
 	REQUIRE(byId(client, "audioEvents", first).at("length").get<int64_t>() > 20001);
+	const auto checkFromFirst = [&]()
+	{
+		CHECK(run(client, "quantize.reset", {{"events", {first, right}}}).at("removed") == Json::array({right}));
+		CHECK(eventsOn(client, loop.track).at(0) == std::vector<int64_t>{1000, 0, 20000});
+		const Json kept = crossfadeOf(client, second);
+		REQUIRE(kept.is_object());
+		CHECK(kept.at("from") == first);
+	};
 
-	CHECK(run(client, "quantize.reset", {{"events", {first, right}}}).at("removed") == Json::array({right}));
-	CHECK(eventsOn(client, loop.track).at(0) == std::vector<int64_t>{1000, 0, 20000});
-	const Json kept = crossfadeOf(client, second);
-	REQUIRE(kept.is_object());
-	CHECK(kept.at("from") == first);
+	SECTION("the first is the piece before")
+	{
+		checkFromFirst();
+	}
+
+	SECTION("also over an event that ends where the piece starts and plays its clip frames up to there (#1805)")
+	{
+		// Such as an overlapping copy, with a lower id: it ends exactly where the piece starts, but the first, which
+		// the piece crossfaded from, wins.
+		const Json piece = byId(client, "audioEvents", right);
+		const int64_t start = piece.at("position").get<int64_t>();
+		const int64_t offset = piece.at("offset").get<int64_t>();
+		REQUIRE(start > 1000);
+		REQUIRE(offset > 1000);
+		run(client, "audioEvent.set",
+			{{"event", copy}, {"position", start - 1000}, {"offset", offset - 1000}, {"length", 1000}});
+		checkFromFirst();
+	}
+
+	SECTION("not once the first was moved away from the piece by hand (#1805)")
+	{
+		// The piece still crossfades from it, but a bar later it no longer overlaps the piece: the crossfade ends, as
+		// without an event before.
+		run(client, "event.move", {{"events", {first}}, {"delta", 4 * g_quarter}});
+		REQUIRE(crossfadeOf(client, right).at("from") == first);
+		CHECK(run(client, "quantize.reset", {{"events", {right}}}).at("removed") == Json::array({right}));
+		CHECK(!crossfadeOf(client, second).is_object());
+	}
 }
 
 TEST_CASE("Reset Quantize leaves locked audio events as they are", "[integration]")

@@ -55,12 +55,13 @@ crossfade comes back. Removing the piece moves every crossfade still from it to 
 again, as gluing moves crossfades to the event it keeps (#1566): that of a neighbour left out of the reset or locked,
 and one changed by hand since quantizing, which counts as the neighbour's original. It plays where the two overlap. The
 piece before is the event of the piece's track and clip that the piece crossfaded from, which grew into the piece by the
-Crossfade step (#1723), or else the one that ended where the piece starts, within the rounding of a musical position
-(#1642); without one, such as after the event the piece was split from was removed or trimmed by hand, the crossfade
-ends, rather than coming from another copy of the clip on the track. The neighbour's origin follows, so resetting it
-later still brings back the crossfade from before quantizing, or keeps the one changed by hand. An original crossfade
-from an event that is gone, such as one removed by hand since, doesn't come back: resetting leaves the event without
-one.
+Crossfade step (#1723), as long as it still plays into the piece's start, also when another event ends exactly there,
+such as an overlapping copy (#1805), or else the one that ended where the piece starts, within the rounding of a musical
+position (#1642); without one, such as after the event the piece was split from was removed, trimmed or moved away by
+hand, the crossfade ends, rather than coming from another copy of the clip on the track. The neighbour's origin follows,
+so resetting it later still brings back the crossfade from before quantizing, or keeps the one changed by hand. An
+original crossfade from an event that is gone, such as one removed by hand since, doesn't come back: resetting leaves
+the event without one.
 
 Locked events stay as they are when resetting, a piece with nothing of the original too, and so do the warp markers
 that resetting would put back for them: a locked event is protected from being moved and edited (p. 276), and
