@@ -407,6 +407,34 @@ TEST_CASE("each mixer window and the lower zone's mixer hide channels of their o
 	REQUIRE(app.waitUntil([&] { return app.appUi().mixer(2) == nullptr; }));
 }
 
+TEST_CASE("another project drops the notes being typed in a mixer channel's notepad", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "song.dawproject").string();
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added a = addTrack(app, "audio", "A");
+	const Added b = addTrack(app, "audio", "B");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 4; }));
+	app.call("project.save", {{"path", file}});
+	click(app, window, "#mixer-layout");
+	click(app, window, "#mixer-layout-pane [setup-section=notes]");
+	REQUIRE(app.waitUntil([&] { return !has(element(app, window, strip(a.channel) + " .mixer-notes"), "hidden"); }));
+	app.ui().key(window, "Escape");
+
+	// Another client loads the project, whose channels have the same ids: the notes typed are dropped, not saved to
+	// the loaded project's channel when the field is left.
+	click(app, window, strip(a.channel) + " .mixer-notes-field");
+	app.ui().text(window, "Bass DI");
+	app.call("project.load", {{"path", file}});
+	REQUIRE(app.waitUntil(
+		[&] { return element(app, window, strip(a.channel) + " .mixer-notes-field").value("value", "").empty(); }));
+	click(app, window, strip(b.channel) + " .mixer-channel-name");
+	CHECK_FALSE(app.waitUntil(
+		[&] { return !channelJson(app, a.channel).value("notes", "").empty(); }, std::chrono::milliseconds(300)));
+}
+
 TEST_CASE("mixer channels show notes and pictures, and a channel dragged onto another moves its track", "[ui]")
 {
 	const test::TempDir dir;

@@ -154,6 +154,7 @@ namespace gnubase::ui
 		bool m_stale = false;
 		uint64_t m_dragged = 0;          // the channel whose name a mouse button went down on
 		bool m_updating = false;         // while the strips show the project's values
+		bool m_dropping = false;         // while another project drops the notes being typed
 		double m_defaultSendLevel = 0.0; // the user setting audio.defaultSendLevel
 
 		std::vector<Subscription> m_subscriptions;

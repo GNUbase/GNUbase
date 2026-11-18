@@ -452,8 +452,19 @@ namespace gnubase::ui
 				[this, reset = std::string(event) == "project.reset"](const engine::Event&)
 				{
 					requestProject();
-					if (reset)
-						requestView();
+					if (!reset)
+						return;
+					// A note being typed belongs to the project that went, as the inspector's edits do
+					// (Inspector::dropEdits).
+					Rml::Context* context = m_root ? m_root->GetContext() : nullptr;
+					if (Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
+						focus != nullptr && focus->IsClassSet("mixer-notes-field") && m_root->Contains(focus))
+					{
+						m_dropping = true;
+						focus->Blur();
+						m_dropping = false;
+					}
+					requestView();
 				}));
 		m_subscriptions.push_back(m_binding.on("mixer.changed",
 			[this](const engine::Event& event)
@@ -1128,7 +1139,7 @@ namespace gnubase::ui
 				}
 			break;
 		case Rml::EventId::Blur:
-			if (target->IsClassSet("mixer-notes-field"))
+			if (target->IsClassSet("mixer-notes-field") && !m_dropping)
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->channel != nullptr)
 					if (auto* field = dynamic_cast<Rml::ElementFormControl*>(target);
 						field != nullptr && field->GetValue() != channel->channel->value("notes", std::string()))
