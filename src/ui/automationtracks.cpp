@@ -633,9 +633,11 @@ namespace gnubase::ui
 				high = std::max(high, point.value);
 				points.emplace_back(lane->ids[i], point);
 			}
-		// A move snaps the pressed point's time and keeps the others' distance to it (reference manual p. 877).
+		// A move snaps the pressed point's time and keeps the others' distance to it; Ctrl with another modifier
+		// turns snapping off (reference manual p. 877).
 		double dt = dx * m_view.scale;
-		if (m_gesture == AutomationGesture::Move)
+		const bool snapOff = has(m_pressed, "ctrl") && (has(m_pressed, "alt") || has(m_pressed, "shift"));
+		if (m_gesture == AutomationGesture::Move && !snapOff)
 		{
 			const auto pressed = std::find(lane->ids.begin(), lane->ids.end(), m_dragEvent);
 			if (pressed != lane->ids.end() && dx != 0.0)

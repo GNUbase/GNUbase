@@ -645,6 +645,33 @@ TEST_CASE("a Ctrl-drag moves the selected automation points in one direction, an
 	CHECK(selected() == both);
 }
 
+TEST_CASE("a move of automation points snaps, and Ctrl with another modifier turns snapping off", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	f.app.call("automationPoint.add", {{"lane", volume}, {"points", {{{"position", 96000}, {"value", -6.0}}}}});
+	f.settle(volume);
+	f.app.call("snap.set", {{"on", true}, {"type", "grid"}, {"grid", "bar"}});
+	REQUIRE(f.app.waitUntil([&f] { return f.display.snap().on; }));
+	const auto position = [&] { return f.lane(volume).at("points")[0].at("position").get<double>(); };
+	const int y = f.y(volume, 54.0 / 66.0);
+
+	// The pressed point lands on a bar, 2 s at 120 BPM (reference manual p. 877).
+	f.drag(f.x(2.0), y, f.x(3.3), y);
+	REQUIRE(f.app.waitUntil([&] { return position() > 96000.0; }));
+	CHECK(position() == 192000.0);
+	f.settle(volume);
+
+	// Ctrl and Shift, or Ctrl and Alt, move it where the mouse goes.
+	f.drag(f.x(4.0), y, f.x(4.7), y, {"ctrl", "shift"});
+	REQUIRE(f.app.waitUntil([&] { return position() > 192000.0; }));
+	CHECK(position() == Approx(4.7 * 48000.0).margin(960.0));
+	f.settle(volume);
+	f.drag(f.x(4.7), y, f.x(5.2), y, {"ctrl", "alt"});
+	REQUIRE(f.app.waitUntil([&] { return position() > 4.8 * 48000.0; }));
+	CHECK(position() == Approx(5.2 * 48000.0).margin(960.0));
+}
+
 TEST_CASE("Show Only Automation Tracks of a plugin shows its lanes and hides the track's others", "[ui]")
 {
 	Automation f;

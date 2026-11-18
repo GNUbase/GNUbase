@@ -66,11 +66,12 @@ the project or its undo history.
 ## Tools
 
 A click with a tool turns reading on (p. 873), in the same undo step as the points. Snapping applies where a click
-places a point and where a moved point lands ([snap.md](snap.md)).
+places a point and where a moved point lands ([snap.md](snap.md)); Ctrl with Alt or Shift turns it off for a move
+(p. 877).
 
 | Tool | Click | Drag |
 |---|---|---|
-| Object Selection | On a point: selects it (Ctrl or Shift: adds or removes it); elsewhere adds a point | A selected point moves the selection in time and value (Ctrl: across or up and down only); from an empty spot a rectangle selects the points in it (Ctrl or Shift: adds them) |
+| Object Selection | On a point: selects it (Ctrl or Shift: adds or removes it); elsewhere adds a point | A selected point moves the selection in time and value (Ctrl: across or up and down only; Ctrl with Alt or Shift: unsnapped); from an empty spot a rectangle selects the points in it (Ctrl or Shift: adds them) |
 | Draw | Adds a point | Draws a curve: the points drawn, reduced to those that stray more than 2 dp from the line between their neighbours (p. 873), replace the points in its range |
 | Line | | Replaces the points in its range with a line, a parabola (fast at first when drawn rightwards), or a sine, triangle or square wave between the start's and the end's value with periods of the grid as zoom adapts it (p. 874); not on step curves |
 | Erase | Removes the point | |
@@ -103,6 +104,9 @@ info line ([virgin-territory.md](virgin-territory.md)), and automation of the ch
   and the selected tracks' command; the draw tool's click and curve, the line tool's line, square, sine, triangle and
   parabola, nothing on a step curve, the erase tool, and reading off with the static value line; selecting points with
   clicks, Ctrl and a rectangle, the event editor's vertical scaling and moving, moving points by a drag, Delete, and
-  selecting events deselecting points; the curve's terminators and virgin territory following `automation.set`.
+  selecting events deselecting points; a Ctrl-drag of selected points in one direction, a Ctrl-click that deselects
+  one, the editor's tilt left, tilt right and stretch; a move that snaps the pressed point, and Ctrl with Shift or Alt
+  that turns snapping off; Show Only Automation Tracks of a plugin; the curve's terminators and virgin territory
+  following `automation.set`.
 - `tests/canvas_tests.cpp`: a curve's lines with a terminator in the middle and at the end, with virgin territory,
   and scrolled to start after a terminator.
