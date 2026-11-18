@@ -23,6 +23,13 @@ Mixdown dialog and Quick Audio Export. The offline rendering it builds on is `au
   in the live ones, and no external MIDI input reaches it, as with the reference's Deactivate External MIDI Inputs
   (p. 1486) always on. `job.progress` reports rendering and file conversion, and
   `job.finished` reports completion, failure or cancellation. Cancellation and failure remove the files made by the job.
+- **What a private render keeps.** Its snapshot is a copy of the starting one with only the selected channels or
+  busses and their upstream audio and MIDI dependencies, so a field added to `RenderSnapshot` later is kept as well.
+  Routing indices are remapped within that snapshot; unrelated plugins and sampler reads are left out. A slot that was
+  active in the live engine must become active in the private renderer too, or the job fails rather than silently
+  exporting without that plugin; so must one still loading live, which is about to play. The private plugins are made
+  in offline mode, so that their own `setProcessMode` is offline before they are activated, and the live plugins never
+  leave real-time mode for an export.
 - **Render points.** `point` renders channels from inside their strip (before the slots, after them, or before the
   fader) instead of after the fader and panner, and `tail` adds up to 60 s that end where the audio does, for render
   in place and freeze ([render-in-place.md](render-in-place.md)).
@@ -97,12 +104,8 @@ job's completed `result` has the same `{files}` shape as the former synchronous 
 held, without changing its audio, and that exports take no track locks. `tests/mixdown_ui_tests.cpp` drives the real
 export dialog, the render progress and Cancel through the automation API.
 
-Private background renders retain only the selected channels or busses and their upstream audio and MIDI dependencies.
-Routing indices are remapped within that snapshot; unrelated plugins and sampler reads are left out. A slot that was
-active in the live engine must become active in the private renderer too, or the job fails rather than silently
-exporting without that plugin; so must one still loading live, which is about to play. The private plugins are made in
-offline mode, so that their own `setProcessMode` is offline before they are activated, and the live plugins never
-leave real-time mode for an export. `tests/renderinplace_tests.cpp` checks that a group export instantiates its upstream
-plugin without unrelated slots, and that a private plugin failure fails freeze and render in place without changing
-history or leaving tracks locked, that an export with a live plugin still loading fails without its private one, and
-that the private plugins are activated offline and process only offline blocks.
+`tests/renderinplace_tests.cpp` checks that a group export instantiates its upstream plugin without unrelated slots,
+that a private plugin failure fails freeze and render in place without changing history or leaving tracks locked, that
+an export with a live plugin still loading fails without its private one, that the private plugins are activated
+offline and process only offline blocks, and that a held render refuses changes of the root key, pan law, tempo and
+sample rate.

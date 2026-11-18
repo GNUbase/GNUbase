@@ -91,18 +91,11 @@ namespace gnubase::engine
 				for (const int input : inputs[node])
 					pending.push_back(static_cast<size_t>(input));
 			}
-			RenderSnapshot result;
-			result.revision = snapshot.revision;
-			result.opened = snapshot.opened;
-			result.sampleRate = snapshot.sampleRate;
-			result.tempo = snapshot.tempo;
-			result.signatures = snapshot.signatures;
-			result.metronome = snapshot.metronome;
-			result.panLaw = snapshot.panLaw;
-			result.maxVolume = snapshot.maxVolume;
-			result.recordBitDepth = snapshot.recordBitDepth;
-			result.arranger = snapshot.arranger;
-			result.chordPadKeys = snapshot.chordPadKeys;
+			// Every field as it is, so that one added later isn't left at its default (#1850), but the three lists.
+			RenderSnapshot result = snapshot;
+			result.busses.clear();
+			result.channels.clear();
+			result.media.clear();
 			std::vector<int> busses(snapshot.busses.size(), -1);
 			std::vector<int> channels(snapshot.channels.size(), -1);
 			std::vector<int> media(snapshot.media.size(), -1);

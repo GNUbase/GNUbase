@@ -243,8 +243,9 @@ namespace gnubase::engine
 		// name.
 		Project loadTemplate(const std::string& name) const;
 		// Records what changed since before as a step; one with a merge key joins the last step if that has the key.
-		void record(std::string action, const Project& before, ProjectChange change, CommandContext& context,
-			std::string merge = {});
+		// known is that change if the caller computed it already, else record does.
+		void record(std::string action, const Project& before, std::optional<ProjectChange> known,
+			CommandContext& context, std::string merge = {});
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
 		Json join(CommandContext& context);

@@ -1290,6 +1290,28 @@ TEST_CASE("a render range locks intersecting audio and transactions but allows e
 	CHECK(finished.at("result").at("tracks").size() == 1);
 }
 
+TEST_CASE("a held render refuses changes of the project settings every render hears", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	// Only the project-wide part of the lock check catches these (#1850).
+	const Json setting =
+		GENERATE(Json{{"rootKey", "D"}}, Json{{"panLaw", "-6dB"}}, Json{{"tempo", 90}}, Json{{"sampleRate", 44100}});
+	const Json before = run(session.client, "project.get");
+	const Json finished = gnubase::test::whileHeld(session.engine, session.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"tail", 0}},
+		[&](uint64_t)
+		{
+			INFO(setting.dump());
+			CHECK_THAT(reject(session.client, "project.set", setting), ContainsSubstring("being rendered"));
+		});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+	const Json after = run(session.client, "project.get");
+	for (const char* key : {"rootKey", "panLaw", "tempo", "sampleRate"})
+		CHECK(after.value(key, Json()) == before.value(key, Json()));
+}
+
 TEST_CASE("a failed background render removes files and unlocks its tracks", "[integration]")
 {
 	Session session;
