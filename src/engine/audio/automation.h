@@ -62,10 +62,14 @@ namespace gnubase::engine
 		// A fader lane whose static value changed while it has no points: it glides there over g_faderSmoothing.
 		// Not compared: it only says how the new value arrives.
 		bool smooth = false;
-		// A program lane and a MIDI lane without points: the revision of the automation that first had it as it is,
-		// set by AutomationPlayer::setAutomation. Other new automation doesn't send its value again, which would
-		// override a part's own program change or controller. Not compared.
+		// A program lane and a MIDI lane: the revision of the automation that first had it as it is, set by
+		// AutomationPlayer::setAutomation. Other new automation doesn't send the value of one without points again,
+		// which would override a part's own program change or controller. Not compared.
 		uint64_t revision = 0;
+		// A MIDI lane with points whose revision is new: the points of the lane it replaced, if any. Where its value
+		// differs from theirs, it is the lane's new value there, not one set again (AutomationPlayer::play's
+		// sentAgain). Not compared.
+		std::vector<RenderAutomationPoint> replaced;
 		// A MIDI lane that plays side by side with others of its target (channelAutomation): it sends every point it
 		// arrives at, also one that repeats its value or that a gap follows, since another lane may have changed the
 		// controller in between; at a start, a locate or a jump only the one whose latest point lies latest sends its
@@ -88,15 +92,19 @@ namespace gnubase::engine
 	// MIDI controller with points.
 	struct ChannelAutomation
 	{
-		uint64_t revision = 0;  // set by AutomationPlayer::setAutomation
+		uint64_t revision = 0; // set by AutomationPlayer::setAutomation
+		// The revision of the automation that first had its instrument, lanes and silent as they are, set by
+		// AutomationPlayer::setAutomation: automation that changes only quiet sends no value again.
+		uint64_t content = 0;
 		std::string instrument; // a new instrument gets every value again
 		std::vector<PlayedLane> lanes;
 		// A silent MIDI track's (muted, soloed out or disabled): its program and MIDI lanes send nothing, so it doesn't
 		// change the instrument that other tracks play. They stay, so that once it is heard again only what changed
 		// meanwhile goes out.
 		bool silent = false;
-		// Silent because it is soloed out or disabled (RenderChannel::quiet), not only by its mute button: its parts
-		// aren't in the snapshot, so they are chased once it is heard again after playback moved.
+		// A MIDI track silent because it is soloed out or disabled (RenderChannel::quiet), not only by its mute
+		// button, or an instrument track that is soloed out or disabled: a MIDI track's or a disabled track's parts
+		// aren't in the snapshot, so they are chased once it is heard again after playback moved or ran meanwhile.
 		bool quiet = false;
 
 		bool sameContent(const ChannelAutomation& other) const
@@ -137,8 +145,9 @@ namespace gnubase::engine
 		// Command thread: the automation last set.
 		const ChannelAutomation& latest() const { return m_automation.latest(); }
 
-		// Command thread: a flag that play raises for the block in which a silent MIDI track is heard again after
-		// playback started, stopped, located or jumped while it was silent, and lowers in every other block. The
+		// Command thread: a flag that play raises for the block in which a silent MIDI track, or a quiet instrument
+		// track, is heard again after playback started, located, jumped or stopped somewhere else while it wasn't
+		// heard, or after it played while the track was soloed out or disabled, and lowers in every other block. The
 		// sequencer that chases the track's parts (ChaseTrack::heardAgain), which runs after it in the block, chases
 		// them there, after the program, MIDI volume and pan that play sends again.
 		std::shared_ptr<const std::atomic<HeardAgain>> heardAgain() const { return m_heardAgain; }
@@ -154,8 +163,9 @@ namespace gnubase::engine
 		// click. sentAgain, if any, gets a copy of the events for source that set a value again, where a start, a
 		// locate, a jump, new automation, a new processor or being heard again sends the values (also while stopped),
 		// and not those of a new value: a lane's step or ramp, also one at the sample where the values are sent again,
-		// or a program or MIDI controller without points set in this block. A MIDI track's strip sends what its mute
-		// kept after the values set again and before the new ones.
+		// a program or MIDI controller without points set in this block, or a MIDI lane's value that new points in
+		// this block changed. A MIDI track's strip sends what its mute kept after the values set again and before the
+		// new ones.
 		void play(const graph::TransportBlock& transport, const std::vector<const void*>& processors,
 			const std::vector<ObjectId>& slots, graph::EventBuffer& source, graph::EventBuffer& fader,
 			graph::EventBuffer& plugins, uint32_t smoothing = 0, graph::EventBuffer* sentAgain = nullptr) noexcept;
@@ -163,9 +173,9 @@ namespace gnubase::engine
 	private:
 		rt::SnapshotPublisher<ChannelAutomation> m_automation;
 		uint64_t m_revision = 0; // command thread: the last revision given
-		// Command thread: the program lanes and the MIDI lanes without points of the last automation set that isn't
-		// silent, with their revisions. A lane set back to one of them while the track is silent keeps its revision,
-		// as nothing changed since the track was last heard.
+		// Command thread: the program lanes and the MIDI lanes of the last automation set that isn't silent, with their
+		// revisions. A lane set back to one of them while the track is silent keeps its revision, as nothing changed
+		// since the track was last heard.
 		std::vector<PlayedLane> m_heardLanes;
 		std::shared_ptr<std::atomic<HeardAgain>> m_heardAgain =
 			std::make_shared<std::atomic<HeardAgain>>(HeardAgain::No);
@@ -175,9 +185,10 @@ namespace gnubase::engine
 		// The revision played last while not silent; 0 when playback moved or the processors changed while silent, so
 		// that the program and MIDI lanes all go out again once it is heard.
 		uint64_t m_heard = 0;
-		// Playback moved while it was silent (Quiet if it was soloed out or disabled at one of the moves): it raises
-		// m_heardAgain once it is heard.
+		// Playback moved while it was silent, or played while it was quiet (then Quiet): it raises m_heardAgain once
+		// it is heard.
 		HeardAgain m_missed = HeardAgain::No;
+		uint64_t m_playedContent = 0; // the content (ChannelAutomation::content) played last
 		// The processors played for last: the source and the slots' plugins.
 		std::array<const void*, g_maxSlots + 1> m_processors{};
 		size_t m_processorCount = 0;

@@ -36,10 +36,12 @@ the project (#491).
   track doesn't change the instrument that other tracks play. Once it is heard again, its automation curves send their
   values at once, but its MIDI volume, pan and program only what changed while it was silent (a new program with the
   MIDI volume and pan after it), so a program change or CC 7 a part played before it went silent stays; if playback
-  started, stopped, located or jumped meanwhile, or the instrument changed, it sends them all, as a jump does. A value
-  changed and changed back while it was silent, e.g. by undo, didn't change: the player compares with the lanes of the
-  automation last heard. A soloed-out or disabled track's parts weren't in the snapshot when playback moved, so once it
-  is heard again they are chased as the jump would have with the chase settings: in that block its automation raises
+  started, located, jumped or stopped somewhere else meanwhile, or ran while it was soloed out or disabled, or the
+  instrument changed, it sends them all, as a jump does. A stop where playback ended moves nothing, as for the
+  sequencer: the values stay as playback left them, also those its parts played. A value changed and changed back
+  while it was silent, e.g. by undo, didn't change: the player compares with the lanes of the automation last heard. A
+  soloed-out or disabled track's parts weren't in the snapshot when playback moved or ran, so once it is heard again
+  they are chased as the jump would have with the chase settings: in that block its automation raises
   `AutomationPlayer::heardAgain`, and the sequencer that chases the track at jumps (`MidiSequencer`: its
   instrument's, or its own if it isn't routed to one) sends, after the channel's values, the latest controller event
   of each kind before the position (stopped: up to and including the cursor) where that is the track's, or where it is
@@ -54,8 +56,13 @@ the project (#491).
   mute kept of every kind of that chase and of the kinds the channel sent, so each goes out once, with the chased value.
   A track that isn't routed to an instrument has its own sequencer chase it into its events, after the channel's values:
   before it sends what waits, its strip forgets what the mute kept of the kinds of its events at the block's start, but
-  for the kinds of the values the channel sent again there, over which what the mute kept wins. Notes that started while
-  it was silent aren't chased. Silent channels don't monitor their input directly either.
+  for the kinds of the values the channel sent again there, over which what the mute kept wins. A disabled instrument
+  track's parts aren't in the snapshot either: heard again after playback moved or ran while it was soloed out or
+  disabled, its own sequencer chases them the same way (a soloed-out one's played, and their latest values go out
+  again: the reference manual, p. 1610, chases when soloing too). Notes that started while it was silent aren't
+  chased, also with `midi.chaseNotes` on: being heard again isn't a jump, after which the instrument has no notes left,
+  and like a mute lane that unmutes in the middle of a note it plays the notes that start from there on, not those that
+  sound there. Silent channels don't monitor their input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
   channel is silent. Other track types refuse it.

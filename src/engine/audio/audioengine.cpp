@@ -801,17 +801,17 @@ namespace gnubase::engine
 				routed[channel.id] = &channel;
 			}
 
-		// A MIDI track's chase is told by its automation when the track is heard again after playback moved while it
-		// was silent (AutomationPlayer::heardAgain). The channel's state is there from the graph before, which had
-		// the track while it was silent.
+		// A MIDI or instrument track's chase is told by its automation when the track is heard again after playback
+		// moved while it was silent, or ran while it was soloed out or disabled (AutomationPlayer::heardAgain). The
+		// channel's state is there from the graph before, which had the track while it wasn't heard.
 		const auto chaseTrack = [this](const RenderChannel& channel)
 		{
 			ChaseTrack track = makeChaseTrack(channel.controllers, channel.midiParts);
-			if (const auto state = m_channelStates.find(channel.id);
-				channel.type == TrackType::Midi && state != m_channelStates.end())
+			if (const auto state = m_channelStates.find(channel.id); state != m_channelStates.end())
 			{
 				track.heardAgain = state->second->automation.heardAgain();
-				track.channelKinds = channelChaseKinds(channel);
+				if (channel.type == TrackType::Midi)
+					track.channelKinds = channelChaseKinds(channel);
 			}
 			return track;
 		};
