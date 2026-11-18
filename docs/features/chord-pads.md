@@ -249,6 +249,12 @@ a remote start above the end, goes back to the one the pads have.
   Assign from MIDI Input show their click at once and go from what they show (#1851): until the engine has answered
   every `chordPads.listen` the panel sent, the panel shows what it asked for last, not the engine's
   `chordPads.listening` of an earlier click, so a second click before the first one's answer stops listening again.
+  A panel built while the engine listens already shows it, from `chordPads.get`'s `listening` (#1896).
+- The settings toggles (Output, Step, Insert, Flats, Snap, Remote, Lock, Adaptive, Reference,
+  Keyboard Velocity, Filter Notes, Latch, Modifiers, Latch Pads, Spread and the sections' Mute) go from what they show
+  and show their click at once as well (#1896): the panel lights them, and until the engine has answered every command
+  of a toggle, it shows what the toggle sent last instead of the engine's reads, so a double click before the first
+  answer turns it on and off again.
 - The Inspector's Input Routing of a MIDI or instrument track chooses All MIDI Inputs, Chord Pads or Not Connected
   (p. 1367).
 - The wheel over a pad: down the next voicing, up the previous one; with Shift it transposes, with Alt it changes the
@@ -329,7 +335,8 @@ pads' key commands; a pad modifier button playing the pad while it is down, the 
 and hovered key, a pad lit by a remote key, a suggestion dropped onto a pad, the List assistant's colors and Assign from
 MIDI Input's frame, a drop location's frame, the assistant's hint kept for a pad without a chord selected before an
 answer came, every MIDI Learn button, MIDI Learn and Assign from MIDI Input clicked twice and on another target while
-the engine is held (#1851), the section keys on the keyboard, Number of Pads, Start Note apart from the remote
+the engine is held (#1851), Latch, Lock and Mute clicked twice while the engine is held and MIDI Learn shown by a panel
+opened while it listens (#1896), the section keys on the keyboard, Number of Pads, Start Note apart from the remote
 range and Number of Rows, and Import from MIDI Loop with why a loop without 3 to 5 voices was refused, gone once the
 pattern changes through the engine and with another project; a pad dropped onto an instrument track's lane and onto the
 chord track; and the step input cursor in the event display.
