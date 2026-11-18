@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -28,12 +29,23 @@ namespace gnubase::ui
 					fit(window, std::exchange(m_centre, false));
 			});
 		// The shell moves only windows that are out of reach: a panel as wide as its monitor's usable area gets
-		// narrower with it, e.g. at another resolution or with the taskbar moved to the side.
+		// narrower with it, e.g. at another resolution or with the taskbar moved to the side. One that followed its
+		// sections and that the shell moved onto another monitor, shrunk to its usable area, follows them on from
+		// the width the shell gave it (#1798).
 		m_shell.onDisplaysChanged(
-			[this, alive = std::weak_ptr<bool>(m_alive)]
+			[this, alive = std::weak_ptr<bool>(m_alive)](const std::map<WindowId, Rect>& moved)
 			{
 				if (alive.expired())
 					return;
+				if (const auto found = moved.find(m_window); found != moved.end())
+				{
+					const int before = found->second.width;
+					if (before == m_docking.fittedWidth(g_name) || before == m_unfitted)
+					{
+						m_unfitted = 0;
+						m_docking.setFittedWidth(g_name, m_shell.bounds(m_window).width);
+					}
+				}
 				m_measured = 0;
 				if (const Window* window = shown())
 					window->context().RequestNextUpdate(0);
@@ -51,9 +63,10 @@ namespace gnubase::ui
 		m_measured = 0;
 		// Only this opening counts for where it is centred again: where it opened, until a fit asks for other bounds.
 		m_measuredBounds = m_shell.bounds(window.id());
-		m_asked = {};
-		if (centre)
-			fit(window, true);
+		m_asked.reset();
+		// One whose first fit found nothing to fit follows from the width it opened with (#1848).
+		if (centre && !fit(window, true))
+			m_docking.setFittedWidth(g_name, m_measuredBounds.width);
 	}
 
 	void TransportPanelFit::follow()
@@ -91,7 +104,8 @@ namespace gnubase::ui
 		// window system that moves windows later, where it was then or where that fit asked for.
 		const bool opening = centre && !m_follows;
 		centre = centre &&
-			(opening || bounds.position() == m_measuredBounds.position() || bounds.position() == m_asked.position());
+			(opening || bounds.position() == m_measuredBounds.position() ||
+				(m_asked && bounds.position() == m_asked->position()));
 		if (!opening)
 		{
 			if (!fitted || (bounds.width != *fitted && bounds.width != m_unfitted))

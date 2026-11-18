@@ -638,10 +638,10 @@ namespace
 
 		// Opens a new panel as the app does, 1100 points wide in the middle of the monitor, and fits it at once; with
 		// its sections hidden, which the class shown on the body shows, if not shown.
-		void open(bool shown = true, int width = 1100)
+		void open(bool shown = true)
 		{
 			ui::WindowSpec spec;
-			spec.size = {width, 48};
+			spec.size = {1100, 48};
 			panel = &ui.shell.open(spec);
 			Rml::ElementDocument* document = panel->context().LoadDocumentFromMemory(R"(<rml><head><style>
 				body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
@@ -722,14 +722,46 @@ TEST_CASE("a new transport panel whose first fit found no sections is centred wh
 	fake.ui.windows.setDisplays({{1, "Monitor", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F}});
 	fake.step();
 
-	// A new one, as wide as the fit before, shows no sections at first: nothing to fit (#1765).
-	fake.open(false, 600);
-	REQUIRE(fake.bounds() == fake.centred(600));
+	// A new one shows no sections at first: nothing to fit (#1765). It follows them from the width it opened with,
+	// not the fit before's (#1848).
+	fake.open(false);
+	REQUIRE(fake.bounds() == fake.centred(1100));
 	fake.panel->context().GetDocument(0)->SetClass("shown", true);
 	fake.second->SetClass("wide", true);
 	fake.fit.follow();
 	fake.step();
 	CHECK(fake.bounds() == fake.centred(900));
+}
+
+TEST_CASE("a new transport panel whose first fit found no sections follows them, also with a fresh layout", "[unit]")
+{
+	// No fit before it, so ui.layout has no fittedWidth (#1848).
+	FakePanel fake;
+	fake.open(false);
+	REQUIRE(fake.bounds() == fake.centred(1100));
+	CHECK(fake.docking.fittedWidth("transportPanel") == 1100);
+	fake.panel->context().GetDocument(0)->SetClass("shown", true);
+	fake.fit.follow();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(600));
+	fake.resize("wide");
+	CHECK(fake.bounds().width == 900);
+}
+
+TEST_CASE("a new transport panel whose first fit asked for nothing and that the user moved to the monitor's corner "
+		  "stays there",
+	"[unit]")
+{
+	// No fit asked for bounds, so none match the corner the user moved it to before the controls showed the project
+	// (#1848).
+	FakePanel fake;
+	fake.open(false);
+	fake.ui.shell.setBounds(fake.panel->id(), {0, 0, 1100, 48});
+	fake.step();
+	fake.panel->context().GetDocument(0)->SetClass("shown", true);
+	fake.fit.follow();
+	fake.step();
+	CHECK(fake.bounds() == ui::Rect{0, 0, 600, 48});
 }
 
 TEST_CASE("the shell leaves a transport panel's fit alone once it is gone", "[unit]")
@@ -813,6 +845,33 @@ TEST_CASE("a transport panel as wide as its monitor gets narrower with the monit
 	fake.step();
 	CHECK(fake.bounds().width == 1600);
 	CHECK(fake.docking.fittedWidth("transportPanel") == 1600);
+}
+
+TEST_CASE("a transport panel that the shell moved onto the primary monitor follows its sections from there", "[unit]")
+{
+	// The panel is on a second monitor, wider than the primary one, as wide as that monitor's usable area.
+	FakePanel fake;
+	const ui::Display primary{1, "Primary", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F};
+	fake.ui.windows.setDisplays({primary, {2, "Wide", {1600, 0, 2560, 1440}, {1600, 0, 2560, 1400}, 1.0F}});
+	fake.step();
+	fake.open();
+	fake.second->SetClass("huge", true);
+	fake.fit.follow();
+	fake.step();
+	REQUIRE(fake.bounds().width == 1600);
+	fake.ui.shell.setBounds(fake.panel->id(), {1700, 100, 1600, 48});
+	fake.panel->context().RequestNextUpdate(0);
+	fake.step();
+	REQUIRE(fake.bounds() == ui::Rect{1600, 100, 2560, 48});
+
+	// That monitor goes: the shell centres the panel on the primary one, as wide as its usable area, and the panel
+	// follows its sections on from that width (#1798).
+	fake.ui.windows.setDisplays({primary});
+	fake.step();
+	REQUIRE(fake.bounds() == ui::Rect{0, 406, 1600, 48});
+	CHECK(fake.docking.fittedWidth("transportPanel") == 1600);
+	fake.resize("wide");
+	CHECK(fake.bounds() == ui::Rect{0, 406, 900, 48});
 }
 
 TEST_CASE("the transport bar goes to markers, the project's ends and the selection", "[ui]")
