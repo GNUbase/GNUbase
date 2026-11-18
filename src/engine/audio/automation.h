@@ -335,7 +335,8 @@ namespace gnubase::engine
 		DroppedMidi midiDropped;
 		// Audio thread, MIDI tracks: the project whose track the strip saw last (RenderSnapshot::opened). Channel ids
 		// start at 1 in every project, so a channel's state can reach the next project's track with that id: the
-		// values its mute kept and the pedals it knows are the old track's, and are forgotten.
+		// values its mute kept are the old track's and are forgotten, and the pedals the old track held down are
+		// released, as a mute releases them.
 		uint64_t midiProject = 0;
 		// Audio thread, MIDI tracks: where playback goes on without a jump, -1 while stopped; while stopped, the
 		// position the strip saw last, -1 if unknown. A jump finds them as the track's sequencer does
@@ -469,7 +470,7 @@ namespace gnubase::engine
 		}
 		// Command thread, before the graph compiles, MIDI tracks: the project the strip's track is in
 		// (RenderSnapshot::opened). The first strip of another project on the channel's state forgets what the old
-		// track's mute kept and the pedals it had down (ChannelState::midiProject).
+		// track's mute kept and releases the pedals it had down (ChannelState::midiProject).
 		void playsProject(uint64_t opened) { m_project = opened; }
 		// Command thread, before the graph compiles: the strip runs a MIDI track's source, whose mute mutes the
 		// track's events (muteMidi). It gets room for the values that the automation sends again in a block, which

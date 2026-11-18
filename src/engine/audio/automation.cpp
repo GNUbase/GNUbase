@@ -1100,7 +1100,8 @@ namespace gnubase::engine
 		// The block's jumps up to offset (a start, a locate or a cycle jump, as the sequencer finds them): what the
 		// mute dropped before one is stale after it, where the chase sets what is in effect.
 		size_t segment = 0;
-		const auto jumpsUntil = [&state, &transport, &segment](uint32_t offset) noexcept
+		int64_t jumped = -1; // the offset of the block's last jump so far
+		const auto jumpsUntil = [&state, &transport, &segment, &jumped](uint32_t offset) noexcept
 		{
 			if (!transport.playing)
 			{
@@ -1111,7 +1112,10 @@ namespace gnubase::engine
 					state.midiCursor = state.midiNext; // where playback stopped
 				state.midiNext = -1;
 				if (state.midiCursor >= 0 && transport.position != state.midiCursor) // a locate while stopped
+				{
 					state.midiDropped.clear();
+					jumped = 0;
+				}
 				state.midiCursor = transport.position;
 				return;
 			}
@@ -1119,7 +1123,10 @@ namespace gnubase::engine
 			{
 				const graph::TransportSegment& at = transport.segments[segment];
 				if (at.position != state.midiNext)
+				{
 					state.midiDropped.clear();
+					jumped = at.offset;
+				}
 				state.midiNext = at.position + at.frames;
 			}
 		};
@@ -1139,7 +1146,8 @@ namespace gnubase::engine
 			events.add(event);
 		out.clear();
 		// After a project change's pedal releases, the block's last values that no longer fit wait as if a mute had
-		// dropped them, after the block's other events, as the latest of their kinds.
+		// dropped them, each at its place among the block's events: a later event of its kind that passes, e.g. the
+		// pedal's release after a press that waits, replaces it.
 		std::bitset<graph::g_maxEventsPerBlock> deferred;
 		if (release)
 		{
@@ -1267,7 +1275,9 @@ namespace gnubase::engine
 							state.midiHeld[n] = false;
 						}
 					// A pedal it releases goes back to its value when it unmutes, unless the track changes it
-					// meanwhile.
+					// meanwhile; not one released at a jump, which was down before the jump: the jump's chase sets
+					// the pedals that are down where playback lands.
+					const bool atJump = jumped == static_cast<int64_t>(mute->offset);
 					for (size_t channel = 0; channel < state.midiPedals.size(); ++channel)
 						for (const uint8_t controller : {uint8_t{64}, uint8_t{66}, uint8_t{69}})
 							if (const uint32_t value = state.midiPedals[channel][pedal(controller)];
@@ -1281,7 +1291,8 @@ namespace gnubase::engine
 								up.value = 0;
 								out.addEnd(up);
 								up.value = value;
-								state.midiDropped.drop(up);
+								if (!atJump)
+									state.midiDropped.drop(up);
 							}
 					state.midiPedals = {};
 				}
@@ -1313,7 +1324,10 @@ namespace gnubase::engine
 				continue;
 			}
 			if (deferred[next])
+			{
+				state.midiDropped.drop(events[next]);
 				continue;
+			}
 			const graph::ProcessEvent& event = events[next];
 			chaseUntil(event.offset);
 			muteUntil(event.offset);
@@ -1340,9 +1354,6 @@ namespace gnubase::engine
 		chaseUntil(UINT32_MAX);
 		muteUntil(UINT32_MAX);
 		flush(UINT32_MAX);
-		for (size_t i = 0; i < events.size(); ++i)
-			if (deferred[i])
-				state.midiDropped.drop(events[i]);
 	}
 
 	void ChannelStrip::render(RenderPoint point, const graph::ProcessContext& context) noexcept
