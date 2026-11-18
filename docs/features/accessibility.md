@@ -32,9 +32,10 @@ UI: keys through MCP's `ui_key` (`ui::Automation::key`), the theme and the scale
 
 RmlUi gives a control the pseudo-class `:focus-visible` when the keyboard focused it, not the mouse. Every theme draws
 its focus ring (`focus-ring.svg`) over the control's own skin for each of its states, so a checked toggle or check box
-still looks checked while it has the focus. `tools/skin/generate.py` makes these rules: each rule that gives a
-focusable widget a skin gets a `:focus-visible` twin with the ring added, after all other rules so that the ring also
-shows under the mouse. Knobs, faders and sliders, whose parts have the skins, get the ring around them; text fields
+still looks checked while it has the focus. Inside the ring runs a line in the theme's background color, so that the
+ring also shows on skins filled with the accent, such as the primary button and a checked check box.
+`tools/skin/generate.py` makes these rules: each rule that gives a focusable widget a skin gets a `:focus-visible`
+twin with the ring added, after all other rules so that the ring also shows under the mouse. Knobs, faders and sliders, whose parts have the skins, get the ring around them; text fields
 and drop-down lists show their focus skin; menu items light up as under the mouse.
 
 ## Scaling
@@ -74,4 +75,7 @@ those panels; a focus ring outside a control's box rather than on its edge.
   The focused controls show their focus.
 - `tests/theme_tests.cpp`: every theme draws the focus ring for each focusable widget in each of its states, and the
   high contrast theme's colors meet the contrast ratios above.
-- `tests/window_tests.cpp`: the high contrast theme's page of widgets against its golden image.
+- `tests/window_tests.cpp`: the high contrast theme's page of widgets against its golden image, and in every theme the
+  focus ring stands out from the skin of each kind of focusable widget (`tests/data/ui/focusable.rml`): buttons, the
+  primary and checked ones too, the checked track toggles, a checked check box and radio button, a list view and a
+  value field, and around knobs, faders and sliders, which get the ring alone, from the page beside them.

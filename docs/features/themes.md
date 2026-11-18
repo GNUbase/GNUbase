@@ -27,7 +27,8 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   graphics (check marks, the slider's thumb, the knob, the fader cap, the meter) use `decorator: svg(<file>)`, which
   rasterizes at the element's size ([svg.md](svg.md)). Both find a file relative to the style sheet that names it.
   A widget that the keyboard focused (`:focus-visible`) gets the theme's focus ring over the skin of its state, a
-  second decorator that the generator adds to each such rule ([accessibility.md](accessibility.md)).
+  decorator that the generator adds to each such rule, first in the list so that RmlUi draws it on top
+  ([accessibility.md](accessibility.md)).
   The default theme's glows are part of its skins, so they cost no extra render passes.
 - **Flat widgets.** The default theme follows the mockup `art/mockups/main-window.webp` (#1311, #1328); the elements and
   layout stay as they are. Its toolbar and transport buttons have no frame: muted until the mouse is over them, a soft
