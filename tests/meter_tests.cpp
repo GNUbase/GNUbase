@@ -530,6 +530,47 @@ TEST_CASE("the loudness meter measures up to where playback stops, also within a
 	CHECK(reading.integrated.value_or(0.0) == Approx(10.0 * std::log10(((27.0 * 0.001) + last) / 28.0)).margin(0.1));
 }
 
+TEST_CASE("a reset while playing starts a fresh step", "[unit]")
+{
+	LoudnessMeter meter;
+	meter.prepare(g_rate);
+	Signal signal;
+	signal.sine(3.0, -30.0);
+	signal.sine(0.05, -10.0); // the 50 ms before the reset, in a step that goes on after it
+	signal.play(meter);
+	meter.reset();
+	signal.clear();
+	signal.sine(3.0, -30.0);
+	signal.play(meter);
+	Signal stopped;
+	stopped.silence(1.0);
+	stopped.play(meter, false);
+	const LoudnessReading reading = meter.read();
+	CHECK(reading.seconds == Approx(3.0));
+	CHECK(decibels(reading.truePeakMax[0]) == Approx(-30.0).margin(0.1));
+	CHECK(reading.momentaryMax.value_or(0.0) == Approx(-30.0).margin(0.1));
+	CHECK(reading.integrated.value_or(0.0) == Approx(-30.0).margin(0.1));
+}
+
+TEST_CASE("a reset between the last played block and the stop leaves nothing to measure", "[unit]")
+{
+	LoudnessMeter meter;
+	meter.prepare(g_rate);
+	Signal played;
+	played.sine(3.05, -10.0); // ends within a step
+	played.play(meter);
+	meter.reset();
+	Signal stopped;
+	stopped.silence(1.0);
+	stopped.play(meter, false);
+	const LoudnessReading reading = meter.read();
+	CHECK(reading.seconds == 0.0);
+	CHECK(reading.truePeakMax[0] == 0.0f);
+	CHECK(!reading.momentaryMax);
+	CHECK(!reading.shortTermMax);
+	CHECK(!reading.integrated);
+}
+
 TEST_CASE("the true peak reads between the samples from the 24th sample after playback starts", "[unit]")
 {
 	LoudnessMeter meter;

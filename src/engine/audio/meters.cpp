@@ -354,11 +354,11 @@ namespace gnubase::engine
 			m_history = {};
 			m_publishedChannels.store(channels, std::memory_order_release); // after the values it cleared (read)
 		}
-		if (measuring && !m_wasMeasuring)
+		if (measuring && (!m_wasMeasuring || afterReset))
 		{
-			// Playback starts: a fresh step, blocks of only the steps from here on and fresh K-weighting filters, whose
-			// high pass would carry loud low frequencies on for about 10 ms, so no block or true peak holds audio from
-			// while the transport stood.
+			// Playback starts, or a reset comes while it plays: a fresh step, blocks of only the steps from here on and
+			// fresh K-weighting filters, whose high pass would carry loud low frequencies on for about 10 ms, so no
+			// block or true peak holds audio from while the transport stood or from before the reset.
 			m_stepEnergy = 0.0;
 			m_stepFrames = 0;
 			m_playingSteps = 0;
