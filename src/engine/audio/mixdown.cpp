@@ -635,11 +635,18 @@ namespace gnubase::engine
 		require(!objects.empty(), "there is no main mix; give channels");
 		const std::set<ObjectId> unique(objects.begin(), objects.end());
 		require(unique.size() == objects.size(), "channels names a channel twice");
+		const bool fromPoint = request.value("point", std::string("output")) != "output";
 		for (const auto object : objects)
 		{
-			require(nameOf(project, object).has_value(), "there is no bus or channel " + std::to_string(object));
+			const std::optional<std::string> name = nameOf(project, object);
+			require(name.has_value(), "there is no bus or channel " + std::to_string(object));
 			const int node = m_programs->latest().graph.find(object);
 			require(node >= 0 && m_programs->latest().graph.outputChannels(node) > 0, "channel has no audio");
+			// Before the job creates the folder (#725).
+			require(!fromPoint ||
+					std::any_of(snapshot.channels.begin(), snapshot.channels.end(),
+						[object](const RenderChannel& channel) { return channel.id == object; }),
+				name.value_or("") + " is a bus: only channels render from a point");
 		}
 		request["channels"] = objects;
 		const auto prepared = std::make_shared<PreparedMixdown>();
@@ -652,9 +659,11 @@ namespace gnubase::engine
 			for (const auto& path : channel.samples)
 				if (!path.empty())
 					paths.insert(path);
+		// The render needs the plugins that play live, and those still loading, which will (#725).
 		for (const auto& channel : prepared->snapshot.channels)
 			for (const auto& slot : channel.slots)
-				if (m_slots && m_slots->status(slot.id) == "active")
+				if (m_slots && slot.active &&
+					(m_slots->status(slot.id) == "active" || m_slots->status(slot.id) == "loading"))
 					prepared->activeSlots.insert(slot.id);
 		SampleLoader* samples = &m_sampleLoader;
 		const auto lease = std::make_shared<SampleLoader::Lease>(*samples, std::move(paths));
@@ -681,6 +690,7 @@ namespace gnubase::engine
 			renderer.m_threads = 1;
 			renderer.m_slots =
 				std::make_unique<plugins::SlotInstances>(*hosts, [] {}, [](uint64_t) { return true; }, factory);
+			renderer.m_slots->setProcessMode(plugin::ProcessMode::Offline); // before they are made and activated
 			renderer.setDevice({{"blockSize", blockSize}, {"sampleRate", prepared->snapshot.sampleRate},
 				{"captureSeconds", 0}, {"inputChannels", 0}});
 			// Wait on the plugin job queue, then publish their ready processors in this render's graph.
@@ -742,8 +752,9 @@ namespace gnubase::engine
 				"Quick audio export (reference manual pp. 1478-1479): writes the main mix of the whole project, from "
 				"the start of the first event to the end of the last, with the tail of the effects after it (up to 30 "
 				"s, to the last sample a 24-bit file doesn't hold as silence), to the WAV file at path with 24-bit "
-				"samples at the project's sample rate, as mixdown.export does, and is refused when it is. An existing "
-				"file is replaced. Returns its absolute path and frames.",
+				"samples at the project's sample rate, as mixdown.export does. Refused for a project without events, "
+				"while recording, without an audio device, and while the device runs at another sample rate than the "
+				"project. An existing file is replaced. Returns its absolute path and frames.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["path"],
 					"properties": {"path": {"type": "string", "minLength": 1}}})"),
 				Json::parse(R"({"type": "object", "required": ["path", "frames"], "properties": {

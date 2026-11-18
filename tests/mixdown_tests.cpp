@@ -353,7 +353,7 @@ TEST_CASE("a mixdown refuses what it can't export and leaves no files", "[integr
 	const auto midi = run(project.client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
 	const auto refuse = [&project](Json parameters)
 	{
-		parameters["folder"] = project.folder.path().u8string();
+		parameters["folder"] = (project.folder.path() / "new").u8string(); // which a refusal doesn't create (#725)
 		parameters["name"] = "mix";
 		return reject(project.client, "mixdown.export", std::move(parameters));
 	};
@@ -365,6 +365,7 @@ TEST_CASE("a mixdown refuses what it can't export and leaves no files", "[integr
 		ContainsSubstring("FLAC"));
 	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}, {"format", "aiff"}, {"sampleFormat", "float64"}}),
 		ContainsSubstring("AIFF"));
+	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}, {"point", "strip"}}), ContainsSubstring("only channels"));
 
 	// The graph would run at the device's rate and the events at the project's.
 	run(project.client, "audio.setDevice",

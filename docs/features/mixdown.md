@@ -28,7 +28,8 @@ Mixdown dialog and Quick Audio Export. The offline rendering it builds on is `au
   in place and freeze ([render-in-place.md](render-in-place.md)).
 - **The device's sample rate.** The processing graph runs at the device's rate and audio events play at the
   project's, so both export commands refuse while the device runs at another rate than the project.
-- **Files.** `folder` is created if needed. One channel's file is `name` with the format's extension (`.wav`,
+- **Files.** `folder` is created if needed, once the command has checked the device, the recording, the sample rate
+  and the channels, so a refusal leaves no new folder. One channel's file is `name` with the format's extension (`.wav`,
   `.aif`, `.flac`); several are `name - <channel name>`, the track's or bus's name, with characters that file systems
   refuse replaced by `_`. `conflicts` `unique` (the default) takes `name (2)`, `name (3)` and so on while a name is
   taken, by an existing file or by another file of the same export (p. 1482, Create Unique File Name); `overwrite`
@@ -99,6 +100,9 @@ export dialog, the render progress and Cancel through the automation API.
 Private background renders retain only the selected channels or busses and their upstream audio and MIDI dependencies.
 Routing indices are remapped within that snapshot; unrelated plugins and sampler reads are left out. A slot that was
 active in the live engine must become active in the private renderer too, or the job fails rather than silently
-exporting without that plugin. `tests/renderinplace_tests.cpp` checks that a group export instantiates its upstream
+exporting without that plugin; so must one still loading live, which is about to play. The private plugins are made in
+offline mode, so that their own `setProcessMode` is offline before they are activated, and the live plugins never
+leave real-time mode for an export. `tests/renderinplace_tests.cpp` checks that a group export instantiates its upstream
 plugin without unrelated slots, and that a private plugin failure fails freeze and render in place without changing
-history or leaving tracks locked.
+history or leaving tracks locked, that an export with a live plugin still loading fails without its private one, and
+that the private plugins are activated offline and process only offline blocks.
