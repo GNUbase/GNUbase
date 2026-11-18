@@ -2046,12 +2046,12 @@ namespace gnubase::ui
 		}
 		if (name != "timeOffset")
 			return;
-		// A position typed in the track's time format; the display shows the offset again for anything else.
-		TimeContext time;
-		readTimeContext(project, time);
+		// A position typed in the track's time format; the display shows the offset again for anything else, and for
+		// the offset it has, which no undo step changes to itself (#814).
+		const TimeContext& time = m_display.time();
 		const std::optional<TimeFormat> format = timeFormatFromName(track.value("timeFormat", std::string()));
 		const std::optional<double> seconds = format ? parseTime(*format, value, time) : std::nullopt;
-		if (seconds)
+		if (seconds && inTimeBase(track, *seconds, time) != track.value("timeOffset", int64_t{0}))
 			m_binding.send("track.set", {{"track", row->id}, {"timeOffset", inTimeBase(track, *seconds, time)}});
 		else
 			control.SetAttribute("value", format ? formatTime(*format, offsetSeconds(track, time), time) : "");

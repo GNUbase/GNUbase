@@ -249,6 +249,14 @@ TEST_CASE("ruler tracks show their rulers in each time format and have their con
 	app.ui().text(std::nullopt, "1");
 	app.ui().key(std::nullopt, "Enter");
 	REQUIRE(app.waitUntil([&track] { return track().at("timeOffset") == 2 * time::g_ticksPerQuarter; }));
+	// The offset it has is no undo step (#814).
+	const size_t steps = app.call("history.get").at("steps").size();
+	click(app, "[control=timeOffset]", 0, 2);
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "1");
+	app.ui().key(std::nullopt, "Enter");
+	app.shell().step(milliseconds(0));
+	CHECK(app.call("history.get").at("steps").size() == steps);
 	click(app, "[control=timeOffset]", 0, 2);
 	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "x");

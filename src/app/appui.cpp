@@ -881,16 +881,16 @@ namespace gnubase::app
 		m_lua.addFunction("ui.toolModifierDefaults",
 			[](const engine::Json&) { return engine::Json{{"modifiers", ui::EventDisplay::defaultToolModifiers()}}; });
 		// For the add track dialog's Time Offset: a position typed in a time format, as position displays show it in
-		// the project (ui/timeformat.h), in seconds and ticks; nothing for text that isn't one.
+		// the project (ui/timeformat.h), in seconds and ticks; nothing for text that isn't one. The project window's
+		// event display has the project's time, so this doesn't wait for the engine (#814).
 		m_lua.addFunction("ui.parseTime",
 			[this](const engine::Json& parameters)
 			{
 				const std::optional<ui::TimeFormat> format =
 					ui::timeFormatFromName(parameters.value("format", std::string()));
-				const engine::Result project = engine::Client(m_engine).call("project.get");
-				ui::TimeContext context;
-				if (!format || !project.ok() || !ui::readTimeContext(project.value, context))
+				if (!format || !m_eventDisplay || m_eventDisplay->project().is_null())
 					return engine::Json::object();
+				const ui::TimeContext& context = m_eventDisplay->time();
 				const std::optional<double> seconds =
 					ui::parseTime(*format, parameters.at("text").get<std::string>(), context);
 				return seconds ? engine::Json{{"seconds", *seconds}, {"ticks", context.tempo.toTicks(*seconds)}}
