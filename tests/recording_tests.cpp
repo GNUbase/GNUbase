@@ -742,7 +742,9 @@ TEST_CASE("recording.add applies the audio record modes to the events a take ove
 			if (each.at("id") == added.at("clips").at(0))
 				regions = each.at("regions");
 		if (!cycle) // a linear recording's takes, after a locate, are no laps
+		{
 			CHECK(regions.empty());
+		}
 		else
 		{
 			REQUIRE(regions.size() == 2);
