@@ -1201,7 +1201,8 @@ TEST_CASE("a private render waits for a live plugin that is still loading", "[in
 	REQUIRE(started.ok());
 	const Json finished = waitForJob(session.client, started.value.at("job").at("id").get<uint64_t>());
 	CHECK(finished.at("state") == "failed");
-	CHECK_THAT(finished.value("error", std::string()), ContainsSubstring("plugin"));
+	// The error, which File > Export > Quick Audio Export shows, names the plugin and its channel.
+	CHECK_THAT(finished.value("error", std::string()), ContainsSubstring("Gain and pan on Source"));
 }
 
 TEST_CASE("a private render's plugins are activated and process offline", "[integration]")

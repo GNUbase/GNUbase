@@ -127,7 +127,8 @@ namespace gnubase::ui
 			  {
 				  const Json job = event.data.at("job");
 				  const std::string kind = job.at("kind").get<std::string>();
-				  if (kind != "track.freeze" && kind != "track.renderInPlace" && kind != "mixdown.export")
+				  if (kind != "track.freeze" && kind != "track.renderInPlace" && kind != "mixdown.export" &&
+					  kind != "mixdown.quickExport")
 					  return;
 				  if (const Window* main = mainWindow())
 					  backupStarted(main->id(), engine::Result{0, {{"job", job}}, {}});

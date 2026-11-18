@@ -31,12 +31,13 @@ namespace
 
 	Json run(Client& client, const std::string& command, Json parameters = Json::object())
 	{
-		// Quick export remains synchronous and can take longer than the client's default 10 s under sanitizers.
+		// Some commands can take longer than the client's default 10 s under sanitizers.
 		const Result result = client.call(command, std::move(parameters), std::chrono::seconds(60));
 		INFO(command << " failed: " << result.error);
 		REQUIRE(result.ok());
 		if (result.value.contains("job") &&
-			(command == "track.freeze" || command == "track.renderInPlace" || command == "mixdown.export"))
+			(command == "track.freeze" || command == "track.renderInPlace" || command == "mixdown.export" ||
+				command == "mixdown.quickExport"))
 		{
 			const Json job = gnubase::test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
 			INFO(job.dump());
@@ -427,6 +428,38 @@ TEST_CASE("a quick export starts with fresh effects and leaves the transport pla
 	run(project.client, "transport.stop");
 	const std::string fresh = project.exportedFile({{"name", "fresh"}, {"start", 0}, {"end", 4800}, {"tail", 30}});
 	CHECK(firstDifference(readFile(path.u8string()).samples, readFile(fresh).samples) == -1);
+}
+
+TEST_CASE("no external MIDI input reaches an export", "[integration]")
+{
+	Session project;
+	const Json added = run(project.client, "track.add",
+		{{"type", "instrument"}, {"timeBase", "linear"}, {"instrument", "testSynth"}, {"name", "Synth"}});
+	const auto channel = added.at("channel").at("id").get<ObjectId>();
+	run(project.client, "channel.set", {{"channel", channel}, {"monitor", true}});
+	const Json part = run(
+		project.client, "midiPart.add", {{"track", added.at("track").at("id")}, {"position", 0}, {"length", 48000}});
+	run(project.client, "note.add",
+		{{"part", part.at("part").at("id")},
+			{"notes", {{{"position", 0}, {"length", 430080}, {"pitch", 60}, {"velocity", 0.8}}}}});
+	const std::string without = project.exportedFile({{"name", "without"}, {"start", 0}, {"end", 24000}});
+
+	// A note from the track's MIDI input that the live synth holds, and one that waits for the device's next block
+	// (#718): the export hears neither, as with the reference's Deactivate External MIDI Inputs (manual p. 1486).
+	const auto inject = [&project, channel](int pitch)
+	{
+		run(project.client, "midi.inject",
+			{{"channel", channel}, {"messages", {{{"position", 0}, {"bytes", {0x90, pitch, 100}}}}}});
+	};
+	inject(67);
+	run(project.client, "audio.render", {{"frames", 4800}});
+	const auto live = run(project.client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", 4800}})
+						  .at("samples")
+						  .get<std::vector<float>>();
+	REQUIRE(peakOf(live) > 0.0f); // the live synth plays it
+	inject(72);
+	const std::string with = project.exportedFile({{"name", "with"}, {"start", 0}, {"end", 24000}});
+	CHECK(firstDifference(readFile(with).samples, readFile(without).samples) == -1);
 }
 
 TEST_CASE("cancelling a background overwrite export keeps the existing file", "[integration]")

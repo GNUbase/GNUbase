@@ -906,19 +906,30 @@ namespace gnubase::app
 						std::filesystem::path file = chosen.files.front();
 						if (file.extension().empty())
 							file += ".wav";
-						// The reference opens the file's folder after the export (reference manual p. 1479).
+						// A job: m_files shows its progress and why it failed, as for mixdown.export, and
+						// quickExportEnded opens the file's folder once it is done.
 						m_binding.send("mixdown.quickExport", {{"path", file.u8string()}},
 							[this, id](const engine::Result& result)
 							{
 								if (!result.ok())
+								{
 									m_files.showError(id, result.error);
-								else
-									m_openExternally(std::filesystem::u8path(result.value.at("path").get<std::string>())
-														 .parent_path(),
-										false);
+									return;
+								}
+								const auto job = result.value.at("job").at("id").get<uint64_t>();
+								m_quickExports.insert(job);
+								// The job may have ended before its command's result came: job.get tells.
+								m_binding.send("job.get", {{"job", job}},
+									[this](const engine::Result& state)
+									{
+										if (state.ok())
+											quickExportEnded(state.value.at("job"));
+									});
 							});
 					});
 			}});
+		m_quickExportEnded.push_back(m_binding.on(
+			"job.finished", [this](const engine::Event& event) { quickExportEnded(event.data.at("job")); }));
 		// File > Export and File > Import > Tempo Track (docs/features/tempo-track.md) and Markers
 		// (docs/features/markers.md): their files, chosen in the OS's file dialog.
 		struct TrackFile
@@ -2666,5 +2677,14 @@ namespace gnubase::app
 		}
 		document->Show(Rml::ModalFlag::Modal);
 		return *document;
+	}
+
+	void AppUi::quickExportEnded(const engine::Json& job)
+	{
+		if (job.at("state") == "running" || m_quickExports.erase(job.at("id").get<uint64_t>()) == 0)
+			return;
+		if (job.at("state") == "done")
+			m_openExternally(
+				std::filesystem::u8path(job.at("result").at("path").get<std::string>()).parent_path(), false);
 	}
 }

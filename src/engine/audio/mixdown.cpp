@@ -257,6 +257,19 @@ namespace gnubase::engine
 			return std::nullopt;
 		}
 
+		// A slot's plugin and its channel in project.get's project, for errors: e.g. "Gain and pan on Guitar".
+		std::string slotName(const Json& project, ObjectId slot)
+		{
+			for (const Json& found : project.at("slots"))
+				if (found.at("id") == slot)
+				{
+					const std::string name = found.value("name", std::string());
+					return (name.empty() ? found.at("plugin").get<std::string>() : name) + " on " +
+						nameOf(project, found.at("channel").get<ObjectId>()).value_or("its channel");
+				}
+			return "plugin slot " + std::to_string(slot);
+		}
+
 		// Second pass: the part file into the target's file, at gain, dithered, at most frames frames.
 		void finish(Target& target, const FileFormat& format, int64_t frames, JobContext* job)
 		{
@@ -313,18 +326,6 @@ namespace gnubase::engine
 			if (job != nullptr)
 				job->checkCancelled();
 		}
-
-		// mixdown.quickExport's render, which runs on the command thread and returns the result itself.
-		class InlineJob final : public JobContext
-		{
-		public:
-			bool cancelled() const override { return false; }
-			void progress(double /*fraction*/, const std::string& /*detail*/) override {}
-			Json command(std::string name, Json /*parameters*/) override
-			{
-				throw CommandError(name + " can't run from a quick export");
-			}
-		};
 
 		// Removes the part files and, unless the export is done, the files it wrote.
 		struct Cleanup
@@ -692,7 +693,7 @@ namespace gnubase::engine
 			renderer.rebuild();
 			for (const ObjectId slot : prepared->activeSlots)
 				require(renderer.m_slots->status(slot) == "active",
-					"render plugin slot " + std::to_string(slot) + " could not be activated");
+					"the plugin " + slotName(prepared->project, slot) + " couldn't be made for the render");
 			return renderer.mixdown(prepared->parameters, prepared->project, &job);
 		};
 	}
@@ -741,19 +742,20 @@ namespace gnubase::engine
 					"mixdown.export", mixdownWork(context.parameters(), context.call("project.get")));
 			});
 		engine.registerCommand(
-			{"mixdown.quickExport", 1,
+			{"mixdown.quickExport", 2,
 				"Quick audio export (reference manual pp. 1478-1479): writes the main mix of the whole project, from "
 				"the start of the first event to the end of the last, with the tail of the effects after it (up to 30 "
 				"s, to the last sample a 24-bit file doesn't hold as silence), to the WAV file at path with 24-bit "
-				"samples at the project's sample rate, as mixdown.export does. Refused for a project without events, "
-				"while recording, without an audio device, and while the device runs at another sample rate than the "
-				"project. An existing file is replaced. Returns its absolute path and frames.",
+				"samples at the project's sample rate, as mixdown.export does, with a private render that leaves the "
+				"live graph, plugins and transport as they are. Refused for a project without events, while recording, "
+				"without an audio device, and while the device runs at another sample rate than the project. An "
+				"existing file is replaced. Returns a cancellable job immediately; progress and completion are "
+				"job.progress and job.finished events, and the job's result is the file's absolute path and frames. "
+				"The job fails if a plugin that plays or is still loading live can't be made for the render.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["path"],
 					"properties": {"path": {"type": "string", "minLength": 1}}})"),
-				Json::parse(R"({"type": "object", "required": ["path", "frames"], "properties": {
-					"path": {"type": "string"}, "frames": {"type": "integer"}}})"),
-				false},
-			[this](CommandContext& context)
+				{{"type", "object"}, {"properties", {{"job", Jobs::schema()}}}, {"required", {"job"}}}, false},
+			[this, &engine](CommandContext& context)
 			{
 				const RenderSnapshot& snapshot = m_snapshots.latest();
 				std::optional<time::Samples> first;
@@ -767,13 +769,17 @@ namespace gnubase::engine
 				const time::Samples end = projectEnd();
 				if (!first || end <= *first)
 					throw CommandError("the project has no events to export");
-				// mixdown.export's private render, run here: the live graph, transport and plugins don't take part.
+				// mixdown.export's private render as a job, so that the command thread doesn't wait for the plugin
+				// hosts while its plugins are made and destroyed (#718).
 				const fs::path path = fs::u8path(context.parameters().at("path").get<std::string>());
 				const Json request = {{"path", path.u8string()}, {"folder", path.parent_path().u8string()},
 					{"start", *first}, {"end", end}, {"tail", g_maxTailSeconds}, {"conflicts", "overwrite"}};
-				InlineJob job;
-				const Json file = mixdownWork(request, context.call("project.get"))(job).at("files").at(0);
-				return Json{{"path", file.at("path")}, {"frames", file.at("frames")}};
+				return engine.startJob("mixdown.quickExport",
+					[work = mixdownWork(request, context.call("project.get"))](JobContext& job)
+					{
+						const Json file = work(job).at("files").at(0);
+						return Json{{"path", file.at("path")}, {"frames", file.at("frames")}};
+					});
 			});
 	}
 }

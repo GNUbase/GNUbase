@@ -19,10 +19,10 @@ Mixdown dialog and Quick Audio Export. The offline rendering it builds on is `au
   sharing only immutable sample reads; the live device, transport and graph keep running and other clients can send
   commands throughout. No tracks are locked for export: subsequent project edits never change the job's starting
   snapshot. The private graph renders block by block as `audio.render` does, with cycle, pre-roll, post-roll, punch and
-  click disabled, and its plugins in offline mode. Its effects start without the echoes and reverb that playback left
-  in the live ones, and no external MIDI input reaches it, as with the reference's Deactivate External MIDI Inputs
-  (p. 1486) always on. `job.progress` reports rendering and file conversion, and
-  `job.finished` reports completion, failure or cancellation. Cancellation and failure remove the files made by the job.
+  click disabled, and its plugins in offline mode. Its effects start without the echoes and reverb that playback left in
+  the live ones, and no external MIDI input reaches it, as with the reference's Deactivate External MIDI Inputs
+  (p. 1486) always on. `job.progress` reports rendering and file conversion, and `job.finished` reports completion,
+  failure or cancellation. Cancellation and failure remove the files made by the job.
 - **What a private render keeps.** Its snapshot is a copy of the starting one with only the selected channels or
   busses and their upstream audio and MIDI dependencies, so a field added to `RenderSnapshot` later is kept as well.
   Routing indices are remapped within that snapshot; unrelated plugins and sampler reads are left out. A slot that was
@@ -54,12 +54,14 @@ Mixdown dialog and Quick Audio Export. The offline rendering it builds on is `au
   and the files it wrote. Converted outputs are staged until every file is complete; cancelling an overwrite export
   keeps the existing destination files.
 - **`mixdown.quickExport`** (pp. 1478–1479) writes the main mix of the whole project into a WAV file at `path`, with
-  24-bit samples at the project's rate, replacing an existing file. Its range is from the start of the first audio
-  event or note to the end of the last (`transport.locate`'s `projectEnd`), and it renders up to 30 seconds more for
-  the tail of the effects, which ends after the last sample that a 24-bit file doesn't hold as 0 (half a step). It
-  runs `mixdown.export`'s private render on the command thread and returns its result, without a job: the live graph,
-  plugins and transport, playing or not, are left as they are. All 30 seconds are rendered: the processors' `tail()`
-  could end it sooner, but instruments and samplers don't report their release in it.
+  24-bit samples at the project's rate, replacing an existing file. Its range is from the start of the first audio event
+  or note to the end of the last (`transport.locate`'s `projectEnd`), and it renders up to 30 seconds more for the tail
+  of the effects, which ends after the last sample that a 24-bit file doesn't hold as 0 (half a step). It runs
+  `mixdown.export`'s private render as a job of its own (command version 2): it returns `{job}` at once, and the job's
+  `result` is the file's absolute `path` and `frames`. The live graph, plugins and transport, playing or not, are left
+  as they are. It is refused as `mixdown.export` is, and its job fails if a plugin that plays or still loads live can't
+  be made for the render; the error names the plugin and its channel. All 30 seconds are rendered: the processors'
+  `tail()` could end it sooner, but instruments and samplers don't report their release in it.
 
 ## In the UI
 
@@ -67,13 +69,14 @@ Mixdown dialog and Quick Audio Export. The offline rendering it builds on is `au
   output busses and the audio, instrument, group and effect tracks' channels as checkboxes, with the main mix checked;
   the name (the project file's name, or Mixdown), the path (the project's folder, or the home folder, with `Mixdown` in
   it, as the reference's Mixdown folder, p. 1482), the file type, sample rate (the project's), bit depth (24 bits),
-  Dither (only for 16 and 24 bits, which the engine dithers), and Normalize with the peak. Export Audio sends `mixdown.export` with the checked channels over the locator
-  range; the dialog closes, or stays and shows why the export failed, or that no channel is checked. The render progress
-  appears in a separate, nonmodal dialog with Cancel; editing stays available.
+  Dither (only for 16 and 24 bits, which the engine dithers), and Normalize with the peak. Export Audio sends
+  `mixdown.export` with the checked channels over the locator range; the dialog closes, or stays and shows why the
+  export failed, or that no channel is checked. The render progress appears in a separate, nonmodal dialog with Cancel;
+  editing stays available.
 - **File > Export > Quick Audio Export...** (`file.quickExport`) asks for a WAV file in the OS's file dialog, adds
-  `.wav` to a name without an extension, and sends `mixdown.quickExport`. A failed export shows why in the project
-  error dialog (`project-error.rml`); a finished one opens the file's folder with the OS, as the reference does
-  (p. 1479).
+  `.wav` to a name without an extension, and sends `mixdown.quickExport`. Its render progress appears as the Export
+  Audio Mixdown's does, with Cancel. A refused or failed export shows why in the project error dialog
+  (`project-error.rml`); a finished one opens the file's folder with the OS, as the reference does (p. 1479).
 
 ## Not yet
 
@@ -96,16 +99,18 @@ name is entered.
 ## API result and tests
 
 `mixdown.export` is command version 2: it keeps its name and parameters, and returns `{job}` instead of `{files}`. The
-job's completed `result` has the same `{files}` shape as the former synchronous result. Lua and MCP callers use
-`job.get` or `job.finished` to obtain it, and `job.cancel` to stop the job.
+job's completed `result` has the same `{files}` shape as the former synchronous result. `mixdown.quickExport` is version
+2 as well: its job's `result` is the `{path, frames}` it returned before. Lua and MCP callers use `job.get` or
+`job.finished` to obtain it, and `job.cancel` to stop the job.
 
-`tests/mixdown_tests.cpp` checks formats, render points, naming, conversion and cleanup through the job result.
-`tests/renderinplace_tests.cpp` also checks that a second client can edit and remove an exported track while the job is
-held, without changing its audio, and that exports take no track locks. `tests/mixdown_ui_tests.cpp` drives the real
-export dialog, the render progress and Cancel through the automation API.
+`tests/mixdown_tests.cpp` checks formats, render points, naming, conversion and cleanup through the job result, and that
+MIDI played into the live engine with `midi.inject` stays out of an export. `tests/renderinplace_tests.cpp` also checks
+that a second client can edit and remove an exported track while the job is held, without changing its audio, and that
+exports take no track locks. `tests/mixdown_ui_tests.cpp` drives the real export dialog, the render progress and Cancel
+through the automation API.
 
 `tests/renderinplace_tests.cpp` checks that a group export instantiates its upstream plugin without unrelated slots,
 that a private plugin failure fails freeze and render in place without changing history or leaving tracks locked, that
-an export with a live plugin still loading fails without its private one, that the private plugins are activated
-offline and process only offline blocks, and that a held render refuses changes of the root key, pan law, tempo and
-sample rate.
+an export with a live plugin still loading fails without its private one, naming the plugin and its channel, that the
+private plugins are activated offline and process only offline blocks, and that a held render refuses changes of the
+root key, pan law, tempo and sample rate.
