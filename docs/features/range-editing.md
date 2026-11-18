@@ -8,15 +8,18 @@ inserting silence, and global copy. The engine's commands are in `src/engine/doc
 
 ## Engine commands
 
-A range is `start` to `end` in project samples, by default the locators, on `tracks` (ids, by default every track).
-Each command is one undo step and changes nothing if it fails; `range.copy` changes nothing in the project at all.
+A range is `start` to `end` in project samples, by default the locators, on `tracks` (ids, by default every track). A
+folder track among them brings the tracks inside it, nested ones too, as its folded lane shows their events as data
+blocks and editing them edits what they stand for (p. 251). An `end` past 2^48 samples, the largest project position,
+means up to it, so that a client can send the largest integer for "to the end". Each command is one undo step and
+changes nothing if it fails; `range.copy` changes nothing in the project at all.
 
 | Command | What it does | Reference |
 |---|---|---|
 | `range.split` | Splits the events and parts at the range's edges (at its start for a range of no length) | p. 293 |
 | `range.crop` | Cuts the events and parts that cross an edge to the range; those inside or outside stay | pp. 293-294 |
 | `range.delete` | Deletes what is in the range, and the part of the cycle markers it lies in; `time` (Delete Time) closes the gap | pp. 292, 425 |
-| `range.insertSilence` | Moves what starts at the range's start or later on by the range's length | pp. 292-293 |
+| `range.insertSilence` | Moves what lies after the range's start, cut there, on by the range's length | pp. 292-293 |
 | `range.copy` | Copies the range to the range clipboard; without a range everything between the locators (Global Copy) | p. 292 |
 | `range.cut` | `range.copy`, then `range.delete`; `time` (Cut Time) closes the gap | pp. 292, 425 |
 | `range.paste` | Pastes the clipboard at `position` (default the cursor); `time` (Paste Time) first makes room | p. 292 |
@@ -24,39 +27,52 @@ Each command is one undo step and changes nothing if it fails; `range.copy` chan
 
 - **Cuts at the edges.** Events and parts that cross an edge are split there first, as `event.split` splits them, so
   only what lies in the range is affected (p. 291). A MIDI part's notes across an edge stay in the part they start in,
-  or with `splitNotes` (the reference's Split MIDI Events preference, p. 287) are cut in two. Locked events stay
-  whole, aren't deleted and don't move. Events and parts are cut where they show, in samples: an edge in the sample a
-  part on a musical track starts or ends in, which in ticks can lie up to half a sample from it, doesn't cut it.
+  or with `splitNotes` (the reference's Split MIDI Events preference, p. 287) are cut in two. Locked events stay whole,
+  aren't deleted and don't move; `range.cut` doesn't copy them either, so that pasting the cut doesn't add them again.
+  Events and parts are cut where they show, in samples: an edge in the sample a part on a musical track starts or ends
+  in, which in ticks can lie up to half a sample from it, doesn't cut it. Once cut, a piece's middle decides where it
+  lies: it is in the range when its middle lies at or after the start and before the end, and it comes after an edge, so
+  that Delete Time, Cut Time, Insert Silence and Paste Time move it, when its middle lies at or after the edge (`after`
+  in `eventedits.cpp`). Not its start: a cut in a clip at another sample rate than the project's lands up to half a clip
+  frame off, and an event that starts less than that before an edge isn't cut there at all. So an unsplit event that
+  starts a sample before the range's start and ends in it lies in the range, and one that starts a sample before its end
+  lies after it. Later range features, such as dragging a range's contents or ranges in the editors, use the same rule.
 - **Time.** Closing a gap and making room move what follows by the range's length: in ticks on musical tracks, so that
   it moves exactly by beats, in samples on linear ones.
 - **Automation.** The automation lanes of the range's tracks are edited with their events, and the curve outside the
   range stays as it was: points are added at the edges with the curve's values there (p. 288 does this for controller
-  curves). Deleting the range removes its points and holds the value the curve arrives at the start with up to the
-  end; Delete Time joins that value and the one after the range at the start. Inserting silence holds the value at the
-  start over the silence. A copy keeps the points in the range with the curve's values at both edges, and pasting it
-  replaces the curve where it lands, on the destination track's lane of the same parameter; a track without such a
-  lane gets none. A point shaped as a curve keeps its bend over what remains of its segment. Like events and parts,
-  points are in the range where they show, in samples: on a musical track a point in the sample an edge lies in, before
-  the edge's tick, is where the edge is, so that a point on the downbeat of a part that starts in the range's start
-  sample goes with the part, and one on the downbeat of a part that starts in the end sample stays with that part, also
-  when Delete Time moves it back; inserting silence there moves it later with the part. A terminator stays where its
-  tick is: an edge on it would fill the gap it starts. Delete Time closes the gap by the range's length in ticks, as
-  the events after it move, so the points after the range stay with their events. With the end edge on a point in its
-  sample, that length puts the point, and the part on its downbeat, up to half a sample before the start tick, half a
-  sample at the end's tempo: at a slower tempo at the start that can be more than a sample there. A point that stays
-  before the range but lies after where the curve after it goes on, a terminator just before the start tick or a point
-  in the sample before the range's, moves onto that joint, ahead of the curve that goes on there, so that no gap
-  swallows what comes after the range and nothing passes what stays. Events don't move onto the joint: one that lands
-  there can pass an event that stays just before the range in ticks. From sample 0, tick 0, or with a faster tempo at
-  the end from a sample just after it, the length would put such a part, its point or an event of an audio part cut in
-  that sample before tick 0: there everything after the range, events, points and transpose events, moves back by less,
-  by the ticks that put the first of it on tick 0, and keeps its distances in ticks.
+  curves). Deleting the range removes its points and holds the value the curve arrives at the start with up to the end;
+  Delete Time joins that value and the one after the range at the start. Inserting silence holds the value at the start
+  over the silence. A copy keeps the points in the range with the curve's values at both edges, and pasting it replaces
+  the curve where it lands, on the destination track's lane of the same parameter; a track without such a lane gets
+  none. A lane without points played the parameter's static value, and still does around the paste: terminators start
+  gaps up to it and after it (p. 881), unless virgin territory makes them gaps anyway. A point shaped as a curve keeps
+  its bend over what remains of its segment. Like events and parts, points are in the range where they show, in samples:
+  on a musical track a point in the sample an edge lies in, before the edge's tick, is where the edge is, so that a
+  point on the downbeat of a part that starts in the range's start sample goes with the part, and one on the downbeat of
+  a part that starts in the end sample stays with that part, also when Delete Time moves it back; inserting silence
+  there moves it later with the part. A terminator stays where its tick is: an edge on it would fill the gap it starts.
+  Delete Time closes the gap by the range's length in ticks, as the events after it move, so the points after the range
+  stay with their events. With the end edge on a point in its sample, that length puts the point, and the part on its
+  downbeat, up to half a sample before the start tick, half a sample at the end's tempo: at a slower tempo at the start
+  that can be more than a sample there. A point that stays before the range but lies after where the curve after it goes
+  on, a terminator just before the start tick or a point in the sample before the range's, moves onto that joint, ahead
+  of the curve that goes on there, so that no gap swallows what comes after the range and nothing passes what stays.
+  Events don't move onto the joint: one that lands there can pass an event that stays just before the range in ticks.
+  From sample 0, tick 0, or with a faster tempo at the end from a sample just after it, the length would put such a
+  part, its point or an event of an audio part cut in that sample before tick 0: there everything after the range,
+  events, points and transpose events, moves back by less, by the ticks that put the first of it on tick 0, and keeps
+  its distances in ticks.
 - **The clipboard** is the engine's, so MCP, Lua and the UI share it; it isn't part of the project or of undo. It keeps
   copies of the events, parts and points, so cutting and deleting the originals doesn't change it. A new or opened
-  project empties it, since it holds the old project's track and clip ids. `range.paste` goes
-  onto the tracks the range was copied from, or with `track` onto that track and the ones below it in the project's
-  order, one for each copied track; their types must take the copied events. Pasted events are unlocked real copies;
-  a copied audio event whose clip was removed from the pool can't be pasted.
+  project empties it, since it holds the old project's track and clip ids. `range.copy` and `range.cut` announce what it
+  holds as `rangeClipboard.changed`; a `range.cut` in a `history.transaction` that fails leaves it as it was, as it
+  leaves the project. `range.paste` goes onto the tracks the range was copied from, or with `track` onto that track and
+  the ones below it in the project's order that aren't hidden, as the event display shows them, one for each copied
+  track; a folded folder's lane stands for the tracks in it. Their types must take the copied events. Its linear
+  positions are samples at the project's sample rate when it was copied: after `project.set` changes the rate,
+  `range.paste` refuses it until the rate is back, and so does `automation.paste` its own clipboard. Pasted events are
+  unlocked real copies; a copied audio event whose clip was removed from the pool can't be pasted.
 - **Cycle markers.** Without `time`, `range.delete` and `range.cut` take the range out of a cycle marker on a marker
   track in the range that it lies in (p. 425): shortened, or split in two ([markers.md](markers.md)). Other markers
   stay.
@@ -111,11 +127,13 @@ With a selection range ([tools.md](tools.md)) the edit commands work on it, and 
 | `edit.globalCopy` | none | Copies everything between the locators |
 
 The main menu's Edit menu has Cut, Copy and Paste, and the Range submenu Global Copy, Cut Time, Delete Time, Paste
-Time, Split, Crop and Insert Silence.
+Time, Split, Crop and Insert Silence. Menus and keys disable the commands that only edit the range while there is
+none, and Paste and Paste Time until something is copied (`rangeClipboard.changed`, since the project opened).
 
 Not yet: copying and pasting selected events without a range, Paste at Origin and Paste Relative to Cursor, moving and
-duplicating a range's contents by dragging it on other tracks than marker tracks, nudging its edges, Range Tool Splits Partly Selected Events, the info
-line's range fields, the range in the editors (they come with their tickets), and the controller events at the edges of a range inside a part.
+duplicating a range's contents by dragging it on other tracks than marker tracks, nudging its edges, Range Tool Splits
+Partly Selected Events, the info line's range fields, the range in the editors (they come with their tickets), and the
+controller events at the edges of a range inside a part.
 
 ## Checks
 
@@ -160,5 +178,20 @@ line's range fields, the range in the editors (they come with their tickets), an
   the next bar; from sample 1 with a faster tempo at the end, the part and its point landing on tick 0 where the length
   would put them before it; and with a faster tempo at the end past a point just before the range's start sample, which
   moves onto the joint.
-- `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; split, Delete Time, cut and
-  paste on a selection range, which stays; paste at the cursor without a range, selecting what it pasted.
+- `tests/eventedit_tests.cpp`, the range tests of the later rounds: `range.delete` and `range.copy` with a 44.1 kHz
+  clip, taking the piece the cut at the end leaves; `range.paste` after `project.new`, refused; with a 22.05 kHz clip,
+  an event at `end - 1` staying whole after `range.delete` and not copied, Delete Time moving it back by the range's
+  length and Insert Silence at the range's end moving it on by the silence, and an event a sample before the start
+  taken whole by `range.copy` and `range.delete`; `range.cut` leaving a locked event in place and out of the
+  clipboard, which `range.copy` copies; pasting onto a lane without points, with terminators before and after the
+  paste, none before it at position 0 and none with virgin territory; a `range.cut` in a failed `history.transaction`
+  leaving the clipboard as it was; `range.crop` announcing the removal of the parts and events it takes away, not of
+  the pieces after the end, also of an audio part with an event moved whole into such a piece; a range on a folder
+  track editing the tracks inside it, and `range.paste` onto a track skipping a hidden one; `range.paste` and
+  `automation.paste` refused after a sample rate change and pasting again after its undo; an end of the largest integer
+  deleting up to the end and a start past 2^48 refused.
+- `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; without a range the range
+  commands can't run, and Paste can't until a cut, nor after `project.new`; split, Delete Time, cut and paste on a
+  selection range, which stays; paste at the cursor without a range, selecting what it pasted.
+- `tests/uiapp_tests.cpp`: the context menu disables the range commands without a range and Paste until something is
+  cut.
