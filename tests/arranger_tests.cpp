@@ -851,8 +851,10 @@ TEST_CASE("a chain edit while playing renders the same in real time as offline",
 	// fresh song, at most five times; only a run with the edit in B and without dropouts is compared with the offline
 	// render (#1893, #1900).
 	constexpr int attempts = 5;
+	// B ends at b + 12500: the window leaves its last 6500 frames, over a tenth of a second, for the edit to reach the
+	// audio thread. An edit adopted only after B would play B again, which differs from the offline render.
 	constexpr int64_t windowStart = b + 1000;
-	constexpr int64_t windowEnd = b + 12000;
+	constexpr int64_t windowEnd = b + 6000;
 	bool edited = false;
 	int64_t position = b; // the song's, where the last attempt ended
 	int64_t dropouts = 0;
@@ -875,7 +877,13 @@ TEST_CASE("a chain edit while playing renders the same in real time as offline",
 				if (position >= windowStart && position < windowEnd)
 				{
 					edit(realtime); // while B plays
-					edited = true;
+					// Still in the window once the edit is made, or the test was held up while making it.
+					position = run(realtime.client, "transport.get").at("position").get<int64_t>();
+					edited = position >= windowStart && position < windowEnd;
+					if (!edited)
+					{
+						break;
+					}
 				}
 				else if (position < b || position >= windowEnd)
 				{
