@@ -2364,9 +2364,20 @@ TEST_CASE("the edit commands edit the selection range, and paste pastes at its s
 	const auto audio = tracks[0].at("id").get<uint64_t>();
 	const auto midi = tracks[1].at("id").get<uint64_t>();
 
+	// Without a range the range commands can't run, and paste can't before something is copied.
+	for (const char* id : {"edit.cut", "edit.copy", "edit.cutTime", "edit.deleteTime", "edit.insertSilence",
+			 "edit.splitRange", "edit.cropRange", "edit.paste", "edit.pasteTime"})
+	{
+		INFO(id);
+		CHECK(!f.display.canRun(id));
+	}
+	CHECK(f.display.canRun("edit.globalCopy"));
+
 	// From 1.5 to 2.25 seconds on both tracks: split cuts the event at 2.25 and the part at both edges.
 	f.display.setTool(ui::Tool::RangeSelection);
 	f.display.setRange(ui::RangeSelection{72000, 108000, {audio, midi}});
+	CHECK(f.display.canRun("edit.cut"));
+	CHECK(!f.display.canRun("edit.paste"));
 	f.run("edit.splitRange");
 	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
 	CHECK(f.audioEvents().size() == 2);
@@ -2384,6 +2395,8 @@ TEST_CASE("the edit commands edit the selection range, and paste pastes at its s
 	f.run("edit.cut");
 	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
 	CHECK(f.audioEvents().size() == 1);
+	REQUIRE(f.waitUntil([&f] { return f.display.canRun("edit.paste"); }));
+	CHECK(f.display.canRun("edit.pasteTime"));
 	f.run("edit.paste");
 	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
 	CHECK(f.audioEvents().size() == 2);
@@ -2397,6 +2410,10 @@ TEST_CASE("the edit commands edit the selection range, and paste pastes at its s
 	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 4; }));
 	CHECK(f.parts()[3].at("position") == 10 * g_quarter);
 	REQUIRE(f.waitUntil([&f] { return f.display.selection().size() == 2; }));
+
+	// A new project empties the clipboard: nothing to paste.
+	f.call("project.new");
+	REQUIRE(f.waitUntil([&f] { return !f.display.canRun("edit.paste"); }));
 }
 
 namespace

@@ -286,7 +286,9 @@ namespace gnubase::engine
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
-		std::optional<RangeClipboard> m_clipboard; // range.copy and range.cut
+		// range.copy and range.cut; shared, so that an edit can keep the one before it cheaply and put it back if it
+		// fails, as range.cut in a failed history.transaction must leave it.
+		std::shared_ptr<const RangeClipboard> m_clipboard;
 		std::function<std::string(ObjectId)> m_slotStatus;
 		// What the chord pads' remote keys and chordPads.listen keep about the project, cleared when another one opens.
 		std::function<void(CommandContext& context)> m_chordPadsOpened;

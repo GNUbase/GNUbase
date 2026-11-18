@@ -20,6 +20,7 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -1606,6 +1607,124 @@ TEST_CASE("range.paste doesn't paste what was copied in another project", "[unit
 	f.track("midi");
 	f.audioEvent(audioTrack);
 	CHECK_THAT(f.fails("range.paste", {{"position", 0}}), ContainsSubstring("nothing to paste"));
+}
+
+TEST_CASE(
+	"range.cut leaves out the locked events, which stay, so that pasting the cut doesn't add them again", "[unit]")
+{
+	RangeFixture f;
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	CHECK(f.call("range.cut", f.range()).at("events") == 1); // the part's piece
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}});
+	f.call("range.paste", {{"position", g_start}});
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_start, g_end}, {g_end, 4 * g_second}});
+	// A copy changes nothing, so it copies the locked event's piece too.
+	CHECK(f.call("range.copy", f.range()).at("events") == 2);
+}
+
+TEST_CASE(
+	"range.paste onto a lane without points keeps the parameter's static value before and after the paste", "[unit]")
+{
+	RangeFixture f;
+	f.call("range.copy", f.range({{"tracks", {f.audioTrack}}}));
+	const int64_t other = f.track("audio", "linear");
+	const auto lane = f.call("automationLane.add", {{"track", other}, {"target", {{"type", "pan"}}}})
+						  .at("lane")
+						  .at("id")
+						  .get<int64_t>();
+	// Terminators start gaps, where the static value plays: up to the paste and after it.
+	using Listed = std::vector<std::tuple<int64_t, double, bool>>;
+	f.call("range.paste", {{"position", 4 * g_second}, {"track", other}});
+	CHECK(f.points(lane) ==
+		Listed{{0, 0.25, true}, {4 * g_second, 0.25, false}, {(9 * g_second) / 2, 0.5, false},
+			{5 * g_second, 0.75, false}, {5 * g_second, 0.75, true}});
+	// Pasted at the start, the gap before it isn't needed; with virgin territory, before and after are gaps anyway.
+	f.call("history.undo");
+	f.call("range.paste", {{"position", 0}, {"track", other}});
+	CHECK(f.points(lane) ==
+		Listed{{0, 0.25, false}, {g_second / 2, 0.5, false}, {g_second, 0.75, false}, {g_second, 0.75, true}});
+	f.call("history.undo");
+	f.call("automation.set", {{"virginTerritory", true}});
+	f.call("range.paste", {{"position", 4 * g_second}, {"track", other}});
+	CHECK(f.points(lane) ==
+		Listed{{4 * g_second, 0.25, false}, {(9 * g_second) / 2, 0.5, false}, {5 * g_second, 0.75, false}});
+}
+
+TEST_CASE("range.cut in a failed history.transaction leaves the range clipboard as it was", "[unit]")
+{
+	RangeFixture f;
+	f.call("range.copy", f.range({{"tracks", {f.audioTrack}}}));
+	Json commands = Json::array();
+	commands.push_back({{"command", "range.cut"}, {"parameters", f.range()}});
+	commands.push_back({{"command", "range.delete"}, {"parameters", f.range({{"end", g_start}})}}); // empty: fails
+	CHECK_THAT(
+		f.fails("history.transaction", {{"description", "Cut"}, {"commands", commands}}), ContainsSubstring("empty"));
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, 4 * g_second}});
+	// The clipboard still holds the copy: the audio event's piece alone.
+	CHECK(f.call("range.paste", {{"position", 6 * g_second}}).at("events").size() == 1);
+}
+
+TEST_CASE("range.crop announces the removal of what it takes away, not of pieces it never announced", "[unit]")
+{
+	RangeFixture f;
+	// The audio event in an audio part, with a second event in it after the range: both edges cut the part.
+	const Json clip = f.audio(f.event).at("clip");
+	const auto second =
+		f.call("audioEvent.add",
+			 {{"track", f.audioTrack}, {"clip", clip}, {"position", (11 * g_second) / 4}, {"length", g_second / 4}})
+			.at("event")
+			.at("id")
+			.get<int64_t>();
+	const auto part = f.call("event.toPart", {{"events", {f.event, second}}}).at("events").at(0).get<int64_t>();
+	const auto removed = [&f](const Json& range)
+	{
+		while (f.client.poll())
+			;
+		f.call("range.crop", range);
+		std::set<int64_t> ids;
+		while (const auto message = f.client.poll())
+			if (const auto* event = std::get_if<gnubase::engine::Event>(&*message); event != nullptr)
+			{
+				if (event->name == "audioEvent.removed")
+					ids.insert(event->data.at("event").get<int64_t>());
+				else if (event->name == "audioPart.removed" || event->name == "midiPart.removed")
+					ids.insert(event->data.at("part").get<int64_t>());
+			}
+		return ids;
+	};
+	// The MIDI part is cut at both edges: the piece after the end is new, and goes unannounced.
+	CHECK(removed(f.range({{"tracks", {f.midiTrack}}})) == std::set<int64_t>{f.midiPart});
+	// So are the audio part's piece after the end and the piece of the event cut there, but the second event, which
+	// moved into that piece whole, was there before.
+	CHECK(removed(f.range({{"start", (3 * g_second) / 2}, {"end", g_start}, {"tracks", {f.audioTrack}}})) ==
+		std::set<int64_t>{part, f.event, second});
+}
+
+TEST_CASE(
+	"A range on a folder track reaches the tracks inside it, and range.paste onto a track skips hidden ones", "[unit]")
+{
+	RangeFixture f;
+	// Pasted from the second audio track down: onto the MIDI track after the hidden one.
+	const int64_t audio2 = f.track("audio", "linear");
+	const int64_t hidden = f.track("midi");
+	const int64_t midi2 = f.track("midi");
+	f.call("trackVisibility.set", {{"hidden", {hidden}}});
+	f.call("range.copy", f.range());
+	f.call("range.paste", {{"position", 0}, {"track", audio2}});
+	CHECK(f.spans(audio2) == Spans{{0, g_second / 2}});
+	CHECK(f.spans(hidden).empty());
+	CHECK(f.spans(midi2) == Spans{{0, g_second}});
+
+	// The range's two tracks in a folder: a range on the folder alone, as its folded lane shows their events, edits
+	// them.
+	const int64_t folder = f.track("folder");
+	f.call("track.move", {{"track", f.audioTrack}, {"parent", folder}, {"index", 0}});
+	f.call("track.move", {{"track", f.midiTrack}, {"parent", folder}, {"index", 1}});
+	CHECK(f.call("range.copy", f.range({{"tracks", {folder}}})).at("events") == 2);
+	f.call("range.delete", f.range({{"tracks", {folder}}}));
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_end, 4 * g_second}});
 }
 
 TEST_CASE("range.move and range.paste put what starts at the range's start exactly at position on musical tracks, "
