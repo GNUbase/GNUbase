@@ -1069,7 +1069,7 @@ TEST_CASE("the context menu's range commands wait for a selection range, which a
 		CHECK(disabled(command));
 	}
 	CHECK(!disabled("edit.delete"));
-	CHECK(!disabled("edit.paste"));
+	CHECK(disabled("edit.paste")); // nothing copied yet
 	// A disabled item does nothing.
 	click(app, selector("#event-display-menu > menuitem[command=edit.cut]"));
 	app.shell().step(std::chrono::milliseconds(0));
@@ -1092,9 +1092,12 @@ TEST_CASE("the context menu's range commands wait for a selection range, which a
 		INFO(command);
 		CHECK(!disabled(command));
 	}
-	// Cut takes the middle of the part out: two parts are left.
+	// Cut takes the middle of the part out: two parts are left, and paste has something to paste.
 	click(app, selector("#event-display-menu > menuitem[command=edit.cut]"));
 	REQUIRE(app.waitUntil([&parts] { return parts() == 2; }));
+	rightClick(at(120));
+	REQUIRE(app.waitUntil([&] { return !disabled("edit.paste"); }));
+	app.ui().key(std::nullopt, "Escape");
 }
 
 TEST_CASE("a tool chosen with a key command shows its name for a moment, unless the setting is off", "[ui]")

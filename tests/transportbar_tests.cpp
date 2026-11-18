@@ -25,6 +25,7 @@
 #include <RmlUi/Core/ElementUtilities.h>
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -638,10 +639,10 @@ namespace
 
 		// Opens a new panel as the app does, 1100 points wide in the middle of the monitor, and fits it at once; with
 		// its sections hidden, which the class shown on the body shows, if not shown.
-		void open(bool shown = true, int width = 1100)
+		void open(bool shown = true)
 		{
 			ui::WindowSpec spec;
-			spec.size = {width, 48};
+			spec.size = {1100, 48};
 			panel = &ui.shell.open(spec);
 			Rml::ElementDocument* document = panel->context().LoadDocumentFromMemory(R"(<rml><head><style>
 				body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
@@ -722,14 +723,46 @@ TEST_CASE("a new transport panel whose first fit found no sections is centred wh
 	fake.ui.windows.setDisplays({{1, "Monitor", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F}});
 	fake.step();
 
-	// A new one, as wide as the fit before, shows no sections at first: nothing to fit (#1765).
-	fake.open(false, 600);
-	REQUIRE(fake.bounds() == fake.centred(600));
+	// A new one shows no sections at first: nothing to fit (#1765). It follows them from the width it opened with,
+	// not the fit before's (#1848).
+	fake.open(false);
+	REQUIRE(fake.bounds() == fake.centred(1100));
 	fake.panel->context().GetDocument(0)->SetClass("shown", true);
 	fake.second->SetClass("wide", true);
 	fake.fit.follow();
 	fake.step();
 	CHECK(fake.bounds() == fake.centred(900));
+}
+
+TEST_CASE("a new transport panel whose first fit found no sections follows them, also with a fresh layout", "[unit]")
+{
+	// No fit before it, so ui.layout has no fittedWidth (#1848).
+	FakePanel fake;
+	fake.open(false);
+	REQUIRE(fake.bounds() == fake.centred(1100));
+	CHECK(fake.docking.fittedWidth("transportPanel") == 1100);
+	fake.panel->context().GetDocument(0)->SetClass("shown", true);
+	fake.fit.follow();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(600));
+	fake.resize("wide");
+	CHECK(fake.bounds().width == 900);
+}
+
+TEST_CASE("a new transport panel whose first fit asked for nothing and that the user moved to the monitor's corner "
+		  "stays there",
+	"[unit]")
+{
+	// No fit asked for bounds, so none match the corner the user moved it to before the controls showed the project
+	// (#1848).
+	FakePanel fake;
+	fake.open(false);
+	fake.ui.shell.setBounds(fake.panel->id(), {0, 0, 1100, 48});
+	fake.step();
+	fake.panel->context().GetDocument(0)->SetClass("shown", true);
+	fake.fit.follow();
+	fake.step();
+	CHECK(fake.bounds() == ui::Rect{0, 0, 600, 48});
 }
 
 TEST_CASE("the shell leaves a transport panel's fit alone once it is gone", "[unit]")
@@ -813,6 +846,41 @@ TEST_CASE("a transport panel as wide as its monitor gets narrower with the monit
 	fake.step();
 	CHECK(fake.bounds().width == 1600);
 	CHECK(fake.docking.fittedWidth("transportPanel") == 1600);
+}
+
+TEST_CASE("a transport panel that the shell moved onto the primary monitor follows its sections from there", "[unit]")
+{
+	// The panel is on a second monitor, wider than the primary one, as wide as that monitor's usable area.
+	FakePanel fake;
+	const ui::Display primary{1, "Primary", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F};
+	fake.ui.windows.setDisplays({primary, {2, "Wide", {1600, 0, 2560, 1440}, {1600, 0, 2560, 1400}, 1.0F}});
+	fake.step();
+	fake.open();
+	fake.second->SetClass("huge", true);
+	fake.fit.follow();
+	fake.step();
+	REQUIRE(fake.bounds().width == 1600);
+	fake.ui.shell.setBounds(fake.panel->id(), {1700, 100, 1600, 48});
+	fake.panel->context().RequestNextUpdate(0);
+	fake.step();
+	REQUIRE(fake.bounds() == ui::Rect{1600, 100, 2560, 48});
+
+	// That monitor goes: the shell centres the panel on the primary one, as wide as its usable area, and the panel
+	// follows its sections on from that width (#1798), also where the window system sizes windows later.
+	const bool later = GENERATE(false, true);
+	INFO((later ? "sized later" : "sized at once"));
+	fake.ui.windows.setBoundsLater(later);
+	fake.ui.windows.setDisplays({primary});
+	fake.step();
+	fake.ui.windows.applyBounds();
+	fake.panel->context().RequestNextUpdate(0);
+	fake.step();
+	REQUIRE(fake.bounds() == ui::Rect{0, 406, 1600, 48});
+	CHECK(fake.docking.fittedWidth("transportPanel") == 1600);
+	fake.resize("wide");
+	fake.ui.windows.applyBounds();
+	fake.step();
+	CHECK(fake.bounds() == ui::Rect{0, 406, 900, 48});
 }
 
 TEST_CASE("the transport bar goes to markers, the project's ends and the selection", "[ui]")
@@ -988,7 +1056,7 @@ TEST_CASE("the time displays keep their width while the cursor moves, and their 
 	// a dp ratio of 1 a 13 dp digit is 8 px, at 0.85 an 11 px face's is 7 px of 11.05, the most a character takes of
 	// its em (#1379).
 	for (const float dpRatio : {1.0F, 0.85F})
-		for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
+		for (const std::string& theme : test::themes(GNUBASE_RESOURCES_DIR))
 		{
 			INFO("dp ratio " << dpRatio << ", theme " << theme);
 			app.setDpRatio(dpRatio);
@@ -1381,7 +1449,7 @@ TEST_CASE("Rewind and Forward wind while their key or button is held", "[ui]")
 TEST_CASE("Nudge Cursor Left and Right move the project cursor by a grid step", "[ui]")
 {
 	test::UiApp app({1024, 700});
-	showBar(app);
+	ui::EventDisplay& display = showBar(app);
 
 	// The grid is on bars by default: 4 quarters at 120 BPM, 96000 samples.
 	app.ui().key(std::nullopt, "Mod+Num+");
@@ -1408,6 +1476,20 @@ TEST_CASE("Nudge Cursor Left and Right move the project cursor by a grid step", 
 	settle(app);
 	app.ui().key(std::nullopt, "Mod+Num+");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+
+	// The grid of the ruler's format (#559, #604): samples, 100 by default; seconds, 100 ms; bars and beats again,
+	// the beat chosen there before; user frames, a frame at the user's 30 fps, not the project's 25.
+	for (const auto& [format, step] :
+		{std::pair{ui::TimeFormat::Samples, 100}, std::pair{ui::TimeFormat::Seconds, 4800},
+			std::pair{ui::TimeFormat::BarsBeats, 24000}, std::pair{ui::TimeFormat::UserFrames, 1600}})
+	{
+		INFO(ui::timeFormatName(format));
+		display.setRulerFormat(format);
+		app.call("transport.locate", {{"position", 0}});
+		settle(app);
+		app.ui().key(std::nullopt, "Mod+Num+");
+		REQUIRE(waitFor(app, [step = step](const Json& state) { return state.at("position") == step; }));
+	}
 }
 
 TEST_CASE("the mouse wheel changes a display's value", "[ui]")
@@ -1653,7 +1735,11 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 
 	// Show Beat Count Only: the beat in its bar.
 	app.ui().click(window, at("#time-display"), ui::MouseButton::Right, 1, {});
-	click(app, "#beat-count-only", window);
+	// This small window cannot show the whole menu: choose its items with the keyboard.
+	app.ui().key(window, "Up");
+	app.ui().key(window, "Up");
+	CHECK(app.ui().key(window, "Up").at("focus").at("id") == "beat-count-only");
+	app.ui().key(window, "Enter");
 	REQUIRE(app.waitUntil([&app, window] { return shows(app, "#time-display", window) == "4"; }));
 	CHECK(element(app, "#beat-count-only", window).at("attributes").contains("checked"));
 	CHECK(app.call("settings.get", {{"key", "ui.timeDisplay"}}).at("value").at("beatCountOnly") == true);
@@ -1662,7 +1748,9 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 
 	// Increase and Decrease Window Size: the window and its digits, whose sizes the theme has.
 	app.ui().click(window, at("#time-display"), ui::MouseButton::Right, 1, {});
-	click(app, "#increase-size", window);
+	app.ui().key(window, "Up");
+	CHECK(app.ui().key(window, "Up").at("focus").at("id") == "increase-size");
+	app.ui().key(window, "Enter");
 	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-2", window); }));
 	const ui::Size larger = app.shell().bounds(window).size();
 	CHECK(larger.width > normal.width);
@@ -1708,6 +1796,10 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	app.ui().key(std::nullopt, "F2");
 	REQUIRE(app.appUi().transportPanel() != nullptr);
 	const ui::WindowId panel = app.appUi().transportPanel()->id();
+	ui::Rect bounds = app.shell().bounds(panel);
+	bounds.height = 300; // the setup pane is taller than the single-row panel
+	app.shell().setBounds(panel, bounds);
+	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(visible(app, "[section=locators]", panel));
 	app.ui().click(panel, at("[section=click]"), ui::MouseButton::Right, 1, {});
 	click(app, "#transport-setup [setup-section=click]", panel);

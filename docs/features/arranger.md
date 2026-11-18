@@ -131,9 +131,11 @@ as wide as the event, an empty name keeping the old one, and the erase tool remo
 engine refused a draw within one bar.
 
 Both real-time comparisons in `tests/arranger_tests.cpp` retry runs that report playback dropouts, with at most five
-attempts and a fresh song and audio file per attempt. Each retry emits a warning. The chain-edit comparison requires
-that the edit happened during playback on every attempt and compares only a capture without dropouts; exhausting the
-attempts fails the test (#1893).
+attempts and a fresh song and audio file per attempt. Each retry emits a warning. The chain-edit comparison makes its
+edit in the first half of B, judged by the transport's position rather than the device's, so that the audio thread
+adopts it while B plays; an attempt that misses that stretch, or is still making the edit when it ends, for example
+because a busy machine held up the test, is retried like one with dropouts. It compares only a capture with the edit
+made in time and without dropouts; exhausting the attempts fails the test (#1893, #1900).
 
 Not yet: resizing arranger events by their edges and selecting them, renaming them on the info line, the track
 list's arranger controls and the inspector's arranger section, renaming chains in the editor, drag and drop

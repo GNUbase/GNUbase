@@ -261,6 +261,14 @@
 		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
 		color: #f3f4f5;
 	}
+	button.toggle.record.checked:not(:disabled) svg.icon
+	{
+		image-color: #f3f4f5;
+	}
+	button.toggle.monitor.checked:not(:disabled) svg.icon
+	{
+		image-color: #f3f4f5;
+	}
 	button.toggle.solo.defeated
 	{
 		decorator: svg-ninepatch(toggle-hover.svg, 6 6 6 6);
@@ -1536,6 +1544,14 @@
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-normal.svg, 6 6 6 6);
 	}
+	button:hover:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-hover.svg, 6 6 6 6);
+	}
+	button:active:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-pressed.svg, 6 6 6 6);
+	}
 	button.checked:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-checked.svg, 6 6 6 6);
@@ -1552,9 +1568,21 @@
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-primary-normal.svg, 6 6 6 6);
 	}
+	button.primary:hover:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-primary-hover.svg, 6 6 6 6);
+	}
+	button.primary:active:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-primary-pressed.svg, 6 6 6 6);
+	}
 	button.toggle:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-off.svg, 6 6 6 6);
+	}
+	button.toggle:hover:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-hover.svg, 6 6 6 6);
 	}
 	button.toggle.mute.checked:focus-visible
 	{
@@ -1603,6 +1631,10 @@
 	menubar button:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	menubar button:hover:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(menu-item-hover.svg, 6 6 6 6);
 	}
 	menubar
 	{
@@ -1821,6 +1853,26 @@
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(dropdown-button-normal.svg, 6 6 6 6);
 	}
+	.toolbar:not(.transport) button:not(.toggle):not(.primary):hover:focus-visible, .transport .transport-section button:not(.toggle):not(.primary):hover:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-hover.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button[menu]:not(.toggle):not(.primary):hover:focus-visible, .transport .transport-section button[menu]:not(.toggle):not(.primary):hover:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(dropdown-button-hover.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button.icon-only[menu]:not(.toggle):not(.primary):hover:focus-visible, .transport .transport-section button.icon-only[menu]:not(.toggle):not(.primary):hover:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(dropdown-button-hover.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button:not(.toggle):not(.primary):active:focus-visible, .transport .transport-section button:not(.toggle):not(.primary):active:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-pressed.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button[menu]:not(.toggle):not(.primary):active:focus-visible, .transport .transport-section button[menu]:not(.toggle):not(.primary):active:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(dropdown-button-pressed.svg, 6 6 6 6);
+	}
 	.toolbar:not(.transport) button.checked[menu]:not(.toggle):not(.primary):focus-visible, .transport .transport-section button.checked[menu]:not(.toggle):not(.primary):focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-checked.svg, 6 6 6 6);
@@ -1837,6 +1889,10 @@
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-pressed.svg, 6 6 6 6);
 	}
+	.toolbar:not(.transport) button.icon-only[menu]:not(.toggle):not(.primary):active:focus-visible, .transport .transport-section button.icon-only[menu]:not(.toggle):not(.primary):active:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(dropdown-button-pressed.svg, 6 6 6 6);
+	}
 	.transport button#start.checked:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-checked.svg, 6 6 6 6);
@@ -1852,6 +1908,14 @@
 	.inspector-section.collapsed button.section-header:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(disclosure-closed.svg, 6 6 6 6);
+	}
+	.inspector-section button.section-header:hover:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-hover.svg, 6 6 6 6);
+	}
+	.inspector-section button.section-header:active:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-pressed.svg, 6 6 6 6);
 	}
 	.transport .transport-section valuefield:focus-visible
 	{
