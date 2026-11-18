@@ -25,6 +25,7 @@
 #include <RmlUi/Core/ElementUtilities.h>
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -865,12 +866,20 @@ TEST_CASE("a transport panel that the shell moved onto the primary monitor follo
 	REQUIRE(fake.bounds() == ui::Rect{1600, 100, 2560, 48});
 
 	// That monitor goes: the shell centres the panel on the primary one, as wide as its usable area, and the panel
-	// follows its sections on from that width (#1798).
+	// follows its sections on from that width (#1798), also where the window system sizes windows later.
+	const bool later = GENERATE(false, true);
+	INFO((later ? "sized later" : "sized at once"));
+	fake.ui.windows.setBoundsLater(later);
 	fake.ui.windows.setDisplays({primary});
+	fake.step();
+	fake.ui.windows.applyBounds();
+	fake.panel->context().RequestNextUpdate(0);
 	fake.step();
 	REQUIRE(fake.bounds() == ui::Rect{0, 406, 1600, 48});
 	CHECK(fake.docking.fittedWidth("transportPanel") == 1600);
 	fake.resize("wide");
+	fake.ui.windows.applyBounds();
+	fake.step();
 	CHECK(fake.bounds() == ui::Rect{0, 406, 900, 48});
 }
 

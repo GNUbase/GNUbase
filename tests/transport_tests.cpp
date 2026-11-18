@@ -590,6 +590,28 @@ TEST_CASE("a locate past the punch in records there also after a record while pl
 	CHECK(recordedPositions(transport, 46640, 64) == range(48000, 48640));
 }
 
+TEST_CASE("a recording that waits for the punch in follows the left locator", "[unit]")
+{
+	// Punch in at 48000, recording asked for from stop or while playing at 10000, then the left locator moves to
+	// 60000: the punch in records from there, not from where it was (#588, the reference manual, p. 337).
+	const bool playing = GENERATE(false, true);
+	INFO((playing ? "while playing" : "from stop"));
+	Transport transport;
+	TransportSettings settings;
+	settings.left = 48000;
+	settings.right = 96000;
+	settings.punchIn = true;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(10000));
+	if (playing)
+		REQUIRE(transport.play());
+	REQUIRE(transport.record(true)); // waits for the left locator
+	transport.advance(64);
+	settings.left = 60000;
+	REQUIRE(transport.set(settings));
+	CHECK(recordedPositions(transport, 50640 - 64, 64) == range(60000, 60640));
+}
+
 TEST_CASE("recording from stop in a cycle with punch in starts at the punch in if the cycle never reaches the cursor",
 	"[unit]")
 {

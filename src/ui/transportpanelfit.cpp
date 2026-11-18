@@ -33,17 +33,21 @@ namespace gnubase::ui
 		// sections and that the shell moved onto another monitor, shrunk to its usable area, follows them on from
 		// the width the shell gave it (#1798).
 		m_shell.onDisplaysChanged(
-			[this, alive = std::weak_ptr<bool>(m_alive)](const std::map<WindowId, Rect>& moved)
+			[this, alive = std::weak_ptr<bool>(m_alive)](const std::map<WindowId, Shell::Moved>& moved)
 			{
 				if (alive.expired())
 					return;
 				if (const auto found = moved.find(m_window); found != moved.end())
 				{
-					const int before = found->second.width;
+					const int before = found->second.before.width;
 					if (before == m_docking.fittedWidth(g_name) || before == m_unfitted)
 					{
-						m_unfitted = 0;
-						m_docking.setFittedWidth(g_name, m_shell.bounds(m_window).width);
+						// As after a fit: a window system that sizes windows later has the old width meanwhile.
+						const int width = found->second.placed.width;
+						const int now = m_shell.bounds(m_window).width;
+						const bool applied = now != before || now == width;
+						m_unfitted = applied ? 0 : before;
+						m_docking.setFittedWidth(g_name, applied ? now : width);
 					}
 				}
 				m_measured = 0;
