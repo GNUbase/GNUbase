@@ -62,6 +62,12 @@ namespace
 		return element(app, selector).value("attributes", Json::object()).contains("disabled");
 	}
 
+	bool checked(test::UiApp& app, const std::string& selector)
+	{
+		app.shell().step(std::chrono::milliseconds(0));
+		return element(app, selector).value("attributes", Json::object()).contains("checked");
+	}
+
 	void click(test::UiApp& app, const std::string& selector)
 	{
 		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
@@ -150,8 +156,19 @@ TEST_CASE("Transport > Audio Record Mode sets the transport's audio record mode"
 	click(app, "#menu-bar button[menu=transport-menu]");
 	app.ui().move(std::nullopt, {"#audio-record-mode-submenu", 0, std::nullopt});
 	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(!checked(app, "#audio-record-mode-replace"));
+	CHECK(checked(app, "#audio-record-mode-keep-history"));
 	click(app, "#audio-record-mode-replace");
 	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("audioRecordMode") == "replace"; }));
+
+	// The item of the mode that is set is checked (#531), also when another client set it.
+	REQUIRE(app.waitUntil([&app] { return checked(app, "#audio-record-mode-replace"); }));
+	CHECK(!checked(app, "#audio-record-mode-keep-history"));
+	app.call("transport.set", {{"audioRecordMode", "keepHistory"}});
+	REQUIRE(app.waitUntil([&app] { return !checked(app, "#audio-record-mode-replace"); }));
+	CHECK(checked(app, "#audio-record-mode-keep-history"));
+	CHECK(!checked(app, "#lock-record")); // Lock and Unlock Record are commands, not a state
+	CHECK(!checked(app, "#unlock-record"));
 }
 
 TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI record mode", "[ui]")
@@ -164,6 +181,7 @@ TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI record mode", 
 	app.shell().step(std::chrono::milliseconds(0));
 	click(app, "#midi-record-mode-merge");
 	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("midiRecordMode") == "merge"; }));
+	REQUIRE(app.waitUntil([&app] { return checked(app, "#midi-record-mode-merge"); }));
 }
 
 TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI cycle record mode", "[ui]")
@@ -176,6 +194,8 @@ TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI cycle record m
 	app.shell().step(std::chrono::milliseconds(0));
 	click(app, "#midi-cycle-record-mode-stacked");
 	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("midiCycleRecordMode") == "stacked"; }));
+	REQUIRE(app.waitUntil([&app] { return checked(app, "#midi-cycle-record-mode-stacked"); }));
+	CHECK(checked(app, "#midi-record-mode-new-parts"));
 }
 
 TEST_CASE("main menu items are disabled while their command can't run", "[ui]")

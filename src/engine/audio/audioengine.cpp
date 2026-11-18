@@ -495,6 +495,9 @@ namespace gnubase::engine
 			m_audition.cue(block, false);
 			m_playback.waitUntilBuffered(g_offlineWait);
 			m_audition.waitUntilBuffered(g_offlineWait);
+			// And for the recorder's disk thread: a recording made offline loses no input (#531).
+			if (!m_recorder.waitForChunks(g_offlineWait))
+				logging::warning("The render didn't wait any longer for the recorder: input to record may be lost");
 			if (m_dummy != nullptr)
 			{
 				m_dummy->render(*this, block);

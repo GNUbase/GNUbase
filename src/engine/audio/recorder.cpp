@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -26,8 +27,12 @@ namespace gnubase::engine
 	{
 		namespace fs = std::filesystem;
 
-		// How long the disk thread sleeps when it finds no chunk.
+		// How long the disk thread sleeps when it finds no chunk: while a track is armed or records, and otherwise,
+		// when only MIDI input for the retrospective buffers can come (the MIDI chunks hold far longer than that).
 		constexpr std::chrono::milliseconds g_idle{2};
+		constexpr std::chrono::milliseconds g_standby{50};
+		// The pre-recorded frames go to the files in pieces of this many.
+		constexpr size_t g_historyPiece = 4096;
 		// The chunks hold this many frames in all, at least g_minChunks of them: over a second at 48 kHz.
 		constexpr uint32_t g_queuedFrames = 65536;
 		constexpr uint32_t g_minChunks = 32;
@@ -46,7 +51,21 @@ namespace gnubase::engine
 					c = '_';
 			while (!result.empty() && (result.back() == '.' || result.back() == ' '))
 				result.pop_back(); // Windows drops them
-			return result.empty() ? "Audio" : result;
+			if (result.empty())
+				return "Audio";
+			// Windows' device names, whatever the extension and the case, and spaces before it: "con.wav" is no file.
+			size_t stem = std::min(result.find('.'), result.size());
+			std::string device = result.substr(0, stem);
+			while (!device.empty() && device.back() == ' ')
+				device.pop_back();
+			std::transform(device.begin(), device.end(), device.begin(),
+				[](char c) { return static_cast<char>(std::toupper(static_cast<unsigned char>(c))); });
+			const bool numbered = device.size() == 4 &&
+				(device.compare(0, 3, "COM") == 0 || device.compare(0, 3, "LPT") == 0) && device[3] >= '1' &&
+				device[3] <= '9';
+			if (numbered || device == "CON" || device == "PRN" || device == "AUX" || device == "NUL")
+				result.insert(stem, "_");
+			return result;
 		}
 
 		const char* extensionOf(AudioFormat format)
@@ -268,8 +287,8 @@ namespace gnubase::engine
 		m_free.reset();
 		m_midiFree.reset();
 		m_filled.reset();
-		m_history.assign(static_cast<size_t>(m_next.preRecordFrames) * static_cast<size_t>(m_channels), 0.0f);
-		m_historyFrames = 0;
+		m_inFlight.store(0, std::memory_order_relaxed);
+		resetHistory();
 		// The next device counts its frames from 0 again: what was kept so far is no input just before its recordings,
 		// and its frames are counted on after it.
 		for (auto& entry : m_retrospective)
@@ -299,6 +318,7 @@ namespace gnubase::engine
 			each.events.resize(g_eventsPerChunk);
 			m_midiFree->tryPush(&each);
 		}
+		m_wake.notify_all(); // the disk thread polls from now on
 	}
 
 	void Recorder::setup(RecordSetup setup)
@@ -316,6 +336,24 @@ namespace gnubase::engine
 		// After the number: the chunks that this arms get it.
 		m_armed.store(armed, std::memory_order_release);
 		m_midiArmed.store(midiArmed, std::memory_order_release);
+		m_wake.notify_all(); // from its standby: the chunks come more often now
+	}
+
+	bool Recorder::waitForChunks(std::chrono::milliseconds timeout)
+	{
+		rt::assertNotRealtime("engine::Recorder::waitForChunks");
+		if (!m_filled ||
+			m_inFlight.load(std::memory_order_acquire) <= std::min(m_chunks.size(), m_midiChunks.size()) / 2)
+			return true;
+		m_wake.notify_all();
+		const auto deadline = std::chrono::steady_clock::now() + timeout;
+		while (m_inFlight.load(std::memory_order_acquire) > 0)
+		{
+			if (std::chrono::steady_clock::now() >= deadline)
+				return false;
+			std::this_thread::sleep_for(std::chrono::microseconds(200));
+		}
+		return true;
 	}
 
 	void Recorder::applySetups(uint64_t number)
@@ -334,13 +372,41 @@ namespace gnubase::engine
 		}
 		if (nextNumber == 0)
 			return;
-		if (next.preRecordFrames != m_next.preRecordFrames)
-		{
-			m_history.assign(static_cast<size_t>(next.preRecordFrames) * static_cast<size_t>(m_channels), 0.0f);
-			m_historyFrames = 0;
-		}
+		const int64_t preRecordFrames = m_next.preRecordFrames;
 		m_next = std::move(next);
 		m_nextNumber = nextNumber;
+		if (m_next.preRecordFrames != preRecordFrames || historyPorts() != m_historyPorts)
+			resetHistory();
+	}
+
+	std::vector<int> Recorder::historyPorts() const
+	{
+		std::vector<int> ports;
+		if (m_next.preRecordFrames > 0)
+			for (const RecordTrack& track : m_next.tracks)
+				for (const int port : track.ports)
+					if (port >= 0 && port < m_channels)
+						ports.push_back(port);
+		std::sort(ports.begin(), ports.end());
+		ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
+		return ports;
+	}
+
+	void Recorder::resetHistory()
+	{
+		m_historyPorts = historyPorts();
+		m_historyFrames = 0;
+		m_history = {}; // before the next one is allocated
+		try
+		{
+			m_history.assign(static_cast<size_t>(m_next.preRecordFrames) * m_historyPorts.size(), 0.0f);
+		}
+		catch (const std::exception& error)
+		{
+			m_history = {};
+			fail("not enough memory for the audio pre-record of " + std::to_string(m_next.preRecordFrames) +
+				" frames: " + error.what());
+		}
 	}
 
 	std::vector<RetrospectiveEvent> Recorder::retrospective(ObjectId channel)
@@ -411,6 +477,7 @@ namespace gnubase::engine
 		for (uint32_t i = 0; i < frames; ++i)
 			for (int c = 0; c < m_channels; ++c)
 				chunk->samples[n++] = block.inputs[c][offset + i];
+		m_inFlight.fetch_add(1, std::memory_order_relaxed);
 		m_filled->tryPush(chunk); // there is room for every chunk
 		return true;
 	}
@@ -481,6 +548,7 @@ namespace gnubase::engine
 				chunk->events[chunk->eventCount++] = {channel, event.offset - offset,
 					played.at(static_cast<int64_t>(block.position + event.offset)), event};
 			}
+		m_inFlight.fetch_add(1, std::memory_order_relaxed);
 		m_filled->tryPush(chunk); // there is room for every chunk
 		return true;
 	}
@@ -491,11 +559,16 @@ namespace gnubase::engine
 		while (!m_stopping)
 		{
 			// ponytail: polls, since the audio thread can't wake it; a semaphore if 2 ms ever matters.
-			if (!drain(true))
-			{
-				applySetups(m_latestSetup.load(std::memory_order_acquire)); // for the chunks to come
+			if (drain(true))
+				continue;
+			applySetups(m_latestSetup.load(std::memory_order_acquire)); // for the chunks to come
+			if (!m_filled)
+				m_wake.wait(lock); // no device: prepare and the destructor wake it
+			else if (m_recording || m_midiRecording || m_armed.load(std::memory_order_relaxed) ||
+				m_midiArmed.load(std::memory_order_relaxed))
 				m_wake.wait_for(lock, g_idle);
-			}
+			else
+				m_wake.wait_for(lock, g_standby); // setup wakes it
 		}
 	}
 
@@ -521,6 +594,7 @@ namespace gnubase::engine
 				handle(*chunk);
 				m_free->tryPush(chunk);
 			}
+			m_inFlight.fetch_sub(1, std::memory_order_release);
 			handled = true;
 		}
 		return handled;
@@ -582,7 +656,8 @@ namespace gnubase::engine
 		m_takes.clear();
 		m_written = 0;
 		// Audio pre-record: the frames that came in just before, if none is missing in between.
-		const size_t capacity = m_channels > 0 ? m_history.size() / static_cast<size_t>(m_channels) : 0;
+		const size_t ports = m_historyPorts.size();
+		const size_t capacity = ports > 0 ? m_history.size() / ports : 0;
 		const size_t before = capacity > 0 && m_historyEnd == chunk.deviceFrame ? m_historyFrames : 0;
 		if (m_current.format.broadcast)
 		{
@@ -626,11 +701,19 @@ namespace gnubase::engine
 			}
 		}
 
+		// The history holds the armed tracks' ports only: in pieces of all channels, as write takes them.
+		const auto channels = static_cast<size_t>(m_channels);
+		std::vector<float> piece(std::min(before, g_historyPiece) * channels, 0.0f);
 		for (size_t done = 0; done < before;)
 		{
-			const size_t index = (m_historyStart + done) % capacity;
-			const size_t frames = std::min(before - done, capacity - index);
-			write(m_history.data() + (index * static_cast<size_t>(m_channels)), static_cast<uint32_t>(frames));
+			const size_t frames = std::min(before - done, g_historyPiece);
+			for (size_t i = 0; i < frames; ++i)
+			{
+				const size_t index = (m_historyStart + done + i) % capacity;
+				for (size_t k = 0; k < ports; ++k)
+					piece[(i * channels) + static_cast<size_t>(m_historyPorts[k])] = m_history[(index * ports) + k];
+			}
+			write(piece.data(), static_cast<uint32_t>(frames));
 			done += frames;
 		}
 		m_historyFrames = 0;
@@ -865,7 +948,8 @@ namespace gnubase::engine
 
 	void Recorder::keepHistory(const Chunk& chunk)
 	{
-		const size_t capacity = m_channels > 0 ? m_history.size() / static_cast<size_t>(m_channels) : 0;
+		const size_t ports = m_historyPorts.size();
+		const size_t capacity = ports > 0 ? m_history.size() / ports : 0;
 		if (capacity == 0 || chunk.frames == 0)
 			return;
 		if (chunk.deviceFrame != m_historyEnd)
@@ -874,7 +958,8 @@ namespace gnubase::engine
 		for (size_t i = 0; i < chunk.frames; ++i)
 		{
 			const size_t index = (m_historyStart + m_historyFrames) % capacity;
-			std::copy_n(chunk.samples.data() + (i * channels), channels, m_history.data() + (index * channels));
+			for (size_t k = 0; k < ports; ++k)
+				m_history[(index * ports) + k] = chunk.samples[(i * channels) + static_cast<size_t>(m_historyPorts[k])];
 			if (m_historyFrames < capacity)
 				++m_historyFrames;
 			else

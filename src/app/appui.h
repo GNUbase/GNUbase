@@ -430,6 +430,9 @@ namespace gnubase::app
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
+		// The transport's state, for the Transport menu's record modes, which show the one set as checked.
+		engine::Json m_transport;
+		std::optional<ui::Subscription> m_transportChanged;
 		// The dialogs openDialog opened for objects of the project, and project.reset, which closes them. An OS file
 		// dialog's answer for objects of the project is dropped when m_resets has changed since it opened
 		// (chooseProjectFile).
