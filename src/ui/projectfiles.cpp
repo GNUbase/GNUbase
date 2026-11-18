@@ -7,6 +7,7 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
+#include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
@@ -229,6 +230,7 @@ namespace gnubase::ui
 		if (Rml::Element* dialog = m_dialog.get())
 		{
 			dialog->RemoveEventListener(Rml::EventId::Dblclick, this);
+			dialog->RemoveEventListener(Rml::EventId::Keydown, this);
 			dialog->RemoveEventListener(g_dialogCloseEvent, this);
 			dialog->RemoveEventListener(Rml::EventId::Unload, this);
 		}
@@ -249,6 +251,7 @@ namespace gnubase::ui
 				if (dialog == nullptr)
 					return;
 				dialog->AddEventListener(Rml::EventId::Dblclick, this);
+				dialog->AddEventListener(Rml::EventId::Keydown, this);
 				m_templates.clear();
 				m_recent.clear();
 				const Rml::ObserverPtr<Rml::Element> shown = dialog->GetObserverPtr();
@@ -580,13 +583,19 @@ namespace gnubase::ui
 		auto* dialog = dynamic_cast<Rml::ElementDocument*>(event.GetCurrentElement());
 		if (dialog == nullptr)
 			return;
-		if (event.GetId() == Rml::EventId::Dblclick)
+		// A double click on a row of the start screen's lists, or Enter while a list has the focus, does what the
+		// list's button does; nothing while the list has no selected row, as the button would close the start screen
+		// and do nothing.
+		const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+		if (event.GetId() == Rml::EventId::Dblclick ||
+			(event.GetId() == Rml::EventId::Keydown &&
+				(key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER)))
 		{
 			const Rml::Element* target = event.GetTargetElement();
 			Rml::Element* button = nullptr;
-			if (inside(target, "start-templates"))
+			if (inside(target, "start-templates") && !selected(*dialog, "start-templates", m_templates).empty())
 				button = dialog->GetElementById("create-template");
-			else if (inside(target, "start-recent"))
+			else if (inside(target, "start-recent") && !selected(*dialog, "start-recent", m_recent).empty())
 				button = dialog->GetElementById("open-recent");
 			if (button != nullptr)
 				button->Click();
@@ -599,6 +608,7 @@ namespace gnubase::ui
 		if (cancelBackupOf(dialog))
 			return;
 		dialog->RemoveEventListener(Rml::EventId::Dblclick, this);
+		dialog->RemoveEventListener(Rml::EventId::Keydown, this);
 		dialog->RemoveEventListener(g_dialogCloseEvent, this);
 		m_dialog.reset();
 		m_autoSaveErrorOpen = false;

@@ -26,11 +26,14 @@ namespace
 		"polyline", "polygon", "path", "g", "defs", "use", "linearGradient", "radialGradient", "stop", "clipPath",
 		"mask"};
 
-	constexpr std::array<const char*, 4> g_themes = {"gnubase", "dark", "light", "high-contrast"};
-
 	std::filesystem::path themesDir()
 	{
 		return std::filesystem::path(GNUBASE_RESOURCES_DIR) / "themes";
+	}
+
+	std::vector<std::string> themes()
+	{
+		return gnubase::test::themes(GNUBASE_RESOURCES_DIR);
 	}
 
 	nlohmann::json readJson(const std::filesystem::path& file)
@@ -125,7 +128,7 @@ namespace
 TEST_CASE("every theme has the same assets, each a renderable SVG of its manifest's size", "[unit]")
 {
 	const nlohmann::json reference = readJson(themesDir() / "gnubase" / "manifest.json").at("assets");
-	for (const char* theme : g_themes)
+	for (const std::string& theme : themes())
 	{
 		INFO("theme " << theme);
 		const std::filesystem::path dir = themesDir() / theme;
@@ -186,7 +189,7 @@ TEST_CASE("every theme has the same assets, each a renderable SVG of its manifes
 
 TEST_CASE("every theme shows the keyboard focus on every widget that takes it, in each of its states", "[unit]")
 {
-	for (const char* theme : g_themes)
+	for (const std::string& theme : themes())
 	{
 		INFO("theme " << theme);
 		const std::string sheet = gnubase::test::readText(themesDir() / theme / "theme.rcss");
@@ -206,7 +209,9 @@ TEST_CASE("every theme shows the keyboard focus on every widget that takes it, i
 					focused.push_back(part.substr(first, part.find_last_not_of(" \t\r") + 1 - first));
 				}
 			}
-		for (const char* widget : {"button", "button.primary", "button.checked", "button.toggle",
+		// Hovered and pressed ones keep looking so with the focus, also while the mouse presses them.
+		for (const char* widget : {"button", "button:hover", "button:active", "button.primary", "button.primary:hover",
+				 "button.primary:active", "button.checked", "button.toggle", "button.toggle:hover",
 				 "button.toggle.mute.checked", "input.checkbox", "input.checkbox:checked", "input.radio",
 				 "input.radio:checked", "listview", "valuefield", "knob", "fader", "slider", "input.range", "menuitem"})
 		{
@@ -235,15 +240,77 @@ TEST_CASE("the high contrast theme's text, accents and borders stand out from it
 	}
 	// Text on accent-colored fills, such as the primary button's.
 	CHECK(contrast(tokens.at("background").get<std::string>(), tokens.at("accent").get<std::string>()) >= 7.0);
-	// The focus ring is thicker than in the other themes.
-	CHECK(gnubase::test::readText(themesDir() / "high-contrast" / "focus-ring.svg").find("stroke-width=\"2\"") !=
-		std::string::npos);
+	// The focus ring is thicker than in the other themes, and each theme's focus-ring.svg is as wide as its tokens say.
+	const auto ring = [](const std::string& theme)
+	{ return readJson(themesDir() / theme / "tokens.json").at("borderWidths").at("focusRing").get<int>(); };
+	for (const std::string& theme : themes())
+	{
+		INFO("theme " << theme);
+		// The ring is the first rect, the line in the background color inside it the second.
+		pugi::xml_document document;
+		REQUIRE(document.load_string(gnubase::test::readText(themesDir() / theme / "focus-ring.svg").c_str()));
+		CHECK(document.child("svg").child("rect").attribute("stroke-width").as_int() == ring(theme));
+		if (theme != "high-contrast")
+			CHECK(ring("high-contrast") > ring(theme));
+	}
+}
+
+TEST_CASE("the high contrast theme's labels and marks stand out from the fills under them", "[unit]")
+{
+	const std::filesystem::path dir = themesDir() / "high-contrast";
+	const std::vector<std::pair<std::string, std::string>> sheet = rules(gnubase::test::readText(dir / "theme.rcss"));
+	// The color, or another color property, that the last rule for the selector gives, alone or among others.
+	const auto color = [&sheet](const std::string& selector, const std::string& property = "color")
+	{
+		std::string found;
+		for (const auto& [selectors, declarations] : sheet)
+		{
+			const size_t first = selectors.find_first_not_of(" \t");
+			const std::string list =
+				" " + selectors.substr(first, selectors.find_last_not_of(" \t\r") + 1 - first) + ",";
+			const size_t at = declarations.find("\t" + property + ": #");
+			if (at != std::string::npos && list.find(" " + selector + ",") != std::string::npos)
+				found = declarations.substr(at + property.size() + 3, 7);
+		}
+		REQUIRE(!found.empty());
+		return found;
+	};
+	// An attribute of the first element of a skin that matches the XPath query, such as its fill.
+	const auto attribute = [&dir](const std::string& file, const char* query, const char* name)
+	{
+		pugi::xml_document document;
+		REQUIRE(document.load_string(gnubase::test::readText(dir / file).c_str()));
+		return std::string(document.select_node(query).node().attribute(name).value());
+	};
+	// WCAG 2's enhanced contrast for text (1.4.6): labels on buttons filled with the accent or a toggle's color.
+	for (const auto& [selector, skin] : std::vector<std::pair<std::string, std::string>>{
+			 {"button.primary", "button-primary-normal.svg"}, {"button.toggle.mute.checked", "toggle-mute.svg"},
+			 {"button.toggle.solo.checked", "toggle-solo.svg"}, {"button.toggle.record.checked", "toggle-record.svg"},
+			 {"button.toggle.monitor.checked", "toggle-monitor.svg"},
+			 {"button.toggle.listen.checked", "toggle-monitor.svg"}})
+	{
+		INFO(selector);
+		CHECK(contrast(color(selector), attribute(skin, "//rect", "fill")) >= 7.0);
+	}
+	// The icons of record and monitor buttons too.
+	for (const char* kind : {"record", "monitor"})
+	{
+		INFO(kind);
+		const std::string skin = std::string_view(kind) == "record" ? "toggle-record.svg" : "toggle-monitor.svg";
+		CHECK(contrast(color("button.toggle." + std::string(kind) + ".checked:not(:disabled) svg.icon", "image-color"),
+				  attribute(skin, "//rect", "fill")) >= 7.0);
+	}
+	// The marks of checked and mixed check boxes on the accent.
+	CHECK(contrast(attribute("checkbox-on.svg", "//polyline", "stroke"),
+			  attribute("checkbox-on.svg", "//rect", "fill")) >= 7.0);
+	CHECK(contrast(attribute("checkbox-mixed.svg", "//line", "stroke"),
+			  attribute("checkbox-mixed.svg", "//rect", "fill")) >= 7.0);
 }
 
 TEST_CASE("every theme's piano keyboard has light white keys and dark black keys", "[unit]")
 {
 	// The key editor's keyboard (docs/features/key-editor.md): a light theme's too, though its text is the dark color.
-	for (const char* theme : g_themes)
+	for (const std::string& theme : themes())
 	{
 		INFO("theme " << theme);
 		std::string white;
@@ -280,7 +347,7 @@ TEST_CASE("every theme's mixer strip names are legible on any track color", "[un
 			for (int b = 0; b < 256; b += 17)
 				colors.push_back(std::string("#") + digits[r / 16] + digits[r % 16] + digits[g / 16] + digits[g % 16] +
 					digits[b / 16] + digits[b % 16]);
-	for (const char* theme : g_themes)
+	for (const std::string& theme : themes())
 	{
 		INFO("theme " << theme);
 		std::string light;
@@ -317,7 +384,7 @@ TEST_CASE("every theme shows the chord pads' black section and modifier keys as 
 	// #1447: what the engine takes a key as wins over the remote range, on black keys too. The rules live in the
 	// generated style sheets (tools/skin/generate.py), so a regeneration that drops them or puts them before the
 	// black remote keys' rule fails here.
-	for (const char* theme : g_themes)
+	for (const std::string& theme : themes())
 	{
 		INFO("theme " << theme);
 		const std::vector<std::pair<std::string, std::string>> found =
@@ -349,7 +416,7 @@ TEST_CASE("every theme dims the audio part editor's events that their part hides
 {
 	// The audio part editor (docs/features/audio-part-editor.md): an event out of its part doesn't play there, so it
 	// is styled and looks dimmed, not like an event that plays.
-	for (const char* theme : g_themes)
+	for (const std::string& theme : themes())
 	{
 		INFO("theme " << theme);
 		std::string playing;
@@ -399,7 +466,7 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 		const size_t from = at + property.size() + 3;
 		return declarations.substr(from, declarations.find(';', from) - from);
 	};
-	for (const char* theme : g_themes)
+	for (const std::string& theme : themes())
 	{
 		INFO("theme " << theme);
 		const std::filesystem::path dir = themesDir() / theme;
@@ -584,7 +651,7 @@ TEST_CASE("every theme marks the arranger editor's row that is playing", "[unit]
 	// The arranger editor (docs/features/arranger.md): the row of the chain step or event playing carries .current and
 	// the theme decides how that looks, since the document's own locate arrows show on every row and mark nothing. The
 	// rule lives in the generated style sheets (tools/skin/generate.py), so a regeneration that drops it fails here.
-	for (const char* theme : g_themes)
+	for (const std::string& theme : themes())
 	{
 		INFO("theme " << theme);
 		bool marked = false;
@@ -604,7 +671,7 @@ TEST_CASE("every theme draws the arranger event being drawn as an outline", "[un
 	// The arranger track's lane (docs/features/arranger.md) shows the event being drawn as an
 	// .arranger-lane-event.drawing while the button is down: without a fill, so that it doesn't look like an event the
 	// engine has (#1696). The rule lives in the generated style sheets (tools/skin/generate.py).
-	for (const char* theme : g_themes)
+	for (const std::string& theme : themes())
 	{
 		INFO("theme " << theme);
 		std::string drawing;
@@ -625,7 +692,7 @@ TEST_CASE(
 	// #1312, #1332: dark, light and high contrast show events as before the tint: opaque in their colors, no tint over
 	// their outlines and waveforms, at their lanes' full height. A <waveform> takes event-inset itself, so the padding
 	// stays in the shared style sheet.
-	for (const char* theme : g_themes)
+	for (const std::string& theme : themes())
 	{
 		INFO("theme " << theme);
 		const bool tinted = std::string_view(theme) == "gnubase";
@@ -675,7 +742,7 @@ TEST_CASE("rendering track appearance belongs to each theme", "[unit]")
 	const std::string base =
 		gnubase::test::readText(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "styles" / "base.rcss");
 	CHECK(base.find("listitem.rendering") == std::string::npos);
-	for (const char* theme : g_themes)
+	for (const std::string& theme : themes())
 	{
 		INFO(theme);
 		const auto sheet = rules(gnubase::test::readText(themesDir() / theme / "theme.rcss"));
