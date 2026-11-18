@@ -106,7 +106,7 @@ namespace gnubase::ui
 		void check(const std::string& command, const engine::Json& parameters) const;
 
 		// Binds the keys to a command in a zone, replacing what they did there. Throws std::invalid_argument for keys
-		// it can't read, or a command and parameters that check refuses.
+		// it can't read or Alt on its own, which opens the menu bar, or a command and parameters that check refuses.
 		void bind(const KeyBinding& binding);
 
 		// The keys bound to the command with these parameters, in every zone, as the platform writes them, e.g. for a

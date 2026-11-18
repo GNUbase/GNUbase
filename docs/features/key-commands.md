@@ -28,7 +28,10 @@ it up in `app::AppUi`.
   arrows Up, Down, Left, Right, Space), the punctuation keys `. , - +`, `Alt` on its own (with Alt held, as the
   keyboard sends it, so that MCP's `ui_key` can press it to open the menu bar, [main-menu.md](main-menu.md)), and the
   keypad's own keys Num0 to Num9, NumEnter, `Num*`, `Num/`, `Num+`, `Num-` and `Num.`, which the reference uses for
-  the transport. Letters and punctuation follow the keyboard layout (SDL's key codes); digits are digits on French
+  the transport. `Alt` on its own can be read but not bound (`KeyCommands::bind` throws, and the user's key commands
+  leave out an entry with it): Alt pressed and released alone opens the menu bar ([widgets.md](widgets.md)), so a
+  command on it would run with the key down and toggle the menu bar with the key up. Alt with another modifier or key
+  is fine; the Right Alt key is written Alt too. Letters and punctuation follow the keyboard layout (SDL's key codes); digits are digits on French
   layouts too.
 - **Per platform.** `Mod` is the platform's command key: Cmd on macOS, Ctrl on Windows and Linux, the reference's
   "Ctrl/Cmd". `Ctrl` is the Control key everywhere, for the reference's few bindings with a real Ctrl on macOS; `Alt`
@@ -41,7 +44,7 @@ it up in `app::AppUi`.
   (`nav`): where they move it nowhere, `KeyCommands::press` runs no command for them. A focused button is clicked by
   Space and Enter (not a toolbar or transport button, [widgets.md](widgets.md)), a focused knob, fader or slider turns
   with the arrow keys, menus and dialogs keep their keys, Tab moves the focus: between the zones of a docking window
-  ([docking.md](docking.md)), and between controls in text fields and dialogs. A key command runs only for a key that
+  (the key commands `focus.next` and `focus.previous`, which the docking system runs from its keydown before RmlUi moves the focus, [docking.md](docking.md)), and between controls in text fields and dialogs. A key command runs only for a key that
   no element
   used: where `Rml::Context::ProcessKeyDown` says so, `SdlWindowSystem` passes the key on with its input event, and
   the shell hands it to its handler (`Shell::onUnusedKey`, `KeyCommands::press`). `ui::Automation::key`, and so MCP's

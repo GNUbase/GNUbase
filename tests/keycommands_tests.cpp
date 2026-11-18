@@ -171,6 +171,34 @@ TEST_CASE("key commands take the UI's own commands, and bindings replace what th
 	CHECK_THROWS_WITH(keys.bind({"F5", "view.zoomIn", {{"factor", 2}}}), ContainsSubstring("view.zoomIn"));
 }
 
+TEST_CASE("Alt on its own can't be bound, since it opens the menu bar, but Alt with other keys can (#568)", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	for (const Platform platform : {Platform::Windows, Platform::Mac, Platform::Linux})
+	{
+		ui::KeyCommands keys(engine, binding, platform);
+		keys.add({"view.zoomIn", "Zooms in.", {}});
+		CHECK_THROWS_WITH(keys.bind({"Alt", "view.zoomIn"}), ContainsSubstring("Alt on its own"));
+		CHECK(keys.keysFor("view.zoomIn").empty());
+		CHECK_NOTHROW(keys.bind({"Shift+Alt", "view.zoomIn"}));
+		CHECK_NOTHROW(keys.bind({"Alt+H", "view.zoomIn"}));
+
+		// The user's settings leave out an entry with it, as they do one with keys they can't read.
+		const Strings before = keys.keysFor("view.zoomIn");
+		keys.customize(Json::parse(R"([{"command": "view.zoomIn", "keys": ["Alt"]}])"), Json::array());
+		CHECK(keys.keysFor("view.zoomIn") == before);
+		keys.customize(Json::parse(R"([{"command": "view.zoomIn", "keys": ["Alt+J", "Alt"]}])"), Json::array());
+		CHECK(keys.keysFor("view.zoomIn") == before);
+		keys.customize(Json::parse(R"([{"command": "view.zoomIn", "keys": ["Alt+J"]}])"), Json::array());
+		CHECK(keys.keysFor("view.zoomIn").size() == 1);
+	}
+
+	// Right Alt is written as Alt, not as an unknown key.
+	CHECK(ui::keyName(ui::KeyPress{Rml::Input::KI_RMENU, Rml::Input::KM_ALT}, Platform::Windows) == "Alt");
+	CHECK(ui::keySetting(ui::KeyPress{Rml::Input::KI_RMENU, Rml::Input::KM_ALT}, Platform::Windows) == "Alt");
+}
+
 TEST_CASE("key commands check a command and its parameters, for keys and menu items (#446)", "[unit]")
 {
 	engine::Engine engine;
