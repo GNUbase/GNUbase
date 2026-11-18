@@ -565,11 +565,7 @@ namespace gnubase::ui
 		// of the selection before: the notes stay as the mouse selected them, so that a move right after a click moves
 		// those (#1817). The view after the answer has the selection sent, or a newer one.
 		if (m_selectionsOut == 0)
-		{
-			m_selection.clear();
-			for (const Json& selected : m_view.value("selection", Json::array()))
-				m_selection.emplace_back(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
-		}
+			m_selection = viewSelection();
 		m_from = 0;
 		m_to = 1;
 		if (!m_parts.empty())
@@ -590,12 +586,33 @@ namespace gnubase::ui
 		}
 		updateOrder();
 		render();
+		showLanes();
+	}
+
+	std::vector<std::pair<uint64_t, uint64_t>> KeyEditor::viewSelection() const
+	{
+		std::vector<std::pair<uint64_t, uint64_t>> selection;
+		for (const Json& selected : m_view.value("selection", Json::array()))
+			selection.emplace_back(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
+		return selection;
+	}
+
+	void KeyEditor::showLanes()
+	{
+		Json view = m_view;
+		if (m_selectionsOut > 0)
+		{
+			Json selection = Json::array();
+			for (const auto& [part, note] : m_selection)
+				selection.push_back({{"part", part}, {"note", note}});
+			view["selection"] = std::move(selection);
+		}
 		// The lanes leave out the notes of the sounds the list hides, as the note display does.
 		std::vector<bool> shown;
 		if (std::find(m_rowOf.begin(), m_rowOf.end(), -1) != m_rowOf.end())
 			for (int pitch = 0; pitch < g_pitches; ++pitch)
 				shown.push_back(listed(pitch));
-		m_lanes->show(m_project, m_view, m_from, m_to, shown);
+		m_lanes->show(m_project, view, m_from, m_to, shown);
 	}
 
 	void KeyEditor::setTimeRange(std::optional<std::pair<int64_t, int64_t>> range)
@@ -1005,7 +1022,20 @@ namespace gnubase::ui
 		const bool unscrolled = !m_scrolled;
 		scrollToNotes();
 		const bool refit = refitLines(true);
-		return refit || (unscrolled && m_scrolled);
+		// The expression editor's anchor comes from the grid's width (placeExpression), which a resize changes without
+		// a render: placed again for it, so that it stays inside the note display (#1746).
+		bool placed = false;
+		if (const Rml::Element* editor =
+				m_expressionOpen ? m_root.get()->QuerySelector(".key-expression-editor") : nullptr;
+			editor != nullptr && editor->GetParentNode() != nullptr)
+		{
+			const float wide = editor->GetParentNode()->GetBox().GetSize(Rml::BoxArea::Border).x;
+			placed = wide != m_expressionWide;
+			m_expressionWide = wide;
+			if (placed)
+				placeExpression();
+		}
+		return refit || placed || (unscrolled && m_scrolled);
 	}
 
 	bool KeyEditor::linesShown() const
@@ -1044,9 +1074,18 @@ namespace gnubase::ui
 			return;
 		const auto [from, to] = expressionSpan();
 		place(*editor, from, to - from, -1);
-		// On notes narrower than its button the style sheet widens it: in the note display's right half it grows to the
-		// left from their end, so that it stays inside the note display there too (#1713).
-		if (from + to > m_from + m_to)
+		// On notes narrower than its button the style sheet widens it: where it would then end past the note display's
+		// right edge, it grows to the left from their end, so that it stays inside the note display there too (#1713).
+		// Anywhere else it starts at the notes, so that it keeps still as an in-place editor's range scrolls (#1746).
+		Rml::Element* grid = editor->GetParentNode();
+		const auto range = static_cast<double>(m_to - m_from);
+		const double wide = grid != nullptr ? grid->GetBox().GetSize(Rml::BoxArea::Border).x : 0.0;
+		m_expressionWide = static_cast<float>(wide);
+		const double least = Rml::ResolveValue(editor->GetComputedValues().min_width(), static_cast<float>(wide));
+		if (wide > 0.0 &&
+			(static_cast<double>(from - m_from) / range * wide) +
+					std::max(static_cast<double>(to - from) / range * wide, least) >
+				wide)
 		{
 			editor->RemoveProperty(Rml::PropertyId::Left);
 			editor->SetProperty(Rml::PropertyId::Right,
@@ -1063,7 +1102,6 @@ namespace gnubase::ui
 			if (std::make_pair(each->part, each->id) == m_expressionNote)
 				centered = each;
 		const double row = m_rowOf.at(static_cast<size_t>(centered->pitch));
-		Rml::Element* grid = editor->GetParentNode();
 		double height = grid != nullptr ? grid->GetBox().GetSize(Rml::BoxArea::Border).y : 0.0;
 		// The rows' height as the pitch zoom sets it, which the layout has not caught up with yet (setPitchZoom).
 		if (Rml::Element* first = grid != nullptr ? grid->QuerySelector(".key-editor-row") : nullptr)
@@ -1164,7 +1202,8 @@ namespace gnubase::ui
 		// Each selected note's points, as the gesture going on changes them, on the editor's span.
 		const auto [from, to] = expressionSpan();
 		std::string rml;
-		const int64_t pixel = ticksPerPixel(); // the editor lies on the note display's time axis
+		// Joined by the note display's pixels, which are coarser than the editor's over notes narrower than its button.
+		const int64_t pixel = ticksPerPixel();
 		for (const Note* note : notes)
 			rml += stepsRml(m_gesture == Gesture::Expression ? edited(*note) : note->expressions, type,
 				note->start - from, to - from, note->length, pixel);
@@ -1326,13 +1365,18 @@ namespace gnubase::ui
 
 	std::pair<double, int> KeyEditor::at(const Rml::Event& event) const
 	{
+		return at(event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F));
+	}
+
+	std::pair<double, int> KeyEditor::at(float mouseX, float mouseY) const
+	{
 		Rml::Element* grid = m_root.get()->QuerySelector(".key-editor-grid");
 		if (grid == nullptr)
 			return {0.0, 0};
 		const Rml::Vector2f origin = grid->GetAbsoluteOffset(Rml::BoxArea::Border);
 		const Rml::Vector2f size = grid->GetBox().GetSize(Rml::BoxArea::Border);
-		const float x = (event.GetParameter("mouse_x", 0.0F) - origin.x) / std::max(size.x, 1.0F);
-		const float y = (event.GetParameter("mouse_y", 0.0F) - origin.y) / std::max(size.y, 1.0F);
+		const float x = (mouseX - origin.x) / std::max(size.x, 1.0F);
+		const float y = (mouseY - origin.y) / std::max(size.y, 1.0F);
 		const int rows = static_cast<int>(m_order.size());
 		const int row = std::clamp(static_cast<int>(std::floor(y * static_cast<float>(rows))), 0, rows - 1);
 		return {static_cast<double>(m_from) + (x * static_cast<double>(m_to - m_from)),
@@ -1405,13 +1449,23 @@ namespace gnubase::ui
 			selection.push_back({{"part", part}, {"note", note}});
 		render(); // at once; editor.changed confirms it
 		++m_selectionsOut;
+		showLanes();
 		m_binding.send("editor.set", {{"editor", m_name}, {"selection", selection}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!result.ok())
 					logging::warning("The key editor cannot select notes: {}", result.error);
-				if (!alive.expired())
-					--m_selectionsOut;
+				if (alive.expired() || --m_selectionsOut != 0)
+					return;
+				// The engine's editor.changed comes before the answer: once all are answered, the view has the
+				// selection the editor shows, unless the last one was refused, as when another client had just deleted
+				// the note. Then the view's selection shows again (#1897).
+				if (std::vector<std::pair<uint64_t, uint64_t>> shown = viewSelection(); shown != m_selection)
+				{
+					m_selection = std::move(shown);
+					render();
+					showLanes();
+				}
 			});
 	}
 
@@ -1673,6 +1727,7 @@ namespace gnubase::ui
 				cancelGesture();
 				break;
 			}
+			m_dragged = false;
 			press(event);
 			dragDuringGesture();
 			break;
@@ -1680,6 +1735,7 @@ namespace gnubase::ui
 			drag(event);
 			break;
 		case Rml::EventId::Drag:
+			m_dragged = true;
 			// The draws, the expression editor's and the keyboard's drag follow the mouse wherever it is, also outside
 			// the window, where the platform captures it while the button is held but nothing is hovered; in the
 			// editor the root's mousemove computes the same absolute state, so both are harmless.
@@ -1707,9 +1763,16 @@ namespace gnubase::ui
 			}
 			break;
 		case Rml::EventId::Mouseout:
-			// The mouse leaving the window ends the pitch too: the button going up out there sends no mouseup.
+			// The mouse leaving the window ends the pitch too: the button going up out there sends no mouseup. A
+			// gesture whose drag never started, as when the window lost the focus before the mouse moved (#1191), gets
+			// no dragend either: it ends here without its effect, so that its notes don't follow the mouse back
+			// (#1756). Dragged out of the window, the drag events came first.
 			if (target == m_document.get())
+			{
 				sound(std::nullopt);
+				if (!m_dragged)
+					cancelGesture();
+			}
 			break;
 		case Rml::EventId::Dblclick:
 			doubleClick(event);
@@ -2062,10 +2125,6 @@ namespace gnubase::ui
 			paint(event);
 			return;
 		}
-		const auto [ticks, pitch] = at(event);
-		const Rml::Element* notes = m_root.get()->QuerySelector(".key-editor-notes");
-		if (notes == nullptr)
-			return;
 		if (m_gesture == Gesture::Draw)
 		{
 			if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && m_drum)
@@ -2082,6 +2141,7 @@ namespace gnubase::ui
 			}
 			else if (drawn != nullptr)
 			{
+				const double ticks = at(event).first;
 				const int64_t step = lengthQuantize(m_pressedAt.second);
 				const auto steps = std::max<int64_t>(
 					1, static_cast<int64_t>(std::ceil((ticks - m_pressedAt.first) / static_cast<double>(step))));
@@ -2092,7 +2152,7 @@ namespace gnubase::ui
 		}
 		if (m_gesture == Gesture::Erase)
 			return;
-		m_draggedTo = std::make_pair(ticks, pitch);
+		m_draggedTo = std::make_pair(event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F));
 		placeDragged();
 	}
 
@@ -2103,7 +2163,8 @@ namespace gnubase::ui
 			m_root.get() != nullptr ? m_root.get()->QuerySelector(".key-editor-notes") : nullptr;
 		if (notes == nullptr || !m_pressed || !m_draggedTo || (m_gesture != Gesture::Move && !resize))
 			return;
-		const auto [ticks, pitch] = *m_draggedTo;
+		// The time under the mouse now, which the release takes: an in-place editor's range can have changed since.
+		const auto [ticks, pitch] = at(m_draggedTo->first, m_draggedTo->second);
 		const int rows = m_gesture == Gesture::Move
 			? m_rowOf.at(static_cast<size_t>(pitch)) - m_rowOf.at(static_cast<size_t>(m_pressedAt.second))
 			: 0;
@@ -2362,9 +2423,9 @@ namespace gnubase::ui
 			return;
 		root->SetClass("in-gesture", on);
 		// RmlUi looks for the drag element right after the press's mousedown and double click, from the computed
-		// values. Off, the next frame updates them: a press that comes before only finds the grid or the keyboard's
-		// left part as its drag element when it is on them, where a drag without a gesture does nothing.
-		if (Rml::ElementDocument* owner = root->GetOwnerDocument(); owner != nullptr && on)
+		// values: the press that starts a gesture needs them with the class, the press that ends a lost one, or
+		// comes in the same frame as a release, without it, as the list editor's body does (#1756).
+		if (Rml::ElementDocument* owner = root->GetOwnerDocument())
 			owner->UpdateDocument();
 	}
 

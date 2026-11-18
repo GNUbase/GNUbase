@@ -33,8 +33,8 @@ namespace gnubase::ui
 		constexpr int64_t g_bendCenter = 8192;
 
 		// What the root hears in the bubble phase.
-		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
-			Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Dragend};
+		constexpr std::array<Rml::EventId, 6> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
+			Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Drag, Rml::EventId::Dragend};
 
 		// The event types, as controller.add names them, with the list's names (p. 1253), in the filters bar's order.
 		constexpr std::array<std::pair<const char*, const char*>, 8> g_types = {{
@@ -959,10 +959,19 @@ namespace gnubase::ui
 			if (event.GetParameter("button", 0) == 0)
 				release(event);
 			break;
+		case Rml::EventId::Drag:
+			m_dragged = true;
+			break;
 		case Rml::EventId::Dragend:
 			// After the mouseup, if there was one: a gesture that it ended is over.
 			if (m_gesture != Gesture::None)
 				release(event);
+			break;
+		case Rml::EventId::Mouseout:
+			// The mouse left the window during a gesture whose drag never started, as when the window lost the focus
+			// before the mouse moved (#1191): no dragend comes, so it ends here without its effect (#1756).
+			if (target == m_document.get() && !m_dragged && cancel())
+				render();
 			break;
 		case Rml::EventId::Click:
 			click(*target, ctrl);
@@ -982,6 +991,7 @@ namespace gnubase::ui
 	void ListEditor::press(Rml::Event& event)
 	{
 		// The document's mousedown in the capture phase (ProcessEvent) has ended a gesture whose end never came.
+		m_dragged = false;
 		begin(event);
 		if (m_gesture == Gesture::None)
 			return;
@@ -1004,6 +1014,7 @@ namespace gnubase::ui
 		if (Rml::Element* listened = m_document.get())
 		{
 			listened->RemoveEventListener(Rml::EventId::Mouseup, this);
+			listened->RemoveEventListener(Rml::EventId::Mouseout, this);
 			listened->RemoveEventListener(Rml::EventId::Mousedown, this, true);
 		}
 		m_document.reset();
@@ -1011,6 +1022,7 @@ namespace gnubase::ui
 			if (Rml::ElementDocument* owner = root->GetOwnerDocument())
 			{
 				owner->AddEventListener(Rml::EventId::Mouseup, this);
+				owner->AddEventListener(Rml::EventId::Mouseout, this);
 				// In the capture phase: before the press reaches the root or anything else in the document.
 				owner->AddEventListener(Rml::EventId::Mousedown, this, true);
 				m_document = owner->GetObserverPtr();

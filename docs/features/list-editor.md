@@ -90,9 +90,11 @@ doesn't have (#1580).
   out of the window ends there, with its effect. Only then, since RmlUi doesn't scroll on a touch move during a drag:
   a finger pan from where a press starts no gesture, such as the type column, scrolls the list, also when that press
   ends a gesture whose end never came or follows a mouseup within the same frame (#1012).
-  A draw released outside the event display draws where it was pressed. One whose end never comes ends without its
-  effect at the next left press anywhere in that document, which the editor hears in the capture phase, before
-  anything else; the value display shows the events' values again at once. Other buttons don't end a gesture.
+  A draw released outside the event display draws where it was pressed. A gesture whose drag never started, as when
+  the window loses the focus before the mouse moved, gets no dragend: it ends without its effect as the mouse leaves
+  the window (the document's mouseout), so a value display drag doesn't follow the mouse back (#1756). One whose end
+  never comes at all ends without its effect at the next left press anywhere in that document, which the editor hears
+  in the capture phase, before anything else; the value display shows the events' values again at once. Other buttons don't end a gesture.
 - **Open List Editor** (`editor.openList`, Mod+G in the project window and Edit > Open List Editor, p. 1243) opens the
   selected MIDI parts in the editor window's list editor. Open in Lower Zone and Open in Separate Window keep the
   content.
@@ -122,5 +124,6 @@ status line, nudging, snap and quantize on the toolbar; editing a program change
   all again, and the Focus menu's subtype and channel; the draw tool drawing a controller event and a note, the erase
   tool, moving a note in the event display and a drag in the value display; a move, a draw and a value display drag
   released outside the list editor and past the window's edge, each with its effect, also a move with a Focus filter
-  on, and ones whose mouseup never comes, ended by the next press without it; a touch pan over the type column
-  scrolling the list; a draw dragged in the event display being a multiple of the length quantize's length.
+  on, and ones whose mouseup never comes, ended by the next press without it, and a value display drag whose release
+  was lost ended as the mouse leaves the window; a touch pan over the type column scrolling the list; a draw dragged
+  in the event display being a multiple of the length quantize's length.
