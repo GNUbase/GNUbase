@@ -1119,6 +1119,9 @@ TEST_CASE("tooltips show an element's title once the mouse rests on it", "[ui]")
 	const Json track = element(app, "#track").at("box");
 	CHECK(element(app, "tooltip").at("box").at("y").get<int>() >
 		track.at("y").get<int>() + (track.at("height").get<int>() / 2));
+	// Under the mouse, which is at the element's center: not at the window's left edge (#1292).
+	CHECK(std::abs(element(app, "tooltip").at("box").at("x").get<int>() -
+			  (track.at("x").get<int>() + (track.at("width").get<int>() / 2))) <= 2);
 
 	// Over an element without a title there's none; near the window's corner it stays inside; a click hides it.
 	app.ui().move(std::nullopt, at("#plain"));
@@ -1279,7 +1282,36 @@ TEST_CASE("a tooltip asks for one more update when its element is gone, not for 
 	// The group under the mouse now has a title: its tooltip waits for its rest, without update after update.
 	updateTwice();
 	CHECK(context.GetNextUpdateDelay() > 0.1);
+	CHECK(context.GetNextUpdateDelay() <= 0.6); // a tooltip waits for #group: not no tooltip at all (#1292)
 	parked.reset();
+}
+
+namespace
+{
+	// Stops the events it gets: RmlUi runs no default action of a stopped Mouseover, which sets :hover.
+	struct StopEvent final : Rml::EventListener
+	{
+		void ProcessEvent(Rml::Event& event) override { event.StopPropagation(); }
+	};
+}
+
+TEST_CASE("an element whose Mouseover a listener stops costs no updates while the mouse rests on it", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	Rml::Context& context = *document.GetContext();
+	StopEvent stop;
+	Rml::Element* track = document.GetElementById("track");
+	track->AddEventListener(Rml::EventId::Mouseover, &stop);
+
+	app.ui().move(std::nullopt, at("#track"));
+	// The first update drops the element, which has no :hover, and asks for one more that looks; that one finds
+	// nothing to show and asks for none (#1292).
+	context.Update();
+	context.Update();
+	CHECK(context.GetNextUpdateDelay() == std::numeric_limits<double>::infinity());
+	CHECK(!document.QuerySelector("tooltip")->IsClassSet("shown"));
+	track->RemoveEventListener(Rml::EventId::Mouseover, &stop);
 }
 
 TEST_CASE("an element without a title that replaces the one under a resting mouse gets no tooltip", "[ui][slow]")
@@ -1388,8 +1420,15 @@ TEST_CASE("a titled ancestor's tooltip comes after its titled member's has gone"
 	app.ui().move(std::nullopt, at("#titled"));
 	REQUIRE(shows("Titled"));
 	app.ui().move(std::nullopt, bare);
-	CHECK_FALSE(visible(app, "tooltip"));
+	// At once, from the Mouseout: without the update that the look-up would take (visible() updates the context).
+	CHECK(!document.QuerySelector("tooltip")->IsClassSet("shown"));
 	CHECK(shows("Group"));
+	// Under the mouse where it rests, not where it entered the group.
+	const int bareX = group.at("x").get<int>() + group.at("width").get<int>() - 5;
+	const int bareY = group.at("y").get<int>() + group.at("height").get<int>() - 5;
+	CHECK(std::abs(element(app, "tooltip").at("box").at("x").get<int>() - bareX) <=
+		8); // not at the titled member, 50 px away
+	CHECK(element(app, "tooltip").at("box").at("y").get<int>() >= bareY + 15);
 
 	// The same when the member under the resting mouse is removed, and the tooltip comes under the mouse where it
 	// rests, not where it entered the member (RmlUi sends no event for moves within an element).
