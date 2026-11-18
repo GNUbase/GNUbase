@@ -553,6 +553,7 @@ namespace gnubase::engine
 			}
 			else
 			{
+				m_cycled = m_cycled || startsLap(takeEnd, chunk.position);
 				m_takes.push_back({chunk.position, m_written, 0});
 			}
 		}
@@ -580,6 +581,7 @@ namespace gnubase::engine
 		m_recording = true;
 		m_files.clear();
 		m_takes.clear();
+		m_cycled = false;
 		m_written = 0;
 		// Audio pre-record: the frames that came in just before, if none is missing in between.
 		const size_t capacity = m_channels > 0 ? m_history.size() / static_cast<size_t>(m_channels) : 0;
@@ -685,10 +687,12 @@ namespace gnubase::engine
 			tracks.push_back({{"track", file.track.track}, {"path", file.path}, {"takes", std::move(takes)}});
 		}
 		m_files.clear();
-		Json data = {
-			{"project", m_current.project}, {"mode", g_audioRecordModes.at(static_cast<size_t>(m_current.mode))}};
+		Json data = {{"project", m_current.project},
+			{"mode", g_audioRecordModes.at(static_cast<size_t>(m_current.mode))}, {"cycle", m_cycled}};
 		if (!m_pendingMidi.empty())
 		{
+			data["cycle"] = m_cycled || m_pendingMidiCycled;
+			m_pendingMidiCycled = false;
 			for (Json& track : m_pendingMidi)
 				tracks.push_back(std::move(track));
 			m_pendingMidi = Json::array();
@@ -729,6 +733,7 @@ namespace gnubase::engine
 			// Playback jumped, at the end of a cycle lap or a locate: the notes that sound end with the take before.
 			for (auto& [channel, builder] : m_midiBuilders)
 				builder.endNotes(take.position + take.length);
+			m_midiCycled = m_midiCycled || startsLap(take.position + take.length, chunk.position);
 			// A take that got no frames is left out of recording.add, and nothing was recorded in it: the next one
 			// takes its place, so the takes' indices stay those recording.add gets.
 			if (take.length == 0)
@@ -762,6 +767,7 @@ namespace gnubase::engine
 		m_midiCurrent = m_next;
 		m_midiRecording = true;
 		m_midiTakes.assign(1, {chunk.position, static_cast<time::Samples>(chunk.deviceFrame), 0});
+		m_midiCycled = false;
 		m_midiBuilders.clear();
 		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
 			m_midiBuilders[track.channel] = MidiTakeBuilder();
@@ -815,6 +821,7 @@ namespace gnubase::engine
 			for (Json& track : tracks)
 				m_pendingMidi.push_back(std::move(track));
 			m_pendingMidiSetup = m_midiCurrent;
+			m_pendingMidiCycled = m_pendingMidiCycled || m_midiCycled;
 			return;
 		}
 		if (m_notify)
@@ -822,7 +829,12 @@ namespace gnubase::engine
 				{{"project", m_midiCurrent.project},
 					{"midiMode", g_midiRecordModes.at(static_cast<size_t>(m_midiCurrent.midiMode))},
 					{"cycleMode", g_midiCycleRecordModes.at(static_cast<size_t>(m_midiCurrent.midiCycleMode))},
-					{"snapToBars", m_midiCurrent.snapToBars}, {"tracks", std::move(tracks)}});
+					{"snapToBars", m_midiCurrent.snapToBars}, {"cycle", m_midiCycled}, {"tracks", std::move(tracks)}});
+	}
+
+	bool Recorder::startsLap(time::Samples end, time::Samples start) const
+	{
+		return m_next.cycleLeft >= 0 && start == m_next.cycleLeft && end == m_next.cycleRight;
 	}
 
 	void Recorder::keepRetrospective(const MidiInput& input, uint64_t deviceFrame)
@@ -832,22 +844,31 @@ namespace gnubase::engine
 		Retrospective& buffer = m_retrospective[input.channel];
 		const uint64_t frame = m_frameBase + deviceFrame + input.offset;
 		// Input after the buffer was inserted starts it afresh, and so does input in stop mode while it holds input in
-		// stop mode, on the next device or after a pause since the last input, from playback or not: the insert places
-		// input in stop mode by its frames, which leave out the time the old device ran.
+		// stop mode, after a pause since the last input, from playback or not (reference manual p. 354).
 		const auto stopped = [&buffer]
 		{
 			return std::any_of(buffer.events.begin(), buffer.events.end(),
 				[](const RetrospectiveEvent& kept) { return kept.position < 0; });
 		};
 		if (buffer.taken ||
-			(input.played < 0 &&
-				(buffer.stoppedBefore > 0 ||
-					(!buffer.events.empty() &&
-						frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames) &&
-						stopped()))))
+			(input.played < 0 && !buffer.events.empty() &&
+				frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames) && stopped()))
 		{
 			buffer.events.clear();
 			buffer.recorded = 0;
+			buffer.stoppedBefore = 0;
+		}
+		else if (input.played < 0 && buffer.stoppedBefore > 0)
+		{
+			// On the next device, input in stop mode leaves out the earlier devices' input in stop mode: the insert
+			// places it by its frames, which leave out the time the old device ran. Input during playback stays, as
+			// the insert places it where it played.
+			const auto earlier = [this](const RetrospectiveEvent& kept)
+			{ return kept.position < 0 && kept.deviceFrame < m_frameBase; };
+			const auto recorded = buffer.events.begin() + static_cast<std::ptrdiff_t>(buffer.recorded);
+			buffer.recorded -= static_cast<size_t>(std::count_if(buffer.events.begin(), recorded, earlier));
+			buffer.events.erase(
+				std::remove_if(buffer.events.begin(), buffer.events.end(), earlier), buffer.events.end());
 			buffer.stoppedBefore = 0;
 		}
 		buffer.taken = false;

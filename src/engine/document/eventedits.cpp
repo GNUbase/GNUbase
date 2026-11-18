@@ -1323,6 +1323,12 @@ namespace gnubase::engine
 			const bool rename = parameters.contains("name");
 			for (const Item& item : items)
 				require(!rename || item.audio == nullptr, "audio events have their clip's name; name renames parts");
+			// A lock keeps them on their lane too (reference manual p. 276), unless they are unlocked with it; events
+			// the same call locks aren't locked yet.
+			if (const auto lane = parameters.find("lane"); lane != parameters.end())
+				for (const Item& item : items)
+					require(item.lane() == lane->get<int>() || !item.locked() || !parameters.value("lock", true),
+						"event " + std::to_string(item.id()) + " is locked");
 			for (const Item& item : items)
 			{
 				if (rename)
@@ -3092,7 +3098,8 @@ namespace gnubase::engine
 				"locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) "
 				"is a color of their own; null makes them follow their track's color again. lane puts them on that "
 				"lane of their track, from 0, as cycle recordings put their takes (recording.add); audio events in an "
-				"audio part on that lane of the part, as the audio part editor shows them. Returns the events.",
+				"audio part on that lane of the part, as the audio part editor shows them. Locked ones stay on their "
+				"lane: lane is refused for them unless lock false unlocks them in the same call. Returns the events.",
 				schema({{"events", events()}, {"mute", boolean()}, {"lock", boolean()}, {"name", {{"type", "string"}}},
 						   {"color", {{"type", {"string", "null"}}}},
 						   {"lane", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}}}},

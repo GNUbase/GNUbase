@@ -232,6 +232,16 @@ TEST_CASE("event.move moves events and parts by samples or ticks, onto tracks of
 	CHECK(f.audio(event).at("lock") == true);
 	CHECK_THAT(f.fails("event.move", {{"events", {part, event}}, {"delta", g_second}}), ContainsSubstring("locked"));
 	CHECK(f.midi(part).at("position") == g_bar + g_quarter);
+	// Nor do they go onto another lane (reference manual p. 276), unless the same event.set unlocks them.
+	CHECK_THAT(f.fails("event.set", {{"events", {part, event}}, {"lane", 1}}), ContainsSubstring("locked"));
+	CHECK(f.midi(part).at("lane") == 0);
+	f.call("event.set", {{"events", {event}}, {"lane", 0}}); // the lane they are on
+	f.call("event.set", {{"events", {event}}, {"lock", false}, {"lane", 1}});
+	CHECK(f.audio(event).at("lane") == 1);
+	// An event the same call locks isn't locked yet.
+	f.call("event.set", {{"events", {event}}, {"lock", true}, {"lane", 2}});
+	CHECK(f.audio(event).at("lane") == 2);
+	CHECK(f.audio(event).at("lock") == true);
 }
 
 TEST_CASE("event.copy and event.duplicate make real and shared copies", "[unit]")

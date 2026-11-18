@@ -568,6 +568,12 @@ namespace gnubase::engine
 			std::llround(std::clamp(m_settings.get(settings::g_audioPreRecordSeconds), 0.0, 60.0) * deviceRate);
 		setup.midiMode = m_transport.settings().midiRecordMode;
 		setup.midiCycleMode = m_transport.settings().midiCycleRecordMode;
+		if (const TransportSettings& transport = m_transport.settings();
+			transport.cycle && transport.left < transport.right)
+		{
+			setup.cycleLeft = transport.left;
+			setup.cycleRight = transport.right;
+		}
 		setup.midiFilter = MidiRecordFilter::fromJson(m_settings.value("midi.recordFilter"));
 		setup.snapToBars = m_settings.get(settings::g_midiSnapPartsToBars);
 		setup.catchFrames = std::llround(

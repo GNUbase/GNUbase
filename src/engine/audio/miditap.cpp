@@ -451,8 +451,9 @@ namespace gnubase::engine
 				"came during playback goes where it played; what came in stop mode goes at the project cursor, with "
 				"its timing. Input after an insert starts the buffer afresh, and so does input in stop mode while "
 				"the buffer holds input in stop mode, when it comes over 30 s after the last input, from playback or "
-				"not, or on the next audio device. It is no recording of the chord track: it makes no "
-				"chord events. Returns what recording.add returns.",
+				"not. On the next audio device, input in stop mode leaves out the earlier devices' input in stop "
+				"mode, whose timing can't be placed against it, and keeps the input during playback. It is no "
+				"recording of the chord track: it makes no chord events. Returns what recording.add returns.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
 					"properties": {"track": {"type": "integer"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"parts": {"type": "array"}},

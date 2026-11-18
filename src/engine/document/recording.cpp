@@ -29,6 +29,8 @@ namespace gnubase::engine
 	{
 		using Run = std::function<Json(const char* command, const Json& parameters)>;
 
+		constexpr int g_lastLane = 1000; // event.set's: the takes beyond it share it
+
 		void require(bool condition, const std::string& message)
 		{
 			if (!condition)
@@ -295,10 +297,11 @@ namespace gnubase::engine
 		// 352-353): mix puts every take into one part, by the MIDI record mode (addMidi); overwrite and keepLast do
 		// too, after overwrite dropped what input in a later take overwrote and keepLast kept only one take
 		// (keptTake); stacked and mixStacked add a new part per take that recorded anything, each on a lane of its
-		// own (firstFreeLane), and stacked mutes all of them but the last. A single take isn't a cycle recording, so
-		// the cycle record mode doesn't apply to it, as for audio. Returns the parts.
+		// own (firstFreeLane), and stacked mutes all of them but the last. The cycle record mode applies only to a
+		// cycle recording of several takes: the takes of a linear one, which a locate starts, all stay. Returns the
+		// parts.
 		Json addMidiRecording(Project& project, const Run& run, const Track& track, const Json& entry,
-			const std::string& mode, const std::string& cycleMode, bool snap)
+			const std::string& mode, std::string cycleMode, bool snap)
 		{
 			std::vector<MidiTake> takes;
 			for (const Json& take : entry.at("takes"))
@@ -333,8 +336,10 @@ namespace gnubase::engine
 				midi::applyRemoteTriggers(*map, played, playedControllers);
 			distribute(played, &MidiTake::notes);
 			distribute(playedControllers, &MidiTake::controllers);
+			if (takes.size() < 2)
+				cycleMode = "mix"; // mixing a single take adds it by the MIDI record mode alone
 
-			if ((cycleMode == "stacked" || cycleMode == "mixStacked") && takes.size() > 1)
+			if (cycleMode == "stacked" || cycleMode == "mixStacked")
 			{
 				std::vector<const MidiTake*> recorded;
 				time::Samples from = std::numeric_limits<time::Samples>::max();
@@ -348,6 +353,13 @@ namespace gnubase::engine
 					}
 				if (!recorded.empty())
 				{
+					if (snap) // the parts take whole bars, and so do the lanes they need
+					{
+						const auto& tempo = project.tempo;
+						const double rate = project.sampleRate;
+						from = tempo.toSamples(barLine(project.signatures, tempo.toTicks(from, rate), false), rate);
+						to = tempo.toSamples(barLine(project.signatures, tempo.toTicks(to, rate), true), rate);
+					}
 					const int lane = firstFreeLane(project, track.id, from, to);
 					Json parts = Json::array();
 					for (size_t index = 0; index < recorded.size(); ++index)
@@ -356,7 +368,8 @@ namespace gnubase::engine
 						const ObjectId part = addMidi(project, run, track, take.position, take.end(), Json(take.notes),
 							Json(take.controllers), "newParts", snap);
 						run("event.set",
-							{{"events", Json::array({part})}, {"lane", lane + static_cast<int>(index)},
+							{{"events", Json::array({part})},
+								{"lane", std::min(lane + static_cast<int>(index), g_lastLane)},
 								{"mute", cycleMode == "stacked" && index + 1 < recorded.size()}});
 						parts.push_back(part);
 					}
@@ -416,10 +429,11 @@ namespace gnubase::engine
 				"start with audio pre-record before its first take. mode, the audio record mode (transport.set), says "
 				"what happens to the track's unlocked events where the takes overlap them: keepHistory (the default) "
 				"keeps them, cycleHistoryReplace cuts them out and keeps every take, replace cuts out what each take "
-				"overlaps, also of the takes before it. With keepHistory and cycleHistoryReplace, the events of a "
-				"recording of several takes go onto lanes of their own (event.set's lane), one per take from the lane "
-				"after the highest one that the track's events where they lie are on; the last take plays where they "
-				"overlap. Per MIDI or instrument track the takes (position and length) "
+				"overlaps, also of the takes before it. With keepHistory and cycleHistoryReplace, the events of the "
+				"takes that overlap another take go onto lanes of their own (event.set's lane), one per take from the "
+				"lane after the highest one that the track's events where they lie are on, up to lane 1000; the last "
+				"take plays where they overlap. With cycle, the clip gets a region per take (clip.addRegion), Take 1 "
+				"on. Per MIDI or instrument track the takes (position and length) "
 				"and what was recorded, all in project samples: notes as note.add takes them and controllers as "
 				"controller.add does, with positions and lengths in project samples (a note's expression points' "
 				"too), and each with take, the index "
@@ -433,9 +447,12 @@ namespace gnubase::engine
 				"or controller event lies to that take's end; keepLast keeps only the last complete take that "
 				"recorded anything (the last take is complete if it ends where an earlier one does), or the last that "
 				"recorded anything if none is complete; stacked adds a new part per take that recorded anything, "
-				"each on a lane of its own as for audio, and mutes all of them but the last; mixStacked does too "
-				"without muting. A single take is added by midiMode alone, whatever the cycleMode. With the project's "
-				"auto quantize (quantize.set) the recorded notes are quantized. "
+				"each on a lane of its own as for audio, after those of the parts in its whole bars with snapToBars, "
+				"and mutes all of them but the last; mixStacked does too "
+				"without muting. cycleMode applies only with cycle, which the engine gives a recording in cycle mode "
+				"(a take that starts at the left locator where the one before ended at the right one): without it, "
+				"and for a single take, the takes go in by midiMode alone, as do those that a locate starts during a "
+				"linear recording. With the project's auto quantize (quantize.set) the recorded notes are quantized. "
 				"On a track with an articulation map (track.set articulationMap), the remote triggers of its sound "
 				"slots aren't recorded: the notes whose pitch is a slot's trigger (remoteTrigger keySwitch) or the "
 				"program changes whose program is one (programChange) select their slot instead, as directions "
@@ -455,8 +472,8 @@ namespace gnubase::engine
 						{{"project", integer}, {"mode", {{"type", "string"}, {"enum", g_audioRecordModes}}},
 							{"midiMode", {{"type", "string"}, {"enum", g_midiRecordModes}}},
 							{"cycleMode", {{"type", "string"}, {"enum", g_midiCycleRecordModes}}},
-							{"snapToBars", {{"type", "boolean"}}}, {"chordEvents", {{"type", "boolean"}}},
-							{"tracks", {{"type", "array"}, {"items", track}}}}},
+							{"cycle", {{"type", "boolean"}}}, {"snapToBars", {{"type", "boolean"}}},
+							{"chordEvents", {{"type", "boolean"}}}, {"tracks", {{"type", "array"}, {"items", track}}}}},
 					{"required", {"tracks"}}},
 				{{"type", "object"}, {"properties", {{"media", ids}, {"clips", ids}, {"events", ids}, {"parts", ids}}},
 					{"required", {"media", "clips", "events", "parts"}}},
@@ -469,7 +486,9 @@ namespace gnubase::engine
 		const Json& parameters = context.parameters();
 		const std::string mode = parameters.value("mode", std::string(g_audioRecordModes[0]));
 		const std::string midiMode = parameters.value("midiMode", std::string(g_midiRecordModes[0]));
-		const std::string cycleMode = parameters.value("cycleMode", std::string(g_midiCycleRecordModes[0]));
+		const bool cycle = parameters.value("cycle", false);
+		const std::string cycleMode =
+			cycle ? parameters.value("cycleMode", std::string(g_midiCycleRecordModes[0])) : std::string("mix");
 		const bool snap = parameters.value("snapToBars", false);
 		const Run run = [this, &project, &context](const char* command, const Json& commandParameters)
 		{ return runEdit(command, project, commandParameters, context); };
@@ -548,6 +567,13 @@ namespace gnubase::engine
 			const ObjectId clip = run("clip.add", {{"media", added.at("id")}}).at("clip").at("id").get<ObjectId>();
 			media.push_back(added.at("id"));
 			clips.push_back(clip);
+			// A cycle recording divides its clip into regions, one per take (reference manual p. 226).
+			if (cycle && takes.size() > 1)
+				for (size_t index = 0; index < takes.size(); ++index)
+					run("clip.addRegion",
+						{{"clip", clip}, {"start", takes[index].offset},
+							{"end", takes[index].offset + takes[index].length},
+							{"name", "Take " + std::to_string(index + 1)}});
 
 			const auto endOf = [ratio](const Take& each)
 			{
@@ -557,21 +583,26 @@ namespace gnubase::engine
 			if (mode == "cycleHistoryReplace")
 				for (const Take& each : takes) // before any take is added, so that every take stays
 					replace(trackId, each.position, endOf(each));
-			// Keeping the takes, a cycle recording puts them on lanes of their own (reference manual p. 226).
-			std::optional<int> lane;
-			if (takes.size() > 1 && mode != "replace")
-			{
-				time::Samples from = std::numeric_limits<time::Samples>::max();
-				time::Samples to = std::numeric_limits<time::Samples>::min();
-				for (const Take& each : takes)
+			// Keeping the takes, a cycle recording puts them on lanes of their own (reference manual p. 226): those
+			// that overlap another take, as laps do; one that a locate during recording started may overlap none.
+			std::vector<bool> stacked(takes.size(), false);
+			if (mode != "replace")
+				for (size_t i = 0; i < takes.size(); ++i)
+					for (size_t j = i + 1; j < takes.size(); ++j)
+						if (takes[i].position < endOf(takes[j]) && takes[j].position < endOf(takes[i]))
+							stacked[i] = stacked[j] = true;
+			time::Samples from = std::numeric_limits<time::Samples>::max();
+			time::Samples to = std::numeric_limits<time::Samples>::min();
+			for (size_t i = 0; i < takes.size(); ++i)
+				if (stacked[i])
 				{
-					from = std::min(from, each.position);
-					to = std::max(to, endOf(each));
+					from = std::min(from, takes[i].position);
+					to = std::max(to, endOf(takes[i]));
 				}
-				lane = firstFreeLane(project, trackId, from, to);
-			}
-			for (const Take& each : takes)
+			int lane = from < to ? firstFreeLane(project, trackId, from, to) : 0;
+			for (size_t i = 0; i < takes.size(); ++i)
 			{
+				const Take& each = takes[i];
 				if (mode == "replace")
 					replace(trackId, each.position, endOf(each));
 				const time::Position at = time::rebase(
@@ -588,8 +619,8 @@ namespace gnubase::engine
 					run("audioEvent.set",
 						{{"event", event}, {"rootKey", transposed ? std::string() : rootKeyName(project.rootKey)},
 							{"globalTranspose", transposed ? "independent" : "follow"}});
-				if (lane)
-					run("event.set", {{"events", Json::array({event})}, {"lane", (*lane)++}});
+				if (stacked[i])
+					run("event.set", {{"events", Json::array({event})}, {"lane", std::min(lane++, g_lastLane)}});
 				events.push_back(event);
 			}
 		}

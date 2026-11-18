@@ -48,8 +48,9 @@ nothing if it fails.
   from the first start to the last end, with every note and controller.
 - **Muting.** Muted audio events and MIDI parts don't play (the render snapshot leaves muted parts out). In DAWproject a
   muted part, like a muted event, is a disabled clip.
-- **Locks.** A locked event can't be moved, resized, split, glued or removed through the `event.*` commands; it can
-  still be copied, muted and unlocked. Without `events`, `event.split` leaves locked events alone. The object commands
+- **Locks.** A locked event can't be moved, resized, split, glued or removed through the `event.*` commands, and
+  `event.set` doesn't put it on another lane unless the same call unlocks it; it can still be copied, muted and
+  unlocked. Without `events`, `event.split` leaves locked events alone. The object commands
   (`audioEvent.set`, `midiPart.set`) stay low-level and don't check locks. The reference's lock attributes (position,
   length, other) come with the preferences.
 - **Copies.** A copy is unlocked and has no crossfade; copies of audio events play the same clip.

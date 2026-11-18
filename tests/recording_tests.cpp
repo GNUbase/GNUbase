@@ -447,6 +447,11 @@ TEST_CASE("a four-lap cycle recording makes four takes on lanes of their own, th
 	}
 	// The last take was added last, so it plays where the takes overlap.
 	CHECK(events[3].at("id") == added.at("events").at(3));
+	// Its clip has a region per take (reference manual p. 226).
+	const Json project = run(client, "project.get");
+	for (const Json& clip : project.at("clips"))
+		if (clip.at("id") == added.at("clips").at(0))
+			CHECK(clip.at("regions").size() == 4);
 	const Json info = run(client, "event.get", {{"events", Json::array({events[2].at("id")})}});
 	CHECK(info.at("events").at(0).at("lane") == 2);
 }
@@ -701,6 +706,55 @@ TEST_CASE("recording.add applies the audio record modes to the events a take ove
 		add("keepHistory", one);
 		for (const Json& event : eventsOn(client, track))
 			CHECK(event.at("lane") == 0);
+	}
+	SECTION("only takes that overlap another take go onto lanes of their own")
+	{
+		// The third take, after a locate during recording, overlaps no other take: it stays on the first lane.
+		add("keepHistory",
+			Json::array({{{"position", 400}, {"offset", 0}, {"length", 200}},
+				{{"position", 500}, {"offset", 200}, {"length", 200}},
+				{{"position", 1500}, {"offset", 400}, {"length", 100}}}));
+		std::vector<std::pair<int64_t, int64_t>> lanes;
+		for (const Json& event : eventsOn(client, track))
+			lanes.emplace_back(event.at("position").get<int64_t>(), event.at("lane").get<int64_t>());
+		std::sort(lanes.begin(), lanes.end());
+		CHECK(lanes == std::vector<std::pair<int64_t, int64_t>>{{0, 0}, {400, 1}, {500, 2}, {1500, 0}});
+	}
+	SECTION("the takes' lanes stop at the last lane event.set can set")
+	{
+		run(client, "event.set", {{"events", {existing}}, {"lane", 999}});
+		add("keepHistory",
+			Json::array({{{"position", 400}, {"offset", 0}, {"length", 200}},
+				{{"position", 400}, {"offset", 200}, {"length", 200}},
+				{{"position", 400}, {"offset", 400}, {"length", 200}}}));
+		for (const Json& event : eventsOn(client, track))
+			if (event.at("id") != existing)
+				CHECK(event.at("lane") == 1000);
+	}
+	SECTION("a cycle recording makes a region of each take on its clip")
+	{
+		const bool cycle = GENERATE(false, true);
+		const Json added = run(client, "recording.add",
+			{{"cycle", cycle}, {"tracks", Json::array({{{"track", track}, {"path", file}, {"takes", two}}})}});
+		Json regions = Json::array();
+		const Json project = run(client, "project.get");
+		for (const Json& each : project.at("clips"))
+			if (each.at("id") == added.at("clips").at(0))
+				regions = each.at("regions");
+		if (!cycle) // a linear recording's takes, after a locate, are no laps
+		{
+			CHECK(regions.empty());
+		}
+		else
+		{
+			REQUIRE(regions.size() == 2);
+			CHECK(regions[0].at("name") == "Take 1");
+			CHECK(regions[0].at("start") == 0);
+			CHECK(regions[0].at("end") == 200);
+			CHECK(regions[1].at("name") == "Take 2");
+			CHECK(regions[1].at("start") == 200);
+			CHECK(regions[1].at("end") == 400);
+		}
 	}
 	SECTION("a locked event stays")
 	{
