@@ -112,7 +112,7 @@ namespace gnubase::ui
 
 		// Gives the keyboard focus to the zone of the docking window as Tab does: to the control that had it last in
 		// the zone, or else its main control. False if the zone isn't shown.
-		bool focus(const std::string& window, const std::string& zone);
+		bool focus(const std::string& window, const std::string& name);
 
 		// The layout as ui.layout has it: what the user changed, without the defaults.
 		const engine::Json& layout() const { return m_layout; }

@@ -674,7 +674,7 @@ TEST_CASE("Tab and Shift+Tab are the key commands Focus Next and Previous, and f
 	Rml::Element* lower = document->GetElementById("lower-zone");
 	REQUIRE(lower != nullptr);
 	Rml::Element* select = lower->AppendChild(document->CreateElement("select"));
-	select->SetInnerRML("<option value=\"a\">A</option><option value=\"b\">B</option>");
+	select->SetInnerRML(R"(<option value="a">A</option><option value="b">B</option>)");
 	REQUIRE(select->Focus());
 	app.ui().key(std::nullopt, "Tab");
 	CHECK(!context.GetFocusElement()->HasAttribute("zone"));
