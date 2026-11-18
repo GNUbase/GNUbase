@@ -117,6 +117,11 @@ namespace gnubase::test
 		m_ui->shell().showOsFileDialogs(false); // tests answer them (Shell::answerFileDialog)
 		m_automation = std::make_unique<ui::Automation>(m_ui->shell());
 		shell().step(std::chrono::milliseconds(0));
+		// macOS fits a window to its monitor (#1078): the test lays out differently there than elsewhere.
+		const ui::Rect opened = shell().bounds(m_ui->mainWindow().id());
+		if (opened.width < m_size.width || opened.height < m_size.height)
+			WARN("The main window opened at " << opened.width << "x" << opened.height << ", not at the " << m_size.width
+											  << "x" << m_size.height << " asked for: the monitor is smaller.");
 	}
 
 	engine::Json UiApp::call(const std::string& command, const engine::Json& parameters)
