@@ -123,7 +123,8 @@ Tempo (Shift and Space) is not bound.
 linear ones staying when tempo events are added, moved and removed, ramps, the first event, simultaneous moves, events
 at the cursor, `editing.tempoType`, every tap tempo mode, saving and loading, and tempo track files: the round trip with
 time signature events from fixed tempo mode, the tempo modes after an import, undo, the same file exported again, a
-failed export, and files that aren't tempo track files. `tests/transport_tests.cpp`: the playback start in `transport.get`.
+failed export, and files that aren't tempo track files. `tests/transport_tests.cpp`: the playback start in
+`transport.get`.
 `tests/tempotrack_ui_tests.cpp`: the visible tempos, the tapped tempo, the curve on the tempo track's lane with clicks
 that add, drag and erase events, the tempo track editor with Mod+T, its toolbar, info line and tools, its Current Tempo
 following the cursor again after a tempo was typed in it, and its rectangle selecting events, Shift-click taking a
