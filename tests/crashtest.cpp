@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Helper process for crash_tests.cpp: opens a log session in the given folder, then crashes the way it is told.
+// Helper process for crash_tests.cpp: opens a log session in the given folder, then crashes the way it is told (or,
+// with "helper", checks that the session starts and ends its gnubase-crashdump).
 #include "platform/log.h"
 
 #include <csignal>
@@ -12,10 +13,13 @@
 #include <atomic>
 #include <optional>
 #include <thread>
+#include <vector>
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+// tlhelp32.h needs windows.h first.
+#include <tlhelp32.h>
 #endif
 
 namespace
@@ -63,6 +67,47 @@ namespace
 		holder.join(); // not reached
 	}
 
+	// The ids of the gnubase-crashdump processes this process started.
+	std::vector<DWORD> crashDumpHelpers()
+	{
+		std::vector<DWORD> helpers;
+		HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+		if (snapshot == INVALID_HANDLE_VALUE)
+			return helpers;
+		PROCESSENTRY32W entry{};
+		entry.dwSize = sizeof(entry);
+		for (BOOL more = Process32FirstW(snapshot, &entry); more != FALSE; more = Process32NextW(snapshot, &entry))
+			if (entry.th32ParentProcessID == GetCurrentProcessId() &&
+				std::wstring_view(entry.szExeFile) == L"gnubase-crashdump.exe")
+				helpers.push_back(entry.th32ProcessID);
+		CloseHandle(snapshot);
+		return helpers;
+	}
+
+	// 0 if the log session starts one gnubase-crashdump and ends it with the session.
+	int startAndEndHelper(const std::filesystem::path& log)
+	{
+		{
+			const gnubase::logging::Session session(log);
+			if (crashDumpHelpers().size() != 1)
+				return 5;
+		}
+		return crashDumpHelpers().empty() ? 0 : 6;
+	}
+
+	// Ends the session's gnubase-crashdump, then crashes.
+	void crashWithoutHelper()
+	{
+		for (const DWORD id : crashDumpHelpers())
+			if (HANDLE helper = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, id); helper != nullptr)
+			{
+				TerminateProcess(helper, 1);
+				WaitForSingleObject(helper, INFINITE);
+				CloseHandle(helper);
+			}
+		RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+	}
+
 	// Crashes another thread while this one ends the log session, which removes the crash handler.
 	int crashWhileEnding(const std::filesystem::path& log)
 	{
@@ -104,6 +149,8 @@ int main(int argc, char** argv)
 #ifdef _WIN32
 		if (how == "ending")
 			return crashWhileEnding(log);
+		if (how == "helper")
+			return startAndEndHelper(log);
 #endif
 		const gnubase::logging::Session session(log);
 		gnubase::logging::info("about to crash");
@@ -114,6 +161,8 @@ int main(int argc, char** argv)
 			crashTwice();
 		if (how == "heaplocked")
 			crashWithHeapLocked();
+		if (how == "helperkilled")
+			crashWithoutHelper();
 		// A real access violation, not a null write, which optimizers may remove.
 		RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
 #else

@@ -134,7 +134,9 @@ TEST_CASE("of two threads crashing at once, the first crash is in the dump and g
 {
 	const bool alone = GENERATE(false, true);
 	CAPTURE(alone);
-	// The two crashes come in either order, and the second one may come before or while the first is handled.
+	// The two crashes come in either order. Most runs report both, so the second one came while the first was handled:
+	// it waits for the first to end the process, instead of ending it with its own code once the dump is written.
+	int bothReported = 0;
 	for (int run = 0; run < 5; ++run)
 	{
 		CAPTURE(run);
@@ -143,7 +145,11 @@ TEST_CASE("of two threads crashing at once, the first crash is in the dump and g
 		const auto exception = static_cast<unsigned>(code);
 		CHECK((exception == g_accessViolation || exception == g_illegalInstruction));
 		CHECK(dumpedException(gnubase::test::readText(dir.path() / "crash.dmp")) == exception);
+		const std::string log = gnubase::test::readText(dir.path() / "crash.log");
+		if (log.find("Crash: ") != log.rfind("Crash: "))
+			++bothReported;
 	}
+	CHECK(bothReported > 0);
 }
 
 TEST_CASE("a crash ends the process even while another thread holds the heap's lock", "[integration]")
@@ -157,12 +163,28 @@ TEST_CASE("a crash ends the process even while another thread holds the heap's l
 TEST_CASE("a crash while the log session ends ends the process with its exit code", "[integration]")
 {
 	// Depending on the timing, the crash handler takes the crash and writes a dump, or ends the process without one
-	// because it is being removed, or it is gone and Windows ends the process.
+	// because it is being removed, or it is gone and Windows ends the process. A dump that was begun is finished: the
+	// session's end doesn't stop gnubase-crashdump while it writes one.
 	for (int run = 0; run < 5; ++run)
 	{
 		CAPTURE(run);
 		const gnubase::test::TempDir dir;
 		CHECK(static_cast<unsigned>(crash(dir.path(), "ending")) == g_accessViolation);
+		if (std::filesystem::exists(dir.path() / "crash.dmp"))
+			CHECK(dumpedException(gnubase::test::readText(dir.path() / "crash.dmp")) == g_accessViolation);
 	}
+}
+
+TEST_CASE("a log session starts gnubase-crashdump and ends it with the session", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	CHECK(crash(dir.path(), "helper") == 0); // 5: no helper while the session runs, 6: one left after it
+}
+
+TEST_CASE("if gnubase-crashdump is gone, a crashed process writes its minidump itself", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	CHECK(static_cast<unsigned>(crash(dir.path(), "helperkilled")) == g_accessViolation);
+	CHECK(dumpedException(gnubase::test::readText(dir.path() / "crash.dmp")) == g_accessViolation);
 }
 #endif

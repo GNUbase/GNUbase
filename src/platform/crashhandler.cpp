@@ -73,7 +73,9 @@ namespace gnubase::logging::detail
 		// The first crash is the one the dump shows, and the process ends with its exit code: a thread that crashes
 		// while another one's crash is handled waits for that to end the process.
 		constexpr DWORD g_dumpTimeoutMs = 30000;
-		constexpr DWORD g_helperStartTimeoutMs = 10000;
+		// Well below the time a plugin host has to connect to the engine (HostManager::Options::launchTimeout), which
+		// includes opening its log session.
+		constexpr DWORD g_helperStartTimeoutMs = 2000;
 
 		// g_state goes from idle to crashing with the first crash, or to uninstalled when the handler is removed. The
 		// events and the helper stay until uninstallCrashHandler has taken it from idle to uninstalled, so a crash

@@ -41,6 +41,7 @@ flowchart LR
 - **gnubase** is the application: the engine, the UI (left out with `--headless`), the MCP server and the Lua runtime.
 - **gnubase-pluginhost** runs third-party plugins. How plugins are grouped into host processes is a user setting: all in one, per vendor (the default until #76 measures), per plugin or per instance, with an override per plugin. There is no in-process mode (#64). Variants for 32-bit plugins (Windows, Linux) and for x86-64 plugins on Apple Silicon (Rosetta) and Windows ARM64 (emulation) speak the same protocol (#151, #152, #153).
 - **Plugin scanning** uses the host binary in scan mode: one short-lived process per plugin file, with a timeout. A crash only blocklists that plugin (#66).
+- **gnubase-crashdump** (Windows) is started by every GNUbase process that keeps a log, waits for it to crash and writes its minidump from outside ([crash reports](features/crash-reports.md)).
 - When a host process crashes or misses its deadline, its plugins output silence, the UI is told, and the plugins can be reloaded with their last state (#65). GNUbase keeps running.
 
 ## Modules
