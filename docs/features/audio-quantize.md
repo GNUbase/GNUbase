@@ -155,7 +155,8 @@ resetting neither puts a copy of the event on top of the event nor removes copie
 duplicated or imported track, also those of its other versions, and of a duplicated version are slices of the copy of
 their event, which resets them. The origin changes its time base with the track's (`rebaseTrack`) and with the event's
 when the event moves onto a track of the other time base, alone or in an audio part, so the file keeps it and the event
-gets its start back in that one.
+gets its start back in that one. It also moves with the event's audio part, so resetting puts the event back where the
+part has it now, still in the part (#1728); slices moved without a part go back into the event where it was sliced.
 
 `quantize.createWarpMarkers` keeps the clip frames of the markers it adds in the clip's warp (`ClipWarp::created`,
 saved with the warp), and `quantize.resetWarpMarkers` removes the markers at those frames from the clip, also once

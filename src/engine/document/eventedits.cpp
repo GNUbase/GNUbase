@@ -326,10 +326,16 @@ namespace gnubase::engine
 			else if (item.audioPart != nullptr)
 			{
 				// The events first: one before the project start refuses the move, as the part's own start does.
+				// Their slice origins move with them, so that the Reset of the Slice Rules puts an event back where
+				// the part has it now (#1728); one that would come before the project start comes back at it.
 				for (AudioEvent* event : eventsIn(project, item.audioPart->id))
 				{
 					event->position = rebased(project, shifted(project, event->position, shift, true), base);
-					rebaseSliceOrigin(project, *event, base);
+					if (event->sliceOrigin)
+					{
+						time::Position& origin = event->sliceOrigin->timing.position;
+						origin = rebased(project, shifted(project, origin, shift, false), base);
+					}
 					event->track = track;
 				}
 				item.audioPart->track = track;

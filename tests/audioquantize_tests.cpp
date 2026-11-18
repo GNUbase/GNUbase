@@ -1656,6 +1656,38 @@ TEST_CASE(
 		CHECK(eventsOn(client, musical) ==
 			std::vector<std::vector<int64_t>>{{time::g_ticksPerQuarter / 12, 0, 4 * g_quarter}}); // 2000 samples
 	}
+
+	// The origin moves with the event's audio part (#1728), so the event comes back where the part has it now.
+	const auto toPart = [&]()
+	{ return run(client, "event.toPart", {{"events", sliced}}).at("events").at(0).get<ObjectId>(); };
+
+	SECTION("the event's audio part moved a bar later")
+	{
+		const ObjectId part = toPart();
+		run(client, "event.move", {{"events", {part}}, {"delta", 4 * g_quarter}});
+		CHECK(run(client, "quantize.resetSlices", {{"events", sliced}}).at("events") == Json::array({loop.event}));
+		CHECK(eventsOn(client, loop.track) ==
+			std::vector<std::vector<int64_t>>{{4 * g_quarter + 2000, 0, 4 * g_quarter}});
+		CHECK(byId(client, "audioEvents", loop.event).at("part") == part);
+	}
+
+	SECTION("the event's audio part moved a bar later onto a musical track, saved and loaded in between")
+	{
+		const ObjectId musical = run(client, "track.add", {{"type", "audio"}, {"timeBase", "musical"}, {"channels", 1}})
+									 .at("track")
+									 .at("id")
+									 .get<ObjectId>();
+		run(client, "event.move", {{"events", {toPart()}}, {"delta", 4 * g_quarter}, {"track", musical}});
+		const std::string file = (dir.path() / "part.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", file}});
+		CHECK(run(client, "quantize.resetSlices", {{"events", sliced}}).at("events") == Json::array({loop.event}));
+		CHECK(eventsOn(client, musical) ==
+			std::vector<std::vector<int64_t>>{
+				{(4 * time::g_ticksPerQuarter) + (time::g_ticksPerQuarter / 12), 0, 4 * g_quarter}});
+		CHECK(byId(client, "audioEvents", loop.event).at("fadeOut") == fadeOut);
+	}
 }
 
 TEST_CASE("Copies of slices have no slice origin of their own, but a duplicated track's slices do", "[integration]")
@@ -1701,6 +1733,24 @@ TEST_CASE("Copies of slices have no slice origin of their own, but a duplicated 
 		const Json result = run(client, "quantize.resetSlices", {{"events", Json::array({copied.at(3)})}});
 		CHECK(result.at("removed").size() == 4);
 		CHECK(eventsOn(client, copy) == whole);
+		CHECK(eventsOn(client, loop.track) == slices);
+	}
+
+	SECTION("an imported track resets its own slices, and the project's own stay (#1728)")
+	{
+		const std::string file = (dir.path() / "sliced.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		const ObjectId imported = run(client, "track.import", {{"path", file}}).at("tracks").at(0).get<ObjectId>();
+		REQUIRE(imported != loop.track);
+		Json copied = Json::array();
+		const Json project = run(client, "project.get");
+		for (const Json& event : project.at("audioEvents"))
+			if (event.at("track") == imported)
+				copied.push_back(event.at("id"));
+		REQUIRE(copied.size() == 5);
+		const Json result = run(client, "quantize.resetSlices", {{"events", Json::array({copied.at(3)})}});
+		CHECK(result.at("removed").size() == 4);
+		CHECK(eventsOn(client, imported) == whole);
 		CHECK(eventsOn(client, loop.track) == slices);
 	}
 
