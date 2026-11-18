@@ -1700,7 +1700,7 @@ TEST_CASE(
 		run(client, "event.move", {{"events", {part}}, {"delta", 4 * g_quarter}});
 		CHECK(run(client, "quantize.resetSlices", {{"events", sliced}}).at("events") == Json::array({loop.event}));
 		CHECK(eventsOn(client, loop.track) ==
-			std::vector<std::vector<int64_t>>{{4 * g_quarter + 2000, 0, 4 * g_quarter}});
+			std::vector<std::vector<int64_t>>{{(4 * g_quarter) + 2000, 0, 4 * g_quarter}});
 		CHECK(byId(client, "audioEvents", loop.event).at("part") == part);
 	}
 
