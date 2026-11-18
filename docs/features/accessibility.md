@@ -38,8 +38,8 @@ still looks checked while it has the focus. Inside the ring runs a line in the t
 ring also shows on skins filled with the accent, such as the primary button and a checked check box.
 `tools/skin/generate.py` makes these rules: each rule that gives a focusable widget a skin, hovered and pressed states
 included, gets a `:focus-visible` twin with the ring added, after all other rules so that the ring also shows under the
-mouse, and in their order, so that a focused button still looks hovered under the mouse and pressed while Space or the
-mouse presses it. Knobs, faders and sliders, whose parts have the skins, get the ring around them; text fields and
+mouse, and in their order, so that a focused button still looks hovered under the mouse and pressed while the mouse
+presses it. Knobs, faders and sliders, whose parts have the skins, get the ring around them; text fields and
 drop-down lists show their focus skin; menu items light up as under the mouse.
 
 ## Scaling

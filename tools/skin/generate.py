@@ -709,9 +709,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     rules.append(("button.toggle.listen.checked",
                   {"decorator": skin("toggle-monitor"), "color": on_fill(theme, toggle_fill(theme, "monitor"), c["text"])}))
     # The icons of checked record and monitor buttons in their labels' color, unless they are disabled
-    for kind, fill in (("record", "record"), ("monitor", "monitor"), ("listen", "monitor")):
+    for kind in ("record", "monitor"):
         rules.append((f"button.toggle.{kind}.checked:not(:disabled) svg.icon",
-                      {"image-color": on_fill(theme, toggle_fill(theme, fill), c["text"])}))
+                      {"image-color": on_fill(theme, toggle_fill(theme, kind), c["text"])}))
     rules.append(("button.toggle.solo.defeated", {"decorator": skin("toggle-hover"), "color": c["accent"]}))
     rules += [
         # Text fields

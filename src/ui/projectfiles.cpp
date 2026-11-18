@@ -584,7 +584,8 @@ namespace gnubase::ui
 		if (dialog == nullptr)
 			return;
 		// A double click on a row of the start screen's lists, or Enter while a list has the focus, does what the
-		// list's button does.
+		// list's button does; nothing while the list has no selected row, as the button would close the start screen
+		// and do nothing.
 		const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 		if (event.GetId() == Rml::EventId::Dblclick ||
 			(event.GetId() == Rml::EventId::Keydown &&
@@ -592,9 +593,9 @@ namespace gnubase::ui
 		{
 			const Rml::Element* target = event.GetTargetElement();
 			Rml::Element* button = nullptr;
-			if (inside(target, "start-templates"))
+			if (inside(target, "start-templates") && !selected(*dialog, "start-templates", m_templates).empty())
 				button = dialog->GetElementById("create-template");
-			else if (inside(target, "start-recent"))
+			else if (inside(target, "start-recent") && !selected(*dialog, "start-recent", m_recent).empty())
 				button = dialog->GetElementById("open-recent");
 			if (button != nullptr)
 				button->Click();

@@ -209,7 +209,7 @@ TEST_CASE("every theme shows the keyboard focus on every widget that takes it, i
 					focused.push_back(part.substr(first, part.find_last_not_of(" \t\r") + 1 - first));
 				}
 			}
-		// Hovered and pressed ones keep looking so with the focus, also when Space presses them.
+		// Hovered and pressed ones keep looking so with the focus, also while the mouse presses them.
 		for (const char* widget : {"button", "button:hover", "button:active", "button.primary", "button.primary:hover",
 				 "button.primary:active", "button.checked", "button.toggle", "button.toggle:hover",
 				 "button.toggle.mute.checked", "input.checkbox", "input.checkbox:checked", "input.radio",
@@ -246,8 +246,10 @@ TEST_CASE("the high contrast theme's text, accents and borders stand out from it
 	for (const std::string& theme : themes())
 	{
 		INFO("theme " << theme);
-		CHECK(gnubase::test::readText(themesDir() / theme / "focus-ring.svg")
-				  .find("stroke-width=\"" + std::to_string(ring(theme)) + "\"") != std::string::npos);
+		// The ring is the first rect, the line in the background color inside it the second.
+		pugi::xml_document document;
+		REQUIRE(document.load_string(gnubase::test::readText(themesDir() / theme / "focus-ring.svg").c_str()));
+		CHECK(document.child("svg").child("rect").attribute("stroke-width").as_int() == ring(theme));
 		if (theme != "high-contrast")
 			CHECK(ring("high-contrast") > ring(theme));
 	}
@@ -284,13 +286,14 @@ TEST_CASE("the high contrast theme's labels and marks stand out from the fills u
 	for (const auto& [selector, skin] : std::vector<std::pair<std::string, std::string>>{
 			 {"button.primary", "button-primary-normal.svg"}, {"button.toggle.mute.checked", "toggle-mute.svg"},
 			 {"button.toggle.solo.checked", "toggle-solo.svg"}, {"button.toggle.record.checked", "toggle-record.svg"},
-			 {"button.toggle.monitor.checked", "toggle-monitor.svg"}})
+			 {"button.toggle.monitor.checked", "toggle-monitor.svg"},
+			 {"button.toggle.listen.checked", "toggle-monitor.svg"}})
 	{
 		INFO(selector);
 		CHECK(contrast(color(selector), attribute(skin, "//rect", "fill")) >= 7.0);
 	}
-	// The icons of record and monitor buttons too, and of the monitor button that is listening.
-	for (const char* kind : {"record", "monitor", "listen"})
+	// The icons of record and monitor buttons too.
+	for (const char* kind : {"record", "monitor"})
 	{
 		INFO(kind);
 		const std::string skin = std::string_view(kind) == "record" ? "toggle-record.svg" : "toggle-monitor.svg";

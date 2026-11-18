@@ -11,6 +11,7 @@
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/themes.h"
 #include "ui/tracklist.h"
 
 #include <RmlUi/Core/Context.h>
@@ -2121,15 +2122,17 @@ TEST_CASE(
 	select->CancelSelectBox();
 	settle();
 
-	// The other themes: the 4 dp strip on every row, also the selected one and the folder's; and back to the default
+	// Every theme: the 4 dp strip on every row, also the selected one and the folder's; and back to the default
 	// theme's.
-	for (const char* theme : {"dark", "light", "high-contrast", "gnubase"})
+	std::vector<std::string> themes = test::themes(GNUBASE_RESOURCES_DIR);
+	themes.emplace_back(ui::g_defaultTheme);
+	for (const std::string& theme : themes)
 	{
 		INFO("theme " << theme);
 		app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
-		REQUIRE(app.waitUntil([&app, theme] { return app.shell().theme() == theme; }));
+		REQUIRE(app.waitUntil([&app, &theme] { return app.shell().theme() == theme; }));
 		settle();
-		const bool flat = std::string(theme) == "gnubase";
+		const bool flat = theme == ui::g_defaultTheme;
 		CHECK(std::abs(width(row(lead) + " .track-color") - (flat ? width(row(lead)) : 4.0)) <= 1.0);
 		CHECK(std::abs(width(row(folder) + " .track-color") - (flat ? width(row(folder)) : 4.0)) <= 1.0);
 	}

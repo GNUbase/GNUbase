@@ -228,7 +228,10 @@ TEST_CASE("Enter on the start screen's selected row does what its button does, a
 	key(app, "Mod+N");
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#start-templates listitem").size() == 1; }));
 	CHECK(idOf(key(app, "Tab")) == "start-templates");
-	key(app, "Down");
+	// Before a row is selected, Enter does nothing: the start screen stays open.
+	key(app, "Enter");
+	CHECK(shown(app, "#start-screen"));
+	CHECK(idOf(key(app, "Down")) == "start-templates");
 	key(app, "Enter");
 	REQUIRE(app.waitUntil([&app] { return tracks(app) == 1; }));
 	CHECK(!shown(app, "#start-screen"));

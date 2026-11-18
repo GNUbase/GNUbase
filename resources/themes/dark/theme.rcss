@@ -269,10 +269,6 @@
 	{
 		image-color: #f3f4f5;
 	}
-	button.toggle.listen.checked:not(:disabled) svg.icon
-	{
-		image-color: #f3f4f5;
-	}
 	button.toggle.solo.defeated
 	{
 		decorator: svg-ninepatch(toggle-hover.svg, 6 6 6 6);
