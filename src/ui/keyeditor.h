@@ -270,6 +270,11 @@ namespace gnubase::ui
 		std::vector<const Note*> selectedNotes() const;
 
 		void select(std::vector<std::pair<uint64_t, uint64_t>> notes);
+		// The view's selected notes, parts and notes.
+		std::vector<std::pair<uint64_t, uint64_t>> viewSelection() const;
+		// Shows the controller lanes for the view, with the notes the display shows selected: while a click's
+		// selection is unanswered, the click's, so that a lane edit acts on those (#1897).
+		void showLanes();
 		void setView(engine::Json parameters);
 		// Sends note.* commands, each {command, parameters}: one alone, several in a history.transaction. done, unless
 		// empty, runs with the result.

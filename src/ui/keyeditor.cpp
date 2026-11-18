@@ -565,11 +565,7 @@ namespace gnubase::ui
 		// of the selection before: the notes stay as the mouse selected them, so that a move right after a click moves
 		// those (#1817). The view after the answer has the selection sent, or a newer one.
 		if (m_selectionsOut == 0)
-		{
-			m_selection.clear();
-			for (const Json& selected : m_view.value("selection", Json::array()))
-				m_selection.emplace_back(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
-		}
+			m_selection = viewSelection();
 		m_from = 0;
 		m_to = 1;
 		if (!m_parts.empty())
@@ -590,12 +586,33 @@ namespace gnubase::ui
 		}
 		updateOrder();
 		render();
+		showLanes();
+	}
+
+	std::vector<std::pair<uint64_t, uint64_t>> KeyEditor::viewSelection() const
+	{
+		std::vector<std::pair<uint64_t, uint64_t>> selection;
+		for (const Json& selected : m_view.value("selection", Json::array()))
+			selection.emplace_back(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
+		return selection;
+	}
+
+	void KeyEditor::showLanes()
+	{
+		Json view = m_view;
+		if (m_selectionsOut > 0)
+		{
+			Json selection = Json::array();
+			for (const auto& [part, note] : m_selection)
+				selection.push_back({{"part", part}, {"note", note}});
+			view["selection"] = std::move(selection);
+		}
 		// The lanes leave out the notes of the sounds the list hides, as the note display does.
 		std::vector<bool> shown;
 		if (std::find(m_rowOf.begin(), m_rowOf.end(), -1) != m_rowOf.end())
 			for (int pitch = 0; pitch < g_pitches; ++pitch)
 				shown.push_back(listed(pitch));
-		m_lanes->show(m_project, m_view, m_from, m_to, shown);
+		m_lanes->show(m_project, view, m_from, m_to, shown);
 	}
 
 	void KeyEditor::setTimeRange(std::optional<std::pair<int64_t, int64_t>> range)
@@ -1418,13 +1435,23 @@ namespace gnubase::ui
 			selection.push_back({{"part", part}, {"note", note}});
 		render(); // at once; editor.changed confirms it
 		++m_selectionsOut;
+		showLanes();
 		m_binding.send("editor.set", {{"editor", m_name}, {"selection", selection}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!result.ok())
 					logging::warning("The key editor cannot select notes: {}", result.error);
-				if (!alive.expired())
-					--m_selectionsOut;
+				if (alive.expired() || --m_selectionsOut != 0)
+					return;
+				// The engine's editor.changed comes before the answer: once all are answered, the view has the
+				// selection the editor shows, unless the last one was refused, as when another client had just deleted
+				// the note. Then the view's selection shows again (#1897).
+				if (std::vector<std::pair<uint64_t, uint64_t>> shown = viewSelection(); shown != m_selection)
+				{
+					m_selection = std::move(shown);
+					render();
+					showLanes();
+				}
 			});
 	}
 

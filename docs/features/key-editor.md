@@ -149,7 +149,9 @@ selects and deselects no notes.
   zooms, takes them to the time now under the mouse, where the release puts them (#1808). A click that selects shows its
   selection at once, and the views that come in before the engine answered it, which can be older, such as the
   editor.changed of the selection before, leave it as it is: a drag right after the click moves the notes it selected
-  (#1817).
+  (#1817), and the controller lanes show that selection too, so that a lane edit acts on the same notes. Once the engine
+  has answered them all, the view has the selection shown, unless the last one was refused, as when another client had
+  just deleted the note: then the view's selection shows again (#1897).
 - **Info line** (p. 1199). Start, end and length in bars and beats, the pitch as a name such as C3 (typing a number
   works too), velocities 0-127, the channel 1-16 and the Articulations, the attributes of the track's articulation
   map that the note has, names separated by commas ([articulation-maps.md](articulation-maps.md)). A value typed
@@ -194,7 +196,8 @@ menu.
   selected notes as they were, and a held key's pitch ending when the editor switches to the drum editor, closes through
   the engine API or has its window closed, and when the lower zone's Editor panel in a window of its own has that window
   closed or is docked again; the object selection tool selecting, deselecting, moving, resizing, inserting and deleting,
-  and a view older than a click that deselects leaving the notes deselected, so a drag right after it moves one note;
+  and a view older than a click that deselects leaving the notes and the controller lanes deselected, so a drag right
+  after it moves one note, and a press whose selection the engine refuses showing the view's selection again;
   the draw tool with Quantize Link and an eighth from the Length Quantize menu; a move released outside the editor
   ending without its effect, the note not following the mouse back and a later click moving nothing, and a draw
   released there drawing; a move and a draw whose release was lost ending as the mouse leaves the window, and a draw

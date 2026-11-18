@@ -5,6 +5,7 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/enginebinding.h"
 #include "ui/keyeditor.h"
 #include "ui/midieditor.h"
 #include "ui/rmlui.h"
@@ -786,20 +787,22 @@ TEST_CASE("the object selection tool selects, moves, resizes, inserts and delete
 	f.settle();
 	CHECK(f.note(ids[0]).at("position") == 2 * g_sixteenth);
 	// A drag at a note's end resizes it (p. 1214).
-	const ui::Target from = f.at(7.95, 62);
-	const Json box = f.box(noteSelector(ids[1]));
-	f.drag(from, f.at(12, 62));
-	Json note;
-	const bool resized = f.app.waitUntil(
-		[&]
-		{
-			note = f.note(ids[1]);
-			return note.at("length") == 2 * g_quarter;
-		});
-	const ui::Point pressed = from.point.value_or(ui::Point{});
-	INFO("pressed at " << pressed.x << ", " << pressed.y << " on the note's box " << box.dump() << ", the note now "
-					   << note.dump());
-	REQUIRE(resized);
+	{
+		const ui::Target from = f.at(7.95, 62);
+		const Json box = f.box(noteSelector(ids[1]));
+		f.drag(from, f.at(12, 62));
+		Json note;
+		const bool resized = f.app.waitUntil(
+			[&]
+			{
+				note = f.note(ids[1]);
+				return note.at("length") == 2 * g_quarter;
+			});
+		const ui::Point pressed = from.point.value_or(ui::Point{});
+		INFO("pressed at " << pressed.x << ", " << pressed.y << " on the note's box " << box.dump() << ", the note now "
+						   << note.dump());
+		REQUIRE(resized);
+	}
 	f.settle();
 	CHECK(f.note(ids[1]).at("position") == g_quarter);
 
@@ -816,11 +819,12 @@ TEST_CASE("the object selection tool selects, moves, resizes, inserts and delete
 	f.settle();
 }
 
-TEST_CASE("a view older than a click that selects keeps the click's selection", "[ui]")
+TEST_CASE("a view older than a click that deselects leaves the notes and the controller lanes deselected", "[ui]")
 {
 	// On a loaded machine the engine's answers to an earlier selection, such as its editor.changed, can come in after a
 	// click selected anew, before the click's own answer. Until that, the notes stay as the click selected them, so a
-	// drag right after the click moves only those (#1817).
+	// drag right after the click moves only those (#1817), and the controller lanes show the click's selection too, so
+	// that a lane edit acts on the same notes (#1897).
 	Fixture f;
 	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {g_quarter, 62, g_quarter}});
 	f.click(of(noteSelector(ids[0])));
@@ -834,11 +838,56 @@ TEST_CASE("a view older than a click that selects keeps the click's selection", 
 	f.app.ui().click(f.window, f.at(12.5, 70), ui::MouseButton::Left, 1, {});
 	f.app.appUi().editorWindow()->keyEditor()->show(project, older, 0);
 	CHECK(f.elements(".key-note.selected").empty());
+	CHECK(f.elements(".controller-bar").size() == 2);
+	CHECK(f.elements(".controller-bar.selected").empty());
 	f.drag(f.at(2, 60), f.at(4.2, 63));
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 63; }));
 	f.settle();
 	CHECK(f.note(ids[1]).at("pitch") == 62);
 	CHECK(f.note(ids[1]).at("position") == g_quarter);
+}
+
+TEST_CASE("a press whose selection the engine refuses shows the view's selection again", "[ui]")
+{
+	// The display shows a note the engine no longer has, as when another client has just deleted it: the press's
+	// editor.set is refused, and once it is answered the notes and the controller lanes show the view's selection
+	// again, not the press's (#1897).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}});
+	f.settle();
+	Json project = f.app.call("project.get");
+	const Json view = f.view();
+	REQUIRE(view.at("selection").empty());
+	uint64_t gone = 0;
+	for (Json& part : project.at("midiParts"))
+		if (part.at("id") == f.part)
+		{
+			Json note = part.at("notes").at(0);
+			gone = note.at("id").get<uint64_t>() + 1000;
+			note["id"] = gone;
+			note["position"] = g_quarter;
+			note["pitch"] = 62;
+			part.at("notes").push_back(note);
+		}
+	REQUIRE(gone != 0);
+	// No read is out that would show the engine's project again before the click is answered.
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("project.get") == 0 && binding.waiting("editor.get") == 0; }));
+	f.app.appUi().editorWindow()->keyEditor()->show(project, view, 0);
+	REQUIRE(f.elements(".key-note").size() == 2);
+	// A move of it released outside the key editor: no edit and no click, which would activate the part with an
+	// editor.set of its own, whose editor.changed would show the view again anyway.
+	f.app.ui().press(f.window, of(noteSelector(gone)), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().move(f.window, f.at(8.5, 62));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().release(f.window, of("#editor-keep-contents"), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.selected").empty(); }));
+	CHECK(f.elements(".controller-bar.selected").empty());
+	CHECK(f.selection().empty());
+	CHECK(f.partNotes().size() == 1);
+	CHECK(f.note(ids[0]).at("position") == 0);
 }
 
 TEST_CASE("the draw tool draws notes of the length quantize's length or a multiple of it", "[ui]")
