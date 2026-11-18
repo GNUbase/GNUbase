@@ -3,6 +3,7 @@ add_library(gnubase-testutils STATIC
 	testutils/commandholds.h
 	testutils/fakeui.cpp testutils/fakeui.h
 	testutils/goldenimage.cpp testutils/goldenimage.h
+	testutils/heldcuethread.cpp testutils/heldcuethread.h
 	testutils/heldjob.cpp testutils/heldjob.h
 	testutils/library.h
 	testutils/schemaguards.h

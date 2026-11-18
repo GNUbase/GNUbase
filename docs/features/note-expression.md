@@ -80,7 +80,9 @@ such as clock and active sensing, 0xF8 to 0xFF) for `midi.activity`, which the e
 second while input arrives and a device processes blocks (the audio engine's cue thread notices it); it takes the
 messages with their ports and announces them as the event `midi.activity`, which the Note Expression Input page shows.
 Its runs stay out of the command log. Turning `midi.activityListen` on, and starting a device, drop what was queued
-before, so nothing old is announced as new. Rendered offline (`audio.render`), nothing runs it: a client calls it. The
+before, so nothing old is announced as new. The cue thread counts the input from before the device started, so input
+that arrives before it first runs is announced too (#1886); a test holds it back at its start until `midi.monitor` has
+the input (#1889). Rendered offline (`audio.render`), nothing runs it: a client calls it. The
 user settings `midi.mpeInput` and `midi.mpePitchRange`, which before #1514 made MIDI recording take every input as MPE's
 lower zone, are gone without a migration: a port's MPE input is set up again on the Note Expression Input page.
 

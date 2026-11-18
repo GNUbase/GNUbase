@@ -10,6 +10,7 @@
 #include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
 #include "plugin/events.h"
+#include "testutils/heldcuethread.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -694,6 +695,32 @@ TEST_CASE(
 	run(client, "midi.activityListen", {{"on", true}});
 	Setup::send(*setup.mpe, {{0xB0, 1, 4}});
 	CHECK(waitFor(client, "midi.activity").at("received") == received("MPE", {0xB0, 1, 4}));
+	run(client, "audio.stop");
+}
+
+TEST_CASE("MIDI input that the audio thread takes before the cue thread first runs is announced as midi.activity",
+	"[integration]")
+{
+	// The cue thread, held back when it starts, reads the activity count only once the input has reached the audio
+	// thread: it must count from what the count was before the device started, not from what it finds (#1886, #1889).
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "midi.activityListen", {{"on", true}});
+	gnubase::test::HeldCueThread held(setup.engine);
+	run(client, "audio.start");
+	REQUIRE(held.waitUntilHeld());
+	run(client, "midi.monitor", {{"start", true}});
+	Setup::send(*setup.keys, {{0xB0, 1, 2}});
+	// Once midi.monitor has the input, the audio thread has counted it as activity too (MidiPorts::take).
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (run(client, "midi.monitor").at("received").empty() && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	REQUIRE(std::chrono::steady_clock::now() < deadline);
+	CHECK(held.release()); // held until the input was counted
+	const Json activity = waitFor(client, "midi.activity");
+	REQUIRE(activity.is_object());
+	CHECK(activity.at("received") ==
+		Json::array({{{"backend", "dummy"}, {"id", "Keys"}, {"bytes", std::vector<int>{0xB0, 1, 2}}}}));
 	run(client, "audio.stop");
 }
 

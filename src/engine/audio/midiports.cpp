@@ -255,8 +255,6 @@ namespace gnubase::engine
 					addInput(slot, message, allInputs);
 				}
 				const Received received{slot, block.position + message.offset, message};
-				if (!m_monitor.tryPush(received))
-					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
 				// Only while someone listens, and without system real-time messages (clock, active sensing), which
 				// some devices send all the time.
 				if (m_activityListen.load(std::memory_order_relaxed) && message.bytes[0] < 0xF8)
@@ -265,6 +263,9 @@ namespace gnubase::engine
 						m_activityDropped.fetch_add(1, std::memory_order_relaxed);
 					m_activityCount.fetch_add(1, std::memory_order_relaxed);
 				}
+				// After the count: a thread that midi.monitor gave the message sees it counted (#1889).
+				if (!m_monitor.tryPush(received))
+					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
 			});
 	}
 
