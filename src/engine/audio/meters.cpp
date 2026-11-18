@@ -81,7 +81,8 @@ namespace gnubase::engine
 			m_publishedPeakMax[index].store(0.0f, std::memory_order_relaxed);
 			m_publishedRmsMax[index].store(0.0f, std::memory_order_relaxed);
 		}
-		m_channels.store(channels, std::memory_order_relaxed);
+		// After the values it cleared: a reader that sees a channel come back doesn't read its old values (read).
+		m_channels.store(channels, std::memory_order_release);
 		// The RMS window follows its resolution and the sample rate: a new one starts empty.
 		if (const int resolution = m_rmsResolution.load(std::memory_order_relaxed);
 			resolution != m_resolution || sampleRate != m_sampleRate)
@@ -186,7 +187,7 @@ namespace gnubase::engine
 	{
 		const float rmsGain = m_aes17.load(std::memory_order_relaxed) ? g_aes17 : 1.0f;
 		LevelReading reading;
-		reading.channels = m_channels.load(std::memory_order_relaxed);
+		reading.channels = m_channels.load(std::memory_order_acquire);
 		for (size_t c = 0; c < static_cast<size_t>(reading.channels); ++c)
 		{
 			reading.peak[c] = m_peak[c].load(std::memory_order_relaxed);
@@ -351,13 +352,15 @@ namespace gnubase::engine
 			m_channels = channels;
 			m_filterState = {};
 			m_history = {};
-			m_publishedChannels.store(channels, std::memory_order_relaxed);
+			m_publishedChannels.store(channels, std::memory_order_release); // after the values it cleared (read)
 		}
 		if (measuring && !m_wasMeasuring)
 		{
-			// Playback starts: a fresh step, so no block or true peak holds audio from while the transport stood.
+			// Playback starts: a fresh step, and blocks of only the steps from here on, so no block or true peak holds
+			// audio from while the transport stood.
 			m_stepEnergy = 0.0;
 			m_stepFrames = 0;
+			m_playingSteps = 0;
 			m_windowTruePeak.fill(0.0f);
 			m_freshSamples = g_taps / 4;
 		}
@@ -544,7 +547,7 @@ namespace gnubase::engine
 		reading.integrated = value(m_integrated.load(std::memory_order_relaxed));
 		reading.range = value(m_range.load(std::memory_order_relaxed));
 		reading.seconds = m_seconds.load(std::memory_order_relaxed);
-		reading.channels = m_publishedChannels.load(std::memory_order_relaxed);
+		reading.channels = m_publishedChannels.load(std::memory_order_acquire);
 		for (size_t c = 0; c < static_cast<size_t>(reading.channels); ++c)
 		{
 			reading.truePeak[c] = m_truePeak[c].load(std::memory_order_relaxed);
