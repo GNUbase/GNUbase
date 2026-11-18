@@ -29,9 +29,9 @@ env:
   # only push main's out of the repository's 10 GB of Actions cache, as no other pull request can restore them. Each job
   # caps its cache (CCACHE_MAXSIZE, SCCACHE_CACHE_SIZE) at about one and a half of its builds, so that one push's caches
   # take about half of the 10 GB. Each push to main saves them under new keys, and GitHub evicts the least recently used
-  # once the 10 GB are full, so about two pushes' caches stay. The jobs print their cache statistics after building,
-  # to check the caps against. SDL and RmlUi compile with precompiled headers, which neither ccache nor sccache can
-  # cache, so CI builds without them.
+  # once the 10 GB are full, so about two pushes' caches stay. The jobs zero their cache statistics after restoring the
+  # cache and print them after building, so they show this build's hits and misses to check the caps against. SDL and
+  # RmlUi compile with precompiled headers, which neither ccache nor sccache can cache, so CI builds without them.
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_LAUNCHER: >-
     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
@@ -130,6 +130,12 @@ jobs:
         run: >-
           cmake --preset ${{ matrix.preset }} -DGNUBASE_LTO=OFF
           ${{ runner.os == 'Windows' && env.SCCACHE_LAUNCHER || env.CCACHE_LAUNCHER }}
+
+      # ccache keeps its statistics in the cache folder, so without this they would add up over every build since the
+      # cache was first created. sccache's start with its server.
+      - name: Zero the compiler cache statistics
+        if: runner.os != 'Windows'
+        run: ccache --zero-stats
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --config Release
@@ -383,6 +389,7 @@ jobs:
 
       - name: Build tests
         run: |
+          ccache --zero-stats
           cmake --build --preset linux-clang --target gnubase-tests
           ccache --show-stats
 
@@ -439,6 +446,7 @@ jobs:
       - name: Build with clang-tidy
         run: |
           touch "$RUNNER_TEMP/build-start"
+          ccache --zero-stats
           cmake --build --preset linux-clang
           ccache --show-stats
           mkdir -p .tidy-cache
