@@ -2654,6 +2654,15 @@ namespace gnubase::engine
 			AutomationClipboard clipboard;
 			clipboard.start = start;
 			clipboard.startTicks = ticks(project, {time::TimeBase::Linear, start});
+			// The given tracks keep those without automation too, so that a paste onto tracks follows their order.
+			const bool given = context.parameters().contains("tracks");
+			if (given)
+			{
+				const auto tracks = context.parameters().at("tracks").get<std::set<ObjectId>>();
+				for (const ObjectId track : project.trackOrder())
+					if (tracks.count(track) != 0)
+						clipboard.tracks.push_back(track);
+			}
 			for (const AutomationLane* lane : lanes)
 			{
 				const time::TimeBase base = project.trackById.at(lane->track).timeBase;
@@ -2671,7 +2680,7 @@ namespace gnubase::engine
 					copied.processor = channel.instrument;
 				if (lane->target.type == AutomationTargetType::MidiEffect)
 					copied.processor = midiEffectSlot(channel, lane->target.number).effect;
-				if (!contains(clipboard.tracks, lane->track))
+				if (!given && !contains(clipboard.tracks, lane->track))
 					clipboard.tracks.push_back(lane->track);
 				clipboard.lanes.push_back(std::move(copied));
 			}
@@ -3315,7 +3324,8 @@ namespace gnubase::engine
 					" for automation.paste: of every track (Copy Automation of All Tracks), of tracks (ids, Copy "
 					"Automation of Selected Tracks) or of lanes (ids, Copy Automation of Selected Parameters), each "
 					"lane with points with the curve's values at the range's edges. It has a clipboard of its own, "
-					"apart from range.copy's. Changes nothing in the project. Returns how many lanes it copied.",
+					"apart from range.copy's, which a new or loaded project empties. Changes nothing in the project. "
+					"Returns how many lanes it copied, which the event automation.copied has too.",
 				schema({{"start", integer()}, {"end", integer()}, {"tracks", events()}, {"lanes", events()}}, {}),
 				schema({{"lanes", integer()}}, {"lanes"}), false},
 			[this](CommandContext& context)
@@ -3323,6 +3333,7 @@ namespace gnubase::engine
 				AutomationClipboard clipboard = copyAutomation(m_project, context);
 				Json result = {{"lanes", clipboard.lanes.size()}};
 				m_automationClipboard = std::move(clipboard);
+				context.emit("automation.copied", result);
 				return result;
 			});
 		addEdit(engine,

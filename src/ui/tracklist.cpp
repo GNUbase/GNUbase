@@ -715,11 +715,14 @@ namespace gnubase::ui
 		// and without a selection.
 		m_subscriptions.push_back(
 			m_binding.on("trackLayout.changed", [this](const engine::Event& event) { loadLayout(event.data, false); }));
+		m_subscriptions.push_back(m_binding.on("automation.copied",
+			[this](const engine::Event& event) { m_automationCopied = event.data.value("lanes", 0) > 0; }));
 		m_subscriptions.push_back(m_binding.on("project.reset",
 			[this, readVisibility](const engine::Event&)
 			{
 				select({});
 				m_selectedLanes.clear();
+				m_automationCopied = false; // the engine's automation clipboard is empty again
 				m_clicked.clear(); // the old project's tracks' clicks, whose ids the new one's may have (#1852)
 				// A height drag under way was the old project's: its release sends nothing to the new one.
 				if (m_drag == Drag::Height)

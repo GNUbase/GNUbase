@@ -56,6 +56,9 @@ namespace gnubase::ui
 		// The selected automation tracks' lanes (#125): a click on an automation track's row, beside its buttons,
 		// selects it, Ctrl or Shift adds or removes it, a click on a track's own row deselects them.
 		std::vector<uint64_t> selectedLanes() const;
+		// Whether automation.copy copied automation (its event automation.copied) since the project started: when the
+		// Paste Automation commands have something to paste.
+		bool automationCopied() const { return m_automationCopied; }
 		// Whether a selected folder has a group channel (withGroupChannel) or has none: when Disable or Enable Group
 		// Channel has something to do.
 		bool selectsFolder(bool withGroupChannel) const;
@@ -250,6 +253,7 @@ namespace gnubase::ui
 		std::string m_versionRml;                // what it shows
 		Rml::Element* m_versionsMenu = nullptr;  // the document's #track-versions-menu
 		std::set<uint64_t> m_selectedLanes;      // the selected automation tracks' lanes
+		bool m_automationCopied = false;
 		std::vector<Row> m_tracks;               // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
 		std::set<uint64_t> m_folded;

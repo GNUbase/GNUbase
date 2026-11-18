@@ -756,8 +756,18 @@ TEST_CASE("automation tracks are selected, and the track list copies their autom
 	};
 	const std::string first = row(f.track) + " .automation-row";
 	const std::string second = row(other) + " .automation-row";
+	// The commands for selected parameters wait for selected automation tracks, the paste commands for copied
+	// automation.
+	const auto canRun = [&f](const char* command) { return f.app.keys().canRun(command, f.app.main(), nullptr); };
+	f.app.appUi().trackList()->select({f.track});
+	CHECK(!canRun("track.copyAutomationSelectedParameters"));
+	CHECK(canRun("track.copyAutomationSelected"));
+	CHECK(!canRun("track.pasteAutomationAll"));
+	CHECK(!canRun("track.pasteAutomationSelected"));
 	clickRow(first);
 	CHECK(hasClass(elements(f.app, first).at(0), "selected"));
+	CHECK(canRun("track.copyAutomationSelectedParameters"));
+	CHECK(!canRun("track.pasteAutomationSelectedParameters"));
 	CHECK(f.app.appUi().trackList()->selectedLanes() == std::vector<uint64_t>{volume.get<uint64_t>()});
 	clickRow(second, {"ctrl"});
 	CHECK(f.app.appUi().trackList()->selectedLanes().size() == 2);
@@ -769,6 +779,8 @@ TEST_CASE("automation tracks are selected, and the track list copies their autom
 	// the locators (reference manual pp. 878-879).
 	clickRow(first);
 	f.app.keys().run("track.copyAutomationSelectedParameters", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return canRun("track.pasteAutomationSelectedParameters"); }));
+	CHECK(canRun("track.pasteAutomationAll"));
 	clickRow(second);
 	f.app.call("transport.set", {{"left", 96000}, {"right", 144000}});
 	f.app.keys().run("track.pasteAutomationSelectedParameters", Json::object(), f.app.main(), nullptr);
@@ -792,6 +804,12 @@ TEST_CASE("automation tracks are selected, and the track list copies their autom
 	f.app.keys().run("track.pasteAutomationSelected", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return positions().size() == 9; }));
 	CHECK(positions().at(5) == 192000);
+
+	// A new project has nothing copied and no selected automation tracks, whose ids its lanes get again.
+	clickRow(second);
+	f.app.call("project.new");
+	REQUIRE(f.app.waitUntil([&] { return !canRun("track.pasteAutomationAll"); }));
+	CHECK(f.app.appUi().trackList()->selectedLanes().empty());
 }
 
 TEST_CASE("a track's lanes come between its own lane and its automation tracks, under its row", "[ui]")
