@@ -1432,7 +1432,7 @@ TEST_CASE("a quit request right after Cancel asks again, before the answered que
 	app.ui().click(std::nullopt, {"#discard-changes-dialog button[result=cancel]", 0, std::nullopt},
 		gnubase::ui::MouseButton::Left, 1, {});
 	app.keys().run("file.quit", Json::object(), app.main(), nullptr);
-	REQUIRE(app.waitUntil([&app, &answered] { return answered.get() == nullptr; }));
+	REQUIRE(app.waitUntil([&answered] { return answered.get() == nullptr; }));
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
 	REQUIRE(app.shell().running());
 	click(app, "#discard-changes");
