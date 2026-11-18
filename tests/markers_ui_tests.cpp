@@ -18,7 +18,6 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -452,9 +451,15 @@ namespace
 		CHECK(rows[1]->QuerySelector(".type")->GetInnerRML() == "Cycle");
 		CHECK(field(document, 1, "position") == ui::formatTime(ui::TimeFormat::BarsBeats, 2.0, context));
 		CHECK(field(document, 1, "end") == ui::formatTime(ui::TimeFormat::BarsBeats, 4.0, context));
-		auto* tracks = dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("marker-track"));
-		REQUIRE(tracks != nullptr);
-		CHECK(tracks->GetValue() == std::to_string(track));
+		// The marker track list's selected track, as the UI tools see it.
+		const auto picked = [&app, window]
+		{
+			for (const Json& option : test::selectOptions(app, "#marker-track", window))
+				if (option.at("selected").get<bool>())
+					return option.at("value").get<std::string>();
+			return std::string();
+		};
+		CHECK(picked() == std::to_string(track));
 
 		// A click in the locate column locates there, and the arrow shows at the marker at the cursor.
 		app.ui().click(window, at("#marker-rows .locate", 1), ui::MouseButton::Left, 1, {});
@@ -508,8 +513,11 @@ namespace
 		const auto other = app.call("track.add", {{"type", "marker"}}).at("track").at("id").get<uint64_t>();
 		REQUIRE(app.waitUntil([&markers] { return markers.markers().empty(); }));
 		CHECK(test::selectOptions(app, "#marker-track", window).size() == 2);
-		CHECK(tracks->GetValue() == std::to_string(other));
-		tracks->SetSelection(0);
+		REQUIRE(picked() == std::to_string(other));
+		// Opened, one up to the first track, closed.
+		app.ui().click(window, at("#marker-track"), ui::MouseButton::Left, 1, {});
+		app.ui().key(window, "Up");
+		app.ui().click(window, at("#marker-track"), ui::MouseButton::Left, 1, {});
 		REQUIRE(app.waitUntil([&app, track] { return app.call("project.get").at("activeMarkerTrack") == track; }));
 		REQUIRE(app.waitUntil([&markers] { return markers.markers().size() == 3; }));
 

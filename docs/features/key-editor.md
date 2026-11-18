@@ -170,14 +170,14 @@ selects and deselects no notes.
 
 Live MIDI keyboard input into `editor.input` (it waits for the MIDI recording input path, #97); Left and Right moving
 the step input cursor and lengthening a held chord; the Mute tool on notes (notes have no mute yet; it mutes the
-Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note display (it draws on the controller lanes); the selection rectangle, the trim
-tool's drag across several notes and the draw tool's modifiers for velocity, pitch and position; key commands for the
-transpose palette and deleting; the nudge buttons, Solo Editor, Record in Editor, Acoustic Feedback, pitch visibility,
-the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom
-and scrolling; the key at the mouse's pitch lit while the mouse moves in the note display (p. 1204); drum map names in
-the key editor and articulation names; Add to Chord Track, Match with Chord Track, Create Chord Events and the chord
-insert tools; quantizing from the toolbar (#132) and the Length section's functions (#133); the key editor's context
-menu.
+Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note
+display (it draws on the controller lanes); the selection rectangle, the trim tool's drag across several notes and the
+draw tool's modifiers for velocity, pitch and position; key commands for the transpose palette and deleting; the nudge
+buttons, Solo Editor, Record in Editor, Acoustic Feedback, pitch visibility, the Scale Assistant, Indicate
+Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom and scrolling; the key at the
+mouse's pitch lit while the mouse moves in the note display (p. 1204); drum map names in the key editor and articulation
+names; Add to Chord Track, Match with Chord Track, Create Chord Events and the chord insert tools; quantizing from the
+toolbar (#132) and the Length section's functions (#133); the key editor's context menu.
 
 ## Checks
 
@@ -194,24 +194,24 @@ menu.
   (`tests/golden/ui/key-editor-keyboard.png`); pressing the right part of a white key beside a black key and the black
   key playing their pitches on the track's instrument until the mouse is released, also outside the editor, leaving the
   selected notes as they were, and a held key's pitch ending when the editor switches to the drum editor, closes through
-  the engine API or has its window closed, and when the lower zone's Editor panel in a window of its own has that window
-  closed or is docked again; the object selection tool selecting, deselecting, moving, resizing, inserting and deleting,
-  and a view older than a click that deselects leaving the notes and the controller lanes deselected, so a drag right
-  after it moves one note, and a press whose selection the engine refuses showing the view's selection again;
-  the draw tool with Quantize Link and an eighth from the Length Quantize menu; a move released outside the editor
-  ending without its effect, the note not following the mouse back and a later click moving nothing, and a draw
-  released there drawing; a move and a draw whose release was lost ending as the mouse leaves the window, and a draw
-  whose mouseup never came at the next press; a resize released there ending without its effect, its note keeping the
-  length the mouse gives it while the display is shown again during it; a move's notes at the time under the mouse
-  as the range changes during it; the erase, trim (and with Alt), split
-  and glue tools, and the split tool splitting the selected notes of two parts at one position in one undo step; the
-  transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input
-  selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and
-  off, with and without a modifier key, choosing tools; drags on the keyboard's left part zooming the rows in and out
-  between the limits, from the height a style sheet gives them, also after a style change at a zoom and back at 1, the
-  keyboard as high as the rows of any height, nothing zoomed or scrolled without a row height to scale and no height
-  left on the rows for a later style, the zoom snapping to 1 near it, and scrolling the note display, while a click
-  there zooms nothing, and a click and a drag there leaving a note an earlier press selected and the history alone; the
-  lower zone's key editor at its default size giving the note display more room than the controller lanes, at dp ratios
-  1 and 2, and the lanes whole in a lower zone of 400 dp; the editor window's lane keeping its 64 dp and the note
-  display its 40%, and the in-place editor's lanes keeping their height with its toolbar shown.
+  the engine API or has its window closed, when the lower zone's Editor panel in a window of its own has that window
+  closed or is docked again, and when that panel's tab is hidden or it is opened in a window of its own; the object
+  selection tool selecting, deselecting, moving, resizing, inserting and deleting, and a view older than a click that
+  deselects leaving the notes and the controller lanes deselected, so a drag right after it moves one note, and a press
+  whose selection the engine refuses showing the view's selection again; the draw tool with Quantize Link and an eighth
+  from the Length Quantize menu; a move released outside the editor ending without its effect, the note not following
+  the mouse back and a later click moving nothing, and a draw released there drawing; a move and a draw whose release
+  was lost ending as the mouse leaves the window, and a draw whose mouseup never came at the next press; a resize
+  released there ending without its effect, its note keeping the length the mouse gives it while the display is shown
+  again during it; a move's notes at the time under the mouse as the range changes during it; the erase, trim (and with
+  Alt), split and glue tools, and the split tool splitting the selected notes of two parts at one position in one undo
+  step; the transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and
+  MIDI input selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the
+  setting on and off, with and without a modifier key, choosing tools; drags on the keyboard's left part zooming the
+  rows in and out between the limits, from the height a style sheet gives them, also after a style change at a zoom and
+  back at 1, the keyboard as high as the rows of any height, nothing zoomed or scrolled without a row height to scale
+  and no height left on the rows for a later style, the zoom snapping to 1 near it, and scrolling the note display,
+  while a click there zooms nothing, and a click and a drag there leaving a note an earlier press selected and the
+  history alone; the lower zone's key editor at its default size giving the note display more room than the controller
+  lanes, at dp ratios 1 and 2, and the lanes whole in a lower zone of 400 dp; the editor window's lane keeping its 64 dp
+  and the note display its 40%, and the in-place editor's lanes keeping their height with its toolbar shown.

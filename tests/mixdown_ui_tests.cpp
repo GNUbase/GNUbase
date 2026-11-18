@@ -128,6 +128,11 @@ TEST_CASE("File > Export > Audio Mixdown exports the checked channels over the l
 			return !jobs.empty() &&
 				std::none_of(jobs.begin(), jobs.end(), [](const Json& job) { return job.at("state") == "running"; });
 		}));
+	// The one job is the export: it must end done, and a failed one shows its error instead of a missing file.
+	const Json jobs = app.call("job.list").at("jobs");
+	REQUIRE(jobs.size() == 1);
+	INFO(jobs.dump());
+	REQUIRE(jobs.front().at("state") == "done");
 	REQUIRE(std::filesystem::exists(dir.path() / "out" / "take.flac"));
 
 	const std::unique_ptr<engine::AudioFileReader> reader =

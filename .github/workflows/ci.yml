@@ -229,10 +229,12 @@ jobs:
             if diff -ru "$RUNNER_TEMP/main-docs" build/${{ matrix.preset }}/docs > "$RUNNER_TEMP/docs.diff"; then
               echo "No changes."
             else
-              echo '```diff'
+              # Four backticks: a context line of a reference's own fence is one space and three backticks, which
+              # would close a three-backtick fence.
+              echo '````diff'
               head -c 900000 "$RUNNER_TEMP/docs.diff" # the summary's limit is 1 MiB
               echo
-              echo '```'
+              echo '````'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -247,7 +249,7 @@ jobs:
           {
             echo '# GNUbase API references'
             echo
-            echo "Generated from \`main\` by CI ([docs/api-reference.md]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/main/docs/api-reference.md))."
+            echo "Generated from \`main\` at [${GITHUB_SHA::8}]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) by CI ([docs/api-reference.md]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/main/docs/api-reference.md))."
             echo
             echo '- [Lua API](lua.html)'
             echo '- [MCP tool catalogue](mcp-tools.html)'

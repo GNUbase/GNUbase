@@ -3671,6 +3671,7 @@ namespace gnubase::engine
 				const ResetRender resetRender{m_applyingRender, applying};
 				Project before = m_project;
 				const bool followsEvents = m_automationFollowsEvents; // automation.set in a transaction changes it
+				const std::shared_ptr<const RangeClipboard> clipboard = m_clipboard; // and range.cut this
 				Json result;
 				ProjectChange change;
 				try
@@ -3688,6 +3689,7 @@ namespace gnubase::engine
 				{
 					m_project = std::move(before);
 					m_automationFollowsEvents = followsEvents;
+					m_clipboard = clipboard;
 					throw;
 				}
 				announceWarpedEvents(before, m_project, context);

@@ -105,9 +105,11 @@ namespace gnubase::engine
 				if (const auto given = context.parameters().find("channels"); given != context.parameters().end())
 				{
 					wanted = given->get<std::vector<ObjectId>>();
+					// The project's channels, not the meters: only a graph build drops a deleted channel's meter,
+					// and while no device runs there is none.
+					const std::vector<RenderChannel>& known = m_snapshots.latest().channels;
 					for (const ObjectId id : wanted)
-						if (m_channelStates.count(id) == 0 &&
-							std::none_of(m_snapshots.latest().channels.begin(), m_snapshots.latest().channels.end(),
+						if (std::none_of(known.begin(), known.end(),
 								[id](const RenderChannel& channel) { return channel.id == id; }))
 							throw CommandError("no channel " + std::to_string(id));
 				}
