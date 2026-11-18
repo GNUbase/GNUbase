@@ -19,8 +19,8 @@ set(GNUBASE_SANITIZERS "" CACHE STRING "Sanitizers for GNUbase code (GCC/Clang),
 option(GNUBASE_CLANG_TIDY "Run clang-tidy on GNUbase code while compiling" OFF)
 # CI keeps clang-tidy's passes here and checks only files whose input changed (tools/clang-tidy-cache.sh, Linux).
 set(GNUBASE_CLANG_TIDY_CACHE "" CACHE PATH "Folder for clang-tidy's passes to reuse; empty: check every file")
-# Release builds are optimized across files, as they ship. tools/ci-local.sh turns it off: it makes every link of the
-# tests take minutes.
+# Release builds are optimized across files, as they ship. CI and tools/ci-local.sh turn it off: it makes every link of
+# the tests take minutes. .github/workflows/lto.yml builds and tests with it once a week.
 option(GNUBASE_LTO "Link-time optimization in Release builds, where the compiler supports it" ON)
 option(GNUBASE_TEST_PLUGINS "Build the test plugins (tests/plugins) and the tests that load them" ON)
 option(GNUBASE_RENDER_SPIKE "Build the render backend spike (spikes/render-backend, #47)" OFF)

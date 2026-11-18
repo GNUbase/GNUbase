@@ -7,8 +7,9 @@
 # - on Linux, and on Windows in WSL: linux-gcc and linux-clang (builds and tests), asan-ubsan, tsan and clang-tidy.
 # macOS is left to CI. It checks the commit at HEAD, so commit first: on Windows the Linux jobs run in a clone inside
 # WSL (~/gnubase-ci/<checkout folder name>, one per checkout, so worktrees can run checks at the same time), which
-# builds far faster than the Windows folder and has Linux line endings. Unlike CI, it builds without link-time
-# optimization, which only makes every link slow, and one run at a time per machine (lockMachine).
+# builds far faster than the Windows folder and has Linux line endings. Like CI, it builds without link-time
+# optimization, which only makes every link slow (.github/workflows/lto.yml builds with it once a week), and it runs
+# one at a time per machine (lockMachine).
 # Usage: tools/ci-local.sh [job...]    default: every job this machine can run
 # Environment: GNUBASE_WSL names the WSL distribution (default Ubuntu), GNUBASE_CI_JOBS the compile jobs per build.
 # Setup: Windows needs Visual Studio 2026 and, on Git Bash's PATH, Python 3.10 or later for the format job's

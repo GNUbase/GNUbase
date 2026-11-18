@@ -121,7 +121,8 @@ jobs:
           restore-keys: ccache-${{ matrix.name }}-
 
       # No link-time optimization: its link steps took most of the Release builds (about 13 of 18 minutes on Windows),
-      # and no compiler cache can skip them. Pull requests restore main's cache, so main builds without it too.
+      # and no compiler cache can skip them. Pull requests restore main's cache, so main builds without it too. lto.yml
+      # builds and tests with it once a week.
       - name: Configure
         shell: bash
         run: >-
