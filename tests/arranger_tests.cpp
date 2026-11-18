@@ -846,9 +846,15 @@ TEST_CASE("a chain edit while playing renders the same in real time as offline",
 	run(offline.client, "audio.render", {{"frames", frames - 5000}});
 	const std::vector<float> expected = capture(offline, frames);
 
-	// As in the chain playback test, a busy machine can starve the cue thread. Replay the edit with a fresh song
-	// after a dropout, at most five times; only a run without dropouts is compared with the offline render (#1893).
+	// As in the chain playback test, a busy machine can starve the cue thread, or this thread so long that it misses
+	// the stretch of B in which it must make the edit. Neither says anything about the chain: replay the edit with a
+	// fresh song, at most five times; only a run with the edit in B and without dropouts is compared with the offline
+	// render (#1893, #1900).
 	constexpr int attempts = 5;
+	constexpr int64_t windowStart = b + 1000;
+	constexpr int64_t windowEnd = b + 12000;
+	bool edited = false;
+	int64_t position = b; // the song's, where the last attempt ended
 	int64_t dropouts = 0;
 	std::vector<float> actual;
 	for (int attempt = 1; attempt <= attempts; ++attempt)
@@ -857,33 +863,50 @@ TEST_CASE("a chain edit while playing renders the same in real time as offline",
 		build(realtime, "cue-realtime" + std::to_string(attempt));
 		run(realtime.client, "audio.start");
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
-		bool edited = false;
+		edited = false;
+		position = b;
 		while (std::chrono::steady_clock::now() < deadline)
 		{
-			const int64_t position = run(realtime.client, "audio.get").at("position").get<int64_t>();
-			if (!edited && position >= b + 1000 && position < b + 12000)
+			// The song's position, not the device's: the edit must come while B plays.
+			const Json transport = run(realtime.client, "transport.get");
+			position = transport.at("position").get<int64_t>();
+			if (!edited)
 			{
-				edit(realtime); // while B plays
-				edited = true;
+				if (position >= windowStart && position < windowEnd)
+				{
+					edit(realtime); // while B plays
+					edited = true;
+				}
+				else if (position < b || position >= windowEnd)
+				{
+					break; // B played on past the window, or the chain already left it: this attempt can't edit
+				}
 			}
-			const int64_t step = run(realtime.client, "transport.get").at("arranger").at("step").get<int64_t>();
+			const int64_t step = transport.at("arranger").at("step").get<int64_t>();
 			if (edited && step == -1 &&
 				position >= (1600 * scale) + 2500) // past the chain, where the offline render ends
 				break;
 			std::this_thread::sleep_for(std::chrono::milliseconds(5));
 		}
-		REQUIRE(edited);
 		run(realtime.client, "audio.stop");
 		dropouts = run(realtime.client, "audio.get").at("playbackDropouts").get<int64_t>();
-		if (dropouts == 0)
+		if (edited && dropouts == 0)
 		{
 			actual = capture(realtime, frames);
 			break;
 		}
-		if (attempt < attempts)
+		if (attempt == attempts)
+			break;
+		if (edited)
 			WARN(
 				"attempt " << attempt << " of " << attempts << " had " << dropouts << " dropped frames, playing again");
+		else
+			WARN("attempt " << attempt << " of " << attempts << " missed the edit window [" << windowStart << ", "
+							<< windowEnd << ") at position " << position << " with " << dropouts
+							<< " dropped frames, playing again");
 	}
+	INFO("the last attempt ended at position " << position << " with " << dropouts << " dropped frames");
+	REQUIRE(edited);
 	REQUIRE(dropouts == 0);
 	REQUIRE(actual.size() == expected.size());
 	const auto difference = std::mismatch(actual.begin(), actual.end(), expected.begin());
