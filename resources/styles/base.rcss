@@ -370,6 +370,12 @@ knob, fader, slider, valuefield
 	drag: drag;
 }
 
+/* Disabled ones take no focus, nor does a disabled list view, which has no :disabled (docs/features/accessibility.md). */
+knob:disabled, fader:disabled, slider:disabled, valuefield:disabled, listview[disabled]
+{
+	tab-index: none;
+}
+
 knob
 {
 	display: inline-block;
@@ -893,6 +899,11 @@ meter .meter-peak
 
 /* Markers (docs/features/markers.md): the marker lines and marker events are event lanes like the events; code
    places the labels where their markers are. */
+.event-display .marker-lines, .event-display .marker-events
+{
+	pointer-events: none;
+}
+
 .event-display .marker-labels
 {
 	position: absolute;

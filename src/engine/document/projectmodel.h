@@ -90,6 +90,7 @@ namespace gnubase::engine
 		time::Samples end = 0;
 		time::Ticks startTicks = 0;
 		time::Ticks endTicks = 0;
+		double sampleRate = 0.0;             // the project's when it was copied, which its samples count in
 		std::vector<ObjectId> tracks;        // the tracks it was copied from, from top to bottom
 		std::vector<AudioEvent> audioEvents; // with those of the audio parts
 		std::vector<AudioPart> audioParts;
@@ -112,6 +113,7 @@ namespace gnubase::engine
 
 		time::Samples start = 0; // the range's start, in project samples and in ticks
 		time::Ticks startTicks = 0;
+		double sampleRate = 0.0;      // the project's when it was copied, which its samples count in
 		std::vector<ObjectId> tracks; // the tracks of the copied lanes, from top to bottom
 		std::vector<Lane> lanes;      // in the order of their tracks
 	};
@@ -286,7 +288,9 @@ namespace gnubase::engine
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
-		std::optional<RangeClipboard> m_clipboard; // range.copy and range.cut
+		// range.copy and range.cut; shared, so that an edit can keep the one before it cheaply and put it back if it
+		// fails, as range.cut in a failed history.transaction must leave it.
+		std::shared_ptr<const RangeClipboard> m_clipboard;
 		std::function<std::string(ObjectId)> m_slotStatus;
 		// What the chord pads' remote keys and chordPads.listen keep about the project, cleared when another one opens.
 		std::function<void(CommandContext& context)> m_chordPadsOpened;

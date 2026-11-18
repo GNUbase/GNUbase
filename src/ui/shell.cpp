@@ -292,6 +292,7 @@ namespace gnubase::ui
 		case WindowEventKind::DisplaysChanged:
 		{
 			const std::vector<Display> displays = m_windows.displays();
+			std::map<WindowId, Moved> moved;
 			for (auto& [id, window] : m_open)
 			{
 				const Rect bounds = m_windows.bounds(id);
@@ -300,11 +301,12 @@ namespace gnubase::ui
 				{
 					logging::info("Window {} moved onto a connected monitor", id);
 					m_windows.setBounds(id, placed);
+					moved.emplace(id, Moved{bounds, placed});
 				}
 				refresh(*window);
 			}
-			for (const std::function<void()>& task : m_displaysChanged)
-				task();
+			for (const auto& task : m_displaysChanged)
+				task(moved);
 			return;
 		}
 		default:

@@ -20,7 +20,8 @@
 namespace gnubase::ui
 {
 	// Where the mouse goes: the centre of the element that a selector matches (the index-th match), or a point in the
-	// window's pixels. Neither means where the mouse is.
+	// window's pixels. A hidden centre is scrolled into view first, or rejected if it stays hidden. Neither means where
+	// the mouse is.
 	struct Target
 	{
 		std::string selector;

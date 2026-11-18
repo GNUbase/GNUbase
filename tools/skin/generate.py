@@ -29,7 +29,7 @@ THEMES = {
             "trackPalette": ["#e12ad8", "#10dff2", "#9b55f5", "#22d8ca", "#ffc44d", "#ff5b72", "#8248ef", "#4f8cff"],
         },
         "radii": {"small": 3, "control": 5, "panel": 6, "round": 999},
-        "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
+        "borderWidths": {"hairline": 1, "control": 1, "focus": 2, "focusRing": 1},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
@@ -60,7 +60,7 @@ THEMES = {
             "trackPalette": ["#a76f9e", "#5ea7b3", "#8174ad", "#63a99e", "#c0a15e", "#c66f76", "#7865aa", "#6689ae"],
         },
         "radii": {"small": 3, "control": 4, "panel": 5, "round": 999},
-        "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
+        "borderWidths": {"hairline": 1, "control": 1, "focus": 2, "focusRing": 1},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
@@ -82,7 +82,7 @@ THEMES = {
             "trackPalette": ["#bb2d8f", "#087fa4", "#6f42c1", "#008f83", "#a86f00", "#c83d52", "#7048c8", "#276fd3"],
         },
         "radii": {"small": 3, "control": 5, "panel": 6, "round": 999},
-        "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
+        "borderWidths": {"hairline": 1, "control": 1, "focus": 2, "focusRing": 1},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
@@ -91,7 +91,8 @@ THEMES = {
         "events": None,
     },
     # Black, white and bright colors that meet WCAG's enhanced contrast (7:1) for text, white borders around every
-    # control and a thicker focus ring (docs/features/accessibility.md).
+    # control and a thicker focus ring (docs/features/accessibility.md). Checked toggles keep their bright colors, and
+    # their labels and the check box's marks are black on them (brightFills).
     "high-contrast": {
         "displayName": "High Contrast",
         "colors": {
@@ -106,13 +107,13 @@ THEMES = {
             "trackPalette": ["#ff80ff", "#00ffff", "#c0a0ff", "#40ffd0", "#ffd040", "#ff8c8c", "#a0a0ff", "#80c0ff"],
         },
         "radii": {"small": 2, "control": 3, "panel": 3, "round": 999},
-        "borderWidths": {"hairline": 1, "control": 1, "focus": 3},
+        "borderWidths": {"hairline": 1, "control": 1, "focus": 3, "focusRing": 2},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
         "flat": False,
-        "focusRing": 2,
+        "brightFills": True,
         "events": None,
     },
 }
@@ -177,6 +178,20 @@ def mix(a: str, b: str, amount: float) -> str:
     return "#" + "".join(f"{round(x + (y - x) * amount):02x}" for x, y in zip(av, bv))
 
 
+def toggle_fill(theme: dict, kind: str) -> str:
+    """A checked mute, solo, record or monitor button's fill: its color, darkened toward the background unless the
+    theme keeps bright fills."""
+    c = theme["colors"]
+    color = {"mute": c["warning"], "solo": c["accent"], "record": c["danger"], "monitor": c["success"]}[kind]
+    return color if theme.get("brightFills") else mix(color, c["background"], .10 if theme["glow"] else .24)
+
+
+def on_fill(theme: dict, fill: str, default: str) -> str:
+    """The color of a label or mark on a fill: the background's on a bright fill in a theme with bright fills, which
+    keeps WCAG's enhanced contrast (tests/theme_tests.cpp), else the default."""
+    return theme["colors"]["background"] if theme.get("brightFills") and luminance(fill) > 0.4 else default
+
+
 def svg_doc(w: int, h: int, body: str) -> str:
     return ("<!-- SPDX-License-Identifier: GPL-3.0-or-later -->\n"
             f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">\n'
@@ -224,7 +239,7 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
     elif name == "focus-ring":
         # Drawn over the widget's skin: the accent ring, and inside it a line in the background color, which shows on
         # skins filled with the accent, such as primary buttons and checked check boxes.
-        ring = theme.get("focusRing", 1)
+        ring = theme["borderWidths"]["focusRing"]
         body = (rect(w, h, "none", accent, r, ring, None, ring / 2) +
                 rect(w, h, "none", c["background"], max(1, r - ring), 1, None, ring + .5))
         if theme["glow"]: body += glow_rect(w, h, accent, r)
@@ -250,7 +265,7 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
             bg = mix(c["surfaceRaised"], c["border"], .7 if state == "off" else 1); border = "none"
         elif state == "hover": bg = mix(bg, accent, .14); border = mix(border, accent, .5)
         elif state in colors:
-            bg = mix(colors[state], c["background"], .10 if theme["glow"] else .24); border = colors[state]
+            bg = toggle_fill(theme, state); border = colors[state]
             extra = glow_rect(w, h, colors[state], r) if theme["glow"] else ""
     elif name.startswith(("disclosure-", "dropdown-button-")) and not theme["flat"]:
         # Framed themes draw no arrows on buttons: their drop-down and section header buttons are the plain button,
@@ -352,8 +367,9 @@ def fixed_svg(name: str, theme: dict) -> tuple[int, int, str]:
     elif name.startswith("checkbox-"):
         state = name.split("-")[-1]
         body = rect(w, h, accent if state != "off" else bg, accent if state != "off" else border, 4)
-        if state == "on": body += '<polyline points="4.5,9 7.5,12 13.5,5.5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
-        elif state == "mixed": body += '<line x1="5" y1="9" x2="13" y2="9" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>'
+        mark = on_fill(theme, accent, "#ffffff")
+        if state == "on": body += f'<polyline points="4.5,9 7.5,12 13.5,5.5" fill="none" stroke="{mark}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+        elif state == "mixed": body += f'<line x1="5" y1="9" x2="13" y2="9" stroke="{mark}" stroke-width="2" stroke-linecap="round"/>'
     elif name.startswith("radio-"):
         body = f'<circle cx="9" cy="9" r="7.5" fill="{bg}" stroke="{accent if name.endswith("on") else border}"/>'
         if name.endswith("on"): body += f'<circle cx="9" cy="9" r="4" fill="{accent}"/>'
@@ -471,7 +487,7 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (bars(state=":hover", tail=" svg.icon"), {"image-color": c["text"]}, {"image-color": c["text"]}),
         (bars("[menu]", ":hover"), {"decorator": skin("dropdown-button-hover")},
          {"decorator": skin("dropdown-button-hover")}),
-        (bars(".icon-only[menu]", ":hover"), {"decorator": "none"}, {}),
+        (bars(".icon-only[menu]", ":hover"), {"decorator": "none"}, {}, ("none", skin("dropdown-button-hover"))),
         (bars(state=":active"), {"decorator": "none", "background-color": pressed},
          {"decorator": skin("button-pressed")}),
         (bars("[menu]", ":active"), {"decorator": skin("dropdown-button-pressed")},
@@ -490,7 +506,7 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (bars("[menu]", ":disabled"), {"decorator": skin("dropdown-button-disabled"), "color": dim},
          {"decorator": skin("dropdown-button-disabled"), "color": c["textMuted"]}),
         # Icon-only menu buttons keep no field when pressed or disabled either, the arrow being their icon
-        (bars(".icon-only[menu]", ":active"), {"decorator": "none"}, {}),
+        (bars(".icon-only[menu]", ":active"), {"decorator": "none"}, {}, ("none", skin("dropdown-button-pressed"))),
         (bars(".icon-only[menu]", ":disabled"), {"decorator": "none"}, {}),
         # Start in the accent, filled while playing; Record in the danger color, filled while recording
         (".transport #start svg.icon", {"image-color": accent}, {"image-color": c["text"]}),
@@ -687,9 +703,15 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("button.toggle:hover", {"decorator": skin("toggle-hover"), "color": c["text"]}),
     ]
     for kind in ("mute", "solo", "record", "monitor"):
-        rules.append((f"button.toggle.{kind}.checked", {"decorator": skin(f"toggle-{kind}"), "color": c["text"]}))
+        rules.append((f"button.toggle.{kind}.checked",
+                      {"decorator": skin(f"toggle-{kind}"), "color": on_fill(theme, toggle_fill(theme, kind), c["text"])}))
     # Listen is monitoring; solo defeat keeps the solo button off, in the solo color.
-    rules.append(("button.toggle.listen.checked", {"decorator": skin("toggle-monitor"), "color": c["text"]}))
+    rules.append(("button.toggle.listen.checked",
+                  {"decorator": skin("toggle-monitor"), "color": on_fill(theme, toggle_fill(theme, "monitor"), c["text"])}))
+    # The icons of checked record and monitor buttons in their labels' color, unless they are disabled
+    for kind in ("record", "monitor"):
+        rules.append((f"button.toggle.{kind}.checked:not(:disabled) svg.icon",
+                      {"image-color": on_fill(theme, toggle_fill(theme, kind), c["text"])}))
     rules.append(("button.toggle.solo.defeated", {"decorator": skin("toggle-hover"), "color": c["accent"]}))
     rules += [
         # Text fields
@@ -1179,20 +1201,22 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
 
 
 def focusable(selector: str) -> bool:
-    """Whether a selector's last part is a FOCUSABLE widget in a state other than hovered, pressed or focused.
+    """Whether a selector's last part is a FOCUSABLE widget in a state it can have with the focus: checked, hovered or
+    pressed, not disabled or focused.
 
     The widget may have classes, attributes and an id, and exclude classes with :not(), as the bars' buttons do.
     """
     widget, *states = selector.split(" ")[-1].split(":")
     return (any(widget == f or widget.startswith((f + ".", f + "[", f + "#")) for f in FOCUSABLE)
-            and all(s == "checked" or s.startswith("not(") for s in states))
+            and all(s in ("checked", "hover", "active") or s.startswith("not(") for s in states))
 
 
 def with_focus_rings(rules: list, ring: str) -> list:
     """The rules, then for each that gives a FOCUSABLE widget a skin its :focus-visible twin with the ring.
 
     The twins come after the rules (flat_rules, which follow them, add their own), so the ring also shows on a hovered
-    widget. The ring is the first decorator, because RmlUi draws the first one on top.
+    widget, and in the rules' order, so that a hovered or pressed widget with the focus keeps the skin of that state.
+    The ring is the first decorator, because RmlUi draws the first one on top.
     """
     twins = []
     for selector, declarations in rules:

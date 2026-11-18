@@ -252,6 +252,8 @@ namespace gnubase::engine
 			return;
 		case Request::Type::Set:
 			m_settings = request.settings;
+			if (m_recordAt >= 0) // waiting for the record start: it follows the punch in (#588)
+				m_recordAt = recordStart(m_settings, std::max(m_start, m_position), m_position);
 			return;
 		case Request::Type::Arrange:
 			if (request.record)
@@ -301,11 +303,16 @@ namespace gnubase::engine
 				startRecording();
 				return;
 			}
-			// With punch in before the left locator, the punch in starts recording.
+			// With punch in before the left locator, the punch in starts recording; it waits there as from stop, so
+			// that it moves along with a locate (#588).
 			if (!m_settings.punchIn || m_position >= m_settings.left)
 			{
 				m_recording = true;
 				m_recordAt = -1; // started by hand during the pre-roll: no second start later
+			}
+			else
+			{
+				m_recordAt = m_settings.left;
 			}
 			return;
 		}

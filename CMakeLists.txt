@@ -19,14 +19,18 @@ set(GNUBASE_SANITIZERS "" CACHE STRING "Sanitizers for GNUbase code (GCC/Clang),
 option(GNUBASE_CLANG_TIDY "Run clang-tidy on GNUbase code while compiling" OFF)
 # CI keeps clang-tidy's passes here and checks only files whose input changed (tools/clang-tidy-cache.sh, Linux).
 set(GNUBASE_CLANG_TIDY_CACHE "" CACHE PATH "Folder for clang-tidy's passes to reuse; empty: check every file")
-# Release builds are optimized across files, as they ship. tools/ci-local.sh turns it off: it makes every link of the
-# tests take minutes.
+# Release builds are optimized across files, as they ship. CI and tools/ci-local.sh turn it off: it makes every link of
+# the tests take minutes. .github/workflows/lto.yml builds and tests with it once a week.
 option(GNUBASE_LTO "Link-time optimization in Release builds, where the compiler supports it" ON)
 option(GNUBASE_TEST_PLUGINS "Build the test plugins (tests/plugins) and the tests that load them" ON)
 option(GNUBASE_RENDER_SPIKE "Build the render backend spike (spikes/render-backend, #47)" OFF)
 
 if(GNUBASE_SANITIZERS AND MSVC)
 	message(FATAL_ERROR "GNUBASE_SANITIZERS is only supported with GCC and Clang")
+endif()
+# CMake would run the cache's shell script as the clang-tidy command, which Windows can't.
+if(GNUBASE_CLANG_TIDY AND GNUBASE_CLANG_TIDY_CACHE AND CMAKE_HOST_WIN32)
+	message(FATAL_ERROR "GNUBASE_CLANG_TIDY_CACHE needs a Linux or macOS host; leave it empty on Windows")
 endif()
 if(GNUBASE_CLANG_TIDY)
 	find_program(GNUBASE_CLANG_TIDY_EXE NAMES clang-tidy REQUIRED)
@@ -36,10 +40,14 @@ if(GNUBASE_CLANG_TIDY)
 	endif()
 endif()
 
-# MSBuild compiles a project's files one at a time without /MP. Ninja runs one cl per file already, and sccache can't
-# cache /MP compiles, so the Ninja presets don't get it.
-if(MSVC AND CMAKE_GENERATOR MATCHES "^Visual Studio")
-	add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/MP>)
+# MSBuild compiles a project's files one at a time by default. Its multi-tool task runs one cl per file instead, and
+# EnforceProcessCountAcrossBuilds shares one limit, a cl per logical processor, across all projects that build at once,
+# even across MSBuild instances (#705). With /MP each of the four projects the build presets build at once ("jobs")
+# started a cl per logical processor. Measured on 32 logical processors, a clean Debug build of gnubase-tests with
+# --parallel 4 ran up to 94 cl at once with /MP and took 271 s; with the shared limit it ran at most 32 and took 269 s.
+# To lower the limit, pass -p:MultiProcMaxCount=<n> to MSBuild. Ninja runs one cl per file already.
+if(CMAKE_GENERATOR MATCHES "^Visual Studio")
+	list(APPEND CMAKE_VS_GLOBALS UseMultiToolTask=true EnforceProcessCountAcrossBuilds=true)
 endif()
 
 if(GNUBASE_LTO)

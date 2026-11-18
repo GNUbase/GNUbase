@@ -2146,6 +2146,48 @@ TEST_CASE("a remote key whose pad is gone no longer counts as down for the chord
 	CHECK(remote.until([&] { return remote.rig.played().size() == 4; }));
 }
 
+TEST_CASE("with Latch Chords a pad goes out when another remote key's chord ends its notes", "[integration]")
+{
+	// #1812: the latched key's note-off reports nothing, so Stop First and Legato ending its chord put out its pad.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set", {{"latch", true}, {"overlaps", "stopFirst"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	CHECK(remote.send(0x80, 36, 0).empty());
+	CHECK(remote.send(0x90, 37, 90).size() == 8);
+	CHECK(remote.send(0x80, 37, 0).empty());
+	CHECK(litUpTo(client, 1, true) == Lit{{0, true}, {0, false}, {1, true}});
+	run(client, "chordPads.set", {{"overlaps", "legato"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(!remote.send(0x90, 38, 90).empty());
+	CHECK(litUpTo(client, 2, true) == Lit{{1, false}, {2, true}});
+	// Hold First keeps the first chord's notes, and its pad stays lit.
+	run(client, "chordPads.set", {{"overlaps", "holdFirst"}});
+	run(client, "audio.render", {{"frames", 64}});
+	remote.send(0x80, 38, 0);
+	CHECK(!remote.send(0x90, 39, 90).empty());
+	CHECK(litUpTo(client, 3, true) == Lit{{3, true}});
+}
+
+TEST_CASE(
+	"a pad key that becomes a Select/Mute Player or chord modifier key ends its chord when it goes up", "[integration]")
+{
+	// #1812: the key's note-off went to those keys' handling before it ended what the key held.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	run(client, "chordPads.set", {{"playerKeys", {36, 70, 71}}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x80, 36, 0).size() == 4);
+	CHECK(litUpTo(client, 0, false) == Lit{{0, true}, {0, false}});
+	CHECK(remote.send(0x90, 37, 90).size() == 4);
+	run(client, "chordPads.set", {{"modifiers", true}, {"modifierKeys", {{"transposeUp", 37}}}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x80, 37, 0).size() == 4);
+	CHECK(litUpTo(client, 1, false) == Lit{{1, true}, {1, false}});
+}
+
 TEST_CASE("chordPads.remoteInput takes the pad a key lit from the event, whatever the range is now", "[unit]")
 {
 	// #1740: a key the audio thread played before chordPads.set moved the range lights the pad it played.

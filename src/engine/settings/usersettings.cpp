@@ -596,7 +596,8 @@ namespace gnubase::engine::settings
 				{"midi.portSettings",
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
-					"all MIDI inputs (inAllInputs) and its MPE input (mpe, what differs from its defaults). Ports "
+					"all MIDI inputs (inAllInputs) and its MPE input (mpe: the whole setup once a member differs from "
+					"the defaults or the detected device's preset). Ports "
 					"without an entry show their system name, are visible, belong to all MIDI inputs and have no MPE "
 					"input, but for a detected MPE device's input (mpeDevice in midi.ports), which has the device's "
 					"preset. Members of an entry that this GNUbase doesn't know, from a later one, stay.",

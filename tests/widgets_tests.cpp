@@ -258,6 +258,17 @@ TEST_CASE("knobs turn with drags, the wheel and the arrow keys, finer with Shift
 	CHECK(page.value("#pan") == Catch::Approx(100.0F));
 }
 
+TEST_CASE("Tab moves between the widgets with a number, past disabled ones and a disabled list view", "[ui]")
+{
+	test::UiApp app;
+	const ValuesPage page(app);
+	std::vector<std::string> order;
+	order.reserve(5);
+	for (int i = 0; i < 5; ++i)
+		order.push_back(app.ui().key(std::nullopt, "Tab").at("focus").value("id", ""));
+	CHECK(order == std::vector<std::string>{"pan", "volume", "gain", "send", "pan"});
+}
+
 TEST_CASE(
 	"a value set during a drag waits until the drag ends, and goes if the drag changes the value after it", "[ui]")
 {

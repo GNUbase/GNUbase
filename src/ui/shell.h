@@ -180,9 +180,19 @@ namespace gnubase::ui
 		// updates again before the window is drawn. Windows that don't draw in a step don't run it.
 		void afterUpdate(std::function<bool(Window&)> task) { m_afterUpdate.push_back(std::move(task)); }
 
+		// A window the shell moved onto a connected monitor: the bounds it had before and the ones the shell asked for,
+		// which a window system that sizes windows later, such as X11's, gives it only after the tasks ran.
+		struct Moved
+		{
+			Rect before;
+			Rect placed;
+		};
 		// Runs task when a monitor was connected, disconnected, moved or changed, after the shell moved the windows
 		// that were out of reach onto a connected one, e.g. to fit a window to its monitor's new usable area.
-		void onDisplaysChanged(std::function<void()> task) { m_displaysChanged.push_back(std::move(task)); }
+		void onDisplaysChanged(std::function<void(const std::map<WindowId, Moved>& moved)> task)
+		{
+			m_displaysChanged.push_back(std::move(task));
+		}
 
 		// Runs handler for every key pressed in a window that none of its elements used, e.g. for key commands
 		// (ui/keycommands.h). Elements that use a key stop its propagation.
@@ -259,7 +269,7 @@ namespace gnubase::ui
 		std::vector<std::function<void()>> m_posted;
 		std::vector<std::function<bool()>> m_stepTasks;
 		std::vector<std::function<bool(Window&)>> m_afterUpdate;
-		std::vector<std::function<void()>> m_displaysChanged;
+		std::vector<std::function<void(const std::map<WindowId, Moved>&)>> m_displaysChanged;
 		Clock::time_point m_nextFrame = Clock::time_point::max(); // when a step task that follows values runs again
 		std::function<void(Window&, const KeyPress&)> m_unusedKey;
 		std::function<void(Window&, const KeyPress&)> m_keyReleased;
