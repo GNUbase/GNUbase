@@ -1732,7 +1732,7 @@ TEST_CASE("a direction on the Articulations lane lasts on through a muted one, a
 	CHECK(std::abs(right(pizzicato) - end) <= 1.0);
 	CHECK(std::abs(right(arco) - end) <= 1.0);
 	CHECK(std::abs(f.box(arco).at("x").get<double>() -
-			  (area.at("x").get<double>() + area.at("width").get<double>() / 2.0)) <= 1.0);
+			  (area.at("x").get<double>() + (area.at("width").get<double>() / 2.0))) <= 1.0);
 	REQUIRE(f.app.waitUntil([&f] { return f.slot(f.notes[2]) == "Pizzicato"; }));
 }
 
