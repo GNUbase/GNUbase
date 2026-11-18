@@ -914,9 +914,9 @@ namespace gnubase::engine
 				"Puts audio events that quantize.slice cut back together (the Reset of the Slice Rules, reference "
 				"manual p. 378): of each event that one of events is or is a slice of, the slices on its track, also "
 				"those split from them since, are removed and the event gets back the position, offset, length, "
-				"crossfade, snap point and fade out it had before slicing, unquantized. Crossfades from the slices go "
-				"to it. An "
-				"event that is locked, or has a locked slice, stays as it is with its slices. Returns the events put "
+				"crossfade, snap point and fade out it had before slicing, unquantized; an event whose audio part "
+				"moved since comes back where the part has it now. Crossfades from the slices go to it. An event "
+				"that is locked, or has a locked slice, stays as it is with its slices. Returns the events put "
 				"back together and the slices removed.",
 				objectSchema({{"events", ids}}, {"events"}),
 				objectSchema({{"events", ids}, {"removed", ids}}, {"events", "removed"}), false},

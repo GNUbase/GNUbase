@@ -436,11 +436,18 @@ namespace gnubase::engine
 			}
 		}
 
-		// Moves an audio part's events by ticks.
+		// Moves an audio part's events by ticks, their slice origins too, as moving the part does (#1728).
 		void shiftEvents(Project& project, const AudioPart& part, time::Ticks delta)
 		{
 			for (AudioEvent* event : eventsIn(project, part.id))
+			{
 				event->position = shifted(project, event->position, {delta, true}, false);
+				if (event->sliceOrigin)
+				{
+					time::Position& origin = event->sliceOrigin->timing.position;
+					origin = shifted(project, origin, {delta, true}, false);
+				}
+			}
 		}
 
 		// Resizing (reference manual p. 265): the start or the end goes to a position, within the clip and at least a

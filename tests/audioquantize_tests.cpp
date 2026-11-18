@@ -1704,6 +1704,19 @@ TEST_CASE(
 		CHECK(byId(client, "audioEvents", loop.event).at("part") == part);
 	}
 
+	SECTION("the event's audio part's start sized a bar later, moving its contents")
+	{
+		const ObjectId part = toPart();
+		run(client, "event.resize",
+			{{"events", {part}}, {"edge", "start"}, {"delta", 4 * g_quarter}, {"mode", "moveContents"}});
+		// Where the first slice went with the contents, a bar later within the rounding of a tick.
+		const int64_t start = eventsOn(client, loop.track).at(0).at(0);
+		REQUIRE(std::abs(start - ((4 * g_quarter) + 2000)) <= 1);
+		CHECK(run(client, "quantize.resetSlices", {{"events", sliced}}).at("events") == Json::array({loop.event}));
+		CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{start, 0, 4 * g_quarter}});
+		CHECK(byId(client, "audioEvents", loop.event).at("part") == part);
+	}
+
 	SECTION("the event's audio part moved a bar later onto a musical track, saved and loaded in between")
 	{
 		const ObjectId musical = run(client, "track.add", {{"type", "audio"}, {"timeBase", "musical"}, {"channels", 1}})
