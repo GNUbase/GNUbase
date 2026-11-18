@@ -21,7 +21,10 @@ make each lap a take of its own: a run of consecutive project positions.
 - **MIDI cycle record modes** (pp. 352–353). `transport.set` with `midiCycleRecordMode`, which `transport.get`
   reports and the Transport menu's MIDI Record Mode submenu sets below the MIDI record modes, decides what becomes of
   a MIDI cycle recording's laps. The recorder marks each note and controller event with the take it was recorded in
-  (`take` in `recording.add`'s notes and controllers), and `recording.add` gets the mode as `cycleMode`:
+  (`take` in `recording.add`'s notes and controllers), and `recording.add` gets the mode as `cycleMode`, and `cycle`
+  if the recording ran in cycle mode: a take started at the left locator where the one before ended at the right one.
+  The modes apply only then and only to several takes (p. 352): a recording of a single take, and a linear one whose
+  takes a locate started, go by the MIDI record mode alone, whatever the cycle record mode is.
   - `mix` (the default) puts every lap into one part, by the MIDI record mode.
   - `overwrite`: input in a lap overwrites what the laps before it recorded from its first note or controller event to
     the lap's end; a lap without input overwrites nothing. What is left goes into one part, as with mix.
@@ -34,11 +37,13 @@ make each lap a take of its own: a run of consecutive project positions.
   - `mixStacked` (Mix-Stacked (No Mute)): the same, without muting.
 
   Tests: `tests/midirecording_tests.cpp` records four laps in the stacked modes and checks the parts, lanes and mutes,
-  records Keep Last through the dummy device with a lap without input and one where recording stopped, and checks
-  every mode through `recording.add`; `tests/mainmenu_tests.cpp` sets the mode from the menu.
+  records Keep Last through the dummy device with a lap without input and one where recording stopped, records a
+  linear recording with a locate in Keep Last and Stacked and finds every note in one part, and checks every mode
+  through `recording.add`; `tests/mainmenu_tests.cpp` sets the mode from the menu.
 - **Real time.** Nothing changes on the audio thread: the recorder's disk thread numbers the takes as it already
   splits them, and a take that got no frames before the next one started gives its place to it, so the numbers are
-  those of the takes `recording.add` gets.
+  those of the takes `recording.add` gets. It tells a cycle lap from a locate by the locators in its setup, which
+  the engine updates with the transport's settings.
 
 ## Not yet
 

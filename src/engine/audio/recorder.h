@@ -136,6 +136,10 @@ namespace gnubase::engine
 		int64_t catchFrames = 0;  // midi.recordCatchRange, in device frames
 		size_t retrospective = 0; // midi.retrospectiveEvents: what each track's retrospective buffer holds
 		int64_t pauseFrames = 0;  // a pause after which input in stop mode starts the buffer afresh
+		// The locators while the transport cycles, else -1: a take that starts at the left one where the one before
+		// ended at the right one is a cycle lap (recording.add's cycle).
+		time::Samples cycleLeft = -1;
+		time::Samples cycleRight = -1;
 
 		bool operator==(const RecordSetup& other) const
 		{
@@ -147,7 +151,8 @@ namespace gnubase::engine
 				preRecordFrames == other.preRecordFrames && tracks == other.tracks && midiTracks == other.midiTracks &&
 				midiMode == other.midiMode && midiCycleMode == other.midiCycleMode && midiFilter == other.midiFilter &&
 				snapToBars == other.snapToBars && catchFrames == other.catchFrames &&
-				retrospective == other.retrospective && pauseFrames == other.pauseFrames;
+				retrospective == other.retrospective && pauseFrames == other.pauseFrames &&
+				cycleLeft == other.cycleLeft && cycleRight == other.cycleRight;
 		}
 	};
 
@@ -285,6 +290,8 @@ namespace gnubase::engine
 		void handleMidi(const Chunk& chunk);
 		void beginMidi(const Chunk& chunk);
 		void endMidi();
+		// Whether a take that starts at start after one that ended at end is a cycle lap, by the latest setup.
+		bool startsLap(time::Samples end, time::Samples start) const;
 		void keepRetrospective(const MidiInput& input, uint64_t deviceFrame);
 		// Makes the latest setup up to number the next recording's.
 		void applySetups(uint64_t number);
@@ -333,6 +340,7 @@ namespace gnubase::engine
 		bool m_recording = false;
 		std::vector<File> m_files;
 		std::vector<Take> m_takes;
+		bool m_cycled = false;             // a take began a cycle lap
 		time::Samples m_written = 0;       // frames in each file
 		uint64_t m_deviceEnd = 0;          // the device frame after the last one recorded
 		std::vector<float> m_history;      // pre-record: the last frames not recorded, a ring of all channels
@@ -344,11 +352,13 @@ namespace gnubase::engine
 		RecordSetup m_midiCurrent;
 		bool m_midiRecording = false;
 		std::vector<Take> m_midiTakes; // their offsets are the device frames they started at
+		bool m_midiCycled = false;     // a take began a cycle lap
 		std::map<ObjectId, MidiTakeBuilder> m_midiBuilders;
 		// MIDI recordings that ended while an audio recording still runs (its input comes later by the record
 		// offset): recording.add gets them with it, as one undo step.
 		Json m_pendingMidi = Json::array();
 		RecordSetup m_pendingMidiSetup;
+		bool m_pendingMidiCycled = false;
 		std::map<ObjectId, Retrospective> m_retrospective; // by channel
 		uint64_t m_frameBase = 0; // added to the device frames kept: the device's first frame is after all kept before
 

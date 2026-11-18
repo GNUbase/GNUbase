@@ -801,6 +801,29 @@ TEST_CASE("Keep Last keeps the last complete lap that recorded anything", "[inte
 	CHECK(notesOf(parts[0]) == std::vector<std::vector<int64_t>>{{g_beatTicks, g_beatTicks, 62}});
 }
 
+TEST_CASE("a locate during a linear recording keeps every take, whatever the MIDI cycle record mode", "[integration]")
+{
+	// The MIDI cycle record modes apply only to recording in cycle mode (reference manual p. 352), not to the take
+	// that a locate starts.
+	Setup setup;
+	Client& client = setup.client;
+	const std::string mode = GENERATE("keepLast", "stacked");
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "transport.set", {{"left", 0}, {"right", 4 * g_beat}, {"midiCycleRecordMode", mode}});
+	run(client, "transport.record");
+	setup.inject({message(g_beat, {0x90, 60, 100}), message(2 * g_beat, {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 4 * g_beat}});
+	run(client, "transport.locate", {{"position", 8 * g_beat}});
+	setup.inject({message(5 * g_beat, {0x90, 62, 100}), message(6 * g_beat, {0x80, 62, 0})});
+	run(client, "audio.render", {{"frames", 3 * g_beat}});
+	REQUIRE(setup.stop().is_object());
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	CHECK(parts[0].at("lane") == 0);
+	CHECK(notesOf(parts[0]) ==
+		std::vector<std::vector<int64_t>>{{g_beatTicks, g_beatTicks, 60}, {9 * g_beatTicks, g_beatTicks, 62}});
+}
+
 TEST_CASE("recording.add applies the MIDI cycle record modes to the takes", "[integration]")
 {
 	Setup setup;
@@ -814,7 +837,8 @@ TEST_CASE("recording.add applies the MIDI cycle record modes to the takes", "[in
 	const auto record = [&](const std::string& cycleMode, const Json& takes, const Json& notes)
 	{
 		return run(client, "recording.add",
-			{{"cycleMode", cycleMode}, {"tracks", {{{"track", setup.track}, {"takes", takes}, {"notes", notes}}}}});
+			{{"cycle", true}, {"cycleMode", cycleMode},
+				{"tracks", {{{"track", setup.track}, {"takes", takes}, {"notes", notes}}}}});
 	};
 	using Notes = std::vector<std::vector<int64_t>>;
 
@@ -875,7 +899,7 @@ TEST_CASE("recording.add applies the MIDI cycle record modes to the takes", "[in
 				.at("id")
 				.get<ObjectId>();
 		run(client, "recording.add",
-			{{"cycleMode", cycleMode}, {"midiMode", "merge"},
+			{{"cycle", true}, {"cycleMode", cycleMode}, {"midiMode", "merge"},
 				{"tracks",
 					{{{"track", setup.track}, {"takes", Json::array({lap})},
 						{"notes", Json::array({note(g_beat, g_beat, 48)})}}}}});
@@ -884,6 +908,19 @@ TEST_CASE("recording.add applies the MIDI cycle record modes to the takes", "[in
 		CHECK(parts[0].at("id") == existing);
 		CHECK(parts[0].at("lane") == 0);
 		CHECK(notesOf(parts[0]) == Notes{{g_beatTicks, g_beatTicks, 48}});
+	}
+	SECTION("without cycle, the takes of a linear recording go by the MIDI record mode alone")
+	{
+		const std::string cycleMode = GENERATE("keepLast", "overwrite", "stacked");
+		run(client, "recording.add",
+			{{"cycleMode", cycleMode},
+				{"tracks",
+					{{{"track", setup.track}, {"takes", {lap, {{"position", 8 * g_beat}, {"length", 4 * g_beat}}}},
+						{"notes", {taken(note(0, g_beat, 48), 0), taken(note(8 * g_beat, g_beat, 50), 1)}}}}}});
+		const std::vector<Json> parts = setup.parts();
+		REQUIRE(parts.size() == 1);
+		CHECK(parts[0].at("lane") == 0);
+		CHECK(notesOf(parts[0]) == Notes{{0, g_beatTicks, 48}, {8 * g_beatTicks, g_beatTicks, 50}});
 	}
 	SECTION("a take that isn't there is refused")
 	{
