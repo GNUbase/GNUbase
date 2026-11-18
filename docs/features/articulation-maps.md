@@ -63,8 +63,9 @@ removed).
   articulation events have it) and the attributes in a note's `mutedArticulations` (`note.add`, `note.set`: only
   attributes the note has, each once, and an attribute that goes is no longer muted; a loaded project's too, #1762)
   are muted: they select no sound slot, so they play no output events and change no note, as if they weren't there. A
-  muted direction ends no direction before it, and Merge MIDI in Loop doesn't take it as in effect, though it copies
-  it, muted. Renaming an attribute renames its mute too. `project.get` lists them only where they are muted, and the project saves them.
+  muted direction ends no direction before it, and Merge MIDI in Loop doesn't take it as in effect, though it copies it,
+  muted. Renaming an attribute renames its mute too. `project.get` lists them only where they are muted, and the project
+  saves them.
 - **Playback** (`src/engine/document/rendersnapshot.cpp`). Each note of a track with a map plays a sound slot
   (`midi::soundSlots`): of each group, its attribute or else the direction in effect at its start; the slot with
   exactly those articulations, else the slot that has those of the more important groups, then the fewest others,
@@ -98,37 +99,39 @@ removed).
   (`midi::addOnSlots`): where the add-ons differ from those of the note before, the off events of those that end and
   the on events of those that start go after the slot's own, on the channel of the note, the off events on the channel
   the on events went to; where the notes go to another channel (a slot's `channel`), an add-on that stays goes off
-  there and on again on the new channel (#1667). One rule for both: on a track without a MIDI channel, where the notes
-  keep their own channels, a slot that stays follows them too, its off events on the channel it went to and its on
-  events on the note's (#1718). There the notes of each of their own channels are a line of their own, with the slot
-  and add-ons last sent for them (#1744): where notes on several channels sound together, a chord from MPE input or
-  two hands on two channels, each channel gets the on events of its notes' slot and add-ons, and none the off events
-  because a note on another channel plays another slot. An add-on slot's own MIDI modifiers do nothing: the notes play with
-  those of their slot, and the setup shows none for it. The sound slots lane and `articulationMap.soundSlots`
-  show the slot, not the add-ons. Attack Compensation starts a note earlier by its slot's `attack`, with its end, its
-  expression and its slot's output events; its slot's `separation` sends the output events, key switches, controller
-  and program changes, that much before that (with 0 the key switches one sample before, the others with the note),
-  but after the start of the note before, so that note keeps its own slot (#1667). The
-  pitch and velocity ranges keep the note's pitch and velocity in them after the slot's transpose and velocity, also
-  for the notes played into the track. A remote trigger of an add-on slot in a recording adds the directions of its own
-  groups only, and their resets where its key is released without latch, in the groups no later trigger took; its
-  attributes go to the notes that start while it is selected, until a trigger of another slot with an articulation of
-  its groups, an add-on slot or not, which takes its place (#1667). Slots that aren't add-ons leave the groups alone in
-  which an add-on slot is selected and they have no articulation of their own; in the others they write their own
-  direction (#1669). Without latch its key isn't one that comes before a held key's release. Each group's triggers are
-  listed once, by position, so that the work grows with the triggers, not their square (#1669). Played into the
-  track, it sends its on events on the channel the notes play on (the selected slot's), and without latch its off
-  events where the key is released, on the channel its on events went to, and leaves the selected slot as it is; its
-  trigger, and that of a slot that isn't an add-on with an articulation of its groups, sends the off events of an
-  add-on slot of its groups that is on, also with latch (#1667). An add-on slot that is on follows the notes to another
-  channel: where another slot with a channel of its own is selected, the default slot comes back on another, the MIDI
-  track is set to another channel (back to Any: the selected slot's channel, its trigger's, or with none selected the
-  default slot's own or the channel of the add-on's trigger), or its key is pressed again on another channel, its off events go to the
-  channel its on events went to and its on events to the new one (#1718). Unlike playback, the input keeps one
-  selected slot and its add-ons on one channel: on a track without a MIDI channel, notes played on another channel than
-  the selected slot's get no output events on theirs (#1744). Without latch, the default slot coming back where a key is released ends no add-on slot: one whose key is
-  still held keeps its groups, in the track and in a recording, where the default slot's directions leave those groups
-  alone, also where it has an articulation of them (#1718).
+  there and on again on the new channel (#1667). On a track without a MIDI channel, where the notes keep their own
+  channels, the notes of each of their own channels are a line of their own, with the slot and add-ons last sent for
+  them (#1744): where notes on several channels sound together, a chord from MPE input or two hands on two channels,
+  each channel gets the on events of its notes' slot and add-ons, and none the off events because a note on another
+  channel plays another slot. Only a slot's own channel moves a line to another channel, with the off events of its slot
+  and add-ons on the one it leaves (#1718). Each channel the notes play on keeps what went out there last: where lines
+  meet on one through slots with a channel of their own, a note whose slot or add-ons differ from those sent there for
+  another line sends its own again, after the off events of the others. An add-on slot's own MIDI modifiers do nothing:
+  the notes play with those of their slot, and the setup shows none for it. The sound slots lane and
+  `articulationMap.soundSlots` show the slot, not the add-ons. Attack Compensation starts a note earlier by its slot's
+  `attack`, with its end, its expression and its slot's output events; its slot's `separation` sends the output events,
+  key switches, controller and program changes, that much before that (with 0 the key switches one sample before, the
+  others with the note), but after the start of the note before, so that note keeps its own slot (#1667). The pitch and
+  velocity ranges keep the note's pitch and velocity in them after the slot's transpose and velocity, also for the notes
+  played into the track. A remote trigger of an add-on slot in a recording adds the directions of its own groups only,
+  and their resets where its key is released without latch, in the groups no later trigger took; its attributes go to
+  the notes that start while it is selected, until a trigger of another slot with an articulation of its groups, an
+  add-on slot or not, which takes its place (#1667). Slots that aren't add-ons leave the groups alone in which an add-on
+  slot is selected and they have no articulation of their own; in the others they write their own direction (#1669).
+  Without latch its key isn't one that comes before a held key's release. Each group's triggers are listed once, by
+  position, so that the work grows with the triggers, not their square (#1669). Played into the track, it sends its on
+  events on the channel the notes play on (the selected slot's), and without latch its off events where the key is
+  released, on the channel its on events went to, and leaves the selected slot as it is; its trigger, and that of a slot
+  that isn't an add-on with an articulation of its groups, sends the off events of an add-on slot of its groups that is
+  on, also with latch (#1667). An add-on slot that is on follows the notes to another channel: where another slot with a
+  channel of its own is selected, the default slot comes back on another, the MIDI track is set to another channel (back
+  to Any: the selected slot's channel, its trigger's, or with none selected the default slot's own or the channel of the
+  add-on's trigger), or its key is pressed again on another channel, its off events go to the channel its on events went
+  to and its on events to the new one (#1718). Unlike playback, the input keeps one selected slot and its add-ons on one
+  channel: on a track without a MIDI channel, notes played on another channel than the selected slot's get no output
+  events on theirs (#1744). Without latch, the default slot coming back where a key is released ends no add-on slot: one
+  whose key is still held keeps its groups, in the track and in a recording, where the default slot's directions leave
+  those groups alone, also where it has an articulation of them (#1718).
 - **Remote triggers** (pp. 1263, 1268, 1282). In what a recording brings to a track with a map (`recording.add`), the
   notes whose pitch is a slot's trigger (Key Switch), or the program changes whose program is one (Program Change),
   aren't recorded; they select their slot instead: a direction for each group that has directions, the slot's own or
@@ -210,10 +213,10 @@ removed).
   the part editing mode (#1799); a muted direction ends no direction before it, which lasts on through it as it plays,
   while it keeps its own span (#1762, #1799). The key editor's mute tool mutes the direction or attribute clicked
   (`controller.set` `muted`, `note.set` `mutedArticulations`), or unmutes it, one undo step each; the drum editor's
-  toolbar has it too. With the draw tool a click in a direction's row adds it on the quantize grid (Ctrl: off it) to the part there
-  (`controller.add`), but not where the row's direction already starts, in an attribute's row to the notes that sound
-  there and started last, in place of their attribute of the same group (`note.set`); a click on a direction or
-  attribute removes it, as the erase tool's does. The lane menu's Select All Events on Lane selects the lane's
+  toolbar has it too. With the draw tool a click in a direction's row adds it on the quantize grid (Ctrl: off it) to the
+  part there (`controller.add`), but not where the row's direction already starts, in an attribute's row to the notes
+  that sound there and started last, in place of their attribute of the same group (`note.set`); a click on a direction
+  or attribute removes it, as the erase tool's does. The lane menu's Select All Events on Lane selects the lane's
   directions.
 - **Groups and the sound slots lane** (#1580, pp. 1287-1288; the view's `collapsedGroups` and `soundSlotsLane`,
   `editor.set`). A collapsed group is one row (`.articulation-row.collapsed[articulation-group]`) where its first
@@ -233,16 +236,17 @@ removed).
   Lua and MCP select single attributes with `editor.set` (only the note's own, not none, #1762), and a new selection of
   the note elsewhere selects all its attributes again; the notes that stay selected as the note display's selection
   changes, as with Shift and a click on another note, keep theirs (#1762). An attribute that goes leaves the entry, and
-  a note whose attributes selected all went, as after Delete, is no longer selected. A press on the lane gives it the keyboard focus (on the lanes' root, as the lane's elements can go
-  with the next render), which its state class `.focused` shows, a frame the themes draw over the whole lane
-  (`.controller-lane-frame`, taking no room, so that the area lines up with the other lanes'), as around the docking
-  zone with the focus (p. 100, #1658, #1688), until the root loses the focus: Delete or Backspace then removes its
-  selected directions and attributes (`controller.remove`, `note.set`, one undo step), not the notes, as the reference does (p. 1289). With the object
-  selection tool an arrow in a direction's upper left corner (`.articulation-menu-arrow`, shown while the mouse is over
-  the direction or it is selected; beside a reset, which is narrower than it, so that a press on the reset selects
-  it, #1688) opens its event pop-up menu (`#controller-articulation-menu`, p. 1290, #1658), as a
-  right click on it does; Reset, checked on a reset, makes it a reset or a direction again (`controller.set` `reset`).
-  A direction of a part that isn't editable has neither.
+  a note whose attributes selected all went, as after Delete, is no longer selected. A press on the lane gives it the
+  keyboard focus (on the lanes' root, as the lane's elements can go with the next render), which its state class
+  `.focused` shows, a frame the themes draw over the whole lane (`.controller-lane-frame`, taking no room, so that the
+  area lines up with the other lanes'), as around the docking zone with the focus (p. 100, #1658, #1688), until the root
+  loses the focus: Delete or Backspace then removes its selected directions and attributes (`controller.remove`,
+  `note.set`, one undo step), not the notes, as the reference does (p. 1289). With the object selection tool an arrow in
+  a direction's upper left corner (`.articulation-menu-arrow`, shown while the mouse is over the direction or it is
+  selected; beside a reset, which is narrower than it, so that a press on the reset selects it, #1688) opens its event
+  pop-up menu (`#controller-articulation-menu`, p. 1290, #1658), as a right click on it does; Reset, checked on a reset,
+  makes it a reset or a direction again (`controller.set` `reset`). A direction of a part that isn't editable has
+  neither.
 - **Articulations field** (p. 1290): the key and drum editors' info line shows the first selected note's attributes,
   names separated by commas; typed, they replace every selected note's, and typed empty, they go. A warning sign
   (`svg.icon.warning`, which the themes color for every warning sign, the field's state class `.unknown`) shows where
@@ -318,7 +322,9 @@ presets; importing the reference's own files and other applications' maps.
   `.muted`, and the slots the notes play then; the attribute selection in `editor.get` and `editor.set`, a new
   selection of the note selecting all its attributes, Shift removing one of all, Delete with the lane's frame; a press
   on a reset selecting it and its arrow beside it; the list editor's menu opening for another row's cell and not while
-  a cell is edited.
+  a cell is edited, and closing on a second click on its cell after the rows rendered anew (#1799); a direction lasting
+  on the lane through a muted one, which keeps its own span, and the note display's selection changes keeping the lane's
+  attributes selected of the notes that stay (#1762).
   `tests/scripting_tests.cpp` checks empty Lua tables as lists and `gnubase.off`.
 - `tests/articulationmaps_tests.cpp`: maps added, copied, changed and removed with their errors and undo, a track's map;
   directions and attributes; playback through the slots' output events and MIDI modifiers, the closest slot and resets;
@@ -334,7 +340,9 @@ presets; importing the reference's own files and other applications' maps.
   where the second track's part starts while the first's direction is in effect, none once that direction was reset);
   muted directions and attributes selecting no slot, refused on other events and on attributes the note doesn't
   have, and going with their attribute; saved and loaded, renamed with the map and not in effect in Merge MIDI in Loop
-  (#1684); the selection's `articulations` (#1688);
+  (#1684); the selection's `articulations` (#1688), `editor.set` refusing attributes the note doesn't have and an empty
+  list, and a note leaving the selection once its selected attributes are gone (#1762); a loaded project's mutes, only
+  the note's own, each once, and Merge MIDI in Loop copying a muted direction inside the range, muted (#1762, #1799);
   the slots a map and a part as `project.get` lists them choose (the sound slots lane's) and
   `articulationMap.soundSlots`, and the `articulations` lane type, which
   `controller.line` refuses; track presets and track import with the map; remote triggers played into a track
@@ -358,7 +366,9 @@ presets; importing the reference's own files and other applications' maps.
   another of their group and by a slot with an articulation of it, on the selected slot's channel, pressed again on
   another channel, following the notes to the default slot's channel where it comes back, and pressed again after a
   setup edit put another one on into its group (#1744); a slot following the notes to their own channels in playback,
-  as its add-ons do (#1718), and a chord across two channels keeping both channels' slots (#1744).
+  as its add-ons do (#1718), and a chord across two channels keeping both channels' slots, and notes of two own channels
+  whose slots share a channel of their own, alternating slots, sending their slot and add-on there again each time
+  (#1744).
   `tests/midi_tests.cpp` and `tests/sequencing_tests.cpp` check the chased key switches, and
   `tests/sequencing_tests.cpp` a jump with the chase limited to parts into a part that continues the slot of the part
   before it (#1521), and a MIDI track heard again there after it was disabled (#1600); `tests/midi_tests.cpp` the

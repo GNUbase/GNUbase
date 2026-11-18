@@ -1675,6 +1675,66 @@ TEST_CASE("sound slots follow the notes to their own channels, as add-on slots d
 			{first.start, 0, on}, {first.start, 1, on}, {notePlaying(chord, 62).start, 1, 0}});
 }
 
+TEST_CASE("notes of two own channels that slots send to one channel switch it each time", "[unit]")
+{
+	Fixture f;
+	// An instrument track: the notes keep their own channels, and each is a line of its own (#1744). Arco, the default
+	// slot, switches with the key C0 and Staccato with D0, both on channel 3; the add-on Legato turns on with
+	// controller 68 at 127 and off with it at 0. Notes on channels 1 and 2 alternate between the slots: each sends
+	// its slot and add-ons again, as the channel they play on last got the other's.
+	const Json settings = {{"name", "Shared"}, {"groups", {"Technique", "Legato"}},
+		{"articulations",
+			{{{"name", "Staccato"}, {"type", "attribute"}, {"group", 0}},
+				{{"name", "Legato"}, {"type", "attribute"}, {"group", 1}}}},
+		{"slots",
+			{{{"name", "Arco"}, {"channel", 2}, {"outputs", {{{"status", "note"}, {"data1", 24}}}}},
+				{{"name", "Staccato"}, {"articulations", {"Staccato"}}, {"channel", 2},
+					{"outputs", {{{"status", "note"}, {"data1", 26}}}}},
+				{{"name", "Legato"}, {"articulations", {"Legato"}}, {"addOn", true},
+					{"outputs",
+						{{{"status", "controller"}, {"data1", 68}, {"data2", 127}},
+							{{"status", "controller"}, {"data1", 68}, {"data2", 0}, {"off", true}}}}}}}};
+	const auto id = f.call("articulationMap.add", settings).at("map").at("id");
+	f.call("track.set", {{"track", f.track}, {"articulationMap", id}});
+	const auto note = [](int64_t position, int pitch, int channel, Json articulations)
+	{
+		return Json{{"position", position}, {"length", g_quarter / 2}, {"pitch", pitch}, {"velocity", 0.5},
+			{"channel", channel}, {"articulations", std::move(articulations)}};
+	};
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{note(0, 60, 0, {"Staccato", "Legato"}), note(g_quarter, 61, 1, Json::array()),
+					note(2 * g_quarter, 62, 0, {"Staccato", "Legato"}), note(3 * g_quarter, 63, 1, Json::array())}}});
+	const engine::RenderChannel channel = f.rendered();
+	std::vector<std::tuple<int64_t, int, int>> switches;
+	for (const engine::RenderNote& each : channel.notes)
+		if (each.pitch == 24 || each.pitch == 26)
+			switches.emplace_back(each.start, each.pitch, each.channel);
+	std::sort(switches.begin(), switches.end());
+	REQUIRE(switches.size() == 4);
+	const std::vector<int> pitches = {60, 61, 62, 63};
+	const std::vector<int> keys = {26, 24, 26, 24};
+	for (size_t index = 0; index < switches.size(); ++index)
+	{
+		const engine::RenderNote& played = notePlaying(channel, pitches.at(index));
+		CHECK(played.channel == 2);
+		CHECK(std::get<0>(switches.at(index)) <= played.start);
+		CHECK(std::get<1>(switches.at(index)) == keys.at(index));
+		CHECK(std::get<2>(switches.at(index)) == 2);
+	}
+	std::vector<std::tuple<int64_t, int, uint32_t>> found;
+	found.reserve(channel.controllers.size());
+	for (const engine::RenderController& controller : channel.controllers)
+		found.emplace_back(controller.position, controller.channel, controller.value);
+	std::sort(found.begin(), found.end());
+	const uint32_t on = engine::midi::controllerFromMidi1(127);
+	CHECK(found ==
+		std::vector<std::tuple<int64_t, int, uint32_t>>{{notePlaying(channel, 60).start, 2, on},
+			{notePlaying(channel, 61).start, 2, 0}, {notePlaying(channel, 62).start, 2, on},
+			{notePlaying(channel, 63).start, 2, 0}});
+}
+
 TEST_CASE("articulationMap.remoteTriggers transposes, reassigns and removes the remote triggers", "[unit]")
 {
 	Fixture f;

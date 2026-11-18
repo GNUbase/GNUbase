@@ -146,26 +146,26 @@ namespace gnubase::engine
 		// them sends them again (MidiSequencer::chaseNotes). The controller and program changes are the track's
 		// (g_soundSlotPart), not the part's of the note, so a chase limited to parts finds them where a part continues
 		// the slot of another. Add-on slots go on the channel of the notes that play them and follow them to another
-		// channel. On a track without a MIDI channel each channel the notes come with keeps its own slot and add-ons
-		// (#1744), so that notes on several channels that sound together, a chord from MPE input, keep theirs.
-		// ponytail: notes of several such channels that a slot's own channel joins don't know of each other there; a
-		// state per channel played on too, if that matters.
+		// channel. On a track without a MIDI channel the notes of each channel they come with are a line of their own
+		// (#1744), so that notes on several channels that sound together, a chord from MPE input, keep their slots and
+		// add-ons: only a slot's own channel moves a line to another channel, with the off events of what it sent on
+		// the one it leaves. Each channel played on keeps what went out there last, so a note whose slot or add-ons
+		// differ from those, sent there for another line, sends its own again.
 		void addOutputEvents(const Project& project, std::vector<SlotNote>& notes, RenderChannel& channel)
 		{
 			std::stable_sort(notes.begin(), notes.end(), [](const SlotNote& a, const SlotNote& b)
 				{ return std::tie(a.plays, a.order) < std::tie(b.plays, b.order); });
 			struct Sent
 			{
-				const SlotNote* previous = nullptr;                       // the last one whose slot went out
-				std::vector<std::pair<const SoundSlot*, uint8_t>> addOns; // the add-on slots on, with their channel
+				const SoundSlot* slot = nullptr;      // the slot on
+				std::vector<const SoundSlot*> addOns; // the add-on slots on
 			};
-			std::array<Sent, 16> sources;        // by SlotNote::source
-			std::optional<time::Samples> before; // where the note before played
+			std::array<const SlotNote*, 16> lines{}; // the last note of each line, by SlotNote::source
+			std::array<Sent, 16> played;             // what went out last on each channel played on
+			std::optional<time::Samples> before;     // where the note before played
 			for (const SlotNote& note : notes)
 			{
-				Sent& sent = sources.at(note.source % sources.size());
-				const SlotNote*& previous = sent.previous;
-				auto& addOns = sent.addOns;
+				const SlotNote*& previous = lines.at(note.source % lines.size());
 				const time::Samples at = std::max<time::Samples>(note.plays, 0);
 				const int separation = note.slot->separation;
 				time::Samples keySwitch = at - std::max<time::Samples>(milliseconds(project, separation), 1);
@@ -191,41 +191,50 @@ namespace gnubase::engine
 								on, {}, g_soundSlotPart});
 					}
 				};
-				// A slot that stays follows the notes to another channel of their own, as the add-ons do (#1718).
-				if (previous == nullptr || note.slot != previous->slot || note.channel != previous->channel)
+				// Where a slot's own channel moves the line to another channel, the off events of its slot and add-ons
+				// there, as far as they are still on there (#1667, #1718).
+				if (previous != nullptr && previous->channel != note.channel)
 				{
-					if (previous != nullptr)
-						send(*previous->slot, true, previous->channel);
-					send(*note.slot, false, note.channel);
-					previous = &note;
+					Sent& left = played.at(previous->channel % played.size());
+					if (left.slot == previous->slot)
+					{
+						send(*left.slot, true, previous->channel);
+						left.slot = nullptr;
+					}
+					for (const SoundSlot* addOn : previous->addOns)
+						if (const auto on = std::find(left.addOns.begin(), left.addOns.end(), addOn);
+							on != left.addOns.end())
+						{
+							send(*addOn, true, previous->channel);
+							left.addOns.erase(on);
+						}
 				}
-				// Add-on slots (#1113): the off events of those that end, on the channel they went to, and the on
-				// events of those that start; one that stays goes to the note's channel where it differs.
-				for (auto on = addOns.begin(); on != addOns.end();)
+				previous = &note;
+				// On the note's channel the off events of the slot there and the note's slot's on events where they
+				// differ, then those of the add-on slots (#1113) that end and start.
+				Sent& sent = played.at(note.channel % played.size());
+				if (sent.slot != note.slot)
 				{
-					const bool stays =
-						std::find(note.addOns.begin(), note.addOns.end(), on->first) != note.addOns.end();
-					if (stays && on->second == note.channel)
+					if (sent.slot != nullptr)
+						send(*sent.slot, true, note.channel);
+					send(*note.slot, false, note.channel);
+					sent.slot = note.slot;
+				}
+				for (auto on = sent.addOns.begin(); on != sent.addOns.end();)
+					if (std::find(note.addOns.begin(), note.addOns.end(), *on) == note.addOns.end())
+					{
+						send(**on, true, note.channel);
+						on = sent.addOns.erase(on);
+					}
+					else
 					{
 						++on;
-						continue;
 					}
-					send(*on->first, true, on->second);
-					if (!stays)
-					{
-						on = addOns.erase(on);
-						continue;
-					}
-					on->second = note.channel;
-					send(*on->first, false, note.channel);
-					++on;
-				}
 				for (const SoundSlot* addOn : note.addOns)
-					if (std::none_of(addOns.begin(), addOns.end(),
-							[addOn](const std::pair<const SoundSlot*, uint8_t>& on) { return on.first == addOn; }))
+					if (std::find(sent.addOns.begin(), sent.addOns.end(), addOn) == sent.addOns.end())
 					{
 						send(*addOn, false, note.channel);
-						addOns.emplace_back(addOn, note.channel);
+						sent.addOns.push_back(addOn);
 					}
 			}
 		}

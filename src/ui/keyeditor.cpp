@@ -600,14 +600,19 @@ namespace gnubase::ui
 
 	Json KeyEditor::selectionJson() const
 	{
+		// The view's entries with selected attributes, usually none or a few, looked up once.
+		std::map<std::pair<uint64_t, uint64_t>, const Json*> attributes;
 		const Json shown = m_view.value("selection", Json::array());
+		for (const Json& entry : shown)
+			if (entry.contains("articulations"))
+				attributes[{entry.at("part").get<uint64_t>(), entry.at("note").get<uint64_t>()}] =
+					&entry.at("articulations");
 		Json selection = Json::array();
-		for (const auto& [part, note] : m_selection)
+		for (const auto& selected : m_selection)
 		{
-			selection.push_back({{"part", part}, {"note", note}});
-			for (const Json& entry : shown)
-				if (entry.at("part") == part && entry.at("note") == note && entry.contains("articulations"))
-					selection.back()["articulations"] = entry.at("articulations");
+			selection.push_back({{"part", selected.first}, {"note", selected.second}});
+			if (const auto found = attributes.find(selected); found != attributes.end())
+				selection.back()["articulations"] = *found->second;
 		}
 		return selection;
 	}
