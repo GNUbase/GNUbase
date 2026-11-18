@@ -3260,9 +3260,10 @@ namespace gnubase::engine
 			"user confirmed it. A recording's takes come into the project later, not with this command: once the "
 			"input still on its way has come in and the files are closed, the engine runs recording.add, which "
 			"announces recording.added; a file that can't be created or written is announced with recording.failed. "
-			"Wait for recording.added before project.save, or the project is saved without the takes; project.load, "
-			"project.new or project.revert before it drop them with recording.failed, and their files stay in the "
-			"old project's media folder.",
+			"Wait for recording.added before project.save, or the project is saved without the takes; it follows "
+			"unless no file could be written, which only recording.failed reports. project.load, project.new or "
+			"project.revert before it drop them with recording.failed, and their files stay in the old project's "
+			"media folder.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
