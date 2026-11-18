@@ -2,7 +2,8 @@
 // Holds the audio engine's cue thread back when it first runs, through Engine::setCueStartHook, until the test
 // releases it, so that what the test sends right after audio.start reaches the audio thread before the cue thread reads
 // anything, however the threads are scheduled (#1889). Only the cue thread waits: the device runs meanwhile, and
-// commands and events go on, but nothing posts transport.update or midi.activity and no stream is cued.
+// commands and events go on, but nothing posts transport.update, midi.activity or chordPads.remoteInput, and only the
+// command thread's own cues (transport.play, transport.locate) cue streams.
 #pragma once
 
 #include <chrono>
@@ -20,7 +21,7 @@ namespace gnubase::test
 	public:
 		// Holds the cue thread of the engine's next device start, such as audio.start, once, for hold at most: then the
 		// hold lapses and the thread goes on as if released. Later starts aren't held. One HeldCueThread per engine at
-		// a time; it must not outlive the engine.
+		// a time: a second throws std::logic_error and leaves the first one holding. It must not outlive the engine.
 		explicit HeldCueThread(engine::Engine& engine, std::chrono::milliseconds hold = std::chrono::seconds(30));
 
 		// Releases the thread and holds no other.

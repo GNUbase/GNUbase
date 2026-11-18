@@ -286,13 +286,14 @@ namespace gnubase::engine
 		// there: uncaught, a std::exception ends the job as failed, JobCancelled as cancelled. Empty for none. Any
 		// thread.
 		void setJobProgressHook(std::function<void(uint64_t job, const std::string& kind)> hook);
-		// For tests: calls hook on the audio engine's cue thread whenever a device start (audio.start, a device reset
-		// or reconnect) starts it, when the thread first runs and before it reads anything, e.g. to hold it back until
-		// what the test sends right after audio.start has reached the audio thread (tests/testutils/heldcuethread.h,
-		// #1889). The thread takes its starting counts of transport changes and MIDI input before the device starts,
-		// so what the audio thread does meanwhile is still announced (#1886). audio.stop, and so the engine's
-		// shutdown, wait for a hook that holds the thread. The thread gets a copy: a new hook applies from the next
-		// start on. Empty for none. Any thread.
+		// For tests: calls hook on the audio engine's cue thread whenever a device start starts it (each one:
+		// audio.start, audio.setDevice on a running device, a reset, a reconnect, a fallback, the restart after an
+		// offline mixdown), when the thread first runs and before it reads anything, e.g. to hold it back until what
+		// the test sends right after audio.start has reached the audio thread (tests/testutils/heldcuethread.h, #1889).
+		// The thread takes its starting counts of transport changes and MIDI input before the device starts, so what
+		// the audio thread does meanwhile is still announced (#1886). audio.stop, and so the engine's shutdown, wait
+		// for a hook that holds the thread. The thread gets a copy: a new hook applies from the next start on. Empty
+		// for none. Any thread.
 		void setCueStartHook(std::function<void()> hook);
 
 	private:

@@ -5,9 +5,28 @@
 
 #include <condition_variable>
 #include <mutex>
+#include <set>
+#include <stdexcept>
 
 namespace gnubase::test
 {
+	namespace
+	{
+		// The engines whose cue thread a HeldCueThread holds, so that a second one per engine is refused: it would
+		// replace the first one's hook and, when it goes, unhook it.
+		struct Holders
+		{
+			std::mutex mutex;
+			std::set<const engine::Engine*> engines;
+		};
+
+		Holders& holders()
+		{
+			static Holders all;
+			return all;
+		}
+	}
+
 	struct HeldCueThread::State
 	{
 		std::chrono::milliseconds hold{0};
@@ -23,6 +42,12 @@ namespace gnubase::test
 	HeldCueThread::HeldCueThread(engine::Engine& engine, std::chrono::milliseconds hold)
 		: m_engine(engine), m_state(std::make_shared<State>())
 	{
+		{
+			Holders& all = holders();
+			const std::scoped_lock lock(all.mutex);
+			if (!all.engines.insert(&engine).second)
+				throw std::logic_error("another HeldCueThread holds this engine's cue thread");
+		}
 		m_state->hold = hold;
 		m_engine.setCueStartHook(
 			[state = m_state]
@@ -44,6 +69,9 @@ namespace gnubase::test
 	{
 		release();
 		m_engine.setCueStartHook({});
+		Holders& all = holders();
+		const std::scoped_lock lock(all.mutex);
+		all.engines.erase(&m_engine);
 	}
 
 	bool HeldCueThread::waitUntilHeld(std::chrono::milliseconds timeout)
