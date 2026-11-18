@@ -54,7 +54,7 @@ namespace gnubase::engine
 			if (result.empty())
 				return "Audio";
 			// Windows' device names, whatever the extension and the case, and spaces before it: "con.wav" is no file.
-			size_t stem = std::min(result.find('.'), result.size());
+			const size_t stem = std::min(result.find('.'), result.size());
 			std::string device = result.substr(0, stem);
 			while (!device.empty() && device.back() == ' ')
 				device.pop_back();

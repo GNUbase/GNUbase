@@ -954,7 +954,7 @@ TEST_CASE("audio pre-record keeps only the armed tracks' input channels (#531)",
 		recorder.prepare(4, g_blockFrames);
 		engine::RecordSetup setup = recordInto(dir.path());
 		setup.tracks = {{1, "Audio", {2}}};
-		setup.preRecordFrames = 2 * g_blockFrames;
+		setup.preRecordFrames = int64_t{2} * g_blockFrames;
 		recorder.setup(setup);
 		engine::PlayedPositions played(size_t{8} * g_blockFrames);
 		const auto block = [&](uint64_t index, bool recording)
@@ -991,7 +991,10 @@ TEST_CASE("audio pre-record keeps only the armed tracks' input channels (#531)",
 	const std::vector<float> file = channelOf(path, 0);
 	REQUIRE(file.size() == 3 * g_blockFrames);
 	for (size_t f = 0; f < file.size(); ++f)
-		REQUIRE(file[f] == 3.0f + (static_cast<float>(f / g_blockFrames + 1) / 10.0f));
+	{
+		const size_t block = (f / g_blockFrames) + 1;
+		REQUIRE(file[f] == 3.0f + (static_cast<float>(block) / 10.0f));
+	}
 }
 
 TEST_CASE("a pre-record history that can't be allocated fails the pre-record, not the recording (#531)", "[unit]")
@@ -1063,16 +1066,39 @@ TEST_CASE(
 			REQUIRE(changed.wait_for(lock, 5s, [&] { return paths.size() == 1; }));
 		}
 		// Twice the chunks the pool holds (65536 frames), each block after the wait an offline render makes.
-		constexpr uint64_t g_blocks = 2048;
-		for (uint64_t index = 2; index < 2 + g_blocks; ++index)
+		constexpr uint64_t blocks = 2048;
+		for (uint64_t index = 2; index < 2 + blocks; ++index)
 		{
 			REQUIRE(recorder.waitForChunks(5s));
 			processBlock(recorder, played, index, true);
 		}
-		processBlock(recorder, played, 2 + g_blocks, false);
+		processBlock(recorder, played, 2 + blocks, false);
 		CHECK(recorder.dropped() == 0);
 		std::unique_lock lock(mutex);
 		REQUIRE(changed.wait_for(lock, 5s, [&] { return paths.size() == 2; }));
-		CHECK(channelOf(paths[1], 0).size() == g_blocks * g_blockFrames);
+		CHECK(channelOf(paths[1], 0).size() == blocks * g_blockFrames);
 	}
+}
+
+TEST_CASE("a recording that adds nothing leaves the project unmodified (#546)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	const auto modified = [&client] { return run(client, "project.revision").at("modified").get<bool>(); };
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	SECTION("another project was opened")
+	{
+		run(client, "project.new");
+	}
+	SECTION("every recorded track was removed")
+	{
+		run(client, "track.remove", {{"track", setup.track}});
+		run(client, "project.save");
+	}
+	REQUIRE(!modified());
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(waitFor(client, "recording.failed").is_object()); // recording.add runs on the command thread
+	CHECK(!modified());
 }

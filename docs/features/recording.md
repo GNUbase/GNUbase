@@ -59,7 +59,11 @@ transport's record state and the record mode setting.
   a clip per file, and an audio event per take at its position, playing its part of the file. `recording.added`
   announces the media files, clips and events; a file that can't be created or written is announced with
   `recording.failed` and its reason, and the others go on. Undo removes the events, clips and media files; the files
-  stay on disk. A recording belongs to the project it was started in (`project.revision`'s `project`, which
+  stay on disk. The takes come after `transport.stop` or a punch out has returned, once the input still on its way has
+  come in: a client waits for `recording.added` before `project.save`, or the project is saved without them, and
+  `project.load`, `project.new` or `project.revert` before it drop them (#546, the command descriptions say so). A
+  recording that adds nothing, because its project is no longer open or all its tracks are gone, leaves the project
+  unmodified, without an undo step. A recording belongs to the project it was started in (`project.revision`'s `project`, which
   `recording.add` gets as `project`): if another project was opened meanwhile, nothing is added and
   `recording.failed` says so, and a track removed while it recorded is skipped with `recording.failed` while the
   other tracks' takes are added.

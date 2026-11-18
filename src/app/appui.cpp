@@ -1166,7 +1166,7 @@ namespace gnubase::app
 			{
 				if (parameters.size() != 1 || !m_transport.is_object())
 					return false;
-				const std::string& key = parameters.begin().key();
+				const std::string key = parameters.begin().key();
 				return (key == "audioRecordMode" || key == "midiRecordMode" || key == "midiCycleRecordMode") &&
 					m_transport.value(key, engine::Json()) == parameters.begin().value();
 			});
