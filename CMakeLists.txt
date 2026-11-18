@@ -1,5 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.25)
+# An in-source build would write the generated API references into the source docs/ folder (#922). Refused before
+# project(), so no compiler checks run.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+	message(FATAL_ERROR "In-source builds are not supported. Configure with a preset, which builds in build/<preset> "
+		"(e.g. cmake --preset linux-gcc), and delete the CMakeCache.txt and CMakeFiles/ that CMake has already left "
+		"in the source folder.")
+endif()
 project(GNUbase VERSION 0.1.0 LANGUAGES C CXX)
 # The VST3 SDK's module loader on macOS is Objective-C++. Enabled before any subdirectory, so every generated
 # project has the language's compile and archive rules.
