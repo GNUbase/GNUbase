@@ -410,7 +410,9 @@ jobs:
         run: ctest --preset linux-clang --parallel ${{ matrix.tests }}
 
   clang-tidy:
-    timeout-minutes: 90 # main took up to 51 min in Nov 2026; a PR that changes a widely included header takes longer
+    # A change to a widely included header took 82 min on main (0cdb3d17, Nov 2026). A job cancelled at its limit saves
+    # no clang-tidy passes, so its rerun starts over and is cancelled again.
+    timeout-minutes: 150
     runs-on: ubuntu-24.04
     env:
       # 400M held only 58 % of a build: a pull request that changed no compiled code missed 548 of 1309 compiles.
