@@ -465,7 +465,7 @@
 			if not setup.subscribed then
 				setup.subscribed = true
 				gnubase.on("midi.activity", setup.activityArrived)
-				gnubase.midi.activityListen({on = true})
+				gnubase.midi.activityListen({on = true, listener = "studioSetup"})
 			end
 			report(document, {})
 		end
@@ -501,7 +501,7 @@
 			setup.document = nil
 			if setup.subscribed then
 				gnubase.off("midi.activity", setup.activityArrived)
-				gnubase.midi.activityListen({on = false})
+				gnubase.midi.activityListen({on = false, listener = "studioSetup"})
 				setup.subscribed = false
 			end
 		end

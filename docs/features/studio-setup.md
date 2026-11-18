@@ -29,8 +29,9 @@ MCP and Lua scripts can do all it does.
     Tuning and disables it; off, X shows its own assignment again (None until another is chosen, #1749), and choosing
     Tuning for X turns it on. At the bottom the MIDI Activity display shows the input's last eight messages (channel,
     kind, values) as the event `midi.activity` brings them; the dialog turns `midi.activityListen` on while it is open
-    and off when it closes. An input that is a known MPE device shows it (Detected Device), and the devices list has a
-    page named after the device below Note Expression Input, which is this page with its input. Each input has its own
+    and off when it closes, as its own `listener` (`studioSetup`), so others that listen go on (#1832). An input that
+    is a known MPE device shows it (Detected Device), and the devices list has a page named after the device below Note
+    Expression Input, which is this page with its input. Each input has its own
     fields, so switching inputs keeps what the user changed; Apply and OK send the changed inputs' settings; a pitch
     range that isn't a whole number from 1 to 96 is an error, and that input's settings stay as they were. Used Channels
     offers 16 for channel rotation; a zone gets at most 15, which the page shows after Apply. Apply builds the page

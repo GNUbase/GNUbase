@@ -657,18 +657,25 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"midi.activityListen", 1,
 				"Whether what the open MIDI inputs receive goes to midi.activity, which the engine then runs itself "
-				"as input arrives: the Note Expression Input page turns it on while it is open (#1749). Off by "
-				"default; turning it on starts afresh, without what came before.",
+				"as input arrives: the studio setup dialog turns it on while it is open, for its Note Expression "
+				"Input page (#1749). listener names who listens, such as the dialog's studioSetup; without it, the "
+				"calls share one. It is on while any listener has it on, so turning it off for one leaves the "
+				"others' (#1832). Off by default; turning it on starts afresh, without what came before.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["on"],
-					"properties": {"on": {"type": "boolean"}}})"),
+					"properties": {"on": {"type": "boolean"}, "listener": {"type": "string"}}})"),
 				Json::object(), false},
 			[this](CommandContext& context)
 			{
 				listOnce();
-				const bool on = context.parameters().at("on").get<bool>();
-				if (on && !m_activityListen.load(std::memory_order_relaxed))
+				const bool was = !m_activityListeners.empty();
+				const std::string listener = context.parameters().value("listener", std::string());
+				if (context.parameters().at("on").get<bool>())
+					m_activityListeners.insert(listener);
+				else
+					m_activityListeners.erase(listener);
+				if (!was && !m_activityListeners.empty())
 					dropActivity();
-				m_activityListen.store(on, std::memory_order_relaxed);
+				m_activityListen.store(!m_activityListeners.empty(), std::memory_order_relaxed);
 				return Json::object();
 			});
 
