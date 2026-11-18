@@ -481,6 +481,30 @@ TEST_CASE("the loudness blocks start where playback starts, not with audio from 
 	CHECK(reading.seconds == Approx(10.0).margin(0.1));
 }
 
+TEST_CASE("the loudness meter measures up to where playback stops, also within a step", "[unit]")
+{
+	LoudnessMeter meter;
+	meter.prepare(g_rate);
+	Signal played;
+	played.sine(3.0, -30.0);
+	played.sine(0.05, -10.0); // the last 50 ms before the stop, in a step that ends while the transport stands
+	played.play(meter);
+	Signal stopped;
+	stopped.silence(1.0);
+	stopped.play(meter, false);
+	const LoudnessReading reading = meter.read();
+	CHECK(reading.seconds == Approx(3.05));
+	CHECK(decibels(reading.truePeakMax[0]) == Approx(-10.0).margin(0.1));
+	// The 400 ms and 3 s blocks that end at the stop: 50 ms at -10 dBFS, the rest at -30.
+	const auto loudness = [](double loud, double total)
+	{ return 10.0 * std::log10(((loud * 0.1) + ((total - loud) * 0.001)) / total); };
+	CHECK(reading.momentaryMax.value_or(0.0) == Approx(loudness(0.05, 0.4)).margin(0.1));
+	CHECK(reading.shortTermMax.value_or(0.0) == Approx(loudness(0.05, 3.0)).margin(0.1));
+	// 27 blocks at -30 LUFS from 0.4 to 3 s, and the one that ends at the stop.
+	const double last = std::pow(10.0, loudness(0.05, 0.4) / 10.0);
+	CHECK(reading.integrated.value_or(0.0) == Approx(10.0 * std::log10(((27.0 * 0.001) + last) / 28.0)).margin(0.1));
+}
+
 TEST_CASE("the loudness meter reads a steady sine at other sample rates too", "[unit]")
 {
 	const double rate = GENERATE(44100.0, 96000.0);
@@ -498,6 +522,21 @@ TEST_CASE("the loudness meter reads a steady sine at other sample rates too", "[
 	}
 	CHECK(meter.read().integrated.value_or(0.0) == Approx(-23.0).margin(0.1));
 	CHECK(decibels(meter.read().truePeakMax[0]) == Approx(-23.0).margin(0.1)); // the level is the peak
+}
+
+TEST_CASE("meter.get refuses a channel deleted while no device runs", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}});
+	const Json added = run(client, "track.add", {{"type", "audio"}});
+	const auto channel = added.at("channel").at("id").get<ObjectId>();
+	run(client, "audio.render", {{"frames", 4800}});
+	run(client, "audio.simulateDeviceLoss", {{"connected", false}}); // no fallback: no device, no graph builds
+	REQUIRE(waitForLost(client, true));
+	run(client, "track.remove", {{"track", added.at("track").at("id")}});
+	CHECK_THAT(reject(client, "meter.get", {{"channels", {channel}}}), ContainsSubstring(std::to_string(channel)));
+	CHECK(run(client, "meter.get").at("channels").empty());
 }
 
 TEST_CASE("meter.get lists the channels asked for, also before they played", "[integration]")

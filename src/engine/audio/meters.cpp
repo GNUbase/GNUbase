@@ -320,18 +320,23 @@ namespace gnubase::engine
 		m_momentaryMax.reset();
 		m_shortTermMax.reset();
 		m_truePeakMax.fill(0.0f);
-		m_measuredSteps = 0;
+		m_measuredFrames = 0;
 		m_playingSteps = 0;
 	}
 
 	void LoudnessMeter::process(const float* const* audio, int channels, uint32_t frames, bool measuring) noexcept
 	{
 		channels = std::clamp(channels, 0, g_maxMeterChannels);
-		if (const uint32_t resets = m_resets.load(std::memory_order_acquire); resets != m_resetsSeen)
+		const uint32_t resets = m_resets.load(std::memory_order_acquire);
+		const bool afterReset = resets != m_resetsSeen;
+		if (afterReset)
 		{
 			m_resetsSeen = resets;
 			clear();
 		}
+		// Playback stopped within a step: what played of it counts, unless a reset came since.
+		if (m_wasMeasuring && !measuring && !afterReset)
+			stop();
 		if (channels != m_channels)
 		{
 			// Channels that come back start without what they measured before.
@@ -431,7 +436,7 @@ namespace gnubase::engine
 		m_playingSteps = measuring ? m_playingSteps + 1 : 0;
 		if (measuring)
 		{
-			++m_measuredSteps;
+			m_measuredFrames += m_stepLength;
 			// Blocks of 400 ms every 100 ms, and of 3 s every second, from where playback started: none holds audio
 			// from while the transport stood.
 			if (m_playingSteps >= 4 && momentary > 0.0)
@@ -450,6 +455,37 @@ namespace gnubase::engine
 		}
 		publish();
 		m_windowTruePeak.fill(0.0f);
+	}
+
+	void LoudnessMeter::stop() noexcept
+	{
+		// What played of the step counts as if the step ended at the stop, with the 400 ms and 3 s blocks that end
+		// there. Their oldest step lies partly before them, and the part they reach is taken at that step's mean
+		// square.
+		if (m_stepFrames == 0)
+			return;
+		m_measuredFrames += m_stepFrames;
+		const double played = static_cast<double>(m_stepFrames) / m_stepLength;
+		const auto block = [this, played](int steps)
+		{
+			double sum = m_stepEnergy / m_stepLength; // in steps' mean squares
+			for (int k = 1; k < steps; ++k)
+				sum += m_steps[static_cast<size_t>((m_stepIndex - k + g_steps) % g_steps)];
+			sum += (1.0 - played) * m_steps[static_cast<size_t>((m_stepIndex - steps + g_steps) % g_steps)];
+			return sum / steps;
+		};
+		if (m_playingSteps >= 4)
+			if (const double momentary = block(4); momentary > 0.0)
+			{
+				m_blocks.add(momentary);
+				m_momentaryMax = std::max(m_momentaryMax.value_or(-1e9), toLoudness(momentary));
+			}
+		if (m_playingSteps >= g_steps)
+			if (const double shortTerm = block(g_steps); shortTerm > 0.0)
+				m_shortTermMax = std::max(m_shortTermMax.value_or(-1e9), toLoudness(shortTerm));
+		for (size_t c = 0; c < static_cast<size_t>(m_channels); ++c)
+			m_truePeakMax[c] = std::max(m_truePeakMax[c], m_windowTruePeak[c]);
+		publish();
 	}
 
 	void LoudnessMeter::publish() noexcept
@@ -490,7 +526,7 @@ namespace gnubase::engine
 		m_range.store(range, std::memory_order_relaxed);
 		m_publishedMomentaryMax.store(m_momentaryMax.value_or(g_nothing), std::memory_order_relaxed);
 		m_publishedShortTermMax.store(m_shortTermMax.value_or(g_nothing), std::memory_order_relaxed);
-		m_seconds.store(static_cast<double>(m_measuredSteps) * g_publishSeconds, std::memory_order_relaxed);
+		m_seconds.store(static_cast<double>(m_measuredFrames) / m_sampleRate, std::memory_order_relaxed);
 		for (size_t c = 0; c < static_cast<size_t>(g_maxMeterChannels); ++c)
 		{
 			m_truePeak[c].store(m_windowTruePeak[c], std::memory_order_relaxed);
