@@ -195,15 +195,16 @@ TEST_CASE("the spectrum summary finds the strongest frequencies and the level of
 
 TEST_CASE("audio.analyze measures the captured output", "[integration]")
 {
-	const int64_t twentySeconds = int64_t{20} * 48000;
+	// Two seconds cover the loudness blocks and the later range, with timeout margin under sanitizers.
+	const int64_t twoSeconds = int64_t{2} * 48000;
 	Engine engine;
 	Client client(engine);
-	renderSine(client, 1000.0, -23.0, twentySeconds);
+	renderSine(client, 1000.0, -23.0, twoSeconds);
 
 	const Json all = call(client, "audio.analyze");
 	CHECK(all.at("sampleRate") == 48000.0);
 	CHECK(all.at("start") == 0);
-	CHECK(all.at("frames") == twentySeconds);
+	CHECK(all.at("frames") == twoSeconds);
 	CHECK_THAT(all.at("loudness").get<double>(), WithinAbs(-23.0, 0.1));
 	REQUIRE(all.at("channels").size() == 2);
 	const Json& left = all.at("channels").at(0);
@@ -227,8 +228,8 @@ TEST_CASE("audio.analyze measures the captured output", "[integration]")
 	CHECK(part.at("channels").at(0).at("spectrum").at("peaks").size() == 1);
 
 	CHECK_THAT(client.call("audio.analyze", {{"channels", {2}}}).error, ContainsSubstring("no output channel 2"));
-	CHECK_THAT(client.call("audio.analyze", {{"start", twentySeconds + 1}}).error, ContainsSubstring("captured"));
-	CHECK_THAT(client.call("audio.analyze", {{"frames", twentySeconds + 1}}).error, ContainsSubstring("captured"));
+	CHECK_THAT(client.call("audio.analyze", {{"start", twoSeconds + 1}}).error, ContainsSubstring("captured"));
+	CHECK_THAT(client.call("audio.analyze", {{"frames", twoSeconds + 1}}).error, ContainsSubstring("captured"));
 	CHECK_THAT(client.call("audio.analyze", {{"peaks", 21}}).error, ContainsSubstring("peaks"));
 }
 
