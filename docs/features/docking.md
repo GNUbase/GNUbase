@@ -16,6 +16,7 @@ strips above and below a row of zones, where the main zone takes what the others
 |---|---|
 | `zone="main"`, `"channel"`, `"left"`, `"right"`, `"lower"` | A zone. Every zone but the main one gets a `<tabset>` with its panels' tabs. `size` is its default size in dp, `default="hidden"` hides it by default. Its size is its width, or its height in a flex column. `tabbar="bottom"` puts its tabs at its bottom. |
 | `splitter for="left"` | The splitter that sizes that zone or resizable element; `resize="next"` for one after it. It hides with its zone. |
+| `maincontrol=".track-list listview"` | On a zone: the selector of the control in it (the track list's list view in the project zone) that Tab focuses when the zone has no control that had the focus last. |
 | `resizable="trackList"` | An element inside a zone that a splitter sizes, such as the track list; `size` is its default size in dp, its width, or its height in a flex column. |
 | `strip="infoLine"` | A strip; `default="hidden"` hides it by default. |
 | `toggle="left"` | A toggle button or menu item that shows or hides that zone or strip. |
@@ -204,21 +205,31 @@ The reference's defaults (p. 1572), bound everywhere; they act on the docking wi
 | Mod+I | `window.infoLine` | Show/Hide Info Line |
 | Alt+O | `window.overviewLine` | Show/Hide Overview |
 | Mod+Alt+Left, Mod+Alt+Right | `window.previousTab`, `window.nextTab` | Show Previous/Next Tab, in the zone with the focus |
+| Shift+Tab, Tab | `focus.previous`, `focus.next` | Focus Previous/Next (p. 1565): the keyboard focus to the previous or next zone |
 
 `window.menuBar`, `window.toolbar` and `window.statusLine` have no keys. Each zone is a focus zone (`focuszone` `channel`, `left`,
 `right`, `lower`, and `project` for the main zone), so key commands can depend on it ([key-commands.md](key-commands.md)). The document
 is the focus zone `project` too, so the project window's keys, such as zooming, work from the toolbar and from a side
 zone that doesn't bind them itself.
 
-**Moving the focus between zones** (#379, p. 100). A click into a zone gives it the keyboard focus. Tab activates the
+**Moving the focus between zones** (#379, #515, p. 100). A click into a zone gives it the keyboard focus. Tab activates the
 next shown zone of the docking window and Shift+Tab the previous one, around the ends, in the reference's order: the
 project zone, the Channel zone, then the left, lower and right zones. From outside the zones, such as
-the toolbar, Tab goes on as from the project zone. The docking system takes the key from the document's keydown before
-RmlUi does and focuses the zone's element, so the zone gets `.focused` and its keys
-([key-commands.md](key-commands.md)) work there; a control in the zone, such as a list view, takes its own keys once
-it is clicked. Tab isn't a key command and can't be bound to another key. In a text field or a select box Tab moves
+the toolbar, Tab goes on as from the project zone. Tab and Shift+Tab are the key commands `focus.next` and
+`focus.previous`, which the key commands dialog lists and the user can bind to other keys (F6, say, which then works
+as any key command does). Tab itself has to take the key before RmlUi's document moves the focus between its controls,
+so the docking system looks up what Tab is bound to in its keydown listener (`KeyCommands::press`) and runs that,
+whatever it is; a key that nothing is bound to, such as Alt+Tab and Cmd+Tab, which belong to the window manager, and
+Ctrl+Tab, goes on to RmlUi. The zone gets `.focused` and its keys ([key-commands.md](key-commands.md)) work there. The
+focus goes to the control that had it last in the zone, if that is still shown and not disabled, so that a list view
+that was clicked takes its arrow keys again; else to the zone's main control (its `maincontrol` attribute: the track
+list's list view in the project zone); else to the zone's element. In a text field or a select box Tab moves
 between controls as RmlUi does (#60), an open menu keeps it, and so do dialogs, which are modal documents of their own,
-and a panel in a window of its own, whose document has no zones. Ctrl+Tab, Alt+Tab and Cmd+Tab aren't taken.
+and a panel in a window of its own, whose document has no zones. `Docking::focus(window, zone)` does the same for a
+zone by name: showing the lower zone with its key command (Mod+Alt+E) and opening the lower zone's editor with
+`window.lowerZoneEditor` give the zone the keyboard focus, as the reference's editor in the lower zone gets it after a
+key command (p. 100). A double click on an event or part and Return open the editor window, not the lower zone's,
+until a setting for that exists, so they don't move the focus.
 
 ## Not yet
 
@@ -242,8 +253,10 @@ after them, held at the zones' minimums, and a double click that collapses a zon
 into a new order, hidden through the tab menu, stepped through with the keys in the zone with the focus, which gets
 the focus frame, and the active tab remembered; whether a panel shows, behind another tab, in a hidden zone or in a
 window of its own; Tab and Shift+Tab through the shown zones in the reference's order, the Channel zone right after
-the project zone, around the ends and past hidden zones, with a zone's keys working in the zone they reach, and Tab in a
-text field, Ctrl+Tab and Tab in an open menu left alone; a panel moved into a window of its own through the tab menu, with its
+the project zone, around the ends and past hidden zones, with a zone's keys working in the zone they reach (and no longer after Tab leaves it), the
+control last focused in a zone or the track list taking the focus back, Focus Next and Previous bound to other keys, and
+Tab in a text field or a select box, Ctrl+Tab, Alt+Tab, Meta+Tab and Tab in an open menu left alone; the lower zone
+taking the focus when its key command shows it or opens its editor; a panel moved into a window of its own through the tab menu, with its
 contents made there and gone from the zone, docked with the Dock button and by closing its window, which reopens where
 it was; `open` on a panel in a window of its own that is behind the project window, minimized, or both, which brings
 its window to the front, restored and with the focus, and leaves the layout alone (on the fake window system, which
