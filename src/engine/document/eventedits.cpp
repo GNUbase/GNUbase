@@ -1304,10 +1304,11 @@ namespace gnubase::engine
 			const bool rename = parameters.contains("name");
 			for (const Item& item : items)
 				require(!rename || item.audio == nullptr, "audio events have their clip's name; name renames parts");
-			// A lock keeps them on their lane too (reference manual p. 276), unless they are unlocked with it.
+			// A lock keeps them on their lane too (reference manual p. 276), unless they are unlocked with it; events
+			// the same call locks aren't locked yet.
 			if (const auto lane = parameters.find("lane"); lane != parameters.end())
 				for (const Item& item : items)
-					require(item.lane() == lane->get<int>() || !parameters.value("lock", item.locked()),
+					require(item.lane() == lane->get<int>() || !item.locked() || !parameters.value("lock", true),
 						"event " + std::to_string(item.id()) + " is locked");
 			for (const Item& item : items)
 			{

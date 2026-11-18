@@ -236,6 +236,10 @@ TEST_CASE("event.move moves events and parts by samples or ticks, onto tracks of
 	f.call("event.set", {{"events", {event}}, {"lane", 0}}); // the lane they are on
 	f.call("event.set", {{"events", {event}}, {"lock", false}, {"lane", 1}});
 	CHECK(f.audio(event).at("lane") == 1);
+	// An event the same call locks isn't locked yet.
+	f.call("event.set", {{"events", {event}}, {"lock", true}, {"lane", 2}});
+	CHECK(f.audio(event).at("lane") == 2);
+	CHECK(f.audio(event).at("lock") == true);
 }
 
 TEST_CASE("event.copy and event.duplicate make real and shared copies", "[unit]")

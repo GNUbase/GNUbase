@@ -253,8 +253,8 @@ namespace gnubase::engine
 		{
 			std::deque<RetrospectiveEvent> events;
 			bool taken = false; // retrospective() returned it: the next input starts afresh
-			// How many of its events came in stop mode through an earlier audio device: the next in stop mode starts it
-			// afresh.
+			// How many of its events came in stop mode through an earlier audio device: the next input in stop mode
+			// leaves out just those events.
 			size_t stoppedBefore = 0;
 			// Its first events came before or during a recording of the track, whether that one took them or not, or
 			// through another audio device: the catch range of the next one leaves them out.

@@ -505,7 +505,7 @@ TEST_CASE("retrospective recording inserts what a track's input played while it 
 	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}}), ContainsSubstring("nothing"));
 }
 
-TEST_CASE("input in stop mode on the next audio device starts the retrospective buffer afresh", "[integration]")
+TEST_CASE("input in stop mode on the next audio device leaves out the old device's input in stop mode", "[integration]")
 {
 	Setup setup;
 	Client& client = setup.client;
