@@ -1165,6 +1165,8 @@ TEST_CASE(
 	// from it. Removing the piece, the second's crossfade from it goes to the first, the whole original again, rather
 	// than ending with the piece (#1723).
 	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	// Another event of the clip, with a lower id than the first, out of the way until a section places it.
+	const ObjectId copy = loop.add(client, 90000, 0, 1000);
 	const ObjectId first = loop.add(client, 1000, 0, 20000);
 	const ObjectId second = loop.add(client, 19000, 18000, 30000);
 	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
@@ -1179,12 +1181,43 @@ TEST_CASE(
 	run(client, "quantize.crossfade", {{"events", {first, right}}});
 	REQUIRE(crossfadeOf(client, right).at("from") == first);
 	REQUIRE(byId(client, "audioEvents", first).at("length").get<int64_t>() > 20001);
+	const auto checkFromFirst = [&]()
+	{
+		CHECK(run(client, "quantize.reset", {{"events", {first, right}}}).at("removed") == Json::array({right}));
+		CHECK(eventsOn(client, loop.track).at(0) == std::vector<int64_t>{1000, 0, 20000});
+		const Json kept = crossfadeOf(client, second);
+		REQUIRE(kept.is_object());
+		CHECK(kept.at("from") == first);
+	};
 
-	CHECK(run(client, "quantize.reset", {{"events", {first, right}}}).at("removed") == Json::array({right}));
-	CHECK(eventsOn(client, loop.track).at(0) == std::vector<int64_t>{1000, 0, 20000});
-	const Json kept = crossfadeOf(client, second);
-	REQUIRE(kept.is_object());
-	CHECK(kept.at("from") == first);
+	SECTION("the first is the piece before")
+	{
+		checkFromFirst();
+	}
+
+	SECTION("also over an event that ends where the piece starts and plays its clip frames up to there (#1805)")
+	{
+		// Such as an overlapping copy, with a lower id: it ends exactly where the piece starts, but the first, which
+		// the piece crossfaded from, wins.
+		const Json piece = byId(client, "audioEvents", right);
+		const int64_t start = piece.at("position").get<int64_t>();
+		const int64_t offset = piece.at("offset").get<int64_t>();
+		REQUIRE(start > 1000);
+		REQUIRE(offset > 1000);
+		run(client, "audioEvent.set",
+			{{"event", copy}, {"position", start - 1000}, {"offset", offset - 1000}, {"length", 1000}});
+		checkFromFirst();
+	}
+
+	SECTION("not once the first was moved away from the piece by hand (#1805)")
+	{
+		// The piece still crossfades from it, but a bar later it no longer overlaps the piece: the crossfade ends, as
+		// without an event before.
+		run(client, "event.move", {{"events", {first}}, {"delta", 4 * g_quarter}});
+		REQUIRE(crossfadeOf(client, right).at("from") == first);
+		CHECK(run(client, "quantize.reset", {{"events", {right}}}).at("removed") == Json::array({right}));
+		CHECK(!crossfadeOf(client, second).is_object());
+	}
 }
 
 TEST_CASE("Reset Quantize leaves locked audio events as they are", "[integration]")
@@ -1656,6 +1689,51 @@ TEST_CASE(
 		CHECK(eventsOn(client, musical) ==
 			std::vector<std::vector<int64_t>>{{time::g_ticksPerQuarter / 12, 0, 4 * g_quarter}}); // 2000 samples
 	}
+
+	// The origin moves with the event's audio part (#1728), so the event comes back where the part has it now.
+	const auto toPart = [&]()
+	{ return run(client, "event.toPart", {{"events", sliced}}).at("events").at(0).get<ObjectId>(); };
+
+	SECTION("the event's audio part moved a bar later")
+	{
+		const ObjectId part = toPart();
+		run(client, "event.move", {{"events", {part}}, {"delta", 4 * g_quarter}});
+		CHECK(run(client, "quantize.resetSlices", {{"events", sliced}}).at("events") == Json::array({loop.event}));
+		CHECK(eventsOn(client, loop.track) ==
+			std::vector<std::vector<int64_t>>{{(4 * g_quarter) + 2000, 0, 4 * g_quarter}});
+		CHECK(byId(client, "audioEvents", loop.event).at("part") == part);
+	}
+
+	SECTION("the event's audio part's start sized a bar later, moving its contents")
+	{
+		const ObjectId part = toPart();
+		run(client, "event.resize",
+			{{"events", {part}}, {"edge", "start"}, {"delta", 4 * g_quarter}, {"mode", "moveContents"}});
+		// Where the first slice went with the contents, a bar later within the rounding of a tick.
+		const int64_t start = eventsOn(client, loop.track).at(0).at(0);
+		REQUIRE(std::abs(start - ((4 * g_quarter) + 2000)) <= 1);
+		CHECK(run(client, "quantize.resetSlices", {{"events", sliced}}).at("events") == Json::array({loop.event}));
+		CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{start, 0, 4 * g_quarter}});
+		CHECK(byId(client, "audioEvents", loop.event).at("part") == part);
+	}
+
+	SECTION("the event's audio part moved a bar later onto a musical track, saved and loaded in between")
+	{
+		const ObjectId musical = run(client, "track.add", {{"type", "audio"}, {"timeBase", "musical"}, {"channels", 1}})
+									 .at("track")
+									 .at("id")
+									 .get<ObjectId>();
+		run(client, "event.move", {{"events", {toPart()}}, {"delta", 4 * g_quarter}, {"track", musical}});
+		const std::string file = (dir.path() / "part.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", file}});
+		CHECK(run(client, "quantize.resetSlices", {{"events", sliced}}).at("events") == Json::array({loop.event}));
+		CHECK(eventsOn(client, musical) ==
+			std::vector<std::vector<int64_t>>{
+				{(4 * time::g_ticksPerQuarter) + (time::g_ticksPerQuarter / 12), 0, 4 * g_quarter}});
+		CHECK(byId(client, "audioEvents", loop.event).at("fadeOut") == fadeOut);
+	}
 }
 
 TEST_CASE("Copies of slices have no slice origin of their own, but a duplicated track's slices do", "[integration]")
@@ -1701,6 +1779,24 @@ TEST_CASE("Copies of slices have no slice origin of their own, but a duplicated 
 		const Json result = run(client, "quantize.resetSlices", {{"events", Json::array({copied.at(3)})}});
 		CHECK(result.at("removed").size() == 4);
 		CHECK(eventsOn(client, copy) == whole);
+		CHECK(eventsOn(client, loop.track) == slices);
+	}
+
+	SECTION("an imported track resets its own slices, and the project's own stay (#1728)")
+	{
+		const std::string file = (dir.path() / "sliced.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		const ObjectId imported = run(client, "track.import", {{"path", file}}).at("tracks").at(0).get<ObjectId>();
+		REQUIRE(imported != loop.track);
+		Json copied = Json::array();
+		const Json project = run(client, "project.get");
+		for (const Json& event : project.at("audioEvents"))
+			if (event.at("track") == imported)
+				copied.push_back(event.at("id"));
+		REQUIRE(copied.size() == 5);
+		const Json result = run(client, "quantize.resetSlices", {{"events", Json::array({copied.at(3)})}});
+		CHECK(result.at("removed").size() == 4);
+		CHECK(eventsOn(client, imported) == whole);
 		CHECK(eventsOn(client, loop.track) == slices);
 	}
 
