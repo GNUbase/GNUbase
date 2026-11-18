@@ -54,7 +54,7 @@ namespace gnubase::engine::plugins
 
 		// [plugin job thread] Makes a slot's plugin and activates it if the slot wants it active.
 		Made make(const SlotInstances::Factory& factory, plugin::Host& host, const RenderSlot& wanted,
-			uint32_t channels, double sampleRate, uint32_t maxFrames)
+			uint32_t channels, double sampleRate, uint32_t maxFrames, plugin::ProcessMode mode)
 		{
 			std::unique_ptr<plugin::Plugin> plugin = factory(wanted.plugin, channels, host);
 			if (!plugin)
@@ -69,6 +69,7 @@ namespace gnubase::engine::plugins
 				logging::warning("Plugin slot {}: {} doesn't take its saved state", wanted.id, wanted.plugin);
 			processor->setParameters(setParameters(wanted));
 			processor->setBypass(wanted.bypass);
+			processor->setProcessMode(mode); // which activate passes on to the plugin
 			if (!wanted.active)
 				return {std::move(processor), "inactive"};
 			const bool active = sampleRate > 0.0 && processor->activate(sampleRate, maxFrames);
@@ -83,6 +84,7 @@ namespace gnubase::engine::plugins
 		std::function<bool(uint64_t)> retired;
 		Factory factory;
 		std::atomic<bool> closing{false};
+		std::atomic<plugin::ProcessMode> mode{plugin::ProcessMode::Realtime}; // for the plugins made from now on
 
 		// What retire leaves to the retirer thread, by generation, oldest first.
 		struct Retirement
@@ -250,7 +252,8 @@ namespace gnubase::engine::plugins
 					return;
 				try
 				{
-					instance->set(make(shared->factory, *instance->host, *slot, channels, sampleRate, maxFrames));
+					instance->set(make(
+						shared->factory, *instance->host, *slot, channels, sampleRate, maxFrames, shared->mode.load()));
 				}
 				catch (const std::exception& error)
 				{
@@ -356,6 +359,7 @@ namespace gnubase::engine::plugins
 
 	void SlotInstances::setProcessMode(plugin::ProcessMode mode) const
 	{
+		m_shared->mode = mode;
 		for (const auto& [slot, instance] : m_instances)
 			if (const std::shared_ptr<PluginSlot> processor = instance->currentProcessor())
 				processor->setProcessMode(mode);

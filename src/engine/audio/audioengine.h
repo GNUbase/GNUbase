@@ -229,7 +229,7 @@ namespace gnubase::engine
 			uint64_t generation = 0; // the first program that has it
 		};
 
-		Json mixdown(const Json& parameters, const Json& project, bool quick, JobContext* job);
+		Json mixdown(const Json& parameters, const Json& project, JobContext* job);
 		void rebuild();
 		// audio.setDevice: opens the device, starts it if asked or if the one it replaces ran, falls back to the dummy
 		// device and saves the choice as the user's if asked (start, fallBackToDummy, remember).

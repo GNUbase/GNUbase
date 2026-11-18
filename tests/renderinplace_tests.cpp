@@ -6,7 +6,9 @@
 #include "engine/document/document.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/plugins/hostmanager.h"
 #include "engine/processors/builtinplugin.h"
+#include "plugin/plugin.h"
 #include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
@@ -24,6 +26,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -37,6 +40,53 @@ namespace
 	namespace fs = std::filesystem;
 
 	constexpr int64_t g_scrubFrames = 480; // how far each scrub of a test goes
+
+	// What a render's plugin was told: the modes set before each activation, and how many blocks of each mode it got.
+	struct Modes
+	{
+		std::vector<gnubase::plugin::ProcessMode> activated; // [plugin job thread]
+		std::atomic<int> realtimeBlocks{0};
+		std::atomic<int> offlineBlocks{0};
+	};
+
+	// A plugin that passes everything on to another one and notes the modes in Modes.
+	class ModeRecorder final : public gnubase::plugin::Plugin
+	{
+	public:
+		ModeRecorder(std::unique_ptr<gnubase::plugin::Plugin> plugin, std::shared_ptr<Modes> modes)
+			: m_plugin(std::move(plugin)), m_modes(std::move(modes))
+		{
+		}
+		const gnubase::plugin::Descriptor& descriptor() const override { return m_plugin->descriptor(); }
+		bool init() override { return m_plugin->init(); }
+		bool setProcessMode(gnubase::plugin::ProcessMode mode) override
+		{
+			m_mode = mode;
+			return m_plugin->setProcessMode(mode);
+		}
+		bool activate(double sampleRate, uint32_t minFrames, uint32_t maxFrames) override
+		{
+			m_modes->activated.push_back(m_mode);
+			return m_plugin->activate(sampleRate, minFrames, maxFrames);
+		}
+		void deactivate() override { m_plugin->deactivate(); }
+		bool startProcessing() noexcept override { return m_plugin->startProcessing(); }
+		void stopProcessing() noexcept override { m_plugin->stopProcessing(); }
+		void reset() noexcept override { (*m_plugin).reset(); }
+		gnubase::plugin::ProcessStatus process(const gnubase::plugin::Process& process) noexcept override
+		{
+			++(process.mode == gnubase::plugin::ProcessMode::Offline ? m_modes->offlineBlocks
+																	 : m_modes->realtimeBlocks);
+			return m_plugin->process(process);
+		}
+		void* extension(std::string_view id) override { return m_plugin->extension(id); }
+		void onMainThread() override { m_plugin->onMainThread(); }
+
+	private:
+		std::unique_ptr<gnubase::plugin::Plugin> m_plugin;
+		std::shared_ptr<Modes> m_modes;
+		gnubase::plugin::ProcessMode m_mode = gnubase::plugin::ProcessMode::Realtime;
+	};
 
 	Json run(Client& client, const std::string& command, Json parameters = Json::object())
 	{
@@ -1130,6 +1180,48 @@ TEST_CASE("a private render fails if a live active plugin cannot be instantiated
 	CHECK(run(session.client, "track.renderLocks").at("locks").empty());
 }
 
+TEST_CASE("a private render waits for a live plugin that is still loading", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	session.engine.setRenderPluginFactory(
+		[](const std::string&, uint32_t, gnubase::plugin::Host&) -> std::unique_ptr<gnubase::plugin::Plugin>
+		{ return nullptr; });
+	// The plugin job thread waits, so the live slot is still loading when the export starts (#725): the export
+	// must still have its plugin, and fails without it.
+	std::promise<void> release;
+	std::future<void> blocked = session.engine.pluginHosts().run([go = release.get_future().share()] { go.wait(); });
+	run(session.client, "plugin.insert", {{"channel", source.channel}, {"plugin", "builtin:gainPan"}});
+	const Result started = session.client.call("mixdown.export",
+		{{"folder", session.folder.path().u8string()}, {"name", "loading"}, {"start", 0}, {"end", 7000}});
+	CHECK(
+		run(session.client, "plugin.list", {{"channel", source.channel}}).at("slots").at(0).at("status") == "loading");
+	release.set_value();
+	blocked.get();
+	REQUIRE(started.ok());
+	const Json finished = waitForJob(session.client, started.value.at("job").at("id").get<uint64_t>());
+	CHECK(finished.at("state") == "failed");
+	// The error, which File > Export > Quick Audio Export shows, names the plugin and its channel.
+	CHECK_THAT(finished.value("error", std::string()), ContainsSubstring("Gain and pan on Source"));
+}
+
+TEST_CASE("a private render's plugins are activated and process offline", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	session.insertGain(source.channel, -6);
+	const auto modes = std::make_shared<Modes>();
+	session.engine.setRenderPluginFactory(
+		[modes](const std::string& plugin, uint32_t channels, gnubase::plugin::Host& host)
+		{ return std::make_unique<ModeRecorder>(processors::BuiltinFactory(channels).create(plugin, host), modes); });
+	run(session.client, "mixdown.export",
+		{{"folder", session.folder.path().u8string()}, {"name", "offline"}, {"start", 0}, {"end", 7000}});
+	// The job has ended, and its plugin with it (#725).
+	CHECK(modes->activated == std::vector<gnubase::plugin::ProcessMode>{gnubase::plugin::ProcessMode::Offline});
+	CHECK(modes->offlineBlocks.load() > 0);
+	CHECK(modes->realtimeBlocks.load() == 0);
+}
+
 TEST_CASE("cancelling a background track render unlocks without an undo step or files", "[integration]")
 {
 	Session session;
@@ -1197,6 +1289,28 @@ TEST_CASE("a render range locks intersecting audio and transactions but allows e
 	INFO(finished.dump());
 	REQUIRE(finished.at("state") == "done");
 	CHECK(finished.at("result").at("tracks").size() == 1);
+}
+
+TEST_CASE("a held render refuses changes of the project settings every render hears", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	// Only the project-wide part of the lock check catches these (#1850).
+	const Json setting =
+		GENERATE(Json{{"rootKey", "D"}}, Json{{"panLaw", "-6dB"}}, Json{{"tempo", 90}}, Json{{"sampleRate", 44100}});
+	const Json before = run(session.client, "project.get");
+	const Json finished = gnubase::test::whileHeld(session.engine, session.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"tail", 0}},
+		[&](uint64_t)
+		{
+			INFO(setting.dump());
+			CHECK_THAT(reject(session.client, "project.set", setting), ContainsSubstring("being rendered"));
+		});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+	const Json after = run(session.client, "project.get");
+	for (const char* key : {"rootKey", "panLaw", "tempo", "sampleRate"})
+		CHECK(after.value(key, Json()) == before.value(key, Json()));
 }
 
 TEST_CASE("a failed background render removes files and unlocks its tracks", "[integration]")

@@ -91,18 +91,11 @@ namespace gnubase::engine
 				for (const int input : inputs[node])
 					pending.push_back(static_cast<size_t>(input));
 			}
-			RenderSnapshot result;
-			result.revision = snapshot.revision;
-			result.opened = snapshot.opened;
-			result.sampleRate = snapshot.sampleRate;
-			result.tempo = snapshot.tempo;
-			result.signatures = snapshot.signatures;
-			result.metronome = snapshot.metronome;
-			result.panLaw = snapshot.panLaw;
-			result.maxVolume = snapshot.maxVolume;
-			result.recordBitDepth = snapshot.recordBitDepth;
-			result.arranger = snapshot.arranger;
-			result.chordPadKeys = snapshot.chordPadKeys;
+			// Every field as it is, so that one added later isn't left at its default (#1850), but the three lists.
+			RenderSnapshot result = snapshot;
+			result.busses.clear();
+			result.channels.clear();
+			result.media.clear();
 			std::vector<int> busses(snapshot.busses.size(), -1);
 			std::vector<int> channels(snapshot.channels.size(), -1);
 			std::vector<int> media(snapshot.media.size(), -1);
@@ -264,6 +257,19 @@ namespace gnubase::engine
 			return std::nullopt;
 		}
 
+		// A slot's plugin and its channel in project.get's project, for errors: e.g. "Gain and pan on Guitar".
+		std::string slotName(const Json& project, ObjectId slot)
+		{
+			for (const Json& found : project.at("slots"))
+				if (found.at("id") == slot)
+				{
+					const std::string name = found.value("name", std::string());
+					return (name.empty() ? found.at("plugin").get<std::string>() : name) + " on " +
+						nameOf(project, found.at("channel").get<ObjectId>()).value_or("its channel");
+				}
+			return "plugin slot " + std::to_string(slot);
+		}
+
 		// Second pass: the part file into the target's file, at gain, dithered, at most frames frames.
 		void finish(Target& target, const FileFormat& format, int64_t frames, JobContext* job)
 		{
@@ -344,7 +350,7 @@ namespace gnubase::engine
 		};
 	}
 
-	Json AudioEngine::mixdown(const Json& parameters, const Json& project, bool quick, JobContext* job)
+	Json AudioEngine::mixdown(const Json& parameters, const Json& project, JobContext* job)
 	{
 		// Renders [start, end) and tail frames more of the targets, which have objects and paths, into their files:
 		// what they output, or with point, what their channel's strip has there (render in place and freeze). The
@@ -535,38 +541,6 @@ namespace gnubase::engine
 		};
 
 		CommandContext context(parameters);
-		if (quick)
-		{
-			const RenderSnapshot& snapshot = m_snapshots.latest();
-			std::optional<time::Samples> first;
-			for (const RenderChannel& channel : snapshot.channels)
-			{
-				for (const RenderAudioEvent& event : channel.audioEvents)
-					first = std::min(first.value_or(event.start), event.start);
-				for (const RenderNote& note : channel.notes)
-					first = std::min(first.value_or(note.start), note.start);
-			}
-			const time::Samples end = projectEnd();
-			if (!first || end <= *first)
-				throw CommandError("the project has no events to export");
-			FileFormat format;
-			format.sampleRate = snapshot.sampleRate;
-			format.overwrite = true;
-			std::vector<Target> targets(1);
-			for (const RenderBus& bus : snapshot.busses)
-				if (bus.mainMix)
-					targets[0].object = bus.id;
-			require(targets[0].object != 0, "there is no main mix");
-			targets[0].name = "Main Mix";
-			targets[0].path = fs::u8path(parameters.at("path").get<std::string>());
-			std::error_code error;
-			if (targets[0].path.has_parent_path())
-				fs::create_directories(targets[0].path.parent_path(), error);
-			const Json result = exportRange(context, targets, *first, end,
-				static_cast<time::Samples>(std::llround(g_maxTailSeconds * snapshot.sampleRate)), format, std::nullopt);
-			const Json& file = result.at("files").at(0);
-			return Json{{"path", file.at("path")}, {"frames", file.at("frames")}};
-		}
 		{
 			const RenderSnapshot& snapshot = m_snapshots.latest();
 			const FileFormat format = formatFrom(parameters, snapshot.sampleRate);
@@ -585,7 +559,8 @@ namespace gnubase::engine
 			require(unique.size() == objects.size(), "channels names a channel twice");
 
 			const fs::path folder = fs::u8path(parameters.at("folder").get<std::string>());
-			const std::string name = parameters.at("name").get<std::string>();
+			const std::string name = parameters.value("name", std::string());
+			const auto path = parameters.find("path"); // mixdown.quickExport's file, the one target's
 			std::vector<Target> targets(objects.size());
 			std::set<fs::path> taken;
 			for (size_t i = 0; i < objects.size(); ++i)
@@ -595,8 +570,10 @@ namespace gnubase::engine
 					throw CommandError("there is no bus or channel " + std::to_string(objects[i]));
 				targets[i].object = objects[i];
 				targets[i].name = *found;
-				targets[i].path = claim(folder, objects.size() == 1 ? name : name + " - " + targets[i].name,
-					extensionOf(format.format), format.overwrite, taken);
+				targets[i].path = path != parameters.end()
+					? fs::u8path(path->get<std::string>())
+					: claim(folder, objects.size() == 1 ? name : name + " - " + targets[i].name,
+						  extensionOf(format.format), format.overwrite, taken);
 				taken.insert(targets[i].path);
 			}
 			std::optional<RenderPoint> point;
@@ -610,7 +587,8 @@ namespace gnubase::engine
 			const auto tail =
 				static_cast<time::Samples>(std::llround(parameters.value("tail", 0.0) * snapshot.sampleRate));
 			std::error_code error;
-			fs::create_directories(folder, error);
+			if (!folder.empty())
+				fs::create_directories(folder, error);
 			require(!error, "can't create the folder " + folder.u8string() + ": " + error.message());
 			Cleanup reserved{targets};
 			for (Target& target : targets)
@@ -651,11 +629,18 @@ namespace gnubase::engine
 		require(!objects.empty(), "there is no main mix; give channels");
 		const std::set<ObjectId> unique(objects.begin(), objects.end());
 		require(unique.size() == objects.size(), "channels names a channel twice");
+		const bool fromPoint = request.value("point", std::string("output")) != "output";
 		for (const auto object : objects)
 		{
-			require(nameOf(project, object).has_value(), "there is no bus or channel " + std::to_string(object));
+			const std::optional<std::string> name = nameOf(project, object);
+			require(name.has_value(), "there is no bus or channel " + std::to_string(object));
 			const int node = m_programs->latest().graph.find(object);
 			require(node >= 0 && m_programs->latest().graph.outputChannels(node) > 0, "channel has no audio");
+			// Before the job creates the folder (#725).
+			require(!fromPoint ||
+					std::any_of(snapshot.channels.begin(), snapshot.channels.end(),
+						[object](const RenderChannel& channel) { return channel.id == object; }),
+				name.value_or("") + " is a bus: only channels render from a point");
 		}
 		request["channels"] = objects;
 		const auto prepared = std::make_shared<PreparedMixdown>();
@@ -668,9 +653,11 @@ namespace gnubase::engine
 			for (const auto& path : channel.samples)
 				if (!path.empty())
 					paths.insert(path);
+		// The render needs the plugins that play live, and those still loading, which will (#725).
 		for (const auto& channel : prepared->snapshot.channels)
 			for (const auto& slot : channel.slots)
-				if (m_slots && m_slots->status(slot.id) == "active")
+				if (m_slots && slot.active &&
+					(m_slots->status(slot.id) == "active" || m_slots->status(slot.id) == "loading"))
 					prepared->activeSlots.insert(slot.id);
 		SampleLoader* samples = &m_sampleLoader;
 		const auto lease = std::make_shared<SampleLoader::Lease>(*samples, std::move(paths));
@@ -697,6 +684,7 @@ namespace gnubase::engine
 			renderer.m_threads = 1;
 			renderer.m_slots =
 				std::make_unique<plugins::SlotInstances>(*hosts, [] {}, [](uint64_t) { return true; }, factory);
+			renderer.m_slots->setProcessMode(plugin::ProcessMode::Offline); // before they are made and activated
 			renderer.setDevice({{"blockSize", blockSize}, {"sampleRate", prepared->snapshot.sampleRate},
 				{"captureSeconds", 0}, {"inputChannels", 0}});
 			// Wait on the plugin job queue, then publish their ready processors in this render's graph.
@@ -705,8 +693,8 @@ namespace gnubase::engine
 			renderer.rebuild();
 			for (const ObjectId slot : prepared->activeSlots)
 				require(renderer.m_slots->status(slot) == "active",
-					"render plugin slot " + std::to_string(slot) + " could not be activated");
-			return renderer.mixdown(prepared->parameters, prepared->project, false, &job);
+					"the plugin " + slotName(prepared->project, slot) + " couldn't be made for the render");
+			return renderer.mixdown(prepared->parameters, prepared->project, &job);
 		};
 	}
 
@@ -754,24 +742,44 @@ namespace gnubase::engine
 					"mixdown.export", mixdownWork(context.parameters(), context.call("project.get")));
 			});
 		engine.registerCommand(
-			{"mixdown.quickExport", 1,
+			{"mixdown.quickExport", 2,
 				"Quick audio export (reference manual pp. 1478-1479): writes the main mix of the whole project, from "
 				"the start of the first event to the end of the last, with the tail of the effects after it (up to 30 "
 				"s, to the last sample a 24-bit file doesn't hold as silence), to the WAV file at path with 24-bit "
-				"samples at the project's sample rate, as mixdown.export does, and is refused when it is. An existing "
-				"file is replaced. Returns its absolute path and frames.",
+				"samples at the project's sample rate, as mixdown.export does, with a private render that leaves the "
+				"live graph, plugins and transport as they are. Refused for a project without events, while recording, "
+				"without an audio device, and while the device runs at another sample rate than the project. An "
+				"existing file is replaced. Returns a cancellable job immediately; progress and completion are "
+				"job.progress and job.finished events, and the job's result is the file's absolute path and frames. "
+				"The job fails if a plugin that plays or is still loading live can't be made for the render.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["path"],
 					"properties": {"path": {"type": "string", "minLength": 1}}})"),
-				Json::parse(R"({"type": "object", "required": ["path", "frames"], "properties": {
-					"path": {"type": "string"}, "frames": {"type": "integer"}}})"),
-				false},
-			[this](CommandContext& context)
+				{{"type", "object"}, {"properties", {{"job", Jobs::schema()}}}, {"required", {"job"}}}, false},
+			[this, &engine](CommandContext& context)
 			{
-				const bool playing = m_transport.playing();
-				Json result = mixdown(context.parameters(), context.call("project.get"), true, nullptr);
-				if (playing)
-					context.emit("transport.changed", transportStatus());
-				return result;
+				const RenderSnapshot& snapshot = m_snapshots.latest();
+				std::optional<time::Samples> first;
+				for (const RenderChannel& channel : snapshot.channels)
+				{
+					for (const RenderAudioEvent& event : channel.audioEvents)
+						first = std::min(first.value_or(event.start), event.start);
+					for (const RenderNote& note : channel.notes)
+						first = std::min(first.value_or(note.start), note.start);
+				}
+				const time::Samples end = projectEnd();
+				if (!first || end <= *first)
+					throw CommandError("the project has no events to export");
+				// mixdown.export's private render as a job, so that the command thread doesn't wait for the plugin
+				// hosts while its plugins are made and destroyed (#718).
+				const fs::path path = fs::u8path(context.parameters().at("path").get<std::string>());
+				const Json request = {{"path", path.u8string()}, {"folder", path.parent_path().u8string()},
+					{"start", *first}, {"end", end}, {"tail", g_maxTailSeconds}, {"conflicts", "overwrite"}};
+				return engine.startJob("mixdown.quickExport",
+					[work = mixdownWork(request, context.call("project.get"))](JobContext& job)
+					{
+						const Json file = work(job).at("files").at(0);
+						return Json{{"path", file.at("path")}, {"frames", file.at("frames")}};
+					});
 			});
 	}
 }
