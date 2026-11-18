@@ -42,12 +42,13 @@ namespace gnubase::engine
 		void setBand(Equalizer& core, int band, bool on, dsp::FilterType type, double frequency, double gain, double q,
 			double slope) noexcept
 		{
-			core.setParameter(Equalizer::parameter(band, Equalizer::On), on ? 1.0 : 0.0);
+			// On last: a band that is off takes the others at once, so that it comes in at them.
 			core.setParameter(Equalizer::parameter(band, Equalizer::Type), static_cast<double>(type));
 			core.setParameter(Equalizer::parameter(band, Equalizer::Frequency), frequency);
 			core.setParameter(Equalizer::parameter(band, Equalizer::Gain), gain);
 			core.setParameter(Equalizer::parameter(band, Equalizer::Q), q);
 			core.setParameter(Equalizer::parameter(band, Equalizer::Slope), slope);
+			core.setParameter(Equalizer::parameter(band, Equalizer::On), on ? 1.0 : 0.0);
 		}
 
 		bool samePre(const ChannelSections& a, const ChannelSections& b)

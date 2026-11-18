@@ -547,6 +547,7 @@ namespace gnubase::ui
 		void showAutoScroll();
 		void showSnap();
 		void showRootKey(const engine::Json& project);
+		void showStates(const engine::Json& project);
 		void setSnap(const engine::Json& settings); // sends snap.set; one with a format counts in m_formatsSent
 
 		// Importing files (fileimport.cpp).
@@ -989,7 +990,8 @@ namespace gnubase::ui
 		bool m_modifiersKnown = false; // changed since they were asked for
 		Rml::Element* m_rangeElement = nullptr;
 		Rml::Element* m_rectangle = nullptr;
-		std::vector<Rml::Element*> m_toolButtons; // the document's
+		std::vector<Rml::Element*> m_toolButtons;  // the document's
+		std::vector<Rml::Element*> m_stateButtons; // the toolbar's Deactivate All buttons (button[deactivate])
 		Rml::Element* m_combineButton = nullptr;
 		Rml::Element* m_objectMenu = nullptr;
 		Rml::Element* m_lineMenu = nullptr;

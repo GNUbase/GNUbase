@@ -994,9 +994,13 @@ TEST_CASE("solo reaches through nested groups and effect channels; solo defeat k
 	set(direct, {{"solo", true}});
 	CHECK(silentOnes() == std::vector<ObjectId>{inner, grouped, other});
 
-	// Exclusive solo turns the others' solo off.
+	// Exclusive solo turns the others' solo off, only with solo turning on.
 	set(other, {{"solo", true}});
 	CHECK(silentOnes() == std::vector<ObjectId>{inner, grouped});
+	set(grouped, {{"exclusive", true}});
+	set(grouped, {{"solo", false}, {"exclusive", true}});
+	CHECK(channelOf(client, direct).at("solo") == true);
+	CHECK(channelOf(client, other).at("solo") == true);
 	set(grouped, {{"solo", true}, {"exclusive", true}});
 	CHECK(channelOf(client, direct).at("solo") == false);
 	CHECK(channelOf(client, other).at("solo") == false);
@@ -1026,14 +1030,26 @@ TEST_CASE("listening channels feed the listen bus; MIDI channels can't listen", 
 	const ObjectId group = addTrack(client, {{"type", "group"}});
 	const ObjectId midi = addTrack(client, {{"type", "midi"}});
 	const auto channel = [&client](ObjectId trackId) { return channelOf(client, trackId).at("id"); };
+	REQUIRE(client.call("plugin.insert", {{"channel", channel(audio)}, {"plugin", "builtin:eq"}}).ok());
+	// The listen bus nodes, each with the channels whose nodes it receives: their faders' nodes, also behind plugin
+	// slots.
 	const auto listenBusses = [&client]
 	{
-		std::vector<Json> nodes;
+		std::vector<std::vector<Json>> busses;
 		const Json graph = run(client, "graph.get");
-		for (const Json& node : graph.at("nodes"))
+		const Json& nodes = graph.at("nodes");
+		for (const Json& node : nodes)
 			if (node.at("kind") == "listenBus")
-				nodes.push_back(node);
-		return nodes;
+			{
+				std::vector<Json>& received = busses.emplace_back();
+				for (const Json& input : node.at("audioInputs"))
+				{
+					const Json& from = nodes.at(input.get<size_t>());
+					CHECK(from.at("kind") == "channel");
+					received.push_back(from.at("object"));
+				}
+			}
+		return busses;
 	};
 	CHECK(channelOf(client, audio).at("listen") == false);
 	CHECK(listenBusses().empty());
@@ -1042,7 +1058,7 @@ TEST_CASE("listening channels feed the listen bus; MIDI channels can't listen", 
 			run(client, "channel.set", {{"channel", channel(trackId)}, {"listen", true}}).at("channel").at("listen") ==
 			true);
 	CHECK(renderChannel(engine.renderSnapshots().acquire(), audio).listen);
-	CHECK(listenBusses().size() == 1);
+	CHECK(listenBusses() == std::vector<std::vector<Json>>{{channel(audio), channel(group)}});
 	CHECK_THAT(
 		reject(client, "channel.set", {{"channel", channel(midi)}, {"listen", true}}), ContainsSubstring("MIDI"));
 	CHECK(run(client, "channel.deactivateAll", {{"state", "listen"}}).at("channels") ==
