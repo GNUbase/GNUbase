@@ -190,7 +190,7 @@ New Project and Open Last Project on Startup.
 Quit requests (#615): a signal waits for the unsaved changes question like the other requests, although on a Linux
 shutdown or a `kill` nobody may answer it before SIGKILL: whether a signal should rather quit after an auto save is
 still to decide. What the OS does with the question's window (the Dock's Quit with the main window minimized, a Linux
-session's logout) is only checked on the fake window system and SDL's dummy driver, not on macOS or Linux desktops.
+session's logout) is not checked: the tests read SDL's window flags on this platform only, not on macOS or Linux desktops.
 
 ## Checks
 
