@@ -1525,6 +1525,11 @@ namespace gnubase::engine
 				require(track.type == TrackType::Folder, "only folder tracks have group editing");
 				track.groupEditing = parameters.at("groupEditing").get<bool>();
 			}
+			if (parameters.contains("lock"))
+			{
+				require(track.type == TrackType::Signature, "only the signature track has a lock");
+				track.lock = parameters.at("lock").get<bool>();
+			}
 			Json result = {{"track", toJson(track)}};
 			context.emit("track.changed", result);
 			if (track.type == TrackType::Folder && parameters.contains("color"))
@@ -4476,13 +4481,14 @@ namespace gnubase::engine
 				"the slot's output events, and the notes after it get the slot's channel, transpose and velocity. "
 				"gmNames, for a MIDI or instrument track, is its name list (reference manual p. 1239): true for GM "
 				"Default, which names its pitches by General MIDI's percussion sounds in the editors while it has no "
-				"drum map, false for No Names.",
+				"drum map, false for No Names. lock, for the signature track, is its Lock (reference manual p. 163): "
+				"while it is on, signature.add, signature.set and signature.remove are refused.",
 				objectSchema(
 					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
 						{"timeFormat", timeFormats}, {"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
 						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"groupEditing", booleanSchema},
 						{"picture", stringSchema}, {"drumMap", idSchema}, {"articulationMap", idSchema},
-						{"gmNames", booleanSchema}},
+						{"gmNames", booleanSchema}, {"lock", booleanSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);

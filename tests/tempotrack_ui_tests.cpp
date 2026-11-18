@@ -651,6 +651,16 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&app] { return std::abs(firstTempo(app) - 135.0) < 0.2; }));
 	clickButton(app, "#tempo-detection-analyze");
 	REQUIRE(app.waitUntil([&app] { return std::abs(firstTempo(app) - 90.0) < 0.1; }));
+	// Offbeat Correction and Smooth Tempo show whether they are on, and switch off again (#812).
+	clickButton(app, "#tempo-detection-offbeat");
+	clickButton(app, "#tempo-detection-smooth");
+	CHECK(elements(app, "#tempo-detection-offbeat.checked") == 1);
+	CHECK(elements(app, "#tempo-detection-smooth.checked") == 1);
+	clickButton(app, "#tempo-detection-smooth");
+	CHECK(elements(app, "#tempo-detection-smooth.checked") == 0);
+	clickButton(app, "#tempo-detection-analyze");
+	CHECK(elements(app, "#tempo-detection-offbeat.checked") == 0);
+	REQUIRE(app.waitUntil([&app] { return std::abs(firstTempo(app) - 90.0) < 0.1; }));
 	clickButton(app, "#tempo-detection-reset");
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tempoTrack").size() == 1; }));
 	app.ui().key(std::nullopt, "Escape");

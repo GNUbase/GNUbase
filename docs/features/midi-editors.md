@@ -30,7 +30,8 @@ Each emits `editor.changed` with the view.
 - **Visibility** (pp. 1148-1152): `showTracks` shows every MIDI part of the tracks, of all tracks in a folder, and
   activates the last; `hideTracks` hides theirs; `exclusive` hides every other track first. At least one part stays
   shown, and a track without parts can't show. `activeTrack` activates a track's first part shown.
-- **Global tracks** (pp. 1144-1146): the marker and ruler tracks the editor window shows above its events, in the track
+- **Global tracks** (pp. 1144-1146): the tempo, signature, chord, ruler, arranger, marker and transpose tracks the editor
+  window shows above its events, in the track
   list's order. The lower zone's editor has none, as in the reference.
 
 ## In the UI

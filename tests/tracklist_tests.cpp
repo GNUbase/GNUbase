@@ -2152,3 +2152,20 @@ TEST_CASE(
 	settle();
 	CHECK(width(row(lead) + " .track-color") <= 8.0);
 }
+
+TEST_CASE("the signature track's Lock in the track list locks its time signature events", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t signature = tracks.add({{"type", "signature"}});
+	tracks.rows(1);
+	const std::string lock = row(signature) + " button[control=signatureLock]";
+	REQUIRE(elements(tracks.app, lock).size() == 1);
+	tracks.click(lock);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(signature).value("lock", false); }));
+	CHECK(!engine::Client(tracks.app.engine())
+			.call("signature.add", {{"bar", 2}, {"numerator", 3}, {"denominator", 4}})
+			.ok());
+	REQUIRE(tracks.app.waitUntil([&] { return !elements(tracks.app, lock + ".checked").empty(); }));
+	tracks.click(lock);
+	REQUIRE(tracks.app.waitUntil([&] { return !tracks.track(signature).value("lock", true); }));
+}

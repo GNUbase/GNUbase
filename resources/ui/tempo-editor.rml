@@ -2,7 +2,8 @@
 <!-- The tempo track editor (docs/features/tempo-track.md, reference manual pp. 1447-1449, 1455), in a window of its
      own. ui::TempoEditor drives the toolbar, the info line and the tempo curve in #tempo-curve-area, over the whole
      project, with a bars and beats ruler above it, the time signature display between them and the tempo scale left of
-     it; its .tool-rectangle shows while a drag selects tempo events. -->
+     it; its .tool-rectangle shows while a drag selects tempo events. #edit-refused says why the engine refused a move or
+     a signature typed in the time signature display. -->
 <rml>
 <head>
 	<title>Tempo Track</title>
@@ -124,6 +125,17 @@
 		{
 			display: block;
 		}
+
+		#edit-refused
+		{
+			position: absolute;
+			z-index: 10;
+			top: 112dp;
+			left: 50%;
+			width: 480dp;
+			margin-left: -240dp;
+			text-align: center;
+		}
 	</style>
 </head>
 <body class="tempo-editor">
@@ -156,5 +168,6 @@
 	<div id="signature-area"/>
 	<div id="tempo-scale"/>
 	<div id="tempo-curve-area"/>
+	<notification id="edit-refused" class="tooltip" duration="4"/>
 </body>
 </rml>

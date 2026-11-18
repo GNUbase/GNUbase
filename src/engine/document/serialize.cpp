@@ -559,7 +559,7 @@ namespace gnubase::engine
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
 			{"enabled", track.enabled}, {"picture", track.picture}, {"frozen", nullptr}, {"drumMap", track.drumMap},
 			{"articulationMap", track.articulationMap}, {"gmNames", track.gmNames},
-			{"groupEditing", track.groupEditing}};
+			{"groupEditing", track.groupEditing}, {"lock", track.lock}};
 		if (track.frozen)
 			json["frozen"] = {{"path", track.frozen->path}, {"sampleRate", track.frozen->sampleRate},
 				{"channels", track.frozen->channels}, {"length", track.frozen->length}};
@@ -2224,6 +2224,7 @@ namespace gnubase::engine
 			track.articulationMap = item.value("articulationMap", ObjectId{0}); // and before #175 none
 			track.gmNames = item.value("gmNames", false);                       // and before #1493 No Names
 			track.groupEditing = track.type == TrackType::Folder && item.value("groupEditing", false); // #1579
+			track.lock = track.type == TrackType::Signature && item.value("lock", false);              // and #729
 			if (const Json frozen = item.value("frozen", Json()); !frozen.is_null()) // and before #116 none
 			{
 				track.frozen = Freeze{frozen.at("path").get<std::string>(), frozen.at("sampleRate").get<double>(),

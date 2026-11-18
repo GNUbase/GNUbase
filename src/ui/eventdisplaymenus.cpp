@@ -390,14 +390,26 @@ namespace gnubase::ui
 	}
 
 	// The Tempo Detection dialog's buttons (reference manual pp. 1460-1461): Analyze detects the tempo afresh, the
-	// factors, Offbeat Correction and Smooth Tempo detect it again with them, Reset removes what it made.
+	// factors, Offbeat Correction and Smooth Tempo detect it again with them, Reset removes what it made. Offbeat
+	// Correction and Smooth Tempo switch on and off, and are .checked while on (#812).
 	void EventDisplay::detectTempo(const std::string& button)
 	{
 		TempoDetection& detection = m_detection;
+		const auto showSwitches = [this, &detection]
+		{
+			if (Rml::Element* dialog = m_dialog.get())
+			{
+				if (Rml::Element* offbeat = dialog->GetElementById("tempo-detection-offbeat"))
+					offbeat->SetClass("checked", detection.offbeat);
+				if (Rml::Element* smooth = dialog->GetElementById("tempo-detection-smooth"))
+					smooth->SetClass("checked", detection.smooth);
+			}
+		};
 		Json parameters = {{"event", detection.event}};
 		if (button == "tempo-detection-reset")
 		{
 			detection = TempoDetection{detection.event};
+			showSwitches();
 			parameters["reset"] = true;
 			edit("tempo.detect", std::move(parameters));
 			return;
@@ -415,9 +427,10 @@ namespace gnubase::ui
 		else if (button == "tempo-detection-offbeat")
 			detection.offbeat = !detection.offbeat;
 		else if (button == "tempo-detection-smooth")
-			detection.smooth = true;
+			detection.smooth = !detection.smooth;
 		else
 			return;
+		showSwitches();
 		parameters["factor"] = detection.factor;
 		parameters["offbeat"] = detection.offbeat;
 		parameters["smooth"] = detection.smooth;

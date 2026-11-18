@@ -238,6 +238,11 @@ TEST_CASE("the editor window shows global tracks, and a new project closes the e
 		ContainsSubstring("only the editor window"));
 	f.call("track.remove", {{"track", ruler}});
 	CHECK(ids(f.view("window").at("globalTracks")) == std::vector<uint64_t>{markers});
+	// The tempo and signature tracks are global tracks too (#729).
+	const uint64_t tempo = f.track("tempo");
+	const uint64_t signature = f.track("signature");
+	view = f.call("editor.set", {{"editor", "window"}, {"globalTracks", {tempo, signature}}});
+	CHECK(ids(view.at("globalTracks")) == std::vector<uint64_t>{tempo, signature});
 
 	f.call("project.new");
 	view = f.view("window");

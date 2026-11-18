@@ -840,6 +840,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                              "border-left-width": f"{widths['hairline']}dp",
                                              "border-left-color": c["accent2"]}),
         (".signature-row .signature-event.selected", {"color": c["background"], "background-color": c["accent2"]}),
+        # The bars in the signature track's background (reference manual p. 163)
+        (".signature-row .signature-bar", {"border-left-width": f"{widths['hairline']}dp",
+                                           "border-left-color": c["border"]}),
         # The transpose track (docs/features/transpose.md): a transpose event's value from its position on
         (".transpose-row .transpose-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
                                              "border-left-width": f"{widths['hairline']}dp",

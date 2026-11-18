@@ -988,8 +988,9 @@ meter .meter-peak
 }
 
 /* The signature track (docs/features/signature-track.md): the time signature events over the signature track's lane,
-   or filling the tempo track editor's time signature display, and the field that edits one. Code places the row on
-   its lane, the events at their bars and the field over the event it edits. */
+   or filling the tempo track editor's time signature display, and the field that edits one; on the lane, the bars in
+   its background behind them. Code places the row on its lane, the events and the bars at their bars and the field
+   over the event it edits. */
 .signature-row
 {
 	position: absolute;
@@ -1010,6 +1011,24 @@ meter .meter-peak
 	left: 0;
 	top: 0;
 	width: 100%;
+	height: 100%;
+}
+
+.signature-row .signature-bars
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+}
+
+.signature-row .signature-bar
+{
+	position: absolute;
+	top: 0;
+	width: 0;
 	height: 100%;
 }
 
