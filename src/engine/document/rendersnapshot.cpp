@@ -101,6 +101,7 @@ namespace gnubase::engine
 			time::Samples plays = 0;
 			const SoundSlot* slot = nullptr;
 			uint8_t channel = 0;
+			uint8_t source = 0; // the channel it plays on but for its slot's: its track's, else its own (#1744)
 			std::vector<const SoundSlot*> addOns;
 		};
 
@@ -130,8 +131,9 @@ namespace gnubase::engine
 							added.push_back(&map.slots.at(index));
 					const time::Samples plays = toSamples(project, start + std::max<time::Ticks>(note.position, 0)) -
 						milliseconds(project, slot.attack);
-					into.push_back({start + note.position, plays, &slot,
-						playedChannel(note, nullptr, &slot, trackChannel), std::move(added)});
+					into.push_back(
+						{start + note.position, plays, &slot, playedChannel(note, nullptr, &slot, trackChannel),
+							playedChannel(note, nullptr, nullptr, trackChannel), std::move(added)});
 				}
 		}
 
@@ -144,16 +146,26 @@ namespace gnubase::engine
 		// them sends them again (MidiSequencer::chaseNotes). The controller and program changes are the track's
 		// (g_soundSlotPart), not the part's of the note, so a chase limited to parts finds them where a part continues
 		// the slot of another. Add-on slots go on the channel of the notes that play them and follow them to another
-		// channel.
+		// channel. On a track without a MIDI channel each channel the notes come with keeps its own slot and add-ons
+		// (#1744), so that notes on several channels that sound together, a chord from MPE input, keep theirs.
+		// ponytail: notes of several such channels that a slot's own channel joins don't know of each other there; a
+		// state per channel played on too, if that matters.
 		void addOutputEvents(const Project& project, std::vector<SlotNote>& notes, RenderChannel& channel)
 		{
 			std::stable_sort(notes.begin(), notes.end(), [](const SlotNote& a, const SlotNote& b)
 				{ return std::tie(a.plays, a.order) < std::tie(b.plays, b.order); });
-			const SlotNote* previous = nullptr;                       // the last one whose slot the track sent
-			std::optional<time::Samples> before;                      // where the note before played
-			std::vector<std::pair<const SoundSlot*, uint8_t>> addOns; // the add-on slots on, with their channel
+			struct Sent
+			{
+				const SlotNote* previous = nullptr;                       // the last one whose slot went out
+				std::vector<std::pair<const SoundSlot*, uint8_t>> addOns; // the add-on slots on, with their channel
+			};
+			std::array<Sent, 16> sources;        // by SlotNote::source
+			std::optional<time::Samples> before; // where the note before played
 			for (const SlotNote& note : notes)
 			{
+				Sent& sent = sources.at(note.source % sources.size());
+				const SlotNote*& previous = sent.previous;
+				auto& addOns = sent.addOns;
 				const time::Samples at = std::max<time::Samples>(note.plays, 0);
 				const int separation = note.slot->separation;
 				time::Samples keySwitch = at - std::max<time::Samples>(milliseconds(project, separation), 1);
