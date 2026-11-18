@@ -51,11 +51,10 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   button's, in each state. Rules for buttons in bars skip toggle and primary buttons (`:not(.toggle):not(.primary)`),
   which keep their skins, and reach the transport's sections (`.transport-section`), not the setup pane that comes into
   the transport bar and the transport panel with them: it keeps framed buttons, as every setup pane (#1342). Each bar
-  rule that gives a skin gets a `:focus-visible` twin with the focus ring over it, as the general rules do; a hovered
-  bar button with the focus shows the ring over the skin it has without the hover, since the twins come after the hover
-  rules (the default theme's hover fill, a background color, stays). A disabled bar button looks disabled also when it
-  is checked, a menu button that shows a value too, in every theme: in the framed themes such a menu button showed the
-  checked skin before (#1711).
+  rule that gives a skin gets a `:focus-visible` twin with the focus ring over it, as the general rules do, hovered and
+  pressed states too, so a hovered bar button with the focus shows the ring over its hover skin (#543). A disabled bar
+  button looks disabled also when it is checked, a menu button that shows a value too, in every theme: in the framed
+  themes such a menu button showed the checked skin before (#1711).
 - **Every document gets them.** While a `ui::Themes` exists, every document RmlUi loads gets the shared style sheets
   and every theme's style sheet ahead of its own style (an RmlUi plugin, on document load). Documents name neither a
   theme nor a shared style sheet, and their own rules, which only lay out, come last. Live reload in Debug builds picks

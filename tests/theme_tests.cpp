@@ -209,7 +209,9 @@ TEST_CASE("every theme shows the keyboard focus on every widget that takes it, i
 					focused.push_back(part.substr(first, part.find_last_not_of(" \t\r") + 1 - first));
 				}
 			}
-		for (const char* widget : {"button", "button.primary", "button.checked", "button.toggle",
+		// Hovered and pressed ones keep looking so with the focus, also when Space presses them.
+		for (const char* widget : {"button", "button:hover", "button:active", "button.primary", "button.primary:hover",
+				 "button.primary:active", "button.checked", "button.toggle", "button.toggle:hover",
 				 "button.toggle.mute.checked", "input.checkbox", "input.checkbox:checked", "input.radio",
 				 "input.radio:checked", "listview", "valuefield", "knob", "fader", "slider", "input.range", "menuitem"})
 		{
@@ -238,9 +240,68 @@ TEST_CASE("the high contrast theme's text, accents and borders stand out from it
 	}
 	// Text on accent-colored fills, such as the primary button's.
 	CHECK(contrast(tokens.at("background").get<std::string>(), tokens.at("accent").get<std::string>()) >= 7.0);
-	// The focus ring is thicker than in the other themes.
-	CHECK(gnubase::test::readText(themesDir() / "high-contrast" / "focus-ring.svg").find("stroke-width=\"2\"") !=
-		std::string::npos);
+	// The focus ring is thicker than in the other themes, and each theme's focus-ring.svg is as wide as its tokens say.
+	const auto ring = [](const std::string& theme)
+	{ return readJson(themesDir() / theme / "tokens.json").at("borderWidths").at("focusRing").get<int>(); };
+	for (const std::string& theme : themes())
+	{
+		INFO("theme " << theme);
+		CHECK(gnubase::test::readText(themesDir() / theme / "focus-ring.svg")
+				  .find("stroke-width=\"" + std::to_string(ring(theme)) + "\"") != std::string::npos);
+		if (theme != "high-contrast")
+			CHECK(ring("high-contrast") > ring(theme));
+	}
+}
+
+TEST_CASE("the high contrast theme's labels and marks stand out from the fills under them", "[unit]")
+{
+	const std::filesystem::path dir = themesDir() / "high-contrast";
+	const std::vector<std::pair<std::string, std::string>> sheet = rules(gnubase::test::readText(dir / "theme.rcss"));
+	// The color, or another color property, that the last rule for the selector gives, alone or among others.
+	const auto color = [&sheet](const std::string& selector, const std::string& property = "color")
+	{
+		std::string found;
+		for (const auto& [selectors, declarations] : sheet)
+		{
+			const size_t first = selectors.find_first_not_of(" \t");
+			const std::string list =
+				" " + selectors.substr(first, selectors.find_last_not_of(" \t\r") + 1 - first) + ",";
+			const size_t at = declarations.find("\t" + property + ": #");
+			if (at != std::string::npos && list.find(" " + selector + ",") != std::string::npos)
+				found = declarations.substr(at + property.size() + 3, 7);
+		}
+		REQUIRE(!found.empty());
+		return found;
+	};
+	// An attribute of the first element of a skin that matches the XPath query, such as its fill.
+	const auto attribute = [&dir](const std::string& file, const char* query, const char* name)
+	{
+		pugi::xml_document document;
+		REQUIRE(document.load_string(gnubase::test::readText(dir / file).c_str()));
+		return std::string(document.select_node(query).node().attribute(name).value());
+	};
+	// WCAG 2's enhanced contrast for text (1.4.6): labels on buttons filled with the accent or a toggle's color.
+	for (const auto& [selector, skin] : std::vector<std::pair<std::string, std::string>>{
+			 {"button.primary", "button-primary-normal.svg"}, {"button.toggle.mute.checked", "toggle-mute.svg"},
+			 {"button.toggle.solo.checked", "toggle-solo.svg"}, {"button.toggle.record.checked", "toggle-record.svg"},
+			 {"button.toggle.monitor.checked", "toggle-monitor.svg"}})
+	{
+		INFO(selector);
+		CHECK(contrast(color(selector), attribute(skin, "//rect", "fill")) >= 7.0);
+	}
+	// The icons of record and monitor buttons too, and of the monitor button that is listening.
+	for (const char* kind : {"record", "monitor", "listen"})
+	{
+		INFO(kind);
+		const std::string skin = std::string_view(kind) == "record" ? "toggle-record.svg" : "toggle-monitor.svg";
+		CHECK(contrast(color("button.toggle." + std::string(kind) + ".checked:not(:disabled) svg.icon", "image-color"),
+				  attribute(skin, "//rect", "fill")) >= 7.0);
+	}
+	// The marks of checked and mixed check boxes on the accent.
+	CHECK(contrast(attribute("checkbox-on.svg", "//polyline", "stroke"),
+			  attribute("checkbox-on.svg", "//rect", "fill")) >= 7.0);
+	CHECK(contrast(attribute("checkbox-mixed.svg", "//line", "stroke"),
+			  attribute("checkbox-mixed.svg", "//rect", "fill")) >= 7.0);
 }
 
 TEST_CASE("every theme's piano keyboard has light white keys and dark black keys", "[unit]")
