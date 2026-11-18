@@ -844,22 +844,31 @@ namespace gnubase::engine
 		Retrospective& buffer = m_retrospective[input.channel];
 		const uint64_t frame = m_frameBase + deviceFrame + input.offset;
 		// Input after the buffer was inserted starts it afresh, and so does input in stop mode while it holds input in
-		// stop mode, on the next device or after a pause since the last input, from playback or not: the insert places
-		// input in stop mode by its frames, which leave out the time the old device ran.
+		// stop mode, after a pause since the last input, from playback or not (reference manual p. 354).
 		const auto stopped = [&buffer]
 		{
 			return std::any_of(buffer.events.begin(), buffer.events.end(),
 				[](const RetrospectiveEvent& kept) { return kept.position < 0; });
 		};
 		if (buffer.taken ||
-			(input.played < 0 &&
-				(buffer.stoppedBefore > 0 ||
-					(!buffer.events.empty() &&
-						frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames) &&
-						stopped()))))
+			(input.played < 0 && !buffer.events.empty() &&
+				frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames) && stopped()))
 		{
 			buffer.events.clear();
 			buffer.recorded = 0;
+			buffer.stoppedBefore = 0;
+		}
+		else if (input.played < 0 && buffer.stoppedBefore > 0)
+		{
+			// On the next device, input in stop mode leaves out the earlier devices' input in stop mode: the insert
+			// places it by its frames, which leave out the time the old device ran. Input during playback stays, as
+			// the insert places it where it played.
+			const auto earlier = [this](const RetrospectiveEvent& kept)
+			{ return kept.position < 0 && kept.deviceFrame < m_frameBase; };
+			const auto recorded = buffer.events.begin() + static_cast<std::ptrdiff_t>(buffer.recorded);
+			buffer.recorded -= static_cast<size_t>(std::count_if(buffer.events.begin(), recorded, earlier));
+			buffer.events.erase(
+				std::remove_if(buffer.events.begin(), buffer.events.end(), earlier), buffer.events.end());
 			buffer.stoppedBefore = 0;
 		}
 		buffer.taken = false;

@@ -527,11 +527,13 @@ TEST_CASE("input in stop mode on the next audio device starts the retrospective 
 	CHECK(notesOf(parts[0]) == std::vector<std::vector<int64_t>>{{0, g_beatTicks, 62}});
 }
 
-TEST_CASE("input in stop mode starts the retrospective buffer afresh also with input during playback in between",
+TEST_CASE("input in stop mode on the next device leaves out only the old device's input in stop mode, after a "
+		  "pause it starts the buffer afresh",
 	"[integration]")
 {
 	// Stop mode, playback, then stop mode again on the next device, before or after the playback, or on the same
-	// device after a pause of over 30 s (reference manual p. 354).
+	// device after a pause of over 30 s (reference manual p. 354). The insert places input in stop mode by its frames,
+	// which can't be counted across devices, but input during playback where it played.
 	const int next = GENERATE(0, 1, 2); // the device changes before the playback, after it, or not at all
 	Setup setup(4096);
 	Client& client = setup.client;
@@ -569,7 +571,11 @@ TEST_CASE("input in stop mode starts the retrospective buffer afresh also with i
 	const std::vector<Json> parts = setup.parts();
 	REQUIRE(parts.size() == 1);
 	CHECK(parts[0].at("position") == 2 * g_beatTicks);
-	CHECK(notesOf(parts[0]) == std::vector<std::vector<int64_t>>{{0, g_beatTicks, 62}});
+	if (next == 2)
+		CHECK(notesOf(parts[0]) == std::vector<std::vector<int64_t>>{{0, g_beatTicks, 62}});
+	else // the played note stays where it played
+		CHECK(notesOf(parts[0]) ==
+			std::vector<std::vector<int64_t>>{{0, g_beatTicks, 62}, {7 * g_beatTicks, g_beatTicks, 64}});
 }
 
 TEST_CASE("input in stop mode after a pause keeps what the buffer holds from playback alone", "[integration]")
