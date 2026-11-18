@@ -1013,3 +1013,34 @@ TEST_CASE(
 	CHECK(reads == std::optional<bool>(false));
 	CHECK(project.at("channels").at(1).at("pan") == 0.5);
 }
+
+TEST_CASE("ChannelSteps hands on a step's channels only if the step changed only channels", "[unit]")
+{
+	// The channels of a step that changed more, such as a track.add that routes tracks into its new channel, wait
+	// for the view's read: alone, they could name a channel that the project doesn't have yet (#1881).
+	const auto channelChanged = [](int id) { return engine::Event{"channel.changed", {{"channel", {{"id", id}}}}, 0}; };
+	const auto historyChanged = [](Json events)
+	{
+		Json data = {{"position", 1}};
+		if (!events.is_null())
+			data["events"] = std::move(events);
+		return engine::Event{"history.changed", std::move(data), 0};
+	};
+	ui::ChannelSteps steps;
+	steps.keep(channelChanged(1));
+	steps.keep(channelChanged(2));
+	const std::vector<engine::Event> channels = steps.settle(historyChanged(Json::array({"channel.changed"})));
+	REQUIRE(channels.size() == 2);
+	CHECK(channels[0].data.at("channel").at("id") == 1);
+	CHECK(channels[1].data.at("channel").at("id") == 2);
+	CHECK(steps.settle(historyChanged(Json::array({"channel.changed"}))).empty()); // handed on once
+
+	steps.keep(channelChanged(1));
+	CHECK(steps.settle(historyChanged(Json::array({"channel.changed", "track.added"}))).empty());
+	CHECK(steps.settle(historyChanged(Json::array({"channel.changed"}))).empty()); // gone with their step
+	steps.keep(channelChanged(1));
+	CHECK(steps.settle(historyChanged(Json())).empty()); // an undo names no events
+	steps.keep(channelChanged(1));
+	CHECK(steps.settle(engine::Event{"project.reset", Json::object(), 0}).empty());
+	CHECK(steps.settle(historyChanged(Json::array({"channel.changed"}))).empty());
+}

@@ -505,6 +505,8 @@ namespace gnubase::ui
 		double dpFrom(Rml::Element& element, float x) const;
 
 		void requestProject();
+		// Puts a channel-only step's channel into the project, as its channel.changed brought it (#1881).
+		void takeChannel(const engine::Event& channelChanged);
 		// Shows m_project, with event.previewResize's answer over it while an edge is dragged.
 		void showProject();
 		void loadProject(const engine::Json& project);
@@ -885,6 +887,7 @@ namespace gnubase::ui
 		uint64_t m_loads = 0;
 		uint64_t m_answers = 0;
 		uint64_t m_read = 0;
+		ChannelSteps m_channelSteps; // channel.changed until their step's history.changed (#1881)
 		std::function<void()> m_layoutListener;
 		std::function<void()> m_addTrack;     // onAddTrack
 		std::vector<std::string> m_laneTypes; // and its type

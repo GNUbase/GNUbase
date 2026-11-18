@@ -223,6 +223,52 @@ TEST_CASE(
 	CHECK(volume() == -6.0);
 }
 
+TEST_CASE("the channels of a step that changed more than channels wait for the display's read", "[unit]")
+{
+	test::CommandHolds holds; // declared before the fixture: its engine's command thread waits in hold()
+	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
+	f.engine.registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	const Json vox = f.call("track.add", {{"type", "audio"}, {"name", "Vox"}}).at("track");
+	REQUIRE(
+		f.waitUntil([&f] { return f.display.project().is_object() && f.display.project().at("tracks").size() == 1; }));
+	REQUIRE(f.waitUntil([&f] { return f.binding.waiting("project.get") == 0; }));
+	const auto output = [&f, &vox]
+	{
+		for (const Json& channel : f.display.project().at("channels"))
+			if (channel.at("id") == vox.at("channel"))
+				return channel.at("output");
+		return Json();
+	};
+	const Json before = output();
+	size_t layouts = 0;
+	f.display.onLayout([&layouts] { ++layouts; });
+
+	// A group track that Vox plays into: its step changes Vox's channel and adds a channel, which only the display's
+	// read brings. Vox's channel alone would play into a channel that the project doesn't have yet, which the
+	// inspector's and the mixer's routing lists showed as none and sent back (#1881).
+	engine::Client holder(f.engine, "holder");
+	engine::Client other(f.engine, "other");
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	other.send("track.add", {{"type", "group"}, {"tracks", Json::array({vox.at("id")})}});
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	REQUIRE(f.waitUntil([&f] { return f.binding.waiting("project.get") != 0; }));
+	CHECK(output() == before);
+	CHECK(f.display.project().at("tracks").size() == 1);
+	CHECK(layouts == 0);
+
+	holds.release(2);
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("tracks").size() == 2; }));
+	const Json group = f.display.project().at("tracks").at(1);
+	CHECK(group.at("type") == "group");
+	CHECK(output() == group.at("channel"));
+}
+
 TEST_CASE("the event display shows events and the project cursor where the engine has them", "[unit]")
 {
 	Fixture fixture;

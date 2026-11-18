@@ -452,18 +452,20 @@ namespace gnubase::ui
 			m_subscriptions.push_back(m_binding.on(event,
 				[this, reset = std::string(event) == "project.reset"](const engine::Event& changed)
 				{
+					const std::vector<engine::Event> channels = m_channelSteps.settle(changed);
 					if (changedOnly(changed, {"channel.changed"}))
+					{
+						for (const engine::Event& each : channels)
+							if (const Json* channel = takeChannel(m_project, each))
+								showChannel(channel->at("id").get<uint64_t>());
 						return;
+					}
 					requestProject();
 					if (reset)
 						requestView();
 				}));
-		m_subscriptions.push_back(m_binding.on("channel.changed",
-			[this](const engine::Event& event)
-			{
-				if (const Json* channel = takeChannel(m_project, event))
-					showChannel(channel->at("id").get<uint64_t>());
-			}));
+		m_subscriptions.push_back(
+			m_binding.on("channel.changed", [this](const engine::Event& event) { m_channelSteps.keep(event); }));
 		m_subscriptions.push_back(m_binding.on("mixer.changed",
 			[this](const engine::Event& event)
 			{

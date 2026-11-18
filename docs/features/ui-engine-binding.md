@@ -74,7 +74,11 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   and `changedOnly(event, names)` tells whether they are all of those names. After a step that changed only channels,
   `changedOnly(event, {"channel.changed"})`, no view reads: the mixer and the event display take each channel that
   `channel.changed` brings into the project they read (`takeChannel`, in place, as `project.get` shows channels the same
-  way), and the mixer updates only that channel's strip. The event display counts it in `loads()`, so the views that
+  way), and the mixer updates only that channel's strip. They keep a step's `channel.changed` until its
+  `history.changed` (`ChannelSteps`) and drop them for a step that changed more, which they read: a `track.add` that
+  routes the selected tracks into its new group channel changes their channels too, and taken before the read brought
+  the group, they named a channel the project didn't have, which the inspector's output list showed as none and sent
+  back. The event display counts it in `loads()`, so the views that
   show channels from its project, the track list, the inspector and the sampler and drum machine panels, show it too,
   but not in `answers()`, which the views that show no channel go by (the info line, the in-place editors, the ruler and
   transpose tracks), and `read()` moves on with it only while no `project.get` is out, since the project still lacks the

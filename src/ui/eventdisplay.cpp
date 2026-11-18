@@ -183,27 +183,18 @@ namespace gnubase::ui
 			m_subscriptions.push_back(m_binding.on(event,
 				[this](const engine::Event& changed)
 				{
+					const std::vector<engine::Event> channels = m_channelSteps.settle(changed);
 					if (changedOnly(changed, {"channel.changed"}))
+					{
+						for (const engine::Event& channel : channels)
+							takeChannel(channel);
 						return;
+					}
 					requestProject();
 					requestMarkers();
 				}));
-		m_subscriptions.push_back(m_binding.on("channel.changed",
-			[this](const engine::Event& event)
-			{
-				Json before;
-				const Json* after = takeChannel(m_project, event, &before);
-				if (after == nullptr)
-					return;
-				++m_loads;
-				// A read that is out may come from before a step that came before this channel: the project isn't
-				// as new as this channel until it is in.
-				if (!m_loading)
-					m_read = m_binding.handed();
-				// What the lanes show doesn't change with a channel, the track list's controls may.
-				if (m_layoutListener && !levelsOnly(before, *after))
-					m_layoutListener();
-			}));
+		m_subscriptions.push_back(
+			m_binding.on("channel.changed", [this](const engine::Event& event) { m_channelSteps.keep(event); }));
 		// A dialog for the old project's events or parts closes: OK would act on whatever has those ids in the new
 		// project (#1586).
 		m_subscriptions.push_back(m_binding.on("project.reset",
@@ -417,6 +408,22 @@ namespace gnubase::ui
 	double EventDisplay::dpFrom(Rml::Element& element, float x) const
 	{
 		return (x - element.GetAbsoluteLeft()) / dpRatio();
+	}
+
+	void EventDisplay::takeChannel(const engine::Event& channelChanged)
+	{
+		Json before;
+		const Json* after = ui::takeChannel(m_project, channelChanged, &before);
+		if (after == nullptr)
+			return;
+		++m_loads;
+		// A read that is out may come from before a step that came before this channel: the project isn't as new as
+		// this channel until it is in.
+		if (!m_loading)
+			m_read = m_binding.handed();
+		// What the lanes show doesn't change with a channel, the track list's controls may.
+		if (m_layoutListener && !levelsOnly(before, *after))
+			m_layoutListener();
 	}
 
 	// ponytail: reads the whole project after every change but the channels' (#1881); read only what the events name

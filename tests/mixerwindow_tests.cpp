@@ -1110,7 +1110,7 @@ namespace
 		ui::EngineBinding& binding = app.appUi().binding();
 		const auto settled = [&binding]
 		{ return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0; };
-		REQUIRE(app.waitUntil(settled));
+		REQUIRE(app.waitUntil(settled, std::chrono::seconds(60))); // 64 tracks under sanitizers
 		Drag result;
 		const ui::Subscription reads =
 			binding.onResult("project.get", [&result](const engine::Result&) { ++result.reads; });
@@ -1137,7 +1137,7 @@ namespace
 		}
 		result.value = valueOf(app, window, selector);
 		context.ProcessMouseButtonUp(0, 0);
-		REQUIRE(app.waitUntil(settled));
+		REQUIRE(app.waitUntil(settled, std::chrono::seconds(60)));
 		return result;
 	}
 

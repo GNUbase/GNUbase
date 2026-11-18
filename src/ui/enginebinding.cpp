@@ -48,6 +48,14 @@ namespace gnubase::ui
 		return nullptr;
 	}
 
+	std::vector<engine::Event> ChannelSteps::settle(const engine::Event& changed)
+	{
+		std::vector<engine::Event> kept = std::exchange(m_kept, {});
+		if (!changedOnly(changed, {"channel.changed"}))
+			kept.clear();
+		return kept;
+	}
+
 	Subscription::Subscription(Subscription&& other) noexcept
 		: m_binding(std::exchange(other.m_binding, nullptr)), m_id(other.m_id)
 	{

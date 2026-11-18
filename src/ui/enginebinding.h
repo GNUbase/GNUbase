@@ -40,6 +40,22 @@ namespace gnubase::ui
 	engine::Json* takeChannel(
 		engine::Json& project, const engine::Event& channelChanged, engine::Json* before = nullptr);
 
+	// The channel.changed of a step, kept until the step's history.changed tells whether it changed only channels
+	// (#1881). Only then may a view put them into the project it read: a step that changed more is read again, and its
+	// channels alone could name what the project doesn't have yet, such as the new channel of a track.add that routes
+	// the selected tracks into it, which a routing list would show as none and send back.
+	class ChannelSteps
+	{
+	public:
+		void keep(const engine::Event& channelChanged) { m_kept.push_back(channelChanged); }
+		// Of a history.changed or project.reset: the kept channel.changed, in the order they came, if the step changed
+		// only channels (changedOnly); none otherwise. Either way they go.
+		std::vector<engine::Event> settle(const engine::Event& changed);
+
+	private:
+		std::vector<engine::Event> m_kept;
+	};
+
 	// A handler that the binding calls while the subscription exists. Subscriptions must not outlive their binding.
 	class Subscription
 	{

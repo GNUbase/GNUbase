@@ -150,6 +150,7 @@ namespace gnubase::ui
 		bool m_syncs = false;  // its channel visibility follows the track visibility (#166)
 
 		engine::Json m_project = engine::Json::object();
+		ChannelSteps m_channelSteps; // channel.changed until their step's history.changed (#1881)
 		std::vector<MixerChannel> m_channels;
 		std::set<uint64_t> m_hidden;
 		std::set<std::string> m_hiddenTypes;
