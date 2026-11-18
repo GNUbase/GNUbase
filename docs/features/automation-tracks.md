@@ -99,7 +99,7 @@ editor's compress, relative and absolute centre scaling, Range Selection on auto
 Alt with the object selection tool to draw, a selection with unselected points in it that can't move past other points
 (p. 878), opening an automation track without recording an undo step (#1918), Shift to set the line
 tool's period, the most recent parameters at the top of the selector, Open Plugin Editor, setting terminators on the
-info line ([virgin-territory.md](virgin-territory.md)), and automation of the channel strip's sections (#658).
+info line (#1917, [virgin-territory.md](virgin-territory.md)), and automation of the channel strip's sections (#658).
 
 ## Checks
 
