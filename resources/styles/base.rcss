@@ -370,6 +370,12 @@ knob, fader, slider, valuefield
 	drag: drag;
 }
 
+/* Disabled ones take no focus, nor does a disabled list view, which has no :disabled (docs/features/accessibility.md). */
+knob:disabled, fader:disabled, slider:disabled, valuefield:disabled, listview[disabled]
+{
+	tab-index: none;
+}
+
 knob
 {
 	display: inline-block;
