@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -224,6 +225,24 @@ namespace gnubase::test
 		}
 	}
 
+	namespace
+	{
+		// Messages as hex bytes, e.g. "[90 3c 64] [80 3c 00]".
+		std::string describe(const std::vector<std::vector<int>>& messages)
+		{
+			std::ostringstream text;
+			text << std::hex << std::setfill('0');
+			for (std::size_t index = 0; index < messages.size(); ++index)
+			{
+				text << (index == 0 ? "[" : " [");
+				for (std::size_t byte = 0; byte < messages[index].size(); ++byte)
+					text << (byte == 0 ? "" : " ") << std::setw(2) << messages[index][byte];
+				text << "]";
+			}
+			return messages.empty() ? "nothing" : text.str();
+		}
+	}
+
 	NoteProbe::NoteProbe(UiApp& app, uint64_t track) : m_app(app)
 	{
 		app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
@@ -238,7 +257,7 @@ namespace gnubase::test
 
 	bool NoteProbe::plays(const std::vector<std::vector<int>>& expected)
 	{
-		return m_app.waitUntil(
+		const bool heard = m_app.waitUntil(
 			[&]
 			{
 				m_app.call("audio.render", {{"frames", 128}});
@@ -251,6 +270,9 @@ namespace gnubase::test
 				}
 				return m_played == expected;
 			});
+		if (!heard)
+			UNSCOPED_INFO("heard " << describe(m_played) << ", expected " << describe(expected));
+		return heard;
 	}
 
 	double controlValue(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector)
