@@ -90,6 +90,7 @@ namespace gnubase::engine
 		time::Samples end = 0;
 		time::Ticks startTicks = 0;
 		time::Ticks endTicks = 0;
+		double sampleRate = 0.0;             // the project's when it was copied, which its samples count in
 		std::vector<ObjectId> tracks;        // the tracks it was copied from, from top to bottom
 		std::vector<AudioEvent> audioEvents; // with those of the audio parts
 		std::vector<AudioPart> audioParts;
@@ -112,6 +113,7 @@ namespace gnubase::engine
 
 		time::Samples start = 0; // the range's start, in project samples and in ticks
 		time::Ticks startTicks = 0;
+		double sampleRate = 0.0;      // the project's when it was copied, which its samples count in
 		std::vector<ObjectId> tracks; // the tracks of the copied lanes, from top to bottom
 		std::vector<Lane> lanes;      // in the order of their tracks
 	};

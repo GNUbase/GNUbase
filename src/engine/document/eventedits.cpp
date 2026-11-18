@@ -2083,6 +2083,7 @@ namespace gnubase::engine
 			clipboard.end = range.end;
 			clipboard.startTicks = ticks(project, {time::TimeBase::Linear, range.start});
 			clipboard.endTicks = ticks(project, {time::TimeBase::Linear, range.end});
+			clipboard.sampleRate = project.sampleRate;
 			clipboard.tracks = range.tracks;
 			for (const Item& item : within(scratch, range.tracks, range.start, range.end, locked))
 			{
@@ -2559,6 +2560,9 @@ namespace gnubase::engine
 			if (stored == nullptr)
 				throw CommandError("nothing to paste: copy or cut a range first");
 			const RangeClipboard& clipboard = *stored;
+			// Its linear positions and lengths are samples at the rate it was copied at.
+			require(clipboard.sampleRate == project.sampleRate,
+				"the project's sample rate changed since the range was copied: copy it again");
 			const Json& parameters = context.parameters();
 			const time::Samples at = parameters.contains("position")
 				? parameters.at("position").get<time::Samples>()
@@ -2697,6 +2701,7 @@ namespace gnubase::engine
 			AutomationClipboard clipboard;
 			clipboard.start = start;
 			clipboard.startTicks = ticks(project, {time::TimeBase::Linear, start});
+			clipboard.sampleRate = project.sampleRate;
 			for (const AutomationLane* lane : lanes)
 			{
 				const time::TimeBase base = project.trackById.at(lane->track).timeBase;
@@ -2815,6 +2820,8 @@ namespace gnubase::engine
 			if (!stored)
 				throw CommandError("nothing to paste: copy automation first");
 			const AutomationClipboard& clipboard = *stored;
+			require(clipboard.sampleRate == project.sampleRate,
+				"the project's sample rate changed since the automation was copied: copy it again");
 			const Json& parameters = context.parameters();
 			require(!(parameters.contains("tracks") && parameters.contains("lanes")), "give tracks or lanes, not both");
 			const auto [start, end] = startAndEnd(context);
@@ -3280,7 +3287,8 @@ namespace gnubase::engine
 				"tracks moves by the same ticks, keeping its distance from that on every track. Audio events and MIDI "
 				"parts come as unlocked real copies; automation replaces the curve where it lands, on a lane of the "
 				"same parameter. time (Paste Time) first makes room as long as the copied range, as "
-				"range.insertSilence does. Returns the new events.",
+				"range.insertSilence does. A clipboard copied at another sample rate than the project's is refused. "
+				"Returns the new events.",
 				schema({{"position", integer()}, {"track", integer()}, {"time", boolean()}}, {}), eventsResult(),
 				false},
 			"Paste", [this](Project& project, CommandContext& context)
@@ -3372,7 +3380,8 @@ namespace gnubase::engine
 					"A track takes the parameters it has, adding their lanes: a plugin's needs the same plugin in the "
 					"slot at the same place, an instrument's the same instrument; the others are left out. A shorter "
 					"range cuts the copy at the curve's value there, in a longer one its last value holds up to the "
-					"end. Returns the lanes it pasted into.",
+					"end. A copy made at another sample rate than the project's is refused. Returns the lanes it pasted "
+					"into.",
 				schema({{"start", integer()}, {"end", integer()}, {"tracks", events()}, {"lanes", events()}}, {}),
 				schema({{"lanes", events()}}, {"lanes"}), false},
 			"Paste Automation", [this](Project& project, CommandContext& context)

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -1595,6 +1596,7 @@ TEST_CASE("Range edits take an event that starts a sample before an edge as afte
 	CHECK(f.call("project.get").at("audioEvents") == before);
 	f.call("range.insertSilence", {{"start", end}, {"end", end + g_second}, {"tracks", {track}}});
 	CHECK(position() == end - 1 + g_second);
+
 }
 
 TEST_CASE("range.paste doesn't paste what was copied in another project", "[unit]")
@@ -1725,6 +1727,21 @@ TEST_CASE(
 	f.call("range.delete", f.range({{"tracks", {folder}}}));
 	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}});
 	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_end, 4 * g_second}});
+}
+
+TEST_CASE("range.paste and automation.paste refuse what was copied at another sample rate", "[unit]")
+{
+	// project.set rescales the project's linear positions to a new rate, but not the clipboards' samples.
+	RangeFixture f;
+	f.call("range.copy", f.range());
+	f.call("automation.copy", {{"start", g_start}, {"end", g_end}});
+	f.call("project.set", {{"sampleRate", 96000}});
+	CHECK_THAT(f.fails("range.paste", {{"position", 0}}), ContainsSubstring("sample rate"));
+	CHECK_THAT(f.fails("automation.paste", {{"start", 0}, {"end", g_second}}), ContainsSubstring("sample rate"));
+	// Back at the rate they were copied at, they paste again.
+	f.call("history.undo");
+	CHECK(f.call("range.paste", {{"position", 0}}).at("events").size() == 2);
+	CHECK(f.call("automation.paste", {{"start", 0}, {"end", g_second}}).at("lanes").size() == 2);
 }
 
 TEST_CASE("range.move and range.paste put what starts at the range's start exactly at position on musical tracks, "
