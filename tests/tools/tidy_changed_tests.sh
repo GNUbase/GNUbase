@@ -3,8 +3,9 @@
 # Tests tools/tidy-changed.sh in a temporary repository with prepared compile databases: the line filter it gives
 # clang-tidy, with a stub clang-tidy that logs it, the function size check on the whole changed files, its exit without
 # changed lines and, on Linux, its compile steps
-# with stub compilers for Clang and GCC and when it configures the compile databases again, with a stub cmake. Run by
-# ctest; usage: tidy_changed_tests.sh <source-dir>
+# with stub compilers for Clang and GCC and when it configures the compile databases again, with a stub cmake, and
+# the run that Windows starts in WSL: its clone's lock, the cleanup of old clones and the logs it names. Run by ctest;
+# usage: tidy_changed_tests.sh <source-dir>
 set -u
 src=$(cd "${1:?usage: $0 <source-dir>}" && pwd) || exit 1
 case "$(uname -s)" in
@@ -51,6 +52,8 @@ mkdir -p "$repo/src" "$repo/build/tidy" "$repo/build/tidy-gcc"
 lines() { i=1; while [ $i -le 30 ]; do echo "int v$i;"; i=$((i + 1)); done; }
 for file in a b c; do lines > "$repo/src/$file.cpp"; done
 printf 'build/\n' > "$repo/.gitignore"
+# The run in WSL checks with the script of the commit it checks.
+mkdir -p "$repo/tools" && cp "$src/tools/tidy-changed.sh" "$repo/tools/"
 # Both databases list a.cpp and b.cpp, compiled on Linux by stubs for Clang (build/tidy) and GCC (build/tidy-gcc)
 # that report an error, failing, when $tmp/<compiler>-error exists.
 for compiler in clang:tidy gcc:tidy-gcc; do
@@ -174,6 +177,33 @@ if [ "$(uname -s)" = Linux ]; then
 	[ "$(wc -l < "$tmp/configured" | tr -d ' ')" -eq 2 ] && echo "ok: the next run configures nothing" ||
 		{ echo "FAILED: the next run configures nothing"; sed 's/^/    /' "$tmp/output"; failures=$((failures + 1)); }
 	PATH=$path
+
+	# The run in WSL, here with a home of its own: it waits while another run holds its clone's lock, removes the
+	# clones that no run used for 30 days, and its messages name the logs in its clone (configuring fails here).
+	clones=$tmp/home/gnubase-tidy
+	mkdir -p "$clones/old" "$clones/recent"
+	touch -d '31 days ago' "$clones/old.log"
+	touch "$clones/recent.log"
+	printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/cmake"
+	(exec 9> "$clones/slot.lock" && flock 9 && touch "$tmp/locked" && sleep 2) &
+	holder=$!
+	while [ ! -e "$tmp/locked" ]; do sleep 0.1; done
+	(cd "$tmp" && HOME=$tmp/home PATH=$tmp/bin:$PATH bash "$src/tools/tidy-changed.sh" --wsl "$repo" \
+		"$(git -C "$repo" rev-parse HEAD)" "$(git -C "$repo" rev-parse HEAD~1)" slot) > "$tmp/output" 2>&1
+	status=$?
+	wait "$holder"
+	[ "$status" -eq 2 ] && echo "ok: the run in WSL fails when configuring fails" ||
+		{ echo "FAILED: the run in WSL fails when configuring fails (exit status $status)"; failures=$((failures + 1)); }
+	printed "the run in WSL waits for the run that holds its clone" \
+		"Another run uses ~/gnubase-tidy/slot, waiting until it ends."
+	printed "the run in WSL names the log in its clone" \
+		"Configuring failed, see ~/gnubase-tidy/slot/build/tidy/configure.log"
+	[ -f "$clones/slot/build/tidy/configure.log" ] && echo "ok: the log is in the clone" ||
+		{ echo "FAILED: the log is in the clone"; failures=$((failures + 1)); }
+	[ ! -e "$clones/old" ] && [ ! -e "$clones/old.log" ] && [ -d "$clones/recent" ] &&
+		echo "ok: the run in WSL removes the clones that no run used for 30 days, only those" ||
+		{ echo "FAILED: the run in WSL removes the clones that no run used for 30 days, only those"; ls -a "$clones";
+			failures=$((failures + 1)); }
 fi
 
 touch "$tmp/finding"

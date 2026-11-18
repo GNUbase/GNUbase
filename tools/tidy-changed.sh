@@ -22,25 +22,39 @@ set -u
 
 # Started by Windows inside WSL (below) with the repository, the commit at HEAD, where the branch starts and the
 # checkout folder's name: moves the clone to that commit and checks it there. It fetches from the repository, not the
-# checkout: a worktree's .git file holds a Windows path, which git in WSL can't follow.
+# checkout: a worktree's .git file holds a Windows path, which git in WSL can't follow. A second run with the same
+# clone waits for the first (a lock next to it), and clones that no run used for 30 days go, so that those of
+# short-lived worktrees don't pile up.
 if [ "${1:-}" = --wsl ]; then
 	repository=$2 commit=$3 start=$4 mirror=$HOME/gnubase-tidy/$5
 	export PATH="$HOME/.local/bin:$PATH" GIT_LFS_SKIP_SMUDGE=1 # pipx; clang-tidy needs no test audio
-	mkdir -p "$HOME/gnubase-tidy" || exit 2
+	mkdir -p "$HOME/gnubase-tidy" && exec 9> "$mirror.lock" || exit 2
+	if ! flock -n 9; then
+		echo "Another run uses ~/gnubase-tidy/$5, waiting until it ends."
+		flock 9 || exit 2
+	fi
+	find "$HOME/gnubase-tidy" -maxdepth 1 -name '*.log' -mtime +30 | while IFS= read -r log; do
+		old=${log%.log}
+		(flock -n 8 && rm -rf "$old" "$log") 8> "$old.lock"
+	done
 	if ! { { [ -d "$mirror/.git" ] || git clone -q --no-checkout "$repository" "$mirror"; } && cd "$mirror" &&
 		git fetch -q --no-tags "$repository" "$commit" && git checkout -q --force --detach FETCH_HEAD &&
-		git submodule sync -q && git submodule update -q --init --recursive &&
-		git submodule update -q --init --checkout ext/vst3sdk &&
-		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk; } > "$mirror.log" 2>&1; then
+		git submodule sync -q && git submodule update -q --init --recursive && { [ ! -d ext/vst3sdk ] || {
+			git submodule update -q --init --checkout ext/vst3sdk &&
+				git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk; }; }; } \
+		> "$mirror.log" 2>&1; then
 		echo "Preparing the clone in WSL failed, see ~/gnubase-tidy/$5.log"
 		exit 2
 	fi
 	echo "clang-tidy runs in WSL on HEAD $(git rev-parse --short HEAD), in ~/gnubase-tidy/$5, as CI's runs on Linux."
-	bash tools/tidy-changed.sh "$start" 2>&1 | sed "s|$mirror/||g"
+	# The run's own messages name its logs in the clone, not in the Windows checkout; sed -u passes each line on as
+	# it comes, also when the output isn't a terminal.
+	GNUBASE_TIDY_CLONE="~/gnubase-tidy/$5/" bash tools/tidy-changed.sh "$start" 2>&1 | sed -u "s|$mirror/||g"
 	exit "${PIPESTATUS[0]}"
 fi
 
 root=$(git rev-parse --show-toplevel) || exit 2
+logs=${GNUBASE_TIDY_CLONE:-} # where build/ is, for messages: in the clone in WSL for a run there
 cd "$root" || exit 2
 start=$(git merge-base "${1:-origin/main}" HEAD) || exit 2
 build=build/tidy
@@ -50,15 +64,22 @@ options="-DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_CONFIGURATION_TYPES=Debug"
 case "$(uname -s)" in
 MINGW* | MSYS* | CYGWIN*)
 	distro=${GNUBASE_WSL:-Ubuntu}
-	if [ -z "${CLANG_TIDY:-}" ] && MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash -c \
-		'PATH=$HOME/.local/bin:$PATH clang-tidy --version' 2>/dev/null | tr -d '\0' | grep -q 'version 22\.'; then
-		[ -z "$(git status --porcelain -- src tests)" ] ||
-			echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)."
-		wslPath() { cygpath -m "$1" | sed -E 's|^([A-Za-z]):|/mnt/\L\1|'; }
-		MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash "$(wslPath "$root")/tools/tidy-changed.sh" --wsl \
-			"$(wslPath "$(git rev-parse --path-format=absolute --git-common-dir)")" "$(git rev-parse HEAD)" "$start" \
-			"$(basename "$root")"
-		exit
+	inWsl() { MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash -c "PATH=\$HOME/.local/bin:\$PATH; $1" 2>/dev/null | tr -d '\0'; }
+	if [ -z "${CLANG_TIDY:-}" ] && inWsl 'clang-tidy --version' | grep -q 'version 22\.'; then
+		# The run there also configures and compiles: without the Linux setup (CONTRIBUTING.md) it stays on Windows.
+		missing=$(inWsl 'for tool in git cmake ninja clang++ g++ python3 flock; do
+			command -v $tool >/dev/null || printf " %s" $tool; done')
+		if [ -n "$missing" ]; then
+			echo "WSL has clang-tidy 22 but not$missing (CONTRIBUTING.md), so clang-tidy runs on Windows."
+		else
+			[ -z "$(git status --porcelain -- src tests '*CMakeLists.txt' '*.cmake' .clang-tidy)" ] ||
+				echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)."
+			wslPath() { cygpath -m "$1" | sed -E 's|^([A-Za-z]):|/mnt/\L\1|'; }
+			MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash "$(wslPath "$root")/tools/tidy-changed.sh" --wsl \
+				"$(wslPath "$(git rev-parse --path-format=absolute --git-common-dir)")" "$(git rev-parse HEAD)" \
+				"$start" "$(basename "$root")"
+			exit
+		fi
 	fi
 	vs=$("$(cygpath -u "$PROGRAMFILES") (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest \
 		-property installationPath | tr -d '\r')
@@ -100,7 +121,7 @@ fi
 reconfigure()
 {
 	echo "Configuring $build for its compile database"
-	mkdir -p "$build" && configure > "$build/configure.log" 2>&1 || { echo "Configuring failed, see $build/configure.log"; exit 2; }
+	mkdir -p "$build" && configure > "$build/configure.log" 2>&1 || { echo "Configuring failed, see $logs$build/configure.log"; exit 2; }
 }
 [ -f "$build/compile_commands.json" ] || reconfigure
 
@@ -189,7 +210,7 @@ if [ "$(uname -s)" = Linux ]; then
 		echo "Configuring $gcc for GCC's compile commands"
 		mkdir -p "$gcc" && cmake --preset linux-gcc -B "$gcc" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-DCMAKE_CONFIGURATION_TYPES=Release -DGNUBASE_LTO=OFF > "$gcc/configure.log" 2>&1 ||
-			{ echo "Configuring failed, see $gcc/configure.log"; exit 2; }
+			{ echo "Configuring failed, see $logs$gcc/configure.log"; exit 2; }
 	fi
 	# GCC at -O3 takes up to about 2 GB for one of the larger files: no more compiles at once than WSL's free memory
 	# holds, so that many changed files don't run it out of memory.
