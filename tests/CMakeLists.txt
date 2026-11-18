@@ -392,6 +392,7 @@ function(gnubase_add_shell_test name script)
 endfunction()
 gnubase_add_shell_test("the clang-tidy cache reruns clang-tidy only when an input changed" clang_tidy_cache_tests.sh)
 gnubase_add_shell_test("the keyword guard blocks private keywords in commits and pull requests" keyword_guard_tests.sh)
+gnubase_add_shell_test("a failed CI run on main is reported in an issue" report_ci_failure_tests.sh)
 gnubase_add_shell_test("the license header check lists files without the SPDX header" spdx_check_tests.sh)
 gnubase_add_shell_test("tidy-changed.sh checks the changed lines and compiles the changed files" tidy_changed_tests.sh)
 

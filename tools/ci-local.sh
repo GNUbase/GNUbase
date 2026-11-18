@@ -7,8 +7,9 @@
 # - on Linux, and on Windows in WSL: linux-gcc and linux-clang (builds and tests), asan-ubsan, tsan and clang-tidy.
 # macOS is left to CI. It checks the commit at HEAD, so commit first: on Windows the Linux jobs run in a clone inside
 # WSL (~/gnubase-ci/<checkout folder name>, one per checkout, so worktrees can run checks at the same time), which
-# builds far faster than the Windows folder and has Linux line endings. Unlike CI, it builds without link-time
-# optimization, which only makes every link slow, and one run at a time per machine (lockMachine).
+# builds far faster than the Windows folder and has Linux line endings. Like CI, it builds without link-time
+# optimization, which only makes every link slow (.github/workflows/lto.yml builds with it once a week), and it runs
+# one at a time per machine (lockMachine).
 # Usage: tools/ci-local.sh [job...]    default: every job this machine can run
 # Environment: GNUBASE_WSL names the WSL distribution (default Ubuntu), GNUBASE_CI_JOBS the compile jobs per build.
 # Setup: Windows needs Visual Studio 2026 and, on Git Bash's PATH, Python 3.10 or later for the format job's
@@ -153,9 +154,12 @@ job()
 			cmake --build "build/$1" --target gnubase-tests && runTests "build/$1" Debug
 		;;
 	clang-tidy)
+		# Unlike CI, which builds every file, the build here is incremental: a pass of a file it didn't rebuild can
+		# still be reused later, for example after switching back to a branch. So it drops passes unused for 30 days.
 		cmake --preset linux-clang -B build/clang-tidy -DGNUBASE_CLANG_TIDY=ON \
 			-DGNUBASE_CLANG_TIDY_CACHE="$root/build/clang-tidy-cache" "${ccache[@]}" &&
-			cmake --build build/clang-tidy
+			cmake --build build/clang-tidy &&
+			{ [ ! -d build/clang-tidy-cache ] || find build/clang-tidy-cache -type f -mtime +30 -delete; }
 		;;
 	*)
 		echo "Unknown job $1" >&2

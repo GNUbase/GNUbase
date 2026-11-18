@@ -7,14 +7,15 @@ src=$(cd "${1:?usage: $0 <source-dir>}" && pwd) || exit 1
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 
-# The stub clang-tidy prints the version and the configuration from files, and otherwise logs the call and exits with
+# The stub clang-tidy prints the version and the configuration from files, the configuration only when asked for the
+# source file's (a folder's own .clang-tidy applies only to the files in it), and otherwise logs the call and exits with
 # the status in $tmp/status. The stub compiler writes the source and the header for -frewrite-includes, as clang does
 # with the text of what a file includes, or fails when $tmp/nokey exists.
 cat > "$tmp/clang-tidy" << EOF
 #!/bin/sh
 case "\$1" in
 --version) cat "$tmp/version" ;;
---dump-config) cat "$tmp/config" ;;
+--dump-config) [ "\$2" = "$tmp/source.cpp" ] && cat "$tmp/config" ;;
 *)
 	echo checked >> "$tmp/calls"
 	status=\$(cat "$tmp/status")
@@ -75,6 +76,16 @@ entries() { find "$tmp/cache" -type f 2> /dev/null | wc -l | tr -d ' '; }
 check "the first run checks the file" 0 1
 check "a second run on the same input is reused" 0 1
 [ "$(entries)" -eq 1 ] && echo "ok: a pass is stored" || { echo "FAILED: a pass is stored"; failures=$((failures + 1)); }
+# CI deletes the passes that aren't newer than the build's start, so a reused pass must be touched.
+find "$tmp/cache" -type f -exec touch -t 200001010000 {} +
+touch "$tmp/build-start"
+check "a stored pass is reused again" 0 1
+if [ -n "$(find "$tmp/cache" -type f -newer "$tmp/build-start")" ]; then
+	echo "ok: a reused pass is marked as used"
+else
+	echo "FAILED: a reused pass is marked as used"
+	failures=$((failures + 1))
+fi
 
 echo "// a comment" >> "$tmp/header.h"
 check "a comment changed in an included header checks it again" 0 2

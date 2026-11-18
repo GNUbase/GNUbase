@@ -25,11 +25,15 @@ env:
     libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev
     libdbus-1-dev libibus-1.0-dev libudev-dev libfribidi-dev libthai-dev
     libvulkan1 mesa-vulkan-drivers
-  # Compiler caches: only pushes to main save them, and pull requests restore main's. A pull request's own would only
-  # push main's out of the repository's 10 GB of Actions cache, as no other pull request can restore them. Each job caps
-  # its cache (CCACHE_MAXSIZE, SCCACHE_CACHE_SIZE) at about one and a half of its builds, so that main's caches take
-  # about half of the 10 GB. SDL and RmlUi compile with precompiled headers, which neither ccache nor sccache can cache,
-  # so CI builds without them.
+  # Compiler caches: only pushes to main save them, and pull requests restore main's latest. A pull request's own would
+  # only push main's out of the repository's 10 GB of Actions cache, as no other pull request can restore them. Each job
+  # caps its cache (CCACHE_MAXSIZE, SCCACHE_CACHE_SIZE) at what one of its builds fills, or a little more, so that one
+  # push's caches take about 6 of the 10 GB. Each push to main saves them under new keys, and GitHub evicts the least
+  # recently used once the 10 GB are full, so main's latest caches stay. The jobs zero their cache statistics after
+  # restoring the cache and print them after building, so they show this build's hits and misses to check the caps
+  # against. In Nov 2026 the linux-x64-gcc and windows-x64 caches held a whole build, and the sanitizer and clang-tidy
+  # caps were raised from ones that missed 7 to 42 % of a build that changed no compiled code. SDL and RmlUi compile
+  # with precompiled headers, which neither ccache nor sccache can cache, so CI builds without them.
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_LAUNCHER: >-
     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
@@ -61,8 +65,13 @@ jobs:
           - { name: windows-x64, runner: windows-2025, preset: windows-x64-ninja, arch: x64, cache: 800M }
           - { name: linux-x64-gcc, runner: ubuntu-24.04, preset: linux-gcc, cache: 1500M }
           # ponytail: paused while many pull requests are open at once, so each run takes fewer of GitHub's 20 concurrent
-          # jobs; macOS still builds in ui-macos.yml, Clang in the sanitizer and clang-tidy jobs. To restore, uncomment
-          # them and add their names back to the required checks of the ruleset "main: CI must pass".
+          # jobs; Clang still builds in the sanitizer and clang-tidy jobs. macOS builds only in ui-macos.yml, after a
+          # merge, and only the arm64 slice of gnubase-tests without the test plugins, running only the ui tests. A
+          # macOS-only failure there (Objective-C++, libc++, Metal) passes every pull request check and first fails on
+          # main, where tools/report-ci-failure.sh opens an issue for it. A macOS-only failure anywhere else fails
+          # nowhere: in the other tests (CoreAudio [unit], CoreMIDI [integration]), the test plugins or the x86_64
+          # slice. Bringing back macos-universal, whose Intel runners do pick jobs up, restores that coverage first. To
+          # restore, uncomment them and add their names back to the required checks of the ruleset "main: CI must pass".
           # - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64-ninja, arch: arm64, cache: 800M }
           # Intel runner because hosted macOS arm64 runners often never pick jobs up (they are cancelled after 15
           # minutes). Builds both slices, tests the x86_64 one; the window tests run on Apple Silicon in ui-macos.yml.
@@ -116,15 +125,26 @@ jobs:
           restore-keys: ccache-${{ matrix.name }}-
 
       # No link-time optimization: its link steps took most of the Release builds (about 13 of 18 minutes on Windows),
-      # and no compiler cache can skip them. Pull requests restore main's cache, so main builds without it too.
+      # and no compiler cache can skip them. Pull requests restore main's cache, so main builds without it too. lto.yml
+      # builds and tests with it once a week.
       - name: Configure
         shell: bash
         run: >-
           cmake --preset ${{ matrix.preset }} -DGNUBASE_LTO=OFF
           ${{ runner.os == 'Windows' && env.SCCACHE_LAUNCHER || env.CCACHE_LAUNCHER }}
 
+      # ccache keeps its statistics in the cache folder, so without this they would add up over every build since the
+      # cache was first created. sccache's start with its server.
+      - name: Zero the compiler cache statistics
+        if: runner.os != 'Windows'
+        run: ccache --zero-stats
+
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --config Release
+
+      - name: Compiler cache statistics
+        if: runner.os != 'Windows'
+        run: ccache --show-stats
 
       # Stopping the server writes out what it still holds before the cache is saved, and prints its statistics.
       - name: Stop sccache (Windows)
@@ -329,8 +349,8 @@ jobs:
           # tests: how many tests run at a time. At four, sanitized exports, freezes and analyses kept the engine busy
           # past its client's 10 s reply limit on slow runners. Three leaves one of the runner's four cores for the
           # tests' own threads; at two, the jobs took 50 to 80 min in Nov 2026.
-          - { name: asan-ubsan, sanitizers: "address,undefined", cache: 1300M, tests: 3 }
-          - { name: tsan, sanitizers: thread, cache: 1G, tests: 3 }
+          - { name: asan-ubsan, sanitizers: "address,undefined", cache: 1600M, tests: 3 }
+          - { name: tsan, sanitizers: thread, cache: 1300M, tests: 3 }
     env:
       CCACHE_MAXSIZE: ${{ matrix.cache }}
       ASAN_OPTIONS: detect_leaks=1
@@ -372,7 +392,10 @@ jobs:
         run: cmake --preset linux-clang -DGNUBASE_SANITIZERS=${{ matrix.sanitizers }} $CCACHE_LAUNCHER
 
       - name: Build tests
-        run: cmake --build --preset linux-clang --target gnubase-tests
+        run: |
+          ccache --zero-stats
+          cmake --build --preset linux-clang --target gnubase-tests
+          ccache --show-stats
 
       - name: Save the compiler cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -390,7 +413,8 @@ jobs:
     timeout-minutes: 90 # main took up to 51 min in Nov 2026; a PR that changes a widely included header takes longer
     runs-on: ubuntu-24.04
     env:
-      CCACHE_MAXSIZE: 400M
+      # 400M held only 58 % of a build: a pull request that changed no compiled code missed 548 of 1309 compiles.
+      CCACHE_MAXSIZE: 1G
     steps:
       - uses: actions/checkout@v7
         with:
@@ -422,11 +446,15 @@ jobs:
           cmake --preset linux-clang -DGNUBASE_CLANG_TIDY=ON -DGNUBASE_CLANG_TIDY_CACHE=$PWD/.tidy-cache
           $CCACHE_LAUNCHER
 
-      # Keeps only the passes this build used, so the cache doesn't grow with every push.
+      # Keeps only the passes this build used, so the cache doesn't grow with every push. The folder is missing when no
+      # file had a key (tools/clang-tidy-cache.sh).
       - name: Build with clang-tidy
         run: |
           touch "$RUNNER_TEMP/build-start"
+          ccache --zero-stats
           cmake --build --preset linux-clang
+          ccache --show-stats
+          mkdir -p .tidy-cache
           find .tidy-cache -type f ! -newer "$RUNNER_TEMP/build-start" -delete
 
       - name: Save the caches
