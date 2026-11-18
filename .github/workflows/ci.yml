@@ -63,8 +63,11 @@ jobs:
           - { name: windows-x64, runner: windows-2025, preset: windows-x64-ninja, arch: x64, cache: 800M }
           - { name: linux-x64-gcc, runner: ubuntu-24.04, preset: linux-gcc, cache: 1500M }
           # ponytail: paused while many pull requests are open at once, so each run takes fewer of GitHub's 20 concurrent
-          # jobs; macOS still builds in ui-macos.yml, Clang in the sanitizer and clang-tidy jobs. To restore, uncomment
-          # them and add their names back to the required checks of the ruleset "main: CI must pass".
+          # jobs; Clang still builds in the sanitizer and clang-tidy jobs. macOS builds only in ui-macos.yml, after a
+          # merge: a macOS-only compile or test failure (CoreAudio, CoreMIDI, Objective-C++, libc++) passes every
+          # pull request check and first fails on main, where tools/report-ci-failure.sh opens an issue for it. Bringing
+          # back macos-universal, whose Intel runners do pick jobs up, restores that coverage first. To restore,
+          # uncomment them and add their names back to the required checks of the ruleset "main: CI must pass".
           # - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64-ninja, arch: arm64, cache: 800M }
           # Intel runner because hosted macOS arm64 runners often never pick jobs up (they are cancelled after 15
           # minutes). Builds both slices, tests the x86_64 one; the window tests run on Apple Silicon in ui-macos.yml.
