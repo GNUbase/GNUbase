@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Helper process for crash_tests.cpp: opens a log session in the given folder, then crashes.
+// Helper process for crash_tests.cpp: opens a log session in the given folder, then crashes the way it is told.
 #include "platform/log.h"
 
 #include <csignal>
@@ -9,23 +9,112 @@
 #include <string_view>
 
 #ifdef _WIN32
+#include <atomic>
+#include <optional>
+#include <thread>
+
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
 
+namespace
+{
+#ifdef _WIN32
+	// Crashes another thread with EXCEPTION_ILLEGAL_INSTRUCTION at the moment this one crashes with an access
+	// violation, so that one of them crashes while the other one's crash is being handled.
+	void crashTwice()
+	{
+		std::atomic<bool> ready{false};
+		std::atomic<bool> go{false};
+		std::thread other(
+			[&ready, &go]
+			{
+				ready = true;
+				while (!go.load())
+				{
+				}
+				RaiseException(EXCEPTION_ILLEGAL_INSTRUCTION, 0, 0, nullptr);
+			});
+		while (!ready.load())
+		{
+		}
+		go = true;
+		RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+		other.join(); // not reached
+	}
+
+	// Crashes while another thread holds the heap's lock. A minidump written in this process suspends that thread,
+	// and if MiniDumpWriteDump then needs the heap, it waits for the lock forever.
+	void crashWithHeapLocked()
+	{
+		std::atomic<bool> locked{false};
+		std::thread holder(
+			[&locked]
+			{
+				HeapLock(GetProcessHeap());
+				locked = true;
+				Sleep(INFINITE);
+			});
+		while (!locked.load())
+		{
+		}
+		RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+		holder.join(); // not reached
+	}
+
+	// Crashes another thread while this one ends the log session, which removes the crash handler.
+	int crashWhileEnding(const std::filesystem::path& log)
+	{
+		std::optional<gnubase::logging::Session> session(std::in_place, log);
+		std::atomic<bool> ready{false};
+		std::atomic<bool> go{false};
+		std::thread other(
+			[&ready, &go]
+			{
+				ready = true;
+				while (!go.load())
+				{
+				}
+				RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+			});
+		while (!ready.load())
+		{
+		}
+		go = true;
+		session.reset();
+		other.join(); // the crash ends the process
+		return 4;
+	}
+#endif
+}
+
 int main(int argc, char** argv)
 {
 	if (argc != 3)
 		return 2;
+#ifdef _WIN32
+	// A crash that no handler takes must not wait for an error dialog.
+	SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+#endif
 	try
 	{
-		const gnubase::logging::Session session(std::filesystem::path(argv[1]) / "crash.log");
-		gnubase::logging::info("about to crash");
-		if (std::string_view(argv[2]) == "abort")
-			std::abort();
-		// A real access violation, not a null write, which optimizers may remove.
+		const std::filesystem::path log = std::filesystem::path(argv[1]) / "crash.log";
+		const std::string_view how(argv[2]);
 #ifdef _WIN32
+		if (how == "ending")
+			return crashWhileEnding(log);
+#endif
+		const gnubase::logging::Session session(log);
+		gnubase::logging::info("about to crash");
+		if (how == "abort")
+			std::abort();
+#ifdef _WIN32
+		if (how == "twice")
+			crashTwice();
+		if (how == "heaplocked")
+			crashWithHeapLocked();
+		// A real access violation, not a null write, which optimizers may remove.
 		RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
 #else
 		std::raise(SIGSEGV);

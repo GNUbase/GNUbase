@@ -108,7 +108,7 @@ Data moves between threads only through:
 - Every process (the app, each plugin host) writes its own log file in the per-user log folder, through a `logging::Session` created in `main`. The previous run's file is kept as `<name>.previous.log` (#8).
 - Audio threads log without allocating or locking: the message and its strings are copied into a lock-free queue, and the log writer thread writes them. If the queue is full, messages are dropped and the number is logged.
 - `GNUBASE_ASSERT` checks in every build: a failure is logged, and debug builds stop there. `GNUBASE_ASSERT_REALTIME` marks code that must run on an audio thread; `rt::assertNotRealtime` marks code that must not.
-- A crash adds a backtrace to the log (macOS, Linux) or writes a minidump next to it (Windows).
+- A crash adds a backtrace to the log (macOS, Linux) or writes a minidump next to it (Windows), from a helper process ([crash reports](features/crash-reports.md)).
 
 ## Engine API
 
