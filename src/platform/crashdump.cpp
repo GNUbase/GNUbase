@@ -74,6 +74,7 @@ namespace
 	}
 }
 
+// NOLINTNEXTLINE(misc-use-internal-linkage): wmain is the program's entry point, like main
 int wmain(int argc, wchar_t** argv)
 {
 	if (argc != gnubase::logging::detail::g_crashDumpArguments + 1)

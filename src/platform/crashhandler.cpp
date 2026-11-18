@@ -208,7 +208,9 @@ namespace gnubase::logging::detail
 				WaitForSingleObject(g_dumped, g_dumpTimeoutMs);
 			}
 			else
+			{
 				writeMinidump();
+			}
 			terminate(exitCode);
 		}
 
