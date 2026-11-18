@@ -276,7 +276,7 @@ namespace gnubase::ui
 		void requestProject();
 		void showHead();
 		void show();
-		void showCursor();
+		bool showCursor(); // whether the locate arrow moved to another marker
 		void scrollToArrow();
 		void click(Rml::Element* target);
 		std::optional<HeaderDrag> grab(Rml::Element* target, float x) const;
@@ -284,7 +284,7 @@ namespace gnubase::ui
 		void header(Rml::Event& event);
 		void saveColumns();
 		void commit(Rml::Element& field);
-		void setCursor(int64_t sample);
+		bool setCursor(int64_t sample);
 
 		engine::Engine& m_engine;
 		EngineBinding& m_binding;

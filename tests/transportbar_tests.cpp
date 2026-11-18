@@ -1981,10 +1981,16 @@ TEST_CASE(
 	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
 	ui::Window* timeWindow = app.appUi().timeDisplay();
 	REQUIRE(timeWindow != nullptr);
+	app.ui().key(std::nullopt, "F2");
+	ui::Window* panelWindow = app.appUi().transportPanel();
+	REQUIRE(panelWindow != nullptr);
 	Rml::Element& cursor = drawn(app.main(), ".project-cursor");
 	Rml::Element& bar = drawn(app.main(), "#primary-time");
 	Rml::Element& time = drawn(*timeWindow, "#time-display");
-	REQUIRE(app.waitUntil([&] { return value(bar) == "1.1.1.0" && !value(time).empty(); }));
+	Rml::Element& panel = drawn(*panelWindow, "#primary-time");
+	REQUIRE(panel.GetTagName() == "textdisplay");
+	REQUIRE(
+		app.waitUntil([&] { return value(bar) == "1.1.1.0" && value(panel) == value(bar) && !value(time).empty(); }));
 	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
 	app.call("audio.start");
 	app.call("transport.play");
@@ -1993,14 +1999,17 @@ TEST_CASE(
 	// in a step, its window draws it in that step.
 	int moved = 0;
 	int counted = 0;
+	int panelCounted = 0;
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-	while ((moved < 10 || counted < 10) && std::chrono::steady_clock::now() < deadline)
+	while ((moved < 10 || counted < 10 || panelCounted < 10) && std::chrono::steady_clock::now() < deadline)
 	{
 		const uint64_t mainFrames = app.main().frames();
 		const uint64_t timeFrames = timeWindow->frames();
+		const uint64_t panelFrames = panelWindow->frames();
 		const double before = display.cursor();
 		const std::string barBefore = value(bar);
 		const std::string timeBefore = value(time);
+		const std::string panelBefore = value(panel);
 		app.shell().step(std::chrono::milliseconds(20));
 		if (display.cursor() != before || value(bar) != barBefore)
 		{
@@ -2013,9 +2022,15 @@ TEST_CASE(
 			++counted;
 			CHECK(timeWindow->frames() == timeFrames + 1);
 		}
+		if (value(panel) != panelBefore)
+		{
+			++panelCounted;
+			CHECK(panelWindow->frames() == panelFrames + 1);
+		}
 	}
 	CHECK(moved >= 10);
 	CHECK(counted >= 10);
+	CHECK(panelCounted >= 10);
 	app.call("transport.stop");
 	app.call("audio.stop");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == false; }));
@@ -2033,9 +2048,11 @@ TEST_CASE(
 	{
 		const uint64_t mainFrames = app.main().frames();
 		const uint64_t timeFrames = timeWindow->frames();
+		const uint64_t panelFrames = panelWindow->frames();
 		const double before = display.cursor();
 		const std::string barBefore = value(bar);
 		const std::string timeBefore = value(time);
+		const std::string panelBefore = value(panel);
 		app.shell().step(std::chrono::milliseconds(20));
 		if (display.cursor() != before || value(bar) != barBefore)
 		{
@@ -2044,7 +2061,10 @@ TEST_CASE(
 		}
 		if (value(time) != timeBefore)
 			CHECK(timeWindow->frames() == timeFrames + 1);
-		shown = display.cursor() == 2.0 && value(bar) == "2.1.1.0" && value(time) != stopped;
+		if (value(panel) != panelBefore)
+			CHECK(panelWindow->frames() == panelFrames + 1);
+		shown =
+			display.cursor() == 2.0 && value(bar) == "2.1.1.0" && value(panel) == value(bar) && value(time) != stopped;
 	}
 	CHECK(shown);
 }

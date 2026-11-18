@@ -461,6 +461,8 @@ namespace gnubase::app
 				}
 				if (m_keyboard && m_shell.find(m_keyboardWindow) == nullptr)
 					m_keyboard.reset(); // so too: its notes end
+				if (m_markers && m_shell.find(m_markersWindow) == nullptr)
+					m_markers.reset(); // its project subscriptions and playback watch end with its window
 				// The project window selects events or markers: an event selected deselects the markers.
 				if (m_eventDisplay && m_markerLines && m_eventDisplay->selection() != m_eventSelection)
 				{

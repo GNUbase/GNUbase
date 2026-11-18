@@ -111,6 +111,9 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
 - The event display tells it about every change of the view (`EventDisplay::onViewChanged`); the marker elements are
   its own, in its event area, so the display's code doesn't know about markers.
 
+The marker lines and marker events ignore pointer events, so the event lanes beneath them remain the mouse targets.
+`MarkerLines` handles marker input on their shared event area.
+
 ## Marker track controls
 
 The track list's controls for marker tracks (pp. 422-423, the user setting `ui.trackControls` for `marker`, all six
@@ -159,6 +162,9 @@ Marker Tracks and Off set `ui.markerLines`.
   (`history.transaction` of `marker.set`s; cycle markers keep their length) and reassigns the position or cycle
   marker ids in timeline order (`marker.renumber`).
 
+Closing the markers window, with its native close button or Mod+M, releases its project subscriptions and playback
+watch. It sends no project reads after it closes; opening it again reads the current markers.
+
 ## DAWproject
 
 - DAWproject has one list of markers in the arrangement and no ranges: it gets the markers of every marker track in timeline order, cycle markers at their start; read from another application, they become position markers on one marker track.
@@ -199,6 +205,10 @@ markers (p. 425); and the context menu's Show Marker Lines. Marker files:
 a spreadsheet's file and files that change nothing, among them rows of one Track Number with different names;
 `tests/midifile_tests.cpp` the marker tracks in type 1 and type 0 files, the same file exported again and the limit
 of 10 marker tracks; `tests/markers_ui_tests.cpp` the File menu's items through the file dialog.
+
+`tests/markers_ui_tests.cpp` also closes the native markers window during playback and checks that its watch ends, later
+edits send no project reads for it, and reopening lists the current markers. A mouse target test places both marker
+overlays above ordinary event lanes and checks that mouse input reaches those lanes.
 
 Not yet: cutting a range that covers a cycle marker whole or reaches out of it (#1190); hiding columns;
 marker lines in the key editor; locking marker tracks; importing markers from wave files.
