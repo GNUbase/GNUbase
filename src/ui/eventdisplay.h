@@ -368,7 +368,8 @@ namespace gnubase::ui
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 		// Whether the action can do something now, for menus and keys to disable it: the actions that only edit the
 		// selection range (edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence, edit.cropRange and
-		// edit.splitRange) need a range, all but edit.splitRange one with a length. The others always can.
+		// edit.splitRange) need a range, all but edit.splitRange one with a length; edit.paste and edit.pasteTime need
+		// something copied, a rangeClipboard.changed since the project opened. The others always can.
 		bool canRun(const std::string& action) const;
 
 		// Automation tracks (#121, automationtracks.cpp, docs/features/automation-tracks.md): lanes of their own below
@@ -1057,6 +1058,7 @@ namespace gnubase::ui
 
 		std::map<std::string, std::function<void()>> m_actions;
 		std::map<std::string, bool> m_rangeActions; // the actions that need a range (canRun), whether with a length
+		bool m_copied = false;                      // whether the range clipboard has something to paste (canRun)
 		std::vector<std::function<void()>> m_viewListeners;
 		std::vector<std::function<void()>> m_selectionListeners; // onSelectionShown
 		std::vector<Subscription> m_subscriptions;

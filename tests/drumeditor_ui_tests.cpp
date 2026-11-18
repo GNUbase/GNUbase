@@ -380,48 +380,16 @@ TEST_CASE("the drum sound list types an output, reverses with Pitch Visibility a
 		{{"map", f.map},
 			{"sounds",
 				{{{"pitch", 36}, {"iNote", 45}, {"oNote", 35}, {"channel", 3}}, {{"pitch", 45}, {"iNote", 100}}}}});
-	f.app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
-	f.app.call("channel.set",
-		{{"channel", f.app.call("project.get").at("tracks").at(0).at("channel")}, {"instrument", "noteProbe"}});
-	f.app.call("audio.render", {{"frames", 128}}); // the new graph
-	f.app.call("midi.capture", {{"start", true}});
+	test::NoteProbe heard(f.app, f.track);
 	f.scroll(36);
 	f.click(of(sound(36) + " .drum-sound-pitch"));
-	std::vector<std::vector<int>> played;
-	CHECK(f.app.waitUntil(
-		[&]
-		{
-			f.app.call("audio.render", {{"frames", 128}});
-			const Json captured = f.app.call("midi.capture");
-			INFO(captured.dump());
-			for (const Json& message : captured.at("captured"))
-			{
-				const auto bytes = message.at("bytes").get<std::vector<int>>();
-				if ((bytes.at(0) & 0xE0) == 0x80)
-					played.push_back({bytes.at(0), bytes.at(1)});
-			}
-			return played == std::vector<std::vector<int>>{{0x93, 35}, {0x83, 35}};
-		}));
+	CHECK(heard.plays({{0x93, 35, 100}, {0x83, 35, 0}}));
 	// A sound whose I-note an earlier sound has too plays itself, not the earlier one.
 	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", Json::array({{{"pitch", 47}, {"iNote", 45}}})}});
-	f.app.call("audio.render", {{"frames", 128}});
-	f.app.call("midi.capture", {{"start", true}});
-	played.clear();
+	heard.clear();
 	f.scroll(47);
 	f.click(of(sound(47) + " .drum-sound-pitch"));
-	CHECK(f.app.waitUntil(
-		[&]
-		{
-			f.app.call("audio.render", {{"frames", 128}});
-			const Json captured = f.app.call("midi.capture");
-			for (const Json& message : captured.at("captured"))
-			{
-				const auto bytes = message.at("bytes").get<std::vector<int>>();
-				if ((bytes.at(0) & 0xE0) == 0x80)
-					played.push_back({bytes.at(0), bytes.at(1)});
-			}
-			return played == std::vector<std::vector<int>>{{0x99, 47}, {0x89, 47}};
-		}));
+	CHECK(heard.plays({{0x99, 47, 100}, {0x89, 47, 0}}));
 }
 
 TEST_CASE("Show Note Length shows boxes, and the drumstick deletes a sound's notes with a drag", "[ui]")

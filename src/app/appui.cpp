@@ -161,7 +161,7 @@ namespace gnubase::app
 			{"locate.nudgeCursorLeft", "Moves the project cursor left by a grid step.", nullptr},
 			{"locate.nudgeCursorRight", "Moves the project cursor right by a grid step.", nullptr},
 			// Editing parts and events (docs/features/parts-and-events.md); Backspace deletes too.
-			{"edit.delete", "Deletes the selected events.", "Delete"},
+			{"edit.delete", "Deletes the selection range, or without one the selected events.", "Delete"},
 			{"edit.mute", "Mutes the selected events.", "Shift+M"},
 			{"edit.unmute", "Unmutes the selected events.", "Shift+U"},
 			{"edit.lock", "Locks the selected events.", "Mod+Shift+L"},
@@ -1094,7 +1094,8 @@ namespace gnubase::app
 						if (m_eventDisplay)
 							m_eventDisplay->actions().at(id)();
 					}});
-			// Those that only edit the selection range wait for one (EventDisplay::canRun).
+			// Those that only edit the selection range wait for one, and paste for something copied
+			// (EventDisplay::canRun).
 			m_keys.enableWhen(command.id, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
 				{ return m_eventDisplay != nullptr && m_eventDisplay->canRun(id); });
 			if (command.keys != nullptr)

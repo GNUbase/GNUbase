@@ -648,6 +648,8 @@ namespace gnubase::ui
 
 	bool EventDisplay::canRun(const std::string& action) const
 	{
+		if (action == "edit.paste" || action == "edit.pasteTime")
+			return m_copied;
 		const auto found = m_rangeActions.find(action);
 		return found == m_rangeActions.end() || (m_range && (!found->second || m_range->end > m_range->start));
 	}

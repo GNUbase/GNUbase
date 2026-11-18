@@ -404,6 +404,55 @@ TEST_CASE(
 	CHECK_THAT(fixture.fail("ui_drag", {{"from", {{"selector", "#drums"}}}, {"to", {{"selector", "#guitar"}}}}),
 		ContainsSubstring("#drums and the other end of the drag can't both be in view"));
 	CHECK(recorder.events.empty());
+	CHECK(list->GetScrollTop() == 40.0F); // the attempt leaves the list scrolled to the end
+}
+
+TEST_CASE("ui_click rejects a target whose centre stays hidden after scrolling", "[unit]")
+{
+	Fixture fixture;
+	const ui::Window* window = fixture.open({100, 100, 640, 480}, "automation-hidden-targets.rml");
+	Recorder recorder;
+	for (const Rml::EventId id :
+		{Rml::EventId::Mousemove, Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Click})
+		window->context().GetDocument(0)->AddEventListener(id, &recorder);
+
+	for (const char* selector : {"#cut-off", "#tall", "#wide", "#below", "#beside"})
+	{
+		CAPTURE(selector);
+		CHECK_THAT(fixture.fail("ui_click", {{"window", window->id()}, {"selector", selector}}),
+			ContainsSubstring(std::string(selector) + " has its centre hidden after scrolling"));
+		CHECK(recorder.events.empty());
+	}
+}
+
+TEST_CASE("ui_click accepts centres on the boundary that RmlUi can hit", "[unit]")
+{
+	Fixture fixture;
+	const ui::Window* window = fixture.open({100, 100, 640, 480}, "automation-hidden-targets.rml");
+	CHECK(fixture.call("ui_click", {{"window", window->id()}, {"selector", "#window-edge"}}).at("element").at("id") ==
+		"edge-child");
+	CHECK(fixture.call("ui_click", {{"window", window->id()}, {"selector", "#clip-edge"}}).at("element").at("id") ==
+		"clip-edge");
+}
+
+TEST_CASE("ui_drag rejects a start that stays hidden without blaming the other end", "[unit]")
+{
+	Fixture fixture;
+	const ui::Window* window = fixture.open({100, 100, 640, 480}, "automation-hidden-targets.rml");
+	Recorder recorder;
+	for (const Rml::EventId id : {Rml::EventId::Mousemove, Rml::EventId::Mousedown, Rml::EventId::Mouseup,
+			 Rml::EventId::Dragstart, Rml::EventId::Dragdrop})
+		window->context().GetDocument(0)->AddEventListener(id, &recorder);
+
+	for (const char* selector : {"#cut-off", "#tall"})
+	{
+		CAPTURE(selector);
+		const std::string message = fixture.fail(
+			"ui_drag", {{"window", window->id()}, {"from", {{"selector", selector}}}, {"to", {{"x", 20}, {"y", 200}}}});
+		CHECK_THAT(message, ContainsSubstring(std::string(selector) + " has its centre hidden after scrolling"));
+		CHECK(message.find("other end") == std::string::npos);
+		CHECK(recorder.events.empty());
+	}
 }
 
 TEST_CASE("ui_click with action down holds the button across other tool calls until action up", "[unit]")

@@ -512,13 +512,13 @@ namespace gnubase::engine::midi
 				{ return std::find(removed.begin(), removed.end(), Json(id)) != removed.end(); };
 				// The piece before a removed one: of the events of its track and clip but follower, whose crossfade
 				// from it is followed, those that played its clip frames up to where it starts, or past it into a
-				// crossfade, the one the piece crossfaded from, which grew into it by the Crossfade step (#1723), else
-				// the one that ended where it starts (within a sample, the rounding of a musical position), as the
-				// event it was split from did. Not just any that plays those frames: the follower stretched back over
-				// them by the Crossfade step, or another copy of the clip elsewhere on the track, play them too, and
-				// with the event it was split from gone or trimmed by hand there is none (#1642).
-				// It is the whole original again, or removed too and then has one of its own; its clip frames come
-				// before the piece's, so the chain ends. 0 without one.
+				// crossfade, the one the piece crossfaded from, which grew into it by the Crossfade step (#1723), as
+				// long as it still plays into the piece's start (#1805), else the one that ended where it starts
+				// (within a sample, the rounding of a musical position), as the event it was split from did. Not just
+				// any that plays those frames: the follower stretched back over them by the Crossfade step, or another
+				// copy of the clip elsewhere on the track, play them too, and with the event it was split from gone or
+				// trimmed by hand there is none (#1642). It is the whole original again, or removed too and then has
+				// one of its own; its clip frames come before the piece's, so the chain ends. 0 without one.
 				const auto pieceBefore = [&](ObjectId id, ObjectId follower)
 				{
 					while (isRemoved(id))
@@ -530,11 +530,19 @@ namespace gnubase::engine::midi
 						for (const auto& [otherId, other] : played)
 						{
 							const AudioEvent& event = project.audioEvents.at(otherId);
-							const time::Samples distance =
-								otherId == where.crossfadeFrom ? 0 : std::abs(other.span.end - where.span.start);
-							if (otherId != piece.id && otherId != follower && event.track == piece.track &&
-								event.clip == piece.clip && other.from < where.from && other.to >= where.from &&
-								distance <= 1 && (id == 0 || distance < nearest))
+							if (otherId == piece.id || otherId == follower || event.track != piece.track ||
+								event.clip != piece.clip || other.from >= where.from || other.to < where.from)
+								continue;
+							// It wins also over one that ends exactly there; moved away by hand since, it doesn't
+							// count.
+							if (otherId == where.crossfadeFrom && other.span.start < where.span.start &&
+								other.span.end > where.span.start)
+							{
+								id = otherId;
+								break;
+							}
+							const time::Samples distance = std::abs(other.span.end - where.span.start);
+							if (distance <= 1 && (id == 0 || distance < nearest))
 							{
 								id = otherId;
 								nearest = distance;

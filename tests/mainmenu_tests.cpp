@@ -474,6 +474,7 @@ TEST_CASE("the menu bar shows and hides like the project window's strips, and Fi
 {
 	test::UiApp app({900, 640});
 	app.appUi().showProject();
+	app.shell().step(std::chrono::milliseconds(0)); // fit the toolbar before clicking Window Layout
 
 	// Show Menu Bar, in the Set up Window Layout menu.
 	click(app, "#window-layout");

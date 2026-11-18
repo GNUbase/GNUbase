@@ -406,8 +406,8 @@ TEST_CASE("two in-place editors and the lower zone's key editor have menus and s
 	}
 
 	// A note selected in one editor is selected in its view only. The instrument track's lane is scrolled to the top
-	// first: where the window opens smaller, as on CI's macOS runner (80 % of a smaller monitor), the lower zone
-	// leaves the event display too little height to show it below the other two tracks.
+	// first: where the window opens smaller than asked, as on CI's macOS runner, which fits it to its 1024x684 monitor
+	// (test::UiApp), the lower zone leaves the event display too little height to show it below the other two tracks.
 	const std::vector<uint64_t>& lanes = f.display.laneTracks();
 	const auto lane = std::find(lanes.begin(), lanes.end(), strings);
 	REQUIRE(lane != lanes.end());
