@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -79,6 +80,25 @@ namespace gnubase::ui
 				std::max(0.0F, std::min(at.x, window.x - size.x)), std::max(0.0F, std::min(at.y, window.y - size.y))};
 		}
 
+		// What an element stands for: its and its ancestors' tags and attributes, but for those of its state and look
+		// (class, style) and of a value that can change in it.
+		std::string pathOf(const Rml::Element& element)
+		{
+			std::string path;
+			for (const Rml::Element* each = &element; each != nullptr; each = each->GetParentNode())
+			{
+				std::map<Rml::String, Rml::String> sorted;
+				for (const auto& [name, value] : each->GetAttributes())
+					if (name != "class" && name != "style" && name != "value")
+						sorted[name] = value.Get<Rml::String>();
+				path += each->GetTagName();
+				for (const auto& [name, value] : sorted)
+					path.append(" ").append(name).append("=").append(value);
+				path += '\n';
+			}
+			return path;
+		}
+
 		class Menu;
 
 		// The menu whose id the button's menu attribute names, or null.
@@ -132,13 +152,17 @@ namespace gnubase::ui
 				open(button.GetAbsoluteOffset(Rml::BoxArea::Border) +
 					Rml::Vector2f(0.0F, button.GetBox().GetSize(Rml::BoxArea::Border).y));
 				m_button = button.GetObserverPtr();
+				m_buttonPath = pathOf(button);
 			}
 
 			// Whether the menu is open under the button: of the buttons that share a menu, such as the list editor's
-			// cells, a click on another one opens it under that one (#1688).
+			// cells, a click on another one opens it under that one (#1688). A button that a render made anew while
+			// the menu was open is the one it opened under where it stands for the same, by its and its ancestors'
+			// attributes (#1799).
 			bool openedUnder(const Rml::Element& button) const
 			{
-				return IsClassSet("open") && m_button.get() == &button;
+				return IsClassSet("open") &&
+					(m_button.get() == &button || (!m_button && m_buttonPath == pathOf(button)));
 			}
 
 			// Closes the menu and the submenus that keys opened in it. The focus doesn't stay on a hidden item: it goes
@@ -397,6 +421,7 @@ namespace gnubase::ui
 			// Where open() opened the menu and, once it settled, where it is; until it closes.
 			std::optional<Rml::Vector2f> m_at;
 			Rml::ObserverPtr<Rml::Element> m_button; // what it opened under
+			std::string m_buttonPath;                // and what that stands for (pathOf)
 			bool m_settling = false;                 // no input came since it opened
 			bool m_resized = false;                  // since the last update
 		};

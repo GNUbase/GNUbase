@@ -85,7 +85,8 @@ namespace gnubase::ui
 			return length == "drumMap" ? "Drum-Map Link" : nullptr;
 		}
 
-		// The drum editor's tools (p. 1224): no trim, split or glue; the draw tool is the drumstick.
+		// The drum editor's tools (p. 1224): no trim, split or glue; the draw tool is the drumstick. The mute tool
+		// mutes on the Articulations lane, as the key editor's (#1684).
 		bool drumTool(KeyTool tool)
 		{
 			return tool != KeyTool::Trim && tool != KeyTool::Split && tool != KeyTool::Glue;
@@ -597,16 +598,30 @@ namespace gnubase::ui
 		return selection;
 	}
 
+	Json KeyEditor::selectionJson() const
+	{
+		// The view's entries with selected attributes, usually none or a few, looked up once.
+		std::map<std::pair<uint64_t, uint64_t>, const Json*> attributes;
+		const Json shown = m_view.value("selection", Json::array());
+		for (const Json& entry : shown)
+			if (entry.contains("articulations"))
+				attributes[{entry.at("part").get<uint64_t>(), entry.at("note").get<uint64_t>()}] =
+					&entry.at("articulations");
+		Json selection = Json::array();
+		for (const auto& selected : m_selection)
+		{
+			selection.push_back({{"part", selected.first}, {"note", selected.second}});
+			if (const auto found = attributes.find(selected); found != attributes.end())
+				selection.back()["articulations"] = *found->second;
+		}
+		return selection;
+	}
+
 	void KeyEditor::showLanes()
 	{
 		Json view = m_view;
 		if (m_selectionsOut > 0)
-		{
-			Json selection = Json::array();
-			for (const auto& [part, note] : m_selection)
-				selection.push_back({{"part", part}, {"note", note}});
-			view["selection"] = std::move(selection);
-		}
+			view["selection"] = selectionJson();
 		// The lanes leave out the notes of the sounds the list hides, as the note display does.
 		std::vector<bool> shown;
 		if (std::find(m_rowOf.begin(), m_rowOf.end(), -1) != m_rowOf.end())
@@ -1444,13 +1459,10 @@ namespace gnubase::ui
 	void KeyEditor::select(std::vector<std::pair<uint64_t, uint64_t>> notes)
 	{
 		m_selection = std::move(notes);
-		Json selection = Json::array();
-		for (const auto& [part, note] : m_selection)
-			selection.push_back({{"part", part}, {"note", note}});
 		render(); // at once; editor.changed confirms it
 		++m_selectionsOut;
 		showLanes();
-		m_binding.send("editor.set", {{"editor", m_name}, {"selection", selection}},
+		m_binding.send("editor.set", {{"editor", m_name}, {"selection", selectionJson()}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!result.ok())

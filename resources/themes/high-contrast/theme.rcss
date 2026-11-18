@@ -1101,6 +1101,14 @@
 	{
 		background-color: #3c3c3c;
 	}
+	.articulation-item.muted.selected
+	{
+		background-color: #82dbdb;
+	}
+	.articulation-item.muted.inactive
+	{
+		background-color: #181818;
+	}
 	.controller-lane-frame
 	{
 		border-width: 3dp;

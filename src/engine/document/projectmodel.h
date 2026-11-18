@@ -31,7 +31,8 @@ namespace gnubase::engine
 	Controller controllerFrom(const Json& item, const std::string& name);
 
 	// A note's muted attributes from note.add or note.set (#1684): item's mutedArticulations, else those of the note's
-	// that it still has; only its own attributes, each once. Throws CommandError with messages that start with name.
+	// that it still has, as a loaded project's (#1762); only its own attributes, each once. Throws CommandError with
+	// messages that start with name.
 	std::vector<std::string> mutedArticulationsFrom(const Json& item, const Note& note, const std::string& name);
 
 	// Automation follows events (projectmodel.cpp): moves the automation of a track from where an event or part was

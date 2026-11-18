@@ -1711,6 +1711,31 @@ TEST_CASE("the mute tool mutes and unmutes the Articulations lane's directions a
 	REQUIRE(f.app.waitUntil([&] { return f.elements(muted).size() == 1; }));
 }
 
+TEST_CASE("a direction on the Articulations lane lasts on through a muted one, as it plays", "[ui]")
+{
+	// #1762, #1799, reference manual p. 1289.
+	Editor f;
+	f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 4 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
+					{{"position", 8 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Arco"},
+						{"muted", true}}}}});
+	const std::string pizzicato = inLane(" .articulation-item.direction:not(.muted)");
+	const std::string arco = inLane(" .articulation-item.direction.muted");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(pizzicato).size() == 1 && f.elements(arco).size() == 1; }));
+	const Json area = f.box(inLane(" .controller-lane-area"));
+	const double end = area.at("x").get<double>() + area.at("width").get<double>();
+	const auto right = [&f](const std::string& selector)
+	{ return f.box(selector).at("x").get<double>() + f.box(selector).at("width").get<double>(); };
+	// Pizzicato goes on to the part's end, and the muted Arco keeps its own span there, in gray.
+	CHECK(std::abs(right(pizzicato) - end) <= 1.0);
+	CHECK(std::abs(right(arco) - end) <= 1.0);
+	CHECK(std::abs(f.box(arco).at("x").get<double>() -
+			  (area.at("x").get<double>() + (area.at("width").get<double>() / 2.0))) <= 1.0);
+	REQUIRE(f.app.waitUntil([&f] { return f.slot(f.notes[2]) == "Pizzicato"; }));
+}
+
 TEST_CASE("the Articulations lane's attribute selection is the editor view's, and Shift removes one of all", "[ui]")
 {
 	// #1688, reference manual p. 1289.
@@ -1754,6 +1779,29 @@ TEST_CASE("the Articulations lane's attribute selection is the editor view's, an
 	f.app.ui().key(f.window, "Delete");
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[1]) == Json{"Accent"}; }));
+}
+
+TEST_CASE("a selection change in the note display keeps the lane's attributes selected of the notes that stay", "[ui]")
+{
+	// #1762, reference manual p. 1289.
+	Editor f;
+	f.app.call("note.set", {{"part", f.part}, {"notes", {{{"id", f.notes[1]}, {"articulations", {"Staccato"}}}}}});
+	f.app.call("editor.set",
+		{{"editor", "window"},
+			{"selection", {{{"part", f.part}, {"note", f.notes[1]}, {"articulations", {"Staccato"}}}}}});
+	const std::string note = ".key-note[note=\"" + std::to_string(f.notes[0]) + "\"]";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(note).empty(); }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.attribute.selected")).size() == 1; }));
+	// Shift and a click on another note adds it; the one selected on the lane keeps its entry.
+	f.app.ui().click(f.window, of(note), ui::MouseButton::Left, 1, {"shift"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.app.call("editor.get", {{"editor", "window"}}).at("selection") ==
+				Json::array({{{"part", f.part}, {"note", f.notes[1]}, {"articulations", {"Staccato"}}},
+					{{"part", f.part}, {"note", f.notes[0]}}});
+		}));
 }
 
 TEST_CASE("a reset's arrow lies beside it, so that a press on the reset selects it", "[ui]")
@@ -1813,6 +1861,17 @@ TEST_CASE("the list editor's Attributes cells open the menu for the row clicked,
 	f.click(of(staccato));
 	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[0]) == Json{"Staccato"}; }));
 	CHECK(f.articulations(f.notes[2]).empty());
+
+	// A second click on the same cell closes the menu, also after the rows rendered anew while it was open (#1799).
+	f.click(of(cell(f.notes[2])));
+	REQUIRE(f.app.waitUntil([&] { return f.shown(staccato); }));
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes", {{{"position", 12 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 62}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".list-editor-rows .list-row[note]").size() == 4; }));
+	CHECK(f.shown(staccato));
+	f.click(of(cell(f.notes[2])));
+	REQUIRE(f.app.waitUntil([&] { return !f.shown(menu); }));
 
 	// While its text is edited, clicks into it don't open the menu.
 	REQUIRE(f.app.waitUntil([&] { return !f.shown(menu); }));
