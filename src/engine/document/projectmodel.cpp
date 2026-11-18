@@ -3102,8 +3102,9 @@ namespace gnubase::engine
 		std::vector<std::string> muted;
 		if (!item.contains("mutedArticulations"))
 		{
-			std::copy_if(
-				note.mutedArticulations.begin(), note.mutedArticulations.end(), std::back_inserter(muted), has);
+			for (const std::string& each : note.mutedArticulations)
+				if (has(each) && std::find(muted.begin(), muted.end(), each) == muted.end())
+					muted.push_back(each);
 			return muted;
 		}
 		for (const std::string& each : item.at("mutedArticulations").get<std::vector<std::string>>())

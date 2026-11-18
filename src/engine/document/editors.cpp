@@ -215,10 +215,28 @@ namespace gnubase::engine
 							}),
 						view.selection.end());
 			dropUneditable(project, editable, view.controllerSelection, &MidiPart::controllers);
+			// The attributes selected keep only those the note still has (#1762): a note whose attributes selected all
+			// went, as Delete on the lane removes them, is no longer selected.
 			for (auto each = view.selectedArticulations.begin(); each != view.selectedArticulations.end();)
-				each = std::find(view.selection.begin(), view.selection.end(), each->first) != view.selection.end()
-					? std::next(each)
-					: view.selectedArticulations.erase(each);
+			{
+				const auto selected = std::find(view.selection.begin(), view.selection.end(), each->first);
+				if (selected != view.selection.end())
+				{
+					const std::vector<std::string>& has =
+						project.midiParts.at(each->first.first).notes.at(each->first.second).articulations;
+					std::vector<std::string>& names = each->second;
+					names.erase(std::remove_if(names.begin(), names.end(), [&has](const std::string& name)
+									{ return std::find(has.begin(), has.end(), name) == has.end(); }),
+						names.end());
+					if (!names.empty())
+					{
+						++each;
+						continue;
+					}
+					view.selection.erase(selected);
+				}
+				each = view.selectedArticulations.erase(each);
+			}
 			view.eventSelection.erase(
 				std::remove_if(view.eventSelection.begin(), view.eventSelection.end(),
 					[&](ObjectId event) { return editablePartOf(project, editable, event) == 0; }),
@@ -598,7 +616,8 @@ namespace gnubase::engine
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note"}},
 					{"properties",
 						{{"part", idSchema}, {"note", idSchema},
-							{"articulations", {{"type", "array"}, {"items", {{"type", "string"}}}}}}}}}};
+							{"articulations",
+								{{"type", "array"}, {"items", {{"type", "string"}}}, {"minItems", 1}}}}}}}};
 		const Json groupsSchema = {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}}};
 		const Json lanesSchema = {{"type", "array"},
 			{"items",
@@ -653,7 +672,8 @@ namespace gnubase::engine
 			"keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the "
 			"marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): "
 			"selection, the selected notes, each {part, note}, of the editable parts, with articulations, the "
-			"attributes selected of it on the Articulations lane, where not all are; stepInput and midiInput, what "
+			"attributes selected of it on the Articulations lane, where not all are: some of the note's own, and a "
+			"note whose attributes selected all go is no longer selected; stepInput and midiInput, what "
 			"editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, "
 			"recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), "
 			"the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, "
@@ -891,14 +911,27 @@ namespace gnubase::engine
 					}
 				};
 				select("selection", "note", &MidiPart::notes, view.selection);
+				// The attributes selected of a note: some of its own, each once (#1762, #1799); the schema refuses
+				// none.
 				if (parameters.contains("selection"))
 				{
 					view.selectedArticulations.clear();
 					for (const Json& item : parameters.at("selection"))
 						if (item.contains("articulations"))
-							view.selectedArticulations[{
-								item.at("part").get<ObjectId>(), item.at("note").get<ObjectId>()}] =
-								item.at("articulations").get<std::vector<std::string>>();
+						{
+							const auto part = item.at("part").get<ObjectId>();
+							const auto note = item.at("note").get<ObjectId>();
+							const std::vector<std::string>& has =
+								project.midiParts.at(part).notes.at(note).articulations;
+							std::vector<std::string>& names = view.selectedArticulations[{part, note}];
+							for (const std::string& name : item.at("articulations").get<std::vector<std::string>>())
+							{
+								require(std::find(has.begin(), has.end(), name) != has.end(),
+									"note " + std::to_string(note) + " has no articulation " + name);
+								if (!contains(names, name))
+									names.push_back(name);
+							}
+						}
 				}
 				select("controllerSelection", "controller", &MidiPart::controllers, view.controllerSelection);
 				if (parameters.contains("eventSelection"))

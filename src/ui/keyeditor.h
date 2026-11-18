@@ -273,6 +273,9 @@ namespace gnubase::ui
 		void select(std::vector<std::pair<uint64_t, uint64_t>> notes);
 		// The view's selected notes, parts and notes.
 		std::vector<std::pair<uint64_t, uint64_t>> viewSelection() const;
+		// The notes the display shows selected as editor.set takes them: those that stay selected keep the view's
+		// attributes selected of them on the Articulations lane (#1762).
+		engine::Json selectionJson() const;
 		// Shows the controller lanes for the view, with the notes the display shows selected: while a click's
 		// selection is unanswered, the click's, so that a lane edit acts on those (#1897).
 		void showLanes();

@@ -3,6 +3,7 @@
 // export and import, a track's map, directions and attributes in MIDI parts, playback through the sound slots'
 // output events and MIDI modifiers, and remote triggers in recordings.
 #include "engine/document/rendersnapshot.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/articulationmaps.h"
 #include "engine/midi/midivalues.h"
@@ -1777,7 +1778,8 @@ TEST_CASE("muted articulations are saved, renamed with the map and stay muted in
 		{{"part", f.part},
 			{"controllers",
 				{{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
-					{{"position", 10}, {"type", "articulation"}, {"articulation", "Arco"}, {"muted", true}}}}});
+					{{"position", 10}, {"type", "articulation"}, {"articulation", "Arco"}, {"muted", true}},
+					{{"position", g_quarter}, {"type", "articulation"}, {"articulation", "Arco"}, {"muted", true}}}}});
 	f.call("note.add",
 		{{"part", f.part},
 			{"notes",
@@ -1798,16 +1800,19 @@ TEST_CASE("muted articulations are saved, renamed with the map and stay muted in
 	f.call("articulationMap.set", settings);
 	CHECK(f.partJson().at("notes").at(0).at("mutedArticulations") == Json{"Stacc"});
 
-	// Merge MIDI in Loop: the muted Arco isn't in effect where the range starts, Pizzicato is; the muted attribute
-	// stays muted.
+	// Merge MIDI in Loop: the muted Arco isn't in effect where the range starts, Pizzicato is; the muted Arco inside
+	// the range is copied, muted (#1799), and the muted attribute stays muted.
 	const Json changes = f.call("midi.merge", {{"start", 12000}, {"end", 96000}});
 	Json merged;
 	const Json project = f.call("project.get");
 	for (const Json& part : project.at("midiParts"))
 		if (part.at("id") == changes.at("parts").at(0))
 			merged = part;
-	REQUIRE(merged.at("controllers").size() == 1);
+	REQUIRE(merged.at("controllers").size() == 2);
 	CHECK(merged.at("controllers").at(0).at("articulation") == "Pizzicato");
+	CHECK_FALSE(merged.at("controllers").at(0).contains("muted"));
+	CHECK(merged.at("controllers").at(1).at("articulation") == "Arco");
+	CHECK(merged.at("controllers").at(1).value("muted", false));
 	CHECK(merged.at("notes").at(0).at("mutedArticulations") == Json{"Stacc"});
 }
 
@@ -1836,4 +1841,41 @@ TEST_CASE("the selected notes' entries name the attributes selected of them", "[
 	// A new selection without them selects all of a note's attributes again.
 	CHECK(f.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", first}}}}})
 			  .at("selection") == Json::array({{{"part", f.part}, {"note", first}}}));
+
+	// Only the note's own, each once, and not none (#1762, #1799).
+	const auto select = [&](const Json& names)
+	{
+		return Json{
+			{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", first}, {"articulations", names}}}}};
+	};
+	CHECK_THAT(f.fails("editor.set", select(Json{"Pizzicato"})), ContainsSubstring("Pizzicato"));
+	CHECK_THAT(f.fails("editor.set", select(Json::array())), ContainsSubstring("articulations"));
+	CHECK(f.call("editor.set", select(Json{"Staccato", "Staccato"})).at("selection").at(0).at("articulations") ==
+		Json{"Staccato"});
+	// An attribute that goes leaves the entry; with none of them left the note is no longer selected, as after
+	// Delete on the lane.
+	f.call("editor.set",
+		{{"editor", "window"},
+			{"selection",
+				{{{"part", f.part}, {"note", first}, {"articulations", {"Staccato"}}},
+					{{"part", f.part}, {"note", second}}}}});
+	f.call("note.set", {{"part", f.part}, {"notes", {{{"id", first}, {"articulations", Json::array()}}}}});
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("selection") ==
+		Json::array({{{"part", f.part}, {"note", second}}}));
+}
+
+TEST_CASE("a loaded project keeps only a note's own muted attributes, each once", "[unit]")
+{
+	// #1762, #1799: as note.add and note.set take them.
+	Fixture f;
+	f.strings();
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5},
+					{"articulations", {"Staccato"}}}}}});
+	Json saved = f.call("project.get");
+	saved["midiParts"][0]["notes"][0]["mutedArticulations"] = {"Pizzicato", "Staccato", "Staccato"};
+	const engine::Project loaded = engine::projectFromJson(saved);
+	CHECK(loaded.midiParts.at(f.part).notes.begin()->second.mutedArticulations == std::vector<std::string>{"Staccato"});
 }

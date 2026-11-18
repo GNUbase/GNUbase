@@ -2605,8 +2605,10 @@ namespace gnubase::engine
 						timingFrom(n.at("origin").at("original")), timingFrom(n.at("origin").at("quantized"))};
 				note.probability = std::clamp(n.value("probability", 1.0), 0.0, 1.0);
 				note.velocityVariance = std::clamp(n.value("velocityVariance", 0.0), -1.0, 1.0);
-				note.articulations = n.value("articulations", std::vector<std::string>());           // before #175 none
-				note.mutedArticulations = n.value("mutedArticulations", std::vector<std::string>()); // #1684
+				note.articulations = n.value("articulations", std::vector<std::string>()); // before #175 none
+				// Only the note's own attributes, each once, as note.add and note.set take them (#1684, #1762).
+				note.mutedArticulations = n.value("mutedArticulations", std::vector<std::string>());
+				note.mutedArticulations = mutedArticulationsFrom(Json::object(), note, noteName);
 				note.expressions =
 					expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions", true);
 				part.notes[note.id] = note;
