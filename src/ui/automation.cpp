@@ -203,10 +203,20 @@ namespace gnubase::ui
 			return chosen;
 		}
 
+		bool pointInView(Window& window, Rml::Element& element, const Point& point)
+		{
+			const Size size = window.pixelSize();
+			if (point.x < 0 || point.y < 0 || point.x >= size.width || point.y >= size.height)
+				return false;
+			Rml::Rectanglei clip;
+			return !Rml::ElementUtilities::GetClippingRegion(&element, clip) ||
+				(point.x >= clip.Left() && point.y >= clip.Top() && point.x < clip.Right() && point.y < clip.Bottom());
+		}
+
 		// The target's point, or the centre of its element as it is now. As a user would, an element whose centre its
 		// scrolling containers hide is scrolled into view first, so the input lands on it rather than on what is in its
-		// place; a visible centre scrolls nothing. With scroll false a hidden centre is an error instead: the other end
-		// of a drag scrolled it out of view.
+		// place; a visible centre scrolls nothing. A centre that stays hidden after scrolling is an error. With scroll
+		// false a hidden centre is an error at once: the other end of a drag scrolled it out of view.
 		Point targetPoint(Window& window, const Target& target, bool scroll = true)
 		{
 			if (target.point)
@@ -215,9 +225,8 @@ namespace gnubase::ui
 				throw std::invalid_argument("needs a selector or x and y");
 			Rml::Element& element = targetElement(window, target);
 			Rect bounds = box(element);
-			Rml::Rectanglei clip;
-			if (Rml::ElementUtilities::GetClippingRegion(&element, clip) &&
-				!clip.Contains({bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)}))
+			Point point{bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)};
+			if (!pointInView(window, element, point))
 			{
 				if (!scroll)
 					throw std::invalid_argument(
@@ -225,8 +234,11 @@ namespace gnubase::ui
 				element.ScrollIntoView({Rml::ScrollAlignment::Nearest, Rml::ScrollAlignment::Nearest,
 					Rml::ScrollBehavior::Instant, Rml::ScrollParentage::All});
 				bounds = box(element);
+				point = {bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)};
+				if (!pointInView(window, element, point))
+					throw std::invalid_argument(target.selector + " has its centre hidden after scrolling");
 			}
-			return {bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)};
+			return point;
 		}
 
 		// The window's context, updated, with the mouse moved to the target, or left where it is if there's none.

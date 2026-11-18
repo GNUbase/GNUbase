@@ -58,7 +58,7 @@ namespace gnubase::app
 					{{"type", "string"},
 						{"description",
 							"A CSS selector; the mouse goes to the centre of the element it matches, scrolled into "
-							"view first if a scrolling container hides it."}}},
+							"view first if hidden. Fails if its centre stays outside the clipping region or window."}}},
 				{"index",
 					{{"type", "integer"}, {"minimum", 0},
 						{"description", "Which of the elements the selector matches; 0, the first, if left out."}}},
@@ -278,10 +278,9 @@ namespace gnubase::app
 		Json to = object(dragTarget);
 		to["description"] = "Where to release it, the same way.";
 		tools.push_back({"ui_drag",
-			"Drags with the left button from one element or point to another and drops there, e.g. a fader's cap, "
-			"finer with shift held; fails when its ends can't both be scrolled into view. Returns the element under "
-			"the "
-			"mouse at the end.",
+			"Drags with the left button between elements or points, e.g. a fader's cap, "
+			"finer with shift held. Fails if its ends can't both be in view; scrolling done "
+			"to show them stays after failure. Returns the element under the mouse at the end.",
 			object({{"window", windowProperty()}, {"from", std::move(from)}, {"to", std::move(to)},
 					   {"modifiers", modifiersProperty("Keys held while dragging.")}},
 				{"from", "to"}),

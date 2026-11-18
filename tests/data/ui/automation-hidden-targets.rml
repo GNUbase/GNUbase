@@ -1,0 +1,38 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<rml>
+<head>
+	<title>Hidden automation targets</title>
+	<style>
+		body { position: absolute; left: 0; top: 0; width: 640dp; height: 480dp; margin: 0; }
+		div, ul, li { display: block; }
+		.container { position: absolute; top: 10dp; width: 100dp; height: 60dp; overflow: auto; }
+		#clipped { left: 10dp; overflow: hidden; }
+		#tall-container { left: 150dp; }
+		#wide-container { left: 300dp; }
+		.spacer { height: 100dp; }
+		.target { height: 20dp; drag: drag-drop; }
+		#tall { height: 200dp; }
+		#wide { width: 300dp; }
+		scrollbarvertical { width: 10dp; }
+		scrollbarhorizontal { height: 10dp; }
+		#below, #beside { position: absolute; width: 20dp; height: 20dp; }
+		#below { top: 500dp; left: 10dp; }
+		#beside { top: 100dp; left: 660dp; }
+	</style>
+</head>
+<body>
+	<ul class="container" id="clipped">
+		<li class="spacer"/>
+		<li class="target" id="cut-off"/>
+	</ul>
+	<div class="container" id="tall-container">
+		<div class="spacer"/>
+		<div class="target" id="tall"/>
+	</div>
+	<div class="container" id="wide-container">
+		<div class="target" id="wide"/>
+	</div>
+	<div class="target" id="below"/>
+	<div class="target" id="beside"/>
+</body>
+</rml>
