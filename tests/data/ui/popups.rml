@@ -3,7 +3,8 @@
      with a context menu that has submenus (one with only a disabled item), a disabled item and a hidden one (#524), an
      element whose right click with a modifier key opens another menu, elements with tooltips (one with a member
      without a title and one with a title of its own), a notification, a menu with nested controls and controls that
-     aren't Tab stops (#826), a menu bar whose File menu has a submenu and whose Tools title is disabled, and an area at
+     aren't Tab stops (#826), a menu with no enabled item (#792), a text field that a menu gives the focus back to
+     (#568), a menu bar whose File menu has a submenu and whose Tools title is disabled, and an area at
      the window's bottom left with the track's context menu (#1665). -->
 <rml>
 <head>
@@ -24,6 +25,8 @@
 <body>
 	<button id="edit-button" menu="edit">Edit</button>
 	<button id="controls-button" menu="controls-menu">Controls</button>
+	<button id="blocked-button" menu="blocked-menu">Blocked</button>
+	<input id="field" type="text"/>
 	<div id="track" class="panel" contextmenu="track-menu" title="Audio 01">Audio 01</div>
 	<div id="plain" class="panel">No menu</div>
 	<div id="corner" contextmenu="track-menu" title="A long tooltip near the window's corner"/>
@@ -61,6 +64,10 @@
 		<input id="no-tab-control" type="text" style="tab-index: none;"/>
 		<input id="no-focus-control" type="text" style="focus: none;"/>
 		<menuitem id="controls-last">Last</menuitem>
+	</menu>
+	<menu id="blocked-menu">
+		<menuitem id="blocked-first" disabled="disabled">First</menuitem>
+		<menuitem id="blocked-second" disabled="disabled">Second</menuitem>
 	</menu>
 	<menubar id="menubar">
 		<button id="file-title" menu="file">File</button>
