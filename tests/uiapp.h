@@ -50,8 +50,11 @@ namespace gnubase::test
 	class UiApp
 	{
 	public:
-		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1. The engine takes MIDI and
-		// audio from these backends, by default the system's; the audio backends must include the dummy device's.
+		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1. Every runner opens it at
+		// that size, except that macOS fits it to the monitor: CI's macOS runner opens windows at most 1024x684, and
+		// the test warns when its window is smaller than asked (#1078). A test that needs a lane or a control in view
+		// in a larger window scrolls it there, or asks for a window that fits. The engine takes MIDI and audio from
+		// these backends, by default the system's; the audio backends must include the dummy device's.
 		explicit UiApp(ui::Size size = {640, 480},
 			std::vector<std::unique_ptr<midi::Backend>> midiBackends = midi::makeBackends(),
 			std::vector<std::unique_ptr<audio::Backend>> audioBackends = audio::makeBackends());
