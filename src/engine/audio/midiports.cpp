@@ -308,10 +308,10 @@ namespace gnubase::engine
 			for (size_t player = 0; player < m_padVoices.size(); ++player)
 				m_padVoices.at(player).off(key, emitTo(player));
 		};
-		const auto holds = [this, key]
+		const auto holds = [this](size_t which)
 		{
 			return std::any_of(m_padVoices.begin(), m_padVoices.end(),
-				[key](const midi::PadVoices& voices) { return voices.holds(key); });
+				[which](const midi::PadVoices& voices) { return voices.holds(which); });
 		};
 		const auto tell = [this, key](PadEvent::Kind kind, uint8_t velocity)
 		{ m_padEvents.tryPush(PadEvent{kind, static_cast<uint8_t>(key), velocity}); };
@@ -321,8 +321,16 @@ namespace gnubase::engine
 		// Select/Mute Player's keys play nothing; the command thread selects or mutes (p. 1389).
 		if (keys.active && std::find(keys.playerKeys.begin(), keys.playerKeys.end(), key) != keys.playerKeys.end())
 		{
-			if (!off)
+			// A pad key that became one while it was down ends what it holds and puts out its pad (#1812).
+			if (off)
+			{
+				offAll();
+				tellReleased(key);
+			}
+			else
+			{
 				tell(PadEvent::Kind::Player, message.bytes[2]);
+			}
 			return true;
 		}
 		// The sections player mode (pp. 1381-1385): a pad key chooses the chord, its section keys play its sections.
@@ -392,6 +400,11 @@ namespace gnubase::engine
 		if (keys.active && keys.modifiers &&
 			std::find(keys.modifierKeys.begin(), keys.modifierKeys.end(), key) != keys.modifierKeys.end())
 		{
+			if (off)
+			{
+				offAll(); // as a Select/Mute Player key's (#1812)
+				tellReleased(key);
+			}
 			tell(PadEvent::Kind::Modifier, off ? 0 : message.bytes[2]);
 			return true;
 		}
@@ -399,7 +412,7 @@ namespace gnubase::engine
 		const bool filtered = keys.active && keys.filter && key >= keys.start && key <= keys.end;
 		if (off)
 		{
-			if (!holds())
+			if (!holds(key))
 			{
 				tellReleased(key); // a pad it lit with nothing to play, such as with the selected player muted (#1740)
 				return filtered;
@@ -413,7 +426,7 @@ namespace gnubase::engine
 		}
 		// Before the pad check: a key that latched a chord and plays no pad now (moved range, emptied pad, a section
 		// key after the player mode changed) still ends it.
-		if (keys.latch && holds())
+		if (keys.latch && holds(key))
 		{
 			offAll();
 			tellReleased(key);
@@ -426,6 +439,12 @@ namespace gnubase::engine
 			if (plays(player) && keys.counts.at(player).at(key) > 0)
 				m_padVoices.at(player).on(key, keys.pitches.at(player).at(key).data(), keys.counts.at(player).at(key),
 					message.bytes[2], keys.overlap, emitTo(player));
+		// With Latch Chords, the pads of the other keys whose chords this one ended (Legato, Stop First) go out, as
+		// their note-offs reported nothing (#1812).
+		if (keys.latch)
+			for (size_t other = 0; other < m_padLit.size(); ++other)
+				if (other != key && m_padLit.at(other) != 0 && !holds(other))
+					tellReleased(other);
 		tellTriggered(key, static_cast<uint8_t>(key - keys.start), message.bytes[2]);
 		return true;
 	}
