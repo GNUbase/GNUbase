@@ -230,7 +230,7 @@ namespace gnubase::ui
 					if (auto* submenu = dynamic_cast<Menu*>(element); submenu != nullptr && submenu != this)
 					{
 						int level = 0;
-						for (const Rml::Element* up = submenu; up != this; up = up->GetParentNode())
+						for (const Rml::Element* up = submenu; up != nullptr && up != this; up = up->GetParentNode())
 							level += dynamic_cast<const Menu*>(up) != nullptr ? 1 : 0;
 						if (level > depth)
 						{
