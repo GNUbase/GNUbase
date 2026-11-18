@@ -2416,6 +2416,18 @@ TEST_CASE("the edit commands edit the selection range, and paste pastes at its s
 	REQUIRE(f.waitUntil([&f] { return !f.display.canRun("edit.paste"); }));
 }
 
+TEST_CASE("copying the selection range lets paste run", "[unit]")
+{
+	Fixture f;
+	const auto audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{72000, 108000, {audio}});
+	CHECK(!f.display.canRun("edit.paste"));
+	f.run("edit.copy");
+	REQUIRE(f.waitUntil([&f] { return f.display.canRun("edit.paste"); }));
+	CHECK(f.display.canRun("edit.pasteTime"));
+}
+
 namespace
 {
 	const ui::FadeLines& fadeLines(const Fixture& f)

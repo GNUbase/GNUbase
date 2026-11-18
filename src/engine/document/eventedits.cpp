@@ -1980,13 +1980,12 @@ namespace gnubase::engine
 		}
 
 		// Pastes copied automation into a lane, moved by shift: it replaces the curve from its first to its last
-		// point, and the curve outside stays, with its gaps; with keepStatic a lane without points keeps the static
-		// value it had around it (range.paste; automation.paste leaves it out). What would land before the project's
-		// start lands on it: at position 0 the range's automation can start before its first event, which lands on
-		// tick 0 (landing). The points keep their order there, so the curve goes on from tick 0 as the last of them
-		// shapes it.
+		// point, and the curve outside stays, with its gaps; a lane without points keeps the static value it had
+		// around it (reference manual p. 879). What would land before the project's start lands on it: at position 0
+		// the range's automation can start before its first event, which lands on tick 0 (landing). The points keep
+		// their order there, so the curve goes on from tick 0 as the last of them shapes it.
 		void pasteAutomation(Project& project, AutomationLane& lane, const AutomationLane& copied, const Gap& shift,
-			bool keepStatic, CommandContext& context)
+			CommandContext& context)
 		{
 			const time::TimeBase base = project.trackById.at(lane.track).timeBase;
 			std::vector<AutomationPoint> points;
@@ -2008,7 +2007,7 @@ namespace gnubase::engine
 			const bool had = !lane.points.empty();
 			// A lane without points played the parameter's static value: it still does before and after the paste,
 			// in gaps that terminators start (reference manual p. 881), unless virgin territory makes them gaps.
-			const bool gaps = keepStatic && !had && !project.virginTerritory;
+			const bool gaps = !had && !project.virginTerritory;
 			const double left = had ? valueAt(lane, from, true) : 0.0;
 			const double right = had ? valueAt(lane, to, false) : 0.0;
 			const std::optional<AutomationPoint> shape = shapingPoint(lane, to, true);
@@ -2496,7 +2495,7 @@ namespace gnubase::engine
 				const ObjectId track = onto(copied.track);
 				for (auto& [id, lane] : project.automation)
 					if (lane.track == track && lane.target == copied.target)
-						pasteAutomation(project, lane, copied, landed, true, context);
+						pasteAutomation(project, lane, copied, landed, context);
 			}
 			return added;
 		}
@@ -2555,7 +2554,7 @@ namespace gnubase::engine
 			for (const AutomationLane& copied : automation)
 				for (auto& [id, lane] : project.automation)
 					if (lane.track == copied.track && lane.target == copied.target)
-						pasteAutomation(project, lane, copied, landed, true, context);
+						pasteAutomation(project, lane, copied, landed, context);
 			return {{"events", idsOf(items)}};
 		}
 
@@ -2800,7 +2799,7 @@ namespace gnubase::engine
 				const ObjectId last = fitted.points.empty() ? 0 : fitted.points.rbegin()->first;
 				fitted.points[last + 1] = *held; // after the others at its position
 			}
-			pasteAutomation(project, lane, fitted, Gap{}, false, context);
+			pasteAutomation(project, lane, fitted, Gap{}, context);
 		}
 
 		// The lane of a track for a parameter, added if the track has none.
@@ -3259,12 +3258,12 @@ namespace gnubase::engine
 		addEdit(engine,
 			{"range.cut", 1,
 				"Copies " + range +
-					" to the range clipboard as range.copy does, then deletes it as range.delete does; time (Cut "
-					"Time) closes the gap. Without time it cuts the range out of the cycle markers that it lies in as "
+					" to the range clipboard as range.copy does, then deletes it as range.delete does; time (Cut Time) "
+					"closes the gap. Without time it cuts the range out of the cycle markers that it lies in as "
 					"range.delete does; markers don't go to the clipboard. Locked events stay where they are and "
-					"aren't copied. "
-					"Returns how many events and parts and automation lanes it copied, which rangeClipboard.changed "
-					"announces.",
+					"aren't "
+					"copied. Returns how many events and parts and automation lanes it copied, which "
+					"rangeClipboard.changed announces.",
 				schema(withTime, {}), copiedResult, false},
 			"Cut",
 			[this](Project& project, CommandContext& context)
@@ -3287,13 +3286,13 @@ namespace gnubase::engine
 				"Pastes the range clipboard (range.copy, range.cut) at position (project samples, default the project "
 				"cursor): onto the tracks it was copied from, or onto track and the tracks below it in the project's "
 				"order that aren't hidden (trackVisibility.set), one for each copied track, which must take the copied "
-				"events. What started where the copied "
-				"range starts lands at position exactly (of several, the first in ticks), and everything on musical "
-				"tracks moves by the same ticks, keeping its distance from that on every track. Audio events and MIDI "
-				"parts come as unlocked real copies; automation replaces the curve where it lands, on a lane of the "
-				"same parameter. time (Paste Time) first makes room as long as the copied range, as "
-				"range.insertSilence does. A clipboard copied at another sample rate than the project's is refused. "
-				"Returns the new events.",
+				"events. What started where the copied range starts lands at position exactly (of several, the first "
+				"in "
+				"ticks), and everything on musical tracks moves by the same ticks, keeping its distance from that on "
+				"every track. Audio events and MIDI parts come as unlocked real copies; automation replaces the curve "
+				"where it lands, on a lane of the same parameter. time (Paste Time) first makes room as long as the "
+				"copied range, as range.insertSilence does. A clipboard copied at another sample rate than the "
+				"project's is refused. Returns the new events.",
 				schema({{"position", integer()}, {"track", integer()}, {"time", boolean()}}, {}), eventsResult(),
 				false},
 			"Paste", [this](Project& project, CommandContext& context)

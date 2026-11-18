@@ -130,10 +130,10 @@ The main menu's Edit menu has Cut, Copy and Paste, and the Range submenu Global 
 Time, Split, Crop and Insert Silence. Menus and keys disable the commands that only edit the range while there is
 none, and Paste and Paste Time until something is copied (`rangeClipboard.changed`, since the project opened).
 
-Not yet: copying and pasting selected events without a range, Paste at Origin and Paste Relative to Cursor, moving and
-duplicating a range's contents by dragging it on other tracks than marker tracks, nudging its edges, Range Tool Splits
-Partly Selected Events, the info line's range fields, the range in the editors (they come with their tickets), and the
-controller events at the edges of a range inside a part.
+Not yet (#1910): copying and pasting selected events without a range, Paste at Origin and Paste Relative to Cursor,
+moving and duplicating a range's contents by dragging it on other tracks than marker tracks, nudging its edges, Range
+Tool Splits Partly Selected Events, the info line's range fields, the range in the editors (they come with their
+tickets), and the controller events at the edges of a range inside a part.
 
 ## Checks
 
