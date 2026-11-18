@@ -254,7 +254,7 @@ namespace gnubase::ui
 		Rml::Element* m_versionsMenu = nullptr;  // the document's #track-versions-menu
 		std::set<uint64_t> m_selectedLanes;      // the selected automation tracks' lanes
 		bool m_automationCopied = false;
-		std::vector<Row> m_tracks;               // every track in the project's order
+		std::vector<Row> m_tracks; // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
 		std::set<uint64_t> m_folded;
 		std::set<uint64_t> m_filtered;                         // what the track visibility hides (#166)

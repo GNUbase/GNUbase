@@ -1043,9 +1043,9 @@ namespace gnubase::ui
 		std::map<uint64_t, AutomationView> m_automation;            // every lane of the project
 		std::map<uint64_t, engine::Json> m_targets;                 // automationLane.targets, by track
 		std::map<uint64_t, std::string> m_targetsKeys; // by track, what its targets depended on when last asked
-		std::vector<uint64_t> m_laneAutomation;                     // each display lane's automation lane, or 0
-		std::vector<int> m_laneTakes;                               // each display lane's track lane, or -1
-		std::set<uint64_t> m_lanesShown;                            // the tracks whose lanes show
+		std::vector<uint64_t> m_laneAutomation;        // each display lane's automation lane, or 0
+		std::vector<int> m_laneTakes;                  // each display lane's track lane, or -1
+		std::set<uint64_t> m_lanesShown;               // the tracks whose lanes show
 		std::map<uint64_t, std::set<uint64_t>> m_selectedPoints;
 		Rml::Element* m_automationArea = nullptr; // the curves, a .automation-lane each
 		Rml::Element* m_editor = nullptr;         // .automation-editor around the selected points

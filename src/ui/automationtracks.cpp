@@ -1048,8 +1048,8 @@ namespace gnubase::ui
 			const std::vector<std::pair<uint64_t, CurvePoint>> moved = transformed(x, y);
 			Json commands = Json::array();
 			if (const std::set<uint64_t> replaced = covered(*lane, moved); !replaced.empty())
-				commands.push_back(
-					{{"command", "automationPoint.remove"}, {"parameters", {{"lane", lane->id}, {"points", replaced}}}});
+				commands.push_back({{"command", "automationPoint.remove"},
+					{"parameters", {{"lane", lane->id}, {"points", replaced}}}});
 			Json changes = Json::array();
 			for (const auto& [id, point] : moved)
 				changes.push_back({{"id", id}, {"position", pointPosition(*lane, point.position)},

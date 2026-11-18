@@ -511,13 +511,13 @@ namespace gnubase::engine
 		// and lane.
 		const Json number = {{"type", "number"}};
 		const Json text = {{"type", "string"}};
-		const Json targetItem = objectSchema(
-			{{"target", {{"type", "object"}}}, {"name", text}, {"minimum", number}, {"maximum", number},
-				{"default", number}, {"unit", text}, {"stepped", {{"type", "boolean"}}},
-				{"options", {{"type", "array"}, {"items", text}}}, {"value", number}, {"text", text}, {"group", text},
-				{"lane", idSchema}},
-			{"target", "name", "minimum", "maximum", "default", "unit", "stepped", "options", "value", "text", "group",
-				"lane"});
+		const Json targetItem =
+			objectSchema({{"target", {{"type", "object"}}}, {"name", text}, {"minimum", number}, {"maximum", number},
+							 {"default", number}, {"unit", text}, {"stepped", {{"type", "boolean"}}},
+							 {"options", {{"type", "array"}, {"items", text}}}, {"value", number}, {"text", text},
+							 {"group", text}, {"lane", idSchema}},
+				{"target", "name", "minimum", "maximum", "default", "unit", "stepped", "options", "value", "text",
+					"group", "lane"});
 		add(engine,
 			{"automationLane.targets", 1,
 				"What a track's automation lanes can automate, in the order automation tracks offer them: its "

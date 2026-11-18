@@ -762,11 +762,12 @@ TEST_CASE("the zoom tool zooms on automation tracks, Show All Used Automation ke
 	f.display.setTool(ui::Tool::ObjectSelection);
 
 	// Show All Used Automation leaves the unused automation track open.
-	std::vector<uint64_t> tracks;
-	for (int i = 0; i < 10; ++i)
-		tracks.push_back(f.app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>());
-	const Json used =
-		f.app.call("automationLane.add", {{"track", tracks.back()}, {"target", {{"type", "volume"}}}}).at("lane").at("id");
+	std::vector<uint64_t> tracks(10);
+	for (uint64_t& track : tracks)
+		track = f.app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	const Json used = f.app.call("automationLane.add", {{"track", tracks.back()}, {"target", {{"type", "volume"}}}})
+						  .at("lane")
+						  .at("id");
 	f.app.call("automationPoint.add", {{"lane", used}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
 	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("automation").size() == 2; }));
 	f.app.keys().run("track.showUsedAutomation", Json::object(), f.app.main(), nullptr);

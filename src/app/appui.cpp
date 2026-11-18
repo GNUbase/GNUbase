@@ -1133,8 +1133,7 @@ namespace gnubase::app
 							!(parameters ? m_trackList->selectedLanes() : m_trackList->selection()).empty();
 					});
 			else if (id == "track.pasteAutomationAll")
-				m_keys.enableWhen(command.id,
-					[this](ui::Window&, Rml::Element*)
+				m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*)
 					{ return m_trackList != nullptr && m_trackList->automationCopied(); });
 			else
 				m_keys.enableWhen(command.id, [this, selected](ui::Window&, Rml::Element*)
