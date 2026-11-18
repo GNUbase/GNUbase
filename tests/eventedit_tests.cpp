@@ -1597,6 +1597,27 @@ TEST_CASE("Range edits take an event that starts a sample before an edge as afte
 	f.call("range.insertSilence", {{"start", end}, {"end", end + g_second}, {"tracks", {track}}});
 	CHECK(position() == end - 1 + g_second);
 
+	// At the range's start the other way round: an event that starts a sample before it isn't cut there, but lies in
+	// the range, and range.delete and range.copy take it whole.
+	f.call("history.undo");
+	const Json moved = f.call("project.get").at("audioEvents").at(0).at("id");
+	f.call("audioEvent.set", {{"event", moved}, {"position", g_second - 1}, {"length", 22050 / 4}});
+	CHECK(f.call("range.copy", range).at("events") == 1);
+	f.call("range.delete", range);
+	CHECK(f.call("project.get").at("audioEvents").empty());
+}
+
+TEST_CASE("A range's end past the largest project position means up to it", "[unit]")
+{
+	// after() doubles the edges: an end of INT64_MAX, "to the end", would overflow.
+	RangeFixture f;
+	f.call("range.delete", f.range({{"end", std::numeric_limits<int64_t>::max()}}));
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}});
+	CHECK_THAT(
+		f.fails("range.delete",
+			f.range({{"start", gnubase::time::g_maxPosition + 1}, {"end", std::numeric_limits<int64_t>::max()}})),
+		ContainsSubstring("start at or before"));
 }
 
 TEST_CASE("range.paste doesn't paste what was copied in another project", "[unit]")

@@ -1588,7 +1588,8 @@ namespace gnubase::engine
 		};
 
 		// The range a command names: start and end (default the locators) on tracks (default every track). A folder
-		// track brings the tracks inside it, whose events its lane shows folded (reference manual p. 251).
+		// track brings the tracks inside it, whose events its lane shows folded (reference manual p. 251). An end past
+		// the largest project position means up to it, so that after can double the edges without overflowing.
 		Range rangeFrom(const Project& project, CommandContext& context, bool needsLength)
 		{
 			const Json& parameters = context.parameters();
@@ -1596,6 +1597,9 @@ namespace gnubase::engine
 			std::tie(range.start, range.end) = startAndEnd(context);
 			require(range.start >= 0 && range.end >= range.start,
 				"the range must start at or after 0 and not end before its start");
+			require(range.start <= time::g_maxPosition,
+				"the range must start at or before " + std::to_string(time::g_maxPosition));
+			range.end = std::min(range.end, time::g_maxPosition);
 			require(!needsLength || range.end > range.start, "the range is empty");
 			range.tracks = project.trackOrder();
 			if (parameters.contains("tracks"))
@@ -3170,8 +3174,9 @@ namespace gnubase::engine
 
 	void ProjectModel::registerRangeEditCommands(Engine& engine)
 	{
-		const std::string range = "the range from start to end (project samples, default the locators) on tracks "
-								  "(ids, default every track; a folder track with the tracks inside it)";
+		const std::string range = "the range from start to end (project samples, default the locators; an end past "
+								  "2^48 means up to it) on tracks (ids, default every track; a folder track with the "
+								  "tracks inside it)";
 		const Json rangeParameters = {
 			{"start", integer()}, {"end", integer()}, {"tracks", events()}, {"splitNotes", boolean()}};
 		Json withTime = rangeParameters;
@@ -3380,7 +3385,8 @@ namespace gnubase::engine
 					"A track takes the parameters it has, adding their lanes: a plugin's needs the same plugin in the "
 					"slot at the same place, an instrument's the same instrument; the others are left out. A shorter "
 					"range cuts the copy at the curve's value there, in a longer one its last value holds up to the "
-					"end. A copy made at another sample rate than the project's is refused. Returns the lanes it pasted "
+					"end. A copy made at another sample rate than the project's is refused. Returns the lanes it "
+					"pasted "
 					"into.",
 				schema({{"start", integer()}, {"end", integer()}, {"tracks", events()}, {"lanes", events()}}, {}),
 				schema({{"lanes", events()}}, {"lanes"}), false},
