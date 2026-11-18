@@ -1440,7 +1440,7 @@ TEST_CASE("Rewind and Forward wind while their key or button is held", "[ui]")
 TEST_CASE("Nudge Cursor Left and Right move the project cursor by a grid step", "[ui]")
 {
 	test::UiApp app({1024, 700});
-	showBar(app);
+	ui::EventDisplay& display = showBar(app);
 
 	// The grid is on bars by default: 4 quarters at 120 BPM, 96000 samples.
 	app.ui().key(std::nullopt, "Mod+Num+");
@@ -1467,6 +1467,20 @@ TEST_CASE("Nudge Cursor Left and Right move the project cursor by a grid step", 
 	settle(app);
 	app.ui().key(std::nullopt, "Mod+Num+");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+
+	// The grid of the ruler's format (#559, #604): samples, 100 by default; seconds, 100 ms; bars and beats again,
+	// the beat chosen there before; user frames, a frame at the user's 30 fps, not the project's 25.
+	for (const auto& [format, step] :
+		{std::pair{ui::TimeFormat::Samples, 100}, std::pair{ui::TimeFormat::Seconds, 4800},
+			std::pair{ui::TimeFormat::BarsBeats, 24000}, std::pair{ui::TimeFormat::UserFrames, 1600}})
+	{
+		INFO(ui::timeFormatName(format));
+		display.setRulerFormat(format);
+		app.call("transport.locate", {{"position", 0}});
+		settle(app);
+		app.ui().key(std::nullopt, "Mod+Num+");
+		REQUIRE(waitFor(app, [step = step](const Json& state) { return state.at("position") == step; }));
+	}
 }
 
 TEST_CASE("the mouse wheel changes a display's value", "[ui]")
