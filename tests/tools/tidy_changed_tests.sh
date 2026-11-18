@@ -185,7 +185,9 @@ if [ "$(uname -s)" = Linux ]; then
 	touch -d '31 days ago' "$clones/old.log"
 	touch "$clones/recent.log"
 	printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/cmake"
-	(exec 9> "$clones/slot.lock" && flock 9 && touch "$tmp/locked" && sleep 2) &
+	# The holder lets go once the run under test says it waits (at most 10 s), so a slow start can't miss the lock.
+	(exec 9> "$clones/slot.lock" && flock 9 && touch "$tmp/locked" &&
+		for _ in $(seq 100); do grep -q 'waiting until it ends' "$tmp/output" 2>/dev/null && break; sleep 0.1; done) &
 	holder=$!
 	while [ ! -e "$tmp/locked" ]; do sleep 0.1; done
 	(cd "$tmp" && HOME=$tmp/home PATH=$tmp/bin:$PATH bash "$src/tools/tidy-changed.sh" --wsl "$repo" \

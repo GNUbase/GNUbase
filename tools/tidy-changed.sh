@@ -13,9 +13,10 @@
 # Linux uses a clang-tidy 22 on the PATH (CONTRIBUTING.md). CI's clang-tidy runs on Linux, where libstdc++ and the
 # non-Windows #ifdef branches bring findings that Windows doesn't see (bugprone-unchecked-optional-access never fires
 # with Microsoft's std::optional), so on Windows (Git Bash) the check runs in WSL when it has clang-tidy 22 (pipx, as
-# for tools/ci-local.sh): on the commit at HEAD, in a clone in ~/gnubase-tidy/<checkout folder name>. Without it,
-# Windows uses Visual Studio 2026's Ninja, compiler and clang-tidy. Not macOS yet: its universal build gives every file
-# two -arch flags, which clang-tidy refuses.
+# for tools/ci-local.sh) and the tools of the Linux setup (CONTRIBUTING.md): on the commit at HEAD, in a clone in
+# ~/gnubase-tidy/<checkout folder name>. Without them, Windows checks the working tree with Visual Studio 2026's
+# Ninja, compiler and clang-tidy. Not macOS yet: its universal build gives every file two -arch flags, which
+# clang-tidy refuses.
 # CLANG_TIDY overrides the clang-tidy to use, which on Windows also keeps the check out of WSL; GNUBASE_WSL names the
 # WSL distribution (default Ubuntu). Exit status: 0 no findings, 1 findings, 2 error.
 set -u
