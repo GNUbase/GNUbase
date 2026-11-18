@@ -890,6 +890,25 @@ TEST_CASE("recording.add applies the MIDI cycle record modes to the takes", "[in
 		std::sort(lanes.begin(), lanes.end());
 		CHECK(lanes == std::vector<int64_t>{1, 2, 3});
 	}
+	SECTION("snapped stacked takes go onto lanes after those of the parts in their bars")
+	{
+		// The takes lie in beats 2 and 3; snapped to bars, their parts take the whole bar, where a part on lane 0
+		// lies after them.
+		run(client, "midiPart.add",
+			{{"track", setup.track}, {"position", (3 * g_beatTicks) + (g_beatTicks / 2)}, {"length", g_beatTicks / 2}});
+		const Json take = {{"position", g_beat}, {"length", 2 * g_beat}};
+		run(client, "recording.add",
+			{{"cycle", true}, {"cycleMode", "stacked"}, {"snapToBars", true},
+				{"tracks",
+					{{{"track", setup.track}, {"takes", {take, take}},
+						{"notes",
+							{taken(note(g_beat, g_beat / 2, 48), 0), taken(note(g_beat, g_beat / 2, 50), 1)}}}}}});
+		std::vector<int64_t> lanes;
+		for (const Json& part : setup.parts())
+			lanes.push_back(part.at("lane").get<int64_t>());
+		std::sort(lanes.begin(), lanes.end());
+		CHECK(lanes == std::vector<int64_t>{0, 1, 2});
+	}
 	SECTION("a single take isn't stacked: it goes by the MIDI record mode, on lane 0")
 	{
 		const std::string cycleMode = GENERATE("stacked", "mixStacked");

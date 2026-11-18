@@ -8,16 +8,22 @@ make each lap a take of its own: a run of consecutive project positions.
 - **Lanes.** Audio events, audio parts and MIDI parts have a `lane`, from 0 (the default), which `project.get`,
   `event.get` and the events' announcements report, `event.set` with `lane` changes (as one undo step, up to lane
   1000), splits and copies keep, and the project file keeps in GNUbase's entry (files from before have every event on
-  lane 0). A cycle recording puts its takes on lanes of their own, one per take, from the lane after the highest one
-  that the track's events and parts where the takes lie are on (from 0 where there are none). Lanes don't change what
+  lane 0). Locked events and parts stay on their lane: `event.set` refuses `lane` for them unless the same call
+  unlocks them, as a lock keeps them from moving (p. 276). A cycle recording puts its takes on lanes of their own, one
+  per take, from the lane after the highest one that the track's events and parts where the takes lie are on (from 0
+  where there are none; for stacked MIDI parts snapped to bars, where their bars lie), up to lane 1000, which the
+  takes beyond it share. Only takes that overlap another take need a lane of their own: one that a locate during
+  recording started and that overlaps none stays on lane 0, as a recording of one take does. Lanes don't change what
   plays: an audio track plays the event added last where events overlap, so the last lap plays; MIDI tracks play
   every part that isn't muted. Showing lanes, bringing takes to the front and comping are in [comping.md](comping.md).
 - **Audio** (p. 345). Every lap of an audio cycle recording is a take of the one file, and `recording.add` adds an
   audio event per take (a four-lap cycle recording makes four events). With the audio record modes that keep the
   takes, Keep History and Cycle History + Replace, the takes go onto lanes; Replace keeps only what the last lap
-  recorded where laps overlap, so its events stay on lane 0, as do the events of a recording of one take. The
-  acceptance test records four laps through the dummy device in both modes and finds four events playing the four
-  runs of the file, on lanes 0 to 3, the last one added last (`tests/recording_tests.cpp`).
+  recorded where laps overlap, so its events stay on lane 0, as do the events of a recording of one take. In cycle
+  mode (`recording.add`'s `cycle`) the clip is divided into regions, one per take, named Take 1 on (p. 226), which
+  the sample editor shows. The acceptance test records four laps through the dummy device in both modes and finds
+  four events playing the four runs of the file, on lanes 0 to 3, the last one added last, and four regions
+  (`tests/recording_tests.cpp`).
 - **MIDI cycle record modes** (pp. 352–353). `transport.set` with `midiCycleRecordMode`, which `transport.get`
   reports and the Transport menu's MIDI Record Mode submenu sets below the MIDI record modes, decides what becomes of
   a MIDI cycle recording's laps. The recorder marks each note and controller event with the take it was recorded in
@@ -47,7 +53,6 @@ make each lap a take of its own: a run of consecutive project positions.
 
 ## Not yet
 
-Regions per lap on the recorded clip (the reference divides a cycle recording's audio event into regions, one per
-take, p. 225), which needs regions in the pool; lanes in the
-DAWproject file's own description (GNUbase's entry keeps them); the MIDI record modes for stacked recordings;
+Set to Region in the event context menu, which picks one of the regions to play (p. 226); lanes in the DAWproject
+file's own description (GNUbase's entry keeps them); the MIDI record modes for stacked recordings;
 inserting a retrospective recording as a cycle recording (p. 355).
