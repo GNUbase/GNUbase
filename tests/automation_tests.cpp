@@ -3175,7 +3175,7 @@ TEST_CASE("a MIDI track whose mute lane mutes where playback jumps to releases t
 	CHECK(midiValuesOf(strip.play({midiEvent(Type::Controller, 10, 0, 64, 0xFFFFFFFFU)})) ==
 		MidiValues{{g_controller, 10, 0, 64, 0xFFFFFFFFU}});
 	if (jump)
-		strip.locate(4 * g_midiBlock);
+		strip.locate(int64_t{4} * g_midiBlock);
 	else
 		for (int block = 1; block < 4; ++block)
 			strip.play({});

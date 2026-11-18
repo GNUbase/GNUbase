@@ -1382,14 +1382,15 @@ namespace gnubase::engine
 				--ahead;
 				continue;
 			}
-			if (deferred[next])
-			{
-				state.midiDropped.drop(events[next]);
-				continue;
-			}
 			const graph::ProcessEvent& event = events[next];
+			// A jump before it forgets what waits; a deferred value waits after it.
 			chaseUntil(event.offset);
 			muteUntil(event.offset);
+			if (deferred[next])
+			{
+				state.midiDropped.drop(event);
+				continue;
+			}
 			// The note-offs and the values sent again at the sample go before what waits, which is later, also those
 			// that the source put after events it received there, from the track's MIDI input.
 			const bool before = sentAgain(event);
