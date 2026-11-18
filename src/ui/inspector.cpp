@@ -1455,7 +1455,7 @@ namespace gnubase::ui
 		}
 		std::string key = name;
 		Json value;
-		if (name == "mute" || name == "solo" || name == "monitor" || name == "record")
+		if (name == "mute" || name == "monitor" || name == "record")
 		{
 			key = name == "record" ? "recordEnable" : name;
 			value = event.GetParameter<bool>("value", false);
