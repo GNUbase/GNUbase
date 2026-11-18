@@ -79,10 +79,13 @@ the port's entry in `midi.portSettings` keeps what differs from the preset, so i
 such as clock and active sensing, 0xF8 to 0xFF) for `midi.activity`, which the engine runs itself at most ten times a
 second while input arrives and a device processes blocks (the audio engine's cue thread notices it); it takes the
 messages with their ports and announces them as the event `midi.activity`, which the Note Expression Input page shows.
-Its runs stay out of the command log. Turning `midi.activityListen` on, and starting a device, drop what was queued
-before, so nothing old is announced as new. Rendered offline (`audio.render`), nothing runs it: a client calls it. The
-user settings `midi.mpeInput` and `midi.mpePitchRange`, which before #1514 made MIDI recording take every input as MPE's
-lower zone, are gone without a migration: a port's MPE input is set up again on the Note Expression Input page.
+Its runs stay out of the command log. Each `listener` (the dialog's is `studioSetup`, calls without one share one)
+turns it on and off for itself, and it is on while any has it on, so the dialog closing leaves a script's or an MCP
+session's on, and their off leaves the dialog's (#1832). Turning `midi.activityListen` on while no listener has it on,
+and starting a device, drop what was queued before, so nothing old is announced as new; a second listener turning it on
+keeps the queue, which the first one still reads. Rendered offline (`audio.render`), nothing runs it: a client calls it.
+The user settings `midi.mpeInput` and `midi.mpePitchRange`, which before #1514 made MIDI recording take every input as
+MPE's lower zone, are gone without a migration: a port's MPE input is set up again on the Note Expression Input page.
 
 `midi::MpeInput` does this on the audio thread, per port, before the ports' input merges into all MIDI inputs
 (`MidiPorts::take`): it keeps each channel's sounding notes and latest values, without allocating, and the port's setup
@@ -118,7 +121,8 @@ record filter filters note expression by its channel only, as it is no MIDI mess
 and plays plain MIDI; `midi.inject` does too, unless its `mpe` gives it an MPE setup to play through, as a port with it
 would, so MCP and Lua reach MPE input without a MIDI port. The track keeps that setup's state of the channels from one
 call to the next, and a message waits for the next block unless the track's input has room for all it adds, a point
-for each note of its channel (`MpeInput::maxEvents`, #1685).
+for each note of its channel (`MpeInput::maxEvents`, #1685). `direct` and `mpe` together are refused: `direct`
+skips the track's input, where the setup plays (#1819).
 
 **Playback.** The sequencer sends a note's points that lie within it as note expression events
 (`graph::ProcessEvent::Type::NoteExpression`, with the note's pitch and channel) where they are, after the note-on at
