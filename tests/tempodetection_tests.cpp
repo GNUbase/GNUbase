@@ -345,6 +345,18 @@ TEST_CASE("tempo detection keeps musical content after old tempo events where it
 	CHECK(part.at("position") == int64_t{20} * 48000);
 }
 
+TEST_CASE("tempo detection doesn't analyze audio in musical mode", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const int64_t event = addLoop(client, dir, drumLoop(beatsOf(0.0, 104.0, 104.0, 21), 12.0));
+	const Json clip = run(client, "project.get").at("audioEvents").at(0).at("clip");
+	run(client, "clip.setWarp", {{"clip", clip}, {"musical", true}});
+	// The reference manual, pp. 1460-1461 (#812).
+	CHECK_THAT(reject(client, "tempo.detect", {{"event", event}}), ContainsSubstring("musical mode"));
+}
+
 TEST_CASE("tempo detection follows a drum loop that speeds up", "[integration]")
 {
 	const test::TempDir dir;
@@ -382,6 +394,21 @@ TEST_CASE("tempo detection works on MIDI parts and needs seven seconds of materi
 	CHECK_THAT(reject(client, "tempo.detect", {{"event", made.part}, {"factor", 0}}), ContainsSubstring("factor"));
 }
 
+TEST_CASE("resetting a detection in fixed tempo mode removes the inactive tempo track's events in the event", "[unit]")
+{
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Part made = addNotes(client, beatsOf(0.0, 90.0, 90.0, 16), 10.5);
+	// The tempo track plays 4 seconds at 120 BPM, then 60 BPM: the part's 10.5 seconds end at 14.5 quarters there,
+	// at 21 at the fixed 120 BPM (#812).
+	run(client, "project.set", {{"tempoTrackActive", false}});
+	run(client, "tempo.add", {{"position", 8 * g_ticksPerQuarter}, {"bpm", 60.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", 16 * g_ticksPerQuarter}, {"bpm", 80.0}, {"ramp", false}});
+	const Json tempo = run(client, "tempo.detect", {{"event", made.part}, {"reset", true}}).at("tempo");
+	REQUIRE(tempo.at("tempoTrack").size() == 2);
+	CHECK(tempo.at("tempoTrack").at(1).at("position") == 16 * g_ticksPerQuarter);
+}
+
 TEST_CASE("the tempo is calculated from tapped MIDI notes", "[unit]")
 {
 	engine::Engine engine;
@@ -409,6 +436,20 @@ TEST_CASE("the tempo is calculated from tapped MIDI notes", "[unit]")
 		for (size_t i = 0; i < taps.size(); ++i)
 			CHECK(std::abs(times[i] - taps[i]) < 0.0001);
 		CHECK(std::abs(map.bpmAt(first) - 100.0) < 0.01);
+	}
+	SECTION("with a ramp after the last note")
+	{
+		// A ramp from a step among the notes to after the last: the ramp starts at the last note now, so the note
+		// keeps its time (#812).
+		run(client, "tempo.add", {{"position", 4 * g_ticksPerQuarter}, {"bpm", 120.0}, {"ramp", false}});
+		run(client, "tempo.add", {{"position", 40 * g_ticksPerQuarter}, {"bpm", 60.0}, {"ramp", true}});
+		run(client, "project.set", {{"tempoTrackActive", true}});
+		const time::TempoMap map = tempoMap(run(client, "tempo.fromMidi", {{"parts", {made.part}}}).at("tempo"));
+		const time::Ticks last =
+			map.toTicks(taps.front()) + (static_cast<time::Ticks>(taps.size() - 1) * g_ticksPerQuarter);
+		CHECK(std::abs(map.toSeconds(last) - taps.back()) < 0.0001);
+		CHECK(std::abs(noteTimes(engine, made.track).back() - taps.back()) < 0.0001);
+		CHECK(map.bpmAt(40 * g_ticksPerQuarter) == 60.0);
 	}
 	SECTION("an eighth apart, from the selected notes")
 	{

@@ -1193,7 +1193,8 @@ TEST_CASE("an export that fails leaves the earlier file as it was", "[integratio
 	Client client(engine);
 	const std::string file = (dir.path() / "tempo.xml").u8string();
 	run(client, "tempo.export", {{"path", file}});
-	const auto read = [&file] {
+	const auto read = [&file]
+	{
 		std::ifstream in(std::filesystem::u8path(file), std::ios::binary);
 		return std::string(std::istreambuf_iterator<char>(in), {});
 	};
