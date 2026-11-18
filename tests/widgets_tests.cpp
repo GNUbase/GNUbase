@@ -263,6 +263,7 @@ TEST_CASE("Tab moves between the widgets with a number, past disabled ones and a
 	test::UiApp app;
 	const ValuesPage page(app);
 	std::vector<std::string> order;
+	order.reserve(5);
 	for (int i = 0; i < 5; ++i)
 		order.push_back(app.ui().key(std::nullopt, "Tab").at("focus").value("id", ""));
 	CHECK(order == std::vector<std::string>{"pan", "volume", "gain", "send", "pan"});
