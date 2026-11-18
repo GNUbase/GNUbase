@@ -1044,9 +1044,17 @@ namespace gnubase::ui
 			return;
 		const auto [from, to] = expressionSpan();
 		place(*editor, from, to - from, -1);
-		// On notes narrower than its button the style sheet widens it: in the note display's right half it grows to the
-		// left from their end, so that it stays inside the note display there too (#1713).
-		if (from + to > m_from + m_to)
+		// On notes narrower than its button the style sheet widens it: where it would then end past the note display's
+		// right edge, it grows to the left from their end, so that it stays inside the note display there too (#1713).
+		// Anywhere else it starts at the notes, so that it keeps still as an in-place editor's range scrolls (#1746).
+		Rml::Element* grid = editor->GetParentNode();
+		const double range = static_cast<double>(m_to - m_from);
+		const double wide = grid != nullptr ? grid->GetBox().GetSize(Rml::BoxArea::Border).x : 0.0;
+		const double least = Rml::ResolveValue(editor->GetComputedValues().min_width(), static_cast<float>(wide));
+		if (wide > 0.0 &&
+			(static_cast<double>(from - m_from) / range * wide) +
+					std::max(static_cast<double>(to - from) / range * wide, least) >
+				wide)
 		{
 			editor->RemoveProperty(Rml::PropertyId::Left);
 			editor->SetProperty(Rml::PropertyId::Right,
@@ -1063,7 +1071,6 @@ namespace gnubase::ui
 			if (std::make_pair(each->part, each->id) == m_expressionNote)
 				centered = each;
 		const double row = m_rowOf.at(static_cast<size_t>(centered->pitch));
-		Rml::Element* grid = editor->GetParentNode();
 		double height = grid != nullptr ? grid->GetBox().GetSize(Rml::BoxArea::Border).y : 0.0;
 		// The rows' height as the pitch zoom sets it, which the layout has not caught up with yet (setPitchZoom).
 		if (Rml::Element* first = grid != nullptr ? grid->QuerySelector(".key-editor-row") : nullptr)
@@ -1164,7 +1171,8 @@ namespace gnubase::ui
 		// Each selected note's points, as the gesture going on changes them, on the editor's span.
 		const auto [from, to] = expressionSpan();
 		std::string rml;
-		const int64_t pixel = ticksPerPixel(); // the editor lies on the note display's time axis
+		// Joined by the note display's pixels, which are coarser than the editor's over notes narrower than its button.
+		const int64_t pixel = ticksPerPixel();
 		for (const Note* note : notes)
 			rml += stepsRml(m_gesture == Gesture::Expression ? edited(*note) : note->expressions, type,
 				note->start - from, to - from, note->length, pixel);

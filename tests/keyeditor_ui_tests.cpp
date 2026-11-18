@@ -135,6 +135,18 @@ namespace
 
 		Json view() { return app.call("editor.get", {{"editor", "window"}}); }
 
+		// Pixels of the editor window's layout in desktop coordinates, which setBounds takes: at a monitor scale of 2,
+		// as on a HiDPI Mac, half as many (#1746).
+		int desktop(double pixels)
+		{
+			const ui::WindowId id = app.appUi().editorWindowId();
+			const ui::Window* shown = app.shell().find(id);
+			REQUIRE(shown != nullptr);
+			const double scale = static_cast<double>(app.shell().bounds(id).width) /
+				static_cast<double>(std::max(shown->context().GetDimensions().x, 1));
+			return static_cast<int>(std::lround(pixels * scale));
+		}
+
 		// Waits until a note with at least four expression points per pixel shows one line per pixel at most, and
 		// lines for four in five pixels at least, as the lines built for the width it has now (#1671; a line joined
 		// for fewer pixels spans several). Returns the note's width.
@@ -1729,6 +1741,25 @@ TEST_CASE("the expression editor on a short note at the end of the bottom row st
 	CHECK(std::abs(points.back().at("value").get<double>() - 24.0) <= 2.0);
 }
 
+TEST_CASE("the expression editor on a short note right of the note display's middle starts at the note", "[ui]")
+{
+	// Wider than the note, it grows to the left from the note's end only where it would end past the note display's
+	// right edge: anchored at the middle, an in-place editor's would jump by its overhang as the project window scrolls
+	// the note across it (#1746).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{9 * g_sixteenth, 60, g_sixteenth / 2}});
+	f.settle();
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionDoubleClick", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	f.click(of(noteSelector(ids[0])), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json editor = f.box(".key-expression-editor");
+	const Json note = f.box(noteSelector(ids[0]));
+	CHECK(editor.at("width").get<double>() > note.at("width").get<double>() + 10);
+	CHECK(std::abs(editor.at("x").get<double>() - note.at("x").get<double>()) <= 1.0);
+}
+
 TEST_CASE("the note expression lines join the steps narrower than a pixel", "[ui]")
 {
 	// A recorded MPE note has a point every few milliseconds (#1671): the overlay and the expression editor draw a
@@ -1796,7 +1827,7 @@ TEST_CASE(
 	// a quarter more or fewer (#1716), not on every frame of a scroll across a tempo change in the project window's
 	// in-place editor. The note is half the note display wide.
 	const size_t lines = f.elements(steps).size();
-	const int narrower = bounds.width - static_cast<int>(std::lround(before * 2 / 6));
+	const int narrower = bounds.width - f.desktop(before * 2 / 6);
 	const ui::Window* shown = f.app.shell().find(window);
 	REQUIRE(shown != nullptr);
 	const uint64_t frames = shown->frames();
@@ -1829,8 +1860,7 @@ TEST_CASE("the key editor window builds a dense note's expression lines that sho
 	// A sixth narrower, a fifth more ticks per pixel. The note is half the note display wide.
 	const ui::WindowId window = f.app.appUi().editorWindowId();
 	const ui::Rect bounds = f.app.shell().bounds(window);
-	f.app.shell().setBounds(
-		window, {bounds.x, bounds.y, bounds.width - static_cast<int>(std::lround(before * 2 / 6)), bounds.height});
+	f.app.shell().setBounds(window, {bounds.x, bounds.y, bounds.width - f.desktop(before * 2 / 6), bounds.height});
 	SECTION("Show Note Expression Data once the window is laid out")
 	{
 		REQUIRE(f.app.waitUntil([&] { return noteWidth() < before * 0.88; }));

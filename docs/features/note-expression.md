@@ -184,9 +184,9 @@ first.
   the row of the note double-clicked and kept inside the note display at the top and bottom rows, never narrower than
   its button, and it stays there as the pitches zoom; it shows their points of the chosen expression the same way. On
   notes narrower than its button it spreads their time over its whole width, so that its lines no longer lie over the
-  notes' time behind it and join their steps by the note display's coarser pixels, and at the note display's right
-  edge it moves left to stay inside (#1713). Its
-  button at the top left is Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point
+  notes' time behind it and join their steps by the note display's coarser pixels, and only where it would end past
+  the note display's right edge it moves left to stay inside (#1713), so that an in-place editor's keeps still as the
+  project window scrolls (#1746). Its button at the top left is Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point
   where it clicks, and a drag draws points along the way where the value changes (not one per mouse position), replacing
   those of the expression in the range it went over; at the right edge it draws at the last note's last tick. With
   Shift, tuning goes in semitone steps (Vertical Snap). The erase tool deletes the points of the expression it is
@@ -212,7 +212,8 @@ click deletes the note. With several selected notes of two parts they check the 
 of them over their span, centered on the note clicked, an edit reaching each note at its time, a drag leaving a point
 where the value changes, one undo step for both parts, Vertical Snap and the editor closing when the selection empties;
 the editor centered on its note while the pitches zoom; on the top row the editor inside the note display and wider than
-its button, and a draw released outside the window; a dense note's lines a pixel each after the window's layout and a
+its button, and a draw released outside the window; on a short note right of the note display's middle the editor
+starting at the note; a dense note's lines a pixel each after the window's layout and a
 resize, a resize by less than a quarter keeping them, and lines that first show after the window narrowed by less than
 a quarter, also on the box of the layout before, built for the narrower width. `tests/inplaceeditor_ui_tests.cpp`
 checks the draw tool on a line of the editor in an in-place editor and a dense note's lines a pixel each after its
