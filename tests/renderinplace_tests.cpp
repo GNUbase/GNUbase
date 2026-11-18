@@ -72,7 +72,7 @@ namespace
 		void deactivate() override { m_plugin->deactivate(); }
 		bool startProcessing() noexcept override { return m_plugin->startProcessing(); }
 		void stopProcessing() noexcept override { m_plugin->stopProcessing(); }
-		void reset() noexcept override { m_plugin->reset(); }
+		void reset() noexcept override { (*m_plugin).reset(); }
 		gnubase::plugin::ProcessStatus process(const gnubase::plugin::Process& process) noexcept override
 		{
 			++(process.mode == gnubase::plugin::ProcessMode::Offline ? m_modes->offlineBlocks
