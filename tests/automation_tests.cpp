@@ -1669,7 +1669,6 @@ TEST_CASE("automation.copy and automation.paste copy automation between tracks w
 
 TEST_CASE("automation.copy keeps the given tracks without automation in their order, and says what it copied", "[unit]")
 {
-	using Points = std::vector<std::pair<int64_t, double>>;
 	Engine engine;
 	Client client(engine);
 	std::mutex mutex;
@@ -1696,11 +1695,16 @@ TEST_CASE("automation.copy keeps the given tracks without automation in their or
 		Json{{"lanes", 1}});
 	run(client, "automation.paste", {{"tracks", {tracks[2], tracks[3]}}, {"start", 0}, {"end", 48000}});
 	CHECK(lanePoints(client, tracks[2], "volume").points.empty());
-	const Points pasted = lanePoints(client, tracks[3], "volume").points;
-	REQUIRE(pasted.size() == 2);
-	for (const auto& [at, value] : pasted)
+	// The lane had no points: the static value plays again in the gap a terminator starts after the paste (reference
+	// manual p. 879).
+	const LanePoints pasted = lanePoints(client, tracks[3], "volume");
+	REQUIRE(pasted.points.size() == 3);
+	CHECK(pasted.points[0].first == 0);
+	CHECK(pasted.points[1].first == 48000);
+	CHECK(pasted.points[2].first == 48000);
+	for (const auto& [at, value] : pasted.points)
 		CHECK(std::abs(value + 6.0) < 1e-6);
-	CHECK(pasted[1].first == 48000);
+	CHECK(pasted.terminators == std::vector<size_t>{2});
 
 	// automation.copied says how many lanes the clipboard holds, also none.
 	run(client, "automation.copy", {{"tracks", {tracks[0]}}, {"start", 0}, {"end", 48000}});
