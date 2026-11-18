@@ -40,10 +40,13 @@ if(GNUBASE_CLANG_TIDY)
 	endif()
 endif()
 
-# MSBuild compiles a project's files one at a time without /MP. Ninja runs one cl per file already, and sccache can't
-# cache /MP compiles, so the Ninja presets don't get it.
-if(MSVC AND CMAKE_GENERATOR MATCHES "^Visual Studio")
-	add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/MP>)
+# MSBuild compiles a project's files one at a time by default. Its multi-tool task runs one cl per file instead, and
+# EnforceProcessCountAcrossBuilds shares one limit, a cl per logical processor, across all projects that build at once,
+# even across MSBuild instances (#705). With /MP each of the four projects the build presets build at once ("jobs")
+# started a cl per logical processor: 94 at once on 32 threads, in the same time. To lower the limit, pass
+# -p:MultiProcMaxCount=<n> to MSBuild. Ninja runs one cl per file already.
+if(CMAKE_GENERATOR MATCHES "^Visual Studio")
+	list(APPEND CMAKE_VS_GLOBALS UseMultiToolTask=true EnforceProcessCountAcrossBuilds=true)
 endif()
 
 if(GNUBASE_LTO)
