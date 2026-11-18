@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -722,17 +723,23 @@ namespace gnubase::ui
 		std::set<uint64_t> result;
 		if (m_gesture != AutomationGesture::Move || moved.empty())
 			return result;
-		std::set<uint64_t> ids;
+		std::map<uint64_t, double> ids; // where each moved point goes
 		for (const auto& [id, point] : moved)
-			ids.insert(id);
+			ids[id] = point.position;
 		size_t first = lane.ids.size();
 		size_t last = 0;
+		bool shifted = false;
 		for (size_t i = 0; i < lane.ids.size(); ++i)
-			if (ids.count(lane.ids[i]) != 0)
+			if (const auto found = ids.find(lane.ids[i]); found != ids.end())
 			{
 				first = std::min(first, i);
 				last = i;
+				shifted = shifted || std::abs(found->second - lane.points[i].position) > 0.5 / m_time.sampleRate;
 			}
+		// A move that keeps the times (to half a sample, as a snap back gives them) replaces nothing: the other point
+		// of a jump at the selection's edge stays.
+		if (!shifted)
+			return result;
 		// A selection with unselected points in it replaces nothing; that it can't move past other points (reference
 		// manual p. 878) is not done yet.
 		for (size_t i = first; i <= last && i < lane.ids.size(); ++i)

@@ -7,6 +7,7 @@
 #include "engine/engine.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
+#include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/tracklist.h"
 
@@ -749,8 +750,44 @@ TEST_CASE("moved automation points replace those where they land, and clicks sel
 	CHECK(selected() == 0);
 }
 
-TEST_CASE("the zoom tool zooms on automation tracks, Show All Used Automation keeps those that show, and selecting a "
-		  "track reveals its automation tracks",
+TEST_CASE("a move of one of two automation points at one position that keeps the times keeps the other", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	// A jump at 2 s, from -20 dB to 0 dB, as pastes leave at their edges.
+	f.app.call("automationPoint.add",
+		{{"lane", volume},
+			{"points",
+				{{{"position", 48000}, {"value", -20.0}}, {{"position", 96000}, {"value", -20.0}},
+					{{"position", 96000}, {"value", 0.0}}}}});
+	f.settle(volume);
+	const auto values = [&]
+	{
+		std::vector<double> found;
+		const Json lane = f.lane(volume);
+		for (const Json& point : lane.at("points"))
+			found.push_back(point.at("value").get<double>());
+		return found;
+	};
+	REQUIRE(values().size() == 3);
+
+	// Up and down only with Ctrl: the point at -20 dB goes up and the jump's other point stays, in the preview too.
+	const int y = f.y(volume, 40.0 / 66.0);
+	const ui::Target down{"", 0, ui::Point{f.x(2.0), y}};
+	const ui::Target up{"", 0, ui::Point{f.x(2.0) + 1, y - 8}};
+	f.app.ui().press(std::nullopt, down, ui::MouseButton::Left, {"ctrl"});
+	f.app.ui().move(std::nullopt, up, {"ctrl"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.curve("automation-curve", volume).size() == 3);
+	f.app.ui().release(std::nullopt, up, ui::MouseButton::Left, {"ctrl"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return values().size() == 3 && values()[1] > -19.0; }));
+	CHECK(values()[0] == Approx(-20.0).margin(0.01));
+	CHECK(values()[2] == Approx(0.0).margin(0.01));
+}
+
+TEST_CASE("the zoom and play tools work on automation tracks, Show All Used Automation keeps those that show, and "
+		  "selecting a track reveals its automation tracks",
 	"[ui]")
 {
 	Automation f;
@@ -759,6 +796,40 @@ TEST_CASE("the zoom tool zooms on automation tracks, Show All Used Automation ke
 	const double scale = f.display.view().scale;
 	f.clickAt(f.x(1.0), f.y(volume, 0.5));
 	REQUIRE(f.app.waitUntil([&] { return f.display.view().scale < scale; }));
+
+	// The play tool auditions the automation track's audio track, and scrubs it (reference manual pp. 252-253).
+	ui::EngineBinding binding(f.app.engine());
+	std::vector<std::string> modes;
+	std::vector<uint64_t> auditioned;
+	const ui::Subscription subscription = binding.on("audition.changed",
+		[&](const engine::Event& event)
+		{
+			modes.push_back(event.data.at("mode").get<std::string>());
+			auditioned.push_back(event.data.at("track").get<uint64_t>());
+		});
+	const auto audition = [&](const std::vector<std::string>& expected)
+	{
+		return f.app.waitUntil(
+			[&]
+			{
+				binding.update();
+				return modes == expected;
+			});
+	};
+	f.display.setTool(ui::Tool::Play);
+	f.clickAt(f.x(1.0), f.y(volume, 0.5));
+	REQUIRE(audition({"play", "off"}));
+	CHECK(auditioned[0] == f.track);
+	f.display.setPlayMode(ui::PlayMode::Scrub);
+	f.drag(f.x(1.0), f.y(volume, 0.5), f.x(1.5), f.y(volume, 0.5));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			binding.update();
+			return modes.size() >= 4 && modes.back() == "off";
+		}));
+	CHECK(modes[2] == "scrub");
+	CHECK(auditioned[2] == f.track);
 	f.display.setTool(ui::Tool::ObjectSelection);
 
 	// Show All Used Automation leaves the unused automation track open.
@@ -919,11 +990,20 @@ TEST_CASE("automation tracks are selected, and the track list copies their autom
 	REQUIRE(f.app.waitUntil([&] { return positions().size() == 9; }));
 	CHECK(positions().at(5) == 192000);
 
-	// A new project has nothing copied and no selected automation tracks, whose ids its lanes get again.
+	// A new project has nothing copied, no selected automation tracks or points and no open automation tracks, whose
+	// ids its tracks, lanes and points get again.
 	clickRow(second);
+	const Json point = f.lane(volume).at("points").at(0).at("id");
+	f.display.selectPoints({{volume.get<uint64_t>(), {point.get<uint64_t>()}}});
+	REQUIRE(!f.display.selectedPoints().empty());
+	REQUIRE(f.display.automationShown(f.track));
 	f.app.call("project.new");
 	REQUIRE(f.app.waitUntil([&] { return !canRun("track.pasteAutomationAll"); }));
 	CHECK(f.app.appUi().trackList()->selectedLanes().empty());
+	CHECK(f.display.selectedPoints().empty());
+	CHECK(!f.display.automationShown(f.track));
+	CHECK(!f.display.automationShown(other));
+	CHECK(f.display.automationTargets(f.track) == nullptr);
 }
 
 TEST_CASE("a track's lanes come between its own lane and its automation tracks, under its row", "[ui]")
