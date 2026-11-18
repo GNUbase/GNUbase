@@ -321,6 +321,18 @@ namespace gnubase::engine
 				job->checkCancelled();
 		}
 
+		// mixdown.quickExport's render, which runs on the command thread and returns the result itself.
+		class InlineJob final : public JobContext
+		{
+		public:
+			bool cancelled() const override { return false; }
+			void progress(double /*fraction*/, const std::string& /*detail*/) override {}
+			Json command(std::string name, Json /*parameters*/) override
+			{
+				throw CommandError(name + " can't run from a quick export");
+			}
+		};
+
 		// Removes the part files and, unless the export is done, the files it wrote.
 		struct Cleanup
 		{
@@ -344,7 +356,7 @@ namespace gnubase::engine
 		};
 	}
 
-	Json AudioEngine::mixdown(const Json& parameters, const Json& project, bool quick, JobContext* job)
+	Json AudioEngine::mixdown(const Json& parameters, const Json& project, JobContext* job)
 	{
 		// Renders [start, end) and tail frames more of the targets, which have objects and paths, into their files:
 		// what they output, or with point, what their channel's strip has there (render in place and freeze). The
@@ -535,38 +547,6 @@ namespace gnubase::engine
 		};
 
 		CommandContext context(parameters);
-		if (quick)
-		{
-			const RenderSnapshot& snapshot = m_snapshots.latest();
-			std::optional<time::Samples> first;
-			for (const RenderChannel& channel : snapshot.channels)
-			{
-				for (const RenderAudioEvent& event : channel.audioEvents)
-					first = std::min(first.value_or(event.start), event.start);
-				for (const RenderNote& note : channel.notes)
-					first = std::min(first.value_or(note.start), note.start);
-			}
-			const time::Samples end = projectEnd();
-			if (!first || end <= *first)
-				throw CommandError("the project has no events to export");
-			FileFormat format;
-			format.sampleRate = snapshot.sampleRate;
-			format.overwrite = true;
-			std::vector<Target> targets(1);
-			for (const RenderBus& bus : snapshot.busses)
-				if (bus.mainMix)
-					targets[0].object = bus.id;
-			require(targets[0].object != 0, "there is no main mix");
-			targets[0].name = "Main Mix";
-			targets[0].path = fs::u8path(parameters.at("path").get<std::string>());
-			std::error_code error;
-			if (targets[0].path.has_parent_path())
-				fs::create_directories(targets[0].path.parent_path(), error);
-			const Json result = exportRange(context, targets, *first, end,
-				static_cast<time::Samples>(std::llround(g_maxTailSeconds * snapshot.sampleRate)), format, std::nullopt);
-			const Json& file = result.at("files").at(0);
-			return Json{{"path", file.at("path")}, {"frames", file.at("frames")}};
-		}
 		{
 			const RenderSnapshot& snapshot = m_snapshots.latest();
 			const FileFormat format = formatFrom(parameters, snapshot.sampleRate);
@@ -585,7 +565,8 @@ namespace gnubase::engine
 			require(unique.size() == objects.size(), "channels names a channel twice");
 
 			const fs::path folder = fs::u8path(parameters.at("folder").get<std::string>());
-			const std::string name = parameters.at("name").get<std::string>();
+			const std::string name = parameters.value("name", std::string());
+			const auto path = parameters.find("path"); // mixdown.quickExport's file, the one target's
 			std::vector<Target> targets(objects.size());
 			std::set<fs::path> taken;
 			for (size_t i = 0; i < objects.size(); ++i)
@@ -595,8 +576,10 @@ namespace gnubase::engine
 					throw CommandError("there is no bus or channel " + std::to_string(objects[i]));
 				targets[i].object = objects[i];
 				targets[i].name = *found;
-				targets[i].path = claim(folder, objects.size() == 1 ? name : name + " - " + targets[i].name,
-					extensionOf(format.format), format.overwrite, taken);
+				targets[i].path = path != parameters.end()
+					? fs::u8path(path->get<std::string>())
+					: claim(folder, objects.size() == 1 ? name : name + " - " + targets[i].name,
+						  extensionOf(format.format), format.overwrite, taken);
 				taken.insert(targets[i].path);
 			}
 			std::optional<RenderPoint> point;
@@ -610,7 +593,8 @@ namespace gnubase::engine
 			const auto tail =
 				static_cast<time::Samples>(std::llround(parameters.value("tail", 0.0) * snapshot.sampleRate));
 			std::error_code error;
-			fs::create_directories(folder, error);
+			if (!folder.empty())
+				fs::create_directories(folder, error);
 			require(!error, "can't create the folder " + folder.u8string() + ": " + error.message());
 			Cleanup reserved{targets};
 			for (Target& target : targets)
@@ -706,7 +690,7 @@ namespace gnubase::engine
 			for (const ObjectId slot : prepared->activeSlots)
 				require(renderer.m_slots->status(slot) == "active",
 					"render plugin slot " + std::to_string(slot) + " could not be activated");
-			return renderer.mixdown(prepared->parameters, prepared->project, false, &job);
+			return renderer.mixdown(prepared->parameters, prepared->project, &job);
 		};
 	}
 
@@ -767,11 +751,25 @@ namespace gnubase::engine
 				false},
 			[this](CommandContext& context)
 			{
-				const bool playing = m_transport.playing();
-				Json result = mixdown(context.parameters(), context.call("project.get"), true, nullptr);
-				if (playing)
-					context.emit("transport.changed", transportStatus());
-				return result;
+				const RenderSnapshot& snapshot = m_snapshots.latest();
+				std::optional<time::Samples> first;
+				for (const RenderChannel& channel : snapshot.channels)
+				{
+					for (const RenderAudioEvent& event : channel.audioEvents)
+						first = std::min(first.value_or(event.start), event.start);
+					for (const RenderNote& note : channel.notes)
+						first = std::min(first.value_or(note.start), note.start);
+				}
+				const time::Samples end = projectEnd();
+				if (!first || end <= *first)
+					throw CommandError("the project has no events to export");
+				// mixdown.export's private render, run here: the live graph, transport and plugins don't take part.
+				const fs::path path = fs::u8path(context.parameters().at("path").get<std::string>());
+				const Json request = {{"path", path.u8string()}, {"folder", path.parent_path().u8string()},
+					{"start", *first}, {"end", end}, {"tail", g_maxTailSeconds}, {"conflicts", "overwrite"}};
+				InlineJob job;
+				const Json file = mixdownWork(request, context.call("project.get"))(job).at("files").at(0);
+				return Json{{"path", file.at("path")}, {"frames", file.at("frames")}};
 			});
 	}
 }

@@ -372,6 +372,9 @@ TEST_CASE("a mixdown refuses what it can't export and leaves no files", "[integr
 	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}}), ContainsSubstring("44100 Hz"));
 	CHECK_THAT(reject(project.client, "mixdown.quickExport", {{"path", (project.folder.path() / "q.wav").u8string()}}),
 		ContainsSubstring("sample rate"));
+	CHECK_THAT(
+		reject(project.client, "mixdown.quickExport", {{"path", (project.folder.path() / "new" / "q.wav").u8string()}}),
+		ContainsSubstring("sample rate"));
 	CHECK(fs::directory_iterator(project.folder.path()) == fs::directory_iterator());
 }
 
@@ -405,6 +408,24 @@ TEST_CASE("a quick export keeps the tail of effects", "[integration][slow]")
 	CHECK(frames < 4800 + (30 * 48000));
 	const Read read = readFile(path.u8string());
 	CHECK(std::max(std::abs(read.samples[read.samples.size() - 2]), std::abs(read.samples.back())) > 0.0f);
+}
+
+TEST_CASE("a quick export starts with fresh effects and leaves the transport playing", "[integration][slow]")
+{
+	Session project;
+	const ObjectId channel = project.addTrack("Ramp", 0, 4800);
+	const Json slot =
+		run(project.client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:delay"}}).at("slot").at("id");
+	waitUntilActive(project.client, slot);
+	// Playback fills the live delay's lines with echoes, which an export must not start with (#718).
+	run(project.client, "transport.play");
+	run(project.client, "audio.render", {{"frames", 30000}});
+	const fs::path path = project.folder.path() / "quick.wav";
+	run(project.client, "mixdown.quickExport", {{"path", path.u8string()}});
+	CHECK(run(project.client, "transport.get").at("playing") == true);
+	run(project.client, "transport.stop");
+	const std::string fresh = project.exportedFile({{"name", "fresh"}, {"start", 0}, {"end", 4800}, {"tail", 30}});
+	CHECK(firstDifference(readFile(path.u8string()).samples, readFile(fresh).samples) == -1);
 }
 
 TEST_CASE("cancelling a background overwrite export keeps the existing file", "[integration]")

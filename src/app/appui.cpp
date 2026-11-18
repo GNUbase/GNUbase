@@ -897,7 +897,7 @@ namespace gnubase::app
 				dialog.location = "Mixdown.wav";
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this](const ui::FileDialogResult& chosen)
+					[this, id = window.id()](const ui::FileDialogResult& chosen)
 					{
 						if (!chosen.error.empty())
 							logging::warning("The file dialog failed: {}", chosen.error);
@@ -906,7 +906,17 @@ namespace gnubase::app
 						std::filesystem::path file = chosen.files.front();
 						if (file.extension().empty())
 							file += ".wav";
-						m_binding.send("mixdown.quickExport", {{"path", file.u8string()}});
+						// The reference opens the file's folder after the export (reference manual p. 1479).
+						m_binding.send("mixdown.quickExport", {{"path", file.u8string()}},
+							[this, id](const engine::Result& result)
+							{
+								if (!result.ok())
+									m_files.showError(id, result.error);
+								else
+									m_openExternally(std::filesystem::u8path(result.value.at("path").get<std::string>())
+														 .parent_path(),
+										false);
+							});
 					});
 			}});
 		// File > Export and File > Import > Tempo Track (docs/features/tempo-track.md) and Markers
