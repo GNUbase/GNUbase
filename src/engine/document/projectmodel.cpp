@@ -2186,9 +2186,9 @@ namespace gnubase::engine
 			const Channel before = channel;
 			channel = changed;
 			const std::set<ObjectId> soloed = passOn(project, before, channel.id, parameters, context);
-			// Exclusive solo (reference manual p. 466): every other channel's solo goes off, but for those the solo
-			// went on to.
-			if (parameters.value("exclusive", false))
+			// Exclusive solo (reference manual p. 466): with solo on, every other channel's solo goes off, but for
+			// those the solo went on to.
+			if (parameters.value("exclusive", false) && parameters.value("solo", false))
 				for (auto& [id, other] : project.channels)
 					if (id != channel.id && other.solo && soloed.count(id) == 0)
 					{
@@ -4570,7 +4570,9 @@ namespace gnubase::engine
 				"channels and VCA faders don't pass them on to it. mute silences a channel; "
 				"while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
-				"channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; "
+				"channels that play into them are heard; exclusive with solo true turns every other channel's solo "
+				"off, "
+				"and does nothing without it; "
 				"soloDefeat keeps a channel and the channels it plays through heard while others are soloed. listen "
 				"(not MIDI channels) also plays the channel after its fader on the monitoring bus, the main mix, which "
 				"is turned down to the user setting audio.listenDim while any channel listens; the listening channels "

@@ -17,8 +17,9 @@ modes, solo defeat, the Deactivate All buttons and listen.
   are soloed, with the channels they play through; alone, solo defeat changes nothing. A muted channel stays silent
   either way. The others are `silent` in the render snapshot and glide out over one block. Sends are links of the
   same graph: a soloed track keeps the effect channels it sends to ([routing.md](routing.md)).
-- **Exclusive solo** (p. 466): `channel.set` with `solo` and `exclusive: true` turns every other channel's solo
-  off in the same undo step, announcing each with `channel.changed`.
+- **Exclusive solo** (p. 466): `channel.set` with `solo: true` and `exclusive: true` turns every other channel's
+  solo off in the same undo step, announcing each with `channel.changed`; `exclusive` without `solo: true` changes
+  nothing.
 - **Deactivate All Mute, Solo or Listen States** (p. 447): `channel.deactivateAll` with `state` `mute`, `solo` or
   `listen` turns it off on every channel, solo together with solo defeat, as one undo step, and returns the
   channels that changed.
@@ -28,7 +29,9 @@ modes, solo defeat, the Deactivate All buttons and listen.
   listening channel's node, and the audio thread (`AudioEngine::output`) turns the main mix's device ports down to the
   user setting `audio.listenDim` (dB, default -144: only the listening channels are heard) and adds the listen bus
   there at `audio.listenLevel` (dB, default 0). The dim glides over one block as listening starts and ends. Other
-  output busses are left alone. Offline rendering (`audio.render`) plays what the device would.
+  output busses are left alone. Offline rendering (`audio.render`) plays what the device would, and the main mix's
+  meter and loudness ([metering.md](metering.md)) measure it too: what is heard, with the dim and the listen bus. The
+  audio mixdown ([mixdown.md](mixdown.md)) exports the main mix without them.
 
 ## In the mixer
 
@@ -54,8 +57,11 @@ with dimming.
 
 - `tests/document_tests.cpp`: which channels solo silences through nested groups and an effect channel routed to a
   group, solo defeat with and without solo, exclusive solo, `channel.deactivateAll` for each state and its undo;
-  listening channels feed one `listenBus` node in `graph.get`, MIDI channels refuse listen.
+  `exclusive` without solo; listening channels feed one `listenBus` node in `graph.get`, which receives their
+  channel nodes, also behind plugin slots; MIDI channels refuse listen.
 - `tests/mixer_tests.cpp` renders a listening track at -20 dB beside another one: the mix glides out to the default
   dim, a new dim and listen level glide in, and the mix glides back once listening ends, sample by sample.
+- `tests/mixdown_tests.cpp`: a mixdown while a channel listens is the main mix, bit for bit.
 - `tests/dawproject_tests.cpp` saves and loads solo defeat and listen.
-- `tests/mixerwindow_tests.cpp`: S, Ctrl-click and Alt-click on S, L, M and the toolbar's Deactivate All buttons.
+- `tests/mixerwindow_tests.cpp`: S, Ctrl-click and Alt-click on S, L, M and the toolbar's Deactivate All buttons;
+  `tests/tracklist_tests.cpp` the track list's Ctrl-click and Alt-click on S.

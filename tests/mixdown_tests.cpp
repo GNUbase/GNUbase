@@ -220,6 +220,23 @@ TEST_CASE("an exported mixdown is bit-identical to an offline render of the same
 	CHECK(transport.at("playing") == false);
 }
 
+TEST_CASE("a mixdown exports the main mix without the listen dim and the listen bus", "[integration]")
+{
+	// Listening (docs/features/solo-mute-listen.md) changes what the device plays, not what is exported.
+	Session exported;
+	exported.addTrack("Ramp", 1000);
+	const ObjectId listening = exported.addTrack("Other", 2000);
+	run(exported.client, "channel.set", {{"channel", listening}, {"listen", true}});
+	const std::string path = exported.exportedFile({{"start", 0}, {"end", 6000}, {"sampleFormat", "float32"}});
+
+	Session offline;
+	offline.addTrack("Ramp", 1000);
+	offline.addTrack("Other", 2000);
+	const std::vector<float> expected = rendered(offline, 0, 6000);
+	CHECK(peakOf(expected) > 0.4f);
+	CHECK(firstDifference(readFile(path).samples, expected) == -1);
+}
+
 TEST_CASE("a mixdown exports the locator range, and a file per channel", "[integration]")
 {
 	Session project;

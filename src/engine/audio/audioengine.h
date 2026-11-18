@@ -148,7 +148,6 @@ namespace gnubase::engine
 		void process(const audio::DeviceBlock& block) noexcept override;
 
 	private:
-		// Where a bus node meets the device.
 		// The user settings audio.listenDim and audio.listenLevel, as linear gains.
 		struct ListenGains
 		{
@@ -159,6 +158,7 @@ namespace gnubase::engine
 			bool operator!=(const ListenGains& other) const { return !(*this == other); }
 		};
 
+		// Where a bus node meets the device.
 		struct BusLink
 		{
 			int node = 0;
