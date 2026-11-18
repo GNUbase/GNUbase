@@ -346,18 +346,18 @@ TEST_CASE("every theme looks the same on every platform, and switches without lo
 		return image;
 	};
 	std::optional<ui::Image> first;
-	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	for (const std::string& theme : test::themes(GNUBASE_RESOURCES_DIR))
 	{
 		INFO("theme " << theme);
 		gpu.shell->setTheme(theme);
 		CHECK(window.context().GetDocument(0) == document);
 		const ui::Image image = compare("theme-" + theme, 1);
-		if (!first)
+		if (theme == ui::g_defaultTheme)
 			first = image;
 	}
 
-	// Back to the first theme: the same pixels as before.
-	gpu.shell->setTheme("gnubase");
+	// Back to the default theme: the same pixels as before.
+	gpu.shell->setTheme(ui::g_defaultTheme);
 	const ui::Image again = crop(gpu.screenshot(window, "theme-gnubase-again"), 0, 0, 560, 360);
 	const test::ImageDiff same = test::compareImages(again, first.value_or(ui::Image{}), {0});
 	INFO(same.report);
@@ -414,7 +414,7 @@ TEST_CASE(
 		}
 		return largest;
 	};
-	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	for (const std::string& theme : test::themes(GNUBASE_RESOURCES_DIR))
 	{
 		INFO("theme " << theme);
 		gpu.shell->setTheme(theme);

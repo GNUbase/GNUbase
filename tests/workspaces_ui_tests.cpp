@@ -507,7 +507,7 @@ TEST_CASE("the Windows dialog's mode select and buttons are one column inside th
 				   << ", " << b[1] << ", " << b[2] << ", " << b[3] << "]");
 		return a[0] >= b[0] - 0.5 && a[1] >= b[1] - 0.5 && a[2] <= b[2] + 0.5 && a[3] <= b[3] + 0.5;
 	};
-	for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
+	for (const std::string& theme : test::themes(GNUBASE_RESOURCES_DIR))
 	{
 		INFO("theme " << theme);
 		app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});

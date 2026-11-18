@@ -277,6 +277,16 @@ namespace gnubase::test
 		return text.str();
 	}
 
+	std::vector<std::string> themes(const std::filesystem::path& resources)
+	{
+		std::vector<std::string> ids;
+		for (const auto& entry : std::filesystem::directory_iterator(resources / "themes"))
+			if (std::filesystem::is_regular_file(entry.path() / "theme.rcss"))
+				ids.push_back(entry.path().filename().u8string());
+		std::sort(ids.begin(), ids.end());
+		return ids;
+	}
+
 	Unreadable::Unreadable(std::filesystem::path file)
 		: m_file(std::move(file)), m_folder(std::filesystem::is_directory(m_file))
 	{

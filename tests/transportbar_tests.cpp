@@ -988,7 +988,7 @@ TEST_CASE("the time displays keep their width while the cursor moves, and their 
 	// a dp ratio of 1 a 13 dp digit is 8 px, at 0.85 an 11 px face's is 7 px of 11.05, the most a character takes of
 	// its em (#1379).
 	for (const float dpRatio : {1.0F, 0.85F})
-		for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
+		for (const std::string& theme : test::themes(GNUBASE_RESOURCES_DIR))
 		{
 			INFO("dp ratio " << dpRatio << ", theme " << theme);
 			app.setDpRatio(dpRatio);

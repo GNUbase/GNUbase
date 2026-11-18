@@ -15,13 +15,16 @@ UI: keys through MCP's `ui_key` (`ui::Automation::key`), the theme and the scale
 - **Keys on the focused control.** Space and Enter click a button and Space toggles a check box (RmlUi). A drop-down
   list opens and closes with Enter, its arrows step through the options while it is open, and Escape closes it without
   choosing. The arrow keys move a list view's selection and step knobs, faders, sliders and value fields; Enter edits a
-  value field as text, Enter again takes the number ([widgets.md](widgets.md)).
-- **Enter and Escape.** Enter clicks the dialog's primary button from a text field, a check box or a list, but a
-  focused button clicks itself, so Enter on Cancel cancels. Escape closes an open drop-down list or menu first, then the
+  value field as text, Enter again takes the number ([widgets.md](widgets.md)). A value field with `autofocus` in a
+  dialog, such as Repeat Events' count, is the dialog's main field instead: it is edited when it gets the focus, and
+  Enter takes the number and clicks OK.
+- **Enter and Escape.** Enter clicks the dialog's primary button from a text field, the main value field, a check box
+  or a list, but a focused button clicks itself, so Enter on Cancel cancels. Escape closes an open drop-down list or menu first, then the
   dialog with the result `cancel` (`ui::Dialog` in `src/ui/popupwidgets.cpp`).
 - **Docking windows.** Tab and Shift+Tab move the focus between the zones of the project window, as in the reference
-  (#379, [docking.md](docking.md)), and the zone with the focus is framed. The menus take Up, Down and Enter once open;
-  moving between the menus of the menu bar with the keyboard and opening them with Alt are #445, the setup panes #460.
+  (#379, [docking.md](docking.md)), and the zone with the focus is framed. The menus take Up, Down and Enter once open,
+  Left and Right move between the menus of the menu bar, and Alt on its own opens the File menu on Windows and Linux
+  ([main-menu.md](main-menu.md)); the setup panes with the keyboard are #460.
 - **Key commands.** Every key command can have keys of its own ([key-commands.md](key-commands.md)), also commands
   without default keys such as `project.addTrack`, which opens the add track dialog.
 
@@ -57,7 +60,7 @@ for MCP. Implementing it is a ticket of its own.
 
 ## Not yet
 
-A screen reader implementation (above); the menu bar and the setup panes with the keyboard (#445, #460); keyboard
+A screen reader implementation (above); the setup panes with the keyboard (#460); keyboard
 focus in the zones' own panels beyond the zone, such as moving between the tracks of the track list, which come with
 those panels; a focus ring outside a control's box rather than on its edge.
 

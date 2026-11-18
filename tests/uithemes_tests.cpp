@@ -156,7 +156,9 @@ TEST_CASE("every document gets the design system and the active theme's colors, 
 		window.requestRender();
 		fake.shell.step(milliseconds(0));
 	};
-	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast", "gnubase"})
+	std::vector<std::string> order = test::themes(resources());
+	order.push_back(order.front()); // and back to the first
+	for (const std::string& theme : order)
 	{
 		INFO("theme " << theme);
 		fake.shell.setTheme(theme);
@@ -211,7 +213,7 @@ TEST_CASE("every theme dims the edit history's undone steps, details too, and dr
 	REQUIRE(undone != nullptr);
 	REQUIRE(separator != nullptr);
 
-	for (const std::string theme : {"gnubase", "dark", "light"})
+	for (const std::string& theme : test::themes(resources()))
 	{
 		INFO("theme " << theme);
 		fake.shell.setTheme(theme);
@@ -245,7 +247,7 @@ TEST_CASE("every theme draws play probability and velocity variance bars dashed,
 	document->Show();
 	Rml::Element* velocity = document->GetElementById("velocity");
 	REQUIRE(velocity != nullptr);
-	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	for (const std::string& theme : test::themes(resources()))
 	{
 		INFO("theme " << theme);
 		fake.shell.setTheme(theme);
@@ -317,7 +319,7 @@ TEST_CASE(
 			button->SetPseudoClass(state, false);
 		return skin;
 	};
-	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	for (const std::string& theme : test::themes(resources()))
 	{
 		INFO("theme " << theme);
 		fake.shell.setTheme(theme);

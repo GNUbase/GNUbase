@@ -811,15 +811,16 @@ namespace gnubase::ui
 						tooltip->hide();
 					// Alt alone arms the menu bar, for when it's released; any other key with it disarms it.
 					m_alt = isAlt(key) && !otherModifiers(event);
+					// Escape closes the open menus or drop-down list, not the dialog around them.
 					if (key == Rml::Input::KI_ESCAPE)
+					{
 						if (const std::vector<Menu*> open = openMenus(*document); !open.empty())
 						{
 							for (Menu* menu : open)
 								menu->close();
-							event.StopPropagation(); // Escape closed the menu, not the dialog around it
+							event.StopPropagation();
 							break;
 						}
-					if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_ESCAPE)
 						if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(target);
 							select != nullptr && select->IsSelectBoxVisible())
 						{
@@ -827,6 +828,7 @@ namespace gnubase::ui
 							event.StopPropagation();
 							break;
 						}
+					}
 					if (Dialog* dialog = dialogOf(*document))
 						dialog->key(event);
 					break;

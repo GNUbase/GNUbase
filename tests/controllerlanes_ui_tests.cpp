@@ -245,7 +245,7 @@ TEST_CASE(
 	const std::string row = ".controller-lane[lane-kind=articulations] .articulation-row[articulation-row]";
 	REQUIRE(
 		f.app.waitUntil([&] { return f.elements(".controller-lane-type").size() == 3 && !f.elements(row).empty(); }));
-	for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
+	for (const std::string& theme : test::themes(GNUBASE_RESOURCES_DIR))
 	{
 		INFO("theme " << theme);
 		f.app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
