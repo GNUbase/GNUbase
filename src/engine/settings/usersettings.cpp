@@ -834,9 +834,9 @@ namespace gnubase::engine::settings
 					"to Project Cursor Position), and for the transpose track transposeMute (Mute Transpose Events), "
 					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock), for the chord track "
 					"chordRecord (Record Enable), chordMute (Mute Chord Track), chordAudition (Select Track for "
-					"Auditioning) and showScales (Show Scales), and for folders groupEditing (Group Editing). "
-					"The signature track has no controls yet. Mute and solo always show on tracks with a channel; a "
-					"type left out shows none.",
+					"Auditioning) and showScales (Show Scales), for the signature track signatureLock (Lock), and for "
+					"folders groupEditing (Group Editing). Mute and solo always show on tracks with a channel; a type "
+					"left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "array"},
@@ -849,7 +849,7 @@ namespace gnubase::engine::settings
 												"transposeLock", "chordRecord", "chordMute", "chordAudition",
 												"showScales", "addPositionMarker", "addCycleMarker",
 												"activateMarkerTrack", "markerLocate", "markerCycle", "markerZoom",
-												"groupEditing"}}}}}}},
+												"groupEditing", "signatureLock"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
@@ -858,7 +858,7 @@ namespace gnubase::engine::settings
 							{"addPositionMarker", "addCycleMarker", "activateMarkerTrack", "markerLocate",
 								"markerCycle", "markerZoom"}},
 						{"ruler", {"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}},
-						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}}, {"signature", Json::array()},
+						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}}, {"signature", {"signatureLock"}},
 						{"transpose", {"transposeMute", "keepInOctave", "timeBase", "transposeLock"}},
 						{"chord", {"chordRecord", "chordMute", "showScales", "timeBase", "chordAudition"}}}},
 				{"ui.trackWidths",

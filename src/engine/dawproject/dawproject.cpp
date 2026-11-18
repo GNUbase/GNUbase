@@ -418,6 +418,21 @@ namespace gnubase::engine
 					tempo.push_back({position, value, ramp});
 				ramp = std::string(point.attribute("interpolation").as_string("hold")) == "linear";
 			}
+			std::optional<time::TempoMap> tempoMap;
+			try
+			{
+				tempoMap.emplace(tempo);
+			}
+			catch (const std::invalid_argument& error)
+			{
+				throw DawProjectError(std::string("the file's tempo or time signature is invalid: ") + error.what());
+			}
+			// The signature commands refuse bars past the longest possible project (#729), and so does a file: at the
+			// lowest sample rate, as a tempo track file has none.
+			const time::Ticks longest =
+				tempoMap->toTicks(static_cast<double>(time::g_maxPosition) / g_lowestSampleRate);
+			const char* const pastLongest =
+				"the file's time signature is invalid: a bar is past the longest possible project";
 			const pugi::xml_node signature = transport.child("TimeSignature");
 			time::TimeSignature first{
 				signature.attribute("numerator").as_int(4), signature.attribute("denominator").as_int(4)};
@@ -435,8 +450,13 @@ namespace gnubase::engine
 					changes.front().signature = next;
 					continue;
 				}
+				// Before its bar could overflow.
+				if (!(beat * time::g_ticksPerQuarter <= static_cast<double>(longest)))
+					throw DawProjectError(pastLongest);
 				const time::TimeSignature previous = changes.back().signature;
 				const double barBeats = previous.numerator * 4.0 / previous.denominator;
+				if (!(barBeats > 0.0))
+					throw DawProjectError("the file's time signature is invalid");
 				const int64_t bar = changes.back().bar + std::llround((beat - changeBeat) / barBeats);
 				if (bar > changes.back().bar)
 				{
@@ -444,13 +464,28 @@ namespace gnubase::engine
 					changeBeat = beat;
 				}
 			}
-			// The signature commands take numerators up to 99, and so does a file (#771).
-			for (const time::SignatureChange& change : changes)
-				if (change.signature.numerator > 99)
+			// The signature commands take numerators up to 99, and so does a file (#771); each bar starts within the
+			// longest project, as signature.cpp counts them.
+			time::Ticks start = 0;
+			for (size_t i = 0; i < changes.size(); ++i)
+			{
+				if (changes[i].signature.numerator > 99)
 					throw DawProjectError("the file's time signature is invalid: its numerator is above 99");
+				if (i == 0)
+					continue;
+				const time::TimeSignature& previous = changes[i - 1].signature;
+				const time::Ticks barLength = previous.denominator > 0
+					? time::g_ticksPerQuarter * 4 * previous.numerator / previous.denominator
+					: 0;
+				if (barLength <= 0)
+					throw DawProjectError("the file's time signature is invalid");
+				if (changes[i].bar - changes[i - 1].bar > (longest - start) / barLength)
+					throw DawProjectError(pastLongest);
+				start += (changes[i].bar - changes[i - 1].bar) * barLength;
+			}
 			try
 			{
-				return {time::TempoMap(tempo), time::SignatureMap(changes)};
+				return {*tempoMap, time::SignatureMap(changes)};
 			}
 			catch (const std::invalid_argument& error)
 			{

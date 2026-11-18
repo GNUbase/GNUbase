@@ -101,10 +101,13 @@ namespace gnubase::ui
 	};
 
 	// The time signature events on the signature track's lane in an event display, which follow the project and the
-	// display's view. The row takes the display's tools: draw draws, erase erases, the others select. The display
-	// selects events or time signature events: selecting either deselects the other (see AppUi), and the display shows
-	// the edits the engine refuses (EventDisplay::showRefusal). Use it on the UI thread; the display and the binding
-	// must outlive it.
+	// display's view, over the bars in the lane's background (reference manual p. 163): a .signature-bar at the start
+	// of each bar in view, or of every second, fourth and so on where they would be closer than 8 dp, in the row's
+	// .signature-bars, whatever the ruler's time format. The row takes the display's tools: draw draws, erase erases,
+	// the others select. The display selects events or time signature events: selecting either deselects the other
+	// (see AppUi, which onSelect tells of time signature events selected), and the display shows the edits the engine
+	// refuses (EventDisplay::showRefusal). A hidden lane has none selected. Use it on the UI thread; the display and
+	// the binding must outlive it.
 	class SignatureLane
 	{
 	public:
@@ -116,15 +119,20 @@ namespace gnubase::ui
 		~SignatureLane() = default;
 
 		SignatureRow& row() { return m_row; }
+		// Told when the user selects time signature events, after the display's events are deselected.
+		void onSelect(std::function<void()> handler) { m_onSelect = std::move(handler); }
 
 	private:
 		void requestProject();
 		void place();
+		void placeBars();
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the binding's answers after it went
 		SignatureRow m_row;
+		Rml::Element* m_bars = nullptr; // .signature-bars, behind the events
+		std::function<void()> m_onSelect;
 		uint64_t m_track = 0; // the signature track, 0 without one
 		bool m_loading = false;
 		bool m_stale = false;

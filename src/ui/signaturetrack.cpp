@@ -23,6 +23,7 @@ namespace gnubase::ui
 
 		constexpr double g_dragStart = 2.0;       // dp a press moves before it moves events
 		constexpr double g_doubleClickTime = 0.5; // seconds, as RmlUi's double clicks
+		constexpr double g_barSpacing = 8.0;      // dp at least between the bars in the lane's background
 
 		Rml::Property dp(double value)
 		{
@@ -359,9 +360,19 @@ namespace gnubase::ui
 		m_row.onSelect(
 			[this]
 			{
-				if (!m_row.selection().empty() && !m_display.selection().empty())
+				if (m_row.selection().empty())
+					return;
+				if (!m_display.selection().empty())
 					m_display.select({});
+				if (m_onSelect)
+					m_onSelect();
 			});
+		if (Rml::Element* row = m_row.element())
+		{
+			Rml::ElementPtr bars = row->GetOwnerDocument()->CreateElement("div");
+			bars->SetClassNames("signature-bars");
+			m_bars = row->InsertBefore(std::move(bars), row->GetFirstChild());
+		}
 		m_row.setTool(
 			[this]
 			{
@@ -429,6 +440,9 @@ namespace gnubase::ui
 		element->SetClass("hidden", !shown);
 		if (!shown)
 		{
+			// Nobody can see them, so Delete doesn't remove them.
+			if (!m_row.selection().empty())
+				m_row.setSelection({});
 			if (Rml::Context* context = element->GetContext())
 				context->RequestNextUpdate(0);
 			return;
@@ -437,5 +451,40 @@ namespace gnubase::ui
 		element->SetProperty(Rml::PropertyId::Top, dp(tops[index] - view.top));
 		element->SetProperty(Rml::PropertyId::Height, dp(tops[index + 1] - tops[index]));
 		m_row.setView(view.start, view.scale);
+		placeBars();
+	}
+
+	void SignatureLane::placeBars()
+	{
+		const Rml::Element* element = m_row.element();
+		const Rml::Context* context = element != nullptr ? element->GetContext() : nullptr;
+		if (m_bars == nullptr || context == nullptr)
+			return;
+		const TimelineView& view = m_display.view();
+		const TimeContext& time = m_row.time();
+		// At least one bar's spacing, also before the display has a width.
+		const double width = std::max(g_barSpacing,
+			static_cast<double>(m_display.eventArea().GetClientWidth() / context->GetDensityIndependentPixelRatio()));
+		const int64_t first = time.signatures.toBarsBeats(time.tempo.toTicks(std::max(0.0, view.start))).bar;
+		const int64_t last =
+			time.signatures.toBarsBeats(time.tempo.toTicks(std::max(0.0, view.start + (width * view.scale)))).bar;
+		// Every n-th bar, n a power of two, so that they are g_barSpacing apart on average.
+		int64_t n = 1;
+		while (static_cast<double>(last - first) / static_cast<double>(n) > width / g_barSpacing)
+			n *= 2;
+		std::string rml;
+		for (int64_t bar = first / n * n; bar <= last; bar += n)
+			rml += R"(<div class="signature-bar" bar=")" + std::to_string(bar) + R"("/>)";
+		if (m_bars->GetAttribute<Rml::String>("bars", "") != rml)
+		{
+			m_bars->SetAttribute("bars", rml);
+			m_bars->SetInnerRML(rml);
+		}
+		for (int i = 0; i < m_bars->GetNumChildren(); ++i)
+		{
+			Rml::Element* bar = m_bars->GetChild(i);
+			const double seconds = time.tempo.toSeconds(time.signatures.barStart(bar->GetAttribute<int64_t>("bar", 0)));
+			bar->SetProperty(Rml::PropertyId::Left, dp((seconds - view.start) / view.scale));
+		}
 	}
 }

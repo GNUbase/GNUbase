@@ -10,6 +10,7 @@
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/fonts.h"
+#include "ui/markers.h"
 #include "ui/rmlui.h"
 #include "ui/shell.h"
 #include "ui/signaturetrack.h"
@@ -430,4 +431,139 @@ TEST_CASE("Insert Time Signature Event asks for a signature and adds an event at
 	app.ui().click(std::nullopt, {"#insert-signature-ok", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("signatures")[1] == change(2, 7, 8); }));
 	REQUIRE(app.waitUntil([&open] { return !open(); }));
+}
+
+TEST_CASE("the tempo track editor's time signature display says why the engine refused an edit", "[ui]")
+{
+	test::UiApp app{{1000, 600}};
+	app.appUi().showProject();
+	const Json track = app.call("track.add", {{"type", "signature"}}).at("track").at("id");
+	app.call("signature.add", change(2, 3, 4));
+	app.call("track.set", {{"track", track}, {"lock", true}});
+	app.ui().key(std::nullopt, "Mod+T");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().tempoEditor() != nullptr; }));
+	const ui::WindowId window = app.appUi().tempoWindow();
+	Rml::ElementDocument& document = editorDocument(app);
+	const auto events = [&document]
+	{
+		Rml::ElementList found;
+		document.QuerySelectorAll(found, "#signature-area .signature-event");
+		return found;
+	};
+	REQUIRE(app.waitUntil([&events] { return events().size() == 2; }));
+
+	// A drag of a time signature event while the signature track is locked (#729).
+	Rml::Element& event = *events()[1];
+	const float x = event.GetAbsoluteLeft() + (event.GetOffsetWidth() / 2.0F);
+	const float y = event.GetAbsoluteTop() + (event.GetOffsetHeight() / 2.0F);
+	app.ui().drag(window, point(x, y), point(x + 150.0F, y));
+	const Rml::Element* refusal = document.GetElementById("edit-refused");
+	REQUIRE(refusal != nullptr);
+	REQUIRE(app.waitUntil(
+		[refusal] { return refusal->GetAttribute<Rml::String>("text", "").find("locked") != Rml::String::npos; }));
+	CHECK(app.call("project.get").at("signatures")[1] == change(2, 3, 4));
+}
+
+TEST_CASE("the project window selects time signature events, markers or a range, one at a time", "[ui]")
+{
+	test::UiApp app{{1000, 600}};
+	ui::EventDisplay& display = app.appUi().showProject();
+	const uint64_t signature = app.call("track.add", {{"type", "signature"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t audio = app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	app.call("signature.add", change(2, 3, 4));
+	app.call("signature.add", change(3, 3, 4));
+	const uint64_t marker = app.call("marker.add", {{"position", "cursor"}}).at("marker").at("id").get<uint64_t>();
+	ui::SignatureRow& row = app.appUi().signatureLane()->row();
+	ui::MarkerLines& markers = *app.appUi().markerLines();
+	const auto events = [&row]
+	{
+		Rml::ElementList found;
+		row.element()->QuerySelectorAll(found, ".signature-event");
+		return found;
+	};
+	REQUIRE(app.waitUntil([&] { return events().size() == 3 && row.element()->GetOffsetHeight() > 0.0F; }));
+	REQUIRE(app.waitUntil([&markers] { return !markers.loading(); }));
+	const auto signatures = [&app] { return app.call("project.get").at("signatures"); };
+	const auto click = [&app](Rml::Element& element)
+	{
+		app.ui().click(std::nullopt, centre(element), ui::MouseButton::Left, 1, {});
+		app.shell().step(milliseconds(0));
+	};
+
+	// A marker, then a time signature event: Delete removes the event, which was selected last.
+	markers.pick({marker});
+	REQUIRE(markers.selection() == std::vector<uint64_t>{marker});
+	click(*events()[1]);
+	REQUIRE(row.selection() == std::vector<int64_t>{2});
+	CHECK(markers.selection().empty());
+	app.ui().key(std::nullopt, "Delete");
+	REQUIRE(app.waitUntil([&] { return signatures().size() == 2; }));
+	CHECK(app.call("project.get").at("markers").size() == 1);
+
+	// And the other way round: the marker selected deselects the event. (Clicks alternate between the events, as two
+	// on one soon after each other open it.)
+	REQUIRE(app.waitUntil([&] { return events().size() == 2; }));
+	click(*events()[0]);
+	REQUIRE(row.selection() == std::vector<int64_t>{0});
+	markers.pick({marker});
+	CHECK(row.selection().empty());
+
+	// A time signature event, then a range: the range is what is selected.
+	click(*events()[1]);
+	REQUIRE(row.selection() == std::vector<int64_t>{3});
+	app.keys().run("tool.rangeSelection", Json::object(), app.main(), nullptr);
+	display.setRange(ui::RangeSelection{0, 48000, {audio}});
+	app.shell().step(milliseconds(0));
+	CHECK(row.selection().empty());
+	app.ui().key(std::nullopt, "Delete");
+	app.shell().step(milliseconds(0));
+	CHECK(signatures().size() == 2);
+	// An event selected ends the range.
+	display.setRange(ui::RangeSelection{0, 48000, {audio}});
+	app.shell().step(milliseconds(0));
+	click(*events()[0]);
+	REQUIRE(row.selection() == std::vector<int64_t>{0});
+	CHECK(!display.range().has_value());
+
+	// A lane that goes keeps none selected, so that Delete doesn't remove what nobody sees.
+	app.call("track.remove", {{"track", signature}});
+	REQUIRE(app.waitUntil([&row] { return row.element()->IsClassSet("hidden"); }));
+	CHECK(row.selection().empty());
+	app.ui().key(std::nullopt, "Delete");
+	app.shell().step(milliseconds(0));
+	CHECK(signatures().size() == 2);
+}
+
+TEST_CASE("the signature track's lane shows bars in its background, whatever the ruler's format", "[ui]")
+{
+	test::UiApp app{{1000, 600}};
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.call("track.add", {{"type", "signature"}});
+	app.call("signature.add", change(2, 3, 4));
+	display.setRulerFormat(ui::TimeFormat::Seconds);
+	ui::SignatureRow& row = app.appUi().signatureLane()->row();
+	const auto bars = [&row]
+	{
+		Rml::ElementList found;
+		row.element()->QuerySelectorAll(found, ".signature-bars .signature-bar");
+		return found;
+	};
+	// A bar of 4/4 at 120 BPM lasts two seconds: zoomed so that it is 40 dp wide, every bar has a line.
+	display.zoomTo(0.0, 50.0);
+	REQUIRE(app.waitUntil([&] { return bars().size() > 4 && row.element()->GetOffsetHeight() > 0.0F; }));
+	const ui::TimeContext& time = row.time();
+	for (size_t i = 0; i < 4; ++i)
+	{
+		Rml::Element& bar = *bars()[i];
+		const auto number = bar.GetAttribute<int64_t>("bar", -1);
+		CHECK(number == static_cast<int64_t>(i));
+		const double seconds = time.tempo.toSeconds(time.signatures.barStart(number));
+		CHECK(bar.GetAbsoluteLeft() - row.element()->GetAbsoluteLeft() ==
+			Approx((seconds - display.view().start) / display.view().scale).margin(1.0));
+	}
+	// Zoomed out, every few bars, at least 8 dp apart.
+	display.zoomTo(0.0, 4000.0);
+	REQUIRE(app.waitUntil([&] { return bars().size() > 1 && bars()[1]->GetAttribute<int64_t>("bar", 0) > 1; }));
+	app.shell().step(milliseconds(0));
+	CHECK(bars()[1]->GetAbsoluteLeft() - bars()[0]->GetAbsoluteLeft() >= 7.0F);
 }

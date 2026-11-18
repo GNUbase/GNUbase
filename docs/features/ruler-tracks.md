@@ -22,8 +22,10 @@ in [add-track.md](add-track.md).
   `.hidden` while the lane isn't shown, e.g. in a folded folder.
 - **What it counts from** (`ui::rulerTrackTime`). With the offset off, the ruler follows the project setup's start
   time and bar offset ([project-setup.md](project-setup.md)), as the main ruler does. With it on, it counts from the
-  offset instead: 0:00:00.000, 00:00:00:00 and sample 0 at the offset, negative times before it, and bar 1 at the bar
-  the offset is in. Ruler tracks ignore the project setup's time format: they always show their own (p. 159).
+  offset instead: 0:00:00.000, 00:00:00:00 and sample 0 at the offset, negative times before it, and bar 1 at the
+  offset itself, also within a bar: the bars move by as much as the offset is into its bar (`TimeContext::barShift`,
+  `src/ui/timeformat.h`), so they keep the signatures' lengths. Ruler tracks ignore the project setup's time format:
+  they always show their own (p. 159).
 - **Track controls** (p. 159) in the track list, the user setting `ui.trackControls` for `ruler` (all four by
   default, in the track controls settings dialog too, [track-list.md](track-list.md)):
   `select[control=timeFormat]` (Time Format), `button[control=timeOffsetOn]` (Time Offset On/Off, `.checked` when on),
@@ -38,16 +40,13 @@ in [add-track.md](add-track.md).
   project's tempo and signatures from the project window's event display, without waiting for the engine.
 - **Global tracks** of the MIDI editors' window ([midi-editors.md](midi-editors.md), p. 1144) include ruler tracks.
 
-## Not yet
-
-A time offset within a bar for bars and beats (the ruler counts from the bar the offset is in).
-
 ## Tests
 
 `tests/document_tests.cpp`: the offset and its switch in `track.add` and `track.set`, `"cursor"`, undo, a new time base
 and what they refuse; `tests/dawproject_tests.cpp` saves and loads a ruler track with an offset.
-`tests/rulertracks_tests.cpp`: what a ruler track counts from with the offset off and on, in each format and on a
-linear track; the rulers on the ruler tracks' lanes on the fake window system; and in the app's UI a golden screenshot
-(`tests/golden/ui/ruler-tracks.png`) of a ruler track in each format, without and with an offset, and the track list's
-controls changing the time format, the offset and its switch, and the offset it has adding no undo step.
+`tests/rulertracks_tests.cpp`: what a ruler track counts from with the offset off and on, in each format, on a
+linear track and within a bar; the rulers on the ruler tracks' lanes on the fake window system; and in the app's UI a
+golden screenshot (`tests/golden/ui/ruler-tracks.png`) of a ruler track in each format, without and with an offset,
+and the track list's controls changing the time format, the offset and its switch, and the offset it has adding no
+undo step.
 `tests/addtrack_tests.cpp`: the Ruler page's Time Offset.

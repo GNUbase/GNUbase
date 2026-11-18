@@ -56,9 +56,12 @@ namespace gnubase::engine
 			return found;
 		}
 
-		// The signature map as the given changes, which must make one.
+		// The signature map as the given changes, which must make one; refused while the signature track is locked.
 		Json setSignatures(Project& project, std::vector<time::SignatureChange> changes, CommandContext& context)
 		{
+			require(std::none_of(project.trackById.begin(), project.trackById.end(), [](const auto& entry)
+						{ return entry.second.type == TrackType::Signature && entry.second.lock; }),
+				"the signature track is locked");
 			std::sort(changes.begin(), changes.end(),
 				[](const time::SignatureChange& a, const time::SignatureChange& b) { return a.bar < b.bar; });
 			// Each event's bar starts within the longest possible project, so the bars' ticks don't overflow (#729).
@@ -176,7 +179,7 @@ namespace gnubase::engine
 				"there. The bars from there to the next event have that signature; a short first bar is a pickup "
 				"bar. Musical positions stay in ticks, so events, parts and markers keep theirs while the bars move "
 				"under them. Returns the bar and the project's signatures as project.get and signature.changed "
-				"report them.",
+				"report them. Refused while the signature track is locked (track.set lock).",
 				objectSchema({{"bar", {{"type", {"integer", "string"}}}}, {"numerator", valueSchema},
 								 {"denominator", valueSchema}},
 					{"bar", "numerator", "denominator"}),
@@ -186,7 +189,7 @@ namespace gnubase::engine
 			{"signature.set", 1,
 				"Changes time signature events, each named by its bar: to moves it to another bar (the first stays at "
 				"bar 0, and no two events share a bar), numerator and denominator change its signature. All changes "
-				"happen at once.",
+				"happen at once. Refused while the signature track is locked.",
 				objectSchema({{"events",
 								 {{"type", "array"},
 									 {"items",
@@ -197,7 +200,9 @@ namespace gnubase::engine
 				result, false},
 			setSignature);
 		add(engine,
-			{"signature.remove", 1, "Removes time signature events by their bars. The first one stays.",
+			{"signature.remove", 1,
+				"Removes time signature events by their bars. The first one stays. Refused while the signature track "
+				"is locked.",
 				objectSchema({{"bars", {{"type", "array"}, {"items", barSchema}}}}, {"bars"}), result, false},
 			removeSignature);
 	}

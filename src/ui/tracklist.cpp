@@ -193,6 +193,9 @@ namespace gnubase::ui
 				return type == "transpose" && (transposeControl(control) || control == "timeBase");
 			if (type == "chord" || chordControl(control))
 				return type == "chord" && (chordControl(control) || control == "timeBase");
+			// The signature track's Lock (reference manual p. 163).
+			if (type == "signature" || control == "signatureLock")
+				return type == "signature" && control == "signatureLock";
 			if (!hasChannel)
 				return control == "timeBase" && type != "folder" && type != "ruler" && type != "signature";
 			if (control == "record" || control == "monitor")
@@ -237,6 +240,7 @@ namespace gnubase::ui
 				{"timeBase", {"Switch Time Base", "L"}}, {"tempoTrack", {"Activate Tempo Track", "T"}},
 				{"timeOffsetOn", {"Time Offset On/Off", "O"}}, {"transposeMute", {"Mute Transpose Events", "M"}},
 				{"keepInOctave", {"Keep Transpose in Octave Range", "O"}}, {"transposeLock", {"Lock", "L"}},
+				{"signatureLock", {"Lock", "L"}},
 				{"chordRecord", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
 				{"chordMute", {"Mute Chord Track", "M"}}, {"showScales", {"Show Scales", "S"}},
 				{"addPositionMarker", {"Add Position Marker", "+"}}, {"addCycleMarker", {"Add Cycle Marker", "[+]"}},
@@ -1189,6 +1193,8 @@ namespace gnubase::ui
 					on = track.value("timeOffsetOn", false);
 				else if (name == "groupEditing")
 					on = track.value("groupEditing", false);
+				else if (name == "signatureLock")
+					on = track.value("lock", false);
 				else if (name == "activateMarkerTrack")
 					on = markers.active == row.id;
 				else if (transposeControl(name))
@@ -1921,9 +1927,10 @@ namespace gnubase::ui
 			m_binding.send("chord.setTrack", {{chordKey(name), !on}}, clicked(button, row.id, name, !on));
 			return;
 		}
-		if (name == "timeOffsetOn" || name == "groupEditing")
+		if (name == "timeOffsetOn" || name == "groupEditing" || name == "signatureLock")
 		{
-			m_binding.send("track.set", {{"track", row.id}, {name, !on}}, clicked(button, row.id, name, !on));
+			const std::string key = name == "signatureLock" ? "lock" : name;
+			m_binding.send("track.set", {{"track", row.id}, {key, !on}}, clicked(button, row.id, name, !on));
 			return;
 		}
 		if (name == "timeBase")

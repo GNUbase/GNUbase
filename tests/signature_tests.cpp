@@ -205,3 +205,37 @@ TEST_CASE("the signature track and the time signature events are saved with the 
 	CHECK(after.at("signatures") == before.at("signatures"));
 	CHECK(after.at("tracks").at(0).at("type") == "signature");
 }
+
+TEST_CASE("the signature track's lock keeps its time signature events as they are", "[integration]")
+{
+	// Lock (reference manual p. 163): the signature commands are refused while it is on.
+	const gnubase::test::TempDir dir;
+	const std::string file = (dir.path() / "locked.dawproject").u8string();
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = addTrack(client, {{"type", "signature"}});
+	const ObjectId audio = addTrack(client, {{"type", "audio"}});
+	run(client, "signature.add", change(2, 7, 8));
+	CHECK_THAT(reject(client, "track.set", {{"track", audio}, {"lock", true}}), ContainsSubstring("signature track"));
+	CHECK(run(client, "track.set", {{"track", track}, {"lock", true}}).at("track").at("lock") == true);
+	const Json before = run(client, "project.get").at("signatures");
+	CHECK_THAT(reject(client, "signature.add", change(4, 3, 4)), ContainsSubstring("locked"));
+	CHECK_THAT(reject(client, "signature.set", {{"events", {{{"bar", 2}, {"to", 3}}}}}), ContainsSubstring("locked"));
+	CHECK_THAT(reject(client, "signature.remove", {{"bars", {2}}}), ContainsSubstring("locked"));
+	CHECK(run(client, "project.get").at("signatures") == before);
+
+	// It is saved with the project, and undone like the track's other settings.
+	run(client, "project.save", {{"path", file}});
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	const Json loaded = run(client, "project.get").at("tracks");
+	const auto signature =
+		std::find_if(loaded.begin(), loaded.end(), [](const Json& each) { return each.at("type") == "signature"; });
+	REQUIRE(signature != loaded.end());
+	CHECK(signature->at("lock") == true);
+	run(client, "track.set", {{"track", signature->at("id")}, {"lock", false}});
+	run(client, "signature.remove", {{"bars", {2}}});
+	run(client, "history.undo");
+	run(client, "history.undo");
+	CHECK_THAT(reject(client, "signature.remove", {{"bars", {2}}}), ContainsSubstring("locked"));
+}

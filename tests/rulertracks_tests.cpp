@@ -158,11 +158,37 @@ TEST_CASE("a ruler track counts from its time offset while it is on", "[unit]")
 		std::vector<std::string>{"-0:00:01", "0:00:00", "0:00:01", "0:00:02"});
 	CHECK(labels(ui::TimeFormat::Samples, offset, 2.0, 3.5).front() == "0");
 
-	// On a linear track the offset is in samples: bar 2 is the bar that 2.5 seconds are in.
+	// On a linear track the offset is in samples: bar 1 starts at 2.5 seconds, in the second bar.
 	const ui::TimeContext linear =
 		ui::rulerTrackTime(project, {{"timeBase", "linear"}, {"timeOffset", 120000}, {"timeOffsetOn", true}});
 	CHECK(ui::formatTime(ui::TimeFormat::Seconds, 2.5, linear) == "0:00:00.000");
-	CHECK(ui::formatTime(ui::TimeFormat::BarsBeats, 2.0, linear) == "1.1.1.0");
+	CHECK(ui::formatTime(ui::TimeFormat::BarsBeats, 2.5, linear) == "1.1.1.0");
+	CHECK(ui::formatTime(ui::TimeFormat::BarsBeats, 2.0, linear) == "0.4.1.0");
+}
+
+TEST_CASE("a ruler track's bar 1 starts at a time offset within a bar", "[unit]")
+{
+	// Six quarters, three seconds at 120 BPM, in the middle of the second bar: the ruler's bars start there (#814).
+	const ui::TimeContext offset = ui::rulerTrackTime(ui::TimeContext(),
+		{{"timeBase", "musical"}, {"timeOffset", 6 * time::g_ticksPerQuarter}, {"timeOffsetOn", true}});
+	CHECK(ui::formatTime(ui::TimeFormat::BarsBeats, 3.0, offset) == "1.1.1.0");
+	CHECK(ui::formatTime(ui::TimeFormat::BarsBeats, 4.5, offset) == "1.4.1.0");
+	CHECK(ui::formatTime(ui::TimeFormat::BarsBeats, 5.0, offset) == "2.1.1.0");
+	CHECK(ui::formatTime(ui::TimeFormat::BarsBeats, 2.0, offset) == "0.3.1.0");
+	CHECK(ui::formatTime(ui::TimeFormat::BarsBeats, 0.0, offset) == "-1.3.1.0");
+	CHECK(ui::parseTime(ui::TimeFormat::BarsBeats, "2.1.1.0", offset).value_or(-1.0) == Approx(5.0));
+
+	// The ruler's bar lines are there too, from the project start on, two seconds apart.
+	std::vector<ui::RulerMark> marks;
+	ui::rulerScale(ui::TimeFormat::BarsBeats, offset).marks(0.0, 8.0, 1.0, marks);
+	std::vector<double> bars;
+	for (const ui::RulerMark& mark : marks)
+		if (!mark.label.empty())
+			bars.push_back(mark.position);
+	REQUIRE(bars.size() == 4);
+	for (size_t i = 0; i < bars.size(); ++i)
+		CHECK(bars[i] == Approx(1.0 + (2.0 * static_cast<double>(i))));
+	CHECK(labels(ui::TimeFormat::BarsBeats, offset, 2.5, 8.0).front() == "1");
 }
 
 TEST_CASE("ruler tracks show a ruler on their lanes in their time formats", "[unit]")

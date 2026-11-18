@@ -1231,6 +1231,21 @@ TEST_CASE("importing a file that isn't a tempo track file changes nothing", "[in
 													  << R"(<TimeSignature numerator="150" denominator="4"/>)"
 													  << "</Transport></TempoTrack>";
 	CHECK_THAT(reject(client, "tempo.import", {{"path", numerator}}), ContainsSubstring("numerator"));
+	// Nor a bar past the longest possible project, whose ticks would overflow (#729).
+	const auto signatureAt = [&dir](const std::string& name, const std::string& beat)
+	{
+		const std::string path = (dir.path() / name).u8string();
+		std::ofstream(std::filesystem::u8path(path))
+			<< R"(<TempoTrack version="1.0"><Transport><Tempo unit="bpm" value="120"/></Transport>)"
+			<< R"(<Arrangement><TimeSignatureAutomation><TimeSignaturePoint time=")" << beat
+			<< R"(" numerator="3" denominator="4"/></TimeSignatureAutomation></Arrangement></TempoTrack>)";
+		return path;
+	};
+	CHECK_THAT(reject(client, "tempo.import", {{"path", signatureAt("far.xml", "1e300")}}),
+		ContainsSubstring("longest possible project"));
+	// 2^48 samples at 8 kHz and 120 BPM are about 70 billion beats: bar 20 billion of 4/4 is past them.
+	CHECK_THAT(reject(client, "tempo.import", {{"path", signatureAt("past.xml", "8e10")}}),
+		ContainsSubstring("longest possible project"));
 	const Json after = run(client, "project.get");
 	CHECK(after.at("tempoTrack") == before.at("tempoTrack"));
 	CHECK(after.at("signatures") == before.at("signatures"));

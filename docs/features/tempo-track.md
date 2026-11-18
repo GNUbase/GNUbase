@@ -105,7 +105,8 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   curve of the whole project. Backspace and Delete remove the selected events.
 - Project > Add Track has a Tempo page.
 - The tempo track editor's time signature display, under its ruler, has the time signature events
-  ([signature-track.md](signature-track.md)).
+  ([signature-track.md](signature-track.md)); a move or a signature there that the engine refuses shows why in the
+  editor's `#edit-refused`.
 
 ## Not yet
 

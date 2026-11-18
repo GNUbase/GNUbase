@@ -618,6 +618,11 @@
 		color: #090b18;
 		background-color: #e12ad8;
 	}
+	.signature-row .signature-bar
+	{
+		border-left-width: 1dp;
+		border-left-color: #303754;
+	}
 	.transpose-row .transpose-event
 	{
 		color: #f1f4ff;

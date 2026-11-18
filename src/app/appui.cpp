@@ -486,7 +486,11 @@ namespace gnubase::app
 					{
 						m_eventRange = range;
 						if (range)
+						{
 							m_markerLines->deselect();
+							if (m_signatureLane)
+								m_signatureLane->row().setSelection({});
+						}
 					}
 				}
 				if (m_infoLine)
@@ -1692,6 +1696,18 @@ namespace gnubase::app
 			{
 				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
 					window->setSelection(selection);
+				// Markers selected deselect the time signature events: Delete deletes what was selected last.
+				if (!selection.empty() && m_signatureLane)
+					m_signatureLane->row().setSelection({});
+			});
+		// So do time signature events selected: the markers and the selection range go.
+		m_signatureLane->onSelect(
+			[this]
+			{
+				if (m_markerLines)
+					m_markerLines->deselect();
+				if (m_eventDisplay && m_eventDisplay->range())
+					m_eventDisplay->setRange(std::nullopt);
 			});
 		// The marker tracks' Locate menus select the marker, Shift-click on Add Cycle Marker names the new one.
 		if (m_trackList)
