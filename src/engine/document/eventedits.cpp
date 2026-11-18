@@ -3261,8 +3261,7 @@ namespace gnubase::engine
 					" to the range clipboard as range.copy does, then deletes it as range.delete does; time (Cut Time) "
 					"closes the gap. Without time it cuts the range out of the cycle markers that it lies in as "
 					"range.delete does; markers don't go to the clipboard. Locked events stay where they are and "
-					"aren't "
-					"copied. Returns how many events and parts and automation lanes it copied, which "
+					"aren't copied. Returns how many events and parts and automation lanes it copied, which "
 					"rangeClipboard.changed announces.",
 				schema(withTime, {}), copiedResult, false},
 			"Cut",
@@ -3287,11 +3286,10 @@ namespace gnubase::engine
 				"cursor): onto the tracks it was copied from, or onto track and the tracks below it in the project's "
 				"order that aren't hidden (trackVisibility.set), one for each copied track, which must take the copied "
 				"events. What started where the copied range starts lands at position exactly (of several, the first "
-				"in "
-				"ticks), and everything on musical tracks moves by the same ticks, keeping its distance from that on "
-				"every track. Audio events and MIDI parts come as unlocked real copies; automation replaces the curve "
-				"where it lands, on a lane of the same parameter. time (Paste Time) first makes room as long as the "
-				"copied range, as range.insertSilence does. A clipboard copied at another sample rate than the "
+				"in ticks), and everything on musical tracks moves by the same ticks, keeping its distance from that "
+				"on every track. Audio events and MIDI parts come as unlocked real copies; automation replaces the "
+				"curve where it lands, on a lane of the same parameter. time (Paste Time) first makes room as long as "
+				"the copied range, as range.insertSilence does. A clipboard copied at another sample rate than the "
 				"project's is refused. Returns the new events.",
 				schema({{"position", integer()}, {"track", integer()}, {"time", boolean()}}, {}), eventsResult(),
 				false},
@@ -3378,15 +3376,12 @@ namespace gnubase::engine
 				"Pastes what automation.copy copied " + between +
 					", where it replaces the automation: without tracks and lanes each lane onto its own track (Paste "
 					"Automation of All Tracks); onto tracks (ids), the copied tracks from the top one onto each, or "
-					"one "
-					"copied track onto all of them; or onto lanes (ids), each getting the copied lane of its "
-					"parameter. "
-					"A track takes the parameters it has, adding their lanes: a plugin's needs the same plugin in the "
-					"slot at the same place, an instrument's the same instrument; the others are left out. A shorter "
-					"range cuts the copy at the curve's value there, in a longer one its last value holds up to the "
-					"end. A copy made at another sample rate than the project's is refused. Returns the lanes it "
-					"pasted "
-					"into.",
+					"one copied track onto all of them; or onto lanes (ids), each getting the copied lane of its "
+					"parameter. A track takes the parameters it has, adding their lanes: a plugin's needs the same "
+					"plugin in the slot at the same place, an instrument's the same instrument; the others are left "
+					"out. A shorter range cuts the copy at the curve's value there, in a longer one its last value "
+					"holds up to the end. A copy made at another sample rate than the project's is refused. Returns "
+					"the lanes it pasted into.",
 				schema({{"start", integer()}, {"end", integer()}, {"tracks", events()}, {"lanes", events()}}, {}),
 				schema({{"lanes", events()}}, {"lanes"}), false},
 			"Paste Automation", [this](Project& project, CommandContext& context)
