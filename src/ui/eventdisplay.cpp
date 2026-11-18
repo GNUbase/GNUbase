@@ -171,10 +171,13 @@ namespace gnubase::ui
 		m_subscriptions.push_back(m_binding.on("project.reset",
 			[this](const engine::Event&)
 			{
+				m_copied = false; // a new or opened project empties the range clipboard
 				if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get());
 					dialog != nullptr && m_dialogForObjects)
 					closeDialog(*dialog, "cancel");
 			}));
+		m_subscriptions.push_back(
+			m_binding.on("rangeClipboard.changed", [this](const engine::Event&) { m_copied = true; }));
 		// The ruler follows snap.changed; keep the cached primary format without another project.get.
 		m_subscriptions.push_back(m_binding.on("project.changed",
 			[this](const engine::Event& event)
