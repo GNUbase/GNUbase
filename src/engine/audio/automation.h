@@ -68,8 +68,10 @@ namespace gnubase::engine
 		uint64_t revision = 0;
 		// A MIDI lane with points whose revision is new: the points of the lane it replaced, if any. Where its value
 		// differs from theirs, it is the lane's new value there, not one set again (AutomationPlayer::play's
-		// sentAgain). Not compared.
-		std::vector<RenderAutomationPoint> replaced{};
+		// sentAgain). Not compared. The initializer lets PlayedLane{...} leave it out without GCC's and Clang's
+		// -Wmissing-field-initializers, like the members above with default values.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see above
+		std::vector<RenderAutomationPoint> replaced = {};
 		// A MIDI lane that plays side by side with others of its target (channelAutomation): it sends every point it
 		// arrives at, also one that repeats its value or that a gap follows, since another lane may have changed the
 		// controller in between; at a start, a locate or a jump only the one whose latest point lies latest sends its
