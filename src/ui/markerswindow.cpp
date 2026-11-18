@@ -189,10 +189,9 @@ namespace gnubase::ui
 				if (!event.data.at("playing").get<bool>())
 					m_position.reset();
 				else if (!m_position)
-					// The document changes only when the arrow moves to another marker, and showCursor draws it then.
 					m_position = m_binding.watch<int64_t>(
-						nullptr, [this] { return m_engine.playbackPosition(); },
-						[this](const int64_t& sample) { setCursor(sample); });
+						m_document.get(), [this] { return m_engine.playbackPosition(); },
+						[this](const int64_t& sample) { return setCursor(sample); });
 			}));
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
@@ -426,18 +425,18 @@ namespace gnubase::ui
 		showCursor();
 	}
 
-	void MarkersWindow::setCursor(int64_t sample)
+	bool MarkersWindow::setCursor(int64_t sample)
 	{
 		m_cursorSample = sample;
-		showCursor();
+		return showCursor();
 	}
 
 	// The arrow at the marker at the cursor, or the last one before it; with Auto-Scroll, the list scrolls to it when
 	// it moves to another marker.
-	void MarkersWindow::showCursor()
+	bool MarkersWindow::showCursor()
 	{
 		if (!alive() || m_rows == nullptr)
-			return;
+			return false;
 		const double cursor = static_cast<double>(m_cursorSample) / m_markers.time.sampleRate;
 		uint64_t at = 0;
 		double atStart = 0.0;
@@ -453,12 +452,10 @@ namespace gnubase::ui
 			row->SetClass("at-cursor", at != 0 && row->GetAttribute<uint64_t>("value", 0) == at);
 		}
 		if (std::exchange(m_arrow, at) == at)
-			return;
-		// Also during playback, which follows the cursor without asking for a draw (EngineBinding::watch).
-		if (Rml::Context* context = m_document->GetContext())
-			context->RequestNextUpdate(0);
+			return false;
 		if (m_flags.at("ui.markersAutoScroll"))
 			scrollToArrow();
+		return true;
 	}
 
 	void MarkersWindow::scrollToArrow()
