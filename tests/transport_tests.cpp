@@ -564,6 +564,32 @@ TEST_CASE("a locate while recording waits for the punch in keeps waiting for it"
 	CHECK(recordedPositions(transport, 640, 64) == range(6000, 6640));
 }
 
+TEST_CASE("a locate past the punch in records there also after a record while playing", "[unit]")
+{
+	// Punch in at 48000, recording asked for while playing at 10000, then a locate to 60000 (#588).
+	Transport transport;
+	TransportSettings settings;
+	settings.left = 48000;
+	settings.right = 96000;
+	settings.punchIn = true;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.play());
+	CHECK(recordedPositions(transport, 10000, 64).empty());
+	REQUIRE(transport.record(true)); // waits for the left locator
+	CHECK(!transport.recording());
+	REQUIRE(transport.locate(60000));
+	CHECK(recordedPositions(transport, 640, 64) == range(60000, 60640));
+	CHECK(transport.sync());
+	CHECK(transport.recording());
+
+	// Located back before it, it waits for it again.
+	REQUIRE(transport.record(false));
+	REQUIRE(transport.locate(1000));
+	REQUIRE(transport.record(true));
+	REQUIRE(transport.locate(2000));
+	CHECK(recordedPositions(transport, 46640, 64) == range(48000, 48640));
+}
+
 TEST_CASE("recording from stop in a cycle with punch in starts at the punch in if the cycle never reaches the cursor",
 	"[unit]")
 {

@@ -301,11 +301,16 @@ namespace gnubase::engine
 				startRecording();
 				return;
 			}
-			// With punch in before the left locator, the punch in starts recording.
+			// With punch in before the left locator, the punch in starts recording; it waits there as from stop, so
+			// that it moves along with a locate (#588).
 			if (!m_settings.punchIn || m_position >= m_settings.left)
 			{
 				m_recording = true;
 				m_recordAt = -1; // started by hand during the pre-roll: no second start later
+			}
+			else
+			{
+				m_recordAt = m_settings.left;
 			}
 			return;
 		}
