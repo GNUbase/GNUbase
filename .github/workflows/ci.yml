@@ -339,7 +339,9 @@ jobs:
         uses: actions/deploy-pages@v5
 
   sanitizers:
-    timeout-minutes: 90 # asan-ubsan took up to 59 min on main on slow runners in Nov 2026
+    # On main at fefa12a9 (Nov 2026) asan-ubsan built for 23 min after a widely included header changed, tested for 65
+    # and was cancelled at 90 with 218 of 3426 tests left; tsan took 86.
+    timeout-minutes: 150
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     strategy:
