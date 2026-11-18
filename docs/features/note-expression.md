@@ -118,7 +118,8 @@ record filter filters note expression by its channel only, as it is no MIDI mess
 and plays plain MIDI; `midi.inject` does too, unless its `mpe` gives it an MPE setup to play through, as a port with it
 would, so MCP and Lua reach MPE input without a MIDI port. The track keeps that setup's state of the channels from one
 call to the next, and a message waits for the next block unless the track's input has room for all it adds, a point
-for each note of its channel (`MpeInput::maxEvents`, #1685).
+for each note of its channel (`MpeInput::maxEvents`, #1685). `direct` and `mpe` together are refused: `direct`
+skips the track's input, where the setup plays (#1819).
 
 **Playback.** The sequencer sends a note's points that lie within it as note expression events
 (`graph::ProcessEvent::Type::NoteExpression`, with the note's pitch and channel) where they are, after the note-on at

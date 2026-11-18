@@ -1073,4 +1073,8 @@ TEST_CASE("midi.inject plays its messages through an MPE setup as a port with it
 	CHECK_THAT(reject(client, "midi.inject",
 				   {{"channel", setup.channel}, {"messages", Json::array()}, {"mpe", {{"mode", "middle"}}}}),
 		ContainsSubstring("mode"));
+	// direct skips the track's input, where the MPE setup plays (#1819).
+	CHECK_THAT(reject(client, "midi.inject",
+				   {{"channel", setup.channel}, {"messages", Json::array()}, {"direct", true}, {"mpe", lower}}),
+		ContainsSubstring("MPE setup"));
 }
