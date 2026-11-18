@@ -142,6 +142,12 @@
 		<div class="toolbar-section" section="trackVisibility" label="Track Visibility Configurations">
 			<button id="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
 		</div>
+		<!-- Deactivate All Mute, Solo and Listen States (reference manual p. 58), which ui::EventDisplay shows -->
+		<div class="toolbar-section" section="states" label="State Buttons">
+			<button class="toggle mute" deactivate="mute" title="Deactivate All Mute States">M</button>
+			<button class="toggle solo" deactivate="solo" title="Deactivate All Solo States">S</button>
+			<button class="toggle listen" deactivate="listen" title="Deactivate All Listen States">L</button>
+		</div>
 		<div class="toolbar-section" section="rootKey" label="Project Root Key">
 			<!-- The Project Root Key (reference manual p. 414, docs/features/transpose.md), which the display shows -->
 			<button id="root-key" menu="root-key-menu" title="Project Root Key">-</button>

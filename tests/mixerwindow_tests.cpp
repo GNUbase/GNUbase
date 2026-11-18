@@ -7,11 +7,13 @@
 #include "ui/keycommands.h"
 #include "ui/mixer.h"
 #include "ui/renderer.h"
+#include "ui/rmlui.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Property.h>
@@ -718,10 +720,20 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&] { return has(button(guitar, "solo"), "defeated"); }));
 	CHECK(channelJson(app, guitar.channel).at("soloDefeat") == true);
 	CHECK_FALSE(has(button(guitar, "solo"), "checked"));
+	// So does a click held down, on a soloed channel too.
+	const std::string bassSolo = strip(bass.channel) + " button[control=solo]";
+	app.ui().press(window, {bassSolo, 0, std::nullopt}, ui::MouseButton::Left);
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0);
+	app.ui().release(window, {bassSolo, 0, std::nullopt}, ui::MouseButton::Left);
+	REQUIRE(app.waitUntil([&] { return has(button(bass, "solo"), "defeated"); }));
+	CHECK(channelJson(app, bass.channel).at("solo") == true);
 	// Deactivate All Solo States takes both.
 	click(app, window, ".mixer-toolbar button[deactivate=solo]");
 	REQUIRE(app.waitUntil([&] { return !has(toolbar("solo"), "checked"); }));
 	CHECK(channelJson(app, bass.channel).at("solo") == false);
+	CHECK(channelJson(app, bass.channel).at("soloDefeat") == false);
 	CHECK(channelJson(app, guitar.channel).at("soloDefeat") == false);
 
 	// Listen and mute, and their Deactivate All buttons.

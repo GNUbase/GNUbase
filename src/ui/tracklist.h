@@ -4,6 +4,7 @@
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/mixer.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
@@ -296,6 +297,7 @@ namespace gnubase::ui
 			bool defeated = false; // solo defeat
 		};
 		std::map<std::pair<uint64_t, std::string>, Clicked> m_clicked;
+		SoloHold m_soloHold;
 
 		std::map<std::string, std::function<void()>> m_actions;
 		std::function<void(uint64_t, bool)> m_onMarker;

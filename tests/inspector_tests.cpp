@@ -14,9 +14,11 @@
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/markers.h"
+#include "ui/rmlui.h"
 #include "ui/tracklist.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 
@@ -916,6 +918,82 @@ namespace
 	}
 }
 
+TEST_CASE("the inspector's S solos exclusively and switches solo defeat, and its L listens", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
+	const uint64_t other = window.addTrack({{"type", "audio"}, {"name", "Bass"}});
+	const uint64_t midi = window.addTrack({{"type", "midi"}, {"name", "Keys"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 3; }));
+	window.call("channel.set", {{"channel", window.channel(other).at("id")}, {"solo", true}});
+	window.list.select({audio});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	const std::string solo = ".inspector button[control=solo]";
+	const auto clickWith = [&window](const std::string& selector, const char* modifier)
+	{
+		window.app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {modifier});
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// Ctrl-click solos exclusively; Alt-click and click and hold switch solo defeat, which S shows (reference manual
+	// p. 466).
+	clickWith(solo, "ctrl");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("solo") == true; }));
+	CHECK(window.channel(other).at("solo") == false);
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, solo, "checked"); }));
+	clickWith(solo, "alt");
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, solo, "defeated"); }));
+	CHECK(window.channel(audio).at("soloDefeat") == true);
+	window.app.ui().press(std::nullopt, {solo, 0, std::nullopt}, ui::MouseButton::Left);
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0);
+	window.app.ui().release(std::nullopt, {solo, 0, std::nullopt}, ui::MouseButton::Left);
+	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, solo, "defeated"); }));
+	CHECK(window.channel(audio).at("soloDefeat") == false);
+	CHECK(window.channel(audio).at("solo") == true);
+
+	// L listens, on channels with audio.
+	const std::string listen = ".inspector button[control=listen]";
+	CHECK_FALSE(hasClass(window.app, listen, "unavailable"));
+	window.click(listen);
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("listen") == true; }));
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, listen, "checked"); }));
+	window.call("channel.set", {{"channel", window.channel(audio).at("id")}, {"listen", false}});
+	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, listen, "checked"); }));
+	window.list.select({midi});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK(hasClass(window.app, listen, "unavailable"));
+}
+
+TEST_CASE("the toolbar's state buttons deactivate all mute, solo and listen states", "[ui]")
+{
+	Window window(1300); // wide enough for every toolbar section
+	const uint64_t audio = window.addTrack({{"type", "audio"}});
+	const uint64_t other = window.addTrack({{"type", "audio"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
+	const auto lit = [&window](const std::string& state)
+	{ return hasClass(window.app, "#toolbar button[deactivate=" + state + "]", "checked"); };
+	const Json audioChannel = window.channel(audio).at("id");
+	const Json otherChannel = window.channel(other).at("id");
+
+	// They light up while any channel has their state, solo defeat counting as solo (reference manual p. 58).
+	CHECK_FALSE(lit("solo"));
+	window.call("channel.set", {{"channel", otherChannel}, {"soloDefeat", true}});
+	REQUIRE(window.app.waitUntil([&] { return lit("solo"); }));
+	window.call("channel.set", {{"channel", audioChannel}, {"solo", true}, {"mute", true}});
+	window.call("channel.set", {{"channel", otherChannel}, {"listen", true}});
+	REQUIRE(window.app.waitUntil([&] { return lit("mute") && lit("listen"); }));
+	// A click turns the state off on every channel.
+	for (const char* state : {"mute", "solo", "listen"})
+		window.click(std::string("#toolbar button[deactivate=") + state + "]");
+	REQUIRE(window.app.waitUntil([&] { return !lit("mute") && !lit("solo") && !lit("listen"); }));
+	CHECK(window.channel(audio).at("mute") == false);
+	CHECK(window.channel(audio).at("solo") == false);
+	CHECK(window.channel(other).at("soloDefeat") == false);
+	CHECK(window.channel(other).at("listen") == false);
+}
+
 TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with presets, Show All and Reset All", "[ui]")
 {
 	// 1300 dp is wide enough for every section, so the buttons are all in the clear.
@@ -924,7 +1002,7 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 	const std::vector<std::string> defaults = docking.sections("project", "toolbar");
 	CHECK(defaults ==
 		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "quantize", "color",
-			"trackVisibility", "rootKey", "zones"});
+			"trackVisibility", "states", "rootKey", "zones"});
 	const auto openPane = [&window]
 	{
 		if (!hasClass(window.app, "#toolbar-setup", "open"))

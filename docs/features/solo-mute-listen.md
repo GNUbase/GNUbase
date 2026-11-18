@@ -36,22 +36,25 @@ modes, solo defeat, the Deactivate All buttons and listen.
 ## In the mixer
 
 - Each strip's fader section has M, S and, for audio channels, L (`button[control=listen]`). A click switches the
-  state; on S, Ctrl-click (Cmd on macOS) solos exclusively and Alt-click switches solo defeat (`ui::soloClick`).
+  state; on S, Ctrl-click (Cmd on macOS) solos exclusively, and Alt-click and click and hold (half a second,
+  `ui::SoloHold`) switch solo defeat (`ui::soloClick`).
   S has `.checked` while soloed and `.defeated` with solo defeat; the themes draw solo defeat in the solo color on an
   unlit button, and a listening L like monitoring.
 - The toolbar's M, S and L buttons (`.mixer-toolbar button[deactivate=<state>]`) are Deactivate All Mute, Solo and
   Listen States: `.checked` while any channel has the state (solo or solo defeat), a click sends
   `channel.deactivateAll`.
-- The track list's S takes the same Ctrl- and Alt-clicks and shows solo defeat too.
+- The track list's S, and the inspector's S and L (not for MIDI channels), take the same clicks and show solo
+  defeat and listen too.
+- The project window's toolbar has the same Deactivate All buttons (p. 58) in its State Buttons section
+  (`#toolbar [section=states] button[deactivate=<state>]`), which `ui::EventDisplay` shows and sends.
 
 ## Not yet
 
 The control room (#191), and with it PFL, listen on input and output channels, and the listen level and dim in its
-panel rather than in user settings; listened channels gliding in and out (they come in at once; the dim glides);
-the project window toolbar's state buttons (p. 58); click and hold for solo defeat; the inspector's solo modifiers
-and its Listen indicator; the preferences Group Channels:
-Mute Sources as well and Mute Pre-Send when Mute (p. 1622); solo on directly monitored inputs
-with dimming.
+panel rather than in user settings; listened channels gliding in and out (they come in at once; the dim glides),
+which needs the listen bus in every graph or a listen gain per channel and goes with the control room's monitoring
+bus; the toolbar's Activate/Deactivate Read for All Tracks (p. 58); the preferences Group Channels: Mute Sources as
+well and Mute Pre-Send when Mute (p. 1622); solo on directly monitored inputs with dimming.
 
 ## Checks
 
@@ -63,5 +66,7 @@ with dimming.
   dim, a new dim and listen level glide in, and the mix glides back once listening ends, sample by sample.
 - `tests/mixdown_tests.cpp`: a mixdown while a channel listens is the main mix, bit for bit.
 - `tests/dawproject_tests.cpp` saves and loads solo defeat and listen.
-- `tests/mixerwindow_tests.cpp`: S, Ctrl-click and Alt-click on S, L, M and the toolbar's Deactivate All buttons;
-  `tests/tracklist_tests.cpp` the track list's Ctrl-click and Alt-click on S.
+- `tests/mixerwindow_tests.cpp`: S, Ctrl-click, Alt-click and click and hold on S, L, M and the toolbar's Deactivate
+  All buttons; `tests/tracklist_tests.cpp` the track list's Ctrl-click, Alt-click and click and hold on S;
+  `tests/inspector_tests.cpp` the inspector's S with its modifiers and L, and the project window toolbar's state
+  buttons.
