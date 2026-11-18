@@ -820,7 +820,7 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 TEST_CASE("the transport's position schemas give the positions' bounds", "[unit]")
 {
 	// For MCP clients and Lua, and the same bound as the handlers' (#592).
-	Engine engine;
+	const Engine engine;
 	int found = 0;
 	for (const CommandInfo& info : engine.commands())
 		for (const auto& [command, property] : {std::pair{"transport.locate", "position"},
