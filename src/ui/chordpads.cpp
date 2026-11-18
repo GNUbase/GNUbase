@@ -129,11 +129,12 @@ namespace gnubase::ui
 				title + R"("/>)";
 		}
 
-		// MIDI Learn of a chordPads.listen learn target (reference manual pp. 1386-1389), lit while it listens.
+		// MIDI Learn of a chordPads.listen learn target (reference manual pp. 1386-1389), lit while it listens. Not a
+		// toggle: the panel lights it at the click (#1851).
 		std::string learnButton(const std::string& target, const std::string& title)
 		{
 			return R"(<button action="learn" learn=")" + target + R"(" id="chord-pads-learn-)" + target +
-				R"(" type="toggle" title="MIDI Learn: )" + title + R"(">Learn</button>)";
+				R"(" title="MIDI Learn: )" + title + R"(">Learn</button>)";
 		}
 
 		// What MIDI Learn can listen for (chordPads.listen learn).
@@ -344,7 +345,7 @@ namespace gnubase::ui
 			button("previousVoicing", "Previous Voicing", "&lt;") + button("nextVoicing", "Next Voicing", "&gt;") +
 			button("lock", "Lock", "Lock", true) + button("adaptive", "Adaptive Voicing", "Adaptive", true) +
 			button("reference", "Adaptive Voicing Reference", "Reference", true) +
-			button("assignMidi", "Assign from MIDI Input", "MIDI", true) +
+			button("assignMidi", "Assign from MIDI Input", "MIDI") + // lit by the panel at the click, as Learn (#1851)
 			R"(<input type="text" id="chord-pads-field" class="chord-pads-field" title="Chord"/>)"
 			R"(</div><div id="chord-pads-pane-player" class="chord-pads-toolbar chord-pads-pane hidden">)"
 			R"(<select id="chord-pads-player" title="Select Player"/><select id="chord-pads-library" )"
@@ -538,6 +539,26 @@ namespace gnubase::ui
 			});
 	}
 
+	void ChordPadsPanel::listen(Json parameters)
+	{
+		// Shown at the click, and kept against the engine's events of earlier clicks until it has answered every one,
+		// so that a second click before then goes from what the first asked for (#1851). Its event comes before its
+		// answer, so then m_listening has what the engine made of the last, also when it refused it.
+		m_listenSent = parameters.empty() ? Json() : parameters;
+		++m_listensSending;
+		showSelection();
+		m_binding.send("chordPads.listen", std::move(parameters),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!result.ok())
+					logging::warning("chordPads.listen from the UI failed: {}", result.error);
+				if (alive.expired() || --m_listensSending > 0)
+					return;
+				m_listenSent.reset();
+				showSelection();
+			});
+	}
+
 	void ChordPadsPanel::request()
 	{
 		m_binding.send("chordPads.get", Json::object(),
@@ -709,11 +730,12 @@ namespace gnubase::ui
 		setChecked(find("chord-pads-adaptive"), pad.is_object() && pad.at("adaptive").get<bool>());
 		setChecked(find("chord-pads-reference"), first >= 0 && m_pads.at("reference") == first);
 		// Assign from MIDI Input: the pad that gets the chord has a red frame (p. 1354).
-		const int listening = m_listening.is_object() ? m_listening.value("assign", -1) : -1;
+		const Json& now = listening();
+		const int assigned = now.is_object() ? now.value("assign", -1) : -1;
 		for (int i = 0; i < list->GetNumChildren(); ++i)
-			setClass(list->GetChild(i), "listening", i == listening);
-		setChecked(find("chord-pads-assignMidi"), listening >= 0);
-		const std::string learning = m_listening.is_object() ? m_listening.value("learn", std::string()) : "";
+			setClass(list->GetChild(i), "listening", i == assigned);
+		setChecked(find("chord-pads-assignMidi"), assigned >= 0);
+		const std::string learning = now.is_object() ? now.value("learn", std::string()) : "";
 		for (const char* target : g_learnTargets)
 			setChecked(find(std::string("chord-pads-learn-") + target), learning == target);
 		showListColors();
@@ -975,10 +997,10 @@ namespace gnubase::ui
 				{
 					// MIDI Learn (pp. 1386-1389): its target, or off again.
 					const auto learn = actor->GetAttribute<Rml::String>("learn", "");
-					if (m_listening.is_object() && m_listening.value("learn", std::string()) == learn)
-						send("chordPads.listen", Json::object());
+					if (listening().is_object() && listening().value("learn", std::string()) == learn)
+						listen(Json::object());
 					else
-						send("chordPads.listen", {{"learn", learn}});
+						listen({{"learn", learn}});
 				}
 				else if (name == "muteSection")
 				{
@@ -1177,10 +1199,10 @@ namespace gnubase::ui
 		else if (name == "assignMidi")
 		{
 			// Assign from MIDI Input (p. 1360) for the first selected pad, or off again.
-			if (m_listening.is_object() || first < 0)
-				send("chordPads.listen", Json::object());
+			if (listening().is_object() || first < 0)
+				listen(Json::object());
 			else
-				send("chordPads.listen", {{"assign", first}});
+				listen({{"assign", first}});
 		}
 		else if (name == "importLoop")
 		{

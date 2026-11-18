@@ -243,7 +243,10 @@ a remote start above the end, goes back to the one the pads have.
 - Each key setting of the Remote Settings and Player Remote panes has its MIDI Learn button
   (`#chord-pads-learn-<target>`, `chordPads.listen` `learn`): the range, each chord modifier's key, what moves all
   pads' voicings, tensions and transposition, the section keys, the subsection keys and the Select/Mute Player keys
-  (pp. 1386-1389). The button of what it listens for is lit; a click on it again stops listening.
+  (pp. 1386-1389). The button of what it listens for is lit; a click on it again stops listening. These buttons and
+  Assign from MIDI Input show their click at once and go from what they show (#1851): until the engine has answered
+  every `chordPads.listen` the panel sent, the panel shows what it asked for last, not the engine's
+  `chordPads.listening` of an earlier click, so a second click before the first one's answer stops listening again.
 - The Inspector's Input Routing of a MIDI or instrument track chooses All MIDI Inputs, Chord Pads or Not Connected
   (p. 1367).
 - The wheel over a pad: down the next voicing, up the previous one; with Shift it transposes, with Alt it changes the
@@ -323,7 +326,8 @@ numerals, Nashville numbers, voicing indicators and the grid); saving a preset a
 pads' key commands; a pad modifier button playing the pad while it is down, the keyboard's remote range, played notes
 and hovered key, a pad lit by a remote key, a suggestion dropped onto a pad, the List assistant's colors and Assign from
 MIDI Input's frame, a drop location's frame, the assistant's hint kept for a pad without a chord selected before an
-answer came, every MIDI Learn button, the section keys on the keyboard, Number of Pads, Start Note apart from the remote
+answer came, every MIDI Learn button, MIDI Learn and Assign from MIDI Input clicked twice and on another target while
+the engine is held (#1851), the section keys on the keyboard, Number of Pads, Start Note apart from the remote
 range and Number of Rows, and Import from MIDI Loop with why a loop without 3 to 5 voices was refused, gone once the
 pattern changes through the engine and with another project; a pad dropped onto an instrument track's lane and onto the
 chord track; and the step input cursor in the event display.

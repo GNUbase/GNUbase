@@ -241,7 +241,8 @@ TEST_CASE(
 	Json lanes = f.view().at("lanes");
 	lanes.push_back({{"type", "articulations"}});
 	f.app.call("editor.set", {{"editor", "window"}, {"lanes", lanes}});
-	const std::string row = ".controller-lane[lane-kind=articulations] .articulation-row";
+	// An articulation's row, not the sound slots row, which shows before the map's rows do and then moves (#1887).
+	const std::string row = ".controller-lane[lane-kind=articulations] .articulation-row[articulation-row]";
 	REQUIRE(
 		f.app.waitUntil([&] { return f.elements(".controller-lane-type").size() == 3 && !f.elements(row).empty(); }));
 	for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})

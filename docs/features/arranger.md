@@ -130,6 +130,11 @@ a drag moving an event by bars, the event following the mouse until the release,
 as wide as the event, an empty name keeping the old one, and the erase tool removing it; `#edit-refused` saying why the
 engine refused a draw within one bar.
 
+Both real-time comparisons in `tests/arranger_tests.cpp` retry runs that report playback dropouts, with at most five
+attempts and a fresh song and audio file per attempt. Each retry emits a warning. The chain-edit comparison requires
+that the edit happened during playback on every attempt and compares only a capture without dropouts; exhausting the
+attempts fails the test (#1893).
+
 Not yet: resizing arranger events by their edges and selecting them, renaming them on the info line, the track
 list's arranger controls and the inspector's arranger section, renaming chains in the editor, drag and drop
 in the chain list, the other flatten options (Checked and All Chains, New Project, Make Real Event Copies, Don't Split

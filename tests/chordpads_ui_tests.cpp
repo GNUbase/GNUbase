@@ -2,6 +2,7 @@
 // The chord pads zone in the project window (#174, docs/features/chord-pads.md), driven with ui::Automation as MCP's
 // UI tools drive it: shown and hidden from the Project menu, pads played and recorded with the mouse, typed, swapped,
 // changed with the toolbars and the wheel, presets and the root key, and the chord assistant's suggestions.
+#include "testutils/commandholds.h"
 #include "uiapp.h"
 
 #include "engine/engine.h"
@@ -902,6 +903,71 @@ TEST_CASE("the chord assistant keeps the hint for a pad without a chord selected
 	CHECK(window.elements(".chord-suggestion").empty());
 }
 
+// A MIDI Learn button and Assign from MIDI Input go from what they show, which they show at the click, not from the
+// listening the panel last heard of (#1851): a second click before the engine answers the first stops listening
+// again, and another target's click takes over from the first.
+TEST_CASE("MIDI Learn and Assign from MIDI Input clicked twice before the engine answers stop listening again", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	Window window;
+	const test::ReleaseHolds releaseHolds{holds};
+	window.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(window.app.engine(), "holder");
+	window.open();
+	window.click("#chord-pads-pane-remote-button");
+	window.click(Window::pad(0));
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(Window::pad(0), "selected"); }));
+	const auto listening = [&] { return window.call("chordPads.get").at("listening"); };
+	const auto answered = [&]
+	{ return window.app.waitUntil([&] { return window.app.appUi().binding().waiting("chordPads.listen") == 0; }); };
+	const std::string range = "#chord-pads-learn-range";
+	const std::string voicing = "#chord-pads-learn-nextVoicing";
+	const std::string assign = "#chord-pads-assignMidi";
+
+	// On and off again within one answer.
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	window.click(range);
+	CHECK(window.hasClass(range, "checked"));
+	window.click(range);
+	CHECK_FALSE(window.hasClass(range, "checked"));
+	holds.release(1);
+	REQUIRE(answered());
+	CHECK(listening().is_null());
+	CHECK_FALSE(window.hasClass(range, "checked"));
+
+	// One target, then another: the engine's event of the first doesn't light its button again.
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(2));
+	window.click(range);
+	window.click(voicing);
+	CHECK_FALSE(window.hasClass(range, "checked"));
+	CHECK(window.hasClass(voicing, "checked"));
+	holds.release(2);
+	REQUIRE(answered());
+	CHECK(listening() == Json{{"learn", "nextVoicing"}});
+	CHECK(window.hasClass(voicing, "checked"));
+	CHECK_FALSE(window.hasClass(range, "checked"));
+	window.click(voicing);
+	REQUIRE(answered());
+	CHECK(listening().is_null());
+
+	// Assign from MIDI Input the same way.
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(3));
+	window.click(assign);
+	CHECK(window.hasClass(Window::pad(0), "listening"));
+	window.click(assign);
+	CHECK_FALSE(window.hasClass(Window::pad(0), "listening"));
+	holds.release(3);
+	REQUIRE(answered());
+	CHECK(listening().is_null());
+	CHECK_FALSE(window.hasClass(Window::pad(0), "listening"));
+	CHECK_FALSE(window.hasClass(assign, "checked"));
+}
+
 TEST_CASE(
 	"MIDI Learn of every remote key and control, the section keys, the pad layout and Import from MIDI Loop", "[ui]")
 {
@@ -913,8 +979,8 @@ TEST_CASE(
 	{
 		window.click("#chord-pads-learn-" + target);
 		REQUIRE(window.app.waitUntil([&] { return pads().at("listening") == Json{{"learn", target}}; }));
-		// And the panel heard of it, as the command's event comes before its result: the toggle button lights at the
-		// click already, and a click before the event would ask the panel's last target for listening again.
+		// And the panel heard of it, as the command's event comes before its result: the button lights at the click
+		// already, before the engine's answer (#1851).
 		REQUIRE(window.app.waitUntil([&] { return window.app.appUi().binding().waiting("chordPads.listen") == 0; }));
 		CHECK(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learn-" + target, "checked"); }));
 	};

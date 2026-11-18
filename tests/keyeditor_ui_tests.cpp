@@ -774,8 +774,20 @@ TEST_CASE("the object selection tool selects, moves, resizes, inserts and delete
 	f.settle();
 	CHECK(f.note(ids[0]).at("position") == 2 * g_sixteenth);
 	// A drag at a note's end resizes it (p. 1214).
-	f.drag(f.at(7.95, 62), f.at(12, 62));
-	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).at("length") == 2 * g_quarter; }));
+	const ui::Target from = f.at(7.95, 62);
+	const Json box = f.box(noteSelector(ids[1]));
+	f.drag(from, f.at(12, 62));
+	Json note;
+	const bool resized = f.app.waitUntil(
+		[&]
+		{
+			note = f.note(ids[1]);
+			return note.at("length") == 2 * g_quarter;
+		});
+	const ui::Point pressed = from.point.value_or(ui::Point{});
+	INFO("pressed at " << pressed.x << ", " << pressed.y << " on the note's box " << box.dump() << ", the note now "
+					   << note.dump());
+	REQUIRE(resized);
 	f.settle();
 	CHECK(f.note(ids[1]).at("position") == g_quarter);
 
@@ -790,6 +802,31 @@ TEST_CASE("the object selection tool selects, moves, resizes, inserts and delete
 	f.click(of(noteSelector(ids[0])), 2);
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).is_null(); }));
 	f.settle();
+}
+
+TEST_CASE("a view older than a click that selects keeps the click's selection", "[ui]")
+{
+	// On a loaded machine the engine's answers to an earlier selection, such as its editor.changed, can come in after a
+	// click selected anew, before the click's own answer. Until that, the notes stay as the click selected them, so a
+	// drag right after the click moves only those (#1817).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {g_quarter, 62, g_quarter}});
+	f.click(of(noteSelector(ids[0])));
+	f.click(of(noteSelector(ids[1])), 1, {"ctrl"});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.selected").size() == 2; }));
+	f.settle();
+	const Json project = f.app.call("project.get");
+	const Json older = f.view();
+	REQUIRE(older.at("selection").size() == 2);
+	// A click in the empty grid deselects; the view with both notes selected comes in before its answer.
+	f.app.ui().click(f.window, f.at(12.5, 70), ui::MouseButton::Left, 1, {});
+	f.app.appUi().editorWindow()->keyEditor()->show(project, older, 0);
+	CHECK(f.elements(".key-note.selected").empty());
+	f.drag(f.at(2, 60), f.at(4.2, 63));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 63; }));
+	f.settle();
+	CHECK(f.note(ids[1]).at("pitch") == 62);
+	CHECK(f.note(ids[1]).at("position") == g_quarter);
 }
 
 TEST_CASE("the draw tool draws notes of the length quantize's length or a multiple of it", "[ui]")
