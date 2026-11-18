@@ -12,6 +12,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <variant>
@@ -1185,6 +1186,25 @@ TEST_CASE("a tempo track file with a single tempo leaves fixed tempo mode as it 
 	CHECK(after.at("tempoTrack")[0].at("bpm") == 87.0);
 }
 
+TEST_CASE("an export that fails leaves the earlier file as it was", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const std::string file = (dir.path() / "tempo.xml").u8string();
+	run(client, "tempo.export", {{"path", file}});
+	const auto read = [&file] {
+		std::ifstream in(std::filesystem::u8path(file), std::ios::binary);
+		return std::string(std::istreambuf_iterator<char>(in), {});
+	};
+	const std::string earlier = read();
+	// The export writes next to the file and moves it over (#771): a folder in the way makes that fail.
+	std::filesystem::create_directory(std::filesystem::u8path(file + ".saving"));
+	run(client, "tempo.add", point(4, 90.0));
+	CHECK_THAT(reject(client, "tempo.export", {{"path", file}}), ContainsSubstring("tempo.xml"));
+	CHECK(read() == earlier);
+}
+
 TEST_CASE("importing a file that isn't a tempo track file changes nothing", "[integration]")
 {
 	const gnubase::test::TempDir dir;
@@ -1204,6 +1224,12 @@ TEST_CASE("importing a file that isn't a tempo track file changes nothing", "[in
 	std::ofstream(std::filesystem::u8path(invalid))
 		<< R"(<TempoTrack version="1.0"><Transport><Tempo unit="bpm" value="2000"/></Transport></TempoTrack>)";
 	CHECK_THAT(reject(client, "tempo.import", {{"path", invalid}}), ContainsSubstring("invalid"));
+	// No command makes a numerator above 99, so a file can't either (#771).
+	const std::string numerator = (dir.path() / "numerator.xml").u8string();
+	std::ofstream(std::filesystem::u8path(numerator)) << R"(<TempoTrack version="1.0"><Transport>)"
+													  << R"(<TimeSignature numerator="150" denominator="4"/>)"
+													  << "</Transport></TempoTrack>";
+	CHECK_THAT(reject(client, "tempo.import", {{"path", numerator}}), ContainsSubstring("numerator"));
 	const Json after = run(client, "project.get");
 	CHECK(after.at("tempoTrack") == before.at("tempoTrack"));
 	CHECK(after.at("signatures") == before.at("signatures"));

@@ -444,6 +444,10 @@ namespace gnubase::engine
 					changeBeat = beat;
 				}
 			}
+			// The signature commands take numerators up to 99, and so does a file (#771).
+			for (const time::SignatureChange& change : changes)
+				if (change.signature.numerator > 99)
+					throw DawProjectError("the file's time signature is invalid: its numerator is above 99");
 			try
 			{
 				return {time::TempoMap(tempo), time::SignatureMap(changes)};
@@ -2329,11 +2333,30 @@ namespace gnubase::engine
 		std::ostringstream xml;
 		document.save(xml, "  ", pugi::format_default, pugi::encoding_utf8);
 		const std::string text = xml.str();
-		const detail::File out = detail::openFile(path, "wb");
-		if (!out)
-			throw DawProjectError("can't write " + path + ": " + detail::lastError());
-		if (std::fwrite(text.data(), 1, text.size(), out.get()) != text.size() || std::fflush(out.get()) != 0)
-			throw DawProjectError("can't write " + path + ": " + detail::lastError());
+		// Written next to the file and then moved over it, as saveDawProject does, so a failed export leaves the
+		// earlier file as it was (#771).
+		const std::string temporary = path + ".saving";
+		std::string failure;
+		{
+			const detail::File out = detail::openFile(temporary, "wb");
+			if (!out)
+				throw DawProjectError("can't write " + path + ": " + detail::lastError());
+			if (std::fwrite(text.data(), 1, text.size(), out.get()) != text.size() || std::fflush(out.get()) != 0)
+				failure = detail::lastError();
+		}
+		if (failure.empty())
+		{
+			std::error_code error;
+			std::filesystem::rename(pathOf(temporary), pathOf(path), error);
+			if (error)
+				failure = error.message();
+		}
+		if (!failure.empty())
+		{
+			std::error_code ignored;
+			std::filesystem::remove(pathOf(temporary), ignored);
+			throw DawProjectError("can't write " + path + ": " + failure);
+		}
 	}
 
 	TempoTrackFile loadTempoTrack(const std::string& path)
