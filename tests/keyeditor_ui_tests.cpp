@@ -889,7 +889,8 @@ TEST_CASE("a move released outside the key editor ends without its effect, a dra
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
 }
 
-TEST_CASE("a draw whose release was lost ends without its effect at a press on the drawn note", "[ui]")
+TEST_CASE(
+	"a draw whose release was lost ends without its effect as the mouse leaves the window or at the next press", "[ui]")
 {
 	Fixture f;
 	f.scroll(64);
@@ -897,26 +898,38 @@ TEST_CASE("a draw whose release was lost ends without its effect at a press on t
 	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
 	REQUIRE(window != nullptr);
 	Rml::Context& context = window->context();
-	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so the button
-	// going up out there ends nothing, and the drawn note stays where it was pressed.
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so no dragend
+	// comes, and the draw ends at the leave, without its effect: the drawn note doesn't follow the mouse back over the
+	// editor with the button up (#1756).
 	f.app.ui().press(f.window, f.at(4.3, 64), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.elements(".key-note.drawing").size() == 1);
 	context.ProcessMouseLeave();
 	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(".key-note.drawing").empty());
+	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
+	f.app.ui().move(f.window, f.at(8.5, 64));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(".key-note.drawing").empty());
+	CHECK_FALSE(f.app.waitUntil([&] { return !f.partNotes().empty(); }, std::chrono::milliseconds(300)));
+
+	// A draw whose mouseup never comes at all ends at the next press, here on the drawn note: the end takes the note
+	// out while the press still has it as its target, and the press draws nothing either.
+	clock->advance(1.0); // no double click with the press before
+	f.app.ui().press(f.window, f.at(4.3, 64), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.elements(".key-note.drawing").size() == 1);
 	const Json drawn = f.box(".key-note.drawing");
 	const ui::Point on{
 		static_cast<int>(std::lround(drawn.at("x").get<double>() + (drawn.at("width").get<double>() / 2))),
 		static_cast<int>(std::lround(drawn.at("y").get<double>() + (drawn.at("height").get<double>() / 2)))};
-	// The next press goes to the drawn note and ends the draw, which takes the note out while the press still has it
-	// as its target; the press draws nothing either.
 	const Rml::Element* hit = context.GetElementAtPoint({static_cast<float>(on.x), static_cast<float>(on.y)});
 	REQUIRE(hit != nullptr);
 	REQUIRE(hit->IsClassSet("drawing"));
-	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
-	REQUIRE(clock != nullptr);
-	clock->advance(1.0); // no double click with the press before
+	clock->advance(1.0);
 	f.app.ui().press(f.window, {"", 0, on}, ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.elements(".key-note.drawing").empty());
@@ -924,30 +937,31 @@ TEST_CASE("a draw whose release was lost ends without its effect at a press on t
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK_FALSE(f.app.waitUntil([&] { return !f.partNotes().empty(); }, std::chrono::milliseconds(300)));
 	CHECK(f.elements(".key-note.drawing").empty());
+	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
 }
 
-TEST_CASE("a move whose release was lost ends without its effect at a press outside the key editor", "[ui]")
+TEST_CASE("a move whose release was lost ends without its effect as the mouse leaves the window", "[ui]")
 {
 	Fixture f;
 	const std::vector<uint64_t> ids = f.add({{0, 60, g_sixteenth}});
+	const auto x = [&] { return f.box(noteSelector(ids[0])).at("x").get<double>(); };
+	const double before = x();
 	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
 	REQUIRE(window != nullptr);
 	Rml::Context& context = window->context();
-	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so the button
-	// going up out there ends nothing, and the grid stays a drag element.
+	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so no dragend
+	// comes. The move ends at the leave (#1756): the grid is no drag element any more, the note doesn't follow the
+	// mouse back over the grid with the button up, and the button going up there moves nothing.
 	f.app.ui().press(f.window, f.at(0.5, 60), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.has(".key-editor", "in-gesture"));
 	context.ProcessMouseLeave();
 	context.ProcessMouseButtonUp(0, 0);
-	f.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(f.has(".key-editor", "in-gesture"));
-	// The next press, on the editor window's toolbar outside the key editor, ends the move: the grid is no drag element
-	// any more, and the button going up over the grid after a move there moves nothing.
-	f.app.ui().press(f.window, of("#editor-keep-contents"), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
 	f.app.ui().move(f.window, f.at(6.5, 62));
 	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(x() - before) <= 1.5);
 	f.app.ui().release(f.window, f.at(6.5, 62), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK_FALSE(f.app.waitUntil([&] { return f.note(ids[0]).at("position") != 0; }, std::chrono::milliseconds(300)));
@@ -1032,23 +1046,31 @@ TEST_CASE("the key editor's draw and the drag on the keyboard's left part go on 
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
 	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
 
-	// The keyboard's left part dragged 60 px past the window's left edge zooms out by as much as in the window.
+	// The keyboard's left part dragged 60 px past the window's left edge zooms out by as much as in the window. Zoomed
+	// in first, as the left zone puts the keyboard about 200 px into the window: from 1, a drag to the edge alone would
+	// reach the least zoom (#1756).
 	const int left = f.box(".key-editor-keys").at("x").get<int>() + 4;
 	const int high = f.box(".key-editor-body").at("y").get<int>() + 150;
 	REQUIRE(std::abs(f.box(".key-editor-row").at("height").get<double>() - 10.0) <= 0.5);
+	f.drag({"", 0, ui::Point{left, high}}, {"", 0, ui::Point{left + 200, high}});
+	REQUIRE(std::abs(f.box(".key-editor-row").at("height").get<double>() - 40.0) <= 0.5);
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0); // no double click with the press before
 	f.app.ui().press(f.window, {"", 0, ui::Point{left, high}}, ui::MouseButton::Left);
 	f.app.ui().move(f.window, {"", 0, ui::Point{left - 4, high}});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	context.ProcessMouseMove(-60, high, 0);
 	context.ProcessMouseButtonUp(0, 0);
 	f.app.shell().step(std::chrono::milliseconds(0));
-	const double zoomed = 10.0 * std::exp2((-60.0 - left) / 100.0);
-	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - std::max(zoomed, 2.5)) <= 0.5);
+	const double zoomed = 40.0 * std::exp2((-60.0 - left) / 100.0);
+	REQUIRE(zoomed > 3.0); // not the least zoom's 2.5 px
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - zoomed) <= 0.5);
 	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
 	// Back in the window with the button up, the mouse zooms no more.
 	f.app.ui().move(f.window, {"", 0, ui::Point{left + 200, high}});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - std::max(zoomed, 2.5)) <= 0.5);
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - zoomed) <= 0.5);
 }
 
 TEST_CASE("the draw tool follows a quantize grid changed in the project window", "[ui]")

@@ -1673,6 +1673,7 @@ namespace gnubase::ui
 				cancelGesture();
 				break;
 			}
+			m_dragged = false;
 			press(event);
 			dragDuringGesture();
 			break;
@@ -1680,6 +1681,7 @@ namespace gnubase::ui
 			drag(event);
 			break;
 		case Rml::EventId::Drag:
+			m_dragged = true;
 			// The draws, the expression editor's and the keyboard's drag follow the mouse wherever it is, also outside
 			// the window, where the platform captures it while the button is held but nothing is hovered; in the
 			// editor the root's mousemove computes the same absolute state, so both are harmless.
@@ -1707,9 +1709,16 @@ namespace gnubase::ui
 			}
 			break;
 		case Rml::EventId::Mouseout:
-			// The mouse leaving the window ends the pitch too: the button going up out there sends no mouseup.
+			// The mouse leaving the window ends the pitch too: the button going up out there sends no mouseup. A
+			// gesture whose drag never started, as when the window lost the focus before the mouse moved (#1191), gets
+			// no dragend either: it ends here without its effect, so that its notes don't follow the mouse back
+			// (#1756). Dragged out of the window, the drag events came first.
 			if (target == m_document.get())
+			{
 				sound(std::nullopt);
+				if (!m_dragged)
+					cancelGesture();
+			}
 			break;
 		case Rml::EventId::Dblclick:
 			doubleClick(event);
@@ -2362,9 +2371,9 @@ namespace gnubase::ui
 			return;
 		root->SetClass("in-gesture", on);
 		// RmlUi looks for the drag element right after the press's mousedown and double click, from the computed
-		// values. Off, the next frame updates them: a press that comes before only finds the grid or the keyboard's
-		// left part as its drag element when it is on them, where a drag without a gesture does nothing.
-		if (Rml::ElementDocument* owner = root->GetOwnerDocument(); owner != nullptr && on)
+		// values: the press that starts a gesture needs them with the class, the press that ends a lost one, or
+		// comes in the same frame as a release, without it, as the list editor's body does (#1756).
+		if (Rml::ElementDocument* owner = root->GetOwnerDocument())
 			owner->UpdateDocument();
 	}
 

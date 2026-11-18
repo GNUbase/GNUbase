@@ -89,8 +89,8 @@ namespace gnubase::ui
 		void begin(Rml::Event& event);
 		// Ends the gesture without its effect. Returns whether the value display showed values of it.
 		bool cancel();
-		// Hears the mouseup and, in the capture phase, the mousedown in the root's document while a gesture goes on,
-		// or stops hearing them.
+		// Hears the mouseup, the mouseout and, in the capture phase, the mousedown in the root's document while a
+		// gesture goes on, or stops hearing them.
 		void listen(bool document);
 		// Makes the body a drag element while a gesture goes on, or stops doing so.
 		void dragBody(bool on);
@@ -155,6 +155,7 @@ namespace gnubase::ui
 		float m_laneLeft = 0.0F;
 		float m_laneWidth = 1.0F;
 		std::map<std::pair<uint64_t, uint64_t>, double> m_values; // what a drag in the value display set
+		bool m_dragged = false; // a drag event came since the press: the mouse leaving the window keeps the gesture
 		// The document that a gesture hears the mouseup in, wherever in it the mouse goes up.
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;

@@ -322,10 +322,11 @@ namespace gnubase::ui
 		std::optional<Note> m_pressed;                     // the note pressed, as it was
 		std::optional<std::pair<double, int>> m_draggedTo; // a move's or resize's ticks and pitch at the last move
 		bool m_snapOff = false;
-		float m_pitchZoom = 1.0F;               // the pitch rows' scale, which the keyboard's left part drags (p. 1261)
-		float m_zoomStart = 1.0F;               // m_pitchZoom at the press
-		float m_scrollStart = 0.0F;             // the note display's scroll top at the press, in pixels
-		bool m_zoomDrag = false;                // the drag went past the threshold
+		bool m_dragged = false;     // a drag event came since the press: the mouse leaving the window keeps the gesture
+		float m_pitchZoom = 1.0F;   // the pitch rows' scale, which the keyboard's left part drags (p. 1261)
+		float m_zoomStart = 1.0F;   // m_pitchZoom at the press
+		float m_scrollStart = 0.0F; // the note display's scroll top at the press, in pixels
+		bool m_zoomDrag = false;    // the drag went past the threshold
 		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out
 		// The drawn note taken out of the grid, kept until the next one goes: the mouse event that ends the draw may
 		// have it as its target, which the listeners after this one still read.

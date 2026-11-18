@@ -137,11 +137,13 @@ selects and deselects no notes.
   drumstick's drags, the expression editor's draw and erase and the drag on the keyboard's left part follow the mouse
   out there and end at the release as in the editor; the drumstick's delete drag deletes up to it. A move or resize
   released outside the editor ends without its effect, except onto another in-place editor's grid
-  ([in-place-editor.md](in-place-editor.md)). A gesture whose release never comes, as when the window loses the focus
-  before the mouse moved, ends without its effect at the next press anywhere in the editor's window (the document's
-  mousedown in the capture phase), before the press reaches its target: until then the notes it moves or draws follow
-  the mouse over the editor. The class goes when the gesture ends, as RmlUi doesn't scroll on a touch move during a
-  drag. The display shown again while a move or resize goes on, as when the engine's answers to an earlier edit come
+  ([in-place-editor.md](in-place-editor.md)). A gesture whose drag never started, as when the window loses the focus
+  before the mouse moved, gets no dragend: it ends without its effect as the mouse leaves the window (the document's
+  mouseout; dragged out of the window, the drag events come first), so its notes don't follow the mouse back (#1756).
+  One whose release never comes at all ends without its effect at the next press anywhere in the editor's window (the
+  document's mousedown in the capture phase), before the press reaches its target. The class goes when the gesture
+  ends, as RmlUi doesn't scroll on a touch move during a drag, and the document's computed values follow it both ways,
+  as the list editor's do: the grid is a drag element only during a gesture. The display shown again while a move or resize goes on, as when the engine's answers to an earlier edit come
   in, keeps the notes where the mouse took them, also when the mouse holds still (#1789). A click that selects shows
   its selection at once, and the views that come in before the engine answered it, which can be older, such as the
   editor.changed of the selection before, leave it as it is: a drag right after the click moves the notes it selected
@@ -193,8 +195,9 @@ menu.
   and a view older than a click that deselects leaving the notes deselected, so a drag right after it moves one note;
   the draw tool with Quantize Link and an eighth from the Length Quantize menu; a move released outside the editor
   ending without its effect, the note not following the mouse back and a later click moving nothing, and a draw
-  released there drawing; a resize released there ending without its effect, its note keeping the length the mouse
-  gives it while the display is shown again during it; the erase, trim (and with Alt), split
+  released there drawing; a move and a draw whose release was lost ending as the mouse leaves the window, and a draw
+  whose mouseup never came at the next press; a resize released there ending without its effect, its note keeping the
+  length the mouse gives it while the display is shown again during it; the erase, trim (and with Alt), split
   and glue tools, and the split tool splitting the selected notes of two parts at one position in one undo step; the
   transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input
   selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and
