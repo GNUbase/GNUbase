@@ -175,6 +175,12 @@ namespace gnubase::ui
 				if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get());
 					dialog != nullptr && m_dialogForObjects)
 					closeDialog(*dialog, "cancel");
+				// The old project's open automation tracks and selected points go too: the new one's get their ids
+				// again.
+				m_openAutomation.clear();
+				m_selectedPoints.clear();
+				m_targets.clear();
+				m_targetsKeys.clear();
 			}));
 		m_subscriptions.push_back(
 			m_binding.on("rangeClipboard.changed", [this](const engine::Event&) { m_copied = true; }));

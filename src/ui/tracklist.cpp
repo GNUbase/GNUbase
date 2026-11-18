@@ -48,6 +48,13 @@ namespace gnubase::ui
 			Rml::EventId::Click, Rml::EventId::Mousescroll, Rml::EventId::Change};
 		constexpr std::array<Rml::EventId, 2> g_documentEvents = {Rml::EventId::Mousemove, Rml::EventId::Mouseup};
 
+		// A parameter's name in the parameter selector: with its instrument's or plugin's name.
+		std::string parameterName(const Json& target)
+		{
+			const std::string group = target.at("group").get<std::string>();
+			return (group == "Channel" ? "" : group + ": ") + target.at("name").get<std::string>();
+		}
+
 		Rml::Property dp(double value)
 		{
 			return {static_cast<float>(value), Rml::Unit::DP};
@@ -715,11 +722,14 @@ namespace gnubase::ui
 		// and without a selection.
 		m_subscriptions.push_back(
 			m_binding.on("trackLayout.changed", [this](const engine::Event& event) { loadLayout(event.data, false); }));
+		m_subscriptions.push_back(m_binding.on("automation.copied",
+			[this](const engine::Event& event) { m_automationCopied = event.data.value("lanes", 0) > 0; }));
 		m_subscriptions.push_back(m_binding.on("project.reset",
 			[this, readVisibility](const engine::Event&)
 			{
 				select({});
 				m_selectedLanes.clear();
+				m_automationCopied = false; // the engine's automation clipboard is empty again
 				m_clicked.clear(); // the old project's tracks' clicks, whose ids the new one's may have (#1852)
 				// A height drag under way was the old project's: its release sends nothing to the new one.
 				if (m_drag == Drag::Height)
@@ -1574,11 +1584,9 @@ namespace gnubase::ui
 		for (size_t i = 0; i < targets.size(); ++i)
 		{
 			const Json& target = targets.at(i);
-			const std::string group = target.at("group").get<std::string>();
-			const std::string name = (group == "Channel" ? "" : group + ": ") + target.at("name").get<std::string>();
 			rml += R"(<menuitem class="automation-target)" +
 				std::string(target.at("target") == json->at("target") ? " checked" : "") + R"(" target-index=")" +
-				std::to_string(i) + R"(">)" + Rml::StringUtilities::EncodeRml(name) + "</menuitem>";
+				std::to_string(i) + R"(">)" + Rml::StringUtilities::EncodeRml(parameterName(target)) + "</menuitem>";
 		}
 		m_parameterMenu->SetInnerRML(rml);
 	}
@@ -1599,10 +1607,17 @@ namespace gnubase::ui
 					[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 				return text;
 			};
+			// Matched against the names, not the items' RML, where & < > are entities.
 			const std::string text = lower(target->GetAttribute<Rml::String>("value", ""));
+			const Json* targets = m_display.automationTargets(track);
 			for (int i = 0; i < m_parameterMenu->GetNumChildren(); ++i)
 				if (Rml::Element* item = m_parameterMenu->GetChild(i); item->IsClassSet("automation-target"))
-					setClass(*item, "hidden", lower(item->GetInnerRML()).find(text) == std::string::npos);
+				{
+					const auto index = static_cast<size_t>(item->GetAttribute<int>("target-index", 0));
+					const std::string name =
+						targets != nullptr && index < targets->size() ? parameterName(targets->at(index)) : "";
+					setClass(*item, "hidden", lower(name).find(text) == std::string::npos);
+				}
 			return;
 		}
 		if (event.GetId() != Rml::EventId::Click)
@@ -2235,10 +2250,14 @@ namespace gnubase::ui
 		const auto lane = static_cast<size_t>(at - lanes.begin());
 		const double shown = m_rows->GetClientHeight() / dpRatio();
 		const double top = m_display.view().top;
+		// With its automation tracks below it, as far as they fit.
+		size_t end = lane + 1;
+		while (end < lanes.size() && lanes[end] == track)
+			++end;
 		if (tops[lane] < top)
 			m_display.scrollVertically(tops[lane]);
-		else if (tops[lane + 1] > top + shown)
-			m_display.scrollVertically(tops[lane + 1] - shown);
+		else if (tops[end] > top + shown)
+			m_display.scrollVertically(std::min(tops[lane], tops[end] - shown));
 		place();
 	}
 

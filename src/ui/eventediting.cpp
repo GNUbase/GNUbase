@@ -1009,6 +1009,14 @@ namespace gnubase::ui
 		const Drag drag = m_drag;
 		if (!alive())
 			return;
+		if (drag == Drag::Automation) // with the keys held at the press, as its preview has them
+		{
+			automationUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
+			m_dragMoved = false;
+			m_drag = Drag::None;
+			return;
+		}
 		m_pressed = modifiersOf(event); // what is held now decides, e.g. whether a drag copies
 		if (std::exchange(m_resizeScrubs, false))
 		{
@@ -1020,14 +1028,6 @@ namespace gnubase::ui
 				m_drag = Drag::None;
 				return;
 			}
-		}
-		if (drag == Drag::Automation)
-		{
-			automationUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
-				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
-			m_dragMoved = false;
-			m_drag = Drag::None;
-			return;
 		}
 		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::DrawPart || drag == Drag::Comp ||
 			drag == Drag::Play || drag == Drag::Click || drag == Drag::VolumePoint || drag == Drag::TimeWarp)

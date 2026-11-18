@@ -13,12 +13,14 @@ cuts and pastes it shares; the track list's commands are in `src/ui/tracklist.cp
   default the locators) of every track, of the tracks or of the lanes, as `range.copy` copies a range's automation:
   each lane with points, with the curve's values at the range's edges and its gaps. It has a clipboard of its own,
   apart from the range clipboard, keeps it outside the project and its undo history, and returns how many lanes it
-  copied. A new or loaded project clears this clipboard.
+  copied; so does its event `automation.copied` `{lanes}`. With tracks it keeps every one of them in their order, also
+  those without automation, for the paste onto tracks. A new or loaded project clears this clipboard
+  (`project.reset`).
 - **`automation.paste`** `{start, end, tracks | lanes}` pastes it between start and end, one undo step (Paste
   Automation), and returns the lanes it pasted into:
   - without tracks and lanes each lane goes onto its own track (Paste Automation of All Tracks), in the new range;
   - onto tracks, the copied tracks go onto them from the top, the first onto the first; a single copied track goes
-    onto each of them;
+    onto each of them; a copied track without automation leaves its target as it is;
   - onto lanes, each gets the copied lane of its parameter, if there is one.
 - **Other parameters.** A track takes the copied parameters it has and leaves out the others: volume, pan and mute on
   tracks with audio channels, a VCA fader's volume on VCA tracks, MIDI controllers, pitch bend and channel pressure
@@ -44,7 +46,9 @@ cuts and pastes it shares; the track list's commands are in `src/ui/tracklist.cp
   (Copy Automation of All Tracks, of Selected Tracks, of Selected Parameters (Locator Range)), and
   `track.pasteAutomationAll`, `track.pasteAutomationSelected` and `track.pasteAutomationSelectedParameters` (Paste
   ...). They send `automation.copy` and `automation.paste` with the selected tracks or lanes; the engine takes the
-  locators.
+  locators. Those of Selected Tracks wait for selected tracks, those of Selected Parameters for selected automation
+  tracks, and the Paste commands also for copied automation: the track list follows `automation.copied` and
+  `project.reset` (`TrackList::automationCopied()`). A new project clears the selected automation tracks.
 
 ## Not yet
 
@@ -57,6 +61,8 @@ Automation Functions menu (p. 889).
   plugin in the same slot and another plugin in the next, a MIDI track that takes only the MIDI controller), replacing
   the automation in the range, one undo step; a shorter and a longer range; one parameter onto the lanes of the same
   parameter, one copied track onto several tracks; all tracks onto all tracks; pasting a VCA fader's volume and
-  finding nothing to paste after a new project; the checks.
-- `tests/automationtracks_tests.cpp`: selecting automation tracks with clicks and Ctrl, and the track list's copy and
-  paste commands for selected parameters and selected tracks.
+  finding nothing to paste after a new project; selected tracks without automation that keep the paste's order, and
+  `automation.copied`; the checks.
+- `tests/automationtracks_tests.cpp`: selecting automation tracks with clicks and Ctrl, the track list's copy and
+  paste commands for selected parameters and selected tracks, when they are enabled, and a new project that has
+  nothing copied and no selected automation tracks.

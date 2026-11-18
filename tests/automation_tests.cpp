@@ -24,6 +24,7 @@
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -1664,6 +1665,51 @@ TEST_CASE("automation.copy and automation.paste copy automation between tracks w
 	CHECK_THAT(reject(client, "automation.paste", {{"start", 100}, {"end", 100}}), ContainsSubstring("empty"));
 	CHECK_THAT(reject(client, "automation.copy", {{"lanes", {12345}}}), ContainsSubstring("no automation lane 12345"));
 	CHECK_THAT(reject(client, "automation.paste", {{"tracks", {12345}}}), ContainsSubstring("no track 12345"));
+}
+
+TEST_CASE("automation.copy keeps the given tracks without automation in their order, and says what it copied", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	std::mutex mutex;
+	std::vector<Json> copied;
+	const Listener listener(engine,
+		[&](const Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "automation.copied")
+				copied.push_back(event.data);
+		});
+	std::vector<ObjectId> tracks;
+	for (int i = 0; i < 4; ++i)
+	{
+		tracks.push_back(idOf(run(client, "track.add", {{"type", "audio"}}), "track"));
+		run(client, "track.set", {{"track", tracks.back()}, {"timeBase", "linear"}});
+	}
+	const ObjectId lane =
+		idOf(run(client, "automationLane.add", {{"track", tracks[1]}, {"target", {{"type", "volume"}}}}), "lane");
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
+
+	// The first selected track has no automation: the second's goes onto the second target, not onto both.
+	CHECK(run(client, "automation.copy", {{"tracks", {tracks[0], tracks[1]}}, {"start", 0}, {"end", 48000}}) ==
+		Json{{"lanes", 1}});
+	run(client, "automation.paste", {{"tracks", {tracks[2], tracks[3]}}, {"start", 0}, {"end", 48000}});
+	CHECK(lanePoints(client, tracks[2], "volume").points.empty());
+	// The lane had no points: the static value plays again in the gap a terminator starts after the paste (reference
+	// manual p. 879).
+	const LanePoints pasted = lanePoints(client, tracks[3], "volume");
+	REQUIRE(pasted.points.size() == 3);
+	CHECK(pasted.points[0].first == 0);
+	CHECK(pasted.points[1].first == 48000);
+	CHECK(pasted.points[2].first == 48000);
+	for (const auto& [at, value] : pasted.points)
+		CHECK(std::abs(value + 6.0) < 1e-6);
+	CHECK(pasted.terminators == std::vector<size_t>{2});
+
+	// automation.copied says how many lanes the clipboard holds, also none.
+	run(client, "automation.copy", {{"tracks", {tracks[0]}}, {"start", 0}, {"end", 48000}});
+	const std::scoped_lock lock(mutex);
+	CHECK(copied == std::vector<Json>{{{"lanes", 1}}, {{"lanes", 0}}});
 }
 
 TEST_CASE("automation.paste pastes VCA faders' volume, and a new project has nothing to paste", "[unit]")

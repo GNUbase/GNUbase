@@ -1125,6 +1125,19 @@ namespace gnubase::app
 				m_keys.enableWhen(command.id,
 					[this, off = id == "track.disableSelectedGroupChannels"](ui::Window&, Rml::Element*)
 					{ return m_trackList != nullptr && m_trackList->selectsFolder(off); });
+			else if (id.find("Automation") != std::string::npos && id.find("Selected") != std::string::npos)
+				// Copy and Paste Automation of Selected Tracks or Parameters wait for their selection, the paste
+				// commands for copied automation too (docs/features/copy-automation.md).
+				m_keys.enableWhen(command.id,
+					[this, parameters = id.find("SelectedParameters") != std::string::npos,
+						paste = id.find("paste") != std::string::npos](ui::Window&, Rml::Element*)
+					{
+						return m_trackList != nullptr && (!paste || m_trackList->automationCopied()) &&
+							!(parameters ? m_trackList->selectedLanes() : m_trackList->selection()).empty();
+					});
+			else if (id == "track.pasteAutomationAll")
+				m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*)
+					{ return m_trackList != nullptr && m_trackList->automationCopied(); });
 			else
 				m_keys.enableWhen(command.id, [this, selected](ui::Window&, Rml::Element*)
 					{ return m_trackList != nullptr && (!selected || !m_trackList->selection().empty()); });

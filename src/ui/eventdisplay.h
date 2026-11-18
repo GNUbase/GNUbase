@@ -805,6 +805,10 @@ namespace gnubase::ui
 		std::optional<EditorControl> editorControlAt(double x, double y) const;
 		// The selected points of the pressed lane as a drag to x and y dp moves them or the editor changes them, by id.
 		std::vector<std::pair<uint64_t, CurvePoint>> transformed(double x, double y) const;
+		// The other points of the lane that moved points replace: those where a continuous selection lands
+		// (reference manual pp. 877-878).
+		std::set<uint64_t> covered(
+			const AutomationView& lane, const std::vector<std::pair<uint64_t, CurvePoint>>& moved) const;
 		// Shows these points on the display lane's curve while dragging.
 		void preview(size_t lane, std::vector<CurvePoint> points);
 		// The lane's points with those from start to end, seconds, replaced by these.
@@ -924,6 +928,7 @@ namespace gnubase::ui
 		std::optional<size_t> m_dragPoint;  // the curve point dragged, none for a new one
 		bool m_dragStarted = false;         // moving events, after the drag delay
 		bool m_dragToggles = false;         // a Ctrl/Shift click takes the pressed event or point out of the selection
+		bool m_clickSelectsPoint = false;   // a click on a point of a larger selection selects only that point
 		double m_pressTime = 0.0;           // RmlUi's clock, in seconds
 		double m_dragDx = 0.0;              // dp, while moving, snapped
 		std::optional<int64_t> m_dragTicks; // a musical move's offset, for each event's preview
@@ -1038,10 +1043,10 @@ namespace gnubase::ui
 		std::map<uint64_t, std::vector<uint64_t>> m_openAutomation; // the lanes each track shows, in order
 		std::map<uint64_t, AutomationView> m_automation;            // every lane of the project
 		std::map<uint64_t, engine::Json> m_targets;                 // automationLane.targets, by track
-		std::set<uint64_t> m_targetsAsked;                          // tracks whose targets are on their way
-		std::vector<uint64_t> m_laneAutomation;                     // each display lane's automation lane, or 0
-		std::vector<int> m_laneTakes;                               // each display lane's track lane, or -1
-		std::set<uint64_t> m_lanesShown;                            // the tracks whose lanes show
+		std::map<uint64_t, std::string> m_targetsKeys; // by track, what its targets depended on when last asked
+		std::vector<uint64_t> m_laneAutomation;        // each display lane's automation lane, or 0
+		std::vector<int> m_laneTakes;                  // each display lane's track lane, or -1
+		std::set<uint64_t> m_lanesShown;               // the tracks whose lanes show
 		std::map<uint64_t, std::set<uint64_t>> m_selectedPoints;
 		Rml::Element* m_automationArea = nullptr; // the curves, a .automation-lane each
 		Rml::Element* m_editor = nullptr;         // .automation-editor around the selected points
