@@ -2292,18 +2292,21 @@ namespace gnubase::engine
 				{std::pair{"midiVolume", &channel.midiVolume}, std::pair{"midiPan", &channel.midiPan}})
 				if (const Json stored = item.value(key, Json()); !stored.is_null())
 					*value = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " " + key));
-			// Files from before patches have none.
-			if (const Json stored = item.value("program", Json()); !stored.is_null())
-				channel.program = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " program"));
-			if (const Json stored = item.value("bank", Json()); !stored.is_null())
-				channel.bank = static_cast<int>(checkedNumber(stored, 0.0, g_maxBank, name + " bank"));
+			// Only MIDI tracks have patches, as channel.set requires. Files from before patches have none.
+			const auto track = project.trackById.find(channel.track);
+			if (track != project.trackById.end() && track->second.type == TrackType::Midi)
+			{
+				if (const Json stored = item.value("program", Json()); !stored.is_null())
+					channel.program = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " program"));
+				if (const Json stored = item.value("bank", Json()); !stored.is_null())
+					channel.bank = static_cast<int>(checkedNumber(stored, 0.0, g_maxBank, name + " bank"));
+			}
 			// Files from before the MIDI channel have Any.
 			if (const Json stored = item.value("midiChannel", Json()); !stored.is_null())
 				channel.midiChannel = static_cast<int>(checkedNumber(stored, 0.0, 15.0, name + " midiChannel"));
 			channel.device = item.value("device", std::string());
 			// An instrument this build doesn't have, e.g. in a file from a newer one, or one on a track that doesn't
 			// play instruments: the channel plays none.
-			const auto track = project.trackById.find(channel.track);
 			if (!processors::isInstrument(channel.instrument) || track == project.trackById.end() ||
 				track->second.type != TrackType::Instrument)
 				channel.instrument.clear();

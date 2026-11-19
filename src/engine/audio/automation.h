@@ -88,8 +88,9 @@ namespace gnubase::engine
 	// MIDI controller with points.
 	struct ChannelAutomation
 	{
-		uint64_t revision = 0;  // set by AutomationPlayer::setAutomation
-		std::string instrument; // a new instrument gets every value again
+		uint64_t revision = 0;   // set by AutomationPlayer::setAutomation
+		std::string instrument;  // a new instrument gets every value again
+		ObjectId midiOutput = 0; // a MIDI track's destination channel: rerouting gives it the values again
 		std::vector<PlayedLane> lanes;
 		// A silent MIDI track's (muted, soloed out or disabled): its program and MIDI lanes send nothing, so it doesn't
 		// change the instrument that other tracks play. They stay, so that once it is heard again only what changed
@@ -102,7 +103,7 @@ namespace gnubase::engine
 		bool sameContent(const ChannelAutomation& other) const
 		{
 			return instrument == other.instrument && lanes == other.lanes && silent == other.silent &&
-				quiet == other.quiet;
+				quiet == other.quiet && midiOutput == other.midiOutput;
 		}
 	};
 
@@ -175,6 +176,7 @@ namespace gnubase::engine
 		// The revision played last while not silent; 0 when playback moved or the processors changed while silent, so
 		// that the program and MIDI lanes all go out again once it is heard.
 		uint64_t m_heard = 0;
+		ObjectId m_midiOutput = 0; // the MIDI destination played for last
 		// Playback moved while it was silent (Quiet if it was soloed out or disabled at one of the moves): it raises
 		// m_heardAgain once it is heard.
 		HeardAgain m_missed = HeardAgain::No;

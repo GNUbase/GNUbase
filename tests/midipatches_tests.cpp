@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // MIDI devices and patch banks (#136, docs/features/midi-devices.md): installed devices with their patches, and a
 // MIDI track's program and bank, which reach its instrument as bank select and program change.
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "testutils/testutils.h"
 
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -109,6 +111,54 @@ TEST_CASE("MIDI devices are installed from the GM template or empty, and removed
 	Json broken = devices;
 	broken.at("Sound Module").at("banks")[0].at("patches")[0].at("program") = 128;
 	CHECK(!client.call("settings.set", {{"key", "midi.devices"}, {"value", broken}}).ok());
+	edited.at("Sound Module").at("banks")[0].at("patches")[0]["bank"] = g_maxBank;
+	run(client, "settings.set", {{"key", "midi.devices"}, {"value", edited}});
+	edited.at("Sound Module").at("banks")[0].at("patches")[0]["bank"] = g_maxBank + 1;
+	CHECK(!client.call("settings.set", {{"key", "midi.devices"}, {"value", edited}}).ok());
+}
+
+TEST_CASE("MIDI device banks are replaced through the engine without changing other devices", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "midiDevice.install", {{"name", "Synth"}});
+	const Json other = run(client, "midiDevice.install", {{"name", "Other"}, {"template", "gm"}}).at("device");
+	const Json banks = {{{"name", "Custom"}, {"patches", Json::array()}}};
+	CHECK(run(client, "midiDevice.set", {{"name", "Synth"}, {"banks", banks}}).at("device") ==
+		Json{{"name", "Synth"}, {"banks", banks}});
+	CHECK(!client.call("midiDevice.set", {{"name", "Missing"}, {"banks", banks}}).ok());
+	CHECK(!client.call("midiDevice.set", {{"name", "Synth"}, {"banks", {{{"name", "Broken"}}}}}).ok());
+	CHECK(run(client, "settings.get", {{"key", "midi.devices"}}).at("value").at("Synth").at("banks") == banks);
+	run(client, "midiDevice.set", {{"name", "Synth"}, {"banks", Json::array()}});
+	const Json devices = run(client, "settings.get", {{"key", "midi.devices"}}).at("value");
+	CHECK(devices.at("Synth").at("banks").empty());
+	CHECK(devices.at("Other").at("banks") == other.at("banks"));
+}
+
+TEST_CASE("loading ignores program and bank on channels without a MIDI track", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	for (const char* type : {"midi", "instrument", "audio", "group"})
+		run(client, "track.add", {{"type", type}});
+	Json saved = run(client, "project.get");
+	for (Json& channel : saved.at("channels"))
+	{
+		channel["program"] = 5;
+		channel["bank"] = 300;
+	}
+	const Project loaded = projectFromJson(saved);
+	for (const auto& [id, channel] : loaded.channels)
+	{
+		const bool midi = loaded.trackById.at(channel.track).type == TrackType::Midi;
+		CHECK(channel.program == (midi ? std::optional<int>(5) : std::nullopt));
+		CHECK(channel.bank == (midi ? std::optional<int>(300) : std::nullopt));
+	}
+	// A dangling track doesn't make a MIDI channel either.
+	saved.at("channels")[0]["track"] = 0;
+	const Project orphan = projectFromJson(saved);
+	CHECK(!orphan.channels.at(saved.at("channels")[0].at("id").get<ObjectId>()).program);
+	CHECK(!orphan.channels.at(saved.at("channels")[0].at("id").get<ObjectId>()).bank);
 }
 
 TEST_CASE("a MIDI track's program, bank and device are set, undone and saved", "[integration]")
@@ -193,6 +243,63 @@ TEST_CASE("other changes of a MIDI track's channel don't send its patch again", 
 	// A new program goes out at once, with the controllers after it.
 	track.set({{"program", 6}});
 	CHECK(track.played() == Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 6}, {0xB0, 7, 100}});
+}
+
+TEST_CASE("stopping keeps a MIDI part's patch and controllers unless the cursor moves", "[integration]")
+{
+	PatchTrack track;
+	track.set({{"program", 5}, {"bank", 300}, {"midiVolume", 90}, {"midiPan", 20}});
+	track.played();
+	const Json trackId = run(track.client, "project.get").at("channels")[1].at("track");
+	const Json part = run(track.client, "midiPart.add", {{"track", trackId}, {"position", 0}, {"length", 1720320}})
+						  .at("part")
+						  .at("id");
+	run(track.client, "controller.add",
+		{{"part", part},
+			{"controllers",
+				{{{"position", 107520}, {"type", "program"}, {"number", 10}},
+					{{"position", 107520}, {"number", 7}, {"value", 1.0}},
+					{{"position", 107520}, {"number", 10}, {"value", 1.0}}}}});
+	run(track.client, "transport.play");
+	CHECK(track.played(4096) ==
+		Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 5}, {0xB0, 7, 90}, {0xB0, 10, 20}, {0xC0, 10}, {0xB0, 7, 127},
+			{0xB0, 10, 127}});
+	SECTION("stop at the playback cursor")
+	{
+		run(track.client, "transport.stop");
+		CHECK(track.played().empty()); // midi.capture: no bank select, program, volume or pan
+		CHECK(track.played().empty());
+	}
+	SECTION("stop returns to the start")
+	{
+		run(track.client, "transport.set", {{"returnToStart", true}});
+		run(track.client, "transport.stop");
+		CHECK(track.played() == Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 5}, {0xB0, 7, 90}, {0xB0, 10, 20}});
+	}
+}
+
+TEST_CASE("rerouting a MIDI track sends its patch and controllers to the new instrument", "[integration]")
+{
+	PatchTrack track;
+	track.set({{"program", 5}, {"bank", 300}, {"midiVolume", 90}, {"midiPan", 20}});
+	track.played();
+	SECTION("while playing")
+	{
+		run(track.client, "transport.play");
+		track.played();
+	}
+	SECTION("while stopped")
+	{
+	}
+	const Json instrument = run(track.client, "track.add", {{"type", "instrument"}}).at("channel").at("id");
+	run(track.client, "channel.set", {{"channel", instrument}, {"instrument", "noteProbe"}});
+	track.played();
+	track.set({{"output", instrument}});
+	CHECK(track.played() == Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 5}, {0xB0, 7, 90}, {0xB0, 10, 20}});
+	CHECK(track.played().empty());
+	// Returning to the first instrument sends them again there too.
+	track.set({{"output", run(track.client, "project.get").at("channels")[0].at("id")}});
+	CHECK(track.played() == Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 5}, {0xB0, 7, 90}, {0xB0, 10, 20}});
 }
 
 TEST_CASE("a MIDI track's patch, MIDI volume and pan go out on its MIDI channel", "[integration]")

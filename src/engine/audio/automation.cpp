@@ -650,9 +650,10 @@ namespace gnubase::engine
 			return out;
 		};
 		// New automation, or a new source processor (e.g. another instrument) or plugin that hasn't had the values
-		// yet: the automation may have reached the audio thread before the graph with the new processor.
+		// yet, or another MIDI destination: the automation may have reached the audio thread before the graph with
+		// the new processor.
 		const size_t count = std::min(processors.size(), m_processors.size());
-		const bool newProcessors = count != m_processorCount ||
+		const bool newProcessors = automation.midiOutput != m_midiOutput || count != m_processorCount ||
 			!std::equal(
 				processors.begin(), processors.begin() + static_cast<std::ptrdiff_t>(count), m_processors.begin());
 		bool changed = automation.revision != m_played || newProcessors;
@@ -705,15 +706,18 @@ namespace gnubase::engine
 		m_played = automation.revision;
 		std::copy_n(processors.begin(), count, m_processors.begin());
 		m_processorCount = count;
+		m_midiOutput = automation.midiOutput;
 
 		if (!transport.playing)
 		{
-			const bool moved = m_next >= 0 || transport.position != m_stoppedAt;
-			if (changed || moved)
+			const bool stopped = m_next >= 0;
+			const bool moved = transport.position != (stopped ? m_next : m_stoppedAt);
+			if (changed || moved || stopped)
 				for (const PlayedLane& lane : automation.lanes)
 				{
-					if ((silent && midi(lane)) || !(moved || again(lane)) ||
-						!chases(automation.lanes, lane, transport.position))
+					// A stop at the playback cursor keeps the part's patch and controllers, as its sequencer does.
+					const bool send = moved || again(lane) || (stopped && !midi(lane));
+					if ((silent && midi(lane)) || !send || !chases(automation.lanes, lane, transport.position))
 						continue;
 					const std::optional<Outputs> out = outputs(lane);
 					const std::optional<double> value =
@@ -721,7 +725,7 @@ namespace gnubase::engine
 					if (out && value)
 						emit(lane, 0, *value, glide(lane), *out, !renewed(lane));
 				}
-			hear(moved);
+			hear(moved || stopped);
 			m_stoppedAt = transport.position;
 			m_next = -1;
 			return;
