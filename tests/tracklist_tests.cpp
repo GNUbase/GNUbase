@@ -11,10 +11,12 @@
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/rmlui.h"
 #include "ui/themes.h"
 #include "ui/tracklist.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_approx.hpp>
@@ -305,6 +307,27 @@ TEST_CASE("the track list's buttons show their click at once, also against a pro
 	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("automationLane.set") == 0; }));
 	CHECK(tracks.app.call("automationLane.list", {{"track", audio}}).at("lanes")[0].at("read") == false);
 	CHECK(!laneReads());
+}
+
+TEST_CASE("a click held on a track's S switches solo defeat", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t other = tracks.add({{"type", "audio"}});
+	tracks.rows(1);
+	// As Alt-click does (reference manual p. 466); a short click solos.
+	const std::string solo = row(other) + " button.solo";
+	tracks.app.ui().press(std::nullopt, {solo, 0, std::nullopt}, ui::MouseButton::Left);
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0);
+	tracks.app.ui().release(std::nullopt, {solo, 0, std::nullopt}, ui::MouseButton::Left);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.channel(other).at("soloDefeat") == true; }));
+	CHECK(tracks.channel(other).at("solo") == false);
+	CHECK(hasClass(elements(tracks.app, solo).at(0), "defeated"));
+	clock->advance(1.0); // no double click with the press before
+	tracks.click(solo);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.channel(other).at("solo") == true; }));
+	CHECK(tracks.channel(other).at("soloDefeat") == true);
 }
 
 // #1852: what the engine makes of a click wins over what the click showed: an exclusive solo turns the other

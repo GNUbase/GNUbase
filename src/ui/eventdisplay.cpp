@@ -457,6 +457,7 @@ namespace gnubase::ui
 		readMarkerMagnets(project);
 		showSnap();
 		showRootKey(project);
+		showStates(project);
 
 		// A lane per track that isn't hidden, in the project's order.
 		std::map<uint64_t, size_t> lanes;

@@ -2191,9 +2191,9 @@ namespace gnubase::engine
 			const Channel before = channel;
 			channel = changed;
 			const std::set<ObjectId> soloed = passOn(project, before, channel.id, parameters, context);
-			// Exclusive solo (reference manual p. 466): every other channel's solo goes off, but for those the solo
-			// went on to.
-			if (parameters.value("exclusive", false))
+			// Exclusive solo (reference manual p. 466): with solo on, every other channel's solo goes off, but for
+			// those the solo went on to.
+			if (parameters.value("exclusive", false) && parameters.value("solo", false))
 				for (auto& [id, other] : project.channels)
 					if (id != channel.id && other.solo && soloed.count(id) == 0)
 					{
@@ -3679,7 +3679,7 @@ namespace gnubase::engine
 				const bool followsEvents = m_automationFollowsEvents; // automation.set in a transaction changes it
 				const std::shared_ptr<const RangeClipboard> clipboard = m_clipboard; // and range.cut this
 				Json result;
-				ProjectChange change;
+				std::optional<ProjectChange> change; // computed here only for the render locks, else by record (#1850)
 				try
 				{
 					result = handler(m_project, context);
@@ -3688,8 +3688,11 @@ namespace gnubase::engine
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
 					followTrackFolders(m_project, context, before);
-					change = difference(before, m_project);
-					checkRenderLocks(m_project, {&change});
+					if (!m_trackRenders.empty())
+					{
+						change = difference(before, m_project);
+						checkRenderLocks(m_project, {&*change});
+					}
 				}
 				catch (...)
 				{
@@ -3733,8 +3736,8 @@ namespace gnubase::engine
 		engine.registerCommand(std::move(info), std::move(handler));
 	}
 
-	void ProjectModel::record(
-		std::string action, const Project& before, ProjectChange change, CommandContext& context, std::string merge)
+	void ProjectModel::record(std::string action, const Project& before, std::optional<ProjectChange> known,
+		CommandContext& context, std::string merge)
 	{
 		const std::vector<HistoryStep>& steps = m_history.steps();
 		if (!merge.empty() && !steps.empty() && m_history.position() == steps.size() && steps.back().merge == merge)
@@ -3742,7 +3745,7 @@ namespace gnubase::engine
 			// The step joins the last one: what changed since before that one.
 			Project start = before;
 			apply(start, steps.back().change, Direction::Undo);
-			change = difference(start, m_project);
+			ProjectChange change = difference(start, m_project);
 			// Compose only format edits, excluding display choices made between the gesture's commands.
 			change.timeFormatBefore = steps.back().change.timeFormatBefore;
 			change.timeFormatAfter = steps.back().change.timeFormatAfter;
@@ -3784,6 +3787,7 @@ namespace gnubase::engine
 			announceHistory(context);
 			return;
 		}
+		ProjectChange change = known ? std::move(*known) : difference(before, m_project);
 		if (change.empty())
 			return;
 		HistoryStep step{std::move(action), now(), {}, std::move(change), std::move(merge)};
@@ -4579,7 +4583,9 @@ namespace gnubase::engine
 				"channels and VCA faders don't pass them on to it. mute silences a channel; "
 				"while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
-				"channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; "
+				"channels that play into them are heard; exclusive with solo true turns every other channel's solo "
+				"off, "
+				"and does nothing without it; "
 				"soloDefeat keeps a channel and the channels it plays through heard while others are soloed. listen "
 				"(not MIDI channels) also plays the channel after its fader on the monitoring bus, the main mix, which "
 				"is turned down to the user setting audio.listenDim while any channel listens; the listening channels "

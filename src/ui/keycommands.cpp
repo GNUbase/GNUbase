@@ -539,4 +539,19 @@ namespace gnubase::ui
 		const auto enabled = m_enabled.find(command);
 		return enabled == m_enabled.end() || !enabled->second || enabled->second(window, zone);
 	}
+
+	void KeyCommands::checkWhen(const std::string& command, std::function<bool(const engine::Json& parameters)> checked)
+	{
+		if (m_engineCommands.count(command) == 0 && m_uiCommands.count(command) == 0)
+			throw std::invalid_argument("there is no command " + command);
+		m_checked[command] = std::move(checked);
+	}
+
+	std::optional<bool> KeyCommands::checked(const std::string& command, const engine::Json& parameters) const
+	{
+		const auto found = m_checked.find(command);
+		if (found == m_checked.end() || !found->second)
+			return std::nullopt;
+		return found->second(parameters);
+	}
 }

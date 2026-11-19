@@ -31,12 +31,13 @@ namespace
 
 	Json run(Client& client, const std::string& command, Json parameters = Json::object())
 	{
-		// Quick export remains synchronous and can take longer than the client's default 10 s under sanitizers.
+		// Some commands can take longer than the client's default 10 s under sanitizers.
 		const Result result = client.call(command, std::move(parameters), std::chrono::seconds(60));
 		INFO(command << " failed: " << result.error);
 		REQUIRE(result.ok());
 		if (result.value.contains("job") &&
-			(command == "track.freeze" || command == "track.renderInPlace" || command == "mixdown.export"))
+			(command == "track.freeze" || command == "track.renderInPlace" || command == "mixdown.export" ||
+				command == "mixdown.quickExport"))
 		{
 			const Json job = gnubase::test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
 			INFO(job.dump());
@@ -220,6 +221,23 @@ TEST_CASE("an exported mixdown is bit-identical to an offline render of the same
 	CHECK(transport.at("playing") == false);
 }
 
+TEST_CASE("a mixdown exports the main mix without the listen dim and the listen bus", "[integration]")
+{
+	// Listening (docs/features/solo-mute-listen.md) changes what the device plays, not what is exported.
+	Session exported;
+	exported.addTrack("Ramp", 1000);
+	const ObjectId listening = exported.addTrack("Other", 2000);
+	run(exported.client, "channel.set", {{"channel", listening}, {"listen", true}});
+	const std::string path = exported.exportedFile({{"start", 0}, {"end", 6000}, {"sampleFormat", "float32"}});
+
+	Session offline;
+	offline.addTrack("Ramp", 1000);
+	offline.addTrack("Other", 2000);
+	const std::vector<float> expected = rendered(offline, 0, 6000);
+	CHECK(peakOf(expected) > 0.4f);
+	CHECK(firstDifference(readFile(path).samples, expected) == -1);
+}
+
 TEST_CASE("a mixdown exports the locator range, and a file per channel", "[integration]")
 {
 	Session project;
@@ -353,7 +371,7 @@ TEST_CASE("a mixdown refuses what it can't export and leaves no files", "[integr
 	const auto midi = run(project.client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
 	const auto refuse = [&project](Json parameters)
 	{
-		parameters["folder"] = project.folder.path().u8string();
+		parameters["folder"] = (project.folder.path() / "new").u8string(); // which a refusal doesn't create (#725)
 		parameters["name"] = "mix";
 		return reject(project.client, "mixdown.export", std::move(parameters));
 	};
@@ -365,12 +383,16 @@ TEST_CASE("a mixdown refuses what it can't export and leaves no files", "[integr
 		ContainsSubstring("FLAC"));
 	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}, {"format", "aiff"}, {"sampleFormat", "float64"}}),
 		ContainsSubstring("AIFF"));
+	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}, {"point", "strip"}}), ContainsSubstring("only channels"));
 
 	// The graph would run at the device's rate and the events at the project's.
 	run(project.client, "audio.setDevice",
 		{{"sampleRate", 44100}, {"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
 	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}}), ContainsSubstring("44100 Hz"));
 	CHECK_THAT(reject(project.client, "mixdown.quickExport", {{"path", (project.folder.path() / "q.wav").u8string()}}),
+		ContainsSubstring("sample rate"));
+	CHECK_THAT(
+		reject(project.client, "mixdown.quickExport", {{"path", (project.folder.path() / "new" / "q.wav").u8string()}}),
 		ContainsSubstring("sample rate"));
 	CHECK(fs::directory_iterator(project.folder.path()) == fs::directory_iterator());
 }
@@ -405,6 +427,56 @@ TEST_CASE("a quick export keeps the tail of effects", "[integration][slow]")
 	CHECK(frames < 4800 + (30 * 48000));
 	const Read read = readFile(path.u8string());
 	CHECK(std::max(std::abs(read.samples[read.samples.size() - 2]), std::abs(read.samples.back())) > 0.0f);
+}
+
+TEST_CASE("a quick export starts with fresh effects and leaves the transport playing", "[integration][slow]")
+{
+	Session project;
+	const ObjectId channel = project.addTrack("Ramp", 0, 4800);
+	const Json slot =
+		run(project.client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:delay"}}).at("slot").at("id");
+	waitUntilActive(project.client, slot);
+	// Playback fills the live delay's lines with echoes, which an export must not start with (#718).
+	run(project.client, "transport.play");
+	run(project.client, "audio.render", {{"frames", 30000}});
+	const fs::path path = project.folder.path() / "quick.wav";
+	run(project.client, "mixdown.quickExport", {{"path", path.u8string()}});
+	CHECK(run(project.client, "transport.get").at("playing") == true);
+	run(project.client, "transport.stop");
+	const std::string fresh = project.exportedFile({{"name", "fresh"}, {"start", 0}, {"end", 4800}, {"tail", 30}});
+	CHECK(firstDifference(readFile(path.u8string()).samples, readFile(fresh).samples) == -1);
+}
+
+TEST_CASE("no external MIDI input reaches an export", "[integration]")
+{
+	Session project;
+	const Json added = run(project.client, "track.add",
+		{{"type", "instrument"}, {"timeBase", "linear"}, {"instrument", "testSynth"}, {"name", "Synth"}});
+	const auto channel = added.at("channel").at("id").get<ObjectId>();
+	run(project.client, "channel.set", {{"channel", channel}, {"monitor", true}});
+	const Json part = run(
+		project.client, "midiPart.add", {{"track", added.at("track").at("id")}, {"position", 0}, {"length", 48000}});
+	run(project.client, "note.add",
+		{{"part", part.at("part").at("id")},
+			{"notes", {{{"position", 0}, {"length", 430080}, {"pitch", 60}, {"velocity", 0.8}}}}});
+	const std::string without = project.exportedFile({{"name", "without"}, {"start", 0}, {"end", 24000}});
+
+	// A note from the track's MIDI input that the live synth holds, and one that waits for the device's next block
+	// (#718): the export hears neither, as with the reference's Deactivate External MIDI Inputs (manual p. 1486).
+	const auto inject = [&project, channel](int pitch)
+	{
+		run(project.client, "midi.inject",
+			{{"channel", channel}, {"messages", {{{"position", 0}, {"bytes", {0x90, pitch, 100}}}}}});
+	};
+	inject(67);
+	run(project.client, "audio.render", {{"frames", 4800}});
+	const auto live = run(project.client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", 4800}})
+						  .at("samples")
+						  .get<std::vector<float>>();
+	REQUIRE(peakOf(live) > 0.0f); // the live synth plays it
+	inject(72);
+	const std::string with = project.exportedFile({{"name", "with"}, {"start", 0}, {"end", 24000}});
+	CHECK(firstDifference(readFile(with).samples, readFile(without).samples) == -1);
 }
 
 TEST_CASE("cancelling a background overwrite export keeps the existing file", "[integration]")

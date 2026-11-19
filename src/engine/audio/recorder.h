@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <bitset>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -199,6 +200,11 @@ namespace gnubase::engine
 		void process(const audio::DeviceBlock& block, const PlayedPositions& played, int64_t offset,
 			const MidiTap::Sequencers& sequencers) noexcept;
 
+		// Command thread, while it calls process itself (an offline render): if the chunks the audio thread sent fill
+		// half the pool, waits until the disk thread has handled all of them, so that no block finds the pool empty.
+		// False if that took longer than timeout.
+		bool waitForChunks(std::chrono::milliseconds timeout);
+
 		// Input frames lost because the disk thread fell behind.
 		uint64_t dropped() const { return m_dropped.load(std::memory_order_relaxed); }
 
@@ -295,6 +301,10 @@ namespace gnubase::engine
 		void keepRetrospective(const MidiInput& input, uint64_t deviceFrame);
 		// Makes the latest setup up to number the next recording's.
 		void applySetups(uint64_t number);
+		// The device channels the next recording's tracks record, which the pre-record history keeps, sorted.
+		std::vector<int> historyPorts() const;
+		// Allocates the pre-record history for the next recording, empty; reports a failure and keeps none then.
+		void resetHistory();
 		// Audio thread: hands frames frames from offset in the block on, or false if no chunk is free.
 		bool send(const audio::DeviceBlock& block, uint32_t offset, uint32_t frames, time::Samples position) noexcept;
 		void processMidi(const audio::DeviceBlock& block, const PlayedPositions& played,
@@ -321,6 +331,7 @@ namespace gnubase::engine
 		std::atomic<bool> m_armed{false};
 		std::atomic<bool> m_midiArmed{false};
 		std::atomic<uint64_t> m_dropped{0};
+		std::atomic<size_t> m_inFlight{0};      // chunks sent that the disk thread hasn't handled yet
 		std::atomic<uint64_t> m_latestSetup{0}; // the number of the latest setup, which the chunks get
 
 		// Setups not yet applied, numbered from 1 on, oldest first: the command thread adds them, the disk thread
@@ -343,7 +354,8 @@ namespace gnubase::engine
 		bool m_cycled = false;             // a take began a cycle lap
 		time::Samples m_written = 0;       // frames in each file
 		uint64_t m_deviceEnd = 0;          // the device frame after the last one recorded
-		std::vector<float> m_history;      // pre-record: the last frames not recorded, a ring of all channels
+		std::vector<float> m_history;      // pre-record: the last frames not recorded, a ring of m_historyPorts
+		std::vector<int> m_historyPorts;   // the device channels in it
 		size_t m_historyFrames = 0;        // valid frames in it
 		size_t m_historyStart = 0;         // the oldest frame's index
 		uint64_t m_historyEnd = 0;         // the device frame after its newest one

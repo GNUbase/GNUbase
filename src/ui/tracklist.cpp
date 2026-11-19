@@ -1759,8 +1759,8 @@ namespace gnubase::ui
 				{
 					if (const Row* row = rowOf(element); row != nullptr && !element->HasAttribute("disabled"))
 						control(*element, *row, element->GetAttribute<Rml::String>("control", ""),
-							held(event, "ctrl_key") || held(event, "meta_key"), held(event, "alt_key"),
-							held(event, "shift_key"));
+							held(event, "ctrl_key") || held(event, "meta_key"),
+							held(event, "alt_key") || m_soloHold.held(*element), held(event, "shift_key"));
 					break;
 				}
 			break;
@@ -2415,6 +2415,7 @@ namespace gnubase::ui
 			endHeightDrag();
 		}
 		Rml::Element* target = event.GetTargetElement();
+		m_soloHold.pressed(target);
 		const Row* row = rowOf(target);
 		if (row == nullptr)
 			return;

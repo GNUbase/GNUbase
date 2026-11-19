@@ -266,6 +266,33 @@ TEST_CASE("an equalizer band or cut filter turned on from all-off glides in", "[
 	glidesIn(bell, 0.0);
 }
 
+TEST_CASE("an equalizer band or cut filter that comes on comes in at its settings", "[integration]")
+{
+	Strip strip(1000.0, -12.0);
+	run(strip.client, "audio.render", {{"frames", g_block}});
+	// 25 to 30 ms after it comes on, past its 20 ms glide in, a band is where it settles, rather than still sweeping
+	// there from its old frequency.
+	const auto comesIn = [&strip](const Json& on)
+	{
+		INFO(on.dump());
+		strip.set(on);
+		const double early = strip.renderPeakDb(g_block, 1200, 1440);
+		CHECK_THAT(early, WithinAbs(strip.peakDb(), 1.0));
+	};
+	// Turned on with a frequency far from its 20 Hz default, in the same call.
+	comesIn({{"pre", {{"lowCut", {{"on", true}, {"frequency", 2000.0}}}}}});
+	CHECK_THAT(strip.peakDb(), WithinAbs(-12.0 - 12.0, 1.0)); // an octave at 12 dB per octave
+	// A frequency changed while the band is off and its equalizer idle, longer than the filters' tail.
+	strip.set({{"pre", {{"lowCut", {{"on", false}}}}}});
+	run(strip.client, "audio.render", {{"frames", 3 * g_block}});
+	strip.set({{"pre", {{"lowCut", {{"frequency", 4000.0}}}}}});
+	run(strip.client, "audio.render", {{"frames", g_block}});
+	comesIn({{"pre", {{"lowCut", {{"on", true}}}}}});
+	CHECK_THAT(strip.peakDb(), WithinAbs(-12.0 - 24.0, 1.5));
+	// An equalizer band, turned on with a new frequency and Q.
+	comesIn({{"eq", {{"bands", {{{"band", 3}, {"on", true}, {"frequency", 1000.0}, {"gain", 12.0}, {"q", 4.0}}}}}}});
+}
+
 TEST_CASE("the equalizer's Q sets a bell's width, and band 1 can be a low cut", "[integration]")
 {
 	Strip strip(1000.0, -12.0);

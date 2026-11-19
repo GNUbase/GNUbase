@@ -561,6 +561,29 @@ TEST_CASE("tracks of the same name record into files of their own, next to the o
 	CHECK(gnubase::test::readText(audio / "VOCALS.wav") == "there");
 }
 
+TEST_CASE(
+	"a track named after a Windows device records into a file of its own name with _ added (#531)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	const auto name = GENERATE(as<std::string>{}, "con", "Nul .mix", "COM1", "lpt9.take", "Console");
+	run(client, "track.set", {{"track", setup.track}, {"name", name}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	const std::string file = std::filesystem::u8path(pathOf(client, events[0])).filename().u8string();
+	if (name == "Console")
+		CHECK(file == "Console.wav");
+	else if (name == "Nul .mix")
+		CHECK(file == "Nul _.mix.wav");
+	else
+		CHECK(
+			file == name.substr(0, name.find('.')) + "_" + name.substr(std::min(name.find('.'), name.size())) + ".wav");
+}
+
 TEST_CASE("a recording isn't added to a project opened while it was recorded", "[integration]")
 {
 	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
@@ -961,4 +984,175 @@ TEST_CASE("the retrospective buffer leaves a recording's start to the disk threa
 		}
 	}
 	CHECK_FALSE(startedOnCommandThread);
+}
+
+TEST_CASE("audio pre-record keeps only the armed tracks' input channels (#531)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::string path;
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				if (name != "recording.finished")
+					return;
+				const std::scoped_lock lock(mutex);
+				path = data.at("tracks").at(0).at("path").get<std::string>();
+				changed.notify_all();
+			});
+		// Four input channels, each frame of channel c c + 1 and the block's index tenths; the track records the third.
+		recorder.prepare(4, g_blockFrames);
+		engine::RecordSetup setup = recordInto(dir.path());
+		setup.tracks = {{1, "Audio", {2}}};
+		setup.preRecordFrames = int64_t{2} * g_blockFrames;
+		recorder.setup(setup);
+		engine::PlayedPositions played(size_t{8} * g_blockFrames);
+		const auto block = [&](uint64_t index, bool recording)
+		{
+			std::vector<std::vector<float>> input(4);
+			std::vector<const float*> inputs;
+			for (size_t c = 0; c < input.size(); ++c)
+			{
+				input[c].assign(g_blockFrames, static_cast<float>(c + 1) + (static_cast<float>(index) / 10.0f));
+				inputs.push_back(input[c].data());
+			}
+			const gnubase::audio::MidiBuffer midiIn;
+			gnubase::audio::MidiBuffer midiOut;
+			const engine::MidiTap::Sequencers sequencers;
+			const uint64_t position = index * g_blockFrames;
+			const engine::graph::TransportSegment segment{0, g_blockFrames, static_cast<int64_t>(position), recording};
+			engine::graph::TransportBlock transport;
+			transport.playing = true;
+			transport.segments = &segment;
+			transport.segmentCount = 1;
+			transport.recording = recording;
+			played.add(position, g_blockFrames, transport);
+			recorder.process(
+				{inputs.data(), nullptr, g_blockFrames, position, 0, midiIn, midiOut}, played, 0, sequencers);
+		};
+		for (uint64_t index = 0; index < 3; ++index)
+			block(index, false);
+		block(3, true);
+		block(4, false);
+		std::unique_lock lock(mutex);
+		REQUIRE(changed.wait_for(lock, 5s, [&] { return !path.empty(); }));
+	}
+	// The last two blocks before recording started, then the recorded one, all of the third channel.
+	const std::vector<float> file = channelOf(path, 0);
+	REQUIRE(file.size() == 3 * g_blockFrames);
+	for (size_t f = 0; f < file.size(); ++f)
+	{
+		const size_t block = (f / g_blockFrames) + 1;
+		REQUIRE(file[f] == 3.0f + (static_cast<float>(block) / 10.0f));
+	}
+}
+
+TEST_CASE("a pre-record history that can't be allocated fails the pre-record, not the recording (#531)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::vector<std::string> failures;
+	bool finished = false;
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				const std::scoped_lock lock(mutex);
+				if (name == "recording.failed")
+					failures.push_back(data.at("reason").get<std::string>());
+				finished = finished || name == "recording.finished";
+				changed.notify_all();
+			});
+		recorder.prepare(1, g_blockFrames);
+		engine::RecordSetup setup = recordInto(dir.path());
+		setup.preRecordFrames = int64_t{1} << 62; // more than a vector holds
+		recorder.setup(setup);
+		engine::PlayedPositions played(size_t{4} * g_blockFrames);
+		processBlock(recorder, played, 0, false);
+		processBlock(recorder, played, 1, true);
+		processBlock(recorder, played, 2, false);
+		std::unique_lock lock(mutex);
+		REQUIRE(changed.wait_for(lock, 5s, [&] { return finished; }));
+	}
+	REQUIRE(failures.size() == 1);
+	CHECK_THAT(failures[0], ContainsSubstring("pre-record"));
+}
+
+TEST_CASE(
+	"an offline render that waits for the recorder's chunks loses none while the disk thread is slow (#531)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::vector<std::string> paths;
+	{
+		// The disk thread takes a while to report the first recording, as on a slow disk.
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				if (name != "recording.finished")
+					return;
+				std::unique_lock lock(mutex);
+				paths.push_back(data.at("tracks").at(0).at("path").get<std::string>());
+				changed.notify_all();
+				if (paths.size() == 1)
+				{
+					lock.unlock();
+					std::this_thread::sleep_for(300ms);
+				}
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(dir.path()));
+		engine::PlayedPositions played(size_t{4} * g_blockFrames);
+		processBlock(recorder, played, 0, true);
+		processBlock(recorder, played, 1, false);
+		{
+			std::unique_lock lock(mutex);
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return paths.size() == 1; }));
+		}
+		// Twice the chunks the pool holds (65536 frames), each block after the wait an offline render makes.
+		constexpr uint64_t blocks = 2048;
+		for (uint64_t index = 2; index < 2 + blocks; ++index)
+		{
+			REQUIRE(recorder.waitForChunks(5s));
+			processBlock(recorder, played, index, true);
+		}
+		processBlock(recorder, played, 2 + blocks, false);
+		CHECK(recorder.dropped() == 0);
+		std::unique_lock lock(mutex);
+		REQUIRE(changed.wait_for(lock, 5s, [&] { return paths.size() == 2; }));
+		CHECK(channelOf(paths[1], 0).size() == blocks * g_blockFrames);
+	}
+}
+
+TEST_CASE("a recording that adds nothing leaves the project unmodified (#546)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	const auto modified = [&client] { return run(client, "project.revision").at("modified").get<bool>(); };
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	SECTION("another project was opened")
+	{
+		run(client, "project.new");
+	}
+	SECTION("every recorded track was removed")
+	{
+		run(client, "track.remove", {{"track", setup.track}});
+		run(client, "project.save");
+	}
+	REQUIRE(!modified());
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(waitFor(client, "recording.failed").is_object()); // recording.add runs on the command thread
+	CHECK(!modified());
 }

@@ -466,7 +466,8 @@ namespace gnubase::engine
 				"Announces recording.added with the result: the media files, clips and events added and the MIDI "
 				"parts recorded into. project, as project.revision reports it, is the project the recording was made "
 				"in: if another project is open by now, nothing is added and recording.failed is announced. A track "
-				"that is gone is skipped and announced with recording.failed; the others are added.",
+				"that is gone is skipped and announced with recording.failed; the others are added. A recording that "
+				"adds nothing leaves the project as it was, not modified, and records no undo step.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"project", integer}, {"mode", {{"type", "string"}, {"enum", g_audioRecordModes}}},
@@ -522,8 +523,10 @@ namespace gnubase::engine
 		{
 			context.emit("recording.failed",
 				{{"reason", "the recording isn't added: another project was opened while it was recorded"}});
+			context.markUnchanged(); // the project isn't modified (#546)
 			return {{"media", media}, {"clips", clips}, {"events", events}, {"parts", parts}};
 		}
+		bool changed = false; // a track is there to add to, or chord events were recorded
 		for (const Json& entry : parameters.at("tracks"))
 		{
 			const auto trackId = entry.at("track").get<ObjectId>();
@@ -536,6 +539,7 @@ namespace gnubase::engine
 							entry.value("path", std::string("of MIDI")) + " isn't added"}});
 				continue;
 			}
+			changed = true;
 			const TrackType type = found->second.type;
 			if (type == TrackType::Midi || type == TrackType::Instrument)
 			{
@@ -660,8 +664,13 @@ namespace gnubase::engine
 			}
 			for (const Lap& lap : laps)
 				if (!lap.notes.empty())
+				{
 					recordChordEvents(project, lap.notes, ticks(lap.from), ticks(lap.to), context);
+					changed = true;
+				}
 		}
+		if (!changed)
+			context.markUnchanged(); // every track is gone: the project isn't modified (#546)
 		Json result = {{"media", media}, {"clips", clips}, {"events", events}, {"parts", parts}};
 		context.emit("recording.added", result);
 		return result;
