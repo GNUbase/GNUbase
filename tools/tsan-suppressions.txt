@@ -7,4 +7,7 @@ race:libLLVM
 # The same blindness for libstdc++ itself, which isn't compiled with TSan: an exception's message is a reference-counted
 # string whose count it changes inside libstdc++.so, so when a promise's exception is read on one thread and released
 # with the promise on another, TSan sees the release as a race with the read (HostManager::load in the safe mode test).
+# std::logic_error's message is the same kind of string: the UI tools throw std::invalid_argument, read on the MCP
+# thread and released with ui::onUiThread's task on the UI thread (ui_screenshot of a hidden element, #1945).
 race:std::runtime_error::~runtime_error
+race:std::logic_error::~logic_error
