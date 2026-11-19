@@ -192,6 +192,8 @@ function(gnubase_target_defaults target)
 	if(GNUBASE_SANITIZERS)
 		target_compile_options(${target} PRIVATE -fsanitize=${GNUBASE_SANITIZERS} -fno-sanitize-recover=all -fno-omit-frame-pointer)
 		target_link_options(${target} PRIVATE -fsanitize=${GNUBASE_SANITIZERS})
+		# Lets code wait longer for what sanitizers slow down, such as engine::g_callTimeout, and tests skip benchmarks.
+		target_compile_definitions(${target} PRIVATE GNUBASE_SANITIZED)
 	endif()
 	if(GNUBASE_CLANG_TIDY)
 		set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${clangTidy}")
