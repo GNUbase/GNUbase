@@ -457,7 +457,10 @@ namespace gnubase::engine
 
 		int64_t rescale(int64_t value, double factor)
 		{
-			return std::llround(static_cast<double>(value) * factor);
+			if (value == 0)
+				return 0; // even when a tiny source rate makes the factor infinite
+			const auto limit = static_cast<double>(time::g_maxPosition);
+			return std::llround(std::clamp(static_cast<double>(value) * factor, -limit, limit));
 		}
 
 		// Only ruler tracks have a time format and a time offset.
@@ -575,7 +578,7 @@ namespace gnubase::engine
 		track.timeBase = base;
 	}
 
-	void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
+	void changeSampleRate(Project& project, double sampleRate, CommandContext* context)
 	{
 		const double factor = sampleRate / project.sampleRate;
 		// Only linear positions are in samples; the inactive versions' events and parts change without an event, since
@@ -587,8 +590,8 @@ namespace gnubase::engine
 				if (event.position.base != time::TimeBase::Linear)
 					return;
 				event.position.value = rescale(event.position.value, factor);
-				if (plays)
-					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+				if (context != nullptr && plays)
+					context->emit("audioEvent.changed", {{"event", toJson(event)}});
 			},
 			[&](AudioPart& part, bool plays)
 			{
@@ -596,8 +599,8 @@ namespace gnubase::engine
 					return;
 				part.position.value = rescale(part.position.value, factor);
 				part.length = rescale(part.length, factor);
-				if (plays)
-					context.emit("audioPart.changed", {{"part", toJson(part)}});
+				if (context != nullptr && plays)
+					context->emit("audioPart.changed", {{"part", toJson(part)}});
 			},
 			[&](MidiPart& part, bool plays)
 			{
@@ -605,8 +608,8 @@ namespace gnubase::engine
 					return;
 				part.position.value = rescale(part.position.value, factor);
 				part.length = rescale(part.length, factor);
-				if (plays)
-					context.emit("midiPart.changed", {{"part", toJson(part)}});
+				if (context != nullptr && plays)
+					context->emit("midiPart.changed", {{"part", toJson(part)}});
 			});
 		for (auto& [id, lane] : project.automation)
 		{
@@ -617,14 +620,15 @@ namespace gnubase::engine
 					point.position.value = rescale(point.position.value, factor);
 					changed = true;
 				}
-			if (changed)
-				context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+			if (context != nullptr && changed)
+				context->emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 		for (auto& [id, track] : project.trackById)
 			if (track.type == TrackType::Ruler && track.timeBase == time::TimeBase::Linear)
 			{
 				track.timeOffset = rescale(track.timeOffset, factor);
-				context.emit("track.changed", {{"track", toJson(track)}});
+				if (context != nullptr)
+					context->emit("track.changed", {{"track", toJson(track)}});
 			}
 		project.sampleRate = sampleRate;
 		// At a lower rate, a short cycle marker may become shorter than a sample, in either time base.
@@ -635,9 +639,11 @@ namespace gnubase::engine
 			{
 				marker.position.value = rescale(marker.position.value, factor);
 				marker.end.value = rescale(marker.end.value, factor);
+				if (marker.type == MarkerType::Cycle)
+					marker.position.value = std::min(marker.position.value, time::g_maxPosition - 1);
 			}
-			if (keepMinimumLength(project, marker) || linear)
-				context.emit("marker.changed", {{"marker", toJson(marker)}});
+			if ((keepMinimumLength(project, marker) || linear) && context != nullptr)
+				context->emit("marker.changed", {{"marker", toJson(marker)}});
 		}
 		bool arranged = false;
 		for (ArrangerEvent& event : project.arranger.events)
@@ -646,12 +652,13 @@ namespace gnubase::engine
 			{
 				event.position.value = rescale(event.position.value, factor);
 				event.end.value = rescale(event.end.value, factor);
+				event.position.value = std::min(event.position.value, time::g_maxPosition - 1);
 				arranged = true;
 			}
 			arranged = keepMinimumLength(project, event) || arranged;
 		}
-		if (arranged)
-			context.emit("arranger.changed", arrangerJson(project));
+		if (context != nullptr && arranged)
+			context->emit("arranger.changed", arrangerJson(project));
 		bool transposed = false;
 		for (TransposeEvent& event : project.transpose.events)
 			if (event.position.base == time::TimeBase::Linear)
@@ -659,8 +666,8 @@ namespace gnubase::engine
 				event.position.value = rescale(event.position.value, factor);
 				transposed = true;
 			}
-		if (transposed)
-			context.emit("transpose.changed", transposeJson(project));
+		if (context != nullptr && transposed)
+			context->emit("transpose.changed", transposeJson(project));
 		bool chorded = false;
 		for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
 			for (ChordEvent& event : *events)
@@ -669,8 +676,8 @@ namespace gnubase::engine
 					event.position.value = rescale(event.position.value, factor);
 					chorded = true;
 				}
-		if (chorded)
-			context.emit("chord.changed", chordJson(project));
+		if (context != nullptr && chorded)
+			context->emit("chord.changed", chordJson(project));
 	}
 
 	namespace
@@ -4160,8 +4167,9 @@ namespace gnubase::engine
 				"revision, it loads only if the project is still at that revision (see project.revision), and fails "
 				"otherwise, so that no change made meanwhile is lost. An auto save (see project.autoSave) opens "
 				"without a file and with unsaved changes, and isn't a recent project. A sample rate outside the "
-				"supported range is clamped to the nearest bound, keeping GNUbase-only data. Returns warnings, "
-				"an array of repair messages (empty when no repair was needed).",
+				"supported range is clamped to the nearest bound, keeping GNUbase-only data. Linear positions keep "
+				"their time within the project bounds; with a non-positive rate sample counts stay unchanged. Returns "
+				"warnings, an array of repair messages (empty when no repair was needed).",
 				objectSchema(
 					{{"path", stringSchema}, {"mediaFolder", stringSchema}, {"revision", integerSchema}}, {"path"}),
 				objectSchema({{"warnings", {{"type", "array"}, {"items", stringSchema}}}}, {"warnings"}), false},

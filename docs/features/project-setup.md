@@ -29,9 +29,12 @@ so MCP and Lua scripts can do all it does.
   their time, as before; media files keep their sample rate and play at the wrong speed until they are conformed with
   `media.conform` ([pool.md](pool.md)). The dialog does both, as one undo step (below). `project.set` advertises the
   bounds in its parameter schema. A project file with a rate outside them opens at the nearest bound, keeping its
-  GNUbase-only data: `project.load` returns a `warnings` array with a message naming the old and repaired rates, empty
-  when no repair was needed. This prevents positions in ticks or samples from leaving an int64 without losing native
-  data on the next save.
+  GNUbase-only data. For a positive rate, linear positions, part lengths, automation points, markers, arranger,
+  transpose and chord events and ruler offsets are rescaled to keep their time, rounded to samples and bounded to plus
+  or minus `time::g_maxPosition`. A non-positive numeric rate opens at the lowest rate without rescaling sample counts,
+  since it has no meaningful time scale. Missing or non-numeric rates retain the existing fallback to `project.xml`.
+  `project.load` returns a `warnings` array naming the old and repaired rates and the timing policy used, empty when no
+  repair was needed. The next save keeps the repaired native data.
 - **The record bit depth** is in the render snapshot, so `audio.get` has it as `recordBitDepth` next to
   `projectSampleRate`, and `audio.changed` announces a new one, also after undo, for the status line's record format
   ([status-line.md](status-line.md)). The audio thread doesn't read it.
@@ -107,7 +110,9 @@ is missing, the others at the new rate, takes the new rate without asking for a 
 bit depth, follows undo and opens the dialog with a click; Project > Project Setup... opens it, and Escape closes it
 without a change.
 `tests/dawproject_tests.cpp`: `project.load` clamps rates below and above the bounds, reports each repair and preserves
-the GNUbase-only data through another save and load; rates within the bounds, including the bounds themselves, and
+the GNUbase-only data through another save and load; a linear marker at one second keeps its time at both bounds,
+non-positive rates keep sample counts, and tiny rates saturate linear positions and ruler offsets safely while zero
+stays zero and cycle markers keep a sample of length. Rates within the bounds, including the bounds themselves, and
 already repaired files load without warnings.
 `tests/timeformat_tests.cpp`: the ruler's marks counting from the start time and bar offset, the negative-bar round
 trip, and `readTimeContext` leaving the context as it was for a project it can't read. `tests/markers_ui_tests.cpp`:

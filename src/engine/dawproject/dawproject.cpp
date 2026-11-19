@@ -4,6 +4,7 @@
 
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/file.h"
+#include "engine/document/projectmodel.h"
 #include "engine/document/renderinplace.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
@@ -2314,6 +2315,11 @@ namespace gnubase::engine
 			const double repairedRate = std::clamp(sampleRate, g_lowestSampleRate, g_highestSampleRate);
 			native["sampleRate"] = repairedRate;
 			Project project = projectFromJson(extension.at("project"));
+			if (repairedRate != sampleRate && std::isfinite(sampleRate) && sampleRate > 0.0)
+			{
+				project.sampleRate = sampleRate;
+				changeSampleRate(project, repairedRate);
+			}
 			const Json& media = extension.at("media");
 			for (auto& [id, file] : project.media)
 			{
@@ -2343,7 +2349,10 @@ namespace gnubase::engine
 					entry.second.warp.tempo = definitionTempo(project, entry.second);
 			if (warnings != nullptr && repairedRate != sampleRate)
 				warnings->push_back("The project's sample rate was clamped from " + Json(sampleRate).dump() + " to " +
-					Json(repairedRate).dump() + " Hz; GNUbase-only data was kept.");
+					Json(repairedRate).dump() + " Hz; GNUbase-only data was kept. " +
+					(sampleRate > 0.0
+							? "Linear positions keep their time within the project bounds."
+							: "The old rate has no meaningful time scale; sample counts were left unchanged."));
 			return project;
 		}
 		catch (const std::overflow_error&)
