@@ -23,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -451,7 +452,6 @@ namespace gnubase::ui
 					return;
 				m_titled = titled->GetObserverPtr();
 				m_tracking = true;
-				m_at = at + Rml::Vector2f(0.0F, g_tooltipOffset * GetContext()->GetDensityIndependentPixelRatio());
 				m_due = now() + g_tooltipDelay;
 				GetContext()->RequestNextUpdate(g_tooltipDelay);
 			}
@@ -472,11 +472,10 @@ namespace gnubase::ui
 			{
 				Rml::Element::OnUpdate();
 				const Rml::Element* titled = m_titled.get();
-				// An element that isn't hovered any more is gone from under the mouse like a destroyed one: the mouse
-				// moved onto a part of its ancestor that no other element covers and the Mouseout missed it (an
-				// element taken out and kept has its :hover cleared without a Mouseout reaching the document). RmlUi
-				// sets :hover in the default action of the Mouseover, which a listener that stops the event keeps
-				// from running: such an element gets no tooltip, and nothing stops the event in the app.
+				// An element that isn't hovered any more is gone from under the mouse like a destroyed one: an element
+				// taken out and kept has its :hover cleared without a Mouseout reaching the document. RmlUi sets
+				// :hover in the default action of the Mouseover, which a listener that stops the event keeps from
+				// running: such an element gets no tooltip, and nothing stops the event in the app.
 				if (titled != nullptr && !titled->IsPseudoClassSet("hover"))
 				{
 					m_titled.reset();
@@ -519,17 +518,23 @@ namespace gnubase::ui
 				}
 				SetInnerRML(Rml::StringUtilities::EncodeRml(titled->GetAttribute<Rml::String>("title", "")));
 				SetClass("shown", true);
+				// Under the mouse where it rests now, not where it entered the element.
+				m_at = m_mouse + Rml::Vector2f(0.0F, g_tooltipOffset * GetContext()->GetDensityIndependentPixelRatio());
 				moveTo(*this, m_at);
+				m_placed = m_at;
 			}
 
-			// Once laid out with its text, the tooltip moves inside the window if it isn't.
+			// Once laid out with its text, the tooltip moves inside the window if it isn't, and back to the point
+			// where it belongs if it fits there: the first layout of a shown tooltip is as wide as its text could be,
+			// and moves it to the window's left edge.
 			void OnResize() override
 			{
 				Rml::Element::OnResize();
 				if (IsClassSet("shown"))
-					if (const Rml::Vector2f at = inside(*this, m_at); at != m_at)
+					if (const Rml::Vector2f at = inside(*this, m_at); at != m_placed)
 					{
 						moveTo(*this, at);
+						m_placed = at;
 						GetContext()->RequestNextUpdate(0.0); // the layout sets its place for the next update
 					}
 			}
@@ -539,8 +544,14 @@ namespace gnubase::ui
 			void lookUp()
 			{
 				Rml::Element* hovered = GetContext()->GetHoverElement();
-				if (hovered != nullptr && hovered->GetOwnerDocument() == GetOwnerDocument())
-					hover(hovered, m_mouse);
+				if (hovered == nullptr || hovered->GetOwnerDocument() != GetOwnerDocument())
+					return;
+				// Not an element without :hover (one whose Mouseover a listener stopped): OnUpdate would drop it and
+				// look again, update after update.
+				if (const Rml::Element* titled = closestWith(hovered, "title");
+					titled != nullptr && !titled->IsPseudoClassSet("hover"))
+					return;
+				hover(hovered, m_mouse);
 			}
 
 			Rml::ObserverPtr<Rml::Element> m_titled; // whose title is shown, or waits to be
@@ -549,7 +560,8 @@ namespace gnubase::ui
 			bool m_tracking = false;
 			bool m_looking = false; // its element is gone: the next update looks for the one under the mouse
 			Rml::Vector2f m_mouse;  // where the mouse was last seen, in the window's pixels
-			Rml::Vector2f m_at;
+			Rml::Vector2f m_at;     // where it belongs, under the mouse
+			Rml::Vector2f m_placed; // where it was moved last: m_at, or inside the window
 			double m_due = 0.0;
 		};
 
@@ -736,10 +748,12 @@ namespace gnubase::ui
 
 			void OnDocumentLoad(Rml::ElementDocument* document) override
 			{
-				document->AppendChild(document->CreateElement("tooltip"));
+				m_tooltips[document] = document->AppendChild(document->CreateElement("tooltip"))->GetObserverPtr();
 				for (const Rml::EventId id : g_events)
 					document->AddEventListener(id, &m_listener, true);
 			}
+
+			void OnDocumentUnload(Rml::ElementDocument* document) override { m_tooltips.erase(document); }
 
 		private:
 			static constexpr std::array<Rml::EventId, 9> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mouseup,
@@ -749,9 +763,17 @@ namespace gnubase::ui
 			void handle(Rml::Event& event)
 			{
 				Rml::ElementDocument* document = event.GetCurrentElement()->GetOwnerDocument();
-				Rml::Element* target = event.GetTargetElement();
 				const Rml::Vector2f mouse(event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F));
 				Tooltip* tooltip = tooltipOf(*document);
+				if (event == Rml::EventId::Mousemove)
+				{
+					// RmlUi sends no Mouseover for a move within an element: where the mouse rests, for the tooltip
+					// that comes after the element under it is gone. Every move gets here, also during a drag.
+					if (tooltip != nullptr)
+						tooltip->moved(mouse);
+					return;
+				}
+				Rml::Element* target = event.GetTargetElement();
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 				if (event == Rml::EventId::Mousedown || event == Rml::EventId::Mouseup ||
 					event == Rml::EventId::Keydown)
@@ -767,12 +789,6 @@ namespace gnubase::ui
 					if (const Rml::Element* item = closestTag(target, "menuitem"))
 						if (auto* menu = dynamic_cast<Menu*>(item->GetParentNode()))
 							menu->hover(*item);
-					break;
-				case Rml::EventId::Mousemove:
-					// RmlUi sends no Mouseover for a move within an element: where the mouse rests, for the
-					// tooltip that a removed element's replacement gets.
-					if (tooltip != nullptr)
-						tooltip->moved(mouse);
 					break;
 				case Rml::EventId::Mouseout:
 					// The mouse left the document, or an element within it: the tooltip goes, and the one of the
@@ -939,11 +955,12 @@ namespace gnubase::ui
 				}
 			}
 
-			static Tooltip* tooltipOf(Rml::ElementDocument& document)
+			// The document's tooltip, made when it loaded: found without a walk of the document, which every mouse move
+			// would pay for.
+			Tooltip* tooltipOf(Rml::ElementDocument& document) const
 			{
-				Rml::ElementList found;
-				document.GetElementsByTagName(found, "tooltip");
-				return found.empty() ? nullptr : dynamic_cast<Tooltip*>(found.back());
+				const auto found = m_tooltips.find(&document);
+				return found == m_tooltips.end() ? nullptr : dynamic_cast<Tooltip*>(found->second.get());
 			}
 
 			static Dialog* dialogOf(Rml::ElementDocument& document)
@@ -977,6 +994,7 @@ namespace gnubase::ui
 			}
 
 			Listener m_listener{[this](Rml::Event& event) { handle(event); }};
+			std::unordered_map<const Rml::ElementDocument*, Rml::ObserverPtr<Rml::Element>> m_tooltips;
 			bool m_alt = false; // Alt is held alone, so releasing it toggles the menu bar
 		};
 	}

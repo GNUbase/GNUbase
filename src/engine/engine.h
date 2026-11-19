@@ -336,6 +336,14 @@ namespace gnubase::engine
 		std::thread m_thread;
 	};
 
+	// How long Client::call waits for a result by default. Sanitizer builds run the engine several times slower, and
+	// CI runs three of their tests at once, so a long command there took more than 10 s without hanging.
+#ifdef GNUBASE_SANITIZED
+	inline constexpr std::chrono::milliseconds g_callTimeout = std::chrono::seconds(60);
+#else
+	inline constexpr std::chrono::milliseconds g_callTimeout = std::chrono::seconds(10);
+#endif
+
 	// A connection to the engine. Receives the results of its own commands and every event, in order.
 	// Clients must not outlive their engine.
 	class Client
@@ -359,8 +367,8 @@ namespace gnubase::engine
 		std::optional<Message> wait(std::chrono::milliseconds timeout);
 
 		// Sends a command and waits for its result. Other messages stay queued for poll and wait.
-		Result call(std::string command, Json parameters = Json::object(),
-			std::chrono::milliseconds timeout = std::chrono::seconds(10));
+		Result call(
+			std::string command, Json parameters = Json::object(), std::chrono::milliseconds timeout = g_callTimeout);
 
 	private:
 		Engine& m_engine;
