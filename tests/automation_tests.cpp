@@ -546,6 +546,63 @@ TEST_CASE("the automation player turns curves into parameter and controller even
 	CHECK(source.empty());
 }
 
+TEST_CASE("the automation player waits for the graph's MIDI destination before resending the patch", "[unit]")
+{
+	using Type = graph::ProcessEvent::Type;
+	const bool playing = GENERATE(false, true);
+	AutomationPlayer player;
+	RenderChannel channel;
+	channel.type = TrackType::Midi;
+	channel.format = ChannelFormat::None;
+	channel.program = 5;
+	channel.bank = 300;
+	channel.midiVolume = 90;
+	channel.midiPan = 20;
+	player.setAutomation(channelAutomation(channel, 6.0));
+	graph::EventBuffer source(graph::g_maxEventsPerBlock);
+	graph::EventBuffer fader(graph::g_maxEventsPerBlock);
+	graph::EventBuffer plugins(graph::g_maxEventsPerBlock);
+	const int processor = 0;
+	int64_t position = 0;
+	const auto block = [&](ObjectId destination)
+	{
+		source.clear();
+		fader.clear();
+		const graph::TransportSegment segment{0, 64, position};
+		player.play({playing, position, playing ? &segment : nullptr, playing ? size_t{1} : size_t{0}}, {&processor},
+			{}, source, fader, plugins, 0, nullptr, destination);
+		if (playing)
+			position += 64;
+	};
+	block(11);
+	REQUIRE(source.size() == 3);
+
+	// New automation reaches the player before the graph with the new route: only its changed controller goes out.
+	channel.midiVolume = 91;
+	player.setAutomation(channelAutomation(channel, 6.0));
+	block(11);
+	REQUIRE(source.size() == 1);
+	CHECK(source[0].type == Type::Controller);
+	CHECK(source[0].key == 7);
+	CHECK(source[0].value == midi::controllerFromMidi1(91));
+
+	// The graph changes destination without a new processor or automation revision. The new instrument gets all three.
+	block(22);
+	REQUIRE(source.size() == 3);
+	CHECK(source[0].type == Type::Program);
+	CHECK(source[0].key == 5);
+	CHECK(source[0].value == 300);
+	CHECK(source[1].type == Type::Controller);
+	CHECK(source[1].key == 7);
+	CHECK(source[1].value == midi::controllerFromMidi1(91));
+	CHECK(source[2].type == Type::Controller);
+	CHECK(source[2].key == 10);
+	block(22);
+	CHECK(source.empty());
+	block(11);
+	CHECK(source.size() == 3);
+}
+
 TEST_CASE("volume ramps, curves, steps and pan render as their golden file", "[integration]")
 {
 	Mixer mixer(128);
