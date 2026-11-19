@@ -629,7 +629,7 @@ namespace gnubase::engine
 
 	void AutomationPlayer::play(const graph::TransportBlock& transport, const std::vector<const void*>& processors,
 		const std::vector<ObjectId>& slots, graph::EventBuffer& source, graph::EventBuffer& fader,
-		graph::EventBuffer& plugins, uint32_t smoothing, graph::EventBuffer* sentAgain) noexcept
+		graph::EventBuffer& plugins, uint32_t smoothing, graph::EventBuffer* sentAgain, ObjectId midiOutput) noexcept
 	{
 		const ChannelAutomation& automation = m_automation.acquire();
 		if (sentAgain != nullptr)
@@ -653,7 +653,7 @@ namespace gnubase::engine
 		// yet, or another MIDI destination: the automation may have reached the audio thread before the graph with
 		// the new processor.
 		const size_t count = std::min(processors.size(), m_processors.size());
-		const bool newProcessors = automation.midiOutput != m_midiOutput || count != m_processorCount ||
+		const bool newProcessors = midiOutput != m_midiOutput || count != m_processorCount ||
 			!std::equal(
 				processors.begin(), processors.begin() + static_cast<std::ptrdiff_t>(count), m_processors.begin());
 		bool changed = automation.revision != m_played || newProcessors;
@@ -706,7 +706,7 @@ namespace gnubase::engine
 		m_played = automation.revision;
 		std::copy_n(processors.begin(), count, m_processors.begin());
 		m_processorCount = count;
-		m_midiOutput = automation.midiOutput;
+		m_midiOutput = midiOutput;
 
 		if (!transport.playing)
 		{
@@ -903,7 +903,7 @@ namespace gnubase::engine
 		m_sourceEvents.nextSource();
 		m_state->pluginEvents.clear();
 		m_state->automation.play(context.transport, m_processors, m_slots, m_sourceEvents, m_faderEvents,
-			m_state->pluginEvents, m_smoothing, m_sentAgain.capacity() > 0 ? &m_sentAgain : nullptr);
+			m_state->pluginEvents, m_smoothing, m_sentAgain.capacity() > 0 ? &m_sentAgain : nullptr, m_midiOutput);
 
 		if (m_monitoring && context.frames > 0)
 		{

@@ -1052,8 +1052,6 @@ namespace gnubase::engine
 			const std::shared_ptr<ChannelState> state =
 				kept != m_channelStates.end() ? kept->second : std::make_shared<ChannelState>();
 			std::unique_ptr<ChannelAutomation> automation = channelAutomation(channel, snapshot.maxVolume);
-			if (channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel)
-				automation->midiOutput = snapshot.channels[static_cast<size_t>(channel.output.index)].id;
 			if (kept != m_channelStates.end())
 			{
 				// A fader or pre gain set to another value glides there.
@@ -1127,7 +1125,10 @@ namespace gnubase::engine
 					kinds.push_back(chaseKindEvent(kind));
 				sourceStrip->chasedWhenHeard(std::move(kinds), sequencer->second);
 				sourceStrip->playsProject(snapshot.opened);
-				sourceStrip->playsMidiTrack();
+				const ObjectId midiOutput = channel.output.kind == RenderTarget::Kind::Channel
+					? snapshot.channels[static_cast<size_t>(channel.output.index)].id
+					: 0;
+				sourceStrip->playsMidiTrack(midiOutput);
 			}
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
 				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)

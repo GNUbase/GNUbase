@@ -56,14 +56,18 @@ namespace
 			return run(client, "channel.set", std::move(parameters)).at("channel");
 		}
 
-		// The MIDI 1.0 bytes the instrument got in the next frames.
-		std::vector<std::vector<int>> played(int frames = 64)
+		// The MIDI 1.0 bytes the instrument got in the next frames, optionally checking the receiving channel too.
+		std::vector<std::vector<int>> played(int frames = 64, std::optional<ObjectId> destination = std::nullopt)
 		{
 			run(client, "audio.render", {{"frames", frames}});
 			std::vector<std::vector<int>> bytes;
 			const Json capture = run(client, "midi.capture");
 			for (const Json& captured : capture.at("captured"))
+			{
+				if (destination)
+					CHECK(captured.at("channel") == *destination);
 				bytes.push_back(captured.at("bytes").get<std::vector<int>>());
+			}
 			return bytes;
 		}
 
@@ -295,11 +299,13 @@ TEST_CASE("rerouting a MIDI track sends its patch and controllers to the new ins
 	run(track.client, "channel.set", {{"channel", instrument}, {"instrument", "noteProbe"}});
 	track.played();
 	track.set({{"output", instrument}});
-	CHECK(track.played() == Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 5}, {0xB0, 7, 90}, {0xB0, 10, 20}});
+	CHECK(track.played(64, instrument.get<ObjectId>()) ==
+		Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 5}, {0xB0, 7, 90}, {0xB0, 10, 20}});
 	CHECK(track.played().empty());
 	// Returning to the first instrument sends them again there too.
-	track.set({{"output", run(track.client, "project.get").at("channels")[0].at("id")}});
-	CHECK(track.played() == Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 5}, {0xB0, 7, 90}, {0xB0, 10, 20}});
+	const ObjectId first = run(track.client, "project.get").at("channels")[0].at("id").get<ObjectId>();
+	track.set({{"output", first}});
+	CHECK(track.played(64, first) == Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 5}, {0xB0, 7, 90}, {0xB0, 10, 20}});
 }
 
 TEST_CASE("a MIDI track's patch, MIDI volume and pan go out on its MIDI channel", "[integration]")

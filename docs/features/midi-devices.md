@@ -1,7 +1,7 @@
 # MIDI devices and patch banks
 
 MIDI devices stand for external instruments with their patches by name, and a MIDI track chooses its patch, the
-program and bank it sends to its instrument (#136, reference manual pp. 1108â€“1114).
+program and bank it sends to its instrument (#136, reference manual pp. 1108–1114).
 
 - **A MIDI track's patch** (p. 1108). `channel.set` `program` (0 to 127) and `bank` (0 to 16383), `null` for none, the
   default, are a MIDI channel's patch. The channel sends it to its instrument as a program change on its MIDI channel
@@ -57,6 +57,8 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108â�
 
 ## Checks
 
+- `tests/automation_tests.cpp`: newer automation arriving while the old graph still plays does not consume a new MIDI
+  destination; its patch and controllers go out when the graph changes destination, while stopped and playing.
 - `tests/midipatches_tests.cpp`: installing a GM device and an empty one, a taken or empty name refused, removing,
   patches edited and a broken one refused with `settings.set`; a MIDI track's program, bank and device set, refused on
   an instrument track and out of range, saved and loaded, undone; and a patch selected reaching the instrument
