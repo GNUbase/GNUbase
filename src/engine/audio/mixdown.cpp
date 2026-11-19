@@ -207,8 +207,9 @@ namespace gnubase::engine
 					result.sampleFormat == SampleFormat::Int24,
 				"FLAC files take int16 or int24 samples");
 			result.sampleRate = parameters.value("sampleRate", projectRate);
-			require(result.sampleRate >= 8000.0 && result.sampleRate <= 768000.0,
-				"sampleRate must be from 8000 to 768000 Hz");
+			require(result.sampleRate >= g_lowestSampleRate && result.sampleRate <= g_highestSampleRate,
+				"sampleRate must be from " + std::to_string(static_cast<int>(g_lowestSampleRate)) + " to " +
+					std::to_string(static_cast<int>(g_highestSampleRate)) + " Hz");
 			result.dither = parameters.value("dither", false) &&
 				(result.sampleFormat == SampleFormat::Int16 || result.sampleFormat == SampleFormat::Int24);
 			if (const auto normalize = parameters.find("normalize"); normalize != parameters.end())

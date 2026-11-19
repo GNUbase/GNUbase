@@ -45,8 +45,13 @@ namespace gnubase::engine
 	bool hasStepCurve(const Project& project, const AutomationLane& lane);
 
 	// Changes the project's sample rate (projectmodel.cpp). Linear positions are in samples, so they are rescaled to
-	// keep their time.
-	void changeSampleRate(Project& project, double sampleRate, CommandContext& context);
+	// keep their time, bounded to plus or minus time::g_maxPosition. Without context no events are emitted, for
+	// repairing a loaded project. The old rate must be finite and positive.
+	void changeSampleRate(Project& project, double sampleRate, CommandContext* context = nullptr);
+	inline void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
+	{
+		changeSampleRate(project, sampleRate, &context);
+	}
 
 	// Changes a track's time base (projectmodel.cpp): its events, parts, markers, automation points and other
 	// versions' events and parts keep their place in the new one.

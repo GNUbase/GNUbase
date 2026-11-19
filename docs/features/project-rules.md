@@ -22,15 +22,14 @@ holds named rules, as the MIDI rules have one ([midi-rules.md](midi-rules.md)).
   - **Functions:** delete, transform, select and deselect. Select and deselect change nothing: the UI selects what was
     found, or deselects everything.
   - **Action lines** change, in order: position and length (add, subtract, multiply by, divide by, round by, random,
-    relative random, fixed value; each result stops at plus or minus the longest project, `time::g_maxPosition`
-    samples, so that its ticks fit at any sample rate a project can have; it stops at the project's start when it is
-    applied, where a cycle marker keeps its length, as a part does, and a cycle marker stays at least one sample
-    long), name (replace, append, prepend,
-    generate name: text and a number counting up from parameter 2 over the elements that are renamed, so locked parts
-    and audio events take none, replace search string, erase before, erase after, erase the first or last character),
-    track operations (mute, solo, record, monitor: on, off or toggle; time domain: musical, linear or toggle; a marker track's markers that move too
-    take their positions in its new time domain) and color
-    (a project color's name or `#rrggbb`, the next or previous project color).
+    relative random, fixed value; each result stops at plus or minus the longest project, `time::g_maxPosition` samples,
+    so that its ticks fit at any sample rate a project can have; it stops at the project's start when it is applied,
+    where a cycle marker keeps its length, as a part does, and a cycle marker stays at least one sample long), name
+    (replace, append, prepend, generate name: text and a number counting up from parameter 2 over the elements that are
+    renamed, so locked parts and audio events take none, replace search string, erase before, erase after, erase the
+    first or last character), track operations (mute, solo, record, monitor: on, off or toggle; time domain: musical,
+    linear or toggle; a marker track's markers that move too take their positions in its new time domain) and color (a
+    project color's name or `#rrggbb`, the next or previous project color).
   - **Pre and post commands:** up to four key commands each ([key-commands.md](key-commands.md)), engine or UI
     commands with parameters, kept with the rules and their presets. The UI runs them before and after the rules.
   - JSON (`toJson`, `projectRulesFromJson`, `projectRulesSchema`): `{filters: [{open, target, condition, parameter1,
