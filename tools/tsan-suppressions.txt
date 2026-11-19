@@ -8,6 +8,8 @@ race:libLLVM
 # string whose count it changes inside libstdc++.so, so when a promise's exception is read on one thread and released
 # with the promise on another, TSan sees the release as a race with the read (HostManager::load in the safe mode test).
 # std::logic_error's message is the same kind of string: the UI tools throw std::invalid_argument, read on the MCP
-# thread and released with ui::onUiThread's task on the UI thread (ui_screenshot of a hidden element, #1945).
+# thread and released with ui::onUiThread's task on the UI thread (ui_screenshot of a hidden element, #1945). The
+# exception object itself is counted the same way, by every std::exception_ptr to it, so its release is suppressed too.
 race:std::runtime_error::~runtime_error
 race:std::logic_error::~logic_error
+race:std::__exception_ptr::exception_ptr::_M_release
