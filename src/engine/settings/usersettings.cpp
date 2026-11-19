@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/settings/usersettings.h"
 
+#include "engine/document/document.h"
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/devices.h"
@@ -439,7 +440,8 @@ namespace gnubase::engine::settings
 					"after the post-roll if it's on (see transport.set), unless it cycles.",
 					Json{{"type", "boolean"}}, false, true},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
-					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
+					Json{{"type", "number"}, {"minimum", g_lowestSampleRate}, {"maximum", g_highestSampleRate}},
+					48000.0},
 				{"chordPads.presets",
 					"The user's own chord pads presets by name (chordPads.savePreset): each with pads (chord, voicings "
 					"and adaptive of each pad), rootKey, scale, players (without their tracks), player, mode and "

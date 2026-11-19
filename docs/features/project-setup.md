@@ -25,11 +25,13 @@ so MCP and Lua scripts can do all it does.
 - They are saved in the project file's GNUbase entry (`gnubase.json` in the DAWproject container, as `toJson(Project)`
   writes it); files from before have the defaults. Undo and redo restore them with the other project settings
   (`ProjectSettings` in `history.h`) and announce them with `project.changed`.
-- **A new sample rate**, from 8000 to 768000 Hz (`g_lowestSampleRate`, `g_highestSampleRate`; so does a loaded
-  project's, since far outside them positions in ticks or samples leave an int64), keeps linear positions at their
-  time, as before; media files keep their sample rate and play
-  at the wrong speed until they are conformed with `media.conform` ([pool.md](pool.md)). The dialog does both, as
-  one undo step (below).
+- **A new sample rate**, from 8000 to 768000 Hz (`g_lowestSampleRate`, `g_highestSampleRate`), keeps linear positions at
+  their time, as before; media files keep their sample rate and play at the wrong speed until they are conformed with
+  `media.conform` ([pool.md](pool.md)). The dialog does both, as one undo step (below). `project.set` advertises the
+  bounds in its parameter schema. A project file with a rate outside them opens at the nearest bound, keeping its
+  GNUbase-only data: `project.load` returns a `warnings` array with a message naming the old and repaired rates, empty
+  when no repair was needed. This prevents positions in ticks or samples from leaving an int64 without losing native
+  data on the next save.
 - **The record bit depth** is in the render snapshot, so `audio.get` has it as `recordBitDepth` next to
   `projectSampleRate`, and `audio.changed` announces a new one, also after undo, for the status line's record format
   ([status-line.md](status-line.md)). The audio thread doesn't read it.
@@ -94,14 +96,19 @@ so MCP and Lua scripts can do all it does.
 
 ## Tests
 
-`tests/projectsetup_tests.cpp`: the settings are set, announced, read by the audio engine, undone and saved and loaded
-with the project; combinations recording can't write and values out of range are refused; the time displays follow the
-frame rate, start time and bar offset. In the app, the dialog shows the defaults and OK sends a changed bit depth,
-frame rate, start, length, bar offset, pan law and maximum volume as one undo step; Cancel drops a change and an
-unreadable length keeps it open with the message; a new sample rate keeps the dialog open on an unsaved project
-with media, and conforms a saved project's audio file with the pool's job, which the pool shows, undone in one step,
-and doesn't with Conform Audio Files off; an unsaved project whose only file at another rate is missing, the others at the new rate, takes the new rate without asking for a save; the status line shows a new record bit depth, follows undo and opens
-the dialog with a click; Project > Project Setup... opens it, and Escape closes it without a change.
+`tests/projectsetup_tests.cpp`: the sample rate schema advertises both bounds; the settings are set, announced, read by
+the audio engine, undone and saved and loaded with the project; combinations recording can't write and values out of
+range are refused; the time displays follow the frame rate, start time and bar offset. In the app, the dialog shows the
+defaults and OK sends a changed bit depth, frame rate, start, length, bar offset, pan law and maximum volume as one undo
+step; Cancel drops a change and an unreadable length keeps it open with the message; a new sample rate keeps the dialog
+open on an unsaved project with media, and conforms a saved project's audio file with the pool's job, which the pool
+shows, undone in one step, and doesn't with Conform Audio Files off; an unsaved project whose only file at another rate
+is missing, the others at the new rate, takes the new rate without asking for a save; the status line shows a new record
+bit depth, follows undo and opens the dialog with a click; Project > Project Setup... opens it, and Escape closes it
+without a change.
+`tests/dawproject_tests.cpp`: `project.load` clamps rates below and above the bounds, reports each repair and preserves
+the GNUbase-only data through another save and load; rates within the bounds, including the bounds themselves, and
+already repaired files load without warnings.
 `tests/timeformat_tests.cpp`: the ruler's marks counting from the start time and bar offset, the negative-bar round
 trip, and `readTimeContext` leaving the context as it was for a project it can't read. `tests/markers_ui_tests.cpp`:
 cycle marker lengths with a start time, and the markers window in the project's time format.

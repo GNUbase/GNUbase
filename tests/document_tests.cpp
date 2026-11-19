@@ -805,7 +805,8 @@ TEST_CASE("projects run at 8000 to 768000 Hz when set and when loaded", "[unit]"
 	for (const double rate : {g_lowestSampleRate - 1.0, g_highestSampleRate + 1.0, 1e-6, 1e16})
 	{
 		CAPTURE(rate);
-		CHECK_THAT(reject(client, "project.set", {{"sampleRate", rate}}), ContainsSubstring("8000 to 768000"));
+		CHECK_THAT(reject(client, "project.set", {{"sampleRate", rate}}),
+			ContainsSubstring(rate < g_lowestSampleRate ? "at least" : "at most"));
 		saved["sampleRate"] = rate;
 		CHECK_THROWS_WITH(projectFromJson(saved), ContainsSubstring("8000 to 768000"));
 	}

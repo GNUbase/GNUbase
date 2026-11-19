@@ -3241,7 +3241,8 @@ namespace gnubase::engine
 			const Json& parameters = context.parameters();
 			const double sampleRate = parameters.value("sampleRate", project.sampleRate);
 			require(sampleRate >= g_lowestSampleRate && sampleRate <= g_highestSampleRate,
-				"sampleRate must be from 8000 to 768000 Hz");
+				"sampleRate must be from " + std::to_string(static_cast<int>(g_lowestSampleRate)) + " to " +
+					std::to_string(static_cast<int>(g_highestSampleRate)) + " Hz");
 			const double maxVolume = parameters.value("maxVolume", project.maxVolume);
 			require(maxVolume == 6.0 || maxVolume == 12.0, "maxVolume must be 6 or 12 dB");
 			ProjectSetup setup;
@@ -4158,10 +4159,12 @@ namespace gnubase::engine
 				"it are extracted to mediaFolder, by default a folder named after the file next to it. With "
 				"revision, it loads only if the project is still at that revision (see project.revision), and fails "
 				"otherwise, so that no change made meanwhile is lost. An auto save (see project.autoSave) opens "
-				"without a file and with unsaved changes, and isn't a recent project.",
+				"without a file and with unsaved changes, and isn't a recent project. A sample rate outside the "
+				"supported range is clamped to the nearest bound, keeping GNUbase-only data. Returns warnings, "
+				"an array of repair messages (empty when no repair was needed).",
 				objectSchema(
 					{{"path", stringSchema}, {"mediaFolder", stringSchema}, {"revision", integerSchema}}, {"path"}),
-				noResult, false},
+				objectSchema({{"warnings", {{"type", "array"}, {"items", stringSchema}}}}, {"warnings"}), false},
 			[this](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
@@ -4174,16 +4177,17 @@ namespace gnubase::engine
 				const std::string folder = parameters.value("mediaFolder",
 					(file.parent_path() / std::filesystem::u8path(file.stem().u8string() + " media")).u8string());
 				Project project;
+				std::vector<std::string> warnings;
 				try
 				{
-					project = loadDawProject(path, folder);
+					project = loadDawProject(path, folder, true, &warnings);
 				}
 				catch (const std::exception& error)
 				{
 					throw CommandError(error.what());
 				}
 				opened(std::move(project), std::filesystem::absolute(file).u8string(), context);
-				return Json::object();
+				return Json{{"warnings", warnings}};
 			});
 		addControl(engine,
 			{"project.new", 1,
@@ -4222,32 +4226,31 @@ namespace gnubase::engine
 		add(engine,
 			{"project.set", 1,
 				"Changes the project's name, sample rate (8000 to 768000 Hz), stereo pan law or maximum volume, or "
-				"the other settings of the project setup. Linear positions keep their time at a new sample rate; media "
-				"files keep theirs "
-				"(see media.conform). panLaw is how much a mono channel panned to the center is turned down on "
-				"each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same "
-				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
-				"faders, 6 (the default) or 12 dB; faders, send levels and volume automation above a lower maximum "
-				"come down to it. tempo (1 to 999 BPM) and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} "
-				"are the project's first tempo and "
-				"time signature, as the transport bar sets them: the fixed tempo, or in tempo track mode the tempo "
-				"track's first event; later changes stay, and musical positions keep their ticks. tempoTrackActive "
-				"switches between fixed tempo mode (false, a new project's) and tempo track mode, in which the "
-				"project plays the tempo track's events (tempo.add); each mode keeps its tempo while the other is in "
-				"use (emits tempo.changed). colors is the project's color set, which track and event colors are picked "
-				"from: at least "
-				"one {name, color (#rrggbb)}, in order. recordFileType (wav, the default, broadcastWav, aiff or "
-				"flac) and recordBitDepth (int16, int24, the default, int32, float32 or float64) are what recording "
-				"writes: AIFF only integers, FLAC 16 or 24 bit, 64 bit float only Wave. frameRate is the timecode's "
-				"(default 25). startTime (seconds, under 24 hours) is the time shown at the project start, length "
-				"(seconds, up to 24 hours, default 600) how long the project is, barOffset (-9999 to 9999) is added "
-				"to the bar numbers shown, and timeFormat is the primary time format of rulers and position "
-				"displays. A new timeFormat, also by undo or redo, is the snap settings' format too (see snap.set; "
-				"emits snap.changed). rootKey is the Project Root Key (\"\" for none, C, C# and so on to B): MIDI "
-				"parts "
+				"the other settings of the project setup. Linear positions keep their time at a new sample rate; "
+				"media files keep theirs (see media.conform). panLaw is how much a mono channel panned to the center "
+				"is turned down on each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the "
+				"power stays the same wherever it is panned); the side panned toward is always at 0 dB. maxVolume is "
+				"the top of the faders, 6 (the default) or 12 dB; faders, send levels and volume automation above a "
+				"lower maximum come down to it. tempo (1 to 999 BPM) and signature {numerator 1 to 99, denominator "
+				"1, 2, 4, 8 or 16} are the project's first tempo and time signature, as the transport bar sets them: "
+				"the fixed tempo, or in tempo track mode the tempo track's first event; later changes stay, and "
+				"musical positions keep their ticks. tempoTrackActive switches between fixed tempo mode (false, a "
+				"new project's) and tempo track mode, in which the project plays the tempo track's events "
+				"(tempo.add); each mode keeps its tempo while the other is in use (emits tempo.changed). colors is "
+				"the project's color set, which track and event colors are picked from: at least one {name, color "
+				"(#rrggbb)}, in order. recordFileType (wav, the default, broadcastWav, aiff or flac) and "
+				"recordBitDepth (int16, int24, the default, int32, float32 or float64) are what recording writes: "
+				"AIFF only integers, FLAC 16 or 24 bit, 64 bit float only Wave. frameRate is the timecode's (default "
+				"25). startTime (seconds, under 24 hours) is the time shown at the project start, length (seconds, "
+				"up to 24 hours, default 600) how long the project is, barOffset (-9999 to 9999) is added to the bar "
+				"numbers shown, and timeFormat is the primary time format of rulers and position displays. A new "
+				"timeFormat, also by undo or redo, is the snap settings' format too (see snap.set; emits "
+				"snap.changed). rootKey is the Project Root Key (\"\" for none, C, C# and so on to B): MIDI parts "
 				"with a root key of their own that follow global transpose play transposed to it, the nearer way "
 				"(midiPart.set rootKey and globalTranspose; transpose.assignRootKey).",
-				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
+				objectSchema({{"name", stringSchema},
+					{"sampleRate",
+						{{"type", "number"}, {"minimum", g_lowestSampleRate}, {"maximum", g_highestSampleRate}}},
 					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}, {"tempo", numberSchema},
 					{"tempoTrackActive", booleanSchema},
 					{"colors",

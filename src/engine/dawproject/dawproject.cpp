@@ -2286,7 +2286,8 @@ namespace gnubase::engine
 		return missing;
 	}
 
-	Project loadDawProject(const std::string& path, const std::string& mediaFolder, bool extractMedia)
+	Project loadDawProject(
+		const std::string& path, const std::string& mediaFolder, bool extractMedia, std::vector<std::string>* warnings)
 	{
 		ZipReader zip(path);
 		const std::string xml = zip.text("project.xml");
@@ -2305,9 +2306,13 @@ namespace gnubase::engine
 			return fromXml;
 		try
 		{
-			const Json extension = Json::parse(zip.text(g_extensionEntry));
+			Json extension = Json::parse(zip.text(g_extensionEntry));
 			if (extension.value("format", 0) != g_extensionFormat || extension.value("projectXml", "") != checksum(xml))
 				return fromXml;
+			Json& native = extension.at("project");
+			const double sampleRate = native.at("sampleRate").get<double>();
+			const double repairedRate = std::clamp(sampleRate, g_lowestSampleRate, g_highestSampleRate);
+			native["sampleRate"] = repairedRate;
 			Project project = projectFromJson(extension.at("project"));
 			const Json& media = extension.at("media");
 			for (auto& [id, file] : project.media)
@@ -2336,6 +2341,9 @@ namespace gnubase::engine
 			for (auto& entry : project.clips)
 				if (entry.second.warp.musical && entry.second.warp.tempo <= 0.0)
 					entry.second.warp.tempo = definitionTempo(project, entry.second);
+			if (warnings != nullptr && repairedRate != sampleRate)
+				warnings->push_back("The project's sample rate was clamped from " + Json(sampleRate).dump() + " to " +
+					Json(repairedRate).dump() + " Hz; GNUbase-only data was kept.");
 			return project;
 		}
 		catch (const std::overflow_error&)

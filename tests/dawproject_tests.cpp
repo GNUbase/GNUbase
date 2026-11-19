@@ -830,6 +830,55 @@ TEST_CASE("markers from before marker tracks load onto a new marker track", "[in
 	CHECK(next == highestId(after) + 1);
 }
 
+TEST_CASE("project.load repairs an out-of-range sample rate without losing native data", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string file = utf8(dir.path() / "rate.dawproject");
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"barOffset", -3}, {"recordBitDepth", "float32"}});
+	run(client, "bus.add", {{"direction", "input"}, {"name", "Native input"}, {"channels", 1}});
+	run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}});
+	const Json original = run(client, "project.get");
+	run(client, "project.save", {{"path", file}});
+	const auto saved = readZip(file);
+	const std::vector<std::pair<double, double>> rates = {{0.0, g_lowestSampleRate}, {7999.0, g_lowestSampleRate},
+		{g_lowestSampleRate, g_lowestSampleRate}, {44100.0, 44100.0}, {g_highestSampleRate, g_highestSampleRate},
+		{768001.0, g_highestSampleRate}};
+	for (const auto& [rate, repaired] : rates)
+	{
+		CAPTURE(rate);
+		auto entries = saved;
+		Json extension = Json::parse(entries.at("gnubase.json"));
+		extension["project"]["sampleRate"] = rate;
+		entries["gnubase.json"] = extension.dump();
+		writeZip(file, entries);
+		run(client, "project.new");
+		const Json loaded = run(client, "project.load", {{"path", file}});
+		Json expected = original;
+		expected["sampleRate"] = repaired;
+		CHECK(run(client, "project.get") == expected);
+		const Json& warnings = loaded.at("warnings");
+		if (rate == repaired)
+		{
+			CHECK(warnings.empty());
+		}
+		else
+		{
+			REQUIRE(warnings.size() == 1);
+			const std::string warning = warnings.at(0).get<std::string>();
+			CHECK_THAT(warning, ContainsSubstring("sample rate"));
+			CHECK_THAT(warning, ContainsSubstring(Json(rate).dump()));
+			CHECK_THAT(warning, ContainsSubstring(Json(repaired).dump()));
+		}
+		// A subsequent save keeps the repaired rate and all the native data, with no warning on the next load.
+		run(client, "project.save", {{"path", file}});
+		run(client, "project.new");
+		CHECK(run(client, "project.load", {{"path", file}}).at("warnings").empty());
+		CHECK(run(client, "project.get") == expected);
+	}
+}
+
 TEST_CASE("VCA faders that would control themselves are left out when a project loads", "[integration]")
 {
 	const test::TempDir dir;
