@@ -99,10 +99,93 @@ namespace gnubase::engine::analysis
 		return result;
 	}
 
-	StatisticsMeter::StatisticsMeter(double sampleRate, int channels)
-		: m_sampleRate(sampleRate), m_channels(static_cast<size_t>(std::max(channels, 1))),
-		  m_part(std::max<int64_t>(1, frames(g_rmsPart, sampleRate)))
+	PitchEstimator::PitchEstimator(double sampleRate)
+		: m_rate(sampleRate), m_decimation(std::max<size_t>(1, static_cast<size_t>(sampleRate / 12000.0)))
 	{
+		m_rate /= static_cast<double>(m_decimation);
+		m_pending.reserve(2048);
+	}
+
+	void PitchEstimator::keepWindow()
+	{
+		if (m_pending.size() < static_cast<size_t>(std::ceil(2.0 * m_rate / 40.0)))
+			return;
+		double sum = 0.0;
+		double squares = 0.0;
+		for (const double sample : m_pending)
+		{
+			sum += sample;
+			squares += sample * sample;
+		}
+		const double mean = sum / static_cast<double>(m_pending.size());
+		const double energy = (squares / static_cast<double>(m_pending.size())) - (mean * mean);
+		if (energy <= std::max(m_energy, 1e-10))
+			return;
+		m_energy = energy;
+		m_best = m_pending;
+	}
+
+	void PitchEstimator::feed(const float* samples, size_t count, size_t stride)
+	{
+		for (size_t i = 0; i < count; ++i)
+		{
+			m_sum += samples[i * stride];
+			if (++m_count < m_decimation)
+				continue;
+			m_pending.push_back(m_sum / static_cast<double>(m_decimation));
+			m_count = 0;
+			m_sum = 0.0;
+			if (m_pending.size() == 2048)
+			{
+				keepWindow();
+				m_pending.clear();
+			}
+		}
+	}
+
+	std::optional<double> PitchEstimator::finish()
+	{
+		keepWindow();
+		if (m_best.empty())
+			return std::nullopt;
+		// Cumulative mean normalized squared differences: take the first periodic minimum, rather than the
+		// loudest harmonic. Each lag compares the same number of samples; DC cancels in the differences.
+		const size_t half = m_best.size() / 2;
+		const size_t last = std::min(half - 1, static_cast<size_t>(m_rate / 40.0) + 1);
+		std::vector<double> differences(last + 1, 0.0);
+		std::vector<double> normalized(last + 1, 1.0);
+		double sum = 0.0;
+		for (size_t lag = 1; lag <= last; ++lag)
+		{
+			for (size_t i = 0; i < half; ++i)
+			{
+				const double delta = m_best[i] - m_best[i + lag];
+				differences[lag] += delta * delta;
+			}
+			sum += differences[lag];
+			if (sum > 0.0)
+				normalized[lag] = differences[lag] * static_cast<double>(lag) / sum;
+		}
+		for (size_t lag = 2; lag < last; ++lag)
+		{
+			if (normalized[lag] >= 0.1 || normalized[lag] > normalized[lag - 1] ||
+				normalized[lag] > normalized[lag + 1])
+				continue;
+			const double curve = differences[lag - 1] - (2.0 * differences[lag]) + differences[lag + 1];
+			const double shift = curve > 0.0 ? 0.5 * (differences[lag - 1] - differences[lag + 1]) / curve : 0.0;
+			const double pitch = m_rate / (static_cast<double>(lag) + std::clamp(shift, -0.5, 0.5));
+			if (pitch >= 40.0 && pitch <= 2000.0)
+				return pitch;
+			return std::nullopt; // don't turn an unsupported high pitch into a lower subharmonic
+		}
+		return std::nullopt;
+	}
+
+	StatisticsMeter::StatisticsMeter(double sampleRate, int channels)
+		: m_part(std::max<int64_t>(1, frames(g_rmsPart, sampleRate)))
+	{
+		for (int c = 0; c < std::max(channels, 1); ++c)
+			m_channels.emplace_back(sampleRate);
 		for (Channel& channel : m_channels)
 		{
 			channel.statistics.minSample = std::numeric_limits<double>::infinity();
@@ -117,7 +200,7 @@ namespace gnubase::engine::analysis
 		const size_t channels = m_channels.size();
 		const auto window = static_cast<int64_t>(m_channels.front().parts.size()) * m_part;
 		for (size_t c = 0; c < channels; ++c)
-			m_channels[c].spectrum.feed(frames + c, count, channels);
+			m_channels[c].pitch.feed(frames + c, count, channels);
 		for (size_t i = 0; i < count; ++i)
 		{
 			++m_frames;
@@ -169,12 +252,7 @@ namespace gnubase::engine::analysis
 				if (m_frames < static_cast<int64_t>(channel.parts.size()) * m_part)
 					statistics.maxRms = statistics.averageRms;
 			}
-			if (statistics.peak > 0.0)
-			{
-				const Spectrum strongest = summarize(channel.spectrum.finish(), m_sampleRate, 1);
-				if (!strongest.peaks.empty())
-					statistics.pitch = strongest.peaks.front().frequency;
-			}
+			statistics.pitch = channel.pitch.finish();
 			result.push_back(statistics);
 		}
 		return result;

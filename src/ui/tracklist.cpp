@@ -242,6 +242,9 @@ namespace gnubase::ui
 			// The MIDI channel, as in the inspector (reference manual p. 349).
 			if (control == "midiChannel")
 				return type == "midi";
+			// Edit In-Place (reference manual pp. 194, 1261).
+			if (control == "editInPlace")
+				return type == "midi" || type == "instrument";
 			// Switch Time Base (reference manual pp. 179-180, 229).
 			if (control == "timeBase")
 				return type == "audio" || type == "instrument" || type == "midi" || type == "group" || type == "effect";
@@ -294,7 +297,8 @@ namespace gnubase::ui
 				{"chordMute", {"Mute Chord Track", "M"}}, {"showScales", {"Show Scales", "S"}},
 				{"arrangerMode", {"Activate Arranger Mode", "A"}}, {"addPositionMarker", {"Add Position Marker", "+"}},
 				{"addCycleMarker", {"Add Cycle Marker", "[+]"}}, {"activateMarkerTrack", {"Activate Track", "A"}},
-				{"groupEditing", {"Group Editing", "G"}}};
+				{"groupEditing", {"Group Editing", "G"}},
+				{"editInPlace", {"Edit In-Place", R"(<svg class="icon" src="../icons/tool-draw.svg"/>)"}}};
 			const auto& [title, content] = looks.at(control);
 			// A click on one leaves the track selection as it is (#1852): selecting the track on a click on its Solo is
 			// a preference (reference manual p. 1600, not yet), and its other buttons never select it.
@@ -1018,6 +1022,10 @@ namespace gnubase::ui
 			showState();
 			hide(); // may load the display's lanes again, which lays them out again
 		}
+		else if (m_display.inPlaceTracks() != m_inPlaceShown || m_display.inPlaceToolbars() != m_toolbarsShown)
+		{
+			showInPlace();
+		}
 		place();
 		m_layingOut = false;
 	}
@@ -1071,6 +1079,12 @@ namespace gnubase::ui
 							R"(<svg class="icon" src="../icons/general-arrow-down.svg"/></button>)"
 						  : "") +
 				R"(<div class="track-controls"/>)" +
+				// The in-place editor's toolbar triangle in the upper right corner, while its editor is open
+				// (reference manual p. 1259, in-place-editor.md).
+				(row.type == "midi" || row.type == "instrument"
+						? R"(<button class="in-place-toolbar-toggle icon-only" keepselection="" title="Show/Hide Toolbar">)"
+						  R"(<svg class="icon" src="../icons/general-arrow-down.svg"/></button>)"
+						: "") +
 				// Show/Hide Automation in the lower left corner, and the automation tracks below (#121).
 				(row.channel != 0 ? R"(<button class="automation-toggle icon-only" title="Show/Hide Automation">)"
 									R"(<svg class="icon" src="../icons/general-arrow-down.svg"/></button>)"
@@ -1298,6 +1312,8 @@ namespace gnubase::ui
 					on = arranger.value("mode", false);
 				else if (name == "read")
 					on = !lanes.empty() && std::all_of(lanes.begin(), lanes.end(), [](bool read) { return read; });
+				else if (name == "editInPlace")
+					on = m_display.inPlaceTracks().count(row.id) != 0;
 				else
 					on = channel != nullptr && channel->value(name, false);
 				bool defeated = channel != nullptr && channel->value("soloDefeat", false);
@@ -1321,10 +1337,27 @@ namespace gnubase::ui
 				}
 			}
 		}
+		showInPlace();
 		followTempo(); // the tempo field may have come or gone with the rows or the controls (#1338)
 		showTempo();
 		if (Rml::Context* context = m_view->GetContext())
 			context->RequestNextUpdate(0);
+	}
+
+	void TrackList::showInPlace()
+	{
+		m_inPlaceShown = m_display.inPlaceTracks();
+		m_toolbarsShown = m_display.inPlaceToolbars();
+		for (int i = 0; i < m_view->GetNumChildren() && static_cast<size_t>(i) < m_tracks.size(); ++i)
+		{
+			Rml::Element* element = m_view->GetChild(i);
+			const uint64_t track = m_tracks[static_cast<size_t>(i)].id;
+			setClass(*element, "in-place", m_inPlaceShown.count(track) != 0);
+			if (Rml::Element* button = element->QuerySelector("button[control=editInPlace]"))
+				setClass(*button, "checked", m_inPlaceShown.count(track) != 0);
+			if (Rml::Element* triangle = element->QuerySelector(".in-place-toolbar-toggle"))
+				setClass(*triangle, "checked", m_toolbarsShown.count(track) != 0);
+		}
 	}
 
 	const Json& TrackList::arranger() const
@@ -1814,6 +1847,12 @@ namespace gnubase::ui
 				openVersionsMenu(row->id); // before its click opens the menu
 		if (event.GetId() == Rml::EventId::Click)
 		{
+			if (closest(target, "in-place-toolbar-toggle") != nullptr)
+			{
+				if (const Row* row = rowOf(target))
+					m_display.showInPlaceToolbar(row->id, !m_display.inPlaceToolbarShown(row->id));
+				return;
+			}
 			if (closest(target, "automation-toggle") != nullptr)
 			{
 				if (const Row* row = rowOf(target))
@@ -2006,6 +2045,12 @@ namespace gnubase::ui
 		if (name == "setTimeOffset")
 		{
 			m_binding.send("track.set", {{"track", row.id}, {"timeOffset", "cursor"}});
+			return;
+		}
+		if (name == "editInPlace")
+		{
+			// Checked once the editor opens (showInPlace): a view of the engine's, which no project read follows.
+			m_binding.send("editor.inPlace", {{"tracks", {row.id}}});
 			return;
 		}
 		if (name == "timeFormat" || name == "timeOffset" || name == "chordAudition" || name == "arrangerChain" ||
@@ -2556,7 +2601,7 @@ namespace gnubase::ui
 			part = part->GetParentNode())
 			if (part->HasAttribute("control") || part->GetTagName() == "input" || part->IsClassSet("tree-toggle") ||
 				part->IsClassSet("automation-rows") || part->IsClassSet("automation-toggle") ||
-				part->IsClassSet("track-versions-toggle"))
+				part->IsClassSet("track-versions-toggle") || part->IsClassSet("in-place-toolbar-toggle"))
 				return; // the control's, or the automation tracks'
 		Rml::Element* element = rowElement(row->id);
 		const auto y = event.GetParameter<float>("mouse_y", 0.0F);

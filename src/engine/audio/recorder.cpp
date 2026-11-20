@@ -686,15 +686,26 @@ namespace gnubase::engine
 			// retrospective() shouldn't wait for them. Meanwhile no chunk is handled and no setup applied (m_opening),
 			// prepare and the destructor wait, and nothing else uses m_current, m_files or the pre-record history.
 			const Unlocked unlocked(*this);
-			if (!m_current.tracks.empty())
+			// Without a folder it records no files, rather than into the working folder: the recording fails once.
+			bool hasFolder = !m_current.tracks.empty();
+			if (hasFolder && m_current.folder.empty())
+			{
+				fail("there is no folder to record into: save the project first");
+				hasFolder = false;
+			}
+			else if (hasFolder)
 			{
 				std::error_code error;
 				fs::create_directories(m_current.folder, error);
-				if (error)
-					fail("can't create the record folder " + m_current.folder.u8string() + ": " + error.message());
+				hasFolder = !error && fs::is_directory(m_current.folder, error);
+				if (!hasFolder)
+					fail("can't create the record folder " + m_current.folder.u8string() + ": " +
+						(error ? error.message() : std::string("a file of that name is there")));
 			}
-			std::set<std::string> taken = takenNames(m_current.folder); // one listing for all tracks
-			for (const RecordTrack& track : m_current.tracks)
+			// One listing for all tracks.
+			std::set<std::string> taken = hasFolder ? takenNames(m_current.folder) : std::set<std::string>{};
+			const std::vector<RecordTrack> none;
+			for (const RecordTrack& track : hasFolder ? m_current.tracks : none)
 			{
 				try
 				{

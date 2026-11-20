@@ -377,6 +377,31 @@ TEST_CASE("the Spectrum Analyzer draws the channel of a stereo clip that #sa-cha
 	step(app);
 	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("Right"));
 
+	// All channels keep separate curves; the nearest curve supplies the value and reference across channels.
+	choose(app, "#sa-channel", "Down");
+	REQUIRE(elements(app, ".sa-bar").size() == 492);
+	const std::string left = R"(.sa-bar[channel="1"][index=")" + std::to_string(bar(1000.0)) + "\"]";
+	const std::string right = R"(.sa-bar[channel="2"][index=")" + std::to_string(bar(3000.0)) + "\"]";
+	click(app, left, ui::MouseButton::Right);
+	app.ui().move(std::nullopt, {right, 0, std::nullopt});
+	step(app);
+	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("Right"));
+	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("D:"));
+	CHECK(elements(app, ".sa-bar.reference[channel=\"1\"]").size() == 1);
+
+	const double width = element(app, right).at("box").at("width").get<double>();
+	click(app, "#sa-zoom");
+	app.ui().key(std::nullopt, "Right");
+	app.ui().key(std::nullopt, "Right");
+	step(app);
+	CHECK(element(app, right).at("box").at("width").get<double>() > width * 2.0);
+	CHECK(elements(app, ".sa-bar.reference[channel=\"1\"]").size() == 1);
+
+	app.ui().move(std::nullopt, {right, 0, std::nullopt});
+	step(app);
+	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("Right"));
+	CHECK(element(app, "#sa-value").at("attributes").at("index") == std::to_string(bar(3000.0)));
+
 	click(app, "#sa-close");
 	closes(app, "#spectrum-analyzer-dialog");
 }
