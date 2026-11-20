@@ -22,6 +22,7 @@
 #include "plugin/extensions.h"
 #include "plugin/plugin.h"
 #include "plugin/remote/proxy.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -431,7 +432,7 @@ TEST_CASE("every built-in processor processes notes and parameter changes withou
 	CHECK(g_violations == 0);
 }
 
-TEST_CASE("the sampler plays notes, loops, slices and its filter without allocating", "[unit]")
+TEST_CASE("the sampler plays notes, loops, slices, glides, fades and its filter without allocating", "[unit]")
 {
 	using namespace gnubase::engine::graph;
 	using namespace gnubase::engine::processors;
@@ -466,6 +467,11 @@ TEST_CASE("the sampler plays notes, loops, slices and its filter without allocat
 		set(Sampler::PlaybackMode, block >= 6 ? 1.0 : 0.0);
 		set(Sampler::Monophonic, block % 4 == 3 ? 1.0 : 0.0);
 		set(Sampler::Reverse, static_cast<double>(block % 2));
+		set(Sampler::Glide, block % 3 == 0 ? 0.0 : 20.0);
+		set(Sampler::Fingered, static_cast<double>(block % 2));
+		set(Sampler::FadeIn, 0.1);
+		set(Sampler::FadeOut, 0.1);
+		set(Sampler::LoopCrossfade, 0.05);
 		for (uint8_t key = 60; key < 64; ++key)
 		{
 			ProcessEvent note;
@@ -1232,13 +1238,7 @@ TEST_CASE("playing automation of volume, pan, instrument, plugin and strip param
 	const Json slot = run("plugin.insert", {{"channel", audio.at("channel").at("id")}, {"plugin", "builtin:gainPan"}})
 						  .at("slot")
 						  .at("id");
-	const auto active = [&run, &slot]()
-	{ return run("plugin.get", {{"slot", slot}}).at("slot").at("status") == "active"; };
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-	while (!active() && std::chrono::steady_clock::now() < deadline)
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	REQUIRE(active());
-	run("audio.updatePlugins", Json::object());
+	gnubase::test::waitForPlugin(client, slot);
 	run("automationPoint.add",
 		{{"lane", lane(audio, {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}})},
 			{"points", points({{0, -12.0}, {3000, 0.0}, {6000, -6.0}}, "linear")}});

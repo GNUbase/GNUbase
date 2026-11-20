@@ -24,8 +24,8 @@ build/linux-gcc/bin/Release/gnubase-render-spike --backend gpu --document benchm
 
 Any wrong option prints the usage. Without `--screenshot` or `--benchmark` it opens a window until you
 close it. `run-all.sh` runs every backend with both documents and writes the screenshots, logs and `summary.md`; the
-`Render spike` workflow (`.github/workflows/render-spike.yml`) runs it on Linux, Windows and macOS for every pull request
-that changes the spike and uploads the results as artifacts.
+`Render spike` workflow (`.github/workflows/render-spike.yml`) runs it on Linux, Windows and macOS when started by hand
+(`gh workflow run render-spike.yml --ref <branch>`) and uploads the results as artifacts.
 
 ## Documents
 

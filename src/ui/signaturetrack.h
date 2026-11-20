@@ -39,8 +39,8 @@ namespace gnubase::ui
 	// to the nearest bar (signature.set); the draw tool adds an event at the nearest bar with the signature there
 	// (signature.add) and opens it for editing; the erase tool removes events, but never the first. A double click on
 	// an event opens it for editing: the row's <input class="signature-field">, .shown over it, where Enter sets the
-	// signature typed (signature.set). The parent places it; the row follows the view it is given. Use it on the UI
-	// thread; the binding must outlive it.
+	// signature typed (signature.set). A press on empty space with the select tool deselects the events. The parent
+	// places it; the row follows the view it is given. Use it on the UI thread; the binding must outlive it.
 	class SignatureRow final : private Rml::EventListener
 	{
 	public:
@@ -61,8 +61,10 @@ namespace gnubase::ui
 		const std::vector<int64_t>& selection() const { return m_selection; }
 		void setSelection(std::vector<int64_t> bars);
 		void onSelect(std::function<void()> handler) { m_onSelect = std::move(handler); }
-		// Removes the selected events but the first.
-		void removeSelected();
+		// Told why the engine refused a move or a typed signature, such as a drag onto a bar that has an event.
+		void onRefusal(std::function<void(const std::string&)> handler) { m_onRefusal = std::move(handler); }
+		// Removes the selected events but the first; false without a selection.
+		bool removeSelected();
 		// Opens the event at a bar for editing.
 		void edit(int64_t bar);
 
@@ -76,6 +78,8 @@ namespace gnubase::ui
 		void release(Rml::Event& event);
 		void select(std::vector<int64_t> bars);
 		void open(int64_t bar, const std::string& text);
+		// signature.set, which the engine may refuse.
+		void set(engine::Json events, std::function<void()> done = nullptr);
 		// The bar start nearest to a time in seconds.
 		int64_t nearestBar(double seconds) const;
 
@@ -90,14 +94,20 @@ namespace gnubase::ui
 		std::function<TempoTool()> m_tool;
 		std::vector<int64_t> m_selection;
 		std::function<void()> m_onSelect;
+		std::function<void(const std::string&)> m_onRefusal;
 		std::optional<float> m_dragFrom; // where a press on a selected event was, in pixels
 		std::optional<int64_t> m_editing;
 		std::optional<std::pair<int64_t, double>> m_lastPress; // the bar of an event pressed, and when
 	};
 
 	// The time signature events on the signature track's lane in an event display, which follow the project and the
-	// display's view. The row takes the display's tools: draw draws, erase erases, the others select. Use it on the UI
-	// thread; the display and the binding must outlive it.
+	// display's view, over the bars in the lane's background (reference manual p. 163): a .signature-bar at the start
+	// of each bar in view, or of every second, fourth and so on where they would be closer than 8 dp, in the row's
+	// .signature-bars, whatever the ruler's time format. The row takes the display's tools: draw draws, erase erases,
+	// the others select. The display selects events or time signature events: selecting either deselects the other
+	// (see AppUi, which onSelect tells of time signature events selected), and the display shows the edits the engine
+	// refuses (EventDisplay::showRefusal). A hidden lane has none selected. Use it on the UI thread; the display and
+	// the binding must outlive it.
 	class SignatureLane
 	{
 	public:
@@ -109,15 +119,20 @@ namespace gnubase::ui
 		~SignatureLane() = default;
 
 		SignatureRow& row() { return m_row; }
+		// Told when the user selects time signature events, after the display's events are deselected.
+		void onSelect(std::function<void()> handler) { m_onSelect = std::move(handler); }
 
 	private:
 		void requestProject();
 		void place();
+		void placeBars();
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the binding's answers after it went
 		SignatureRow m_row;
+		Rml::Element* m_bars = nullptr; // .signature-bars, behind the events
+		std::function<void()> m_onSelect;
 		uint64_t m_track = 0; // the signature track, 0 without one
 		bool m_loading = false;
 		bool m_stale = false;

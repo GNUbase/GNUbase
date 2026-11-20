@@ -132,8 +132,8 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   opens and again for each request that finds it open, so that a request never seems ignored (#615, #688).
 - **Start screen.** `start-screen.rml`, the minimal version of the reference's hub: the templates with Create, Create
   Empty Project, the recent projects that are still there with Open, and Open Other..., which asks for a file. A double
-  click on a row does what its button does. File > New Project opens it, and the app at its start when no project was
-  given on the command line.
+  click on a row, or Enter while its list has the focus, does what the list's button does. File > New Project opens it,
+  and the app at its start when no project was given on the command line.
 - **File dialogs** are the OS's (`Shell::showFileDialog`). UI tests switch them off (`Shell::showOsFileDialogs`) and
   answer them with `Shell::answerFileDialog`; MCP's `ui_file_dialog` and Lua's `gnubase.ui.file_dialog` list the
   dialogs that wait and answer one the same way ([ui-automation.md](ui-automation.md)). MCP's `ui_close` and Lua's

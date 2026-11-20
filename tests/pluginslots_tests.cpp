@@ -12,6 +12,7 @@
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
 #include "platform/rt/workerpool.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -38,6 +39,7 @@
 using namespace gnubase::engine;
 using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
+using gnubase::test::waitForPlugin;
 
 namespace
 {
@@ -84,20 +86,6 @@ namespace
 	std::string status(Client& client, const Json& slot)
 	{
 		return run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status").get<std::string>();
-	}
-
-	// Waits until a slot's plugin has the status, then builds the graph with it, as the engine does on its own then.
-	void waitFor(Client& client, const Json& slot, const std::string& wanted)
-	{
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-		std::string now = status(client, slot);
-		while (now != wanted && std::chrono::steady_clock::now() < deadline)
-		{
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-			now = status(client, slot);
-		}
-		REQUIRE(now == wanted);
-		run(client, "audio.updatePlugins");
 	}
 
 	Json insert(Client& client, ObjectId channel, const char* plugin)
@@ -231,7 +219,7 @@ TEST_CASE(
 	CHECK_THAT(peakDb(client), WithinAbs(-24.0, 0.01));
 
 	const Json slot = insert(client, channel, "builtin:eq");
-	waitFor(client, slot, "active");
+	waitForPlugin(client, slot, "active");
 	CHECK_THAT(peakDb(client), WithinAbs(-24.0, 0.01)); // the EQ is flat by default
 	setParameter(client, channel, slot, g_bellGain, 12.0);
 	CHECK_THAT(peakDb(client), WithinAbs(-12.0, 0.1));
@@ -252,7 +240,7 @@ TEST_CASE(
 	CHECK_THAT(peakDb(client), WithinAbs(-24.0, 0.01));
 
 	run(client, "history.redo"); // a new instance of the plugin
-	waitFor(client, slot, "active");
+	waitForPlugin(client, slot, "active");
 	run(client, "history.redo");
 	CHECK_THAT(peakDb(client), WithinAbs(-12.0, 0.1));
 }
@@ -263,7 +251,7 @@ TEST_CASE("a bypassed or inactive plugin passes the audio unchanged", "[integrat
 	Client client(engine);
 	const ObjectId channel = monitorSine(client, 500.0, -24.0);
 	const Json slot = insert(client, channel, "builtin:eq");
-	waitFor(client, slot, "active");
+	waitForPlugin(client, slot, "active");
 	setParameter(client, channel, slot, g_bellGain, 12.0);
 	CHECK_THAT(peakDb(client), WithinAbs(-12.0, 0.1));
 
@@ -274,10 +262,10 @@ TEST_CASE("a bypassed or inactive plugin passes the audio unchanged", "[integrat
 	CHECK_THAT(peakDb(client), WithinAbs(-12.0, 0.1));
 
 	run(client, "plugin.set", {{"slot", slot}, {"active", false}});
-	waitFor(client, slot, "inactive");
+	waitForPlugin(client, slot, "inactive");
 	CHECK_THAT(peakDb(client), WithinAbs(-24.0, 0.01));
 	run(client, "plugin.set", {{"slot", slot}, {"active", true}});
-	waitFor(client, slot, "active");
+	waitForPlugin(client, slot, "active");
 	CHECK_THAT(peakDb(client), WithinAbs(-12.0, 0.1)); // with its parameters
 }
 
@@ -288,8 +276,8 @@ TEST_CASE("the audio passes the slots from top to bottom", "[integration]")
 	const ObjectId channel = monitorSine(client, 1000.0, -6.0);
 	const Json gain = insert(client, channel, "builtin:gainPan");
 	const Json limiter = insert(client, channel, "builtin:limiter");
-	waitFor(client, gain, "active");
-	waitFor(client, limiter, "active");
+	waitForPlugin(client, gain, "active");
+	waitForPlugin(client, limiter, "active");
 	setParameter(client, channel, gain, g_gain, -12.0);
 	setParameter(client, channel, limiter, g_limiterCeiling, -20.0);
 	CHECK_THAT(peakDb(client), WithinAbs(-20.0, 0.5)); // -18 dB, limited to -20 dB
@@ -306,12 +294,12 @@ TEST_CASE("a plugin moves with its slot to another channel, and a mono channel's
 	const ObjectId mono =
 		run(client, "track.add", {{"type", "audio"}, {"format", "mono"}}).at("channel").at("id").get<ObjectId>();
 	const Json slot = insert(client, channel, "builtin:eq");
-	waitFor(client, slot, "active");
+	waitForPlugin(client, slot, "active");
 	setParameter(client, channel, slot, g_bellGain, 12.0);
 	CHECK_THAT(peakDb(client), WithinAbs(-12.0, 0.1));
 
 	run(client, "plugin.move", {{"slot", slot}, {"channel", mono}, {"index", 0}});
-	waitFor(client, slot, "active"); // made again for one channel
+	waitForPlugin(client, slot, "active"); // made again for one channel
 	CHECK_THAT(peakDb(client), WithinAbs(-24.0, 0.01));
 	CHECK(run(client, "plugin.get", {{"slot", slot}}).at("slot").at("parameters").size() == 1);
 }
@@ -338,7 +326,7 @@ TEST_CASE("plugins in slots render the same with any number of processing thread
 			setParameter(client, channels[t], slots.back(), g_limiterCeiling, -6.0);
 		}
 		for (const Json& slot : slots)
-			waitFor(client, slot, "active");
+			waitForPlugin(client, slot, "active");
 		run(client, "audio.render", {{"frames", g_block}});
 		return run(client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", g_block}}).at("samples");
 	};
@@ -389,8 +377,8 @@ TEST_CASE("plugins change while the device plays, and a new sample rate activate
 	run(client, "audio.start");
 	const Json limiter = insert(client, channel, "builtin:limiter");
 	const Json eq = insert(client, other, "builtin:eq");
-	waitFor(client, limiter, "active");
-	waitFor(client, eq, "active");
+	waitForPlugin(client, limiter, "active");
+	waitForPlugin(client, eq, "active");
 
 	const auto node = [&client](const Json& object)
 	{
@@ -404,18 +392,18 @@ TEST_CASE("plugins change while the device plays, and a new sample rate activate
 
 	// Deactivating, bypassing and removing while blocks are processed: the plugin leaves the graph first.
 	run(client, "plugin.set", {{"slot", limiter}, {"active", false}});
-	waitFor(client, limiter, "inactive");
+	waitForPlugin(client, limiter, "inactive");
 	run(client, "plugin.set", {{"slot", limiter}, {"active", true}, {"bypass", true}});
-	waitFor(client, limiter, "active");
+	waitForPlugin(client, limiter, "active");
 	run(client, "plugin.remove", {{"slot", eq}});
 	run(client, "history.undo");
-	waitFor(client, eq, "active");
+	waitForPlugin(client, eq, "active");
 	// A new sample rate activates them again.
 	run(client, "audio.stop");
 	run(client, "audio.setDevice", {{"sampleRate", 44100.0}});
 	run(client, "audio.start");
-	waitFor(client, limiter, "active");
-	waitFor(client, eq, "active");
+	waitForPlugin(client, limiter, "active");
+	waitForPlugin(client, eq, "active");
 	run(client, "audio.stop");
 	CHECK(run(client, "plugin.get", {{"slot", limiter}}).at("slot").at("bypass") == true);
 }
@@ -831,9 +819,9 @@ TEST_CASE("plugin.changed announces a slot once its plugin's status changed", "[
 	Client client(engine);
 	const ObjectId channel = monitorSine(client, 500.0, -24.0);
 	const Json slot = insert(client, channel, "builtin:eq");
-	waitFor(client, slot, "active");
+	waitForPlugin(client, slot, "active");
 	run(client, "plugin.set", {{"slot", slot}, {"active", false}});
-	waitFor(client, slot, "inactive");
+	waitForPlugin(client, slot, "inactive");
 	run(client, "audio.updatePlugins"); // announces nothing new
 
 	const std::vector<Json> announced = events(client)["plugin.changed"];
@@ -1037,8 +1025,8 @@ TEST_CASE("plugin.changed announces the slots whose status changes when the devi
 	const Json eq = insert(client, channel, "builtin:eq");
 	const Json limiter = insert(client, channel, "builtin:limiter");
 	run(client, "plugin.set", {{"slot", limiter}, {"active", false}});
-	waitFor(client, eq, "active");
-	waitFor(client, limiter, "inactive");
+	waitForPlugin(client, eq, "active");
+	waitForPlugin(client, limiter, "inactive");
 	events(client);
 
 	// A reset closes the device and opens it again as it was: no slot's status changes.
@@ -1072,7 +1060,7 @@ TEST_CASE("plugin.changed announces the slots whose status changes when the devi
 		CHECK(statuses[limiter.get<ObjectId>()] == std::vector<std::string>{"inactive"});
 		CHECK(statuses[gain.get<ObjectId>()] == std::vector<std::string>{"loading"});
 	}
-	waitFor(client, gain, "active");
+	waitForPlugin(client, gain, "active");
 	events(client);
 	run(client, "audio.updatePlugins");
 	CHECK(events(client)["plugin.changed"].empty());
@@ -1089,7 +1077,7 @@ TEST_CASE("plugin.changed announces the slots whose status changes when the devi
 		CHECK(statuses[eq.get<ObjectId>()] == std::vector<std::string>{"loading"});
 		CHECK(statuses.count(limiter.get<ObjectId>()) == 0);
 		gate.open();
-		waitFor(client, eq, "active");
+		waitForPlugin(client, eq, "active");
 		statuses = announcedStatuses(client, {});
 		CHECK(statuses[eq.get<ObjectId>()] == std::vector<std::string>{"active"});
 	}
@@ -1104,14 +1092,14 @@ TEST_CASE("a plugin leaving the graph goes when the device stops before it start
 	// Blocks of about a second: the audio thread doesn't get to the new graph before the device stops.
 	run(client, "audio.setDevice", {{"sampleRate", 8000.0}, {"blockSize", 8192}});
 	const Json slot = insert(client, channel, "builtin:gainPan");
-	waitFor(client, slot, "active");
+	waitForPlugin(client, slot, "active");
 	run(client, "audio.start");
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 	while (run(client, "audio.get").at("position").get<int64_t>() == 0 && std::chrono::steady_clock::now() < deadline)
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	run(client, "plugin.set", {{"slot", slot}, {"active", false}});
 	run(client, "audio.stop");
-	waitFor(client, slot, "inactive"); // nothing else wakes the retirer
+	waitForPlugin(client, slot, "inactive"); // nothing else wakes the retirer
 }
 
 TEST_CASE("a loaded project's audio slot that names a built-in MIDI effect is unavailable and passes the audio",
@@ -1121,7 +1109,7 @@ TEST_CASE("a loaded project's audio slot that names a built-in MIDI effect is un
 	Client client(engine);
 	const ObjectId channel = monitorSine(client, 500.0, -24.0);
 	const Json slot = insert(client, channel, "builtin:gainPan");
-	waitFor(client, slot, "active");
+	waitForPlugin(client, slot, "active");
 	setParameter(client, channel, slot, g_gain, -12.0);
 	CHECK_THAT(peakDb(client), WithinAbs(-36.0, 0.1));
 
@@ -1140,7 +1128,7 @@ TEST_CASE("a loaded project's audio slot that names a built-in MIDI effect is un
 	run(client, "project.new");
 	run(client, "project.load", {{"path", file}});
 
-	waitFor(client, slot, "unavailable");
+	waitForPlugin(client, slot, "unavailable");
 	CHECK(run(client, "plugin.get", {{"slot", slot}}).at("slot").at("plugin") == "builtin:chordGenerator");
 	CHECK_THAT(peakDb(client), WithinAbs(-24.0, 0.01));
 }

@@ -80,12 +80,18 @@ namespace gnubase::engine::midi
 			return {{"parts", changed}};
 		}
 
-		// Announces what a function that makes parts changed, and returns it.
-		Json announce(const Project& project, const PartChanges& changes, CommandContext& context)
+		// Gives the tracks that a part-making function added the color new tracks get (newTrackColor), announces what
+		// the function changed and returns it.
+		Json announce(Project& project, const PartChanges& changes, CommandContext& context)
 		{
 			for (const ObjectId id : changes.tracks)
 			{
-				const Track& track = project.trackById.at(id);
+				Track& track = project.trackById.at(id);
+				const std::vector<ObjectId>& siblings =
+					track.parent == 0 ? project.tracks : project.trackById.at(track.parent).children;
+				const auto index =
+					static_cast<size_t>(std::find(siblings.begin(), siblings.end(), id) - siblings.begin());
+				track.color = newTrackColor(project, track.parent, index, context);
 				context.emit(
 					"track.added", {{"track", toJson(track)}, {"channel", toJson(project.channels.at(track.channel))}});
 			}
@@ -566,7 +572,8 @@ namespace gnubase::engine::midi
 				"part of its own that no note goes into is left out. "
 				"Without destination a new MIDI track is added at the end, routed "
 				"to the instrument of the first track merged, with the articulation map of the first merged track "
-				"that has one. eraseDestination first removes the destination's parts "
+				"that has one and the color track.add gives tracks without one. eraseDestination first removes the "
+				"destination's parts "
 				"that lie between start and end, and the events of its other parts that start there, which leave "
 				"their shared copies for it: their notes get new ids, so play probability, velocity variance and "
 				"random MIDI modifier values draw anew. includeChase "
@@ -594,9 +601,10 @@ namespace gnubase::engine::midi
 				"instrument; to lanes on a new lane of the track, below the lanes its parts are on, named after the "
 				"part and the channel or pitch. Events of no channel or pitch (SysEx by channel, everything but notes "
 				"and poly pressure by pitch) go with the first new part of their part; a part with nothing to "
-				"separate stays as it is. New parts keep the part's mute, transpose, velocity, root key and Global "
-				"Transpose setting; their events get new "
-				"ids, so play probability and velocity variance draw anew. New tracks get the track's MIDI modifiers "
+				"separate stays as it is. New parts keep the part's mute, transpose, velocity, root key, Global "
+				"Transpose setting and color; their events get new "
+				"ids, so play probability and velocity variance draw anew. New tracks get the color track.add gives "
+				"tracks without one and the track's MIDI modifiers "
 				"(channel.set modifiers), so that the new parts play as the part did, and a MIDI channel: by "
 				"channel each the channel it holds, on which it plays even where the track was set to one channel, "
 				"by pitch the track's (channel.set midiChannel). optimize (to tracks only) "
@@ -611,8 +619,9 @@ namespace gnubase::engine::midi
 		model.addEdit(engine,
 			{"midi.bounce", 1,
 				"Bounces MIDI parts on one track into one part, or one for each setting the notes can't hold (below), "
-				"from the first one's start to the last one's end, named after the first, on the lowest lane they are "
-				"on, with the root key and Global Transpose setting (midiPart.set) the parts with notes share, or, "
+				"from the first one's start to the last one's end, named after the first and with its color, on the "
+				"lowest lane they are on, with the root key and Global Transpose setting (midiPart.set) the parts with "
+				"notes share, or, "
 				"when they "
 				"differ, the project root key and follow. Muted parts are removed and add nothing. Events keep their "
 				"time; notes are cut where their part ended. The parts' transpose, their difference in global "

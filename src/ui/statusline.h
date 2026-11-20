@@ -25,8 +25,8 @@ namespace gnubase::ui
 	public:
 		StatusLine(EngineBinding& binding, Rml::Element& root);
 
-		// Reads the remaining record time again, which the disk filling up changes too; the app calls it every
-		// second.
+		// Reads the remaining record time again, which the disk filling up changes too, while #record-time is
+		// shown; the app calls it every second.
 		void update();
 
 	private:

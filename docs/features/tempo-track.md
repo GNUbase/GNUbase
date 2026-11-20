@@ -46,6 +46,8 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   under a `TempoTrack` element instead of a `Project`. So both share one writer and reader, and the tempo track
   survives the round trip exactly: positions are whole ticks as beats, tempos written at full precision. The file
   ends in `.xml`: the reference's own tempo track files have a format of their own, which GNUbase doesn't read.
+  An export writes next to the file and moves it over, so one that fails leaves an earlier file as it was. An import
+  refuses a file whose tempos or numerators no command can make: a tempo outside 1 to 999 BPM, a numerator above 99.
 
 ## UI
 
@@ -103,7 +105,8 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   curve of the whole project. Backspace and Delete remove the selected events.
 - Project > Add Track has a Tempo page.
 - The tempo track editor's time signature display, under its ruler, has the time signature events
-  ([signature-track.md](signature-track.md)).
+  ([signature-track.md](signature-track.md)); a move or a signature there that the engine refuses shows why in the
+  editor's `#edit-refused`.
 
 ## Not yet
 
@@ -120,8 +123,9 @@ Tempo (Shift and Space) is not bound.
 `tests/tempo_tests.cpp`: the tempo track's limits, both modes keeping their tempo and undo, musical events moving and
 linear ones staying when tempo events are added, moved and removed, ramps, the first event, simultaneous moves, events
 at the cursor, `editing.tempoType`, every tap tempo mode, saving and loading, and tempo track files: the round trip with
-time signature events from fixed tempo mode, the tempo modes after an import, undo, the same file exported again, and
-files that aren't tempo track files. `tests/transport_tests.cpp`: the playback start in `transport.get`.
+time signature events from fixed tempo mode, the tempo modes after an import, undo, the same file exported again, a
+failed export, and files that aren't tempo track files. `tests/transport_tests.cpp`: the playback start in
+`transport.get`.
 `tests/tempotrack_ui_tests.cpp`: the visible tempos, the tapped tempo, the curve on the tempo track's lane with clicks
 that add, drag and erase events, the tempo track editor with Mod+T, its toolbar, info line and tools, its Current Tempo
 following the cursor again after a tempo was typed in it, and its rectangle selecting events, Shift-click taking a

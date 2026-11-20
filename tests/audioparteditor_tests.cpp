@@ -205,6 +205,27 @@ TEST_CASE("Events to Part and Dissolve Part keep the events' lanes, the track's 
 	CHECK(lanes() == std::vector<int>{0, 2});
 }
 
+TEST_CASE("a locked audio part or audio event keeps its track out of the audio part editor", "[unit]")
+{
+	// Reference manual p. 1151 (#625).
+	Fixture f;
+	const uint64_t vocals = f.track("audio");
+	const uint64_t drums = f.track("audio");
+	const auto [vocalPart, vocalEvent] = f.part(vocals, 0);
+	const uint64_t drumPart = f.part(drums, 0).first;
+	f.call("editor.open", {{"editor", "window"}, {"parts", {drumPart}}});
+
+	f.call("event.set", {{"events", {vocalPart}}, {"lock", true}});
+	CHECK_THAT(f.fails("editor.set", {{"editor", "window"}, {"showTracks", {vocals}}}), ContainsSubstring("locked"));
+	f.call("event.set", {{"events", {vocalPart}}, {"lock", false}});
+	f.call("event.set", {{"events", {vocalEvent}}, {"lock", true}});
+	CHECK_THAT(f.fails("editor.set", {{"editor", "window"}, {"showTracks", {vocals}}}), ContainsSubstring("locked"));
+	CHECK(ids(f.view().at("parts")) == std::vector<uint64_t>{drumPart}); // nothing changed
+	f.call("event.set", {{"events", {vocalEvent}}, {"lock", false}});
+	CHECK(ids(f.call("editor.set", {{"editor", "window"}, {"showTracks", {vocals}}}).at("parts")) ==
+		std::vector<uint64_t>{vocalPart, drumPart});
+}
+
 TEST_CASE("editor.set refuses notes of audio parts and shows the tracks of a content given with it", "[unit]")
 {
 	Fixture f;

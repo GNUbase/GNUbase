@@ -263,8 +263,12 @@ namespace gnubase::ui
 				m_drag = Drag::DrawPart;
 			return true;
 		case Tool::Play:
-			// Auditions or scrubs the pressed audio track (reference manual pp. 252-253); auditioning MIDI waits.
-			if (lane && m_laneTypes[*lane] == "audio")
+			// Auditions or scrubs the pressed audio track, also on its automation tracks, whose track's own lane is the
+			// track's first (reference manual pp. 252-253); auditioning MIDI waits.
+			if (lane &&
+				m_laneTypes[static_cast<size_t>(
+					std::find(m_laneTracks.begin(), m_laneTracks.end(), m_laneTracks[*lane]) - m_laneTracks.begin())] ==
+					"audio")
 			{
 				m_auditioned = m_laneTracks[*lane];
 				if (m_playMode == PlayMode::Play)
@@ -643,6 +647,8 @@ namespace gnubase::ui
 		if (range)
 			range->tracks = withEditGroupTracks(range->tracks);
 		m_range = std::move(range);
+		if (m_range && !m_selectedPoints.empty()) // as selecting events does, so that Delete edits the range
+			selectPoints({});
 		showRange();
 	}
 

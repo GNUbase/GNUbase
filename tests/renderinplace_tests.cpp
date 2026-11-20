@@ -6,7 +6,9 @@
 #include "engine/document/document.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/plugins/hostmanager.h"
 #include "engine/processors/builtinplugin.h"
+#include "plugin/plugin.h"
 #include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
@@ -23,8 +25,10 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
-#include <thread>
+#include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -37,6 +41,53 @@ namespace
 	namespace fs = std::filesystem;
 
 	constexpr int64_t g_scrubFrames = 480; // how far each scrub of a test goes
+
+	// What a render's plugin was told: the modes set before each activation, and how many blocks of each mode it got.
+	struct Modes
+	{
+		std::vector<gnubase::plugin::ProcessMode> activated; // [plugin job thread]
+		std::atomic<int> realtimeBlocks{0};
+		std::atomic<int> offlineBlocks{0};
+	};
+
+	// A plugin that passes everything on to another one and notes the modes in Modes.
+	class ModeRecorder final : public gnubase::plugin::Plugin
+	{
+	public:
+		ModeRecorder(std::unique_ptr<gnubase::plugin::Plugin> plugin, std::shared_ptr<Modes> modes)
+			: m_plugin(std::move(plugin)), m_modes(std::move(modes))
+		{
+		}
+		const gnubase::plugin::Descriptor& descriptor() const override { return m_plugin->descriptor(); }
+		bool init() override { return m_plugin->init(); }
+		bool setProcessMode(gnubase::plugin::ProcessMode mode) override
+		{
+			m_mode = mode;
+			return m_plugin->setProcessMode(mode);
+		}
+		bool activate(double sampleRate, uint32_t minFrames, uint32_t maxFrames) override
+		{
+			m_modes->activated.push_back(m_mode);
+			return m_plugin->activate(sampleRate, minFrames, maxFrames);
+		}
+		void deactivate() override { m_plugin->deactivate(); }
+		bool startProcessing() noexcept override { return m_plugin->startProcessing(); }
+		void stopProcessing() noexcept override { m_plugin->stopProcessing(); }
+		void reset() noexcept override { (*m_plugin).reset(); }
+		gnubase::plugin::ProcessStatus process(const gnubase::plugin::Process& process) noexcept override
+		{
+			++(process.mode == gnubase::plugin::ProcessMode::Offline ? m_modes->offlineBlocks
+																	 : m_modes->realtimeBlocks);
+			return m_plugin->process(process);
+		}
+		void* extension(std::string_view id) override { return m_plugin->extension(id); }
+		void onMainThread() override { m_plugin->onMainThread(); }
+
+	private:
+		std::unique_ptr<gnubase::plugin::Plugin> m_plugin;
+		std::shared_ptr<Modes> m_modes;
+		gnubase::plugin::ProcessMode m_mode = gnubase::plugin::ProcessMode::Realtime;
+	};
 
 	Json run(Client& client, const std::string& command, Json parameters = Json::object())
 	{
@@ -200,22 +251,12 @@ namespace
 		// slots pass their audio on unchanged (#951).
 		void activate(const std::vector<ObjectId>& channels)
 		{
-			const auto active = [&]
+			for (const ObjectId channel : channels)
 			{
-				for (const ObjectId channel : channels)
-				{
-					const Json slots = run(client, "plugin.list", {{"channel", channel}}).at("slots");
-					if (!std::all_of(
-							slots.begin(), slots.end(), [](const Json& slot) { return slot.at("status") == "active"; }))
-						return false;
-				}
-				return true;
-			};
-			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-			while (!active() && std::chrono::steady_clock::now() < deadline)
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-			REQUIRE(active());
-			run(client, "audio.updatePlugins");
+				const Json slots = run(client, "plugin.list", {{"channel", channel}}).at("slots");
+				for (const Json& slot : slots)
+					gnubase::test::waitForPlugin(client, slot.at("id"));
+			}
 		}
 
 		// The main mix from 0 to 40000 as a 32-bit float file's samples.
@@ -503,6 +544,32 @@ TEST_CASE("a frozen track stays frozen in the project file", "[integration]")
 			moved / "Freeze" / "Ramp.wav");
 	}
 }
+
+#ifndef _WIN32
+TEST_CASE("a save fails on a freeze file that the file system can't say is there", "[integration]")
+{
+	Session project;
+	const Session::Track audio = project.addTrack("Ramp");
+	run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+	const fs::path freeze = fs::u8path(project.track(audio.track).at("frozen").at("path").get<std::string>());
+	run(project.client, "project.save", {{"embedMedia", false}});
+	const fs::path file = project.media.path() / "project.dawproject";
+	const std::string before = gnubase::test::readText(file);
+	fs::permissions(freeze.parent_path(), fs::perms::none);
+	std::error_code error;
+	if (fs::exists(freeze, error) || !error)
+	{
+		fs::permissions(freeze.parent_path(), fs::perms::owner_all);
+		SKIP("the folder can be searched here anyway, e.g. by root");
+	}
+	const Result failed = project.client.call("project.save", Json::object());
+	fs::permissions(freeze.parent_path(), fs::perms::owner_all);
+	CHECK(!failed.ok());
+	CHECK_THAT(failed.error, ContainsSubstring("Ramp.wav"));
+	CHECK(gnubase::test::readText(file) == before);
+	CHECK(!fs::exists(fs::u8path(file.u8string() + ".saving")));
+}
+#endif
 
 TEST_CASE("freeze files of the same name, also in another case, keep apart in the project file", "[integration]")
 {
@@ -865,6 +932,232 @@ TEST_CASE("render in place puts what a track plays on a new audio track", "[inte
 	}
 }
 
+TEST_CASE("render in place separates events or combines adjacent blocks on one destination track", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	const Json initial = run(project.client, "project.get").at("audioEvents").at(0).at("id");
+	run(project.client, "audioEvent.set", {{"event", initial}, {"length", 1000}});
+	for (const int64_t position : {2000, 5000})
+		run(project.client, "audioEvent.add",
+			{{"track", source.track}, {"clip", project.clip}, {"position", position}, {"length", 1000}});
+	const std::string mode = GENERATE("separateEvents", "blockEvents", "oneEvent");
+	const Json rendered = run(project.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"mode", mode}, {"sourceTracks", "disable"}});
+	REQUIRE(rendered.at("tracks").size() == 1);
+	std::vector<int64_t> expectedPositions{1000};
+	if (mode == "separateEvents")
+		expectedPositions = {1000, 2000, 5000};
+	else if (mode == "blockEvents")
+		expectedPositions = {1000, 5000};
+	const size_t count = expectedPositions.size();
+	REQUIRE(rendered.at("events").size() == count);
+	REQUIRE(rendered.at("media").size() == count);
+	const Json state = run(project.client, "project.get");
+	std::vector<int64_t> positions;
+	for (const auto& event : state.at("audioEvents"))
+		if (event.at("track") == rendered.at("tracks").at(0))
+			positions.push_back(event.at("position").get<int64_t>());
+	CHECK(positions == expectedPositions);
+	std::set<std::string> paths;
+	for (const auto& media : state.at("media"))
+		if (std::find(rendered.at("media").begin(), rendered.at("media").end(), media.at("id")) !=
+			rendered.at("media").end())
+		{
+			paths.insert(media.at("path").get<std::string>());
+			const auto samples = samplesOf(media.at("path").get<std::string>());
+			CHECK(samples.front() == 1.0f / 8192.0f);
+			size_t expectedLength = 1000;
+			if (mode == "oneEvent")
+				expectedLength = 5000;
+			else if (mode == "blockEvents" && media.at("id") == rendered.at("media").at(0))
+				expectedLength = 2000;
+			CHECK(samples.size() == expectedLength);
+		}
+	CHECK(paths.size() == count);
+	CHECK(project.track(source.track).at("enabled") == false);
+	run(project.client, "history.undo");
+	CHECK(run(project.client, "project.get").at("tracks").size() == 1);
+	CHECK(project.track(source.track).at("enabled") == true);
+	run(project.client, "history.redo");
+	CHECK(run(project.client, "project.get").at("tracks").size() == 2);
+}
+
+TEST_CASE("render in place renders only selected audio events even under an overlapping event", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	const Json selected = run(project.client, "project.get").at("audioEvents").at(0).at("id");
+	run(project.client, "audioEvent.add",
+		{{"track", source.track}, {"clip", project.clip}, {"position", 1000}, {"offset", 2000}, {"length", 1000}});
+	const Json rendered = run(project.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"events", {selected}}, {"start", 1000}, {"end", 2000}});
+	const Json state = run(project.client, "project.get");
+	for (const auto& media : state.at("media"))
+		if (media.at("id") == rendered.at("media").at(0))
+		{
+			const auto samples = samplesOf(media.at("path").get<std::string>());
+			REQUIRE(samples.size() == 1000);
+			CHECK(samples.front() == 1.0f / 8192.0f);
+			CHECK(samples.back() == 1000.0f / 8192.0f);
+		}
+	CHECK(state.at("audioEvents").size() == 3);
+}
+
+TEST_CASE("render in place rejects invalid event selections without starting a job", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	const auto other = project.addTrack("Other", 1);
+	const Json selected = run(project.client, "project.get").at("audioEvents").at(0).at("id");
+	for (const Json& events : {Json::array(), Json::array({999999}), Json::array({selected, selected})})
+		CHECK(!project.client.call("track.renderInPlace", {{"tracks", {source.track}}, {"events", events}}).ok());
+	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {other.track}}, {"events", {selected}}}),
+		ContainsSubstring("selected tracks"));
+	CHECK(run(project.client, "track.renderLocks").at("locks").empty());
+}
+
+TEST_CASE("render in place isolates selected MIDI parts and uses their whole boundaries", "[integration]")
+{
+	Session project;
+	const auto synth = project.addSynth();
+	const Json part = run(project.client, "project.get").at("midiParts").at(0).at("id");
+	const Json expected = run(project.client, "track.renderInPlace",
+		{{"tracks", {synth.track}}, {"events", {part}}, {"mode", "separateEvents"}});
+	std::vector<float> original;
+	const Json before = run(project.client, "project.get");
+	for (const auto& media : before.at("media"))
+		if (media.at("id") == expected.at("media").at(0))
+			original = samplesOf(media.at("path").get<std::string>());
+	REQUIRE(original.size() == size_t{48000} * 2);
+	run(project.client, "history.undo");
+	const Json other = run(project.client, "midiPart.add", {{"track", synth.track}, {"position", 0}, {"length", 48000}})
+						   .at("part")
+						   .at("id");
+	run(project.client, "note.add",
+		{{"part", other}, {"notes", {{{"position", 0}, {"length", 1720320}, {"pitch", 36}, {"velocity", 1.0}}}}});
+	const Json rendered = run(project.client, "track.renderInPlace", {{"tracks", {synth.track}}, {"events", {part}}});
+	const Json after = run(project.client, "project.get");
+	for (const auto& media : after.at("media"))
+		if (media.at("id") == rendered.at("media").at(0))
+			CHECK(firstDifference(samplesOf(media.at("path").get<std::string>()), original) == -1);
+}
+
+TEST_CASE("separate and block renders keep the parts feeding an instrument through a MIDI send", "[integration]")
+{
+	Session project;
+	const auto synth = project.addSynth();
+	const Json midi =
+		run(project.client, "track.add", {{"type", "midi"}, {"timeBase", "linear"}, {"output", synth.channel}});
+	for (const int64_t position : {0, 24000})
+	{
+		const Json part = run(project.client, "midiPart.add",
+			{{"track", midi.at("track").at("id")}, {"position", position}, {"length", 12000}})
+							  .at("part")
+							  .at("id");
+		run(project.client, "note.add",
+			{{"part", part}, {"notes", {{{"position", 0}, {"length", 430080}, {"pitch", 36}, {"velocity", 0.9}}}}});
+	}
+	const std::string mode = GENERATE("separateEvents", "blockEvents");
+	const auto audioOf = [&](const Json& result)
+	{
+		const Json state = run(project.client, "project.get");
+		std::vector<std::vector<float>> audio;
+		for (const auto& id : result.at("media"))
+		{
+			const auto found = std::find_if(state.at("media").begin(), state.at("media").end(),
+				[&](const Json& media) { return media.at("id") == id; });
+			REQUIRE(found != state.at("media").end());
+			audio.push_back(samplesOf(found->at("path").get<std::string>()));
+			CHECK(peakOf(audio.back()) > 0.01f);
+		}
+		return audio;
+	};
+	// Direct routing provides the expected files: one per part, or one block including the overlapping send parts.
+	const Json baseline = run(project.client, "track.renderInPlace", {{"tracks", {synth.track}}, {"mode", mode}});
+	REQUIRE(baseline.at("media").size() == (mode == "separateEvents" ? size_t{3} : size_t{1}));
+	const auto expected = audioOf(baseline);
+	run(project.client, "history.undo");
+	run(project.client, "channel.set",
+		{{"channel", midi.at("channel").at("id")}, {"output", 0},
+			{"midiSends",
+				{{"slots",
+					{{{"effect", "transformer"}, {"parameters", {{"value", 0}}}, {"output", synth.channel}}}}}}});
+	const Json rendered = run(project.client, "track.renderInPlace", {{"tracks", {synth.track}}, {"mode", mode}});
+	REQUIRE(rendered.at("tracks").size() == 1);
+	const auto actual = audioOf(rendered);
+	REQUIRE(actual.size() == expected.size());
+	for (size_t i = 0; i < expected.size(); ++i)
+		CHECK(firstDifference(actual[i], expected[i]) == -1);
+}
+
+TEST_CASE("separate renders exclude later events from their tail and remove each source once", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	const Json first = run(project.client, "project.get").at("audioEvents").at(0).at("id");
+	run(project.client, "audioEvent.set", {{"event", first}, {"length", 1000}});
+	run(project.client, "audioEvent.add",
+		{{"track", source.track}, {"clip", project.clip}, {"position", 3000}, {"length", 1000}});
+	const Json rendered = run(project.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"mode", "separateEvents"}, {"tail", 0.1}, {"sourceTracks", "remove"}});
+	REQUIRE(rendered.at("tracks").size() == 1);
+	REQUIRE(rendered.at("media").size() == 2);
+	const Json state = run(project.client, "project.get");
+	CHECK(state.at("tracks").size() == 1);
+	for (const auto& media : state.at("media"))
+		if (media.at("id") == rendered.at("media").at(0))
+			CHECK(samplesOf(media.at("path").get<std::string>()).size() == 1000);
+	run(project.client, "history.undo");
+	CHECK(project.track(source.track).at("name") == "Mono");
+}
+
+TEST_CASE("separate dry renders copy the source effects once and preserve the track's audio", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	run(project.client, "audioEvent.add",
+		{{"track", source.track}, {"clip", project.clip}, {"position", 10000}, {"length", 1000}});
+	project.insertGain(source.channel, -6.0);
+	const auto expected = project.mainMix();
+	const Json rendered = run(project.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"mode", "separateEvents"}, {"processing", "dry"}, {"sourceTracks", "remove"}});
+	REQUIRE(rendered.at("tracks").size() == 1);
+	REQUIRE(rendered.at("events").size() == 2);
+	const Json state = run(project.client, "project.get");
+	REQUIRE(state.at("channels").size() == 1);
+	CHECK(state.at("slots").size() == 1);
+	project.activate({state.at("channels").at(0).at("id").get<ObjectId>()});
+	CHECK(firstDifference(project.mainMix(), expected) == -1);
+}
+
+TEST_CASE("a failed second event render removes the first file and releases every lock", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	run(project.client, "audioEvent.add",
+		{{"track", source.track}, {"clip", project.clip}, {"position", 10000}, {"length", 1000}});
+	project.insertGain(source.channel, -6.0);
+	const auto made = std::make_shared<std::atomic<int>>(0);
+	project.engine.setRenderPluginFactory(
+		[made](const std::string& plugin, uint32_t channels,
+			gnubase::plugin::Host& host) -> std::unique_ptr<gnubase::plugin::Plugin>
+		{
+			if (++*made == 2)
+				return nullptr;
+			return processors::BuiltinFactory(channels).create(plugin, host);
+		});
+	const Json before = run(project.client, "project.get");
+	const Json history = run(project.client, "history.get");
+	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {source.track}}, {"mode", "separateEvents"}}),
+		ContainsSubstring("plugin"));
+	CHECK(made->load() == 2);
+	CHECK(run(project.client, "project.get") == before);
+	CHECK(run(project.client, "history.get") == history);
+	CHECK(run(project.client, "track.renderLocks").at("locks").empty());
+	CHECK(fs::directory_iterator(project.media.path() / "Audio") == fs::directory_iterator());
+}
+
 TEST_CASE("a rendered event under a transpose event is independent of it", "[integration]")
 {
 	// The render holds the transposition: following the transpose track, it would be transposed again (#1368).
@@ -1130,6 +1423,48 @@ TEST_CASE("a private render fails if a live active plugin cannot be instantiated
 	CHECK(run(session.client, "track.renderLocks").at("locks").empty());
 }
 
+TEST_CASE("a private render waits for a live plugin that is still loading", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	session.engine.setRenderPluginFactory(
+		[](const std::string&, uint32_t, gnubase::plugin::Host&) -> std::unique_ptr<gnubase::plugin::Plugin>
+		{ return nullptr; });
+	// The plugin job thread waits, so the live slot is still loading when the export starts (#725): the export
+	// must still have its plugin, and fails without it.
+	std::promise<void> release;
+	std::future<void> blocked = session.engine.pluginHosts().run([go = release.get_future().share()] { go.wait(); });
+	run(session.client, "plugin.insert", {{"channel", source.channel}, {"plugin", "builtin:gainPan"}});
+	const Result started = session.client.call("mixdown.export",
+		{{"folder", session.folder.path().u8string()}, {"name", "loading"}, {"start", 0}, {"end", 7000}});
+	CHECK(
+		run(session.client, "plugin.list", {{"channel", source.channel}}).at("slots").at(0).at("status") == "loading");
+	release.set_value();
+	blocked.get();
+	REQUIRE(started.ok());
+	const Json finished = waitForJob(session.client, started.value.at("job").at("id").get<uint64_t>());
+	CHECK(finished.at("state") == "failed");
+	// The error, which File > Export > Quick Audio Export shows, names the plugin and its channel.
+	CHECK_THAT(finished.value("error", std::string()), ContainsSubstring("Gain and pan on Source"));
+}
+
+TEST_CASE("a private render's plugins are activated and process offline", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	session.insertGain(source.channel, -6);
+	const auto modes = std::make_shared<Modes>();
+	session.engine.setRenderPluginFactory(
+		[modes](const std::string& plugin, uint32_t channels, gnubase::plugin::Host& host)
+		{ return std::make_unique<ModeRecorder>(processors::BuiltinFactory(channels).create(plugin, host), modes); });
+	run(session.client, "mixdown.export",
+		{{"folder", session.folder.path().u8string()}, {"name", "offline"}, {"start", 0}, {"end", 7000}});
+	// The job has ended, and its plugin with it (#725).
+	CHECK(modes->activated == std::vector<gnubase::plugin::ProcessMode>{gnubase::plugin::ProcessMode::Offline});
+	CHECK(modes->offlineBlocks.load() > 0);
+	CHECK(modes->realtimeBlocks.load() == 0);
+}
+
 TEST_CASE("cancelling a background track render unlocks without an undo step or files", "[integration]")
 {
 	Session session;
@@ -1197,6 +1532,28 @@ TEST_CASE("a render range locks intersecting audio and transactions but allows e
 	INFO(finished.dump());
 	REQUIRE(finished.at("state") == "done");
 	CHECK(finished.at("result").at("tracks").size() == 1);
+}
+
+TEST_CASE("a held render refuses changes of the project settings every render hears", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	// Only the project-wide part of the lock check catches these (#1850).
+	const Json setting =
+		GENERATE(Json{{"rootKey", "D"}}, Json{{"panLaw", "-6dB"}}, Json{{"tempo", 90}}, Json{{"sampleRate", 44100}});
+	const Json before = run(session.client, "project.get");
+	const Json finished = gnubase::test::whileHeld(session.engine, session.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"tail", 0}},
+		[&](uint64_t)
+		{
+			INFO(setting.dump());
+			CHECK_THAT(reject(session.client, "project.set", setting), ContainsSubstring("being rendered"));
+		});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+	const Json after = run(session.client, "project.get");
+	for (const char* key : {"rootKey", "panLaw", "tempo", "sampleRate"})
+		CHECK(after.value(key, Json()) == before.value(key, Json()));
 }
 
 TEST_CASE("a failed background render removes files and unlocks its tracks", "[integration]")

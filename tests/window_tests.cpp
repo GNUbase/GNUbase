@@ -15,6 +15,7 @@
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "ui/themes.h"
+#include "ui/widgets.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Box.h>
@@ -346,18 +347,18 @@ TEST_CASE("every theme looks the same on every platform, and switches without lo
 		return image;
 	};
 	std::optional<ui::Image> first;
-	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	for (const std::string& theme : test::themes(GNUBASE_RESOURCES_DIR))
 	{
 		INFO("theme " << theme);
 		gpu.shell->setTheme(theme);
 		CHECK(window.context().GetDocument(0) == document);
 		const ui::Image image = compare("theme-" + theme, 1);
-		if (!first)
+		if (theme == ui::g_defaultTheme)
 			first = image;
 	}
 
-	// Back to the first theme: the same pixels as before.
-	gpu.shell->setTheme("gnubase");
+	// Back to the default theme: the same pixels as before.
+	gpu.shell->setTheme(ui::g_defaultTheme);
 	const ui::Image again = crop(gpu.screenshot(window, "theme-gnubase-again"), 0, 0, 560, 360);
 	const test::ImageDiff same = test::compareImages(again, first.value_or(ui::Image{}), {0});
 	INFO(same.report);
@@ -374,13 +375,15 @@ TEST_CASE(
 {
 	Gpu gpu;
 	loadFonts();
+	ui::registerWidgets(*gpu.rmlui); // the knob, fader, slider, value field and list view
 	const ui::Themes themes(std::filesystem::path(GNUBASE_RESOURCES_DIR));
-	const ui::Window& window = gpu.open("widgets.rml", 1024, 640);
+	const ui::Window& window = gpu.open("focusable.rml", 1024, 640);
 	gpu.shell->setUiScale(gpu.shell->uiScale() / window.dpRatio()); // one pixel per dp
 	Rml::ElementDocument* document = window.context().GetDocument(0);
 	REQUIRE(document != nullptr);
 	std::vector<Rml::Element*> widgets;
-	for (const char* id : {"plain", "primary", "checked", "checkbox-on", "radio-on"})
+	for (const char* id : {"plain", "primary", "checked", "checkbox-on", "radio-on", "mute", "solo", "record",
+			 "monitor", "knob", "fader", "slider", "range", "valuefield", "listview"})
 	{
 		widgets.push_back(document->GetElementById(id));
 		REQUIRE(widgets.back() != nullptr);
@@ -394,27 +397,33 @@ TEST_CASE(
 		return largest;
 	};
 	// How well the focus ring stands out from the widget's skin: in the outer 4 dp at the middle of its top and left
-	// edges, the pixels the focus changed, compared with the skin 5 dp inside the edge. 0 if the focus changed nothing,
-	// or only in the skin's own color, as a ring in the accent color on a skin filled with it.
+	// edges, the pixels the focus changed, compared with the skin 5 dp inside its top left corner, away from a label in
+	// the middle. 0 if the focus changed nothing, or only in the skin's own color, as a ring in the accent color on a
+	// skin filled with it. Knobs, faders and sliders get the ring alone, around them, and are thin or round: their ring
+	// is compared with the page beside them.
 	const auto standsOut = [&distance](const ui::Image& before, const ui::Image& after, Rml::Element& widget)
 	{
+		const std::array<std::string, 4> ringAlone = {"knob", "fader", "slider", "range"};
+		const bool alone = std::find(ringAlone.begin(), ringAlone.end(), widget.GetId()) != ringAlone.end();
 		const Rml::Vector2f offset = widget.GetAbsoluteOffset(Rml::BoxArea::Padding);
 		const Rml::Vector2f middle = offset + (widget.GetBox().GetSize(Rml::BoxArea::Padding) / 2);
 		const auto pixel = [](const ui::Image& image, float x, float y)
 		{ return image.pixel(static_cast<int>(x), static_cast<int>(y)); };
+		const Color skin =
+			alone ? pixel(before, offset.x - 4.0F, offset.y - 4.0F) : pixel(before, offset.x + 5.0F, offset.y + 5.0F);
 		int largest = 0;
 		for (int edge = 0; edge < 4; ++edge)
 		{
 			const auto depth = static_cast<float>(edge);
-			const std::array<std::array<float, 4>, 2> lines{{{middle.x, offset.y + depth, middle.x, offset.y + 5.0F},
-				{offset.x + depth, middle.y, offset.x + 5.0F, middle.y}}};
-			for (const auto& [x, y, skinX, skinY] : lines)
+			const std::array<std::array<float, 2>, 2> edges{
+				{{middle.x, offset.y + depth}, {offset.x + depth, middle.y}}};
+			for (const auto& [x, y] : edges)
 				if (distance(pixel(before, x, y), pixel(after, x, y)) > 16)
-					largest = std::max(largest, distance(pixel(after, x, y), pixel(before, skinX, skinY)));
+					largest = std::max(largest, distance(pixel(after, x, y), skin));
 		}
 		return largest;
 	};
-	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	for (const std::string& theme : test::themes(GNUBASE_RESOURCES_DIR))
 	{
 		INFO("theme " << theme);
 		gpu.shell->setTheme(theme);

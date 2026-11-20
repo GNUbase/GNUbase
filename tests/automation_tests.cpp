@@ -24,6 +24,7 @@
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -543,6 +544,63 @@ TEST_CASE("the automation player turns curves into parameter and controller even
 	player.play({false, 50, nullptr, 0}, {}, {}, source, fader, plugins);
 	CHECK(fader.empty());
 	CHECK(source.empty());
+}
+
+TEST_CASE("the automation player waits for the graph's MIDI destination before resending the patch", "[unit]")
+{
+	using Type = graph::ProcessEvent::Type;
+	const bool playing = GENERATE(false, true);
+	AutomationPlayer player;
+	RenderChannel channel;
+	channel.type = TrackType::Midi;
+	channel.format = ChannelFormat::None;
+	channel.program = 5;
+	channel.bank = 300;
+	channel.midiVolume = 90;
+	channel.midiPan = 20;
+	player.setAutomation(channelAutomation(channel, 6.0));
+	graph::EventBuffer source(graph::g_maxEventsPerBlock);
+	graph::EventBuffer fader(graph::g_maxEventsPerBlock);
+	graph::EventBuffer plugins(graph::g_maxEventsPerBlock);
+	const int processor = 0;
+	int64_t position = 0;
+	const auto block = [&](ObjectId destination)
+	{
+		source.clear();
+		fader.clear();
+		const graph::TransportSegment segment{0, 64, position};
+		player.play({playing, position, playing ? &segment : nullptr, playing ? size_t{1} : size_t{0}}, {&processor},
+			{}, source, fader, plugins, 0, nullptr, destination);
+		if (playing)
+			position += 64;
+	};
+	block(11);
+	REQUIRE(source.size() == 3);
+
+	// New automation reaches the player before the graph with the new route: only its changed controller goes out.
+	channel.midiVolume = 91;
+	player.setAutomation(channelAutomation(channel, 6.0));
+	block(11);
+	REQUIRE(source.size() == 1);
+	CHECK(source[0].type == Type::Controller);
+	CHECK(source[0].key == 7);
+	CHECK(source[0].value == midi::controllerFromMidi1(91));
+
+	// The graph changes destination without a new processor or automation revision. The new instrument gets all three.
+	block(22);
+	REQUIRE(source.size() == 3);
+	CHECK(source[0].type == Type::Program);
+	CHECK(source[0].key == 5);
+	CHECK(source[0].value == 300);
+	CHECK(source[1].type == Type::Controller);
+	CHECK(source[1].key == 7);
+	CHECK(source[1].value == midi::controllerFromMidi1(91));
+	CHECK(source[2].type == Type::Controller);
+	CHECK(source[2].key == 10);
+	block(22);
+	CHECK(source.empty());
+	block(11);
+	CHECK(source.size() == 3);
 }
 
 TEST_CASE("volume ramps, curves, steps and pan render as their golden file", "[integration]")
@@ -1503,12 +1561,13 @@ TEST_CASE("volume automation plays its static value in virgin territory and gaps
 
 namespace
 {
-	// The lane of a track with a target of this type: its id and its points as (position, value) pairs in the order
-	// they play; 0 and none if the track has no such lane.
+	// The lane of a track with a target of this type: its id, its points as (position, value) pairs in the order
+	// they play and which of them are terminators, by index; 0 and none if the track has no such lane.
 	struct LanePoints
 	{
 		ObjectId id = 0;
 		std::vector<std::pair<int64_t, double>> points;
+		std::vector<size_t> terminators;
 	};
 
 	LanePoints lanePoints(Client& client, ObjectId track, const std::string& type)
@@ -1520,7 +1579,11 @@ namespace
 			{
 				found.id = lane.at("id").get<ObjectId>();
 				for (const Json& point : lane.at("points"))
+				{
+					if (point.value("terminator", false))
+						found.terminators.push_back(found.points.size());
 					found.points.emplace_back(point.at("position").get<int64_t>(), point.at("value").get<double>());
+				}
 			}
 		return found;
 	}
@@ -1592,7 +1655,11 @@ TEST_CASE("automation.copy and automation.paste copy automation between tracks w
 	const LanePoints targetVolume = lanePoints(client, target, "volume");
 	CHECK(targetVolume.points ==
 		Points{{0, -20.0}, {192000, -20.0}, {192000, -6.0}, {240000, 0.0}, {288000, -12.0}, {288000, -20.0}});
-	CHECK(lanePoints(client, target, "pan").points == Points{{192000, -1.0}, {288000, 1.0}});
+	// The target had no pan lane: the static value still plays before and after the paste, in gaps that terminators
+	// start (reference manual p. 879).
+	const LanePoints targetPan = lanePoints(client, target, "pan");
+	CHECK(targetPan.points == Points{{0, -1.0}, {192000, -1.0}, {288000, 1.0}, {288000, 1.0}});
+	CHECK(targetPan.terminators == std::vector<size_t>{0, 3});
 	const Json targetLanes = run(client, "automationLane.list", {{"track", target}}).at("lanes");
 	REQUIRE(targetLanes.size() == 3);
 	CHECK(targetLanes[2].at("target") == pluginTarget(targetGainPan, 0));
@@ -1611,13 +1678,18 @@ TEST_CASE("automation.copy and automation.paste copy automation between tracks w
 
 	// A shorter range shortens the copy, at the curve's value there; in a longer one its last value holds up to the
 	// right locator (reference manual p. 879).
+	// Pasted at the start, no gap is needed before it.
 	run(client, "automation.paste", {{"tracks", {other}}, {"start", 0}, {"end", 48000}});
-	CHECK(lanePoints(client, other, "volume").points == Points{{0, -6.0}, {48000, 0.0}});
-	CHECK(lanePoints(client, other, "pan").points == Points{{0, -1.0}, {48000, 0.0}});
+	CHECK(lanePoints(client, other, "volume").points == Points{{0, -6.0}, {48000, 0.0}, {48000, 0.0}});
+	CHECK(lanePoints(client, other, "volume").terminators == std::vector<size_t>{2});
+	CHECK(lanePoints(client, other, "pan").points == Points{{0, -1.0}, {48000, 0.0}, {48000, 0.0}});
+	// Into the gap after it: the gap goes on after the paste.
 	run(client, "automation.paste", {{"tracks", {other}}, {"start", 400000}, {"end", 600000}});
-	CHECK(lanePoints(client, other, "volume").points ==
-		Points{{0, -6.0}, {48000, 0.0}, {400000, 0.0}, {400000, -6.0}, {448000, 0.0}, {496000, -12.0}, {600000, -12.0},
+	const LanePoints otherVolumeLane = lanePoints(client, other, "volume");
+	CHECK(otherVolumeLane.points ==
+		Points{{0, -6.0}, {48000, 0.0}, {48000, 0.0}, {400000, -6.0}, {448000, 0.0}, {496000, -12.0}, {600000, -12.0},
 			{600000, 0.0}});
+	CHECK(otherVolumeLane.terminators == std::vector<size_t>{2, 7});
 
 	// Copy Automation of Selected Parameters: one parameter onto the selected lanes of the same parameter.
 	CHECK(run(client, "automation.copy", {{"lanes", {pan}}, {"start", 0}, {"end", 96000}}) == Json{{"lanes", 1}});
@@ -1629,7 +1701,7 @@ TEST_CASE("automation.copy and automation.paste copy automation between tracks w
 	const Points otherPanPoints = lanePoints(client, other, "pan").points;
 	REQUIRE(otherPanPoints.size() >= 6);
 	CHECK(Points(otherPanPoints.begin(), otherPanPoints.begin() + 6) ==
-		Points{{0, -1.0}, {48000, 0.0}, {96000, 0.0}, {96000, -1.0}, {192000, 1.0}, {192000, 0.0}});
+		Points{{0, -1.0}, {48000, 0.0}, {48000, 0.0}, {96000, -1.0}, {192000, 1.0}, {192000, 0.0}});
 	// One copied track goes onto every selected track; a track without the parameter takes nothing.
 	CHECK(run(client, "automation.paste", {{"tracks", {midi, target}}, {"start", 0}, {"end", 96000}}).at("lanes") ==
 		Json{lanePoints(client, target, "pan").id});
@@ -1650,6 +1722,51 @@ TEST_CASE("automation.copy and automation.paste copy automation between tracks w
 	CHECK_THAT(reject(client, "automation.paste", {{"start", 100}, {"end", 100}}), ContainsSubstring("empty"));
 	CHECK_THAT(reject(client, "automation.copy", {{"lanes", {12345}}}), ContainsSubstring("no automation lane 12345"));
 	CHECK_THAT(reject(client, "automation.paste", {{"tracks", {12345}}}), ContainsSubstring("no track 12345"));
+}
+
+TEST_CASE("automation.copy keeps the given tracks without automation in their order, and says what it copied", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	std::mutex mutex;
+	std::vector<Json> copied;
+	const Listener listener(engine,
+		[&](const Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "automation.copied")
+				copied.push_back(event.data);
+		});
+	std::vector<ObjectId> tracks;
+	for (int i = 0; i < 4; ++i)
+	{
+		tracks.push_back(idOf(run(client, "track.add", {{"type", "audio"}}), "track"));
+		run(client, "track.set", {{"track", tracks.back()}, {"timeBase", "linear"}});
+	}
+	const ObjectId lane =
+		idOf(run(client, "automationLane.add", {{"track", tracks[1]}, {"target", {{"type", "volume"}}}}), "lane");
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
+
+	// The first selected track has no automation: the second's goes onto the second target, not onto both.
+	CHECK(run(client, "automation.copy", {{"tracks", {tracks[0], tracks[1]}}, {"start", 0}, {"end", 48000}}) ==
+		Json{{"lanes", 1}});
+	run(client, "automation.paste", {{"tracks", {tracks[2], tracks[3]}}, {"start", 0}, {"end", 48000}});
+	CHECK(lanePoints(client, tracks[2], "volume").points.empty());
+	// The lane had no points: the static value plays again in the gap a terminator starts after the paste (reference
+	// manual p. 879).
+	const LanePoints pasted = lanePoints(client, tracks[3], "volume");
+	REQUIRE(pasted.points.size() == 3);
+	CHECK(pasted.points[0].first == 0);
+	CHECK(pasted.points[1].first == 48000);
+	CHECK(pasted.points[2].first == 48000);
+	for (const auto& [at, value] : pasted.points)
+		CHECK(std::abs(value + 6.0) < 1e-6);
+	CHECK(pasted.terminators == std::vector<size_t>{2});
+
+	// automation.copied says how many lanes the clipboard holds, also none.
+	run(client, "automation.copy", {{"tracks", {tracks[0]}}, {"start", 0}, {"end", 48000}});
+	const std::scoped_lock lock(mutex);
+	CHECK(copied == std::vector<Json>{{{"lanes", 1}}, {{"lanes", 0}}});
 }
 
 TEST_CASE("automation.paste pastes VCA faders' volume, and a new project has nothing to paste", "[unit]")
@@ -1677,11 +1794,12 @@ TEST_CASE("automation.paste pastes VCA faders' volume, and a new project has not
 	CHECK(run(client, "automation.paste", {{"start", 192000}, {"end", 288000}}).at("lanes") == Json{lane});
 	CHECK(lanePoints(client, vca, "volume").points ==
 		Points{{0, -6.0}, {96000, -12.0}, {192000, -12.0}, {192000, -6.0}, {288000, -12.0}, {288000, -12.0}});
-	// And onto another VCA track.
+	// And onto another VCA track, whose fader's static volume plays again after it.
 	const Json pasted = run(client, "automation.paste", {{"tracks", {other}}, {"start", 0}, {"end", 96000}});
 	const LanePoints otherVolume = lanePoints(client, other, "volume");
 	CHECK(pasted.at("lanes") == Json{otherVolume.id});
-	CHECK(otherVolume.points == Points{{0, -6.0}, {96000, -12.0}});
+	CHECK(otherVolume.points == Points{{0, -6.0}, {96000, -12.0}, {96000, -12.0}});
+	CHECK(otherVolume.terminators == std::vector<size_t>{2});
 
 	// The clipboard holds this project's track ids, which a new project hands out again.
 	run(client, "automation.copy", {{"start", 0}, {"end", 96000}});

@@ -173,16 +173,24 @@ namespace gnubase::ui
 				beat = std::min(beat, beatLength(change.signature));
 				bar = std::min(bar, beatLength(change.signature) * change.signature.numerator);
 			}
-			const time::Ticks first = tempo.toTicks(from);
-			const time::Ticks last = tempo.toTicks(to);
+			// Positions in the bars' ticks, which start the bar shift later.
+			const time::Ticks first = tempo.toTicks(from) - context.barShift;
+			const time::Ticks last = tempo.toTicks(to) - context.barShift;
 			const auto add = [&](time::Ticks position, bool labelled)
 			{
 				if (position >= first && position < last)
 				{
 					time::BarsBeats shown = signatures.toBarsBeats(position);
 					shown.bar += context.barOffset;
-					marks.push_back({tempo.toSeconds(position), labelled ? musicalLabel(shown) : ""});
+					marks.push_back(
+						{tempo.toSeconds(position + context.barShift), labelled ? musicalLabel(shown) : ""});
 				}
+			};
+			// Rounded down, also before bar 0.
+			const auto firstBar = [&](int64_t n)
+			{
+				const int64_t bar = signatures.toBarsBeats(first).bar;
+				return (bar >= 0 ? bar / n : -((n - 1 - bar) / n)) * n;
 			};
 
 			if (static_cast<double>(beat) < needed)
@@ -192,8 +200,7 @@ namespace gnubase::ui
 				while (static_cast<double>(n * bar) < needed)
 					n *= 2;
 				const int64_t parts = std::min<int64_t>(n, 4);
-				for (int64_t b = signatures.toBarsBeats(first).bar / n * n;
-					signatures.barStart(b) < last && marks.size() < g_maxMarks; b += n)
+				for (int64_t b = firstBar(n); signatures.barStart(b) < last && marks.size() < g_maxMarks; b += n)
 				{
 					const time::Ticks start = signatures.barStart(b);
 					add(start, true);
@@ -230,7 +237,7 @@ namespace gnubase::ui
 						break;
 					}
 			}
-			for (int64_t b = signatures.toBarsBeats(first).bar; signatures.barStart(b) < last; ++b)
+			for (int64_t b = firstBar(1); signatures.barStart(b) < last; ++b)
 			{
 				const time::Ticks start = signatures.barStart(b);
 				const time::Ticks end = signatures.barStart(b + 1);
@@ -336,7 +343,8 @@ namespace gnubase::ui
 	{
 		if (format == TimeFormat::BarsBeats)
 		{
-			time::BarsBeats position = context.signatures.toBarsBeats(context.tempo.toTicks(seconds));
+			time::BarsBeats position =
+				context.signatures.toBarsBeats(context.tempo.toTicks(seconds) - context.barShift);
 			position.bar += context.barOffset;
 			return time::formatBarsBeats(position);
 		}
@@ -441,7 +449,7 @@ namespace gnubase::ui
 				position->bar -= 1 + context.barOffset;
 				position->beat = std::max(position->beat - 1, 0);
 				position->sixteenth = std::max(position->sixteenth - 1, 0);
-				return context.tempo.toSeconds(context.signatures.toTicks(*position));
+				return context.tempo.toSeconds(context.signatures.toTicks(*position) + context.barShift);
 			}
 			case TimeFormat::Seconds:
 			{

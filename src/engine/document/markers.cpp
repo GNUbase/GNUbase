@@ -53,10 +53,7 @@ namespace gnubase::engine
 			if (parameters.at("color").is_null())
 				return {};
 			const std::string value = parameters.at("color").get<std::string>();
-			const bool valid = value.size() == 7 && value[0] == '#' &&
-				std::all_of(value.begin() + 1, value.end(),
-					[](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
-			require(valid, "color must be #rrggbb");
+			require(isColor(value), "color must be #rrggbb");
 			return value;
 		}
 

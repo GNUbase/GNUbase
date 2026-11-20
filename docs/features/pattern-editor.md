@@ -40,6 +40,10 @@ instrument track, whose pattern management lists it.
 
 They emit `pattern.added`, `pattern.changed` and `pattern.removed` with the pattern (its id for removed).
 
+The descriptions of `pattern.set` and `pattern.add` warn that a shorter `length` without `lanes` drops steps beyond it
+on lanes that follow the pattern's length and cuts their ties at the new end; for `pattern.add` this applies to `copy`.
+MCP tools and the Lua API reference include these descriptions.
+
 - **Mode switches** (p. 913): between drum and melodic mode the pattern is cleared; from poly to mono mode the lowest
   step at each position stays and the lanes' own settings go; mono to poly changes nothing. In mono mode a step can't
   overlap another, ties included.
@@ -181,8 +185,9 @@ content that other applications read, which have the parts' own notes.
   Resolution and Double Length with lanes of their own length and resolution, a gesture right after Double Length, a
   mode switch and a shorter Number of Steps with a project read before them, a click on a step right after a mode switch
   and a shorter Number of Steps, a mute, a double click, Delete and a project read before it while a mode switch is out,
-  a selection whose steps a script or a mode switch took, one that doesn't go along to another pattern or another
-  part of the same pattern, one that Double Resolution moves and its undo clears, one that the toolbar's Step
-  Resolution keeps, selecting, deleting and double-clicking steps, Tie and Split, mute, the parameter lane's
-  velocity and probability, the toolbar's menus and Double Length, Add Lane and melodic mode; New Melodic Pattern for a
-  plain part, the pattern menu choosing, duplicating and converting; Open Pattern Editor and the Edit menu's entries.
+  a selection whose steps a script or a mode switch took, one that doesn't go along to another pattern or another part
+  of the same pattern, one that Double Resolution moves and its undo clears, one that the toolbar's Step Resolution
+  keeps, selecting, deleting and double-clicking steps, Tie and Split, mute, the parameter lane's velocity and
+  probability, the toolbar's menus and Double Length, 12 Steps dropping a step at 14 from a 16-step lane and undo
+  restoring it, Add Lane and melodic mode; New Melodic Pattern for a plain part, the pattern menu choosing, duplicating
+  and converting; Open Pattern Editor and the Edit menu's entries.

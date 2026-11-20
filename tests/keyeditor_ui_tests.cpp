@@ -5,6 +5,7 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/enginebinding.h"
 #include "ui/keyeditor.h"
 #include "ui/midieditor.h"
 #include "ui/rmlui.h"
@@ -134,6 +135,18 @@ namespace
 		}
 
 		Json view() { return app.call("editor.get", {{"editor", "window"}}); }
+
+		// Pixels of the editor window's layout in desktop coordinates, which setBounds takes: at a monitor scale of 2,
+		// as on a HiDPI Mac, half as many (#1746).
+		int desktop(double pixels)
+		{
+			const ui::WindowId id = app.appUi().editorWindowId();
+			const ui::Window* shown = app.shell().find(id);
+			REQUIRE(shown != nullptr);
+			const double scale = static_cast<double>(app.shell().bounds(id).width) /
+				static_cast<double>(std::max(shown->context().GetDimensions().x, 1));
+			return static_cast<int>(std::lround(pixels * scale));
+		}
 
 		// Waits until a note with at least four expression points per pixel shows one line per pixel at most, and
 		// lines for four in five pixels at least, as the lines built for the width it has now (#1671; a line joined
@@ -733,6 +746,9 @@ TEST_CASE("a key of the keyboard held while the lower zone's Editor panel goes e
 		f.window = docking.windowOf("editor")->id();
 		f.app.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
 		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr; }));
+		// The key editor is built before the engine answers: a press needs its view and the project, which the one
+		// part in the panel's window shows.
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".editor-part").size() == 1; }));
 		REQUIRE(f.app.waitUntil([&] { return f.elements(".key-editor-keys").size() == 1; }));
 		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && keyEditor()->scrollToPitch(60); }));
 		f.app.shell().step(std::chrono::milliseconds(0));
@@ -756,6 +772,56 @@ TEST_CASE("a key of the keyboard held while the lower zone's Editor panel goes e
 	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
 }
 
+TEST_CASE("a key of the keyboard held while the lower zone's Editor panel is hidden or floated ends its pitch", "[ui]")
+{
+	// The panel in the lower zone of the project window, its key editor kept when the panel goes: the held key's pitch
+	// ends however the panel goes, at the latest when the mouse is released.
+	Fixture f({1024, 600}, "instrument");
+	f.app.setDpRatio(1.0F);
+	f.probe();
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.appUi().showProject();
+	f.window = std::nullopt;
+	ui::Docking& docking = f.app.appUi().docking();
+	const auto keyEditor = [&]() -> ui::KeyEditor*
+	{
+		ui::MidiEditor* editor = f.app.appUi().lowerZoneEditor();
+		return editor != nullptr ? editor->keyEditor() : nullptr;
+	};
+	const auto pressDocked = [&]
+	{
+		f.app.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
+		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr; }));
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".editor-part").size() == 1; }));
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".key-editor-keys").size() == 1; }));
+		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && keyEditor()->scrollToPitch(60); }));
+		f.app.shell().step(std::chrono::milliseconds(0));
+		const Json keyboard = f.box(".key-editor-keys");
+		f.app.ui().press(f.window, f.key(keyboard.at("x").get<int>() + 2, 60), ui::MouseButton::Left, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+		CHECK(f.plays({{0x90, 60, 100}}));
+	};
+
+	// The tab hidden.
+	pressDocked();
+	docking.setTabHidden("editor", true);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().release(f.window, ui::Target{"", 0, ui::Point{500, 300}}, ui::MouseButton::Left, {});
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+	docking.setTabHidden("editor", false);
+	f.app.shell().step(std::chrono::milliseconds(0));
+
+	// The panel opened in a window of its own.
+	f.clearSound();
+	pressDocked();
+	docking.setFloating("editor", true);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(docking.windowOf("editor") != nullptr);
+	f.app.ui().release(f.window, ui::Target{"", 0, ui::Point{500, 300}}, ui::MouseButton::Left, {});
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+}
+
 TEST_CASE("the object selection tool selects, moves, resizes, inserts and deletes notes", "[ui]")
 {
 	Fixture f;
@@ -774,20 +840,22 @@ TEST_CASE("the object selection tool selects, moves, resizes, inserts and delete
 	f.settle();
 	CHECK(f.note(ids[0]).at("position") == 2 * g_sixteenth);
 	// A drag at a note's end resizes it (p. 1214).
-	const ui::Target from = f.at(7.95, 62);
-	const Json box = f.box(noteSelector(ids[1]));
-	f.drag(from, f.at(12, 62));
-	Json note;
-	const bool resized = f.app.waitUntil(
-		[&]
-		{
-			note = f.note(ids[1]);
-			return note.at("length") == 2 * g_quarter;
-		});
-	const ui::Point pressed = from.point.value_or(ui::Point{});
-	INFO("pressed at " << pressed.x << ", " << pressed.y << " on the note's box " << box.dump() << ", the note now "
-					   << note.dump());
-	REQUIRE(resized);
+	{
+		const ui::Target from = f.at(7.95, 62);
+		const Json box = f.box(noteSelector(ids[1]));
+		f.drag(from, f.at(12, 62));
+		Json note;
+		const bool resized = f.app.waitUntil(
+			[&]
+			{
+				note = f.note(ids[1]);
+				return note.at("length") == 2 * g_quarter;
+			});
+		const ui::Point pressed = from.point.value_or(ui::Point{});
+		INFO("pressed at " << pressed.x << ", " << pressed.y << " on the note's box " << box.dump() << ", the note now "
+						   << note.dump());
+		REQUIRE(resized);
+	}
 	f.settle();
 	CHECK(f.note(ids[1]).at("position") == g_quarter);
 
@@ -804,11 +872,12 @@ TEST_CASE("the object selection tool selects, moves, resizes, inserts and delete
 	f.settle();
 }
 
-TEST_CASE("a view older than a click that selects keeps the click's selection", "[ui]")
+TEST_CASE("a view older than a click that deselects leaves the notes and the controller lanes deselected", "[ui]")
 {
 	// On a loaded machine the engine's answers to an earlier selection, such as its editor.changed, can come in after a
 	// click selected anew, before the click's own answer. Until that, the notes stay as the click selected them, so a
-	// drag right after the click moves only those (#1817).
+	// drag right after the click moves only those (#1817), and the controller lanes show the click's selection too, so
+	// that a lane edit acts on the same notes (#1897).
 	Fixture f;
 	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {g_quarter, 62, g_quarter}});
 	f.click(of(noteSelector(ids[0])));
@@ -822,11 +891,56 @@ TEST_CASE("a view older than a click that selects keeps the click's selection", 
 	f.app.ui().click(f.window, f.at(12.5, 70), ui::MouseButton::Left, 1, {});
 	f.app.appUi().editorWindow()->keyEditor()->show(project, older, 0);
 	CHECK(f.elements(".key-note.selected").empty());
+	CHECK(f.elements(".controller-bar").size() == 2);
+	CHECK(f.elements(".controller-bar.selected").empty());
 	f.drag(f.at(2, 60), f.at(4.2, 63));
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 63; }));
 	f.settle();
 	CHECK(f.note(ids[1]).at("pitch") == 62);
 	CHECK(f.note(ids[1]).at("position") == g_quarter);
+}
+
+TEST_CASE("a press whose selection the engine refuses shows the view's selection again", "[ui]")
+{
+	// The display shows a note the engine no longer has, as when another client has just deleted it: the press's
+	// editor.set is refused, and once it is answered the notes and the controller lanes show the view's selection
+	// again, not the press's (#1897).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}});
+	f.settle();
+	Json project = f.app.call("project.get");
+	const Json view = f.view();
+	REQUIRE(view.at("selection").empty());
+	uint64_t gone = 0;
+	for (Json& part : project.at("midiParts"))
+		if (part.at("id") == f.part)
+		{
+			Json note = part.at("notes").at(0);
+			gone = note.at("id").get<uint64_t>() + 1000;
+			note["id"] = gone;
+			note["position"] = g_quarter;
+			note["pitch"] = 62;
+			part.at("notes").push_back(note);
+		}
+	REQUIRE(gone != 0);
+	// No read is out that would show the engine's project again before the click is answered.
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("project.get") == 0 && binding.waiting("editor.get") == 0; }));
+	f.app.appUi().editorWindow()->keyEditor()->show(project, view, 0);
+	REQUIRE(f.elements(".key-note").size() == 2);
+	// A move of it released outside the key editor: no edit and no click, which would activate the part with an
+	// editor.set of its own, whose editor.changed would show the view again anyway.
+	f.app.ui().press(f.window, of(noteSelector(gone)), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().move(f.window, f.at(8.5, 62));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().release(f.window, of("#editor-keep-contents"), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.selected").empty(); }));
+	CHECK(f.elements(".controller-bar.selected").empty());
+	CHECK(f.selection().empty());
+	CHECK(f.partNotes().size() == 1);
+	CHECK(f.note(ids[0]).at("position") == 0);
 }
 
 TEST_CASE("the draw tool draws notes of the length quantize's length or a multiple of it", "[ui]")
@@ -889,7 +1003,8 @@ TEST_CASE("a move released outside the key editor ends without its effect, a dra
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
 }
 
-TEST_CASE("a draw whose release was lost ends without its effect at a press on the drawn note", "[ui]")
+TEST_CASE(
+	"a draw whose release was lost ends without its effect as the mouse leaves the window or at the next press", "[ui]")
 {
 	Fixture f;
 	f.scroll(64);
@@ -897,26 +1012,38 @@ TEST_CASE("a draw whose release was lost ends without its effect at a press on t
 	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
 	REQUIRE(window != nullptr);
 	Rml::Context& context = window->context();
-	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so the button
-	// going up out there ends nothing, and the drawn note stays where it was pressed.
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so no dragend
+	// comes, and the draw ends at the leave, without its effect: the drawn note doesn't follow the mouse back over the
+	// editor with the button up (#1756).
 	f.app.ui().press(f.window, f.at(4.3, 64), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.elements(".key-note.drawing").size() == 1);
 	context.ProcessMouseLeave();
 	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(".key-note.drawing").empty());
+	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
+	f.app.ui().move(f.window, f.at(8.5, 64));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(".key-note.drawing").empty());
+	CHECK_FALSE(f.app.waitUntil([&] { return !f.partNotes().empty(); }, std::chrono::milliseconds(300)));
+
+	// A draw whose mouseup never comes at all ends at the next press, here on the drawn note: the end takes the note
+	// out while the press still has it as its target, and the press draws nothing either.
+	clock->advance(1.0); // no double click with the press before
+	f.app.ui().press(f.window, f.at(4.3, 64), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.elements(".key-note.drawing").size() == 1);
 	const Json drawn = f.box(".key-note.drawing");
 	const ui::Point on{
 		static_cast<int>(std::lround(drawn.at("x").get<double>() + (drawn.at("width").get<double>() / 2))),
 		static_cast<int>(std::lround(drawn.at("y").get<double>() + (drawn.at("height").get<double>() / 2)))};
-	// The next press goes to the drawn note and ends the draw, which takes the note out while the press still has it
-	// as its target; the press draws nothing either.
 	const Rml::Element* hit = context.GetElementAtPoint({static_cast<float>(on.x), static_cast<float>(on.y)});
 	REQUIRE(hit != nullptr);
 	REQUIRE(hit->IsClassSet("drawing"));
-	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
-	REQUIRE(clock != nullptr);
-	clock->advance(1.0); // no double click with the press before
+	clock->advance(1.0);
 	f.app.ui().press(f.window, {"", 0, on}, ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.elements(".key-note.drawing").empty());
@@ -924,30 +1051,31 @@ TEST_CASE("a draw whose release was lost ends without its effect at a press on t
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK_FALSE(f.app.waitUntil([&] { return !f.partNotes().empty(); }, std::chrono::milliseconds(300)));
 	CHECK(f.elements(".key-note.drawing").empty());
+	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
 }
 
-TEST_CASE("a move whose release was lost ends without its effect at a press outside the key editor", "[ui]")
+TEST_CASE("a move whose release was lost ends without its effect as the mouse leaves the window", "[ui]")
 {
 	Fixture f;
 	const std::vector<uint64_t> ids = f.add({{0, 60, g_sixteenth}});
+	const auto x = [&] { return f.box(noteSelector(ids[0])).at("x").get<double>(); };
+	const double before = x();
 	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
 	REQUIRE(window != nullptr);
 	Rml::Context& context = window->context();
-	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so the button
-	// going up out there ends nothing, and the grid stays a drag element.
+	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so no dragend
+	// comes. The move ends at the leave (#1756): the grid is no drag element any more, the note doesn't follow the
+	// mouse back over the grid with the button up, and the button going up there moves nothing.
 	f.app.ui().press(f.window, f.at(0.5, 60), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.has(".key-editor", "in-gesture"));
 	context.ProcessMouseLeave();
 	context.ProcessMouseButtonUp(0, 0);
-	f.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(f.has(".key-editor", "in-gesture"));
-	// The next press, on the editor window's toolbar outside the key editor, ends the move: the grid is no drag element
-	// any more, and the button going up over the grid after a move there moves nothing.
-	f.app.ui().press(f.window, of("#editor-keep-contents"), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
 	f.app.ui().move(f.window, f.at(6.5, 62));
 	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(x() - before) <= 1.5);
 	f.app.ui().release(f.window, f.at(6.5, 62), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK_FALSE(f.app.waitUntil([&] { return f.note(ids[0]).at("position") != 0; }, std::chrono::milliseconds(300)));
@@ -984,7 +1112,19 @@ TEST_CASE("a resize released outside the key editor ends without its effect", "[
 	f.app.shell().step(std::chrono::milliseconds(0));
 	f.app.ui().move(f.window, f.at(9.5, 60));
 	f.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(f.app.waitUntil([&] { return width() > before + 10; }));
+	{
+		double now = 0.0;
+		const bool wider = f.app.waitUntil(
+			[&]
+			{
+				now = width();
+				return now > before + 10;
+			});
+		// A press that starts a move instead of a resize, or a re-render that loses the preview, shows here (#1808).
+		INFO("the note " << now << " px wide, " << before << " before the resize, the key editor "
+						 << (f.has(".key-editor", "in-gesture") ? "in" : "not in") << " a gesture");
+		REQUIRE(wider);
+	}
 	// The display shown again during the resize, as when the engine's answers to the last edit come in only now, still
 	// shows the note where the mouse takes it, although the mouse doesn't move (#1789).
 	f.app.call("note.add",
@@ -1001,6 +1141,33 @@ TEST_CASE("a resize released outside the key editor ends without its effect", "[
 	CHECK_FALSE(f.app.waitUntil(
 		[&] { return f.note(ids[0]).at("length") != 6 * g_sixteenth; }, std::chrono::milliseconds(300)));
 	f.settle();
+}
+
+TEST_CASE("a move shows its notes at the time under the mouse as the editor's range changes during it", "[ui]")
+{
+	// An in-place editor's range follows the project window's scroll and zoom (setTimeRange): during a move the notes
+	// go where the release would put them at once, not only at the next mouse move (#1808).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_sixteenth}});
+	const Json grid = f.box(".key-editor-grid");
+	const auto x = [&] { return f.box(noteSelector(ids[0])).at("x").get<double>(); };
+	const auto shownAt = [&](double fraction)
+	{ return grid.at("x").get<double>() + (fraction * grid.at("width").get<double>()); };
+	f.app.ui().press(f.window, f.at(0.5, 60), ui::MouseButton::Left);
+	f.app.ui().move(f.window, f.at(4.0, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().move(f.window, f.at(4.25, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	// From half a sixteenth to 4.25: the note 4 sixteenths on, snapped.
+	REQUIRE(f.app.waitUntil([&] { return std::abs(x() - shownAt(4.0 / 16.0)) <= 1.5; }));
+	// The range twice as long: the mouse is at 8.5 sixteenths now, the note 8 sixteenths on.
+	f.app.appUi().editorWindow()->keyEditor()->setTimeRange(std::make_pair(int64_t{0}, 2 * g_bar));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(x() - shownAt(8.0 / 32.0)) <= 1.5);
+	f.app.ui().release(f.window, f.at(4.25, 60), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("position") == 8 * g_sixteenth; }));
+	CHECK(f.note(ids[0]).at("pitch") == 60);
 }
 
 TEST_CASE("the key editor's draw and the drag on the keyboard's left part go on past the window's edge until the "
@@ -1032,23 +1199,31 @@ TEST_CASE("the key editor's draw and the drag on the keyboard's left part go on 
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
 	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
 
-	// The keyboard's left part dragged 60 px past the window's left edge zooms out by as much as in the window.
+	// The keyboard's left part dragged 60 px past the window's left edge zooms out by as much as in the window. Zoomed
+	// in first, as the left zone puts the keyboard about 200 px into the window: from 1, a drag to the edge alone would
+	// reach the least zoom (#1756).
 	const int left = f.box(".key-editor-keys").at("x").get<int>() + 4;
 	const int high = f.box(".key-editor-body").at("y").get<int>() + 150;
 	REQUIRE(std::abs(f.box(".key-editor-row").at("height").get<double>() - 10.0) <= 0.5);
+	f.drag({"", 0, ui::Point{left, high}}, {"", 0, ui::Point{left + 200, high}});
+	REQUIRE(std::abs(f.box(".key-editor-row").at("height").get<double>() - 40.0) <= 0.5);
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0); // no double click with the press before
 	f.app.ui().press(f.window, {"", 0, ui::Point{left, high}}, ui::MouseButton::Left);
 	f.app.ui().move(f.window, {"", 0, ui::Point{left - 4, high}});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	context.ProcessMouseMove(-60, high, 0);
 	context.ProcessMouseButtonUp(0, 0);
 	f.app.shell().step(std::chrono::milliseconds(0));
-	const double zoomed = 10.0 * std::exp2((-60.0 - left) / 100.0);
-	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - std::max(zoomed, 2.5)) <= 0.5);
+	const double zoomed = 40.0 * std::exp2((-60.0 - left) / 100.0);
+	REQUIRE(zoomed > 3.0); // not the least zoom's 2.5 px
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - zoomed) <= 0.5);
 	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
 	// Back in the window with the button up, the mouse zooms no more.
 	f.app.ui().move(f.window, {"", 0, ui::Point{left + 200, high}});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - std::max(zoomed, 2.5)) <= 0.5);
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - zoomed) <= 0.5);
 }
 
 TEST_CASE("the draw tool follows a quantize grid changed in the project window", "[ui]")
@@ -1707,6 +1882,66 @@ TEST_CASE("the expression editor on a short note at the end of the bottom row st
 	CHECK(std::abs(points.back().at("value").get<double>() - 24.0) <= 2.0);
 }
 
+TEST_CASE("the expression editor on a short note right of the note display's middle starts at the note", "[ui]")
+{
+	// Wider than the note, it grows to the left from the note's end only where it would end past the note display's
+	// right edge: anchored at the middle, an in-place editor's would jump by its overhang as the project window scrolls
+	// the note across it (#1746).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{9 * g_sixteenth, 60, g_sixteenth / 2}});
+	f.settle();
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionDoubleClick", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	f.click(of(noteSelector(ids[0])), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json editor = f.box(".key-expression-editor");
+	const Json note = f.box(noteSelector(ids[0]));
+	CHECK(editor.at("width").get<double>() > note.at("width").get<double>() + 10);
+	CHECK(std::abs(editor.at("x").get<double>() - note.at("x").get<double>()) <= 1.0);
+}
+
+TEST_CASE("the expression editor on a short note just inside the note display's right edge stays in it as the window "
+		  "narrows",
+	"[ui]")
+{
+	// Its button's width is in dp and the note's place in percent: a seventh narrower, the note starts nearer the right
+	// edge than the editor is wide, and the window's update places it again, although a pixel with a sixth more ticks
+	// renders nothing again (#1746).
+	Fixture f;
+	const ui::WindowId window = f.app.appUi().editorWindowId();
+	const ui::Window* shown = f.app.shell().find(window);
+	REQUIRE(shown != nullptr);
+	f.app.call("quantize.set", {{"settings", {{"grid", "1/128"}}}}); // which the click on the note snaps it to
+	f.settle();
+	const double grid = f.box(".key-editor-grid").at("width").get<double>();
+	// The first 128th at least 73dp from the right edge, less than 84: the editor's 72dp fit there, a seventh narrower
+	// they don't.
+	const double fromRight = 73.0 * shown->context().GetDensityIndependentPixelRatio();
+	const auto steps = static_cast<int64_t>(std::ceil(fromRight / grid * 128));
+	REQUIRE(static_cast<double>(steps) * grid / 128 < fromRight * 84 / 73);
+	const std::vector<uint64_t> ids = f.add({{g_bar - (steps * g_bar / 128), 60, g_sixteenth / 2}});
+	f.settle();
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionDoubleClick", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	f.click(of(noteSelector(ids[0])), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(std::abs(f.box(".key-expression-editor").at("x").get<double>() -
+				f.box(noteSelector(ids[0])).at("x").get<double>()) <= 1.0);
+
+	const ui::Rect bounds = f.app.shell().bounds(window);
+	const uint64_t frames = shown->frames();
+	f.app.shell().setBounds(window, {bounds.x, bounds.y, bounds.width - f.desktop(grid / 7), bounds.height});
+	REQUIRE(f.app.waitUntil(
+		[&] { return shown->frames() > frames && f.box(".key-editor-grid").at("width").get<double>() < grid * 0.9; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json editor = f.box(".key-expression-editor");
+	const Json narrowed = f.box(".key-editor-grid");
+	CHECK(editor.at("x").get<double>() + editor.at("width").get<double>() <=
+		narrowed.at("x").get<double>() + narrowed.at("width").get<double>() + 0.5);
+}
+
 TEST_CASE("the note expression lines join the steps narrower than a pixel", "[ui]")
 {
 	// A recorded MPE note has a point every few milliseconds (#1671): the overlay and the expression editor draw a
@@ -1774,7 +2009,7 @@ TEST_CASE(
 	// a quarter more or fewer (#1716), not on every frame of a scroll across a tempo change in the project window's
 	// in-place editor. The note is half the note display wide.
 	const size_t lines = f.elements(steps).size();
-	const int narrower = bounds.width - static_cast<int>(std::lround(before * 2 / 6));
+	const int narrower = bounds.width - f.desktop(before * 2 / 6);
 	const ui::Window* shown = f.app.shell().find(window);
 	REQUIRE(shown != nullptr);
 	const uint64_t frames = shown->frames();
@@ -1807,8 +2042,7 @@ TEST_CASE("the key editor window builds a dense note's expression lines that sho
 	// A sixth narrower, a fifth more ticks per pixel. The note is half the note display wide.
 	const ui::WindowId window = f.app.appUi().editorWindowId();
 	const ui::Rect bounds = f.app.shell().bounds(window);
-	f.app.shell().setBounds(
-		window, {bounds.x, bounds.y, bounds.width - static_cast<int>(std::lround(before * 2 / 6)), bounds.height});
+	f.app.shell().setBounds(window, {bounds.x, bounds.y, bounds.width - f.desktop(before * 2 / 6), bounds.height});
 	SECTION("Show Note Expression Data once the window is laid out")
 	{
 		REQUIRE(f.app.waitUntil([&] { return noteWidth() < before * 0.88; }));

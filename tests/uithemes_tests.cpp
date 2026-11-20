@@ -24,7 +24,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -156,7 +155,9 @@ TEST_CASE("every document gets the design system and the active theme's colors, 
 		window.requestRender();
 		fake.shell.step(milliseconds(0));
 	};
-	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast", "gnubase"})
+	std::vector<std::string> order = test::themes(resources());
+	order.push_back(order.front()); // and back to the first
+	for (const std::string& theme : order)
 	{
 		INFO("theme " << theme);
 		fake.shell.setTheme(theme);
@@ -211,7 +212,7 @@ TEST_CASE("every theme dims the edit history's undone steps, details too, and dr
 	REQUIRE(undone != nullptr);
 	REQUIRE(separator != nullptr);
 
-	for (const std::string theme : {"gnubase", "dark", "light"})
+	for (const std::string& theme : test::themes(resources()))
 	{
 		INFO("theme " << theme);
 		fake.shell.setTheme(theme);
@@ -245,7 +246,7 @@ TEST_CASE("every theme draws play probability and velocity variance bars dashed,
 	document->Show();
 	Rml::Element* velocity = document->GetElementById("velocity");
 	REQUIRE(velocity != nullptr);
-	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	for (const std::string& theme : test::themes(resources()))
 	{
 		INFO("theme " << theme);
 		fake.shell.setTheme(theme);
@@ -317,7 +318,7 @@ TEST_CASE(
 			button->SetPseudoClass(state, false);
 		return skin;
 	};
-	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	for (const std::string& theme : test::themes(resources()))
 	{
 		INFO("theme " << theme);
 		fake.shell.setTheme(theme);
@@ -387,18 +388,14 @@ TEST_CASE(
 		}
 
 		// The focus ring over every state of a bar button and the tempo (#1711): the ring first, which RmlUi draws on
-		// top, over the skin of the same state without the focus. A hovered button shows the skin without the hover,
-		// since the rings' rules come after the hover rules (tools/skin/generate.py).
+		// top, over the skin of the same state without the focus, hovered too (tools/skin/generate.py, #543).
 		const std::vector<std::pair<const char*, std::vector<const char*>>> focused{{"tool", {}}, {"tool", {"hover"}},
 			{"tool-checked", {}}, {"value", {}}, {"value", {"hover"}}, {"value-checked", {}}, {"icon-menu", {"hover"}},
 			{"start", {}}, {"record", {}}, {"tapping", {}}, {"suspended", {}}, {"locate", {"hover"}}, {"tempo", {}}};
 		for (const auto& [id, states] : focused)
 		{
 			INFO(id << " " << states.size() << " states");
-			std::vector<const char*> under;
-			std::copy_if(states.begin(), states.end(), std::back_inserter(under),
-				[](const char* state) { return std::string_view(state) != "hover"; });
-			std::string skin = in(id, under);
+			std::string skin = in(id, states);
 			if (skin == "none")
 				skin.clear();
 			std::vector<const char*> with = states;

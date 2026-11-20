@@ -91,6 +91,10 @@ namespace gnubase::test
 	// The whole file, or an empty string if it cannot be read.
 	std::string readText(const std::filesystem::path& file);
 
+	// The themes in <resources>/themes, by id, sorted: the folders with a theme.rcss, as ui::Themes finds them. Tests
+	// loop over them, so that a new theme is tested without edits.
+	std::vector<std::string> themes(const std::filesystem::path& resources);
+
 	// Runs a command line, UTF-8, with the system's shell (cmd.exe on Windows, sh elsewhere), and returns its exit
 	// code, or -1 if it didn't exit (POSIX: ended by a signal).
 	int runCommand(const std::string& command);

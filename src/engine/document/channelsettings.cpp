@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -25,6 +27,7 @@ namespace gnubase::engine
 			ChannelSections sections;
 			std::array<Send, g_maxSends> sends = {};
 			std::vector<Slot> slots; // the inserts, from top to bottom
+			uint64_t project = 0;    // the project it was copied in (ProjectModel::openedRevision)
 		};
 
 		void require(bool condition, const std::string& message)
@@ -42,17 +45,20 @@ namespace gnubase::engine
 			return found->second;
 		}
 
-		ChannelClipboard copySettings(const Project& project, ObjectId id)
+		ChannelClipboard copySettings(const ProjectModel& model, ObjectId id)
 		{
+			const Project& project = model.project();
 			const Channel& channel = audioChannel(project, id);
-			ChannelClipboard clipboard{channel.sections, channel.sends, {}};
+			ChannelClipboard clipboard{channel.sections, channel.sends, {}, model.openedRevision()};
 			for (const ObjectId slot : channel.slots)
 				clipboard.slots.push_back(project.slots.at(slot));
 			return clipboard;
 		}
 
 		// Gives a channel the copied settings: its inserts are copies of the copied ones, and a send keeps its
-		// destination only where the channel may send.
+		// destination only where the channel may send, and only in the project it was copied in, as ids start again in
+		// every project. Its level stays below the project's fader top, which can be lower than the one it was copied
+		// under.
 		void pasteSettings(const ProjectModel& model, Project& project, CommandContext& context, ObjectId id,
 			const ChannelClipboard& clipboard)
 		{
@@ -60,14 +66,29 @@ namespace gnubase::engine
 			channel.sections = clipboard.sections;
 			channel.sends = clipboard.sends;
 			for (Send& send : channel.sends)
+			{
+				send.level = std::clamp(send.level, g_minChannelVolume, project.maxVolume);
 				if (send.destination != 0 &&
-					(project.channels.count(send.destination) == 0 || !isSendDestination(project, send.destination) ||
-						routingLoops(project, id, send.destination)))
+					(clipboard.project != model.openedRevision() || project.channels.count(send.destination) == 0 ||
+						!isSendDestination(project, send.destination) || routingLoops(project, id, send.destination)))
 					send.destination = 0;
+			}
 			replaceSlots(project, context, id, clipboard.slots);
 			context.emit("channel.changed", {{"channel", toJson(channel)}});
 			for (const ObjectId slot : channel.slots)
 				context.emit("plugin.added", {{"slot", model.describeSlot(project, slot)}});
+		}
+	}
+
+	void removePluginAutomation(Project& project, CommandContext& context, ObjectId slot)
+	{
+		for (auto lane = project.automation.begin(); lane != project.automation.end();)
+		{
+			const bool gone =
+				lane->second.target.type == AutomationTargetType::Plugin && lane->second.target.slot == slot;
+			if (gone)
+				context.emit("automationLane.removed", {{"lane", lane->first}});
+			lane = gone ? project.automation.erase(lane) : std::next(lane);
 		}
 	}
 
@@ -77,14 +98,7 @@ namespace gnubase::engine
 		for (const ObjectId slot : channel.slots)
 		{
 			project.slots.erase(slot);
-			for (auto lane = project.automation.begin(); lane != project.automation.end();)
-			{
-				const bool gone =
-					lane->second.target.type == AutomationTargetType::Plugin && lane->second.target.slot == slot;
-				if (gone)
-					context.emit("automationLane.removed", {{"lane", lane->first}});
-				lane = gone ? project.automation.erase(lane) : std::next(lane);
-			}
+			removePluginAutomation(project, context, slot);
 			context.emit("plugin.removed", {{"slot", slot}});
 		}
 		channel.slots.clear();
@@ -128,7 +142,7 @@ namespace gnubase::engine
 				Json::object(), false},
 			[&model, clipboard](CommandContext& context)
 			{
-				*clipboard = copySettings(model.project(), context.parameters().at("channel").get<ObjectId>());
+				*clipboard = copySettings(model, context.parameters().at("channel").get<ObjectId>());
 				return Json::object();
 			});
 		model.addEdit(engine,
@@ -137,8 +151,9 @@ namespace gnubase::engine
 					what +
 					". Their inserts are replaced by copies of the copied ones, the automation of the plugins they "
 					"had goes with them. A send keeps its destination only if the channel may send there, so not to "
-					"itself and never in a loop. Emits channel.changed, plugin.removed and plugin.added. Returns the "
-					"channels.",
+					"itself and never in a loop, and only in the project it was copied in, and its level stays below "
+					"the project's maxVolume. Emits channel.changed, automationLane.removed, plugin.removed and "
+					"plugin.added. Returns the channels.",
 				{{"type", "object"},
 					{"properties", {{"channels", {{"type", "array"}, {"items", idSchema}, {"minItems", 1}}}}},
 					{"required", {"channels"}}, {"additionalProperties", false}},

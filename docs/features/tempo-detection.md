@@ -33,7 +33,9 @@ fits them best, one steady tempo. Everything runs on the command thread.
   reference manual says, and the tempo events inside the event, but the first, go: what an earlier detection made. Then
   the beats, a quarter apart, go on the tempo track (below). `factor` (Multiply by 2, Divide by 2, Multiply by 4/3 and
   by 3/4), `offbeat` (Offbeat Correction) and `smooth` (Smooth Tempo) change the beats first; `reset` (Reset the
-  analysis result) only removes the tempo events inside the event. Each call is one undo step, "Detect tempo".
+  analysis result) only removes the tempo events inside the event, in the tempo track's own ticks also while it is
+  inactive. Audio in musical mode is refused, as the reference manual says (p. 1460). Each call is one undo step,
+  "Detect tempo".
 - **`tempo.fromMidi`** (Calculate Tempo from MIDI Events, pp. 1130, 1459-1460) takes MIDI parts (`parts`) and the selected
   notes among them (`notes`, all without), `distance`, the Distance of Notes in ticks (a quarter by default), and
   `beginAtBarStart`. Notes that start within 30 ms of each other are one tap, such as a chord. One undo step, "Calculate
@@ -41,7 +43,8 @@ fits them best, one steady tempo. Everything runs on the command thread.
   manual records the taps on a linear track (p. 1459).
 - **Onto the tempo track** (`followBeats` in `tempo.cpp`): the first beat keeps its position under the tempo playing,
   and a step tempo event at each beat but the last, `distance` after the one before with the tempo that reaches the next
-  beat in time, replaces the tempo events from the first beat to the last; the last tempo holds after it. Beats before
+  beat in time, replaces the tempo events from the first beat to the last; the last tempo holds after it, and a step
+  event at the last beat starts a ramp that follows, so the last beat keeps its time too. Beats before
   the project start don't count. With `beginAtBarStart` the first beat moves to the nearest bar start after the project
   start, and a tempo event at the start of the bar before puts the bar start at the beat's time (an error if that tempo
   would be outside 1-999 BPM). Both commands make the tempo track active, whose events then come from the tempo the
@@ -52,9 +55,9 @@ fits them best, one steady tempo. Everything runs on the command thread.
 
 - **Project > Tempo Track > Tempo Detection...** (`tempo.detection`) opens `resources/ui/tempo-detection.rml` for the
   first selected audio event, or else MIDI part, in the project window: `#tempo-detection-analyze` detects afresh,
-  `#tempo-detection-double`, `-halve`, `-four-thirds` and `-three-quarters` multiply the factor, `-offbeat` switches
-  Offbeat Correction and `-smooth` Smooth Tempo on, each sending `tempo.detect` again with them
-  (`EventDisplay::detectTempo`); `#tempo-detection-reset` resets. Close or Escape closes it.
+  `#tempo-detection-double`, `-halve`, `-four-thirds` and `-three-quarters` multiply the factor, `-offbeat` and
+  `-smooth` switch Offbeat Correction and Smooth Tempo on and off, `.checked` while on, each sending `tempo.detect`
+  again with them (`EventDisplay::detectTempo`); `#tempo-detection-reset` resets. Close or Escape closes it.
 - **MIDI > Functions > Calculate Tempo from MIDI Events...** (`midi.calculateTempo`, a new MIDI menu) opens
   `resources/ui/calculate-tempo.rml` for the selected MIDI parts: `select#calculate-tempo-distance` (whole to sixteenth
   notes, triplets and dotted values, a quarter first) and `#calculate-tempo-bar-start`; OK sends `tempo.fromMidi`.
@@ -74,6 +77,6 @@ quieter offbeats, drifting from 100 to 125 BPM and at 120 BPM played up to 8 ms 
 pulses or within 20 ms); a synthesized drum loop at 104 BPM, 48 kHz (every tempo event within 0.5 BPM, the kicks on the
 beats within 5 ms) and one speeding up from 92 to 108 BPM after half a second of silence (every beat within 5 ms);
 rescaling and smoothing; the factors, offbeat correction, smoothing, detecting again, reset and undo, tracks becoming
-linear, MIDI parts and parts shorter than 7 seconds; `tempo.fromMidi` with quarters and eighths, selected notes,
-Begin at Bar Start and its errors, notes keeping their time. `tests/tempotrack_ui_tests.cpp` drives both dialogs in the
-app.
+linear, MIDI parts and parts shorter than 7 seconds, audio in musical mode, reset with an inactive tempo track;
+`tempo.fromMidi` with quarters and eighths, selected notes, Begin at Bar Start and its errors, a ramp after the notes,
+notes keeping their time. `tests/tempotrack_ui_tests.cpp` drives both dialogs in the app, with the switches' state.

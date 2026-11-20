@@ -18,6 +18,10 @@ project window.
   ([transport-bar.md](transport-bar.md)).
 - **Keys.** Each command item gets a `.menu-keys` element with the first key bound to the command with those
   parameters (`KeyCommands::keysFor`), as the platform writes it: Ctrl+Z, or Cmd+Z on macOS.
+- **Checked.** An item is `checked` (the theme's `menuitem.checked`) while `KeyCommands::checked` says so, what
+  `KeyCommands::checkWhen` set for its command: Transport > Audio Record Mode and MIDI Record Mode check the modes that
+  `transport.changed` reports as set (#531). Items of commands without `checkWhen` keep the state others give them,
+  such as the Window menu's panels, which the docking checks.
 - **Disabled.** An item is `disabled` while `KeyCommands::canRun` says its command can't run: what
   `KeyCommands::enableWhen` set for it, e.g. Undo and Redo while the undo history (`history.changed`) has nothing to
   undo or redo, and the project window's edit commands without the event display. The menu updates in every step of
@@ -72,17 +76,18 @@ system menu bar on macOS, where the window shows its own menu bar until then (an
 `ui::Automation` clicks, as MCP's `ui_click` does: Studio > Studio Setup opens the studio setup dialog and closes the
 menu; items show their keys per platform; Transport > Locators > Go to Right Locator Position sends `transport.locate`
 with its parameters through the UI's client; Edit > Select > All and Edit > Delete run the event display's commands;
-Undo and Redo are disabled and enabled as the history changes, and a disabled item ignores clicks; Edit > Select >
-All and None, and a Ctrl-click on a part that takes it out of the selection on the release, enable and disable
-Quantize right after the click; a click listener of the item, or of the document added before the menu, that lets the
-item's command run makes the click run it, and one added to the document after the menu only the next click; every
-input of `ui::Automation` (move, click, drag, press, release, wheel, key down, up and press, text and drop) runs the
-shell's input handler once, after the input's listeners and the shell's unused key and key release handlers (#1233);
-`canRun` and `enableWhen`; the menu bar hidden from Set up Window Layout and shown with `window.menuBar`; File > Quit
-quits; and the File menu's Import item shows its arrow, the mouse moves from File to Edit, Right and Left move to Media
-and back, and Alt opens and closes the File menu (mouse moves and key presses, as MCP's `ui_move` and `ui_key` do). A
-menu with an item whose command doesn't exist or is empty, whose parameters an engine command doesn't take or has of the
-wrong type, that gives a UI command parameters, or whose parameters aren't a JSON object throws and leaves the document
-as it was; the project window, the transport panel and the time display window open, and every `command` in the
-documents and fragments of `resources/ui` passes `KeyCommands::check`, as does every command their buttons run from Lua
-with `gnubase.ui.command`.
+Transport > Audio Record Mode and MIDI Record Mode set the modes and check the one set, also when another client set it;
+Undo and Redo are disabled and enabled as the history changes, and a disabled item ignores clicks; Edit > Select > All
+and None, and a Ctrl-click on a part that takes it out of the selection on the release, enable and disable Quantize
+right after the click; a click listener of the item, or of the document added before the menu, that lets the item's
+command run makes the click run it, and one added to the document after the menu only the next click; every input of
+`ui::Automation` (move, click, drag, press, release, wheel, key down, up and press, text and drop) runs the shell's
+input handler once, after the input's listeners and the shell's unused key and key release handlers (#1233); `canRun`
+and `enableWhen`; the menu bar hidden from Set up Window Layout and shown with `window.menuBar`; File > Quit quits; and
+the File menu's Import item shows its arrow, the mouse moves from File to Edit, Right and Left move to Media and back,
+and Alt opens and closes the File menu (mouse moves and key presses, as MCP's `ui_move` and `ui_key` do). A menu with an
+item whose command doesn't exist or is empty, whose parameters an engine command doesn't take or has of the wrong type,
+that gives a UI command parameters, or whose parameters aren't a JSON object throws and leaves the document as it was;
+the project window, the transport panel and the time display window open, and every `command` in the documents and
+fragments of `resources/ui` passes `KeyCommands::check`, as does every command their buttons run from Lua with
+`gnubase.ui.command`.

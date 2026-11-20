@@ -559,7 +559,7 @@ namespace gnubase::engine
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
 			{"enabled", track.enabled}, {"picture", track.picture}, {"frozen", nullptr}, {"drumMap", track.drumMap},
 			{"articulationMap", track.articulationMap}, {"gmNames", track.gmNames},
-			{"groupEditing", track.groupEditing}};
+			{"groupEditing", track.groupEditing}, {"lock", track.lock}};
 		if (track.frozen)
 			json["frozen"] = {{"path", track.frozen->path}, {"sampleRate", track.frozen->sampleRate},
 				{"channels", track.frozen->channels}, {"length", track.frozen->length}};
@@ -2159,7 +2159,9 @@ namespace gnubase::engine
 		project.name = json.at("name").get<std::string>();
 		project.sampleRate = json.at("sampleRate").get<double>();
 		if (project.sampleRate < g_lowestSampleRate || project.sampleRate > g_highestSampleRate)
-			throw std::invalid_argument("the sample rate must be from 8000 to 768000 Hz");
+			throw std::invalid_argument("the sample rate must be from " +
+				std::to_string(static_cast<int>(g_lowestSampleRate)) + " to " +
+				std::to_string(static_cast<int>(g_highestSampleRate)) + " Hz");
 		project.tempo = tempoFromJson(json.at("tempo"));
 		// Files from before tempo modes (#155) follow their tempo changes, if they have any.
 		project.tempoTrackActive = json.value("tempoTrackActive", project.tempo.points().size() > 1);
@@ -2224,6 +2226,7 @@ namespace gnubase::engine
 			track.articulationMap = item.value("articulationMap", ObjectId{0}); // and before #175 none
 			track.gmNames = item.value("gmNames", false);                       // and before #1493 No Names
 			track.groupEditing = track.type == TrackType::Folder && item.value("groupEditing", false); // #1579
+			track.lock = track.type == TrackType::Signature && item.value("lock", false);              // and #729
 			if (const Json frozen = item.value("frozen", Json()); !frozen.is_null()) // and before #116 none
 			{
 				track.frozen = Freeze{frozen.at("path").get<std::string>(), frozen.at("sampleRate").get<double>(),
@@ -2291,18 +2294,21 @@ namespace gnubase::engine
 				{std::pair{"midiVolume", &channel.midiVolume}, std::pair{"midiPan", &channel.midiPan}})
 				if (const Json stored = item.value(key, Json()); !stored.is_null())
 					*value = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " " + key));
-			// Files from before patches have none.
-			if (const Json stored = item.value("program", Json()); !stored.is_null())
-				channel.program = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " program"));
-			if (const Json stored = item.value("bank", Json()); !stored.is_null())
-				channel.bank = static_cast<int>(checkedNumber(stored, 0.0, g_maxBank, name + " bank"));
+			// Only MIDI tracks have patches, as channel.set requires. Files from before patches have none.
+			const auto track = project.trackById.find(channel.track);
+			if (track != project.trackById.end() && track->second.type == TrackType::Midi)
+			{
+				if (const Json stored = item.value("program", Json()); !stored.is_null())
+					channel.program = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " program"));
+				if (const Json stored = item.value("bank", Json()); !stored.is_null())
+					channel.bank = static_cast<int>(checkedNumber(stored, 0.0, g_maxBank, name + " bank"));
+			}
 			// Files from before the MIDI channel have Any.
 			if (const Json stored = item.value("midiChannel", Json()); !stored.is_null())
 				channel.midiChannel = static_cast<int>(checkedNumber(stored, 0.0, 15.0, name + " midiChannel"));
 			channel.device = item.value("device", std::string());
 			// An instrument this build doesn't have, e.g. in a file from a newer one, or one on a track that doesn't
 			// play instruments: the channel plays none.
-			const auto track = project.trackById.find(channel.track);
 			if (!processors::isInstrument(channel.instrument) || track == project.trackById.end() ||
 				track->second.type != TrackType::Instrument)
 				channel.instrument.clear();
@@ -2605,8 +2611,10 @@ namespace gnubase::engine
 						timingFrom(n.at("origin").at("original")), timingFrom(n.at("origin").at("quantized"))};
 				note.probability = std::clamp(n.value("probability", 1.0), 0.0, 1.0);
 				note.velocityVariance = std::clamp(n.value("velocityVariance", 0.0), -1.0, 1.0);
-				note.articulations = n.value("articulations", std::vector<std::string>());           // before #175 none
-				note.mutedArticulations = n.value("mutedArticulations", std::vector<std::string>()); // #1684
+				note.articulations = n.value("articulations", std::vector<std::string>()); // before #175 none
+				// Only the note's own attributes, each once, as note.add and note.set take them (#1684, #1762).
+				note.mutedArticulations = n.value("mutedArticulations", std::vector<std::string>());
+				note.mutedArticulations = mutedArticulationsFrom(Json::object(), note, noteName);
 				note.expressions =
 					expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions", true);
 				part.notes[note.id] = note;
