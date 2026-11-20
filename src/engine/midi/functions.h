@@ -285,20 +285,19 @@ namespace gnubase::engine::midi
 	// Copies the events of the parts into new parts at the same place, one per channel or pitch found in the parts of
 	// a track, on a new track or lane for each, and mutes the parts (reference manual pp. 1121-1122). Events that
 	// belong to no channel or pitch go with the first new part of their part, so none is lost; a
-	// part with nothing to separate stays as it is. The new parts keep the part's mute, transpose, velocity, root key
-	// and Global Transpose setting, on
-	// lanes also its name, with the channel or pitch added, and color. optimize shortens new parts on tracks to the
-	// bars their events play in; parts on lanes keep the part's place.
+	// part with nothing to separate stays as it is. The new parts keep the part's mute, transpose, velocity, root key,
+	// Global Transpose setting and color, on lanes also its name, with the channel or pitch added. optimize shortens
+	// new parts on tracks to the bars their events play in; parts on lanes keep the part's place.
 	PartChanges dissolve(Project& project, const std::vector<ObjectId>& parts, DissolveBy by, bool optimize,
 		DissolveTo to = DissolveTo::Tracks);
 
 	// Combines parts on one track into a single part from the first one's start to the last one's end, named after
-	// the earliest, on the lowest lane they are on (reference manual p. 1123). Muted parts are removed and add
-	// nothing. Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go into
-	// the notes as playback applies them. The new part gets the root key and Global Transpose setting the parts
-	// share, or, when they differ, the project root key and follow, and then each note the difference its part's
-	// global transposition makes played into its pitch, so that it keeps the pitch it played with (#954). What the
-	// notes of a part can't hold stays on a part of its own, for each part on its own (#1064): a pitch beyond 0-127
+	// the earliest and with its color, on the lowest lane they are on (reference manual p. 1123). Muted parts are
+	// removed and add nothing. Events keep their time; notes are cut where their part ended. The parts' transpose and
+	// velocity go into the notes as playback applies them. The new part gets the root key and Global Transpose setting
+	// the parts share, or, when they differ, the project root key and follow, and then each note the difference its
+	// part's global transposition makes played into its pitch, so that it keeps the pitch it played with (#954). What
+	// the notes of a part can't hold stays on a part of its own, for each part on its own (#1064): a pitch beyond 0-127
 	// that plays, or one a drum map or the chord track, which map a note before the part's transpose and the global
 	// transposition, would play differently, keeps the part's root key and Global Transpose setting, and its
 	// transpose too unless the notes hold that alone; a velocity the track's MIDI modifiers would play differently

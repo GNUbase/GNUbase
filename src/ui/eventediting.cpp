@@ -648,6 +648,8 @@ namespace gnubase::ui
 
 	bool EventDisplay::canRun(const std::string& action) const
 	{
+		if (action == "edit.paste" || action == "edit.pasteTime")
+			return m_copied;
 		const auto found = m_rangeActions.find(action);
 		return found == m_rangeActions.end() || (m_range && (!found->second || m_range->end > m_range->start));
 	}
@@ -1007,6 +1009,14 @@ namespace gnubase::ui
 		const Drag drag = m_drag;
 		if (!alive())
 			return;
+		if (drag == Drag::Automation) // with the keys held at the press, as its preview has them
+		{
+			automationUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
+			m_dragMoved = false;
+			m_drag = Drag::None;
+			return;
+		}
 		m_pressed = modifiersOf(event); // what is held now decides, e.g. whether a drag copies
 		if (std::exchange(m_resizeScrubs, false))
 		{
@@ -1018,14 +1028,6 @@ namespace gnubase::ui
 				m_drag = Drag::None;
 				return;
 			}
-		}
-		if (drag == Drag::Automation)
-		{
-			automationUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
-				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
-			m_dragMoved = false;
-			m_drag = Drag::None;
-			return;
 		}
 		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::DrawPart || drag == Drag::Comp ||
 			drag == Drag::Play || drag == Drag::Click || drag == Drag::VolumePoint || drag == Drag::TimeWarp)
@@ -1219,7 +1221,7 @@ namespace gnubase::ui
 	{
 		if (m_resizeLanded)
 		{
-			// The first project after the last release's resize shows it: its preview has done its part.
+			// The first project after a release's resize shows it: its preview has done its part.
 			m_resizeLanded = false;
 			m_releasedPreview = Json();
 		}
@@ -1260,15 +1262,15 @@ namespace gnubase::ui
 		endResize();
 		m_resizeLanded = false;
 		m_binding.send("event.resize", std::move(parameters),
-			[this, previewed, release = ++m_resizeReleases, alive = std::weak_ptr<bool>(m_alive)](
-				const engine::Result& result)
+			[this, previewed, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (alive.expired())
 					return;
 				if (!result.ok())
 					showRefusal(result.error);
-				if (release == m_resizeReleases) // the last one: its preview goes with the next project
-					m_resizeLanded = true;
+				// Its preview goes with the next project. A client gets its answers in order, and a later release's
+				// preview is asked after this resize, so this answer can't come after a later release's preview.
+				m_resizeLanded = true;
 				if (!result.ok() || !previewed)
 					requestProject();
 			});

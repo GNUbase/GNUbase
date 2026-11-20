@@ -141,7 +141,7 @@ every Reset All, also of a set that had its defaults, so the app can fit the win
 The transport bar and the transport panel (a docking window `transportPanel` of its own) have the sections of the
 set `transport`, with a setup pane as their context menu ([transport-bar.md](transport-bar.md)). The project window's toolbar has the
 sections of the set `toolbar` (`.toolbar-section`: Tool Buttons, Auto-Scroll, Zoom Presets, Snap, Grid Type, Quantize,
-Color Menu, Track Visibility Configurations, Project Root Key and Window Zone Controls, pp. 57–65) with the setup pane
+Color Menu, Track Visibility Configurations, State Buttons, Project Root Key and Window Zone Controls, pp. 57–65) with the setup pane
 `#toolbar-setup` as its context menu (p. 57), and the info line has its fields as the sections of the set `infoLine`,
 with `#info-line-setup` ([inspector.md](inspector.md)), whose buttons name the fields as the info line does: Description
 and Position for its name and start with markers selected (p. 430), Name and Start otherwise. The mixer's channels

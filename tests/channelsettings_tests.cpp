@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase;
@@ -136,6 +137,72 @@ TEST_CASE(
 	CHECK_THAT(reject(client, "channel.pasteSettings", {{"channels", {12345}}}), ContainsSubstring("no channel"));
 }
 
+TEST_CASE("channel.pasteSettings removes the replaced plugins' automation and drops sends that would loop or that "
+		  "another project copied",
+	"[unit]")
+{
+	engine::Engine engine;
+	Client client(engine);
+	const ObjectId source = add(client, "audio");
+	const Json target = run(client, "track.add", {{"type", "audio"}});
+	const auto targetChannel = target.at("channel").at("id").get<ObjectId>();
+	const ObjectId first = add(client, "effect");
+	const ObjectId second = add(client, "effect");
+
+	// The automation of the plugins a paste replaces goes with them, announced as plugin.remove announces it.
+	const ObjectId slot = run(client, "plugin.insert", {{"channel", targetChannel}, {"plugin", "builtin:gainPan"}})
+							  .at("slot")
+							  .at("id")
+							  .get<ObjectId>();
+	const ObjectId lane = run(client, "automationLane.add",
+		{{"track", target.at("track").at("id")}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}}})
+							  .at("lane")
+							  .at("id")
+							  .get<ObjectId>();
+	while (client.poll())
+	{
+	}
+	run(client, "channel.copySettings", {{"channel", source}});
+	run(client, "channel.pasteSettings", {{"channels", {targetChannel}}});
+	std::vector<std::string> names;
+	while (const auto message = client.poll())
+		if (const auto* event = std::get_if<engine::Event>(&*message); event != nullptr)
+		{
+			names.push_back(event->name);
+			if (event->name == "automationLane.removed")
+				CHECK(event->data.at("lane") == lane);
+		}
+	CHECK(std::count(names.begin(), names.end(), "automationLane.removed") == 1);
+	CHECK(std::find(names.begin(), names.end(), "automationLane.removed") <
+		std::find(names.begin(), names.end(), "plugin.removed"));
+	CHECK(run(client, "project.get").at("automation").empty());
+
+	// A send to the first effect channel, pasted onto the second one, which the first one sends to, would close a
+	// loop through the first: it keeps its level without the destination.
+	run(client, "channel.set", {{"channel", first}, {"sends", {{{"send", 1}, {"destination", second}}}}});
+	run(client, "channel.set",
+		{{"channel", source}, {"sends", {{{"send", 1}, {"destination", first}, {"level", -6.0}}}}});
+	run(client, "channel.copySettings", {{"channel", source}});
+	run(client, "channel.pasteSettings", {{"channels", {targetChannel, second}}});
+	CHECK(channelJson(client, targetChannel).at("sends").at(0).at("destination") == first);
+	CHECK(channelJson(client, second).at("sends").at(0).at("destination") == 0);
+	CHECK(channelJson(client, second).at("sends").at(0).at("level") == -6.0);
+
+	// Ids start again in another project, so a destination copied in one project means nothing in the next: the
+	// sends lose it there, even where the new project has a channel of that id, and a level above the new project's
+	// fader top comes down to it; the rest is pasted.
+	run(client, "project.set", {{"maxVolume", 12.0}});
+	run(client, "channel.set", {{"channel", source}, {"sends", {{{"send", 1}, {"level", 10.0}}}}});
+	run(client, "channel.copySettings", {{"channel", source}});
+	run(client, "project.new");
+	const ObjectId other = add(client, "audio");
+	add(client, "effect");
+	CHECK(add(client, "effect") == first);
+	run(client, "channel.pasteSettings", {{"channels", {other}}});
+	CHECK(channelJson(client, other).at("sends").at(0).at("destination") == 0);
+	CHECK(channelJson(client, other).at("sends").at(0).at("level") == 6.0);
+}
+
 TEST_CASE("link groups link the equalizers, the dynamics and the sends", "[unit]")
 {
 	engine::Engine engine;
@@ -162,6 +229,15 @@ TEST_CASE("link groups link the equalizers, the dynamics and the sends", "[unit]
 	CHECK(channelJson(client, effect).at("sends").at(1).at("destination") == 0);
 	run(client, "history.undo");
 	CHECK(channelJson(client, b).at("sends").at(1).at("destination") == 0);
+
+	// Nor does a send that would close a loop through another channel: the second effect channel sends to the effect
+	// channel, so the effect channel can't send to it.
+	const ObjectId second = add(client, "effect");
+	run(client, "channel.set", {{"channel", second}, {"sends", {{{"send", 1}, {"destination", effect}}}}});
+	run(client, "channel.set", {{"channel", a}, {"sends", {{{"send", 4}, {"destination", second}, {"on", true}}}}});
+	CHECK(channelJson(client, b).at("sends").at(3).at("destination") == second);
+	CHECK(channelJson(client, effect).at("sends").at(3).at("destination") == 0);
+	CHECK(channelJson(client, effect).at("sends").at(3).at("on") == false);
 
 	// The equalizers and the dynamics: what changed on one channel changes on the others, the rest stays theirs.
 	run(client, "linkGroup.set", {{"group", group.at("id")}, {"eq", true}, {"dynamics", true}, {"sends", false}});

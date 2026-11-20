@@ -250,6 +250,7 @@ TEST_CASE("the project window's zones and strips show and hide with buttons, key
 {
 	test::UiApp app({1000, 700});
 	app.appUi().showProject();
+	app.shell().step(std::chrono::milliseconds(0)); // fit the toolbar before clicking its zone controls
 	for (const char* zone :
 		{"#channel-zone", "#left-zone", "#lower-zone", "#right-zone", "#info-line", "#status-line", "#transport-bar"})
 	{
@@ -354,6 +355,7 @@ TEST_CASE(
 	test::UiApp app({1000, 700});
 	app.setDpRatio(1.0F);
 	app.appUi().showProject();
+	app.shell().step(std::chrono::milliseconds(0)); // fit the toolbar before clicking its zone controls
 	CHECK(!shown(app, "#channel-zone"));
 	CHECK(!shown(app, "splitter[for=channel]"));
 

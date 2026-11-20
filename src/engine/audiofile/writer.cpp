@@ -20,6 +20,9 @@ namespace gnubase::engine
 		constexpr uint64_t g_max32 = 0xffffffff; // the largest size a 32-bit chunk size field holds
 		constexpr uint64_t g_ds64Size = 28;      // RF64's ds64 chunk without a table
 		constexpr uint64_t g_bextSize = 602;     // the bext chunk without coding history
+		// The RIFF and FORM sizes and the data and SSND sizes until a file is closed: readers take them as "up to the
+		// end of the file", so a file cut short by a crash still has the frames on the disk (#581).
+		constexpr uint64_t g_unknownSize = g_max32;
 
 		bool isFloat(SampleFormat format)
 		{
@@ -156,7 +159,7 @@ namespace gnubase::engine
 			{
 				Bytes header(false);
 				header.text(options.rf64 == Rf64::Always ? "RF64" : "RIFF");
-				header.integer(0, 4); // completed when closing
+				header.integer(g_unknownSize, 4); // completed when closing
 				header.text("WAVE");
 				header.text(options.rf64 == Rf64::Always ? "ds64" : "JUNK");
 				header.integer(g_ds64Size, 4);
@@ -174,7 +177,7 @@ namespace gnubase::engine
 				}
 				header.text("data");
 				m_dataSize = header.data().size();
-				header.integer(0, 4);
+				header.integer(g_unknownSize, 4);
 				m_output.write(header.data());
 			}
 
@@ -308,18 +311,18 @@ namespace gnubase::engine
 			{
 				Bytes header(true);
 				header.text("FORM");
-				header.integer(0, 4); // completed when closing
+				header.integer(g_unknownSize, 4); // completed when closing
 				header.text("AIFF");
 				header.text("COMM");
 				header.integer(18, 4);
 				header.integer(static_cast<uint64_t>(options.channels), 2);
 				m_frameCount = header.data().size();
-				header.integer(0, 4);
+				header.integer(0, 4); // unknown: readers count the frames in SSND
 				header.integer(static_cast<uint64_t>(bitsOf(options.sampleFormat)), 2);
 				header.extended(options.sampleRate);
 				header.text("SSND");
 				m_soundSize = header.data().size();
-				header.integer(0, 4);
+				header.integer(g_unknownSize, 4);
 				header.integer(0, 4); // offset
 				header.integer(0, 4); // block size
 				m_output.write(header.data());
@@ -385,7 +388,7 @@ namespace gnubase::engine
 		{
 		public:
 			FlacWriter(const std::string& path, const WriteOptions& options)
-				: m_options(options), m_path(path), m_bits(bitsOf(options.sampleFormat)),
+				: m_options(options), m_path(path), m_bits(bitsOf(options.sampleFormat)), m_file(createFile(path)),
 				  m_encoder(FLAC__stream_encoder_new(), FLAC__stream_encoder_delete)
 			{
 				if (m_encoder == nullptr)
@@ -395,11 +398,10 @@ namespace gnubase::engine
 				FLAC__stream_encoder_set_sample_rate(
 					m_encoder.get(), static_cast<uint32_t>(std::lround(options.sampleRate)));
 				FLAC__stream_encoder_set_compression_level(m_encoder.get(), 5);
-				// From here on the encoder owns the file and closes it when it finishes, or when it is deleted after
-				// rejecting the settings.
-				std::FILE* file = createFile(path).release();
-				if (FLAC__stream_encoder_init_FILE(m_encoder.get(), file, nullptr, nullptr) !=
-					FLAC__STREAM_ENCODER_INIT_STATUS_OK)
+				// Through callbacks rather than FLAC__stream_encoder_init_FILE, which gives the file a 10 MB buffer on
+				// Windows that a crash would lose (#581).
+				if (FLAC__stream_encoder_init_stream(m_encoder.get(), writeCallback, seekCallback, tellCallback,
+						nullptr, m_file.get()) != FLAC__STREAM_ENCODER_INIT_STATUS_OK)
 					throw AudioFileError("can't write " + path + ": the FLAC encoder rejected the settings");
 			}
 
@@ -434,14 +436,43 @@ namespace gnubase::engine
 				if (m_closed)
 					return;
 				m_closed = true;
-				if (FLAC__stream_encoder_finish(m_encoder.get()) == 0)
+				const bool finished = FLAC__stream_encoder_finish(m_encoder.get()) != 0;
+				if (!finished || std::fflush(m_file.get()) != 0)
 					throw AudioFileError("can't complete " + m_path);
+				m_file.reset();
 			}
 
 		private:
+			static FLAC__StreamEncoderWriteStatus writeCallback(const FLAC__StreamEncoder* /*encoder*/,
+				const FLAC__byte buffer[], size_t bytes, uint32_t /*samples*/, uint32_t /*frame*/, void* file)
+			{
+				return std::fwrite(buffer, 1, bytes, static_cast<std::FILE*>(file)) == bytes
+					? FLAC__STREAM_ENCODER_WRITE_STATUS_OK
+					: FLAC__STREAM_ENCODER_WRITE_STATUS_FATAL_ERROR;
+			}
+
+			static FLAC__StreamEncoderSeekStatus seekCallback(
+				const FLAC__StreamEncoder* /*encoder*/, FLAC__uint64 offset, void* file)
+			{
+				return detail::seekFile(static_cast<std::FILE*>(file), static_cast<int64_t>(offset), SEEK_SET)
+					? FLAC__STREAM_ENCODER_SEEK_STATUS_OK
+					: FLAC__STREAM_ENCODER_SEEK_STATUS_ERROR;
+			}
+
+			static FLAC__StreamEncoderTellStatus tellCallback(
+				const FLAC__StreamEncoder* /*encoder*/, FLAC__uint64* offset, void* file)
+			{
+				const int64_t position = detail::tellFile(static_cast<std::FILE*>(file));
+				if (position < 0)
+					return FLAC__STREAM_ENCODER_TELL_STATUS_ERROR;
+				*offset = static_cast<FLAC__uint64>(position);
+				return FLAC__STREAM_ENCODER_TELL_STATUS_OK;
+			}
+
 			WriteOptions m_options;
 			std::string m_path;
 			int m_bits;
+			detail::File m_file; // before the encoder, which writes to it until it is deleted
 			std::unique_ptr<FLAC__StreamEncoder, decltype(&FLAC__stream_encoder_delete)> m_encoder;
 			std::vector<FLAC__int32> m_samples;
 			bool m_closed = false;

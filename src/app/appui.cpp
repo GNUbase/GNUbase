@@ -161,7 +161,7 @@ namespace gnubase::app
 			{"locate.nudgeCursorLeft", "Moves the project cursor left by a grid step.", nullptr},
 			{"locate.nudgeCursorRight", "Moves the project cursor right by a grid step.", nullptr},
 			// Editing parts and events (docs/features/parts-and-events.md); Backspace deletes too.
-			{"edit.delete", "Deletes the selected events.", "Delete"},
+			{"edit.delete", "Deletes the selection range, or without one the selected events.", "Delete"},
 			{"edit.mute", "Mutes the selected events.", "Shift+M"},
 			{"edit.unmute", "Unmutes the selected events.", "Shift+U"},
 			{"edit.lock", "Locks the selected events.", "Mod+Shift+L"},
@@ -461,12 +461,19 @@ namespace gnubase::app
 				}
 				if (m_keyboard && m_shell.find(m_keyboardWindow) == nullptr)
 					m_keyboard.reset(); // so too: its notes end
-				// The project window selects events or markers: an event selected deselects the markers.
+				if (m_markers && m_shell.find(m_markersWindow) == nullptr)
+					m_markers.reset(); // its project subscriptions and playback watch end with its window
+				// The project window selects events, markers or time signature events: an event selected deselects
+				// the others.
 				if (m_eventDisplay && m_markerLines && m_eventDisplay->selection() != m_eventSelection)
 				{
 					m_eventSelection = m_eventDisplay->selection();
 					if (!m_eventSelection.empty())
+					{
 						m_markerLines->deselect();
+						if (m_signatureLane)
+							m_signatureLane->row().setSelection({});
+					}
 				}
 				// So does a range selected, e.g. between markers with the range tool: Delete deletes what was selected
 				// last.
@@ -481,7 +488,11 @@ namespace gnubase::app
 					{
 						m_eventRange = range;
 						if (range)
+						{
 							m_markerLines->deselect();
+							if (m_signatureLane)
+								m_signatureLane->row().setSelection({});
+						}
 					}
 				}
 				if (m_infoLine)
@@ -572,6 +583,34 @@ namespace gnubase::app
 								const auto cursor = transport.value.at("position").get<int64_t>();
 								openDialog(*found, "insert-tempo.rml",
 									{{"bpm", ui::tempoText(ui::currentTempo(context, cursor))}});
+							});
+					});
+			}});
+		// Insert Time Signature Event (p. 1469): a key command without a key, whose dialog starts at the signature at
+		// the cursor and adds the signature typed at the bar the cursor is in (signature.add).
+		m_keys.add({"signature.insertAtCursor",
+			"Asks for a time signature and adds a time signature event with it at the bar the project cursor is in.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				m_binding.send("project.get", engine::Json::object(),
+					[this, id = window.id()](const engine::Result& project)
+					{
+						if (!project.ok())
+							return;
+						m_binding.send("transport.get", engine::Json::object(),
+							[this, id, context = ui::projectTime(project.value)](const engine::Result& transport)
+							{
+								ui::Window* found = m_shell.find(id);
+								if (found == nullptr || !transport.ok())
+									return;
+								const double seconds = static_cast<double>(std::max<int64_t>(
+														   transport.value.at("position").get<int64_t>(), 0)) /
+									context.sampleRate;
+								const time::TimeSignature signature =
+									context.signatures.signatureAt(context.tempo.toTicks(seconds));
+								openDialog(*found, "insert-signature.rml",
+									{{"numerator", std::to_string(signature.numerator)},
+										{"denominator", std::to_string(signature.denominator)}});
 							});
 					});
 			}});
@@ -848,16 +887,16 @@ namespace gnubase::app
 		m_lua.addFunction("ui.toolModifierDefaults",
 			[](const engine::Json&) { return engine::Json{{"modifiers", ui::EventDisplay::defaultToolModifiers()}}; });
 		// For the add track dialog's Time Offset: a position typed in a time format, as position displays show it in
-		// the project (ui/timeformat.h), in seconds and ticks; nothing for text that isn't one.
+		// the project (ui/timeformat.h), in seconds and ticks; nothing for text that isn't one. The project window's
+		// event display has the project's time, so this doesn't wait for the engine (#814).
 		m_lua.addFunction("ui.parseTime",
 			[this](const engine::Json& parameters)
 			{
 				const std::optional<ui::TimeFormat> format =
 					ui::timeFormatFromName(parameters.value("format", std::string()));
-				const engine::Result project = engine::Client(m_engine).call("project.get");
-				ui::TimeContext context;
-				if (!format || !project.ok() || !ui::readTimeContext(project.value, context))
+				if (!format || !m_eventDisplay || m_eventDisplay->project().is_null())
 					return engine::Json::object();
+				const ui::TimeContext& context = m_eventDisplay->time();
 				const std::optional<double> seconds =
 					ui::parseTime(*format, parameters.at("text").get<std::string>(), context);
 				return seconds ? engine::Json{{"seconds", *seconds}, {"ticks", context.tempo.toTicks(*seconds)}}
@@ -897,7 +936,7 @@ namespace gnubase::app
 				dialog.location = "Mixdown.wav";
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this](const ui::FileDialogResult& chosen)
+					[this, id = window.id()](const ui::FileDialogResult& chosen)
 					{
 						if (!chosen.error.empty())
 							logging::warning("The file dialog failed: {}", chosen.error);
@@ -906,9 +945,30 @@ namespace gnubase::app
 						std::filesystem::path file = chosen.files.front();
 						if (file.extension().empty())
 							file += ".wav";
-						m_binding.send("mixdown.quickExport", {{"path", file.u8string()}});
+						// A job: m_files shows its progress and why it failed, as for mixdown.export, and
+						// quickExportEnded opens the file's folder once it is done.
+						m_binding.send("mixdown.quickExport", {{"path", file.u8string()}},
+							[this, id](const engine::Result& result)
+							{
+								if (!result.ok())
+								{
+									m_files.showError(id, result.error);
+									return;
+								}
+								const auto job = result.value.at("job").at("id").get<uint64_t>();
+								m_quickExports.insert(job);
+								// The job may have ended before its command's result came: job.get tells.
+								m_binding.send("job.get", {{"job", job}},
+									[this](const engine::Result& state)
+									{
+										if (state.ok())
+											quickExportEnded(state.value.at("job"));
+									});
+							});
 					});
 			}});
+		m_quickExportEnded.push_back(m_binding.on(
+			"job.finished", [this](const engine::Event& event) { quickExportEnded(event.data.at("job")); }));
 		// File > Export and File > Import > Tempo Track (docs/features/tempo-track.md) and Markers
 		// (docs/features/markers.md): their files, chosen in the OS's file dialog.
 		struct TrackFile
@@ -1088,13 +1148,17 @@ namespace gnubase::app
 			m_keys.add(
 				{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
 					{
-						// Delete removes the selected markers, which the project window selects instead of events.
+						// Delete removes the selected markers or time signature events, which the project window
+						// selects instead of events.
 						if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
+							return;
+						if (id == "edit.delete" && m_signatureLane && m_signatureLane->row().removeSelected())
 							return;
 						if (m_eventDisplay)
 							m_eventDisplay->actions().at(id)();
 					}});
-			// Those that only edit the selection range wait for one (EventDisplay::canRun).
+			// Those that only edit the selection range wait for one, and paste for something copied
+			// (EventDisplay::canRun).
 			m_keys.enableWhen(command.id, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
 				{ return m_eventDisplay != nullptr && m_eventDisplay->canRun(id); });
 			if (command.keys != nullptr)
@@ -1122,6 +1186,19 @@ namespace gnubase::app
 				m_keys.enableWhen(command.id,
 					[this, off = id == "track.disableSelectedGroupChannels"](ui::Window&, Rml::Element*)
 					{ return m_trackList != nullptr && m_trackList->selectsFolder(off); });
+			else if (id.find("Automation") != std::string::npos && id.find("Selected") != std::string::npos)
+				// Copy and Paste Automation of Selected Tracks or Parameters wait for their selection, the paste
+				// commands for copied automation too (docs/features/copy-automation.md).
+				m_keys.enableWhen(command.id,
+					[this, parameters = id.find("SelectedParameters") != std::string::npos,
+						paste = id.find("paste") != std::string::npos](ui::Window&, Rml::Element*)
+					{
+						return m_trackList != nullptr && (!paste || m_trackList->automationCopied()) &&
+							!(parameters ? m_trackList->selectedLanes() : m_trackList->selection()).empty();
+					});
+			else if (id == "track.pasteAutomationAll")
+				m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*)
+					{ return m_trackList != nullptr && m_trackList->automationCopied(); });
 			else
 				m_keys.enableWhen(command.id, [this, selected](ui::Window&, Rml::Element*)
 					{ return m_trackList != nullptr && (!selected || !m_trackList->selection().empty()); });
@@ -1150,6 +1227,25 @@ namespace gnubase::app
 				return m_trackList != nullptr && m_trackList->selectsType("transpose") && m_eventDisplay != nullptr &&
 					m_eventDisplay->project().is_object() &&
 					!m_eventDisplay->project().value("rootKey", std::string()).empty();
+			});
+
+		// The Transport menu's record modes show the one that is set (#531); Lock and Unlock Record stay commands.
+		m_transportChanged.emplace(
+			m_binding.on("transport.changed", [this](const engine::Event& event) { m_transport = event.data; }));
+		m_binding.send("transport.get", engine::Json::object(),
+			[this](const engine::Result& result)
+			{
+				if (result.ok())
+					m_transport = result.value;
+			});
+		m_keys.checkWhen("transport.set",
+			[this](const engine::Json& parameters)
+			{
+				if (parameters.size() != 1 || !m_transport.is_object())
+					return false;
+				const std::string key = parameters.begin().key();
+				return (key == "audioRecordMode" || key == "midiRecordMode" || key == "midiCycleRecordMode") &&
+					m_transport.value(key, engine::Json()) == parameters.begin().value();
 			});
 
 		// Undo and Redo in the menus while the history has a step to undo or redo.
@@ -1656,6 +1752,18 @@ namespace gnubase::app
 			{
 				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
 					window->setSelection(selection);
+				// Markers selected deselect the time signature events: Delete deletes what was selected last.
+				if (!selection.empty() && m_signatureLane)
+					m_signatureLane->row().setSelection({});
+			});
+		// So do time signature events selected: the markers and the selection range go.
+		m_signatureLane->onSelect(
+			[this]
+			{
+				if (m_markerLines)
+					m_markerLines->deselect();
+				if (m_eventDisplay && m_eventDisplay->range())
+					m_eventDisplay->setRange(std::nullopt);
 			});
 		// The marker tracks' Locate menus select the marker, Shift-click on Add Cycle Marker names the new one.
 		if (m_trackList)
@@ -2660,5 +2768,14 @@ namespace gnubase::app
 		}
 		document->Show(Rml::ModalFlag::Modal);
 		return *document;
+	}
+
+	void AppUi::quickExportEnded(const engine::Json& job)
+	{
+		if (job.at("state") == "running" || m_quickExports.erase(job.at("id").get<uint64_t>()) == 0)
+			return;
+		if (job.at("state") == "done")
+			m_openExternally(
+				std::filesystem::u8path(job.at("result").at("path").get<std::string>()).parent_path(), false);
 	}
 }

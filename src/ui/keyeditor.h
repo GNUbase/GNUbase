@@ -87,7 +87,8 @@ namespace gnubase::ui
 		// window or zone changes its width (#1671). Lines that an update laid out with their own ticks only for a
 		// quarter more or fewer (#1716), others for any other ticks (#1768). True when it built them, so that the
 		// window updates again (Shell::afterUpdate). The first scroll to the notes waits for that layout too, and
-		// is true when it scrolled.
+		// is true when it scrolled. It places the expression editor again for a grid of another width, and is true
+		// then.
 		bool fitLines(const Rml::Context& updated);
 
 		// Scrolls the note display so that the pitch is in the middle; false before the display has its size. The
@@ -136,8 +137,9 @@ namespace gnubase::ui
 		void ProcessEvent(Rml::Event& event) override;
 		void press(Rml::Event& event);
 		void drag(Rml::Event& event);
-		// The selected notes where a move or resize has taken them, at m_draggedTo: after every mouse move, and when
-		// the display shows the project again during the gesture (#1789).
+		// The selected notes where a move or resize has taken them, at the time and pitch now under m_draggedTo: after
+		// every mouse move, when the display shows the project again during the gesture (#1789) and when an in-place
+		// editor's range changes during it (#1808).
 		void placeDragged();
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
@@ -248,6 +250,7 @@ namespace gnubase::ui
 
 		// The note display's point under the mouse: project ticks and pitch.
 		std::pair<double, int> at(const Rml::Event& event) const;
+		std::pair<double, int> at(float mouseX, float mouseY) const; // the mouse's point in the window, in pixels
 		// With a pitch, the drum editor snaps it to its sound's snap while the grid type is drumMap.
 		int64_t snap(double ticks, bool off, int pitch = -1) const;
 		// How far a gesture moves the pressed note's edge, snapped; a move rows away in the display's order snaps to
@@ -268,6 +271,14 @@ namespace gnubase::ui
 		std::vector<const Note*> selectedNotes() const;
 
 		void select(std::vector<std::pair<uint64_t, uint64_t>> notes);
+		// The view's selected notes, parts and notes.
+		std::vector<std::pair<uint64_t, uint64_t>> viewSelection() const;
+		// The notes the display shows selected as editor.set takes them: those that stay selected keep the view's
+		// attributes selected of them on the Articulations lane (#1762).
+		engine::Json selectionJson() const;
+		// Shows the controller lanes for the view, with the notes the display shows selected: while a click's
+		// selection is unanswered, the click's, so that a lane edit acts on those (#1897).
+		void showLanes();
 		void setView(engine::Json parameters);
 		// Sends note.* commands, each {command, parameters}: one alone, several in a history.transaction. done, unless
 		// empty, runs with the result.
@@ -317,15 +328,16 @@ namespace gnubase::ui
 
 		Gesture m_gesture = Gesture::None;
 		std::pair<double, int> m_pressedAt;
-		float m_pressedX = 0.0F;                           // the mouse's x at the press, in pixels
-		float m_pressedY = 0.0F;                           // the mouse's y at the press, in pixels
-		std::optional<Note> m_pressed;                     // the note pressed, as it was
-		std::optional<std::pair<double, int>> m_draggedTo; // a move's or resize's ticks and pitch at the last move
+		float m_pressedX = 0.0F;                            // the mouse's x at the press, in pixels
+		float m_pressedY = 0.0F;                            // the mouse's y at the press, in pixels
+		std::optional<Note> m_pressed;                      // the note pressed, as it was
+		std::optional<std::pair<float, float>> m_draggedTo; // the mouse at a move's or resize's last move, in pixels
 		bool m_snapOff = false;
-		float m_pitchZoom = 1.0F;               // the pitch rows' scale, which the keyboard's left part drags (p. 1261)
-		float m_zoomStart = 1.0F;               // m_pitchZoom at the press
-		float m_scrollStart = 0.0F;             // the note display's scroll top at the press, in pixels
-		bool m_zoomDrag = false;                // the drag went past the threshold
+		bool m_dragged = false;     // a drag event came since the press: the mouse leaving the window keeps the gesture
+		float m_pitchZoom = 1.0F;   // the pitch rows' scale, which the keyboard's left part drags (p. 1261)
+		float m_zoomStart = 1.0F;   // m_pitchZoom at the press
+		float m_scrollStart = 0.0F; // the note display's scroll top at the press, in pixels
+		bool m_zoomDrag = false;    // the drag went past the threshold
 		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out
 		// The drawn note taken out of the grid, kept until the next one goes: the mouse event that ends the draw may
 		// have it as its target, which the listeners after this one still read.
@@ -341,8 +353,9 @@ namespace gnubase::ui
 		std::unique_ptr<ControllerLanes> m_lanes;
 		bool m_expressionOpen = false;                  // the expression editor (p. 1308)
 		std::pair<uint64_t, uint64_t> m_expressionNote; // the note double-clicked to open it: part, id
-		std::map<int64_t, double> m_painted;            // the draw tool's points in it, project ticks
-		int64_t m_paintFrom = 0;                        // the range it swept, project ticks
+		float m_expressionWide = 0.0F;       // the grid's width placeExpression placed it for, which fitLines follows
+		std::map<int64_t, double> m_painted; // the draw tool's points in it, project ticks
+		int64_t m_paintFrom = 0;             // the range it swept, project ticks
 		int64_t m_paintTo = -1;
 		uint64_t m_read = 0;                // show()'s read
 		uint64_t m_expressionEdits = 0;     // the expression editor's edits sent

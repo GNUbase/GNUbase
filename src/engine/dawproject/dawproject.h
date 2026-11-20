@@ -35,8 +35,11 @@ namespace gnubase::engine
 	// GNUbase wrote it, the project is restored from gnubase.json; otherwise, as when another application wrote the
 	// file or changed it, it is built from project.xml. With extractMedia false nothing is extracted, and embedded
 	// media files keep their names inside the file as paths: for reading what a file holds without its media.
+	// An out-of-range native sample rate is clamped to the nearest bound, keeping the native data. If warnings is
+	// given, the repair is appended there after the native entry has been restored successfully.
 	// Throws DawProjectError.
-	Project loadDawProject(const std::string& path, const std::string& mediaFolder, bool extractMedia = true);
+	Project loadDawProject(const std::string& path, const std::string& mediaFolder, bool extractMedia = true,
+		std::vector<std::string>* warnings = nullptr);
 
 	// A tempo track file (#160, reference manual p. 1462): the tempo track's events and the time signature events, in
 	// an XML file of their own. It describes them as project.xml does, a Transport and an Arrangement with the tempo

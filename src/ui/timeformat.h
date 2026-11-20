@@ -41,6 +41,7 @@ namespace gnubase::ui
 		double startTime = 0.0;   // what seconds, timecode and user frames show at the project start
 		double sampleStart = 0.0; // what samples show at the project start, in seconds: ruler tracks' time offset
 		int barOffset = 0;        // added to the bars shown
+		time::Ticks barShift = 0; // how much later than the signatures' the bars shown start: ruler tracks' offset
 		int userFramesPerSecond = time::g_userFramesPerSecond;
 	};
 
@@ -60,7 +61,8 @@ namespace gnubase::ui
 	time::Samples positionSamples(double seconds, double sampleRate);
 
 	// A position, in seconds from the project start, as position displays show it: "1.1.1.0", "0:00:01.500",
-	// "00:00:01:12" or "72000". Seconds, timecode and user frames count from the start time, bars from the bar offset.
+	// "00:00:01:12" or "72000". Seconds, timecode and user frames count from the start time, bars from the bar offset
+	// and the bar shift.
 	std::string formatTime(TimeFormat format, double seconds, const TimeContext& context);
 
 	// A position typed in the format, in seconds, or nothing for text that isn't one or is before the project start.

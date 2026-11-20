@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // MIDI devices and patch banks (#136, docs/features/midi-devices.md) in the app's UI, driven with ui::Automation as
-// MCP's UI tools drive it: the inspector chooses a MIDI track's patch, and the MIDI device manager installs, shows and
-// removes devices, all through engine commands.
+// MCP's UI tools drive it: the inspector chooses a MIDI track's patch, and the MIDI device manager installs, shows,
+// edits and removes devices, all through engine commands.
 #include "uiapp.h"
 
 #include "engine/engine.h"
@@ -170,6 +170,151 @@ TEST_CASE("the MIDI device manager installs, shows and removes MIDI devices", "[
 	CHECK(devices(app).contains("Sound Module"));
 	click(app, "#close");
 	REQUIRE(app.waitUntil([&] { return elements(app, "#midi-devices").empty(); }));
+}
+
+TEST_CASE("the MIDI device manager follows external settings and groups interleaved folders", "[ui]")
+{
+	test::UiApp app{{900, 640}};
+	Json value = {{"Synth",
+		{{"banks",
+			{{{"name", "Bank"},
+				{"patches",
+					{{{"name", "First"}, {"program", 0}, {"folder", "Keys"}}, {{"name", "Root"}, {"program", 1}},
+						{{"name", "Other"}, {"program", 2}, {"folder", "Strings"}},
+						{{"name", "Last"}, {"program", 3}, {"folder", "Keys"}}}}}}}}}};
+	app.call("settings.set", {{"key", "midi.devices"}, {"value", value}});
+	app.keys().run("window.midiDeviceManager", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return !elements(app, "#midi-devices").empty(); }));
+	SECTION("each folder appears once, with its patches together")
+	{
+		const Json rows = elements(app, "#patch-banks listitem");
+		REQUIRE(rows.size() == 7);
+		CHECK_THAT(rows[1].at("text").get<std::string>(), ContainsSubstring("Keys"));
+		CHECK_THAT(rows[2].at("text").get<std::string>(), ContainsSubstring("First"));
+		CHECK_THAT(rows[3].at("text").get<std::string>(), ContainsSubstring("Last"));
+		CHECK_THAT(rows[4].at("text").get<std::string>(), ContainsSubstring("Root"));
+		CHECK_THAT(rows[5].at("text").get<std::string>(), ContainsSubstring("Strings"));
+	}
+	SECTION("external edits preserve the selected device and follow removal and reopening")
+	{
+		app.call("midiDevice.install", {{"name", "Another"}});
+		REQUIRE(app.waitUntil([&] { return elements(app, "#installed-devices listitem").size() == 2; }));
+		CHECK(attribute(app, "#installed-devices", "value") == "2"); // Synth is still selected
+		value = devices(app);
+		value.at("Synth").at("banks")[0]["name"] = "Changed";
+		app.call("settings.set", {{"key", "midi.devices"}, {"value", value}});
+		REQUIRE(app.waitUntil([&] { return elements(app, "#patch-banks listitem")[0].at("text") == "Changed"; }));
+		app.call("midiDevice.remove", {{"name", "Synth"}});
+		REQUIRE(app.waitUntil([&] { return elements(app, "#patch-banks listitem").empty(); }));
+		click(app, "#close");
+		REQUIRE(app.waitUntil([&] { return elements(app, "#midi-devices").empty(); }));
+		app.call("midiDevice.install", {{"name", "Closed"}});
+		app.keys().run("window.midiDeviceManager", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&] { return elements(app, "#installed-devices listitem").size() == 2; }));
+		app.call("midiDevice.remove", {{"name", "Another"}});
+		CHECK(app.waitUntil([&] { return elements(app, "#installed-devices listitem").size() == 1; }));
+	}
+}
+
+TEST_CASE("the MIDI device manager edits banks and presets only with Enable Edit", "[ui]")
+{
+	test::UiApp app{{900, 640}};
+	app.call("midiDevice.install", {{"name", "Synth"}});
+	app.keys().run("window.midiDeviceManager", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return !elements(app, "#midi-devices").empty(); }));
+	const auto type = [&](const std::string& id, const std::string& text)
+	{
+		click(app, id);
+		app.ui().key(std::nullopt, "Mod+A");
+		app.ui().text(std::nullopt, text);
+	};
+	const auto banks = [&] { return devices(app).at("Synth").at("banks"); };
+	REQUIRE(elements(app, "#enable-edit").size() == 1);
+	click(app, "#enable-edit");
+	click(app, "#create-bank");
+	REQUIRE(app.waitUntil([&] { return banks().size() == 1; }));
+	type("#patch-name", "Custom Bank");
+	click(app, "#apply-patch");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("name") == "Custom Bank"; }));
+	click(app, "#new-preset");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("patches").size() == 1; }));
+	type("#patch-name", "My <Piano>");
+	type("#patch-folder", "Keys & Pads");
+	type("#patch-program", "128");
+	type("#patch-bank", "16384");
+	click(app, "#apply-patch");
+	const Json expected = {{"name", "My <Piano>"}, {"folder", "Keys & Pads"}, {"program", 127}, {"bank", 16383}};
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("patches")[0] == expected; }));
+	CHECK_THAT(
+		elements(app, "#patch-banks .patch-name")[0].at("text").get<std::string>(), ContainsSubstring("My <Piano>"));
+	// Invalid numbers report an error without changing settings.
+	type("#patch-program", "129");
+	click(app, "#apply-patch");
+	CHECK(banks()[0].at("patches")[0] == expected);
+	CHECK(!elements(app, "#midi-devices-message")[0].value("text", std::string()).empty());
+	type("#patch-program", "1");
+	type("#patch-bank", "");
+	click(app, "#apply-patch");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("patches")[0].at("program") == 0; }));
+	CHECK(!banks()[0].at("patches")[0].contains("bank"));
+	click(app, "#enable-edit");
+	CHECK(elements(app, "#create-bank")[0].at("attributes").contains("disabled"));
+	click(app, "#enable-edit");
+	click(app, "#remove-patch");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("patches").empty(); }));
+	// A folder groups presets: rename and remove the group as a whole.
+	click(app, "#new-preset");
+	type("#patch-folder", "Keys");
+	click(app, "#apply-patch");
+	click(app, "#new-preset");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("patches").size() == 2; }));
+	click(app, "#patch-banks listitem[value=folder1-1]");
+	type("#patch-name", "Renamed Keys");
+	click(app, "#apply-patch");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("patches")[0].at("folder") == "Renamed Keys"; }));
+	CHECK(banks()[0].at("patches")[1].at("folder") == "Renamed Keys");
+	click(app, "#remove-patch");
+	REQUIRE(app.waitUntil([&] { return banks()[0].at("patches").empty(); }));
+	click(app, "#patch-banks listitem[value=bank1]");
+	app.ui().key(std::nullopt, "Backspace");
+	CHECK(app.waitUntil([&] { return banks().empty(); }));
+}
+
+TEST_CASE("the MIDI device manager adds a checked range of presets from a selected template", "[ui]")
+{
+	test::UiApp app{{900, 640}};
+	const Json patch = {{"name", "Brass"}, {"program", 125}, {"bank", 300}, {"folder", "Winds"}};
+	app.call("settings.set",
+		{{"key", "midi.devices"}, {"value", {{"Synth", {{"banks", {{{"name", "Bank"}, {"patches", {patch}}}}}}}}}});
+	app.keys().run("window.midiDeviceManager", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return !elements(app, "#midi-devices").empty(); }));
+	click(app, "#enable-edit");
+	click(app, "#patch-banks listitem[value=patch1-1]");
+	const auto count = [&](const std::string& text)
+	{
+		click(app, "#preset-count");
+		app.ui().key(std::nullopt, "Mod+A");
+		app.ui().text(std::nullopt, text);
+		click(app, "#multiple-presets");
+	};
+	const auto patches = [&] { return devices(app).at("Synth").at("banks")[0].at("patches"); };
+	REQUIRE(elements(app, "#multiple-presets").size() == 1);
+	for (const char* invalid : {"words", "0", "1.5", "4"}) // the last range would exceed program 128
+	{
+		count(invalid);
+		CHECK(patches().size() == 1);
+		CHECK(!elements(app, "#midi-devices-message")[0].value("text", std::string()).empty());
+	}
+	count("3");
+	REQUIRE(app.waitUntil([&] { return patches().size() == 4; }));
+	for (int i = 1; i <= 3; ++i)
+	{
+		const Json added = patches()[i];
+		CHECK(added.at("program") == 124 + i);
+		CHECK(added.at("name") == "Brass " + std::to_string(i));
+		CHECK(added.at("bank") == 300);
+		CHECK(added.at("folder") == "Winds");
+	}
 }
 
 TEST_CASE("the inspector chooses the MIDI channel a MIDI track's patch goes out on", "[ui]")

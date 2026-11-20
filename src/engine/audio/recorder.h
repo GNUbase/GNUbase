@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <bitset>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -136,6 +137,10 @@ namespace gnubase::engine
 		int64_t catchFrames = 0;  // midi.recordCatchRange, in device frames
 		size_t retrospective = 0; // midi.retrospectiveEvents: what each track's retrospective buffer holds
 		int64_t pauseFrames = 0;  // a pause after which input in stop mode starts the buffer afresh
+		// The locators while the transport cycles, else -1: a take that starts at the left one where the one before
+		// ended at the right one is a cycle lap (recording.add's cycle).
+		time::Samples cycleLeft = -1;
+		time::Samples cycleRight = -1;
 
 		bool operator==(const RecordSetup& other) const
 		{
@@ -147,7 +152,8 @@ namespace gnubase::engine
 				preRecordFrames == other.preRecordFrames && tracks == other.tracks && midiTracks == other.midiTracks &&
 				midiMode == other.midiMode && midiCycleMode == other.midiCycleMode && midiFilter == other.midiFilter &&
 				snapToBars == other.snapToBars && catchFrames == other.catchFrames &&
-				retrospective == other.retrospective && pauseFrames == other.pauseFrames;
+				retrospective == other.retrospective && pauseFrames == other.pauseFrames &&
+				cycleLeft == other.cycleLeft && cycleRight == other.cycleRight;
 		}
 	};
 
@@ -193,6 +199,11 @@ namespace gnubase::engine
 		// sequencers' MIDI input plays in the block, recorded where the transport plays it.
 		void process(const audio::DeviceBlock& block, const PlayedPositions& played, int64_t offset,
 			const MidiTap::Sequencers& sequencers) noexcept;
+
+		// Command thread, while it calls process itself (an offline render): if the chunks the audio thread sent fill
+		// half the pool, waits until the disk thread has handled all of them, so that no block finds the pool empty.
+		// False if that took longer than timeout.
+		bool waitForChunks(std::chrono::milliseconds timeout);
 
 		// Input frames lost because the disk thread fell behind.
 		uint64_t dropped() const { return m_dropped.load(std::memory_order_relaxed); }
@@ -248,8 +259,8 @@ namespace gnubase::engine
 		{
 			std::deque<RetrospectiveEvent> events;
 			bool taken = false; // retrospective() returned it: the next input starts afresh
-			// How many of its events came in stop mode through an earlier audio device: the next in stop mode starts it
-			// afresh.
+			// How many of its events came in stop mode through an earlier audio device: the next input in stop mode
+			// leaves out just those events.
 			size_t stoppedBefore = 0;
 			// Its first events came before or during a recording of the track, whether that one took them or not, or
 			// through another audio device: the catch range of the next one leaves them out.
@@ -285,9 +296,15 @@ namespace gnubase::engine
 		void handleMidi(const Chunk& chunk);
 		void beginMidi(const Chunk& chunk);
 		void endMidi();
+		// Whether a take that starts at start after one that ended at end is a cycle lap, by the latest setup.
+		bool startsLap(time::Samples end, time::Samples start) const;
 		void keepRetrospective(const MidiInput& input, uint64_t deviceFrame);
 		// Makes the latest setup up to number the next recording's.
 		void applySetups(uint64_t number);
+		// The device channels the next recording's tracks record, which the pre-record history keeps, sorted.
+		std::vector<int> historyPorts() const;
+		// Allocates the pre-record history for the next recording, empty; reports a failure and keeps none then.
+		void resetHistory();
 		// Audio thread: hands frames frames from offset in the block on, or false if no chunk is free.
 		bool send(const audio::DeviceBlock& block, uint32_t offset, uint32_t frames, time::Samples position) noexcept;
 		void processMidi(const audio::DeviceBlock& block, const PlayedPositions& played,
@@ -314,6 +331,7 @@ namespace gnubase::engine
 		std::atomic<bool> m_armed{false};
 		std::atomic<bool> m_midiArmed{false};
 		std::atomic<uint64_t> m_dropped{0};
+		std::atomic<size_t> m_inFlight{0};      // chunks sent that the disk thread hasn't handled yet
 		std::atomic<uint64_t> m_latestSetup{0}; // the number of the latest setup, which the chunks get
 
 		// Setups not yet applied, numbered from 1 on, oldest first: the command thread adds them, the disk thread
@@ -333,9 +351,11 @@ namespace gnubase::engine
 		bool m_recording = false;
 		std::vector<File> m_files;
 		std::vector<Take> m_takes;
+		bool m_cycled = false;             // a take began a cycle lap
 		time::Samples m_written = 0;       // frames in each file
 		uint64_t m_deviceEnd = 0;          // the device frame after the last one recorded
-		std::vector<float> m_history;      // pre-record: the last frames not recorded, a ring of all channels
+		std::vector<float> m_history;      // pre-record: the last frames not recorded, a ring of m_historyPorts
+		std::vector<int> m_historyPorts;   // the device channels in it
 		size_t m_historyFrames = 0;        // valid frames in it
 		size_t m_historyStart = 0;         // the oldest frame's index
 		uint64_t m_historyEnd = 0;         // the device frame after its newest one
@@ -344,11 +364,13 @@ namespace gnubase::engine
 		RecordSetup m_midiCurrent;
 		bool m_midiRecording = false;
 		std::vector<Take> m_midiTakes; // their offsets are the device frames they started at
+		bool m_midiCycled = false;     // a take began a cycle lap
 		std::map<ObjectId, MidiTakeBuilder> m_midiBuilders;
 		// MIDI recordings that ended while an audio recording still runs (its input comes later by the record
 		// offset): recording.add gets them with it, as one undo step.
 		Json m_pendingMidi = Json::array();
 		RecordSetup m_pendingMidiSetup;
+		bool m_pendingMidiCycled = false;
 		std::map<ObjectId, Retrospective> m_retrospective; // by channel
 		uint64_t m_frameBase = 0; // added to the device frames kept: the device's first frame is after all kept before
 

@@ -18,6 +18,8 @@
 		#member { position: absolute; left: 10dp; top: 10dp; width: 40dp; height: 20dp; }
 		#titled { position: absolute; left: 70dp; top: 10dp; width: 40dp; height: 20dp; }
 		#modified { position: absolute; left: 450dp; top: 100dp; width: 100dp; height: 40dp; }
+		tooltip { display: none; position: absolute; z-index: 1000; padding: 4dp 8dp; white-space: nowrap; }
+		tooltip.shown { display: block; }
 		#menubar { position: absolute; left: 200dp; top: 300dp; }
 		#low { position: absolute; left: 0; bottom: 0; width: 100dp; height: 200dp; }
 	</style>

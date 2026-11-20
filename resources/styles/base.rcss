@@ -370,6 +370,12 @@ knob, fader, slider, valuefield
 	drag: drag;
 }
 
+/* Disabled ones take no focus, nor does a disabled list view, which has no :disabled (docs/features/accessibility.md). */
+knob:disabled, fader:disabled, slider:disabled, valuefield:disabled, listview[disabled]
+{
+	tab-index: none;
+}
+
 knob
 {
 	display: inline-block;
@@ -893,6 +899,11 @@ meter .meter-peak
 
 /* Markers (docs/features/markers.md): the marker lines and marker events are event lanes like the events; code
    places the labels where their markers are. */
+.event-display .marker-lines, .event-display .marker-events
+{
+	pointer-events: none;
+}
+
 .event-display .marker-labels
 {
 	position: absolute;
@@ -977,8 +988,9 @@ meter .meter-peak
 }
 
 /* The signature track (docs/features/signature-track.md): the time signature events over the signature track's lane,
-   or filling the tempo track editor's time signature display, and the field that edits one. Code places the row on
-   its lane, the events at their bars and the field over the event it edits. */
+   or filling the tempo track editor's time signature display, and the field that edits one; on the lane, the bars in
+   its background behind them. Code places the row on its lane, the events and the bars at their bars and the field
+   over the event it edits. */
 .signature-row
 {
 	position: absolute;
@@ -999,6 +1011,24 @@ meter .meter-peak
 	left: 0;
 	top: 0;
 	width: 100%;
+	height: 100%;
+}
+
+.signature-row .signature-bars
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+}
+
+.signature-row .signature-bar
+{
+	position: absolute;
+	top: 0;
+	width: 0;
 	height: 100%;
 }
 
@@ -1725,6 +1755,13 @@ meter .meter-peak
 .track-list .track-controls select.marker-menu
 {
 	width: 44dp;
+	padding: 0 2dp;
+}
+
+/* The signature track's Signature Track Options (docs/features/signature-track.md), next to Lock. */
+.track-list .track-controls select.signature-options
+{
+	width: 64dp;
 	padding: 0 2dp;
 }
 

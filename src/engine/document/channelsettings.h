@@ -13,6 +13,10 @@ namespace gnubase::engine
 	class Engine;
 	class ProjectModel;
 
+	// Removes the automation lanes of a slot's plugin, which go with the plugin when it leaves its channel
+	// (automationLane.removed).
+	void removePluginAutomation(Project& project, CommandContext& context, ObjectId slot);
+
 	// Replaces an audio channel's inserts by copies of slots, with new ids: the automation of the plugins it had goes
 	// with them (automationLane.removed, plugin.removed). The caller announces the channel and the new slots.
 	void replaceSlots(Project& project, CommandContext& context, ObjectId id, const std::vector<Slot>& slots);

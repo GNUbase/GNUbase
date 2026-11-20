@@ -854,6 +854,8 @@ namespace gnubase::engine
 		int activeVersion = 1; // the ID of the active version
 		// Folders: Group Editing mode (reference manual p. 274, #1579). Last, so that Track{...} can leave it out.
 		bool groupEditing = false;
+		// The signature track: Lock (reference manual p. 163), while the signature.* commands don't change the events.
+		bool lock = false;
 	};
 
 	// Whether tracks of a type have versions: audio, instrument and MIDI tracks.
@@ -1631,7 +1633,7 @@ namespace gnubase::engine
 		// Snap and grid (#87): settings, not part of undo.
 		SnapSettings snap;
 		// The color last given to events or parts, for editing.autoTrackColor's lastApplied: not part of undo or the
-		// file.
+		// file, and kept when another project is opened or a new one made (reference manual p. 1621).
 		std::string lastAppliedColor;
 		// Solo Instrument (reference manual p. 1223): the selected notes of the drum editors that have it on. Of the
 		// tracks with a drum map that these notes are on, only the notes with their pitches play. Set from the editor
@@ -2082,10 +2084,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.groupEditing,
 				   a.autoFades, a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
-				   a.articulationMap, a.gmNames, a.versions, a.activeVersion) ==
+				   a.articulationMap, a.gmNames, a.versions, a.activeVersion, a.lock) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.groupEditing,
 				b.autoFades, b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
-				b.articulationMap, b.gmNames, b.versions, b.activeVersion);
+				b.articulationMap, b.gmNames, b.versions, b.activeVersion, b.lock);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

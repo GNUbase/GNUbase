@@ -67,9 +67,8 @@ manual pp. 160–161, 221–226). Adding, nesting, moving and folding folders is
 
 Event details instead of data blocks on folders, and automation instead of data on folders with a group channel
 (p. 222); mute and solo on folders without a group channel; phase-coherent warping of the edit group (p. 196); the
-modified folder icon; the folder's channel in the mixer, and moving channels into folders there; Deep Track Folding; a
-folder's data blocks following an event drag (they move on the drop); and the color picker, with the track colors
-ticket (#94).
+modified folder icon; the folder's channel in the mixer, and moving channels into folders there; Deep Track Folding;
+and a folder's data blocks following an event drag (they move on the drop).
 
 ## Checks
 

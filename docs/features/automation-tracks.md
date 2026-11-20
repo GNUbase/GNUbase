@@ -16,7 +16,9 @@ the project or its undo history.
   Controller 0 to 127 (MIDI channel 0, from 0 to 1; pitch bend's static value is 0.5; a MIDI track set to a MIDI
   channel plays them on that one, [mixer.md](mixer.md)). Each comes with `group`
   (`Channel`, the instrument's or plugin's name, or `MIDI`) and `lane`, the id of the track's lane for it, or 0.
-  Tracks without a channel have none.
+  Tracks without a channel have none. Its result schema describes the items' fields. The event display asks for a
+  track's targets again only when the track, its channel, the channel's plugins, the track's lanes (not their points)
+  or the project's maximum volume change.
 
 ## Automation tracks
 
@@ -41,18 +43,22 @@ the project or its undo history.
   automation lane per display lane (0 for a track's own), and `laneTracks()` its track. The track list's row reaches
   down over them; the track's height still drags at its own lane's lower edge.
 - **Showing and hiding** (p. 880): Show/Hide Automation in a track's lower left corner, 16 dp square, left of the name
-  and above the 4 dp at the row's lower edge that size the track (2 dp in the lowest rows, 20 dp), so that the selection
-  frame and the separator to the next row stay whole (#1773), or the track list's context menu (Show/Hide Automation for
-  the selected tracks, Show All Used Automation, Hide All Automation; `track.toggleAutomationSelected`,
-  `track.showUsedAutomation`, `track.hideAllAutomation`). Showing a track's automation shows its lanes with points, or
-  else its first lane, or else adds a lane for its first parameter (volume on tracks with audio). Append Automation
-  Track shows the next parameter in `automationLane.targets`' order that no automation track shows, adding its lane if
-  the track has none. New lanes don't read until a tool draws on them.
+  and above the 4 dp at the row's lower edge that size the track (2 dp in the lowest rows, 20 dp), so that the
+  selection frame and the separator to the next row stay whole (#1773), or the track list's context menu (Show/Hide
+  Automation for the selected tracks, Show All Used Automation, Hide All Automation; `track.toggleAutomationSelected`,
+  `track.showUsedAutomation`, `track.hideAllAutomation`; Show All Used Automation adds to the automation tracks that
+  show, unused ones too). Showing a track's automation shows its lanes with points, or else its first lane, or else
+  adds a lane for its first parameter (volume on tracks with audio). Append Automation Track shows the next parameter
+  in `automationLane.targets`' order that no automation track shows, adding its lane if the track has none. New lanes
+  don't read until a tool draws on them. Selecting a track with the keys scrolls it into view with its automation
+  tracks, as far as they fit (`TrackList::reveal`). A new or loaded project (`project.reset`) starts with none open and
+  no points selected, since its tracks, lanes and points get the old project's ids again.
 - **Parameter selector** (p. 880): the parameter's name opens a menu with a search field, which narrows the track's
-  parameters to those whose name has the text in any case; Remove Parameter (`automationLane.remove`, p. 878),
-  Remove Unused Parameters (the track's lanes without points, p. 880), and on a plugin's lane Show Only Automation
-  Tracks of the plugin. Picking a parameter shows its lane in that automation track, adding it if the track has
-  none; a lane without points that the track showed is removed in the same undo step.
+  parameters to those whose name (not its RML, where `&`, `<` and `>` are entities) has the text in any case; Remove
+  Parameter (`automationLane.remove`, p. 878), Remove Unused Parameters (the track's lanes without points, p. 880), and
+  on a plugin's lane Show Only Automation Tracks of the plugin. Picking a parameter shows its lane in that automation
+  track, adding it if the track has none; a lane without points that the track showed is removed in the same undo
+  step.
 - **Curves** (p. 870): ramps for continuous parameters, steps for on/off and stepped ones, as the engine plays them.
   A lane's values fill its height from its parameter's minimum to its maximum; volume from -60 dB to the project's
   maximum, like the mixer's fader, with silence at the bottom. A lane that doesn't read is grayed out (`.off`).
@@ -66,11 +72,12 @@ the project or its undo history.
 ## Tools
 
 A click with a tool turns reading on (p. 873), in the same undo step as the points. Snapping applies where a click
-places a point and where a moved point lands ([snap.md](snap.md)).
+places a point and where a moved point lands ([snap.md](snap.md)); Ctrl with Alt or Shift turns it off for a move
+(p. 877).
 
 | Tool | Click | Drag |
 |---|---|---|
-| Object Selection | On a point: selects it (Ctrl or Shift: adds or removes it); elsewhere adds a point | A selected point moves the selection in time and value (Ctrl: across or up and down only); from an empty spot a rectangle selects the points in it (Ctrl or Shift: adds them) |
+| Object Selection | On a point: selects it, on one of several selected points only it (Ctrl or Shift: adds or removes it); elsewhere adds a point and ends the selection (Ctrl or Shift: keeps it) | A selected point moves the selection in time and value, and a continuous selection replaces the points where it lands (pp. 877-878), none when the times stay, so a jump's other point does; with the keys held at the press, Ctrl: across or up and down only, Ctrl with Alt or Shift: unsnapped. From an empty spot a rectangle selects the points in it (Ctrl or Shift: adds them) |
 | Draw | Adds a point | Draws a curve: the points drawn, reduced to those that stray more than 2 dp from the line between their neighbours (p. 873), replace the points in its range |
 | Line | | Replaces the points in its range with a line, a parabola (fast at first when drawn rightwards), or a sine, triangle or square wave between the start's and the end's value with periods of the grid as zoom adapts it (p. 874); not on step curves |
 | Erase | Removes the point | |
@@ -80,18 +87,22 @@ places a point and where a moved point lands ([snap.md](snap.md)).
   rest of its top moves them up or down, and its bottom border stretches them in time from the box's left.
 - **Copying automation to other tracks** (pp. 878–879) selects automation tracks in the track list and copies
   their automation, or that of tracks, between the locators: [copy-automation.md](copy-automation.md).
-- **Delete** (`edit.delete`, Backspace) removes the selected points (p. 878). Selecting events deselects the points,
-  and the other way round. The selection is the display's (`EventDisplay::selectedPoints()`), also in the display's
-  attribute `automation-selection` as `lane:point` pairs.
+- **Other tools.** The zoom and play tools work on automation tracks as on the track's own lane: the play tool
+  auditions and scrubs an audio track from its automation tracks too. A press with the range selection, split, glue,
+  mute, comp or time warp tool does nothing there.
+- **Delete** (`edit.delete`, Backspace) removes the selected points (p. 878). Selecting events or a range deselects
+  the points, and the other way round for events. The selection is the display's (`EventDisplay::selectedPoints()`),
+  also in the display's attribute `automation-selection` as `lane:point` pairs.
 
 ## Not yet
 
 Write automation (#122), automation track heights of their own, the automation panel and its settings (Reduction
 Level, Reveal Parameter on Write), bézier handles and quick vertical scaling of one segment (pp. 874, 877), the
 editor's compress, relative and absolute centre scaling, Range Selection on automation tracks with its added points,
-Alt with the object selection tool to draw, Shift to set the line
+Alt with the object selection tool to draw, a selection with unselected points in it that can't move past other points
+(p. 878), opening an automation track without recording an undo step (#1918), Shift to set the line
 tool's period, the most recent parameters at the top of the selector, Open Plugin Editor, setting terminators on the
-info line ([virgin-territory.md](virgin-territory.md)), and automation of the channel strip's sections (#658).
+info line (#1917, [virgin-territory.md](virgin-territory.md)), and automation of the channel strip's sections (#658).
 
 ## Checks
 
@@ -103,6 +114,14 @@ info line ([virgin-territory.md](virgin-territory.md)), and automation of the ch
   and the selected tracks' command; the draw tool's click and curve, the line tool's line, square, sine, triangle and
   parabola, nothing on a step curve, the erase tool, and reading off with the static value line; selecting points with
   clicks, Ctrl and a rectangle, the event editor's vertical scaling and moving, moving points by a drag, Delete, and
-  selecting events deselecting points; the curve's terminators and virgin territory following `automation.set`.
+  selecting events deselecting points; a Ctrl-drag of selected points in one direction, a Ctrl-click that deselects
+  one, the editor's tilt left, tilt right and stretch; a move that snaps the pressed point, and Ctrl with Shift or Alt
+  that turns snapping off; a moved selection that replaces the point where it lands, in its preview and in one undo
+  step, a click on one of the selected points, a click on an empty spot that ends the selection, a Ctrl-restricted
+  move released after Ctrl, and a range that deselects points; a vertical move of one of a jump's two points that
+  keeps the other; the zoom tool on an automation track, the play tool auditioning and scrubbing its track there, Show
+  All Used Automation keeping an unused automation track open, and selecting a track with the keys that reveals its
+  automation track; Show Only Automation Tracks of a plugin; a new project without the old one's open automation
+  tracks and selected points; the curve's terminators and virgin territory following `automation.set`.
 - `tests/canvas_tests.cpp`: a curve's lines with a terminator in the middle and at the end, with virgin territory,
   and scrolled to start after a terminator.

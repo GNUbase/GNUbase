@@ -217,7 +217,9 @@ namespace gnubase::engine::dsp
 				for (int k = std::max(first, 0); k < last; ++k)
 					channel[static_cast<size_t>(b)][static_cast<size_t>(k)] = BiquadState{};
 		};
-		const bool glide = !m_fresh && m_glideFrames > 0;
+		// A band that is off and uses no sections takes its new values at once, so that it comes in at them.
+		const bool idle = !s.on && band.count == 0 && !band.morphing();
+		const bool glide = !m_fresh && m_glideFrames > 0 && !idle;
 		band.octaves.set(std::log2(s.frequency), glide);
 		band.gain.set(s.gain, glide);
 		band.logQ.set(std::log2(s.q), glide);

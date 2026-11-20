@@ -564,6 +564,54 @@ TEST_CASE("a locate while recording waits for the punch in keeps waiting for it"
 	CHECK(recordedPositions(transport, 640, 64) == range(6000, 6640));
 }
 
+TEST_CASE("a locate past the punch in records there also after a record while playing", "[unit]")
+{
+	// Punch in at 48000, recording asked for while playing at 10000, then a locate to 60000 (#588).
+	Transport transport;
+	TransportSettings settings;
+	settings.left = 48000;
+	settings.right = 96000;
+	settings.punchIn = true;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.play());
+	CHECK(recordedPositions(transport, 10000, 64).empty());
+	REQUIRE(transport.record(true)); // waits for the left locator
+	CHECK(!transport.recording());
+	REQUIRE(transport.locate(60000));
+	CHECK(recordedPositions(transport, 640, 64) == range(60000, 60640));
+	CHECK(transport.sync());
+	CHECK(transport.recording());
+
+	// Located back before it, it waits for it again.
+	REQUIRE(transport.record(false));
+	REQUIRE(transport.locate(1000));
+	REQUIRE(transport.record(true));
+	REQUIRE(transport.locate(2000));
+	CHECK(recordedPositions(transport, 46640, 64) == range(48000, 48640));
+}
+
+TEST_CASE("a recording that waits for the punch in follows the left locator", "[unit]")
+{
+	// Punch in at 48000, recording asked for from stop or while playing at 10000, then the left locator moves to
+	// 60000: the punch in records from there, not from where it was (#588, the reference manual, p. 337).
+	const bool playing = GENERATE(false, true);
+	INFO((playing ? "while playing" : "from stop"));
+	Transport transport;
+	TransportSettings settings;
+	settings.left = 48000;
+	settings.right = 96000;
+	settings.punchIn = true;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(10000));
+	if (playing)
+		REQUIRE(transport.play());
+	REQUIRE(transport.record(true)); // waits for the left locator
+	transport.advance(64);
+	settings.left = 60000;
+	REQUIRE(transport.set(settings));
+	CHECK(recordedPositions(transport, 50640 - 64, 64) == range(60000, 60640));
+}
+
 TEST_CASE("recording from stop in a cycle with punch in starts at the punch in if the cycle never reaches the cursor",
 	"[unit]")
 {
@@ -789,6 +837,25 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK_THAT(reject(client, "transport.set", {{"startMode", "selection"}}), ContainsSubstring("startMode"));
 	CHECK_THAT(reject(client, "transport.set", {{"preRollAmount", -1}}), ContainsSubstring("preRollAmount"));
 	CHECK_THAT(reject(client, "transport.set", {{"postRollAmount", -1}}), ContainsSubstring("postRollAmount"));
+}
+
+TEST_CASE("the transport's position schemas give the positions' bounds", "[unit]")
+{
+	// For MCP clients and Lua, and the same bound as the handlers' (#592).
+	const Engine engine;
+	int found = 0;
+	for (const CommandInfo& info : engine.commands())
+		for (const auto& [command, property] : {std::pair{"transport.locate", "position"},
+				 std::pair{"transport.set", "left"}, std::pair{"transport.set", "right"}})
+			if (info.name == command)
+			{
+				INFO(command << " " << property);
+				const Json& schema = info.parameters.at("properties").at(property);
+				CHECK(schema.at("minimum") == 0);
+				CHECK(schema.at("maximum") == g_maxPosition);
+				++found;
+			}
+	CHECK(found == 3);
 }
 
 TEST_CASE("record starts playback and recording, punches in and out, and stop ends both", "[integration]")
@@ -1090,6 +1157,16 @@ TEST_CASE("go to project end locates to the end of the last event", "[integratio
 	run(client, "audioEvent.add",
 		{{"track", audio.at("track").at("id")}, {"clip", clip.at("clip").at("id")}, {"position", 12345}});
 	CHECK(run(client, "transport.locate", {{"target", "projectEnd"}}).at("position") == 12345 + 48000);
+
+	// One whose end in project samples is past what a time::Samples holds: the end stops at the largest position
+	// (#596).
+	const Json longest = run(client, "media.add",
+		{{"path", "/audio/longest.wav"}, {"sampleRate", 24000.0}, {"channels", 1}, {"length", Samples{1} << 62}});
+	const Json longClip = run(client, "clip.add", {{"media", longest.at("media").at("id")}});
+	const Json other = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}});
+	run(client, "audioEvent.add",
+		{{"track", other.at("track").at("id")}, {"clip", longClip.at("clip").at("id")}, {"position", 0}});
+	CHECK(run(client, "transport.locate", {{"target", "projectEnd"}}).at("position") == g_maxPosition);
 
 	// An event past the largest position: the cursor stops there, as do locators set to it.
 	run(client, "audioEvent.add",

@@ -1,0 +1,19 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Marker overlays above ordinary event lanes, without the other event overlays, for mouse target tests. -->
+<rml>
+<head>
+	<title>Marker overlays</title>
+	<style>
+		body, .event-display { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+	</style>
+</head>
+<body>
+	<div class="event-display">
+		<div class="event-area">
+			<event-lanes class="events"/>
+			<event-lanes class="marker-lines"/>
+			<event-lanes class="marker-events"/>
+		</div>
+	</div>
+</body>
+</rml>

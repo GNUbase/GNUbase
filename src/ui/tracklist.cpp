@@ -48,6 +48,13 @@ namespace gnubase::ui
 			Rml::EventId::Click, Rml::EventId::Mousescroll, Rml::EventId::Change};
 		constexpr std::array<Rml::EventId, 2> g_documentEvents = {Rml::EventId::Mousemove, Rml::EventId::Mouseup};
 
+		// A parameter's name in the parameter selector: with its instrument's or plugin's name.
+		std::string parameterName(const Json& target)
+		{
+			const std::string group = target.at("group").get<std::string>();
+			return (group == "Channel" ? "" : group + ": ") + target.at("name").get<std::string>();
+		}
+
 		Rml::Property dp(double value)
 		{
 			return {static_cast<float>(value), Rml::Unit::DP};
@@ -193,6 +200,10 @@ namespace gnubase::ui
 				return type == "transpose" && (transposeControl(control) || control == "timeBase");
 			if (type == "chord" || chordControl(control))
 				return type == "chord" && (chordControl(control) || control == "timeBase");
+			// The signature track's Lock and Signature Track Options (reference manual pp. 163-164).
+			const bool signatureControl = control == "signatureLock" || control == "signatureOptions";
+			if (type == "signature" || signatureControl)
+				return type == "signature" && signatureControl;
 			if (!hasChannel)
 				return control == "timeBase" && type != "folder" && type != "ruler" && type != "signature";
 			if (control == "record" || control == "monitor")
@@ -226,6 +237,9 @@ namespace gnubase::ui
 			if (control == "setTimeOffset")
 				return R"(<button class="set-time-offset" control="setTimeOffset" keepselection="" )"
 					   R"(title="Set Time Offset to Project Cursor Position">C</button>)";
+			if (control == "signatureOptions")
+				return R"(<select class="signature-options" control="signatureOptions" )"
+					   R"(title="Signature Track Options"/>)";
 			if (markerMenu(control))
 				return R"(<select class="marker-menu" control=")" + control + R"(" title=")" + markerMenuName(control) +
 					R"("/>)";
@@ -237,6 +251,7 @@ namespace gnubase::ui
 				{"timeBase", {"Switch Time Base", "L"}}, {"tempoTrack", {"Activate Tempo Track", "T"}},
 				{"timeOffsetOn", {"Time Offset On/Off", "O"}}, {"transposeMute", {"Mute Transpose Events", "M"}},
 				{"keepInOctave", {"Keep Transpose in Octave Range", "O"}}, {"transposeLock", {"Lock", "L"}},
+				{"signatureLock", {"Lock", "L"}},
 				{"chordRecord", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
 				{"chordMute", {"Mute Chord Track", "M"}}, {"showScales", {"Show Scales", "S"}},
 				{"addPositionMarker", {"Add Position Marker", "+"}}, {"addCycleMarker", {"Add Cycle Marker", "[+]"}},
@@ -715,11 +730,14 @@ namespace gnubase::ui
 		// and without a selection.
 		m_subscriptions.push_back(
 			m_binding.on("trackLayout.changed", [this](const engine::Event& event) { loadLayout(event.data, false); }));
+		m_subscriptions.push_back(m_binding.on("automation.copied",
+			[this](const engine::Event& event) { m_automationCopied = event.data.value("lanes", 0) > 0; }));
 		m_subscriptions.push_back(m_binding.on("project.reset",
 			[this, readVisibility](const engine::Event&)
 			{
 				select({});
 				m_selectedLanes.clear();
+				m_automationCopied = false; // the engine's automation clipboard is empty again
 				m_clicked.clear(); // the old project's tracks' clicks, whose ids the new one's may have (#1852)
 				// A height drag under way was the old project's: its release sends nothing to the new one.
 				if (m_drag == Drag::Height)
@@ -1156,6 +1174,13 @@ namespace gnubase::ui
 					widgets::fill(*button, markerOptions(markers, row.id, name), "");
 					continue;
 				}
+				if (name == "signatureOptions")
+				{
+					// Process Bars Dialog; the click pattern options wait for patterns per time signature event
+					// (docs/features/metronome.md).
+					widgets::fill(*button, {{"", "Options"}, {"processBars", "Process Bars Dialog"}}, "");
+					continue;
+				}
 				if (name == "midiChannel")
 				{
 					widgets::Options channels{{"any", "Any"}};
@@ -1189,6 +1214,8 @@ namespace gnubase::ui
 					on = track.value("timeOffsetOn", false);
 				else if (name == "groupEditing")
 					on = track.value("groupEditing", false);
+				else if (name == "signatureLock")
+					on = track.value("lock", false);
 				else if (name == "activateMarkerTrack")
 					on = markers.active == row.id;
 				else if (transposeControl(name))
@@ -1574,11 +1601,9 @@ namespace gnubase::ui
 		for (size_t i = 0; i < targets.size(); ++i)
 		{
 			const Json& target = targets.at(i);
-			const std::string group = target.at("group").get<std::string>();
-			const std::string name = (group == "Channel" ? "" : group + ": ") + target.at("name").get<std::string>();
 			rml += R"(<menuitem class="automation-target)" +
 				std::string(target.at("target") == json->at("target") ? " checked" : "") + R"(" target-index=")" +
-				std::to_string(i) + R"(">)" + Rml::StringUtilities::EncodeRml(name) + "</menuitem>";
+				std::to_string(i) + R"(">)" + Rml::StringUtilities::EncodeRml(parameterName(target)) + "</menuitem>";
 		}
 		m_parameterMenu->SetInnerRML(rml);
 	}
@@ -1599,10 +1624,17 @@ namespace gnubase::ui
 					[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 				return text;
 			};
+			// Matched against the names, not the items' RML, where & < > are entities.
 			const std::string text = lower(target->GetAttribute<Rml::String>("value", ""));
+			const Json* targets = m_display.automationTargets(track);
 			for (int i = 0; i < m_parameterMenu->GetNumChildren(); ++i)
 				if (Rml::Element* item = m_parameterMenu->GetChild(i); item->IsClassSet("automation-target"))
-					setClass(*item, "hidden", lower(item->GetInnerRML()).find(text) == std::string::npos);
+				{
+					const auto index = static_cast<size_t>(item->GetAttribute<int>("target-index", 0));
+					const std::string name =
+						targets != nullptr && index < targets->size() ? parameterName(targets->at(index)) : "";
+					setClass(*item, "hidden", lower(name).find(text) == std::string::npos);
+				}
 			return;
 		}
 		if (event.GetId() != Rml::EventId::Click)
@@ -1738,8 +1770,8 @@ namespace gnubase::ui
 				{
 					if (const Row* row = rowOf(element); row != nullptr && !element->HasAttribute("disabled"))
 						control(*element, *row, element->GetAttribute<Rml::String>("control", ""),
-							held(event, "ctrl_key") || held(event, "meta_key"), held(event, "alt_key"),
-							held(event, "shift_key"));
+							held(event, "ctrl_key") || held(event, "meta_key"),
+							held(event, "alt_key") || m_soloHold.held(*element), held(event, "shift_key"));
 					break;
 				}
 			break;
@@ -1796,6 +1828,7 @@ namespace gnubase::ui
 				rulerChange(*target, event.GetParameter<Rml::String>("value", ""));
 				midiChannelChange(*target, event.GetParameter<Rml::String>("value", ""));
 				markerChange(*target, event.GetParameter<Rml::String>("value", ""));
+				signatureOption(*target, event.GetParameter<Rml::String>("value", ""));
 				// Select Track for Auditioning.
 				const Json& project = m_display.project();
 				const auto audition = static_cast<uint64_t>(
@@ -1860,7 +1893,8 @@ namespace gnubase::ui
 	void TrackList::control(
 		Rml::Element& button, const Row& row, const std::string& name, bool exclusive, bool defeat, bool shift)
 	{
-		if (name == "currentTempo" || name == "tempoType" || name == "midiChannel" || markerMenu(name))
+		if (name == "currentTempo" || name == "tempoType" || name == "midiChannel" || name == "signatureOptions" ||
+			markerMenu(name))
 			return; // fields and lists, which change
 		if (name == "addPositionMarker")
 		{
@@ -1921,9 +1955,10 @@ namespace gnubase::ui
 			m_binding.send("chord.setTrack", {{chordKey(name), !on}}, clicked(button, row.id, name, !on));
 			return;
 		}
-		if (name == "timeOffsetOn" || name == "groupEditing")
+		if (name == "timeOffsetOn" || name == "groupEditing" || name == "signatureLock")
 		{
-			m_binding.send("track.set", {{"track", row.id}, {name, !on}}, clicked(button, row.id, name, !on));
+			const std::string key = name == "signatureLock" ? "lock" : name;
+			m_binding.send("track.set", {{"track", row.id}, {key, !on}}, clicked(button, row.id, name, !on));
 			return;
 		}
 		if (name == "timeBase")
@@ -2019,6 +2054,16 @@ namespace gnubase::ui
 		}
 	}
 
+	void TrackList::signatureOption(Rml::Element& control, const std::string& value)
+	{
+		if (control.GetAttribute<Rml::String>("control", "") != "signatureOptions" || value.empty())
+			return;
+		if (auto* list = dynamic_cast<Rml::ElementFormControl*>(&control))
+			list->SetValue(""); // so that the same option can be chosen again, as in the marker tracks' lists
+		if (value == "processBars")
+			m_display.actions().at("tempo.openProcessBars")();
+	}
+
 	void TrackList::midiChannelChange(Rml::Element& control, const std::string& value)
 	{
 		const Row* row = rowOf(&control);
@@ -2046,12 +2091,12 @@ namespace gnubase::ui
 		}
 		if (name != "timeOffset")
 			return;
-		// A position typed in the track's time format; the display shows the offset again for anything else.
-		TimeContext time;
-		readTimeContext(project, time);
+		// A position typed in the track's time format; the display shows the offset again for anything else, and for
+		// the offset it has, which no undo step changes to itself (#814).
+		const TimeContext& time = m_display.time();
 		const std::optional<TimeFormat> format = timeFormatFromName(track.value("timeFormat", std::string()));
 		const std::optional<double> seconds = format ? parseTime(*format, value, time) : std::nullopt;
-		if (seconds)
+		if (seconds && inTimeBase(track, *seconds, time) != track.value("timeOffset", int64_t{0}))
 			m_binding.send("track.set", {{"track", row->id}, {"timeOffset", inTimeBase(track, *seconds, time)}});
 		else
 			control.SetAttribute("value", format ? formatTime(*format, offsetSeconds(track, time), time) : "");
@@ -2235,10 +2280,14 @@ namespace gnubase::ui
 		const auto lane = static_cast<size_t>(at - lanes.begin());
 		const double shown = m_rows->GetClientHeight() / dpRatio();
 		const double top = m_display.view().top;
+		// With its automation tracks below it, as far as they fit.
+		size_t end = lane + 1;
+		while (end < lanes.size() && lanes[end] == track)
+			++end;
 		if (tops[lane] < top)
 			m_display.scrollVertically(tops[lane]);
-		else if (tops[lane + 1] > top + shown)
-			m_display.scrollVertically(tops[lane + 1] - shown);
+		else if (tops[end] > top + shown)
+			m_display.scrollVertically(std::min(tops[lane], tops[end] - shown));
 		place();
 	}
 
@@ -2389,6 +2438,7 @@ namespace gnubase::ui
 			endHeightDrag();
 		}
 		Rml::Element* target = event.GetTargetElement();
+		m_soloHold.pressed(target);
 		const Row* row = rowOf(target);
 		if (row == nullptr)
 			return;

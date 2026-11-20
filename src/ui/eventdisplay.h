@@ -368,7 +368,8 @@ namespace gnubase::ui
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 		// Whether the action can do something now, for menus and keys to disable it: the actions that only edit the
 		// selection range (edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence, edit.cropRange and
-		// edit.splitRange) need a range, all but edit.splitRange one with a length. The others always can.
+		// edit.splitRange) need a range, all but edit.splitRange one with a length; edit.paste and edit.pasteTime need
+		// something copied, a rangeClipboard.changed since the project opened. The others always can.
 		bool canRun(const std::string& action) const;
 
 		// Automation tracks (#121, automationtracks.cpp, docs/features/automation-tracks.md): lanes of their own below
@@ -546,6 +547,7 @@ namespace gnubase::ui
 		void showAutoScroll();
 		void showSnap();
 		void showRootKey(const engine::Json& project);
+		void showStates(const engine::Json& project);
 		void setSnap(const engine::Json& settings); // sends snap.set; one with a format counts in m_formatsSent
 
 		// Importing files (fileimport.cpp).
@@ -804,6 +806,10 @@ namespace gnubase::ui
 		std::optional<EditorControl> editorControlAt(double x, double y) const;
 		// The selected points of the pressed lane as a drag to x and y dp moves them or the editor changes them, by id.
 		std::vector<std::pair<uint64_t, CurvePoint>> transformed(double x, double y) const;
+		// The other points of the lane that moved points replace: those where a continuous selection lands
+		// (reference manual pp. 877-878).
+		std::set<uint64_t> covered(
+			const AutomationView& lane, const std::vector<std::pair<uint64_t, CurvePoint>>& moved) const;
 		// Shows these points on the display lane's curve while dragging.
 		void preview(size_t lane, std::vector<CurvePoint> points);
 		// The lane's points with those from start to end, seconds, replaced by these.
@@ -914,8 +920,7 @@ namespace gnubase::ui
 		engine::Json m_resizePreview;   // the answer shown, null for none
 		double m_resizeDx = 0.0;        // dp the edge was dragged
 		engine::Json m_releasedPreview; // the last release's, until the project shows its resize
-		uint64_t m_resizeReleases = 0;  // counts releases, so that only the last one's answer counts
-		bool m_resizeLanded = false;    // the last release's event.resize is done; the next project shows it
+		bool m_resizeLanded = false;    // a release's event.resize is done; the next project shows it
 		uint64_t m_resizeGesture = 0;   // counts drags of edges, so that late answers are dropped
 		uint64_t m_dragEvent = 0;       // pressed on
 		bool m_dragMoved = false;
@@ -923,6 +928,7 @@ namespace gnubase::ui
 		std::optional<size_t> m_dragPoint;  // the curve point dragged, none for a new one
 		bool m_dragStarted = false;         // moving events, after the drag delay
 		bool m_dragToggles = false;         // a Ctrl/Shift click takes the pressed event or point out of the selection
+		bool m_clickSelectsPoint = false;   // a click on a point of a larger selection selects only that point
 		double m_pressTime = 0.0;           // RmlUi's clock, in seconds
 		double m_dragDx = 0.0;              // dp, while moving, snapped
 		std::optional<int64_t> m_dragTicks; // a musical move's offset, for each event's preview
@@ -983,7 +989,8 @@ namespace gnubase::ui
 		bool m_modifiersKnown = false; // changed since they were asked for
 		Rml::Element* m_rangeElement = nullptr;
 		Rml::Element* m_rectangle = nullptr;
-		std::vector<Rml::Element*> m_toolButtons; // the document's
+		std::vector<Rml::Element*> m_toolButtons;  // the document's
+		std::vector<Rml::Element*> m_stateButtons; // the toolbar's Deactivate All buttons (button[deactivate])
 		Rml::Element* m_combineButton = nullptr;
 		Rml::Element* m_objectMenu = nullptr;
 		Rml::Element* m_lineMenu = nullptr;
@@ -1037,10 +1044,10 @@ namespace gnubase::ui
 		std::map<uint64_t, std::vector<uint64_t>> m_openAutomation; // the lanes each track shows, in order
 		std::map<uint64_t, AutomationView> m_automation;            // every lane of the project
 		std::map<uint64_t, engine::Json> m_targets;                 // automationLane.targets, by track
-		std::set<uint64_t> m_targetsAsked;                          // tracks whose targets are on their way
-		std::vector<uint64_t> m_laneAutomation;                     // each display lane's automation lane, or 0
-		std::vector<int> m_laneTakes;                               // each display lane's track lane, or -1
-		std::set<uint64_t> m_lanesShown;                            // the tracks whose lanes show
+		std::map<uint64_t, std::string> m_targetsKeys; // by track, what its targets depended on when last asked
+		std::vector<uint64_t> m_laneAutomation;        // each display lane's automation lane, or 0
+		std::vector<int> m_laneTakes;                  // each display lane's track lane, or -1
+		std::set<uint64_t> m_lanesShown;               // the tracks whose lanes show
 		std::map<uint64_t, std::set<uint64_t>> m_selectedPoints;
 		Rml::Element* m_automationArea = nullptr; // the curves, a .automation-lane each
 		Rml::Element* m_editor = nullptr;         // .automation-editor around the selected points
@@ -1052,6 +1059,7 @@ namespace gnubase::ui
 
 		std::map<std::string, std::function<void()>> m_actions;
 		std::map<std::string, bool> m_rangeActions; // the actions that need a range (canRun), whether with a length
+		bool m_copied = false;                      // whether the range clipboard has something to paste (canRun)
 		std::vector<std::function<void()>> m_viewListeners;
 		std::vector<std::function<void()>> m_selectionListeners; // onSelectionShown
 		std::vector<Subscription> m_subscriptions;
