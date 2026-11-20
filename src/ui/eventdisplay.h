@@ -178,6 +178,12 @@ namespace gnubase::ui
 		// The tracks whose in-place editors are open (#131, ui/inplaceeditor.h): they are at least g_inPlaceHeight
 		// high, for the editor over their lane.
 		void setInPlaceTracks(std::set<uint64_t> tracks);
+		const std::set<uint64_t>& inPlaceTracks() const { return m_inPlace; }
+		// Whether an open in-place editor shows its toolbar and info line, which the triangle in its track's row of
+		// the track list switches (reference manual p. 1259); hidden again once the editor closes.
+		bool inPlaceToolbarShown(uint64_t track) const { return m_inPlaceToolbars.count(track) != 0; }
+		const std::set<uint64_t>& inPlaceToolbars() const { return m_inPlaceToolbars; }
+		void showInPlaceToolbar(uint64_t track, bool shown);
 		// The quantize panel's cutting positions (#1579, reference manual p. 378): a .cutting-position line over the
 		// event lanes where Slice would cut, at each of the project samples, by position. Each line shows that is
 		// at least g_cutDistance dp after the one shown before it (#1668), so that a flam zoomed out keeps the others.
@@ -913,6 +919,7 @@ namespace gnubase::ui
 		std::vector<EventLanes::Lane> m_tracks; // events in seconds, heights before zoom
 		std::vector<uint64_t> m_laneTracks;     // the track of each lane
 		std::set<uint64_t> m_inPlace;           // setInPlaceTracks'
+		std::set<uint64_t> m_inPlaceToolbars;   // showInPlaceToolbar's, of those
 		std::vector<double> m_laneTops = {0.0};
 		std::map<uint64_t, double> m_heights; // set by setTrackHeight, before zoom
 		std::set<uint64_t> m_hidden;
