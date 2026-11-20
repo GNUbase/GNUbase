@@ -727,16 +727,25 @@ TEST_CASE(
 	REQUIRE(store.loadReport().problems.size() == 2);
 	CHECK_THAT(store.loadReport().problems[1], ContainsSubstring("using the entries that fit"));
 
-	// A change starts from the entries that fit; the one that doesn't goes, and the log keeps it.
-	store.modify("ports",
-		[](const Json& value)
-		{
-			Json ports = value;
-			ports["In 3"] = {{"visible", true}};
-			return ports;
-		});
+	// A change starts from the entries that fit, and the one that doesn't stays in the file, for the GNUbase that
+	// wrote it, until a change gives its key a value; then the log keeps what it replaced.
+	const auto setPort = [&store](const char* port, bool visible)
+	{
+		return store.modify("ports",
+			[port, visible](const Json& value)
+			{
+				Json ports = value;
+				ports[port] = {{"visible", visible}};
+				return ports;
+			});
+	};
+	CHECK(setPort("In 3", true) == Json::parse(R"({"In 1": {"visible": false}, "In 3": {"visible": true}})"));
 	CHECK(readJson(file).at("values").at("ports") ==
-		Json::parse(R"({"In 1": {"visible": false}, "In 3": {"visible": true}})"));
+		Json::parse(R"({"In 1": {"visible": false}, "In 2": {"visible": "no"}, "In 3": {"visible": true}})"));
+	CHECK_THAT(readText(log), !ContainsSubstring(R"({"In 2":{"visible":"no"}})"));
+	setPort("In 2", true);
+	CHECK(readJson(file).at("values").at("ports") ==
+		Json::parse(R"({"In 1": {"visible": false}, "In 2": {"visible": true}, "In 3": {"visible": true}})"));
 	CHECK_THAT(readText(log), ContainsSubstring(R"({"In 2":{"visible":"no"}})"));
 	// A value of which nothing fits counts as the default, and the log keeps what it replaces.
 	store.modify("names", [](const Json&) { return Json::array({"B"}); });

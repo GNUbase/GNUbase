@@ -1566,7 +1566,7 @@ TEST_CASE("port settings keep the members of a later GNUbase's entries", "[integ
 	run(client, "audio.setDevice");
 
 	// This GNUbase uses the members it knows and the entries that fit, and its changes keep the others and the other
-	// entries; the entry that doesn't fit goes.
+	// entries, also the one that doesn't fit.
 	CHECK(run(client, "audio.ports").at("inputs")[0].at("showAs") == "Mic");
 	const Json midi = run(client, "midi.ports").at("ports");
 	CHECK(std::any_of(midi.begin(), midi.end(),
@@ -1576,15 +1576,20 @@ TEST_CASE("port settings keep the members of a later GNUbase's entries", "[integ
 	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", ""}});
 	CHECK(settingsFile(dir.path()).at("audio.portSettings") ==
 		Json{{"dummy/dummy/in/Input 1", {{"showAs", "Vocals"}, {"color", "#ff0000"}}},
-			{"dummy/dummy/in/Input 2", {{"visible", false}}}});
+			{"dummy/dummy/in/Input 2", {{"visible", false}}}, {"dummy/dummy/in/Input 3", {{"visible", "no"}}}});
 	CHECK(settingsFile(dir.path()).at("midi.portSettings") == Json{{"dummy/in/Keys", {{"channel", 3}}}});
 }
 
 TEST_CASE("audio.setPort and midi.setPort send settings.changed only when the port's entry changes", "[integration]")
 {
+	// The settings file has an entry that doesn't fit, which the changes keep.
+	const gnubase::test::TempDir dir;
+	std::ofstream(dir.path() / "settings.json") << Json{{"version", gnubase::engine::settings::userFormat().version},
+		{"values", {{"audio.portSettings", {{"dummy/dummy/in/Input 3", {{"visible", "no"}}}}}}}}
+													   .dump();
 	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
 	dummy->addLoopback("Keys");
-	Engine engine(fakeBackends(std::make_shared<FakeDriver>()), {}, midiBackends(std::move(dummy)));
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()), dir.path(), midiBackends(std::move(dummy)));
 	Client client(engine);
 	run(client, "audio.setDevice");
 	// The settings.changed events since the last call: a command's events come before its result.

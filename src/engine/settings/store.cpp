@@ -58,8 +58,9 @@ namespace gnubase::engine::settings
 
 		// What of a value fits its setting's schema: the value itself, or for a setting of entries by key (an object
 		// schema with additionalProperties, such as the port settings) the entries that fit, so that one edited by
-		// hand doesn't take the others along; nullopt if nothing fits. dropped gets the entries left out.
-		std::optional<Json> fitting(const Json& value, const Definition& setting, Json& dropped)
+		// hand, or one a later GNUbase gave a value this one doesn't accept, doesn't take the others along; nullopt if
+		// nothing fits, also when no entry does. left gets the entries that don't fit.
+		std::optional<Json> fitting(const Json& value, const Definition& setting, Json& left)
 		{
 			if (validate(value, setting.schema, setting.key).empty())
 				return value;
@@ -74,9 +75,9 @@ namespace gnubase::engine::settings
 				if (validate(entry, known != properties.end() ? *known : *entries, setting.key + "." + key).empty())
 					kept[key] = entry;
 				else
-					dropped[key] = entry;
+					left[key] = entry;
 			}
-			if (!validate(kept, setting.schema, setting.key).empty())
+			if (kept.empty() || !validate(kept, setting.schema, setting.key).empty())
 				return std::nullopt;
 			return kept;
 		}
@@ -247,14 +248,27 @@ namespace gnubase::engine::settings
 					if (found != fileValues.end())
 						fits = fitting(*found, setting, left);
 					Json value = changed(fits ? *fits : setting.defaultValue);
-					if (found != fileValues.end() && !fits)
+					// The entries that don't fit stay in the file, for the GNUbase that wrote them, unless the change
+					// gives their key a value of its own.
+					Json kept = value;
+					if (fits)
+					{
+						for (const auto& [entry, old] : left.items())
+						{
+							if (!value.is_object() || value.contains(entry))
+								dropped[entry] = old;
+							else
+								kept[entry] = old;
+						}
+					}
+					else if (found != fileValues.end())
+					{
 						dropped = *found;
-					else if (!left.empty())
-						dropped = std::move(left);
-					if (value == setting.defaultValue)
+					}
+					if (kept == setting.defaultValue)
 						fileValues.erase(setting.key);
 					else
-						fileValues[setting.key] = value;
+						fileValues[setting.key] = kept;
 					result = std::move(value);
 				});
 			if (!dropped.is_null())
