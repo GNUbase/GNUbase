@@ -1314,6 +1314,39 @@ TEST_CASE("a fader, panner or send drag follows the mouse without reading the pr
 	}
 }
 
+TEST_CASE("an editor opened after a channel last changed asks for no view when a fader moves it", "[ui]")
+{
+	// The editor follows only the channel changes that may change its view, which it tells by the channels as they
+	// were (#1881). It has them from its project reads too: one opened after a channel's last channel.changed asked
+	// for its view at a fader's first step (CI, Linux).
+	test::UiApp app({1024, 600});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added keys = addTrack(app, "midi", "Keys");
+	const Json part = app.call("midiPart.add", {{"track", keys.track}, {"position", 0}, {"length", 1920}}).at("part");
+	app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part.at("id")})}});
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	ui::EngineBinding& binding = app.appUi().binding();
+	REQUIRE(app.waitUntil(
+		[&binding] { return binding.waiting("project.get") == 0 && binding.waiting("editor.get") == 0; }));
+	app.shell().step(std::chrono::milliseconds(0));
+
+	size_t views = 0;
+	const ui::Subscription counted = binding.onResult("editor.get", [&views](const engine::Result&) { ++views; });
+	app.call("channel.set", {{"channel", guitar.channel}, {"volume", -6.0}});
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			for (const Json& channel : display.project().at("channels"))
+				if (channel.at("id") == guitar.channel)
+					return channel.at("volume") == -6.0;
+			return false;
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(binding.waiting("editor.get") == 0);
+	CHECK(views == 0);
+}
+
 TEST_CASE("a fader drag in a project of 64 tracks reports its time per move", "[ui][slow]")
 {
 	// A benchmark: the time from a move of the mouse to the UI having drawn the engine's answer, so that a regression

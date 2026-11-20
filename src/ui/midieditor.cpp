@@ -211,6 +211,7 @@ namespace gnubase::ui
 				{
 					m_project = result.value;
 					m_read = m_binding.handed();
+					m_levelSteps.read(m_project); // so that a fader's first step on a channel asks for no view
 					// The view leaves out parts that are gone; ask again, so that it has their removal too.
 					requestView();
 				}

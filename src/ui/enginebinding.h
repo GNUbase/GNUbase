@@ -64,11 +64,14 @@ namespace gnubase::ui
 	// and drum pads play, a drum editor which pitches the drum pads play. It keeps each step's channel.changed and
 	// the channels as they were, and tells at the step's history.changed whether the step changed only channels, and
 	// of them only levels and sends (#1881). The view needn't ask again then, also not during a drag; after any other
-	// channel-only step, such as Reset Pad, it does. A channel it hasn't seen yet counts as changed.
+	// channel-only step, such as Reset Pad, it does. A channel it hasn't seen in a channel.changed or a project read
+	// counts as changed.
 	class LevelSteps
 	{
 	public:
 		void keep(const engine::Event& channelChanged) { m_kept.push_back(channelChanged); }
+		// The channels of a project.get answer.
+		void read(const engine::Json& project);
 		// Of a history.changed or project.reset.
 		bool levelsOnly(const engine::Event& changed);
 

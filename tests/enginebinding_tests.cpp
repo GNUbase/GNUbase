@@ -1014,6 +1014,52 @@ TEST_CASE(
 	CHECK(project.at("channels").at(1).at("pan") == 0.5);
 }
 
+TEST_CASE(
+	"LevelSteps tells a channel-only step that changed only levels and sends from one that changed more", "[unit]")
+{
+	// For views that show what comes from channels, such as the pool's uses of the drum pads' clips (#1881).
+	const auto channelChanged = [](const Json& channel)
+	{ return engine::Event{"channel.changed", {{"channel", channel}}, 0}; };
+	const auto historyChanged = [](Json events)
+	{
+		Json data = {{"position", 1}};
+		if (!events.is_null())
+			data["events"] = std::move(events);
+		return engine::Event{"history.changed", std::move(data), 0};
+	};
+	const Json channelOnly = Json::array({"channel.changed"});
+	Json channel = {{"id", 7}, {"volume", 0.0}, {"pads", Json::array({1, 2})}};
+	ui::LevelSteps steps;
+	// A channel it hasn't seen counts as changed, unless a project read showed it.
+	steps.keep(channelChanged(channel));
+	CHECK(!steps.levelsOnly(historyChanged(channelOnly)));
+	channel["volume"] = -6.0;
+	steps.keep(channelChanged(channel));
+	CHECK(steps.levelsOnly(historyChanged(channelOnly)));
+	channel["pads"] = Json::array({1});
+	steps.keep(channelChanged(channel));
+	CHECK(!steps.levelsOnly(historyChanged(channelOnly)));
+	// A step that changed more isn't levels only, but its channels count as seen.
+	channel["volume"] = -7.0;
+	steps.keep(channelChanged(channel));
+	CHECK(!steps.levelsOnly(historyChanged(Json::array({"channel.changed", "track.changed"}))));
+	channel["volume"] = -8.0;
+	steps.keep(channelChanged(channel));
+	CHECK(steps.levelsOnly(historyChanged(channelOnly)));
+
+	ui::LevelSteps read;
+	Json other = {{"id", 8}, {"volume", 0.0}, {"pads", Json::array()}};
+	read.read({{"channels", Json::array({other})}});
+	other["volume"] = -3.0;
+	read.keep(channelChanged(other));
+	CHECK(read.levelsOnly(historyChanged(channelOnly)));
+	// A new project forgets them.
+	CHECK(!read.levelsOnly(engine::Event{"project.reset", Json::object(), 0}));
+	other["volume"] = -4.0;
+	read.keep(channelChanged(other));
+	CHECK(!read.levelsOnly(historyChanged(channelOnly)));
+}
+
 TEST_CASE("ChannelSteps hands on a step's channels only if the step changed only channels", "[unit]")
 {
 	// The channels of a step that changed more, such as a track.add that routes tracks into its new channel, wait

@@ -71,6 +71,16 @@ namespace gnubase::ui
 		return true;
 	}
 
+	void LevelSteps::read(const engine::Json& project)
+	{
+		const auto channels = project.find("channels");
+		if (channels == project.end() || !channels->is_array())
+			return;
+		for (const engine::Json& channel : *channels)
+			if (channel.is_object())
+				m_channels[channel.value("id", uint64_t{0})] = channel;
+	}
+
 	bool LevelSteps::levelsOnly(const engine::Event& changed)
 	{
 		const std::vector<engine::Event> kept = std::exchange(m_kept, {});

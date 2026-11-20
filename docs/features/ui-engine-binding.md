@@ -93,8 +93,9 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   in-place editors. Two views show what comes from channels: the pool counts the clips that sampler tracks and drum
   pads play, and a drum editor's Show Drum Sounds in Use by Instrument lists the pitches that the drum pads play
   (`editor.get`'s `soundsInUse`). They skip only steps that changed nothing but channels' levels and sends
-  (`LevelSteps`, which keeps each channel as its last `channel.changed` brought it; one it hasn't seen counts as
-  changed), and after any other channel-only step, such as Reset Pad, the pool reads the pool again and the editor its
+  (`LevelSteps`, which keeps each channel as its last `channel.changed` or the editor's last project read brought it;
+  one it hasn't seen counts as changed, so the pool reads once at the first step of a channel that changed before it
+  opened), and after any other channel-only step, such as Reset Pad, the pool reads the pool again and the editor its
   view. A view whose step was answered shows the engine's value then, since no read follows. The records
   of the controls' steps still go only after a project read, so they stay until the next change that isn't only
   channels'.
