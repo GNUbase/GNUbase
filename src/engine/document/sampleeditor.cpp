@@ -271,7 +271,7 @@ namespace gnubase::engine
 				"project changed meanwhile; process again");
 			AudioEvent& selected = project.audioEvents.at(parameters.at("event").get<ObjectId>());
 			const ObjectId original = selected.clip;
-			const bool all = parameters.value("sharedCopies", std::string("newVersion")) == "all";
+			const bool all = parameters.value("sharedCopies", std::string("all")) == "all";
 			checkProcess(project, selected, all);
 			Clip clip = project.clips.at(original);
 			const ProcessRange range{parameters.at("start").get<time::Samples>(),
@@ -440,27 +440,30 @@ namespace gnubase::engine
 						*clipboard = std::move(copied);
 					return result;
 				});
-			engine.registerCommand({"sampleEditor.process", 1,
-									   "Basic Commands on a clip range (reference manual pp. 619-620). event "
-									   "identifies the clip; start/end are "
-									   "clip frames, start before end. operation: cut copies then closes the gap, copy "
-									   "replaces the engine audio "
-									   "clipboard without undo, paste replaces the range, delete closes the gap, "
-									   "insertSilence inserts the range's "
-									   "length at its start. sharedCopies is required for shared clips: newVersion "
-									   "edits only this event, all edits "
-									   "all copies, including inactive track versions. Locked events/parts and frozen "
-									   "tracks refuse edits. Flatten "
-									   "warped clips first; edited definition grids are not supported. Paste needs "
-									   "matching channels and sample rate. Writes new "
-									   "float WAV files in the media "
-									   "folder as a cancellable job; returns job (its result: clip, media, length or "
-									   "copied frames). One undo step "
-									   "per edit; original files stay intact. Fails if the project changes during an "
-									   "edit. Clipboard survives undo "
-									   "and project changes. Not usable inside history.transaction.",
-									   objectSchema(properties, {"event", "operation", "start", "end"}),
-									   objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
+			engine.registerCommand(
+				{"sampleEditor.process", 1,
+					"Basic Commands on a clip range (reference manual pp. 619-620). event "
+					"identifies the clip; start/end are "
+					"clip frames, start before end. operation: cut copies then closes the gap, copy "
+					"replaces the engine audio "
+					"clipboard without undo, paste replaces the range, delete closes the gap, "
+					"insertSilence inserts the range's "
+					"length at its start. sharedCopies is required for shared clips: newVersion "
+					"edits only this event, all edits "
+					"all copies, including inactive track versions. Sampler tracks and drum pads count as users too. "
+					"Without another user, omitting sharedCopies edits the clip in place and keeps its region ids. "
+					"Locked events/parts and frozen "
+					"tracks refuse edits. Flatten "
+					"warped clips first; edited definition grids are not supported. Paste needs "
+					"matching channels and sample rate. Writes new "
+					"float WAV files in the media "
+					"folder as a cancellable job; returns job (its result: clip, media, length or "
+					"copied frames). One undo step "
+					"per edit; original files stay intact. Fails if the project changes during an "
+					"edit. Clipboard survives undo "
+					"and project changes. Not usable inside history.transaction.",
+					objectSchema(properties, {"event", "operation", "start", "end"}),
+					objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
 				[&model, &engine, clipboard](CommandContext& context)
 				{
 					Json parameters = context.parameters();
@@ -480,9 +483,10 @@ namespace gnubase::engine
 						size_t copies = 0;
 						forEveryAudioEvent(
 							project, [&](const AudioEvent& each) { copies += each.clip == clip.id ? 1 : 0; });
+						forEverySamplerClip(project, [&](ObjectId id) { copies += id == clip.id ? 1 : 0; });
 						require(copies <= 1 || parameters.contains("sharedCopies"),
 							"choose sharedCopies: newVersion or all");
-						checkProcess(project, *event, parameters.value("sharedCopies", std::string()) == "all");
+						checkProcess(project, *event, parameters.value("sharedCopies", std::string("all")) == "all");
 						require(!clip.warp.musical && clip.warp.markers.empty() && clip.warp.beats.empty() &&
 								clip.warp.gridStart == 0,
 							"Process edits require no active warping or edited definition grid; flatten active warping "

@@ -47,11 +47,12 @@ or `copied` for Copy. Original files stay intact. Failed, cancelled and stale jo
 clipboard alone. An edit fails if the project's revision changed during the job; selection changes and saving do not
 invalidate it. These asynchronous commands cannot be used in `history.transaction`.
 
-`sharedCopies` must be chosen when another event uses the clip: `newVersion` makes an independent clip for this event;
-`all` edits the existing clip and adjusts its other events, including inactive track versions. Locked events and locked
-audio parts refuse edits. Each edit is one undo step, restoring the original clip, media and events. Clip regions,
-hitpoints, event offsets, lengths, fades, volume points and snap points follow the changed range; empty regions and
-events disappear. Active warping must be flattened before editing; edited definition grids are not supported in this
+`sharedCopies` must be chosen when another event, sampler track or drum pad uses the clip. Without another user,
+omitting it edits the clip in place and keeps the clip and region ids. `newVersion` makes an independent clip for this
+event; `all` edits the existing clip and adjusts its other events, including inactive track versions. Locked events and
+locked audio parts refuse edits. Each edit is one undo step, restoring the original clip, media and events. Clip
+regions, hitpoints, event offsets, lengths, fades, volume points and snap points follow the changed range; empty regions
+and events disappear. Active warping must be flattened before editing; edited definition grids are not supported in this
 first implementation. A tempo value alone does not warp playback and is preserved. The internal completion commands
 `sampleEditor.applyProcess` and `sampleEditor.finishProcess` accept only engine-posted work; clients use
 `sampleEditor.process`.
@@ -141,7 +142,8 @@ pool; the UI for the Process section's Basic Commands (#1968, pp. 619-620). Hook
 
 - `tests/sampleeditor_tests.cpp`: Process samples and lengths for Cut, Delete, Paste and Insert Silence, Copy and
   clipboard replacement, shared-copy choices, regions and fades following edits, stereo samples, undo/redo, errors,
-  cancellation, stale jobs and file cleanup.
+  cancellation, stale jobs and file cleanup; an unshared Cut keeping clip and region ids and the clip count, and sampler
+  tracks and drum pads requiring the shared-copy choice.
 - `tests/sampleeditor_tests.cpp`: the view as view state with its event and selection, Select All, None, Event and in
   Loop, a range of its own and its errors, an event that goes and comes back with undo, opening and closing, another
   event dropping the selection, a new project closing it; zero crossings of a sine; regions added, sorted, changed

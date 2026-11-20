@@ -571,3 +571,61 @@ TEST_CASE("sample editor Process preserves interleaved channels and rejects inco
 			ContainsSubstring("must match"));
 	}
 }
+
+TEST_CASE("sample editor Process cuts an unshared clip in place without a shared-copy choice", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	test::writeWav(path, processAudio());
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	f.call("clip.addRegion", {{"clip", f.clip}, {"start", 500}, {"end", 4000}});
+	f.call("clip.addRegion", {{"clip", f.clip}, {"start", 7000}, {"end", 8000}});
+	const Json before = f.call("project.get");
+	const Json job =
+		f.call("sampleEditor.process", {{"event", f.event}, {"operation", "cut"}, {"start", 2000}, {"end", 3000}})
+			.at("job");
+	const Json done = test::waitForJob(f.client, job.at("id").get<uint64_t>());
+	REQUIRE(done.at("state") == "done");
+	CHECK(done.at("result").at("clip") == f.clip);
+	const Json after = f.call("project.get");
+	CHECK(after.at("clips").size() == before.at("clips").size());
+	CHECK(objectWithId(after.at("audioEvents"), f.event).at("clip") == f.clip);
+	const Json edited = objectWithId(after.at("clips"), objectWithId(after.at("audioEvents"), f.event).at("clip"));
+	const Json regions = objectWithId(before.at("clips"), f.clip).at("regions");
+	REQUIRE(edited.at("regions").size() == regions.size());
+	for (size_t i = 0; i < regions.size(); ++i)
+		CHECK(edited.at("regions").at(i).at("id") == regions.at(i).at("id"));
+	f.call("history.undo");
+	CHECK(f.call("project.get").at("clips") == before.at("clips"));
+	f.call("history.redo");
+	CHECK(f.call("project.get").at("clips") == after.at("clips"));
+}
+
+TEST_CASE("sample editor Process requires a choice for clips also used by sampler tracks or drum pads", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	test::writeWav(path, processAudio());
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	SECTION("sampler track")
+	{
+		f.call("sampler.create", {{"clip", f.clip}});
+	}
+	SECTION("drum pad")
+	{
+		const Json track = f.call("drum.create", {{"kit", false}}).at("track").at("id");
+		f.call("drum.loadPad", {{"track", track}, {"pad", 36}, {"clip", f.clip}});
+	}
+	const Json before = f.call("project.get");
+	CHECK_THAT(
+		f.fails("sampleEditor.process", {{"event", f.event}, {"operation", "cut"}, {"start", 2000}, {"end", 3000}}),
+		ContainsSubstring("sharedCopies"));
+	CHECK(f.call("project.get").at("clips") == before.at("clips"));
+	const Json result = process(f, "cut", 2000, 3000, "newVersion");
+	CHECK(result.at("clip") != f.clip);
+	const Json after = f.call("project.get");
+	CHECK(objectWithId(after.at("clips"), f.clip) == objectWithId(before.at("clips"), f.clip));
+	CHECK(after.at("channels") == before.at("channels"));
+}
