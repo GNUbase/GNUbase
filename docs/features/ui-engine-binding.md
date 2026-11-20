@@ -78,16 +78,23 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   `history.changed` (`ChannelSteps`) and drop them for a step that changed more, which they read: a `track.add` that
   routes the selected tracks into its new group channel changes their channels too, and taken before the read brought
   the group, they named a channel the project didn't have, which the inspector's output list showed as none and sent
-  back. The event display counts it in `loads()`, so the views that
-  show channels from its project, the track list, the inspector and the sampler and drum machine panels, show it too,
+  back. The event display asks again for the targets of the tracks with open automation lanes whose channel changed
+  (`requestChangedTargets`), whose static value line shows the channel's value. It counts the channel in `loads()`,
+  so the views that show channels from its project, the track list, the inspector and the sampler and drum machine
+  panels, show it too,
   but not in `answers()`, which the views that show no channel go by (the info line, the in-place editors, the ruler and
   transpose tracks), and `read()` moves on with it only while no `project.get` is out, since the project still lacks the
   steps that read is for; it lays out the track list again only when more than the channel's levels and sends changed
   (volume, pan, MIDI volume and pan, sends), which the track list doesn't show. The edit history panel reads
   `history.get` after each step quietly (`sendQuietly`) and draws only its own window, so the answer doesn't draw every
   window again. The other views that read the project after each step (markers, tempo and signature tracks, transport,
-  track visibility, the MIDI and sample editors, the pool) show no channel and skip it; so does the inspector's read of
-  the in-place editors. A view whose step was answered shows the engine's value then, since no read follows. The records
+  track visibility, the MIDI and sample editors) show no channel and skip it; so does the inspector's read of the
+  in-place editors. Two views show what comes from channels: the pool counts the clips that sampler tracks and drum
+  pads play, and a drum editor's Show Drum Sounds in Use by Instrument lists the pitches that the drum pads play
+  (`editor.get`'s `soundsInUse`). They skip only steps that changed nothing but channels' levels and sends
+  (`LevelSteps`, which keeps each channel as its last `channel.changed` brought it; one it hasn't seen counts as
+  changed), and after any other channel-only step, such as Reset Pad, the pool reads the pool again and the editor its
+  view. A view whose step was answered shows the engine's value then, since no read follows. The records
   of the controls' steps still go only after a project read, so they stay until the next change that isn't only
   channels'.
 - **Waking the UI.** The UI thread sleeps until something happens (docs/architecture.md, "UI shell"). When the

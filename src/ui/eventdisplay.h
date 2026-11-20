@@ -776,6 +776,9 @@ namespace gnubase::ui
 		// Automation tracks (automationtracks.cpp).
 		void addAutomationActions();
 		void readAutomation(const engine::Json& project); // m_automation, and asks for the targets it needs
+		// Asks again for the targets of the tracks with open lanes whose track, channel, plugins or lanes changed in
+		// the project, e.g. a channel's volume, which a volume lane without points shows.
+		void requestChangedTargets();
 		// Asks for the track's automationLane.targets again; then runs when they are in.
 		void requestTargets(uint64_t track, std::function<void()> then = {});
 		// Adds a lane for the target to the track and shows it below the track's others, with the commands before it

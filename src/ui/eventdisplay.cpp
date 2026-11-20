@@ -93,23 +93,6 @@ namespace gnubase::ui
 		{
 			return {static_cast<float>(value), Rml::Unit::DP};
 		}
-
-		// Whether a channel changed only in its levels or sends, as each step of a fader, panner or send drag changes
-		// them, which neither the lanes nor the track list show (#1881).
-		bool levelsOnly(const Json& before, const Json& after)
-		{
-			if (!before.is_object() || !after.is_object() || before.size() != after.size())
-				return false;
-			for (auto value = after.begin(); value != after.end(); ++value)
-			{
-				const std::string& key = value.key();
-				const bool level = key == "volume" || key == "pan" || key == "panLeft" || key == "panRight" ||
-					key == "midiVolume" || key == "midiPan" || key == "sends";
-				if (!level && before.value(key, Json()) != value.value())
-					return false;
-			}
-			return true;
-		}
 	}
 
 	EventDisplay::EventDisplay(engine::Engine& engine, EngineBinding& binding, Rml::Element& root)
@@ -176,9 +159,9 @@ namespace gnubase::ui
 			};
 		setToolModifiers(Json::object());
 
-		// A step that changed only channels, such as each step of a fader drag, needs no read: the display shows no
-		// channel, and the views that show the project it read (the track list, the inspector) take channel.changed
-		// with it (#1881).
+		// A step that changed only channels, such as each step of a fader drag, needs no read (#1881): the display
+		// takes their channel.changed into its project, for the views that show it (the track list, the inspector),
+		// and asks again for the automation targets whose static values the channels may have changed.
 		for (const char* event : {"history.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event,
 				[this](const engine::Event& changed)
@@ -188,6 +171,8 @@ namespace gnubase::ui
 					{
 						for (const engine::Event& channel : channels)
 							takeChannel(channel);
+						if (!channels.empty())
+							requestChangedTargets();
 						return;
 					}
 					requestProject();
@@ -430,7 +415,8 @@ namespace gnubase::ui
 		// this channel until it is in.
 		if (!m_loading)
 			m_read = m_binding.handed();
-		// What the lanes show doesn't change with a channel, the track list's controls may.
+		// The track lanes show nothing of a channel, the track list's controls may; the automation lanes' static values
+		// come from their targets (requestChangedTargets).
 		if (m_layoutListener && !levelsOnly(before, *after))
 			m_layoutListener();
 	}

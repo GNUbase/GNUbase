@@ -56,6 +56,27 @@ namespace gnubase::ui
 		std::vector<engine::Event> m_kept;
 	};
 
+	// Whether a channel changed only in its levels or sends (volume, pan, MIDI volume and pan, sends), as each step of
+	// a fader, panner or send drag changes it (#1881). False if either isn't a channel.
+	bool levelsOnly(const engine::Json& before, const engine::Json& after);
+
+	// For a view that shows no channel, but what comes from channels: the pool shows which clips the sampler tracks
+	// and drum pads play, a drum editor which pitches the drum pads play. It keeps each step's channel.changed and
+	// the channels as they were, and tells at the step's history.changed whether the step changed only channels, and
+	// of them only levels and sends (#1881). The view needn't ask again then, also not during a drag; after any other
+	// channel-only step, such as Reset Pad, it does. A channel it hasn't seen yet counts as changed.
+	class LevelSteps
+	{
+	public:
+		void keep(const engine::Event& channelChanged) { m_kept.push_back(channelChanged); }
+		// Of a history.changed or project.reset.
+		bool levelsOnly(const engine::Event& changed);
+
+	private:
+		std::vector<engine::Event> m_kept;
+		std::map<uint64_t, engine::Json> m_channels; // as the last channel.changed of each brought it
+	};
+
 	// A handler that the binding calls while the subscription exists. Subscriptions must not outlive their binding.
 	class Subscription
 	{

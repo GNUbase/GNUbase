@@ -56,6 +56,45 @@ namespace gnubase::ui
 		return kept;
 	}
 
+	bool levelsOnly(const engine::Json& before, const engine::Json& after)
+	{
+		if (!before.is_object() || !after.is_object() || before.size() != after.size())
+			return false;
+		for (auto value = after.begin(); value != after.end(); ++value)
+		{
+			const std::string& key = value.key();
+			const bool level = key == "volume" || key == "pan" || key == "panLeft" || key == "panRight" ||
+				key == "midiVolume" || key == "midiPan" || key == "sends";
+			if (!level && before.value(key, engine::Json()) != value.value())
+				return false;
+		}
+		return true;
+	}
+
+	bool LevelSteps::levelsOnly(const engine::Event& changed)
+	{
+		const std::vector<engine::Event> kept = std::exchange(m_kept, {});
+		if (changed.name == "project.reset")
+		{
+			m_channels.clear(); // the next project's channels may have the same ids
+			return false;
+		}
+		bool levels = changedOnly(changed, {"channel.changed"});
+		// Every kept channel is the channel as it is now, also after a step that changed more: a later step that
+		// changes it back isn't levels only.
+		for (const engine::Event& event : kept)
+		{
+			const auto channel = event.data.find("channel");
+			if (channel == event.data.end() || !channel->is_object())
+				continue;
+			engine::Json& before = m_channels[channel->value("id", uint64_t{0})];
+			if (!ui::levelsOnly(before, *channel))
+				levels = false;
+			before = *channel;
+		}
+		return levels;
+	}
+
 	Subscription::Subscription(Subscription&& other) noexcept
 		: m_binding(std::exchange(other.m_binding, nullptr)), m_id(other.m_id)
 	{

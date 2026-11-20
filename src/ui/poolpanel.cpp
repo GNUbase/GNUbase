@@ -139,13 +139,17 @@ namespace gnubase::ui
 
 	PoolPanel::PoolPanel(EngineBinding& binding, Rml::Element& element, Run run, std::function<bool()> shown)
 		: m_binding(binding), m_run(std::move(run)), m_shown(std::move(shown)),
-		  // Not after a step that changed only channels, which the pool doesn't show (#1881).
+		  // Not after a step that changed only channels' levels and sends, such as a fader drag's (#1881): the Used
+		  // column counts the clips of sampler tracks and drum pads, which other channel-only steps change, e.g. Reset
+		  // Pad.
 		  m_changed(binding.on("history.changed",
 			  [this](const engine::Event& changed)
 			  {
-				  if (!changedOnly(changed, {"channel.changed"}))
+				  if (!m_levelSteps.levelsOnly(changed))
 					  poolChanged();
 			  })),
+		  m_channelChanged(
+			  binding.on("channel.changed", [this](const engine::Event& event) { m_levelSteps.keep(event); })),
 		  m_saved(binding.on("project.saved", [this](const engine::Event&) { poolChanged(); })),
 		  m_jobProgress(binding.on("job.progress",
 			  [this](const engine::Event& event)

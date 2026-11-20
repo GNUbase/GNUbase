@@ -699,6 +699,33 @@ TEST_CASE("history.changed names the events of a command's step, so that clients
 	run(client, "channel.set", {{"channel", first}, {"volume", -3.0}});
 	CHECK(changed().at("events") == Json::array({"channel.changed"}));
 
+	// Steps that history.join makes one name none: they are several commands' changes, which the clients read.
+	const Json before = run(client, "history.get").at("steps").back().at("id");
+	run(client, "channel.set", {{"channel", second}, {"pan", 0.5}});
+	CHECK(changed().at("events") == Json::array({"channel.changed"}));
+	run(client, "channel.set", {{"channel", second}, {"pan", -0.5}});
+	CHECK(changed().at("events") == Json::array({"channel.changed"}));
+	CHECK(run(client, "history.join", {{"after", before}, {"action", "Pan"}}).at("steps") == 2);
+	CHECK(!changed().contains("events"));
+
+	// Nor does a step recorded inside another command, which may change more after it, as a chord pad command runs
+	// a transaction: the step's own events would tell a client that only channels changed.
+	engine.registerCommand({"test.outer", 1, "Records a channel step, then changes something else.",
+							   CommandInfo{}.parameters, Json::object(), false},
+		[first](CommandContext& context)
+		{
+			context.call("history.transaction",
+				{{"description", "Inner"},
+					{"commands",
+						{{{"command", "channel.set"}, {"parameters", {{"channel", first}, {"volume", -4.0}}}}}}});
+			context.emit("test.changed");
+			return Json::object();
+		});
+	run(client, "test.outer");
+	CHECK(!changed().contains("events"));
+	CHECK(contains(heard, "channel.changed"));
+	CHECK(contains(heard, "test.changed"));
+
 	// Undo, redo and the other changes of the history itself name none: clients read the project then.
 	run(client, "history.undo");
 	CHECK(!changed().contains("events"));

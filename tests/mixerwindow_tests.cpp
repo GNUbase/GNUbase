@@ -1134,8 +1134,9 @@ TEST_CASE("an inspector wheel turn follows a released mixer's waiting fader step
 namespace
 {
 	// A drag of a strip control by moves of a pixel, each answered by the engine before the next, as when the mouse
-	// moves once a frame: down and up again in a zigzag 20 pixels deep, ending 20 pixels down. Counts the project reads
-	// that the UI's views sent meanwhile, and how long each move took until the UI had handed on what the engine
+	// moves once a frame: down and up again in a zigzag 20 pixels deep, ending 20 pixels down. Or with Wheel, as many
+	// turns of the mouse wheel over it, each a step down, until the mouse leaves. Counts the project reads that the
+	// UI's views sent meanwhile, and how long each move or turn took until the UI had handed on what the engine
 	// answered and drawn it.
 	struct Drag
 	{
@@ -1145,7 +1146,13 @@ namespace
 		double value = 0.0;               // the control's when the drag ended
 	};
 
-	Drag drag(test::UiApp& app, Window window, const std::string& selector, int moves)
+	enum class Gesture
+	{
+		Drag,
+		Wheel
+	};
+
+	Drag drag(test::UiApp& app, Window window, const std::string& selector, int moves, Gesture gesture = Gesture::Drag)
 	{
 		ui::EngineBinding& binding = app.appUi().binding();
 		const auto settled = [&binding]
@@ -1161,13 +1168,18 @@ namespace
 		const Json box = element(app, window, selector).at("box");
 		const int x = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
 		const int y = box.at("y").get<int>() + (box.at("height").get<int>() / 2);
+		const bool wheel = gesture == Gesture::Wheel;
 		context.ProcessMouseMove(x, y, 0);
-		context.ProcessMouseButtonDown(0, 0);
+		if (!wheel)
+			context.ProcessMouseButtonDown(0, 0);
 		for (int move = 0; move < moves; ++move)
 		{
 			const int phase = move % 40;
 			const auto start = std::chrono::steady_clock::now();
-			context.ProcessMouseMove(x, y + 1 + (phase < 20 ? phase : 40 - phase), 0);
+			if (wheel)
+				context.ProcessMouseWheel(Rml::Vector2f(0.0F, 1.0F), 0);
+			else
+				context.ProcessMouseMove(x, y + 1 + (phase < 20 ? phase : 40 - phase), 0);
 			do
 			{
 				app.shell().step(std::chrono::milliseconds(0));
@@ -1176,7 +1188,10 @@ namespace
 				std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
 		}
 		result.value = valueOf(app, window, selector);
-		context.ProcessMouseButtonUp(0, 0);
+		if (wheel)
+			context.ProcessMouseMove(0, 0, 0); // leaves the control, which ends the turns' gesture
+		else
+			context.ProcessMouseButtonUp(0, 0);
 		REQUIRE(app.waitUntil(settled, std::chrono::seconds(60)));
 		return result;
 	}
@@ -1261,6 +1276,21 @@ TEST_CASE("a fader, panner or send drag follows the mouse without reading the pr
 		CHECK(dragged.queries <= 2);
 		CHECK(dragged.value != 0.0);
 		CHECK(channel().at("pan") == Catch::Approx(dragged.value).margin(1e-4));
+		CHECK(historyPosition(app) == position + 1);
+		app.call("history.undo");
+		REQUIRE(app.waitUntil([&] { return valueOf(app, window, pan) == 0.0; }));
+		CHECK(channel().at("pan") == 0.0);
+	}
+
+	SECTION("wheel turns on the panner")
+	{
+		// The ticket's other gestures, wheel turns and held arrow keys, send their steps as a drag does (sendStep).
+		const std::string pan = strip(guitar.channel) + " [param=pan]";
+		const Drag turned = drag(app, window, pan, 30, Gesture::Wheel);
+		CHECK(turned.reads <= 1);
+		CHECK(turned.queries <= 2);
+		CHECK(turned.value < 0.0);
+		CHECK(channel().at("pan") == Catch::Approx(turned.value).margin(1e-4));
 		CHECK(historyPosition(app) == position + 1);
 		app.call("history.undo");
 		REQUIRE(app.waitUntil([&] { return valueOf(app, window, pan) == 0.0; }));
