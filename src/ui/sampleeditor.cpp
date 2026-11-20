@@ -613,8 +613,26 @@ namespace gnubase::ui
 			return;
 		}
 		if (action == "in" || action == "out")
-			zoom(action == "in" ? g_zoomStep : 1.0 / g_zoomStep, m_start + (displayWidth() * m_scale / 2.0));
-		else if (action == "full" || action == "selection")
+		{
+			m_binding.send("transport.get", Json::object(),
+				[this, alive = std::weak_ptr<bool>(m_alive), event = m_event,
+					factor = action == "in" ? g_zoomStep : 1.0 / g_zoomStep](const engine::Result& result)
+				{
+					if (alive.expired() || !result.ok() || !hasEvent() || m_event != event || !(m_ratio > 0.0))
+						return;
+					const double width = displayWidth();
+					if (!(width > 0.0) || !(m_scale > 0.0))
+						return;
+					const double frame = std::clamp(
+						(result.value.at("position").get<double>() - static_cast<double>(m_clipStart)) / m_ratio, 0.0,
+						static_cast<double>(m_length));
+					const double full = static_cast<double>(m_length) / width;
+					const double scale = std::clamp(m_scale / factor, g_minScale, std::max(full, g_minScale));
+					setZoom({frame - (width * scale / 2.0), scale, m_gain});
+				});
+			return;
+		}
+		if (action == "full" || action == "selection")
 			fit(0.0, static_cast<double>(m_length));
 		else if (action == "event")
 			fit(static_cast<double>(m_offset), static_cast<double>(m_offset + m_eventLength));

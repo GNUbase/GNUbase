@@ -124,9 +124,10 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
   each channel shows percentages or dB, chosen from its Level menu, and follows vertical waveform zoom. The regions list
   occupies the zone to the right of the waveform.
 - **Zoom menu** (p. 623): Zoom In/Out, Full, Selection, Selection (Horiz.), Event, vertical zoom and waveform vertical
-  zoom, Undo/Redo Zoom. Full and Selection show the whole clip, as clip-based zoom does without pitch analysis;
-  Selection (Horiz.) fits the range and Event fits the event. Vertical zoom magnifies the waveform up to 64 times,
-  independently of the overview. Zoom history belongs to the current editor event and adds no project undo steps.
+  zoom, Undo/Redo Zoom. Zoom In and Out center the display on the project cursor, mapped to clip frames and clamped to
+  the clip. Full and Selection show the whole clip, as clip-based zoom does without pitch analysis; Selection (Horiz.)
+  fits the range and Event fits the event. Vertical zoom magnifies the waveform up to 64 times, independently of the
+  overview. Zoom history belongs to the current editor event and adds no project undo steps.
 - **Hitpoints section** (pp. 636-647): detecting, filtering and editing hitpoints and making slices and more of them,
   in [hitpoints.md](hitpoints.md).
 - **Warp section** (pp. 648-656): Musical Mode, the audio tempo, Auto Adjust, Free Warp and Reset, and Flatten
@@ -160,7 +161,8 @@ processing (#141) and making a sampler track of the range; what warping doesn't 
   and undo/redo; Copy without undo, unshared edits preserving the clip, the shared-copy question's New Version and
   Continue choices, Cancel, Escape, closing the editor and project or selection changes while it is open; ruler
   alignment and zoom mapping, percentage and dB levels, region start/end drags and undo, Zoom menu fits and zoom
-  undo/redo, vertical zoom changing the waveform's pixels and restoring them.
+  undo/redo, Zoom In and Out centering on the cursor with a different file sample rate and cursors outside both clip
+  edges, vertical zoom changing the waveform's pixels and restoring them.
 
 - `tests/sampleeditor_tests.cpp`: Process samples and lengths for Cut, Delete, Paste and Insert Silence, Copy and
   clipboard replacement, shared-copy choices, regions and fades following edits, stereo samples, undo/redo, errors,

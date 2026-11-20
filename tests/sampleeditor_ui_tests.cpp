@@ -41,9 +41,10 @@ namespace
 	// frames, selected in the project window and open in the sample editor.
 	struct Fixture
 	{
-		Fixture() : display(app.appUi().showProject())
+		explicit Fixture(int sampleRate = 48000) : display(app.appUi().showProject())
 		{
 			test::Audio sine;
+			sine.sampleRate = sampleRate;
 			for (int64_t frame = 0; frame < g_frames; ++frame)
 				sine.samples.push_back(
 					static_cast<float>(0.5 * std::sin(static_cast<double>(frame) * 3.14159265358979323846 / 100.0)));
@@ -356,9 +357,9 @@ TEST_CASE("the sample editor Zoom submenu fits the clip, selection and event and
 	};
 	const double full = f.editor().scale();
 	zoom("in");
-	CHECK(f.editor().scale() == Catch::Approx(full / 2));
+	REQUIRE(f.app.waitUntil([&] { return f.editor().scale() == Catch::Approx(full / 2); }));
 	zoom("out");
-	CHECK(f.editor().scale() == Catch::Approx(full));
+	REQUIRE(f.app.waitUntil([&] { return f.editor().scale() == Catch::Approx(full); }));
 	f.selection();
 	zoom("selectionHorizontal");
 	CHECK(f.editor().start() == 2000);
@@ -382,6 +383,32 @@ TEST_CASE("the sample editor Zoom submenu fits the clip, selection and event and
 	CHECK(test::compareImages(f.app.ui().screenshot(f.window, of(".se-wave")), waveform, {}).equal);
 	zoom("full");
 	CHECK(f.editor().scale() == Catch::Approx(full));
+}
+
+TEST_CASE("sample editor Zoom In and Out center on the project cursor clamped to the clip", "[ui]")
+{
+	const int64_t cursorFrame = GENERATE(-1000, 3600, 11000);
+	Fixture f(24000); // A project sample spans half a clip frame: exercise both offset and ratio.
+	f.open();
+	const Json view = f.view();
+	REQUIRE(view.at("ratio") == 2.0);
+	REQUIRE(view.at("clipStart") == g_second - 2000);
+	const double full = f.editor().scale();
+	for (const std::string action : {"in", "out"})
+	{
+		const int64_t frame = cursorFrame + (action == "out" ? 200 : 0);
+		const int64_t position = view.at("clipStart").get<int64_t>() + (frame * 2);
+		f.app.call("transport.locate", {{"position", position}});
+		f.click(of("#se-zoom-menu"));
+		f.click(of("#se-zoom-actions [zoom=" + action + "]"));
+		const double expectedScale = action == "in" ? full / 2.0 : full;
+		REQUIRE(f.app.waitUntil([&] { return f.editor().scale() == Catch::Approx(expectedScale); }));
+		const auto clamped = std::clamp<int64_t>(frame, 0, g_frames);
+		const Json display = f.box(".se-display");
+		const double middle = display.at("x").get<double>() + (display.at("width").get<double>() / 2.0);
+		CAPTURE(action, frame, clamped);
+		CHECK(f.near(f.x(static_cast<double>(clamped)), middle));
+	}
 }
 
 TEST_CASE("the sample editor opens an audio event with its info line, overview and waveform", "[ui]")
