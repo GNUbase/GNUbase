@@ -187,9 +187,12 @@ their way to the engine it ignores the echoes, so a quick second change doesn't 
 ```
 
 The setting has only what the user changed; what it leaves out has its default from the document's attributes and the
-panels' order. A set's `order` puts the sections it names first, the others follow in the document's order; once a set
-has `hidden`, it lists every hidden section, so the defaults no longer count. Panels, zones and sections it names that
-don't exist are ignored, so a layout from a newer GNUbase still loads.
+panels' order. A set's `order` has the sections it names in that order, and puts each one it doesn't name, such as a
+section new since the set was saved, after the section before it in the document. Once a set has `hidden`, it lists
+every hidden section the set knows, those its `order` or `hidden` names, so their defaults no longer count; a section
+it doesn't know has its default, so an older set or preset keeps the transport bar's new dividers hidden. Showing or
+hiding a section saves the `order` with `hidden`. Panels, zones and sections it names that don't exist are ignored, so
+a layout from a newer GNUbase still loads.
 The app's top-level windows are in it too, with whether they are open, their bounds and monitors, and workspaces
 keep copies of it by name ([workspaces.md](workspaces.md)).
 

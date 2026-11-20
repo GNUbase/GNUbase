@@ -765,19 +765,35 @@ namespace gnubase::ui
 		for (const std::string& id : strings(find(m_layout, {"windows", window, "sections", set, "order"})))
 			if (section(window, set, id) != nullptr && !contains(result, id))
 				result.push_back(id);
+		// A section the saved order doesn't name, such as one new since it was saved, goes after the section before it
+		// in the document.
 		if (const auto attached = m_windows.find(window); attached != m_windows.end())
 			if (const auto known = attached->second.sections.find(set); known != attached->second.sections.end())
+			{
+				auto at = result.begin();
 				for (const Section& entry : known->second)
-					if (!contains(result, entry.id))
-						result.push_back(entry.id);
+				{
+					if (const auto it = std::find(result.begin(), result.end(), entry.id); it != result.end())
+						at = it + 1;
+					else
+						at = result.insert(at, entry.id) + 1;
+				}
+			}
 		return result;
 	}
 
 	bool Docking::sectionHidden(const std::string& window, const std::string& set, const std::string& id) const
 	{
+		// The saved hidden list counts for the sections the saved set knows, those its order or its hidden list
+		// names; one it doesn't know yet, new since it was saved, has its default.
 		if (const Json* hidden = find(m_layout, {"windows", window, "sections", set, "hidden"});
 			hidden != nullptr && hidden->is_array())
-			return contains(strings(hidden), id);
+		{
+			const std::vector<std::string> names = strings(hidden);
+			if (contains(names, id) ||
+				contains(strings(find(m_layout, {"windows", window, "sections", set, "order"})), id))
+				return contains(names, id);
+		}
 		const Section* known = section(window, set, id);
 		return known != nullptr && known->hidden;
 	}
@@ -811,11 +827,16 @@ namespace gnubase::ui
 	{
 		if (section(window, set, id) == nullptr)
 			return;
-		std::vector<std::string> list; // every hidden one, so that the defaults no longer count
-		for (const std::string& name : sections(window, set))
+		// Every hidden one, so that the defaults no longer count, and the order, so that a later set can tell which
+		// sections this one had.
+		const std::vector<std::string> order = sections(window, set);
+		std::vector<std::string> list;
+		for (const std::string& name : order)
 			if (name == id ? hidden : sectionHidden(window, set, name))
 				list.push_back(name);
-		sectionsJson(window, set)["hidden"] = list;
+		Json& json = sectionsJson(window, set);
+		json["order"] = order;
+		json["hidden"] = list;
 		save();
 		apply();
 	}

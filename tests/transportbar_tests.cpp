@@ -301,6 +301,38 @@ TEST_CASE(
 	CHECK(app.appUi().docking().sections("transportPanel", "transport").size() == 7);
 }
 
+TEST_CASE("a transport set saved before the dividers keeps them hidden in their places, and the bar still hides its "
+		  "last sections",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app, 1.0F); // about 1240 dp of sections in 1024 dp
+	const Json before = Json::array(
+		{"locators", "locatorRange", "punchPoints", "transportControls", "timeDisplays", "tempoSignature", "click"});
+	// An older workspace or preset with the order and hidden list, and a layout with only a hidden list.
+	const std::array<Json, 2> saved{
+		Json{{"order", before}, {"hidden", Json::array()}}, Json{{"hidden", Json::array()}}};
+	for (const Json& set : saved)
+	{
+		INFO(set.dump());
+		Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
+		layout["windows"]["project"]["sections"]["transport"] = set;
+		app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+		REQUIRE(app.waitUntil([&app, &layout] { return app.appUi().docking().layout() == layout; }));
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(app.appUi().docking().sections("project", "transport") ==
+			std::vector<std::string>{"leftDivider", "locators", "locatorRange", "punchPoints", "transportControls",
+				"timeDisplays", "tempoSignature", "rightDivider", "click"});
+		const std::vector<std::string> shown = app.shownSections("transport-bar");
+		const auto has = [&shown](const std::string& id)
+		{ return std::find(shown.begin(), shown.end(), id) != shown.end(); };
+		CHECK(!has("leftDivider"));
+		CHECK(!has("rightDivider"));
+		CHECK(!has("click"));
+		CHECK(has("transportControls"));
+	}
+}
+
 TEST_CASE("every control of the default transport bar fits a 1024-pixel window at a dp ratio of 0.8", "[ui]")
 {
 	// 1280 dp, a 1920-pixel display at 150 % (#1450): the bar holds bars and beats, timecode and a new project's
@@ -1825,10 +1857,15 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	test::UiApp app({1024, 700});
 	showBar(app);
 	CHECK(visible(app, "#transport-bar [section=locators]"));
+	const std::vector<std::string> before = app.shownSections("transport-bar");
 
-	// A right click on the bar opens its setup pane, which stays open while its buttons hide sections.
+	// A right click on the bar opens its setup pane, which stays open while its buttons hide sections. The pane, in
+	// the bar and wider than the room it has left, takes no room from its sections.
 	app.ui().click(std::nullopt, at("#transport-bar [section=click]"), ui::MouseButton::Right, 1, {});
 	REQUIRE(visible(app, "#transport-setup"));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.shownSections("transport-bar") == before);
+	CHECK(visible(app, "#transport-bar [section=click]"));
 	click(app, "#transport-setup [setup-section=locators]");
 	click(app, "#transport-setup [setup-section=punchPoints]");
 	app.shell().step(std::chrono::milliseconds(0));
