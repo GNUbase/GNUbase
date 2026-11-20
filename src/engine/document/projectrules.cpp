@@ -907,15 +907,28 @@ namespace gnubase::engine
 					if (position != element->position || length != element->length)
 					{
 						// Stopped at the project's start, a cycle marker keeps its length, as a part does.
+						// Positions and ends stop at the longest project, as marker.set wants them (#686).
 						position = std::max(position, 0.0);
-						set["position"] = at(position);
+						const int64_t last = longestPosition(project, base);
+						set["position"] = std::min(at(position), last);
 						if (marker.type == MarkerType::Cycle)
 						{
 							// At least one sample long, as marker.set wants it, also on a musical track.
 							Marker moved = marker;
-							moved.position = {base, at(position)};
-							moved.end = {base, at(position + std::max(length, 0.0))};
+							moved.position = {base, std::min(at(position), last)};
+							moved.end = {base, std::min(at(position + std::max(length, 0.0)), last)};
 							keepMinimumLength(project, moved);
+							if (moved.end.value > last)
+							{
+								// At the longest project's end, the marker ends there and starts a sample before it.
+								moved.end.value = last;
+								const time::Samples end = time::toSamples(moved.end, project.tempo, project.sampleRate);
+								moved.position = time::rebase(
+									{time::TimeBase::Linear, end - 1}, base, project.tempo, project.sampleRate);
+								while (!hasMinimumLength(project, moved))
+									--moved.position.value;
+								set["position"] = moved.position.value;
+							}
 							set["end"] = moved.end.value;
 						}
 					}
