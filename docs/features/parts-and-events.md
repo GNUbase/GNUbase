@@ -34,8 +34,9 @@ nothing if it fails.
 - **The longest project.** Positions and lengths end at the longest project's end, `longestPosition` in
   `src/engine/document/document.h`: `time::g_maxPosition` (2^48) samples, or in ticks as long as that lasts at the
   project's tempo (`longestProjectTicks`). `audioEvent.add` and `.set`, `audioPart.add`, `midiPart.add` and `.set`,
-  `note.add`, `.set` and `.move`, automation points and the lengths of `media.add` refuse more, and so do a move or
-  copy that would take an event past it; loading a project cuts event, part and note positions and lengths and media
+  `note.add`, `.set` and `.move`, automation points and the lengths of `media.add` refuse more, and so does a move or
+  copy that would take an event's start past it, or its end as far again; loading a project cuts event, part and note
+  positions and lengths and media
   lengths there. A position plus a length then can't overflow, and an event of a clip at a far lower sample rate than
   the project's ends there when it plays (#1906).
 - **Resizing** stops at the clip's start and end and keeps events at least a sample frame (a tick for parts) long.

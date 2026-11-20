@@ -239,11 +239,14 @@ namespace gnubase::engine
 		}
 
 		// A position moved by shift, in its own time base. Before the project start or past the longest project's end
-		// it is refused, or clamped to them (#1906).
-		time::Position shifted(const Project& project, const time::Position& position, const Shift& shift, bool refuse)
+		// it is refused, or clamped to them (#1906). An event's end may lie as far again past it, as its start and its
+		// length may each reach it.
+		time::Position shifted(
+			const Project& project, const time::Position& position, const Shift& shift, bool refuse, bool end = false)
 		{
 			const time::TimeBase base = shift.ticks ? time::TimeBase::Musical : time::TimeBase::Linear;
 			const int64_t longest = longestPosition(project, base);
+			const int64_t last = end ? 2 * longest : longest;
 			require(shift.value >= -longest && shift.value <= longest,
 				"the move must be at most " + std::to_string(longest) + ", the longest project");
 			time::Position moved{
@@ -253,10 +256,10 @@ namespace gnubase::engine
 				require(!refuse, "the event would start before the project start");
 				moved.value = 0;
 			}
-			if (moved.value > longest)
+			if (moved.value > last)
 			{
 				require(!refuse, "the event would move past the end of the longest project");
-				moved.value = longest;
+				moved.value = last;
 			}
 			return rebased(project, moved, position.base);
 		}
@@ -325,7 +328,8 @@ namespace gnubase::engine
 			const time::Position start = rebased(project, shifted(project, item.position(), shift, true), base);
 			if (int64_t* length = item.length())
 			{
-				const time::Position end = rebased(project, shifted(project, endOf(project, item), shift, true), base);
+				const time::Position end =
+					rebased(project, shifted(project, endOf(project, item), shift, true, true), base);
 				*length = std::max<int64_t>(1, end.value - start.value);
 			}
 			if (item.audio != nullptr)
@@ -984,7 +988,8 @@ namespace gnubase::engine
 			const bool zero = parameters.value("zeroCrossing", false) && !moveContents;
 			for (const Item& item : items)
 			{
-				time::Position to = shifted(project, start ? item.position() : endOf(project, item), shift, false);
+				time::Position to =
+					shifted(project, start ? item.position() : endOf(project, item), shift, false, !start);
 				if (zero && item.audio != nullptr)
 					to = {time::TimeBase::Linear, zeroCrossing(project, *item.audio, samples(project, to))};
 				if (start)
