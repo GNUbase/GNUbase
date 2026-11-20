@@ -575,26 +575,28 @@ namespace gnubase::audio
 				const std::array<HANDLE, 3> events{
 					m_stop.get(), m_output.event.get(), m_input ? m_input->event.get() : nullptr};
 				const DWORD count = m_input ? 3 : 2;
-				bool lost = false;
-				while (!lost)
+				std::optional<WasapiGaveUp> gaveUp;
+				while (!gaveUp)
 				{
 					const DWORD woken = WaitForMultipleObjects(count, events.data(), FALSE, g_hangMilliseconds);
 					if (woken == WAIT_OBJECT_0)
 						break;
 					if (woken != WAIT_OBJECT_0 + 1 && woken != WAIT_OBJECT_0 + 2)
 					{
-						lost = true; // a timeout: the endpoint hangs
+						gaveUp = WasapiGaveUp::Hung; // a timeout
 						break;
 					}
 					const rt::ScopedRealtimeContext realtime;
-					lost = !readInput() || (woken == WAIT_OBJECT_0 + 1 && !writeOutput(callback));
+					if (!readInput() || (woken == WAIT_OBJECT_0 + 1 && !writeOutput(callback)))
+						gaveUp = WasapiGaveUp::CallFailed;
 				}
 				if (mmcss != nullptr)
 					AvRevertMmThreadCharacteristics(mmcss);
-				if (lost)
+				if (gaveUp)
 				{
 					logging::warning("The audio device {} stopped working", m_info.name);
-					reportOverload(); // a dropout, before the reset that recovers from it
+					if (wasapiDropout(*gaveUp))
+						reportOverload(); // before the reset that recovers from it
 					requestReset();
 				}
 			}
@@ -811,6 +813,11 @@ namespace gnubase::audio
 		private:
 			bool m_exclusive;
 		};
+	}
+
+	bool wasapiDropout(WasapiGaveUp why)
+	{
+		return why == WasapiGaveUp::Hung;
 	}
 
 	std::unique_ptr<Backend> makeWasapiBackend(bool exclusive)

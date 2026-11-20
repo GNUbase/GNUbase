@@ -17,4 +17,16 @@ namespace gnubase::audio
 	// sizes are free: each period of the output is processed in blocks of at most the block size. The device asks for a
 	// reset when one of its endpoints goes away or, for "default", when the default endpoints change.
 	std::unique_ptr<Backend> makeWasapiBackend(bool exclusive);
+
+	// Why a device's audio thread gave up on its endpoint and asked for a reset.
+	enum class WasapiGaveUp
+	{
+		Hung,      // the endpoint stopped responding
+		CallFailed // a WASAPI call failed
+	};
+
+	// Whether that was a dropout (Device::overloads): only a hang. A call fails also when Windows invalidates the
+	// stream because the endpoint was reconfigured, e.g. its format changed in the sound settings, which is a settings
+	// change (#418, #431).
+	bool wasapiDropout(WasapiGaveUp why);
 }

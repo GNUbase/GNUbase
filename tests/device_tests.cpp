@@ -447,6 +447,13 @@ TEST_CASE("the WASAPI backends list their devices and refuse unknown ones", "[un
 		CHECK_THROWS_AS(backend->open(config("no such device")), DeviceError);
 	}
 }
+
+// The thread can't be driven without an endpoint that fails, so this checks its decision (#431).
+TEST_CASE("a WASAPI endpoint that hangs counts as a dropout, a stream that fails doesn't", "[unit]")
+{
+	CHECK(wasapiDropout(WasapiGaveUp::Hung));
+	CHECK(!wasapiDropout(WasapiGaveUp::CallFailed)); // e.g. invalidated, as its format changed in the sound settings
+}
 #endif
 
 #ifdef __APPLE__
