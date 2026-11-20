@@ -205,28 +205,29 @@ instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the
 - `tests/inspector_tests.cpp` drives the app's project window with `ui::Automation`: the info line of one and of two
   selected parts, start, length (relative and with Ctrl+Enter absolute, also with the first part's own value, after
   which an edit taken by leaving the field is relative again) and end edits with undo, name, mute and lock for every
-  selected part, changes from another client, an audio event's volume, the parts' transpose and velocity (relative, kept
-  in range, with Ctrl+Enter, undo, hidden for audio events), and asking only while it shows; a marker selected on the
-  marker track with each field edited, two markers changed relatively and with Ctrl+Enter in one undo step, and an event
-  selected after it, the setup pane naming the fields as the info line does; a marker clicked again after a part,
-  Ctrl+Enter on the first marker's own position with a part shown before, and a selection naming removed markers; a note
-  selected in an in-place editor with its fields shown and edited, pitch relative and with Ctrl+Enter, velocity, channel
-  and start, a part selected after it, its editor deselecting and closing; the inspector's buttons, volume and pan both
-  ways, the output from another client and from the drop-down list, a refused output, the inserts overview with a
-  bypassed slot, the notepad, renaming, notes and a name being typed when another track is selected and when another
-  client loads a project, arrow keys in the notepad and the name, closing a section, hiding one in Set up Sections and
-  opening it only from an empty area, and what a group and a marker track don't have; the info line's and the toolbar's
-  setup panes, a hidden field staying hidden when the selection shows again and Show All leaving an unavailable one out;
-  the MIDI Modifiers section's bypass, values, a fraction's denominator, a generator's target with positions in ticks, a
-  range the engine refuses, changes from another client with undo, and an audio track without it; the MIDI Inserts and
-  MIDI Sends sections' effect, a parameter from a drop-down list and from a value field, on, bypass, the divider from
-  the list and dragged in one step, a drag dropped when the inspector shows another instrument track or a marker track,
-  the control panel opened and closed, a send's output and Pre, changes from another client with undo, and an audio
-  track without them. A drag of the inspector's volume up to the project's maximum, wheel turns on the pan and a drag of
-  the info line's volume are one undo step each, and a MIDI modifier and a part's transpose dragged back to where they
-  started while the engine answers late end there. The info line's volume step that the engine refuses, one of the two
-  selected events being gone, shows in the command log, leaves no undo step and shows the engine's value again. While
-  a dragged note's last velocity step is out, another note selected in an in-place editor shows its own velocity and
-  the dragged one the drag's; wheel turns on the velocity of one note, then of the next with the mouse still over the
-  field, are two undo steps.
+  selected part, changes from another client, an audio event's volume, an untouched Ctrl+Enter on it giving three events
+  the first one's in one undo step, the parts' transpose and velocity (relative, kept in range, with Ctrl+Enter, undo,
+  hidden for audio events), and asking only while it shows; a marker selected on the marker track with each field
+  edited, two markers changed relatively and with Ctrl+Enter in one undo step, and an event selected after it, the setup
+  pane naming the fields as the info line does; a marker clicked again after a part, Ctrl+Enter on the first marker's
+  own position with a part shown before, a selection naming removed markers, and an untouched Ctrl+Enter on the position
+  of three markers giving them the first one's in one undo step; a note selected in an in-place editor with its fields
+  shown and edited, pitch relative and with Ctrl+Enter, velocity, channel and start, a part selected after it, its
+  editor deselecting and closing; the inspector's buttons, volume and pan both ways, the output from another client and
+  from the drop-down list, a refused output, the inserts overview with a bypassed slot, the notepad, renaming, notes and
+  a name being typed when another track is selected and when another client loads a project, arrow keys in the notepad
+  and the name, closing a section, hiding one in Set up Sections and opening it only from an empty area, and what a
+  group and a marker track don't have; the info line's and the toolbar's setup panes, a hidden field staying hidden when
+  the selection shows again and Show All leaving an unavailable one out; the MIDI Modifiers section's bypass, values, a
+  fraction's denominator, a generator's target with positions in ticks, a range the engine refuses, changes from another
+  client with undo, and an audio track without it; the MIDI Inserts and MIDI Sends sections' effect, a parameter from a
+  drop-down list and from a value field, on, bypass, the divider from the list and dragged in one step, a drag dropped
+  when the inspector shows another instrument track or a marker track, the control panel opened and closed, a send's
+  output and Pre, changes from another client with undo, and an audio track without them. A drag of the inspector's
+  volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are one undo step
+  each, and a MIDI modifier and a part's transpose dragged back to where they started while the engine answers late end
+  there. The info line's volume step that the engine refuses, one of the two selected events being gone, shows in the
+  command log, leaves no undo step and shows the engine's value again. While a dragged note's last velocity step is out,
+  another note selected in an in-place editor shows its own velocity and the dragged one the drag's; wheel turns on the
+  velocity of one note, then of the next with the mouse still over the field, are two undo steps.
 - `tests/mixerwindow_tests.cpp`: a drag of a mixer fader is one undo step.
