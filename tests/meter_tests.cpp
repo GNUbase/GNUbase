@@ -1116,9 +1116,12 @@ TEST_CASE("a frame loses no peak of the first block after a reset, also when it 
 	// the loads in read() lie between the reader taking the peak and loading the maximum, and the reader keeps the
 	// maxima's cache line contended. With raise in place of the handover it failed in nearly every run of optimized
 	// builds on x86-64 desktops (MSVC, GCC and Clang), though not in unoptimized ones: of CI's jobs only the Release
-	// builds (windows-x64, linux-x64-gcc) can be expected to catch it, though that isn't measured on CI's runners yet,
-	// while a local Debug run and the sanitizer jobs, which build Debug, say nothing about raise. The rounds end early
-	// under load, but not before the minimum (RaceClock).
+	// builds (windows-x64, linux-x64-gcc) can be expected to catch it, while a local Debug run and the sanitizer jobs,
+	// which build Debug, say nothing about raise. Measured on CI's runners (2026-11-20, hosted, four virtual
+	// processors, this test alone in 20 runs, then four copies at a time in 20 runs): raise failed windows-x64 in 20 of
+	// 20 and 17 of 20 runs, linux-x64-gcc in 19 of 20 and 0 of 20 (#1244). ctest runs other tests beside this one, not
+	// copies of it, so the second figure only says that the race can be missed there. The rounds end early under load,
+	// but not before the minimum (RaceClock).
 	constexpr int rounds = 50000;
 	constexpr auto last = static_cast<size_t>(g_maxMeterChannels - 1);
 	// Both levels are new every round, so that a frame with the quieter peak, whether it took it or limited the loud
