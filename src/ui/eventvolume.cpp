@@ -95,6 +95,8 @@ namespace gnubase::ui
 		{
 			const engine::VolumePoint& point = audio.curve[i];
 			const double seconds = shown.start + (static_cast<double>(point.position - audio.offset) / audio.timeRate);
+			if (seconds < shown.start || seconds > shown.end)
+				continue; // the volume line shows no square for it: a split or resize left it outside the event
 			const double px = (seconds - m_view.start) / m_view.scale;
 			const double fraction = std::clamp(gain(audio.volume) * gain(point.volume) / g_volumeLineTop, 0.0, 1.0);
 			const double distance = std::max(std::abs(x - px), std::abs(y - (bottom - (fraction * height))));

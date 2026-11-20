@@ -2676,6 +2676,41 @@ TEST_CASE("the draw tool adds and drags volume curve points, the erase tool remo
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents().empty(); }));
 }
 
+TEST_CASE("the draw and erase tools pass over curve points outside the event, which it doesn't show", "[unit]")
+{
+	// A split keeps the whole curve in both halves: the point 0.1 seconds in lies before the right half's start.
+	Fixture f;
+	f.display.setTool(ui::Tool::Draw);
+	f.click(210, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
+	const uint64_t right = f.call("event.split", {{"events", {f.event}}, {"positions", {96000 + 5280}}})
+							   .at("events")
+							   .at(0)
+							   .get<uint64_t>();
+	const auto curve = [&f, right]
+	{
+		for (const Json& each : f.audioEvents())
+			if (each.at("id") == right)
+				return each.at("volumeCurve");
+		return Json();
+	};
+	REQUIRE(f.waitUntil([&f] { return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].volumes.size() == 2; }));
+	REQUIRE(curve().size() == 1);
+	f.display.select({right});
+
+	// The draw tool within the hidden point's reach adds a point and leaves the hidden one where it is.
+	f.click(216, 36);
+	REQUIRE(f.waitUntil([&curve] { return curve().size() == 2; }));
+	CHECK(curve()[0].at("position") == 4800);
+
+	// The erase tool 2 dp inside the right half, within the hidden point's reach and out of the new one's, removes the
+	// event, not a point.
+	f.display.setTool(ui::Tool::Erase);
+	f.click(212, 24);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 1; }));
+	CHECK(f.audioEvents()[0].at("id") == f.event);
+}
+
 TEST_CASE("volume curve points on a warped event go where its waveform shows their clip frames", "[unit]")
 {
 	Fixture f;
