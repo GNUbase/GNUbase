@@ -691,8 +691,9 @@ namespace gnubase::engine
 			return type == TrackType::Audio || type == TrackType::Instrument || type == TrackType::Midi;
 		}
 
-		// The audio parts that hold a locked event, which the rules neither delete nor move: a part goes and moves with
-		// all its events, locked ones too, so the event's lock keeps the part where it is. Its other changes apply.
+		// The audio parts that hold a locked event, which the rules neither delete, move nor shorten: a part goes and
+		// moves with all its events, locked ones too, and plays only what lies inside it, so the event's lock keeps the
+		// part where it is and at least as long. Its other changes apply.
 		std::set<ObjectId> holdingLocked(const Project& project)
 		{
 			std::set<ObjectId> parts;
@@ -895,6 +896,8 @@ namespace gnubase::engine
 					if (const int64_t delta = ticks(position) - ticks(element->position);
 						delta != 0 && !withPart && !stays)
 						commands.emplace_back("event.move", Json{{"events", events}, {"ticks", delta}});
+					if (stays)
+						length = std::max(length, element->length);
 					if (const int64_t delta = ticks(std::max(length, 1.0)) - ticks(element->length); delta != 0)
 						commands.emplace_back(
 							"event.resize", Json{{"events", events}, {"edge", "end"}, {"ticks", delta}});
@@ -1157,8 +1160,8 @@ namespace gnubase::engine
 				"changes it by the actions through the commands that make such changes (event.move, event.resize, "
 				"event.set, track.set, channel.set, marker.set). Locked parts and events stay as they are on tracks "
 				"that stay, and so do the events in a locked audio part; an audio part that holds a locked event "
-				"neither goes nor moves, while its other changes apply and the unlocked events found in it go or "
-				"move alone. Audio events keep their clip's name, track operations change tracks "
+				"neither goes, moves nor gets shorter, while its other changes apply and the unlocked events found "
+				"in it go or move alone. Audio events keep their clip's name, track operations change tracks "
 				"only. Positions and lengths stop at the longest project. seed makes the random operations "
 				"repeatable; without it each call gives new random values." +
 					rulesText + " Use project.findByRules for select and deselect. Returns what the filters found.",

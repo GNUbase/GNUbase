@@ -47,8 +47,9 @@ holds named rules, as the MIDI rules have one ([midi-rules.md](midi-rules.md)).
   refuses select and deselect. `event.set` renames parts (`name`) for the name actions.
   - **Locks inside audio parts** reach both ways, for delete and transform alike, so that a rule never changes what
     is locked (a lock guards against moving or editing by accident, reference manual p. 276): the events in a locked
-    audio part stay as they are, found or not, and an audio part that holds a locked event neither goes nor moves,
-    while its other changes (length, name, color) apply and the unlocked events found in it go or move alone. The
+    audio part stay as they are, found or not, and an audio part that holds a locked event neither goes, moves nor
+    gets shorter (a part plays only what lies inside it), while it may get longer, its name and color change and the
+    unlocked events found in it go or move alone. The
     rules are stricter here than `event.remove` and `event.move`, which refuse only locked items themselves: they
     remove or move a part with its locked events, and an event in a locked part on its own.
 - **Presets** belong to the user: `projectRules.presets` lists the factory presets (`Init`, `Delete/Empty parts`,
@@ -84,9 +85,9 @@ and post lists and a command browser.
 rules JSON refuses (brackets nesting too deep among it), which the commands' descriptions name; `project.findByRules` on
 every filter target, brackets, properties and the selection; `project.applyRules` moving, resizing, renaming and
 coloring parts and markers, track names, mute, solo, time domain and colors, delete with folders, locked parts, audio
-parts that hold locked events (kept in place, their unlocked events deleted and moved alone), locked audio parts
-keeping their events and the active marker track last, generated names without gaps, new random values without
-a seed, positions and lengths at the longest project, also on a linear track and at the lowest sample rate, cycle
+parts that hold locked events (kept in place and as long, their unlocked events deleted and moved alone), locked
+audio parts keeping their events and the active marker track last, generated names without gaps, new random values
+without a seed, positions and lengths at the longest project, also on a linear track and at the lowest sample rate, cycle
 markers made zero long on musical and linear tracks, at the lowest sample rate, at a tempo change and at 1 BPM, cycle
 markers moved before the start keeping their length, markers moved while their track changes its time domain both ways,
 and repeatable random values, in one undo step, undone and redone; `event.set` renaming parts; the preset library
