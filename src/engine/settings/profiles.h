@@ -21,8 +21,10 @@ namespace gnubase::engine
 		// Before the settings are read at startup: if profile.activate chose another profile, the active profile's
 		// files go into its folder (profiles/<name>) and the chosen one's come into the settings folder. Does nothing
 		// without a folder; logs what fails and then leaves the files and the active profile as they were. A switch
-		// that GNUbase didn't finish, such as in a crash, is undone first. For tests, replacing is called before each
-		// profile file that the switch replaces in a folder, with its path: one that throws makes that step fail.
+		// that GNUbase didn't finish, such as in a crash, is undone first. Before all that, it deletes what earlier
+		// switches and profile.remove couldn't delete of the folders they put aside (profile-removed-<16 hex digits>
+		// in the folder), and logs what still stays. For tests, replacing is called before each profile file that the
+		// switch replaces in a folder, with its path: one that throws makes that step fail.
 		void switchProfile(const std::filesystem::path& directory,
 			const std::function<void(const std::filesystem::path& file)>& replacing = {});
 
