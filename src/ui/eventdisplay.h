@@ -372,8 +372,8 @@ namespace gnubase::ui
 		// Whether the action can do something now, for menus and keys to disable it: the actions that only edit the
 		// selection range (edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence, edit.cropRange,
 		// edit.splitRange and the top and bottom nudges) need a range, all but edit.splitRange and the nudges one with
-		// a length; edit.paste and edit.pasteTime need
-		// something copied, a rangeClipboard.changed since the project opened. The others always can.
+		// a length; edit.paste and edit.pasteTime need something copied, a rangeClipboard.changed since the project
+		// opened. The others always can.
 		bool canRun(const std::string& action) const;
 
 		// Automation tracks (#121, automationtracks.cpp, docs/features/automation-tracks.md): lanes of their own below
@@ -932,7 +932,7 @@ namespace gnubase::ui
 		bool m_dragMoved = false;
 		double m_dragDy = 0.0;              // dp, dragging the event volume or a curve point
 		std::optional<size_t> m_dragPoint;  // the curve point dragged, none for a new one
-		bool m_dragStarted = false;         // moving events, after the drag delay
+		bool m_dragStarted = false;         // moving events, after the drag delay; a RangeMove drag, once across
 		bool m_dragToggles = false;         // a Ctrl/Shift click takes the pressed event or point out of the selection
 		bool m_clickSelectsPoint = false;   // a click on a point of a larger selection selects only that point
 		double m_pressTime = 0.0;           // RmlUi's clock, in seconds
@@ -988,6 +988,7 @@ namespace gnubase::ui
 		bool m_resizeScrubs = false; // the play tool's resize drag, which scrubs m_auditioned
 		std::optional<RangeSelection> m_range;
 		std::optional<RangeSelection> m_rangeBase; // what a drag with Shift adds to
+		bool m_rangeAnew = false;                  // a Shift press in m_rangeBase, which a drag replaces
 		std::optional<RangeSelection> m_dragRange; // the range a RangeMove drag moves, as it was
 		double m_pressX = 0.0;                     // dp in the event lanes
 		double m_pressY = 0.0;

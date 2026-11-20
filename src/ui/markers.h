@@ -90,9 +90,8 @@ namespace gnubase::ui
 	// The erase tool deletes the marker clicked, with the tool modifier erase.deleteLaterEvents every later one on its
 	// track; with the range tool a double click selects the range between the markers around it on every track, and a
 	// click and a drag select a range or drag its contents as on any lane (ui/eventdisplay.h). Moves and new markers
-	// snap. A
-	// drag whose mouseup never comes, released outside the window, ends without its effect at the next press. Use it on
-	// the UI thread; the display, the engine and the binding must outlive it.
+	// snap. A drag whose mouseup never comes, released outside the window, ends without its effect at the next press.
+	// Use it on the UI thread; the display, the engine and the binding must outlive it.
 	class MarkerLines final : private Rml::EventListener
 	{
 	public:

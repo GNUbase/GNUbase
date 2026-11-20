@@ -134,8 +134,10 @@ The grid step is the nudges' for events ([parts-and-events.md](parts-and-events.
 nothing moves before the project start. With the range tool, a press in the range on one of its tracks, without
 Shift, drags its contents (p. 291): the range follows the mouse across, its start snapped, and the release moves what
 is in it there (`range.move`), or with the tool modifier Copy (`dragDrop.copy`, Alt by default) a copy of it; the
-range stays where it went. A click there, or a drag straight up or down, selects a range as anywhere, and a drag
-released outside the window puts the range back at the next press.
+range stays where it went, and a drag that came back to the press leaves it where it was. A click there, or a drag
+straight up or down, selects a range as anywhere. Shift and a drag there selects a new range, just the stretch dragged
+over, and Shift and a drag outside it adds to the range (p. 288). A drag released outside the window puts the range
+back at the next press.
 
 The main menu's Edit menu has Cut, Copy and Paste, and the Range submenu Global Copy, Cut Time, Delete Time, Paste
 Time, Split, Crop and Insert Silence. Menus and keys disable the commands that only edit the range while there is

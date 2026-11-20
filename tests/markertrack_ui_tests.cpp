@@ -467,12 +467,14 @@ TEST_CASE("with the range tool, a click on the marker track in the selection ran
 	CHECK(range().end == clicked.start);
 	CHECK(range().tracks == std::vector<uint64_t>{fixture.audio, fixture.first});
 
-	// Shift and a drag from in it to 4.5 seconds adds to it, as on any lane, and moves nothing.
+	// Shift and a drag from in it to 4.5 seconds selects a new range from the press, as on any lane (reference manual
+	// p. 288), and moves nothing.
 	selectBetween();
 	fixture.drag(170, 70, 450, 70, {"shift"});
-	CHECK(range().start == 2 * g_quarterSamples);
+	CHECK(range().start > 2 * g_quarterSamples);
+	CHECK(range().start < 4 * g_quarterSamples);
 	CHECK(range().end > 8 * g_quarterSamples);
-	CHECK(range().tracks == std::vector<uint64_t>{fixture.audio, fixture.first, fixture.second});
+	CHECK(range().tracks == std::vector<uint64_t>{fixture.first});
 	REQUIRE(fixture.settled());
 	CHECK(fixture.call("history.get").at("steps").size() == steps);
 }

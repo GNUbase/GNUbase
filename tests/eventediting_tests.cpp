@@ -2456,6 +2456,37 @@ TEST_CASE(
 	f.call("history.undo");
 	REQUIRE(f.waitUntil([&] { return positions().size() == 1; }));
 
+	// A drag that went across and came back to the press leaves the range where it was, and nothing moves.
+	f.click(900, 20);
+	f.display.setRange(part);
+	const size_t undone = f.call("history.get").at("steps").size();
+	f.automation.press(std::nullopt, f.at(150, 60), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(250, 60));
+	f.step();
+	CHECK(range().start == 96000);
+	f.automation.move(std::nullopt, f.at(151, 60));
+	f.automation.release(std::nullopt, f.at(151, 60), ui::MouseButton::Left);
+	f.step();
+	CHECK(range().start == 48000);
+	CHECK(range().end == 144000);
+	CHECK(range().tracks == std::vector<uint64_t>{midi});
+	CHECK(f.call("history.get").at("steps").size() == undone);
+	CHECK(positions() == std::vector<int64_t>{2 * g_quarter});
+
+	// With Shift a drag in the range selects a new range, just the stretch dragged over, and moves nothing; outside
+	// the range it adds to it (p. 288).
+	f.click(900, 20);
+	f.display.setRange(part);
+	f.drag(200, 60, 250, 60, {"shift"});
+	CHECK(range().start == 96000);
+	CHECK(range().end == 120000);
+	CHECK(range().tracks == std::vector<uint64_t>{midi});
+	f.drag(400, 60, 450, 60, {"shift"});
+	CHECK(range().start == 96000);
+	CHECK(range().end == 216000);
+	CHECK(f.call("history.get").at("steps").size() == undone);
+	CHECK(positions() == std::vector<int64_t>{2 * g_quarter});
+
 	// A click in the range without a drag selects a range of no length there, as anywhere.
 	f.click(900, 20);
 	f.display.setRange(part);

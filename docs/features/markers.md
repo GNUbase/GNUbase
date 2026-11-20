@@ -98,7 +98,7 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
   tool modifier Copy (`dragDrop.copy`, Alt by default) copies them; the selection range follows the mouse and stays
   where it went, and the markers stay where they are. A click there without a drag, and Shift and a drag, select a range
   as on any lane (a range of no length at the click, over the lanes between press and release after a drag up or down,
-  or added to the range), and so do its other clicks and drags. **Delete** (and
+  a new range with Shift, p. 288), and so do its other clicks and drags (Shift and a drag outside the range adds to it). **Delete** (and
   Backspace) removes the selected markers (`marker.remove`), which the project window selects instead of events; a
   range selected deselects the markers, so that Delete deletes what was selected last.
 - **Cutting a range in a cycle marker** (p. 425): with a range selected in a cycle marker, Ctrl+X (`range.cut`) or

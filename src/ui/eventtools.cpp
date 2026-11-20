@@ -238,20 +238,27 @@ namespace gnubase::ui
 		case Tool::RangeSelection:
 			if (!m_selection.empty())
 				select({});
-			// A press in the range on one of its tracks drags its contents (reference manual p. 291), unless Shift
-			// adds to the range.
-			if (const int64_t at = samples(m_view.start + (x * m_view.scale)); lane && m_range &&
-				m_range->start <= at && at < m_range->end && m_pressed.find("shift") == std::string::npos &&
-				std::find(m_range->tracks.begin(), m_range->tracks.end(), m_laneTracks[*lane]) != m_range->tracks.end())
 			{
-				m_dragRange = m_range;
-				m_drag = Drag::RangeMove;
+				// A press in the range on one of its tracks drags its contents (reference manual p. 291). With Shift a
+				// press adds to the range, but a drag in it selects a new range (reference manual p. 288): a Shift
+				// double click there still adds the event's range.
+				const int64_t at = samples(m_view.start + (x * m_view.scale));
+				const bool inRange = lane && m_range && m_range->start <= at && at < m_range->end &&
+					std::find(m_range->tracks.begin(), m_range->tracks.end(), m_laneTracks[*lane]) !=
+						m_range->tracks.end();
+				const bool shift = m_pressed.find("shift") != std::string::npos;
+				if (inRange && !shift)
+				{
+					m_dragRange = m_range;
+					m_drag = Drag::RangeMove;
+					return true;
+				}
+				m_rangeBase = m_pressed == "shift" ? m_range : std::nullopt;
+				m_rangeAnew = m_pressed == "shift" && inRange;
+				m_drag = Drag::Range;
+				setRangeFrom(x, y);
 				return true;
 			}
-			m_rangeBase = m_pressed == "shift" ? m_range : std::nullopt; // Shift adds to the range
-			m_drag = Drag::Range;
-			setRangeFrom(x, y);
-			return true;
 		case Tool::Zoom:
 		case Tool::Mute:
 			m_drag = Drag::Rectangle;
@@ -353,12 +360,15 @@ namespace gnubase::ui
 				true, std::min(m_pressX, x), std::min(m_pressY, y), std::max(m_pressX, x), std::max(m_pressY, y));
 			break;
 		case Drag::Range:
+			if (m_rangeAnew)
+				m_rangeBase = std::nullopt;
 			setRangeFrom(x, y);
 			break;
 		case Drag::RangeMove:
 			if (m_dragRange)
 			{
 				// The range follows the mouse across, its start snapped.
+				m_dragStarted = m_dragStarted || std::abs(x - m_pressX) >= g_rangeDragStart;
 				const RangeSelection& from = *m_dragRange;
 				const double start = static_cast<double>(from.start) / m_time.sampleRate;
 				const int64_t to =
@@ -479,8 +489,9 @@ namespace gnubase::ui
 		case Drag::RangeMove:
 		{
 			// Released, its contents go where the range is, or with the tool modifier Copy (Alt) a copy of them; a
-			// click, or a drag straight up or down, selects a range of no length there, over the lanes between.
-			if (!moved || !m_dragRange || std::abs(x - m_pressX) < g_rangeDragStart)
+			// click, or a drag straight up or down, selects a range of no length there, over the lanes between. A
+			// drag that went across and came back leaves the range where it was.
+			if (!moved || !m_dragRange || !m_dragStarted)
 			{
 				m_rangeBase = std::nullopt;
 				setRangeFrom(x, y);
@@ -488,6 +499,11 @@ namespace gnubase::ui
 				break;
 			}
 			const RangeSelection from = *m_dragRange;
+			if (std::abs(x - m_pressX) < g_rangeDragStart)
+			{
+				setRange(from);
+				break;
+			}
 			toolMove(x, y);
 			if (m_range && m_range->start != from.start)
 				edit("range.move",
