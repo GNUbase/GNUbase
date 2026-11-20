@@ -102,8 +102,8 @@ namespace
 			const engine::Result result = client.call(command, parameters, timeout);
 			INFO(command << ": " << result.error);
 			REQUIRE(result.ok());
-			if (command != "clip.statistics" && command != "clip.spectrum" && command != "clip.detectSilence" &&
-				command != "event.stripSilence")
+			if (command != "clip.statistics" && command != "clip.estimatePitch" && command != "clip.spectrum" &&
+				command != "clip.detectSilence" && command != "event.stripSilence")
 				return result.value;
 			const Json job = test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
 			INFO(job);
@@ -397,6 +397,83 @@ TEST_CASE("clip.statistics measures reference signals", "[unit]")
 	}
 }
 
+TEST_CASE("clip.statistics weights surround speakers and excludes LFE only from loudness", "[integration]")
+{
+	Fixture f;
+	const Json mono = f.statistics(make(3.1, 1, [](int, double t) { return sine(1000.0, 0.25, t); }));
+	const double reference = number(mono.at("loudness").at("integrated"));
+	for (const int channels : {4, 5, 6, 8})
+		for (int speaker = 0; speaker < channels; ++speaker)
+		{
+			INFO(channels << " channels, speaker " << speaker);
+			const Json measured = f.statistics(make(3.1, channels,
+				[&](int channel, double t) { return channel == speaker ? sine(1000.0, 0.25, t) : 0.0; }));
+			const bool lfe = channels >= 6 && speaker == 3;
+			const bool surround = speaker >= std::min(4, channels - 2);
+			for (const char* value : {"integrated", "maxMomentary", "maxShortTerm"})
+			{
+				if (lfe)
+					CHECK(measured.at("loudness").at(value).is_null());
+				else
+					CHECK(number(measured.at("loudness").at(value)) ==
+						Approx(reference + (surround ? 10.0 * std::log10(1.41) : 0.0)).margin(0.05));
+			}
+			CHECK(number(measured.at("channels").at(speaker).at("truePeak")) == Approx(0.25).margin(0.002));
+			CHECK(number(measured.at("loudness").at("maxTruePeak")) == Approx(-12.0412).margin(0.05));
+		}
+}
+
+TEST_CASE("clip.estimatePitch finds a fundamental beneath louder harmonics and measures a clip range", "[integration]")
+{
+	Fixture f;
+	const auto clip = f.add(make(0.8, 2,
+								[](int channel, double t)
+								{
+									const double firstPitch = channel == 0 ? 110.0 : 261.6256;
+									const double hz = t < 0.4 ? firstPitch : 440.0;
+									return sine(hz, 0.2, t) + sine(2.0 * hz, 0.6, t) + sine(3.0 * hz, 0.1, t);
+								}),
+		"harmonics");
+	const Json before = f.call("project.get");
+	const Json first = f.call("clip.estimatePitch", {{"clip", clip}, {"end", at(0.4)}});
+	CHECK(first.at("clip") == clip);
+	CHECK(first.at("frames") == at(0.4));
+	REQUIRE(first.at("channels").size() == 2);
+	CHECK(number(first.at("channels").at(0).at("pitch")) == Approx(110.0).epsilon(0.01));
+	CHECK(number(first.at("channels").at(1).at("pitch")) == Approx(261.6256).epsilon(0.01));
+	const Json second = f.call("clip.estimatePitch", {{"clip", clip}, {"start", at(0.4)}});
+	CHECK(number(second.at("channels").at(0).at("pitch")) == Approx(440.0).epsilon(0.01));
+	const Json statistics = f.call("clip.statistics", {{"clip", clip}, {"end", at(0.4)}});
+	CHECK(number(statistics.at("channels").at(0).at("pitch")) == Approx(110.0).epsilon(0.01));
+	CHECK(f.call("project.get") == before);
+	CHECK_THAT(f.fails("clip.estimatePitch", {{"clip", clip}, {"start", -1}}), ContainsSubstring("within the clip"));
+	CHECK_THAT(f.fails("clip.estimatePitch", {{"clip", -1}}), ContainsSubstring("no clip"));
+}
+
+TEST_CASE("pitch estimation rejects unpitched or unsupported audio", "[integration]")
+{
+	Fixture f;
+	uint32_t noise = 1;
+	for (const std::string signal : {"silence", "DC", "noise", "short", "high"})
+	{
+		INFO(signal);
+		const auto clip = f.add(make(signal == "short" ? 0.001 : 0.4, 1,
+									[&](int, double t)
+									{
+										noise = (noise * 1664525U) + 1013904223U;
+										if (signal == "noise")
+											return (static_cast<double>(noise >> 8U) / 16777216.0) - 0.5;
+										if (signal == "high")
+											return sine(3000.0, 0.5, t);
+										if (signal == "DC")
+											return 0.5;
+										return signal == "short" ? sine(110.0, 0.5, t) : 0.0;
+									}),
+			signal);
+		CHECK(f.call("clip.estimatePitch", {{"clip", clip}}).at("channels").at(0).at("pitch").is_null());
+	}
+}
+
 TEST_CASE("clip.spectrum shows the levels of a signal's frequencies", "[unit]")
 {
 	Fixture f;
@@ -439,7 +516,8 @@ TEST_CASE("clip.spectrum shows the levels of a signal's frequencies", "[unit]")
 
 TEST_CASE("audio function jobs keep commands available and report progress or cancellation", "[unit]")
 {
-	for (const std::string command : {"clip.statistics", "clip.spectrum", "clip.detectSilence", "event.stripSilence"})
+	for (const std::string command :
+		{"clip.statistics", "clip.estimatePitch", "clip.spectrum", "clip.detectSilence", "event.stripSilence"})
 	{
 		INFO(command);
 		Fixture f;
@@ -498,7 +576,8 @@ TEST_CASE("Strip Silence jobs never apply sections to a changed project", "[unit
 
 TEST_CASE("audio function jobs report unreadable files without changing the document", "[unit]")
 {
-	for (const std::string command : {"clip.statistics", "clip.spectrum", "clip.detectSilence", "event.stripSilence"})
+	for (const std::string command :
+		{"clip.statistics", "clip.estimatePitch", "clip.spectrum", "clip.detectSilence", "event.stripSilence"})
 	{
 		INFO(command);
 		Fixture f;

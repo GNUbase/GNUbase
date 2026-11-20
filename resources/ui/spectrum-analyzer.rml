@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The Spectrum Analyzer (#147, docs/features/audio-functions.md, reference manual pp. 607-608) of the first audio
      event in the document's attribute events (ids): ui::EventDisplay opens it (audio.spectrumAnalyzer). Its Lua
-     measures the section of the clip the event plays (clip.spectrum) and draws the chosen channel's levels as bars
+     measures the section of the clip the event plays (clip.spectrum) and draws one channel as bars or all as curves,
      from -120 dB at the bottom to 0 dB at the top of #sa-graph, a bar per 1/24 octave from 20 Hz. The mouse over
      the graph shows the channel, frequency, note and level in #sa-value; a right click makes that frequency the one
      the difference D is measured from (.reference), and a click drops it. A clip whose file can't be read shows
@@ -15,7 +15,7 @@
 			width: 640dp;
 		}
 
-		.row, #sa-graph
+		.row, #sa-view
 		{
 			margin: 8dp 12dp 0 12dp;
 		}
@@ -36,6 +36,22 @@
 		{
 			position: relative;
 			height: 260dp;
+		}
+
+		#sa-view
+		{
+			overflow-x: auto;
+		}
+
+		#sa-zoom
+		{
+			width: 160dp;
+			margin-left: 12dp;
+		}
+
+		.sa-graph.all .sa-bar
+		{
+			height: 2dp;
 		}
 
 		.sa-bar
@@ -85,19 +101,32 @@
 			return level and string.format("%.1f dB", level) or "-oo dB"
 		end
 
-		-- Draws the chosen channel's bars.
+		-- One channel as bars, or every channel as a separate thin curve.
 		local function draw(document)
-			local levels = dialog.result.channels[dialog.channel].levels
-			local width = 100 / #levels
+			local width = 100 / #dialog.result.frequencies
 			local bars = {}
-			for i = 1, #levels do
-				local level = levels[i]
-				local height = level and math.max(0, math.min(100, (level - floor) * 100 / -floor)) or 0
-				bars[#bars + 1] = string.format(
-					'<div class="sa-bar%s" index="%d" style="left: %.4f%%; width: %.4f%%; height: %.4f%%"/>',
-					i == dialog.reference and " reference" or "", i, (i - 1) * width, width, height)
+			for c, channel in ipairs(dialog.result.channels) do
+				if dialog.channel == 0 or dialog.channel == c then
+					for i = 1, #channel.levels do
+						local level = channel.levels[i]
+						local height = level and math.max(0, math.min(100, (level - floor) * 100 / -floor)) or 0
+						local reference = dialog.reference and dialog.reference.index == i and dialog.reference.channel == c
+						bars[#bars + 1] = string.format(
+							'<div class="sa-bar channel-%d%s" channel="%d" index="%d" ' ..
+							'style="left: %.4f%%; width: %.4f%%; %s: %.4f%%"/>',
+							c, reference and " reference" or "", c, i, (i - 1) * width, width,
+							dialog.channel == 0 and "bottom" or "height", height)
+					end
+				end
 			end
-			document:GetElementById("sa-graph").inner_rml = table.concat(bars)
+			local graph = document:GetElementById("sa-graph")
+			graph:SetClass("all", dialog.channel == 0)
+			graph.inner_rml = table.concat(bars)
+		end
+
+		function dialog.zoom(document)
+			local zoom = tonumber(tostring(document:GetElementById("sa-zoom"):GetAttribute("value"))) or 1
+			document:GetElementById("sa-graph").style.width = (zoom * 100) .. "%"
 		end
 
 		function dialog.load(document)
@@ -130,6 +159,9 @@
 					options[#options + 1] = '<option value="' .. i .. '"' .. (i == 1 and " selected" or "") .. ">" ..
 						escape(channelName(i, count)) .. "</option>"
 				end
+				if count > 1 then
+					options[#options + 1] = '<option value="0">All Channels</option>'
+				end
 				document:GetElementById("sa-channel").inner_rml = table.concat(options)
 				dialog.channel = 1
 				dialog.reference = nil
@@ -139,34 +171,44 @@
 
 		function dialog.chooseChannel(document)
 			local value = tonumber(tostring(document:GetElementById("sa-channel"):GetAttribute("value") or ""))
-			if value and dialog.result and dialog.result.channels[value] then
+			if value and dialog.result and (value == 0 or dialog.result.channels[value]) then
 				dialog.channel = value
 				draw(document)
 			end
 		end
 
-		-- The bar at the mouse's x: from the left of the graph's content, which is the sum of the offsets up its
-		-- offset parents (nothing between scrolls).
-		local function barAt(graph, x)
+		-- Content coordinates, including the horizontal scroll of a zoomed graph.
+		local function origin(graph)
 			local left = graph.client_left
+			local top = graph.client_top
 			local element = graph
 			while element do
 				left = left + element.offset_left
+				top = top + element.offset_top
 				element = element.offset_parent
+				if element then
+					left = left - element.scroll_left
+					top = top - element.scroll_top
+				end
 			end
+			return left, top
+		end
+
+		local function barAt(graph, x)
+			local left = origin(graph)
 			local count = #dialog.result.frequencies
 			local index = math.floor((x - left) * count / graph.client_width) + 1
 			return math.max(1, math.min(count, index))
 		end
 
 		-- The value field: channel, frequency, note and level at the bar, and the difference to the reference bar.
-		function dialog.show(document, index)
+		function dialog.show(document, index, channel)
 			local frequency = dialog.result.frequencies[index]
-			local levels = dialog.result.channels[dialog.channel].levels
-			local text = string.format("%s  %.1f Hz  %s  %s", channelName(dialog.channel, #dialog.result.channels),
+			local levels = dialog.result.channels[channel].levels
+			local text = string.format("%s  %.1f Hz  %s  %s", channelName(channel, #dialog.result.channels),
 				frequency, note(frequency), levelText(levels[index]))
 			if dialog.reference then
-				local from = levels[dialog.reference]
+				local from = dialog.result.channels[dialog.reference.channel].levels[dialog.reference.index]
 				local to = levels[index]
 				text = text .. "  D: " .. ((from and to) and string.format("%.1f dB", to - from) or "-")
 			end
@@ -174,9 +216,23 @@
 			document:GetElementById("sa-value").inner_rml = escape(text)
 		end
 
+		local function channelAt(graph, index, y)
+			if dialog.channel ~= 0 then return dialog.channel end
+			local _, top = origin(graph)
+			local level = floor + (1 - ((y - top) / graph.client_height)) * -floor
+			local channel, distance = 1, math.huge
+			for c, each in ipairs(dialog.result.channels) do
+				local delta = math.abs((each.levels[index] or floor) - level)
+				if delta < distance then channel, distance = c, delta end
+			end
+			return channel
+		end
+
 		function dialog.move(document, event)
 			if dialog.result then
-				dialog.show(document, barAt(document:GetElementById("sa-graph"), event.parameters.mouse_x))
+				local graph = document:GetElementById("sa-graph")
+				local index = barAt(graph, event.parameters.mouse_x)
+				dialog.show(document, index, channelAt(graph, index, event.parameters.mouse_y))
 			end
 		end
 
@@ -185,17 +241,12 @@
 			if not dialog.result then
 				return
 			end
-			local index = barAt(document:GetElementById("sa-graph"), event.parameters.mouse_x)
-			local function mark(on)
-				local bar = dialog.reference and document:QuerySelector('.sa-bar[index="' .. dialog.reference .. '"]')
-				if bar then
-					bar:SetClass("reference", on)
-				end
-			end
-			mark(false)
-			dialog.reference = event.parameters.button == 1 and index or nil
-			mark(true)
-			dialog.show(document, index)
+			local graph = document:GetElementById("sa-graph")
+			local index = barAt(graph, event.parameters.mouse_x)
+			local channel = channelAt(graph, index, event.parameters.mouse_y)
+			dialog.reference = event.parameters.button == 1 and {index = index, channel = channel} or nil
+			draw(document)
+			dialog.show(document, index, channel)
 		end
 	</script>
 </head>
@@ -206,9 +257,13 @@
 			<select id="sa-channel" onchange="SpectrumAnalyzer.chooseChannel(document)"/>
 			<div id="sa-value"/>
 		</div>
-		<div id="sa-graph" class="sa-graph" onmousemove="SpectrumAnalyzer.move(document, event)"
-			onmousedown="SpectrumAnalyzer.press(document, event)"/>
+		<div id="sa-view">
+			<div id="sa-graph" class="sa-graph" onmousemove="SpectrumAnalyzer.move(document, event)"
+				onmousedown="SpectrumAnalyzer.press(document, event)"/>
+		</div>
 		<div class="row buttons">
+			<label for="sa-zoom">Zoom</label>
+			<slider id="sa-zoom" min="1" max="8" step="1" value="1" onchange="SpectrumAnalyzer.zoom(document)"/>
 			<button id="sa-close" class="primary" result="ok">Close</button>
 		</div>
 	</dialog>
