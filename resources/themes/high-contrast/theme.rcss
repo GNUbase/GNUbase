@@ -1234,6 +1234,14 @@
 	{
 		background-color: #ffffff;
 	}
+	.sampler-bar:hover, .sampler-bar.dragged
+	{
+		background-color: #ffff0080;
+	}
+	.sampler-bar.loop:hover, .sampler-bar.loop.dragged
+	{
+		background-color: #00ffff80;
+	}
 	.sampler-section-title, .sampler-label
 	{
 		color: #c8c8c8;

@@ -287,10 +287,12 @@ TEST_CASE("recordings are written in the project setup's record file type and bi
 	};
 	const Case cases[] = {
 		{"wav", "int16", AudioFormat::Wav, SampleFormat::Int16, ".wav", 1.0f / 32768.0f},
+		{"wav", "int32", AudioFormat::Wav, SampleFormat::Int32, ".wav", 1.0f / 8388608.0f},
 		{"wav", "float64", AudioFormat::Wav, SampleFormat::Float64, ".wav", 0.0f},
 		{"aiff", "int24", AudioFormat::Aiff, SampleFormat::Int24, ".aif", 1.0f / 8388608.0f},
 		{"aiff", "int32", AudioFormat::Aiff, SampleFormat::Int32, ".aif", 1.0f / 8388608.0f},
 		{"flac", "int16", AudioFormat::Flac, SampleFormat::Int16, ".flac", 1.0f / 32768.0f},
+		{"flac", "int24", AudioFormat::Flac, SampleFormat::Int24, ".flac", 1.0f / 8388608.0f},
 		{"broadcastWav", "float32", AudioFormat::Wav, SampleFormat::Float32, ".wav", 0.0f},
 	};
 	for (const Case& each : cases)
@@ -366,6 +368,76 @@ TEST_CASE("a Broadcast Wave recording's time reference includes the pre-recorded
 	REQUIRE(reader->info().broadcast.has_value());
 	CHECK(
 		reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference == (3600ULL * 48000) - 2400);
+}
+
+TEST_CASE("a pre-record that reaches back before 0:00:00 gives a time reference of 0 (#580)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "audio.preRecordSeconds"}, {"value", 0.05}}); // 2400 frames
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}, {"startTime", 0.0}});
+	run(client, "audio.render", {{"frames", 4800}}); // stopped
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 1000}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("offset") == 2400);
+	const auto reader = AudioFileReader::open(pathOf(client, events[0]));
+	REQUIRE(reader->info().broadcast.has_value());
+	CHECK(reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference == 0);
+}
+
+TEST_CASE("a long track name is cut between two UTF-8 characters for the description and the file name (#580)",
+	"[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	// An ASCII character, 127 two-byte characters and a three-byte one: 258 bytes, so the file name's 200 would split
+	// the 100th two-byte character and the description's 256 the three-byte one.
+	std::string name = "a";
+	for (int i = 0; i < 127; ++i)
+		name += "\xc3\xa9";
+	name += "\xe2\x82\xac";
+	run(client, "track.set", {{"track", setup.track}, {"name", name}});
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	const std::string path = pathOf(client, events[0]);
+	CHECK(std::filesystem::u8path(path).filename().u8string() == name.substr(0, 199) + ".wav");
+	const auto reader = AudioFileReader::open(path);
+	CHECK(reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).description == name.substr(0, 255));
+}
+
+TEST_CASE("a change of only the start time reaches the next Broadcast Wave recording (#581)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}, {"startTime", 3600.0}});
+	const auto record = [&](int64_t position)
+	{
+		run(client, "transport.locate", {{"position", position}});
+		run(client, "transport.record");
+		run(client, "audio.render", {{"frames", 640}});
+		REQUIRE(setup.stop().is_object());
+		std::string path;
+		for (const Json& event : eventsOn(client, setup.track))
+			if (event.at("position") == position)
+				path = pathOf(client, event);
+		REQUIRE(!path.empty());
+		return AudioFileReader::open(path)->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference;
+	};
+	CHECK(record(0) == 3600ULL * 48000);
+	run(client, "project.set", {{"startTime", 7200.0}});
+	CHECK(record(48000) == 7201ULL * 48000);
+	// 23:59:59 and 2 s into the project: past midnight, which the time reference doesn't wrap at.
+	run(client, "project.set", {{"startTime", 86399.0}});
+	CHECK(record(96000) == 86401ULL * 48000);
 }
 
 TEST_CASE("cycle recording makes a take per lap, all in one file", "[integration]")
@@ -512,6 +584,25 @@ TEST_CASE("punch recording replaces only the punch range, after the pre-roll and
 	const std::vector<float> take = channelOf(pathOf(client, events[1]), 0);
 	REQUIRE(take.size() == 2400);
 	CHECK(take == recorded(client, 0, 2400, 2400));
+}
+
+TEST_CASE("switching off stop after punch out during the post-roll lets playback go on", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "audio.stopAfterPunchOut"}, {"value", true}});
+	run(client, "transport.set",
+		{{"left", 640}, {"right", 1280}, {"punchIn", true}, {"punchOut", true}, {"postRoll", true},
+			{"postRollAmount", 1280}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 1920}}); // punched out at 1280, the stop waits at 2560
+	REQUIRE(waitForRecording(client).is_object());
+	run(client, "settings.set", {{"key", "audio.stopAfterPunchOut"}, {"value", false}});
+	run(client, "audio.render", {{"frames", 1280}});
+	const Json transport = run(client, "transport.get");
+	CHECK(transport.at("playing") == true);
+	CHECK(transport.at("position") == 3200);
+	run(client, "transport.stop");
 }
 
 TEST_CASE("only record-enabled audio tracks record, and nothing records without recording", "[integration]")

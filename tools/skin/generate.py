@@ -1085,6 +1085,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
          {"background-color": c["accent2"]}),
         (".sampler-marker.dragged .sampler-marker-line, .sampler-marker.dragged .sampler-marker-flag",
          {"background-color": c["text"]}),
+        (".sampler-bar:hover, .sampler-bar.dragged", {"background-color": c["accent"] + "80"}),
+        (".sampler-bar.loop:hover, .sampler-bar.loop.dragged", {"background-color": c["accent2"] + "80"}),
         (".sampler-section-title, .sampler-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".sampler-key", {"background-color": c["text"], "border-right-width": f"{widths['hairline']}px",
                           "border-right-color": c["border"]}),

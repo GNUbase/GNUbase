@@ -4443,8 +4443,9 @@ namespace gnubase::engine
 			{"track.add", 1,
 				"Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks "
 				"(default: last). Audio channels default to stereo; format or channels set another format, as in "
-				"bus.add. timeBase is musical (positions in ticks, which follow tempo changes) or linear (in "
-				"samples, which keep their time); without it the user setting editing.defaultTimeBase decides. "
+				"bus.add. timeBase is musical (positions in ticks, 1,720,320 to the quarter note, which follow tempo "
+				"changes) or linear (in samples, which keep their time); without it the user setting "
+				"editing.defaultTimeBase decides. "
 				"Folders get a channel only with groupChannel. New channels play through the main output, "
 				"or through the group channel of the nearest folder around them that has one, and audio tracks record "
 				"from the first input bus; input, output and instrument set them as channel.set does. tracks moves "
@@ -4838,11 +4839,12 @@ namespace gnubase::engine
 			addAudioPart);
 		add(engine,
 			{"midiPart.add", 1,
-				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base, "
-				"each at most the longest project's end (see audioEvent.add). lane puts it on that lane of the track, "
-				"from 0 (default), as event.set does. pattern makes it a pattern event (#181), which plays that "
-				"pattern (pattern.add) from its start over and over instead of its notes; a pattern of another track "
-				"plays as its copy on the part's track (pattern.add), which the result names.",
+				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base: "
+				"ticks on musical tracks, 1,720,320 to the quarter note, samples on linear ones, each at most the "
+				"longest project's end (see audioEvent.add). lane puts it on that lane of the track, from 0 (default), "
+				"as event.set does. pattern makes it a pattern event (#181), which plays that pattern (pattern.add) "
+				"from its start over and over instead of its notes; a pattern of another track plays as its copy on "
+				"the part's track (pattern.add), which the result names.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
 								 {"name", stringSchema}, {"lane", laneSchema}, {"pattern", idSchema}},
 					{"track", "position", "length"}),

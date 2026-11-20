@@ -26,6 +26,10 @@ nothing if it fails.
 | `event.toRealCopy` | Turns shared copies into real ones: a part's own notes, an audio event's own clip | p. 272 |
 | `event.get` | Where events are, in project samples and ticks, their name, mute, lock and shared group | p. 72 |
 
+- **Ticks.** Events, parts and notes on musical tracks have their positions and lengths in ticks, 1,720,320 to the
+  quarter note (`time::g_ticksPerQuarter`, so that every common note value is a whole number of them): a part from
+  the second beat, a quarter note long, is `midiPart.add` with `position` and `length` 1720320, and 3840 ticks are
+  about a millisecond at 120 BPM (#1855). On linear tracks they are in samples.
 - **Positions.** Distances are project samples (`delta`), like the locators, or ticks (`ticks`), which are exact for
   events on musical tracks: a part moved by a bar in ticks starts on the bar. Blocks of events (duplicate, fill loop)
   are measured in ticks when every event is on a musical track, otherwise in samples; a block with no length in its
@@ -190,7 +194,8 @@ that the arrow keys select into view.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
   and Backspace; Left and Right selecting parts, Up and Down stepping the tracks and selecting their first parts, also across a track
   without parts, and only the track with no part selected; and Mod+K,
-  whose Repeat Events dialog makes three shared copies, and real copies from just a number typed and Enter.
+  whose Repeat Events dialog makes three shared copies, and real copies from just a number typed and Enter. It also adds
+  MIDI and instrument parts while the start screen is open and after it closed, which show at their time and length (#1855).
 - The project-start checks cover move and copy previews and release at 1024 by 600, single and multiple selections,
   snapping on and off, musical and linear tracks, other tracks, and one-step undo. The fake-window checks cover left
   nudges, moving to the cursor, a musical preview across a tempo change, and musical nudges of mixed audio/MIDI

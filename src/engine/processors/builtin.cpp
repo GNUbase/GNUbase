@@ -225,7 +225,8 @@ namespace gnubase::engine::processors
 					make<Reverb>()},
 				{{"sampler", "Sampler",
 					 "The sampler track's instrument: plays a sample chromatically from its root key, or a slice per "
-					 "key, with loops, reverse, a filter and an amp envelope. Its sample comes from the track "
+					 "key, with loops and their crossfade, fades, reverse, glide, a filter and an amp envelope. Its "
+					 "sample comes from the track "
 					 "(sampler.load); without one it plays nothing.",
 					 true,
 					 {whole(Sampler::RootKey, "Root key", 0.0, 127.0, 60.0),
@@ -258,7 +259,11 @@ namespace gnubase::engine::processors
 						 number(Sampler::Decay, "Decay", 0.0, 10000.0, 0.0, "ms"),
 						 number(Sampler::Sustain, "Sustain", 0.0, 100.0, 100.0, "%"),
 						 number(Sampler::Release, "Release", 0.0, 10000.0, 10.0, "ms"),
-						 number(Sampler::Gain, "Sample gain", -48.0, 48.0, 0.0, "dB")}},
+						 number(Sampler::Gain, "Sample gain", -48.0, 48.0, 0.0, "dB"),
+						 number(Sampler::Glide, "Glide", 0.0, 5000.0, 0.0, "ms"),
+						 onOff(Sampler::Fingered, "Fingered", false), number(Sampler::FadeIn, "Fade in", 0.0, 1.0, 0.0),
+						 number(Sampler::FadeOut, "Fade out", 0.0, 1.0, 0.0),
+						 number(Sampler::LoopCrossfade, "Loop crossfade", 0.0, 1.0, 0.0)}},
 					make<Sampler>()},
 				{{"sine", "Sine generator", "A sine wave at the frequency and level.", false,
 					 {number(Sine::Frequency, "Frequency", 1.0, 20000.0, 440.0, "Hz"),

@@ -17,7 +17,6 @@
 #include <filesystem>
 #include <memory>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -176,20 +175,6 @@ namespace
 			interleaved.push_back(r[i]);
 		}
 		return interleaved;
-	}
-
-	void waitUntilActive(Client& client, const Json& slot)
-	{
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-		std::string status;
-		while (status != "active" && std::chrono::steady_clock::now() < deadline)
-		{
-			status = run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status").get<std::string>();
-			if (status != "active")
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		}
-		REQUIRE(status == "active");
-		run(client, "audio.updatePlugins");
 	}
 }
 
@@ -420,7 +405,7 @@ TEST_CASE("a quick export keeps the tail of effects", "[integration][slow]")
 	const ObjectId channel = project.addTrack("Ramp", 0, 4800);
 	const Json slot =
 		run(project.client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:delay"}}).at("slot").at("id");
-	waitUntilActive(project.client, slot);
+	gnubase::test::waitForPlugin(project.client, slot);
 	const fs::path path = project.folder.path() / "tail.wav";
 	const auto frames = run(project.client, "mixdown.quickExport", {{"path", path.u8string()}}).at("frames");
 	CHECK(frames > 4800 + 24000); // at least the first echo, 500 ms on
@@ -435,7 +420,7 @@ TEST_CASE("a quick export starts with fresh effects and leaves the transport pla
 	const ObjectId channel = project.addTrack("Ramp", 0, 4800);
 	const Json slot =
 		run(project.client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:delay"}}).at("slot").at("id");
-	waitUntilActive(project.client, slot);
+	gnubase::test::waitForPlugin(project.client, slot);
 	// Playback fills the live delay's lines with echoes, which an export must not start with (#718).
 	run(project.client, "transport.play");
 	run(project.client, "audio.render", {{"frames", 30000}});

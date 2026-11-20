@@ -42,10 +42,21 @@ namespace gnubase::engine
 
 		using EventType = graph::ProcessEvent::Type;
 
-		// A track name as a file name: characters that some file system doesn't take become "_".
+		// text cut to at most bytes between two UTF-8 characters, not in one (#580).
+		std::string cut(const std::string& text, size_t bytes)
+		{
+			if (text.size() <= bytes)
+				return text;
+			while (bytes > 0 && (static_cast<unsigned char>(text[bytes]) & 0xc0) == 0x80)
+				--bytes; // a continuation byte
+			return text.substr(0, bytes);
+		}
+
+		// A track name as a file name: characters that some file system doesn't take become "_", and 200 bytes at
+		// most leave room for a number and the extension in the 255 that file systems take.
 		std::string fileName(const std::string& name)
 		{
-			std::string result = name;
+			std::string result = cut(name, 200);
 			for (char& c : result)
 				if (static_cast<unsigned char>(c) < 32 || std::string_view("<>:\"/\\|?*").find(c) != std::string::npos)
 					c = '_';
@@ -693,7 +704,7 @@ namespace gnubase::engine
 					WriteOptions options = m_current.format;
 					options.channels = static_cast<int>(track.ports.size());
 					if (options.broadcast)
-						options.broadcast->description = track.name.substr(0, 256);
+						options.broadcast->description = cut(track.name, 256);
 					m_files.push_back({track, path, AudioFileWriter::create(path, options)});
 				}
 				catch (const std::exception& error)
