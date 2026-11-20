@@ -2639,6 +2639,19 @@ TEST_CASE("a drag in the selection range takes its contents onto other tracks to
 	f.display.setRange(part);
 	f.drag(150, 60, 150, f.display.laneTops().back() + 20.0);
 	REQUIRE(f.waitUntil([&] { return placed() == decltype(placed()){{below, 2 * g_quarter}}; }));
+
+	// Audio dragged down onto the MIDI track is refused: nothing moves, and the range goes back to the audio track.
+	const auto audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	const size_t steps = f.call("history.get").at("steps").size();
+	f.click(900, 60);
+	f.display.setRange(ui::RangeSelection{96000, 120000, {audio}}); // the audio event's, 2 to 2.5 seconds
+	f.drag(220, 20, 220, 60);
+	REQUIRE(f.waitUntil([&] { return range().tracks == std::vector<uint64_t>{audio}; }));
+	CHECK(range().start == 96000);
+	CHECK(range().end == 120000);
+	CHECK(f.audioEvents()[0].at("track") == audio);
+	CHECK(f.audioEvents()[0].at("position") == 96000);
+	CHECK(f.call("history.get").at("steps").size() == steps);
 }
 
 TEST_CASE("the selection range's edges drag across and up or down, snapped, and show the resize pointers", "[unit]")
@@ -2701,6 +2714,25 @@ TEST_CASE("the selection range's edges drag across and up or down, snapped, and 
 	CHECK(range().end == 288000);
 	CHECK(f.parts()[0].at("position") == 2 * g_quarter);
 	CHECK(f.audioEvents()[0].at("position") == 96000);
+
+	// An edge drag released outside the window, where RmlUi has no element to send the mouseup to: the next press
+	// puts the range back where it was, before it does what it does: in the range it starts a drag of its contents.
+	const ui::RangeSelection before = range();
+	const double lane = (tops[2] + tops[3]) / 2.0; // the track below's
+	f.automation.press(std::nullopt, f.at(598, lane), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(800, lane));
+	f.step();
+	CHECK(range().end != before.end);
+	f.automation.release(std::nullopt, point(1100, 300), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(450, lane));
+	f.step();
+	f.automation.press(std::nullopt, f.at(450, lane), ui::MouseButton::Left);
+	f.step();
+	CHECK(range().start == before.start);
+	CHECK(range().end == before.end);
+	CHECK(range().tracks == before.tracks);
+	f.automation.release(std::nullopt, f.at(450, lane), ui::MouseButton::Left);
+	f.step();
 }
 
 TEST_CASE("with a selection range, the nudge commands move the range or its edges, and its contents stay", "[unit]")

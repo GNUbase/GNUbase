@@ -948,9 +948,10 @@ namespace gnubase::ui
 		uint64_t m_resizeGesture = 0;   // counts drags of edges, so that late answers are dropped
 		uint64_t m_dragEvent = 0;       // pressed on
 		bool m_dragMoved = false;
-		double m_dragDy = 0.0;              // dp, dragging the event volume or a curve point
-		std::optional<size_t> m_dragPoint;  // the curve point dragged, none for a new one
-		bool m_dragStarted = false;         // moving events, after the drag delay; a RangeMove drag, once across
+		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
+		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
+		// Moving events, after the drag delay; a RangeMove drag, once across or on other tracks.
+		bool m_dragStarted = false;
 		bool m_dragToggles = false;         // a Ctrl/Shift click takes the pressed event or point out of the selection
 		bool m_clickSelectsPoint = false;   // a click on a point of a larger selection selects only that point
 		double m_pressTime = 0.0;           // RmlUi's clock, in seconds

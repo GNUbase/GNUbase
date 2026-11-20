@@ -534,7 +534,18 @@ namespace gnubase::ui
 						top = i;
 				parameters["track"] = to.tracks[top];
 			}
-			edit("range.move", std::move(parameters));
+			// Refused, e.g. audio onto a MIDI track, the range goes back to its contents, unless it moved since.
+			const RangeSelection shown = m_range.value_or(to);
+			m_binding.send("range.move", std::move(parameters),
+				[this, from, shown, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (alive.expired() || result.ok())
+						return;
+					showRefusal(result.error);
+					if (m_range && m_range->start == shown.start && m_range->end == shown.end &&
+						m_range->tracks == shown.tracks)
+						setRange(from);
+				});
 			break;
 		}
 		case Drag::RangeEdge:
@@ -715,8 +726,6 @@ namespace gnubase::ui
 		return true;
 	}
 
-	// From where the drag started to x and y, snapped (reference manual p. 287); with Select Full Vertical on every
-	// track, with Shift added to the range the drag started with.
 	EventDisplay::RangeEdge EventDisplay::rangeEdgeAt(double x, double y) const
 	{
 		if (!m_range || m_range->tracks.empty())
@@ -837,6 +846,8 @@ namespace gnubase::ui
 		return range;
 	}
 
+	// From where the drag started to x and y, snapped (reference manual p. 287); with Select Full Vertical on every
+	// track, with Shift added to the range the drag started with.
 	void EventDisplay::setRangeFrom(double x, double y)
 	{
 		if (m_laneTracks.empty())

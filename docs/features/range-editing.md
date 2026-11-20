@@ -154,9 +154,10 @@ since the project opened).
 
 Not yet (#1910): copying and pasting selected events without a range, Paste at Origin and Paste Relative to Cursor,
 Range Tool Splits Partly Selected Events, the info line's range fields, the range in the editors (they come with their
-tickets), and the controller events at the edges of a range inside a part. A range of several tracks dragged past a
-folded folder: the display counts the folder's lane once, `range.move` the tracks inside it too, so the range's other
-tracks can land further off than its top one.
+tickets), and the controller events at the edges of a range inside a part.
+
+Not yet (#1978): a range of several tracks dragged past a folded folder. The display counts the folder's lane once,
+`range.move` the tracks inside it too, so the range's other tracks can land further off than its top one.
 
 ## Checks
 

@@ -1536,8 +1536,8 @@ namespace gnubase::ui
 
 	void EventDisplay::mouseDown(Rml::Event& event, Rml::Element& target)
 	{
-		// A drag of edges whose release the display didn't see (#732), or of a range's contents, which puts the range
-		// back.
+		// A drag whose release the display didn't see (#732): of events' edges, or of a range's contents or edges,
+		// which puts the range back.
 		if (!m_resizeWanted.is_null())
 		{
 			endResize();
