@@ -721,6 +721,72 @@ TEST_CASE("a second resize release can precede the first release's project", "[u
 	CHECK(f.parts()[0].at("length") == (27 * g_quarter) / 5);
 }
 
+TEST_CASE("the project that lands a release during the next drag asks that drag's preview again", "[unit]")
+{
+	test::CommandHolds holds;
+	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
+	registerHold(f, holds);
+	engine::Client holder(f.engine, "holder");
+	f.display.select({f.part});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("selected-events")[1].events.size() == 1; }));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	const auto bothEnds = [&f](double end)
+	{
+		return std::abs(f.lanes("events")[1].events[0].end() - end) < 1e-6 &&
+			std::abs(f.lanes("selected-events")[1].events[0].end() - end) < 1e-6;
+	};
+	const auto stepUntil = [&f](const std::function<bool()>& done)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (!done())
+		{
+			REQUIRE(std::chrono::steady_clock::now() < deadline);
+			f.ui.shell.step(milliseconds(5));
+		}
+	};
+	// The first drag moves the part's end (3 seconds) to 3.5, its preview in before the release.
+	clock->advance(1.0);
+	f.automation.press(std::nullopt, f.at(298, 60), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(348, 60));
+	REQUIRE(f.waitUntil([&bothEnds] { return bothEnds(3.5); }));
+	REQUIRE(f.waitUntil(
+		[&f] { return f.binding.waiting("event.previewResize") == 0 && f.binding.waiting("project.get") == 0; }));
+	// Behind a hold: the release's resize, the second drag's preview (to 3.7 seconds), then another client moving the
+	// part half a second later, which the preview doesn't have yet.
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	f.automation.release(std::nullopt, f.at(348, 60), ui::MouseButton::Left);
+	clock->advance(1.0);
+	f.automation.press(std::nullopt, f.at(348, 60), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(368, 60));
+	REQUIRE(f.binding.waiting("event.previewResize") == 1);
+	holder.send("event.move", {{"events", {f.part}}, {"delta", 24000}});
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	// The resize and the stale preview are in; the project they announce waits behind the second hold.
+	stepUntil([&f, &bothEnds] { return bothEnds(3.7) && f.binding.waiting("project.get") == 1; });
+	// A third hold keeps whatever that project's answer asks for from being answered.
+	holder.send("test.hold");
+	holds.release(2);
+	REQUIRE(holds.waitEntered(3));
+	stepUntil([&f] { return f.display.project().at("midiParts")[0].at("length") == 5 * g_quarter; });
+	// The project that lands the release has the other client's move: it asks the drag's preview again.
+	CHECK(f.binding.waiting("event.previewResize") == 1);
+	holds.release(3);
+	REQUIRE(f.waitUntil([&bothEnds] { return bothEnds(4.2); }));
+	f.automation.release(std::nullopt, f.at(368, 60), ui::MouseButton::Left);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") == (27 * g_quarter) / 5; }));
+	REQUIRE(f.waitUntil(
+		[&f, &bothEnds]
+		{
+			return f.binding.waiting("project.get") == 0 && f.display.project().at("midiParts") == f.parts() &&
+				bothEnds(4.2);
+		}));
+}
+
 TEST_CASE("the object selection tool's modifiers act on events whatever keys they are set to", "[unit]")
 {
 	Fixture f;
