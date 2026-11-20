@@ -397,7 +397,7 @@ namespace gnubase::test
 				std::chrono::duration_cast<std::chrono::milliseconds>(until - std::chrono::steady_clock::now());
 			std::optional<engine::Message> message = client.wait(std::max(left, std::chrono::milliseconds(1)));
 			if (!message)
-				break;
+				continue;
 			if (auto* event = std::get_if<engine::Event>(&*message);
 				event != nullptr && event->name == name && (!match || match(event->data)))
 				return std::move(event->data);
