@@ -4703,9 +4703,8 @@ namespace gnubase::engine
 				"read from the file, or taken as given, for a file that is still being recorded. With copy, a file "
 				"from outside the project folder is also copied into its media folder (see project.location); the "
 				"project must have been saved. The copy runs as a job, returned as job (null without one), with the "
-				"result that "
-				"media.prepareArchive's job has: the media file is added at once where it is, and when the copy is "
-				"done it is pointed at the copy as an undo step of its own.",
+				"result that media.prepareArchive's job has: the media file is added at once where it is, and when the "
+				"copy is done it is pointed at the copy as an undo step of its own.",
 				objectSchema({{"path", stringSchema}, {"sampleRate", numberSchema}, {"channels", integerSchema},
 								 {"length", integerSchema}, {"copy", booleanSchema}},
 					{"path"}),
@@ -4790,9 +4789,9 @@ namespace gnubase::engine
 			{"audioEvent.add", 1,
 				"Adds an audio event that plays a section of a clip on an audio track. position is in the track's time "
 				"base (ticks or samples), at most the longest project's end: 2^48 samples, or as many ticks as that "
-				"lasts at the tempo. offset and length are in the clip's sample frames, length defaulting to the "
-				"rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track "
-				"plays one event at a time: where events overlap, the one added last plays, unless they crossfade; "
+				"lasts at the tempo. offset and length are in the clip's sample frames, length defaulting to the rest "
+				"of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays "
+				"one event at a time: where events overlap, the one added last plays, unless they crossfade; "
 				"event.toFront brings another one to the front. lane puts it on that lane of the track, from 0 "
 				"(default), as event.set does.",
 				objectSchema({{"track", idSchema}, {"clip", idSchema}, {"position", integerSchema},
@@ -4828,11 +4827,10 @@ namespace gnubase::engine
 		add(engine,
 			{"audioPart.add", 1,
 				"Adds an empty audio part to an audio track (reference manual p. 250): a container of audio events, "
-				"which play only within it and move, copy, split and glue with it through the event commands. "
-				"position and length are in the track's time base, each at most the longest project's end (see "
-				"audioEvent.add); name defaults to the track's. event.toPart puts "
-				"events into a part, event.dissolvePart takes them out again. lane puts it on that lane of the track, "
-				"from 0 (default), as event.set does.",
+				"which play only within it and move, copy, split and glue with it through the event commands. position "
+				"and length are in the track's time base, each at most the longest project's end (see audioEvent.add); "
+				"name defaults to the track's. event.toPart puts events into a part, event.dissolvePart takes them out "
+				"again. lane puts it on that lane of the track, from 0 (default), as event.set does.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
 								 {"name", stringSchema}, {"lane", laneSchema}},
 					{"track", "position", "length"}),
@@ -4841,11 +4839,10 @@ namespace gnubase::engine
 		add(engine,
 			{"midiPart.add", 1,
 				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base, "
-				"each at most the longest project's end (see audioEvent.add). "
-				"lane puts it on that lane of the track, from 0 (default), as event.set does. pattern makes it a "
-				"pattern event (#181), which plays that pattern (pattern.add) from its start over and over instead "
-				"of its notes; a pattern of another track plays as its copy on the part's track (pattern.add), which "
-				"the result names.",
+				"each at most the longest project's end (see audioEvent.add). lane puts it on that lane of the track, "
+				"from 0 (default), as event.set does. pattern makes it a pattern event (#181), which plays that "
+				"pattern (pattern.add) from its start over and over instead of its notes; a pattern of another track "
+				"plays as its copy on the part's track (pattern.add), which the result names.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
 								 {"name", stringSchema}, {"lane", laneSchema}, {"pattern", idSchema}},
 					{"track", "position", "length"}),
@@ -4854,16 +4851,16 @@ namespace gnubase::engine
 		add(engine,
 			{"midiPart.set", 1,
 				"Changes a MIDI part's name, position or length (each at most the longest project's end, see "
-				"audioEvent.add), or how its notes play: transpose (semitones) and "
-				"velocity (added to MIDI 1.0 velocities), each -127 to 127. Velocity adds to the track's MIDI "
-				"modifiers (channel.set modifiers), also while they are bypassed; transpose adds to what each note "
-				"plays with, folded into the octave range together with global transposition while the part follows "
-				"it (transpose.setTrack keepInOctave). The notes themselves stay as they are. "
-				"rootKey is the part's root key (\"\" for none, C, C# and so on to B), which the project root key "
-				"transposes it to (project.set rootKey); globalTranspose follow (the default) or independent says "
-				"whether the project root key and the transpose track transpose it (transpose.add). pattern is the "
-				"pattern a pattern event plays (pattern.add, #181), 0 for an ordinary part: another one plays from "
-				"the part's start, and one of another track as its copy on the part's track, which the result names.",
+				"audioEvent.add), or how its notes play: transpose (semitones) and velocity (added to MIDI 1.0 "
+				"velocities), each -127 to 127. Velocity adds to the track's MIDI modifiers (channel.set modifiers), "
+				"also while they are bypassed; transpose adds to what each note plays with, folded into the octave "
+				"range together with global transposition while the part follows it (transpose.setTrack keepInOctave). "
+				"The notes themselves stay as they are. rootKey is the part's root key (\"\" for none, C, C# and so on "
+				"to B), which the project root key transposes it to (project.set rootKey); globalTranspose follow (the "
+				"default) or independent says whether the project root key and the transpose track transpose it "
+				"(transpose.add). pattern is the pattern a pattern event plays (pattern.add, #181), 0 for an ordinary "
+				"part: another one plays from the part's start, and one of another track as its copy on the part's "
+				"track, which the result names.",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"position", integerSchema},
 								 {"length", integerSchema}, {"transpose", integerSchema}, {"velocity", integerSchema},
 								 {"rootKey", enumSchema(rootKeyNames())},
@@ -4888,15 +4885,14 @@ namespace gnubase::engine
 			{"note.add", 1,
 				"Adds notes to a MIDI part: position from the part's start and length in ticks, each at most the "
 				"longest project's end (see audioEvent.add), pitch 0-127, velocity 0-1, release (note-off) velocity "
-				"0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability "
-				"0-1, the chance that the note plays (default 1), and velocity variance -1 to 1, the share by which "
-				"playback raises (positive) or lowers (negative) its velocity at most (default 0). articulations are "
-				"the attributes of the track's articulation map (articulationMap.add) that the note has, by name, and "
-				"mutedArticulations those of them that are muted, as the mute tool mutes them: they select no sound "
-				"slot. "
-				"expressions are its per-note expression: points {type, position, value}, position in ticks from the "
-				"note's start, type volume (a linear gain 0-4), pan (0-1, 0.5 the center), tuning (semitones, -120 to "
-				"120), vibrato, expression, brightness or pressure (0-1).",
+				"0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability 0-1, the chance that the note "
+				"plays (default 1), and velocity variance -1 to 1, the share by which playback raises (positive) or "
+				"lowers (negative) its velocity at most (default 0). articulations are the attributes of the track's "
+				"articulation map (articulationMap.add) that the note has, by name, and mutedArticulations those of "
+				"them that are muted, as the mute tool mutes them: they select no sound slot. expressions are its "
+				"per-note expression: points {type, position, value}, position in ticks from the note's start, type "
+				"volume (a linear gain 0-4), pan (0-1, 0.5 the center), tuning (semitones, -120 to 120), vibrato, "
+				"expression, brightness or pressure (0-1).",
 				objectSchema({{"part", idSchema}, {"notes", arraySchema(note)}}, {"part", "notes"}),
 				{{"type", "object"}, {"properties", {{"notes", {{"type", "array"}}}}}, {"required", {"notes"}}}, false},
 			addNotes);
@@ -5048,15 +5044,14 @@ namespace gnubase::engine
 			{"automationPoint.add", 1,
 				"Adds points to an automation lane: position in the track's time base (ticks on musical tracks, so "
 				"automation follows tempo changes; samples on linear ones, so it keeps its time) and at most the "
-				"longest project's end (see audioEvent.add), value in the "
-				"target's unit, shape of the curve to the next point (step, linear or curve; "
-				"default linear) and for curves the bend, curve, from -1 to 1 (above 0 the value moves fast at first). "
-				"Mute and stepped parameters (parameter.list) have step curves: their points are steps with whole "
-				"values. "
-				"Before the first point the curve has its value, after the last point the last one's; points at one "
-				"position make a jump. A ramp of volume moves the gain in a straight line. terminator (default false) "
-				"ends the curve at the point: up to the next point the parameter has its static value, a gap. With "
-				"virgin territory (automation.set) there are gaps before the first and after the last point too.",
+				"longest project's end (see audioEvent.add), value in the target's unit, shape of the curve to the "
+				"next point (step, linear or curve; default linear) and for curves the bend, curve, from -1 to 1 "
+				"(above 0 the value moves fast at first). Mute and stepped parameters (parameter.list) have step "
+				"curves: their points are steps with whole values. Before the first point the curve has its value, "
+				"after the last point the last one's; points at one position make a jump. A ramp of volume moves the "
+				"gain in a straight line. terminator (default false) ends the curve at the point: up to the next point "
+				"the parameter has its static value, a gap. With virgin territory (automation.set) there are gaps "
+				"before the first and after the last point too.",
 				objectSchema({{"lane", idSchema}, {"points", arraySchema(point)}}, {"lane", "points"}), pointsResult,
 				false},
 			addAutomationPoints);

@@ -790,16 +790,14 @@ namespace gnubase::engine
 		add(engine,
 			{"marker.add", 1,
 				"Adds a position marker, or with type cycle a cycle marker, to a marker track (default: the active "
-				"one; "
-				"without a marker track one is added as track.add adds it, in the time base the user setting "
+				"one; without a marker track one is added as track.add adds it, in the time base the user setting "
 				"editing.defaultTimeBase gives new tracks). position and end are in the track's time base (ticks or "
 				"samples; project.get reports each track's timeBase) or \"cursor\": to give numbers without knowing "
 				"the setting, add the marker track first with track.add timeBase and pass it as track. A position "
-				"marker defaults to the cursor, a cycle marker to the locators; "
-				"a cycle marker ends at least one sample after its position. Positions and ends are at most the "
-				"longest project's end (see audioEvent.add). Position and cycle markers are numbered separately on "
-				"each track; a new marker gets the first free "
-				"number unless one is given.",
+				"marker defaults to the cursor, a cycle marker to the locators; a cycle marker ends at least one "
+				"sample after its position. Positions and ends are at most the longest project's end (see "
+				"audioEvent.add). Position and cycle markers are numbered separately on each track; a new marker gets "
+				"the first free number unless one is given.",
 				objectSchema(
 					{{"type", typeSchema}, {"track", idSchema}, {"position", positionSchema}, {"end", positionSchema},
 						{"name", stringSchema}, {"color", colorSchema}, {"number", integerSchema}}),
@@ -851,8 +849,8 @@ namespace gnubase::engine
 			{"marker.set", 1,
 				"Changes a marker: moves it (position, in the track's time base or \"cursor\"; a cycle marker keeps "
 				"its length unless end is given, at most the longest project's end as in marker.add), renames it, "
-				"changes its color or number, or moves it to another "
-				"marker track, where it takes the first free number if its own is taken.",
+				"changes its color or number, or moves it to another marker track, where it takes the first free "
+				"number if its own is taken.",
 				objectSchema(
 					{{"marker", idSchema}, {"track", idSchema}, {"position", positionSchema}, {"end", positionSchema},
 						{"name", stringSchema}, {"color", colorSchema}, {"number", integerSchema}},

@@ -531,12 +531,11 @@ namespace gnubase::engine
 			{"note.set", 1,
 				"Changes notes of a MIDI part: each change names a note by id and gives what changes, position and "
 				"length in ticks (each at most the longest project's end, see audioEvent.add), pitch 0-127, velocity "
-				"0-1, release velocity 0-1, MIDI channel 0-15, play probability "
-				"0-1, velocity variance -1 to 1, articulations, the attributes it has, mutedArticulations, those of "
-				"them that are muted (an attribute that goes is no longer muted), or expressions, which replace "
-				"its expression points (see note.add). The points move with the note's start, but for a start that "
-				"moves while the end stays: then they stay where they are, and the values at the new start become "
-				"its initial ones. Returns the changed notes.",
+				"0-1, release velocity 0-1, MIDI channel 0-15, play probability 0-1, velocity variance -1 to 1, "
+				"articulations, the attributes it has, mutedArticulations, those of them that are muted (an attribute "
+				"that goes is no longer muted), or expressions, which replace its expression points (see note.add). "
+				"The points move with the note's start, but for a start that moves while the end stays: then they stay "
+				"where they are, and the values at the new start become its initial ones. Returns the changed notes.",
 				changesSchema("notes",
 					{{"position", integer}, {"length", integer}, {"pitch", integer}, {"velocity", number},
 						{"releaseVelocity", number}, {"channel", integer}, {"probability", number},
@@ -595,23 +594,23 @@ namespace gnubase::engine
 							{"description", "controller events of the part that move along, in time only"}}}}}};
 		add(engine,
 			{"note.move", 1,
-				"Moves notes of a MIDI part to another part, as dragging them from one in-place editor to another "
-				"does (reference manual p. 1261): each note keeps its id and every field but its position and pitch. "
-				"ticks moves the notes on the project's timeline, to at most the longest project's end (see "
-				"audioEvent.add), and semitones in pitch; the command converts the "
-				"timeline shift to the target part's own positions, wherever the two parts start on the timeline and "
-				"whatever their time bases. The source part and the target part may be the same. The move "
-				"is one undo step, and the shared copies of both parts follow it. A note may reach past the target "
-				"part's end, as note.add and note.set allow. Refuses, changing nothing, a part or a note that "
-				"doesn't exist, a note that would land on the timeline before the target part's start or outside the "
-				"pitches 0 to 127, and a move between shared copies of one group, which must stay equal. Emits "
-				"note.removed for the source part and note.added for the target part. controllers names controller "
-				"events of the source part that go along, as the key editor moves the selected ones with the notes "
-				"(p. 1188): each keeps its id and every field, ticks shifts it and semitones doesn't, and one that "
-				"would land before the target part's start lands at its start; a controller event that doesn't exist "
-				"refuses the move. notes may then be empty; the undo step is \"Move notes\" also then. Emits "
-				"controller.removed and controller.added for them, and the note events only when notes names any. "
-				"Returns the moved notes and controller events, as the target part has them.",
+				"Moves notes of a MIDI part to another part, as dragging them from one in-place editor to another does "
+				"(reference manual p. 1261): each note keeps its id and every field but its position and pitch. ticks "
+				"moves the notes on the project's timeline, to at most the longest project's end (see audioEvent.add), "
+				"and semitones in pitch; the command converts the timeline shift to the target part's own positions, "
+				"wherever the two parts start on the timeline and whatever their time bases. The source part and the "
+				"target part may be the same. The move is one undo step, and the shared copies of both parts follow "
+				"it. A note may reach past the target part's end, as note.add and note.set allow. Refuses, changing "
+				"nothing, a part or a note that doesn't exist, a note that would land on the timeline before the "
+				"target part's start or outside the pitches 0 to 127, and a move between shared copies of one group, "
+				"which must stay equal. Emits note.removed for the source part and note.added for the target part. "
+				"controllers names controller events of the source part that go along, as the key editor moves the "
+				"selected ones with the notes (p. 1188): each keeps its id and every field, ticks shifts it and "
+				"semitones doesn't, and one that would land before the target part's start lands at its start; a "
+				"controller event that doesn't exist refuses the move. notes may then be empty; the undo step is "
+				"\"Move notes\" also then. Emits controller.removed and controller.added for them, and the note events "
+				"only when notes names any. Returns the moved notes and controller events, as the target part has "
+				"them.",
 				noteMove,
 				{{"type", "object"}, {"required", {"notes", "controllers"}},
 					{"properties", {{"notes", {{"type", "array"}}}, {"controllers", {{"type", "array"}}}}}},
