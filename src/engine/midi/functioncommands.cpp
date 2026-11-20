@@ -80,8 +80,8 @@ namespace gnubase::engine::midi
 			return {{"parts", changed}};
 		}
 
-		// Gives the tracks a function that makes parts added the color for new tracks, announces what it changed and
-		// returns it.
+		// Gives the tracks that a part-making function added the color new tracks get (newTrackColor), announces what
+		// the function changed and returns it.
 		Json announce(Project& project, const PartChanges& changes, CommandContext& context)
 		{
 			for (const ObjectId id : changes.tracks)

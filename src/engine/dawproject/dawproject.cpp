@@ -18,7 +18,6 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <climits>
 #include <cmath>
 #include <cstdint>

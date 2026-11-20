@@ -465,28 +465,27 @@ TEST_CASE("the project colors setup dialog renames colors and resets one to its 
 	const auto open = [&window] { return !window.elements("#project-colors-dialog").empty(); };
 	window.app.keys().run("project.colorsSetup", Json::object(), window.app.main(), nullptr);
 	REQUIRE(window.app.waitUntil(open));
-	const auto change = [&window](const std::string& selector, const std::string& value)
+	// Types a name over the old one in the name field.
+	const auto rename = [&window](const std::string& name)
 	{
-		Rml::Element* element = window.find(selector);
-		REQUIRE(element != nullptr);
-		element->SetAttribute("value", value);
-		Rml::Dictionary parameters;
-		parameters["value"] = Rml::String(value);
-		element->DispatchEvent(Rml::EventId::Change, parameters);
+		window.click("#color-name");
+		window.app.ui().key(std::nullopt, "Mod+A");
+		window.app.ui().text(std::nullopt, name);
 		window.app.shell().step(std::chrono::milliseconds(0));
 	};
 
 	// The name field renames the selected color, and its row in the list with it.
 	window.click("#project-colors > listitem[value=\"3\"]");
-	change("#color-name", "Kick");
+	rename("Kick");
 	CHECK(window.elements("#project-colors > listitem[value=\"3\"]").at(0).value("text", "") == "Kick");
 
 	// Reset Color gives the selected color the factory name and color in its place.
-	window.click("#project-colors > listitem[value=\"2\"]");
-	change("#color-name", "Snare");
-	change("#color-picker", "#123456");
-	window.click("#color-reset");
 	const Json factory = window.app.call("project.factoryColors").at("colors");
+	window.click("#project-colors > listitem[value=\"2\"]");
+	rename("Snare");
+	window.click("#color-picker .color-field");
+	CHECK(window.elements("#color-picker").at(0).at("attributes").at("value") != factory[1].at("color"));
+	window.click("#color-reset");
 	CHECK(window.elements("#project-colors > listitem[value=\"2\"]").at(0).value("text", "") ==
 		factory[1].at("name").get<std::string>());
 	CHECK(window.elements("#color-picker").at(0).at("attributes").at("value") == factory[1].at("color"));
