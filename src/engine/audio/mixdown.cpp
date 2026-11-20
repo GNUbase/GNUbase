@@ -7,6 +7,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/document/rendersnapshot.h"
+#include "engine/document/serialize.h"
 #include "engine/dsp/dither.h"
 #include "engine/engine.h"
 #include "engine/jobs/jobs.h"
@@ -645,7 +646,25 @@ namespace gnubase::engine
 		}
 		request["channels"] = objects;
 		const auto prepared = std::make_shared<PreparedMixdown>();
-		prepared->snapshot = renderSnapshot(snapshot, objects);
+		if (request.contains("renderEvents"))
+		{
+			// Private render-in-place input: isolate the material before compiling overlaps, MIDI and tails.
+			const auto selected = request.at("renderEvents").get<std::set<ObjectId>>();
+			Project input = projectFromJson(project);
+			for (auto it = input.audioEvents.begin(); it != input.audioEvents.end();)
+				if (selected.count(it->first) == 0 && selected.count(it->second.part) == 0)
+					it = input.audioEvents.erase(it);
+				else
+					++it;
+			for (auto it = input.midiParts.begin(); it != input.midiParts.end();)
+				if (selected.count(it->first) == 0)
+					it = input.midiParts.erase(it);
+				else
+					++it;
+			prepared->snapshot = renderSnapshot(*compile(input, snapshot.revision), objects);
+		}
+		else
+			prepared->snapshot = renderSnapshot(snapshot, objects);
 		prepared->project = project;
 		prepared->settings = m_settings.values();
 		prepared->parameters = request;
