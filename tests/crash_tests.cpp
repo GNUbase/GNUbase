@@ -175,6 +175,15 @@ TEST_CASE("a crash while the log session ends ends the process with its exit cod
 	}
 }
 
+TEST_CASE("a crash whose filter finds the handler removed ends the process without a dump", "[integration]")
+{
+	// The filter was entered just before the session ended: the events and gnubase-crashdump are gone, so it ends
+	// the process with the exception's code at once.
+	const gnubase::test::TempDir dir;
+	CHECK(static_cast<unsigned>(crash(dir.path(), "removed")) == g_accessViolation);
+	CHECK(!std::filesystem::exists(dir.path() / "crash.dmp"));
+}
+
 TEST_CASE("a log session starts gnubase-crashdump and ends it with the session", "[integration]")
 {
 	const gnubase::test::TempDir dir;

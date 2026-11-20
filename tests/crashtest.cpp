@@ -131,6 +131,27 @@ namespace
 		other.join(); // the crash ends the process
 		return 4;
 	}
+
+	// Calls the session's exception filter for an access violation after the session ended, as a crash does whose
+	// filter was entered just before the handler was removed.
+	int crashInRemovedFilter(const std::filesystem::path& log)
+	{
+		LPTOP_LEVEL_EXCEPTION_FILTER filter = nullptr;
+		{
+			const gnubase::logging::Session session(log);
+			filter = SetUnhandledExceptionFilter(nullptr);
+			SetUnhandledExceptionFilter(filter);
+		}
+		if (filter == nullptr)
+			return 7;
+		EXCEPTION_RECORD record{};
+		record.ExceptionCode = EXCEPTION_ACCESS_VIOLATION;
+		CONTEXT context{};
+		RtlCaptureContext(&context);
+		EXCEPTION_POINTERS exception{&record, &context};
+		filter(&exception); // ends the process
+		return 4;
+	}
 #endif
 }
 
@@ -151,6 +172,8 @@ int main(int argc, char** argv)
 			return crashWhileEnding(log);
 		if (how == "helper")
 			return startAndEndHelper(log);
+		if (how == "removed")
+			return crashInRemovedFilter(log);
 #endif
 		const gnubase::logging::Session session(log);
 		gnubase::logging::info("about to crash");
