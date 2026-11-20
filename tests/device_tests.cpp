@@ -44,6 +44,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -728,14 +729,14 @@ namespace
 		std::atomic<bool> m_pending{false};
 	};
 
-	// Polls both devices for the given time, as two engines would.
-	void reopenFor(Reopening& first, Reopening& second, std::chrono::milliseconds time)
+	// Polls the devices for the given time, as their engines would.
+	void reopenFor(std::initializer_list<Reopening*> devices, std::chrono::milliseconds time)
 	{
 		const auto end = std::chrono::steady_clock::now() + time;
 		while (std::chrono::steady_clock::now() < end)
 		{
-			first.poll();
-			second.poll();
+			for (Reopening* device : devices)
+				device->poll();
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
 	}
@@ -924,7 +925,7 @@ TEST_CASE("PipeWire devices at different rates don't keep resetting each other",
 	std::optional<Reopening> first(std::in_place, makePipeWireBackend(), config("default", rate));
 	REQUIRE(eventually([&first] { return first->blocks() >= 8; }));
 	std::optional<Reopening> second(std::in_place, makePipeWireBackend(), config("default", other));
-	reopenFor(*first, *second, std::chrono::seconds(5));
+	reopenFor({&*first, &*second}, std::chrono::seconds(5));
 	INFO("resets: " << first->resets() << " and " << second->resets());
 	CHECK(first->resets() <= 1);
 	CHECK(second->resets() <= 1);
@@ -1353,11 +1354,20 @@ namespace
 		const uint32_t secondSize = found != 128 ? 128 : 64;
 		{
 			Reopening first(makeJackBackend(library), config("default", 0.0, firstSize));
-			REQUIRE(waitUntil([&other, firstSize] { return other.bufferSize() == firstSize; }));
+			REQUIRE(waitUntil(
+				[&first, &other, firstSize]
+				{
+					first.poll();
+					return other.bufferSize() == firstSize;
+				}));
+			// jackd's latencies may follow the device's own request late, which resets it once: it opens again at
+			// the size it set then, and only the resets after that count.
+			reopenFor({&first}, std::chrono::milliseconds(300));
+			const int settled = first.resets();
 			Reopening second(makeJackBackend(library), config("default", 0.0, secondSize));
-			reopenFor(first, second, std::chrono::seconds(1));
-			INFO("resets: " << first.resets() << " and " << second.resets());
-			CHECK(first.resets() <= 1);
+			reopenFor({&first, &second}, std::chrono::seconds(1));
+			INFO("resets: " << first.resets() - settled << " and " << second.resets());
+			CHECK(first.resets() - settled <= 1);
 			CHECK(second.resets() <= 1);
 			CHECK(other.bufferSize() == secondSize);
 			CHECK(first.device().format().blockSize == firstSize); // in blocks of at most that size
