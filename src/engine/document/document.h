@@ -1675,6 +1675,10 @@ namespace gnubase::engine
 	// such as the rule editors', stop there.
 	time::Ticks longestProjectTicks(const Project& project);
 
+	// Whether the signature track's Lock is on (reference manual p. 163): commands that would change the time signature
+	// events refuse to then (#729, #1956).
+	bool signatureTrackLocked(const Project& project);
+
 	// The longest project's end in a time base: g_maxPosition samples, or longestProjectTicks ticks. Commands keep
 	// event, part and note positions and lengths and media lengths within it, and so does loading a project, so that
 	// a position plus a length can't overflow (#1906).

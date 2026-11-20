@@ -435,6 +435,7 @@ namespace gnubase::engine
 		std::atomic<int64_t> m_recordOffset{0};
 		PlayedPositions m_played; // audio thread; for any record offset
 		bool m_directMonitoring = false;
+		std::string m_silenceReason;                   // the device's, as audio.changed last announced it
 		std::map<int, audio::InputMonitor> m_monitors; // by input port, those the device monitors directly
 		// Per input channel of the device, what it recorded at each project position from 0, for captureSeconds.
 		// Written by the audio thread, read while the device stands.

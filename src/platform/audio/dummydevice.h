@@ -54,6 +54,8 @@ namespace gnubase::audio
 		using Device::requestReset;
 		// Simulates the driver reporting a dropout.
 		using Device::reportOverload;
+		// Simulates the driver reporting a new latency or silence reason.
+		using Device::reportLatencyChange;
 
 		// While stopped. Without a source the inputs are silent.
 		void setInput(InputSource source);
