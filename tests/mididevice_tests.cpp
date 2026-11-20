@@ -33,6 +33,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -58,6 +59,13 @@ namespace
 		MidiMessage message;
 		message.size = 3;
 		message.bytes = {0x90, pitch, 100};
+		return message;
+	}
+
+	MidiMessage noteOff(uint8_t pitch)
+	{
+		MidiMessage message;
+		message.bytes = {0x80, pitch, 0};
 		return message;
 	}
 
@@ -159,6 +167,10 @@ namespace
 		output->send(noteOn(64), hostTime());
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 		CHECK(inbox.messages().size() == 2);
+
+		// The loopback may be shared, as the IAC bus is: whatever else listens to it isn't left with notes sounding.
+		for (const uint8_t pitch : std::array<uint8_t, 3>{60, 62, 64})
+			output->send(noteOff(pitch), hostTime());
 	}
 
 #ifdef __APPLE__
@@ -439,7 +451,27 @@ TEST_CASE("the dummy MIDI backend keeps the port contract and reports loopbacks 
 	CHECK(ports[0].input);
 	CHECK(!ports[1].input);
 	CHECK(ports[1].id == "Loop");
-	checkContract(backend, "Loop", "Loop");
+	{
+		// Another listener on the loopback hears every note the contract plays end again (#357).
+		Inbox listener;
+		const auto listening = backend.openInput("Loop", listener.receiver());
+		checkContract(backend, "Loop", "Loop");
+		std::map<uint8_t, int> sounding;
+		for (const auto& received : listener.messages())
+		{
+			const std::array<uint8_t, 3>& bytes = received.first.bytes;
+			if ((bytes[0] & 0xf0U) == 0x90 && bytes[2] > 0)
+				++sounding[bytes[1]];
+			else if ((bytes[0] & 0xf0U) == 0x80)
+				--sounding[bytes[1]];
+		}
+		CHECK(sounding.size() == 3);
+		for (const auto& [pitch, count] : sounding)
+		{
+			INFO("pitch " << int{pitch});
+			CHECK(count == 0);
+		}
+	}
 
 	Inbox inbox;
 	const auto input = backend.openInput("Loop", inbox.receiver());
