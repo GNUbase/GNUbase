@@ -432,7 +432,7 @@ TEST_CASE("every built-in processor processes notes and parameter changes withou
 	CHECK(g_violations == 0);
 }
 
-TEST_CASE("the sampler plays notes, loops, slices and its filter without allocating", "[unit]")
+TEST_CASE("the sampler plays notes, loops, slices, glides, fades and its filter without allocating", "[unit]")
 {
 	using namespace gnubase::engine::graph;
 	using namespace gnubase::engine::processors;
@@ -467,6 +467,11 @@ TEST_CASE("the sampler plays notes, loops, slices and its filter without allocat
 		set(Sampler::PlaybackMode, block >= 6 ? 1.0 : 0.0);
 		set(Sampler::Monophonic, block % 4 == 3 ? 1.0 : 0.0);
 		set(Sampler::Reverse, static_cast<double>(block % 2));
+		set(Sampler::Glide, block % 3 == 0 ? 0.0 : 20.0);
+		set(Sampler::Fingered, static_cast<double>(block % 2));
+		set(Sampler::FadeIn, 0.1);
+		set(Sampler::FadeOut, 0.1);
+		set(Sampler::LoopCrossfade, 0.05);
 		for (uint8_t key = 60; key < 64; ++key)
 		{
 			ProcessEvent note;
