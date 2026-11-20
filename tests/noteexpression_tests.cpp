@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -65,6 +66,16 @@ namespace
 				return event->data;
 		}
 		return nullptr;
+	}
+
+	// The data of the events since the last call, by name.
+	std::map<std::string, std::vector<Json>> events(Client& client)
+	{
+		std::map<std::string, std::vector<Json>> found;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message))
+				found[event->name].push_back(event->data);
+		return found;
 	}
 
 	// An instrument track playing the note probe, record-enabled, on the dummy device.
@@ -647,7 +658,7 @@ TEST_CASE("resizing a note's start keeps its expression where it was", "[integra
 
 TEST_CASE("sends before the modifiers get the notes' expression", "[integration]")
 {
-	for (const bool pre : {false, true})
+	for (const auto& [pre, bypass] : {std::pair{false, false}, std::pair{true, false}, std::pair{true, true}})
 	{
 		Setup setup;
 		Client& client = setup.client;
@@ -666,6 +677,7 @@ TEST_CASE("sends before the modifiers get the notes' expression", "[integration]
 				{"midiSends",
 					{{"pre", pre},
 						{"slots", {{{"effect", "transformer"}, {"parameters", {{"value", 1}}}, {"output", other}}}}}}});
+		run(client, "noteExpression.set", {{"track", setup.track}, {"bypass", bypass}});
 		run(client, "audio.render", {{"frames", 64}});
 		const auto start = run(client, "audio.get").at("position").get<int64_t>();
 		run(client, "midi.capture", {{"start", true}});
@@ -677,9 +689,13 @@ TEST_CASE("sends before the modifiers get the notes' expression", "[integration]
 			if (captured.at("channel") == other)
 				sent.push_back({captured.at("position").get<int64_t>() - start,
 					captured.at("bytes").at(0).get<int64_t>(), captured.at("bytes").at(1).get<int64_t>()});
-		INFO("sends " << (pre ? "pre" : "post"));
-		// The transformer moves the note with its expression (#1618), whose initial point comes before it.
-		CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0xE2, 0}, {0, 0x92, pre ? 61 : 73}, {100, 0xE2, 0}});
+		INFO("sends " << (pre ? "pre" : "post") << (bypass ? ", expression bypassed" : ""));
+		// The transformer moves the note with its expression (#1618), whose initial point comes before it; with the
+		// track's expression bypassed, also the sends before the modifiers get the note alone.
+		if (bypass)
+			CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0x92, 61}});
+		else
+			CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0xE2, 0}, {0, 0x92, pre ? 61 : 73}, {100, 0xE2, 0}});
 	}
 }
 
@@ -901,5 +917,136 @@ TEST_CASE("note.replaceExpression reaches the shared copies of the part", "[inte
 		INFO("part " << each.at("id"));
 		REQUIRE(each.at("notes").size() == 1);
 		CHECK(pointsOf(each.at("notes").at(0)) == Points{{"tuning", 100, 1000}, {"volume", 0, 3500}});
+	}
+}
+
+namespace
+{
+	// The track's note expression setup as project.get lists it with its channel.
+	Json setupOf(Client& client, ObjectId channel)
+	{
+		const Json project = run(client, "project.get");
+		for (const Json& each : project.at("channels"))
+			if (each.at("id") == channel)
+				return each.at("noteExpression");
+		return nullptr;
+	}
+
+	Json input(const char* type, const char* message, double min, double max)
+	{
+		return {{"type", type}, {"input", message}, {"min", min}, {"max", max}};
+	}
+}
+
+TEST_CASE("noteExpression.set sets a track's bypass and input assignments, which the project keeps", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	CHECK(setupOf(client, setup.channel) == Json{{"bypass", false}, {"inputs", Json::array()}});
+
+	events(client);
+	const Json set = run(client, "noteExpression.set",
+		{{"track", setup.track}, {"bypass", true},
+			{"inputs", {input("tuning", "pitchBend", -12.0, 12.0), input("brightness", "cc74", 0.25, 0.75)}}});
+	const Json expected = {{"bypass", true},
+		{"inputs", {input("tuning", "pitchBend", -12.0, 12.0), input("brightness", "cc74", 0.25, 0.75)}}};
+	CHECK(set == Json{{"track", setup.track}, {"noteExpression", expected}});
+	// Clients that follow events, like the inspector, see the new setup.
+	const std::vector<Json> changes = events(client)["channel.changed"];
+	REQUIRE(changes.size() == 1);
+	CHECK(changes[0].at("channel").at("id") == setup.channel);
+	CHECK(changes[0].at("channel").at("noteExpression") == expected);
+	CHECK(setupOf(client, setup.channel) == expected);
+	CHECK(run(client, "history.get").at("steps").back().at("action") == "Change note expression setup");
+
+	// What a call leaves out stays; an expression back at no input and its full range is no longer listed.
+	run(client, "noteExpression.set",
+		{{"track", setup.track},
+			{"inputs",
+				{{{"type", "brightness"}, {"max", 1.0}}, {{"type", "tuning"}, {"input", "none"}, {"min", -120.0}},
+					{{"type", "tuning"}, {"max", 120.0}}, {{"type", "pressure"}, {"input", "aftertouch"}}}}});
+	const Json changed = {{"bypass", true},
+		{"inputs", {input("brightness", "cc74", 0.25, 1.0), input("pressure", "aftertouch", 0.0, 1.0)}}};
+	CHECK(setupOf(client, setup.channel) == changed);
+
+	// Saved and loaded with the project.
+	const Project loaded = projectFromJson(run(client, "project.get"));
+	CHECK(toJson(loaded.channels.at(setup.channel)).at("noteExpression") == changed);
+
+	run(client, "history.undo");
+	CHECK(setupOf(client, setup.channel) == expected);
+	run(client, "history.undo");
+	CHECK(setupOf(client, setup.channel) == Json{{"bypass", false}, {"inputs", Json::array()}});
+}
+
+TEST_CASE(
+	"a project loads a note expression setup out of range clamped and what it doesn't know left out", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	Json json = run(client, "project.get");
+	for (Json& each : json.at("channels"))
+		if (each.at("id") == setup.channel)
+			each["noteExpression"] = {{"bypass", true},
+				{"inputs",
+					{input("volume", "cc7", -1.0, 9.0), input("wobble", "cc1", 0.0, 1.0),
+						input("pan", "cc200", 0.0, 0.5)}}};
+	const Project loaded = projectFromJson(json);
+	CHECK(toJson(loaded.channels.at(setup.channel)).at("noteExpression") ==
+		Json{{"bypass", true}, {"inputs", {input("volume", "cc7", 0.0, 4.0), input("pan", "none", 0.0, 0.5)}}});
+}
+
+TEST_CASE("noteExpression.set refuses what it can't do and changes nothing then", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId audio = run(client, "track.add", {{"type", "audio"}}).at("track").at("id").get<ObjectId>();
+	const Json revision = run(client, "project.revision");
+	CHECK_THAT(reject(client, "noteExpression.set", {{"track", audio}, {"bypass", true}}),
+		ContainsSubstring("no MIDI or instrument track"));
+	CHECK_THAT(reject(client, "noteExpression.set", {{"track", 999999}, {"bypass", true}}),
+		ContainsSubstring("no MIDI or instrument track"));
+	CHECK_THAT(reject(client, "noteExpression.set",
+				   {{"track", setup.track}, {"bypass", true}, {"inputs", {{{"type", "tuning"}, {"input", "cc128"}}}}}),
+		ContainsSubstring("input"));
+	CHECK_THAT(reject(client, "noteExpression.set",
+				   {{"track", setup.track}, {"inputs", {{{"type", "volume"}, {"max", 4.5}}}}}),
+		ContainsSubstring("max must be 0 to 4"));
+	CHECK_THAT(reject(client, "noteExpression.set",
+				   {{"track", setup.track}, {"inputs", {{{"type", "tuning"}, {"min", -121.0}}}}}),
+		ContainsSubstring("min must be -120 to 120"));
+	CHECK(setupOf(client, setup.channel) == Json{{"bypass", false}, {"inputs", Json::array()}});
+	CHECK(run(client, "project.revision") == revision);
+}
+
+TEST_CASE("a track's note expression bypass plays its notes without their expression", "[integration]")
+{
+	for (const bool bypass : {true, false})
+	{
+		Setup setup;
+		Client& client = setup.client;
+		const ObjectId part = addPart(client, setup.track);
+		run(client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", ticksOf(100)}, {"length", ticksOf(1000)}, {"pitch", 62}, {"velocity", 0.5},
+						{"channel", 3},
+						{"expressions", {point("tuning", 0, -48.0), point("brightness", ticksOf(500), 1.0)}}}}}});
+		run(client, "noteExpression.set", {{"track", setup.track}, {"bypass", bypass}});
+		run(client, "audio.render", {{"frames", 64}});
+		const auto start = run(client, "audio.get").at("position").get<int64_t>();
+		run(client, "midi.capture", {{"start", true}});
+		run(client, "transport.play");
+		run(client, "audio.render", {{"frames", 2000}});
+		std::vector<std::vector<int64_t>> played;
+		for (const std::vector<int64_t>& each : capturedFrom(client, start))
+			played.push_back({each[0], each[1], each.size() > 2 ? each[2] : -1});
+		INFO("bypass " << bypass);
+		if (bypass)
+			CHECK(played == std::vector<std::vector<int64_t>>{{100, 0x93, 62}, {1100, 0x83, 62}});
+		else
+			CHECK(played ==
+				std::vector<std::vector<int64_t>>{
+					{100, 0xE3, 0}, {100, 0xB3, 74}, {100, 0x93, 62}, {600, 0xB3, 74}, {1100, 0x83, 62}});
 	}
 }
