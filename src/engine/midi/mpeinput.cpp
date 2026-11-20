@@ -12,14 +12,15 @@ namespace gnubase::engine::midi
 {
 	namespace
 	{
-		constexpr std::array<const char*, 4> g_modes = {"off", "lower", "upper", "rotation"};
+		constexpr std::array<const char*, 5> g_modes = {"off", "lower", "upper", "rotation", "both"};
 		constexpr std::array<const char*, 4> g_initials = {"off", "min", "center", "max"};
 		// The dimensions' members in JSON, by MpeSetup::Dimension.
 		constexpr std::array<const char*, 3> g_messageMembers = {"xMessage", "pressureMessage", "yMessage"};
 		constexpr std::array<const char*, 3> g_expressionMembers = {"xExpression", "pressureExpression", "yExpression"};
-		// A Note Expression Assignment's names: none, then plugin::NoteExpression's.
-		constexpr std::array<const char*, 8> g_assignments = {
-			"none", "volume", "pan", "tuning", "vibrato", "expression", "brightness", "pressure"};
+		// A Note Expression Assignment's names: none, plugin::NoteExpression's, then MIDI PolyPressure (#1829).
+		constexpr std::array<const char*, 9> g_assignments = {
+			"none", "volume", "pan", "tuning", "vibrato", "expression", "brightness", "pressure", "polyPressure"};
+		constexpr size_t g_polyPressure = 8; // its index in g_assignments
 
 		// The known MPE input devices (p. 1295), which come from the factory with MPE's lower zone and its pitch range
 		// of 48 semitones.
@@ -82,17 +83,21 @@ namespace gnubase::engine::midi
 			return number <= 127 ? static_cast<uint8_t>(number) : fallback;
 		}
 
-		// An assignment's index in g_assignments, and back.
-		size_t assignmentIndex(std::optional<plugin::NoteExpression> expression)
+		// A dimension's assignment's index in g_assignments, and back.
+		size_t assignmentIndex(const MpeSetup& setup, size_t dimension)
 		{
+			if (setup.polyPressure.at(dimension))
+				return g_polyPressure;
+			const std::optional<plugin::NoteExpression> expression = setup.expressions.at(dimension);
 			return expression.has_value() ? static_cast<size_t>(*expression) + 1 : 0;
 		}
 
-		std::optional<plugin::NoteExpression> assignmentAt(size_t index)
+		void assign(MpeSetup& setup, size_t dimension, size_t index)
 		{
-			if (index == 0 || index >= g_assignments.size())
-				return std::nullopt;
-			return static_cast<plugin::NoteExpression>(index - 1);
+			setup.polyPressure.at(dimension) = index == g_polyPressure;
+			setup.expressions.at(dimension) = index == 0 || index >= g_polyPressure
+				? std::nullopt
+				: std::optional(static_cast<plugin::NoteExpression>(index - 1));
 		}
 
 		bool addEvent(graph::EventBuffer& out, const graph::ProcessEvent& event) noexcept
@@ -137,8 +142,15 @@ namespace gnubase::engine::midi
 	{
 		MpeSetup setup = defaults;
 		setup.mode = static_cast<Mode>(named(json, "mode", g_modes, static_cast<size_t>(defaults.mode)));
-		setup.channels = clampedInt(
-			json, "channels", setup.channels, 1, setup.mode == Mode::Lower || setup.mode == Mode::Upper ? 15 : 16);
+		// With both zones, the upper one keeps its member channels and the lower one gets at most the rest of 14, as
+		// MPE shrinks the zone set up first when the other one overlaps it.
+		setup.upperChannels = clampedInt(json, "upperChannels", setup.upperChannels, 1, 13);
+		int most = 16;
+		if (setup.mode == Mode::Both)
+			most = 14 - setup.upperChannels;
+		else if (setup.mode == Mode::Lower || setup.mode == Mode::Upper)
+			most = 15;
+		setup.channels = clampedInt(json, "channels", setup.channels, 1, most);
 		setup.firstChannel = clampedInt(json, "firstChannel", setup.firstChannel, 1, 16);
 		setup.pitchRange = clampedInt(json, "pitchRange", setup.pitchRange, 1, 96);
 		setup.tuning = json.value("tuning", setup.tuning);
@@ -151,8 +163,7 @@ namespace gnubase::engine::midi
 		for (size_t i = 0; i < setup.messages.size(); ++i)
 		{
 			setup.messages.at(i) = messageOf(json, g_messageMembers.at(i), defaults.messages.at(i));
-			setup.expressions.at(i) = assignmentAt(
-				named(json, g_expressionMembers.at(i), g_assignments, assignmentIndex(defaults.expressions.at(i))));
+			assign(setup, i, named(json, g_expressionMembers.at(i), g_assignments, assignmentIndex(defaults, i)));
 		}
 		if (setup.expressions.at(X) == plugin::NoteExpression::Tuning)
 			setup.expressions.at(X) = std::nullopt;
@@ -162,45 +173,47 @@ namespace gnubase::engine::midi
 	Json MpeSetup::toJson() const
 	{
 		Json json = {{"mode", g_modes.at(static_cast<size_t>(mode))}, {"channels", channels},
-			{"firstChannel", firstChannel}, {"pitchRange", pitchRange}, {"tuning", tuning},
-			{"initialX", g_initials.at(static_cast<size_t>(initialX))},
+			{"upperChannels", upperChannels}, {"firstChannel", firstChannel}, {"pitchRange", pitchRange},
+			{"tuning", tuning}, {"initialX", g_initials.at(static_cast<size_t>(initialX))},
 			{"initialY", g_initials.at(static_cast<size_t>(initialY))}};
 		for (size_t i = 0; i < messages.size(); ++i)
 		{
 			json[g_messageMembers.at(i)] = messageName(messages.at(i));
-			json[g_expressionMembers.at(i)] = g_assignments.at(assignmentIndex(expressions.at(i)));
+			json[g_expressionMembers.at(i)] = g_assignments.at(assignmentIndex(*this, i));
 		}
 		return json;
 	}
 
 	uint64_t MpeSetup::pack() const
 	{
-		uint64_t packed = static_cast<uint64_t>(mode) | (static_cast<uint64_t>(channels - 1) << 2U) |
-			(static_cast<uint64_t>(firstChannel - 1) << 6U) | (static_cast<uint64_t>(pitchRange) << 10U) |
-			(static_cast<uint64_t>(tuning) << 17U) | (static_cast<uint64_t>(initialX) << 18U) |
-			(static_cast<uint64_t>(initialY) << 20U);
-		// From bit 22 on, per dimension its message's 8 bits and its assignment's 4.
+		uint64_t packed = static_cast<uint64_t>(mode) | (static_cast<uint64_t>(channels - 1) << 3U) |
+			(static_cast<uint64_t>(firstChannel - 1) << 7U) | (static_cast<uint64_t>(pitchRange) << 11U) |
+			(static_cast<uint64_t>(tuning) << 18U) | (static_cast<uint64_t>(initialX) << 19U) |
+			(static_cast<uint64_t>(initialY) << 21U) | (static_cast<uint64_t>(upperChannels - 1) << 59U);
+		// From bit 23 on, per dimension its message's 8 bits and its assignment's 4; the upper zone's channels from
+		// bit 59.
 		for (size_t i = 0; i < messages.size(); ++i)
-			packed |= (static_cast<uint64_t>(messages.at(i)) | (uint64_t{assignmentIndex(expressions.at(i))} << 8U))
-				<< (22U + (12U * i));
+			packed |= (static_cast<uint64_t>(messages.at(i)) | (uint64_t{assignmentIndex(*this, i)} << 8U))
+				<< (23U + (12U * i));
 		return packed;
 	}
 
 	MpeSetup MpeSetup::unpack(uint64_t packed)
 	{
 		MpeSetup setup;
-		setup.mode = static_cast<Mode>(packed & 3U);
-		setup.channels = static_cast<int>((packed >> 2U) & 15U) + 1;
-		setup.firstChannel = static_cast<int>((packed >> 6U) & 15U) + 1;
-		setup.pitchRange = static_cast<int>((packed >> 10U) & 127U);
-		setup.tuning = ((packed >> 17U) & 1U) != 0;
-		setup.initialX = static_cast<Initial>((packed >> 18U) & 3U);
-		setup.initialY = static_cast<Initial>((packed >> 20U) & 3U);
+		setup.mode = static_cast<Mode>(packed & 7U);
+		setup.channels = static_cast<int>((packed >> 3U) & 15U) + 1;
+		setup.firstChannel = static_cast<int>((packed >> 7U) & 15U) + 1;
+		setup.pitchRange = static_cast<int>((packed >> 11U) & 127U);
+		setup.tuning = ((packed >> 18U) & 1U) != 0;
+		setup.initialX = static_cast<Initial>((packed >> 19U) & 3U);
+		setup.initialY = static_cast<Initial>((packed >> 21U) & 3U);
+		setup.upperChannels = static_cast<int>((packed >> 59U) & 15U) + 1;
 		for (size_t i = 0; i < setup.messages.size(); ++i)
 		{
-			const uint64_t dimension = packed >> (22U + (12U * i));
+			const uint64_t dimension = packed >> (23U + (12U * i));
 			setup.messages.at(i) = static_cast<uint8_t>(dimension & 255U);
-			setup.expressions.at(i) = assignmentAt((dimension >> 8U) & 15U);
+			assign(setup, i, (dimension >> 8U) & 15U);
 		}
 		return setup;
 	}
@@ -217,6 +230,8 @@ namespace gnubase::engine::midi
 			return number <= 15 && number >= 16 - members;
 		case Mode::Rotation:
 			return number >= firstChannel && number < firstChannel + channels;
+		case Mode::Both:
+			return (number >= 2 && number <= 1 + channels) || (number <= 15 && number >= 16 - upperChannels);
 		case Mode::Off:
 			break;
 		}
@@ -248,8 +263,9 @@ namespace gnubase::engine::midi
 	Json mpeSchema()
 	{
 		Json schema = Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
-			"mode": {"type": "string", "enum": ["off", "lower", "upper", "rotation"]},
+			"mode": {"type": "string", "enum": ["off", "lower", "upper", "rotation", "both"]},
 			"channels": {"type": "integer", "minimum": 1, "maximum": 16},
+			"upperChannels": {"type": "integer", "minimum": 1, "maximum": 13},
 			"firstChannel": {"type": "integer", "minimum": 1, "maximum": 16},
 			"pitchRange": {"type": "integer", "minimum": 1, "maximum": 96},
 			"tuning": {"type": "boolean"},
@@ -283,15 +299,24 @@ namespace gnubase::engine::midi
 			return;
 		}
 		Channel& state = m_channels.at(channel);
-		// A point of the dimension's expression, which it has, for the note.
+		// Whether the dimension plays something: an expression or poly pressure.
+		const auto plays = [&setup](size_t dimension)
+		{ return setup.expression(dimension).has_value() || setup.playsPolyPressure(dimension); };
+		// A point of the dimension's expression, which it has, for the note, or the note's poly pressure.
 		const auto expression = [&event, &setup, &state](uint8_t key, size_t dimension)
 		{
-			const plugin::NoteExpression type = setup.expression(dimension).value_or(plugin::NoteExpression::Pressure);
 			graph::ProcessEvent point;
 			point.offset = event.offset;
-			point.type = Type::NoteExpression;
 			point.channel = event.channel;
 			point.key = key;
+			if (setup.playsPolyPressure(dimension))
+			{
+				point.type = Type::PolyPressure;
+				point.value = state.values.at(dimension);
+				return point;
+			}
+			const plugin::NoteExpression type = setup.expression(dimension).value_or(plugin::NoteExpression::Pressure);
+			point.type = Type::NoteExpression;
 			point.parameter = plugin::expressionId(type);
 			point.parameterValue = expressionValue(type, state.values.at(dimension), setup.pitchRange);
 			return point;
@@ -314,7 +339,7 @@ namespace gnubase::engine::midi
 			const std::array<MpeSetup::Initial, 3> initials = {setup.initialX, MpeSetup::Initial::Off, setup.initialY};
 			for (size_t i = 0; i < state.values.size(); ++i)
 			{
-				if (!setup.expression(i).has_value())
+				if (!plays(i))
 					continue;
 				const MpeSetup::Initial initial = initials.at(i);
 				if (initial != MpeSetup::Initial::Off)
@@ -340,7 +365,7 @@ namespace gnubase::engine::midi
 		bool expressed = false;
 		for (size_t i = 0; i < state.values.size(); ++i)
 		{
-			if (!setup.expression(i).has_value() || !isMessage(setup.messages.at(i), event))
+			if (!plays(i) || !isMessage(setup.messages.at(i), event))
 				continue;
 			expressed = true;
 			state.values.at(i) = event.value;

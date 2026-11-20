@@ -1483,6 +1483,47 @@ TEST_CASE("Mod+K, a count and Enter repeat the selected events", "[ui]")
 	}
 }
 
+TEST_CASE("the Repeat Events count is edited as its dialog shows, and again when Tab or Shift+Tab moves to it", "[ui]")
+{
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	const auto part = app.call("midiPart.add", {{"track", track.at("id")}, {"position", 0}, {"length", 4 * 1720320}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	REQUIRE(app.waitUntil(
+		[&app, &display, part]
+		{
+			app.ui().key(std::nullopt, "Mod+A");
+			return display.selection() == std::vector<uint64_t>{part};
+		}));
+
+	// Editing starts as the dialog shows, before the next update, so that the count's text field has the focus and
+	// SDL's text input is on for the keys after Mod+K: a real keyboard's keys only come with their text while it is.
+	app.keys().run("edit.repeat", Json::object(), app.main(), nullptr);
+	const Rml::Element* focus = app.main().context().GetFocusElement();
+	REQUIRE(focus != nullptr);
+	CHECK(focus->GetTagName() == "input");
+	REQUIRE(focus->GetParentNode() != nullptr);
+	CHECK(focus->GetParentNode()->GetId() == "repeat-count");
+	CHECK(focus->GetParentNode()->IsClassSet("editing"));
+
+	// Tab leaves it; Shift+Tab back to it, and Tab to it from the control before it, edit it again.
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(!hasClass(app, "#repeat-count", "editing"));
+	app.ui().key(std::nullopt, "Shift+Tab");
+	REQUIRE(app.waitUntil([&app] { return hasClass(app, "#repeat-count", "editing"); }));
+	app.ui().key(std::nullopt, "Shift+Tab");
+	CHECK(!hasClass(app, "#repeat-count", "editing"));
+	app.ui().key(std::nullopt, "Tab");
+	REQUIRE(app.waitUntil([&app] { return hasClass(app, "#repeat-count", "editing"); }));
+	app.ui().text(std::nullopt, "2");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&app] { return count(app, "#repeat-events-dialog") == 0; }));
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("midiParts").size() == 3; }));
+}
+
 TEST_CASE("event drags past the project start clamp the preview and the edit together", "[ui][slow]")
 {
 	const bool copy = GENERATE(false, true);
