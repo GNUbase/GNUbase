@@ -9,10 +9,10 @@ event display and the value display.
 
 An editor view's `content` says what shows its parts: `key`, the key editor, or `list`, the list editor. `editor.open`
 takes it (an open editor keeps its content unless it is given, a closed one opens with the key editor, also when
-`editor.set` gave it another content while it was closed) and so does `editor.set`; `editor.close` puts it back to `key`. The list editor selects notes and controller events: notes in the
-view's `selection`, as the key editor does, and controller events in `controllerSelection`, each `{part, controller}`
-of the editable parts. Removed events leave it, and closing the editor clears it. Like the rest of a view it is view
-state: no undo steps, not saved.
+`editor.set` gave it another content while it was closed) and so does `editor.set`; `editor.close` puts it back to
+`key`. The list editor selects notes and controller events: notes in the view's `selection`, as the key editor does, and
+controller events in `controllerSelection`, each `{part, controller}` of the editable parts. Removed events leave it,
+and closing the editor clears it. Like the rest of a view it is view state: no undo steps, not saved.
 
 Edits are the existing commands: `note.add`, `note.set`, `note.remove`, `controller.add`, `controller.set` and
 `controller.remove` (SysEx with its whole message as `data`).
@@ -116,10 +116,9 @@ status line, nudging, snap and quantize on the toolbar; editing a program change
 ## Checks
 
 - `tests/listeditor_tests.cpp`: an editor's content, given to `editor.open` and `editor.set`, kept when an open editor
-  opens other parts, back to the key editor once closed, also after `editor.set` gave the closed editor one, and
-  refused when unknown; the selected controller events as
-  view state of the editable parts, each once, refused for events that don't exist or parts that aren't editable,
-  leaving with removed events, a change of the editing mode and closing.
+  opens other parts, back to the key editor once closed, also after `editor.set` gave the closed editor one, and refused
+  when unknown; the selected controller events as view state of the editable parts, each once, refused for events that
+  don't exist or parts that aren't editable, leaving with removed events, a change of the editing mode and closing.
 - `tests/listeditor_ui_tests.cpp` drives the app with `ui::Automation`: Open List Editor (its key and menu item)
   lists a note and a controller event of each type in playback order, with their columns, the events at their time
   and the velocity as a bar, and once closed Open/Close Editor opens the key editor; typing values for two selected

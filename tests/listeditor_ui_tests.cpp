@@ -391,11 +391,14 @@ TEST_CASE("the filters bar hides event types and the Focus menu shows the select
 {
 	Fixture f;
 	// A filter hides its type; Ctrl (Cmd) shows that type alone, and again all of them (p. 1254).
+	// Rendering the rows again without a new project keeps the time context that show built.
+	const uint64_t builds = ui::projectTimeBuilds();
 	f.click(of(".list-filter[event-type=note]"));
 	REQUIRE(f.app.waitUntil([&] { return f.types().size() == 6; }));
 	CHECK(f.has(".list-filter[event-type=note]", "checked"));
 	f.click(of(".list-filter[event-type=note]"));
 	REQUIRE(f.app.waitUntil([&] { return f.types().size() == 8; }));
+	CHECK(ui::projectTimeBuilds() == builds);
 	f.click(of(".list-filter[event-type=sysEx]"), 1, {"ctrl"});
 	REQUIRE(f.app.waitUntil([&] { return f.types() == std::vector<std::string>{"sysEx"}; }));
 	f.click(of(".list-filter[event-type=sysEx]"), 1, {"ctrl"});
@@ -759,7 +762,7 @@ TEST_CASE("a value display drag across rows sets each one's value in one undo st
 	const int half = f.xAt(volume, 0.5);
 	const int quarter = f.xAt(volume, 0.25);
 	f.press(threeQuarters, lowY);
-	// The moves change the bars alone: they build no time context, as rebuilding the rows' cells would.
+	// The moves change the bars alone: they neither render the rows again nor build a time context of their own.
 	const uint64_t builds = ui::projectTimeBuilds();
 	f.moveTo(half, volumeY);
 	f.moveTo(quarter, volumeY);
