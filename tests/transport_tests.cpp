@@ -4,6 +4,7 @@
 #include "engine/graph/graph.h"
 #include "engine/processors/builtin.h"
 #include "engine/time/tempomap.h"
+#include "testutils/heldcuethread.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -14,6 +15,7 @@
 #include <chrono>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <variant>
@@ -1030,6 +1032,108 @@ TEST_CASE("while the device runs, the engine announces punching in and stopping 
 			CHECK(announced.count(entry.at("request").get<RequestId>()) == 1);
 		}
 	CHECK(updates == 3);
+}
+
+TEST_CASE("a punch in that the audio thread plays before the cue thread first runs is announced", "[integration]")
+{
+	// The cue thread, held back when it starts, reads the transport's changes only once the audio thread has punched
+	// in: it must count from the changes before the device started, not from what it finds (#1886, #1889).
+	Engine engine;
+	Client client(engine);
+	Client listener(engine);
+	constexpr Samples block = 64;
+	constexpr Samples left = 4800;
+	run(client, "audio.setDevice", {{"blockSize", block}});
+	run(client, "transport.set", {{"left", left}, {"right", 96000}, {"punchIn", true}});
+	gnubase::test::HeldCueThread held(engine);
+	run(client, "audio.start");
+	REQUIRE(held.waitUntilHeld());
+	run(client, "transport.play");
+	// The block after the one that punched in has moved the cursor past this: the audio thread publishes the cursor
+	// before its state in each block (Transport::advance), so the punch in has been published too.
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (run(client, "transport.get").at("position").get<Samples>() < left + (2 * block) &&
+		std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	REQUIRE(std::chrono::steady_clock::now() < deadline);
+	// Nothing has taken the punch in over yet, and the cue thread was held until the audio thread had made it.
+	CHECK(run(client, "transport.get").at("recording") == false);
+	CHECK(held.release());
+	bool announced = false;
+	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (!announced && std::chrono::steady_clock::now() < until)
+	{
+		const std::optional<Message> message = listener.wait(std::chrono::milliseconds(50));
+		const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
+		announced = event != nullptr && event->name == "transport.changed" && event->data.at("playing") == true &&
+			event->data.at("recording") == true;
+	}
+	CHECK(announced);
+	CHECK(run(client, "transport.get").at("recording") == true);
+	run(client, "audio.stop");
+}
+
+TEST_CASE("a held cue thread is the first device start's, held once, and goes on after its hold", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	Client listener(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}});
+	run(client, "transport.set", {{"left", 4800}, {"right", 96000}, {"punchIn", true}});
+	// Whether a cue thread runs: it announces the punch in at the left locator, 0.1 s in, as the audio thread plays it.
+	const auto cueThreadRuns = [&client, &listener]
+	{
+		run(client, "transport.locate", {{"position", 0}});
+		run(client, "transport.play");
+		bool announced = false;
+		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (!announced && std::chrono::steady_clock::now() < until)
+		{
+			const std::optional<Message> message = listener.wait(std::chrono::milliseconds(50));
+			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
+			announced = event != nullptr && event->name == "transport.changed" && event->data.at("recording") == true;
+		}
+		run(client, "transport.stop");
+		return announced;
+	};
+	SECTION("only the first start's thread is held")
+	{
+		gnubase::test::HeldCueThread held(engine);
+		// One per engine at a time: a second one is refused and leaves the first one's hook in place.
+		CHECK_THROWS_AS(gnubase::test::HeldCueThread(engine), std::logic_error);
+		run(client, "audio.start");
+		REQUIRE(held.waitUntilHeld());
+		CHECK(held.release());
+		CHECK(cueThreadRuns());
+		run(client, "audio.stop");
+		run(client, "audio.start");
+		CHECK(cueThreadRuns());
+		run(client, "audio.stop");
+		CHECK(!held.release()); // released already
+	}
+	SECTION("released before the device starts, it holds nothing")
+	{
+		gnubase::test::HeldCueThread held(engine);
+		CHECK(!held.release());
+		run(client, "audio.start");
+		CHECK(cueThreadRuns());
+		run(client, "audio.stop");
+		CHECK(!held.waitUntilHeld(std::chrono::milliseconds(0)));
+	}
+	SECTION("a hold lapses")
+	{
+		gnubase::test::HeldCueThread held(engine, std::chrono::milliseconds(100));
+		run(client, "audio.start");
+		run(client, "audio.stop"); // waits for the cue thread, which goes on once its hold lapsed
+		CHECK(!held.waitUntilHeld(std::chrono::milliseconds(0)));
+		CHECK(!held.release());
+	}
+	// Once it went, another one may hold the engine's cue thread.
+	gnubase::test::HeldCueThread next(engine);
+	run(client, "audio.start");
+	CHECK(next.waitUntilHeld());
+	CHECK(next.release());
+	run(client, "audio.stop");
 }
 
 TEST_CASE("toggle switches cycle, punch in and out, the metronome and recording", "[integration]")

@@ -121,6 +121,10 @@ namespace gnubase::engine
 		// Any thread: how long an offline render waits for the samplers' samples before it logs a warning and waits
 		// again (30 s), 20 rounds at most before it fails.
 		void setOfflineSampleWait(std::chrono::milliseconds wait) { m_offlineSampleWait = wait; }
+		// Any thread: calls hook on the cue thread that a device start starts, when the thread first runs, before
+		// anything else it does (Engine::setCueStartHook). The thread gets a copy: a new hook applies from the next
+		// start on.
+		void setCueStartHook(std::function<void()> hook);
 
 		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or
 		// midi.portSettings (midiPorts): emits the audio ports as audio.portsChanged, and the MIDI ports follow their
@@ -573,6 +577,8 @@ namespace gnubase::engine
 		std::pair<const ArrangerPlan*, ArrangerState> cuePlan(const CueState& state) const;
 		std::atomic<bool> m_cueing{false};
 		std::thread m_cueThread;
+		std::mutex m_cueStartHookMutex; // guards m_cueStartHook, which startCueing copies for the cue thread
+		std::function<void()> m_cueStartHook;
 
 		// The dummy device's input generator, if any; runs on the audio thread.
 		std::shared_ptr<graph::Processor> m_generator;

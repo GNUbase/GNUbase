@@ -291,11 +291,20 @@ namespace gnubase::engine
 	void AudioEngine::startCueing()
 	{
 		m_cueing = true;
+		std::function<void()> hook;
+		{
+			const std::scoped_lock lock(m_cueStartHookMutex);
+			hook = m_cueStartHook;
+		}
 		// Taken before the device starts, not when the thread first runs, which may be after the audio thread changed
 		// them: such a change would never be announced (#1886).
 		m_cueThread = std::thread(
-			[this, changes = m_transport.changes(), activity = m_midi.activity()]() mutable
+			[this, changes = m_transport.changes(), activity = m_midi.activity(), hook = std::move(hook)]() mutable
 			{
+				// For tests, before the thread reads anything: one that holds it back here lets the audio thread change
+				// what the counts above count first, however the threads are scheduled (#1889).
+				if (hook)
+					hook();
 				auto activityTaken = std::chrono::steady_clock::now();
 				while (m_cueing)
 				{
@@ -444,6 +453,12 @@ namespace gnubase::engine
 			events.push_back(std::move(each));
 		}
 		return events;
+	}
+
+	void AudioEngine::setCueStartHook(std::function<void()> hook)
+	{
+		const std::scoped_lock lock(m_cueStartHookMutex);
+		m_cueStartHook = std::move(hook);
 	}
 
 	void AudioEngine::stopCueing()

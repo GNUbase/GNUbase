@@ -85,13 +85,15 @@ the port's entry in `midi.portSettings` keeps what differs from the preset, so i
 such as clock and active sensing, 0xF8 to 0xFF) for `midi.activity`, which the engine runs itself at most ten times a
 second while input arrives and a device processes blocks (the audio engine's cue thread notices it); it takes the
 messages with their ports and announces them as the event `midi.activity`, which the Note Expression Input page shows.
-Its runs stay out of the command log. Each `listener` (the dialog's is `studioSetup`, calls without one share one)
-turns it on and off for itself, and it is on while any has it on, so the dialog closing leaves a script's or an MCP
-session's on, and their off leaves the dialog's (#1832). Turning `midi.activityListen` on while no listener has it on,
-and starting a device, drop what was queued before, so nothing old is announced as new; a second listener turning it on
-keeps the queue, which the first one still reads. Rendered offline (`audio.render`), nothing runs it: a client calls it.
-The user settings `midi.mpeInput` and `midi.mpePitchRange`, which before #1514 made MIDI recording take every input as
-MPE's lower zone, are gone without a migration: a port's MPE input is set up again on the Note Expression Input page.
+Its runs stay out of the command log. Each `listener` (the dialog's is `studioSetup`, calls without one share one) turns
+it on and off for itself, and it is on while any has it on, so the dialog closing leaves a script's or an MCP session's
+on, and their off leaves the dialog's (#1832). Turning `midi.activityListen` on while no listener has it on, and
+starting a device, drop what was queued before, so nothing old is announced as new; a second listener turning it on
+keeps the queue, which the first one still reads. The cue thread counts the input from before the device started, so
+input that arrives before it first runs is announced too (#1886); a test holds it back at its start until `midi.monitor`
+has the input (#1889). Rendered offline (`audio.render`), nothing runs it: a client calls it. The user settings
+`midi.mpeInput` and `midi.mpePitchRange`, which before #1514 made MIDI recording take every input as MPE's lower zone,
+are gone without a migration: a port's MPE input is set up again on the Note Expression Input page.
 
 `midi::MpeInput` does this on the audio thread, per port, before the ports' input merges into all MIDI inputs
 (`MidiPorts::take`): it keeps each channel's sounding notes and latest values, without allocating, and the port's setup
