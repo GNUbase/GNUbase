@@ -825,7 +825,13 @@ namespace gnubase::ui
 					// that comes after the element under it is gone. Every move gets here, also during a drag.
 					if (tooltip != nullptr)
 						tooltip->moved(mouse);
-					if (auto* menu = dynamic_cast<Menu*>(closestTag(event.GetTargetElement(), "menu")))
+					// The mouse took a menu over from the keys: over an item, as when it entered it (#568).
+					if (const Rml::Element* item = closestTag(event.GetTargetElement(), "menuitem"))
+					{
+						if (auto* menu = dynamic_cast<Menu*>(item->GetParentNode()))
+							menu->hover(*item);
+					}
+					else if (auto* menu = dynamic_cast<Menu*>(closestTag(event.GetTargetElement(), "menu")))
 						menu->moved();
 					return;
 				}

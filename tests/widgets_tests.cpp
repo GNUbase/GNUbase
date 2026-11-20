@@ -779,6 +779,8 @@ TEST_CASE("items with a submenu show an arrow, and Right and Left open and close
 {
 	test::UiApp app;
 	const Events events(app.show("popups.rml"));
+	// The arrows are there from the load, before a menu opens.
+	CHECK(app.ui().dom(std::nullopt, "#color > .menu-arrow", 0).at("elements").size() == 1);
 
 	const Json track = element(app, "#track").at("box");
 	app.ui().click(std::nullopt, point(track.at("x").get<int>() + 10, track.at("y").get<int>() + 10),
@@ -972,6 +974,17 @@ TEST_CASE("keys take over from the mouse resting on an item, so that two submenu
 	app.ui().key(std::nullopt, "Right");
 	CHECK(visible(app, "#colors"));
 	CHECK(!visible(app, "#locks"));
+
+	// A move within Lock, which sends no Mouseover, gives the menu back to the mouse as entering Lock does: Lock's
+	// submenu shows, and the one that keys opened closes.
+	const Json lock = element(app, "#lock").at("box");
+	app.ui().move(std::nullopt, point(lock.at("x").get<int>() + 3, lock.at("y").get<int>() + 3));
+	CHECK(visible(app, "#locks"));
+	CHECK(!visible(app, "#colors"));
+	// The focus went back to Color, whose submenu Right opens again.
+	REQUIRE(focused(app, "#color"));
+	app.ui().key(std::nullopt, "Right");
+	REQUIRE(visible(app, "#colors"));
 
 	// The mouse moving to Lock shows its submenu again, and closes the one that keys opened.
 	app.ui().move(std::nullopt, at("#rename"));
