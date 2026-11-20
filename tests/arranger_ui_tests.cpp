@@ -386,6 +386,10 @@ TEST_CASE("the arranger track's controls switch arranger mode and the chain and 
 	{ return window.element(selector).value("attributes", Json::object()).value("value", std::string()); };
 	REQUIRE(window.app.waitUntil([&] { return window.shown(row + " select[control=arrangerChain]") == 1; }));
 	CHECK(window.shown(row + " button[control=timeBase]") == 1);
+	// In the default controls area Current Repeat sits beside Current Item, on the second line.
+	CHECK(window.box(row + " [control=arrangerRepeat]").at("y") == window.box(row + " [control=arrangerItem]").at("y"));
+	CHECK(window.box(row + " [control=arrangerItem]").at("y").get<double>() >
+		window.box(row + " [control=arrangerChain]").at("y").get<double>());
 
 	click(row + " button[control=arrangerMode]");
 	REQUIRE(window.app.waitUntil([&] { return window.app.call("arranger.get").at("mode") == true; }));
@@ -402,4 +406,22 @@ TEST_CASE("the arranger track's controls switch arranger mode and the chain and 
 	window.app.call("arranger.goToStep", {{"step", 0}, {"repeat", 1}});
 	CHECK(window.app.waitUntil([&] { return value(row + " [control=arrangerItem]") == "A"; }));
 	CHECK(window.app.waitUntil([&] { return value(row + " [control=arrangerRepeat]") == "2/3"; }));
+
+	// They only show: a double click doesn't edit them.
+	for (const std::string& display : {row + " [control=arrangerItem]", row + " [control=arrangerRepeat]"})
+	{
+		window.app.ui().click(std::nullopt, {display, 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+		window.app.shell().step(std::chrono::milliseconds(0));
+		CHECK_FALSE(window.hasClass(display, "editing"));
+	}
+
+	// Arranger mode off from elsewhere, which brings no project read: the button follows it, also after its own click,
+	// and the displays are empty again.
+	window.app.call("arranger.setMode", {{"mode", false}});
+	CHECK(window.app.waitUntil([&] { return !window.hasClass(row + " button[control=arrangerMode]", "checked"); }));
+	CHECK(window.app.waitUntil(
+		[&]
+		{
+			return value(row + " [control=arrangerItem]").empty() && value(row + " [control=arrangerRepeat]").empty();
+		}));
 }

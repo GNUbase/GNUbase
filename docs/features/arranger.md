@@ -86,8 +86,9 @@ each section's event has a number after its name, how often its event came so fa
   Mode), Switch Time Base, `arrangerChain` (Select Active Arranger Chain, `arranger.setMode`) and the displays
   `arrangerItem` (Current Item, the name of the arranger event playing) and `arrangerRepeat` (Current Repeat, the
   repeat playing of the step's repeats, such as 2/4), which follow `transport.changed`'s `arranger` and are empty
-  outside the chain. The arranger track's controls area is 160 dp wide by default, which shows the first four on two
-  lines; Current Repeat shows on a taller track.
+  outside the chain; they only show, so a double click doesn't edit them. They also read `transport.get` on
+  `arranger.changed`, as turning arranger mode off announces no `transport.changed`. The arranger track's controls area
+  is 160 dp wide by default, which shows them on two lines, Current Repeat narrow beside Current Item.
 - **The arranger track's lane** (`ui::GlobalEventLane` with `LaneKind::Arranger`, `src/ui/transposetrack.h`, shared with
   the transpose and chord tracks' lanes, #1393, pp. 404-405): an `.arranger-lane-event` per arranger event in an
   `.arranger-lane-row` over the lane, as wide as its section, with its name. The class names are `arranger-lane-*`, not

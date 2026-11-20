@@ -1776,6 +1776,13 @@ meter .meter-peak
 	padding: 0 2dp;
 }
 
+/* The arranger track's Current Repeat (docs/features/arranger.md), such as 2/4: narrow, so that it sits beside Current
+   Item under the other controls in the arranger track's default controls area of 160dp. */
+.track-list .track-controls textdisplay.arranger-repeat
+{
+	width: 36dp;
+}
+
 .track-list .drop-line
 {
 	position: absolute;

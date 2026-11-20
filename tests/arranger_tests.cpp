@@ -1031,6 +1031,17 @@ TEST_CASE(
 	run(client, "arranger.flatten", {{"keepTrack", true}, {"dontSplit", true}});
 	CHECK(notes() == Notes{{3 * q, 2 * q, 60}, {5 * q, q, 62}, {9 * q, q, 62}});
 	CHECK(run(client, "arranger.get").at("events")[1].at("name") == "A");
+
+	// Rename Arranger Events counts each event's repeats on its own: A, B, A become A 1, B 1, A 2.
+	run(client, "history.undo");
+	const ObjectId b = idOf(run(client, "arranger.add", {{"position", 8 * q}, {"end", 12 * q}}), "event");
+	run(client, "arranger.setChain", {{"steps", {{{"event", a}}, {{"event", b}}, {{"event", a}}}}});
+	run(client, "arranger.flatten", {{"keepTrack", true}, {"renameEvents", true}});
+	const Json renamed = run(client, "arranger.get").at("events");
+	REQUIRE(renamed.size() == 3);
+	CHECK(renamed[0].at("name") == "A 1");
+	CHECK(renamed[1].at("name") == "B 1");
+	CHECK(renamed[2].at("name") == "A 2");
 }
 
 TEST_CASE("transport.play while playing ends a Repeat Forever loop", "[integration]")

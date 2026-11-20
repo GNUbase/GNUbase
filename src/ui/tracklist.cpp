@@ -266,7 +266,7 @@ namespace gnubase::ui
 				return R"(<textdisplay class="display )" +
 					std::string(control == "arrangerItem" ? "arranger-item" : "arranger-repeat") + R"(" control=")" +
 					control + R"(" title=")" + (control == "arrangerItem" ? "Current Item" : "Current Repeat") +
-					R"("/>)";
+					R"(" disabled/>)";
 			if (control == "midiChannel")
 				return R"(<select class="midi-channel" control="midiChannel" title="MIDI Channel"/>)";
 			if (control == "timeOffset")
@@ -709,13 +709,20 @@ namespace gnubase::ui
 						*value = result.value.at("value").get<bool>();
 				});
 		// The arranger track's controls follow arranger.changed: arranger.setMode isn't an undo step, so no project
-		// read follows it.
+		// read follows it. Turning arranger mode off or switching to an empty chain announces no transport.changed,
+		// so Current Item and Current Repeat read the transport again, as the arranger editor does.
 		m_subscriptions.push_back(m_binding.on("arranger.changed",
 			[this](const engine::Event& event)
 			{
 				m_arranger = event.data;
 				m_arrangerHanded = m_binding.handed();
 				showState();
+				m_binding.send("transport.get", Json::object(),
+					[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+					{
+						if (!alive.expired() && result.ok())
+							followTransport(result.value);
+					});
 			}));
 		// Current Tempo follows the project cursor, also while playing (#831), when the cursor moves without events.
 		m_subscriptions.push_back(
@@ -2099,7 +2106,12 @@ namespace gnubase::ui
 	const TrackList::Clicked* TrackList::click(uint64_t track, const std::string& name) const
 	{
 		const auto found = m_clicked.find({track, name});
-		if (found == m_clicked.end() || (found->second.out <= 0 && m_display.read() > found->second.answered))
+		if (found == m_clicked.end())
+			return nullptr;
+		// Activate Arranger Mode's arranger.setMode brings no project read, but an arranger.changed after its answer.
+		const uint64_t answered = found->second.answered;
+		if (found->second.out <= 0 &&
+			(m_display.read() > answered || (name == "arrangerMode" && m_arrangerHanded > answered)))
 			return nullptr;
 		return &found->second;
 	}
