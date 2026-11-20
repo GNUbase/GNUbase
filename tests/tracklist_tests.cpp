@@ -2192,3 +2192,21 @@ TEST_CASE("the signature track's Lock in the track list locks its time signature
 	tracks.click(lock);
 	REQUIRE(tracks.app.waitUntil([&] { return !tracks.track(signature).value("lock", true); }));
 }
+
+TEST_CASE("the signature track's options in the track list open the Process Bars dialog", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t signature = tracks.add({{"type", "signature"}});
+	tracks.rows(1);
+	// Signature Track Options (reference manual p. 163): its name, then Process Bars Dialog. The click pattern
+	// options come with patterns per time signature event (docs/features/metronome.md).
+	const std::string options = row(signature) + " select[control=signatureOptions]";
+	REQUIRE(tracks.app.waitUntil([&] { return test::selectOptions(tracks.app, options).size() == 2; }));
+	CHECK(elements(tracks.app, "#process-bars-dialog").empty());
+	tracks.click(options);
+	tracks.app.ui().key(std::nullopt, "Down");
+	tracks.click(options);
+	REQUIRE(tracks.app.waitUntil([&] { return !elements(tracks.app, "#process-bars-dialog").empty(); }));
+	// The list's value is its name's again, so that choosing the option again opens the dialog again.
+	CHECK(elements(tracks.app, options).at(0).at("attributes").value("value", "x").empty());
+}

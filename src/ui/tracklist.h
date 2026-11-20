@@ -179,6 +179,8 @@ namespace gnubase::ui
 		const Clicked* click(uint64_t track, const std::string& name) const;
 		// A marker chosen in a marker track's Locate, Cycle or Zoom list.
 		void markerChange(Rml::Element& control, const std::string& value);
+		// An option chosen in the signature track's Signature Track Options (reference manual p. 163).
+		void signatureOption(Rml::Element& control, const std::string& value);
 		// A ruler track's time format chosen or time offset typed (reference manual p. 159).
 		void rulerChange(Rml::Element& control, const std::string& value);
 		// The MIDI channel a MIDI track's row chose (channel.set midiChannel).
