@@ -194,7 +194,9 @@ namespace gnubase::engine
 				"file's tracks of nothing but a name and markers, which midiFile.export writes for marker tracks, "
 				"become new marker tracks at the top while the project has room for them. The options of the "
 				"reference's MIDI file import (#478): position (sample frames from the project start, default 0) "
-				"is where the file starts; the project's tempo and signatures before it stay. dissolve false keeps a "
+				"is where the file starts; the project's tempo and signatures before it stay. While the signature "
+				"track is locked (track.set lock), an import with tempo that would change the time signature events "
+				"is refused. dissolve false keeps a "
 				"type 0 file in one track. singlePart puts the whole file into one part on one track: track, a "
 				"MIDI or instrument track of the project, or a new one named after the file; on a linear track the "
 				"part's position and length are in samples, its notes in ticks. On MIDI tracks, "
@@ -303,6 +305,9 @@ namespace gnubase::engine
 		{
 			throw CommandError(error.what());
 		}
+		require(!parameters.value("tempo", true) || !signatureTrackLocked(project) ||
+				imported.signatures == project.signatures,
+			"the signature track is locked: import with tempo false to keep its time signature events");
 		if (singlePart && !imported.tracks.empty())
 		{
 			// One track with every event, named after the file.
