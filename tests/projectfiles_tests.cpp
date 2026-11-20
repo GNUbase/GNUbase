@@ -788,8 +788,8 @@ namespace
 		return window != nullptr && (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) != 0;
 	}
 
-	// Minimizes the window and steps until SDL says so. False, with a warning, where SDL's video driver can't minimize a
-	// window, as the offscreen driver the tests use on Linux can't.
+	// Minimizes the window and steps until SDL says so. False, with a warning, where SDL's video driver can't minimize
+	// a window, as the offscreen driver the tests use on Linux can't.
 	bool minimizeWindow(test::UiApp& app, gnubase::ui::WindowId id)
 	{
 		SDL_Window* window = SDL_GetWindowFromID(static_cast<SDL_WindowID>(id));
