@@ -4959,7 +4959,7 @@ namespace gnubase::engine
 		registerHitpointCommands(*this, engine, jobs);
 		registerWarpCommands(engine);
 		registerTimeWarpCommands(*this, engine);
-		registerAudioFunctionCommands(*this, engine);
+		registerAudioFunctionCommands(*this, engine, jobs);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);

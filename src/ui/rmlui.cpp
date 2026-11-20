@@ -167,7 +167,13 @@ namespace gnubase::ui
 
 	bool FileInterface::read(const Rml::String& path, std::string& data)
 	{
-		const std::filesystem::path file = normal(std::filesystem::u8path(path));
+		Rml::String filePath = path;
+#ifdef _WIN32
+		// RmlUi's script URLs encode the drive's colon as a vertical bar.
+		if (filePath.size() > 1 && filePath[1] == '|')
+			filePath[1] = ':';
+#endif
+		const std::filesystem::path file = normal(std::filesystem::u8path(filePath));
 		std::error_code error;
 		if (!std::filesystem::is_regular_file(file, error))
 			return false;
