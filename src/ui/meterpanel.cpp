@@ -126,20 +126,20 @@ namespace gnubase::ui
 		m_engine.readMeters(m_frame);
 		const engine::LevelReading& main = m_frame.main;
 		const engine::LoudnessReading& measured = m_frame.loudness;
-		// The main channels' true peaks, RMS levels and peak maxima, the loudness meter's bars, then the readouts.
+		// The main channels' true peaks, RMS levels and true peak maxima, the loudness meter's bars, then the readouts.
 		std::vector<std::string> shown;
 		for (size_t c = 0; c < static_cast<size_t>(main.channels); ++c)
 		{
 			shown.push_back(decibels(measured.truePeak[c]));
 			shown.push_back(decibels(main.rms[c]));
-			shown.push_back(decibels(main.peakMax[c]));
+			shown.push_back(decibels(measured.truePeakHold[c]));
 		}
 		shown.push_back(loudness(measured.momentary));
 		shown.push_back(loudness(measured.integrated));
 		shown.push_back(loudness(measured.shortTerm));
 		shown.push_back(loudness(measured.shortTermMax));
 		shown.push_back(levelText(largest(main.rmsMax, main.channels), "dB"));
-		shown.push_back(levelText(largest(main.peakMax, main.channels), "dB"));
+		shown.push_back(levelText(largest(measured.truePeakHold, main.channels), "dB"));
 		shown.push_back(text(measured.momentaryMax, "LUFS"));
 		shown.push_back(text(measured.shortTermMax, "LUFS"));
 		shown.push_back(text(measured.integrated, "LUFS"));

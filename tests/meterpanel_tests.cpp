@@ -102,3 +102,30 @@ TEST_CASE("the meter display shows the main mix's levels and loudness, and each 
 	click(app, ".meter-tab[value=master]");
 	REQUIRE(app.waitUntil([&app] { return shown(app, ".meter-master"); }));
 }
+
+TEST_CASE("the master meter's peak marks and Peak Max. hold the true peak", "[ui]")
+{
+	// An 8 kHz sine at 48 kHz: its true peak is -6.0 dBTP, its samples reach -7.3 dBFS at most.
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 8000.0}, {"Level", 0.5}}}}}});
+	const auto channel = app.call("track.add", {{"type", "audio"}}).at("channel").at("id").get<uint64_t>();
+	app.call("channel.set", {{"channel", channel}, {"monitor", true}});
+	app.appUi().docking().open("meter");
+	// Past the overshoot of the sine's sudden start between the samples.
+	app.call("audio.render", {{"frames", 4800}});
+	app.call("meter.reset", {{"meters", "main"}});
+	app.call("audio.render", {{"frames", 48000}});
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json bars = elements(app, ".meter-master meter");
+			return text(app, ".peak-max") == "-6.0 dB" && bars.size() == 2 &&
+				bars[0].at("attributes").value("value", std::string()) == "-6.0";
+		}));
+	const Json bars = elements(app, ".meter-master meter");
+	CHECK(bars[0].at("attributes").at("peak") == "-6.0");
+	CHECK(bars[1].at("attributes").at("peak") == "-6.0");
+}
