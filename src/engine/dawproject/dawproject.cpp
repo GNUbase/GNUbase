@@ -1717,6 +1717,7 @@ namespace gnubase::engine
 					m_project.audioParts[part.id] = part;
 					content.part = part.id;
 					content.enabled = context.enabled;
+					content.color = context.color; // the part's color is its own, not its events'
 				}
 				MidiPart* part = nullptr;
 				const auto partFor = [&]() -> MidiPart&

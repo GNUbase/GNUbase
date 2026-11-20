@@ -179,7 +179,8 @@ namespace gnubase::engine
 			return ids;
 		}
 
-		// Announces an item; an audio part's events come and change with it.
+		// Announces an item; an audio part's events come and change with it. Of a new part, the events older than it
+		// (ids only grow) were there before and moved into it, as with a split or a glue: they changed.
 		void announce(Project& project, CommandContext& context, const Item& item, const std::string& what)
 		{
 			if (item.audio != nullptr)
@@ -190,7 +191,9 @@ namespace gnubase::engine
 			{
 				context.emit("audioPart." + what, {{"part", toJson(*item.audioPart)}});
 				for (const AudioEvent* event : eventsIn(project, item.audioPart->id))
-					context.emit("audioEvent." + what, {{"event", toJson(*event)}});
+					context.emit(
+						what == "added" && event->id < item.audioPart->id ? "audioEvent.changed" : "audioEvent." + what,
+						{{"event", toJson(*event)}});
 			}
 			else
 			{
@@ -1402,7 +1405,7 @@ namespace gnubase::engine
 		}
 
 		// Dissolve Part (reference manual p. 250): an audio part's events become events of their own on its track, cut
-		// at its edges so that they play as they did; those it hid entirely go.
+		// at its edges so that they play as they did, muted if it was; those it hid entirely go.
 		Json dissolveParts(Project& project, CommandContext& context)
 		{
 			Json events = Json::array();
@@ -1429,6 +1432,7 @@ namespace gnubase::engine
 						continue;
 					}
 					kept.audio->part = 0;
+					kept.audio->mute = kept.audio->mute || item.audioPart->mute;
 					announce(project, context, kept, kept.id() == original ? "changed" : "added");
 					events.push_back(kept.id());
 				}
@@ -3182,9 +3186,9 @@ namespace gnubase::engine
 		addEdit(engine,
 			{"event.dissolvePart", 1,
 				"Dissolve Part (Audio menu): removes audio parts (events, by id) and makes their audio events events "
-				"of "
-				"their own on the track, cut at the part's edges so that they play as they did; events the part hid "
-				"entirely are removed. Locked parts are refused. The events keep their lane numbers, now lanes of the "
+				"of their own on the track, cut at the part's edges so that they play as they did, muted if the part "
+				"was; events the part hid entirely are removed. Locked parts are refused. The events keep their lane "
+				"numbers, now lanes of the "
 				"track. Returns the events.",
 				schema({{"events", events()}}, {"events"}), eventsResult(), false},
 			"Dissolve Part", dissolveParts);

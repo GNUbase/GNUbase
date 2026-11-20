@@ -844,6 +844,41 @@ TEST_CASE("a render of every fade shape matches its golden file", "[integration]
 	CHECK(diff.equal);
 }
 
+TEST_CASE("an audio part that cuts an event's fades plays them on up to its edges", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Session session(64);
+	const ObjectId track = session.addTrack();
+	const ObjectId constant = session.addClip(writeClip(dir, "one", 1, 10000, one));
+	const ObjectId sine441 =
+		session.addClip(writeClip(dir, "sine", 1, 48000, [](int64_t f, int) { return sine(441.0, f); }));
+	// Events from 1000 to 7000 and from 9000 to 15000, with long fades that their parts cut: from 3000 to 5500 and
+	// from 11000 to 13500.
+	for (const auto& [clip, position] : {std::pair{constant, int64_t{1000}}, std::pair{sine441, int64_t{9000}}})
+	{
+		const ObjectId event = session.addEvent(track, clip, position, 6000);
+		run(session.client, "audioEvent.setFades",
+			{{"event", event}, {"fadeIn", {{"length", 3500}, {"shape", "linear"}}},
+				{"fadeOut", {{"length", 2500}, {"shape", "sCurve"}}}});
+		const Json part = run(session.client, "event.toPart", {{"events", {event}}}).at("events").at(0);
+		run(session.client, "event.resize", {{"events", {part}}, {"edge", "start"}, {"delta", 2000}});
+		run(session.client, "event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", -1500}});
+	}
+	const auto output = session.render(16000);
+	const std::vector<float> first(output[0].begin(), output[0].begin() + 8000);
+	checkSamples(first,
+		[](int64_t at)
+		{
+			if (at < 3000 || at >= 5500)
+				return 0.0;
+			return fadeIn("linear", at, 1000, 3500) * fadeOut("sCurve", at, 7000, 2500);
+		});
+	const gnubase::test::AudioDiff diff = gnubase::test::compareWithGolden(
+		"fades-cut-by-part", mono(std::vector<float>(output[0].begin() + 8000, output[0].end())), 1e-6f);
+	INFO(diff.report);
+	CHECK(diff.equal);
+}
+
 TEST_CASE("a render of equal power crossfades matches its golden file", "[integration]")
 {
 	const gnubase::test::TempDir dir;

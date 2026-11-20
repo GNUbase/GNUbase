@@ -1755,6 +1755,22 @@ TEST_CASE("Events to Part and Dissolve Part act on the selected audio events and
 	CHECK(f.parts().size() == 1);
 }
 
+TEST_CASE("Snap Point to Cursor leaves out a selected audio part, which has no snap point", "[unit]")
+{
+	Fixture f;
+	const Json track = f.audioEvents()[0].at("track");
+	const auto part = f.call("audioPart.add", {{"track", track}, {"position", 100000}, {"length", 48000}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 2; }));
+	f.call("transport.locate", {{"position", 108000}});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 2.25; }));
+	f.display.select({f.event, part});
+	f.run("edit.snapPointToCursor");
+	CHECK(f.waitUntil([&f] { return f.audioEvents()[0].at("snapPoint") == 12000; }));
+}
+
 TEST_CASE("the play tool auditions the pressed audio track until it is released, or scrubs it", "[unit]")
 {
 	Fixture f;
