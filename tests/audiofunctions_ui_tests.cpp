@@ -380,8 +380,8 @@ TEST_CASE("the Spectrum Analyzer draws the channel of a stereo clip that #sa-cha
 	// All channels keep separate curves; the nearest curve supplies the value and reference across channels.
 	choose(app, "#sa-channel", "Down");
 	REQUIRE(elements(app, ".sa-bar").size() == 492);
-	const std::string left = ".sa-bar[channel=\"1\"][index=\"" + std::to_string(bar(1000.0)) + "\"]";
-	const std::string right = ".sa-bar[channel=\"2\"][index=\"" + std::to_string(bar(3000.0)) + "\"]";
+	const std::string left = R"(.sa-bar[channel="1"][index=")" + std::to_string(bar(1000.0)) + "\"]";
+	const std::string right = R"(.sa-bar[channel="2"][index=")" + std::to_string(bar(3000.0)) + "\"]";
 	click(app, left, ui::MouseButton::Right);
 	app.ui().move(std::nullopt, {right, 0, std::nullopt});
 	step(app);

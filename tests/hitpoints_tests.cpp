@@ -520,14 +520,18 @@ TEST_CASE("Delete Overlaps trims selected slices in their part with one undo ste
 	for (const Json& event : after.at("audioEvents"))
 	{
 		if (event.at("id") == f.event)
+		{
 			CHECK(event.at("length") == 24000);
+		}
 		else if (event.at("id") == second)
 		{
 			CHECK(event.at("length") == 40000);
 			CHECK(event.at("offset") == 12000);
 		}
 		else
+		{
 			CHECK(event.at("length") == 48000);
+		}
 	}
 	CHECK(f.call("history.get").at("steps").size() == history.at("steps").size() + 1);
 	f.call("history.undo");

@@ -496,6 +496,7 @@ namespace gnubase::engine
 			{
 				const auto reader = openMedia(media);
 				std::vector<analysis::PitchEstimator> estimators;
+				estimators.reserve(static_cast<size_t>(channelsOf(*reader)));
 				for (int c = 0; c < channelsOf(*reader); ++c)
 					estimators.emplace_back(media.sampleRate);
 				readRange(*reader, media, range, job,

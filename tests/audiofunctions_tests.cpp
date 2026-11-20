@@ -409,7 +409,7 @@ TEST_CASE("clip.statistics weights surround speakers and excludes LFE only from 
 			const Json measured = f.statistics(make(3.1, channels,
 				[&](int channel, double t) { return channel == speaker ? sine(1000.0, 0.25, t) : 0.0; }));
 			const bool lfe = channels >= 6 && speaker == 3;
-			const bool surround = speaker >= (channels >= 6 ? 4 : channels == 5 ? 3 : 2);
+			const bool surround = speaker >= std::min(4, channels - 2);
 			for (const char* value : {"integrated", "maxMomentary", "maxShortTerm"})
 			{
 				if (lfe)
@@ -429,7 +429,8 @@ TEST_CASE("clip.estimatePitch finds a fundamental beneath louder harmonics and m
 	const auto clip = f.add(make(0.8, 2,
 								[](int channel, double t)
 								{
-									const double hz = t < 0.4 ? (channel == 0 ? 110.0 : 261.6256) : 440.0;
+									const double firstPitch = channel == 0 ? 110.0 : 261.6256;
+									const double hz = t < 0.4 ? firstPitch : 440.0;
 									return sine(hz, 0.2, t) + sine(2.0 * hz, 0.6, t) + sine(3.0 * hz, 0.1, t);
 								}),
 		"harmonics");
@@ -461,10 +462,12 @@ TEST_CASE("pitch estimation rejects unpitched or unsupported audio", "[integrati
 									{
 										noise = (noise * 1664525U) + 1013904223U;
 										if (signal == "noise")
-											return static_cast<double>(noise >> 8U) / 16777216.0 - 0.5;
+											return (static_cast<double>(noise >> 8U) / 16777216.0) - 0.5;
 										if (signal == "high")
 											return sine(3000.0, 0.5, t);
-										return signal == "DC" ? 0.5 : signal == "short" ? sine(110.0, 0.5, t) : 0.0;
+										if (signal == "DC")
+											return 0.5;
+										return signal == "short" ? sine(110.0, 0.5, t) : 0.0;
 									}),
 			signal);
 		CHECK(f.call("clip.estimatePitch", {{"clip", clip}}).at("channels").at(0).at("pitch").is_null());
