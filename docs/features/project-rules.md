@@ -40,12 +40,17 @@ holds named rules, as the MIDI rules have one ([midi-rules.md](midi-rules.md)).
   make such changes (`event.move`, `event.resize`, `event.set`, `event.remove`, `track.set`, `track.remove`,
   `channel.set`, `marker.set`, `marker.remove`), so their checks and events are the same. A found folder takes its
   tracks with it; locked parts and events stay on the tracks that stay; an audio event inside a found audio part goes
-  with the part, and delete keeps an audio part that holds a locked event, while the unlocked events found in it go.
-  An audio part that moves takes its events along, locked ones too, as `event.move` does. The active marker track is
-  removed after the other marker tracks, so that no marker track that goes is activated in passing. `seed` makes
-  random values repeatable; without it each call takes a new one, as `midi.applyRules` does. `project.findByRules` returns what the filters find (`tracks`, `events` for parts and audio
-  events, `markers`) and changes nothing; `project.applyRules` refuses select and deselect. `event.set` renames parts
-  (`name`) for the name actions.
+  with the part, and an audio part that moves takes its events along. The active marker track is removed after the
+  other marker tracks, so that no marker track that goes is activated in passing. `seed` makes random values
+  repeatable; without it each call takes a new one, as `midi.applyRules` does. `project.findByRules` returns what the
+  filters find (`tracks`, `events` for parts and audio events, `markers`) and changes nothing; `project.applyRules`
+  refuses select and deselect. `event.set` renames parts (`name`) for the name actions.
+  - **Locks inside audio parts** reach both ways, for delete and transform alike, so that a rule never changes what
+    is locked (a lock guards against moving or editing by accident, reference manual p. 276): the events in a locked
+    audio part stay as they are, found or not, and an audio part that holds a locked event neither goes nor moves,
+    while its other changes (length, name, color) apply and the unlocked events found in it go or move alone. The
+    rules are stricter here than `event.remove` and `event.move`, which refuse only locked items themselves: they
+    remove or move a part with its locked events, and an event in a locked part on its own.
 - **Presets** belong to the user: `projectRules.presets` lists the factory presets (`Init`, `Delete/Empty parts`,
   `Select/MIDI parts`, `Transform/Number the selected tracks` and more) and the user's, kept in
   `project-rule-presets.json` in the settings folder; `projectRules.savePreset` and `projectRules.removePreset` change
@@ -79,7 +84,8 @@ and post lists and a command browser.
 rules JSON refuses (brackets nesting too deep among it), which the commands' descriptions name; `project.findByRules` on
 every filter target, brackets, properties and the selection; `project.applyRules` moving, resizing, renaming and
 coloring parts and markers, track names, mute, solo, time domain and colors, delete with folders, locked parts, audio
-parts that hold locked events and the active marker track last, generated names without gaps, new random values without
+parts that hold locked events (kept in place, their unlocked events deleted and moved alone), locked audio parts
+keeping their events and the active marker track last, generated names without gaps, new random values without
 a seed, positions and lengths at the longest project, also on a linear track and at the lowest sample rate, cycle
 markers made zero long on musical and linear tracks, at the lowest sample rate, at a tempo change and at 1 BPM, cycle
 markers moved before the start keeping their length, markers moved while their track changes its time domain both ways,
