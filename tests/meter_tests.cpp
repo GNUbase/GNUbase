@@ -383,6 +383,26 @@ TEST_CASE("meter.get reads a channel, the main mix and its loudness through the 
 	CHECK(meters.at("loudness").at("seconds").get<double>() == Approx(4.0).margin(0.1));
 	CHECK(meters.at("main").at("truePeakMax").at(0).get<double>() == Approx(-6.02).margin(0.1));
 
+	// The master meter's reset keeps the loudness measurement and the channels' maxima, the loudness meter's the
+	// main mix's maxima (reference manual pp. 535 and 538).
+	run(client, "meter.reset", {{"meters", "main"}});
+	meters = run(client, "meter.get");
+	CHECK(meters.at("main").at("peakMax").at(0).is_null());
+	CHECK(meters.at("main").at("rmsMax").at(0).is_null());
+	CHECK(meters.at("loudness").at("integrated").get<double>() == Approx(-6.02).margin(0.1));
+	CHECK(meters.at("loudness").at("seconds").get<double>() == Approx(4.0).margin(0.1));
+	CHECK(meters.at("main").at("truePeakMax").at(0).get<double>() == Approx(-6.02).margin(0.1));
+	CHECK_FALSE(meters.at("channels").at(0).at("rmsMax").at(0).is_null());
+	run(client, "audio.render", {{"frames", 4800}});
+	run(client, "meter.reset", {{"meters", "loudness"}});
+	meters = run(client, "meter.get");
+	CHECK(meters.at("loudness").at("integrated").is_null());
+	CHECK(meters.at("loudness").at("seconds") == 0.0);
+	CHECK(meters.at("main").at("truePeakMax").at(0).is_null());
+	CHECK(meters.at("main").at("peakMax").at(0).get<double>() == Approx(-6.02).margin(0.1));
+	CHECK_FALSE(meters.at("channels").at(0).at("rmsMax").at(0).is_null());
+	CHECK_THAT(reject(client, "meter.reset", {{"meters", "channels"}}), ContainsSubstring("meters"));
+
 	// A reset starts over; with meter.resetOnStart every start does.
 	run(client, "meter.reset");
 	meters = run(client, "meter.get");

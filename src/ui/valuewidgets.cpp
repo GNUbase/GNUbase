@@ -593,8 +593,10 @@ namespace gnubase::ui
 			bool m_typed = false; // the user typed while editing, even if the text is the same again
 		};
 
-		// <meter>: a level meter, value and peak in dB between min (-60) and max (6). The level shows the lower part
-		// of the theme's meter fill, and the peak sits at its height. Engine meters arrive once a frame (#111).
+		// <meter>: a level meter, value and peak in dB between min (-60) and max (6), and an optional rms, the RMS
+		// level. The level shows the lower part of the theme's meter fill, and the peak sits at its height; the RMS
+		// level shows the fill again over it, up to its height (the style sheets tell them apart by [rms]). Engine
+		// meters arrive once a frame (#111).
 		class Meter final : public Rml::Element
 		{
 		public:
@@ -603,6 +605,8 @@ namespace gnubase::ui
 				appendPart(*this, "meter");
 				m_level = appendPart(*this, "meter-level");
 				m_fill = appendPart(*m_level, "meter-fill");
+				m_rms = appendPart(*this, "meter-rms");
+				m_rmsFill = appendPart(*m_rms, "meter-fill");
 				m_peak = appendPart(*this, "meter-peak");
 				show();
 			}
@@ -619,6 +623,7 @@ namespace gnubase::ui
 			{
 				Rml::Element::OnResize();
 				m_fill->SetProperty("height", format(GetClientHeight()) + "px");
+				m_rmsFill->SetProperty("height", format(GetClientHeight()) + "px");
 			}
 
 		private:
@@ -635,11 +640,14 @@ namespace gnubase::ui
 				if (m_peak == nullptr)
 					return;
 				m_level->SetProperty("height", percent(fraction("value")));
+				m_rms->SetProperty("height", percent(fraction("rms")));
 				m_peak->SetProperty("bottom", percent(fraction("peak")));
 			}
 
 			Rml::Element* m_level = nullptr;
 			Rml::Element* m_fill = nullptr;
+			Rml::Element* m_rms = nullptr;
+			Rml::Element* m_rmsFill = nullptr;
 			Rml::Element* m_peak = nullptr;
 		};
 	}

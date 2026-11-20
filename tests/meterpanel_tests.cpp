@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The right zone's meter display (#590, docs/features/metering.md) in the app's project window, driven with
 // ui::Automation as MCP's UI tools drive it: the master meter and the loudness meter show what the engine measures
-// of the main mix, read once a frame, and Reset starts them over.
+// of the main mix, read once a frame, and each page's reset starts its own values over.
 #include "uiapp.h"
 
 #include "engine/engine.h"
@@ -40,7 +40,7 @@ namespace
 	}
 }
 
-TEST_CASE("the meter display shows the main mix's levels and loudness, and Reset starts them over", "[ui]")
+TEST_CASE("the meter display shows the main mix's levels and loudness, and each page resets its own", "[ui]")
 {
 	test::UiApp app({1200, 700});
 	app.appUi().showProject();
@@ -57,14 +57,32 @@ TEST_CASE("the meter display shows the main mix's levels and loudness, and Reset
 	CHECK_FALSE(shown(app, ".meter-loudness"));
 	CHECK(text(app, ".integrated") == "--");
 
-	// A second of playback: a bar per channel of the main mix, and the maxima (p. 534).
+	// A second of playback: a true peak bar per channel of the main mix with its RMS level, and the maxima (pp. 533
+	// and 535). The bars show the true peak since the last frame, so the first frame after playing shows it.
 	app.call("transport.play");
 	app.call("audio.render", {{"frames", 48000}});
-	REQUIRE(app.waitUntil([&app] { return text(app, ".peak-max") == "-6.0 dB"; }));
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json bars = elements(app, ".meter-master meter");
+			return text(app, ".peak-max") == "-6.0 dB" && bars.size() == 2 &&
+				bars[1].at("attributes").value("value", std::string()) == "-6.0";
+		}));
 	CHECK(text(app, ".rms-max") == "-9.0 dB");
 	const Json bars = elements(app, ".meter-master meter");
 	REQUIRE(bars.size() == 2);
+	CHECK(bars[0].at("attributes").at("value") == "-6.0");
+	CHECK(bars[1].at("attributes").at("rms") == "-9.0");
 	CHECK(bars[1].at("attributes").at("peak") == "-6.0");
+
+	// The master meter's reset clears RMS Max. and Peak Max. (p. 535) and keeps the loudness measurement.
+	click(app, ".meter-master .meter-reset");
+	REQUIRE(app.waitUntil([&app] { return text(app, ".peak-max") == "-inf dB"; }));
+	CHECK(text(app, ".rms-max") == "-inf dB");
+	CHECK(text(app, ".integrated") == "-6.0 LUFS");
+	CHECK(text(app, ".time") == "0:01");
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil([&app] { return text(app, ".peak-max") == "-6.0 dB"; }));
 
 	// The loudness meter's page (pp. 536-538), from the button at the bottom.
 	click(app, ".meter-tab[value=loudness]");
@@ -75,11 +93,12 @@ TEST_CASE("the meter display shows the main mix's levels and loudness, and Reset
 	CHECK(text(app, ".time") == "0:01");
 	CHECK(elements(app, ".meter-loudness meter.momentary").at(0).at("attributes").at("value") == "-6.0");
 
-	// Reset starts the measurement and the maxima over.
-	click(app, ".meter-reset");
+	// Reset Loudness starts the loudness measurement over (p. 538) and keeps the master meter's maxima.
+	click(app, ".meter-loudness .meter-reset");
 	REQUIRE(app.waitUntil([&app] { return text(app, ".integrated") == "--"; }));
 	CHECK(text(app, ".time") == "0:00");
-	CHECK(text(app, ".peak-max") == "-inf dB");
+	CHECK(text(app, ".true-peak-max") == "-inf dBTP");
+	CHECK(text(app, ".peak-max") == "-6.0 dB");
 	click(app, ".meter-tab[value=master]");
 	REQUIRE(app.waitUntil([&app] { return shown(app, ".meter-master"); }));
 }

@@ -68,7 +68,8 @@ namespace gnubase::ui
 				R"(<div class="meter-display">)"
 				R"(<div class="meter-page meter-master"><div class="meter-bars"/><div class="meter-values">)"
 				R"(<div>RMS Max.<span class="rms-max"/></div>)"
-				R"(<div>Peak Max.<span class="peak-max"/></div></div></div>)"
+				R"(<div>Peak Max.<span class="peak-max"/></div></div>)"
+				R"(<button class="meter-reset" value="main">Reset RMS Max. and Peak Max.</button></div>)"
 				R"(<div class="meter-page meter-loudness"><div class="meter-bars">)"
 				R"(<meter class="momentary" min="-41" max="-14"/><meter class="short-term" min="-41" max="-14"/>)"
 				R"(</div><div class="meter-values">)"
@@ -77,10 +78,10 @@ namespace gnubase::ui
 				R"(<div>Integrated<span class="integrated"/></div>)"
 				R"(<div>Range<span class="range"/></div>)"
 				R"(<div>True Peak<span class="true-peak-max"/></div>)"
-				R"(<div>Time<span class="time"/></div></div></div>)"
+				R"(<div>Time<span class="time"/></div></div>)"
+				R"(<button class="meter-reset" value="loudness">Reset Loudness</button></div>)"
 				R"(<div class="meter-buttons"><button class="meter-tab checked" value="master">Master</button>)"
-				R"(<button class="meter-tab" value="loudness">Loudness</button>)"
-				R"(<button class="meter-reset">Reset</button></div></div>)");
+				R"(<button class="meter-tab" value="loudness">Loudness</button></div></div>)");
 			return *element.GetFirstChild();
 		}
 	}
@@ -106,7 +107,8 @@ namespace gnubase::ui
 			return;
 		if (target->IsClassSet("meter-reset"))
 		{
-			m_binding.send("meter.reset");
+			// Each page resets only its own values (pp. 535 and 538).
+			m_binding.send("meter.reset", {{"meters", target->GetAttribute<Rml::String>("value", "")}});
 		}
 		else if (target->IsClassSet("meter-tab"))
 		{
@@ -124,11 +126,12 @@ namespace gnubase::ui
 		m_engine.readMeters(m_frame);
 		const engine::LevelReading& main = m_frame.main;
 		const engine::LoudnessReading& measured = m_frame.loudness;
-		// The main channels' peaks and peak maxima, the loudness meter's bars, then the readouts.
+		// The main channels' true peaks, RMS levels and peak maxima, the loudness meter's bars, then the readouts.
 		std::vector<std::string> shown;
 		for (size_t c = 0; c < static_cast<size_t>(main.channels); ++c)
 		{
-			shown.push_back(decibels(main.peak[c]));
+			shown.push_back(decibels(measured.truePeak[c]));
+			shown.push_back(decibels(main.rms[c]));
 			shown.push_back(decibels(main.peakMax[c]));
 		}
 		shown.push_back(loudness(measured.momentary));
@@ -152,7 +155,7 @@ namespace gnubase::ui
 	{
 		if (!m_root)
 			return;
-		const size_t channels = (shown.size() - g_readouts.size() - 4) / 2;
+		const size_t channels = (shown.size() - g_readouts.size() - 4) / 3;
 		Rml::Element* bars = m_root->QuerySelector(".meter-master .meter-bars");
 		if (bars->GetNumChildren() != static_cast<int>(channels))
 		{
@@ -164,10 +167,11 @@ namespace gnubase::ui
 		for (size_t c = 0; c < channels; ++c)
 		{
 			Rml::Element* meter = bars->GetChild(static_cast<int>(c));
-			meter->SetAttribute("value", shown[2 * c]);
-			meter->SetAttribute("peak", shown[(2 * c) + 1]);
+			meter->SetAttribute("value", shown[3 * c]);
+			meter->SetAttribute("rms", shown[(3 * c) + 1]);
+			meter->SetAttribute("peak", shown[(3 * c) + 2]);
 		}
-		size_t at = 2 * channels;
+		size_t at = 3 * channels;
 		for (const char* bar : {".momentary", ".short-term"})
 		{
 			Rml::Element* meter = m_root->QuerySelector(bar);

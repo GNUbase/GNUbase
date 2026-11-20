@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The meters' commands (#111, docs/features/metering.md): meter.get reads the channels' level meters, the main
 // mix's master meter and the loudness meter, which the audio thread publishes; meter.reset starts their maxima and
-// the loudness measurement over. readMeters reads them all once a frame for the UI (Engine::readMeters).
+// the loudness measurement over, or one of them. readMeters reads them all once a frame for the UI
+// (Engine::readMeters).
 #include "engine/analysis/analysis.h"
 #include "engine/audio/audioengine.h"
 #include "engine/engine.h"
@@ -142,16 +143,24 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"meter.reset", 1,
 				"Resets the meters' maxima (peakMax, rmsMax, truePeakMax, momentaryMax, shortTermMax) and starts the "
-				"loudness measurement over (integrated, range, seconds); see meter.get. Announces meter.reset.",
-				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {}})"),
+				"loudness measurement over (integrated, range, seconds); see meter.get. meters chooses what: \"main\" "
+				"only the main mix's peakMax and rmsMax (the master meter's reset), \"loudness\" only the loudness "
+				"meter's values, truePeakMax included (its Reset Loudness); left out, everything, every channel's "
+				"maxima included. Announces meter.reset with the meters given.",
+				Json::parse(R"({"type": "object", "additionalProperties": false,
+					"properties": {"meters": {"type": "string", "enum": ["main", "loudness"]}}})"),
 				Json::parse(R"({"type": "object"})"), false},
 			[this](CommandContext& context)
 			{
-				for (const auto& [id, state] : m_channelStates)
-					state->meter.reset();
-				m_mainMeter.reset();
-				m_loudness.reset();
-				context.emit("meter.reset", Json::object());
+				const std::string meters = context.parameters().value("meters", std::string());
+				if (meters.empty())
+					for (const auto& [id, state] : m_channelStates)
+						state->meter.reset();
+				if (meters != "loudness")
+					m_mainMeter.reset();
+				if (meters != "main")
+					m_loudness.reset();
+				context.emit("meter.reset", meters.empty() ? Json::object() : Json{{"meters", meters}});
 				return Json::object();
 			});
 	}

@@ -15,11 +15,11 @@
 namespace gnubase::ui
 {
 	// The right zone's meter display (#590, docs/features/metering.md, reference manual pp. 533-538): the master meter,
-	// a level meter per channel of the main mix with RMS Max., Peak Max. and the true peak, and the loudness meter,
+	// a true peak meter per channel of the main mix with its RMS level, RMS Max. and Peak Max., and the loudness meter,
 	// with the momentary and short-term loudness and their values as the engine measures them; the Master and
-	// Loudness buttons at its bottom switch between them, and Reset resets them (meter.reset). It reads the meters
-	// once a frame (Engine::readMeters), the UI's one reader of them. Use it on the UI thread; the engine and the
-	// binding must outlive it.
+	// Loudness buttons at its bottom switch between them, and each page's reset resets its own values (meter.reset
+	// with meters "main" or "loudness"). It reads the meters once a frame (Engine::readMeters), the UI's one reader of
+	// them. Use it on the UI thread; the engine and the binding must outlive it.
 	class MeterPanel final : private Rml::EventListener
 	{
 	public:
@@ -32,7 +32,7 @@ namespace gnubase::ui
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
-		// What the display shows of the meters: each main channel's level and peak maximum, then the texts.
+		// What the display shows: each main channel's true peak, RMS level and peak maximum, then the texts.
 		std::vector<std::string> read();
 		void show(const std::vector<std::string>& shown);
 
