@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <random>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -194,14 +195,38 @@ namespace
 		std::chrono::steady_clock::time_point m_end;
 	};
 
-	// Says how many rounds a race test checked when the budget ended them early, on one line that CI's test steps pick
-	// out of ctest's log (the budget is g_raceBudget), and fails when it was fewer than the minimum.
+	// The race tests' names in their cut-short warning.
+	constexpr const char* g_labelRead = "block ending during a read";
+	constexpr const char* g_labelReset = "first block after a reset";
+
+	// The warning of a race test that the budget cut short. Catch2's console reporter wraps a message at 77 characters
+	// (width 80, less one, less the indent), and CI's test steps pick the line out of ctest's log, so it has to fit.
+	std::string cutShortMessage(const char* test, int checked, int rounds)
+	{
+		std::ostringstream message;
+		message << "race test cut short: " << test << ", " << checked << " of " << rounds << " rounds";
+		return message.str();
+	}
+
+	// Says how many rounds a race test checked when the budget ended them early (the budget is g_raceBudget), and fails
+	// when it was fewer than the minimum.
 	void reportRounds(const char* test, int checked, int rounds)
 	{
 		if (checked < rounds)
-			WARN("race test cut short: " << test << ", " << checked << " of " << rounds
-										 << " rounds"); // one line, for CI's step
+			WARN(cutShortMessage(test, checked, rounds));
 		CHECK(checked >= std::min(rounds, g_minRaceRounds));
+	}
+}
+
+TEST_CASE("a race test's cut-short warning fits on one line of ctest's log", "[unit]")
+{
+	constexpr size_t consoleLineWidth = 77;
+	for (const char* test : {g_labelRead, g_labelReset})
+	{
+		INFO(test);
+		const std::string message = cutShortMessage(test, 99999, 99999);
+		CHECK(message.size() <= consoleLineWidth);
+		CHECK(message.find("race test cut short: ") == 0);
 	}
 }
 
@@ -1163,7 +1188,7 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 	}
 	done = true;
 	reader.join();
-	reportRounds("peak of a block that ends while a frame reads", checked, rounds);
+	reportRounds(g_labelRead, checked, rounds);
 	CHECK(lost == 0);
 }
 
@@ -1237,7 +1262,7 @@ TEST_CASE("a frame loses no peak of the first block after a reset, also when it 
 	}
 	done = true;
 	reader.join();
-	reportRounds("peak of the first block after a reset", checked, rounds);
+	reportRounds(g_labelReset, checked, rounds);
 	CHECK(lost == 0);
 }
 
