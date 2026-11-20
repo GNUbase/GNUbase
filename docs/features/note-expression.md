@@ -146,25 +146,27 @@ the notes' expression too.
 
 The acceptance test plays MPE into a dummy MIDI port set to MPE's lower zone, records it and plays it back to the note
 probe, comparing what the instrument gets with what was played (`tests/mpeinput_tests.cpp`). Its other tests check
-`midi::MpeInput` with the lower and upper zone, channel rotation, Send Initial Value and without Use for Tuning, the
-dimensions' MIDI Messages and Note Expression Assignments (tuning from a controller, volume, pan, none, two dimensions
-of one message) and the room a message needs; the setup's JSON and its 64 bits; a detected LinnStrument's input listed
-with its preset, which plays, and its settings kept against the preset; `midi.activity` taking each port's messages once
-while `midi.activityListen` is on, without system real-time messages, announcing them and staying out of the log; with a
-running dummy device, the engine announcing input as `midi.activity` on its own, dropping what came before the device
-started and announcing nothing while nobody listens; that `midi.setPort` sets a port's setup, which `midi.ports` lists
-and `midi.portSettings` keeps (whose schema lists every `mpe` member), with X's own assignment kept under Use for Tuning
-and Tuning for X turning it on; that an MPE port with a pitch range of 24 plays to the instrument as note expression
-while another port plays its pitch bend as it is; that the expression follows its note through a track that transposes
-and a MIDI track with a MIDI channel, also after its note-off, also on the track's MIDI channel, and is dropped for a
-key whose note is filtered by velocity, a muted drum sound, a remote trigger key and a key held before the track got the
-input, while another channel's note that plays gets its own; that a released key's pressure reaches nothing once another
-key started its note again; that `midi.inject` waits for room for a message's points to 120 notes; that a changed setup
-starts a port's state afresh while the note that sounds still ends; that `midi.inject` plays through an MPE setup; and
-that recording and retrospective recording record the upper zone and channel rotation as the notes' expression.
-`tests/logical_tests.cpp` checks the expression through the input transformer, also that it drops a released key's
-expression once another key starts its note, and `tests/vst3_adapter_tests.cpp` a released note's expression in the VST3
-adapter.
+`midi::MpeInput` with the lower and upper zone, both zones at once, channel rotation, Send Initial Value and without Use
+for Tuning, the dimensions' MIDI Messages and Note Expression Assignments (tuning from a controller, volume, pan, none,
+MIDI PolyPressure, two dimensions of one message) and the room a message needs; the setup's JSON and its 64 bits, also
+with both zones and MIDI PolyPressure; a detected LinnStrument's input listed with its preset, which plays, and its
+settings kept against the preset; `midi.activity` taking each port's messages once while `midi.activityListen` is on,
+without system real-time messages, announcing them and staying out of the log; with a running dummy device, the engine
+announcing input as `midi.activity` on its own, dropping what came before the device started and announcing nothing
+while nobody listens; that `midi.setPort` sets a port's setup, which `midi.ports` lists and `midi.portSettings` keeps
+(whose schema lists every `mpe` member), with X's own assignment kept under Use for Tuning and Tuning for X turning it
+on; that an MPE port with a pitch range of 24 plays to the instrument as note expression while another port plays its
+pitch bend as it is; that `midi.setPort` sets both zones, whose notes play to the instrument as note expression while
+the masters' messages play as they are; that a port whose pressure is MIDI PolyPressure plays to the instrument as the
+notes' poly pressure; that the expression follows its note through a track that transposes and a MIDI track with a MIDI
+channel, also after its note-off, also on the track's MIDI channel, and is dropped for a key whose note is filtered by
+velocity, a muted drum sound, a remote trigger key and a key held before the track got the input, while another
+channel's note that plays gets its own; that a released key's pressure reaches nothing once another key started its note
+again; that `midi.inject` waits for room for a message's points to 120 notes; that a changed setup starts a port's state
+afresh while the note that sounds still ends; that `midi.inject` plays through an MPE setup; and that recording and
+retrospective recording record the upper zone and channel rotation as the notes' expression. `tests/logical_tests.cpp`
+checks the expression through the input transformer, also that it drops a released key's expression once another key
+starts its note, and `tests/vst3_adapter_tests.cpp` a released note's expression in the VST3 adapter.
 
 ## In the key editor
 
@@ -257,7 +259,8 @@ following it.
 - The Note Expression Assignment's Preferred and Alternative rules (Expression Name Contains, Note Expression Number, As
   Recommended by Instrument, p. 1299), and renewing the assignments when the instrument or its preset changes (p. 1298,
   #1829): they choose among a plugin's own expressions and need to know which expressions an instrument has, which need
-  #1516; with the seven common ones and MIDI PolyPressure the assignment is what the page sets. More known MPE devices, which are detected by their port's name only.
+  #1516; with the seven common ones and MIDI PolyPressure the assignment is what the page sets. More known MPE
+  devices, which are detected by their port's name only.
 - Recording MIDI controllers as note expression, overdub and converting controller events into note expression (pp.
   1316-1318, #1515), with the toolbar switch that records expression for a selected note from MIDI input (pp. 1303,
   1308) and the dialog that sets which MIDI messages record as expression (pp. 1314-1315).

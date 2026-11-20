@@ -1152,7 +1152,8 @@ TEST_CASE("midi.setPort sets both MPE zones of an input, whose notes play as per
 	Setup setup;
 	Client& client = setup.client;
 	const Json both = run(client, "midi.setPort",
-		{{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "both"}, {"channels", 4}, {"upperChannels", 4}}}});
+		{{"id", "MPE"}, {"input", true},
+			{"mpe", {{"mode", "both"}, {"channels", 4}, {"upperChannels", 4}, {"pitchRange", 24}}}});
 	CHECK(both.at("mpe").at("mode") == "both");
 	CHECK(both.at("mpe").at("channels") == 4);
 	CHECK(both.at("mpe").at("upperChannels") == 4);
@@ -1166,12 +1167,13 @@ TEST_CASE("midi.setPort sets both MPE zones of an input, whose notes play as per
 
 	run(client, "audio.render", {{"frames", 64}});
 	run(client, "midi.capture", {{"start", true}});
-	// A note in each zone, each with its own bend: MPE's 48 semitones, as the port's pitch range is.
+	// A note in each zone, each with its own bend: a quarter up and a quarter down by the port's pitch range of 24,
+	// which the instrument gets as the notes' tunings, here as MPE's 48 semitones: an eighth up and down.
 	setup.play(*setup.mpe, {{0xE1, 0, 96}, {0x91, 48, 100}, {0xEE, 0, 32}, {0x9E, 72, 100}});
 	// The masters' messages are what they were.
 	setup.play(*setup.mpe, {{0xE0, 0, 80}, {0xEF, 0, 80}, {0x81, 48, 0}, {0x8E, 72, 0}});
 	CHECK(captured(client) ==
-		std::vector<std::vector<int64_t>>{{0xE1, 0, 96}, {0x91, 48, 100}, {0xEE, 0, 32}, {0x9E, 72, 100}, {0xE0, 0, 80},
+		std::vector<std::vector<int64_t>>{{0xE1, 0, 80}, {0x91, 48, 100}, {0xEE, 0, 48}, {0x9E, 72, 100}, {0xE0, 0, 80},
 			{0xEF, 0, 80}, {0x81, 48, 0}, {0x8E, 72, 0}});
 }
 
