@@ -2472,8 +2472,15 @@ TEST_CASE("fade handles at the top corners of audio events drag the selected eve
 			.get<uint64_t>();
 	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 2; }));
 
-	// Over a handle the mouse pointer isn't the resize one, as a press there drags the fade; lower down it is.
+	// An unselected event shows no handles, so its top corners have none to grab either: the edge resizes there.
 	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	f.automation.move(std::nullopt, f.at(200, 3));
+	f.step();
+	CHECK(area->GetAttribute<std::string>("pointer", "") == "resize");
+	// Over a selected event's handle the mouse pointer isn't the resize one, as a press there drags the fade; lower
+	// down it is.
+	f.display.select({f.event});
+	f.automation.move(std::nullopt, f.at(201, 3));
 	f.automation.move(std::nullopt, f.at(200, 3));
 	f.step();
 	CHECK(area->GetAttribute<std::string>("pointer", "") == "objectSelection");

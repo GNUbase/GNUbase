@@ -111,8 +111,10 @@ namespace gnubase::ui
 
 	int EventDisplay::fadeHandleAt(const Shown& shown, double x, double y) const
 	{
+		// Only selected events show their handles (showFades), so only theirs can be grabbed.
 		const auto fades = m_fades.find(shown.id);
 		if (fades == m_fades.end() || !(fades->second.rate > 0.0) ||
+			!std::binary_search(m_selection.begin(), m_selection.end(), shown.id) ||
 			y + m_view.top - m_laneTops[shown.lane] > g_handleSize)
 			return 0;
 		const double in = (shown.start + draggedFade(shown.id, true) - m_view.start) / m_view.scale;
@@ -129,8 +131,6 @@ namespace gnubase::ui
 		const int handle = fadeHandleAt(shown, x, y);
 		if (handle == 0)
 			return false;
-		if (!std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
-			select({shown.id});
 		m_dragEvent = shown.id;
 		m_drag = handle < 0 ? Drag::FadeIn : Drag::FadeOut;
 		return true;
