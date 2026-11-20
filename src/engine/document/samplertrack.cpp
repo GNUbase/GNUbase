@@ -184,8 +184,8 @@ namespace gnubase::engine
 				"the one it has, while it plays. " +
 					sectionText +
 					" Its settings go back to their defaults, unless keepSettings (Lock Parameter Settings, p. 715) "
-					"keeps those that aren't the sample's: all but the root key, start, end and the loop's start and "
-					"end. Emits channel.changed. Returns the track and its channel.",
+					"keeps those that aren't the sample's: all but the root key, start, end, the fades and the loop's "
+					"start, end and crossfade. Emits channel.changed. Returns the track and its channel.",
 				objectSchema({{"track", integer}, {"event", integer}, {"clip", integer}, {"path", {{"type", "string"}}},
 								 {"start", integer}, {"end", integer}, {"keepSettings", {{"type", "boolean"}}}},
 					{"track"}),
@@ -197,7 +197,8 @@ namespace gnubase::engine
 				Channel& channel = samplerChannel(project, parameters.at("track").get<ObjectId>());
 				const SampleSection section = sampleSection(project, parameters);
 				if (parameters.value("keepSettings", false))
-					for (const uint32_t id : {Sampler::RootKey, Sampler::LoopStart, Sampler::LoopEnd})
+					for (const uint32_t id : {Sampler::RootKey, Sampler::LoopStart, Sampler::LoopEnd, Sampler::FadeIn,
+							 Sampler::FadeOut, Sampler::LoopCrossfade})
 						channel.instrumentParameters.erase(id);
 				else
 					channel.instrumentParameters.clear();

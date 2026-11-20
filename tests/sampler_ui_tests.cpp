@@ -163,8 +163,10 @@ TEST_CASE("the sampler panel shows the selected sampler track and sets its param
 	f.open();
 	CHECK(f.elements("#sampler-file").at(0).value("text", "") == "sine");
 	// Every parameter has a control, in its section.
-	CHECK(f.elements("#sampler-panel [parameter]").size() == 32);
+	CHECK(f.elements("#sampler-panel [parameter]").size() == 37);
 	CHECK(!f.elements(".sampler-section[section=keyboard] " + f.control("Root key")).empty());
+	CHECK(!f.elements(".sampler-section[section=pitch] " + f.control("Glide")).empty());
+	CHECK(!f.elements(".sampler-section[section=playback] " + f.control("Loop crossfade")).empty());
 	CHECK(f.has(".sampler-key[key=\"60\"]", "root"));
 	CHECK(f.has(".sampler-loop", "off"));
 

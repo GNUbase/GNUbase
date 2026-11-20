@@ -43,9 +43,11 @@ namespace gnubase::ui
 		const std::vector<Section>& sections()
 		{
 			static const std::vector<Section> list = {
-				{"playback", "Playback", {"Playback mode", "Loop mode", "Start", "End", "Loop start", "Loop end"}},
+				{"playback", "Playback",
+					{"Playback mode", "Loop mode", "Start", "End", "Loop start", "Loop end", "Loop crossfade",
+						"Fade in", "Fade out"}},
 				{"voices", "", {"Reverse", "One shot", "Monophonic", "Legato", "Slices", "Sample gain"}},
-				{"pitch", "Pitch", {"Fixed pitch", "Octave", "Coarse", "Fine"}},
+				{"pitch", "Pitch", {"Fixed pitch", "Octave", "Coarse", "Fine", "Glide", "Fingered"}},
 				{"filter", "Filter", {"Filter", "Filter type", "Cutoff", "Resonance", "Drive", "Cutoff key follow"}},
 				{"amp", "Amp", {"Volume", "Pan", "Attack", "Decay", "Sustain", "Release"}},
 				{"keyboard", "Keyboard", {"Pitchbend", "Root key", "Key low", "Key high"}},

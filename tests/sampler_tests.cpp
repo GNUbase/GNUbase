@@ -527,6 +527,130 @@ TEST_CASE("a loop shorter than a step stays a loop at high pitches", "[unit]")
 	play(Sampler::Loop::Alternate);
 }
 
+TEST_CASE("glide bends the pitch from the note before, with Fingered only between legato notes", "[unit]")
+{
+	// The step between two frames of the ramp shows the pitch: 1 / 1024 at the root key, twice that an octave up.
+	const auto stepAt = [](const std::vector<float>& played, size_t i)
+	{ return static_cast<double>(played[i + 1] - played[i]) * 1024.0; };
+	Sampler sampler;
+	sampler.setSample(ramp(4096));
+	Bench bench(sampler);
+	bench.add(parameter(0, Sampler::Glide, 10.0)); // 480 frames
+
+	SECTION("a legato note glides over the glide time, then plays at its pitch")
+	{
+		bench.add(parameter(0, Sampler::Monophonic, 1.0));
+		bench.add(parameter(0, Sampler::Legato, 1.0));
+		bench.add(note(0, true, 60));
+		bench.add(note(10, true, 72));
+		std::vector<float> played = bench.left(10);
+		CHECK_THAT(stepAt(played, 5), WithinAbs(1.0, 1e-3));
+		CHECK(stepAt(played, 12) > 1.0);
+		CHECK(stepAt(played, 12) < 1.01);
+		// Halfway, six semitones up.
+		CHECK_THAT(stepAt(played, 250), WithinAbs(std::pow(2.0, 0.5), 0.01));
+		CHECK_THAT(stepAt(played, 600), WithinAbs(2.0, 1e-3));
+	}
+	SECTION("a note after one released glides too, unless Fingered")
+	{
+		bench.add(note(0, true, 60));
+		bench.add(note(10, false, 60));
+		bench.add(note(20, true, 72));
+		std::vector<float> played = bench.left(2);
+		CHECK(sampler.activeVoices() == 1);
+		CHECK(stepAt(played, 21) < 1.01);
+
+		bench.add(parameter(0, Sampler::Fingered, 1.0));
+		bench.add(note(0, false, 72));
+		bench.add(note(20, true, 60));
+		played = bench.left(1);
+		CHECK_THAT(stepAt(played, 21), WithinAbs(1.0, 1e-3));
+		CHECK_THAT(stepAt(played, 60), WithinAbs(1.0, 1e-3));
+	}
+	SECTION("with Fingered a note played while another is held glides")
+	{
+		bench.add(parameter(0, Sampler::Fingered, 1.0));
+		bench.add(parameter(0, Sampler::Monophonic, 1.0));
+		bench.add(parameter(0, Sampler::Legato, 1.0));
+		bench.add(note(0, true, 72));
+		bench.add(note(10, true, 60));
+		const std::vector<float> played = bench.left(1);
+		CHECK(stepAt(played, 12) > 1.99);
+		CHECK(stepAt(played, 12) < 2.0);
+	}
+	SECTION("without glide time the pitch changes at once")
+	{
+		bench.add(parameter(0, Sampler::Glide, 0.0));
+		bench.add(parameter(0, Sampler::Monophonic, 1.0));
+		bench.add(parameter(0, Sampler::Legato, 1.0));
+		bench.add(note(0, true, 60));
+		bench.add(note(10, true, 72));
+		CHECK_THAT(stepAt(bench.left(1), 11), WithinAbs(2.0, 1e-3));
+	}
+}
+
+TEST_CASE("the sample's fades count from its start and end", "[unit]")
+{
+	auto constant = std::make_unique<Sample>();
+	constant->left.assign(1000, 0.5f);
+	Sampler sampler;
+	sampler.setSample(std::move(constant));
+	Bench bench(sampler, 100);
+	bench.add(parameter(0, Sampler::FadeIn, 0.1));
+	bench.add(parameter(0, Sampler::FadeOut, 0.2));
+
+	SECTION("from the whole sample")
+	{
+		bench.add(note(0, true, 60));
+		const std::vector<float> played = bench.left(10);
+		CHECK(played[0] == 0.0f);
+		CHECK_THAT(played[50], WithinAbs(0.25, 1e-6));
+		CHECK_THAT(played[100], WithinAbs(0.5, 1e-6));
+		CHECK_THAT(played[799], WithinAbs(0.5, 1e-6));
+		CHECK_THAT(played[900], WithinAbs(0.25, 1e-6));
+	}
+	SECTION("from Start")
+	{
+		bench.add(parameter(0, Sampler::Start, 0.5));
+		bench.add(note(0, true, 60));
+		const std::vector<float> played = bench.left(5);
+		CHECK(played[0] == 0.0f);
+		CHECK_THAT(played[50], WithinAbs(0.25, 1e-6));
+		CHECK_THAT(played[200], WithinAbs(0.5, 1e-6));
+		CHECK_THAT(played[400], WithinAbs(0.25, 1e-6));
+	}
+}
+
+TEST_CASE("a loop's crossfade blends its end into what comes before its start", "[unit]")
+{
+	Sampler sampler;
+	sampler.setSample(ramp(1000));
+	Bench bench(sampler, 100);
+	bench.add(parameter(0, Sampler::LoopMode, static_cast<double>(Sampler::Loop::Continuous)));
+	bench.add(parameter(0, Sampler::LoopStart, 0.4));
+	bench.add(parameter(0, Sampler::LoopEnd, 0.6));
+	bench.add(parameter(0, Sampler::LoopCrossfade, 0.1));
+	bench.add(note(0, true, 60));
+	const std::vector<float> played = bench.left(10);
+	CHECK(played[499] == rampAt(499));
+	CHECK_THAT(played[550], WithinAbs((0.5 * rampAt(550)) + (0.5 * rampAt(350)), 1e-6));
+	CHECK_THAT(played[599], WithinAbs((0.01 * rampAt(599)) + (0.99 * rampAt(399)), 1e-6));
+	// Past the loop's end it goes on with what it faded into.
+	CHECK(played[600] == rampAt(400));
+	CHECK_THAT(played[750], WithinAbs((0.5 * rampAt(550)) + (0.5 * rampAt(350)), 1e-6));
+
+	SECTION("no longer than what comes before the loop's start")
+	{
+		bench.add(parameter(0, Sampler::LoopStart, 0.05));
+		bench.add(parameter(0, Sampler::LoopCrossfade, 0.2));
+		bench.add(note(0, false, 60));
+		bench.add(note(0, true, 60));
+		const std::vector<float> again = bench.left(6);
+		CHECK(again[549] == rampAt(549));
+		CHECK_THAT(again[575], WithinAbs((0.5 * rampAt(575)) + (0.5 * rampAt(25)), 1e-6));
+	}
+}
+
 TEST_CASE("drive is part of the filter: off with it", "[unit]")
 {
 	const auto peak = [](bool filter)
@@ -884,7 +1008,7 @@ TEST_CASE("processor.list has the sampler, an instrument", "[unit]")
 	const processors::BuiltinInfo* info = processors::findBuiltin("sampler");
 	REQUIRE(info != nullptr);
 	CHECK(info->instrument);
-	CHECK(info->parameters.size() == Sampler::Gain + 1);
+	CHECK(info->parameters.size() == Sampler::LoopCrossfade + 1);
 	for (size_t i = 0; i < info->parameters.size(); ++i)
 		CHECK(info->parameters[i].id == i);
 	CHECK(info->parameters[Sampler::LoopMode].options.size() == 6);
@@ -1081,11 +1205,16 @@ TEST_CASE("sampler.load swaps the sample, resetting the settings unless they are
 	};
 	setParameter(Sampler::Volume, -12.0);
 	setParameter(Sampler::RootKey, 48.0);
+	setParameter(Sampler::FadeIn, 0.1);
+	setParameter(Sampler::Glide, 100.0);
 
 	Json loaded = run(client, "sampler.load", {{"track", track}, {"clip", session.clip}, {"keepSettings", true}});
 	CHECK(loaded.at("channel").at("sample") == session.clip);
 	CHECK(instrumentParameter(loaded.at("channel"), Sampler::Volume) == -12.0);
+	CHECK(instrumentParameter(loaded.at("channel"), Sampler::Glide) == 100.0);
+	// The sample's own settings, its fades among them, are the new sample's (p. 715).
 	CHECK(instrumentParameter(loaded.at("channel"), Sampler::RootKey) == -1.0);
+	CHECK(instrumentParameter(loaded.at("channel"), Sampler::FadeIn) == -1.0);
 
 	setParameter(Sampler::Volume, -12.0);
 	loaded = run(client, "sampler.load", {{"track", track}, {"clip", session.clip}, {"end", 24000}});

@@ -12,7 +12,7 @@ sampler is a GNUbase processor and runs inside the engine (architecture rule 3).
 | Command | What it does | Reference |
 |---|---|---|
 | `sampler.create` | A new sampler track with a pool clip (`clip`), an audio event's clip (`event`) or an audio file (`path`), which goes into the pool as a clip in the same undo step, from `start` to `end` in clip frames (default: the event's section or the whole clip), or empty without any; named `name`, or Sampler 01, Sampler 02 and so on, the first number no track's name has; placed and routed with `parent`, `index` and `output` as `track.add` does | pp. 143-144, 711 |
-| `sampler.load` | Loads another sample, the same way, into a sampler track while it plays (hot swap). Its settings go back to their defaults, or with `keepSettings` (Lock Parameter Settings) only those of the sample: root key, start, end, loop start and end | pp. 710, 715-716 |
+| `sampler.load` | Loads another sample, the same way, into a sampler track while it plays (hot swap). Its settings go back to their defaults, or with `keepSettings` (Lock Parameter Settings) only those of the sample: root key, start, end, the fades, loop start, end and crossfade | pp. 710, 715-716 |
 | `sampler.normalize` | Sets the Sample gain so that the highest peak between start and end reaches `level` dBFS (default 0); refused for a silent sample or a missing file | pp. 715, 735 |
 
 Each is one undo step and emits `channel.changed`; `sampler.create` also `track.added`. Another instrument
@@ -28,8 +28,8 @@ The sampler's settings are its parameters (`processor.list`, `parameter.set`, au
 | Section | Parameters | Reference |
 |---|---|---|
 | Keyboard | Root key (default 60), Key low and Key high (the key range), Pitchbend range (0-24 semitones) | pp. 713, 730, 733-734 |
-| Pitch | Fixed pitch, Octave, Coarse (semitones), Fine (cents) | pp. 714, 721 |
-| Playback | Start, End, Loop start and Loop end (shares of the sample, 0 to 1), Loop mode (No loop, Continuous, Alternate, Once, Until release, Alternate until release), Reverse, One shot, Playback mode (Normal or Slice), Slices, Monophonic, Legato, Sample gain | pp. 714-716, 718-720, 732 |
+| Pitch | Fixed pitch, Octave, Coarse (semitones), Fine (cents), Glide (ms, 0: off) and Fingered | pp. 714, 721 |
+| Playback | Start, End, Loop start and Loop end (shares of the sample, 0 to 1), Fade in, Fade out and Loop crossfade (lengths, shares of the sample too), Loop mode (No loop, Continuous, Alternate, Once, Until release, Alternate until release), Reverse, One shot, Playback mode (Normal or Slice), Slices, Monophonic, Legato, Sample gain | pp. 714-716, 718-720, 732 |
 | Filter | Filter on, type (low pass, high pass, band pass: 12 dB/oct), Cutoff, Resonance, Drive, Cutoff key follow | pp. 721-722 |
 | Amp | Volume, Pan, and the amp envelope: Attack, Decay, Sustain, Release | p. 722 |
 
@@ -44,6 +44,15 @@ How it plays:
   looping when the key goes up and play on to the end. One shot plays from start to end, ignoring loops and
   note-offs. A loop shorter than a step (a short loop octaves up) still loops: the position wraps, or reflects, by
   the remainder of the loop's length.
+- The fades (p. 716) belong to the range from Start to End: Fade in rises from 0 at Start over its length, Fade out
+  falls to 0 at End, both straight lines and counted in the sample's positions, so a loop inside a fade plays faded.
+  Slices don't fade. Loop crossfade blends a loop's last frames into those just before its start while the loop
+  wraps (Continuous, Once before its round, Until release while the key is held), so the wrap goes on with what it
+  faded into; it is no longer than the loop and than what comes before its start. Alternating loops don't crossfade.
+- Glide (p. 721) bends a new note's pitch from the note before to its own in the glide time, linearly in semitones:
+  from the key of the note played last, also while that still glides, or from the one started last once nothing
+  sounds. With Fingered only a note played while another is held glides, from the latest held; going back to a held
+  key in monophonic mode glides too. Slices and Fixed pitch don't glide; the filter's key follow follows the glide.
 - Slice mode cuts the range between Start and End into Slices equal slices, mapped to the keys from the root key up,
   each at the sample's pitch without loops (p. 735).
 - Up to 128 voices; a new note beyond that takes the oldest. Monophonic plays one note: a note stolen while still held
@@ -80,7 +89,7 @@ How it plays:
 
 Not yet: warped (time-stretched) playback with sync to the tempo, the quality modes, transient, grid and manual
 slicing with fades and the slices' MIDI phrase, the pitch and filter envelopes and a multi-node amp envelope, the LFOs,
-glide, sample fades and the loop crossfade, Trim Sample, MIDI Reset, Hot Swap Preview Sample, the sampler panel's own
+the display's markers for the fades and the loop crossfade (they have value fields), Trim Sample, MIDI Reset, Hot Swap Preview Sample, the sampler panel's own
 undo history and A/B settings, loading by dragging an event or a MIDI part onto the panel, a pool folder of the
 sampler's samples (p. 710), and transferring the sample to another instrument, which needs a plugin wrapper extension
 for samples. The panel's bars that move Start and End or the loop together, the display's ruler and zoom, the
@@ -159,6 +168,9 @@ when the window loses the focus, the message going with another track and its to
 panel closed while the dialog was open.
 #1200 added recording from stop that waits for the samples unless a count-in plays, the handles apart on a narrow
 keyboard, and a change of the panel's setting from elsewhere right after the panel's own quick ones.
+#1122 also added glide with and without Fingered, the fades from the sample's start and from Start, and the loop
+crossfade and its limit to `tests/sampler_tests.cpp`, the new parameters to the real-time test and the fades to the
+settings that `keepSettings` doesn't keep.
 #1343 added the warnings at every round of an offline render's wait for a sample and the error after the last of its
 20 rounds, tested with rounds of 20 ms instead of 30 s (`Engine::setOfflineSampleWait`), and checks that starting
 playback and recording from stop answer only after the held read is released.
