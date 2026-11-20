@@ -1146,7 +1146,7 @@ namespace
 		double value = 0.0;               // the control's when the drag ended
 	};
 
-	enum class Gesture
+	enum class Gesture : std::uint8_t
 	{
 		Drag,
 		Wheel
