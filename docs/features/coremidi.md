@@ -16,11 +16,15 @@ other backends are in [architecture.md](../architecture.md#midi-ports).
   mach time and leave the scheduling to CoreMIDI.
 - **One client.** The process has one CoreMIDI client, since CoreMIDI advises against disposing clients. It starts with
   the first listing or port, so an engine that never uses MIDI leaves CoreMIDI alone. Its notifications arrive on the
-  run loop of a thread of its own; each setup change makes every CoreMIDI backend report changed ports, shortly after
-  the listing changed. CoreMIDI sends all of a process's notifications to the run loop of its first client, so tests
-  that create CoreMIDI clients of their own list the backend's ports first.
+  run loop of a thread of its own; each setup change makes every CoreMIDI backend that has listed or opened ports
+  report changed ports, shortly after the listing changed. A backend joins the client's notifications with its first
+  listing or port, not when it is constructed, so a change handler set before that is never read on the client's
+  thread while it is set (#356). CoreMIDI sends all of a process's notifications to the run loop of its first client,
+  so tests that create CoreMIDI clients of their own list the backend's ports first.
 - **Tests** (`tests/mididevice_tests.cpp`, macOS only): the port contract runs against a loopback of virtual ports the
   test creates itself (a virtual destination that passes everything on to a virtual source of the same name), checks
   that the ports are noticed coming and going, and also loops through "IAC Driver Bus 1" when the IAC driver is
-  enabled (Audio MIDI Setup). A virtual MIDI 2.0 source checks the `midi2` flag and the translation to MIDI 1.0. The
-  hidden `[hardware]` contract test covers CoreMIDI too, e.g. with `GNUBASE_TEST_MIDI_LOOPBACK="IAC Driver Bus 1"`.
+  enabled (Audio MIDI Setup). The IAC bus is shared with other applications, so the contract ends every note it
+  sends with a note off (#357). Another test checks that a backend that hasn't listed yet hears of no setup change.
+  A virtual MIDI 2.0 source checks the `midi2` flag and the translation to MIDI 1.0. The hidden `[hardware]` contract
+  test covers CoreMIDI too, e.g. with `GNUBASE_TEST_MIDI_LOOPBACK="IAC Driver Bus 1"`.

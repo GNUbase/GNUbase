@@ -296,11 +296,18 @@ namespace gnubase::midi
 			std::vector<CoreMidiBackend*> m_backends;
 		};
 
+		// Hears of setup changes from its first listing or port on, not from its construction: the client's thread
+		// would read the change handler while the backend's owner sets it (#356).
 		class CoreMidiBackend : public Backend
 		{
 		public:
-			CoreMidiBackend() { Client::instance().add(this); }
-			~CoreMidiBackend() override { Client::instance().remove(this); }
+			CoreMidiBackend() = default;
+
+			~CoreMidiBackend() override
+			{
+				if (m_watching)
+					Client::instance().remove(this);
+			}
 
 			CoreMidiBackend(const CoreMidiBackend&) = delete;
 			CoreMidiBackend& operator=(const CoreMidiBackend&) = delete;
@@ -309,7 +316,7 @@ namespace gnubase::midi
 
 			std::vector<PortInfo> ports() override
 			{
-				Client::instance().ref();
+				watch();
 				std::vector<PortInfo> ports;
 				for (const bool input : {true, false})
 					for (Endpoint& endpoint : list(input))
@@ -319,17 +326,33 @@ namespace gnubase::midi
 
 			std::unique_ptr<Input> openInput(const std::string& id, Receiver receiver) override
 			{
-				const MIDIClientRef client = Client::instance().ref();
+				const MIDIClientRef client = watch();
 				return std::make_unique<CoreMidiInput>(client, find(id, true), std::move(receiver));
 			}
 
 			std::unique_ptr<Output> openOutput(const std::string& id) override
 			{
-				const MIDIClientRef client = Client::instance().ref();
+				const MIDIClientRef client = watch();
 				return std::make_unique<CoreMidiOutput>(client, find(id, false));
 			}
 
 			void changed() const { portsChanged(); }
+
+		private:
+			// The process's client, which notifies this backend from now on.
+			MIDIClientRef watch()
+			{
+				Client& client = Client::instance();
+				const MIDIClientRef ref = client.ref();
+				if (!m_watching)
+				{
+					client.add(this);
+					m_watching = true;
+				}
+				return ref;
+			}
+
+			bool m_watching = false;
 		};
 
 		// The client's thread. One setup change comes after the additions and removals it consists of.

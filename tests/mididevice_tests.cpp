@@ -33,6 +33,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -58,6 +59,14 @@ namespace
 		MidiMessage message;
 		message.size = 3;
 		message.bytes = {0x90, pitch, 100};
+		return message;
+	}
+
+	MidiMessage noteOff(uint8_t pitch)
+	{
+		MidiMessage message;
+		message.size = 3;
+		message.bytes = {0x80, pitch, 0};
 		return message;
 	}
 
@@ -159,6 +168,10 @@ namespace
 		output->send(noteOn(64), hostTime());
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 		CHECK(inbox.messages().size() == 2);
+
+		// The loopback may be shared, as the IAC bus is: whatever else listens to it isn't left with notes sounding.
+		for (const uint8_t pitch : std::array<uint8_t, 3>{60, 62, 64})
+			output->send(noteOff(pitch), hostTime());
 	}
 
 #ifdef __APPLE__
@@ -251,6 +264,11 @@ namespace
 
 		SeqLoopback(const SeqLoopback&) = delete;
 		SeqLoopback& operator=(const SeqLoopback&) = delete;
+
+		snd_seq_addr_t address() const
+		{
+			return {static_cast<unsigned char>(snd_seq_client_id(m_seq)), static_cast<unsigned char>(m_port)};
+		}
 
 	private:
 		void pass()
@@ -439,7 +457,28 @@ TEST_CASE("the dummy MIDI backend keeps the port contract and reports loopbacks 
 	CHECK(ports[0].input);
 	CHECK(!ports[1].input);
 	CHECK(ports[1].id == "Loop");
-	checkContract(backend, "Loop", "Loop");
+	{
+		// Another listener on the loopback hears every note the contract plays end again (#357).
+		Inbox listener;
+		const auto listening = backend.openInput("Loop", listener.receiver());
+		checkContract(backend, "Loop", "Loop");
+		std::map<uint8_t, int> sounding;
+		for (const auto& received : listener.messages())
+		{
+			CHECK(received.first.size == 3); // a size-0 note off would go out of JACK as an empty event
+			const uint8_t pitch = received.first.bytes[1];
+			if (received.first == noteOn(pitch))
+				++sounding[pitch];
+			else if (received.first == noteOff(pitch))
+				--sounding[pitch];
+		}
+		CHECK(sounding.size() == 3);
+		for (const auto& [pitch, count] : sounding)
+		{
+			INFO("pitch " << int{pitch});
+			CHECK(count == 0);
+		}
+	}
 
 	Inbox inbox;
 	const auto input = backend.openInput("Loop", inbox.receiver());
@@ -511,6 +550,31 @@ TEST_CASE("the CoreMIDI backend keeps the port contract and notices virtual port
 		WARN("the IAC driver is off: its loopback isn't checked");
 }
 
+// A backend hears of setup changes only once it lists or opens ports, so its owner sets the change handler before
+// that without a race with the notifications of another backend's changes (#356).
+TEST_CASE("a CoreMIDI backend hears of setup changes from its first listing on", "[integration]")
+{
+	const std::unique_ptr<Backend> listing = makeCoreMidiBackend();
+	std::atomic<int> listed{0};
+	listing->onPortsChanged([&listed] { ++listed; });
+	listing->ports();
+	const std::unique_ptr<Backend> unlisted = makeCoreMidiBackend();
+	std::atomic<int> unlistedChanges{0};
+	unlisted->onPortsChanged([&unlistedChanges] { ++unlistedChanges; });
+	{
+		const VirtualLoopback loopback("GNUbase test setup change");
+		REQUIRE(eventually([&listed] { return listed > 0; }));
+	}
+	std::this_thread::sleep_for(std::chrono::milliseconds(200)); // the loopback's removal is announced too
+	CHECK(unlistedChanges == 0);
+
+	unlisted->ports();
+	{
+		const VirtualLoopback loopback("GNUbase test setup change");
+		CHECK(eventually([&unlistedChanges] { return unlistedChanges > 0; }));
+	}
+}
+
 TEST_CASE("the CoreMIDI backend receives MIDI 2.0 sources as MIDI 1.0 messages", "[integration]")
 {
 	const std::unique_ptr<Backend> backend = makeCoreMidiBackend();
@@ -542,17 +606,25 @@ TEST_CASE("the CoreMIDI backend receives MIDI 2.0 sources as MIDI 1.0 messages",
 #endif
 
 #ifdef __linux__
-// Loops back through a sequencer client the test creates itself, and through the kernel's Midi Through port when
-// snd-seq-dummy is loaded. Skipped without a sequencer (/dev/snd/seq), as in WSL and containers, unless
-// GNUBASE_REQUIRE_ALSA_SEQ=1: CI loads the sequencer's modules and requires it.
-TEST_CASE("the ALSA sequencer backend keeps the port contract and notices ports coming and going", "[integration]")
+namespace
 {
-	if (!std::filesystem::exists("/dev/snd/seq"))
+	// Skips the test without a sequencer (/dev/snd/seq), as in WSL and containers, unless GNUBASE_REQUIRE_ALSA_SEQ=1:
+	// CI loads the sequencer's modules and requires it.
+	void needSequencer()
 	{
+		if (std::filesystem::exists("/dev/snd/seq"))
+			return;
 		if (required("GNUBASE_REQUIRE_ALSA_SEQ"))
 			FAIL("there is no ALSA sequencer (/dev/snd/seq)");
 		SKIP("there is no ALSA sequencer here (/dev/snd/seq): sudo modprobe snd-seq-dummy");
 	}
+}
+
+// Loops back through a sequencer client the test creates itself, and through the kernel's Midi Through port when
+// snd-seq-dummy is loaded.
+TEST_CASE("the ALSA sequencer backend keeps the port contract and notices ports coming and going", "[integration]")
+{
+	needSequencer();
 	const std::unique_ptr<Backend> backend = makeAlsaSeqBackend();
 	CHECK(backend->name() == "alsa");
 	std::atomic<int> changes{0};
@@ -577,6 +649,61 @@ TEST_CASE("the ALSA sequencer backend keeps the port contract and notices ports 
 		checkContract(*backend, through, through);
 	else
 		WARN("snd-seq-dummy isn't loaded: the Midi Through loopback isn't checked");
+}
+
+// Sequencer clients send 14-bit controllers and RPN and NRPN changes as single events, which stand for two or four
+// control changes (#403).
+TEST_CASE("the ALSA sequencer backend receives 14-bit controllers and RPN and NRPN changes as control changes",
+	"[integration]")
+{
+	needSequencer();
+	const std::unique_ptr<Backend> backend = makeAlsaSeqBackend();
+	const std::string name = "GNUbase test controllers";
+	const SeqLoopback loopback(name.c_str());
+	REQUIRE(eventually([&] { return hasPort(*backend, name); }));
+	Inbox inbox;
+	const auto input = backend->openInput(name + ":" + name, inbox.receiver());
+
+	// A client of its own sends the events to the loopback.
+	snd_seq_t* opened = nullptr;
+	REQUIRE(snd_seq_open(&opened, "default", SND_SEQ_OPEN_OUTPUT, 0) >= 0);
+	const std::unique_ptr<snd_seq_t, decltype(&snd_seq_close)> seq(opened, &snd_seq_close);
+	const int port = snd_seq_create_simple_port(
+		seq.get(), "sender", SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ, SND_SEQ_PORT_TYPE_APPLICATION);
+	REQUIRE(port >= 0);
+	REQUIRE(snd_seq_connect_to(seq.get(), port, loopback.address().client, loopback.address().port) >= 0);
+	const auto send = [&seq, port](snd_seq_event_type_t type, unsigned char channel, unsigned param, int value)
+	{
+		snd_seq_event_t event;
+		snd_seq_ev_clear(&event);
+		snd_seq_ev_set_source(&event, port);
+		snd_seq_ev_set_subs(&event);
+		snd_seq_ev_set_direct(&event);
+		snd_seq_ev_set_controller(&event, channel, param, value);
+		event.type = type;
+		REQUIRE(snd_seq_event_output_direct(seq.get(), &event) >= 0);
+	};
+	send(SND_SEQ_EVENT_CONTROL14, 2, 7, 0x2345);           // volume, MSB 0x46 and LSB 0x45
+	send(SND_SEQ_EVENT_REGPARAM, 0, 0, 12 << 7);           // pitch bend range: 12 semitones
+	send(SND_SEQ_EVENT_NONREGPARAM, 15, (1 << 7) | 8, 64); // NRPN MSB 1, LSB 8: LSB 64
+	REQUIRE(inbox.waitFor(10));
+
+	const std::vector<std::array<uint8_t, 3>> expected{{0xb2, 7, 0x46}, {0xb2, 39, 0x45}, // CONTROL14
+		{0xb0, 101, 0}, {0xb0, 100, 0}, {0xb0, 6, 12}, {0xb0, 38, 0},                     // RPN
+		{0xbf, 99, 1}, {0xbf, 98, 8}, {0xbf, 6, 0}, {0xbf, 38, 64}};                      // NRPN
+	const auto received = inbox.messages();
+	REQUIRE(received.size() == expected.size());
+	for (size_t i = 0; i < expected.size(); ++i)
+	{
+		INFO("message " << i);
+		CHECK(received[i].first.size == 3);
+		CHECK(received[i].first.bytes == expected[i]);
+	}
+	// The control changes of an event share its time.
+	CHECK(received[1].second == received[0].second);
+	for (const size_t first : {size_t{2}, size_t{6}})
+		for (size_t i = first + 1; i < first + 4; ++i)
+			CHECK(received[i].second == received[first].second);
 }
 
 // Against jackd; skipped where no JACK server runs, unless GNUBASE_REQUIRE_JACK=1 (CI starts jackd with its dummy
