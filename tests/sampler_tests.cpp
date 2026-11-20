@@ -543,7 +543,7 @@ TEST_CASE("glide bends the pitch from the note before, with Fingered only betwee
 		bench.add(parameter(0, Sampler::Legato, 1.0));
 		bench.add(note(0, true, 60));
 		bench.add(note(10, true, 72));
-		std::vector<float> played = bench.left(10);
+		const std::vector<float> played = bench.left(10);
 		CHECK_THAT(stepAt(played, 5), WithinAbs(1.0, 1e-3));
 		CHECK(stepAt(played, 12) > 1.0);
 		CHECK(stepAt(played, 12) < 1.01);
