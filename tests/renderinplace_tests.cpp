@@ -956,7 +956,12 @@ TEST_CASE("render in place separates events or combines adjacent blocks on one d
 	const Json rendered = run(project.client, "track.renderInPlace",
 		{{"tracks", {source.track}}, {"mode", mode}, {"sourceTracks", "disable"}});
 	REQUIRE(rendered.at("tracks").size() == 1);
-	const size_t count = mode == "separateEvents" ? 3 : (mode == "blockEvents" ? 2 : 1);
+	std::vector<int64_t> expectedPositions{1000};
+	if (mode == "separateEvents")
+		expectedPositions = {1000, 2000, 5000};
+	else if (mode == "blockEvents")
+		expectedPositions = {1000, 5000};
+	const size_t count = expectedPositions.size();
 	REQUIRE(rendered.at("events").size() == count);
 	REQUIRE(rendered.at("media").size() == count);
 	const Json state = run(project.client, "project.get");
@@ -964,10 +969,7 @@ TEST_CASE("render in place separates events or combines adjacent blocks on one d
 	for (const auto& event : state.at("audioEvents"))
 		if (event.at("track") == rendered.at("tracks").at(0))
 			positions.push_back(event.at("position").get<int64_t>());
-	CHECK(positions ==
-		(mode == "separateEvents"
-				? std::vector<int64_t>{1000, 2000, 5000}
-				: (mode == "blockEvents" ? std::vector<int64_t>{1000, 5000} : std::vector<int64_t>{1000})));
+	CHECK(positions == expectedPositions);
 	std::set<std::string> paths;
 	for (const auto& media : state.at("media"))
 		if (std::find(rendered.at("media").begin(), rendered.at("media").end(), media.at("id")) !=
@@ -976,10 +978,12 @@ TEST_CASE("render in place separates events or combines adjacent blocks on one d
 			paths.insert(media.at("path").get<std::string>());
 			const auto samples = samplesOf(media.at("path").get<std::string>());
 			CHECK(samples.front() == 1.0f / 8192.0f);
-			CHECK(samples.size() ==
-				(mode == "oneEvent"
-						? 5000
-						: (mode == "blockEvents" && media.at("id") == rendered.at("media").at(0) ? 2000 : 1000)));
+			size_t expectedLength = 1000;
+			if (mode == "oneEvent")
+				expectedLength = 5000;
+			else if (mode == "blockEvents" && media.at("id") == rendered.at("media").at(0))
+				expectedLength = 2000;
+			CHECK(samples.size() == expectedLength);
 		}
 	CHECK(paths.size() == count);
 	CHECK(project.track(source.track).at("enabled") == false);
@@ -1036,7 +1040,7 @@ TEST_CASE("render in place isolates selected MIDI parts and uses their whole bou
 	for (const auto& media : before.at("media"))
 		if (media.at("id") == expected.at("media").at(0))
 			original = samplesOf(media.at("path").get<std::string>());
-	REQUIRE(original.size() == 48000 * 2);
+	REQUIRE(original.size() == size_t{48000} * 2);
 	run(project.client, "history.undo");
 	const Json other = run(project.client, "midiPart.add", {{"track", synth.track}, {"position", 0}, {"length", 48000}})
 						   .at("part")

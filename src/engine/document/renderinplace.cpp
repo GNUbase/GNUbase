@@ -71,7 +71,8 @@ namespace gnubase::engine
 
 		struct EventRender
 		{
-			Span span;
+			time::Samples start = 0;
+			time::Samples end = 0;
 			std::vector<ObjectId> events;
 		};
 
@@ -95,7 +96,7 @@ namespace gnubase::engine
 					end = std::min(end, parameters.at("end").get<time::Samples>());
 				}
 				if (end > start)
-					events.push_back({{start, end}, {id}});
+					events.push_back({start, end, {id}});
 			};
 			std::set<ObjectId> inputs{track.id};
 			for (const auto& channel : snapshot.channels)
@@ -128,20 +129,19 @@ namespace gnubase::engine
 			};
 			parts(project.audioParts);
 			parts(project.midiParts);
-			std::sort(events.begin(), events.end(),
-				[](const auto& a, const auto& b)
-				{
-					return std::tie(a.span.start, a.span.end, a.events) < std::tie(b.span.start, b.span.end, b.events);
-				});
+			std::sort(events.begin(), events.end(), [](const auto& a, const auto& b)
+				{ return std::tie(a.start, a.end, a.events) < std::tie(b.start, b.end, b.events); });
 			std::vector<EventRender> groups;
 			for (auto& event : events)
 			{
 				if (groups.empty() || mode == "separateEvents" ||
-					(mode == "blockEvents" && event.span.start.value() > groups.back().span.end))
+					(mode == "blockEvents" && event.start > groups.back().end))
+				{
 					groups.push_back(std::move(event));
+				}
 				else
 				{
-					groups.back().span.end = std::max(groups.back().span.end, event.span.end);
+					groups.back().end = std::max(groups.back().end, event.end);
 					groups.back().events.insert(groups.back().events.end(), event.events.begin(), event.events.end());
 				}
 			}
@@ -725,7 +725,7 @@ namespace gnubase::engine
 						span = {parameters.at("start").get<time::Samples>(), parameters.at("end").get<time::Samples>()};
 					require(span.start.has_value(), track.name + " has nothing to render");
 					require(span.end > *span.start, "the range is empty: end must be after start");
-					groups.push_back({{span, {}}});
+					groups.push_back({{*span.start, span.end, {}}});
 				}
 				const fs::path folder =
 					m_file.empty() ? unsavedMediaFolder(m_settingsDirectory) : mediaFolderFor(fs::u8path(m_file));
@@ -737,11 +737,11 @@ namespace gnubase::engine
 					for (const auto& group : groups[i])
 					{
 						render->tracks.push_back(track.id);
-						render->starts.push_back(group.span.start.value());
-						render->ends.push_back(group.span.end);
+						render->starts.push_back(group.start);
+						render->ends.push_back(group.end);
 						Json request = {{"folder", folder.u8string()},
 							{"name", parameters.value("name", fileNameOf(track))}, {"channels", {track.channel}},
-							{"start", group.span.start.value()}, {"end", group.span.end}, {"point", point},
+							{"start", group.start}, {"end", group.end}, {"point", point},
 							{"tail", parameters.value("tail", 0.0)},
 							{"sampleFormat", parameters.value("sampleFormat", std::string("float32"))}};
 						if (split)

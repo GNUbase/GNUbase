@@ -664,7 +664,9 @@ namespace gnubase::engine
 			prepared->snapshot = renderSnapshot(*compile(input, snapshot.revision), objects);
 		}
 		else
+		{
 			prepared->snapshot = renderSnapshot(snapshot, objects);
+		}
 		prepared->project = project;
 		prepared->settings = m_settings.values();
 		prepared->parameters = request;
