@@ -400,6 +400,7 @@ TEST_CASE("Add Map with Import Key Switches makes the track's instrument's key s
 {
 	// The test synth reports the key switches Sustain and Staccato (p. 1284).
 	Fixture f;
+	f.app.setDpRatio(0.5F); // the populated map and its actions fit on the monitor
 	const Json project = f.app.call("project.get");
 	f.app.call("channel.set", {{"channel", project.at("tracks").at(0).at("channel")}, {"instrument", "testSynth"}});
 	f.app.keys().run("midi.articulationMapSetup", Json::object(), f.app.main(), nullptr);
