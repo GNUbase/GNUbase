@@ -366,3 +366,40 @@ TEST_CASE("an edit on a global track's lane sends no project.get of its own", "[
 	CHECK(drawn == added);
 	CHECK(window.events()[1].at("position") == 12 * g_quarter);
 }
+
+TEST_CASE("the arranger track's controls switch arranger mode and the chain and show the step playing", "[ui]")
+{
+	// The track list's arranger controls (reference manual p. 164): Activate Arranger Mode, Select Active Arranger
+	// Chain, Current Item and Current Repeat, besides Switch Time Base.
+	Window window;
+	const Json a = window.app.call("arranger.add", {{"position", 0}, {"end", 8 * g_quarter}}).at("event").at("id");
+	window.app.call("arranger.setChain", {{"steps", {{{"event", a}, {"repeats", 3}}}}});
+	const Json first = window.app.call("arranger.get").at("chain");
+	window.app.call("arranger.addChain", {{"name", "Short"}}); // the active chain now
+	const std::string row = "listitem[type=arranger]";
+	const auto click = [&window](const std::string& selector)
+	{
+		window.app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto value = [&window](const std::string& selector)
+	{ return window.element(selector).value("attributes", Json::object()).value("value", std::string()); };
+	REQUIRE(window.app.waitUntil([&] { return window.shown(row + " select[control=arrangerChain]") == 1; }));
+	CHECK(window.shown(row + " button[control=timeBase]") == 1);
+
+	click(row + " button[control=arrangerMode]");
+	REQUIRE(window.app.waitUntil([&] { return window.app.call("arranger.get").at("mode") == true; }));
+	CHECK(window.app.waitUntil([&] { return window.hasClass(row + " button[control=arrangerMode]", "checked"); }));
+
+	// The first chain again, above the active one in the list.
+	click(row + " select[control=arrangerChain]");
+	window.app.ui().key(std::nullopt, "Up");
+	click(row + " select[control=arrangerChain]");
+	REQUIRE(window.app.waitUntil([&] { return window.app.call("arranger.get").at("chain") == first; }));
+
+	// The event and the repeat playing; nothing outside the chain.
+	CHECK(value(row + " [control=arrangerItem]").empty());
+	window.app.call("arranger.goToStep", {{"step", 0}, {"repeat", 1}});
+	CHECK(window.app.waitUntil([&] { return value(row + " [control=arrangerItem]") == "A"; }));
+	CHECK(window.app.waitUntil([&] { return value(row + " [control=arrangerRepeat]") == "2/3"; }));
+}
