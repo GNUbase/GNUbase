@@ -822,8 +822,8 @@ namespace gnubase::engine
 				else if (opens && midi::drumMapOf(project, trackOf(project, view.parts.front())) != nullptr &&
 					context.call("settings.get", {{"key", "editing.useDrumEditor"}}).at("value").get<bool>())
 					view.content = "drum"; // Use Drum Editor when Drum Map is assigned (pp. 1221, 1603)
-				else if (showsAudio(view))
-					view.content = "key";
+				else if (opens || showsAudio(view))
+					view.content = "key"; // also over a content that editor.set gave the closed editor
 				requireContent(project, view);
 				return store(editor, view, context);
 			});

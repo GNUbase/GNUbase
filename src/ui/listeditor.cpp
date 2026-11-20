@@ -29,6 +29,7 @@ namespace gnubase::ui
 	namespace
 	{
 		constexpr double g_maxVelocity = 127.0;
+		constexpr int64_t g_minVelocity = 1; // a note on with velocity 0 is a note off
 		constexpr double g_maxController = 4294967295.0;
 		constexpr int64_t g_bendCenter = 8192;
 
@@ -302,7 +303,9 @@ namespace gnubase::ui
 		m_selection.clear();
 		if (!m_project.contains("tracks") || !m_view.contains("parts"))
 			return;
-		const TimeContext time = projectTime(m_project);
+		// Once per show: every cell's time and every typed one use it, and building it reads the tempo map.
+		m_time = projectTime(m_project);
+		const TimeContext& time = m_time;
 		std::map<uint64_t, const Json*> tracks;
 		for (const Json& track : m_project.at("tracks"))
 			tracks[track.at("id").get<uint64_t>()] = &track;
@@ -394,8 +397,8 @@ namespace gnubase::ui
 		if (m_focus == "none" || first == nullptr)
 			return true;
 		const Row& focus = *first;
-		if (m_focus == "channel")
-			return hasChannel(row.type) && hasChannel(focus.type) && row.channel == focus.channel;
+		if (m_focus == "channel") // SysEx and directions have no channel to focus on: everything shows
+			return !hasChannel(focus.type) || (hasChannel(row.type) && row.channel == focus.channel);
 		if (row.type != focus.type)
 			return false;
 		if (row.type == "articulation")
@@ -450,7 +453,7 @@ namespace gnubase::ui
 		const std::optional<int64_t> value = number(row, field);
 		if (!value)
 			return "";
-		const TimeContext time = projectTime(m_project);
+		const TimeContext& time = m_time;
 		if (field == "start" || field == "end")
 			return formatTime(TimeFormat::BarsBeats, time.tempo.toSeconds(*value), time);
 		if (field == "length")
@@ -461,9 +464,10 @@ namespace gnubase::ui
 		return std::to_string(*value);
 	}
 
-	std::optional<int64_t> ListEditor::parse(const std::string& field, const std::string& typed, const Row& row) const
+	std::optional<int64_t> ListEditor::parse(const std::string& field, const std::string& text, const Row& row) const
 	{
-		const TimeContext time = projectTime(m_project);
+		const TimeContext& time = m_time;
+		const std::string typed = Rml::StringUtilities::StripWhitespace(text);
 		if (field == "start" || field == "end")
 		{
 			const std::optional<double> seconds = parseTime(TimeFormat::BarsBeats, typed, time);
@@ -479,9 +483,10 @@ namespace gnubase::ui
 		const int64_t value = std::strtoll(typed.c_str(), &end, 10);
 		if (!typed.empty() && end != nullptr && *end == 0)
 			return value;
-		// A pitch can be a name, such as C3.
+		// A pitch can be a name, such as C3 or c3.
+		const std::string name = Rml::StringUtilities::ToLower(typed);
 		for (int pitch = 0; pitch < 128; ++pitch)
-			if (engine::midi::pitchName(pitch) == typed)
+			if (Rml::StringUtilities::ToLower(engine::midi::pitchName(pitch)) == name)
 				return pitch;
 		return std::nullopt;
 	}
@@ -778,7 +783,8 @@ namespace gnubase::ui
 			else if (field == "secondary")
 				change["releaseVelocity"] = static_cast<double>(std::clamp<int64_t>(value, 0, 127)) / g_maxVelocity;
 			else if (field == "value" && type == "note")
-				change["velocity"] = static_cast<double>(std::clamp<int64_t>(value, 0, 127)) / g_maxVelocity;
+				change["velocity"] =
+					static_cast<double>(std::clamp<int64_t>(value, g_minVelocity, 127)) / g_maxVelocity;
 			else if (field == "value" || type == "channelPressure")
 				change["value"] = fromMidi1(value);
 			else if (type == "pitchBend")
@@ -1122,8 +1128,11 @@ namespace gnubase::ui
 			return;
 		const Rml::Vector2f origin = lane->GetAbsoluteOffset(Rml::BoxArea::Border);
 		const float width = std::max(lane->GetBox().GetSize(Rml::BoxArea::Border).x, 1.0F);
-		m_values[row->key()] = std::clamp((event.GetParameter("mouse_x", 0.0F) - origin.x) / width, 0.0F, 1.0F);
-		render();
+		const float value = std::clamp((event.GetParameter("mouse_x", 0.0F) - origin.x) / width, 0.0F, 1.0F);
+		m_values[row->key()] = value;
+		// Only the bar changes: rebuilding the list on every mouse move costs what all its rows do.
+		if (Rml::Element* shown = lane->QuerySelector(".list-value"))
+			shown->SetProperty(Rml::PropertyId::Width, percent(value * 100.0));
 	}
 
 	void ListEditor::release(Rml::Event& event)
@@ -1151,7 +1160,9 @@ namespace gnubase::ui
 					continue;
 				Json change = {{"id", row.id}};
 				if (row.isNote())
-					change["velocity"] = std::max(std::round(found->second * g_maxVelocity), 1.0) / g_maxVelocity;
+					change["velocity"] =
+						std::max(std::round(found->second * g_maxVelocity), static_cast<double>(g_minVelocity)) /
+						g_maxVelocity;
 				else if (row.type == "program")
 					change["number"] = std::lround(found->second * g_maxVelocity);
 				else
