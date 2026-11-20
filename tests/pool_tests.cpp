@@ -12,12 +12,16 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <pugixml.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -471,6 +475,57 @@ TEST_CASE("media.locate takes a file of the same length, the same spelling first
 	const Json twice = runJob(song.client, "media.locate", {{"folder", utf8(moved)}, {"media", {kick, kick}}});
 	CHECK(twice.at("relinked") == Json::array({kick}));
 	CHECK(twice.at("missing").empty());
+}
+
+TEST_CASE("media.locate takes a file within a millisecond of a length that another application's project.xml rounded",
+	"[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "take.wav", 4820, 1);
+	writeFile(song.library / "far.wav", 4900, 1);
+	const auto track = run(song.client, "track.add", {{"type", "audio"}}).at("track").at("id");
+	for (const char* name : {"take.wav", "far.wav"})
+		run(song.client, "audioEvent.add",
+			{{"track", track}, {"clip", song.clip(song.library / name)}, {"position", 0}});
+	song.save();
+	song.settle();
+
+	// Another application's file: no GNUbase entry, and durations with three decimals, so take's length reads as 4800
+	// frames once the files are missing, 20 frames off, and far's as 4896.
+	std::map<std::string, std::string> entries = gnubase::test::readZip(utf8(song.file));
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	pugi::xml_document xml;
+	REQUIRE(xml.load_string(entries.at("project.xml").c_str()));
+	for (const pugi::xpath_node& audio : xml.select_nodes("//Audio"))
+	{
+		pugi::xml_attribute duration = audio.node().attribute("duration");
+		duration.set_value(std::round(duration.as_double() * 1000.0) / 1000.0);
+	}
+	std::ostringstream written;
+	xml.save(written);
+	entries.at("project.xml") = written.str();
+	gnubase::test::writeZip(utf8(song.file), entries);
+	fs::remove_all(song.library);
+	const fs::path moved = song.dir.path() / "moved";
+	writeFile(moved / "take.wav", 4820, 1);
+	writeFile(moved / "far.wav", 4800, 1); // another take, 96 frames off: more than a millisecond
+	song.reopen();
+
+	const Json media = run(song.client, "project.get").at("media");
+	REQUIRE(media.size() == 2);
+	const auto named = [&media](const std::string& name)
+	{
+		const auto file = std::find_if(media.begin(), media.end(),
+			[&name](const Json& item) { return fs::u8path(item.at("path").get<std::string>()).filename() == name; });
+		REQUIRE(file != media.end());
+		return *file;
+	};
+	CHECK(named("take.wav").at("length") == 4800);
+	const Json located = runJob(song.client, "media.locate", {{"folder", utf8(moved)}});
+	CHECK(located.at("relinked") == Json::array({named("take.wav").at("id")}));
+	CHECK(located.at("missing") == Json::array({named("far.wav").at("id")}));
+	const Json take = byId(run(song.client, "project.get").at("media"), named("take.wav").at("id"));
+	CHECK(fs::equivalent(fs::u8path(take.at("path").get<std::string>()), moved / "take.wav"));
 }
 
 TEST_CASE("media.removeMissing removes missing files with their clips and events", "[integration]")

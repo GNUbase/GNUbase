@@ -33,7 +33,9 @@ the pool and conforming files to the project's sample rate. The engine commands 
   spelling first, else one whose ASCII letters (A to Z) differ in case; other letters, such as Ä and ä, must match
   exactly, since folding them would need Unicode's case tables. It takes a file only if it has the media file's
   sample rate, channel count and length, so a same-named file of another take (a common kick.wav) isn't relinked
-  with events pointing past its end. `media` limits it to some media files, each looked for once however often it is
+  with events pointing past its end. A length that another application's project.xml gave for a file missing at
+  load is its `duration` times the sample rate, off by the duration's rounding, so a file within a millisecond's
+  frames fits too, the closest length first (#506). `media` limits it to some media files, each looked for once however often it is
   given. Since the folder can be large (a whole drive), it runs as a job (see below). A file found that goes or
   changes before the job relinks it is skipped and reported as `changed` (its `media.relink` entry has the `length`
   the file must have), so the other files found are still relinked. A single file is relinked with `media.relink`
@@ -155,8 +157,9 @@ given twice conformed once; and `audioFile.import` with `clipsOnly`. The accepta
 saved project's files are moved into another folder while it is closed, the loaded project shows them missing,
 `media.locate` finds one in a subfolder under another letter case and skips one whose channel count doesn't fit, the
 event plays the same section, the saved project keeps the new path, and undo brings back the old one. Another test
-has `media.locate` skip a same-named file of another length, prefer the same spelling over another case, match ASCII
-letters in any case but not Ö for ö, and look for a media file given twice once. Both run as jobs, which the tests
+has `media.locate` skip a same-named file of another length but take one within a millisecond of a length that
+another application's project.xml rounded, prefer the same spelling over another case, match ASCII letters in any
+case but not Ö for ö, and look for a media file given twice once. Both run as jobs, which the tests
 wait for: `transport.locate` is answered while `media.locate` on a folder of 2500 files runs, whose progress names
 the folder; `job.cancel` stops `media.locate` and `media.conform` with nothing changed and no file left in the media
 folder; a missing file removed while `media.locate` looks for it, a media file relinked by hand while `media.conform`

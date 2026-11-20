@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -280,28 +281,40 @@ namespace gnubase::engine
 				// The same spelling first.
 				std::stable_partition(candidates.begin(), candidates.end(),
 					[&name](const fs::path& path) { return path.filename().u8string() == name; });
-				const auto fits = std::find_if(candidates.begin(), candidates.end(),
-					[&media](const fs::path& candidate)
+				// A file of another length would leave events pointing past its end. But a length that another
+				// application's project.xml gave for a file missing at load is its duration times the sample rate,
+				// off by the duration's rounding: a file within a millisecond fits, the closest one first.
+				const auto slack = static_cast<time::Samples>(std::ceil(media.sampleRate / 1000.0));
+				const fs::path* fits = nullptr;
+				time::Samples frames = 0;
+				for (const fs::path& candidate : candidates)
+				{
+					AudioFileInfo info;
+					try
 					{
-						try
-						{
-							// A file of another length would leave events pointing past its end.
-							const AudioFileInfo info = AudioFileReader::open(candidate.u8string())->info();
-							return info.sampleRate == media.sampleRate && info.channels == media.channels &&
-								info.frames == media.length;
-						}
-						catch (const AudioFileError&)
-						{
-							return false;
-						}
-					});
-				if (fits == candidates.end())
+						info = AudioFileReader::open(candidate.u8string())->info();
+					}
+					catch (const AudioFileError&)
+					{
+						continue; // a file that can't be read doesn't fit
+					}
+					const time::Samples off = std::abs(info.frames - media.length);
+					if (info.sampleRate == media.sampleRate && info.channels == media.channels && off <= slack &&
+						(fits == nullptr || off < std::abs(frames - media.length)))
+					{
+						fits = &candidate;
+						frames = info.frames;
+					}
+					if (off == 0 && fits == &candidate)
+						break;
+				}
+				if (fits == nullptr)
 				{
 					missing.push_back(media.id);
 					continue;
 				}
 				relink.push_back(
-					{{"media", media.id}, {"path", fits->u8string()}, {"from", media.path}, {"length", media.length}});
+					{{"media", media.id}, {"path", fits->u8string()}, {"from", media.path}, {"length", frames}});
 				found.push_back(media.id);
 			}
 
@@ -795,7 +808,9 @@ namespace gnubase::engine
 				"Looks for missing media files in folder and the folders inside it (the Resolve Missing Files "
 				"dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, the same spelling "
 				"first, else with ASCII letters in another case (other letters must match exactly), and the media "
-				"file's sample rate, channel count and length. media limits it to those media files (default: every "
+				"file's sample rate, channel count and length, within a millisecond's frames for the rounding of a "
+				"duration in another application's project.xml, the closest length first. media limits it to those "
+				"media files (default: every "
 				"missing one). It runs as a job, so it can't be part of a history.transaction: this returns at once, "
 				"job.progress events say which folder it looks in and then which media file it checks, job.cancel "
 				"stops it, and once it is done the files found are relinked as one undo step, which skips media "
