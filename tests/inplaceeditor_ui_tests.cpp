@@ -1323,10 +1323,12 @@ TEST_CASE("an in-place editor joins a dense note's expression steps by its pixel
 	"[ui]")
 {
 	// A recorded MPE note has a point every few milliseconds (#1671). The in-place editor's first show comes before its
-	// layout, and the project window's zoom changes a pixel's ticks: the lines are built again for each.
+	// layout, and the project window's zoom changes a pixel's ticks: the lines are built again for each, but once the
+	// window's update has laid them out only for a quarter more or fewer ticks (#1716), not on every frame of a scroll
+	// across a tempo change. The app's update task fits the in-place editors' lines for that (#1778, #1782).
 	Fixture f;
-	Json points = Json::array();
 	constexpr int count = 2000;
+	Json points = Json::array();
 	for (int i = 0; i < count; ++i)
 		points.push_back(
 			{{"type", "tuning"}, {"position", g_quarter * i / count}, {"value", i % 2 == 0 ? 10.0 : -10.0}});
@@ -1335,21 +1337,39 @@ TEST_CASE("an in-place editor joins a dense note's expression steps by its pixel
 	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
 	f.settle(2);
 	const std::string steps = f.note(f.notes[0]) + " .key-expression-step";
-	// The note's points and the view come with the engine's events, which may follow the notes' placement.
-	REQUIRE(f.app.waitUntil([&] { return !f.elements(steps).empty(); }));
-	const auto perPixel = [&f, &steps]
+	const auto noteWidth = [&f] { return f.box(f.note(f.notes[0])).at("width").get<double>(); };
+	// As many lines as the note has pixels, once they show: a line joined for fewer pixels spans several. The note's
+	// points and the view come with the engine's events, which may follow the notes' placement.
+	const auto linesFit = [&]
 	{
-		f.app.shell().step(std::chrono::milliseconds(0));
-		const double width = f.box(f.note(f.notes[0])).at("width").get<double>();
-		const auto shown = static_cast<double>(f.elements(steps).size());
+		double width = 0.0;
+		double shown = 0.0;
+		const bool fit = f.app.waitUntil(
+			[&]
+			{
+				width = noteWidth();
+				shown = static_cast<double>(f.elements(steps).size());
+				return shown <= width + 2 && shown >= width * 0.8;
+			});
 		INFO("width " << width << ", lines " << shown);
+		CHECK(fit);
 		CHECK(width < count / 4.0);
-		CHECK(shown <= width + 2);
-		CHECK(shown >= width * 0.8); // as many as the pixels: a line joined for fewer pixels spans several
 		return width;
 	};
-	const double before = perPixel();
+	const double before = linesFit();
+
+	// A tenth more ticks per pixel, once the window has laid the lines out: they stay as they were built.
+	const size_t lines = f.elements(steps).size();
+	const ui::Window* window = &f.app.main();
+	const uint64_t frames = window->frames();
+	const double start = f.display.view().start;
+	f.display.zoomTo(start, start + (f.display.visibleLength() * 1.1));
+	REQUIRE(f.app.waitUntil([&] { return window->frames() > frames && noteWidth() < before * 0.93; }));
+	REQUIRE(noteWidth() > before * 0.88);
+	CHECK(f.elements(steps).size() == lines);
+
+	// Zoomed in a step, a pixel has half the ticks or fewer: built again.
 	f.display.zoomIn();
 	f.settle(2);
-	CHECK(perPixel() > before * 1.5);
+	CHECK(linesFit() > before * 1.5);
 }

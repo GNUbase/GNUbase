@@ -233,23 +233,24 @@ of them over their span, centered on the note clicked, an edit reaching each not
 where the value changes, one undo step for both parts, Vertical Snap and the editor closing when the selection empties;
 the editor centered on its note while the pitches zoom; on the top row the editor inside the note display and wider than
 its button, and a draw released outside the window; on a short note right of the note display's middle the editor
-starting at the note; a dense note's lines a pixel each after the window's layout and a
-resize, a resize by less than a quarter keeping them, and lines that first show after the window narrowed by less than
-a quarter, also on the box of the layout before, built for the narrower width. `tests/inplaceeditor_ui_tests.cpp`
-checks the draw tool on a line of the editor in an in-place editor, an erase over nothing in two parts of its track
-leaving the project unmodified after a draw (the in-place editor hands its key editor the read it shows, #1831), and
-a dense note's lines a pixel each after its layout and as the project window zooms, `tests/drumeditor_ui_tests.cpp`
-that the drum editor has neither the buttons, the overlay nor the editor, and `tests/keyeditor_tests.cpp` the three
-settings as view state. `tests/noteexpression_ui_tests.cpp` makes four edits on notes of two parts before the UI hands
-on any answer of the engine, an erase of a point, two draws and an erase of the last point drawn, and checks that the
-engine keeps all of them, as four undo steps of one name, and that an erase where there is nothing to erase then
-leaves the project unmodified; that an erase made after a draw was answered, while the editor still shows the project
-read before it, deletes the point drawn (#1795); and that an erase that changed nothing, answered after the read
-shown, doesn't keep the editor behind (#1831). `tests/noteexpression_tests.cpp` checks `note.replaceExpression`: the
-span with both ends, the other expressions and the points outside it kept, the order, edits made from the same state
-all kept, a note named twice, one undo step, a change of nothing leaving the project unmodified, its refusals changing
-nothing and the shared copies following it; and the bound of point positions in `note.add`, `note.set` and
-`note.replaceExpression`, and loading cutting them there.
+starting at the note; a dense note's lines a pixel each after the window's layout and a resize, a resize by less than a
+quarter keeping them, and lines that first show after the window narrowed by less than a quarter, also on the box of the
+layout before, built for the narrower width. `tests/inplaceeditor_ui_tests.cpp` checks the draw tool on a line of the
+editor in an in-place editor, an erase over nothing in two parts of its track leaving the project unmodified after a
+draw (the in-place editor hands its key editor the read it shows, #1831), and a dense note's lines a pixel each after
+its layout, kept as the project window zooms by a tenth once the window has laid them out (the app's update task fits
+the in-place editors' lines, #1782) and built again as it zooms in a step, `tests/drumeditor_ui_tests.cpp` that the drum
+editor has neither the buttons, the overlay nor the editor, and `tests/keyeditor_tests.cpp` the three settings as view
+state. `tests/noteexpression_ui_tests.cpp` makes four edits on notes of two parts before the UI hands on any answer of
+the engine, an erase of a point, two draws and an erase of the last point drawn, and checks that the engine keeps all of
+them, as four undo steps of one name, and that an erase where there is nothing to erase then leaves the project
+unmodified; that an erase made after a draw was answered, while the editor still shows the project read before it,
+deletes the point drawn (#1795); and that an erase that changed nothing, answered after the read shown, doesn't keep the
+editor behind (#1831). `tests/noteexpression_tests.cpp` checks `note.replaceExpression`: the span with both ends, the
+other expressions and the points outside it kept, the order, edits made from the same state all kept, a note named
+twice, one undo step, a change of nothing leaving the project unmodified, its refusals changing nothing and the shared
+copies following it; and the bound of point positions in `note.add`, `note.set` and `note.replaceExpression`, and
+loading cutting them there.
 
 ## Not yet
 
