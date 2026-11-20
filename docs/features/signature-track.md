@@ -59,13 +59,13 @@ signature map itself, which converts between ticks and bars and beats, is the ti
   of a 4/4 bar before a 3/4 bar end on the third beat of the bar after it.
 - Project > Add Track has a Signature page. The track list leaves the signature track out of Duplicate Tracks, Move
   Selected Tracks to New Folder and drags into folders, and shows its Lock (`signatureLock`, `.checked` while on) and
-  Signature Track Options (p. 163, `signatureOptions`), a list whose Process Bars Dialog opens Process Bars
+  Signature Track Options (pp. 163-164, `signatureOptions`), a list whose Process Bars Dialog opens Process Bars
   ([time-warp.md](time-warp.md)), both in the user setting `ui.trackControls`. Remove Empty Tracks, the engine
   command `track.removeEmpty`, never removes it.
 
 ## Not yet
 
-The signature track's options for click patterns (p. 163: copying, pasting, applying and resetting them, Show Click
+The signature track's options for click patterns (pp. 163-164: copying, pasting, applying and resetting them, Show Click
 Patterns and rendering the click between the locators), which need click patterns per time signature event rather
 than per signature ([metronome.md](metronome.md), #101); its Inspector list (p. 183) and signature events in the
 middle of a bar.

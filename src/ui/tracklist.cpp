@@ -200,7 +200,7 @@ namespace gnubase::ui
 				return type == "transpose" && (transposeControl(control) || control == "timeBase");
 			if (type == "chord" || chordControl(control))
 				return type == "chord" && (chordControl(control) || control == "timeBase");
-			// The signature track's Lock and Signature Track Options (reference manual p. 163).
+			// The signature track's Lock and Signature Track Options (reference manual pp. 163-164).
 			const bool signatureControl = control == "signatureLock" || control == "signatureOptions";
 			if (type == "signature" || signatureControl)
 				return type == "signature" && signatureControl;
