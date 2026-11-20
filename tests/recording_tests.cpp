@@ -514,6 +514,25 @@ TEST_CASE("punch recording replaces only the punch range, after the pre-roll and
 	CHECK(take == recorded(client, 0, 2400, 2400));
 }
 
+TEST_CASE("switching off stop after punch out during the post-roll lets playback go on", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "audio.stopAfterPunchOut"}, {"value", true}});
+	run(client, "transport.set",
+		{{"left", 640}, {"right", 1280}, {"punchIn", true}, {"punchOut", true}, {"postRoll", true},
+			{"postRollAmount", 1280}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 1920}}); // punched out at 1280, the stop waits at 2560
+	REQUIRE(waitForRecording(client).is_object());
+	run(client, "settings.set", {{"key", "audio.stopAfterPunchOut"}, {"value", false}});
+	run(client, "audio.render", {{"frames", 1280}});
+	const Json transport = run(client, "transport.get");
+	CHECK(transport.at("playing") == true);
+	CHECK(transport.at("position") == 3200);
+	run(client, "transport.stop");
+}
+
 TEST_CASE("only record-enabled audio tracks record, and nothing records without recording", "[integration]")
 {
 	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
