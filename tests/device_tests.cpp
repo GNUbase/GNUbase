@@ -1331,6 +1331,28 @@ namespace
 		CHECK(other.setBufferSize(found) == 0);
 	}
 
+	// Two clients that ask for different buffer sizes, as two GNUbase instances can, no longer reset each other through
+	// the reopen: the device that another client's size reset opens again without asking for its own (#433).
+	void checkJackTwoBlockSizes(const std::string& library)
+	{
+		const TestClient other(library, "gnubase-test-client", false);
+		const uint32_t found = other.bufferSize();
+		const uint32_t firstSize = found != 512 ? 512 : 1024;
+		const uint32_t secondSize = found != 128 ? 128 : 64;
+		{
+			Reopening first(makeJackBackend(library), config("default", 0.0, firstSize));
+			REQUIRE(waitUntil([&other, firstSize] { return other.bufferSize() == firstSize; }));
+			Reopening second(makeJackBackend(library), config("default", 0.0, secondSize));
+			reopenFor(first, second, std::chrono::seconds(1));
+			INFO("resets: " << first.resets() << " and " << second.resets());
+			CHECK(first.resets() <= 1);
+			CHECK(second.resets() <= 1);
+			CHECK(other.bufferSize() == secondSize);
+			CHECK(first.device().format().blockSize == firstSize); // in blocks of at most that size
+		}
+		CHECK(other.setBufferSize(found) == 0);
+	}
+
 	// A reset the device finds before it has a handler, as between the engine opening it and reading its info and
 	// latency, comes once the handler is set (#371).
 	void checkJackResetBeforeHandler(Backend& backend, std::unique_ptr<TestClient> hardware)
@@ -1462,6 +1484,7 @@ TEST_CASE(
 	checkJackResets(*backend, true);
 	checkJackOwnBufferSize(*backend, "libjack.so.0", false);
 	checkJackOtherClientsBufferSize(*backend, "libjack.so.0");
+	checkJackTwoBlockSizes("libjack.so.0");
 	checkJackXruns(*backend);
 	checkJackStopWhileLate(*backend);
 	checkJackCycleTimes(*backend, "libjack.so.0");
