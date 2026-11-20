@@ -524,12 +524,15 @@ namespace gnubase::ui
 			Json parameters = {{"start", from.start}, {"end", from.end}, {"tracks", from.tracks},
 				{"position", to.start}, {"copy", modifiers("dragDrop.copy")}};
 			// Snapped to a musical grid line, it goes to the line's tick: a part on a bar lands on another bar's own
-			// tick, which can lie up to half a sample from the sample the range shows (#1785).
-			if (to.start != from.start)
+			// tick, which can lie up to half a sample from the sample the range shows (#1785). Not with Grid Relative,
+			// whose tick keeps the range start's distance from its line, less than a sample, so it would land off the
+			// line and, at the project start, off tick 0.
+			if (to.start != from.start && m_snap.type != engine::SnapType::GridRelative)
 			{
 				const double start = static_cast<double>(from.start) / m_time.sampleRate;
 				const time::Position snapped = snapAt(start + ((x - m_pressX) * m_view.scale), start);
 				if (snapped.base == time::TimeBase::Musical && snapped.value >= 0 &&
+					(to.start != 0 || snapped.value == 0) &&
 					time::toSamples(snapped, m_time.tempo, m_time.sampleRate) == to.start)
 				{
 					parameters.erase("position");

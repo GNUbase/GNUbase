@@ -2666,6 +2666,17 @@ TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar 
 	const double x = (seconds * 100.0) + 20.0;
 	f.drag(x, 60, x + (4.0 * 60.0 / bpm * 100.0), 60);
 	REQUIRE(f.waitUntil([&] { return positionOf(part) == (bar + 1) * g_bar; }));
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return positionOf(part) == bar * g_bar; }));
+
+	// Grid Relative keeps the range start's distance from its bar line, less than a sample: dragged to the project
+	// start, the part lands on tick 0, as range.move at position 0 puts it.
+	f.call("snap.set", {{"type", "gridRelative"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().type == engine::SnapType::GridRelative; }));
+	f.click(900, 20);
+	f.display.setRange(ui::RangeSelection{start, start + 48000, {midi}});
+	f.drag(x, 60, x - (static_cast<double>(bar) * 4.0 * 60.0 / bpm * 100.0), 60);
+	REQUIRE(f.waitUntil([&] { return positionOf(part) == 0; }));
 }
 
 TEST_CASE("a drag in the selection range takes its contents onto other tracks too, Alt a copy of them", "[unit]")

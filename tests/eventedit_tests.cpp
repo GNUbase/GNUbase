@@ -2592,6 +2592,14 @@ TEST_CASE(
 	f.call("range.move", move);
 	CHECK(f.midi(part).at("position") == 0);
 	f.call("history.undo");
+	// With nothing in the range's start sample, what lies on musical tracks moves by the ticks from the range's start
+	// tick to positionTicks.
+	const int64_t before = f.sampleOf(probe, g_bar) - 20000;
+	Json earlier = {{"start", before}, {"end", before + 40000}, {"tracks", {midi}}, {"positionTicks", 3 * g_bar}};
+	const int64_t startTick = f.tickAt(probe, before); // before the move: it adds and undoes steps of its own
+	f.call("range.move", earlier);
+	CHECK(f.midi(part).at("position") == g_bar + (3 * g_bar) - startTick);
+	f.call("history.undo");
 	CHECK_THAT(f.fails("range.move", range), ContainsSubstring("position"));
 	move["position"] = 0;
 	CHECK_THAT(f.fails("range.move", move), ContainsSubstring("not both"));
