@@ -519,7 +519,7 @@ TEST_CASE("applying measured silence sections validates every range and needs no
 	test::settlePeaks(f.client);
 	const Json before = f.call("project.get");
 	Json parameters = {{"events", {f.event}}, {"revision", f.call("project.revision").at("revision")}};
-	for (const Json sections : {Json::array(), Json{{{{"start", -1}, {"end", 100}}}},
+	for (const Json& sections : {Json::array(), Json{{{{"start", -1}, {"end", 100}}}},
 			 Json{{{{"start", 100}, {"end", 50}}}}, Json{{{{"start", 0}, {"end", 4 * g_rate}}}},
 			 Json{{{{"start", 100}, {"end", 200}}, {{"start", 150}, {"end", 300}}}}})
 	{

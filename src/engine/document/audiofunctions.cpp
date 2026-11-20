@@ -111,11 +111,9 @@ namespace gnubase::engine
 					require(read != 0, "file ends before the requested range");
 					feed(buffer.data(), read);
 					at += static_cast<time::Samples>(read);
-					job.progress(0.95 *
-							(from +
-								share * static_cast<double>(at - range.start) /
-									static_cast<double>(range.end - range.start)),
-						media.path);
+					const double fraction =
+						static_cast<double>(at - range.start) / static_cast<double>(range.end - range.start);
+					job.progress(0.95 * (from + (share * fraction)), media.path);
 				}
 			}
 			catch (const AudioFileError& error)
@@ -212,8 +210,8 @@ namespace gnubase::engine
 		// Copy the source on the command thread; only the job reads and measures its audio.
 		const auto addAnalysis = [&](CommandInfo info, auto analyze)
 		{
-			const std::string kind = info.name;
-			const Json resultSchema = info.result;
+			std::string kind = info.name;
+			Json resultSchema = info.result;
 			info.version = 2;
 			info.description +=
 				" Returns a job at once; job.progress reports progress, job.cancel cancels it, "
@@ -223,9 +221,10 @@ namespace gnubase::engine
 			jobSchema["properties"]["result"]["type"] = {"object", "null"};
 			info.result = objectSchema({{"job", jobSchema}}, {"job"});
 			engine.registerCommand(std::move(info),
-				[&model, &jobs, kind, analyze, resultSchema](CommandContext& context)
+				[&model, &jobs, kind = std::move(kind), analyze, resultSchema = std::move(resultSchema)](
+					CommandContext& context)
 				{
-					const Json parameters = context.parameters();
+					const Json& parameters = context.parameters();
 					const Project& project = model.project();
 					const Clip& clip = clipOf(project, parameters);
 					const Range range = rangeOf(project, clip, parameters);
@@ -233,8 +232,8 @@ namespace gnubase::engine
 						silenceSettings(parameters);
 					return Json{{"job",
 						jobs.start(kind,
-							[id = clip.id, media = project.media.at(clip.media), range, parameters, analyze,
-								resultSchema](JobContext& job)
+							[id = clip.id, media = project.media.at(clip.media), range, parameters = parameters,
+								analyze, resultSchema = resultSchema](JobContext& job)
 							{
 								job.progress(0.0, media.path);
 								job.checkCancelled();
@@ -313,7 +312,7 @@ namespace gnubase::engine
 							return job.command("event.applySilenceSections", parameters);
 						})}};
 			});
-		Json applyProperties = {{"events", ids}, {"strip", boolean}, {"regions", boolean}, {"regionName", string},
+		const Json applyProperties = {{"events", ids}, {"strip", boolean}, {"regions", boolean}, {"regionName", string},
 			{"autoNumberStart", integer}, {"fades", number}, {"revision", integer},
 			{"sections", {{"type", "array"}, {"items", sectionsSchema}}}};
 		model.addEdit(engine,

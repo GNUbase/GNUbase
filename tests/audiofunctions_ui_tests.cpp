@@ -411,14 +411,22 @@ TEST_CASE("analysis dialogs stay responsive while their jobs run and cancel them
 		test::HeldJob held(app.engine(), kind);
 		const bool statistics = kind == "clip.statistics";
 		const bool spectrum = kind == "clip.spectrum";
-		const std::string selector = statistics ? "#statistics-dialog"
-			: spectrum                          ? "#spectrum-analyzer-dialog"
-												: "#detect-silence-dialog";
-		run(app,
-			statistics     ? "audio.statistics"
-				: spectrum ? "audio.spectrumAnalyzer"
-						   : "audio.detectSilence",
-			selector, false);
+		std::string selector = "#detect-silence-dialog";
+		std::string command = "audio.detectSilence";
+		std::string closeButton = "#ds-cancel";
+		if (statistics)
+		{
+			selector = "#statistics-dialog";
+			command = "audio.statistics";
+			closeButton = "#st-close";
+		}
+		else if (spectrum)
+		{
+			selector = "#spectrum-analyzer-dialog";
+			command = "audio.spectrumAnalyzer";
+			closeButton = "#sa-close";
+		}
+		run(app, command, selector, false);
 		if (!statistics && !spectrum)
 			click(app, kind == "clip.detectSilence" ? "#ds-analyze" : "#ds-process");
 		REQUIRE(held.waitUntilHeld());
@@ -432,7 +440,7 @@ TEST_CASE("analysis dialogs stay responsive while their jobs run and cancel them
 						   .find("0%") != std::string::npos;
 			}));
 		CHECK(audioEvents(app) == 2);
-		click(app, statistics ? "#st-close" : spectrum ? "#sa-close" : "#ds-cancel");
+		click(app, closeButton);
 		closes(app, selector);
 		CHECK(held.release());
 		REQUIRE(app.waitUntil(
