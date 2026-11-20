@@ -30,6 +30,15 @@ namespace gnubase::audio
 		constexpr std::array<uint32_t, 7> g_blockSizes{32, 64, 128, 256, 512, 1024, 2048};
 		constexpr uint32_t g_maxBlockSize = 8192;
 
+		// The block size a device was opened at and the server's buffer size that another client set over it, which
+		// made the device ask for a reset, as one value (#433).
+		using Yielded = std::atomic<uint64_t>;
+
+		uint64_t yieldKey(uint32_t blockSize, uint32_t bufferSize)
+		{
+			return (static_cast<uint64_t>(blockSize) << 32U) | bufferSize;
+		}
+
 		// A connection to the server as client "gnubase" (or "gnubase-2" and so on, if that name is taken).
 		class Client
 		{
@@ -87,8 +96,10 @@ namespace gnubase::audio
 		class JackDevice : public Device
 		{
 		public:
-			JackDevice(const JackLibrary& jack, std::unique_ptr<Client> client, DeviceInfo info, uint32_t blockSize)
-				: m_jack(jack), m_client(std::move(client)), m_info(std::move(info))
+			JackDevice(const JackLibrary& jack, std::unique_ptr<Client> client, DeviceInfo info, uint32_t blockSize,
+				std::shared_ptr<Yielded> yielded)
+				: m_jack(jack), m_client(std::move(client)), m_info(std::move(info)), m_blockSize(blockSize),
+				  m_yielded(std::move(yielded))
 			{
 				jack_client_t* const handle = m_client->get();
 				m_format.sampleRate = m_info.sampleRates.front();
@@ -129,9 +140,12 @@ namespace gnubase::audio
 				jack.setPortRegistrationCallback(handle, &JackDevice::onPortRegistration, this);
 				jack.onInfoShutdown(handle, &JackDevice::onShutdown, this);
 
-				// The server's buffer size is everybody's: GNUbase asks for its block size only if it was given one.
+				// The server's buffer size is everybody's: GNUbase asks for its block size only if it was given one,
+				// and not again after another client set another size over it, which would only make that client ask
+				// again, and so on (#433). It processes in blocks of at most its block size at any buffer size.
 				m_requestedBufferSize = m_previousBufferSize;
-				if (blockSize != 0 && blockSize != m_previousBufferSize)
+				if (blockSize != 0 && blockSize != m_previousBufferSize &&
+					m_yielded->load() != yieldKey(blockSize, m_previousBufferSize))
 				{
 					m_requestedBufferSize = blockSize;
 					if (jack.setBufferSize(handle, blockSize) != 0)
@@ -217,7 +231,9 @@ namespace gnubase::audio
 			// Undoes the device's buffer size request, unless another client has set a size since (#371). jackd gets
 			// the size it had back. PipeWire's JACK layer may have turned the request into the graph's
 			// clock.force-quantum, which would outlast the client, so a size of 0 clears it instead (#389); it may not
-			// have followed the request yet, and an inactive client sees the size it saw last.
+			// have followed the request yet, and an inactive client sees the size it saw last. PipeWire's layer sends
+			// that request without waiting, and closing the client stops its thread before it may have gone out:
+			// registering a port and unregistering it waits for the daemon, which has the request then (#540).
 			void giveBufferSizeBack() const
 			{
 				if (m_requestedBufferSize == m_previousBufferSize)
@@ -225,9 +241,17 @@ namespace gnubase::audio
 				jack_client_t* const handle = m_client->get();
 				const uint32_t size = m_jack.getBufferSize(handle);
 				if (m_jack.pipeWire && (size == m_requestedBufferSize || size == m_previousBufferSize))
+				{
 					m_jack.setBufferSize(handle, 0);
+					if (jack_port_t* port =
+							m_jack.portRegister(handle, "sync", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
+						port != nullptr)
+						m_jack.portUnregister(handle, port);
+				}
 				else if (!m_jack.pipeWire && size == m_requestedBufferSize)
+				{
 					m_jack.setBufferSize(handle, m_previousBufferSize);
+				}
 			}
 
 			// PipeWire hides the ports of a node while it is suspended, as for a moment when the graph follows the
@@ -360,7 +384,11 @@ namespace gnubase::audio
 				if (size != 0 && size != m_openedBufferSize)
 				{
 					if (size != m_requestedBufferSize)
+					{
+						if (m_blockSize != 0 && m_blockSize != size)
+							m_yielded->store(yieldKey(m_blockSize, size));
 						return "the buffer size changed";
+					}
 					// The device's own request took effect late (PipeWire), and the latency may follow the buffer.
 					m_openedBufferSize = size;
 					m_openedLatency = latency();
@@ -383,6 +411,8 @@ namespace gnubase::audio
 			DeviceFormat m_format;
 			std::vector<jack_port_t*> m_inputPorts;
 			std::vector<jack_port_t*> m_outputPorts;
+			uint32_t m_blockSize = 0;           // what the device was opened at; 0: the server's
+			std::shared_ptr<Yielded> m_yielded; // the backend's: across the reopen a reset causes
 			uint32_t m_previousBufferSize = 0;  // the server's when the device opened
 			uint32_t m_requestedBufferSize = 0; // what the device asked the server for
 			uint32_t m_openedBufferSize = 0;    // the server's once it had
@@ -436,11 +466,13 @@ namespace gnubase::audio
 					throw DeviceError("the JACK server runs at " +
 						std::to_string(std::lround(info.sampleRates.front())) + " Hz, not at " +
 						std::to_string(std::lround(config.sampleRate)) + " Hz");
-				return std::make_unique<JackDevice>(jack, std::move(client), std::move(info), config.blockSize);
+				return std::make_unique<JackDevice>(
+					jack, std::move(client), std::move(info), config.blockSize, m_yielded);
 			}
 
 		private:
 			std::string m_library;
+			std::shared_ptr<Yielded> m_yielded = std::make_shared<Yielded>(0);
 		};
 	}
 

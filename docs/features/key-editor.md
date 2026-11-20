@@ -29,9 +29,12 @@ saved, and a new project closes the editors.
 | `note.voicing` | Fits notes to a chord type, or inverts them or drops notes | pp. 1215-1217 |
 | `note.move` | Moves notes into another MIDI part, by `ticks` on the project's timeline and by `semitones` in pitch, keeping their ids and every other field, with the selected controller events (`controllers`) shifted in time: what a drag between in-place editors sends ([in-place-editor.md](in-place-editor.md)) | pp. 1188, 1261 |
 
-- **Step input.** Move Insert Mode first moves the part's notes from the cursor on by a step; without Keep Existing
-  Notes the notes that start within the step are replaced. The cursor must be within the active part. The inserted
-  notes become the selection. One undo step.
+- **Step input.** Move Insert Mode first moves the part's notes from the cursor on by a step, or by the longest
+  inserted note where that is longer, so that they don't overlap; without Keep Existing Notes the notes that start
+  within the step are replaced. The cursor must be within the active part, and inserted notes end at its end at the
+  latest. They take the MIDI channel of the part's last note before the cursor that stays, else of its first note
+  after it; in an empty part channel 1, as drawn notes. The inserted notes become the selection. One undo step, "Note
+  input", as for MIDI input.
 - **MIDI input.** The first selected note (by time, then pitch) takes the lowest played note's pitch, velocity and
   release velocity, as far as Record Pitch, Record Note On Velocity and Record Note Off Velocity say; the other notes
   of a chord are added with its position and length. With Keep Existing Notes all played notes are added and the
@@ -120,6 +123,10 @@ Editor panel going (its tab hidden, the panel opened in a window of its own, or 
 in-place editor closing, or the switch to the drum editor, which builds a key editor of its own. A press on a key
 selects and deselects no notes.
 
+A press in the note display gives it the keyboard focus. Then Up and Down transpose the selected notes by a semitone,
+with Shift by an octave, and Delete and Backspace delete them (p. 1214), before the key commands hear the keys: in the
+lower zone, Delete deletes the notes, not the project window's selected events.
+
 | Tool | Gesture | Reference |
 |---|---|---|
 | Object Selection | A click selects a note, Ctrl (Cmd) or Shift and a click adds or removes it, a click in the empty grid deselects (with step input on, it also moves the step input cursor); a drag moves the selected notes in time and pitch, at a note's ends it resizes them; a double click inserts a note of the length quantize's length, on a note deletes it, or with Double-Click Opens Note Expression Editor opens the expression editor ([note-expression.md](note-expression.md)) | pp. 1211-1214, 1220, 1308 |
@@ -153,9 +160,10 @@ selects and deselects no notes.
   has answered them all, the view has the selection shown, unless the last one was refused, as when another client had
   just deleted the note: then the view's selection shows again (#1897).
 - **Info line** (p. 1199). Start, end and length in bars and beats, the pitch as a name such as C3 (typing a number
-  works too), velocities 0-127, the channel 1-16 and the Articulations, the attributes of the track's articulation
-  map that the note has, names separated by commas ([articulation-maps.md](articulation-maps.md)). A value typed
-  moves every selected note by as much as the first one's changes; the channel and the attributes are set for all.
+  works too), velocities 0-127, the channel 1-16 and the Articulations, the attributes of the track's articulation map
+  that the note has, names separated by commas ([articulation-maps.md](articulation-maps.md)). A value typed moves every
+  selected note by as much as the first one's changes; a start before a note's part's start moves them only as far as
+  that. The channel and the attributes are set for all.
 - **Chord Editing** (pp. 1215-1218) is in the editor window's inspector, under Global Tracks: the chord the selected
   notes make ("No Chord" for none), and buttons that send `note.voicing` for each part's selected notes.
 - **Toolbox** (p. 65). A right click in the note display opens `#key-editor-toolbox`, the toolbar's tools at the
@@ -172,21 +180,23 @@ Live MIDI keyboard input into `editor.input` (it waits for the MIDI recording in
 the step input cursor and lengthening a held chord; the Mute tool on notes (notes have no mute yet; it mutes the
 Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note
 display (it draws on the controller lanes); the selection rectangle, the trim tool's drag across several notes and the
-draw tool's modifiers for velocity, pitch and position; key commands for the transpose palette and deleting; the nudge
-buttons, Solo Editor, Record in Editor, Acoustic Feedback, pitch visibility, the Scale Assistant, Indicate
-Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom and scrolling; the key at the
-mouse's pitch lit while the mouse moves in the note display (p. 1204); drum map names in the key editor and articulation
-names; Add to Chord Track, Match with Chord Track, Create Chord Events and the chord insert tools; quantizing from the
-toolbar (#132) and the Length section's functions (#133); the key editor's context menu.
+draw tool's modifiers for velocity, pitch and position; transposing and deleting as key commands that the Key Commands
+dialog can bind to other keys; the nudge buttons, Solo Editor, Record in Editor, Acoustic Feedback, pitch visibility,
+the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom
+and scrolling; the key at the mouse's pitch lit while the mouse moves in the note display (p. 1204); drum map names in
+the key editor and articulation names; Add to Chord Track, Match with Chord Track, Create Chord Events and the chord
+insert tools; quantizing from the toolbar (#132) and the Length section's functions (#133); the key editor's context
+menu.
 
 ## Checks
 
 - `tests/keyeditor_tests.cpp`: the selection as view state of the editable parts, refused for notes that don't exist
   or parts that aren't editable, leaving with removed notes and with closing; step input of notes and chords with
   the length quantize, the quantize grid's step, the insert velocity, a rest by moving the cursor, one undo step,
-  replacing and keeping existing notes, Move Insert Mode and a cursor outside the part; MIDI input with and without
-  Record Pitch, a chord, Keep Existing Notes and no selection; chord recognition, fitting and voicings; `note.chord`
-  and `note.voicing` with undo and their errors.
+  replacing and keeping existing notes, Move Insert Mode (also by a note longer than a step) and a cursor outside the
+  part, the channel of a note that stays and notes ending at the part's end; MIDI input with and without Record Pitch,
+  a chord, Keep Existing Notes and no selection; the undo step's name; chord recognition, fitting and voicings;
+  `note.chord` and `note.voicing` with undo and their errors.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
   keys lit for selected notes; the piano keyboard at 1024x600, at dp ratios of 1.5 and 1: white keys of equal height
   across the keyboard, black keys narrower on their rows, the mouse on the right part of a white key beside a black key
@@ -205,13 +215,14 @@ toolbar (#132) and the Length section's functions (#133); the key editor's conte
   released there ending without its effect, its note keeping the length the mouse gives it while the display is shown
   again during it; a move's notes at the time under the mouse as the range changes during it; the erase, trim (and with
   Alt), split and glue tools, and the split tool splitting the selected notes of two parts at one position in one undo
-  step; the transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and
-  MIDI input selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the
-  setting on and off, with and without a modifier key, choosing tools; drags on the keyboard's left part zooming the
-  rows in and out between the limits, from the height a style sheet gives them, also after a style change at a zoom and
-  back at 1, the keyboard as high as the rows of any height, nothing zoomed or scrolled without a row height to scale
-  and no height left on the rows for a later style, the zoom snapping to 1 near it, and scrolling the note display,
-  while a click there zooms nothing, and a click and a drag there leaving a note an earlier press selected and the
-  history alone; the lower zone's key editor at its default size giving the note display more room than the controller
-  lanes, at dp ratios 1 and 2, and the lanes whole in a lower zone of 400 dp; the editor window's lane keeping its 64 dp
-  and the note display its 40%, and the in-place editor's lanes keeping their height with its toolbar shown.
+  step; the transpose palette, Up and Down (with Shift), Delete and Backspace, and typing a pitch and a start before the
+  part's on the info line; step input with its cursor, a click moving it, and MIDI input selecting the next note; the
+  Chord Editing section naming and changing a chord; the toolbox with the setting on and off, with and without a
+  modifier key, choosing tools; drags on the keyboard's left part zooming the rows in and out between the limits, from
+  the height a style sheet gives them, also after a style change at a zoom and back at 1, the keyboard as high as the
+  rows of any height, nothing zoomed or scrolled without a row height to scale and no height left on the rows for a
+  later style, the zoom snapping to 1 near it, and scrolling the note display, while a click there zooms nothing, and a
+  click and a drag there leaving a note an earlier press selected and the history alone; the lower zone's key editor at
+  its default size giving the note display more room than the controller lanes, at dp ratios 1 and 2, and the lanes
+  whole in a lower zone of 400 dp; the editor window's lane keeping its 64 dp and the note display its 40%, and the
+  in-place editor's lanes keeping their height with its toolbar shown.

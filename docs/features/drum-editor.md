@@ -55,18 +55,17 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   and the sequencer makes only `builtin:` ones); a hosted MIDI effect there, once the slots take one, would play events
   of its own that its format adapter makes without the flag: behind one, an auditioned sound would go through the
   I-notes, and the recorder would record those events.
-- **Solo Instrument** (p. 1223): while a drum editor is open with `soloInstrument` on, of the tracks with a map that
-  its selected notes are on only the notes of the selected notes' sounds play; with no note selected every sound
-  plays. The editor views give `Project::soloNotes` (`ProjectModel::setSoloNotesSource`), the selected notes as
-  `editor.get` has them, which every render snapshot takes and turns into the soloed pitches of each track with a map,
-  so a selected note moved to another sound solos that one, a map assigned to the track afterwards solos its selected
-  notes' sounds, and a selected note whose sound Show Drum Sounds in Use by Instrument hides after a change of the pads
-  or the map no longer solos it. The notes it silences select
-  no sound slot of an articulation map either. It changes what plays, not the project: no undo step, not saved, and
-  the project stays as saved, though `project.revision` advances. Playback only; what is played live still plays
-  every sound. Render in place, freeze and export render what plays, so while it is on they take only the soloed
-  sounds, and a frozen track keeps them after it is off: as with the mixer's solo, what is heard is what is rendered,
-  so switch it off before rendering the whole kit.
+- **Solo Instrument** (p. 1223): while a drum editor is open with `soloInstrument` on, of the tracks with a map that its
+  selected notes are on only the notes of the selected notes' sounds play; with no note selected every sound plays. The
+  editor views give `Project::soloNotes` (`ProjectModel::setSoloNotesSource`), the selected notes as `editor.get` has
+  them, which every render snapshot takes and turns into the soloed pitches of each track with a map, so a selected note
+  moved to another sound solos that one, a map assigned to the track afterwards solos its selected notes' sounds, and a
+  selected note whose sound Show Drum Sounds in Use by Instrument hides after a change of the pads or the map no longer
+  solos it. The notes it silences select no sound slot of an articulation map either. It changes what plays, not the
+  project: no undo step, not saved, and the project stays as saved, though `project.revision` advances. Playback only;
+  what is played live still plays every sound. Render in place, freeze and export render what plays, so while it is on
+  they take only the soloed sounds, and a frozen track keeps them after it is off: as with the mixer's solo, what is
+  heard is what is rendered, so switch it off before rendering the whole kit.
 - **Loading**: a note's pitch must be 0-127 and its channel 0-15 in the GNUbase entry of a project (as the DAWproject
   import clamps them), since the maps and the editors take the pitch as an index; an entry that has others is
   damaged, and the project loads from `project.xml`.
