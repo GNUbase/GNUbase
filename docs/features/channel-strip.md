@@ -30,7 +30,11 @@ equalizer and the strip's dynamics, and their controls in the mixer. The fader a
   as it plays. It applies each one at its sample on the audio thread, splitting the block there, without
   allocating. The pre gain glides along the events' ramps frame by frame, like the fader, and over 5 ms to a new
   static value; the phase glides over 20 ms through zero; the equalizers glide their bands, and a band that is off
-  takes its settings at once, so that it comes in at them; dynamics start afresh when they come on. Sections
+  takes its settings at once, so that it comes in at them, and a band's switch, type or slope sent again unchanged
+  starts no morph, so resending every band glides as sending only the one that changed (`dsp::Equalizer` ignores a
+  value a band already has); dynamics start afresh when they come on, and the gate and the compressor crossfade with
+  their input over 5 ms when they switch on or off, so neither the compressor's reduction and makeup nor a closed
+  gate jumps in or out. Sections
   that are off cost nothing: an equalizer runs while a band is on and 100 ms after the last one went off, to glide
   out, and the output of a strip with everything off is bit-identical to its input. The
   limiter's look-ahead counts in the channel node's latency while it is on or a lane of its switch plays
@@ -40,7 +44,8 @@ equalizer and the strip's dynamics, and their controls in the mixer. The fader a
   stays and the switch doesn't click. A bypassed limiter only delays the signal, but its detector and gain keep
   running, so when the lane switches it on during a loud passage its gain is ready from the first frame and nothing
   is hard-clipped at the threshold; when the lane switches it off, its gain stops being applied from that sample on,
-  so the level steps up by the reduction it was doing.
+  so the level steps up by the reduction it was doing. A limiter that `channel.set` turns on changes the channel's
+  latency, and the new graph's delay compensation starts it with its look-ahead (1 ms) of silence.
 - **Parameters and automation** (#658): every setting is a parameter with a target of type `strip` and an id
   (`StripParameter`, `src/engine/document/stripparameters.h`), in `parameter.list`, `parameter.get` and
   `parameter.set` with its range, unit and options, and a target of automation lanes ([automation.md](automation.md),
@@ -79,7 +84,7 @@ settings window shows them for one channel ([channel-settings.md](channel-settin
   everything off, and one whose EQ was on and went off, passes its audio bit-exactly; measured with `audio.analyze`,
   the pre gain, the phase (the negated input), the low and high cuts at their slopes, EQ bells, shelves and cuts and
   the EQ bypass, the gate's range, the compressor's reduction and makeup and the limiter's threshold change the output
-  as they should; an EQ band or cut turned on from all-off glides in, and one turned on with new settings, or whose
+  as they should; the gate and the compressor fade in and out over 5 ms when they switch; an EQ band or cut turned on from all-off glides in, and one turned on with new settings, or whose
   settings changed while it was off, comes in at them; the bands' Q, band 1 as a low cut, and the attack and release
   times of the dynamics; the pre section drives a plugin slot and the EQ lifts what comes out of it; the limiter's
   latency, and that the limiter delays its channel only while that latency counts its look-ahead.
@@ -94,7 +99,7 @@ settings window shows them for one channel ([channel-settings.md](channel-settin
   loud samples with its gain instead of clamping them, and once it switches it off, plays the delayed input again bit
   for bit; section lanes check their ranges and targets, round-trip through the project file and are copied with the
   track. `tests/effects_tests.cpp` checks the bypassed limiter core itself: it only delays, and its gain is ready
-  when the bypass ends. `tests/rtcheck_tests.cpp` plays section automation, the limiter's switch included, under the
+  when the bypass ends; and that an EQ band given the values it has glides on bit for bit as without them. `tests/rtcheck_tests.cpp` plays section automation, the limiter's switch included, under the
   RT checker.
 - `tests/mixerwindow_tests.cpp`: the setup pane shows the sections, which MIDI channels don't have; the toggles,
   knobs and the panner send `channel.set`, and the controls show values set from the engine.
