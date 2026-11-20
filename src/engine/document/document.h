@@ -1680,6 +1680,10 @@ namespace gnubase::engine
 	// a position plus a length can't overflow (#1906).
 	int64_t longestPosition(const Project& project, time::TimeBase base);
 
+	// Cuts event, part and note positions and lengths and media lengths past longestPosition there: what both project
+	// loaders do, as a file edited elsewhere can hold any (#1906).
+	void cutAtLongest(Project& project);
+
 	// Makes the first top-level output bus the main mix if no bus is.
 	void keepMainMix(Project& project);
 

@@ -3027,8 +3027,9 @@ namespace gnubase::engine
 			const time::Position newPosition = parameters.contains("position")
 				? position(project, track, parameters.at("position"), "position")
 				: part.position;
-			const int64_t length =
-				withinLongest(project, track.timeBase, parameters.value("length", part.length), "length");
+			const int64_t length = parameters.contains("length")
+				? withinLongest(project, track.timeBase, parameters.at("length").get<int64_t>(), "length")
+				: part.length;
 			require(length > 0, "length must be positive");
 			if (follow && newPosition != part.position)
 				followEvent(project, part.track, part.position, partEnd(part), newPosition, context);
@@ -4699,11 +4700,10 @@ namespace gnubase::engine
 		add(engine,
 			{"media.add", 1,
 				"Adds an audio file. Its sample rate, channel count and length in sample frames (at most 2^48) are "
-				"read "
-				"from the file, or taken as given, for a file that is still being recorded. With copy, a file from "
-				"outside the "
-				"project folder is also copied into its media folder (see project.location); the project must have "
-				"been saved. The copy runs as a job, returned as job (null without one), with the result that "
+				"read from the file, or taken as given, for a file that is still being recorded. With copy, a file "
+				"from outside the project folder is also copied into its media folder (see project.location); the "
+				"project must have been saved. The copy runs as a job, returned as job (null without one), with the "
+				"result that "
 				"media.prepareArchive's job has: the media file is added at once where it is, and when the copy is "
 				"done it is pointed at the copy as an undo step of its own.",
 				objectSchema({{"path", stringSchema}, {"sampleRate", numberSchema}, {"channels", integerSchema},
@@ -4809,7 +4809,8 @@ namespace gnubase::engine
 				"(project.set rootKey); globalTranspose follow (the default) or independent says whether the project "
 				"root key and the transpose track transpose it (transpose.add). transpose is its own Transpose in "
 				"semitones, -24 to 24, which adds to global transposition as a MIDI part's does, also while it is "
-				"independent (#1555). Its audio file stays as it is.",
+				"independent (#1555). Its audio file stays as it is. position is at most the longest project's end "
+				"(see audioEvent.add).",
 				objectSchema(
 					{{"event", idSchema}, {"clip", idSchema}, {"position", integerSchema}, {"offset", integerSchema},
 						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema},
@@ -4852,7 +4853,8 @@ namespace gnubase::engine
 			addMidiPart);
 		add(engine,
 			{"midiPart.set", 1,
-				"Changes a MIDI part's name, position or length, or how its notes play: transpose (semitones) and "
+				"Changes a MIDI part's name, position or length (each at most the longest project's end, see "
+				"audioEvent.add), or how its notes play: transpose (semitones) and "
 				"velocity (added to MIDI 1.0 velocities), each -127 to 127. Velocity adds to the track's MIDI "
 				"modifiers (channel.set modifiers), also while they are bypassed; transpose adds to what each note "
 				"plays with, folded into the octave range together with global transposition while the part follows "
@@ -4884,8 +4886,9 @@ namespace gnubase::engine
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
-				"Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity "
-				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability "
+				"Adds notes to a MIDI part: position from the part's start and length in ticks, each at most the "
+				"longest project's end (see audioEvent.add), pitch 0-127, velocity 0-1, release (note-off) velocity "
+				"0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability "
 				"0-1, the chance that the note plays (default 1), and velocity variance -1 to 1, the share by which "
 				"playback raises (positive) or lowers (negative) its velocity at most (default 0). articulations are "
 				"the attributes of the track's articulation map (articulationMap.add) that the note has, by name, and "
@@ -5044,7 +5047,8 @@ namespace gnubase::engine
 		add(engine,
 			{"automationPoint.add", 1,
 				"Adds points to an automation lane: position in the track's time base (ticks on musical tracks, so "
-				"automation follows tempo changes; samples on linear ones, so it keeps its time), value in the "
+				"automation follows tempo changes; samples on linear ones, so it keeps its time) and at most the "
+				"longest project's end (see audioEvent.add), value in the "
 				"target's unit, shape of the curve to the next point (step, linear or curve; "
 				"default linear) and for curves the bend, curve, from -1 to 1 (above 0 the value moves fast at first). "
 				"Mute and stepped parameters (parameter.list) have step curves: their points are steps with whole "
@@ -5061,8 +5065,8 @@ namespace gnubase::engine
 			{"id"});
 		add(engine,
 			{"automationPoint.set", 1,
-				"Changes points of an automation lane: their position, value, shape, curve or terminator (see "
-				"automationPoint.add).",
+				"Changes points of an automation lane: their position, at most the longest project's end (see "
+				"audioEvent.add), value, shape, curve or terminator (see automationPoint.add).",
 				objectSchema({{"lane", idSchema}, {"points", arraySchema(change)}}, {"lane", "points"}), pointsResult,
 				false},
 			setAutomationPoints);

@@ -1075,6 +1075,69 @@ TEST_CASE("a VCA channel from another application gets no pan, sends or routing"
 	CHECK(run(client, "project.get").at("channels") == project.at("channels"));
 }
 
+TEST_CASE("a DAWproject from another application is cut at the longest project", "[integration]")
+{
+	// Without GNUbase's entry the importer reads project.xml, which can hold any time and duration (#1906): an audio
+	// clip of a missing file and a note clip, both 10^11 beats in, far past the longest project's 2^48 samples.
+	const std::string xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<Project version="1.0">
+  <Application name="Test" version="1"/>
+  <Transport><Tempo unit="bpm" value="120" id="tempo"/></Transport>
+  <Structure>
+    <Track id="audio" name="Audio" contentType="audio">
+      <Channel id="audioChannel" role="regular" audioChannels="1" destination="master"/>
+    </Track>
+    <Track id="keys" name="Keys" contentType="notes">
+      <Channel id="keysChannel" role="regular" audioChannels="2" destination="master"/>
+    </Track>
+    <Track id="main" name="Main" contentType="audio notes">
+      <Channel id="master" role="master" audioChannels="2"/>
+    </Track>
+  </Structure>
+  <Arrangement id="arrangement">
+    <Lanes timeUnit="beats" id="lanes">
+      <Lanes track="audio" id="audioLanes">
+        <Clips id="audioClips">
+          <Clip time="100000000000" duration="100000000000" playStart="0" contentTimeUnit="seconds">
+            <Audio channels="1" sampleRate="48000" duration="100000000000" id="longAudio">
+              <File path="missing.wav" external="true"/>
+            </Audio>
+          </Clip>
+        </Clips>
+      </Lanes>
+      <Lanes track="keys" id="keysLanes">
+        <Clips id="keysClips">
+          <Clip time="100000000000" duration="100000000000" playStart="0" name="Long">
+            <Notes id="notes">
+              <Note time="100000000000" duration="100000000000" key="60" vel="0.5" channel="0"/>
+            </Notes>
+          </Clip>
+        </Clips>
+      </Lanes>
+    </Lanes>
+  </Arrangement>
+</Project>
+)";
+	const test::TempDir dir;
+	const std::string file = utf8(dir.path() / "long.dawproject");
+	writeZip(file, {{"project.xml", xml}});
+	const Project project = loadDawProject(file, utf8(dir.path() / "media"), false);
+	const int64_t longestTicks = longestProjectTicks(project);
+	REQUIRE(project.media.size() == 1);
+	CHECK(project.media.begin()->second.length == gnubase::time::g_maxPosition);
+	REQUIRE(project.audioEvents.size() == 1);
+	const AudioEvent& event = project.audioEvents.begin()->second;
+	CHECK(event.position.value == longestTicks);
+	CHECK(event.length == gnubase::time::g_maxPosition);
+	REQUIRE(project.midiParts.size() == 1);
+	const MidiPart& part = project.midiParts.begin()->second;
+	CHECK(part.position.value == longestTicks);
+	CHECK(part.length == longestTicks);
+	REQUIRE(part.notes.size() == 1);
+	CHECK(part.notes.begin()->second.position == longestTicks);
+	CHECK(part.notes.begin()->second.length == longestTicks);
+}
+
 TEST_CASE("a project.xml changed by another application wins over GNUbase's entry", "[integration]")
 {
 	const test::TempDir dir;

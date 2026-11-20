@@ -124,7 +124,8 @@ namespace gnubase::engine
 			std::optional<Json> m_state;
 		};
 
-		// A position parameter: ticks or samples in the track's time base, or "cursor".
+		// A position parameter: ticks or samples in the track's time base, or "cursor". At most the longest project's
+		// end, so that locating to it can't fail (#686).
 		time::Position position(const Project& project, const Track& track, const Json& value, const std::string& name,
 			TransportState& transport)
 		{
@@ -135,6 +136,9 @@ namespace gnubase::engine
 			}
 			const auto position = value.get<int64_t>();
 			require(position >= 0, name + " must not be negative");
+			const int64_t longest = longestPosition(project, track.timeBase);
+			require(
+				position <= longest, name + " must be at most " + std::to_string(longest) + ", the longest project");
 			return {track.timeBase, position};
 		}
 
@@ -312,10 +316,16 @@ namespace gnubase::engine
 			if (parameters.contains("position"))
 			{
 				const time::Position start = position(project, track, parameters.at("position"), "position", transport);
-				marker.end.value += start.value - marker.position.value; // a cycle marker moves as a whole
+				const int64_t length = marker.end.value - marker.position.value;
 				marker.position = start;
 				if (!parameters.contains("end"))
+				{
+					// A cycle marker moves as a whole, its end within the longest project too (#686).
+					require(length <= longestPosition(project, track.timeBase) - start.value,
+						"the marker's end would lie past the end of the longest project");
+					marker.end.value = start.value + length;
 					keepMinimumLength(project, marker); // in ticks, its length in samples may round down
+				}
 			}
 			if (parameters.contains("end"))
 			{
@@ -786,8 +796,9 @@ namespace gnubase::engine
 				"samples; project.get reports each track's timeBase) or \"cursor\": to give numbers without knowing "
 				"the setting, add the marker track first with track.add timeBase and pass it as track. A position "
 				"marker defaults to the cursor, a cycle marker to the locators; "
-				"a cycle marker ends at least one sample after its position. "
-				"Position and cycle markers are numbered separately on each track; a new marker gets the first free "
+				"a cycle marker ends at least one sample after its position. Positions and ends are at most the "
+				"longest project's end (see audioEvent.add). Position and cycle markers are numbered separately on "
+				"each track; a new marker gets the first free "
 				"number unless one is given.",
 				objectSchema(
 					{{"type", typeSchema}, {"track", idSchema}, {"position", positionSchema}, {"end", positionSchema},
@@ -839,7 +850,8 @@ namespace gnubase::engine
 		add(engine,
 			{"marker.set", 1,
 				"Changes a marker: moves it (position, in the track's time base or \"cursor\"; a cycle marker keeps "
-				"its length unless end is given), renames it, changes its color or number, or moves it to another "
+				"its length unless end is given, at most the longest project's end as in marker.add), renames it, "
+				"changes its color or number, or moves it to another "
 				"marker track, where it takes the first free number if its own is taken.",
 				objectSchema(
 					{{"marker", idSchema}, {"track", idSchema}, {"position", positionSchema}, {"end", positionSchema},

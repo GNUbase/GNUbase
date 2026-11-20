@@ -725,6 +725,33 @@ TEST_CASE("event, part and note positions and lengths and media lengths end at t
 		ContainsSubstring("ticks " + pastTicks));
 	CHECK_THAT(reject(client, "note.move", with(move, {{"ticks", longestTicks}})),
 		ContainsSubstring("past the end of the longest project"));
+
+	// An end may lie as far again past it: the part at the longest project's end moves back a tick.
+	run(client, "event.move", {{"events", {part}}, {"ticks", -1}});
+	const auto midiPart = [&client](ObjectId id) { return withId(run(client, "project.get").at("midiParts"), id); };
+	CHECK(midiPart(part).at("position") == longestTicks - 1);
+	CHECK(midiPart(part).at("length") == longestTicks);
+
+	// A resize keeps a part's length within it, so that midiPart.set can still change the part.
+	const ObjectId shortPart = run(client, "midiPart.add", {{"track", instrument}, {"position", 0}, {"length", 1}})
+								   .at("part")
+								   .at("id")
+								   .get<ObjectId>();
+	run(client, "event.resize", {{"events", {shortPart}}, {"edge", "end"}, {"ticks", longestTicks}});
+	CHECK(midiPart(shortPart).at("length") == longestTicks);
+	run(client, "event.resize", {{"events", {part}}, {"edge", "start"}, {"ticks", -longestTicks}});
+	CHECK(midiPart(part).at("length") == longestTicks);
+	run(client, "midiPart.set", {{"part", shortPart}, {"name", "Long"}});
+	CHECK(midiPart(shortPart).at("name") == "Long");
+
+	const ObjectId lane = run(client, "automationLane.add", {{"track", linear}, {"target", {{"type", "volume"}}}})
+							  .at("lane")
+							  .at("id")
+							  .get<ObjectId>();
+	CHECK_THAT(reject(client, "automationPoint.add",
+				   {{"lane", lane}, {"points", {{{"position", g_maxPosition + 1}, {"value", 0.0}}}}}),
+		ContainsSubstring("points[0].position must be at most " + std::to_string(g_maxPosition)));
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", g_maxPosition}, {"value", 0.0}}}}});
 }
 
 TEST_CASE("loading a project cuts event, part and note positions and lengths at the longest project", "[unit]")

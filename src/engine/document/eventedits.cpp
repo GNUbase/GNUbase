@@ -990,6 +990,11 @@ namespace gnubase::engine
 			{
 				time::Position to =
 					shifted(project, start ? item.position() : endOf(project, item), shift, false, !start);
+				// The length stays within the longest project too: the other edge at most that far away (#1906).
+				const int64_t longest = longestPosition(project, to.base);
+				const time::Position other = rebased(project, start ? endOf(project, item) : item.position(), to.base);
+				to.value =
+					start ? std::max(to.value, other.value - longest) : std::min(to.value, other.value + longest);
 				if (zero && item.audio != nullptr)
 					to = {time::TimeBase::Linear, zeroCrossing(project, *item.audio, samples(project, to))};
 				if (start)

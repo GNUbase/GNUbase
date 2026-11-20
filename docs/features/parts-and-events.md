@@ -34,11 +34,12 @@ nothing if it fails.
 - **The longest project.** Positions and lengths end at the longest project's end, `longestPosition` in
   `src/engine/document/document.h`: `time::g_maxPosition` (2^48) samples, or in ticks as long as that lasts at the
   project's tempo (`longestProjectTicks`). `audioEvent.add` and `.set`, `audioPart.add`, `midiPart.add` and `.set`,
-  `note.add`, `.set` and `.move`, automation points and the lengths of `media.add` refuse more, and so does a move or
-  copy that would take an event's start past it, or its end as far again; loading a project cuts event, part and note
-  positions and lengths and media
-  lengths there. A position plus a length then can't overflow, and an event of a clip at a far lower sample rate than
-  the project's ends there when it plays (#1906).
+  `note.add`, `.set` and `.move`, automation points, markers and the lengths of `media.add` refuse more, and so does a
+  move or copy that would take an event's start past it, or its end as far again; a cycle marker can't move its end
+  past it either (#686). A resize keeps a length within it. Both loaders, the native project's and the DAWproject
+  import's, cut event, part and note positions and lengths and media lengths there (`cutAtLongest`). A position plus
+  a length then can't overflow, and an event of a clip at a far lower sample rate than the project's ends there when
+  it plays (#1906).
 - **Resizing** stops at the clip's start and end and keeps events at least a sample frame (a tick for parts) long.
   Normal sizing reveals or hides content: a part's start moved later moves its notes and controllers back, so they keep
   their time. Sizing moves contents moves the content with the edge: an audio event's offset, a part's notes. A part's
@@ -167,7 +168,8 @@ that the arrow keys select into view.
   `event.previewResize` agreeing with `event.resize` at the clip's limits, in both modes, for parts and audio parts,
   and changing, announcing and recording nothing.
 - `tests/document_tests.cpp`: positions and lengths at and past the longest project, refused by the commands and cut
-  by loading, and the playlist of a clip at a far lower rate than the project's (#1906).
+  by loading, a native project and a DAWproject from elsewhere, resizes kept within it, markers refused past it on
+  linear and musical marker tracks (#686), and the playlist of a clip at a far lower rate than the project's (#1906).
 - `tests/eventediting_tests.cpp` (fake window system, real engine): selecting with clicks and Ctrl, moving and copying
   with drags, shared copies with Alt and Shift, onto another track; drags restricted with Ctrl, across and down, moving
   and copying, and Ctrl and a click still deselecting; Ctrl and a click adding to the selection and taking out at an

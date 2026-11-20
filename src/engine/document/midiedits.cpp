@@ -530,7 +530,8 @@ namespace gnubase::engine
 		add(engine,
 			{"note.set", 1,
 				"Changes notes of a MIDI part: each change names a note by id and gives what changes, position and "
-				"length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1, MIDI channel 0-15, play probability "
+				"length in ticks (each at most the longest project's end, see audioEvent.add), pitch 0-127, velocity "
+				"0-1, release velocity 0-1, MIDI channel 0-15, play probability "
 				"0-1, velocity variance -1 to 1, articulations, the attributes it has, mutedArticulations, those of "
 				"them that are muted (an attribute that goes is no longer muted), or expressions, which replace "
 				"its expression points (see note.add). The points move with the note's start, but for a start that "
@@ -596,7 +597,8 @@ namespace gnubase::engine
 			{"note.move", 1,
 				"Moves notes of a MIDI part to another part, as dragging them from one in-place editor to another "
 				"does (reference manual p. 1261): each note keeps its id and every field but its position and pitch. "
-				"ticks moves the notes on the project's timeline and semitones in pitch; the command converts the "
+				"ticks moves the notes on the project's timeline, to at most the longest project's end (see "
+				"audioEvent.add), and semitones in pitch; the command converts the "
 				"timeline shift to the target part's own positions, wherever the two parts start on the timeline and "
 				"whatever their time bases. The source part and the target part may be the same. The move "
 				"is one undo step, and the shared copies of both parts follow it. A note may reach past the target "
