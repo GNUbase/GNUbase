@@ -85,6 +85,7 @@ namespace gnubase::engine
 			bool soundSlotsLane = true;
 			std::set<int> collapsedGroups;
 			bool autoSelectControllers = false;
+			bool acousticFeedback = false;                                  // Acoustic Feedback (pp. 1259-1260)
 			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection; // each a part and a controller event of it
 			// The attributes selected of selected notes on the Articulations lane (#1688, p. 1289), by part and note;
 			// a selected note without them has all its attributes selected.
@@ -413,7 +414,7 @@ namespace gnubase::engine
 				{"collapsedGroups", view.collapsedGroups}, {"autoSelectControllers", view.autoSelectControllers},
 				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection},
 				{"showExpression", view.showExpression}, {"expressionDoubleClick", view.expressionDoubleClick},
-				{"expressionType", view.expressionType}};
+				{"expressionType", view.expressionType}, {"acousticFeedback", view.acousticFeedback}};
 		}
 
 		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
@@ -680,7 +681,7 @@ namespace gnubase::engine
 			{"autoSelectControllers", boolean}, {"pitchVisibility", boolean}, {"reverseSounds", boolean},
 			{"visibleSounds", visibleSoundsSchema}, {"soloInstrument", boolean}, {"showNoteLength", boolean},
 			{"gridType", gridTypeSchema}, {"showExpression", boolean}, {"expressionDoubleClick", boolean},
-			{"expressionType", expressionTypeSchema}};
+			{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -693,7 +694,7 @@ namespace gnubase::engine
 					"content", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soundNames",
 					"soloInstrument", "showNoteLength", "gridType", "lanes", "showLanes", "soundSlotsLane",
 					"collapsedGroups", "autoSelectControllers", "controllerSelection", "eventSelection",
-					"showExpression", "expressionDoubleClick", "expressionType"}}};
+					"showExpression", "expressionDoubleClick", "expressionType", "acousticFeedback"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		viewSchema["properties"]["soundsInUse"] = {{"type", {"array", "null"}}, {"items", idSchema}};
 		viewSchema["properties"]["soundNames"] = {
@@ -749,7 +750,8 @@ namespace gnubase::engine
 			"whether selecting notes selects the controller events from their start to their end. Per-note "
 			"expression (pp. 1303-1313): showExpression shows the notes' expression over them, expressionDoubleClick "
 			"makes a double click on a note open the expression editor instead of deleting it, and expressionType is "
-			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. View state: no "
+			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. "
+			"acousticFeedback: the editor plays a note while it is moved or drawn (pp. 1259-1260). View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors.";
 		const auto editorOnly = [&](Json properties = Json::object())
 		{
@@ -857,7 +859,7 @@ namespace gnubase::engine
 					{"soundSlotsLane", boolean}, {"collapsedGroups", groupsSchema}, {"autoSelectControllers", boolean},
 					{"controllerSelection", controllerSelectionSchema}, {"eventSelection", idsSchema},
 					{"showExpression", boolean}, {"expressionDoubleClick", boolean},
-					{"expressionType", expressionTypeSchema}}),
+					{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -1049,6 +1051,7 @@ namespace gnubase::engine
 				view.showExpression = parameters.value("showExpression", view.showExpression);
 				view.expressionDoubleClick = parameters.value("expressionDoubleClick", view.expressionDoubleClick);
 				view.expressionType = parameters.value("expressionType", view.expressionType);
+				view.acousticFeedback = parameters.value("acousticFeedback", view.acousticFeedback);
 				const bool autoSelectTurnsOn = parameters.value("autoSelectControllers", view.autoSelectControllers) &&
 					!view.autoSelectControllers;
 				if (parameters.contains("autoSelectControllers"))

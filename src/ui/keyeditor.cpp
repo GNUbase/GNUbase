@@ -99,7 +99,7 @@ namespace gnubase::ui
 			const char* title;
 			const char* label;
 		};
-		constexpr std::array<Input, 8> g_inputs = {{
+		constexpr std::array<Input, 9> g_inputs = {{
 			{"stepInput", "Step Input", "Step"},
 			{"midiInput", "MIDI Input", "MIDI"},
 			{"moveInsert", "Move Insert Mode", "Insert"},
@@ -108,6 +108,7 @@ namespace gnubase::ui
 			{"recordReleaseVelocity", "Record Note Off Velocity", "Off"},
 			{"keepNotes", "Keep Existing Notes", "Keep"},
 			{"autoSelectControllers", "Auto Select Controllers", "Auto"},
+			{"acousticFeedback", "Acoustic Feedback", "Feedback"},
 		}};
 
 		// The expressions' names as the expression editor's parameter menu shows them, by engine::g_expressionNames.
@@ -1925,8 +1926,10 @@ namespace gnubase::ui
 				select(std::move(notes));
 				return;
 			}
-			// Near an end the press resizes, elsewhere it moves (pp. 1213-1214).
+			// Near an end the press resizes, elsewhere it moves (pp. 1213-1214); Acoustic Feedback plays the note.
 			m_gesture = edgeGesture(target, event);
+			if (m_view.value("acousticFeedback", false))
+				sound(pressed->pitch);
 			if (!selected(*pressed))
 				select({{pressed->part, pressed->id}});
 			return;
@@ -2066,6 +2069,8 @@ namespace gnubase::ui
 		m_drawnLength = lengthQuantize(m_pressedAt.second);
 		place(*added, start, m_drawnLength, m_pressedAt.second);
 		m_drawn = added->GetObserverPtr();
+		if (m_view.value("acousticFeedback", false))
+			sound(m_pressedAt.second); // until the release
 	}
 
 	void KeyEditor::removeDrawn()
@@ -2184,6 +2189,10 @@ namespace gnubase::ui
 			? m_rowOf.at(static_cast<size_t>(pitch)) - m_rowOf.at(static_cast<size_t>(m_pressedAt.second))
 			: 0;
 		const int64_t dt = delta(m_gesture, ticks, rows);
+		// Acoustic Feedback: the pressed note at the pitch it is dragged to.
+		if (const int now = shifted(m_pressed->pitch, rows); m_view.value("acousticFeedback", false) &&
+			m_gesture == Gesture::Move && now >= 0 && m_sounding && m_sounding->second != now)
+			sound(now);
 		for (int i = 0; i < notes->GetNumChildren(); ++i)
 		{
 			Rml::Element* element = notes->GetChild(i);

@@ -338,6 +338,18 @@ TEST_CASE("note.chord and note.voicing edit the chord of notes", "[unit]")
 		f.fails("note.voicing", {{"part", f.part}, {"notes", ids}}), ContainsSubstring("either chord or voicing"));
 }
 
+TEST_CASE("the key editor's Acoustic Feedback is view state and off at first", "[unit]")
+{
+	// Acoustic Feedback in the toolbar (reference manual pp. 1259-1260).
+	Fixture f;
+	CHECK(f.view().at("acousticFeedback") == false);
+	const int64_t revision = f.call("project.revision").at("revision").get<int64_t>();
+	CHECK(f.call("editor.set", {{"editor", "window"}, {"acousticFeedback", true}}).at("acousticFeedback") == true);
+	CHECK(f.view().at("acousticFeedback") == true);
+	CHECK(f.call("project.revision").at("revision").get<int64_t>() == revision); // no undo step
+	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"acousticFeedback", "on"}}).empty());
+}
+
 TEST_CASE("the note expression settings of the key editor are view state", "[unit]")
 {
 	Fixture f;

@@ -104,8 +104,9 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
 ## Not yet
 
 Tracked in #1766: the setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
-([docking.md](docking.md)); the keyboard in the track list's column; the toolbar's Acoustic Feedback, Indicate
-Transpositions and Event Colors (the key editor has none yet).
+([docking.md](docking.md)); the keyboard in the track list's column; the toolbar's Indicate Transpositions and Event
+Colors (the key editor has none yet), and Acoustic Feedback for velocity edits (the toolbar's Acoustic Feedback plays
+the notes moved and drawn, [key-editor.md](key-editor.md)).
 
 ## Checks
 
@@ -136,7 +137,9 @@ Transpositions and Event Colors (the key editor has none yet).
   track list's Edit In-Place, only on MIDI tracks, opening and closing the editor and checked while it is open, and the
   triangle at the upper right of the row while it is open showing and hiding the toolbar, hidden again after the editor
   closes; the notes under the ruler across a tempo change in the view, also after zooming and scrolling, and a click
-  on a note after the tempo change selecting it.
+  on a note after the tempo change selecting it; with Acoustic Feedback turned on in the toolbar, a note playing on the
+  instrument track while it is pressed, at the pitch it is dragged to and until its release, and a note while it is
+  drawn, and nothing with it off.
 - `tests/midiedit_tests.cpp`: `note.move` moving notes to another part as one undo step, keeping every field, a quantize
   origin included, and their ids, two notes keeping their distance, with its `note.removed` and `note.added` events,
   undo and redo; ticks counting on the project's timeline, so that parts starting at different places and a part on a

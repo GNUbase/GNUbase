@@ -966,6 +966,77 @@ TEST_CASE("an in-place editor's notes stay under the ruler across a tempo change
 	CHECK(f.view().at("selection").at(0).at("note") == f.notes[1]);
 }
 
+TEST_CASE("with Acoustic Feedback an in-place editor plays the notes it moves and draws", "[ui]")
+{
+	// Acoustic Feedback in the toolbar (reference manual pp. 1259-1260): a note sounds while it is moved, at the pitch
+	// it is dragged to, and a note being drawn sounds, until the mouse is released.
+	Fixture f;
+	const uint64_t strings = f.app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t part =
+		f.app.call("midiPart.add", {{"track", strings}, {"position", g_bar}, {"length", g_bar}, {"name", "Strings"}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
+	test::NoteProbe sound(f.app, strings);
+	f.track = strings; // the fixture's selectors for this track's editor
+	f.app.call("editor.inPlace", {{"tracks", {strings}}, {"open", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 1; }));
+	const std::vector<uint64_t>& lanes = f.display.laneTracks();
+	const auto found = std::find(lanes.begin(), lanes.end(), strings);
+	REQUIRE(found != lanes.end());
+	f.display.scrollVertically(f.display.laneTops().at(static_cast<size_t>(found - lanes.begin())));
+	f.scroll(61);
+
+	// The toolbar's button turns it on.
+	f.click(f.triangle());
+	f.click(f.editor() + " .key-input[setting=acousticFeedback]");
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("acousticFeedback") == true; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(f.editor() + " .key-input[setting=acousticFeedback]", "checked"); }));
+	f.scroll(61); // the toolbar took room from the rows
+
+	// A press on the note plays it, a drag a row up plays the pitch there instead, the release ends it.
+	f.app.ui().press(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 60, 100}}));
+	f.app.ui().move(std::nullopt, f.at(g_bar + (g_quarter / 2), 61));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 60, 100}, {0x80, 60, 0}, {0x90, 61, 100}}));
+	f.app.ui().release(std::nullopt, f.at(g_bar + (g_quarter / 2), 61), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 60, 100}, {0x80, 60, 0}, {0x90, 61, 100}, {0x80, 61, 0}}));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 1; }));
+
+	// The draw tool's new note sounds while it is drawn.
+	sound.clear();
+	f.click(f.editor() + " .key-tool[key-tool=draw]");
+	f.scroll(62);
+	f.app.ui().press(std::nullopt, f.at(g_bar + (2 * g_quarter) + (g_sixteenth / 2), 62), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 62, 100}}));
+	f.app.ui().release(std::nullopt, f.at(g_bar + (2 * g_quarter) + (g_sixteenth / 2), 62), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 62, 100}, {0x80, 62, 0}}));
+
+	// Off, a press on a note plays nothing.
+	f.app.call("editor.set", {{"editor", "inPlace:" + std::to_string(strings)}, {"acousticFeedback", false}});
+	REQUIRE(f.app.waitUntil([&] { return !f.has(f.editor() + " .key-input[setting=acousticFeedback]", "checked"); }));
+	f.click(f.editor() + " .key-tool[key-tool=objectSelection]");
+	f.scroll(61);
+	sound.clear();
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 61), f.at(g_bar + (g_quarter / 2), 63));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json notes = f.app.call("project.get").at("midiParts").at(1).at("notes");
+			return std::any_of(notes.begin(), notes.end(), [](const Json& note) { return note.at("pitch") == 63; });
+		}));
+	CHECK(sound.plays({}));
+}
+
 TEST_CASE("quantizing in an in-place editor quantizes its notes, not the project window's selected parts", "[ui]")
 {
 	Fixture f;

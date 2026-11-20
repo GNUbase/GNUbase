@@ -18,6 +18,7 @@ saved, and a new project closes the editors.
 | `moveInsert`, `recordPitch`, `recordVelocity`, `recordReleaseVelocity`, `keepNotes` | The Step/MIDI Input section's switches | p. 1197 |
 | `insertVelocity` | The velocity of drawn notes and of input that doesn't record it (0-1, default 100/127) | p. 1195 |
 | `lengthQuantize` | The length of new notes: a note value (`1/16`, `1/8T`, `1/4.`) or `link`, the quantize grid's | p. 1196 |
+| `acousticFeedback` | Acoustic Feedback: the editor plays a note while it is moved, at the pitch it is dragged to, and a note while it is drawn, until the mouse is released, on the active track's instrument as a key of the keyboard does (off by default) | pp. 1259-1260 |
 | `showExpression`, `expressionDoubleClick`, `expressionType` | Show Note Expression Data, Double-Click Opens Note Expression Editor and the expression the expression editor edits ([note-expression.md](note-expression.md)) | pp. 1303, 1308-1309 |
 
 `editor.set` changes them; `editor.get` and `editor.changed` report them.
@@ -57,8 +58,8 @@ the edits of several parts go in one `history.transaction`.
                                       #key-line-menu with its modes (controller-lanes.md)
     button.key-transpose[semitones]   Move Up, Move Down, Move Up More, Move Down More (+1, -1, +12, -12)
     button.key-input[setting]         Step Input, MIDI Input, Move Insert Mode, Record Pitch, Record Note On and
-                                      Note Off Velocity, Keep Existing Notes, Auto Select Controllers; .checked
-                                      while on
+                                      Note Off Velocity, Keep Existing Notes, Auto Select Controllers, Acoustic
+                                      Feedback; .checked while on
     #key-length-quantize              Length Quantize, menu #key-length-menu (Quantize Link, 1/1 to 1/64, triplets)
     valuefield#key-insert-velocity    Insert Velocity, 1-127
     button.key-input[setting=showExpression|expressionDoubleClick]
@@ -173,11 +174,11 @@ the step input cursor and lengthening a held chord; the Mute tool on notes (note
 Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note
 display (it draws on the controller lanes); the selection rectangle, the trim tool's drag across several notes and the
 draw tool's modifiers for velocity, pitch and position; key commands for the transpose palette and deleting; the nudge
-buttons, Solo Editor, Record in Editor, Acoustic Feedback, pitch visibility, the Scale Assistant, Indicate
-Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom and scrolling; the key at the
-mouse's pitch lit while the mouse moves in the note display (p. 1204); drum map names in the key editor and articulation
-names; Add to Chord Track, Match with Chord Track, Create Chord Events and the chord insert tools; quantizing from the
-toolbar (#132) and the Length section's functions (#133); the key editor's context menu.
+buttons, Solo Editor, Record in Editor, Acoustic Feedback for velocity edits, pitch visibility, the Scale Assistant,
+Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom and scrolling; the key
+at the mouse's pitch lit while the mouse moves in the note display (p. 1204); drum map names in the key editor and
+articulation names; Add to Chord Track, Match with Chord Track, Create Chord Events and the chord insert tools;
+quantizing from the toolbar (#132) and the Length section's functions (#133); the key editor's context menu.
 
 ## Checks
 
@@ -186,7 +187,8 @@ toolbar (#132) and the Length section's functions (#133); the key editor's conte
   the length quantize, the quantize grid's step, the insert velocity, a rest by moving the cursor, one undo step,
   replacing and keeping existing notes, Move Insert Mode and a cursor outside the part; MIDI input with and without
   Record Pitch, a chord, Keep Existing Notes and no selection; chord recognition, fitting and voicings; `note.chord`
-  and `note.voicing` with undo and their errors.
+  and `note.voicing` with undo and their errors; Acoustic Feedback off at first, set as view state without an undo
+  step.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
   keys lit for selected notes; the piano keyboard at 1024x600, at dp ratios of 1.5 and 1: white keys of equal height
   across the keyboard, black keys narrower on their rows, the mouse on the right part of a white key beside a black key
