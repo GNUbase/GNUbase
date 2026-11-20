@@ -8,8 +8,8 @@ event display and the value display.
 ## In the engine
 
 An editor view's `content` says what shows its parts: `key`, the key editor, or `list`, the list editor. `editor.open`
-takes it (an open editor keeps its content unless it is given, a closed one opens with the key editor) and so does
-`editor.set`; `editor.close` puts it back to `key`. The list editor selects notes and controller events: notes in the
+takes it (an open editor keeps its content unless it is given, a closed one opens with the key editor, also when
+`editor.set` gave it another content while it was closed) and so does `editor.set`; `editor.close` puts it back to `key`. The list editor selects notes and controller events: notes in the
 view's `selection`, as the key editor does, and controller events in `controllerSelection`, each `{part, controller}`
 of the editable parts. Removed events leave it, and closing the editor clears it. Like the rest of a view it is view
 state: no undo steps, not saved.
@@ -70,11 +70,13 @@ doesn't have (#1580).
   removes it, a click in the empty rest deselects; a click also activates the event's part, as `MidiEditor` handles
   clicks on `[part]`. A double click on a value edits it. A value typed for a selected event changes every selected
   event that has it by as much (the subtype and the values only those of the event's type); with Ctrl (Cmd) held
-  with Enter, they all take the value. A pitch can be typed as a name. A changed start moves the event, and the list
-  sorts it again. SysEx bytes are typed in hexadecimal, with or without the F0 and F7 around them (p. 1255).
+  with Enter, they all take the value. A pitch can be typed as a name, in either case, and spaces around a typed value
+  don't count; a typed velocity is at least 1, as the value display sets it. A changed start moves the event, and the
+  list sorts it again. SysEx bytes are typed in hexadecimal, with or without the F0 and F7 around them (p. 1255).
 - **Filters bar** (pp. 1250, 1254). A click on a type hides or shows it; with Ctrl (Cmd) it shows that type alone, and
   a second time all of them. The Focus menu shows only events of the first selected event's type (Event Types), also
-  of its pitch or controller number (Event Types and Subtype), or of its channel (Event Channels).
+  of its pitch or controller number (Event Types and Subtype), or of its channel (Event Channels); SysEx and directions
+  have no channel, so with one of them first Event Channels hides nothing.
 - **Event display** (pp. 1252, 1254-1255). Object Selection: a click selects as in the list, a drag moves the selected
   events by as far as the event dragged went, snapped to the quantize grid. Draw: a click draws an event of the Insert
   Event Type at the snapped position into the editable part there, the active one first: a note on C3 of the length
@@ -82,7 +84,8 @@ doesn't have (#1580).
   pressure on C3 at 64, aftertouch at 64, pitch bend in the middle, program 0, an empty SysEx message. Erase: a click
   deletes the event, also on its row.
 - **Value display** (pp. 1252, 1255): a press and a drag set the value of every event they cross from the mouse's
-  place in the bar, in one undo step.
+  place in the bar, in one undo step; a velocity is at least 1. While the drag goes on only the bars change, and the
+  rows are built once per project and view the editor is given, with the project's time context read once for them.
 - **Gestures** (#722, #835). A move, a draw or a value display drag ends where the left button goes up, also outside
   the list editor: the editor hears the mouseup in its whole document while the gesture goes on. Past the window's
   edge RmlUi has no element to send the mouseup to, but while a gesture goes on the editor's body is an RmlUi drag
@@ -113,7 +116,8 @@ status line, nudging, snap and quantize on the toolbar; editing a program change
 ## Checks
 
 - `tests/listeditor_tests.cpp`: an editor's content, given to `editor.open` and `editor.set`, kept when an open editor
-  opens other parts, back to the key editor once closed, and refused when unknown; the selected controller events as
+  opens other parts, back to the key editor once closed, also after `editor.set` gave the closed editor one, and
+  refused when unknown; the selected controller events as
   view state of the editable parts, each once, refused for events that don't exist or parts that aren't editable,
   leaving with removed events, a change of the editing mode and closing.
 - `tests/listeditor_ui_tests.cpp` drives the app with `ui::Automation`: Open List Editor (its key and menu item)
@@ -126,4 +130,9 @@ status line, nudging, snap and quantize on the toolbar; editing a program change
   released outside the list editor and past the window's edge, each with its effect, also a move with a Focus filter
   on, and ones whose mouseup never comes, ended by the next press without it, and a value display drag whose release
   was lost ended as the mouse leaves the window; a touch pan over the type column scrolling the list; a draw dragged
-  in the event display being a multiple of the length quantize's length.
+  in the event display being a multiple of the length quantize's length; a typed end, length, channel and release
+  velocity, a value with spaces around it, a pitch name in lower case and a velocity of 0 that stays 1; the Insert
+  Velocity and Length Quantize controls and the note the draw tool then draws; a typed value for notes of two parts
+  in one undo step; a value display drag across two rows in one undo step that builds no time context while it goes
+  on; a move of two selected events that would take one before its part's start moving nothing, and one that moves
+  both; the erase tool erasing in the event display; Focus on Event Channels with a SysEx event selected.
