@@ -702,6 +702,14 @@ TEST_CASE("audioFile.import splits and converts a file in one pass into mono fil
 		INFO("frame " << worst << " differs by " << largest);
 		CHECK(largest < 1e-5f);
 	}
+
+	// In one pass: the media folder holds the two mono files and no other audio file, such as a converted stereo file
+	// (#685); only their peak files may be next to them.
+	std::set<std::string> written;
+	for (const fs::directory_entry& entry : fs::directory_iterator(song.media))
+		if (entry.path().extension() != ".gbpeaks")
+			written.insert(utf8(entry.path().filename()));
+	CHECK(written == std::set<std::string>{"room-L.wav", "room-R.wav"});
 }
 
 TEST_CASE("audioFile.import copies files into the media folder with one job", "[integration]")

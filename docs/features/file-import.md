@@ -199,7 +199,8 @@ MP3) onto new tracks at a position and undoes it in one step, lays files out one
 folder, also with `copy` and `clipsOnly`, and in an unsaved project into `Recordings`, which the first save copies into
 the media folder as an undo step of its own, and removed again when a later file fails, refused without a folder to
 convert into) and leaves FLAC files as they are, converts a 44.1 kHz WAV file and an MP3 file into the media folder and
-leaves a 48 kHz file where it is, splits stereo and 5.1 files into mono files per speaker, names split files as each
+leaves a 48 kHz file where it is, splits stereo and 5.1 files into mono files per speaker, splits and converts a 44.1
+kHz stereo file in one pass, which leaves only its two mono files in the media folder, names split files as each
 `nameFormat` says, copies with one job, puts the first file on a given track and the others on new tracks (one undo
 step), places only the files that aren't split with `track`, and rejects what it can't do, removing converted files when
 a later file fails.
