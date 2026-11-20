@@ -394,6 +394,32 @@ TEST_CASE("a long track name is cut between two UTF-8 characters for the descrip
 	CHECK(reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).description == name.substr(0, 254));
 }
 
+TEST_CASE("a change of only the start time reaches the next Broadcast Wave recording (#581)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}, {"startTime", 3600.0}});
+	const auto record = [&](int64_t position)
+	{
+		run(client, "transport.locate", {{"position", position}});
+		run(client, "transport.record");
+		run(client, "audio.render", {{"frames", 640}});
+		REQUIRE(setup.stop().is_object());
+		std::string path;
+		for (const Json& event : eventsOn(client, setup.track))
+			if (event.at("position") == position)
+				path = pathOf(client, event);
+		REQUIRE(!path.empty());
+		return AudioFileReader::open(path)->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference;
+	};
+	CHECK(record(0) == 3600ULL * 48000);
+	run(client, "project.set", {{"startTime", 7200.0}});
+	CHECK(record(48000) == 7201ULL * 48000);
+	// 23:59:59 and 2 s into the project: past midnight, which the time reference doesn't wrap at.
+	run(client, "project.set", {{"startTime", 86399.0}});
+	CHECK(record(96000) == 86401ULL * 48000);
+}
+
 TEST_CASE("cycle recording makes a take per lap, all in one file", "[integration]")
 {
 	std::string mode = "keepHistory";

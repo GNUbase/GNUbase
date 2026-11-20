@@ -9,6 +9,7 @@
 #include <stb_vorbis.c> // NOLINT(bugprone-suspicious-include): stb_vorbis is one .c file; only its declarations
 
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <utility>
 
@@ -130,6 +131,13 @@ namespace gnubase::engine
 				m_info.sampleFormat = integerFormat(m_flac->bitsPerSample);
 				m_info.sampleRate = m_flac->sampleRate;
 				m_info.channels = m_flac->channels;
+				if (m_flac->totalPCMFrameCount == 0)
+				{
+					// STREAMINFO doesn't know, as in a recording cut short by a crash (#581): count what decodes, which
+					// seeking needs too.
+					m_flac->totalPCMFrameCount = drflac_read_pcm_frames_f32(m_flac, UINT64_MAX, nullptr);
+					drflac_seek_to_pcm_frame(m_flac, 0);
+				}
 				m_info.frames = static_cast<time::Samples>(m_flac->totalPCMFrameCount);
 			}
 

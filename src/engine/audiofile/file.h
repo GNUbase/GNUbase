@@ -18,7 +18,8 @@ namespace gnubase::engine::detail
 	using File = std::unique_ptr<std::FILE, FileCloser>;
 
 	// mode as for fopen. Null if the file can't be opened; lastError() says why. A file opened with "rb" can be deleted
-	// or renamed while it is open, on Windows too.
+	// or renamed while it is open, on Windows too. One opened with "wb" can be read while it is written, on Windows
+	// too, as a recording's file (#581).
 	File openFile(const std::string& path, const char* mode);
 
 	// Moves from onto to, atomically replacing to: no reader ever sees the name missing or half of the new file, and a
