@@ -50,23 +50,28 @@ elsewhere that repeats the value before it stays one). The reference manual's gl
 **MPE input** (pp. 1295-1298, #1514). Each MIDI input port has its own MPE setup, `mpe` in `midi.setPort` and
 `midi.ports`, kept in its entry of the user setting `midi.portSettings`, which the studio setup's Note Expression Input
 page edits ([studio-setup.md](studio-setup.md)). Its multi-channel input mode (`mode`) is off (the default), MPE's lower
-zone (master channel 1, the notes on channels 2 and up), its upper zone (master channel 16, the notes on 15 and down) or
-channel rotation (the notes on the used channels from `firstChannel` on, without a master channel); `channels` is how
-many channels the notes have, 15 by default, and rotation's end at 16; `midi.setPort` makes it at most 15 in a zone,
-which has no more member channels, so a zone set up with 16 lists and keeps 15. On the notes' channels, the messages of
-the three dimensions of the device's input movements, Horizontal/X, Pressure and Vertical/Y, are the expression of the
-notes that sound on the channel (#1674, pp. 1296-1298). Each dimension's MIDI Message (`xMessage`, `pressureMessage`,
-`yMessage`) is `pitchBend`, `aftertouch` (channel pressure) or a controller, `cc0` to `cc127`: by default pitch bend,
-aftertouch and CC 74. Its Note Expression Assignment (`xExpression`, `pressureExpression`, `yExpression`) is the note
-expression it plays, one of the seven, or `none`, which passes the message as it is: by default none for X, pressure and
-brightness. Tuning is by the port's pitch range (`pitchRange`, 48 semitones by default, MPE's), from any message, a
-controller's center being no bend; volume goes from 0 to its gain of 4, the others from 0 to 1. Use for Tuning
-(`tuning`, on by default) sets X's assignment to tuning (p. 1297): X plays tuning over its own assignment
-(`xExpression`), which it keeps and plays again with Use for Tuning off (for devices that don't glide but play a new
-note for each key), `none` by default, so pitch bend stays pitch bend. X's own assignment is never tuning: as on the
-page, `midi.setPort` with `xExpression` `tuning` turns Use for Tuning on and keeps X's own (with `tuning` false it is
-rejected), and an earlier GNUbase's `tuning` in `midi.portSettings` reads as `none` (#1749). Two dimensions of one
-message both play it. The master channel's messages and the notes' channels' other messages are what they were.
+zone (master channel 1, the notes on channels 2 and up), its upper zone (master channel 16, the notes on 15 and down),
+channel rotation (the notes on the used channels from `firstChannel` on, without a master channel) or both zones at once
+(`both`, #1675), e.g. for a keyboard split into two zones that play two instruments; `channels` is how many channels the
+notes have, 15 by default, and rotation's end at 16; `midi.setPort` makes it at most 15 in a zone, which has no more
+member channels, so a zone set up with 16 lists and keeps 15. With both zones `channels` is the lower zone's and
+`upperChannels` the upper zone's (7 by default, at most 13), together at most 14, as MPE has them: the upper zone keeps
+its channels and the lower zone gets at most the rest, so a lower zone of 15 switched to both lists and keeps 7. Both
+zones go past the reference manual, whose MPE mode has one zone with channel 1 as its base (p. 1298), for devices that
+need them. On the notes' channels, the messages of the three dimensions of the device's input movements, Horizontal/X,
+Pressure and Vertical/Y, are the expression of the notes that sound on the channel (#1674, pp. 1296-1298). Each
+dimension's MIDI Message (`xMessage`, `pressureMessage`, `yMessage`) is `pitchBend`, `aftertouch` (channel pressure) or
+a controller, `cc0` to `cc127`: by default pitch bend, aftertouch and CC 74. Its Note Expression Assignment
+(`xExpression`, `pressureExpression`, `yExpression`) is the note expression it plays, one of the seven, or `none`, which
+passes the message as it is: by default none for X, pressure and brightness. Tuning is by the port's pitch range
+(`pitchRange`, 48 semitones by default, MPE's), from any message, a controller's center being no bend; volume goes from
+0 to its gain of 4, the others from 0 to 1. Use for Tuning (`tuning`, on by default) sets X's assignment to tuning (p.
+1297): X plays tuning over its own assignment (`xExpression`), which it keeps and plays again with Use for Tuning off
+(for devices that don't glide but play a new note for each key), `none` by default, so pitch bend stays pitch bend. X's
+own assignment is never tuning: as on the page, `midi.setPort` with `xExpression` `tuning` turns Use for Tuning on and
+keeps X's own (with `tuning` false it is rejected), and an earlier GNUbase's `tuning` in `midi.portSettings` reads as
+`none` (#1749). Two dimensions of one message both play it. The master channel's messages and the notes' channels' other
+messages are what they were.
 
 **Detected devices** (p. 1295). A MIDI input whose name is a known MPE device's (`midi::detectMpeDevice`: a Seaboard,
 LinnStrument, Sensel Morph or Osmose) is listed with the device's name (`mpeDevice` in `midi.ports`) and gets a page of
@@ -252,7 +257,6 @@ following it.
   Recommended by Instrument) and MIDI PolyPressure (p. 1299), and renewing the assignments when the instrument or its
   preset changes (p. 1298, #1829): they choose among a plugin's own expressions, which need #1516; with the seven common
   ones the assignment is what the page sets. More known MPE devices, which are detected by their port's name only.
-- Both MPE zones at once on one port, past the reference manual's single zone (#1675).
 - Recording MIDI controllers as note expression, overdub and converting controller events into note expression (pp.
   1316-1318, #1515), with the toolbar switch that records expression for a selected note from MIDI input (pp. 1303,
   1308) and the dialog that sets which MIDI messages record as expression (pp. 1314-1315).

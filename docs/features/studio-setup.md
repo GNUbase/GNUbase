@@ -25,7 +25,8 @@ MCP and Lua scripts can do all it does.
     are that input's MPE settings (`mpe` in `midi.ports` and `midi.setPort`, [note-expression.md](note-expression.md)):
     the MIDI Message and Note Expression Assignment of Pressure, Horizontal/X and Vertical/Y (#1674), the Send Initial
     Value of X and Y, Use for Tuning and Pitch Range, Multi-Channel Input Mode (off, MPE's lower or upper zone, channel
-    rotation), Used Channels and First Channel (only for channel rotation). Use for Tuning shows X's assignment as
+    rotation, both zones), Used Channels (with both zones the lower zone's), Upper Zone Channels (only for both zones,
+    #1675) and First Channel (only for channel rotation). Use for Tuning shows X's assignment as
     Tuning and disables it; off, X shows its own assignment again (None until another is chosen, #1749), and choosing
     Tuning for X turns it on. At the bottom the MIDI Activity display shows the input's last eight messages (channel,
     kind, values) as the event `midi.activity` brings them; the dialog turns `midi.activityListen` on while it is open
@@ -34,7 +35,8 @@ MCP and Lua scripts can do all it does.
     Expression Input, which is this page with its input. Each input has its own
     fields, so switching inputs keeps what the user changed; Apply and OK send the changed inputs' settings; a pitch
     range that isn't a whole number from 1 to 96 is an error, and that input's settings stay as they were. Used Channels
-    offers 16 for channel rotation; a zone gets at most 15, which the page shows after Apply. Apply builds the page
+    offers 16 for channel rotation; a zone gets at most 15, and both zones together 14, the lower zone the rest, which
+    the page shows after Apply. Apply builds the page
     again from the engine, still showing the input that was selected.
 - **Apply, OK, Cancel.** The pages keep what the user changes until Apply or OK sends it; Cancel and Escape drop it.
   Only what changed is sent: another driver with `audio.setDevice` (the old device's page doesn't apply to the new

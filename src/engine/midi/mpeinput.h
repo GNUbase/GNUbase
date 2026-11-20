@@ -19,14 +19,15 @@ namespace gnubase::engine::midi
 	struct MpeSetup
 	{
 		// Multi-Channel Input Mode: off, MPE's lower zone (master channel 1, the notes on 2 and up), its upper zone
-		// (master channel 16, the notes on 15 and down) or channel rotation (the notes on the used channels, no
-		// master).
+		// (master channel 16, the notes on 15 and down), channel rotation (the notes on the used channels, no master)
+		// or both zones at once, each with its master and member channels (#1675).
 		enum class Mode : uint8_t
 		{
 			Off,
 			Lower,
 			Upper,
 			Rotation,
+			Both,
 		};
 		// Send Initial Value: what each note's expression starts at. Off: the channel's latest value, what the device
 		// sent before the note-on (absolute input); the others a fixed value (relative input).
@@ -50,10 +51,13 @@ namespace gnubase::engine::midi
 		static constexpr uint8_t g_aftertouch = 129;
 
 		Mode mode = Mode::Off;
-		int channels = 15;    // the notes' channels: a zone's member channels (at most 15) or the used channels (16)
-		int firstChannel = 1; // channel rotation's first channel, 1-16; the used ones end at 16
-		int pitchRange = 48;  // of the notes' pitch bend, in semitones, 1-96; tuning's range from any message
-		bool tuning = true;   // Use for Tuning: X plays the notes' tuning over its own assignment, else that
+		// The notes' channels: a zone's member channels (at most 15), the used channels (16) or, with both zones, the
+		// lower zone's (both zones' together at most 14).
+		int channels = 15;
+		int upperChannels = 7; // with both zones, the upper zone's member channels (at most 13)
+		int firstChannel = 1;  // channel rotation's first channel, 1-16; the used ones end at 16
+		int pitchRange = 48;   // of the notes' pitch bend, in semitones, 1-96; tuning's range from any message
+		bool tuning = true;    // Use for Tuning: X plays the notes' tuning over its own assignment, else that
 		Initial initialX = Initial::Off; // Horizontal/X: off or center
 		Initial initialY = Initial::Off; // Vertical/Y
 		// Per dimension, the MIDI message it comes from and the note expression it plays (Note Expression
@@ -64,8 +68,8 @@ namespace gnubase::engine::midi
 			std::nullopt, plugin::NoteExpression::Pressure, plugin::NoteExpression::Brightness};
 
 		// From an mpe value as midi.setPort and midi.portSettings have it; what it lacks keeps its default (or
-		// defaults'), and a zone's channels are at most 15. X's own assignment tuning, which Use for Tuning is, is
-		// none.
+		// defaults'), a zone's channels are at most 15, and both zones' together at most 14, the upper zone keeping
+		// its own (at most 13). X's own assignment tuning, which Use for Tuning is, is none.
 		static MpeSetup fromJson(const Json& json, const MpeSetup& defaults);
 		static MpeSetup fromJson(const Json& json) { return fromJson(json, MpeSetup()); }
 		Json toJson() const;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // MPE input (#1514, reference manual pp. 1295-1298): each MIDI input port has its MPE setup, MPE's lower or upper zone
-// or channel rotation with its pitch range, Use for Tuning and initial values, and the port's MPE input reaches
-// recording and the instruments as per-note expression.
+// (or both, #1675) or channel rotation with its pitch range, Use for Tuning and initial values, and the port's MPE
+// input reaches recording and the instruments as per-note expression.
 #include "engine/document/document.h"
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
@@ -284,7 +284,8 @@ TEST_CASE("without Use for Tuning the notes' pitch bend stays pitch bend", "[uni
 TEST_CASE("an MPE setup reads its JSON with defaults and packs into 64 bits", "[unit]")
 {
 	const midi::MpeSetup defaults;
-	CHECK(defaults.toJson() == Json::parse(R"({"mode": "off", "channels": 15, "firstChannel": 1, "pitchRange": 48,
+	CHECK(defaults.toJson() == Json::parse(R"({"mode": "off", "channels": 15, "upperChannels": 7, "firstChannel": 1,
+		"pitchRange": 48,
 		"tuning": true, "initialX": "off", "initialY": "off", "xMessage": "pitchBend", "pressureMessage": "aftertouch",
 		"yMessage": "cc74", "xExpression": "none", "pressureExpression": "pressure",
 		"yExpression": "brightness"})"));
@@ -1096,4 +1097,76 @@ TEST_CASE("midi.inject plays its messages through an MPE setup as a port with it
 	CHECK_THAT(reject(client, "midi.inject",
 				   {{"channel", setup.channel}, {"messages", Json::array()}, {"direct", true}, {"mpe", lower}}),
 		ContainsSubstring("MPE setup"));
+}
+
+TEST_CASE("both MPE zones at once give each zone its master and member channels", "[unit]")
+{
+	// A keyboard split into two zones (#1675): the lower zone's master on 1 and its notes on 2 to 4, the upper zone's
+	// master on 16 and its notes on 15 down to 11; channels 5 to 10 are no zone's.
+	midi::MpeSetup setup = midi::MpeSetup::fromJson({{"mode", "both"}, {"channels", 3}, {"upperChannels", 5}});
+	CHECK(setup.mode == midi::MpeSetup::Mode::Both);
+	CHECK_FALSE(setup.notesChannel(0));
+	CHECK(setup.notesChannel(1));
+	CHECK(setup.notesChannel(3));
+	CHECK_FALSE(setup.notesChannel(4));
+	CHECK_FALSE(setup.notesChannel(9));
+	CHECK(setup.notesChannel(10));
+	CHECK(setup.notesChannel(14));
+	CHECK_FALSE(setup.notesChannel(15));
+	midi::MpeInput input;
+	CHECK(through(input, setup,
+			  {event(Type::NoteOn, 1, 48), event(Type::NoteOn, 14, 72), event(Type::PitchBend, 1, 0, 80),
+				  event(Type::ChannelPressure, 14, 0, 90), event(Type::PitchBend, 0, 0, 80),
+				  event(Type::PitchBend, 15, 0, 80), event(Type::PitchBend, 6, 0, 80)}) ==
+		Lines{"on 1 48", "on 14 72", "tuning 1 48 " + semitones(80, 48), "pressure 14 72 " + unit(90), "bend 0",
+			"bend 15", "bend 6"});
+
+	// The two zones have at most 14 member channels: the upper zone keeps its own (at most 13), the lower one gets
+	// at most the rest. A zone's channels from another mode shrink to fit; by default each zone gets 7.
+	CHECK(midi::MpeSetup::fromJson({{"mode", "both"}}).channels == 7);
+	CHECK(midi::MpeSetup::fromJson({{"mode", "both"}}).upperChannels == 7);
+	CHECK(midi::MpeSetup::fromJson({{"mode", "both"}, {"channels", 12}, {"upperChannels", 4}}).channels == 10);
+	CHECK(midi::MpeSetup::fromJson({{"mode", "both"}, {"channels", 12}, {"upperChannels", 16}}).upperChannels == 13);
+	CHECK(midi::MpeSetup::fromJson({{"mode", "both"}, {"channels", 12}, {"upperChannels", 16}}).channels == 1);
+	// Other modes keep the upper zone's channels for when both zones come back.
+	const midi::MpeSetup lower = midi::MpeSetup::fromJson({{"mode", "lower"}, {"upperChannels", 3}});
+	CHECK(lower.channels == 15);
+	CHECK(lower.upperChannels == 3);
+	CHECK(midi::MpeSetup::fromJson({{"mode", "both"}}, lower).channels == 11);
+
+	// It packs into the 64 bits too.
+	setup.upperChannels = 13;
+	setup.channels = 1;
+	setup.messages = {127, 127, 127};
+	const midi::MpeSetup unpacked = midi::MpeSetup::unpack(setup.pack());
+	CHECK(unpacked.toJson() == setup.toJson());
+	CHECK(unpacked == setup);
+}
+
+TEST_CASE("midi.setPort sets both MPE zones of an input, whose notes play as per-note expression", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const Json both = run(client, "midi.setPort",
+		{{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "both"}, {"channels", 4}, {"upperChannels", 4}}}});
+	CHECK(both.at("mpe").at("mode") == "both");
+	CHECK(both.at("mpe").at("channels") == 4);
+	CHECK(both.at("mpe").at("upperChannels") == 4);
+	// More than 14 member channels together: the lower zone gets the rest.
+	CHECK(run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"channels", 15}}}})
+			  .at("mpe")
+			  .at("channels") == 10);
+	CHECK(port(run(client, "midi.ports"), "MPE", true).at("mpe").at("channels") == 10);
+	CHECK_THAT(reject(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"upperChannels", 14}}}}),
+		ContainsSubstring("upperChannels"));
+
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	// A note in each zone, each with its own bend: MPE's 48 semitones, as the port's pitch range is.
+	setup.play(*setup.mpe, {{0xE1, 0, 96}, {0x91, 48, 100}, {0xEE, 0, 32}, {0x9E, 72, 100}});
+	// The masters' messages are what they were.
+	setup.play(*setup.mpe, {{0xE0, 0, 80}, {0xEF, 0, 80}, {0x81, 48, 0}, {0x8E, 72, 0}});
+	CHECK(captured(client) ==
+		std::vector<std::vector<int64_t>>{{0xE1, 0, 96}, {0x91, 48, 100}, {0xEE, 0, 32}, {0x9E, 72, 100}, {0xE0, 0, 80},
+			{0xEF, 0, 80}, {0x81, 48, 0}, {0x8E, 72, 0}});
 }
