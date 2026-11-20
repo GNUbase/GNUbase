@@ -2,8 +2,9 @@
 <!-- The fade dialog for event fades (#138, docs/features/fades.md, reference manual pp. 385-387): the fade in and
      fade out of the audio events in the document's attribute events (ids). ui::EventDisplay opens it
      (audio.fadeEditor). Its Lua shows the first event's fades when the dialog shows; OK gives every event the curves
-     and, with Apply Length, the lengths in milliseconds, as one undo step (history.transaction of
-     audioEvent.setFades). Cancel drops them. -->
+     and, with Apply Length (off at first, p. 386), the lengths in milliseconds, as one undo step (history.transaction
+     of audioEvent.setFades): a length left as shown is the first event's exactly, not rounded to the 0.1 ms shown.
+     Cancel drops them. -->
 <rml>
 <head>
 	<title>Fades</title>
@@ -119,6 +120,9 @@
 			local function ms(fade)
 				return string.format("%.1f", fade.length / first.rate)
 			end
+			-- What the length fields show, and the lengths they stand for while they show it.
+			dialog.shown = {["fade-in-length"] = {ms(first.event.fadeIn), first.event.fadeIn.length / first.rate},
+				["fade-out-length"] = {ms(first.event.fadeOut), first.event.fadeOut.length / first.rate}}
 			document:GetElementById("fade-editor-fields").inner_rml =
 				field("Fade In", dropDown("fade-in-shape", shapes, first.event.fadeIn.shape)) ..
 				field("Fade In Length (ms)",
@@ -126,13 +130,17 @@
 				field("Fade Out", dropDown("fade-out-shape", shapes, first.event.fadeOut.shape)) ..
 				field("Fade Out Length (ms)",
 					'<input type="text" id="fade-out-length" value="' .. ms(first.event.fadeOut) .. '"/>') ..
-				field("Apply Length", '<input type="checkbox" id="fade-apply-length" checked/>')
+				field("Apply Length", '<input type="checkbox" id="fade-apply-length"/>')
 		end
 
 		function dialog.ok(document)
 			local applyLength = document:GetElementById("fade-apply-length"):HasAttribute("checked")
-			local inMs = tonumber(valueOf(document, "fade-in-length"))
-			local outMs = tonumber(valueOf(document, "fade-out-length"))
+			local function lengthOf(id)
+				local text = valueOf(document, id)
+				return text == dialog.shown[id][1] and dialog.shown[id][2] or tonumber(text)
+			end
+			local inMs = lengthOf("fade-in-length")
+			local outMs = lengthOf("fade-out-length")
 			if applyLength and (inMs == nil or outMs == nil or inMs < 0 or outMs < 0) then
 				document:GetElementById("fade-editor-message").inner_rml = "Lengths must be milliseconds, 0 or more"
 				return

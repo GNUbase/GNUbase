@@ -194,6 +194,43 @@ namespace gnubase::engine
 			static_cast<double>(time::g_maxPosition) / std::max(project.sampleRate, g_lowestSampleRate));
 	}
 
+	int64_t longestPosition(const Project& project, time::TimeBase base)
+	{
+		return base == time::TimeBase::Linear ? time::g_maxPosition : longestProjectTicks(project);
+	}
+
+	void cutAtLongest(Project& project)
+	{
+		const time::Ticks ticks = longestProjectTicks(project);
+		const auto cut = [ticks](time::TimeBase base, int64_t& value)
+		{ value = std::min(value, base == time::TimeBase::Linear ? time::g_maxPosition : ticks); };
+		for (auto& entry : project.media)
+			cut(time::TimeBase::Linear, entry.second.length);
+		forEveryEventAndPart(
+			project,
+			[&cut](AudioEvent& event, bool)
+			{
+				cut(event.position.base, event.position.value);
+				cut(time::TimeBase::Linear, event.offset);
+				cut(time::TimeBase::Linear, event.length);
+			},
+			[&cut](AudioPart& part, bool)
+			{
+				cut(part.position.base, part.position.value);
+				cut(part.position.base, part.length);
+			},
+			[&cut](MidiPart& part, bool)
+			{
+				cut(part.position.base, part.position.value);
+				cut(part.position.base, part.length);
+				for (auto& entry : part.notes)
+				{
+					cut(time::TimeBase::Musical, entry.second.position);
+					cut(time::TimeBase::Musical, entry.second.length);
+				}
+			});
+	}
+
 	ObjectId mainMix(const Project& project)
 	{
 		const auto bus = std::find_if(

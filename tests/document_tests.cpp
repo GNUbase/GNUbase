@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/audio/playback.h"
+#include "engine/document/document.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
@@ -9,6 +11,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,6 +20,7 @@
 using namespace gnubase::engine;
 using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
+using gnubase::time::g_maxPosition;
 using gnubase::time::g_ticksPerQuarter;
 
 namespace
@@ -39,6 +44,13 @@ namespace
 		INFO(command << " succeeded: " << result.value.dump());
 		REQUIRE(!result.ok());
 		return result.error;
+	}
+
+	// parameters with the keys of more added or replaced.
+	Json with(Json parameters, const Json& more)
+	{
+		parameters.update(more);
+		return parameters;
 	}
 
 	ObjectId addTrack(Client& client, Json parameters)
@@ -650,6 +662,157 @@ TEST_CASE("audio events stay within their clip and on audio tracks", "[unit]")
 		ContainsSubstring("audio track"));
 	CHECK_THAT(reject(client, "audioEvent.add", {{"track", audio}, {"clip", 999}, {"position", 0}}),
 		ContainsSubstring("no clip 999"));
+}
+
+TEST_CASE("event, part and note positions and lengths and media lengths end at the longest project", "[unit]")
+{
+	// An event at 2^62 of a clip of 2^62 frames used to overflow the end of its playlist entry (#1906).
+	Engine engine;
+	Client client(engine);
+	const ObjectId linear = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId musical = addTrack(client, {{"type", "audio"}});
+	const ObjectId instrument = addTrack(client, {{"type", "instrument"}});
+	constexpr int64_t beyond = int64_t{1} << 62;
+	const Json media = {{"path", "/audio/long.wav"}, {"sampleRate", 48000.0}, {"channels", 1}};
+	CHECK_THAT(reject(client, "media.add", with(media, {{"length", beyond}})),
+		ContainsSubstring("length must be at most " + std::to_string(g_maxPosition)));
+	const ObjectId longMedia =
+		run(client, "media.add", with(media, {{"length", g_maxPosition}})).at("media").at("id").get<ObjectId>();
+	const ObjectId clip = run(client, "clip.add", {{"media", longMedia}}).at("clip").at("id").get<ObjectId>();
+
+	CHECK_THAT(reject(client, "audioEvent.add", {{"track", linear}, {"clip", clip}, {"position", beyond}}),
+		ContainsSubstring("position must be at most " + std::to_string(g_maxPosition)));
+	const Json added =
+		run(client, "audioEvent.add", {{"track", linear}, {"clip", clip}, {"position", g_maxPosition}}).at("event");
+	CHECK(added.at("length") == g_maxPosition);
+	const ObjectId event = added.at("id").get<ObjectId>();
+	CHECK_THAT(reject(client, "audioEvent.set", {{"event", event}, {"position", g_maxPosition + 1}}),
+		ContainsSubstring("position must be at most"));
+	CHECK_THAT(reject(client, "audioEvent.set", {{"event", event}, {"length", std::numeric_limits<int64_t>::max()}}),
+		ContainsSubstring("stay within its clip"));
+	CHECK_THAT(reject(client, "event.move", {{"events", {event}}, {"delta", 1}}),
+		ContainsSubstring("past the end of the longest project"));
+	CHECK_THAT(reject(client, "event.move", {{"events", {event}}, {"delta", std::numeric_limits<int64_t>::min()}}),
+		ContainsSubstring("the move must be at most"));
+
+	// Musical positions end where g_maxPosition samples do at the project's tempo and sample rate.
+	const int64_t longestTicks = longestProjectTicks(newProject());
+	const std::string pastTicks = "must be at most " + std::to_string(longestTicks);
+	CHECK_THAT(reject(client, "audioEvent.add", {{"track", musical}, {"clip", clip}, {"position", longestTicks + 1}}),
+		ContainsSubstring("position " + pastTicks));
+	run(client, "audioEvent.add", {{"track", musical}, {"clip", clip}, {"position", longestTicks}});
+	CHECK_THAT(reject(client, "audioPart.add", {{"track", musical}, {"position", 0}, {"length", longestTicks + 1}}),
+		ContainsSubstring("length " + pastTicks));
+	CHECK_THAT(reject(client, "midiPart.add", {{"track", instrument}, {"position", longestTicks + 1}, {"length", 1}}),
+		ContainsSubstring("position " + pastTicks));
+	const ObjectId part =
+		run(client, "midiPart.add", {{"track", instrument}, {"position", longestTicks}, {"length", longestTicks}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	CHECK_THAT(
+		reject(client, "midiPart.set", {{"part", part}, {"length", beyond}}), ContainsSubstring("length " + pastTicks));
+	const Json note = {{"position", 1}, {"length", 1}, {"pitch", 60}, {"velocity", 0.5}};
+	CHECK_THAT(reject(client, "note.add", {{"part", part}, {"notes", Json::array({with(note, {{"length", beyond}})})}}),
+		ContainsSubstring("notes[0].length " + pastTicks));
+	const ObjectId noteId =
+		run(client, "note.add", {{"part", part}, {"notes", {note}}}).at("notes").at(0).at("id").get<ObjectId>();
+	CHECK_THAT(
+		reject(client, "note.set", {{"part", part}, {"notes", {{{"id", noteId}, {"position", longestTicks + 1}}}}}),
+		ContainsSubstring(pastTicks));
+	const Json move = {{"part", part}, {"target", part}, {"notes", {noteId}}};
+	CHECK_THAT(reject(client, "note.move", with(move, {{"ticks", longestTicks + 1}})),
+		ContainsSubstring("ticks " + pastTicks));
+	CHECK_THAT(reject(client, "note.move", with(move, {{"ticks", longestTicks}})),
+		ContainsSubstring("past the end of the longest project"));
+
+	// An end may lie as far again past it: the part at the longest project's end moves back a tick.
+	run(client, "event.move", {{"events", {part}}, {"ticks", -1}});
+	const auto midiPart = [&client](ObjectId id) { return withId(run(client, "project.get").at("midiParts"), id); };
+	CHECK(midiPart(part).at("position") == longestTicks - 1);
+	CHECK(midiPart(part).at("length") == longestTicks);
+
+	// A resize keeps a part's length within it, so that midiPart.set can still change the part.
+	const ObjectId shortPart = run(client, "midiPart.add", {{"track", instrument}, {"position", 0}, {"length", 1}})
+								   .at("part")
+								   .at("id")
+								   .get<ObjectId>();
+	run(client, "event.resize", {{"events", {shortPart}}, {"edge", "end"}, {"ticks", longestTicks}});
+	CHECK(midiPart(shortPart).at("length") == longestTicks);
+	run(client, "event.resize", {{"events", {part}}, {"edge", "start"}, {"ticks", -longestTicks}});
+	CHECK(midiPart(part).at("length") == longestTicks);
+	run(client, "midiPart.set", {{"part", shortPart}, {"name", "Long"}});
+	CHECK(midiPart(shortPart).at("name") == "Long");
+
+	const ObjectId lane = run(client, "automationLane.add", {{"track", linear}, {"target", {{"type", "volume"}}}})
+							  .at("lane")
+							  .at("id")
+							  .get<ObjectId>();
+	CHECK_THAT(reject(client, "automationPoint.add",
+				   {{"lane", lane}, {"points", {{{"position", g_maxPosition + 1}, {"value", 0.0}}}}}),
+		ContainsSubstring("points[0].position must be at most " + std::to_string(g_maxPosition)));
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", g_maxPosition}, {"value", 0.0}}}}});
+}
+
+TEST_CASE("loading a project cuts event, part and note positions and lengths at the longest project", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId instrument = addTrack(client, {{"type", "instrument"}});
+	run(client, "audioEvent.add", {{"track", audio}, {"clip", addClip(client)}, {"position", 0}});
+	const ObjectId part =
+		run(client, "midiPart.add", {{"track", instrument}, {"position", 0}, {"length", g_ticksPerQuarter}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	run(client, "note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", 1}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	Json saved = run(client, "project.get");
+	constexpr int64_t beyond = int64_t{1} << 62;
+	saved.at("media")[0]["length"] = beyond;
+	for (const char* key : {"position", "offset", "length"})
+		saved.at("audioEvents")[0][key] = beyond;
+	Json& savedPart = saved.at("midiParts")[0];
+	savedPart["position"] = beyond;
+	savedPart["length"] = beyond;
+	savedPart.at("notes")[0]["position"] = beyond;
+	savedPart.at("notes")[0]["length"] = beyond;
+
+	const Project loaded = projectFromJson(saved);
+	const int64_t longestTicks = longestProjectTicks(loaded);
+	CHECK(loaded.media.begin()->second.length == g_maxPosition);
+	const AudioEvent& event = loaded.audioEvents.begin()->second;
+	CHECK(event.position.value == g_maxPosition);
+	CHECK(event.offset == g_maxPosition);
+	CHECK(event.length == g_maxPosition);
+	const MidiPart& loadedPart = loaded.midiParts.at(part);
+	CHECK(loadedPart.position.value == longestTicks);
+	CHECK(loadedPart.length == longestTicks);
+	CHECK(loadedPart.notes.begin()->second.position == longestTicks);
+	CHECK(loadedPart.notes.begin()->second.length == longestTicks);
+}
+
+TEST_CASE("an event of a clip at a far lower rate than the project's ends at the longest project", "[unit]")
+{
+	// Its length in the project's samples saturates instead of overflowing, which dropped the event (#1906).
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId media = run(client, "media.add",
+		{{"path", "/audio/slow.wav"}, {"sampleRate", 0.001}, {"channels", 1}, {"length", g_maxPosition}})
+							   .at("media")
+							   .at("id")
+							   .get<ObjectId>();
+	const ObjectId clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	run(client, "audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 100}});
+
+	const RenderSnapshot& snapshot = engine.renderSnapshots().acquire();
+	const Playlist playlist = makePlaylist(snapshot, renderChannel(snapshot, audio), false);
+	REQUIRE(!playlist.layers.empty());
+	REQUIRE(playlist.layers.front().size() == 1);
+	CHECK(playlist.layers.front().front().start == 100);
+	CHECK(playlist.layers.front().front().end == 100 + g_maxPosition);
 }
 
 TEST_CASE("MIDI parts hold notes and controllers, compiled to samples in time order", "[unit]")

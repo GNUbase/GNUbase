@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <set>
@@ -643,12 +644,27 @@ namespace gnubase::engine
 				{
 					if (edited.count(id) != 0 || edited.count(event.part) != 0) // an edited part's events move with it
 						continue;
+					// Of an event in an audio part, only what the part shows attracts.
+					time::Samples from = std::numeric_limits<time::Samples>::min();
+					time::Samples to = std::numeric_limits<time::Samples>::max();
+					if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end())
+					{
+						const time::Position& position = part->second.position;
+						from = time::toSamples(position, project.tempo, project.sampleRate);
+						to = time::toSamples(
+							{position.base, position.value + part->second.length}, project.tempo, project.sampleRate);
+					}
+					const auto magnet = [&target, from, to](time::Samples at)
+					{
+						if (at >= from && at <= to)
+							target.magnets.push_back(at);
+					};
 					const EventSpan span = eventSpan(project, event);
-					target.magnets.push_back(span.start);
-					target.magnets.push_back(span.end);
+					magnet(span.start);
+					magnet(span.end);
 					if (event.snapPoint && *event.snapPoint >= event.offset &&
 						*event.snapPoint < event.offset + event.length)
-						target.magnets.push_back(span.start +
+						magnet(span.start +
 							std::llround(
 								eventSamples(project, event, static_cast<double>(*event.snapPoint - event.offset))));
 				}

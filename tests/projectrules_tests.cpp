@@ -491,7 +491,11 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 					{action("position", "multiplyBy", 1e12), action("length", "multiplyBy", 1e12)})}});
 		CHECK(atLongest(f.object("midiParts", f.full).at("position")));
 		CHECK(atLongest(f.object("midiParts", f.full).at("length")));
-		CHECK(atLongest(run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0).at("position")));
+		// The cycle marker ends at the longest project and starts a sample before it.
+		const Json cycle = run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0);
+		CHECK(atLongest(cycle.at("end")));
+		CHECK(cycle.at("position").get<int64_t>() < cycle.at("end").get<int64_t>());
+		CHECK(cycle.at("position").get<int64_t>() > longest - g_beatTicks);
 		run(f.client, "history.undo");
 		CHECK(f.object("midiParts", f.full).at("position") == g_beatTicks);
 		run(f.client, "history.redo");
@@ -625,7 +629,11 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		const int64_t position = f.object("midiParts", f.full).at("position").get<int64_t>();
 		CHECK(atLongest(position));
 		CHECK(atLongest(f.object("midiParts", f.full).at("length")));
-		CHECK(atLongest(run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0).at("position")));
+		// The cycle marker ends at the longest project and starts a sample before it.
+		const Json cycle = run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0);
+		CHECK(atLongest(cycle.at("end")));
+		CHECK(cycle.at("position").get<int64_t>() < cycle.at("end").get<int64_t>());
+		CHECK(cycle.at("position").get<int64_t>() > longest - g_beatTicks);
 		const int64_t samples =
 			run(f.client, "marker.list", {{"track", linear}}).at("markers").at(0).at("position").get<int64_t>();
 		CHECK(std::abs(samples - gnubase::time::g_maxPosition) <= 2);

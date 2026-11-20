@@ -152,6 +152,25 @@ TEST_CASE("documents get the canvas elements, with the style properties they dra
 	CHECK(lanes.ResolveLength(inset->GetNumericValue()) == 0.0F);
 }
 
+TEST_CASE("fade lines draw their handles in color, as large as handle-size", "[unit]")
+{
+	OneWindow fixture;
+	fixture.show("fade-lines { display: block; width: 400dp; height: 100dp; color: #ff0000; }",
+		R"(<fade-lines id="fades" scale="10"/>)");
+	auto& fades = fixture.element<ui::FadeLines>("fades");
+	fades.setLanes({{40.0F, {}, {1000.0}, {}}});
+	// 6 dp by default, centered on the handle's place.
+	const std::vector<float> small = extent(fixture.draw(), red());
+	CHECK(small[2] - small[0] == 6.0F);
+	CHECK(small[3] - small[1] == 6.0F);
+	fades.SetAttribute("style", "handle-size: 10dp");
+	const std::vector<float> large = extent(fixture.draw(), red());
+	CHECK(large[2] - large[0] == 10.0F);
+	CHECK(large[3] - large[1] == 10.0F);
+	CHECK(large[0] + large[2] == small[0] + small[2]);
+	CHECK(large[1] == small[1]); // at the top of the lane
+}
+
 TEST_CASE("event lanes fill events with color, outlined by stroke-color, in their lanes", "[unit]")
 {
 	OneWindow fixture;

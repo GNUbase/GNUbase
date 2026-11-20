@@ -660,6 +660,26 @@ TEST_CASE("snap.position snaps as the project window does", "[unit]")
 		(2 * g_bar) + (2 * g_quarter));
 }
 
+TEST_CASE("snap.position's magnets of an audio part's events are only those the part shows", "[unit]")
+{
+	Fixture f;
+	const int64_t audio = f.track("audio", "linear");
+	// An event from 2 to 6 seconds with a snap point at 5, in a part that shows it from 3 to 4 seconds.
+	const int64_t event = f.audioEvent(audio, "take.wav", 10 * g_second, 2 * g_second, 0, 4 * g_second);
+	f.call("event.setSnapPoint", {{"events", {event}}, {"position", 5 * g_second}});
+	const Json part = f.call("event.toPart", {{"events", {event}}}).at("events").at(0);
+	f.call("event.resize", {{"events", {part}}, {"edge", "start"}, {"delta", g_second}});
+	f.call("event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", -2 * g_second}});
+	f.call("snap.set", {{"on", true}, {"type", "events"}});
+	const auto snapped = [&f](int64_t position)
+	{ return f.call("snap.position", {{"position", position}}).at("position").get<int64_t>(); };
+	CHECK(snapped((2 * g_second) + 1000) == (2 * g_second) + 1000); // the hidden start
+	CHECK(snapped((5 * g_second) + 1000) == (5 * g_second) + 1000); // the hidden snap point
+	CHECK(snapped((6 * g_second) - 1000) == (6 * g_second) - 1000); // the hidden end
+	CHECK(snapped((3 * g_second) + 1000) == 3 * g_second);          // the part's edges
+	CHECK(snapped((4 * g_second) - 1000) == 4 * g_second);
+}
+
 TEST_CASE("event.shuffle changes the order of adjoining events", "[unit]")
 {
 	Fixture f;

@@ -316,12 +316,10 @@ namespace gnubase::ui
 		// The selection range, also in the root's attributes range ("start end") and range-tracks (ids); none
 		// without the range selection tool. Choosing another tool selects the events in the range instead.
 		const std::optional<RangeSelection>& range() const { return m_range; }
+		// A drag in it on one of its tracks, without Shift, moves its contents (range.move), with the tool modifier
+		// dragDrop.copy copies them, and the range goes with them (reference manual p. 291); a click there without a
+		// drag selects a range of no length, as anywhere.
 		void setRange(std::optional<RangeSelection> range);
-		// What a press and release with the range selection tool do on any lane, for a press that the display didn't
-		// get: the marker track's press in the selection range, released without a drag across (ui/markers.h). A range
-		// from the press to the release, with the release's modifier keys: of no length at a click, over the lanes
-		// between them after a drag up or down.
-		void clickRange(Rml::Vector2f press, Rml::Event& release);
 		// Importing files (#92, fileimport.cpp, docs/features/file-import.md). MIDI files (.mid, .midi, .smf) are
 		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the
 		// document), or with the user setting editing.onImportAudio at useSettings are imported at once with the
@@ -350,6 +348,7 @@ namespace gnubase::ui
 		// edit.delete, edit.mute, edit.unmute, edit.lock, edit.unlock, edit.splitAtCursor, edit.splitLoop, edit.glue,
 		// edit.duplicate, edit.repeat (opens the Repeat Events dialog), edit.fillLoop, edit.toRealCopy, edit.nudgeLeft,
 		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
+		// edit.nudgeTopUp, edit.nudgeTopDown, edit.nudgeBottomUp, edit.nudgeBottomDown,
 		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
 		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd, edit.selectUnderCursor, and
 		// Left and Right's edit.selectPrevious and edit.selectNext; and edit.locatorsToSelection sets the locators
@@ -364,15 +363,20 @@ namespace gnubase::ui
 		// With the range selection tool,
 		// edit.delete deletes the range; edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence,
 		// edit.splitRange and edit.cropRange edit it, edit.paste and edit.pasteTime paste at its start (without a
-		// range at the project cursor) and edit.globalCopy copies the locator range on every track.
+		// range at the project cursor) and edit.globalCopy copies the locator range on every track; edit.duplicate
+		// copies its contents to its end, where the range goes; edit.nudgeLeft and edit.nudgeRight move the range by
+		// a grid step without its contents, the start and end nudges its edges, and edit.nudgeTopUp,
+		// edit.nudgeTopDown, edit.nudgeBottomUp and edit.nudgeBottomDown take a track in or out at its top or bottom
+		// (reference manual pp. 288-291).
 		// edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points); and the
 		// tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue, tool.mute,
 		// tool.zoom, tool.line, tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or off).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 		// Whether the action can do something now, for menus and keys to disable it: the actions that only edit the
-		// selection range (edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence, edit.cropRange and
-		// edit.splitRange) need a range, all but edit.splitRange one with a length; edit.paste and edit.pasteTime need
-		// something copied, a rangeClipboard.changed since the project opened. The others always can.
+		// selection range (edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence, edit.cropRange,
+		// edit.splitRange and the top and bottom nudges) need a range, all but edit.splitRange and the nudges one with
+		// a length; edit.paste and edit.pasteTime need something copied, a rangeClipboard.changed since the project
+		// opened. The others always can.
 		bool canRun(const std::string& action) const;
 
 		// Automation tracks (#121, automationtracks.cpp, docs/features/automation-tracks.md): lanes of their own below
@@ -432,6 +436,7 @@ namespace gnubase::ui
 			ResizeEnd,     // its end
 			Rectangle,     // a rectangle that selects, mutes or zooms
 			Range,         // a selection range
+			RangeMove,     // the selection range's contents, or a copy of them, from m_dragRange
 			DrawPart,      // a new MIDI part
 			Comp,          // brings what it is released on to the front, or comps the range dragged on a lane
 			Play,          // auditions or scrubs until the mouse is released
@@ -690,7 +695,8 @@ namespace gnubase::ui
 		};
 		void addFadeActions();
 		void readFades(const engine::Json& event, double rate, double timeRate);
-		// The fade handle of the event at x and y dp in the event lanes: -1 its fade in's, 1 its fade out's, 0 none.
+		// The fade handle at x and y dp in the event lanes, of a selected event (only those have handles): -1 its
+		// fade in's, 1 its fade out's, 0 none.
 		int fadeHandleAt(const Shown& shown, double x, double y) const;
 		// Starts dragging a fade handle when x and y dp in the event lanes are at one of the pressed event's.
 		bool fadeDown(const Shown& shown, double x, double y);
@@ -700,7 +706,8 @@ namespace gnubase::ui
 		void showFades(); // the fade lines and the selected audio events' handles
 		// A double click on an event at seconds: in a crossfade's zone, opens the crossfade editor.
 		bool openCrossfadeAt(const Shown& shown, double seconds); // whether there is one
-		// The crossfade editor of the first crossfade into or out of a selected audio event; whether there is one.
+		// The crossfade editor of a crossfade that plays between two of the selected audio events, or into or out of
+		// the only selected one; whether there is one.
 		bool openSelectedCrossfade();
 		// The selected audio events, by id.
 		std::vector<uint64_t> selectedAudio() const;
@@ -936,7 +943,7 @@ namespace gnubase::ui
 		bool m_dragMoved = false;
 		double m_dragDy = 0.0;              // dp, dragging the event volume or a curve point
 		std::optional<size_t> m_dragPoint;  // the curve point dragged, none for a new one
-		bool m_dragStarted = false;         // moving events, after the drag delay
+		bool m_dragStarted = false;         // moving events, after the drag delay; a RangeMove drag, once across
 		bool m_dragToggles = false;         // a Ctrl/Shift click takes the pressed event or point out of the selection
 		bool m_clickSelectsPoint = false;   // a click on a point of a larger selection selects only that point
 		double m_pressTime = 0.0;           // RmlUi's clock, in seconds
@@ -992,6 +999,8 @@ namespace gnubase::ui
 		bool m_resizeScrubs = false; // the play tool's resize drag, which scrubs m_auditioned
 		std::optional<RangeSelection> m_range;
 		std::optional<RangeSelection> m_rangeBase; // what a drag with Shift adds to
+		bool m_rangeAnew = false;                  // a Shift press in m_rangeBase, which a drag replaces
+		std::optional<RangeSelection> m_dragRange; // the range a RangeMove drag moves, as it was
 		double m_pressX = 0.0;                     // dp in the event lanes
 		double m_pressY = 0.0;
 		std::string m_pressed; // the modifiers held at the press: ctrl, alt and shift joined with +

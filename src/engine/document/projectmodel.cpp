@@ -443,11 +443,19 @@ namespace gnubase::engine
 
 		// Time.
 
-		time::Position position(const Track& track, const Json& value, const std::string& name)
+		// A position or length in a time base, at most the longest project's end so that sums can't overflow (#1906).
+		int64_t withinLongest(const Project& project, time::TimeBase base, int64_t value, const std::string& name)
+		{
+			const int64_t longest = longestPosition(project, base);
+			require(value <= longest, name + " must be at most " + std::to_string(longest) + ", the longest project");
+			return value;
+		}
+
+		time::Position position(const Project& project, const Track& track, const Json& value, const std::string& name)
 		{
 			const int64_t position = value.get<int64_t>();
 			require(position >= 0, name + " must not be negative");
-			return {track.timeBase, position};
+			return {track.timeBase, withinLongest(project, track.timeBase, position, name)};
 		}
 
 		// A MIDI part's end, in the time base of its position.
@@ -937,11 +945,11 @@ namespace gnubase::engine
 		// Changes a point by what a command gives for it, checked. Positions are in the time base of the lane's track.
 		// On a step curve, points are steps with whole values (reference manual p. 870: step curves for on/off
 		// parameters, such as mute).
-		void changePoint(AutomationPoint& point, const Json& item, const std::string& name, const Track& track,
-			const std::pair<double, double>& range, bool stepped)
+		void changePoint(const Project& project, AutomationPoint& point, const Json& item, const std::string& name,
+			const Track& track, const std::pair<double, double>& range, bool stepped)
 		{
 			if (item.contains("position"))
-				point.position = position(track, item.at("position"), name + ".position");
+				point.position = position(project, track, item.at("position"), name + ".position");
 			if (item.contains("value"))
 			{
 				point.value = item.at("value").get<double>();
@@ -1044,7 +1052,7 @@ namespace gnubase::engine
 			{
 				AutomationPoint point;
 				point.position.base = track.timeBase;
-				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range, stepped);
+				changePoint(project, point, items[i], "points[" + std::to_string(i) + "]", track, range, stepped);
 				points.push_back(point);
 			}
 			for (AutomationPoint& point : points)
@@ -1073,7 +1081,7 @@ namespace gnubase::engine
 				require(found != lane.points.end(),
 					"no automation point " + idText(id) + " in automation lane " + idText(lane.id));
 				AutomationPoint point = found->second;
-				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range, stepped);
+				changePoint(project, point, items[i], "points[" + std::to_string(i) + "]", track, range, stepped);
 				points.push_back(point);
 			}
 			for (const AutomationPoint& point : points)
@@ -1140,7 +1148,7 @@ namespace gnubase::engine
 		{
 			const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
 			const time::Samples start = time::toSamples(event.position, project.tempo, project.sampleRate);
-			const auto length = std::llround(static_cast<double>(event.length) * project.sampleRate / media.sampleRate);
+			const int64_t length = rescale(event.length, project.sampleRate / media.sampleRate);
 			return time::rebase(
 				{time::TimeBase::Linear, start + length}, event.position.base, project.tempo, project.sampleRate);
 		}
@@ -2651,6 +2659,7 @@ namespace gnubase::engine
 			require(media.sampleRate > 0.0, "sampleRate must be positive");
 			requireRange(media.channels, 1, g_maxAudioChannels, "channels");
 			require(media.length >= 0, "length must not be negative");
+			withinLongest(project, time::TimeBase::Linear, media.length, "length");
 			if (copy)
 			{
 				std::error_code error;
@@ -2878,7 +2887,7 @@ namespace gnubase::engine
 			if (event.length == 0)
 				event.length = media.length - event.offset;
 			require(event.length > 0, "length must be positive");
-			require(event.offset + event.length <= media.length,
+			require(event.length <= media.length - event.offset,
 				"the event must stay within its clip (" + std::to_string(media.length) + " sample frames)");
 			require(event.volume >= g_minEventVolume && event.volume <= g_maxEventVolume,
 				"volume must be from -144 to 6 dB");
@@ -2890,7 +2899,7 @@ namespace gnubase::engine
 			AudioEvent event;
 			event.track = parameters.at("track").get<ObjectId>();
 			const Track& track = find(project.trackById, event.track, "track");
-			event.position = position(track, parameters.at("position"), "position");
+			event.position = position(project, track, parameters.at("position"), "position");
 			event.clip = parameters.at("clip").get<ObjectId>();
 			event.offset = parameters.value("offset", time::Samples{0});
 			event.length = parameters.value("length", time::Samples{0});
@@ -2930,7 +2939,8 @@ namespace gnubase::engine
 			AudioEvent& event = find(project.audioEvents, parameters.at("event").get<ObjectId>(), "audio event");
 			AudioEvent changed = event;
 			if (parameters.contains("position"))
-				changed.position = position(project.trackById.at(event.track), parameters.at("position"), "position");
+				changed.position =
+					position(project, project.trackById.at(event.track), parameters.at("position"), "position");
 			changed.clip = parameters.value("clip", event.clip);
 			changed.offset = parameters.value("offset", event.offset);
 			changed.length = parameters.value("length", event.length);
@@ -2976,8 +2986,8 @@ namespace gnubase::engine
 			const Track& track = find(project.trackById, part.track, "track");
 			require(track.type == TrackType::Midi || track.type == TrackType::Instrument,
 				"MIDI parts can only be on a MIDI or instrument track");
-			part.position = position(track, parameters.at("position"), "position");
-			part.length = parameters.at("length").get<int64_t>();
+			part.position = position(project, track, parameters.at("position"), "position");
+			part.length = withinLongest(project, track.timeBase, parameters.at("length").get<int64_t>(), "length");
 			require(part.length > 0, "length must be positive");
 			part.name = parameters.value("name", track.name);
 			part.lane = parameters.value("lane", 0);
@@ -2999,8 +3009,8 @@ namespace gnubase::engine
 			part.track = parameters.at("track").get<ObjectId>();
 			const Track& track = find(project.trackById, part.track, "track");
 			require(track.type == TrackType::Audio, "audio parts can only be on an audio track");
-			part.position = position(track, parameters.at("position"), "position");
-			part.length = parameters.at("length").get<int64_t>();
+			part.position = position(project, track, parameters.at("position"), "position");
+			part.length = withinLongest(project, track.timeBase, parameters.at("length").get<int64_t>(), "length");
 			require(part.length > 0, "length must be positive");
 			part.name = parameters.value("name", track.name);
 			part.lane = parameters.value("lane", 0);
@@ -3015,10 +3025,13 @@ namespace gnubase::engine
 		{
 			const Json& parameters = context.parameters();
 			MidiPart& part = find(project.midiParts, parameters.at("part").get<ObjectId>(), "MIDI part");
+			const Track& track = project.trackById.at(part.track);
 			const time::Position newPosition = parameters.contains("position")
-				? position(project.trackById.at(part.track), parameters.at("position"), "position")
+				? position(project, track, parameters.at("position"), "position")
 				: part.position;
-			const int64_t length = parameters.value("length", part.length);
+			const int64_t length = parameters.contains("length")
+				? withinLongest(project, track.timeBase, parameters.at("length").get<int64_t>(), "length")
+				: part.length;
 			require(length > 0, "length must be positive");
 			if (follow && newPosition != part.position)
 				followEvent(project, part.track, part.position, partEnd(part), newPosition, context);
@@ -3080,6 +3093,8 @@ namespace gnubase::engine
 				note.length = item.at("length").get<time::Ticks>();
 				require(note.position >= 0, name + ".position must not be negative");
 				require(note.length > 0, name + ".length must be positive");
+				withinLongest(project, time::TimeBase::Musical, note.position, name + ".position");
+				withinLongest(project, time::TimeBase::Musical, note.length, name + ".length");
 				requireRange(item.at("pitch").get<int64_t>(), 0, 127, name + ".pitch");
 				requireRange(item.value("channel", int64_t{0}), 0, 15, name + ".channel");
 				note.pitch = item.at("pitch").get<uint8_t>();
@@ -4688,12 +4703,12 @@ namespace gnubase::engine
 
 		add(engine,
 			{"media.add", 1,
-				"Adds an audio file. Its sample rate, channel count and length in sample frames are read from the "
-				"file, or taken as given, for a file that is still being recorded. With copy, a file from outside the "
-				"project folder is also copied into its media folder (see project.location); the project must have "
-				"been saved. The copy runs as a job, returned as job (null without one), with the result that "
-				"media.prepareArchive's job has: the media file is added at once where it is, and when the copy is "
-				"done it is pointed at the copy as an undo step of its own.",
+				"Adds an audio file. Its sample rate, channel count and length in sample frames (at most 2^48) are "
+				"read from the file, or taken as given, for a file that is still being recorded. With copy, a file "
+				"from outside the project folder is also copied into its media folder (see project.location); the "
+				"project must have been saved. The copy runs as a job, returned as job (null without one), with the "
+				"result that media.prepareArchive's job has: the media file is added at once where it is, and when the "
+				"copy is done it is pointed at the copy as an undo step of its own.",
 				objectSchema({{"path", stringSchema}, {"sampleRate", numberSchema}, {"channels", integerSchema},
 								 {"length", integerSchema}, {"copy", booleanSchema}},
 					{"path"}),
@@ -4777,9 +4792,10 @@ namespace gnubase::engine
 		add(engine,
 			{"audioEvent.add", 1,
 				"Adds an audio event that plays a section of a clip on an audio track. position is in the track's time "
-				"base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the "
-				"rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track "
-				"plays one event at a time: where events overlap, the one added last plays, unless they crossfade; "
+				"base (ticks or samples), at most the longest project's end: 2^48 samples, or as many ticks as that "
+				"lasts at the tempo. offset and length are in the clip's sample frames, length defaulting to the rest "
+				"of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays "
+				"one event at a time: where events overlap, the one added last plays, unless they crossfade; "
 				"event.toFront brings another one to the front. lane puts it on that lane of the track, from 0 "
 				"(default), as event.set does.",
 				objectSchema({{"track", idSchema}, {"clip", idSchema}, {"position", integerSchema},
@@ -4796,7 +4812,8 @@ namespace gnubase::engine
 				"(project.set rootKey); globalTranspose follow (the default) or independent says whether the project "
 				"root key and the transpose track transpose it (transpose.add). transpose is its own Transpose in "
 				"semitones, -24 to 24, which adds to global transposition as a MIDI part's does, also while it is "
-				"independent (#1555). Its audio file stays as it is.",
+				"independent (#1555). Its audio file stays as it is. position is at most the longest project's end "
+				"(see audioEvent.add).",
 				objectSchema(
 					{{"event", idSchema}, {"clip", idSchema}, {"position", integerSchema}, {"offset", integerSchema},
 						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema},
@@ -4814,10 +4831,10 @@ namespace gnubase::engine
 		add(engine,
 			{"audioPart.add", 1,
 				"Adds an empty audio part to an audio track (reference manual p. 250): a container of audio events, "
-				"which play only within it and move, copy, split and glue with it through the event commands. "
-				"position and length are in the track's time base; name defaults to the track's. event.toPart puts "
-				"events into a part, event.dissolvePart takes them out again. lane puts it on that lane of the track, "
-				"from 0 (default), as event.set does.",
+				"which play only within it and move, copy, split and glue with it through the event commands. position "
+				"and length are in the track's time base, each at most the longest project's end (see audioEvent.add); "
+				"name defaults to the track's. event.toPart puts events into a part, event.dissolvePart takes them out "
+				"again. lane puts it on that lane of the track, from 0 (default), as event.set does.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
 								 {"name", stringSchema}, {"lane", laneSchema}},
 					{"track", "position", "length"}),
@@ -4826,11 +4843,11 @@ namespace gnubase::engine
 		add(engine,
 			{"midiPart.add", 1,
 				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base: "
-				"ticks on musical tracks, 1,720,320 to the quarter note, samples on linear ones. "
-				"lane puts it on that lane of the track, from 0 (default), as event.set does. pattern makes it a "
-				"pattern event (#181), which plays that pattern (pattern.add) from its start over and over instead "
-				"of its notes; a pattern of another track plays as its copy on the part's track (pattern.add), which "
-				"the result names.",
+				"ticks on musical tracks, 1,720,320 to the quarter note, samples on linear ones, each at most the "
+				"longest project's end (see audioEvent.add). lane puts it on that lane of the track, from 0 (default), "
+				"as event.set does. pattern makes it a pattern event (#181), which plays that pattern (pattern.add) "
+				"from its start over and over instead of its notes; a pattern of another track plays as its copy on "
+				"the part's track (pattern.add), which the result names.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
 								 {"name", stringSchema}, {"lane", laneSchema}, {"pattern", idSchema}},
 					{"track", "position", "length"}),
@@ -4838,16 +4855,17 @@ namespace gnubase::engine
 			addMidiPart);
 		add(engine,
 			{"midiPart.set", 1,
-				"Changes a MIDI part's name, position or length, or how its notes play: transpose (semitones) and "
-				"velocity (added to MIDI 1.0 velocities), each -127 to 127. Velocity adds to the track's MIDI "
-				"modifiers (channel.set modifiers), also while they are bypassed; transpose adds to what each note "
-				"plays with, folded into the octave range together with global transposition while the part follows "
-				"it (transpose.setTrack keepInOctave). The notes themselves stay as they are. "
-				"rootKey is the part's root key (\"\" for none, C, C# and so on to B), which the project root key "
-				"transposes it to (project.set rootKey); globalTranspose follow (the default) or independent says "
-				"whether the project root key and the transpose track transpose it (transpose.add). pattern is the "
-				"pattern a pattern event plays (pattern.add, #181), 0 for an ordinary part: another one plays from "
-				"the part's start, and one of another track as its copy on the part's track, which the result names.",
+				"Changes a MIDI part's name, position or length (each at most the longest project's end, see "
+				"audioEvent.add), or how its notes play: transpose (semitones) and velocity (added to MIDI 1.0 "
+				"velocities), each -127 to 127. Velocity adds to the track's MIDI modifiers (channel.set modifiers), "
+				"also while they are bypassed; transpose adds to what each note plays with, folded into the octave "
+				"range together with global transposition while the part follows it (transpose.setTrack keepInOctave). "
+				"The notes themselves stay as they are. rootKey is the part's root key (\"\" for none, C, C# and so on "
+				"to B), which the project root key transposes it to (project.set rootKey); globalTranspose follow (the "
+				"default) or independent says whether the project root key and the transpose track transpose it "
+				"(transpose.add). pattern is the pattern a pattern event plays (pattern.add, #181), 0 for an ordinary "
+				"part: another one plays from the part's start, and one of another track as its copy on the part's "
+				"track, which the result names.",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"position", integerSchema},
 								 {"length", integerSchema}, {"transpose", integerSchema}, {"velocity", integerSchema},
 								 {"rootKey", enumSchema(rootKeyNames())},
@@ -4870,16 +4888,16 @@ namespace gnubase::engine
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
-				"Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity "
-				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability "
-				"0-1, the chance that the note plays (default 1), and velocity variance -1 to 1, the share by which "
-				"playback raises (positive) or lowers (negative) its velocity at most (default 0). articulations are "
-				"the attributes of the track's articulation map (articulationMap.add) that the note has, by name, and "
-				"mutedArticulations those of them that are muted, as the mute tool mutes them: they select no sound "
-				"slot. "
-				"expressions are its per-note expression: points {type, position, value}, position in ticks from the "
-				"note's start, type volume (a linear gain 0-4), pan (0-1, 0.5 the center), tuning (semitones, -120 to "
-				"120), vibrato, expression, brightness or pressure (0-1).",
+				"Adds notes to a MIDI part: position from the part's start and length in ticks, each at most the "
+				"longest project's end (see audioEvent.add), pitch 0-127, velocity 0-1, release (note-off) velocity "
+				"0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability 0-1, the chance that the note "
+				"plays (default 1), and velocity variance -1 to 1, the share by which playback raises (positive) or "
+				"lowers (negative) its velocity at most (default 0). articulations are the attributes of the track's "
+				"articulation map (articulationMap.add) that the note has, by name, and mutedArticulations those of "
+				"them that are muted, as the mute tool mutes them: they select no sound slot. expressions are its "
+				"per-note expression: points {type, position, value}, position in ticks from the note's start, type "
+				"volume (a linear gain 0-4), pan (0-1, 0.5 the center), tuning (semitones, -120 to 120), vibrato, "
+				"expression, brightness or pressure (0-1).",
 				objectSchema({{"part", idSchema}, {"notes", arraySchema(note)}}, {"part", "notes"}),
 				{{"type", "object"}, {"properties", {{"notes", {{"type", "array"}}}}}, {"required", {"notes"}}}, false},
 			addNotes);
@@ -5030,15 +5048,15 @@ namespace gnubase::engine
 		add(engine,
 			{"automationPoint.add", 1,
 				"Adds points to an automation lane: position in the track's time base (ticks on musical tracks, so "
-				"automation follows tempo changes; samples on linear ones, so it keeps its time), value in the "
-				"target's unit, shape of the curve to the next point (step, linear or curve; "
-				"default linear) and for curves the bend, curve, from -1 to 1 (above 0 the value moves fast at first). "
-				"Mute and stepped parameters (parameter.list) have step curves: their points are steps with whole "
-				"values. "
-				"Before the first point the curve has its value, after the last point the last one's; points at one "
-				"position make a jump. A ramp of volume moves the gain in a straight line. terminator (default false) "
-				"ends the curve at the point: up to the next point the parameter has its static value, a gap. With "
-				"virgin territory (automation.set) there are gaps before the first and after the last point too.",
+				"automation follows tempo changes; samples on linear ones, so it keeps its time) and at most the "
+				"longest project's end (see audioEvent.add), value in the target's unit, shape of the curve to the "
+				"next point (step, linear or curve; default linear) and for curves the bend, curve, from -1 to 1 "
+				"(above 0 the value moves fast at first). Mute and stepped parameters (parameter.list) have step "
+				"curves: their points are steps with whole values. Before the first point the curve has its value, "
+				"after the last point the last one's; points at one position make a jump. A ramp of volume moves the "
+				"gain in a straight line. terminator (default false) ends the curve at the point: up to the next point "
+				"the parameter has its static value, a gap. With virgin territory (automation.set) there are gaps "
+				"before the first and after the last point too.",
 				objectSchema({{"lane", idSchema}, {"points", arraySchema(point)}}, {"lane", "points"}), pointsResult,
 				false},
 			addAutomationPoints);
@@ -5047,8 +5065,8 @@ namespace gnubase::engine
 			{"id"});
 		add(engine,
 			{"automationPoint.set", 1,
-				"Changes points of an automation lane: their position, value, shape, curve or terminator (see "
-				"automationPoint.add).",
+				"Changes points of an automation lane: their position, at most the longest project's end (see "
+				"audioEvent.add), value, shape, curve or terminator (see automationPoint.add).",
 				objectSchema({{"lane", idSchema}, {"points", arraySchema(change)}}, {"lane", "points"}), pointsResult,
 				false},
 			setAutomationPoints);
