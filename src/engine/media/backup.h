@@ -47,25 +47,33 @@ namespace gnubase::engine
 	std::filesystem::path createFreeFile(
 		const std::filesystem::path& folder, const std::filesystem::path& name, std::set<std::string>& taken);
 
-	// A media file and its copy.
+	// A media file, or a freeze file that frozen tracks play, and its copy.
 	struct MediaCopy
 	{
 		ObjectId media = 0;
-		std::string from; // the media file's path
-		std::string to;   // the copy's path; empty if from couldn't be read
+		std::string from;             // the file's path
+		std::string to;               // the copy's path; empty if from couldn't be read
+		std::vector<ObjectId> tracks; // for a freeze file, the frozen tracks that play it; empty for a media file
 	};
 
-	// Copies media files into folder, which it creates if needed, each under its own name or a free one (see
-	// createFreeFile), in chunks, reporting progress to the job and stopping when it is cancelled. Sets each copy's
-	// to, or leaves it empty for a file that can't be read. If it doesn't complete, it removes the copies it made.
-	// Throws JobCancelled or std::runtime_error.
+	// Copies media files into folder and freeze files into Freeze next to it, which it creates if needed, each under
+	// its own name or a free one (see createFreeFile), in chunks, reporting progress to the job and stopping when it is
+	// cancelled. Sets each copy's to, or leaves it empty for a file that can't be read. If it doesn't complete, it
+	// removes the copies it made. Throws JobCancelled or std::runtime_error.
 	void copyMedia(std::vector<MediaCopy>& files, const std::filesystem::path& folder, JobContext& job);
 
-	// Copies media files into the media folder as a job, then points the media at their copies with one
-	// command, a transaction named action, so that it is one undo step of project, the project open when it started
-	// (ProjectModel::openedRevision). Media whose path changed while the job copied, or that were removed, keep their
-	// path, and their copies are removed; so are all of them if another project was opened meanwhile. The job's result
-	// is {copied: [{media, from, to}], missing: [{media, path}], changed: [media]}. Returns the job.
+	// Adds the freeze files of project's frozen tracks inside folder (inside true) or outside it to files, each once,
+	// with the tracks that play it in the order of their ids.
+	void addFreezeCopies(
+		const Project& project, const std::filesystem::path& folder, bool inside, std::vector<MediaCopy>& files);
+
+	// Copies media files into the media folder and freeze files into Freeze next to it as a job, then points the media
+	// and frozen tracks at their copies with one transaction named action (media.relink, track.relinkFreeze), so that
+	// it is one undo step of project, the project open when it started (ProjectModel::openedRevision). Media and tracks
+	// whose path changed while the job copied, or that were removed, keep their path, and copies that none of them
+	// plays are removed; so are all of them if another project was opened meanwhile. The job's result is {copied:
+	// [{media or tracks, from, to}], missing: [{media or tracks, path}], changed: [media], changedTracks: [track]}.
+	// Returns the job.
 	Json startMediaCopy(Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder,
 		std::string action, uint64_t project);
 

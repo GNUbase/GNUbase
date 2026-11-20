@@ -260,6 +260,13 @@ namespace gnubase::engine
 				return mz_zip_reader_locate_file(&m_zip, name.c_str(), nullptr, 0) >= 0;
 			}
 
+			// Whether the file has an entry of exactly that name, in that case: one of the entries a save wrote, which
+			// another entry of the same name in another case mustn't stand in for (#871).
+			bool containsExactly(const std::string& name)
+			{
+				return mz_zip_reader_locate_file(&m_zip, name.c_str(), nullptr, MZ_ZIP_FLAG_CASE_SENSITIVE) >= 0;
+			}
+
 			std::string text(const std::string& name)
 			{
 				size_t size = 0;
@@ -303,9 +310,14 @@ namespace gnubase::engine
 			}
 
 		private:
+			// The entry of that name: the one in the same case if there is one, so that of entries that differ only in
+			// case each is found by its own name, as a build before #871 saved media files (audio/Kick.wav and
+			// audio/kick.wav); else one in another case, as other applications may refer to their entries.
 			mz_uint locate(const std::string& name)
 			{
-				const int index = mz_zip_reader_locate_file(&m_zip, name.c_str(), nullptr, 0);
+				int index = mz_zip_reader_locate_file(&m_zip, name.c_str(), nullptr, MZ_ZIP_FLAG_CASE_SENSITIVE);
+				if (index < 0)
+					index = mz_zip_reader_locate_file(&m_zip, name.c_str(), nullptr, 0);
 				if (index < 0)
 					throw DawProjectError(m_path + " has no " + name);
 				return static_cast<mz_uint>(index);
@@ -540,12 +552,12 @@ namespace gnubase::engine
 						m_mediaPaths[id] = referencePath(media.path, fileFolder);
 						continue;
 					}
-					std::string name = "audio/" + pathOf(media.path).filename().u8string();
-					if (!taken.insert(name).second)
-					{
-						name = "audio/" + std::to_string(id) + "-" + pathOf(media.path).filename().u8string();
-						taken.insert(name);
-					}
+					// Unique in any case, as other applications may look the file's entries up in any case (#871).
+					const std::string file = pathOf(media.path).filename().u8string();
+					std::string name = "audio/" + file;
+					for (int copy = 1; !taken.insert(foldedName(pathOf(name))).second; ++copy)
+						name =
+							"audio/" + std::to_string(id) + (copy > 1 ? "-" + std::to_string(copy) : "") + "-" + file;
 					m_mediaPaths[id] = name;
 				}
 			}
@@ -2319,8 +2331,8 @@ namespace gnubase::engine
 			{
 				const auto stored = media.find(std::to_string(id));
 				if (stored != media.end())
-					file.path =
-						importer.resolvedPath(stored->get<std::string>(), !zip.contains(stored->get<std::string>()));
+					file.path = importer.resolvedPath(
+						stored->get<std::string>(), !zip.containsExactly(stored->get<std::string>()));
 			}
 			const Json frozen = extension.value("frozen", Json::object());
 			for (auto& [id, track] : project.trackById)
@@ -2328,8 +2340,8 @@ namespace gnubase::engine
 				if (!track.frozen)
 					continue;
 				if (const auto stored = frozen.find(std::to_string(id)); stored != frozen.end())
-					track.frozen->path =
-						importer.resolvedPath(stored->get<std::string>(), !zip.contains(stored->get<std::string>()));
+					track.frozen->path = importer.resolvedPath(
+						stored->get<std::string>(), !zip.containsExactly(stored->get<std::string>()));
 			}
 			// The buttons a freeze locks are off (track.freeze), also when a file from before says they are on.
 			for (auto& entry : project.channels)
