@@ -2616,11 +2616,13 @@ TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar 
 			.get<uint64_t>();
 	};
 	// A tempo and a bar where moving the part on it by a range from its start sample to the next bar's sample puts it
-	// off the next bar's tick.
+	// off the next bar's tick, and where Grid Relative's tick for the drag by a bar, which keeps the range start's
+	// distance from its bar line, isn't where the move to that tick's sample puts the part either.
 	double bpm = 0.0;
 	int64_t bar = 0;
 	uint64_t part = 0;
-	for (const double candidate : {97.3, 133.7, 101.3, 89.9, 111.1})
+	const Json relative = {{"on", true}, {"type", "gridRelative"}};
+	for (const double candidate : {97.3, 133.7, 101.3, 89.9, 111.1, 93.7, 127.9, 104.9, 117.3, 86.3})
 	{
 		f.call("tempo.add", {{"position", 0}, {"bpm", candidate}, {"ramp", false}});
 		for (int64_t each = 1; each <= 2 && bar == 0; ++each)
@@ -2630,10 +2632,19 @@ TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar 
 			const int64_t at = startOf(probe);
 			f.call("event.remove", {{"events", {probe}}});
 			const int64_t start = startOf(id);
-			f.call("range.move", {{"start", start}, {"end", start + 48000}, {"tracks", {midi}}, {"position", at}});
+			const Json range = {{"start", start}, {"end", start + 48000}, {"tracks", {midi}}};
+			Json move = range;
+			move["position"] = at;
+			f.call("range.move", move);
 			const bool off = positionOf(id) != (each + 1) * g_bar;
 			f.call("history.undo");
-			if (off)
+			const Json snapped =
+				f.call("snap.position", {{"position", at}, {"from", start}, {"settings", relative}, {"range", 0}});
+			move["position"] = snapped.at("position");
+			f.call("range.move", move);
+			const bool apart = snapped.at("musical") == true && positionOf(id) != snapped.at("ticks").get<int64_t>();
+			f.call("history.undo");
+			if (off && apart)
 			{
 				bpm = candidate;
 				bar = each;
@@ -2669,14 +2680,22 @@ TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar 
 	f.call("history.undo");
 	REQUIRE(f.waitUntil([&] { return positionOf(part) == bar * g_bar; }));
 
-	// Grid Relative keeps the range start's distance from its bar line, less than a sample: dragged to the project
-	// start, the part lands on tick 0, as range.move at position 0 puts it.
+	// Grid Relative keeps the range start's distance from its bar line, the rounding of its sample to ticks, so its
+	// tick lies off the next bar's line: the drag by a bar sends the range's new start in samples, and the part lands
+	// where range.move puts it there, not on that tick.
 	f.call("snap.set", {{"type", "gridRelative"}});
 	REQUIRE(f.waitUntil([&f] { return f.display.snap().type == engine::SnapType::GridRelative; }));
 	f.click(900, 20);
 	f.display.setRange(ui::RangeSelection{start, start + 48000, {midi}});
-	f.drag(x, 60, x - (static_cast<double>(bar) * 4.0 * 60.0 / bpm * 100.0), 60);
-	REQUIRE(f.waitUntil([&] { return positionOf(part) == 0; }));
+	f.drag(x, 60, x + (4.0 * 60.0 / bpm * 100.0), 60);
+	REQUIRE(f.waitUntil([&] { return positionOf(part) != bar * g_bar; }));
+	const int64_t dragged = positionOf(part);
+	const int64_t at = f.display.range().value_or(ui::RangeSelection{-1, -1, {}}).start;
+	REQUIRE(at > start);
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return positionOf(part) == bar * g_bar; }));
+	f.call("range.move", {{"start", start}, {"end", start + 48000}, {"tracks", {midi}}, {"position", at}});
+	CHECK(positionOf(part) == dragged);
 }
 
 TEST_CASE("a drag in the selection range takes its contents onto other tracks too, Alt a copy of them", "[unit]")

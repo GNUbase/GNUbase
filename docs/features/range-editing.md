@@ -235,14 +235,14 @@ Not yet (#1978): a range of several tracks dragged past a folded folder. The dis
   commands can't run, and Paste can't until a cut, nor after `project.new`; split, Delete Time, cut and paste on a
   selection range, which stays; paste at the cursor without a range, selecting what it pasted; a drag in the range
   moving its contents on a MIDI track in one undo step with the range, snapped to a bar at a tempo whose bars lie
-  between samples landing on the bar's tick and with Grid Relative at the project start on tick 0, Alt and a drag
-  copying them, a click in it selecting a range of no length, and Duplicate copying them to the range's end twice in a
-  row; a drag down a lane and across, straight down and with Alt taking the part or a copy onto the track below, and one
-  below the last lane stopping at the last track; the edges' pointers, and dragging the start and the end across,
-  snapped and past the other edge, and the bottom and top down and up, taking tracks in and out and stopping at the
-  other edge, while the project stays as it was; the nudges moving the range and its edges by a beat, not before the
-  project start nor the start past the end, and the top and bottom nudges taking tracks in and out, never the last,
-  while the project stays as it was.
+  between samples landing on the bar's tick and with Grid Relative by a bar where `range.move` at the range's new start
+  in samples puts it, Alt and a drag copying them, a click in it selecting a range of no length, and Duplicate copying
+  them to the range's end twice in a row; a drag down a lane and across, straight down and with Alt taking the part or a
+  copy onto the track below, and one below the last lane stopping at the last track; the edges' pointers, and dragging
+  the start and the end across, snapped and past the other edge, and the bottom and top down and up, taking tracks in
+  and out and stopping at the other edge, while the project stays as it was; the nudges moving the range and its edges
+  by a beat, not before the project start nor the start past the end, and the top and bottom nudges taking tracks in and
+  out, never the last, while the project stays as it was.
 - `tests/markertrack_ui_tests.cpp`: the same drag on the marker track, also released outside the window.
 - `tests/uiapp_tests.cpp`: the context menu disables the range commands without a range and Paste until something is
   cut.
