@@ -3191,7 +3191,7 @@ TEST_CASE(
 	// The mute lane unmutes at the start of the third block. The CC 7 lane steps to 0.5 at 100, and the track's own CC
 	// 7 at 300, later, plays into the mute. In the third block, new points either change the lane's value there, only
 	// add a point after it, or are those of a lane that the channel didn't have before.
-	enum class Edit
+	enum class Edit : uint8_t
 	{
 		Change,
 		AddAfter,
@@ -3216,9 +3216,11 @@ TEST_CASE(
 		points.push_back({5000, 1.0, AutomationShape::Step, 0.0});
 	strip.setChannel(channel);
 	// The lane's new value goes out after the track's CC 7 and wins; a value it had before goes out again before it.
-	const std::vector<uint32_t> expected = change == Edit::Change ? std::vector<uint32_t>{20, midiValueOf(0.75)}
-		: change == Edit::NewLane                                 ? std::vector<uint32_t>{20, midiValueOf(0.5)}
-																  : std::vector<uint32_t>{midiValueOf(0.5), 20};
+	std::vector<uint32_t> expected{midiValueOf(0.5), 20};
+	if (change == Edit::Change)
+		expected = {20, midiValueOf(0.75)};
+	else if (change == Edit::NewLane)
+		expected = {20, midiValueOf(0.5)};
 	CHECK(controllerValues(midiValuesOf(strip.play({})), 0, 7) == expected);
 }
 
@@ -3298,7 +3300,7 @@ TEST_CASE("a MIDI track whose mute lane mutes where playback jumps to releases t
 	using Type = graph::ProcessEvent::Type;
 	// The mute lane mutes from 1000 to 2000; the sustain pedal goes down at 10, before it. Playback goes on into the
 	// mute, jumps into it, or stops and is located into it while the transport stands.
-	enum class Into
+	enum class Into : uint8_t
 	{
 		PlayingOn,
 		Jump,
