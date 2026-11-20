@@ -287,11 +287,16 @@ namespace gnubase::engine
 		// The value a lane with points sets at a start, a locate or a jump to position, or while stopped there: its
 		// value there, nothing in a gap, but the value that stands there in a gap after the points of a lane side by
 		// side with others (PlayedLane::shared), which another lane's would otherwise replace.
+		std::optional<double> chasedValue(const Points& points, bool shared, int64_t position)
+		{
+			if (!inGap(points, position))
+				return automationValue(points, position);
+			return shared ? lastValue(points, position) : std::nullopt;
+		}
+
 		std::optional<double> chasedValue(const PlayedLane& lane, int64_t position)
 		{
-			if (!inGap(lane.points, position))
-				return automationValue(lane.points, position);
-			return lane.shared ? lastValue(lane.points, position) : std::nullopt;
+			return chasedValue(lane.points, lane.shared, position);
 		}
 
 		// The position of a lane's latest point at or before position, or the lowest position before its first point.
@@ -327,10 +332,34 @@ namespace gnubase::engine
 			return true;
 		}
 
+		// Whether a lane that doesn't glide sends a step of the ramp from one point to the next at position: every
+		// g_automationInterval frames from the ramp's start, a MIDI lane only where its MIDI 1.0 value changes, so that
+		// ramps don't flood the events (compared with the step before, which had the same MIDI 1.0 value as the last
+		// one sent).
+		bool stepsAt(const PlayedLane& lane, const RenderAutomationPoint& from, const RenderAutomationPoint& to,
+			int64_t position)
+		{
+			if (from.shape == AutomationShape::Step || position <= from.position ||
+				(position - from.position) % g_automationInterval != 0)
+				return false;
+			return lane.kind != Kind::Midi ||
+				midi1Value(lane, between(from, to, position)) !=
+				midi1Value(lane, between(from, to, position - g_automationInterval));
+		}
+
+		// Whether a lane's ramp has a step at position (stepsAt).
+		bool rampStepAt(const PlayedLane& lane, int64_t position)
+		{
+			const size_t next = after(lane.points, position);
+			return next > 0 && next < lane.points.size() &&
+				stepsAt(lane, lane.points[next - 1], lane.points[next], position);
+		}
+
 		// Plays a lane's curve over one transport segment. With jump, playback didn't arrive here from the frame
 		// before, so the value at the segment's start is set first, if chased; a lane without points glides there
 		// over smoothing frames. That value is set again (AutomationPlayer::play's sentAgain) unless it is new there:
-		// renewed, a static value set in this block, or a point's that the lane arrives at there.
+		// renewed, a static value set in this block or points that changed the value there, or a point's that the
+		// lane arrives at there or a ramp's step there.
 		void playLane(const PlayedLane& lane, const graph::TransportSegment& segment, bool jump, bool chased,
 			const Outputs& out, uint32_t smoothing, bool renewed) noexcept
 		{
@@ -350,7 +379,8 @@ namespace gnubase::engine
 			if (jump && chased)
 				if (const std::optional<double> value = chasedValue(lane, begin))
 					emit(lane, segment.offset, *value, 0, out,
-						!renewed && !arriving(points, begin, glides, lane.shared));
+						!renewed && !arriving(points, begin, glides, lane.shared) &&
+							(glides || !rampStepAt(lane, begin)));
 
 			int64_t at = begin;
 			for (;;)
@@ -388,17 +418,10 @@ namespace gnubase::engine
 							emit(lane, offset(piece), between(from, to, pieceEnd),
 								static_cast<uint32_t>(pieceEnd - piece), out);
 						}
-						else if (piece > from.position && (piece - from.position) % g_automationInterval == 0 &&
-							(piece > begin || !jump) && roomForRamp(out.of(lane)))
+						else if ((piece > begin || !jump) && roomForRamp(out.of(lane)) &&
+							stepsAt(lane, from, to, piece))
 						{
-							// MIDI controllers only when their MIDI 1.0 value changes, so that ramps don't flood the
-							// events: compared with the step before, which had the same MIDI 1.0 value as the last
-							// one sent.
-							const double value = between(from, to, piece);
-							if (lane.kind != Kind::Midi ||
-								midi1Value(lane, value) !=
-									midi1Value(lane, between(from, to, piece - g_automationInterval)))
-								emit(lane, offset(piece), value, 0, out);
+							emit(lane, offset(piece), between(from, to, piece), 0, out);
 						}
 						piece = pieceEnd;
 					}
@@ -446,7 +469,7 @@ namespace gnubase::engine
 		// program and MIDI automation out, so it doesn't change what other tracks play there. Its mute lane plays, so
 		// its mute still ends the notes that sound.
 		automation->silent = channel.type == TrackType::Midi && channel.silent;
-		automation->quiet = channel.type == TrackType::Midi && channel.quiet;
+		automation->quiet = (channel.type == TrackType::Midi || channel.type == TrackType::Instrument) && channel.quiet;
 		for (const auto& [number, value] :
 			{std::pair{uint8_t{7}, channel.midiVolume}, std::pair{uint8_t{10}, channel.midiPan}})
 			if (value)
@@ -601,23 +624,45 @@ namespace gnubase::engine
 	{
 		automation->revision = ++m_revision;
 		const ChannelAutomation& old = m_automation.latest();
+		automation->content = automation->instrument == old.instrument && automation->lanes == old.lanes &&
+				automation->silent == old.silent
+			? old.content
+			: automation->revision;
 		const auto revisioned = [](const PlayedLane& lane)
-		{ return lane.kind == Kind::Program || (lane.kind == Kind::Midi && lane.points.empty()); };
-		for (PlayedLane& lane : automation->lanes)
-			if (revisioned(lane))
+		{ return lane.kind == Kind::Program || lane.kind == Kind::Midi; };
+		for (size_t i = 0; i < automation->lanes.size(); ++i)
+		{
+			PlayedLane& lane = automation->lanes[i];
+			if (!revisioned(lane))
+				continue;
+			// The same as before, or as when the track was last heard: a value changed and changed back while it
+			// was silent doesn't go out again.
+			const auto same = [&lane](const std::vector<PlayedLane>& lanes) -> const PlayedLane*
 			{
-				// The same as before, or as when the track was last heard: a value changed and changed back while it
-				// was silent doesn't go out again.
-				const auto same = [&lane](const std::vector<PlayedLane>& lanes) -> const PlayedLane*
-				{
-					const auto found = std::find(lanes.begin(), lanes.end(), lane);
-					return found != lanes.end() ? &*found : nullptr;
-				};
-				const PlayedLane* kept = same(old.lanes);
-				if (kept == nullptr)
-					kept = same(m_heardLanes);
-				lane.revision = kept != nullptr ? kept->revision : automation->revision;
+				const auto found = std::find(lanes.begin(), lanes.end(), lane);
+				return found != lanes.end() ? &*found : nullptr;
+			};
+			const PlayedLane* previous = same(old.lanes);
+			const PlayedLane* kept = previous != nullptr ? previous : same(m_heardLanes);
+			lane.revision = kept != nullptr ? kept->revision : automation->revision;
+			if (lane.points.empty())
+				continue;
+			if (previous != nullptr)
+			{
+				lane.replaced = previous->replaced;
+				continue;
 			}
+			// The lane it replaced: the one of its target that comes as often before it, as lanes of one target side
+			// by side keep their order.
+			const auto ofTarget = [&lane](const PlayedLane& other) { return other.target == lane.target; };
+			const auto before = std::count_if(
+				automation->lanes.begin(), automation->lanes.begin() + static_cast<std::ptrdiff_t>(i), ofTarget);
+			auto match = std::find_if(old.lanes.begin(), old.lanes.end(), ofTarget);
+			for (auto n = before; n > 0 && match != old.lanes.end(); --n)
+				match = std::find_if(std::next(match), old.lanes.end(), ofTarget);
+			if (match != old.lanes.end() && match->kind == Kind::Midi)
+				lane.replaced = match->points;
+		}
 		if (!automation->silent)
 		{
 			m_heardLanes.clear();
@@ -656,7 +701,8 @@ namespace gnubase::engine
 		const bool newProcessors = midiOutput != m_midiOutput || count != m_processorCount ||
 			!std::equal(
 				processors.begin(), processors.begin() + static_cast<std::ptrdiff_t>(count), m_processors.begin());
-		bool changed = automation.revision != m_played || newProcessors;
+		// New automation plays its values again, unless only quiet changed (ChannelAutomation::content).
+		const bool changed = automation.content != m_playedContent || newProcessors;
 		// The program and the MIDI controllers without points go out again only when they changed since the track was
 		// last heard, for a new processor, a start, a locate or a jump, and the controllers after a new program: other
 		// new automation, e.g. a new MIDI volume, or the track being heard again would override a program change or
@@ -675,57 +721,66 @@ namespace gnubase::engine
 				return programChanged || lane.revision > heard;
 			return changed;
 		};
+		// Not heard: a silent MIDI track, or an instrument track that is soloed out or disabled, whose sequencer may
+		// miss its parts' events too.
+		const bool absent = silent || automation.quiet;
 		const auto hear = [&](bool moved)
 		{
 			if (!silent)
-			{
 				m_heard = automation.revision;
-				m_missed = HeardAgain::No;
-			}
 			else if (moved || newProcessors)
-			{
 				m_heard = 0;
-				if (moved)
-					m_missed = automation.quiet ? HeardAgain::Quiet : std::max(m_missed, HeardAgain::Muted);
-			}
+			if (!absent)
+				m_missed = HeardAgain::No;
+			else if (moved)
+				m_missed = automation.quiet ? HeardAgain::Quiet : std::max(m_missed, HeardAgain::Muted);
 		};
-		// Heard again after playback moved while it was silent: its parts are chased after what it sends here.
-		m_heardAgain->store(silent ? HeardAgain::No : m_missed, std::memory_order_relaxed);
+		// Heard again after playback moved while it was absent: its parts are chased after what it sends here.
+		m_heardAgain->store(absent ? HeardAgain::No : m_missed, std::memory_order_relaxed);
 		// New static values glide, unless they are the first ones.
 		const bool revised = automation.revision != m_played && m_played != 0;
 		const auto glide = [revised, smoothing](const PlayedLane& lane)
 		{ return revised && lane.smooth ? smoothing : 0; };
 		// A program or MIDI controller without points whose value is new in this block (PlayedLane::revision) isn't
-		// set again: a MIDI track's mute sends what it kept before it, as before a lane's new value. Nor are the MIDI
-		// controllers that a new program brings along, which go out after it.
-		const bool newProgram =
-			std::any_of(automation.lanes.begin(), automation.lanes.end(), [played = m_played](const PlayedLane& lane)
-				{ return lane.kind == Kind::Program && lane.revision > played; });
-		const auto renewed = [played = m_played, newProgram, &midi](const PlayedLane& lane)
-		{ return lane.revision > played || (newProgram && midi(lane)); };
+		// set again: a MIDI track's mute sends what it kept before it, as before a lane's new value. Nor is a MIDI
+		// lane's value where new points changed it (PlayedLane::replaced), nor are the MIDI controllers that a new
+		// program brings along, which go out after it.
+		const uint64_t played = m_played;
+		const bool newProgram = std::any_of(automation.lanes.begin(), automation.lanes.end(),
+			[played](const PlayedLane& lane) { return lane.kind == Kind::Program && lane.revision > played; });
+		const auto renewed = [played, newProgram, &midi](const PlayedLane& lane, int64_t position)
+		{
+			if (newProgram && midi(lane))
+				return true;
+			if (lane.revision <= played)
+				return false;
+			return lane.points.empty() || lane.replaced.empty() ||
+				chasedValue(lane.points, lane.shared, position) != chasedValue(lane.replaced, lane.shared, position);
+		};
 		m_played = automation.revision;
+		m_playedContent = automation.content;
 		std::copy_n(processors.begin(), count, m_processors.begin());
 		m_processorCount = count;
 		m_midiOutput = midiOutput;
 
 		if (!transport.playing)
 		{
-			const bool stopped = m_next >= 0;
-			const bool moved = transport.position != (stopped ? m_next : m_stoppedAt);
-			if (changed || moved || stopped)
+			// A stop where playback ended isn't a move, as for the sequencer and a MIDI track's mute: the values
+			// stay as playback left them, also those a part played.
+			const bool moved = transport.position != (m_next >= 0 ? m_next : m_stoppedAt);
+			if (changed || moved)
 				for (const PlayedLane& lane : automation.lanes)
 				{
-					// A stop at the playback cursor keeps the part's patch and controllers, as its sequencer does.
-					const bool send = moved || again(lane) || (stopped && !midi(lane));
-					if ((silent && midi(lane)) || !send || !chases(automation.lanes, lane, transport.position))
+					if ((silent && midi(lane)) || !(moved || again(lane)) ||
+						!chases(automation.lanes, lane, transport.position))
 						continue;
 					const std::optional<Outputs> out = outputs(lane);
 					const std::optional<double> value =
 						lane.points.empty() ? lane.staticValue : chasedValue(lane, transport.position);
 					if (out && value)
-						emit(lane, 0, *value, glide(lane), *out, !renewed(lane));
+						emit(lane, 0, *value, glide(lane), *out, !renewed(lane, transport.position));
 				}
-			hear(moved || stopped);
+			hear(moved);
 			m_stoppedAt = transport.position;
 			m_next = -1;
 			return;
@@ -740,9 +795,11 @@ namespace gnubase::engine
 				if (const std::optional<Outputs> out = outputs(lane); out && !(silent && midi(lane)))
 					playLane(lane, segment, moved || (first && again(lane)),
 						chases(automation.lanes, lane, segment.position), *out, first && changed ? glide(lane) : 0,
-						first && renewed(lane));
+						first && renewed(lane, segment.position));
 			first = false;
-			hear(moved);
+			// Playback that runs while it is soloed out or disabled passes events of its parts that aren't in the
+			// snapshot: they are chased once it is heard again, as after a move.
+			hear(moved || automation.quiet);
 			m_next = segment.position + segment.frames;
 		}
 	}
@@ -1104,7 +1161,8 @@ namespace gnubase::engine
 		// The block's jumps up to offset (a start, a locate or a cycle jump, as the sequencer finds them): what the
 		// mute dropped before one is stale after it, where the chase sets what is in effect.
 		size_t segment = 0;
-		const auto jumpsUntil = [&state, &transport, &segment](uint32_t offset) noexcept
+		int64_t jumped = -1; // the offset of the block's last jump so far
+		const auto jumpsUntil = [&state, &transport, &segment, &jumped](uint32_t offset) noexcept
 		{
 			if (!transport.playing)
 			{
@@ -1115,7 +1173,10 @@ namespace gnubase::engine
 					state.midiCursor = state.midiNext; // where playback stopped
 				state.midiNext = -1;
 				if (state.midiCursor >= 0 && transport.position != state.midiCursor) // a locate while stopped
+				{
 					state.midiDropped.clear();
+					jumped = 0;
+				}
 				state.midiCursor = transport.position;
 				return;
 			}
@@ -1123,7 +1184,10 @@ namespace gnubase::engine
 			{
 				const graph::TransportSegment& at = transport.segments[segment];
 				if (at.position != state.midiNext)
+				{
 					state.midiDropped.clear();
+					jumped = at.offset;
+				}
 				state.midiNext = at.position + at.frames;
 			}
 		};
@@ -1143,7 +1207,8 @@ namespace gnubase::engine
 			events.add(event);
 		out.clear();
 		// After a project change's pedal releases, the block's last values that no longer fit wait as if a mute had
-		// dropped them, after the block's other events, as the latest of their kinds.
+		// dropped them, each at its place among the block's events: a later event of its kind that passes, e.g. the
+		// pedal's release after a press that waits, replaces it.
 		std::bitset<graph::g_maxEventsPerBlock> deferred;
 		if (release)
 		{
@@ -1271,7 +1336,9 @@ namespace gnubase::engine
 							state.midiHeld[n] = false;
 						}
 					// A pedal it releases goes back to its value when it unmutes, unless the track changes it
-					// meanwhile.
+					// meanwhile; not one released at a jump, which was down before the jump: the jump's chase sets
+					// the pedals that are down where playback lands.
+					const bool atJump = jumped == static_cast<int64_t>(mute->offset);
 					for (size_t channel = 0; channel < state.midiPedals.size(); ++channel)
 						for (const uint8_t controller : {uint8_t{64}, uint8_t{66}, uint8_t{69}})
 							if (const uint32_t value = state.midiPedals[channel][pedal(controller)];
@@ -1285,7 +1352,8 @@ namespace gnubase::engine
 								up.value = 0;
 								out.addEnd(up);
 								up.value = value;
-								state.midiDropped.drop(up);
+								if (!atJump)
+									state.midiDropped.drop(up);
 							}
 					state.midiPedals = {};
 				}
@@ -1316,11 +1384,15 @@ namespace gnubase::engine
 				--ahead;
 				continue;
 			}
-			if (deferred[next])
-				continue;
 			const graph::ProcessEvent& event = events[next];
+			// A jump before it forgets what waits; a deferred value waits after it.
 			chaseUntil(event.offset);
 			muteUntil(event.offset);
+			if (deferred[next])
+			{
+				state.midiDropped.drop(event);
+				continue;
+			}
 			// The note-offs and the values sent again at the sample go before what waits, which is later, also those
 			// that the source put after events it received there, from the track's MIDI input.
 			const bool before = sentAgain(event);
@@ -1344,9 +1416,6 @@ namespace gnubase::engine
 		chaseUntil(UINT32_MAX);
 		muteUntil(UINT32_MAX);
 		flush(UINT32_MAX);
-		for (size_t i = 0; i < events.size(); ++i)
-			if (deferred[i])
-				state.midiDropped.drop(events[i]);
 	}
 
 	void ChannelStrip::render(RenderPoint point, const graph::ProcessContext& context) noexcept

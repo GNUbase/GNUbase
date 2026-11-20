@@ -139,7 +139,7 @@ namespace gnubase::ui
 		Rml::Element* m_events = nullptr;           // a .transpose-event per event
 		Rml::ElementFormControl* m_field = nullptr; // .shown while an event is edited
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
-		uint64_t m_loaded = 0; // the display's answers read (EventDisplay::loads)
+		uint64_t m_loaded = 0; // the display's answers read (EventDisplay::answers)
 		uint64_t m_track = 0;  // the transpose or chord track, 0 without one
 		bool m_linear = false;
 		bool m_showScales = false; // the chord track's Show Scales

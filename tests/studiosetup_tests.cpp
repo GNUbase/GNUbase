@@ -270,9 +270,35 @@ TEST_CASE("the studio setup dialog's Note Expression Input page sets up a MIDI i
 	click(app, "#ok");
 	CHECK(closed(app));
 	CHECK(port(app.call("midi.ports"), "Keys", true).at("mpe") == Json::parse(R"({"mode": "rotation", "channels": 15,
-		"firstChannel": 2, "pitchRange": 24, "tuning": false, "initialX": "off", "initialY": "center",
+		"upperChannels": 7, "firstChannel": 2, "pitchRange": 24, "tuning": false, "initialX": "off", "initialY": "center",
 		"xMessage": "pitchBend", "pressureMessage": "aftertouch", "yMessage": "cc74", "xExpression": "none",
 		"pressureExpression": "pressure", "yExpression": "brightness"})"));
+}
+
+TEST_CASE("the Note Expression Input page sets up both MPE zones, each with its member channels", "[ui]")
+{
+	test::UiApp app({900, 640}, keyboard());
+	openDialog(app);
+	click(app, "#devices-mpe");
+	// Upper Zone Channels is only for both zones (#1675).
+	const std::string fields = ".mpe-port.shown ";
+	CHECK(element(app, fields + "select.mpe-upper-channels").at("attributes").contains("disabled"));
+	choose(app, fields + "select.mpe-mode", -4); // Both Zones, the last
+	CHECK(element(app, fields + "select.mpe-mode").at("value") == "both");
+	CHECK_FALSE(element(app, fields + "select.mpe-upper-channels").at("attributes").contains("disabled"));
+	CHECK(element(app, fields + "select.mpe-first-channel").at("attributes").contains("disabled"));
+	choose(app, fields + "select.mpe-upper-channels", -2); // 9, two below the 7 it starts with
+	click(app, "#apply");
+	// Used Channels is the lower zone's, which gets the rest of 14: the page shows it after Apply.
+	const Json mpe = port(app.call("midi.ports"), "Keys", true).at("mpe");
+	CHECK(mpe.at("mode") == "both");
+	CHECK(mpe.at("upperChannels") == 9);
+	CHECK(mpe.at("channels") == 5);
+	CHECK(element(app, fields + "select.mpe-channels").at("value") == "5");
+	CHECK(element(app, fields + "select.mpe-upper-channels").at("value") == "9");
+	choose(app, fields + "select.mpe-mode", 1); // Channel Rotation
+	CHECK(element(app, fields + "select.mpe-upper-channels").at("attributes").contains("disabled"));
+	CHECK_FALSE(element(app, fields + "select.mpe-first-channel").at("attributes").contains("disabled"));
 }
 
 TEST_CASE("the Note Expression Input page sets each dimension's MIDI Message and Note Expression Assignment", "[ui]")
@@ -290,6 +316,8 @@ TEST_CASE("the Note Expression Input page sets each dimension's MIDI Message and
 	CHECK(element(app, fields + "select.mpe-pressure-message").at("value") == "cc11");
 	choose(app, fields + "select.mpe-y-expression", 5); // Volume, five above Brightness
 	CHECK(element(app, fields + "select.mpe-y-expression").at("value") == "volume");
+	choose(app, fields + "select.mpe-pressure-expression", -1); // MIDI PolyPressure, below Pressure (#1829)
+	CHECK(element(app, fields + "select.mpe-pressure-expression").at("value") == "polyPressure");
 	// Off, X plays none and can be another expression; Tuning turns it on again.
 	click(app, fields + "input.mpe-tuning");
 	CHECK(element(app, fields + "select.mpe-x-expression").at("value") == "none");
@@ -300,6 +328,7 @@ TEST_CASE("the Note Expression Input page sets each dimension's MIDI Message and
 	Json mpe = port(app.call("midi.ports"), "Keys", true).at("mpe");
 	CHECK(mpe.at("pressureMessage") == "cc11");
 	CHECK(mpe.at("yExpression") == "volume");
+	CHECK(mpe.at("pressureExpression") == "polyPressure");
 	CHECK(mpe.at("tuning") == false);
 	CHECK(mpe.at("xExpression") == "pan");
 	choose(app, fields + "select.mpe-x-expression", -1); // Tuning, below Pan

@@ -219,9 +219,15 @@ namespace gnubase::ui
 		}
 		for (auto lane = m_selectedPoints.begin(); lane != m_selectedPoints.end();)
 			lane = lane->second.empty() ? m_selectedPoints.erase(lane) : std::next(lane);
-		// The names, ranges and static values may have changed with the track's channel, its plugins or its lanes.
+		requestChangedTargets();
+	}
+
+	void EventDisplay::requestChangedTargets()
+	{
+		// The names, ranges and static values may have changed with the track's channel, its plugins or its lanes,
+		// also in a step that changed only channels, such as a fader drag's (#1881).
 		for (const auto& [track, lanesShown] : m_openAutomation)
-			if (std::string key = targetsKey(project, track); m_targetsKeys[track] != key)
+			if (std::string key = targetsKey(m_project, track); m_targetsKeys[track] != key)
 			{
 				m_targetsKeys[track] = std::move(key);
 				requestTargets(track);

@@ -78,6 +78,8 @@ add_library(gnubase-ui STATIC
 	markers.cpp
 	markers.h
 	markerswindow.cpp
+	meterpanel.cpp
+	meterpanel.h
 	midieditor.cpp
 	midieditor.h
 	mixer.cpp

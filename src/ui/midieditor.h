@@ -107,6 +107,7 @@ namespace gnubase::ui
 		std::unique_ptr<ListEditor> m_list;
 		std::unique_ptr<AudioPartEditor> m_audio;
 		std::unique_ptr<PatternEditor> m_pattern;
+		LevelSteps m_levelSteps; // whether a channel-only step changed only levels and sends (#1881)
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 	};

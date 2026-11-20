@@ -71,8 +71,10 @@ namespace gnubase::ui
 		// The visibility again too, which leaves out the tracks that are gone: changes are sent from it.
 		for (const char* event : {"history.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event,
-				[this](const engine::Event&)
+				[this](const engine::Event& changed)
 				{
+					if (changedOnly(changed, {"channel.changed"}))
+						return; // a step that changed only channels, which it doesn't show (#1881)
 					requestProject();
 					requestVisibility();
 				}));

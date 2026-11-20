@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Changing the notes and controllers of a MIDI part (#27): note.set and controller.set, the key editor's split and
-// glue tools (#1419): note.split and note.glue, and its chord editing (#127): note.chord and note.voicing. Like every
-// command that changes the project, each is one undo step and changes nothing if it fails (ProjectModel::add).
+// glue tools (#1419): note.split and note.glue, its chord editing (#127): note.chord and note.voicing, and a track's
+// note expression setup (#1513): noteExpression.set. Like every command that changes the project, each is one undo
+// step and changes nothing if it fails (ProjectModel::add).
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
@@ -121,6 +122,22 @@ namespace gnubase::engine
 			}
 			context.emit("note.changed", {{"part", part.id}, {"notes", result}});
 			return {{"notes", result}};
+		}
+
+		// A MIDI or instrument track's note expression setup (#1513): its bypass and input assignments.
+		Json setNoteExpression(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const auto id = parameters.at("track").get<ObjectId>();
+			const auto track = project.trackById.find(id);
+			const bool midi = track != project.trackById.end() &&
+				(track->second.type == TrackType::Midi || track->second.type == TrackType::Instrument);
+			const auto channel = midi ? project.channels.find(track->second.channel) : project.channels.end();
+			require(channel != project.channels.end(), "no MIDI or instrument track " + std::to_string(id));
+			NoteExpressionSetup& setup = channel->second.noteExpression;
+			setup = noteExpressionFromJson(parameters, setup, false);
+			context.emit("channel.changed", {{"channel", toJson(channel->second)}});
+			return {{"track", id}, {"noteExpression", toJson(setup)}};
 		}
 
 		// The key editor's expression editor (#1512, #1795): each change replaces the note's points of one expression
@@ -580,6 +597,34 @@ namespace gnubase::engine
 							{"notes", {{"type", "array"}, {"items", span}}}}}},
 				resultSchema("notes"), false},
 			replaceExpression);
+		const Json expressionInput = {{"type", "object"}, {"additionalProperties", false}, {"required", {"type"}},
+			{"properties",
+				{{"type", {{"type", "string"}, {"enum", g_expressionNames}}},
+					{"input",
+						{{"type", "string"},
+							{"description", "none, pitchBend, aftertouch or a controller, cc0 to cc127"}}},
+					{"min", number}, {"max", number}}}};
+		addEdit(engine,
+			{"noteExpression.set", 1,
+				"Changes a MIDI or instrument track's note expression setup, as the inspector's Note Expression "
+				"section does (reference manual pp. 1300-1302): bypass plays the track's notes without their "
+				"expression points, and each of inputs sets an expression's input assignment, the MIDI message "
+				"mapped to it (input: none, pitchBend, aftertouch or cc0 to cc127, as midi.setPort names them) and "
+				"the range of the expression's values that it goes over, min and max in the expression's unit and "
+				"range (see note.add), min above max for a reversed one. What a call leaves out stays as it was. "
+				"The setup belongs to the track and is saved with the project; project.get lists it as the "
+				"channel's noteExpression, whose inputs are the expressions that have a message or a range other "
+				"than the whole one. Refuses, changing nothing, a track that is no MIDI or instrument track, unknown "
+				"expressions and messages and values out of range. Emits channel.changed. Returns the track and its "
+				"setup.",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"track"}},
+					{"properties",
+						{{"track", integer}, {"bypass", {{"type", "boolean"}}},
+							{"inputs", {{"type", "array"}, {"items", expressionInput}}}}}},
+				{{"type", "object"}, {"required", {"track", "noteExpression"}},
+					{"properties", {{"track", integer}, {"noteExpression", {{"type", "object"}}}}}},
+				false},
+			"Change note expression setup", setNoteExpression);
 		const Json noteMove = {{"type", "object"}, {"additionalProperties", false},
 			{"required", {"part", "notes", "target"}},
 			{"properties",

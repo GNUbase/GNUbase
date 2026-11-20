@@ -25,13 +25,15 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   whenever the engine has answered instead of piling up commands. Steps of other gestures and steps without one
   (gesture 0) are never replaced. A command sent with `send` that isn't a query sends the waiting steps first, so that
   an undo right after a drag undoes all of it.
-- **Controls ahead of the engine.** Views read the project again after each undo step, and an answer that the engine
-  gave before it had a control's newest step is older than the control. `sending(what)` is true while a step of `what`
-  is in flight or waiting; a view that shows an answer in its handler, such as the mixer, doesn't set the control then.
-  `handed()` counts the results and events that `update` handed on; a view that shows an answer later, such as the
-  inspector, which shows the event display's project in a step task, keeps the count with the answer and asks
-  `ahead(what, read)`, also true when the last step the engine took was answered after it. The project read after the
-  last step's `history.changed` comes after that step's result, so the view shows the engine's value then. A refused
+- **Controls ahead of the engine.** Views read the project again after each undo step (or take its events, below), and
+  an answer that the engine gave before it had a control's newest step is older than the control. `sending(what)` is
+  true while a step of `what` is in flight or waiting; a view that shows an answer in its handler, such as the mixer,
+  doesn't set the control then. `handed()` counts the results and events that `update` handed on; a view that shows an
+  answer later, such as the inspector, which shows the event display's project in a step task, keeps the count with the
+  answer and asks `ahead(what, read)`, also true when the engine announced the last step it took after it: with the
+  step's first event, which comes before its result, or with the result if the step announced none, so that a view that
+  takes the step's events is not behind the step (#1881). The project read after the last step's `history.changed` comes
+  after that step's result, so the view shows the engine's value then. A refused
   step changes nothing, so the project read before it shows again. Values that other clients change (MCP, Lua,
   automation) show at once while no step of the control is under way; during a drag the widget itself keeps the drag's
   value until it ends. Each view begins its `what`s with a name of its own, `stepOwner(view)` (`mixer 3 `, `inspector 7
@@ -65,6 +67,38 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive
   the binding. A handler may end its own subscription or others.
+- **Changes the views take without a read** (#1881). The views read the whole project after every `history.changed`,
+  which made each step of a drag cost a `project.get` per view: about ten of them in the project window with a mixer,
+  and with them the layout of every view, so a fader drag in a project of 64 tracks fell behind the mouse by 150 ms a
+  move in a Release build. `history.changed` names the events of a command's step ([edit-history.md](edit-history.md)),
+  and `changedOnly(event, names)` tells whether they are all of those names. After a step that changed only channels,
+  `changedOnly(event, {"channel.changed"})`, no view reads: the mixer and the event display take each channel that
+  `channel.changed` brings into the project they read (`takeChannel`, in place, as `project.get` shows channels the same
+  way), and the mixer updates only that channel's strip. They keep a step's `channel.changed` until its
+  `history.changed` (`ChannelSteps`) and drop them for a step that changed more, which they read: a `track.add` that
+  routes the selected tracks into its new group channel changes their channels too, and taken before the read brought
+  the group, they named a channel the project didn't have, which the inspector's output list showed as none and sent
+  back. The event display lights the toolbar's mute, solo and listen buttons again and asks again for the targets of
+  the tracks with open automation lanes whose channel changed
+  (`requestChangedTargets`), whose static value line shows the channel's value. It counts the channel in `loads()`,
+  so the views that show channels from its project, the track list, the inspector and the sampler and drum machine
+  panels, show it too,
+  but not in `answers()`, which the views that show no channel go by (the info line, the in-place editors, the ruler and
+  transpose tracks), and `read()` moves on with it only while no `project.get` is out, since the project still lacks the
+  steps that read is for; it lays out the track list again only when more than the channel's levels and sends changed
+  (volume, pan, MIDI volume and pan, sends), which the track list doesn't show. The edit history panel reads
+  `history.get` after each step quietly (`sendQuietly`) and draws only its own window, so the answer doesn't draw every
+  window again. The other views that read the project after each step (markers, tempo and signature tracks, transport,
+  track visibility, the MIDI and sample editors) show no channel and skip it; so does the inspector's read of the
+  in-place editors. Two views show what comes from channels: the pool counts the clips that sampler tracks and drum
+  pads play, and a drum editor's Show Drum Sounds in Use by Instrument lists the pitches that the drum pads play
+  (`editor.get`'s `soundsInUse`). They skip only steps that changed nothing but channels' levels and sends
+  (`LevelSteps`, which keeps each channel as its last `channel.changed` or the editor's last project read brought it;
+  one it hasn't seen counts as changed, so the pool reads once at the first step of a channel that changed before it
+  opened), and after any other channel-only step, such as Reset Pad, the pool reads the pool again and the editor its
+  view. A view whose step was answered shows the engine's value then, since no read follows. The records
+  of the controls' steps still go only after a project read, so they stay until the next change that isn't only
+  channels'.
 - **Waking the UI.** The UI thread sleeps until something happens (docs/architecture.md, "UI shell"). When the
   binding's client queues a result or an event, the engine's thread calls `Shell::wake`, which pushes a wake-up event
   into SDL's event queue; more messages before the next update don't wake it again, so a burst of events can't fill

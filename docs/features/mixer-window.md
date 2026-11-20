@@ -26,7 +26,11 @@ and panners' engine side is in [mixer.md](mixer.md).
 
 `ui::Mixer` (`src/ui/mixer.h`) fills an element with the toolbar and the fader section. It reads the project with
 `project.get` after every undo step or new project and the view with `mixer.get`, follows `mixer.changed`, and sends
-engine commands, so whichever client changes the project or the view, the mixer shows it at once.
+engine commands, so whichever client changes the project or the view, the mixer shows it at once. A step that changed
+only channels, such as each step of a fader, panner or knob drag, it reads none for: it takes the channels that
+`channel.changed` brings into the project it read and updates only their strips, the Deactivate All buttons and the
+channel settings window's Go to Output, so that a drag follows the mouse however many tracks the project has (#1881). A
+control's last step answered, its strip shows the engine's value; a refused one reads the project again.
 
 ```
 .mixer

@@ -87,5 +87,8 @@ write states, the routing and the selection (p. 458).
   step, and respect `linked` false. In the app: the mixer's `e` opens the window for its channel and selects the track;
   the sections it shows; a control sending `channel.set`; previous, next and Go to Output; following the track selection
   and not following it; the UI command; a removed track; Copy and Paste Channel Settings; Add Effect Track to Send
-  through the add track dialog, below the track whose send it is; and the inspector's `e`.
+  through the add track dialog, below the track whose send it is; the inspector's `e`; the fader, an EQ gain, a
+  dynamics threshold and a send level dragged while the engine answers late, which follow the mouse and take one undo
+  step each (#716); and a send knob's Ctrl-click value, which follows the default send level also while the knob is
+  ahead of the engine.
 - `tests/linkgroups_tests.cpp`: the link group's JSON with `eq`, `dynamics` and `sends`.

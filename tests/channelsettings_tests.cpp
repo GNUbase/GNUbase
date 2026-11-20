@@ -6,11 +6,13 @@
 #include "ui/automation.h"
 #include "uiapp.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -494,4 +496,67 @@ TEST_CASE("the inspector's Edit Channel Settings opens the channel settings wind
 	REQUIRE(app.waitUntil([&] { return app.appUi().channelSettings() != nullptr; }));
 	REQUIRE(app.waitUntil(
 		[&] { return strips(app, app.appUi().channelSettingsWindow()) == std::vector<uint64_t>{bass.channel}; }));
+}
+
+TEST_CASE("the channel settings window's controls dragged while the engine answers late follow the mouse, as one undo "
+		  "step each",
+	"[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	REQUIRE(app.appUi().openChannelSettings(guitar.track) != nullptr);
+	const Window window = app.appUi().channelSettingsWindow();
+	REQUIRE(app.waitUntil([&] { return strips(app, window) == std::vector<uint64_t>{guitar.channel}; }));
+	const auto historyPosition = [&] { return app.call("history.get").at("position").get<int64_t>(); };
+
+	// The window is a mixer of its own (#716): the fader, the equalizers, the dynamics and the sends keep the steps
+	// the mouse made while the engine answers the earlier ones, as in the mixer window.
+	const std::vector<std::pair<std::string, std::string>> controls = {{".mixer-channel fader", "/volume"},
+		{"[param=\"eq.bands.1.gain\"]", "/eq/bands/0/gain"},
+		{"[param=\"strip.compressor.threshold\"]", "/strip/compressor/threshold"},
+		{"[param=\"sends.1.level\"]", "/sends/0/level"}};
+	for (const auto& [selector, path] : controls)
+	{
+		INFO(selector);
+		const Json::json_pointer pointer(path);
+		const double before = test::controlValue(app, window, selector);
+		const int64_t position = historyPosition();
+		test::LateDrag drag(app, window, selector);
+		const double dragged = drag.move(20, 1);
+		CHECK(dragged < before);
+		drag.release();
+		REQUIRE(app.waitUntil(
+			[&] { return channelJson(app, guitar.channel).at(pointer) == Catch::Approx(dragged).margin(0.001); }));
+		CHECK(test::controlValue(app, window, selector) == Catch::Approx(dragged).margin(0.001));
+		CHECK(historyPosition() == position + 1);
+	}
+}
+
+TEST_CASE(
+	"a send knob's Ctrl-click value follows the default send level also while the knob is ahead of the engine", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	REQUIRE(app.appUi().openChannelSettings(guitar.track) != nullptr);
+	const Window window = app.appUi().channelSettingsWindow();
+	REQUIRE(app.waitUntil([&] { return strips(app, window) == std::vector<uint64_t>{guitar.channel}; }));
+	const std::string knob = "[param=\"sends.1.level\"]";
+	const auto defaultLevel = [&] { return element(app, window, knob).at("attributes").value("default", ""); };
+
+	test::LateDrag drag(app, window, knob);
+	drag.move(5, 1);
+	// A step goes out, and the next one waits for it. The default send level changes before the engine answers: with
+	// the answer, the waiting step goes out, so the knob is still ahead when the mixer hears of the change.
+	drag.nudge(1);
+	drag.nudge(1);
+	app.call("settings.set", {{"key", "audio.defaultSendLevel"}, {"value", -12.0}});
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(defaultLevel() == "-12");
+	drag.release();
+
+	// Ctrl-click gives the send that level.
+	app.ui().click(window, {knob, 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("sends")[0].at("level") == -12.0; }));
 }
