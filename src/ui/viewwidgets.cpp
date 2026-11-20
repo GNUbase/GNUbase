@@ -52,8 +52,9 @@ namespace gnubase::ui
 		// row. Selected rows have the state class .selected. The view's
 		// value attribute is the selected rows' values, separated by commas, and each change sends a change event
 		// with it, so data-value binds the selection; setting the attribute selects the rows. Rows that code adds,
-		// removes or replaces with new elements, all or some of them, are selected by the value too, also when a
-		// click or a key comes before the next update.
+		// removes, moves or replaces with new elements, all or some of them, and rows that keep their elements but
+		// get other values, as when data-for reorders its items, are selected by the value too, also when a click or
+		// a key comes before the next update.
 		//
 		// Rows with a level attribute (0 at the top) make a tree: the rows that follow a row with a higher level are
 		// its children, shown while it has the expanded attribute. The view gives tree rows an indent and a
@@ -107,16 +108,16 @@ namespace gnubase::ui
 			}
 
 		private:
-			// Catches up with what code changed since the view last looked: rows added, removed or replaced (also with
-			// as many rows and the same value) and a value that code set select the rows again, and tree rows get their
-			// parts and state classes. Runs on every update and before every click and key, since those can come
-			// before the next update.
+			// Catches up with what code changed since the view last looked: tree rows get their parts and state
+			// classes, and rows added, removed, moved or replaced (also with as many rows and the same value), rows
+			// that kept their elements but got other values, and a value that code set select the rows again. Runs on
+			// every update and before every click and key, since those can come before the next update.
 			void refresh(const std::vector<Rml::Element*>& all)
 			{
+				shapeTree(all); // first: the keys' row mustn't be one that a collapsed parent hides
 				const auto value = GetAttribute<Rml::String>("value", "");
 				if (value != m_value || rowsReplaced(all))
 					select(all, value);
-				shapeTree(all);
 			}
 
 			// A drag in the view goes on (with dragscroll), or is over: it ends, the button goes up, or the view loses
@@ -257,7 +258,7 @@ namespace gnubase::ui
 				}
 				else if (multiple && shift && m_anchor)
 				{
-					selectRange(visible(all), *row);
+					selectRange(all, *row);
 				}
 				else
 				{
@@ -313,7 +314,7 @@ namespace gnubase::ui
 				Rml::Element* row = shown[static_cast<size_t>(std::max<std::ptrdiff_t>(next, 0))];
 				if (HasAttribute("multiple") && event.GetParameter("shift_key", false) && m_anchor)
 				{
-					selectRange(shown, *row);
+					selectRange(all, *row);
 				}
 				else
 				{
@@ -340,14 +341,19 @@ namespace gnubase::ui
 					row->SetClass("selected", row == &chosen);
 			}
 
-			// Selects the rows from the anchor to the row, and only those.
-			void selectRange(const std::vector<Rml::Element*>& shown, const Rml::Element& row)
+			// Selects the shown rows from the anchor to the row, and only those: rows that a collapsed parent hides are
+			// deselected.
+			void selectRange(const std::vector<Rml::Element*>& all, const Rml::Element& row)
 			{
+				const std::vector<Rml::Element*> shown = visible(all);
 				const auto anchor = std::find(shown.begin(), shown.end(), m_anchor.get());
 				const auto end = std::find(shown.begin(), shown.end(), &row);
 				if (anchor == shown.end() || end == shown.end())
 					return;
 				const auto [first, last] = std::minmax(anchor, end);
+				for (Rml::Element* hidden : all)
+					if (hidden->IsClassSet("hidden"))
+						hidden->SetClass("selected", false);
 				for (auto it = shown.begin(); it != shown.end(); ++it)
 					(*it)->SetClass("selected", it >= first && it <= last);
 			}
@@ -366,32 +372,65 @@ namespace gnubase::ui
 				DispatchEvent(Rml::EventId::Change, parameters);
 			}
 
-			// Selects the rows whose values the comma-separated list has. The keys then move from the first of them,
-			// also when the rows were rebuilt or the selection was set from code, e.g. after an engine event.
+			// Selects the rows whose values the comma-separated list has. The keys then move from the first of them, or
+			// from the nearest shown row above it when a collapsed parent hides it, also when the rows were rebuilt or
+			// the selection was set from code, e.g. after an engine event. When only some rows changed and the value
+			// didn't, the keys' row and the Shift anchor stay where they were if their rows kept their elements and
+			// values.
 			void select(const std::vector<Rml::Element*>& all, const std::string& value)
 			{
+				const bool same = value == m_value;
+				Rml::Element* current = same ? surviving(m_current, all) : nullptr;
+				Rml::Element* anchor = same ? surviving(m_anchor, all) : nullptr;
 				m_value = value;
 				m_rows.clear();
 				m_rows.reserve(all.size());
 				for (Rml::Element* row : all)
-					m_rows.push_back(row->GetObserverPtr());
-				setCurrent(nullptr);
-				m_anchor.reset();
+					m_rows.push_back({row->GetObserverPtr(), row->GetAttribute<Rml::String>("value", "")});
 				std::vector<std::string> values;
 				std::istringstream split(value);
 				for (std::string one; std::getline(split, one, ',');)
 					values.push_back(one);
+				Rml::Element* first = nullptr;
 				for (Rml::Element* row : all)
 				{
 					const bool selected = std::find(values.begin(), values.end(),
 											  row->GetAttribute<Rml::String>("value", "")) != values.end();
 					row->SetClass("selected", selected);
-					if (selected && !m_current)
-					{
-						setCurrent(row);
-						m_anchor = row->GetObserverPtr();
-					}
+					if (selected && first == nullptr)
+						first = row;
 				}
+				first = shownAt(all, first);
+				setCurrent(current != nullptr ? current : first);
+				anchor = anchor != nullptr ? anchor : first;
+				m_anchor = anchor != nullptr ? anchor->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+			}
+
+			// The row if it is still one of the rows, with the element and the value it had when the view last selected
+			// among them, else null.
+			Rml::Element* surviving(
+				const Rml::ObserverPtr<Rml::Element>& row, const std::vector<Rml::Element*>& all) const
+			{
+				Rml::Element* element = row.get();
+				if (element == nullptr || std::find(all.begin(), all.end(), element) == all.end())
+					return nullptr;
+				const auto known = std::find_if(m_rows.begin(), m_rows.end(),
+					[element](const KnownRow& old) { return old.element.get() == element; });
+				if (known == m_rows.end() || known->value != element->GetAttribute<Rml::String>("value", ""))
+					return nullptr;
+				return element;
+			}
+
+			// The row, or the nearest shown row above it when it is hidden.
+			static Rml::Element* shownAt(const std::vector<Rml::Element*>& all, Rml::Element* row)
+			{
+				if (row == nullptr || !row->IsClassSet("hidden"))
+					return row;
+				auto at = std::find(all.begin(), all.end(), row);
+				while (at != all.begin())
+					if (!(*--at)->IsClassSet("hidden"))
+						return *at;
+				return row;
 			}
 
 			void toggle(Rml::Element& row, bool expanded)
@@ -450,20 +489,30 @@ namespace gnubase::ui
 			}
 
 			// Whether the rows aren't those the view last selected among, row by row: code added, removed, moved or
-			// replaced some, also any one of them with as many rows and the same value, which neither tells the view.
-			// A replaced row's observer pointer is null, so a new row at the old one's address doesn't count as it.
+			// replaced some, also any one of them with as many rows and the same value, which neither tells the view,
+			// or gave a row another value, as data-for does when it reorders its items. A replaced row's observer
+			// pointer is null, so a new row at the old one's address doesn't count as it.
 			bool rowsReplaced(const std::vector<Rml::Element*>& all) const
 			{
 				return !std::equal(all.begin(), all.end(), m_rows.begin(), m_rows.end(),
-					[](const Rml::Element* row, const Rml::ObserverPtr<Rml::Element>& known)
-					{ return row == known.get(); });
+					[](Rml::Element* row, const KnownRow& known)
+					{
+						return row == known.element.get() && row->GetAttribute<Rml::String>("value", "") == known.value;
+					});
 			}
 
-			std::string m_value; // the value attribute as the view last applied or set it
-			// Rows can be destroyed at any time; observer pointers become null with them.
-			std::vector<Rml::ObserverPtr<Rml::Element>> m_rows; // the rows when the view last selected among them
-			Rml::ObserverPtr<Rml::Element> m_anchor;            // where a Shift-click's range starts
-			Rml::ObserverPtr<Rml::Element> m_current;           // the row the keys move from
+			// A row when the view last selected among them. Rows can be destroyed at any time; observer pointers become
+			// null with them.
+			struct KnownRow
+			{
+				Rml::ObserverPtr<Rml::Element> element;
+				std::string value;
+			};
+
+			std::string m_value;                      // the value attribute as the view last applied or set it
+			std::vector<KnownRow> m_rows;             // the rows when the view last selected among them
+			Rml::ObserverPtr<Rml::Element> m_anchor;  // where a Shift-click's range starts
+			Rml::ObserverPtr<Rml::Element> m_current; // the row the keys move from
 			// While a drag in it scrolls it (dragscroll): the mouse's last y in the window, when it last scrolled, and
 			// the part of a pixel it has yet to scroll.
 			bool m_dragScrolling = false;
