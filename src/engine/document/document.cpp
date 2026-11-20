@@ -194,6 +194,12 @@ namespace gnubase::engine
 			static_cast<double>(time::g_maxPosition) / std::max(project.sampleRate, g_lowestSampleRate));
 	}
 
+	bool signatureTrackLocked(const Project& project)
+	{
+		return std::any_of(project.trackById.begin(), project.trackById.end(),
+			[](const auto& entry) { return entry.second.type == TrackType::Signature && entry.second.lock; });
+	}
+
 	int64_t longestPosition(const Project& project, time::TimeBase base)
 	{
 		return base == time::TimeBase::Linear ? time::g_maxPosition : longestProjectTicks(project);

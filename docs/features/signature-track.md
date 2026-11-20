@@ -16,9 +16,11 @@ signature map itself, which converts between ticks and bars and beats, is the ti
   is past the longest possible project (`longestProjectTicks`, about 2.9 billion bars of 4/4 at 120 BPM and 48 kHz)
   is refused, before the bars' ticks could overflow; so is a tempo track file's or a project file's, counted at the
   lowest sample rate, as a tempo track file has none.
-- **Lock** (p. 163): `track.set` `lock` on the signature track. While it is on, `signature.add`, `signature.set` and
-  `signature.remove` are refused; the transport bar's signature (`project.set`) still sets the first event. GNUbase's
-  entry keeps it with the track.
+- **Lock** (p. 163): `track.set` `lock` on the signature track. While it is on, `signature.add`, `signature.set`,
+  `signature.remove` and Process Bars (`tempo.processBars`) are refused, and so are `tempo.import` and
+  `midiFile.import` with `tempo` when they would change the time signature events; a file whose events are the
+  project's still imports, and a MIDI file with `tempo` false too. The transport bar's signature (`project.set`) still
+  sets the first event. GNUbase's entry keeps it with the track.
 - **Bars move, positions stay.** Events, parts, markers and automation keep their positions in ticks or samples, so
   a signature change moves the bars under them. The bars and beats ruler, the grid, snapping, bar-wise lengths and
   bar positions everywhere follow the signature map.
@@ -74,7 +76,8 @@ middle of a bar.
 
 `tests/signature_tests.cpp`: the signature track's limits, adding, changing, moving and removing events, the first
 event, events at the cursor, bars past the longest project, a pickup bar with events keeping their positions, undo,
-saving and loading, and Lock. `tests/tempo_tests.cpp`: tempo track files with bars past the longest project.
+saving and loading, and Lock, also for Process Bars and the tempo track and MIDI file imports.
+`tests/tempo_tests.cpp`: tempo track files with bars past the longest project.
 `tests/signaturetrack_ui_tests.cpp`: typed signatures, the bars and beats ruler across signature changes, the row on
 the signature track's lane with clicks that add, edit, move and erase events, and the tempo track editor's time
 signature display with its info line, draw tool and Delete, the project window's lane with Delete, Backspace, a press

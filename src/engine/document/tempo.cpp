@@ -405,6 +405,8 @@ namespace gnubase::engine
 			{
 				throw CommandError(error.what());
 			}
+			require(!signatureTrackLocked(project) || file.signatures == project.signatures,
+				"the signature track is locked");
 			// The file's tempo changes play: the tempo track becomes active, as for a MIDI file's (midiFile.import).
 			const time::TempoMap before = project.tempo;
 			if (file.tempo.points().size() > 1 && !project.tempoTrackActive)
@@ -718,7 +720,9 @@ namespace gnubase::engine
 			{"tempo.import", 1,
 				"Imports a file that tempo.export wrote (File > Import > Tempo Track): its tempo events replace the "
 				"tempo track's and its time signature events the project's. A file with tempo changes makes the "
-				"tempo track active; the fixed tempo stays. One undo step. Returns the tempo as tempo.changed reports "
+				"tempo track active; the fixed tempo stays. Refused while the signature track is locked (track.set "
+				"lock), unless the file's time signature events are the project's. One undo step. Returns the tempo as "
+				"tempo.changed reports "
 				"it and the time signature events as signature.changed does.",
 				pathSchema,
 				{{"type", "object"},

@@ -59,9 +59,7 @@ namespace gnubase::engine
 		// The signature map as the given changes, which must make one; refused while the signature track is locked.
 		Json setSignatures(Project& project, std::vector<time::SignatureChange> changes, CommandContext& context)
 		{
-			require(std::none_of(project.trackById.begin(), project.trackById.end(), [](const auto& entry)
-						{ return entry.second.type == TrackType::Signature && entry.second.lock; }),
-				"the signature track is locked");
+			require(!signatureTrackLocked(project), "the signature track is locked");
 			std::sort(changes.begin(), changes.end(),
 				[](const time::SignatureChange& a, const time::SignatureChange& b) { return a.bar < b.bar; });
 			// Each event's bar starts within the longest possible project, so the bars' ticks don't overflow (#729).
