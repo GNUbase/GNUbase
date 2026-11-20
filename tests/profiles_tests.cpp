@@ -568,6 +568,17 @@ TEST_CASE("what is left of a profile folder that couldn't be deleted goes at the
 
 namespace
 {
+	// Whether this process's permissions don't hold it back, as root's elsewhere: then the tests can't make a folder
+	// that it can't change. Windows has no such user: its access rules and open files hold back everyone.
+	bool privileged()
+	{
+#ifdef _WIN32
+		return false;
+#else
+		return geteuid() == 0;
+#endif
+	}
+
 	// A folder with a file that can't be deleted while the object lives: elsewhere the folder has no write
 	// permission, on Windows its access rules deny everyone deleting it and what is in it. It can still be renamed,
 	// with the folder it is in. When the test ends, also after a failed check, it can be changed again, where it is
@@ -580,7 +591,7 @@ namespace
 		{
 			std::filesystem::create_directories(m_folder);
 			std::ofstream(m_folder / "settings.json") << "{}";
-			lock(m_folder, true);
+			REQUIRE(lock(m_folder, true));
 		}
 		~LockedFolder() { unlock(); }
 		LockedFolder(const LockedFolder&) = delete;
@@ -608,7 +619,7 @@ namespace
 		}
 
 	private:
-		static void lock(const std::filesystem::path& folder, bool locked)
+		static bool lock(const std::filesystem::path& folder, bool locked)
 		{
 #ifdef _WIN32
 			// Everyone (WD) is denied deleting (0x10000) and deleting what is in it (0x40), also what is made in it
@@ -616,20 +627,23 @@ namespace
 			PSECURITY_DESCRIPTOR descriptor = nullptr;
 			if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
 					locked ? L"D:(D;OICI;0x10040;;;WD)" : L"D:", SDDL_REVISION_1, &descriptor, nullptr))
-				return;
+				return false;
 			BOOL present = FALSE;
 			BOOL defaulted = FALSE;
 			PACL acl = nullptr;
-			GetSecurityDescriptorDacl(descriptor, &present, &acl, &defaulted);
 			std::wstring name = folder.wstring();
-			SetNamedSecurityInfoW(name.data(), SE_FILE_OBJECT,
-				DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, acl, nullptr);
+			const bool done = GetSecurityDescriptorDacl(descriptor, &present, &acl, &defaulted) != FALSE &&
+				SetNamedSecurityInfoW(name.data(), SE_FILE_OBJECT,
+					DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, acl,
+					nullptr) == ERROR_SUCCESS;
 			LocalFree(descriptor);
+			return done;
 #else
 			namespace fs = std::filesystem;
-			std::error_code ignored;
+			std::error_code error;
 			fs::permissions(
-				folder, locked ? fs::perms::owner_read | fs::perms::owner_exec : fs::perms::owner_all, ignored);
+				folder, locked ? fs::perms::owner_read | fs::perms::owner_exec : fs::perms::owner_all, error);
+			return !error;
 #endif
 		}
 
@@ -650,8 +664,9 @@ TEST_CASE(
 	// A folder in it whose file can't be deleted.
 	const fs::path locked = f.dir.path() / "profiles" / "Studio" / "Locked";
 	const LockedFolder lock(f.dir.path(), locked);
-	if (!lock.locked())
-		SKIP("the folder can be changed here anyway, e.g. by root");
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(lock.locked());
 	f.call("profile.remove", {{"name", "Studio"}});
 	CHECK(f.names() == std::vector<std::string>{"Default"});
 	f.call("profile.add", {{"name", "Studio"}});
@@ -689,8 +704,9 @@ TEST_CASE(
 	f.call("profile.add", {{"name", "Studio"}});
 	const fs::path studio = f.dir.path() / "profiles" / "Studio";
 	const LockedFolder locked(f.dir.path(), studio / "Locked");
-	if (!locked.locked())
-		SKIP("the folder can be changed here anyway, e.g. by root");
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(locked.locked());
 	f.call("profile.activate", {{"name", "Studio"}});
 	f.start();
 	CHECK(f.call("profile.list").at("active") == "Studio");
@@ -728,8 +744,9 @@ TEST_CASE(
 	// What an earlier switch couldn't delete of its copies.
 	const fs::path staging = f.dir.path() / "profile-switch";
 	const LockedFolder locked(f.dir.path(), staging / "Locked");
-	if (!locked.locked())
-		SKIP("the folder can be changed here anyway, e.g. by root");
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(locked.locked());
 	f.call("profile.activate", {{"name", "Studio"}});
 	f.start();
 	const Json list = f.call("profile.list");
@@ -758,6 +775,8 @@ TEST_CASE(
 	f.setScale(1.5);
 	const fs::path dir = f.dir.path();
 	const fs::path staging = dir / "profile-switch";
+	if (privileged())
+		SKIP("root changes any folder");
 	// Something that can't be deleted gets into the switch's copies while it makes them.
 	std::unique_ptr<LockedFolder> locked;
 	bool lockedIndeed = false;
@@ -771,8 +790,7 @@ TEST_CASE(
 			}
 		});
 	REQUIRE(locked != nullptr);
-	if (!lockedIndeed)
-		SKIP("the folder can be changed here anyway, e.g. by root");
+	REQUIRE(lockedIndeed);
 	CHECK(!fs::exists(staging));
 	CHECK(removedFolders(dir).size() == 1);
 	f.start();
@@ -794,8 +812,9 @@ TEST_CASE("a profile switch that fails deletes the active profile's folder at on
 	const fs::path dir = f.dir.path();
 	// A folder in the active profile's that can't be deleted, from before: the switch saves its files there.
 	const LockedFolder locked(dir, dir / "profiles" / "Default" / "Locked");
-	if (!locked.locked())
-		SKIP("the folder can be changed here anyway, e.g. by root");
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(locked.locked());
 	bool failed = false;
 	switchWith(f, "Studio",
 		[&](const fs::path& file)
@@ -828,8 +847,9 @@ TEST_CASE("an unfinished profile switch that is undone deletes the active profil
 	interruptSwitch(f, "Studio");
 	const fs::path dir = f.dir.path();
 	const LockedFolder locked(dir, dir / "profiles" / "Default" / "Locked");
-	if (!locked.locked())
-		SKIP("the folder can be changed here anyway, e.g. by root");
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(locked.locked());
 	// The start undoes the switch, then switches: the active profile's folder is made again, without what waits aside.
 	f.start();
 	CHECK(f.call("profile.list").at("active") == "Studio");
@@ -852,8 +872,9 @@ TEST_CASE("Delete program preferences drops an unfinished profile switch though 
 	interruptSwitch(f, "Studio");
 	const fs::path staging = f.dir.path() / "profile-switch";
 	const LockedFolder locked(f.dir.path(), staging / "Locked");
-	if (!locked.locked())
-		SKIP("the folder can be changed here anyway, e.g. by root");
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(locked.locked());
 	engine::settings::cancelProfileSwitch(f.dir.path());
 	CHECK(!fs::exists(staging));
 	CHECK(removedFolders(f.dir.path()).size() == 1);
@@ -925,6 +946,9 @@ namespace
 TEST_CASE("a deleted profile whose folder can't be put aside is deleted where it is, or the error says why", "[unit]")
 {
 	namespace fs = std::filesystem;
+	const test::TempDir logs;
+	const fs::path log = logs.path() / "gnubase.log";
+	const logging::Session session(log);
 	const Fixture f;
 	f.call("profile.add", {{"name", "Studio"}});
 	f.call("profile.add", {{"name", "Travel"}});
@@ -932,14 +956,23 @@ TEST_CASE("a deleted profile whose folder can't be put aside is deleted where it
 	const fs::path travel = f.dir.path() / "profiles" / "Travel";
 	const UnmovableFolder deletable(studio, true);
 	const UnmovableFolder kept(travel, false);
+	if (privileged())
+		SKIP("root moves any folder");
+#ifdef _WIN32
+	REQUIRE(deletable.unmovable());
+	REQUIRE(kept.unmovable());
+#else
 	if (!deletable.unmovable() || !kept.unmovable())
-		SKIP("the folders move here anyway, e.g. for root");
+		SKIP("this file system moves a folder without write permission to another folder");
+#endif
 	f.call("profile.remove", {{"name", "Studio"}});
 	CHECK(!fs::exists(studio));
 	CHECK_THAT(f.fails("profile.remove", {{"name", "Travel"}}), ContainsSubstring("can't be changed"));
 	CHECK(fs::exists(travel));
 	CHECK(f.names() == std::vector<std::string>{"Default", "Travel"});
 	CHECK(removedFolders(f.dir.path()).empty());
+	// The log has it too, for the switches, which go on when a folder stays.
+	CHECK_THAT(test::readText(log), ContainsSubstring("Cannot delete " + travel.u8string() + ": "));
 }
 
 namespace
@@ -991,6 +1024,8 @@ TEST_CASE("a profile switch replaces each file in one step, so one that can't ta
 	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
 	f.setScale(1.5);
 	const fs::path dir = f.dir.path();
+	if (privileged())
+		SKIP("root moves any file");
 	const std::string before = contents(dir / "settings.json");
 	std::unique_ptr<HeldFile> held;
 	bool undone = false;
@@ -1013,12 +1048,91 @@ TEST_CASE("a profile switch replaces each file in one step, so one that can't ta
 				held.reset();
 			}
 		});
-	if (!undone)
-		SKIP("the file moves here anyway, e.g. for root");
+	REQUIRE(undone);
 	CHECK(contents(dir / "settings.json") == before);
 	CHECK(!fs::exists(dir / "profile-switch"));
 	CHECK(!fs::exists(dir / "profiles" / "Default"));
 	f.start();
 	CHECK(f.call("profile.list").at("active") == "Studio");
 	CHECK(f.scale() == 2.0);
+}
+
+namespace
+{
+	// A file that can't be read while the object lives: on Windows it is open without sharing, elsewhere it has no
+	// permissions.
+	class UnreadableFile
+	{
+	public:
+		explicit UnreadableFile(std::filesystem::path file) : m_file(std::move(file))
+		{
+#ifdef _WIN32
+			m_handle =
+				CreateFileW(m_file.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+			REQUIRE(m_handle != INVALID_HANDLE_VALUE);
+#else
+			std::filesystem::permissions(m_file, std::filesystem::perms::none);
+#endif
+		}
+		~UnreadableFile()
+		{
+#ifdef _WIN32
+			CloseHandle(m_handle);
+#else
+			std::error_code ignored;
+			std::filesystem::permissions(
+				m_file, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, ignored);
+#endif
+		}
+		UnreadableFile(const UnreadableFile&) = delete;
+		UnreadableFile& operator=(const UnreadableFile&) = delete;
+		UnreadableFile(UnreadableFile&&) = delete;
+		UnreadableFile& operator=(UnreadableFile&&) = delete;
+
+	private:
+		std::filesystem::path m_file;
+#ifdef _WIN32
+		HANDLE m_handle = INVALID_HANDLE_VALUE;
+#endif
+	};
+}
+
+TEST_CASE("a profile switch that can't copy a file back leaves the one there in place", "[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	f.setScale(1.5);
+	const fs::path dir = f.dir.path();
+	if (privileged())
+		SKIP("root reads any file");
+	const std::string studio = contents(dir / "profiles" / "Studio" / "settings.json");
+	std::unique_ptr<UnreadableFile> held;
+	int calls = 0;
+	// The switch fails after Studio's settings.json came in, and the copy of the active profile's, which would put
+	// the old one back, can't be read.
+	switchWith(f, "Studio",
+		[&](const fs::path& file)
+		{
+			if (file == dir / "quantize-presets.json" && !held)
+			{
+				held = std::make_unique<UnreadableFile>(dir / "profile-switch" / "active" / "settings.json");
+				throw std::runtime_error("can't be replaced");
+			}
+			if (file == dir / "settings.json")
+				++calls;
+		});
+	REQUIRE(held != nullptr);
+	CHECK(calls == 2);
+	// The settings folder still has a settings.json, not none, and the copies wait for the next start.
+	CHECK(contents(dir / "settings.json") == studio);
+	CHECK(fs::exists(dir / "profile-switch" / "active" / "settings.json"));
+	held.reset();
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Studio");
+	CHECK(f.scale() == 2.0);
+	f.call("profile.activate", {{"name", "Default"}});
+	f.start();
+	CHECK(f.scale() == 1.5);
 }

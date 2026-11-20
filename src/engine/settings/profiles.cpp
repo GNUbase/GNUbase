@@ -190,7 +190,9 @@ namespace gnubase::engine::settings
 		{
 			std::error_code error;
 			fs::remove_all(removed, error);
-			if (error)
+			// Not when another GNUbase process deleted it meanwhile, at its start.
+			std::error_code ignored;
+			if (error && fs::exists(removed, ignored))
 				logging::warning("Cannot delete {} completely, which the next start tries again: {}",
 					removed.u8string(), error.message());
 		}
