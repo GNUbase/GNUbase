@@ -983,6 +983,67 @@ TEST_CASE("flatten turns the chain into a linear project that plays the same, on
 	CHECK(run(song.client, "arranger.get").at("track") == 0); // without keepTrack the arranger track goes
 }
 
+TEST_CASE(
+	"flatten cuts notes at the sections' edges or with dontSplit leaves them out, and renames events", "[integration]")
+{
+	// Don't Split Events and Rename Arranger Events (reference manual p. 408). A MIDI part over bars 1 to 3, A over bar
+	// 2 played twice, and three notes: one into A, one in it, one out of it.
+	constexpr int64_t q = gnubase::time::g_ticksPerQuarter;
+	Engine engine;
+	Client client{engine};
+	const ObjectId midi = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	const ObjectId part =
+		idOf(run(client, "midiPart.add", {{"track", midi}, {"position", 0}, {"length", 12 * q}}), "part");
+	run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 3 * q}, {"length", 2 * q}, {"pitch", 60}, {"velocity", 0.8}},
+					{{"position", 5 * q}, {"length", q}, {"pitch", 62}, {"velocity", 0.8}},
+					{{"position", 7 * q}, {"length", 2 * q}, {"pitch", 64}, {"velocity", 0.8}}}}});
+	const ObjectId a = idOf(run(client, "arranger.add", {{"position", 4 * q}, {"end", 8 * q}}), "event");
+	run(client, "arranger.setChain", {{"steps", {{{"event", a}, {"repeats", 2}}}}});
+	// Every note as where it starts and its length in project ticks, and its pitch, in order.
+	const auto notes = [&client]
+	{
+		std::vector<std::tuple<int64_t, int64_t, int>> found;
+		const Json project = run(client, "project.get");
+		for (const Json& each : project.at("midiParts"))
+			for (const Json& note : each.at("notes"))
+				found.emplace_back(each.at("position").get<int64_t>() + note.at("position").get<int64_t>(),
+					note.at("length").get<int64_t>(), note.at("pitch").get<int>());
+		std::sort(found.begin(), found.end());
+		return found;
+	};
+	using Notes = std::vector<std::tuple<int64_t, int64_t, int>>;
+
+	// By default the notes are cut at the edges: what lies before keeps the first note up to the chain's start.
+	run(client, "arranger.flatten", {{"keepTrack", true}, {"renameEvents", true}});
+	CHECK(notes() ==
+		Notes{{3 * q, q, 60}, {4 * q, q, 60}, {5 * q, q, 62}, {7 * q, q, 64}, {8 * q, q, 60}, {9 * q, q, 62},
+			{11 * q, q, 64}});
+	const Json events = run(client, "arranger.get").at("events");
+	REQUIRE(events.size() == 2);
+	CHECK(events[0].at("name") == "A 1");
+	CHECK(events[1].at("name") == "A 2");
+
+	// Don't Split Events: only the note that starts and ends in A; the one before it stays whole.
+	run(client, "history.undo");
+	run(client, "arranger.flatten", {{"keepTrack", true}, {"dontSplit", true}});
+	CHECK(notes() == Notes{{3 * q, 2 * q, 60}, {5 * q, q, 62}, {9 * q, q, 62}});
+	CHECK(run(client, "arranger.get").at("events")[1].at("name") == "A");
+
+	// Rename Arranger Events counts each event's repeats on its own: A, B, A become A 1, B 1, A 2.
+	run(client, "history.undo");
+	const ObjectId b = idOf(run(client, "arranger.add", {{"position", 8 * q}, {"end", 12 * q}}), "event");
+	run(client, "arranger.setChain", {{"steps", {{{"event", a}}, {{"event", b}}, {{"event", a}}}}});
+	run(client, "arranger.flatten", {{"keepTrack", true}, {"renameEvents", true}});
+	const Json renamed = run(client, "arranger.get").at("events");
+	REQUIRE(renamed.size() == 3);
+	CHECK(renamed[0].at("name") == "A 1");
+	CHECK(renamed[1].at("name") == "B 1");
+	CHECK(renamed[2].at("name") == "A 2");
+}
+
 TEST_CASE("transport.play while playing ends a Repeat Forever loop", "[integration]")
 {
 	const gnubase::test::TempDir dir;

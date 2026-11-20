@@ -12,7 +12,7 @@ they play.
 |---|---|
 | `audioPart.add` | An empty part on an audio track, at `position` and `length` in the track's time base |
 | `event.toPart` | Events to Part: puts audio events into a new part on their track, from the first start to the last end; one part per track |
-| `event.dissolvePart` | Dissolve Part: removes parts and makes their events events of their own, cut at the part's edges so that they play as they did; events the part hid entirely go |
+| `event.dissolvePart` | Dissolve Part: removes parts and makes their events events of their own, cut at the part's edges so that they play as they did, and muted if the part was; events the part hid entirely go |
 
 The `event.*` commands ([parts-and-events.md](parts-and-events.md)) take audio parts like MIDI parts, by id:
 
@@ -21,7 +21,8 @@ The `event.*` commands ([parts-and-events.md](parts-and-events.md)) take audio p
 - **Resizing.** Normal sizing reveals or hides events: they keep their time. Sizing moves contents moves them with the
   edge.
 - **Splitting** cuts the events across the position too; what lies after it goes into the new part. Without `events`,
-  `event.split` splits parts with their events, not the events on their own.
+  `event.split` splits parts with their events, not the events on their own. The events that move into the new part
+  are announced as `audioEvent.changed`, only the pieces the split cuts off as `audioEvent.added`.
 - **Gluing** audio events that continue each other in a clip, as after a split, makes one event; any other audio events
   and parts of one track become one part from the first start to the last end (reference manual p. 269), the first of
   the parts or a new one, with all their events.
@@ -32,14 +33,19 @@ The `event.*` commands ([parts-and-events.md](parts-and-events.md)) take audio p
 ## Playback
 
 The render snapshot cuts each event of a part at the part's edges (`rendersnapshot.cpp`), and leaves out the events
-of a muted part and those it hides. Where the part cuts an event, what is left of the event's fade there is played as a
-shorter fade, and the event's crossfade from an event before it rests.
+of a muted part and those it hides. Where the part cuts an event, the part only hides the audio outside it: the event's
+fade there plays on from where the cut leaves it (`RenderAudioEvent::cutStart` and `cutEnd`), and the event's
+crossfade from an event before it rests.
+
+Snapping to events (`snap.position`) takes the start, end and snap point of an event in a part only where the part shows
+them, besides the part's own edges.
 
 ## Project file
 
 `gnubase.json` has the parts in `audioParts` and each event's `part`. `project.xml` has a part as a clip whose content is
 a `Clips` timeline of its events' clips, which count from the part's start in the lane's time unit; a muted part is a
-disabled clip. Read from another application, such a clip of clips on an audio track becomes an audio part again.
+disabled clip. Read from another application, such a clip of clips on an audio track becomes an audio part again; its
+color is the part's, not its events'.
 
 ## The event display
 
@@ -57,8 +63,13 @@ audio events and parts and select what they make.
 
 ## Checks
 
-- `tests/audiopart_tests.cpp`: `audioPart.add`; Events to Part and Dissolve Part with undo; moving, copying, splitting,
-  gluing, muting, locking, removing and duplicating parts with their events; playback cut at the part's edges and
-  silent while muted; the DAWproject file with and without GNUbase's entry.
+- `tests/audiopart_tests.cpp`: `audioPart.add`; Events to Part and Dissolve Part with undo, also of a muted part;
+  moving, copying, splitting (with what it announces), gluing, muting, locking, removing and duplicating parts with
+  their events; playback cut at the part's edges and silent while muted; the DAWproject file with and without
+  GNUbase's entry.
+- `tests/fade_tests.cpp`: fades that a part cuts play on up to its edges, sample by sample and against the golden file
+  `fades-cut-by-part`.
+- `tests/snap_tests.cpp`: an event's magnets that its part hides don't attract.
 - `tests/eventediting_tests.cpp`: drawing audio parts with the draw tool and with Alt and the object selection tool, the
-  double click between the locators on an audio track, and the Audio menu's two commands.
+  double click between the locators on an audio track, the Audio menu's two commands, and Snap Point to Cursor, which
+  leaves selected parts out.

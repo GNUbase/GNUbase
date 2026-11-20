@@ -106,6 +106,8 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Mod+Left, Mod+Right | `edit.nudgeLeft`, `edit.nudgeRight` | Nudge Left, Right |
 | Alt+Left, Alt+Shift+Right | `edit.nudgeStartLeft`, `edit.nudgeStartRight` | Nudge Start Left, Right |
 | Alt+Shift+Left, Alt+Right | `edit.nudgeEndLeft`, `edit.nudgeEndRight` | Nudge End Left, Right |
+| Alt+Up, Alt+Shift+Down | `edit.nudgeTopUp`, `edit.nudgeTopDown` | Nudge Top Up, Down (selection range, [range-editing.md](range-editing.md)) |
+| Alt+Shift+Up, Alt+Down | `edit.nudgeBottomUp`, `edit.nudgeBottomDown` | Nudge Bottom Up, Down |
 | Mod+A, Mod+Shift+A | `edit.selectAll`, `edit.selectNone` | Select All, Select None |
 | Mod+Alt+I | `edit.invertSelection` | Invert Selection |
 | Left, Right | `edit.selectPrevious`, `edit.selectNext` | Navigate Left, Right |
