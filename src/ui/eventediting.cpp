@@ -20,11 +20,13 @@
 #include <cstdlib>
 #include <functional>
 #include <initializer_list>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -415,11 +417,43 @@ namespace gnubase::ui
 				parameters["events"] = m_selection;
 			edit("event.split", std::move(parameters));
 		};
-		// Nudging moves by a grid step at the selection's start (reference manual p. 107), snap on or off.
-		const auto nudge = [this, edge](const char* edgeName, int direction)
+		// A grid step from a position, snap on or off, never before the start.
+		const auto stepped = [this](int64_t from, int direction)
 		{
-			return [this, edge, edgeName, direction]
+			const engine::SnapGrid grid = snapGrid();
+			const time::Position step = engine::gridStep(m_snap.grid(), grid, from);
+			if (step.base == time::TimeBase::Linear)
+				return std::max<int64_t>(0, from + (direction * step.value));
+			return grid.tempo.toSamples(
+				std::max<time::Ticks>(0, grid.tempo.toTicks(from, grid.sampleRate) + (direction * step.value)),
+				grid.sampleRate);
+		};
+		// Nudging moves by a grid step at the selection's start (reference manual p. 107), snap on or off. A selection
+		// range moves without its contents, or its edges move, the start never past the end (pp. 289-290).
+		const auto nudge = [this, edge, stepped](const char* edgeName, int direction)
+		{
+			return [this, edge, stepped, edgeName, direction]
 			{
+				if (m_range)
+				{
+					RangeSelection range = *m_range;
+					const int64_t length = range.end - range.start;
+					if (edgeName == nullptr)
+					{
+						range.start = stepped(range.start, direction);
+						range.end = range.start + length;
+					}
+					else if (std::string_view(edgeName) == "start")
+					{
+						range.start = std::min(stepped(range.start, direction), range.end);
+					}
+					else
+					{
+						range.end = std::max(stepped(range.end, direction), range.start);
+					}
+					setRange(std::move(range));
+					return;
+				}
 				if (m_selection.empty())
 					return;
 				// A selection the display doesn't show yet takes the step at the project's start.
@@ -436,20 +470,12 @@ namespace gnubase::ui
 			};
 		};
 		// Nudge Cursor Left and Right: a grid step from the cursor (reference manual p. 300), never before the start.
-		const auto nudgeCursor = [this](int direction)
+		const auto nudgeCursor = [this, stepped](int direction)
 		{
-			return [this, direction]
+			return [this, stepped, direction]
 			{
-				const engine::SnapGrid grid = snapGrid();
-				const time::Position step = engine::gridStep(m_snap.grid(), grid, m_cursorSample);
-				int64_t to = m_cursorSample + (direction * step.value);
-				if (step.base == time::TimeBase::Musical)
-					to = grid.tempo.toSamples(
-						std::max<time::Ticks>(
-							0, grid.tempo.toTicks(m_cursorSample, grid.sampleRate) + (direction * step.value)),
-						grid.sampleRate);
 				// The next nudge goes on from here, even before transport.changed says so.
-				setCursor(std::max<int64_t>(0, to));
+				setCursor(stepped(m_cursorSample, direction));
 				m_binding.send("transport.locate", {{"position", m_cursorSample}});
 			};
 		};
@@ -488,6 +514,43 @@ namespace gnubase::ui
 				edit("range.paste", std::move(parameters), !m_range);
 			};
 		};
+		// The top and bottom nudges take the track above or below the range in, or its top or bottom track out, as
+		// long as one stays (reference manual p. 289).
+		const auto nudgeTracks = [this](const char* action, bool top, bool in)
+		{
+			m_rangeActions[action] = false;
+			return std::make_pair(std::string(action),
+				std::function<void()>(
+					[this, top, in]
+					{
+						if (!m_range || m_range->tracks.empty())
+							return;
+						RangeSelection range = *m_range;
+						if (!in)
+						{
+							if (range.tracks.size() > 1)
+								range.tracks.erase(top ? range.tracks.begin() : std::prev(range.tracks.end()));
+						}
+						else
+						{
+							// Each track once: its automation tracks' lanes have its id too (#121).
+							std::vector<uint64_t> order;
+							for (const uint64_t track : m_laneTracks)
+								if (std::find(order.begin(), order.end(), track) == order.end())
+									order.push_back(track);
+							const auto edgeTrack =
+								std::find(order.begin(), order.end(), top ? range.tracks.front() : range.tracks.back());
+							if (edgeTrack == order.end() ||
+								(top ? edgeTrack == order.begin() : edgeTrack + 1 == order.end()))
+								return;
+							if (top)
+								range.tracks.insert(range.tracks.begin(), *(edgeTrack - 1));
+							else
+								range.tracks.push_back(*(edgeTrack + 1));
+						}
+						setRange(std::move(range));
+					}));
+		};
 		const std::map<std::string, std::function<void()>> actions = {
 			{"edit.delete",
 				[this, range = onRange("range.delete", Json::object()),
@@ -515,7 +578,21 @@ namespace gnubase::ui
 			{"edit.splitAtCursor", [this, split] { split(Json::array({m_cursorSample})); }},
 			{"edit.splitLoop", [this, split] { split(Json::array({m_left, m_right})); }},
 			{"edit.glue", onSelection("event.glue", Json::object())},
-			{"edit.duplicate", [this] { repeat(1, false); }},
+			// With a selection range its contents, copied to its end, where the range goes (reference manual p. 291).
+			{"edit.duplicate",
+				[this]
+				{
+					if (!m_range || m_range->end <= m_range->start)
+					{
+						repeat(1, false);
+						return;
+					}
+					const RangeSelection from = *m_range;
+					edit("range.move",
+						{{"start", from.start}, {"end", from.end}, {"tracks", from.tracks}, {"position", from.end},
+							{"copy", true}});
+					setRange(RangeSelection{from.end, from.end + (from.end - from.start), from.tracks});
+				}},
 			{"edit.repeat",
 				[this]
 				{
@@ -570,6 +647,10 @@ namespace gnubase::ui
 			{"edit.nudgeStartRight", nudge("start", 1)},
 			{"edit.nudgeEndLeft", nudge("end", -1)},
 			{"edit.nudgeEndRight", nudge("end", 1)},
+			nudgeTracks("edit.nudgeTopUp", true, true),
+			nudgeTracks("edit.nudgeTopDown", true, false),
+			nudgeTracks("edit.nudgeBottomUp", false, false),
+			nudgeTracks("edit.nudgeBottomDown", false, true),
 			{"edit.snap", [this] { setSnap({{"on", !m_snap.on}}); }},
 			// Snap Point to Cursor (reference manual p. 105): the selected audio events that the cursor is in.
 			{"edit.snapPointToCursor",
@@ -751,21 +832,6 @@ namespace gnubase::ui
 		setRange(std::nullopt);
 		if (!std::binary_search(m_selection.begin(), m_selection.end(), shown->id))
 			select({shown->id});
-	}
-
-	void EventDisplay::clickRange(Rml::Vector2f press, Rml::Event& release)
-	{
-		// As toolDown and toolUp have a press and release with the range tool.
-		const auto y = [this](float pixels) { return (pixels - m_lanes->GetAbsoluteTop()) / dpRatio(); };
-		m_pressX = dpFrom(*m_lanes, press.x);
-		m_pressY = y(press.y);
-		m_pressed = modifiersOf(release);
-		if (!m_selection.empty())
-			select({});
-		m_rangeBase = std::nullopt;
-		setRangeFrom(dpFrom(*m_lanes, release.GetParameter<float>("mouse_x", press.x)),
-			y(release.GetParameter<float>("mouse_y", press.y)));
-		zeroCrossRange();
 	}
 
 	void EventDisplay::areaDown(Rml::Event& event, double x, double y)
@@ -1029,8 +1095,9 @@ namespace gnubase::ui
 				return;
 			}
 		}
-		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::DrawPart || drag == Drag::Comp ||
-			drag == Drag::Play || drag == Drag::Click || drag == Drag::VolumePoint || drag == Drag::TimeWarp)
+		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::RangeMove || drag == Drag::DrawPart ||
+			drag == Drag::Comp || drag == Drag::Play || drag == Drag::Click || drag == Drag::VolumePoint ||
+			drag == Drag::TimeWarp)
 		{
 			toolUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
 				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());

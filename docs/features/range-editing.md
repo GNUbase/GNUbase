@@ -87,8 +87,8 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
   `range.cut` and `range.paste` would move it. With `copy` the range stays and a copy is pasted at `position` as
   `range.paste` pastes, with new ids. Either way the audio that lands comes in front of the events there, every event in
   the order it was stacked, so that the events of an audio part keep their places among the others. Locked events stay
-  where they are and aren't copied. The event display does it when the range is dragged by the marker track
-  ([markers.md](markers.md), p. 432).
+  where they are and aren't copied. The event display does it when the range is dragged, and Duplicate does it with
+  `copy` at the range's end (pp. 291, 432).
 - **Where it lands.** On musical tracks what lies in the range moves by the gap between `start` and `position` in
   ticks, so that it keeps its distance from the range's start in beats. What starts where the range starts lands at
   `position` exactly, a piece cut there and an event that starts there alike: an event's start in ticks can lie up to
@@ -125,14 +125,25 @@ With a selection range ([tools.md](tools.md)) the edit commands work on it, and 
 | `edit.insertSilence` | Mod+Shift+E | Inserts silence |
 | `edit.splitRange`, `edit.cropRange` | Shift+X, none | Splits or crops at the range |
 | `edit.globalCopy` | none | Copies everything between the locators |
+| `edit.duplicate` | Mod+D | Copies the range's contents to its end (`range.move` with `copy`), where the range goes, so that the next one follows (p. 291) |
+| `edit.nudgeLeft`, `edit.nudgeRight` | Mod+Left, Mod+Right | Move the range by a grid step, its contents stay (p. 290) |
+| `edit.nudgeStartLeft`, `edit.nudgeStartRight`, `edit.nudgeEndLeft`, `edit.nudgeEndRight` | Alt+Left, Alt+Shift+Right, Alt+Shift+Left, Alt+Right | Move its start or end by a grid step, the start never past the end (p. 289) |
+| `edit.nudgeTopUp`, `edit.nudgeTopDown`, `edit.nudgeBottomUp`, `edit.nudgeBottomDown` | Alt+Up, Alt+Shift+Down, Alt+Shift+Up, Alt+Down | Take the track above or below it in, or its top or bottom track out, as long as one stays (p. 289) |
+
+The grid step is the nudges' for events ([parts-and-events.md](parts-and-events.md)), at the edge that moves, and
+nothing moves before the project start. With the range tool, a press in the range on one of its tracks, without
+Shift, drags its contents (p. 291): the range follows the mouse across, its start snapped, and the release moves what
+is in it there (`range.move`), or with the tool modifier Copy (`dragDrop.copy`, Alt by default) a copy of it; the
+range stays where it went. A click there, or a drag straight up or down, selects a range as anywhere, and a drag
+released outside the window puts the range back at the next press.
 
 The main menu's Edit menu has Cut, Copy and Paste, and the Range submenu Global Copy, Cut Time, Delete Time, Paste
 Time, Split, Crop and Insert Silence. Menus and keys disable the commands that only edit the range while there is
-none, and Paste and Paste Time until something is copied (`rangeClipboard.changed`, since the project opened).
+none, the top and bottom nudges too, and Paste and Paste Time until something is copied (`rangeClipboard.changed`,
+since the project opened).
 
 Not yet (#1910): copying and pasting selected events without a range, Paste at Origin and Paste Relative to Cursor,
-moving and duplicating a range's contents by dragging it on other tracks than marker tracks, nudging its edges, Range
-Tool Splits Partly Selected Events, the info line's range fields, the range in the editors (they come with their
+Range Tool Splits Partly Selected Events, the info line's range fields, the range in the editors (they come with their
 tickets), and the controller events at the edges of a range inside a part.
 
 ## Checks
@@ -192,6 +203,11 @@ tickets), and the controller events at the edges of a range inside a part.
   deleting up to the end and a start past 2^48 refused.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; without a range the range
   commands can't run, and Paste can't until a cut, nor after `project.new`; split, Delete Time, cut and paste on a
-  selection range, which stays; paste at the cursor without a range, selecting what it pasted.
+  selection range, which stays; paste at the cursor without a range, selecting what it pasted; a drag in the range
+  moving its contents on a MIDI track in one undo step with the range, Alt and a drag copying them, a click in it
+  selecting a range of no length, and Duplicate copying them to the range's end twice in a row; the nudges moving the
+  range and its edges by a beat, not before the project start nor the start past the end, and the top and bottom
+  nudges taking tracks in and out, never the last, while the project stays as it was.
+- `tests/markertrack_ui_tests.cpp`: the same drag on the marker track, also released outside the window.
 - `tests/uiapp_tests.cpp`: the context menu disables the range commands without a range and Paste until something is
   cut.

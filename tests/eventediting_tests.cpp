@@ -2081,6 +2081,7 @@ TEST_CASE(
 	f.automation.drag(std::nullopt, f.at(610, 20), f.at(650, 20), {});
 	REQUIRE(f.binding.waiting("snap.zeroCrossings") == 1);
 	f.display.actions().at("edit.cropRange")();
+	f.click(900, 60); // a press that starts a range elsewhere, as a drag in this one would drag its contents
 	f.automation.drag(std::nullopt, f.at(620, 20), f.at(640, 20), {});
 	const auto cropped = [&f]
 	{
@@ -2414,6 +2415,130 @@ TEST_CASE("the edit commands edit the selection range, and paste pastes at its s
 	// A new project empties the clipboard: nothing to paste.
 	f.call("project.new");
 	REQUIRE(f.waitUntil([&f] { return !f.display.canRun("edit.paste"); }));
+}
+
+TEST_CASE(
+	"a drag in the selection range moves its contents on any track, Alt copies them, Duplicate copies them after it",
+	"[unit]")
+{
+	Fixture f;
+	const auto midi = f.call("project.get").at("tracks")[1].at("id").get<uint64_t>();
+	const auto positions = [&f]
+	{
+		std::vector<int64_t> result;
+		for (const Json& part : f.parts())
+			result.push_back(part.at("position").get<int64_t>());
+		std::sort(result.begin(), result.end());
+		return result;
+	};
+	const auto range = [&f] { return f.display.range().value_or(ui::RangeSelection{-1, -1, {}}); };
+	f.display.setTool(ui::Tool::RangeSelection);
+	const ui::RangeSelection part{48000, 144000, {midi}}; // the part's, 1 to 3 seconds
+
+	// Dragged 2 seconds later: the part moves, in one undo step, and the range with it (reference manual p. 291).
+	f.display.setRange(part);
+	const size_t steps = f.call("history.get").at("steps").size();
+	f.drag(150, 60, 350, 60);
+	REQUIRE(f.waitUntil([&] { return positions() == std::vector<int64_t>{6 * g_quarter}; }));
+	CHECK(f.call("history.get").at("steps").size() == steps + 1);
+	CHECK(range().start == 144000);
+	CHECK(range().end == 240000);
+	CHECK(range().tracks == std::vector<uint64_t>{midi});
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return positions() == std::vector<int64_t>{2 * g_quarter}; }));
+
+	// With Alt a copy goes there and the part stays. (A click elsewhere first: two presses there would be a double
+	// click.)
+	f.click(900, 20);
+	f.display.setRange(part);
+	f.drag(150, 60, 650, 60, {"alt"});
+	REQUIRE(f.waitUntil([&] { return positions() == std::vector<int64_t>{2 * g_quarter, 12 * g_quarter}; }));
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return positions().size() == 1; }));
+
+	// A click in the range without a drag selects a range of no length there, as anywhere.
+	f.click(900, 20);
+	f.display.setRange(part);
+	f.click(200, 60);
+	CHECK(range().start == 96000);
+	CHECK(range().end == 96000);
+	CHECK(positions() == std::vector<int64_t>{2 * g_quarter});
+
+	// Duplicate copies the range's contents to its end, and the range goes to the copy, so that the next one follows
+	// (p. 291).
+	f.display.setRange(part);
+	f.run("edit.duplicate");
+	REQUIRE(f.waitUntil([&] { return positions() == std::vector<int64_t>{2 * g_quarter, 6 * g_quarter}; }));
+	CHECK(range().start == 144000);
+	CHECK(range().end == 240000);
+	f.run("edit.duplicate");
+	REQUIRE(f.waitUntil([&] { return positions().size() == 3; }));
+	CHECK(positions()[2] == 10 * g_quarter);
+}
+
+TEST_CASE("with a selection range, the nudge commands move the range or its edges, and its contents stay", "[unit]")
+{
+	Fixture f;
+	const Json tracks = f.call("project.get").at("tracks");
+	const auto audio = tracks[0].at("id").get<uint64_t>();
+	const auto midi = tracks[1].at("id").get<uint64_t>();
+	const auto range = [&f] { return f.display.range().value_or(ui::RangeSelection{-1, -1, {}}); };
+	for (const char* id : {"edit.nudgeTopUp", "edit.nudgeTopDown", "edit.nudgeBottomUp", "edit.nudgeBottomDown"})
+	{
+		INFO(id);
+		CHECK(!f.display.canRun(id)); // only with a range
+	}
+	// A beat is half a second, 24000 samples.
+	f.call("snap.set", {{"grid", "beat"}});
+	REQUIRE(f.waitUntil([&] { return f.display.snap().grid() == engine::GridType::Beat; }));
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{48000, 144000, {midi}});
+	const size_t steps = f.call("history.get").at("steps").size();
+
+	// Move Left and Right move the range itself (reference manual p. 290), never before the project start.
+	f.run("edit.nudgeRight");
+	CHECK(range().start == 72000);
+	CHECK(range().end == 168000);
+	for (int i = 0; i < 4; ++i)
+		f.run("edit.nudgeLeft");
+	CHECK(range().start == 0);
+	CHECK(range().end == 96000);
+
+	// The start and end nudges move its edges (p. 289), the start never past the end.
+	f.run("edit.nudgeStartRight");
+	CHECK(range().start == 24000);
+	f.run("edit.nudgeEndRight");
+	CHECK(range().end == 120000);
+	f.run("edit.nudgeEndLeft");
+	f.run("edit.nudgeEndLeft");
+	CHECK(range().end == 72000);
+	for (int i = 0; i < 3; ++i)
+		f.run("edit.nudgeStartRight");
+	CHECK(range().start == 72000);
+	f.run("edit.nudgeStartLeft");
+	CHECK(range().start == 48000);
+
+	// The top and bottom nudges take a track in or out at the range's top or bottom, never the last one.
+	CHECK(f.display.canRun("edit.nudgeTopUp"));
+	f.run("edit.nudgeTopUp");
+	CHECK(range().tracks == std::vector<uint64_t>{audio, midi});
+	f.run("edit.nudgeTopUp"); // no track above
+	CHECK(range().tracks == std::vector<uint64_t>{audio, midi});
+	f.run("edit.nudgeBottomUp");
+	CHECK(range().tracks == std::vector<uint64_t>{audio});
+	f.run("edit.nudgeBottomUp");
+	CHECK(range().tracks == std::vector<uint64_t>{audio});
+	f.run("edit.nudgeBottomDown");
+	CHECK(range().tracks == std::vector<uint64_t>{audio, midi});
+	f.run("edit.nudgeTopDown");
+	CHECK(range().tracks == std::vector<uint64_t>{midi});
+	f.run("edit.nudgeTopDown");
+	CHECK(range().tracks == std::vector<uint64_t>{midi});
+
+	// Nothing in the project moved.
+	CHECK(f.call("history.get").at("steps").size() == steps);
+	CHECK(f.parts()[0].at("position") == 2 * g_quarter);
+	CHECK(f.audioEvents()[0].at("position") == 96000);
 }
 
 TEST_CASE("copying the selection range lets paste run", "[unit]")
