@@ -23,8 +23,8 @@ namespace gnubase::ui
 	// Gives a document's <menuitem command="..."> elements their command: a click runs it as a key would
 	// (KeyCommands::run), with the JSON object in the item's parameters attribute, in the window and the focus zone
 	// around the item. Each item shows the command's first key in a .menu-keys element and is disabled while the
-	// command can't run (KeyCommands::canRun). Use it on the UI thread; the key commands, the window and the
-	// document must outlive it.
+	// command can't run (KeyCommands::canRun), and checked while KeyCommands::checked says so. Use it on the UI thread;
+	// the key commands, the window and the document must outlive it.
 	class MainMenu final : private Rml::EventListener
 	{
 	public:

@@ -51,7 +51,7 @@ before the first point and after the last one ([automation-tracks.md](automation
 
 ## Not yet
 
-- The info line's Terminator field (p. 881): the info line doesn't show automation points yet.
+- The info line's Terminator field (p. 881, #1917): the info line doesn't show automation points yet.
 - Write modes (#122): with virgin territory a pass that ends inside a gap ends with a terminator, so that automation
   data is found only where a pass wrote it (p. 881).
 - The automation panel's settings page.

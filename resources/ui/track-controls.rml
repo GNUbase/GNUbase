@@ -270,9 +270,14 @@
 		end
 
 		function dialog.apply(document)
-			-- The types the dialog doesn't list, such as the signature track, show no controls, which leaving them out
-			-- says.
+			-- The types the dialog doesn't list, such as the signature track, have a fixed set of controls (reference
+			-- manual, p. 189): they keep theirs as the setting has them.
 			local value = {}
+			for type, controls in pairs(settings) do
+				if not available[type] then
+					value[type] = copy(controls)
+				end
+			end
 			for type in pairs(available) do
 				value[type] = visible(type)
 			end

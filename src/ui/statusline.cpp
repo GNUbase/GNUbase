@@ -37,7 +37,9 @@ namespace gnubase::ui
 
 	void StatusLine::update()
 	{
-		if (!m_recordTime || m_binding.waiting("recording.remainingTime") > 0)
+		// Only while it is shown: the engine measures the disk on its command thread, which a slow disk holds up
+		// (#645).
+		if (!m_recordTime || !m_recordTime->IsVisible(true) || m_binding.waiting("recording.remainingTime") > 0)
 			return;
 		m_binding.sendQuietly("recording.remainingTime", engine::Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)

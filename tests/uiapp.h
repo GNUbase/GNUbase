@@ -42,6 +42,14 @@ namespace gnubase::test
 	std::filesystem::path patchedResources(const std::filesystem::path& folder, const std::string& document,
 		const std::string& from, const std::string& to);
 
+	// How long UiApp::waitUntil waits by default: longer in sanitizer builds, which run several times slower (as
+	// engine::g_callTimeout). Waits that expect to time out pass a short timeout of their own.
+#ifdef GNUBASE_SANITIZED
+	inline constexpr std::chrono::milliseconds g_waitTimeout = std::chrono::seconds(30);
+#else
+	inline constexpr std::chrono::milliseconds g_waitTimeout = std::chrono::seconds(5);
+#endif
+
 	// GNUbase's UI as the app shows it (app::AppUi), with the engine on the dummy device and the user settings in a
 	// temporary folder: GNUbase's fonts and themes, the user settings and the engine binding, and the main window,
 	// hidden and drawn with 4x MSAA, which every GPU has with the same sample positions. Tests drive it with
@@ -50,8 +58,11 @@ namespace gnubase::test
 	class UiApp
 	{
 	public:
-		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1. The engine takes MIDI and
-		// audio from these backends, by default the system's; the audio backends must include the dummy device's.
+		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1. Every runner opens it at
+		// that size, except that macOS fits it to the monitor: CI's macOS runner opens windows at most 1024x684, and
+		// the test warns when its window is smaller than asked (#1078). A test that needs a lane or a control in view
+		// in a larger window scrolls it there, or asks for a window that fits. The engine takes MIDI and audio from
+		// these backends, by default the system's; the audio backends must include the dummy device's.
 		explicit UiApp(ui::Size size = {640, 480},
 			std::vector<std::unique_ptr<midi::Backend>> midiBackends = midi::makeBackends(),
 			std::vector<std::unique_ptr<audio::Backend>> audioBackends = audio::makeBackends());
@@ -81,7 +92,7 @@ namespace gnubase::test
 		// Steps the shell until done() is true; false if it isn't within the timeout.
 		// A JSON error from done() means "not ready yet"; if it still throws past the timeout, the error is rethrown.
 		// Predicates may read UI state that hasn't arrived yet without a JSON type guard.
-		bool waitUntil(const std::function<bool()>& done, std::chrono::milliseconds timeout = std::chrono::seconds(5));
+		bool waitUntil(const std::function<bool()>& done, std::chrono::milliseconds timeout = g_waitTimeout);
 
 		// Lays the windows out at this dp ratio, whatever the monitor's scale, so that screenshots have the same pixels
 		// everywhere.

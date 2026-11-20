@@ -280,6 +280,38 @@ TEST_CASE("the quantize commands take an editor's selected notes, or all of its 
 	CHECK(f.startsAre({24 * g_unit, 48 * g_unit, 72 * g_unit}));
 }
 
+TEST_CASE("Q and the quantize commands take the lower zone editor's notes, not the project window's parts", "[ui]")
+{
+	Fixture f;
+	f.display.select({f.part});
+	f.app.keys().run("window.lowerZoneEditor", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.app.call("editor.get", {{"editor", "lower"}}).at("parts") == Json::array({f.part}); }));
+	Rml::Element* lowerZone = f.app.main().context().GetDocument(0)->GetElementById("lower-zone");
+	REQUIRE(lowerZone != nullptr);
+	const auto select = [&](const std::vector<uint64_t>& notes)
+	{
+		Json selection = Json::array();
+		for (const uint64_t note : notes)
+			selection.push_back({{"part", f.part}, {"note", note}});
+		f.app.call("editor.set", {{"editor", "lower"}, {"selection", selection}});
+		f.app.shell().step(std::chrono::milliseconds(0)); // editor.changed
+	};
+
+	// Q pressed with the focus in the lower zone: its editor's selected note, though the part is selected.
+	select({f.notes[1]});
+	REQUIRE(lowerZone->Focus());
+	f.app.ui().key(std::nullopt, "Q");
+	CHECK(f.startsAre({26 * g_unit, 48 * g_unit, 73 * g_unit}));
+	// Without a selection there, every note it edits.
+	select({});
+	f.app.keys().run("edit.quantize", Json::object(), f.app.main(), lowerZone);
+	CHECK(f.startsAre({24 * g_unit, 48 * g_unit, 72 * g_unit}));
+	select({f.notes[0]});
+	f.app.keys().run("edit.resetQuantize", Json::object(), f.app.main(), lowerZone);
+	CHECK(f.startsAre({26 * g_unit, 48 * g_unit, 72 * g_unit}));
+}
+
 TEST_CASE("the quantize panel shows and changes the project's quantize settings", "[ui]")
 {
 	Fixture f;
@@ -392,11 +424,47 @@ TEST_CASE("the quantize panel's Apply, Reset and Auto Apply quantize the selecte
 	f.click("#quantize-grid");
 	f.click("menuitem[grid=\"1/8\"]");
 	CHECK(f.startsAre({48 * g_unit, 48 * g_unit, 96 * g_unit}));
+	// Changes from elsewhere apply too (p. 375: any change), such as the toolbar's presets menu and MCP's.
+	f.app.appUi().docking().setSectionHidden("project", "toolbar", "autoScroll", true); // room for the section
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click("#toolbar-quantize-presets");
+	f.click("menuitem[toolbar-preset=\"1/16\"]");
+	CHECK(f.startsAre({24 * g_unit, 48 * g_unit, 72 * g_unit}));
+	f.app.call("quantize.set", {{"preset", "1/8"}});
+	CHECK(f.startsAre({48 * g_unit, 48 * g_unit, 96 * g_unit}));
+	f.app.call("quantize.set", {{"preset", "1/16"}});
+	CHECK(f.startsAre({24 * g_unit, 48 * g_unit, 72 * g_unit}));
+
+	// Wheel turns on the strength, a gesture of the field: one undo step, however many quantize.apply it sends.
+	const auto position = [&f] { return f.app.call("history.get").at("position").get<int64_t>(); };
+	const int64_t before = position();
+	for (int turn = 0; turn < 3; ++turn)
+		f.app.ui().wheel(std::nullopt, {"#quantize-strength", 0, std::nullopt}, 0.0F, 1.0F);
+	REQUIRE(f.app.waitUntil([&] { return f.settings().at("strength") == 0.97; }));
+	f.app.shell().step(std::chrono::milliseconds(50));
+	CHECK(f.app.waitUntil([&] { return f.values("position").at(0) != 24 * g_unit; }));
+	CHECK(position() == before + 1);
+	f.app.call("history.undo");
+	CHECK(f.startsAre({24 * g_unit, 48 * g_unit, 72 * g_unit}));
+
+	// A preset saved or renamed changes no setting, so Auto Apply quantizes nothing: the notes stay where Reset put
+	// them, although the preset that becomes the one shown announces quantize.changed.
+	f.click("#quantize-reset");
+	CHECK(f.startsAre({26 * g_unit, 50 * g_unit, 73 * g_unit}));
+	f.write("#quantize-preset-name", "Mine");
+	f.click("#quantize-save-preset");
+	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Mine"; }));
+	f.write("#quantize-preset-name", "Yours");
+	f.clickEnabled("#quantize-rename-preset");
+	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Yours"; }));
+	f.app.shell().step(std::chrono::milliseconds(50));
+	CHECK(f.startsAre({26 * g_unit, 50 * g_unit, 73 * g_unit}));
+
 	f.click("#quantize-auto-apply");
 	f.click("#quantize-grid");
-	f.click("menuitem[grid=\"1/16\"]");
+	f.click("menuitem[grid=\"1/8\"]");
 	f.app.shell().step(std::chrono::milliseconds(50));
-	CHECK(f.startsAre({48 * g_unit, 48 * g_unit, 96 * g_unit}));
+	CHECK(f.startsAre({26 * g_unit, 50 * g_unit, 73 * g_unit}));
 }
 
 TEST_CASE("the toolbar's quantize section applies, chooses presets, switches soft quantize and opens the panel", "[ui]")
@@ -419,6 +487,18 @@ TEST_CASE("the toolbar's quantize section applies, chooses presets, switches sof
 	CHECK(f.startsAre({48 * g_unit, 48 * g_unit, 96 * g_unit}));
 	f.click("#toolbar-quantize-panel");
 	CHECK(f.app.waitUntil([&] { return f.shown("#quantize-panel"); }));
+
+	// Apply and Open Quantize Panel are icons, and a long preset name doesn't make the presets button wider, so that
+	// the toolbar keeps its room (#754).
+	CHECK(f.elements("#toolbar-quantize-apply svg").size() == 1);
+	CHECK(f.elements("#toolbar-quantize-panel svg").size() == 1);
+	const auto width = [&f] { return f.elements("#toolbar-quantize-presets")[0].at("box").at("width").get<double>(); };
+	const double before = width();
+	f.write("#quantize-preset-name", "A preset with a rather long name");
+	f.click("#quantize-save-preset");
+	REQUIRE(f.app.waitUntil([&] { return f.text("#toolbar-quantize-presets") == "A preset with a rather long name"; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(width() == before);
 }
 
 TEST_CASE("the panel, the toolbar and MCP show the same one of presets with equal settings", "[ui]")
@@ -466,8 +546,9 @@ TEST_CASE("Create Groove Quantize Preset makes a groove of the selected MIDI par
 	CHECK(f.app.waitUntil([&] { return f.hasPreset("Keys"); }));
 	CHECK(f.app.waitUntil([&] { return f.settings().at("groove").is_object(); }));
 	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Keys"; }));
-	// The groove's settings instead of the grid's, and its positions in the grid display.
+	// The groove's settings instead of the grid's, and its positions in the grid display. Strength is Position.
 	CHECK(f.app.waitUntil([&] { return f.shown("#quantize-groove-settings"); }));
+	CHECK(f.elements("#quantize-strength")[0].at("attributes").at("title") == "Position");
 	CHECK(!f.shown("#quantize-grid-settings"));
 	CHECK(f.app.waitUntil([&] { return f.lines() == 3; }));
 
@@ -489,4 +570,35 @@ TEST_CASE("Create Groove Quantize Preset makes a groove of the selected MIDI par
 	f.click("menuitem[preset=\"1/16\"]");
 	CHECK(f.app.waitUntil([&] { return f.shown("#quantize-grid-settings"); }));
 	CHECK(f.app.waitUntil([&] { return f.lines() == 16; }));
+	CHECK(f.elements("#quantize-strength")[0].at("attributes").at("title") == "Quantize Strength");
+}
+
+TEST_CASE("Create Groove Quantize Preset keeps the presets there are and needs notes", "[ui]")
+{
+	Fixture f;
+	f.display.select({f.part});
+	// Made again, the preset gets a name of its own instead of replacing the user's preset "Keys".
+	f.app.keys().run("edit.createGrooveQuantize", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.hasPreset("Keys"); }));
+	f.app.call("quantize.set", {{"preset", "1/16"}});
+	f.app.keys().run("edit.createGrooveQuantize", Json::object(), f.app.main(), nullptr);
+	CHECK(f.app.waitUntil([&] { return f.hasPreset("Keys 2"); }));
+	CHECK(f.app.waitUntil([&] { return f.app.call("quantize.get").at("preset") == "Keys 2"; }));
+	// A part named like a factory preset.
+	f.app.call("midiPart.set", {{"part", f.part}, {"name", "1/16"}});
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").at(0).at("name") == "1/16"; }));
+	f.app.keys().run("edit.createGrooveQuantize", Json::object(), f.app.main(), nullptr);
+	CHECK(f.app.waitUntil([&] { return f.hasPreset("1/16 2"); }));
+
+	// A part without notes makes no groove: the item is disabled while it is the only one selected.
+	const auto empty =
+		f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}, {"name", "Empty"}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
+	f.display.select({empty});
+	CHECK(!f.app.keys().canRun("edit.createGrooveQuantize", f.app.main(), nullptr));
+	f.display.select({empty, f.part});
+	CHECK(f.app.keys().canRun("edit.createGrooveQuantize", f.app.main(), nullptr));
 }

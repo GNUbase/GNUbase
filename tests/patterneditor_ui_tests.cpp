@@ -460,6 +460,34 @@ TEST_CASE("the selection doesn't go along to another part that plays the same pa
 	CHECK_FALSE(f.has(cell(36, 0), "selected"));
 }
 
+TEST_CASE("the Number of Steps menu shortens a 16-step lane to 12 steps and undo restores it", "[ui]")
+{
+	Fixture f;
+	f.click(of(cell(42, 14)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(42) == std::vector<int>{14}; }));
+	f.settle();
+	const Json original = f.patternJson();
+	REQUIRE(f.has(cell(42, 14), "on"));
+	REQUIRE(f.elements(".pattern-lane[pitch=\"42\"] .pattern-step").size() == 16);
+
+	f.click(of("#pattern-length"));
+	f.click(of("#pattern-length-menu menuitem[length=\"12\"]"));
+	REQUIRE(f.app.waitUntil([&] { return f.text("#pattern-length") == "12 Steps"; }));
+	f.settle();
+	CHECK(f.patternJson().at("length") == 12);
+	CHECK(f.steps(42).empty());
+	CHECK(f.elements(".pattern-lane[pitch=\"42\"] .pattern-step").size() == 12);
+	CHECK(f.elements(".pattern-step.on").empty());
+	CHECK(f.elements(".pattern-step.tied").empty());
+
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return f.text("#pattern-length") == "16 Steps"; }));
+	f.settle();
+	CHECK(f.patternJson() == original);
+	CHECK(f.elements(".pattern-lane[pitch=\"42\"] .pattern-step").size() == 16);
+	CHECK(f.has(cell(42, 14), "on"));
+}
+
 TEST_CASE("a shorter Number of Steps edits the pattern as the engine has it, after its answer only", "[ui]")
 {
 	Fixture f;

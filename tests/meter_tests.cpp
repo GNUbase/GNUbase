@@ -428,6 +428,9 @@ TEST_CASE("a mono channel's meter reads both sides of its panner, and muting sil
 
 TEST_CASE("a level meter channel that comes back starts without what it measured before", "[unit]")
 {
+	// Also without a reset, which clears the published maxima itself.
+	const bool reset = GENERATE(true, false);
+	INFO((reset ? "with" : "without") << " a reset");
 	LevelMeter meter;
 	Signal loud;
 	loud.sine(1.0, -6.0);
@@ -438,7 +441,8 @@ TEST_CASE("a level meter channel that comes back starts without what it measured
 		const std::array<const float*, 1> audio{mono.data()};
 		meter.process(audio.data(), 1, g_block, g_rate);
 	}
-	meter.reset();
+	if (reset)
+		meter.reset();
 	// It comes back silent: no old peak, RMS or maximum, also before it publishes again.
 	{
 		const std::array<const float*, 2> audio{mono.data(), mono.data()};
@@ -465,12 +469,16 @@ TEST_CASE("a level meter channel that comes back starts without what it measured
 
 TEST_CASE("the loudness blocks start where playback starts, not with audio from while it stood", "[unit]")
 {
+	// Also loud low frequencies while it stood, which the K-weighting's high pass would carry into the first blocks.
+	const auto [frequency, level] = GENERATE(table<double, double>({{1000.0, -10.0}, {60.0, 0.0}}));
+	const double stood = GENERATE(3.0, 3.05); // also ending off the 100 ms grid
+	INFO(stood << " s of " << frequency << " Hz at " << level << " dBFS while it stood");
 	LoudnessMeter meter;
 	meter.prepare(g_rate);
 	Signal quiet;
 	quiet.sine(5.0, -30.0);
 	Signal loud;
-	loud.sine(GENERATE(3.0, 3.05), -10.0); // also ending off the 100 ms grid
+	loud.sine(stood, level, frequency);
 	quiet.play(meter);
 	loud.play(meter, false); // stopped
 	quiet.play(meter);
@@ -479,6 +487,132 @@ TEST_CASE("the loudness blocks start where playback starts, not with audio from 
 	CHECK(reading.momentaryMax.value_or(0.0) == Approx(-30.0).margin(0.1));
 	CHECK(decibels(reading.truePeakMax[0]) == Approx(-30.0).margin(0.1));
 	CHECK(reading.seconds == Approx(10.0).margin(0.1));
+}
+
+TEST_CASE("the loudness blocks start where playback starts, also after a stop within one step", "[unit]")
+{
+	LoudnessMeter meter;
+	meter.prepare(g_rate);
+	Signal before;
+	before.sine(1.02, -30.0);
+	before.play(meter);
+	Signal pause;
+	pause.silence(0.02); // shorter than the rest of its step
+	pause.play(meter, false);
+	Signal after;
+	after.sine(1.0, -10.0);
+	after.play(meter);
+	// No block after the start holds a step from before the stop, so the quiet blocks all lie below the relative gate.
+	CHECK(meter.read().integrated.value_or(0.0) == Approx(-10.0).margin(0.1));
+}
+
+TEST_CASE("the loudness meter measures up to where playback stops, also within a step", "[unit]")
+{
+	LoudnessMeter meter;
+	meter.prepare(g_rate);
+	Signal played;
+	played.sine(3.0, -30.0);
+	played.sine(0.05, -10.0); // the last 50 ms before the stop, in a step that ends while the transport stands
+	played.play(meter);
+	Signal stopped;
+	stopped.silence(1.0);
+	stopped.play(meter, false);
+	const LoudnessReading reading = meter.read();
+	CHECK(reading.seconds == Approx(3.05));
+	CHECK(decibels(reading.truePeakMax[0]) == Approx(-10.0).margin(0.1));
+	// The 400 ms and 3 s blocks that end at the stop: 50 ms at -10 dBFS, the rest at -30.
+	const auto loudness = [](double loud, double total)
+	{ return 10.0 * std::log10(((loud * 0.1) + ((total - loud) * 0.001)) / total); };
+	CHECK(reading.momentaryMax.value_or(0.0) == Approx(loudness(0.05, 0.4)).margin(0.1));
+	CHECK(reading.shortTermMax.value_or(0.0) == Approx(loudness(0.05, 3.0)).margin(0.1));
+	// 27 blocks at -30 LUFS from 0.4 to 3 s, and the one that ends at the stop.
+	const double last = std::pow(10.0, loudness(0.05, 0.4) / 10.0);
+	CHECK(reading.integrated.value_or(0.0) == Approx(10.0 * std::log10(((27.0 * 0.001) + last) / 28.0)).margin(0.1));
+}
+
+TEST_CASE("a reset while playing starts a fresh step", "[unit]")
+{
+	LoudnessMeter meter;
+	meter.prepare(g_rate);
+	Signal signal;
+	signal.sine(3.0, -30.0);
+	signal.sine(0.05, -10.0); // the 50 ms before the reset, in a step that goes on after it
+	signal.play(meter);
+	meter.reset();
+	signal.clear();
+	signal.sine(3.0, -30.0);
+	signal.play(meter);
+	Signal stopped;
+	stopped.silence(1.0);
+	stopped.play(meter, false);
+	const LoudnessReading reading = meter.read();
+	CHECK(reading.seconds == Approx(3.0));
+	CHECK(decibels(reading.truePeakMax[0]) == Approx(-30.0).margin(0.1));
+	CHECK(reading.momentaryMax.value_or(0.0) == Approx(-30.0).margin(0.1));
+	CHECK(reading.integrated.value_or(0.0) == Approx(-30.0).margin(0.1));
+}
+
+TEST_CASE("a reset between the last played block and the stop leaves nothing to measure", "[unit]")
+{
+	LoudnessMeter meter;
+	meter.prepare(g_rate);
+	Signal played;
+	played.sine(3.05, -10.0); // ends within a step
+	played.play(meter);
+	meter.reset();
+	Signal stopped;
+	stopped.silence(1.0);
+	stopped.play(meter, false);
+	const LoudnessReading reading = meter.read();
+	CHECK(reading.seconds == 0.0);
+	CHECK(reading.truePeakMax[0] == 0.0f);
+	CHECK(!reading.momentaryMax);
+	CHECK(!reading.shortTermMax);
+	CHECK(!reading.integrated);
+}
+
+TEST_CASE("the true peak reads between the samples from the 24th sample after playback starts", "[unit]")
+{
+	LoudnessMeter meter;
+	meter.prepare(g_rate);
+	Signal stopped;
+	stopped.silence(0.1);
+	stopped.play(meter, false);
+	// The 12th and 13th samples after the start at -6 dBFS, with silence around: the peak between them lies 11.5
+	// samples before the 24th, the first sample whose interpolator holds only audio from after the start.
+	Signal played;
+	played.silence(11.0 / g_rate);
+	played.impulse(0.5f);
+	played.impulse(0.5f);
+	played.silence(0.2);
+	played.play(meter);
+	CHECK(decibels(meter.read().truePeakMax[0]) > decibels(0.5) + 1.5);
+}
+
+TEST_CASE("a loudness meter channel that comes back starts without what it measured before", "[unit]")
+{
+	LoudnessMeter meter;
+	meter.prepare(g_rate);
+	Signal loud;
+	loud.sine(1.0, -6.0);
+	loud.play(meter); // stereo
+	const std::vector<float> silence(g_block, 0.0f);
+	for (int block = 0; block < 100; ++block) // mono for a while: the second channel goes away
+	{
+		const std::array<const float*, 1> audio{silence.data()};
+		meter.process(audio.data(), 1, g_block, true);
+	}
+	// It comes back silent: no old true peak or maximum, also before it publishes again.
+	const std::array<const float*, 2> audio{silence.data(), silence.data()};
+	for (int block = 0; block < 20; ++block)
+	{
+		meter.process(audio.data(), 2, g_block, true);
+		const LoudnessReading reading = block == 0 ? meter.read() : meter.readFrame();
+		INFO("block " << block);
+		REQUIRE(reading.channels == 2);
+		CHECK(reading.truePeak[1] == 0.0f);
+		CHECK(reading.truePeakMax[1] == 0.0f);
+	}
 }
 
 TEST_CASE("the loudness meter reads a steady sine at other sample rates too", "[unit]")
@@ -498,6 +632,58 @@ TEST_CASE("the loudness meter reads a steady sine at other sample rates too", "[
 	}
 	CHECK(meter.read().integrated.value_or(0.0) == Approx(-23.0).margin(0.1));
 	CHECK(decibels(meter.read().truePeakMax[0]) == Approx(-23.0).margin(0.1)); // the level is the peak
+}
+
+TEST_CASE("meter.get refuses a channel deleted while no device runs", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}});
+	const Json added = run(client, "track.add", {{"type", "audio"}});
+	const auto channel = added.at("channel").at("id").get<ObjectId>();
+	run(client, "audio.render", {{"frames", 4800}});
+	run(client, "audio.simulateDeviceLoss", {{"connected", false}}); // no fallback: no device, no graph builds
+	REQUIRE(waitForLost(client, true));
+	run(client, "track.remove", {{"track", added.at("track").at("id")}});
+	CHECK_THAT(reject(client, "meter.get", {{"channels", {channel}}}), ContainsSubstring(std::to_string(channel)));
+	CHECK(run(client, "meter.get").at("channels").empty());
+}
+
+TEST_CASE("a mono channel's second side starts over when it moves to a mono bus and back", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const auto channel =
+		run(client, "track.add", {{"type", "audio"}, {"channels", 1}}).at("channel").at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", channel}, {"recordEnable", true}});
+	const auto strip = [&] { return run(client, "meter.get", {{"channels", {channel}}}).at("channels").at(0); };
+	run(client, "audio.render", {{"frames", 9600}});
+	REQUIRE(strip().at("peakMax").size() == 2);
+	CHECK(strip().at("peakMax").at(1).get<double>() == Approx(-6.02).margin(0.05)); // the centre
+
+	// Hard left, so that the second side stays silent from here on, then to a mono bus and back, without a reset.
+	ObjectId stereo = 0;
+	const Json project = run(client, "project.get");
+	for (const Json& bus : project.at("busses"))
+		if (bus.at("mainMix") == true)
+			stereo = bus.at("id").get<ObjectId>();
+	REQUIRE(stereo != 0);
+	const Json mono = run(client, "bus.add", {{"direction", "output"}, {"channels", 1}}).at("bus").at("id");
+	run(client, "channel.set", {{"channel", channel}, {"pan", -1.0}, {"output", mono}});
+	run(client, "audio.render", {{"frames", 9600}});
+	CHECK(strip().at("peakMax").size() == 1);
+	run(client, "channel.set", {{"channel", channel}, {"output", stereo}});
+	run(client, "audio.render", {{"frames", 9600}});
+	const Json back = strip();
+	REQUIRE(back.at("peakMax").size() == 2);
+	CHECK(back.at("peak").at(0).get<double>() == Approx(-3.01).margin(0.05)); // hard left, -3 dB pan law
+	CHECK(back.at("peak").at(1).is_null());
+	CHECK(back.at("rms").at(1).is_null());
+	CHECK(back.at("peakMax").at(1).is_null());
+	CHECK(back.at("rmsMax").at(1).is_null());
 }
 
 TEST_CASE("meter.get lists the channels asked for, also before they played", "[integration]")

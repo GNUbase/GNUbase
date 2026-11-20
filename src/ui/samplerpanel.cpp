@@ -43,9 +43,11 @@ namespace gnubase::ui
 		const std::vector<Section>& sections()
 		{
 			static const std::vector<Section> list = {
-				{"playback", "Playback", {"Playback mode", "Loop mode", "Start", "End", "Loop start", "Loop end"}},
+				{"playback", "Playback",
+					{"Playback mode", "Loop mode", "Start", "End", "Loop start", "Loop end", "Loop crossfade",
+						"Fade in", "Fade out"}},
 				{"voices", "", {"Reverse", "One shot", "Monophonic", "Legato", "Slices", "Sample gain"}},
-				{"pitch", "Pitch", {"Fixed pitch", "Octave", "Coarse", "Fine"}},
+				{"pitch", "Pitch", {"Fixed pitch", "Octave", "Coarse", "Fine", "Glide", "Fingered"}},
 				{"filter", "Filter", {"Filter", "Filter type", "Cutoff", "Resonance", "Drive", "Cutoff key follow"}},
 				{"amp", "Amp", {"Volume", "Pan", "Attack", "Decay", "Sustain", "Release"}},
 				{"keyboard", "Keyboard", {"Pitchbend", "Root key", "Key low", "Key high"}},
@@ -55,6 +57,23 @@ namespace gnubase::ui
 
 		// The markers of the waveform display and the parameters they set (p. 717).
 		constexpr std::array<const char*, 4> g_markers = {"Start", "End", "Loop start", "Loop end"};
+
+		// The bars between two markers that a drag moves together, keeping their distance (p. 717).
+		struct Bar
+		{
+			const char* id;
+			const char* from;
+			const char* to;
+		};
+		constexpr std::array<Bar, 2> g_bars = {Bar{"range", "Start", "End"}, Bar{"loop", "Loop start", "Loop end"}};
+
+		const Bar* barOf(const std::string& id)
+		{
+			for (const Bar& bar : g_bars)
+				if (id == bar.id)
+					return &bar;
+			return nullptr;
+		}
 
 		// The keyboard's handles and the parameters they set (p. 730).
 		struct Handle
@@ -150,6 +169,9 @@ namespace gnubase::ui
 				(std::string(handle.id) == "root" ? " root" : "") + R"(" handle=")" + handle.id + R"(" title=")" +
 				handle.parameter + R"("/>)";
 		std::string markers;
+		for (const Bar& bar : g_bars)
+			markers += std::string(R"(<div class="sampler-bar)") + (std::string(bar.id) == "loop" ? " loop" : "") +
+				R"(" bar=")" + bar.id + R"(" title="Move )" + bar.from + " and " + bar.to + R"("/>)";
 		for (const char* marker : g_markers)
 			markers += std::string(R"(<div class="sampler-marker)") +
 				(std::string(marker).rfind("Loop", 0) == 0 ? " loop" : "") + R"(" marker=")" + marker +
@@ -303,6 +325,15 @@ namespace gnubase::ui
 		// another sampler track showed meanwhile (#1471).
 		if (const Json* shown = m_channel.is_object() ? m_binding.shown(stepKey(found->id), m_read) : nullptr)
 			return shown->get<double>();
+		// Likewise for a bar's drag, which changes two parameters in one step.
+		for (const Bar& bar : g_bars)
+		{
+			const Json* moved = m_channel.is_object() && (name == bar.from || name == bar.to)
+				? m_binding.shown(barKey(bar.id), m_read)
+				: nullptr;
+			if (moved != nullptr && moved->is_object() && moved->contains(name))
+				return moved->at(name).get<double>();
+		}
 		const auto set = m_values.find(found->id);
 		return set != m_values.end() ? set->second : found->defaultValue;
 	}
@@ -310,6 +341,11 @@ namespace gnubase::ui
 	std::string SamplerPanel::stepKey(uint32_t id) const
 	{
 		return m_stepOwner + "channel " + m_channel.value("id", Json()).dump() + " instrument " + std::to_string(id);
+	}
+
+	std::string SamplerPanel::barKey(const std::string& bar) const
+	{
+		return m_stepOwner + "channel " + m_channel.value("id", Json()).dump() + " bar " + bar;
 	}
 
 	void SamplerPanel::update(uint64_t track, const Json& project, uint64_t loads, uint64_t read)
@@ -441,6 +477,17 @@ namespace gnubase::ui
 			setClass(marker, "dragged", name == m_dragged);
 			setClass(marker, "off", !looping && name.rfind("Loop", 0) == 0);
 		}
+		for (const Bar& bar : g_bars)
+		{
+			Rml::Element* element = display->QuerySelector(std::string(".sampler-bar[bar=") + bar.id + "]");
+			if (element == nullptr)
+				continue;
+			const double from = std::min(at(bar.from), at(bar.to));
+			element->SetProperty(Rml::PropertyId::Left, percent(from));
+			element->SetProperty(Rml::PropertyId::Width, percent(std::max(at(bar.from), at(bar.to)) - from));
+			setClass(element, "dragged", bar.id == m_bar);
+			setClass(element, "off", !looping && std::string(bar.id) == "loop");
+		}
 		const double start = std::min(at("Start"), at("End"));
 		const double end = std::max(at("Start"), at("End"));
 		if (Rml::Element* before = display->QuerySelector(".sampler-before"))
@@ -548,6 +595,35 @@ namespace gnubase::ui
 		showMarkers();
 	}
 
+	// Moves the two markers of the bar dragged by as far as the mouse went since the drag began, keeping their
+	// distance and both within the sample, in one step.
+	void SamplerPanel::dragBar(const Rml::Event& event)
+	{
+		Rml::Element* display = find("sampler-display");
+		const Bar* bar = barOf(m_bar);
+		const Parameter* from = bar == nullptr ? nullptr : parameter(bar->from);
+		const Parameter* to = bar == nullptr ? nullptr : parameter(bar->to);
+		const float width = display == nullptr ? 0.0F : display->GetClientWidth();
+		if (from == nullptr || to == nullptr || !m_channel.is_object() || !(width > 0.0F))
+			return;
+		const double moved = (event.GetParameter<float>("mouse_x", 0.0F) - m_barMouse) / static_cast<double>(width);
+		const double shift = std::clamp(value("Reverse") >= 0.5 ? -moved : moved, -std::min(m_barFrom, m_barTo),
+			1.0 - std::max(m_barFrom, m_barTo));
+		const double first = std::clamp(m_barFrom + shift, 0.0, 1.0);
+		const double second = std::clamp(m_barTo + shift, 0.0, 1.0);
+		const auto command = [this](uint32_t id, double share)
+		{
+			return Json{{"command", "parameter.set"},
+				{"parameters",
+					{{"channel", m_channel.at("id")}, {"target", {{"type", "instrument"}, {"parameter", id}}},
+						{"value", share}}}};
+		};
+		m_binding.sendStep(m_gesture, barKey(bar->id), std::string("Move ") + bar->from + " and " + bar->to,
+			Json::array({command(from->id, first), command(to->id, second)}), {},
+			Json{{bar->from, first}, {bar->to, second}});
+		showMarkers();
+	}
+
 	// Moves the keyboard's handle dragged to the key under the mouse: the key range's low key stays at or below its
 	// high one.
 	void SamplerPanel::dragKey(const Rml::Event& event)
@@ -626,6 +702,16 @@ namespace gnubase::ui
 				--m_gesture;
 				showMarkers();
 			}
+			else if (const Rml::Element* bar = withAttribute(target, "bar"); bar != nullptr)
+			{
+				m_bar = bar->GetAttribute<Rml::String>("bar", "");
+				const Bar* found = barOf(m_bar);
+				m_barMouse = event.GetParameter<float>("mouse_x", 0.0F);
+				m_barFrom = found == nullptr ? 0.0 : value(found->from);
+				m_barTo = found == nullptr ? 0.0 : value(found->to);
+				--m_gesture;
+				showMarkers();
+			}
 			else if (const Rml::Element* handle = withAttribute(target, "handle"); handle != nullptr)
 			{
 				m_handle = handle->GetAttribute<Rml::String>("handle", "");
@@ -636,13 +722,16 @@ namespace gnubase::ui
 		case Rml::EventId::Drag:
 			if (!m_dragged.empty())
 				drag(event);
+			else if (!m_bar.empty())
+				dragBar(event);
 			else if (!m_handle.empty())
 				dragKey(event);
 			return;
 		case Rml::EventId::Dragend:
-			if (!m_dragged.empty())
+			if (!m_dragged.empty() || !m_bar.empty())
 			{
 				m_dragged.clear();
+				m_bar.clear();
 				showMarkers();
 			}
 			if (!m_handle.empty())

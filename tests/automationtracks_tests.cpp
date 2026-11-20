@@ -7,6 +7,7 @@
 #include "engine/engine.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
+#include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/tracklist.h"
 
@@ -645,6 +646,217 @@ TEST_CASE("a Ctrl-drag moves the selected automation points in one direction, an
 	CHECK(selected() == both);
 }
 
+TEST_CASE("a move of automation points snaps, and Ctrl with another modifier turns snapping off", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	f.app.call("automationPoint.add", {{"lane", volume}, {"points", {{{"position", 96000}, {"value", -6.0}}}}});
+	f.settle(volume);
+	f.app.call("snap.set", {{"on", true}, {"type", "grid"}, {"grid", "bar"}});
+	REQUIRE(f.app.waitUntil([&f] { return f.display.snap().on; }));
+	const auto position = [&] { return f.lane(volume).at("points")[0].at("position").get<double>(); };
+	const int y = f.y(volume, 54.0 / 66.0);
+
+	// The pressed point lands on a bar, 2 s at 120 BPM (reference manual p. 877).
+	f.drag(f.x(2.0), y, f.x(3.3), y);
+	REQUIRE(f.app.waitUntil([&] { return position() > 96000.0; }));
+	CHECK(position() == 192000.0);
+	f.settle(volume);
+
+	// Ctrl and Shift, or Ctrl and Alt, move it where the mouse goes.
+	f.drag(f.x(4.0), y, f.x(4.7), y, {"ctrl", "shift"});
+	REQUIRE(f.app.waitUntil([&] { return position() > 192000.0; }));
+	CHECK(position() == Approx(4.7 * 48000.0).margin(960.0));
+	f.settle(volume);
+	f.drag(f.x(4.7), y, f.x(5.2), y, {"ctrl", "alt"});
+	REQUIRE(f.app.waitUntil([&] { return position() > 4.8 * 48000.0; }));
+	CHECK(position() == Approx(5.2 * 48000.0).margin(960.0));
+}
+
+TEST_CASE("moved automation points replace those where they land, and clicks select as they do with events", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	Json points = Json::array();
+	for (int i = 1; i <= 4; ++i)
+		points.push_back({{"position", i * 48000}, {"value", -6.0}});
+	f.app.call("automationPoint.add", {{"lane", volume}, {"points", points}});
+	f.settle(volume);
+	const auto positions = [&]
+	{
+		std::vector<double> found;
+		const Json lane = f.lane(volume);
+		for (const Json& point : lane.at("points"))
+			found.push_back(point.at("position").get<double>() / 48000.0);
+		return found;
+	};
+	const auto selected = [&]
+	{
+		const auto selection = f.display.selectedPoints();
+		const auto found = selection.find(volume.get<uint64_t>());
+		return found == selection.end() ? size_t{0} : found->second.size();
+	};
+	const int y = f.y(volume, 54.0 / 66.0);
+	f.clickAt(f.x(1.0), y);
+	f.clickAt(f.x(2.0), y, {"ctrl"});
+	REQUIRE(selected() == 2);
+
+	// A click on one point of the selection selects only it (reference manual p. 875).
+	f.clickAt(f.x(2.0), y);
+	CHECK(f.display.selectedPoints().at(volume.get<uint64_t>()) ==
+		std::set<uint64_t>{f.lane(volume).at("points")[1].at("id").get<uint64_t>()});
+	f.clickAt(f.x(1.0), y, {"ctrl"});
+	REQUIRE(selected() == 2);
+
+	// The selection moved over the third point replaces it, in the preview and in one undo step (pp. 877-878).
+	const ui::Target from{"", 0, ui::Point{f.x(2.0), y}};
+	const ui::Target to{"", 0, ui::Point{f.x(3.5), y}};
+	f.app.ui().press(std::nullopt, from, ui::MouseButton::Left);
+	f.app.ui().move(std::nullopt, to);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.curve("automation-curve", volume).size() == 3);
+	f.app.ui().release(std::nullopt, to, ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return positions().size() == 3; }));
+	CHECK(positions()[0] == Approx(2.5).margin(0.02));
+	CHECK(positions()[1] == Approx(3.5).margin(0.02));
+	CHECK(positions()[2] == 4.0);
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return positions() == std::vector<double>{1.0, 2.0, 3.0, 4.0}; }));
+	f.settle(volume);
+
+	// A click on an empty spot adds a point and ends the selection.
+	REQUIRE(selected() == 2);
+	f.clickAt(f.x(5.0), f.y(volume, 0.25));
+	REQUIRE(f.app.waitUntil([&] { return positions().size() == 5; }));
+	CHECK(selected() == 0);
+	f.settle(volume);
+
+	// A move restricted with Ctrl at the press stays so when Ctrl goes up before the button.
+	f.clickAt(f.x(1.0), y);
+	const ui::Target down{"", 0, ui::Point{f.x(1.5), y + 10}};
+	f.app.ui().press(std::nullopt, {"", 0, ui::Point{f.x(1.0), y}}, ui::MouseButton::Left, {"ctrl"});
+	f.app.ui().move(std::nullopt, down, {"ctrl"});
+	f.app.ui().release(std::nullopt, down, ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return positions()[0] > 1.4; }));
+	CHECK(f.lane(volume).at("points")[0].at("value").get<double>() == Approx(-6.0).margin(0.01));
+	f.settle(volume);
+
+	// Selecting a range deselects the points, so that Delete deletes the range.
+	f.clickAt(f.x(2.0), y);
+	REQUIRE(selected() == 1);
+	f.display.setRange(ui::RangeSelection{0, 48000, {f.track}});
+	CHECK(selected() == 0);
+}
+
+TEST_CASE("a move of one of two automation points at one position that keeps the times keeps the other", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	// A jump at 2 s, from -20 dB to 0 dB, as pastes leave at their edges.
+	f.app.call("automationPoint.add",
+		{{"lane", volume},
+			{"points",
+				{{{"position", 48000}, {"value", -20.0}}, {{"position", 96000}, {"value", -20.0}},
+					{{"position", 96000}, {"value", 0.0}}}}});
+	f.settle(volume);
+	const auto values = [&]
+	{
+		std::vector<double> found;
+		const Json lane = f.lane(volume);
+		for (const Json& point : lane.at("points"))
+			found.push_back(point.at("value").get<double>());
+		return found;
+	};
+	REQUIRE(values().size() == 3);
+
+	// Up and down only with Ctrl: the point at -20 dB goes up and the jump's other point stays, in the preview too.
+	const int y = f.y(volume, 40.0 / 66.0);
+	const ui::Target down{"", 0, ui::Point{f.x(2.0), y}};
+	const ui::Target up{"", 0, ui::Point{f.x(2.0) + 1, y - 8}};
+	f.app.ui().press(std::nullopt, down, ui::MouseButton::Left, {"ctrl"});
+	f.app.ui().move(std::nullopt, up, {"ctrl"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.curve("automation-curve", volume).size() == 3);
+	f.app.ui().release(std::nullopt, up, ui::MouseButton::Left, {"ctrl"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return values().size() == 3 && values()[1] > -19.0; }));
+	CHECK(values()[0] == Approx(-20.0).margin(0.01));
+	CHECK(values()[2] == Approx(0.0).margin(0.01));
+}
+
+TEST_CASE("the zoom and play tools work on automation tracks, Show All Used Automation keeps those that show, and "
+		  "selecting a track reveals its automation tracks",
+	"[ui]")
+{
+	Automation f;
+	const Json volume = f.show(); // no points
+	f.display.setTool(ui::Tool::Zoom);
+	const double scale = f.display.view().scale;
+	f.clickAt(f.x(1.0), f.y(volume, 0.5));
+	REQUIRE(f.app.waitUntil([&] { return f.display.view().scale < scale; }));
+
+	// The play tool auditions the automation track's audio track, and scrubs it (reference manual pp. 252-253).
+	ui::EngineBinding binding(f.app.engine());
+	std::vector<std::string> modes;
+	std::vector<uint64_t> auditioned;
+	const ui::Subscription subscription = binding.on("audition.changed",
+		[&](const engine::Event& event)
+		{
+			modes.push_back(event.data.at("mode").get<std::string>());
+			auditioned.push_back(event.data.at("track").get<uint64_t>());
+		});
+	const auto audition = [&](const std::vector<std::string>& expected)
+	{
+		return f.app.waitUntil(
+			[&]
+			{
+				binding.update();
+				return modes == expected;
+			});
+	};
+	f.display.setTool(ui::Tool::Play);
+	f.clickAt(f.x(1.0), f.y(volume, 0.5));
+	REQUIRE(audition({"play", "off"}));
+	CHECK(auditioned[0] == f.track);
+	f.display.setPlayMode(ui::PlayMode::Scrub);
+	f.drag(f.x(1.0), f.y(volume, 0.5), f.x(1.5), f.y(volume, 0.5));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			binding.update();
+			return modes.size() >= 4 && modes.back() == "off";
+		}));
+	CHECK(modes[2] == "scrub");
+	CHECK(auditioned[2] == f.track);
+	f.display.setTool(ui::Tool::ObjectSelection);
+
+	// Show All Used Automation leaves the unused automation track open.
+	std::vector<uint64_t> tracks(10);
+	for (uint64_t& track : tracks)
+		track = f.app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	const Json used = f.app.call("automationLane.add", {{"track", tracks.back()}, {"target", {{"type", "volume"}}}})
+						  .at("lane")
+						  .at("id");
+	f.app.call("automationPoint.add", {{"lane", used}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("automation").size() == 2; }));
+	f.app.keys().run("track.showUsedAutomation", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, ".automation-row").size() == 2; }));
+	CHECK(f.display.automationShown(f.track));
+
+	// Selecting the last track with the keys scrolls its automation track into view too.
+	f.app.appUi().trackList()->select({f.track});
+	for (size_t i = 0; i < tracks.size(); ++i)
+		f.app.keys().run("track.selectNext", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.appUi().trackList()->selection() == std::vector<uint64_t>{tracks.back()});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json lanes = elements(f.app, "event-lanes.events").at(0).at("box");
+	const Json shown = f.box(used);
+	CHECK(shown.at("y").get<int>() + shown.at("height").get<int>() <=
+		lanes.at("y").get<int>() + lanes.at("height").get<int>());
+}
+
 TEST_CASE("Show Only Automation Tracks of a plugin shows its lanes and hides the track's others", "[ui]")
 {
 	Automation f;
@@ -729,8 +941,18 @@ TEST_CASE("automation tracks are selected, and the track list copies their autom
 	};
 	const std::string first = row(f.track) + " .automation-row";
 	const std::string second = row(other) + " .automation-row";
+	// The commands for selected parameters wait for selected automation tracks, the paste commands for copied
+	// automation.
+	const auto canRun = [&f](const char* command) { return f.app.keys().canRun(command, f.app.main(), nullptr); };
+	f.app.appUi().trackList()->select({f.track});
+	CHECK(!canRun("track.copyAutomationSelectedParameters"));
+	CHECK(canRun("track.copyAutomationSelected"));
+	CHECK(!canRun("track.pasteAutomationAll"));
+	CHECK(!canRun("track.pasteAutomationSelected"));
 	clickRow(first);
 	CHECK(hasClass(elements(f.app, first).at(0), "selected"));
+	CHECK(canRun("track.copyAutomationSelectedParameters"));
+	CHECK(!canRun("track.pasteAutomationSelectedParameters"));
 	CHECK(f.app.appUi().trackList()->selectedLanes() == std::vector<uint64_t>{volume.get<uint64_t>()});
 	clickRow(second, {"ctrl"});
 	CHECK(f.app.appUi().trackList()->selectedLanes().size() == 2);
@@ -742,6 +964,8 @@ TEST_CASE("automation tracks are selected, and the track list copies their autom
 	// the locators (reference manual pp. 878-879).
 	clickRow(first);
 	f.app.keys().run("track.copyAutomationSelectedParameters", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return canRun("track.pasteAutomationSelectedParameters"); }));
+	CHECK(canRun("track.pasteAutomationAll"));
 	clickRow(second);
 	f.app.call("transport.set", {{"left", 96000}, {"right", 144000}});
 	f.app.keys().run("track.pasteAutomationSelectedParameters", Json::object(), f.app.main(), nullptr);
@@ -765,6 +989,21 @@ TEST_CASE("automation tracks are selected, and the track list copies their autom
 	f.app.keys().run("track.pasteAutomationSelected", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return positions().size() == 9; }));
 	CHECK(positions().at(5) == 192000);
+
+	// A new project has nothing copied, no selected automation tracks or points and no open automation tracks, whose
+	// ids its tracks, lanes and points get again.
+	clickRow(second);
+	const Json point = f.lane(volume).at("points").at(0).at("id");
+	f.display.selectPoints({{volume.get<uint64_t>(), {point.get<uint64_t>()}}});
+	REQUIRE(!f.display.selectedPoints().empty());
+	REQUIRE(f.display.automationShown(f.track));
+	f.app.call("project.new");
+	REQUIRE(f.app.waitUntil([&] { return !canRun("track.pasteAutomationAll"); }));
+	CHECK(f.app.appUi().trackList()->selectedLanes().empty());
+	CHECK(f.display.selectedPoints().empty());
+	CHECK(!f.display.automationShown(f.track));
+	CHECK(!f.display.automationShown(other));
+	CHECK(f.display.automationTargets(f.track) == nullptr);
 }
 
 TEST_CASE("a track's lanes come between its own lane and its automation tracks, under its row", "[ui]")

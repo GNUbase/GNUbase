@@ -27,7 +27,8 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   graphics (check marks, the slider's thumb, the knob, the fader cap, the meter) use `decorator: svg(<file>)`, which
   rasterizes at the element's size ([svg.md](svg.md)). Both find a file relative to the style sheet that names it.
   A widget that the keyboard focused (`:focus-visible`) gets the theme's focus ring over the skin of its state, a
-  second decorator that the generator adds to each such rule ([accessibility.md](accessibility.md)).
+  decorator that the generator adds to each such rule, first in the list so that RmlUi draws it on top
+  ([accessibility.md](accessibility.md)).
   The default theme's glows are part of its skins, so they cost no extra render passes.
 - **Flat widgets.** The default theme follows the mockup `art/mockups/main-window.webp` (#1311, #1328); the elements and
   layout stay as they are. Its toolbar and transport buttons have no frame: muted until the mouse is over them, a soft
@@ -50,11 +51,10 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   button's, in each state. Rules for buttons in bars skip toggle and primary buttons (`:not(.toggle):not(.primary)`),
   which keep their skins, and reach the transport's sections (`.transport-section`), not the setup pane that comes into
   the transport bar and the transport panel with them: it keeps framed buttons, as every setup pane (#1342). Each bar
-  rule that gives a skin gets a `:focus-visible` twin with the focus ring over it, as the general rules do; a hovered
-  bar button with the focus shows the ring over the skin it has without the hover, since the twins come after the hover
-  rules (the default theme's hover fill, a background color, stays). A disabled bar button looks disabled also when it
-  is checked, a menu button that shows a value too, in every theme: in the framed themes such a menu button showed the
-  checked skin before (#1711).
+  rule that gives a skin gets a `:focus-visible` twin with the focus ring over it, as the general rules do, hovered and
+  pressed states too, so a hovered bar button with the focus shows the ring over its hover skin (#543). A disabled bar
+  button looks disabled also when it is checked, a menu button that shows a value too, in every theme: in the framed
+  themes such a menu button showed the checked skin before (#1711).
 - **Every document gets them.** While a `ui::Themes` exists, every document RmlUi loads gets the shared style sheets
   and every theme's style sheet ahead of its own style (an RmlUi plugin, on document load). Documents name neither a
   theme nor a shared style sheet, and their own rules, which only lay out, come last. Live reload in Debug builds picks

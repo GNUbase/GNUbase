@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -156,6 +157,13 @@ namespace gnubase::ui
 		// Whether the command exists and can run in the window and zone now: what enableWhen says, or true.
 		bool canRun(const std::string& command, Window& window, Rml::Element* zone) const;
 
+		// Says when a menu item of the command, with its parameters, shows as checked (ui/mainmenu.h), such as the
+		// record mode that is set. Throws std::invalid_argument for a command it doesn't know.
+		void checkWhen(const std::string& command, std::function<bool(const engine::Json& parameters)> checked);
+
+		// Whether a menu item of the command and parameters is checked now, or nullopt if checkWhen says nothing.
+		std::optional<bool> checked(const std::string& command, const engine::Json& parameters) const;
+
 	private:
 		// Remembers a key that runs a command while it is held.
 		void hold(int key, const std::string& command);
@@ -184,6 +192,7 @@ namespace gnubase::ui
 		std::map<std::string, engine::CommandInfo> m_engineCommands; // by name
 		std::map<std::string, UiCommand> m_uiCommands;
 		std::map<std::string, std::function<bool(Window&, Rml::Element*)>> m_enabled; // by command
+		std::map<std::string, std::function<bool(const engine::Json&)>> m_checked;    // by command
 		std::vector<Bound> m_bindings;    // the defaults, in the order they were bound
 		std::vector<Customized> m_custom; // the user's key commands
 		std::map<std::string, std::vector<std::pair<std::string, engine::Json>>> m_macros; // by command id

@@ -117,6 +117,12 @@ TEST_CASE("the status line shows the remaining record time of the record-enabled
 {
 	test::UiApp app({1000, 700});
 	app.appUi().showProject();
+	// Hidden, as by default, the status line doesn't ask: the engine measures the disk on its command thread (#645).
+	const auto hiddenUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+	while (std::chrono::steady_clock::now() < hiddenUntil)
+		app.shell().step(std::chrono::milliseconds(20));
+	CHECK(text(app, "#record-time").empty());
+	app.appUi().docking().setVisible("project", "statusLine", true);
 	CHECK(app.waitUntil([&] { return text(app, "#record-time") == "Max. Record Time: -"; }));
 	Rml::Element* recordTime = nullptr;
 	Rml::Context& context = app.main().context();

@@ -51,6 +51,7 @@
 #include <memory>
 #include <optional>
 #include <ostream>
+#include <set>
 #include <streambuf>
 #include <string>
 #include <utility>
@@ -321,7 +322,12 @@ namespace gnubase::app
 			double insertVelocity = 100.0 / 127.0; // the editor's, for Fixed Velocity
 		};
 		QuantizeTarget quantizeTarget(ui::Window& window, Rml::Element* zone) const;
-		void quantize(const std::string& command, const std::string& step, const QuantizeTarget& target);
+		// With a merge key, as for the steps of a gesture of the quantize panel's Auto Apply, it is one undo step with
+		// the last one of the same key (history.transaction's merge).
+		void quantize(const std::string& command, const std::string& step, const QuantizeTarget& target,
+			const std::string& merge = {});
+		// The first part of the target with notes to make a groove of, or 0.
+		uint64_t groovePart(const QuantizeTarget& target) const;
 		// The quantize panel's commands for several audio tracks (#145): command with parameters on the project
 		// window's selected audio events and the events of its selected audio parts.
 		void quantizeAudioTracks(const std::string& command, engine::Json parameters);
@@ -430,6 +436,9 @@ namespace gnubase::app
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
+		// The transport's state, for the Transport menu's record modes, which show the one set as checked.
+		engine::Json m_transport;
+		std::optional<ui::Subscription> m_transportChanged;
 		// The dialogs openDialog opened for objects of the project, and project.reset, which closes them. An OS file
 		// dialog's answer for objects of the project is dropped when m_resets has changed since it opened
 		// (chooseProjectFile).
@@ -513,5 +522,10 @@ namespace gnubase::app
 		std::chrono::milliseconds m_scriptTimeLimit{10000};
 		std::function<bool(const std::string& script)> m_keepScriptRunning;
 		std::function<void(const std::filesystem::path&, bool edit)> m_openExternally;
+		// A quick export's job, if it is one that File > Export > Quick Audio Export started, ended or is reported by
+		// job.get: once it is done, opens the file's folder, as the reference does (reference manual p. 1479).
+		void quickExportEnded(const engine::Json& job);
+		std::set<uint64_t> m_quickExports;                // the running quick exports it started, by job
+		std::vector<ui::Subscription> m_quickExportEnded; // job.finished, for them
 	};
 }

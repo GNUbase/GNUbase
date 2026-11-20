@@ -301,6 +301,54 @@ TEST_CASE("reading continues where seek says, in every format", "[integration]")
 	}
 }
 
+TEST_CASE("a file that was written but never closed reads back the frames on the disk (#581)", "[integration]")
+{
+	const Case cases[] = {
+		{AudioFormat::Wav, SampleFormat::Int16, 2, 48000, 1.0f / 32768.0f},
+		{AudioFormat::Wav, SampleFormat::Float32, 2, 48000, 0.0f}, // with a fact chunk
+		{AudioFormat::Aiff, SampleFormat::Int24, 2, 48000, 1.0f / 8388608.0f},
+		{AudioFormat::Flac, SampleFormat::Int24, 2, 48000, 1.0f / 8388608.0f},
+	};
+	const test::TempDir dir;
+	const test::Audio audio = testSignal(2, 48000, 48000);
+	int index = 0;
+	for (const Case& c : cases)
+	{
+		INFO("case " << index);
+		const std::string path = utf8(dir.path() / ("open" + std::to_string(index)));
+		const std::string crashed = utf8(dir.path() / ("crashed" + std::to_string(index++)));
+		WriteOptions options;
+		options.format = c.format;
+		options.sampleFormat = c.sampleFormat;
+		options.channels = c.channels;
+		options.sampleRate = c.sampleRate;
+		const auto writer = AudioFileWriter::create(path, options);
+		writer->write(audio.samples.data(), audio.frames());
+		{
+			// What a crash leaves: the bytes on the disk so far, with the header as it was written at the start.
+			std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+			REQUIRE(in);
+			std::ofstream out(std::filesystem::u8path(crashed), std::ios::binary);
+			out << in.rdbuf();
+		}
+		writer->close();
+
+		const auto reader = AudioFileReader::open(crashed);
+		const test::Audio read = readAll(*reader);
+		CHECK(reader->info().frames == static_cast<int64_t>(read.frames()));
+		CHECK(read.frames() > audio.frames() / 2); // all but what was still in the buffers
+		REQUIRE(read.frames() <= audio.frames());
+		test::Audio start = audio;
+		start.samples.resize(read.samples.size());
+		const test::AudioDiff diff = test::compareAudio(read, start, c.tolerance * 1.01f);
+		INFO(diff.report);
+		CHECK(diff.equal);
+		reader->seek(static_cast<int64_t>(read.frames() / 2));
+		std::vector<float> frame(2);
+		CHECK(reader->read(frame.data(), 1) == 1);
+	}
+}
+
 TEST_CASE("the format is recognized from the content, not the file name", "[integration]")
 {
 	const test::TempDir dir;

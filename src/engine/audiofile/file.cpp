@@ -16,6 +16,7 @@
 // io.h and fcntl.h after windows.h.
 #include <fcntl.h>
 #include <io.h>
+#include <share.h>
 #endif
 
 namespace gnubase::engine::detail
@@ -106,6 +107,8 @@ namespace gnubase::engine::detail
 		if (std::strcmp(mode, "rb") == 0)
 			return openForReading(std::filesystem::u8path(path));
 		const std::wstring wideMode(mode, mode + std::char_traits<char>::length(mode));
+		if (std::strcmp(mode, "wb") == 0) // _wfopen_s shares the file with no one
+			return File(_wfsopen(std::filesystem::u8path(path).c_str(), wideMode.c_str(), _SH_DENYWR));
 		std::FILE* file = nullptr;
 		if (_wfopen_s(&file, std::filesystem::u8path(path).c_str(), wideMode.c_str()) != 0)
 			return nullptr;

@@ -1,0 +1,42 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- A widget of each kind that takes the keyboard focus, in the states with skins of their own, for the focus ring
+     test in tests/window_tests.cpp (docs/features/accessibility.md): buttons, the checked track toggles, a checked
+     check box and radio button, the widgets with a number, which get the ring alone, and a list view. The document
+     only lays them out; the shared style sheets and the active theme style them. -->
+<rml>
+<head>
+	<title>Focusable</title>
+	<style>
+		body { position: absolute; left: 0; top: 0; width: 560dp; height: 200dp; box-sizing: border-box; padding: 16dp; }
+		.row { display: flex; align-items: center; margin-bottom: 16dp; }
+		.row > * { margin-right: 16dp; }
+		listview { width: 120dp; height: 60dp; }
+	</style>
+</head>
+<body>
+	<div class="row">
+		<button id="plain">Cancel</button>
+		<button class="primary" id="primary">Apply</button>
+		<button class="checked" id="checked">On</button>
+		<input type="checkbox" checked="checked" id="checkbox-on"/>
+		<input type="radio" name="mode" checked="checked" id="radio-on"/>
+	</div>
+	<div class="row">
+		<button class="toggle mute checked" id="mute">M</button>
+		<button class="toggle solo checked" id="solo">S</button>
+		<button class="toggle record checked" id="record">R</button>
+		<button class="toggle monitor checked" id="monitor">I</button>
+	</div>
+	<div class="row">
+		<knob id="knob" value="0.5"/>
+		<fader id="fader" value="0.5"/>
+		<slider id="slider" value="0.5"/>
+		<input type="range" id="range" min="0" max="100" value="60"/>
+		<valuefield id="valuefield" value="0.5"/>
+		<listview id="listview">
+			<listitem value="1">Drums</listitem>
+			<listitem value="2" class="selected">Bass</listitem>
+		</listview>
+	</div>
+</body>
+</rml>

@@ -275,6 +275,11 @@ namespace gnubase::engine
 			for (const time::TempoPoint& point : playing.points())
 				if (point.position < from || point.position > to)
 					points.push_back(point);
+			// A ramp after the last beat starts there, at the last beat's tempo, so that beat keeps its time (#812).
+			const auto after = std::find_if(
+				points.begin(), points.end(), [to](const time::TempoPoint& point) { return point.position > to; });
+			if (after != points.end() && after->ramp)
+				added.push_back({to, added.back().bpm, false});
 			points.insert(points.end(), added.begin(), added.end());
 			if (!project.tempoTrackActive)
 			{
@@ -347,7 +352,10 @@ namespace gnubase::engine
 			if (const auto event = project.audioEvents.find(id); event != project.audioEvents.end())
 			{
 				const AudioEvent& audio = event->second;
-				const MediaFile& media = project.media.at(project.clips.at(audio.clip).media);
+				const Clip& clip = project.clips.at(audio.clip);
+				// Its beats follow the tempo there (reference manual pp. 1460-1461).
+				require(!clip.warp.musical, "tempo detection needs audio that isn't in musical mode");
+				const MediaFile& media = project.media.at(clip.media);
 				material.start =
 					static_cast<double>(time::toSamples(audio.position, project.tempo, project.sampleRate)) /
 					project.sampleRate;
@@ -568,9 +576,10 @@ namespace gnubase::engine
 			for (const ObjectId id : musical)
 				runEdit("track.set", project, {{"track", id}, {"timeBase", "linear"}}, context);
 		}
-		// What an analysis of the event made before goes: the tempo events inside it, but the first.
-		const time::Ticks from = project.tempo.toTicks(material.start);
-		const time::Ticks to = project.tempo.toTicks(material.end);
+		// What an analysis of the event made before goes: the tempo events inside it, but the first. Their ticks
+		// follow the tempo track's own tempo, also while it is inactive (#812).
+		const time::Ticks from = project.tempoTrack().toTicks(material.start);
+		const time::Ticks to = project.tempoTrack().toTicks(material.end);
 		std::vector<time::TempoPoint> points = project.tempoTrack().points();
 		points.erase(std::remove_if(points.begin() + 1, points.end(), [from, to](const time::TempoPoint& point)
 						 { return point.position >= from && point.position < to; }),
@@ -676,7 +685,8 @@ namespace gnubase::engine
 		add(engine,
 			{"tempo.detect", 1,
 				"Detects the tempo of an audio event or a MIDI part (event, its id) of at least 7 seconds with "
-				"discernible beats (Tempo Detection) and makes the tempo track follow it: where its sounds start "
+				"discernible beats (Tempo Detection), audio not in musical mode, and makes the tempo track follow it: "
+				"where its sounds start "
 				"(the hitpoints of the clip's section, or the notes) give the beats, which may drift. The tempo "
 				"events inside the event but the first go, which an earlier detection made, and a step tempo event "
 				"at each beat but the last, a quarter apart, replaces those from the first beat, which keeps its "

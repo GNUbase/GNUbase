@@ -830,6 +830,104 @@ TEST_CASE("markers from before marker tracks load onto a new marker track", "[in
 	CHECK(next == highestId(after) + 1);
 }
 
+TEST_CASE("project.load repairs an out-of-range sample rate without losing native data", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string file = utf8(dir.path() / "rate.dawproject");
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"barOffset", -3}, {"recordBitDepth", "float32"}});
+	run(client, "bus.add", {{"direction", "input"}, {"name", "Native input"}, {"channels", 1}});
+	run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId markers = idOf(run(client, "track.add", {{"type", "marker"}, {"timeBase", "linear"}}), "track");
+	run(client, "marker.add", {{"track", markers}, {"position", 48000}, {"name", "One second"}});
+	const Json original = run(client, "project.get");
+	run(client, "project.save", {{"path", file}});
+	const auto saved = readZip(file);
+	const std::vector<std::pair<double, double>> rates = {{-1.0, g_lowestSampleRate}, {0.0, g_lowestSampleRate},
+		{4000.0, g_lowestSampleRate}, {7999.0, g_lowestSampleRate}, {g_lowestSampleRate, g_lowestSampleRate},
+		{44100.0, 44100.0}, {g_highestSampleRate, g_highestSampleRate}, {768001.0, g_highestSampleRate},
+		{1000000.0, g_highestSampleRate}};
+	for (const auto& [rate, repaired] : rates)
+	{
+		CAPTURE(rate);
+		auto entries = saved;
+		Json extension = Json::parse(entries.at("gnubase.json"));
+		extension["project"]["sampleRate"] = rate;
+		// A positive rate has a meaningful time: sample rate samples are exactly one second.
+		extension["project"]["markers"][0]["position"] = rate > 0.0 ? rate : 48000.0;
+		entries["gnubase.json"] = extension.dump();
+		writeZip(file, entries);
+		run(client, "project.new");
+		const Json loaded = run(client, "project.load", {{"path", file}});
+		Json expected = original;
+		expected["sampleRate"] = repaired;
+		expected["markers"][0]["position"] = rate > 0.0 ? repaired : 48000.0;
+		const Json after = run(client, "project.get");
+		if (rate > 0.0)
+		{
+			CHECK(after.at("markers").at(0).at("position").get<double>() / repaired == 1.0);
+		}
+		else
+		{
+			CHECK(after.at("markers").at(0).at("position") == 48000);
+		}
+		CHECK(run(client, "project.get") == expected);
+		const Json& warnings = loaded.at("warnings");
+		if (rate == repaired)
+		{
+			CHECK(warnings.empty());
+		}
+		else
+		{
+			REQUIRE(warnings.size() == 1);
+			const std::string warning = warnings.at(0).get<std::string>();
+			CHECK_THAT(warning, ContainsSubstring("sample rate"));
+			CHECK_THAT(warning, ContainsSubstring(Json(rate).dump()));
+			CHECK_THAT(warning, ContainsSubstring(Json(repaired).dump()));
+		}
+		// A subsequent save keeps the repaired rate and all the native data, with no warning on the next load.
+		run(client, "project.save", {{"path", file}});
+		run(client, "project.new");
+		CHECK(run(client, "project.load", {{"path", file}}).at("warnings").empty());
+		CHECK(run(client, "project.get") == expected);
+	}
+}
+
+TEST_CASE("project.load bounds rescaled linear positions when repairing a tiny sample rate", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string file = utf8(dir.path() / "tiny-rate.dawproject");
+	Engine engine;
+	Client client(engine);
+	const ObjectId markers = idOf(run(client, "track.add", {{"type", "marker"}, {"timeBase", "linear"}}), "track");
+	run(client, "marker.add", {{"track", markers}, {"position", 1}});
+	run(client, "marker.add", {{"track", markers}, {"position", 0}});
+	run(client, "marker.add", {{"track", markers}, {"type", "cycle"}, {"position", 1}, {"end", 2}});
+	run(client, "track.add", {{"type", "ruler"}, {"timeBase", "linear"}, {"timeOffset", 1}});
+	run(client, "project.save", {{"path", file}});
+	auto entries = readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	// A value whose product overflows still saturates safely, and zero stays zero.
+	extension["project"]["tracks"][1]["timeOffset"] = gnubase::time::g_maxPosition - 1;
+	for (const double rate : {1e-300, 1e-308})
+	{
+		CAPTURE(rate);
+		extension["project"]["sampleRate"] = rate;
+		entries["gnubase.json"] = extension.dump();
+		writeZip(file, entries);
+		const Json loaded = run(client, "project.load", {{"path", file}});
+		REQUIRE(loaded.at("warnings").size() == 1);
+		const Json project = run(client, "project.get");
+		CHECK(project.at("sampleRate") == g_lowestSampleRate);
+		CHECK(project.at("markers").at(0).at("position") == gnubase::time::g_maxPosition);
+		CHECK(project.at("markers").at(1).at("position") == 0);
+		CHECK(project.at("markers").at(2).at("position") == gnubase::time::g_maxPosition - 1);
+		CHECK(project.at("markers").at(2).at("end") == gnubase::time::g_maxPosition);
+		CHECK(project.at("tracks").at(1).at("timeOffset") == gnubase::time::g_maxPosition);
+	}
+}
+
 TEST_CASE("VCA faders that would control themselves are left out when a project loads", "[integration]")
 {
 	const test::TempDir dir;

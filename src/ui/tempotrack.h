@@ -185,8 +185,9 @@ namespace gnubase::ui
 	// tempos, as .tempo-scale-label elements. The info line shows the first selected event: #tempo-position,
 	// #tempo-value (its tempo, typed) and #tempo-ramp (ramp or jump). #signature-area under the ruler is the time
 	// signature display, a ui::SignatureRow with the editor's tools (pp. 1468-1469); #signature-info shows its first
-	// selected event instead: #signature-position (its bar) and #signature-value (its signature, typed). Backspace and
-	// Delete remove the selected events. Use it on the UI thread; the engine and the binding must outlive it.
+	// selected event instead: #signature-position (its bar) and #signature-value (its signature, typed); the
+	// notification #edit-refused says why the engine refused a move or a signature there. Backspace and Delete remove
+	// the selected events. Use it on the UI thread; the engine and the binding must outlive it.
 	class TempoEditor final : private Rml::EventListener
 	{
 	public:

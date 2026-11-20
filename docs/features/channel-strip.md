@@ -29,9 +29,10 @@ equalizer and the strip's dynamics, and their controls in the mixer. The fader a
   (parameter `g_stripEvents` plus the parameter's id): the static values whenever they change, and the automation
   as it plays. It applies each one at its sample on the audio thread, splitting the block there, without
   allocating. The pre gain glides along the events' ramps frame by frame, like the fader, and over 5 ms to a new
-  static value; the phase glides over 20 ms through zero; the equalizers glide their bands; dynamics start afresh
-  when they come on. Sections that are off cost nothing: an equalizer runs while a band is on and 100 ms after the
-  last one went off, to glide out, and the output of a strip with everything off is bit-identical to its input. The
+  static value; the phase glides over 20 ms through zero; the equalizers glide their bands, and a band that is off
+  takes its settings at once, so that it comes in at them; dynamics start afresh when they come on. Sections
+  that are off cost nothing: an equalizer runs while a band is on and 100 ms after the last one went off, to glide
+  out, and the output of a strip with everything off is bit-identical to its input. The
   limiter's look-ahead counts in the channel node's latency while it is on or a lane of its switch plays
   (`ChannelStrip::latency`), and the limiter runs only while it counts, so that it never delays a channel by more
   than the latency its graph reports: a `channel.set` that turns it on reaches the old strip, which reports none,
@@ -78,8 +79,10 @@ settings window shows them for one channel ([channel-settings.md](channel-settin
   everything off, and one whose EQ was on and went off, passes its audio bit-exactly; measured with `audio.analyze`,
   the pre gain, the phase (the negated input), the low and high cuts at their slopes, EQ bells, shelves and cuts and
   the EQ bypass, the gate's range, the compressor's reduction and makeup and the limiter's threshold change the output
-  as they should; the pre section drives a plugin slot and the EQ lifts what comes out of it; the limiter's latency,
-  and that the limiter delays its channel only while that latency counts its look-ahead.
+  as they should; an EQ band or cut turned on from all-off glides in, and one turned on with new settings, or whose
+  settings changed while it was off, comes in at them; the bands' Q, band 1 as a low cut, and the attack and release
+  times of the dynamics; the pre section drives a plugin slot and the EQ lifts what comes out of it; the limiter's
+  latency, and that the limiter delays its channel only while that latency counts its look-ahead.
 - `tests/parameter_tests.cpp`: the sections' parameters with their ranges, units and options, `parameter.set` and
   `channel.set` changing the same values, their groups, and none on a MIDI channel's or a VCA channel's, each refusal
   saying which.

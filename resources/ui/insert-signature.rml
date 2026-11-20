@@ -1,0 +1,104 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Insert Time Signature Event (docs/features/signature-track.md, reference manual p. 1469): app::AppUi opens it with
+     the UI command signature.insertAtCursor and the signature at the project cursor in the document's attributes
+     numerator and denominator. OK adds a time signature event with the signature in #insert-signature-numerator and
+     #insert-signature-denominator at the bar the cursor is in (signature.add), or changes the one there. Text that
+     isn't a whole number, or a signature the engine refuses, shows #insert-signature-message and keeps the dialog
+     open. -->
+<rml>
+<head>
+	<title>Insert Time Signature Event</title>
+	<style>
+		dialog
+		{
+			width: 280dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			flex: 1;
+		}
+
+		.row input
+		{
+			width: 48dp;
+			text-align: right;
+		}
+
+		.over
+		{
+			margin: 0 6dp;
+		}
+
+		#insert-signature-message
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		InsertSignature = {}
+		local dialog = InsertSignature
+
+		function dialog.load(document)
+			for _, name in ipairs({"numerator", "denominator"}) do
+				local value = document:GetAttribute(name)
+				if value ~= nil then
+					document:GetElementById("insert-signature-" .. name):SetAttribute("value", tostring(value))
+				end
+			end
+		end
+
+		function dialog.ok(document)
+			local function whole(name)
+				local value = tonumber(document:GetElementById("insert-signature-" .. name):GetAttribute("value"))
+				return value ~= nil and math.type(value) == "integer" and value or nil
+			end
+			local numerator, denominator = whole("numerator"), whole("denominator")
+			local ok, failure = false, "The numerator and the denominator must be whole numbers"
+			if numerator ~= nil and denominator ~= nil then
+				ok, failure = pcall(gnubase.signature.add,
+					{bar = "cursor", numerator = numerator, denominator = denominator})
+			end
+			if ok then
+				document:Close()
+			else
+				document:GetElementById("insert-signature-message").inner_rml =
+					(tostring(failure):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+			end
+		end
+	</script>
+</head>
+<body onshow="InsertSignature.load(document)">
+	<dialog id="insert-signature-dialog">
+		<div class="dialog-titlebar">Insert Time Signature Event</div>
+		<div class="row">
+			<label for="insert-signature-numerator">Time Signature</label>
+			<input type="text" id="insert-signature-numerator" value="4" autofocus="autofocus"/>
+			<span class="over">/</span>
+			<input type="text" id="insert-signature-denominator" value="4"/>
+		</div>
+		<div class="row buttons">
+			<div id="insert-signature-message"/>
+			<button result="cancel">Cancel</button>
+			<button id="insert-signature-ok" class="primary" onclick="InsertSignature.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

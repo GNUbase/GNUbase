@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/midi/devices.h"
 
+#include "engine/document/document.h"
 #include "engine/engine.h"
 
 #include <array>
@@ -52,29 +53,33 @@ namespace gnubase::engine::midi
 			return {{"type", "object"}, {"properties", {{"name", {{"type", "string"}}}}}, {"required", {"name"}},
 				{"additionalProperties", false}};
 		}
+
+		Json banksSchema()
+		{
+			const Json patch = {{"type", "object"},
+				{"properties",
+					{{"name", {{"type", "string"}}}, {"folder", {{"type", "string"}}},
+						{"program", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
+						{"bank", {{"type", "integer"}, {"minimum", 0}, {"maximum", g_maxBank}}}}},
+				{"required", {"name", "program"}}};
+			const Json bank = {{"type", "object"},
+				{"properties", {{"name", {{"type", "string"}}}, {"patches", {{"type", "array"}, {"items", patch}}}}},
+				{"required", {"name", "patches"}}};
+			return {{"type", "array"}, {"items", bank}};
+		}
 	}
 
 	Json devicesSchema()
 	{
-		const Json patch = {{"type", "object"},
-			{"properties",
-				{{"name", {{"type", "string"}}}, {"folder", {{"type", "string"}}},
-					{"program", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
-					{"bank", {{"type", "integer"}, {"minimum", 0}, {"maximum", 16383}}}}},
-			{"required", {"name", "program"}}};
-		const Json bank = {{"type", "object"},
-			{"properties", {{"name", {{"type", "string"}}}, {"patches", {{"type", "array"}, {"items", patch}}}}},
-			{"required", {"name", "patches"}}};
 		return {{"type", "object"},
 			{"additionalProperties",
-				{{"type", "object"}, {"properties", {{"banks", {{"type", "array"}, {"items", bank}}}}},
-					{"required", {"banks"}}}}};
+				{{"type", "object"}, {"properties", {{"banks", banksSchema()}}}, {"required", {"banks"}}}}};
 	}
 
 	void registerDeviceCommands(Engine& engine)
 	{
 		const Json device = {{"type", "object"},
-			{"properties", {{"name", {{"type", "string"}}}, {"banks", {{"type", "array"}}}}},
+			{"properties", {{"name", {{"type", "string"}}}, {"banks", banksSchema()}}},
 			{"required", {"name", "banks"}}};
 		Json installSchema = nameSchema();
 		installSchema["properties"]["template"] = {{"type", "string"}, {"enum", {"empty", "gm"}}};
@@ -102,6 +107,32 @@ namespace gnubase::engine::midi
 							throw CommandError("there is already a MIDI device " + name);
 						Json changed = value;
 						changed[name] = {{"banks", banks}};
+						return changed;
+					});
+				return Json{{"device", {{"name", name}, {"banks", banks}}}};
+			});
+		Json editSchema = nameSchema();
+		editSchema["properties"]["banks"] = banksSchema();
+		editSchema["required"].push_back("banks");
+		engine.registerCommand(
+			{"midiDevice.set", 1,
+				"Replaces an installed MIDI device's patch banks (reference manual pp. 1111-1114). Each bank has a "
+				"name and patches; each patch has a name, program (0 to 127), optional bank (0 to 16383) and folder. "
+				"Edits only this device in the user setting midi.devices, announces settings.changed, and returns "
+				"the device. Tracks keep their selected program and bank.",
+				editSchema, {{"type", "object"}, {"properties", {{"device", device}}}, {"required", {"device"}}},
+				false},
+			[&engine](CommandContext& context)
+			{
+				const auto name = context.parameters().at("name").get<std::string>();
+				const Json& banks = context.parameters().at("banks");
+				engine.modifySetting(context, "midi.devices",
+					[&](const Json& value)
+					{
+						if (!value.contains(name))
+							throw CommandError("there is no MIDI device " + name);
+						Json changed = value;
+						changed[name]["banks"] = banks;
 						return changed;
 					});
 				return Json{{"device", {{"name", name}, {"banks", banks}}}};
