@@ -95,6 +95,8 @@ namespace gnubase::ui
 		{
 			const engine::VolumePoint& point = audio.curve[i];
 			const double seconds = shown.start + (static_cast<double>(point.position - audio.offset) / audio.timeRate);
+			if (seconds < shown.start || seconds > shown.end)
+				continue; // the volume line shows no square for it: a split or resize left it outside the event
 			const double px = (seconds - m_view.start) / m_view.scale;
 			const double fraction = std::clamp(gain(audio.volume) * gain(point.volume) / g_volumeLineTop, 0.0, 1.0);
 			const double distance = std::max(std::abs(x - px), std::abs(y - (bottom - (fraction * height))));
@@ -185,6 +187,9 @@ namespace gnubase::ui
 
 	bool EventDisplay::eraseCurvePoint(const Shown& shown, double x, double y)
 	{
+		// Only selected events show their points (showVolume), so only theirs can be erased (#670).
+		if (!std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+			return false;
 		const std::optional<size_t> point = curvePointAt(shown, x, y);
 		if (!point)
 			return false;

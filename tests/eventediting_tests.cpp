@@ -1821,6 +1821,22 @@ TEST_CASE("Events to Part and Dissolve Part act on the selected audio events and
 	CHECK(f.parts().size() == 1);
 }
 
+TEST_CASE("Snap Point to Cursor leaves out a selected audio part, which has no snap point", "[unit]")
+{
+	Fixture f;
+	const Json track = f.audioEvents()[0].at("track");
+	const auto part = f.call("audioPart.add", {{"track", track}, {"position", 100000}, {"length", 48000}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 2; }));
+	f.call("transport.locate", {{"position", 108000}});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 2.25; }));
+	f.display.select({f.event, part});
+	f.run("edit.snapPointToCursor");
+	CHECK(f.waitUntil([&f] { return f.audioEvents()[0].at("snapPoint") == 12000; }));
+}
+
 TEST_CASE("the play tool auditions the pressed audio track until it is released, or scrubs it", "[unit]")
 {
 	Fixture f;
@@ -2522,8 +2538,15 @@ TEST_CASE("fade handles at the top corners of audio events drag the selected eve
 			.get<uint64_t>();
 	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 2; }));
 
-	// Over a handle the mouse pointer isn't the resize one, as a press there drags the fade; lower down it is.
+	// An unselected event shows no handles, so its top corners have none to grab either: the edge resizes there.
 	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	f.automation.move(std::nullopt, f.at(200, 3));
+	f.step();
+	CHECK(area->GetAttribute<std::string>("pointer", "") == "resize");
+	// Over a selected event's handle the mouse pointer isn't the resize one, as a press there drags the fade; lower
+	// down it is.
+	f.display.select({f.event});
+	f.automation.move(std::nullopt, f.at(201, 3));
 	f.automation.move(std::nullopt, f.at(200, 3));
 	f.step();
 	CHECK(area->GetAttribute<std::string>("pointer", "") == "objectSelection");
@@ -2658,6 +2681,38 @@ TEST_CASE("the Fades menu's commands fade to the range, crossfade and remove fad
 	f.run("audio.removeFades");
 	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 0; }));
 	CHECK(fadeLength(f.audioEvents()[0], "fadeOut") == 0);
+
+	// With a selection range, Crossfade crossfades the events it crosses and Remove Fades removes the crossfades in it
+	// (reference manual pp. 388, 396).
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{115200, 120000, {track}});
+	f.run("audio.crossfade");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[1].at("crossfade").is_object(); }));
+	f.run("audio.removeFades");
+	CHECK(f.waitUntil([&f] { return f.audioEvents()[1].at("crossfade").is_null(); }));
+}
+
+TEST_CASE("fade lines move with the events a drag moves", "[unit]")
+{
+	Fixture f;
+	f.call("audioEvent.setFades", {{"event", f.event}, {"fadeIn", {{"length", 4800}}}});
+	f.call("snap.set", {{"on", false}});
+	REQUIRE(f.waitUntil([&f] { return !f.display.snap().on && fadeLines(f).lanes()[0].fades.size() == 1; }));
+	f.display.select({f.event});
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true); // RmlUi's time stands still but for advance()
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	// The event from 2 seconds pressed low in its lane, held past the drag delay and 50 dp, half a second, further
+	// right.
+	f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left);
+	clock->advance(1.0);
+	f.automation.move(std::nullopt, f.at(275, 20));
+	f.step();
+	CHECK(std::abs(fadeLines(f).lanes()[0].fades[0].start - 2.5) < 1e-6);
+	f.automation.release(std::nullopt, f.at(275, 20), ui::MouseButton::Left);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 120000; }));
+	CHECK(f.waitUntil([&f] { return std::abs(fadeLines(f).lanes()[0].fades[0].start - 2.5) < 1e-6; }));
 }
 
 namespace
@@ -2684,6 +2739,16 @@ TEST_CASE("the event volume handle at the top middle of an audio event drags the
 	// Lower down, a drag still moves the event.
 	f.drag(225, 30, 325, 30);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 144000; }));
+}
+
+TEST_CASE("the event volume handle works with the draw tool too, instead of adding a curve point", "[unit]")
+{
+	// Reference manual p. 401: the object selection and the draw tool both drag the event volume.
+	Fixture f;
+	f.display.setTool(ui::Tool::Draw);
+	f.drag(225, 3, 225, 13);
+	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
+	CHECK(f.audioEvents()[0].at("volumeCurve").empty());
 }
 
 TEST_CASE("the draw tool adds and drags volume curve points, the erase tool removes them", "[unit]")
@@ -2725,6 +2790,46 @@ TEST_CASE("the draw tool adds and drags volume curve points, the erase tool remo
 	f.click(230, 10);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
 	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 19200);
+
+	// An unselected event shows no points, so the erase tool there removes the event, not a point (#670).
+	f.display.select({});
+	f.click(240, 20);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().empty(); }));
+}
+
+TEST_CASE("the draw and erase tools pass over curve points outside the event, which it doesn't show", "[unit]")
+{
+	// A split keeps the whole curve in both halves: the point 0.1 seconds in lies before the right half's start.
+	Fixture f;
+	f.display.setTool(ui::Tool::Draw);
+	f.click(210, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
+	const uint64_t right = f.call("event.split", {{"events", {f.event}}, {"positions", {96000 + 5280}}})
+							   .at("events")
+							   .at(0)
+							   .get<uint64_t>();
+	const auto curve = [&f, right]
+	{
+		for (const Json& each : f.audioEvents())
+			if (each.at("id") == right)
+				return each.at("volumeCurve");
+		return Json();
+	};
+	REQUIRE(f.waitUntil([&f] { return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].volumes.size() == 2; }));
+	REQUIRE(curve().size() == 1);
+	f.display.select({right});
+
+	// The draw tool within the hidden point's reach adds a point and leaves the hidden one where it is.
+	f.click(216, 36);
+	REQUIRE(f.waitUntil([&curve] { return curve().size() == 2; }));
+	CHECK(curve()[0].at("position") == 4800);
+
+	// The erase tool 2 dp inside the right half, within the hidden point's reach and out of the new one's, removes the
+	// event, not a point.
+	f.display.setTool(ui::Tool::Erase);
+	f.click(212, 24);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 1; }));
+	CHECK(f.audioEvents()[0].at("id") == f.event);
 }
 
 TEST_CASE("volume curve points on a warped event go where its waveform shows their clip frames", "[unit]")
