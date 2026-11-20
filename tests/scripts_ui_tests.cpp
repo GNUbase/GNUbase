@@ -280,6 +280,7 @@ gnubase.ui.command{command = "edit.delete"}
 gnubase.ui.command{command = "history.undo"}
 )");
 	const Json position = app.call("history.get").at("position");
+	display.setRange(std::nullopt); // a drag in the range would drag its contents
 	app.keys().run("script.delete-and-undo", Json::object(), app.main(), nullptr);
 	CHECK(app.call("project.get").at("audioEvents").size() == 1);
 	CHECK(app.call("history.get").at("position") == position);
