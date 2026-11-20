@@ -447,11 +447,24 @@ TEST_CASE("the quantize panel's Apply, Reset and Auto Apply quantize the selecte
 	f.app.call("history.undo");
 	CHECK(f.startsAre({24 * g_unit, 48 * g_unit, 72 * g_unit}));
 
+	// A preset saved or renamed changes no setting, so Auto Apply quantizes nothing: the notes stay where Reset put
+	// them, although the preset that becomes the one shown announces quantize.changed.
+	f.click("#quantize-reset");
+	CHECK(f.startsAre({26 * g_unit, 50 * g_unit, 73 * g_unit}));
+	f.write("#quantize-preset-name", "Mine");
+	f.click("#quantize-save-preset");
+	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Mine"; }));
+	f.write("#quantize-preset-name", "Yours");
+	f.clickEnabled("#quantize-rename-preset");
+	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Yours"; }));
+	f.app.shell().step(std::chrono::milliseconds(50));
+	CHECK(f.startsAre({26 * g_unit, 50 * g_unit, 73 * g_unit}));
+
 	f.click("#quantize-auto-apply");
 	f.click("#quantize-grid");
 	f.click("menuitem[grid=\"1/8\"]");
 	f.app.shell().step(std::chrono::milliseconds(50));
-	CHECK(f.startsAre({24 * g_unit, 48 * g_unit, 72 * g_unit}));
+	CHECK(f.startsAre({26 * g_unit, 50 * g_unit, 73 * g_unit}));
 }
 
 TEST_CASE("the toolbar's quantize section applies, chooses presets, switches soft quantize and opens the panel", "[ui]")
