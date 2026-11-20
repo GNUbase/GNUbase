@@ -201,6 +201,16 @@ TEST_CASE("Crossfade crossfades the selected events, then opens the crossfade ed
 	CHECK(crossfade.at("length") == 4800);
 	CHECK(crossfade.at("outLength") == 0);
 
+	// OK without edits leaves the lengths as they were, not rounded to the 0.1 ms shown.
+	app.call("crossfade.set", {{"from", events.first}, {"to", events.second}, {"length", 4801}});
+	REQUIRE(app.waitUntil(
+		[&display] { return display.project().at("audioEvents")[1].at("crossfade").at("length") == 4801; }));
+	run(app, "audio.crossfade", "#crossfade-editor");
+	click(app, "#crossfade-ok");
+	closes(app, "#crossfade-editor");
+	CHECK(eventOf(app, events.second).at("crossfade").at("length") == 4801);
+	CHECK(eventOf(app, events.second).at("crossfade").at("outLength") == 0);
+
 	// A double click in the crossfade's zone, at 0.875 seconds on the track's lane, opens it too; Remove removes the
 	// crossfade.
 	app.setDpRatio(1.0F);
@@ -217,24 +227,74 @@ TEST_CASE("Crossfade crossfades the selected events, then opens the crossfade ed
 	CHECK(eventOf(app, events.second).at("crossfade").is_null());
 }
 
+TEST_CASE("Crossfade opens the editor only for a crossfade that plays between selected events", "[ui]")
+{
+	test::UiApp app({900, 700});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const Events events(app);
+	// A third event from 1.5 to 2.5 seconds; the first two crossfade.
+	const uint64_t third = addEvent(app, events.track, eventOf(app, events.first).at("clip"), 72000);
+	app.call("event.crossfade", {{"events", {events.first, events.second}}});
+	REQUIRE(app.waitUntil(
+		[&display]
+		{
+			return display.project().at("audioEvents").size() == 3 &&
+				display.project().at("audioEvents")[1].at("crossfade").is_object();
+		}));
+
+	// The second and the third: the crossfade from the first one doesn't open, they crossfade.
+	display.select({events.second, third});
+	app.keys().run("audio.crossfade", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app, third] { return eventOf(app, third).at("crossfade").is_object(); }));
+	CHECK(eventOf(app, third).at("crossfade").at("from") == events.second);
+	CHECK_FALSE(open(app, "#crossfade-editor"));
+	// The first event alone: it has one crossfade, which opens (reference manual p. 389).
+	display.select({events.first});
+	run(app, "audio.crossfade", "#crossfade-editor");
+	click(app, "#crossfade-cancel");
+	closes(app, "#crossfade-editor");
+
+	// A crossfade that rests, as the events no longer overlap, doesn't open either.
+	app.call("event.move", {{"events", {third}}, {"delta", 48000}});
+	REQUIRE(app.waitUntil([&display] { return display.project().at("audioEvents")[2].at("position") == 120000; }));
+	REQUIRE(eventOf(app, third).at("crossfade").is_object());
+	display.select({events.second, third});
+	app.keys().run("audio.crossfadeEditor", Json::object(), app.main(), nullptr);
+	app.call("project.get");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(open(app, "#crossfade-editor"));
+}
+
 TEST_CASE("the fade dialog gives every selected event the fades it shows, as one undo step", "[ui]")
 {
 	test::UiApp app({900, 700});
 	ui::EventDisplay& display = app.appUi().showProject();
 	const Events events(app);
-	app.call("audioEvent.setFades", {{"event", events.first}, {"fadeIn", {{"length", 2400}, {"shape", "sCurve"}}}});
+	app.call("audioEvent.setFades", {{"event", events.first}, {"fadeIn", {{"length", 2401}, {"shape", "sCurve"}}}});
 	REQUIRE(app.waitUntil([&display] { return display.project().at("audioEvents").size() == 2; }));
 	display.select({events.first, events.second});
 	run(app, "audio.fadeEditor", "#fade-editor");
 	CHECK(element(app, "#fade-in-shape").at("value") == "sCurve");
 	CHECK(element(app, "#fade-in-length").at("value") == "50.0");
+	// Apply Length is off at first (reference manual p. 386): OK gives them the curves only.
+	CHECK_FALSE(checked(app, "#fade-apply-length"));
+	type(app, "#fade-out-length", "125");
+	click(app, "#fade-editor-ok");
+	closes(app, "#fade-editor");
+	CHECK(eventOf(app, events.first).at("fadeIn") == Json{{"length", 2401}, {"shape", "sCurve"}});
+	CHECK(eventOf(app, events.second).at("fadeIn") == Json{{"length", 0}, {"shape", "sCurve"}});
+	CHECK(eventOf(app, events.second).at("fadeOut").at("length") == 0);
+
+	// With it, the lengths too: the one typed, and the one left as shown exactly as it was, not rounded to 0.1 ms.
+	run(app, "audio.fadeEditor", "#fade-editor");
+	click(app, "#fade-apply-length");
 	type(app, "#fade-out-length", "125");
 	click(app, "#fade-editor-ok");
 	closes(app, "#fade-editor");
 	for (const uint64_t id : {events.first, events.second})
 	{
 		const Json event = eventOf(app, id);
-		CHECK(event.at("fadeIn") == Json{{"length", 2400}, {"shape", "sCurve"}});
+		CHECK(event.at("fadeIn") == Json{{"length", 2401}, {"shape", "sCurve"}});
 		CHECK(event.at("fadeOut") == Json{{"length", 6000}, {"shape", "linear"}});
 	}
 	CHECK(app.call("history.get").at("steps").back().at("action") == "Change fades");
@@ -247,6 +307,7 @@ TEST_CASE("the fade dialog gives every selected event the fades it shows, as one
 	REQUIRE(app.waitUntil([&display] { return display.project().at("audioEvents").at(0).contains("fadeRoom"); }));
 	display.select({events.first});
 	run(app, "audio.fadeEditor", "#fade-editor");
+	click(app, "#fade-apply-length");
 	type(app, "#fade-out-length", "1500");
 	click(app, "#fade-editor-ok");
 	closes(app, "#fade-editor");

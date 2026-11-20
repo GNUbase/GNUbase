@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <variant>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -266,6 +267,45 @@ TEST_CASE("audio parts move, copy, split, glue, mute, lock and go with their eve
 	CHECK(f.count("audioParts") == 2);
 }
 
+TEST_CASE("a dissolved muted part leaves its events muted, as they played", "[unit]")
+{
+	Fixture f;
+	const int64_t audio = f.track("audio");
+	const int64_t first = f.audioEvent(audio, g_second, g_second);
+	const int64_t second = f.audioEvent(audio, 3 * g_second, g_second);
+	const Json part = f.call("event.toPart", {{"events", {first, second}}}).at("events").at(0);
+	f.call("event.set", {{"events", {part}}, {"mute", true}});
+	f.call("event.dissolvePart", {{"events", {part}}});
+	CHECK(f.audio(first).at("mute") == true);
+	CHECK(f.audio(second).at("mute") == true);
+	CHECK(f.channel(audio).audioEvents.size() == 2);
+	CHECK(f.channel(audio).audioEvents[0].muted);
+}
+
+TEST_CASE("splitting an audio part announces the events moved into the new part as changed", "[unit]")
+{
+	Fixture f;
+	const int64_t audio = f.track("audio");
+	const int64_t across = f.audioEvent(audio, g_second, 2 * g_second);
+	const int64_t after = f.audioEvent(audio, 4 * g_second, g_second);
+	const Json part = f.call("event.toPart", {{"events", {across, after}}}).at("events").at(0);
+	while (f.client.poll())
+	{
+	}
+	const Json right = f.call("event.split", {{"events", {part}}, {"positions", {2 * g_second}}}).at("events").at(0);
+	const std::vector<Json> moved = f.eventsIn(right);
+	REQUIRE(moved.size() == 2);
+	const int64_t piece = moved[0].at("id").get<int64_t>();
+	std::map<std::string, std::vector<int64_t>> announced;
+	while (const auto message = f.client.poll())
+		if (const auto* event = std::get_if<gnubase::engine::Event>(&*message);
+			event != nullptr && event->name.rfind("audioEvent.", 0) == 0)
+			announced[event->name].push_back(event->data.at("event").at("id").get<int64_t>());
+	CHECK(announced["audioEvent.added"] == std::vector<int64_t>{piece});
+	CHECK(std::count(announced["audioEvent.changed"].begin(), announced["audioEvent.changed"].end(), after) >= 1);
+	CHECK(std::count(announced["audioEvent.changed"].begin(), announced["audioEvent.changed"].end(), across) >= 1);
+}
+
 TEST_CASE("an audio part's events play only within it, and not while it is muted", "[unit]")
 {
 	Fixture f;
@@ -305,7 +345,7 @@ TEST_CASE("audio parts are saved in the DAWproject file", "[integration]")
 	const int64_t first = f.audioEvent(audio, g_second, g_second);
 	const int64_t second = f.audioEvent(audio, 3 * g_second, g_second, g_second);
 	const Json part = f.call("event.toPart", {{"events", {first, second}}}).at("events").at(0);
-	f.call("event.set", {{"events", {part}}, {"mute", true}});
+	f.call("event.set", {{"events", {part}}, {"mute", true}, {"color", "#123456"}});
 	f.call("audioPart.add", {{"track", audio}, {"position", 6 * g_second}, {"length", g_second}, {"name", "Empty"}});
 	const Json before = f.call("project.get");
 	const std::string file = (dir.path() / "parts.dawproject").u8string();
@@ -333,5 +373,7 @@ TEST_CASE("audio parts are saved in the DAWproject file", "[integration]")
 	const std::vector<Json> events = f.eventsIn(muted.at("id"));
 	REQUIRE(events.size() == 2);
 	CHECK(events[0].at("mute") == false);
+	CHECK(muted.at("color") == "#123456");
+	CHECK(events[0].at("color").is_null()); // the part's color is the part's only
 	CHECK(f.call("event.get", {{"events", {events[1].at("id")}}}).at("events").at(0).at("start") == 3 * g_second);
 }

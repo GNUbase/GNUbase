@@ -148,7 +148,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 92> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 96> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -169,7 +169,8 @@ namespace gnubase::app
 			{"edit.splitAtCursor", "Splits the selected events, or all there, at the project cursor.", "Alt+X"},
 			{"edit.splitLoop", "Splits the selected events, or all there, at the locators.", nullptr},
 			{"edit.glue", "Glues the selected events together.", nullptr},
-			{"edit.duplicate", "Duplicates the selected events.", "Mod+D"},
+			{"edit.duplicate", "Duplicates the selected events, or copies the selection range's contents to its end.",
+				"Mod+D"},
 			{"edit.repeat", "Opens the Repeat Events dialog for the selected events.", "Mod+K"},
 			{"edit.fillLoop", "Fills the locator range with copies of the selected events.", nullptr},
 			{"edit.toRealCopy", "Converts the selected shared copies to real copies.", nullptr},
@@ -215,12 +216,21 @@ namespace gnubase::app
 			// Audio parts (docs/features/audio-parts.md).
 			{"audio.eventsToPart", "Puts the selected audio events into an audio part.", nullptr},
 			{"audio.dissolvePart", "Makes the events of the selected audio parts events of their own.", nullptr},
-			{"edit.nudgeLeft", "Moves the selected events left.", "Mod+Left"},
-			{"edit.nudgeRight", "Moves the selected events right.", "Mod+Right"},
-			{"edit.nudgeStartLeft", "Moves the start of the selected events left.", "Alt+Left"},
-			{"edit.nudgeStartRight", "Moves the start of the selected events right.", "Alt+Shift+Right"},
-			{"edit.nudgeEndLeft", "Moves the end of the selected events left.", "Alt+Shift+Left"},
-			{"edit.nudgeEndRight", "Moves the end of the selected events right.", "Alt+Right"},
+			{"edit.nudgeLeft", "Moves the selected events, or the selection range without its contents, left.",
+				"Mod+Left"},
+			{"edit.nudgeRight", "Moves the selected events, or the selection range without its contents, right.",
+				"Mod+Right"},
+			{"edit.nudgeStartLeft", "Moves the start of the selected events or the selection range left.", "Alt+Left"},
+			{"edit.nudgeStartRight", "Moves the start of the selected events or the selection range right.",
+				"Alt+Shift+Right"},
+			{"edit.nudgeEndLeft", "Moves the end of the selected events or the selection range left.",
+				"Alt+Shift+Left"},
+			{"edit.nudgeEndRight", "Moves the end of the selected events or the selection range right.", "Alt+Right"},
+			// The selection range's top and bottom, with the reference's keys (manual p. 289).
+			{"edit.nudgeTopUp", "Moves the top of the selection range up a track.", "Alt+Up"},
+			{"edit.nudgeTopDown", "Moves the top of the selection range down a track.", "Alt+Shift+Down"},
+			{"edit.nudgeBottomUp", "Moves the bottom of the selection range up a track.", "Alt+Shift+Up"},
+			{"edit.nudgeBottomDown", "Moves the bottom of the selection range down a track.", "Alt+Down"},
 			{"edit.moveStartToCursor", "Moves the selected events so that they start at the project cursor.", "Mod+L"},
 			{"edit.moveEndToCursor", "Moves the selected events so that they end at the project cursor.", nullptr},
 			{"edit.selectAll", "Selects every event in the project window.", "Mod+A"},

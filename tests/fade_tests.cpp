@@ -844,6 +844,65 @@ TEST_CASE("a render of every fade shape matches its golden file", "[integration]
 	CHECK(diff.equal);
 }
 
+TEST_CASE("an audio part that cuts an event's fades plays them on up to its edges", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Session session(64);
+	const ObjectId track = session.addTrack();
+	const ObjectId constant = session.addClip(writeClip(dir, "one", 1, 10000, one));
+	const ObjectId sine441 =
+		session.addClip(writeClip(dir, "sine", 1, 48000, [](int64_t f, int) { return sine(441.0, f); }));
+	// Events from 1000 to 7000 and from 9000 to 15000, with long fades that their parts cut: from 3000 to 5500 and
+	// from 11000 to 13500.
+	for (const auto& [clip, position] : {std::pair{constant, int64_t{1000}}, std::pair{sine441, int64_t{9000}}})
+	{
+		const ObjectId event = session.addEvent(track, clip, position, 6000);
+		run(session.client, "audioEvent.setFades",
+			{{"event", event}, {"fadeIn", {{"length", 3500}, {"shape", "linear"}}},
+				{"fadeOut", {{"length", 2500}, {"shape", "sCurve"}}}});
+		const Json part = run(session.client, "event.toPart", {{"events", {event}}}).at("events").at(0);
+		run(session.client, "event.resize", {{"events", {part}}, {"edge", "start"}, {"delta", 2000}});
+		run(session.client, "event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", -1500}});
+	}
+	// Parts inside a fade, which they cut at both ends: from 19000 to 20000 of an event from 17000 to 23000 with a fade
+	// in, and from 27000 to 28000 of one from 25000 to 31000 with a fade out. The fades keep the whole events'
+	// curves, from 17000 to 21500 and from 26500 to 31000.
+	for (const auto& [position, in] : {std::pair{int64_t{17000}, true}, std::pair{int64_t{25000}, false}})
+	{
+		const ObjectId event = session.addEvent(track, constant, position, 6000);
+		run(session.client, "audioEvent.setFades",
+			{{"event", event}, {in ? "fadeIn" : "fadeOut", {{"length", 4500}, {"shape", in ? "linear" : "sCurve"}}}});
+		const Json part = run(session.client, "event.toPart", {{"events", {event}}}).at("events").at(0);
+		run(session.client, "event.resize", {{"events", {part}}, {"edge", "start"}, {"delta", 2000}});
+		run(session.client, "event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", -3000}});
+	}
+	const auto output = session.render(32000);
+	const std::vector<float> first(output[0].begin(), output[0].begin() + 8000);
+	checkSamples(first,
+		[](int64_t at)
+		{
+			if (at < 3000 || at >= 5500)
+				return 0.0;
+			return fadeIn("linear", at, 1000, 3500) * fadeOut("sCurve", at, 7000, 2500);
+		});
+	const gnubase::test::AudioDiff diff = gnubase::test::compareWithGolden(
+		"fades-cut-by-part", mono(std::vector<float>(output[0].begin() + 8000, output[0].begin() + 16000)), 1e-6f);
+	INFO(diff.report);
+	CHECK(diff.equal);
+	const std::vector<float> inside(output[0].begin() + 16000, output[0].end());
+	checkSamples(
+		inside,
+		[](int64_t at)
+		{
+			if (at >= 19000 && at < 20000)
+				return fadeIn("linear", at, 17000, 4500);
+			if (at >= 27000 && at < 28000)
+				return fadeOut("sCurve", at, 31000, 4500);
+			return 0.0;
+		},
+		1e-6, 16000);
+}
+
 TEST_CASE("a render of equal power crossfades matches its golden file", "[integration]")
 {
 	const gnubase::test::TempDir dir;
@@ -938,6 +997,53 @@ TEST_CASE("range.fades fades events in to or out from a range's edges, and adjus
 	CHECK(!client.call("range.fades", {{"start", 2000}, {"end", 3000}, {"fade", "sideways"}}).ok());
 }
 
+TEST_CASE("range.fades crossfades the events a range crosses, fits crossfades to it and removes them", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId other = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 20000, one));
+	const ObjectId a = session.addEvent(track, clip, 0, 3000);    // 0 to 3000
+	const ObjectId b = session.addEvent(track, clip, 2000, 3000); // 2000 to 5000
+	const ObjectId c = session.addEvent(other, clip, 0, 3000);
+	const ObjectId d = session.addEvent(other, clip, 2000, 3000);
+	const auto crossfade = [&client](ObjectId id) { return eventOf(client, id).at("crossfade"); };
+
+	// Crossfade (reference manual p. 388): where the range touches the overlap of events on its tracks, as
+	// event.crossfade does it, fitted to the range; not in a range inside one event, away from its overlaps.
+	CHECK_THAT(
+		reject(client, "range.fades", {{"start", 3500}, {"end", 4500}, {"tracks", {track}}, {"fade", "crossfade"}}),
+		ContainsSubstring("overlap"));
+	CHECK(crossfadeFrom(client, b) == 0);
+	CHECK(run(client, "range.fades", {{"start", 2200}, {"end", 2800}, {"tracks", {track}}, {"fade", "crossfade"}})
+			  .at("events") == Json{b});
+	CHECK(crossfadeFrom(client, b) == a);
+	CHECK(crossfade(b).at("length") == 800);
+	CHECK(crossfade(b).at("outLength") == 800);
+	CHECK(crossfadeFrom(client, d) == 0);
+	run(client, "event.crossfade", {{"events", {c, d}}});
+
+	// Adjust Fades to Range on a crossfade (p. 389): its fade in to the range's end, its fade out from its start; the
+	// events' own fades stay.
+	run(client, "audioEvent.setFades", {{"event", b}, {"fadeIn", {{"length", 100}}}});
+	CHECK(run(client, "range.fades", {{"start", 2200}, {"end", 2600}, {"tracks", {track}}, {"fade", "adjust"}})
+			  .at("events") == Json{b});
+	CHECK(crossfade(b).at("length") == 600);
+	CHECK(crossfade(b).at("outLength") == 800);
+	CHECK(fadeLengths(client, b) == Lengths{100, 0});
+	CHECK(fadeLengths(client, a) == Lengths{0, 0});
+	CHECK(crossfade(d).at("length") == 0);
+
+	// Remove Fades on a range (p. 396): the crossfades that play in it.
+	CHECK(run(client, "range.fades", {{"start", 2500}, {"end", 4000}, {"fade", "remove"}}).at("events") == Json{b, d});
+	CHECK(crossfade(b).is_null());
+	CHECK(crossfade(d).is_null());
+	CHECK_THAT(reject(client, "range.fades", {{"start", 2500}, {"end", 4000}, {"fade", "remove"}}),
+		ContainsSubstring("no crossfade"));
+}
+
 TEST_CASE("event.crossfade joins selected events with the overlapping ones next to them", "[unit]")
 {
 	const gnubase::test::TempDir dir;
@@ -963,6 +1069,21 @@ TEST_CASE("event.crossfade joins selected events with the overlapping ones next 
 
 	CHECK_THAT(reject(client, "event.crossfade", {{"events", {d}}}), ContainsSubstring("overlap"));
 	CHECK_THAT(reject(client, "event.crossfade", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
+}
+
+TEST_CASE("event.crossfade takes events with the same start in the order of their ids", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 20000, one));
+	const ObjectId a = session.addEvent(track, clip, 0, 3000);
+	const ObjectId first = session.addEvent(track, clip, 2000, 4000);
+	const ObjectId second = session.addEvent(track, clip, 2000, 3000);
+	CHECK(run(client, "event.crossfade", {{"events", {second, first, a}}}).at("events") == Json{first});
+	CHECK(crossfadeFrom(client, first) == a);
+	CHECK(crossfadeFrom(client, second) == 0);
 }
 
 TEST_CASE("event.removeFades removes the fades and crossfades at an event's ends", "[unit]")

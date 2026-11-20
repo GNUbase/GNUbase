@@ -88,6 +88,10 @@ namespace gnubase::engine
 		// frames, for the clip fades. Other events' clips start and end with their media files.
 		time::Samples clipStart = 0;
 		time::Samples clipEnd = 0;
+		// What the event's audio part cuts off it at its start and end (#471), in its media file's frames: its own
+		// fades there play on from where the cut leaves them.
+		time::Samples cutStart = 0;
+		time::Samples cutEnd = 0;
 	};
 
 	struct RenderNote

@@ -74,10 +74,21 @@ each step's event as often as it repeats, one after the other, copied as range c
 (range-editing.md)). What lies before stays, and so do locked events. Without `keepTrack` (Keep Arranger Track) the
 arranger track goes; with it, it has an event per section where it now is and one chain that plays them in order.
 Range copies keep the order in which audio events stack, so overlapping events play as before.
+MIDI notes that cross a section's edges are cut there, and so are those that cross the chain's start, as range splits
+with `splitNotes` cut them; with `dontSplit` (Don't Split Events, p. 408) a section has only the notes that start and
+end in it, and what lies before keeps its notes whole. With `keepTrack` and `renameEvents` (Rename Arranger Events)
+each section's event has a number after its name, how often its event came so far: A 1, B 1, A 2.
 
 ## UI
 
 - **Add Track** has Arranger, once per project.
+- **The track list's arranger controls** (p. 164, [track-list.md](track-list.md)): `arrangerMode` (Activate Arranger
+  Mode), Switch Time Base, `arrangerChain` (Select Active Arranger Chain, `arranger.setMode`) and the displays
+  `arrangerItem` (Current Item, the name of the arranger event playing) and `arrangerRepeat` (Current Repeat, the
+  repeat playing of the step's repeats, such as 2/4), which follow `transport.changed`'s `arranger` and are empty
+  outside the chain; they only show, so a double click doesn't edit them. They also read `transport.get` on
+  `arranger.changed`, as turning arranger mode off announces no `transport.changed`. The arranger track's controls area
+  is 160 dp wide by default, which shows them on two lines, Current Repeat narrow beside Current Item.
 - **The arranger track's lane** (`ui::GlobalEventLane` with `LaneKind::Arranger`, `src/ui/transposetrack.h`, shared with
   the transpose and chord tracks' lanes, #1393, pp. 404-405): an `.arranger-lane-event` per arranger event in an
   `.arranger-lane-row` over the lane, as wide as its section, with its name. The class names are `arranger-lane-*`, not
@@ -97,7 +108,9 @@ Range copies keep the order in which audio events stack, so overlapping events p
   says why ([event-display.md](event-display.md)).
 - **The arranger editor** (`resources/ui/arranger-editor.rml`, the UI command `window.arranger`, in a window of its own)
   is driven by its own Lua script through the engine API: the toolbar switches arranger mode and picks the active chain
-  and the jump mode, with Create New Chain, Duplicate Current Chain, Remove Current Chain and Flatten Chain, and the
+  and the jump mode, with the active chain's name in `#chain-name` (Rename Arranger Chain, p. 406: Enter renames it,
+  an empty name keeps the old one; its drop-down lists are filled through the select's own API, as setting their
+  `inner_rml` would add the options to those they have), Create New Chain, Duplicate Current Chain, Remove Current Chain and Flatten Chain, and the
   chain step buttons, which are disabled while they can't work (arranger mode off or an empty chain; First and Last
   Repeat also need a step of the chain playing). The Current Arranger Chain list has a row per step, with its locate
   arrow (a button that plays from the step's event, shown on every row, p. 410), its repeats and its mode, and a button
@@ -119,16 +132,18 @@ triggering events while stopped and playing, also across a chain edit that moves
 for the published generation, including when neither kept plan is it; a cue that falls between two plan generations;
 `transport.play` ending a repeat forever loop, keeping a triggered event and starting from the left locator with the
 start mode cycleStart, and `transport.get` reporting no step while the plan doesn't play; flattening, played back
-linearly against the chain's audio, with undo.
+linearly against the chain's audio, with undo, and its notes cut at the sections' edges, without `dontSplit` and with
+it, with `renameEvents` numbering the events.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
-mode and a locate arrow on every row. `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide
+mode, a locate arrow on every row, and renaming the active chain. `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide
 as its section with its name, the draw tool drawing one over the stretch dragged and, with a click, from the bar line at
 or before it to the next one, both snapped to bars; with the snap type Events, drawing from and to other arranger
 events' edges, the event drawn showing while the button is down, a click just after a bar line whose start snaps back
 to an edge before it drawing up to the next bar line, and a drag that starts on an event drawing over it;
 a drag moving an event by bars, the event following the mouse until the release, a double click renaming it in a field
 as wide as the event, an empty name keeping the old one, and the erase tool removing it; `#edit-refused` saying why the
-engine refused a draw within one bar.
+engine refused a draw within one bar; the track list's arranger controls switching arranger mode and the active chain
+and showing the event and repeat playing.
 
 Both real-time comparisons in `tests/arranger_tests.cpp` retry runs that report playback dropouts, with at most five
 attempts and a fresh song and audio file per attempt. Each retry emits a warning. The chain-edit comparison makes its
@@ -138,6 +153,6 @@ because a busy machine held up the test, is retried like one with dropouts. It c
 made in time and without dropouts; exhausting the attempts fails the test (#1893, #1900).
 
 Not yet: resizing arranger events by their edges and selecting them, renaming them on the info line, the track
-list's arranger controls and the inspector's arranger section, renaming chains in the editor, drag and drop
-in the chain list, the other flatten options (Checked and All Chains, New Project, Make Real Event Copies, Don't Split
-Events, Rename Arranger Events), key commands for triggering events, and arranging to an external timecode.
+list's Open Arranger Editor and the inspector's arranger section, drag and drop in the chain list, the other flatten
+options (Checked and All Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, key commands
+for triggering events, and arranging to an external timecode.
