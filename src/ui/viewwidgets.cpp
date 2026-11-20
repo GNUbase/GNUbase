@@ -277,7 +277,8 @@ namespace gnubase::ui
 				if (shown.empty())
 					return;
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
-				const auto at = std::find(shown.begin(), shown.end(), m_current.get());
+				// A collapsed parent can hide the keys' row, e.g. one clicked before the parent collapsed.
+				const auto at = std::find(shown.begin(), shown.end(), shownAt(all, m_current.get()));
 				const std::ptrdiff_t index = at == shown.end() ? -1 : at - shown.begin();
 				std::ptrdiff_t next = 0;
 				switch (key)
@@ -341,12 +342,12 @@ namespace gnubase::ui
 					row->SetClass("selected", row == &chosen);
 			}
 
-			// Selects the shown rows from the anchor to the row, and only those: rows that a collapsed parent hides are
-			// deselected.
+			// Selects the shown rows from the anchor, or the nearest shown row above it, to the row, and only those:
+			// rows that a collapsed parent hides are deselected.
 			void selectRange(const std::vector<Rml::Element*>& all, const Rml::Element& row)
 			{
 				const std::vector<Rml::Element*> shown = visible(all);
-				const auto anchor = std::find(shown.begin(), shown.end(), m_anchor.get());
+				const auto anchor = std::find(shown.begin(), shown.end(), shownAt(all, m_anchor.get()));
 				const auto end = std::find(shown.begin(), shown.end(), &row);
 				if (anchor == shown.end() || end == shown.end())
 					return;

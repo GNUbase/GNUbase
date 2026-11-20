@@ -2171,6 +2171,21 @@ TEST_CASE("tree views move the keys from the nearest shown row above a selected 
 	CHECK(app.waitUntil([&page] { return byId(page, "kick").IsClassSet("selected"); }));
 	app.ui().key(std::nullopt, "Shift+Down");
 	CHECK(tree.GetAttribute<Rml::String>("value", "") == "audio,midi");
+
+	// The keys' row and the anchor that a collapse hides afterwards: Down goes from Audio to MIDI, not to Project.
+	click(app, "#audio .tree-toggle");
+	click(app, "#kick");
+	click(app, "#audio .tree-toggle");
+	REQUIRE(byId(page, "kick").IsClassSet("hidden"));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(tree.GetAttribute<Rml::String>("value", "") == "midi");
+
+	// And Shift+Down extends from Audio.
+	click(app, "#audio .tree-toggle");
+	click(app, "#kick");
+	click(app, "#audio .tree-toggle");
+	app.ui().key(std::nullopt, "Shift+Down");
+	CHECK(tree.GetAttribute<Rml::String>("value", "") == "audio,midi");
 }
 
 TEST_CASE("splitters move the boundary between the elements of a row or a column", "[ui]")

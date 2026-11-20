@@ -191,10 +191,13 @@ rows are in the document's order. Each row has a `value` attribute (without comm
   Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated by
   commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
   Rows that code adds, removes or replaces with new elements, all of them or only some, keep the selection that the
-  view's `value` gives, also with as many rows and the same value; the keys and Shift-click then go from the first
-  selected row. A click or a key before the next update finds the view caught up as well: with the new rows selected and
-  shaped as a tree, and with a `value` that code set. Not yet: a row that keeps its element but gets another `value`, as
-  when `data-for` reorders its items. Clicks and keys in a form control in a row, such as a text field, are the
+  view's `value` gives, also with as many rows and the same value, and so do rows that keep their elements but get
+  other values, as when `data-for` reorders its items. When only some rows changed and the `value` didn't, the keys'
+  row and the Shift-click anchor stay where they were if their rows kept their elements and values; otherwise the keys
+  and Shift-click go from the first selected row. A keys' row or an anchor that a collapsed parent hides counts as the
+  nearest shown row above it, and a Shift range deselects the hidden rows. A click or a key before the next update
+  finds the view caught up as well: with the new rows selected and shaped as a tree, and with a `value` that code set.
+  Clicks and keys in a form control in a row, such as a text field, are the
   control's and don't change the selection, and neither does a click on a control that opens a menu (a `menu`
   attribute), such as the track list's track versions arrow ([track-versions.md](track-versions.md)), so that its menu
   works on the rows that are selected, nor one with a `keepselection` attribute, such as the track list's Mute, which
@@ -264,8 +267,12 @@ collapse by click and keys, with indents by level; tables select body rows only,
 in the document's order. Rows rebuilt by code keep the selection given by the view's `value`: all rows rebuilt twice
 between two updates, a single row replaced, and rows rebuilt or a `value` set just before a key or a click, after which
 Down skips a collapsed parent's children, Right and Left expand and collapse, and Shift+Down, Shift-click and
-Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` deselects a selected row; a drag held past a view's edge scrolls it with `dragscroll` only; splitters
-move the boundary in a row and in a column, never below nothing. The color picker picks from its field, its hue strip
+Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` deselects a selected row. When code replaces
+a row that isn't selected, Shift+Up goes on from the keys' row and the anchor; rows that keep their elements but get
+other values are selected by value; and in a collapsed parent, Down and Shift+Down go from the nearest shown row above
+a selected row, also one that was clicked before the collapse, and the range deselects the hidden row. A drag held past
+a view's edge scrolls it with `dragscroll` only; splitters move the boundary in a row and in a column, never below
+nothing. The color picker picks from its field, its hue strip
 and its numbers, draws the old and the new color, and follows its data.
 `widgets::fill` drops a fill of a drop-down list from the change that its own fill sends, also with a fill of another
 list in between, so the list keeps the options of the fill that sent it (#1719), and also from the change of another
