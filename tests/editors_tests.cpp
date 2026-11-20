@@ -222,6 +222,10 @@ TEST_CASE("tracks hidden in the project window or holding locked parts can't sho
 	// Hiding a track that can't show still works.
 	view = f.call("editor.set", {{"editor", "window"}, {"hideTracks", {keys, pads}}});
 	CHECK(ids(view.at("parts")) == std::vector<uint64_t>{bass1});
+	// A folder whose tracks are all hidden has nothing to show.
+	f.call("trackVisibility.set", {{"hidden", {keys, pads}}});
+	CHECK_THAT(f.fails("editor.set", {{"editor", "window"}, {"showTracks", {folder}}}),
+		ContainsSubstring("has no parts that can show"));
 
 	f.call("trackVisibility.set", {{"hidden", Json::array()}});
 	f.call("event.set", {{"events", {keys1}}, {"lock", true}});

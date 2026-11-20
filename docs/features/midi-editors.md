@@ -94,7 +94,8 @@ selection rectangle and Show Part Borders, Independent Track Loop, the global tr
 Tracks, track visibility configurations and agents, the Track Display and its settings, selecting tracks in the
 Visibility tab, the preference Editor Content Follows
 Event Selection and where editors open by default, double-clicking a part to open it, and saving the global track
-setup with the project.
+setup with the project. In the Visibility tab (p. 1151, #625), the checks of tracks that can't show are still
+offered and clicking them changes nothing, and folders aren't indented and don't expand or collapse.
 
 ## Checks
 
