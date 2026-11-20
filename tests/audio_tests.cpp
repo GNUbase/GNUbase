@@ -1431,8 +1431,8 @@ TEST_CASE("midi.ports lists the MIDI ports and keeps their settings while they a
 		Json{{"backend", "dummy"}, {"id", "Keys"}, {"input", true}, {"name", "Keys"}, {"showAs", "Keys"},
 			{"visible", true}, {"inAllInputs", true}, {"present", true}, {"open", true}, {"midi2", false},
 			{"mpe",
-				{{"mode", "off"}, {"channels", 15}, {"firstChannel", 1}, {"pitchRange", 48}, {"tuning", true},
-					{"initialX", "off"}, {"initialY", "off"}, {"xMessage", "pitchBend"},
+				{{"mode", "off"}, {"channels", 15}, {"upperChannels", 7}, {"firstChannel", 1}, {"pitchRange", 48},
+					{"tuning", true}, {"initialX", "off"}, {"initialY", "off"}, {"xMessage", "pitchBend"},
 					{"pressureMessage", "aftertouch"}, {"yMessage", "cc74"}, {"xExpression", "none"},
 					{"pressureExpression", "pressure"}, {"yExpression", "brightness"}}}});
 	CHECK(ports[1].at("input") == false);
