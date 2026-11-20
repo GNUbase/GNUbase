@@ -325,7 +325,8 @@ namespace gnubase::engine
 		m_playingSteps = 0;
 	}
 
-	void LoudnessMeter::process(const float* const* audio, int channels, uint32_t frames, bool measuring) noexcept
+	void LoudnessMeter::process(
+		const float* const* audio, int channels, uint32_t frames, bool measuring, const double* weights) noexcept
 	{
 		channels = std::clamp(channels, 0, g_maxMeterChannels);
 		const uint32_t resets = m_resets.load(std::memory_order_acquire);
@@ -387,7 +388,7 @@ namespace gnubase::engine
 				const double y2 = (highPass.b0 * y1) + z[2];
 				z[2] = (highPass.b1 * y1) - (highPass.a1 * y2) + z[3];
 				z[3] = (highPass.b2 * y1) - (highPass.a2 * y2);
-				energy += y2 * y2; // each channel weighted 1, as front left, right and center are
+				energy += y2 * y2 * (weights != nullptr ? weights[c] : 1.0);
 
 				// True peak: the sample and the three points between it and the one before, interpolated.
 				std::array<float, g_taps / 2>& history = m_history[c];

@@ -115,8 +115,10 @@ namespace gnubase::engine
 		// loudness, the true peak), and the integrated loudness, range, maxima and time go on.
 		void prepare(double sampleRate, bool keepMeasurement = false);
 
-		// Audio thread: a block of the main mix's channels.
-		void process(const float* const* audio, int channels, uint32_t frames, bool measuring) noexcept;
+		// Audio thread: a block of the main mix's channels. Optional per-channel energy weights affect loudness,
+		// never true peak; without them every channel weighs 1. The array has at least channels entries.
+		void process(const float* const* audio, int channels, uint32_t frames, bool measuring,
+			const double* weights = nullptr) noexcept;
 
 		// Any thread.
 		LoudnessReading read() const noexcept;

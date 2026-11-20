@@ -1337,9 +1337,45 @@
 	{
 		background-color: #10dff2;
 	}
+	.sa-graph.all .sa-bar.channel-1
+	{
+		background-color: #e12ad8;
+	}
+	.sa-graph.all .sa-bar.channel-2
+	{
+		background-color: #10dff2;
+	}
+	.sa-graph.all .sa-bar.channel-3
+	{
+		background-color: #9b55f5;
+	}
+	.sa-graph.all .sa-bar.channel-4
+	{
+		background-color: #22d8ca;
+	}
+	.sa-graph.all .sa-bar.channel-5
+	{
+		background-color: #ffc44d;
+	}
+	.sa-graph.all .sa-bar.channel-6
+	{
+		background-color: #ff5b72;
+	}
+	.sa-graph.all .sa-bar.channel-7
+	{
+		background-color: #8248ef;
+	}
+	.sa-graph.all .sa-bar.channel-8
+	{
+		background-color: #4f8cff;
+	}
 	.sa-bar.reference
 	{
 		background-color: #e12ad8;
+	}
+	.sa-graph.all .sa-bar.reference
+	{
+		background-color: #f1f4ff;
 	}
 	.st-header, .st-name
 	{
