@@ -173,4 +173,5 @@ unselected audio and MIDI parts, full MIDI part boundaries, later events exclude
 rejected before a job starts. They also null-test separate dry renders with their copied effects and check that a
 failure in the second file removes the first without an edit or remaining locks. Outside Windows, a save with a freeze
 file in a folder that cannot be searched must fail without changing the existing project file or leaving a `.saving`
-file.
+file. The UI regression in `tests/projectfiles_tests.cpp` checks that Save, Save As and Save New Version name media and
+freeze files in the missing-files notice.
