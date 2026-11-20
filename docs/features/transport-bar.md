@@ -167,8 +167,9 @@ transport pop-up window.
 
 ## Not yet
 
-The sections that come with their features: the record modes (#96, #97), retrospective record, pre-roll and post-roll
-and the punch positions (#102), the punch and click behaviour itself (#101, #102), external sync, count-in and the click
+The sections that come with their features: the record modes (#96, #97), retrospective record, the pre-roll and
+post-roll section with the punch positions and the Transport menu's Pre-roll & Post-roll items (#583, p. 318; the
+engine has the settings in `transport.set`), the click behaviour itself (#101), external sync, count-in and the click
 pattern (#101), the markers section (#91), input and output activity and the audio performance meter. Also: Start from
 selection; the left and right dividers, which keep the sections outside them shown in a window too narrow for all (pp.
 307, 310); the time display window's transparency (a studio setup page, p. 313).
