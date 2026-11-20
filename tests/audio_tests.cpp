@@ -38,6 +38,7 @@ using gnubase::engine::Json;
 using gnubase::engine::Message;
 using gnubase::engine::RequestId;
 using gnubase::engine::Result;
+using gnubase::test::waitForEvent;
 
 namespace
 {
@@ -251,20 +252,6 @@ namespace
 		backends.push_back(std::make_unique<FakeBackend>(driver));
 		backends.push_back(std::make_unique<DummyBackend>());
 		return backends;
-	}
-
-	// Waits for an event whose data matches; false after five seconds.
-	template <typename Match> bool waitForEvent(Client& client, const std::string& name, Match match)
-	{
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-		while (std::chrono::steady_clock::now() < deadline)
-		{
-			const std::optional<Message> message = client.wait(std::chrono::milliseconds(50));
-			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
-			if (event != nullptr && event->name == name && match(event->data))
-				return true;
-		}
-		return false;
 	}
 
 	// A project whose output depends on routing: the input through an audio track and a group to the output, and a

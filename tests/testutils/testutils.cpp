@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "testutils/testutils.h"
 
+#include "engine/engine.h"
+
 #include <miniz.h>
 
 #include <algorithm>
@@ -14,6 +16,7 @@
 #include <stdexcept>
 #include <system_error>
 #include <utility>
+#include <variant>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -382,5 +385,23 @@ namespace gnubase::test
 		mz_zip_writer_end(&zip);
 		if (!written)
 			throw std::runtime_error("cannot write " + path);
+	}
+
+	std::optional<nlohmann::json> waitForEvent(engine::Client& client, const std::string& name,
+		const std::function<bool(const nlohmann::json&)>& match, std::chrono::milliseconds timeout)
+	{
+		const auto until = std::chrono::steady_clock::now() + timeout;
+		while (std::chrono::steady_clock::now() < until)
+		{
+			const auto left =
+				std::chrono::duration_cast<std::chrono::milliseconds>(until - std::chrono::steady_clock::now());
+			std::optional<engine::Message> message = client.wait(std::max(left, std::chrono::milliseconds(1)));
+			if (!message)
+				break;
+			if (auto* event = std::get_if<engine::Event>(&*message);
+				event != nullptr && event->name == name && (!match || match(event->data)))
+				return std::move(event->data);
+		}
+		return std::nullopt;
 	}
 }
