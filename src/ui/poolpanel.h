@@ -93,7 +93,9 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_question; // prepare-archive.rml while it asks
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 		std::map<uint64_t, std::string> m_jobs; // the running jobs of pool commands it reports, with their commands
+		LevelSteps m_levelSteps;                // whether a step changed only channels' levels (#1881)
 		Subscription m_changed;
+		Subscription m_channelChanged;
 		Subscription m_saved;
 		Subscription m_jobProgress;
 		Subscription m_jobFinished;

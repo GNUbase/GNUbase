@@ -146,12 +146,26 @@ namespace gnubase::ui
 		// part editor snaps with snap.changed.
 		for (const char* event : {"history.changed", "project.reset", "quantize.changed", "snap.changed"})
 			m_subscriptions.push_back(m_binding.on(event,
-				[this, reset = std::string(event) == "project.reset"](const engine::Event&)
+				[this, reset = std::string(event) == "project.reset",
+					history = std::string(event) == "history.changed"](const engine::Event& changed)
 				{
+					// A step that changed only channels needs no project read, which the editor shows nothing of
+					// (#1881). But the drum pads' samples decide which pitches Show Drum Sounds in Use by Instrument
+					// lists (editor.get's soundsInUse): after a channel-only step that changed more than levels and
+					// sends, such as Reset Pad, it asks for its view again.
+					const bool levels = (history || reset) && m_levelSteps.levelsOnly(changed);
+					if (changedOnly(changed, {"channel.changed"}))
+					{
+						if (!levels)
+							requestView();
+						return;
+					}
 					requestProject();
 					if (reset)
 						requestView(); // a new project closes the editors
 				}));
+		m_subscriptions.push_back(
+			m_binding.on("channel.changed", [this](const engine::Event& event) { m_levelSteps.keep(event); }));
 		m_subscriptions.push_back(m_binding.on("editor.changed",
 			[this](const engine::Event& event)
 			{
@@ -197,6 +211,7 @@ namespace gnubase::ui
 				{
 					m_project = result.value;
 					m_read = m_binding.handed();
+					m_levelSteps.read(m_project); // so that a fader's first step on a channel asks for no view
 					// The view leaves out parts that are gone; ask again, so that it has their removal too.
 					requestView();
 				}

@@ -251,7 +251,7 @@ namespace gnubase::ui
 		const TimeFormat format = m_display.rulerFormat();
 		std::vector<uint64_t> markers = m_markerSource ? m_markerSource() : std::vector<uint64_t>();
 		const bool markersChanged = markers != m_markerSelection;
-		if ((selection == m_selection && m_display.loads() == m_loads && format == m_format && !markersChanged &&
+		if ((selection == m_selection && m_display.answers() == m_loads && format == m_format && !markersChanged &&
 				!m_notesDirty) ||
 			!m_root->IsVisible(true)) // hidden: it asks once it shows
 			return;
@@ -270,7 +270,7 @@ namespace gnubase::ui
 		m_markerSelection = std::move(markers);
 		m_markers.clear();
 		m_selection = selection;
-		m_loads = m_display.loads();
+		m_loads = m_display.answers();
 		m_format = format;
 		m_notesDirty = false;
 		if (m_showsNotes)

@@ -481,6 +481,17 @@ namespace gnubase::engine
 				m_events.end());
 	}
 
+	std::vector<std::string> CommandContext::eventNames() const
+	{
+		std::vector<std::string> names;
+		if (m_outer != nullptr)
+			return names;
+		for (const Event& event : m_events)
+			if (std::find(names.begin(), names.end(), event.name) == names.end())
+				names.push_back(event.name);
+		return names;
+	}
+
 	Json CommandContext::call(const std::string& command, const Json& parameters)
 	{
 		if (m_outer != nullptr)

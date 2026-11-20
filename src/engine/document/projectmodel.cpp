@@ -3809,7 +3809,7 @@ namespace gnubase::engine
 				step.change = std::move(change);
 				step.movedTracks.insert(step.movedTracks.end(), m_movingTracks.begin(), m_movingTracks.end());
 			}
-			announceHistory(context);
+			announceHistory(context, true);
 			return;
 		}
 		ProjectChange change = known ? std::move(*known) : difference(before, m_project);
@@ -3818,17 +3818,22 @@ namespace gnubase::engine
 		HistoryStep step{std::move(action), now(), {}, std::move(change), std::move(merge)};
 		step.movedTracks = m_movingTracks;
 		m_history.record(std::move(step));
-		announceHistory(context);
+		announceHistory(context, true);
 	}
 
-	void ProjectModel::announceHistory(CommandContext& context) const
+	void ProjectModel::announceHistory(CommandContext& context, bool step) const
 	{
 		const std::vector<HistoryStep>& steps = m_history.steps();
 		const size_t position = m_history.position();
-		context.emit("history.changed",
-			{{"position", position}, {"steps", steps.size()},
-				{"undo", position > 0 ? Json(steps[position - 1].action) : Json(nullptr)},
-				{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}});
+		Json data = {{"position", position}, {"steps", steps.size()},
+			{"undo", position > 0 ? Json(steps[position - 1].action) : Json(nullptr)},
+			{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}};
+		// Only where the events tell the whole change: not inside another command, which may announce more after it
+		// (eventNames is empty there), nor for undo and redo, which put back what the steps recorded.
+		if (const std::vector<std::string> events = step ? context.eventNames() : std::vector<std::string>();
+			!events.empty())
+			data["events"] = events;
+		context.emit("history.changed", std::move(data));
 	}
 
 	void ProjectModel::updateSoloNotes()
