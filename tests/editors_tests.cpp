@@ -200,6 +200,38 @@ TEST_CASE("the Visibility tab shows and hides tracks' parts in an editor", "[uni
 	CHECK(ids(f.view("window").at("parts")) == std::vector<uint64_t>{keys1, keys2, synth1}); // nothing changed
 }
 
+TEST_CASE("tracks hidden in the project window or holding locked parts can't show in an editor", "[unit]")
+{
+	// Reference manual p. 1151 (#625).
+	Fixture f;
+	const uint64_t folder = f.track("folder");
+	const uint64_t keys = f.track("midi", folder);
+	const uint64_t pads = f.track("midi", folder);
+	const uint64_t bass = f.track("midi");
+	const uint64_t keys1 = f.part(keys, 0);
+	const uint64_t pads1 = f.part(pads, 0);
+	const uint64_t bass1 = f.part(bass, 0);
+	f.call("editor.open", {{"editor", "window"}, {"parts", {bass1}}});
+
+	f.call("trackVisibility.set", {{"hidden", {pads}}});
+	CHECK_THAT(f.fails("editor.set", {{"editor", "window"}, {"showTracks", {pads}}}),
+		ContainsSubstring("hidden in the project window"));
+	// A folder shows the tracks inside it that aren't hidden.
+	Json view = f.call("editor.set", {{"editor", "window"}, {"showTracks", {folder}}});
+	CHECK(ids(view.at("parts")) == std::vector<uint64_t>{keys1, bass1});
+	// Hiding a track that can't show still works.
+	view = f.call("editor.set", {{"editor", "window"}, {"hideTracks", {keys, pads}}});
+	CHECK(ids(view.at("parts")) == std::vector<uint64_t>{bass1});
+
+	f.call("trackVisibility.set", {{"hidden", Json::array()}});
+	f.call("event.set", {{"events", {keys1}}, {"lock", true}});
+	CHECK_THAT(f.fails("editor.set", {{"editor", "window"}, {"showTracks", {keys}}}), ContainsSubstring("locked"));
+	CHECK_THAT(f.fails("editor.set", {{"editor", "window"}, {"showTracks", {folder}}}), ContainsSubstring("locked"));
+	CHECK(ids(f.view("window").at("parts")) == std::vector<uint64_t>{bass1}); // nothing changed
+	view = f.call("editor.set", {{"editor", "window"}, {"showTracks", {pads}}});
+	CHECK(ids(view.at("parts")) == std::vector<uint64_t>{pads1, bass1});
+}
+
 TEST_CASE("an editor whose parts are all removed still takes settings that don't change its parts", "[unit]")
 {
 	Fixture f;

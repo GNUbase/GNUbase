@@ -29,7 +29,9 @@ Each emits `editor.changed` with the view.
   lists the parts that selecting and editing reach, for the editors' contents to use.
 - **Visibility** (pp. 1148-1152): `showTracks` shows every MIDI part of the tracks, of all tracks in a folder, and
   activates the last; `hideTracks` hides theirs; `exclusive` hides every other track first. At least one part stays
-  shown, and a track without parts can't show. `activeTrack` activates a track's first part shown.
+  shown, and a track without parts can't show, nor can a track hidden in the project window
+  ([track-visibility.md](track-visibility.md)) or a track or folder that holds locked events or parts (p. 1151); a
+  folder leaves out its hidden tracks. `activeTrack` activates a track's first part shown.
 - **Global tracks** (pp. 1144-1146): the tempo, signature, chord, ruler, arranger, marker and transpose tracks the editor
   window shows above its events, in the track
   list's order. The lower zone's editor has none, as in the reference.
@@ -100,7 +102,7 @@ setup with the project.
   own view, parts refused that aren't parts, no undo step and no change of the project, closing that lets go of
   the parts and Keep Editor Contents; the active part and track and the editable parts in each editing mode; removed
   parts leaving and coming back with undo; showing, hiding and exclusively showing tracks and folders, the last track
-  kept and tracks without parts refused; global tracks in the track list's order, refused for the lower zone and for
+  kept and tracks without parts, hidden tracks and tracks with locked parts refused; global tracks in the track list's order, refused for the lower zone and for
   other tracks, removed tracks leaving; a new project closing the editors.
 - `tests/midieditor_tests.cpp` drives the app with `ui::Automation`: Open/Close Editor for three parts on two tracks
   opens the editor window with them in order, the Activate Part for Editing menu lists them under their tracks and

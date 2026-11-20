@@ -11,6 +11,7 @@
 #include "engine/document/drumtrack.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
+#include "engine/document/trackvisibility.h"
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/drummaps.h"
@@ -510,6 +511,28 @@ namespace gnubase::engine
 			return std::find(items.begin(), items.end(), item) != items.end();
 		}
 
+		// The Visibility tab can't show a track hidden in the project window, or a track or folder that holds locked
+		// events or parts (p. 1151).
+		void requireShowable(const Project& project, ObjectId track, const std::vector<ObjectId>& hidden)
+		{
+			const std::string name = "track " + std::to_string(track);
+			require(project.trackById.count(track) != 0, "no " + name);
+			require(!contains(hidden, track), name + " is hidden in the project window");
+			std::vector<ObjectId> tracks = {track}; // with the tracks inside it
+			for (size_t i = 0; i < tracks.size(); ++i)
+			{
+				const std::vector<ObjectId>& children = project.trackById.at(tracks[i]).children;
+				tracks.insert(tracks.end(), children.begin(), children.end());
+			}
+			const auto locked = [&tracks](const auto& items)
+			{
+				return std::any_of(items.begin(), items.end(),
+					[&tracks](const auto& item) { return item.second.lock && contains(tracks, item.second.track); });
+			};
+			require(!locked(project.midiParts) && !locked(project.audioParts) && !locked(project.audioEvents),
+				name + " holds locked events or parts");
+		}
+
 		std::vector<ObjectId> checkedParts(const Project& project, const std::vector<ObjectId>& parts)
 		{
 			for (const ObjectId id : parts)
@@ -803,7 +826,9 @@ namespace gnubase::engine
 				"Changes what an open editor shows (reference manual pp. 1142-1156); what isn't given stays. "
 				"parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, "
 				"showTracks shows every MIDI part of these tracks (all tracks in a folder), in the audio part editor "
-				"(content audioPart, also one given with it) every audio part, and activates the last, "
+				"(content audioPart, also one given with it) every audio part, and activates the last; tracks hidden "
+				"in the project window (trackVisibility.set) and tracks or folders that hold locked events or parts "
+				"can't show, and a folder leaves out its hidden tracks. "
 				"hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, "
 				"activePart a part shown. editingMode (an in-place editor's allParts or activePart), keepContents and "
 				"globalTracks (tempo, signature, chord, ruler, arranger, marker and transpose tracks, the editor "
@@ -860,9 +885,15 @@ namespace gnubase::engine
 				if (parameters.contains("content"))
 					view.content = parameters.at("content").get<std::string>();
 				const bool audio = showsAudio(view);
+				const std::vector<ObjectId> hidden = hiddenTracks(project);
 				for (const ObjectId track : ids(parameters, "showTracks"))
 				{
-					const std::vector<ObjectId> shown = partsOf(project, track, audio);
+					requireShowable(project, track, hidden);
+					std::vector<ObjectId> shown = partsOf(project, track, audio);
+					shown.erase(std::remove_if(shown.begin(), shown.end(),
+									[&](ObjectId part) { return contains(hidden, trackOf(project, part)); }),
+						shown.end());
+					require(!shown.empty(), "track " + std::to_string(track) + " has no parts that can show");
 					view.parts.insert(view.parts.end(), shown.begin(), shown.end());
 					view.activePart = shown.front(); // showing a track activates it (p. 1151)
 				}
