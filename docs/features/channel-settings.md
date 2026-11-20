@@ -60,7 +60,9 @@ pictures and the notepad too with Set up Window Layout, which keeps the window's
   Add Effect Track to Send: it opens the add track dialog on the effect page in that window, with the track and the
   send (the document's `tracks`, `send` and `below` attributes), and the dialog's Add Track passes them to
   `track.add`: the new effect track goes below the track whose send it is. The list
-  shows the send's destination again when the project comes back.
+  shows the send's destination again when the project comes back. While the add track dialog is open, also in another
+  window, it comes to the front as it is instead, one dialog at a time: what was typed stays, and the send keeps its
+  destination, which the window's test of Add Effect Track to Send checks too.
 
 ## Not yet
 
