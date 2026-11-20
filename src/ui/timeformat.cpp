@@ -25,6 +25,24 @@ namespace gnubase::ui
 		return g_projectTimeBuilds;
 	}
 
+	double axisFraction(double ticks, int64_t from, int64_t to, const time::TempoMap* tempo)
+	{
+		if (tempo == nullptr)
+			return (ticks - static_cast<double>(from)) / static_cast<double>(std::max(to - from, int64_t{1}));
+		const double start = tempo->toSecondsExact(static_cast<double>(from));
+		const double end = tempo->toSecondsExact(static_cast<double>(to));
+		return end > start ? (tempo->toSecondsExact(ticks) - start) / (end - start) : 0.0;
+	}
+
+	double axisTicks(double fraction, int64_t from, int64_t to, const time::TempoMap* tempo)
+	{
+		if (tempo == nullptr)
+			return static_cast<double>(from) + (fraction * static_cast<double>(to - from));
+		const double start = tempo->toSecondsExact(static_cast<double>(from));
+		const double end = tempo->toSecondsExact(static_cast<double>(to));
+		return tempo->toTicksExact(start + (fraction * (end - start)));
+	}
+
 	double clampPositionSeconds(double seconds, double sampleRate)
 	{
 		if (!(seconds > 0.0) || !(sampleRate > 0.0))
