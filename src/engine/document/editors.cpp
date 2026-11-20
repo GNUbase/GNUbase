@@ -518,16 +518,18 @@ namespace gnubase::engine
 			const std::string name = "track " + std::to_string(track);
 			require(project.trackById.count(track) != 0, "no " + name);
 			require(!contains(hidden, track), name + " is hidden in the project window");
-			std::vector<ObjectId> tracks = {track}; // with the tracks inside it
-			for (size_t i = 0; i < tracks.size(); ++i)
+			const auto inside = [&project, track](ObjectId id) // the track, or a track inside it
 			{
-				const std::vector<ObjectId>& children = project.trackById.at(tracks[i]).children;
-				tracks.insert(tracks.end(), children.begin(), children.end());
-			}
-			const auto locked = [&tracks](const auto& items)
+				for (auto found = project.trackById.find(id); found != project.trackById.end();
+					found = project.trackById.find(found->second.parent))
+					if (found->first == track)
+						return true;
+				return false;
+			};
+			const auto locked = [&inside](const auto& items)
 			{
 				return std::any_of(items.begin(), items.end(),
-					[&tracks](const auto& item) { return item.second.lock && contains(tracks, item.second.track); });
+					[&inside](const auto& item) { return item.second.lock && inside(item.second.track); });
 			};
 			require(!locked(project.midiParts) && !locked(project.audioParts) && !locked(project.audioEvents),
 				name + " holds locked events or parts");
