@@ -65,6 +65,7 @@ namespace
 	MidiMessage noteOff(uint8_t pitch)
 	{
 		MidiMessage message;
+		message.size = 3;
 		message.bytes = {0x80, pitch, 0};
 		return message;
 	}
@@ -464,11 +465,12 @@ TEST_CASE("the dummy MIDI backend keeps the port contract and reports loopbacks 
 		std::map<uint8_t, int> sounding;
 		for (const auto& received : listener.messages())
 		{
-			const std::array<uint8_t, 3>& bytes = received.first.bytes;
-			if ((bytes[0] & 0xf0U) == 0x90 && bytes[2] > 0)
-				++sounding[bytes[1]];
-			else if ((bytes[0] & 0xf0U) == 0x80)
-				--sounding[bytes[1]];
+			CHECK(received.first.size == 3); // a size-0 note off would go out of JACK as an empty event
+			const uint8_t pitch = received.first.bytes[1];
+			if (received.first == noteOn(pitch))
+				++sounding[pitch];
+			else if (received.first == noteOff(pitch))
+				--sounding[pitch];
 		}
 		CHECK(sounding.size() == 3);
 		for (const auto& [pitch, count] : sounding)
