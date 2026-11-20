@@ -2,6 +2,7 @@
 // Plugin slots (#282): plugin.insert, plugin.remove, plugin.move and plugin.set change the plugins in a channel's
 // slots, each as one undo step that changes nothing if it fails (ProjectModel::add); plugin.list and plugin.get read
 // them. The engine makes and runs the plugins from the render snapshot.
+#include "engine/document/channelsettings.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
@@ -106,21 +107,6 @@ namespace gnubase::engine
 			return {{"slot", std::move(described)}};
 		}
 
-		// Removes the automation lanes of a slot's plugin, which go with the plugin when it leaves its channel.
-		void removeAutomation(Project& project, CommandContext& context, ObjectId slot)
-		{
-			for (auto lane = project.automation.begin(); lane != project.automation.end();)
-			{
-				if (lane->second.target.type != AutomationTargetType::Plugin || lane->second.target.slot != slot)
-				{
-					++lane;
-					continue;
-				}
-				context.emit("automationLane.removed", {{"lane", lane->first}});
-				lane = project.automation.erase(lane);
-			}
-		}
-
 		Json removePlugin(Project& project, CommandContext& context)
 		{
 			const Slot& slot = findSlot(project, context.parameters());
@@ -128,7 +114,7 @@ namespace gnubase::engine
 			Channel& channel = project.channels.at(slot.channel);
 			channel.slots.erase(std::find(channel.slots.begin(), channel.slots.end(), id));
 			project.slots.erase(id);
-			removeAutomation(project, context, id);
+			removePluginAutomation(project, context, id);
 			context.emit("channel.changed", {{"channel", toJson(channel)}});
 			context.emit("plugin.removed", {{"slot", id}});
 			return Json::object();
@@ -161,7 +147,7 @@ namespace gnubase::engine
 			for (const Channel* channel : from.id < to.id ? std::array{&from, &to} : std::array{&to, &from})
 				context.emit("channel.changed", {{"channel", toJson(*channel)}});
 			context.emit("plugin.changed", {{"slot", described}});
-			removeAutomation(project, context, slot.id);
+			removePluginAutomation(project, context, slot.id);
 			return {{"slot", std::move(described)}};
 		}
 
