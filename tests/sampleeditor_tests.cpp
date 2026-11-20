@@ -2,6 +2,7 @@
 // The sample editor's engine side (#140, docs/features/sample-editor.md): the sampleEditor.* view with its selection
 // range, and the regions of clips. tests/sampleeditor_ui_tests.cpp drives the editor in the app.
 #include "engine/engine.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -9,6 +10,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <iterator>
 #include <map>
 #include <string>
 
@@ -40,11 +42,11 @@ namespace
 		}
 
 		// A linear audio track with an event at one second playing frames 1000 to 5000 of a 9600-frame file.
-		Fixture(const std::string& path = "take.wav")
+		Fixture(const std::string& path = "take.wav", int channels = 1)
 		{
 			track = call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id").get<int64_t>();
 			const Json media =
-				call("media.add", {{"path", path}, {"sampleRate", 48000}, {"channels", 1}, {"length", 9600}})
+				call("media.add", {{"path", path}, {"sampleRate", 48000}, {"channels", channels}, {"length", 9600}})
 					.at("media");
 			clip = call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
 			event = call("audioEvent.add",
@@ -248,4 +250,324 @@ TEST_CASE("regions that aren't sections of their clip are left out when a projec
 	REQUIRE(loaded.size() == 2);
 	CHECK(loaded.at(0).at("name") == "To the end"); // by start
 	CHECK(loaded.at(1).at("name") == "Kept");
+}
+
+namespace
+{
+	Json process(Fixture& f, const std::string& operation, int64_t start, int64_t end,
+		const std::string& sharedCopies = "newVersion")
+	{
+		const Json job = f.call("sampleEditor.process",
+							  {{"event", f.event}, {"operation", operation}, {"start", start}, {"end", end},
+								  {"sharedCopies", sharedCopies}})
+							 .at("job");
+		const Json done = test::waitForJob(f.client, job.at("id").get<uint64_t>());
+		INFO(done.dump());
+		REQUIRE(done.at("state") == "done");
+		return done.at("result");
+	}
+
+	Json objectWithId(const Json& objects, const Json& id)
+	{
+		for (const Json& object : objects)
+			if (object.at("id") == id)
+				return object;
+		FAIL("missing object " << id);
+	}
+
+	test::Audio processAudio()
+	{
+		test::Audio audio;
+		for (int i = 0; i < 9600; ++i)
+			audio.samples.push_back(static_cast<float>(i) / 10000.0F);
+		return audio;
+	}
+
+	test::Audio eventAudio(Fixture& f)
+	{
+		const Json project = f.call("project.get");
+		const Json event = objectWithId(project.at("audioEvents"), f.event);
+		const Json clip = objectWithId(project.at("clips"), event.at("clip"));
+		return test::readWav(objectWithId(project.at("media"), clip.at("media")).at("path").get<std::string>());
+	}
+}
+
+TEST_CASE("sample editor Process edits samples and lengths with one undo step", "[integration]")
+{
+	for (const std::string operation : {"cut", "delete", "insertSilence", "paste"})
+	{
+		CAPTURE(operation);
+		const test::TempDir dir;
+		const auto path = dir.path() / "source.wav";
+		test::Audio audio = processAudio();
+		test::writeWav(path, audio);
+		Fixture f(path.u8string());
+		f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+		if (operation == "paste")
+			process(f, "copy", 7000, 7300);
+		const Json before = f.call("project.get");
+		const size_t steps = f.call("history.get").at("steps").size();
+		process(f, operation, 2000, 3000);
+		const Json after = f.call("project.get");
+		CHECK(f.call("history.get").at("steps").size() == steps + 1);
+		test::Audio expected = audio;
+		if (operation == "insertSilence")
+		{
+			expected.samples.insert(expected.samples.begin() + 2000, 1000, 0.0F);
+		}
+		else
+		{
+			expected.samples.erase(expected.samples.begin() + 2000, expected.samples.begin() + 3000);
+			if (operation == "paste")
+				expected.samples.insert(
+					expected.samples.begin() + 2000, audio.samples.begin() + 7000, audio.samples.begin() + 7300);
+		}
+		CHECK(test::compareAudio(eventAudio(f), expected, 0.0F).equal);
+		const Json event = objectWithId(after.at("audioEvents"), f.event);
+		CHECK(event.at("offset") == 1000);
+		CHECK(event.at("length") == (operation == "insertSilence" ? 5000 : operation == "paste" ? 3300 : 3000));
+		CHECK(test::readWav(path).samples == audio.samples);
+		f.call("history.undo");
+		CHECK(f.call("project.get").at("audioEvents") == before.at("audioEvents"));
+		CHECK(f.call("project.get").at("clips") == before.at("clips"));
+		CHECK(f.call("project.get").at("media") == before.at("media"));
+		f.call("history.redo");
+		CHECK(f.call("project.get").at("audioEvents") == after.at("audioEvents"));
+		CHECK(test::compareAudio(eventAudio(f), expected, 0.0F).equal);
+		if (operation == "cut")
+		{
+			process(f, "paste", 1000, 2000);
+			CHECK(eventAudio(f).samples.at(1000) == audio.samples.at(2000));
+		}
+	}
+}
+
+TEST_CASE("sample editor Process copies replace the clipboard without an undo step", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	const test::Audio audio = processAudio();
+	test::writeWav(path, audio);
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	const size_t steps = f.call("history.get").at("steps").size();
+	process(f, "copy", 100, 200);
+	process(f, "copy", 700, 900);
+	CHECK(f.call("history.get").at("steps").size() == steps);
+	process(f, "paste", 2000, 3000);
+	const auto result = eventAudio(f);
+	CHECK(result.frames() == 8800);
+	CHECK(result.samples.at(2000) == audio.samples.at(700));
+	CHECK(result.samples.at(2199) == audio.samples.at(899));
+	CHECK(result.samples.at(2200) == audio.samples.at(3000));
+}
+
+TEST_CASE("sample editor Process chooses a new version or all shared copies", "[integration]")
+{
+	for (const std::string sharedCopies : {"newVersion", "all"})
+	{
+		CAPTURE(sharedCopies);
+		const test::TempDir dir;
+		const auto path = dir.path() / "source.wav";
+		test::writeWav(path, processAudio());
+		Fixture f(path.u8string());
+		f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+		const Json other =
+			f.call("audioEvent.add",
+				 {{"track", f.track}, {"clip", f.clip}, {"position", 96000}, {"offset", 4000}, {"length", 2000}})
+				.at("event")
+				.at("id");
+		f.call("clip.addRegion", {{"clip", f.clip}, {"start", 3500}, {"end", 6500}});
+		const Json before = f.call("project.get");
+		process(f, "delete", 2000, 3000, sharedCopies);
+		const Json project = f.call("project.get");
+		const Json edited = objectWithId(project.at("audioEvents"), f.event);
+		const Json copy = objectWithId(project.at("audioEvents"), other);
+		CHECK((edited.at("clip") == copy.at("clip")) == (sharedCopies == "all"));
+		CHECK(copy.at("offset") == (sharedCopies == "all" ? 3000 : 4000));
+		const Json clip = objectWithId(project.at("clips"), edited.at("clip"));
+		CHECK(clip.at("regions").at(0).at("start") == 2500);
+		CHECK(clip.at("regions").at(0).at("end") == 5500);
+		f.call("history.undo");
+		CHECK(f.call("project.get").at("audioEvents") == before.at("audioEvents"));
+		CHECK(f.call("project.get").at("clips") == before.at("clips"));
+	}
+}
+
+TEST_CASE("sample editor Process rejects errors and discards cancelled or stale work", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	test::writeWav(path, processAudio());
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	Json parameters = {{"event", f.event}, {"operation", "paste"}, {"start", 2000}, {"end", 3000}};
+	CHECK_THAT(f.fails("sampleEditor.process", parameters), ContainsSubstring("clipboard"));
+	parameters["operation"] = "delete";
+	parameters["end"] = 10000;
+	CHECK_THAT(f.fails("sampleEditor.process", parameters), ContainsSubstring("range"));
+	parameters["end"] = 3000;
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	CHECK_THAT(f.fails("sampleEditor.process", parameters), ContainsSubstring("locked"));
+	f.call("event.set", {{"events", {f.event}}, {"lock", false}});
+	f.call("audioEvent.add", {{"track", f.track}, {"clip", f.clip}, {"position", 96000}, {"length", 4000}});
+	CHECK_THAT(f.fails("sampleEditor.process", parameters), ContainsSubstring("sharedCopies"));
+	parameters["sharedCopies"] = "all";
+	for (const bool cancel : {true, false})
+	{
+		const Json before = f.call("project.get");
+		const Json job = test::whileHeld(f.engine, f.client, "sampleEditor.process", parameters,
+			[&](uint64_t id)
+			{
+				CHECK(f.call("sampleEditor.get").is_object());
+				if (cancel)
+					f.call("job.cancel", {{"job", id}});
+				else
+					f.call("project.set", {{"name", "Changed"}});
+			});
+		CHECK(job.at("state") == (cancel ? "cancelled" : "failed"));
+		if (!cancel)
+			CHECK_THAT(job.at("error").get<std::string>(), ContainsSubstring("changed meanwhile"));
+		CHECK(f.call("project.get").at("media") == before.at("media"));
+		CHECK(f.call("project.get").at("audioEvents") == before.at("audioEvents"));
+	}
+}
+
+TEST_CASE("sample editor Process keeps inactive shared copies consistent and removes empty events", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	test::writeWav(path, processAudio());
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	const int64_t inactive = f.event;
+	f.call("trackVersion.add", {{"tracks", {f.track}}});
+	f.event = f.call("audioEvent.add",
+				   {{"track", f.track}, {"clip", f.clip}, {"position", 48000}, {"offset", 1000}, {"length", 4000}})
+				  .at("event")
+				  .at("id")
+				  .get<int64_t>();
+	process(f, "delete", 2000, 3000, "all");
+	const Json project = f.call("project.get");
+	const Json stored = objectWithId(project.at("versionContents").at(0).at("audioEvents"), inactive);
+	CHECK(stored.at("offset") == 1000);
+	CHECK(stored.at("length") == 3000);
+	f.call("history.undo");
+	process(f, "delete", 0, 9600, "all");
+	CHECK(f.call("project.get").at("audioEvents").empty());
+	CHECK(f.call("project.get").at("versionContents").at(0).at("audioEvents").empty());
+	f.call("history.undo");
+	CHECK(objectWithId(f.call("project.get").at("audioEvents"), f.event).at("length") == 4000);
+}
+
+TEST_CASE("sample editor Process keeps ranges ordered, fades valid and progress increasing", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	test::writeWav(path, processAudio());
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	f.call("clip.setWarp", {{"clip", f.clip}, {"gridStart", 500}});
+	CHECK_THAT(
+		f.fails("sampleEditor.process", {{"event", f.event}, {"operation", "delete"}, {"start", 2000}, {"end", 3000}}),
+		ContainsSubstring("definition grid"));
+	f.call("clip.setWarp", {{"clip", f.clip}, {"gridStart", 0}, {"tempo", 120}}); // tempo alone does not warp playback
+	f.call("clip.addRegion", {{"clip", f.clip}, {"start", 2500}, {"end", 5000}, {"name", "First id"}});
+	f.call("clip.addRegion", {{"clip", f.clip}, {"start", 2200}, {"end", 5000}, {"name", "Second id"}});
+	f.call(
+		"audioEvent.setFades", {{"event", f.event}, {"fadeIn", {{"length", 1500}}}, {"fadeOut", {{"length", 1500}}}});
+	f.call("audioEvent.setVolumeCurve",
+		{{"event", f.event},
+			{"points", Json::array({{{"position", 1500}, {"volume", -6}}, {{"position", 4500}, {"volume", -3}}})}});
+	f.call("event.setSnapPoint", {{"events", {f.event}}, {"position", 48000 + 3500}});
+	std::vector<Json> progress;
+	const Json job = test::whileHeld(
+		f.engine, f.client, "sampleEditor.process",
+		{{"event", f.event}, {"operation", "cut"}, {"start", 2000}, {"end", 3000}, {"sharedCopies", "all"}},
+		[](uint64_t) {}, &progress);
+	REQUIRE(job.at("state") == "done");
+	for (size_t i = 1; i < progress.size(); ++i)
+		CHECK(progress.at(i).at("progress").get<double>() >= progress.at(i - 1).at("progress").get<double>());
+	const Json project = f.call("project.get");
+	const Json event = objectWithId(project.at("audioEvents"), f.event);
+	CHECK(event.at("fadeIn").at("length") == 1000);
+	CHECK(event.at("fadeOut").at("length") == 1500);
+	CHECK(event.at("volumeCurve").at(1).at("position") == 3500);
+	CHECK(event.at("snapPoint") == 3500);
+	const Json regions = objectWithId(project.at("clips"), f.clip).at("regions");
+	CHECK(regions.at(0).at("name") == "First id");
+	CHECK(regions.at(1).at("name") == "Second id");
+}
+
+TEST_CASE("sample editor Process failures preserve the clipboard and clean their files", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	const test::Audio original = processAudio();
+	test::writeWav(path, original);
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	process(f, "copy", 700, 900);
+	const Json parameters = {{"event", f.event}, {"operation", "cut"}, {"start", 2000}, {"end", 3000}};
+	const auto filesBefore =
+		std::distance(std::filesystem::directory_iterator(dir.path() / "Audio"), std::filesystem::directory_iterator());
+	const Json stale = test::whileHeld(f.engine, f.client, "sampleEditor.process", parameters,
+		[&](uint64_t) { f.call("project.set", {{"name", "Changed"}}); });
+	CHECK(stale.at("state") == "failed");
+	CHECK(std::distance(std::filesystem::directory_iterator(dir.path() / "Audio"),
+			  std::filesystem::directory_iterator()) == filesBefore);
+	test::settlePeaks(f.client);
+	test::Audio shortFile = original;
+	shortFile.samples.resize(2500);
+	test::writeWav(path, shortFile);
+	const Json job = f.call("sampleEditor.process", parameters).at("job");
+	const Json failed = test::waitForJob(f.client, job.at("id").get<uint64_t>());
+	CHECK(failed.at("state") == "failed");
+	CHECK_THAT(failed.at("error").get<std::string>(), ContainsSubstring("file ends"));
+	test::writeWav(path, original);
+	process(f, "paste", 2000, 3000);
+	CHECK(eventAudio(f).samples.at(2000) == original.samples.at(700));
+	CHECK(eventAudio(f).frames() == 8800);
+	Json completion = parameters;
+	completion.update({{"revision", 0}, {"inserted", 0}});
+	CHECK_THAT(f.fails("sampleEditor.finishProcess", completion), ContainsSubstring("only a Process job"));
+	CHECK_THAT(f.fails("sampleEditor.applyProcess", completion), ContainsSubstring("only a Process job"));
+}
+
+TEST_CASE("sample editor Process preserves interleaved channels and rejects incompatible paste", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "stereo.wav";
+	test::Audio stereo;
+	stereo.channels = 2;
+	for (const float sample : processAudio().samples)
+	{
+		stereo.samples.push_back(sample);
+		stereo.samples.push_back(-sample);
+	}
+	test::writeWav(path, stereo);
+	Fixture f(path.u8string(), 2);
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	process(f, "copy", 100, 200);
+	process(f, "paste", 2000, 3000);
+	const test::Audio result = eventAudio(f);
+	CHECK(result.frames() == 8700);
+	CHECK(result.channels == 2);
+	CHECK(result.samples.at(4000) == stereo.samples.at(200));
+	CHECK(result.samples.at(4001) == stereo.samples.at(201));
+	CHECK(result.samples.at(4200) == stereo.samples.at(6000));
+	for (const bool rate : {true, false})
+	{
+		const Json media = f.call("media.add",
+								{{"path", path.u8string()}, {"sampleRate", rate ? 44100 : 48000},
+									{"channels", rate ? 2 : 1}, {"length", 9600}})
+							   .at("media")
+							   .at("id");
+		const Json clip = f.call("clip.add", {{"media", media}}).at("clip").at("id");
+		const Json event =
+			f.call("audioEvent.add", {{"track", f.track}, {"clip", clip}, {"position", 96000}}).at("event").at("id");
+		CHECK_THAT(
+			f.fails("sampleEditor.process", {{"event", event}, {"operation", "paste"}, {"start", 1000}, {"end", 2000}}),
+			ContainsSubstring("must match"));
+	}
 }

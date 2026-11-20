@@ -33,6 +33,32 @@ regions that aren't sections of the clip's media file. Each command is one undo 
 Snap to zero crossing reads the file on the command thread with `zeroCrossingFrame` (`snap.h`), which `event.split` and
 `event.resize` use too ([snap.md](snap.md)). The snap point is the event's (`event.setSnapPoint`, snap.md).
 
+## Process commands
+
+`sampleEditor.process` implements the Basic Commands on an audio event's clip range (reference manual pp. 619-620). It
+takes `event`, `start` and `end` in clip frames and `operation`: `cut`, `copy`, `paste`, `delete` or `insertSilence`.
+Cut and Delete close the gap; Paste replaces the range with the copied samples; Insert Silence inserts the range's
+length at its start without replacing any audio. Copy and Cut replace an engine audio clipboard, independent of the
+system text clipboard and of undo. Paste currently requires matching sample rates and channel counts.
+
+File reads and writes run as cancellable jobs, streaming blocks to new float WAV files in the project's media folder
+(the recording folder before saving). The result is `job`; its result contains `clip`, `media` and `length` for an edit,
+or `copied` for Copy. Original files stay intact. Failed, cancelled and stale jobs discard their files and leave the
+clipboard alone. An edit fails if the project's revision changed during the job; selection changes and saving do not
+invalidate it. These asynchronous commands cannot be used in `history.transaction`.
+
+`sharedCopies` must be chosen when another event uses the clip: `newVersion` makes an independent clip for this event;
+`all` edits the existing clip and adjusts its other events, including inactive track versions. Locked events and locked
+audio parts refuse edits. Each edit is one undo step, restoring the original clip, media and events. Clip regions,
+hitpoints, event offsets, lengths, fades, volume points and snap points follow the changed range; empty regions and
+events disappear. Active warping must be flattened before editing; edited definition grids are not supported in this
+first implementation. A tempo value alone does not warp playback and is preserved. The internal completion commands
+`sampleEditor.applyProcess` and `sampleEditor.finishProcess` accept only engine-posted work; clients use
+`sampleEditor.process`.
+
+The Process menu, keys and shared-copy prompt still need UI wiring (#1968). The editor's layout, ruler and level scale,
+dragging regions, Zoom submenu and Draw tool remain in #730.
+
 ## In the UI
 
 `ui::SampleEditor` (`src/ui/sampleeditor.h`) fills the sample editor window (`resources/ui/sample-editor.rml`), which
@@ -108,12 +134,14 @@ and snapping to it, the level scale and vertical zoom, and horizontal scrolling 
 the overview; the Zoom submenu; Solo Editor, Audition, auto-scroll, the independent track loop and the toolbar's context
 menu; positions in the project's time format, and typing them; the Draw tool's volume curve and sample editing; moving
 regions' edges with the mouse and dragging regions into the project window; the clip's snap point when opened from the
-pool; the Process section's Cut, Copy, Paste, Delete and Insert Silence (#1968, pp. 619-620). Hooks for other tickets:
-offline processing (#141) and making a sampler track of the range; what warping doesn't have yet is in
-[warp.md](warp.md).
+pool; the UI for the Process section's Basic Commands (#1968, pp. 619-620). Hooks for other tickets: offline processing
+(#141) and making a sampler track of the range; what warping doesn't have yet is in [warp.md](warp.md).
 
 ## Checks
 
+- `tests/sampleeditor_tests.cpp`: Process samples and lengths for Cut, Delete, Paste and Insert Silence, Copy and
+  clipboard replacement, shared-copy choices, regions and fades following edits, stereo samples, undo/redo, errors,
+  cancellation, stale jobs and file cleanup.
 - `tests/sampleeditor_tests.cpp`: the view as view state with its event and selection, Select All, None, Event and in
   Loop, a range of its own and its errors, an event that goes and comes back with undo, opening and closing, another
   event dropping the selection, a new project closing it; zero crossings of a sine; regions added, sorted, changed
