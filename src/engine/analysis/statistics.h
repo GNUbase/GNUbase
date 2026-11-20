@@ -10,7 +10,7 @@
 #include <vector>
 
 // The audio functions (#147, docs/features/audio-functions.md): detecting silence and the statistics of audio. They
-// allocate and take time in proportion to the audio, so they run on the command thread, never on audio threads.
+// allocate and take time in proportion to the audio, so they run on job threads, never on audio threads.
 namespace gnubase::engine::analysis
 {
 	struct SilenceSettings
@@ -62,6 +62,26 @@ namespace gnubase::engine::analysis
 		std::vector<Section> m_sections;
 	};
 
+	// Monophonic fundamental, 40-2000 Hz, from the loudest 2048-sample window after averaging down to about 12 kHz.
+	// Bounded memory and work at finish; no estimate for nonperiodic, silent or too short audio.
+	class PitchEstimator
+	{
+	public:
+		explicit PitchEstimator(double sampleRate);
+		void feed(const float* samples, size_t count, size_t stride = 1);
+		std::optional<double> finish();
+
+	private:
+		void keepWindow();
+		double m_rate;
+		size_t m_decimation;
+		size_t m_count = 0;
+		double m_sum = 0.0;
+		double m_energy = 0.0;
+		std::vector<double> m_pending;
+		std::vector<double> m_best;
+	};
+
 	struct ChannelStatistics
 	{
 		double minSample = 0.0;      // the lowest sample
@@ -71,7 +91,7 @@ namespace gnubase::engine::analysis
 		int bitDepth = 0;            // the bits the samples need, 32 for floating point, 0 for silence
 		double averageRms = 0.0;     // the RMS of every sample
 		double maxRms = 0.0;         // the highest RMS of 50 ms windows, 10 ms apart; averageRms if shorter
-		std::optional<double> pitch; // Hz, the strongest frequency
+		std::optional<double> pitch; // Hz, the estimated fundamental
 	};
 
 	// The statistics of each channel of audio fed to it in blocks of interleaved frames (the Statistics window,
@@ -92,10 +112,10 @@ namespace gnubase::engine::analysis
 			double squares = 0.0;
 			std::array<double, 5> parts{}; // the squares of the last five 10 ms parts
 			double part = 0.0;             // the squares of the 10 ms part so far
-			PowerSpectrum spectrum;
+			PitchEstimator pitch;
+			explicit Channel(double sampleRate) : pitch(sampleRate) {}
 		};
 
-		double m_sampleRate = 0.0;
 		std::vector<Channel> m_channels;
 		int64_t m_frames = 0;
 		int64_t m_part = 0; // frames in a 10 ms part
