@@ -1485,6 +1485,11 @@ meter .meter-peak
 	cursor: resize;
 }
 
+.event-display .event-area[pointer=resizeVertical]
+{
+	cursor: ns-resize;
+}
+
 /* The name of a tool chosen with a key command, for a moment, at the top of the event lanes; the document gives it
    the tooltip's look. */
 .event-display .tool-notification

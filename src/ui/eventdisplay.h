@@ -313,9 +313,10 @@ namespace gnubase::ui
 		// The selection range, also in the root's attributes range ("start end") and range-tracks (ids); none
 		// without the range selection tool. Choosing another tool selects the events in the range instead.
 		const std::optional<RangeSelection>& range() const { return m_range; }
-		// A drag in it on one of its tracks, without Shift, moves its contents (range.move), with the tool modifier
-		// dragDrop.copy copies them, and the range goes with them (reference manual p. 291); a click there without a
-		// drag selects a range of no length, as anywhere.
+		// A drag in it on one of its tracks, without Shift, moves its contents (range.move), across and onto other
+		// tracks, with the tool modifier dragDrop.copy copies them, and the range goes with them (reference manual
+		// p. 291); a drag just inside one of its edges moves that edge (p. 288); a click there without a drag selects
+		// a range of no length, as anywhere.
 		void setRange(std::optional<RangeSelection> range);
 		// Importing files (#92, fileimport.cpp, docs/features/file-import.md). MIDI files (.mid, .midi, .smf) are
 		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the
@@ -434,6 +435,7 @@ namespace gnubase::ui
 			Rectangle,     // a rectangle that selects, mutes or zooms
 			Range,         // a selection range
 			RangeMove,     // the selection range's contents, or a copy of them, from m_dragRange
+			RangeEdge,     // m_rangeEdge of the selection range, from m_dragRange
 			DrawPart,      // a new MIDI part
 			Comp,          // brings what it is released on to the front, or comps the range dragged on a lane
 			Play,          // auditions or scrubs until the mouse is released
@@ -760,8 +762,23 @@ namespace gnubase::ui
 		void toolMove(double x, double y);
 		void toolUp(double x, double y);
 		bool toolDoubleClick(double x, double y); // whether it took the double click
-		void setRangeFrom(double x, double y);    // from the drag's start
-		void selectRange();                       // the events in it, when another tool takes over
+		// The selection range's edges, of which a press just inside one drags it, with the range tool and no Shift.
+		enum class RangeEdge : uint8_t
+		{
+			None,
+			Start,
+			End,
+			Top,
+			Bottom,
+		};
+		RangeEdge rangeEdgeAt(double x, double y) const;
+		// The lanes' tracks, each once: a track's automation tracks' lanes have its id too (#121).
+		std::vector<uint64_t> shownTracks() const;
+		// Where a RangeMove drag to x and y dp has the range from, and a RangeEdge drag.
+		RangeSelection movedRange(const RangeSelection& from, double x, double y) const;
+		RangeSelection resizedRange(const RangeSelection& from, double x, double y) const;
+		void setRangeFrom(double x, double y); // from the drag's start
+		void selectRange();                    // the events in it, when another tool takes over
 		void showRange();
 		// Moves the range's edges to zero crossings of the audio on its tracks (reference manual p. 285), with Snap to
 		// Zero Crossing on: snap.zeroCrossings answers later, and actions wait until it has (EngineBinding::sendAwaited
@@ -931,9 +948,10 @@ namespace gnubase::ui
 		uint64_t m_resizeGesture = 0;   // counts drags of edges, so that late answers are dropped
 		uint64_t m_dragEvent = 0;       // pressed on
 		bool m_dragMoved = false;
-		double m_dragDy = 0.0;              // dp, dragging the event volume or a curve point
-		std::optional<size_t> m_dragPoint;  // the curve point dragged, none for a new one
-		bool m_dragStarted = false;         // moving events, after the drag delay; a RangeMove drag, once across
+		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
+		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
+		// Moving events, after the drag delay; a RangeMove drag, once across or on other tracks.
+		bool m_dragStarted = false;
 		bool m_dragToggles = false;         // a Ctrl/Shift click takes the pressed event or point out of the selection
 		bool m_clickSelectsPoint = false;   // a click on a point of a larger selection selects only that point
 		double m_pressTime = 0.0;           // RmlUi's clock, in seconds
@@ -990,7 +1008,8 @@ namespace gnubase::ui
 		std::optional<RangeSelection> m_range;
 		std::optional<RangeSelection> m_rangeBase; // what a drag with Shift adds to
 		bool m_rangeAnew = false;                  // a Shift press in m_rangeBase, which a drag replaces
-		std::optional<RangeSelection> m_dragRange; // the range a RangeMove drag moves, as it was
+		std::optional<RangeSelection> m_dragRange; // the range a RangeMove or RangeEdge drag changes, as it was
+		RangeEdge m_rangeEdge = RangeEdge::None;   // the edge a RangeEdge drag moves
 		double m_pressX = 0.0;                     // dp in the event lanes
 		double m_pressY = 0.0;
 		std::string m_pressed; // the modifiers held at the press: ctrl, alt and shift joined with +

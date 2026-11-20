@@ -1536,14 +1536,14 @@ namespace gnubase::ui
 
 	void EventDisplay::mouseDown(Rml::Event& event, Rml::Element& target)
 	{
-		// A drag of edges whose release the display didn't see (#732), or of a range's contents, which puts the range
-		// back.
+		// A drag whose release the display didn't see (#732): of events' edges, or of a range's contents or edges,
+		// which puts the range back.
 		if (!m_resizeWanted.is_null())
 		{
 			endResize();
 			showProject();
 		}
-		if (m_drag == Drag::RangeMove)
+		if (m_drag == Drag::RangeMove || m_drag == Drag::RangeEdge)
 			setRange(m_dragRange);
 		const auto x = event.GetParameter<float>("mouse_x", 0.0F);
 		const auto y = event.GetParameter<float>("mouse_y", 0.0F);
@@ -1648,6 +1648,7 @@ namespace gnubase::ui
 		case Drag::Rectangle:
 		case Drag::Range:
 		case Drag::RangeMove:
+		case Drag::RangeEdge:
 		case Drag::DrawPart:
 		case Drag::Comp:
 		case Drag::Play:
