@@ -31,6 +31,13 @@ nothing if it fails.
   are measured in ticks when every event is on a musical track, otherwise in samples; a block with no length in its
   unit (a frame of a 192 kHz clip in a 48 kHz project) is refused, since its copies would lie on top of it. Nothing
   moves before the project start: a move or copy there fails, a resize stops at it.
+- **The longest project.** Positions and lengths end at the longest project's end, `longestPosition` in
+  `src/engine/document/document.h`: `time::g_maxPosition` (2^48) samples, or in ticks as long as that lasts at the
+  project's tempo (`longestProjectTicks`). `audioEvent.add` and `.set`, `audioPart.add`, `midiPart.add` and `.set`,
+  `note.add`, `.set` and `.move`, automation points and the lengths of `media.add` refuse more, and so do a move or
+  copy that would take an event past it; loading a project cuts event, part and note positions and lengths and media
+  lengths there. A position plus a length then can't overflow, and an event of a clip at a far lower sample rate than
+  the project's ends there when it plays (#1906).
 - **Resizing** stops at the clip's start and end and keeps events at least a sample frame (a tick for parts) long.
   Normal sizing reveals or hides content: a part's start moved later moves its notes and controllers back, so they keep
   their time. Sizing moves contents moves the content with the edge: an audio event's offset, a part's notes. A part's
@@ -158,6 +165,8 @@ that the arrow keys select into view.
   at the cursor and the locators, with and without splitting notes; gluing; filling the locators; `event.get`;
   `event.previewResize` agreeing with `event.resize` at the clip's limits, in both modes, for parts and audio parts,
   and changing, announcing and recording nothing.
+- `tests/document_tests.cpp`: positions and lengths at and past the longest project, refused by the commands and cut
+  by loading, and the playlist of a clip at a far lower rate than the project's (#1906).
 - `tests/eventediting_tests.cpp` (fake window system, real engine): selecting with clicks and Ctrl, moving and copying
   with drags, shared copies with Alt and Shift, onto another track; drags restricted with Ctrl, across and down, moving
   and copying, and Ctrl and a click still deselecting; Ctrl and a click adding to the selection and taking out at an

@@ -238,16 +238,25 @@ namespace gnubase::engine
 			return {parameters.value("delta", int64_t{0}), false};
 		}
 
-		// A position moved by shift, in its own time base. Before the project start it is refused, or clamped to it.
+		// A position moved by shift, in its own time base. Before the project start or past the longest project's end
+		// it is refused, or clamped to them (#1906).
 		time::Position shifted(const Project& project, const time::Position& position, const Shift& shift, bool refuse)
 		{
-			time::Position moved = shift.ticks
-				? time::Position{time::TimeBase::Musical, ticks(project, position) + shift.value}
-				: time::Position{time::TimeBase::Linear, samples(project, position) + shift.value};
+			const time::TimeBase base = shift.ticks ? time::TimeBase::Musical : time::TimeBase::Linear;
+			const int64_t longest = longestPosition(project, base);
+			require(shift.value >= -longest && shift.value <= longest,
+				"the move must be at most " + std::to_string(longest) + ", the longest project");
+			time::Position moved{
+				base, (shift.ticks ? ticks(project, position) : samples(project, position)) + shift.value};
 			if (moved.value < 0)
 			{
 				require(!refuse, "the event would start before the project start");
 				moved.value = 0;
+			}
+			if (moved.value > longest)
+			{
+				require(!refuse, "the event would move past the end of the longest project");
+				moved.value = longest;
 			}
 			return rebased(project, moved, position.base);
 		}

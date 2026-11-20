@@ -2418,8 +2418,9 @@ namespace gnubase::engine
 		for (const Json& item : json.at("media"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
+			// Lengths and positions past the longest project's end are cut there, so that sums can't overflow (#1906).
 			project.media[id] = {id, item.at("path").get<std::string>(), item.at("sampleRate").get<double>(),
-				item.at("channels").get<int>(), item.at("length").get<time::Samples>()};
+				item.at("channels").get<int>(), std::min(item.at("length").get<time::Samples>(), time::g_maxPosition)};
 		}
 		for (const Json& item : json.at("clips"))
 		{
@@ -2499,15 +2500,20 @@ namespace gnubase::engine
 			if (project.poolFolders.count(clip.folder) == 0)
 				clip.folder = 0;
 		const auto base = [&project](ObjectId track) { return project.trackById.at(track).timeBase; };
-		const auto readAudioEvent = [&base](const Json& item)
+		const time::Ticks longestTicks = longestProjectTicks(project);
+		const auto within = [longestTicks](time::TimeBase timeBase, int64_t value)
+		{ return std::min(value, timeBase == time::TimeBase::Linear ? time::g_maxPosition : longestTicks); };
+		const auto readPosition = [&base, &within](ObjectId track, const Json& value)
+		{ return time::Position{base(track), within(base(track), value.get<int64_t>())}; };
+		const auto readAudioEvent = [&readPosition, &within](const Json& item)
 		{
 			AudioEvent event;
 			event.id = item.at("id").get<ObjectId>();
 			event.track = item.at("track").get<ObjectId>();
-			event.position = {base(event.track), item.at("position").get<int64_t>()};
+			event.position = readPosition(event.track, item.at("position"));
 			event.clip = item.at("clip").get<ObjectId>();
-			event.offset = item.at("offset").get<time::Samples>();
-			event.length = item.at("length").get<time::Samples>();
+			event.offset = within(time::TimeBase::Linear, item.at("offset").get<time::Samples>());
+			event.length = within(time::TimeBase::Linear, item.at("length").get<time::Samples>());
 			event.volume = item.value("volume", 0.0); // files from before event volume and mute
 			event.mute = item.value("mute", false);
 			event.lock = item.value("lock", false); // files from before #85 have neither lock nor shared copies
@@ -2544,14 +2550,14 @@ namespace gnubase::engine
 			const AudioEvent event = readAudioEvent(item);
 			project.audioEvents[event.id] = event;
 		}
-		const auto readAudioPart = [&base](const Json& item)
+		const auto readAudioPart = [&readPosition, &within](const Json& item)
 		{
 			AudioPart part;
 			part.id = item.at("id").get<ObjectId>();
 			part.track = item.at("track").get<ObjectId>();
 			part.name = item.at("name").get<std::string>();
-			part.position = {base(part.track), item.at("position").get<int64_t>()};
-			part.length = item.at("length").get<int64_t>();
+			part.position = readPosition(part.track, item.at("position"));
+			part.length = within(part.position.base, item.at("length").get<int64_t>());
 			part.mute = item.value("mute", false);
 			part.lock = item.value("lock", false);
 			part.color = eventColorFrom(item);
@@ -2568,14 +2574,14 @@ namespace gnubase::engine
 			if (const auto part = project.audioParts.find(event.part);
 				part == project.audioParts.end() || part->second.track != event.track)
 				event.part = 0;
-		const auto readMidiPart = [&base](const Json& item)
+		const auto readMidiPart = [&readPosition, &within](const Json& item)
 		{
 			MidiPart part;
 			part.id = item.at("id").get<ObjectId>();
 			part.track = item.at("track").get<ObjectId>();
 			part.name = item.at("name").get<std::string>();
-			part.position = {base(part.track), item.at("position").get<int64_t>()};
-			part.length = item.at("length").get<int64_t>();
+			part.position = readPosition(part.track, item.at("position"));
+			part.length = within(part.position.base, item.at("length").get<int64_t>());
 			part.mute = item.value("mute", false);
 			part.lock = item.value("lock", false);
 			part.shared = item.value("shared", ObjectId{0});
@@ -2595,8 +2601,8 @@ namespace gnubase::engine
 			{
 				Note note;
 				note.id = n.at("id").get<ObjectId>();
-				note.position = n.at("position").get<time::Ticks>();
-				note.length = n.at("length").get<time::Ticks>();
+				note.position = within(time::TimeBase::Musical, n.at("position").get<time::Ticks>());
+				note.length = within(time::TimeBase::Musical, n.at("length").get<time::Ticks>());
 				// Checked as the DAWproject import does: drum maps and the editors take a pitch as an index (#882).
 				const std::string noteName =
 					"note " + std::to_string(note.id) + " of MIDI part " + std::to_string(part.id);

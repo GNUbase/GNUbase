@@ -92,6 +92,9 @@ namespace gnubase::engine
 				note.position = position(item, note.position, name);
 				note.length = item.value("length", note.length);
 				require(note.length > 0, name + ".length must be positive");
+				const time::Ticks longest = longestProjectTicks(project); // so that the end can't overflow (#1906)
+				require(note.position <= longest && note.length <= longest,
+					name + ".position and length must be at most " + std::to_string(longest) + ", the longest project");
 				// A start resized, its end where it was: the expression stays where it is too.
 				if (note.position != start && note.position + note.length == end && !item.contains("expressions"))
 					note.expressions = expressionsFrom(note.expressions, note.position - start);
@@ -309,6 +312,9 @@ namespace gnubase::engine
 			require(source.id == targetId || source.shared == 0 || source.shared != target->second.shared,
 				"can't move notes between shared copies of one group: they must stay equal");
 			const auto ticks = parameters.value("ticks", time::Ticks{0});
+			const time::Ticks longest = longestProjectTicks(project); // so that the sums can't overflow (#1906)
+			require(ticks >= -longest && ticks <= longest,
+				"ticks must be at most " + std::to_string(longest) + ", the longest project");
 			const auto semitones = parameters.value("semitones", int64_t{0});
 			const auto ids = parameters.at("notes").get<std::vector<ObjectId>>();
 			// The offsets count on the project's timeline, while a note's position counts from its part's start:
@@ -325,6 +331,7 @@ namespace gnubase::engine
 				Note note = found->second;
 				note.position = sourceStart + note.position + ticks - targetStart;
 				require(note.position >= 0, name + " would land before the target part's start");
+				require(note.position <= longest, name + " would land past the end of the longest project");
 				const int64_t pitch = static_cast<int64_t>(note.pitch) + semitones;
 				require(pitch >= 0 && pitch <= 127, name + " would land outside the pitches 0 to 127");
 				note.pitch = static_cast<uint8_t>(pitch);

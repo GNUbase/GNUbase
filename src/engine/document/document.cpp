@@ -194,6 +194,11 @@ namespace gnubase::engine
 			static_cast<double>(time::g_maxPosition) / std::max(project.sampleRate, g_lowestSampleRate));
 	}
 
+	int64_t longestPosition(const Project& project, time::TimeBase base)
+	{
+		return base == time::TimeBase::Linear ? time::g_maxPosition : longestProjectTicks(project);
+	}
+
 	ObjectId mainMix(const Project& project)
 	{
 		const auto bus = std::find_if(
