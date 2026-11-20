@@ -249,7 +249,9 @@ namespace gnubase::audio
 						m_jack.portUnregister(handle, port);
 				}
 				else if (!m_jack.pipeWire && size == m_requestedBufferSize)
+				{
 					m_jack.setBufferSize(handle, m_previousBufferSize);
+				}
 			}
 
 			// PipeWire hides the ports of a node while it is suspended, as for a moment when the graph follows the
