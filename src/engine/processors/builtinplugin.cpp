@@ -154,6 +154,8 @@ namespace gnubase::engine::processors
 	{
 		if (m_noteEffect && id == plugin::NotePorts::extensionId())
 			return static_cast<plugin::NotePorts*>(this);
+		if (id == plugin::KeySwitches::extensionId() && !keySwitches().empty())
+			return static_cast<plugin::KeySwitches*>(this);
 		return plugin::provide<plugin::AudioPorts, plugin::Params, plugin::State, plugin::Latency, plugin::Tail>(
 			this, id);
 	}
@@ -335,6 +337,13 @@ namespace gnubase::engine::processors
 		if (auto* hostParams = plugin::extension<plugin::HostParams>(m_host))
 			hostParams->rescanParams(plugin::HostParams::Values);
 		return true;
+	}
+
+	std::vector<plugin::KeySwitch> BuiltinPlugin::keySwitches()
+	{
+		if (m_info.id == "testSynth")
+			return {{"Sustain", 0}, {"Staccato", 1}};
+		return {};
 	}
 
 	uint32_t BuiltinPlugin::latency() const

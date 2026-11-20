@@ -14,6 +14,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -1222,6 +1223,32 @@ TEST_CASE("the reverb glides to a new size or predelay instead of replaying old 
 		INFO("parameter " << parameter);
 		CHECK(maxCurvature(left, 96000, left.size()) <= 10.0 * settled);
 	}
+}
+
+TEST_CASE("an EQ band given the values it has goes on gliding as before", "[unit]")
+{
+	// Band 2 glides to a new frequency; the second time its switch, type and slope come again too, as from a host that
+	// sends every band whenever one changes. Unchanged, they start no morph that would hold the glide back.
+	const auto render = [](bool again)
+	{
+		dsp::Equalizer eq;
+		eq.prepare(g_sampleRate, 4800);
+		for (const auto& [id, value] : onlyBand(2, dsp::FilterType::Bell, 200.0, 12.0, 1.0))
+			eq.setParameter(id, value);
+		Signal signal = sine(1, 9600, 300.0, 0.5);
+		const std::array<float*, 1> audio{signal[0].data()};
+		eq.process(audio.data(), 1, 0, 4800);
+		eq.setParameter(Equalizer::parameter(2, Equalizer::Frequency), 2000.0);
+		if (again)
+		{
+			eq.setParameter(Equalizer::parameter(2, Equalizer::On), 1.0);
+			eq.setParameter(Equalizer::parameter(2, Equalizer::Type), static_cast<double>(dsp::FilterType::Bell));
+			eq.setParameter(Equalizer::parameter(2, Equalizer::Slope), 1.0);
+		}
+		eq.process(audio.data(), 1, 4800, 9600);
+		return signal[0];
+	};
+	CHECK(render(true) == render(false));
 }
 
 TEST_CASE("the mixing effects sound the same at every block size", "[unit]")

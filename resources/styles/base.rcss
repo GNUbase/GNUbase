@@ -669,6 +669,18 @@ meter .meter-fill
 	bottom: 0;
 }
 
+/* A meter's RMS level: the fill again over its level, up to the RMS level's height; themes dim the level under it. */
+meter .meter-rms
+{
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	width: 100%;
+	height: 0;
+	overflow: hidden;
+	clip: always;
+}
+
 /* The peak's top edge marks the level; at the bottom the meter hides it. */
 meter .meter-peak
 {
@@ -2501,6 +2513,64 @@ splitter.column .splitter-grip-horizontal
 .inspector textarea.notepad
 {
 	width: 100%;
+}
+
+/* The meter display (ui/meterpanel.h): the master meter's page, or with .loudness the loudness meter's, each with
+   its reset under its values, over the buttons that switch between them; the selected one is .checked. */
+.meter-display
+{
+	display: block;
+	padding: 6dp;
+}
+
+.meter-display .meter-loudness, .meter-display.loudness .meter-master
+{
+	display: none;
+}
+
+.meter-display.loudness .meter-loudness
+{
+	display: block;
+}
+
+.meter-display .meter-bars
+{
+	display: block;
+	height: 160dp;
+}
+
+.meter-display .meter-bars meter
+{
+	height: 160dp;
+	margin-right: 2dp;
+}
+
+.meter-display .meter-values div
+{
+	display: block;
+	padding: 2dp 0;
+}
+
+.meter-display .meter-values span
+{
+	float: right;
+}
+
+.meter-display .meter-reset
+{
+	margin-top: 4dp;
+}
+
+.meter-display .meter-buttons
+{
+	display: block;
+	margin-top: 6dp;
+}
+
+.meter-display .meter-buttons button
+{
+	min-width: 0;
+	margin-right: 4dp;
 }
 
 /* The edit history panel (ui/historypanel.h): a table of the undo steps that fills its panel, cut by the separator

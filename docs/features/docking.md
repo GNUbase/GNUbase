@@ -51,8 +51,9 @@ A panel (`ui::Panel`) has an id, a title, the docking window and the zone it doc
 element it shows in, wherever that is; what the function returns lives as long as the panel shows there. `add`
 registers panels; the project window has the Inspector ([inspector.md](inspector.md)) and Visibility on the left,
 Editor and Mixer in the lower zone, and Media and Meter on the right (pp. 75–98), the others empty until their tickets
-fill them (the Editor panel is the lower zone editor's, [midi-editors.md](midi-editors.md), the Visibility panel has
-the track visibility and the lower zone editor's, [track-visibility.md](track-visibility.md)), the Pool in the lower zone
+fill them (the Meter panel is the meter display, [metering.md](metering.md); the Editor panel is the lower zone
+editor's, [midi-editors.md](midi-editors.md), the Visibility panel has the track visibility and the lower zone editor's,
+[track-visibility.md](track-visibility.md)), the Pool in the lower zone
 ([pool.md](pool.md), `window.pool`, Mod+P), the chord pads in the lower zone
 ([chord-pads.md](chord-pads.md), `window.chordPads`), the sampler panel in the lower zone
 ([sampler-track.md](sampler-track.md), `window.sampler`), the drum machine in the lower zone
