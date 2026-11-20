@@ -36,7 +36,7 @@ undo step. A new project has none.
 
 | Command | What it does | Reference |
 |---|---|---|
-| `articulationMap.add` | Add Map (New Map with Group 1) or Duplicate Map (`copy`), with the settings given | pp. 1267, 1280 |
+| `articulationMap.add` | Add Map (New Map with Group 1) or Duplicate Map (`copy`), with the settings given; Import Key Switches with `keySwitches`, a track (below) | pp. 1267, 1280, 1284 |
 | `articulationMap.set` | Changes a map; `articulations` and `slots` replace the whole lists | pp. 1268-1279 |
 | `articulationMap.remove` | Removes a map; the tracks that used it have none | p. 1267 |
 | `articulationMap.export` | Saves a map as an articulation map file (`.articulationmap`) | p. 1292 |
@@ -47,6 +47,14 @@ undo step. A new project has none.
 
 They emit `articulationMap.added`, `articulationMap.changed` and `articulationMap.removed` with the map (its id for
 removed).
+
+- **Import Key Switches** (`articulationMap.add` `keySwitches`, p. 1284). The instrument of a MIDI or instrument track
+  (a MIDI track's: the instrument track's it plays) reports the key switches of its preset through the plugin
+  wrapper's `KeySwitches` extension ([plugin-api.md](../plugin-api.md#gnubase-extensions)): a name and a key each.
+  Each becomes a direction of the first group and a sound slot with its name and that articulation, the key as its
+  remote trigger and a note on the key at velocity 100 as its output mapping; a name that comes twice is one
+  direction. An instrument that reports none, or a track without one, is refused. Of the built-in instruments, only
+  the test synth has key switches, Sustain (C-2) and Staccato (C#-2), for the tests; they play like other notes.
 
 - **Renaming and removing articulations** (`articulationMap.set`). An articulation renamed at its place in the list
   (a list as long as before, its old name gone, the new one not the map's before), as the setup renames them, is
@@ -161,7 +169,8 @@ removed).
   Add Map, Duplicate Map, Remove Map, Import Map and Export Map (the OS's file dialogs through
   `gnubase.ui.importArticulationMap` and `gnubase.ui.exportArticulationMap`; Export Map offers the map's name as the
   file name, with the characters file names can't have replaced, `engine::safeFileName`), and Assign to Track for the
-  selected MIDI or instrument track. On the right the selected map: its name, Remote Trigger (Key Switch or Program
+  selected MIDI or instrument track. With that track, Import Key Switches beside Add Map, checked, makes Add Map import
+  the track's key switches (p. 1285, the reference's Add Map dialog has it). On the right the selected map: its name, Remote Trigger (Key Switch or Program
   Change) and latch; its groups; its articulations with their type and group; its sound slots with their articulations
   (names separated by commas) and remote trigger; the output mapping (status, data 1, data 2, on or off events) and
   MIDI modifiers (channel 1-16 or empty for the notes' own, length and velocity in percent, transpose) of the slot
@@ -279,8 +288,9 @@ the notes played into a track, which aren't known to end yet; Sound Slot event c
 editors' event colors menu (p. 1133, [colors.md](colors.md)); the slot actions Rename and Reset Color (the slots'
 names and colors are typed or set through `articulationMap.set`), the keyboard preview and assigning triggers from a
 MIDI keyboard; the sound slot actions as a menu and Transpose All and Reassign All as dialogs of their own (they are
-rows of the setup); changing several maps' remote trigger mode and latch at once; Import Key Switches from instrument
-presets; importing the reference's own files and other applications' maps.
+rows of the setup); changing several maps' remote trigger mode and latch at once; key switches of plugins in host
+processes (the `KeySwitches` extension's proxy and stub, and VST3's `IKeyswitchController` in the VST3 adapter) and
+the Add Map dialog with the map's name; importing the reference's own files and other applications' maps.
 
 ## Checks
 
@@ -324,7 +334,8 @@ presets; importing the reference's own files and other applications' maps.
   on a reset selecting it and its arrow beside it; the list editor's menu opening for another row's cell and not while
   a cell is edited, and closing on a second click on its cell after the rows rendered anew (#1799); a direction lasting
   on the lane through a muted one, which keeps its own span, and the note display's selection changes keeping the lane's
-  attributes selected of the notes that stay (#1762).
+  attributes selected of the notes that stay (#1762). One more (#1114): Add Map with Import Key Switches checked
+  imports the test synth's key switches, unchecked it adds an empty map; without a track the option is hidden.
   `tests/scripting_tests.cpp` checks empty Lua tables as lists and `gnubase.off`.
 - `tests/articulationmaps_tests.cpp`: maps added, copied, changed and removed with their errors and undo, a track's map;
   directions and attributes; playback through the slots' output events and MIDI modifiers, the closest slot and resets;
