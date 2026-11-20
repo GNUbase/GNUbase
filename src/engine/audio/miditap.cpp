@@ -318,10 +318,10 @@ namespace gnubase::engine
 				"p. 942); with drumSounds too, no drum map maps their keys, but the notes reach the instrument marked "
 				"as drum sounds' pitches. mpe: the messages play through this MPE "
 				"input setup (midi.setPort mpe; what it leaves out has its default), as a MIDI input port with it "
-				"plays them: on the notes' channels pitch bend, channel pressure and CC 74 reach the track as its "
+				"plays them: on the notes' channels the messages of the setup's dimensions reach the track as its "
 				"notes' per-note expression (docs/features/note-expression.md). The track keeps the state of those "
-				"channels from one call to the next while the setup stays. midi.capture returns what instruments "
-				"played.",
+				"channels from one call to the next while the setup stays. direct and mpe together are refused. "
+				"midi.capture returns what instruments played.",
 				[]
 				{
 					Json schema = Json::parse(R"({"type": "object", "additionalProperties": false,
@@ -347,6 +347,8 @@ namespace gnubase::engine
 				require(messages.size() <= MidiTap::g_size, "at most 4096 messages at a time");
 				const bool drumSounds = parameters.value("drumSounds", false);
 				const bool direct = parameters.value("direct", false);
+				require(!direct || !parameters.contains("mpe"),
+					"direct messages skip the track's input, so they can't play through an MPE setup");
 				const uint64_t mpe =
 					parameters.contains("mpe") ? midi::MpeSetup::fromJson(parameters.at("mpe")).pack() : 0;
 				std::vector<MidiTap::Message> injected;
@@ -449,8 +451,9 @@ namespace gnubase::engine
 				"came during playback goes where it played; what came in stop mode goes at the project cursor, with "
 				"its timing. Input after an insert starts the buffer afresh, and so does input in stop mode while "
 				"the buffer holds input in stop mode, when it comes over 30 s after the last input, from playback or "
-				"not, or on the next audio device. It is no recording of the chord track: it makes no "
-				"chord events. Returns what recording.add returns.",
+				"not. On the next audio device, input in stop mode leaves out the earlier devices' input in stop "
+				"mode, whose timing can't be placed against it, and keeps the input during playback. It is no "
+				"recording of the chord track: it makes no chord events. Returns what recording.add returns.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
 					"properties": {"track": {"type": "integer"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"parts": {"type": "array"}},

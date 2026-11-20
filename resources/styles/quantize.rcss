@@ -96,3 +96,14 @@
 {
 	margin-right: 2dp;
 }
+
+/* The presets button keeps its width whatever the preset's name, so that the toolbar keeps its room: a button's
+   least, with less padding for the names that fit, such as No Preset. */
+.toolbar-quantize #toolbar-quantize-presets
+{
+	width: 64dp;
+	padding: 4dp 4dp;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}

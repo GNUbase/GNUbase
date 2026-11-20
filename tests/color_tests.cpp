@@ -133,6 +133,7 @@ TEST_CASE("audio events and MIDI parts have a color of their own, or their track
 
 	CHECK_THAT(reject(client, "event.set", {{"events", {part}}, {"color", "red"}}), ContainsSubstring("#rrggbb"));
 	CHECK_THAT(reject(client, "event.set", {{"events", {part}}, {"color", "#12345g"}}), ContainsSubstring("#rrggbb"));
+	CHECK_THAT(reject(client, "event.set", {{"events", {part}}, {"color", ""}}), ContainsSubstring("#rrggbb"));
 }
 
 TEST_CASE("a project has a color set that project.set changes, with undo", "[unit]")
@@ -211,6 +212,10 @@ TEST_CASE("editing.autoTrackColor colors new tracks", "[unit]")
 	run(client, "event.set", {{"events", {part}}, {"color", "#0000cc"}});
 	run(client, "event.set", {{"events", {part}}, {"color", nullptr}}); // not a color applied
 	CHECK(added({{"type", "audio"}}) == "#0000cc");
+	// It's the color the user last applied, also in the next project.
+	run(client, "project.new");
+	CHECK(added({{"type", "audio"}}) == "#0000cc");
+	run(client, "project.set", {{"colors", colors}});
 
 	// A random color of the set.
 	mode("random");
@@ -224,6 +229,53 @@ TEST_CASE("editing.autoTrackColor colors new tracks", "[unit]")
 	run(client, "settings.set", {{"key", "editing.applyFolderColor"}, {"value", true}});
 	const ObjectId folder = addTrack(client, {{"type", "folder"}, {"color", "#334455"}});
 	CHECK(added({{"type", "audio"}, {"parent", folder}}) == "#334455");
+}
+
+TEST_CASE("MIDI functions keep their parts' colors and give the tracks they add the color for new tracks", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set",
+		{{"colors", {{{"name", "A"}, {"color", "#aa0000"}}, {{"name", "B"}, {"color", "#00bb00"}}}}});
+	run(client, "settings.set", {{"key", "editing.autoTrackColor"}, {"value", "previousPlusOne"}});
+	const ObjectId track = addTrack(client, {{"type", "midi"}, {"color", "#aa0000"}});
+	const auto addPart = [&client, track](int position, const char* color)
+	{
+		const auto part = run(client, "midiPart.add", {{"track", track}, {"position", position}, {"length", 960}})
+							  .at("part")
+							  .at("id")
+							  .get<ObjectId>();
+		run(client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", 0}, {"length", 10}, {"pitch", 60}, {"velocity", 0.5}},
+						{{"position", 10}, {"length", 10}, {"pitch", 62}, {"velocity", 0.5}}}}});
+		run(client, "event.set", {{"events", {part}}, {"color", color}});
+		return part;
+	};
+
+	// Dissolve Part: the new parts keep the part's color, the new tracks after it get the next colors of the set.
+	const Json dissolved =
+		run(client, "midi.dissolve", {{"parts", {addPart(0, "#123456")}}, {"by", "pitch"}, {"to", "tracks"}});
+	REQUIRE(dissolved.at("tracks").size() == 2);
+	CHECK(colorOf(client, "tracks", dissolved.at("tracks")[0].get<ObjectId>()) == "#00bb00");
+	CHECK(colorOf(client, "tracks", dissolved.at("tracks")[1].get<ObjectId>()) == "#aa0000");
+	CHECK(lastEvent(client, "track.added").at("track").at("color") == "#aa0000");
+	REQUIRE(dissolved.at("parts").size() == 2);
+	for (const Json& part : dissolved.at("parts"))
+		CHECK(colorOf(client, "midiParts", part.get<ObjectId>()) == "#123456");
+
+	// Bounce MIDI: the part has the first part's color.
+	const ObjectId second = addPart(3840, "#654321");
+	const ObjectId third = addPart(7680, "#abcdef");
+	const Json bounced = run(client, "midi.bounce", {{"parts", {third, second}}}).at("parts");
+	REQUIRE(bounced.size() == 1);
+	CHECK(colorOf(client, "midiParts", bounced[0].get<ObjectId>()) == "#654321");
+
+	// Merge MIDI in Loop: the new track at the end gets the color after the last track's.
+	const Json merged = run(client, "midi.merge", {{"start", 0}, {"end", 480000}, {"tracks", {track}}}).at("tracks");
+	REQUIRE(merged.size() == 1);
+	CHECK(colorOf(client, "tracks", merged[0].get<ObjectId>()) == "#00bb00");
 }
 
 namespace
@@ -405,4 +457,44 @@ TEST_CASE("the project colors setup dialog edits the project's color set", "[ui]
 	window.click("#colors-cancel");
 	REQUIRE(window.app.waitUntil([&] { return !open(); }));
 	CHECK(window.project().at("colors") == colors);
+}
+
+TEST_CASE("the project colors setup dialog renames colors and resets one to its factory color", "[ui]")
+{
+	ProjectWindow window;
+	const auto open = [&window] { return !window.elements("#project-colors-dialog").empty(); };
+	window.app.keys().run("project.colorsSetup", Json::object(), window.app.main(), nullptr);
+	REQUIRE(window.app.waitUntil(open));
+	// Types a name over the old one in the name field.
+	const auto rename = [&window](const std::string& name)
+	{
+		window.click("#color-name");
+		window.app.ui().key(std::nullopt, "Mod+A");
+		window.app.ui().text(std::nullopt, name);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// The name field renames the selected color, and its row in the list with it.
+	window.click("#project-colors > listitem[value=\"3\"]");
+	rename("Kick");
+	CHECK(window.elements("#project-colors > listitem[value=\"3\"]").at(0).value("text", "") == "Kick");
+
+	// Reset Color gives the selected color the factory name and color in its place.
+	const Json factory = window.app.call("project.factoryColors").at("colors");
+	window.click("#project-colors > listitem[value=\"2\"]");
+	rename("Snare");
+	window.click("#color-picker .color-field");
+	CHECK(window.elements("#color-picker").at(0).at("attributes").at("value") != factory[1].at("color"));
+	window.click("#color-reset");
+	CHECK(window.elements("#project-colors > listitem[value=\"2\"]").at(0).value("text", "") ==
+		factory[1].at("name").get<std::string>());
+	CHECK(window.elements("#color-picker").at(0).at("attributes").at("value") == factory[1].at("color"));
+
+	window.click("#colors-apply");
+	REQUIRE(window.app.waitUntil([&] { return !open(); }));
+	const Json colors = window.project().at("colors");
+	REQUIRE(colors.size() == factory.size());
+	CHECK(colors[1] == factory[1]);
+	CHECK(colors[2].at("name") == "Kick");
+	CHECK(colors[2].at("color") == factory[2].at("color"));
 }

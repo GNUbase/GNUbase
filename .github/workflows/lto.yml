@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Release builds with link-time optimization, as they ship (GNUBASE_LTO, CMakeLists.txt), and their tests. CI builds
+# without it to keep pull requests fast, but LTO builds found bugs that only showed up with it: RmlUi's vector indexing
+# that GCC's -O3 with LTO compiled into broken transforms (docs/dependencies.md), and the linker's --wrap missing malloc
+# and free in the RT checker (src/platform/rt/allocationcheck.cpp). So this runs once a week and by hand, without a
+# compiler cache: main's caches must never hand LTO objects to pull requests. A failure opens an issue, or comments on
+# the open one.
+name: LTO builds
+
+on:
+  schedule:
+    - cron: "0 3 * * 0" # Sundays, 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write # tools/report-ci-failure.sh
+
+jobs:
+  build:
+    timeout-minutes: 150
+    name: lto-${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, runner: windows-2025, preset: windows-x64 }
+          - { name: linux-x64-gcc, runner: ubuntu-24.04, preset: linux-gcc }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # As in ci.yml: the recursive checkout skips the VST3 SDK (update = none in .gitmodules).
+      - name: Fetch the VST3 SDK
+        run: |
+          git submodule update --init --checkout ext/vst3sdk
+          git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
+
+      - name: Fetch test data and fonts
+        run: git lfs pull --include "tests/data/**,tests/golden/**,resources/fonts/**"
+
+      # ci.yml's package list, so that the two can't drift apart.
+      - name: Install packages (Linux)
+        timeout-minutes: 15
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $(yq '.env.LINUX_PACKAGES' .github/workflows/ci.yml)
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --config Release
+
+      # As in ci.yml's linux-x64-gcc job, so that the PipeWire, JACK and ALSA MIDI tests run with LTO too.
+      # A headless sound server with a null sink and source, so that the PipeWire tests open real devices here, and
+      # its JACK layer (pipewire-jack) for the JACK tests. GNUBASE_REQUIRE_PIPEWIRE makes them fail instead of skipping
+      # when it can't be reached. The Windows job skips them.
+      - name: Start PipeWire (Linux)
+        if: matrix.name == 'linux-x64-gcc'
+        timeout-minutes: 5
+        run: |
+          sudo apt-get install -y --no-install-recommends pipewire pipewire-bin pipewire-jack wireplumber dbus-daemon
+          tools/start-pipewire.sh >> "$GITHUB_ENV"
+          echo "GNUBASE_REQUIRE_PIPEWIRE=1" >> "$GITHUB_ENV"
+
+      # jackd2 with its dummy driver, for the JACK tests. GNUBASE_REQUIRE_JACK makes them fail instead of skipping when
+      # it can't be reached. The Windows job skips them.
+      - name: Start JACK (Linux)
+        if: matrix.name == 'linux-x64-gcc'
+        timeout-minutes: 5
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jackd2
+          tools/start-jack.sh
+          echo "GNUBASE_REQUIRE_JACK=1" >> "$GITHUB_ENV"
+
+      # The ALSA sequencer for the ALSA MIDI tests: snd-seq-dummy loads it and adds the Midi Through port. The runner's
+      # kernel has them in linux-modules-extra. GNUBASE_REQUIRE_ALSA_SEQ makes the tests fail instead of skipping once
+      # it is loaded; where it can't be, they skip with a warning here. The Windows job skips them.
+      - name: Load the ALSA sequencer (Linux)
+        if: matrix.name == 'linux-x64-gcc'
+        timeout-minutes: 5
+        run: |
+          if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              "linux-modules-extra-$(uname -r)" && sudo modprobe snd-seq-dummy; then
+            for _ in $(seq 50); do [ -e /dev/snd/seq ] && break; sleep 0.1; done
+            if [ -e /dev/snd/seq ]; then
+              sudo chmod a+rw /dev/snd/seq
+              echo "GNUBASE_REQUIRE_ALSA_SEQ=1" >> "$GITHUB_ENV"
+            else
+              echo "::warning::/dev/snd/seq didn't appear after loading snd-seq-dummy: the ALSA MIDI tests are skipped"
+            fi
+          else
+            echo "::warning::The ALSA sequencer can't be loaded on this runner: the ALSA MIDI tests are skipped"
+          fi
+
+      - name: Test
+        env:
+          GNUBASE_REQUIRE_GPU: 1
+        run: ctest --preset ${{ matrix.preset }} -C Release --parallel 4
+
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-output-lto-${{ matrix.name }}
+          path: build/${{ matrix.preset }}/tests/output/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Report the failure
+        if: failure() && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tools/report-ci-failure.sh "LTO builds fail on main"

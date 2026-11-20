@@ -314,20 +314,18 @@ namespace gnubase::ui
 		  m_importLoop(std::move(importLoop)), m_root(element.GetObserverPtr())
 	{
 		element.SetInnerRML(R"(<div class="chord-pads"><div class="chord-pads-toolbar">)" +
-			button("outputMode", "Chord Pad Output Mode", "Output", true) +
-			button("stepInput", "Step Input", "Step", true) + button("moveInsert", "Move Insert Mode", "Insert", true) +
-			R"(<select id="chord-pads-root" title="Root Key"/>)" +
+			button("outputMode", "Chord Pad Output Mode", "Output") + button("stepInput", "Step Input", "Step") +
+			button("moveInsert", "Move Insert Mode", "Insert") + R"(<select id="chord-pads-root" title="Root Key"/>)" +
 			button("transposePads", "Transpose Pads", "Transpose Pads", true) +
-			button("flats", "Enh. Shift: Flats", "b", true) +
+			button("flats", "Enh. Shift: Flats", "b") +
 			R"(<select id="chord-pads-preset" title="Chord Pads Presets"/>)"
 			R"(<select id="chord-pads-load" title="Load Preset Settings"/>)" +
 			button("loadPreset", "Load Preset", "Load") + button("previousPreset", "Previous Preset", "&lt;") +
 			button("nextPreset", "Next Preset", "&gt;") + button("savePreset", "Save Preset", "Save") +
 			R"(<input type="text" id="chord-pads-preset-name" class="chord-pads-field" title="Preset Name"/>)" +
 			button("fromChordTrack", "Assign from Chord Track", "From Chord Track") +
-			button("snapPlayback", "Snap Playback to Musical Grid", "Snap", true) +
-			number("velocity", "Velocity on Mouse Click", 1, 127) +
-			button("remote", "Pad Remote Control", "Remote", true) +
+			button("snapPlayback", "Snap Playback to Musical Grid", "Snap") +
+			number("velocity", "Velocity on Mouse Click", 1, 127) + button("remote", "Pad Remote Control", "Remote") +
 			number("remoteStart", "Pads Remote Range Start", 0, 127) +
 			number("remoteEnd", "Pads Remote Range End", 0, 127) +
 			button("assistant", "Show/Hide Editor/Assistant", "Assistant", true) +
@@ -343,8 +341,8 @@ namespace gnubase::ui
 			button("transposeDown", "Transpose Down", "-1") + button("transposeUp", "Transpose Up", "+1") +
 			button("fewerTensions", "Fewer Tensions", "Fewer") + button("moreTensions", "More Tensions", "More") +
 			button("previousVoicing", "Previous Voicing", "&lt;") + button("nextVoicing", "Next Voicing", "&gt;") +
-			button("lock", "Lock", "Lock", true) + button("adaptive", "Adaptive Voicing", "Adaptive", true) +
-			button("reference", "Adaptive Voicing Reference", "Reference", true) +
+			button("lock", "Lock", "Lock") + button("adaptive", "Adaptive Voicing", "Adaptive") +
+			button("reference", "Adaptive Voicing Reference", "Reference") +
 			button("assignMidi", "Assign from MIDI Input", "MIDI") + // lit by the panel at the click, as Learn (#1851)
 			R"(<input type="text" id="chord-pads-field" class="chord-pads-field" title="Chord"/>)"
 			R"(</div><div id="chord-pads-pane-player" class="chord-pads-toolbar chord-pads-pane hidden">)"
@@ -360,14 +358,14 @@ namespace gnubase::ui
 			R"(title="Pattern Preset"/>)" +
 			button("patternFromPart", "Use the Selected MIDI Part as the Pattern", "From Part") +
 			button("importLoop", "Import from MIDI Loop", "Import Loop") +
-			button("velocityFromKeyboard", "Velocity from MIDI Keyboard", "Keyboard Velocity", true) +
+			button("velocityFromKeyboard", "Velocity from MIDI Keyboard", "Keyboard Velocity") +
 			R"(<span id="chord-pads-pattern-info" class="chord-pads-hint"/>)"
 			R"(<select id="chord-pads-overlaps" title="Overlaps"/>)" +
-			button("filterNotes", "Filter Notes From MIDI Thru", "Filter Notes", true) +
+			button("filterNotes", "Filter Notes From MIDI Thru", "Filter Notes") +
 			R"(</div><div id="chord-pads-pane-remote" class="chord-pads-toolbar chord-pads-pane hidden">)"
 			R"(<select id="chord-pads-remotePort" title="MIDI Input"/>)" +
-			button("latch", "Latch Chords", "Latch", true) + learnButton("range", "Pads Remote Range") +
-			button("modifiers", "Activate Chord Modifiers", "Modifiers", true) + modifierKeys() +
+			button("latch", "Latch Chords", "Latch") + learnButton("range", "Pads Remote Range") +
+			button("modifiers", "Activate Chord Modifiers", "Modifiers") + modifierKeys() +
 			R"(<select id="chord-pads-controlSource-0" control="0" title="Modify All Pad Voicings"/>)" +
 			learnButton("modifyAllVoicings", "Modify All Pad Voicings") +
 			R"(<select id="chord-pads-controlSource-1" control="1" title="Modify All Pad Tensions"/>)" +
@@ -377,17 +375,17 @@ namespace gnubase::ui
 			fiveKeys("controlNumbers", "Controller Number", 3, 0, 127) +
 			R"(</div><div id="chord-pads-pane-playerRemote" class="chord-pads-toolbar chord-pads-pane hidden">)"
 			R"(<select id="chord-pads-sectionPlay" title="Play Mode"/>)" +
-			button("latchPads", "Latch Chord Pads", "Latch Pads", true) +
-			button("spread", "Chord Note Distribution: Spread", "Spread", true) +
+			button("latchPads", "Latch Chord Pads", "Latch Pads") +
+			button("spread", "Chord Note Distribution: Spread", "Spread") +
 			fiveKeys("sectionKeys", "Section", 5, -1, 127) + learnButton("sectionKeys", "Sections") +
 			fiveKeys("subsectionKeys", "Subsection", 5, -1, 127) + learnButton("subsectionKeys", "Subsections") +
 			fiveKeys("subsectionOffsets", "Subsection Offset", 5, -48, 48) + subsectionSections() +
-			R"(<button action="muteSection" index="0" id="chord-pads-mute-0" type="toggle" title="Mute Section 1">M1)"
-			R"(</button><button action="muteSection" index="1" id="chord-pads-mute-1" type="toggle" )"
+			R"(<button action="muteSection" index="0" id="chord-pads-mute-0" title="Mute Section 1">M1)"
+			R"(</button><button action="muteSection" index="1" id="chord-pads-mute-1" )"
 			R"(title="Mute Section 2">M2</button><button action="muteSection" index="2" id="chord-pads-mute-2" )"
-			R"(type="toggle" title="Mute Section 3">M3</button><button action="muteSection" index="3" )"
-			R"(id="chord-pads-mute-3" type="toggle" title="Mute Section 4">M4</button><button action="muteSection" )"
-			R"(index="4" id="chord-pads-mute-4" type="toggle" title="Mute Section 5">M5</button>)" +
+			R"(title="Mute Section 3">M3</button><button action="muteSection" index="3" )"
+			R"(id="chord-pads-mute-3" title="Mute Section 4">M4</button><button action="muteSection" )"
+			R"(index="4" id="chord-pads-mute-4" title="Mute Section 5">M5</button>)" +
 			fiveKeys("playerKeys", "Select/Mute Player Key", 3, -1, 127) +
 			learnButton("playerKeys", "Select/Mute Player") +
 			R"(</div><div id="chord-pads-pane-display" class="chord-pads-toolbar chord-pads-pane hidden">)"
@@ -559,13 +557,56 @@ namespace gnubase::ui
 			});
 	}
 
+	void ChordPadsPanel::toggle(const std::string& name, const std::string& command, Json parameters, bool on)
+	{
+		// As listen does: shown at the click, and kept until the engine answered every command of the toggle.
+		auto& [out, sent] = m_toggled[name];
+		++out;
+		sent = on;
+		setChecked(find("chord-pads-" + name), on);
+		m_binding.send(command, std::move(parameters),
+			[this, name, command, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!result.ok())
+					logging::warning("{} from the UI failed: {}", command, result.error);
+				if (alive.expired())
+					return;
+				const auto found = m_toggled.find(name);
+				if (found == m_toggled.end() || --found->second.first > 0)
+					return;
+				m_toggled.erase(found);
+				// The command's events came before its answer, so the pads have what the engine made of it; a refused
+				// one changed nothing and sent none.
+				if (result.ok() && m_pads.contains("pads"))
+					show(m_pads);
+				else
+					request();
+			});
+	}
+
+	bool ChordPadsPanel::toggled(const std::string& name, bool engine) const
+	{
+		const auto found = m_toggled.find(name);
+		return found != m_toggled.end() ? found->second.second : engine;
+	}
+
 	void ChordPadsPanel::request()
 	{
 		m_binding.send("chordPads.get", Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				if (!alive.expired() && result.ok())
-					show(result.value);
+				if (alive.expired() || !result.ok())
+					return;
+				// chordPads.get says what the engine listens for, also to a panel built after MIDI Learn started
+				// through MCP or Lua (#1896). Only its answer: the pads kept for showing again later would bring back
+				// what it said then, while chordPads.listen sends no chordPads.changed.
+				Json pads = result.value;
+				if (const auto listening = pads.find("listening"); listening != pads.end())
+				{
+					m_listening = *listening;
+					pads.erase(listening);
+				}
+				show(pads);
 			});
 	}
 
@@ -622,7 +663,7 @@ namespace gnubase::ui
 		}
 		for (const char* setting : {"stepInput", "moveInsert", "remote", "outputMode", "filterNotes", "latch",
 				 "modifiers", "snapPlayback", "flats"})
-			setChecked(find(std::string("chord-pads-") + setting), pads.at(setting).get<bool>());
+			setChecked(find(std::string("chord-pads-") + setting), toggled(setting, pads.at(setting).get<bool>()));
 		for (const char* setting : {"velocity", "remoteStart", "remoteEnd", "octaveOffset"})
 			setValue(find(std::string("chord-pads-") + setting), pads.at(setting).get<int>());
 		for (const char* name : g_modifierKeyNames)
@@ -637,7 +678,7 @@ namespace gnubase::ui
 			{{"sections", "Sections"}, {"chordPads", "Chord Pads"}, {"combination", "Combination"}},
 			pads.at("sectionPlay").get<std::string>());
 		for (const char* setting : {"latchPads", "spread"})
-			setChecked(find(std::string("chord-pads-") + setting), pads.at(setting).get<bool>());
+			setChecked(find(std::string("chord-pads-") + setting), toggled(setting, pads.at(setting).get<bool>()));
 		for (const char* setting : {"sectionKeys", "subsectionKeys", "subsectionOffsets", "playerKeys"})
 			for (size_t i = 0; i < pads.at(setting).size(); ++i)
 				setValue(find(std::string("chord-pads-") + setting + "-" + std::to_string(i)),
@@ -655,7 +696,8 @@ namespace gnubase::ui
 					pads.at(setting).at(i).get<int>());
 		for (size_t i = 0; i < 5; ++i)
 		{
-			setChecked(find("chord-pads-mute-" + std::to_string(i)), pads.at("mutedSections").at(i).get<bool>());
+			setChecked(find("chord-pads-mute-" + std::to_string(i)),
+				toggled("mute-" + std::to_string(i), pads.at("mutedSections").at(i).get<bool>()));
 			if (Rml::Element* select = find("chord-pads-subsectionSections-" + std::to_string(i)))
 				widgets::fill(*select,
 					{{"0", "Section 1"}, {"1", "Section 2"}, {"2", "Section 3"}, {"3", "Section 4"},
@@ -668,7 +710,8 @@ namespace gnubase::ui
 			{{"", "Pattern Preset"}, {"arpeggioUp", "Arpeggio Up"}, {"arpeggioDown", "Arpeggio Down"},
 				{"brokenChord", "Broken Chord"}, {"eighths", "Eighths"}},
 			"");
-		setChecked(find("chord-pads-velocityFromKeyboard"), pads.at("velocityFromKeyboard").get<bool>());
+		setChecked(find("chord-pads-velocityFromKeyboard"),
+			toggled("velocityFromKeyboard", pads.at("velocityFromKeyboard").get<bool>()));
 		std::string patternInfo = pattern.at("length").get<int64_t>() > 0
 			? patternName + " (" + std::to_string(pattern.at("voices").get<int>()) + " voices)"
 			: std::string("No pattern");
@@ -726,9 +769,9 @@ namespace gnubase::ui
 		const int first = m_selection.empty() ? -1 : *m_selection.begin();
 		const Json pad =
 			first >= 0 && first < static_cast<int>(pads.size()) ? pads[static_cast<size_t>(first)] : Json();
-		setChecked(find("chord-pads-lock"), pad.is_object() && pad.at("locked").get<bool>());
-		setChecked(find("chord-pads-adaptive"), pad.is_object() && pad.at("adaptive").get<bool>());
-		setChecked(find("chord-pads-reference"), first >= 0 && m_pads.at("reference") == first);
+		setChecked(find("chord-pads-lock"), toggled("lock", pad.is_object() && pad.at("locked").get<bool>()));
+		setChecked(find("chord-pads-adaptive"), toggled("adaptive", pad.is_object() && pad.at("adaptive").get<bool>()));
+		setChecked(find("chord-pads-reference"), toggled("reference", first >= 0 && m_pads.at("reference") == first));
 		// Assign from MIDI Input: the pad that gets the chord has a red frame (p. 1354).
 		const Json& now = listening();
 		const int assigned = now.is_object() ? now.value("assign", -1) : -1;
@@ -1005,12 +1048,16 @@ namespace gnubase::ui
 				else if (name == "muteSection")
 				{
 					// Mute Sections (p. 1384): the button's section.
+					// From what the buttons show (#1896).
 					Json muted = m_pads.at("mutedSections");
+					for (size_t i = 0; i < muted.size(); ++i)
+						muted.at(i) = toggled("mute-" + std::to_string(i), muted.at(i).get<bool>());
 					const auto index = static_cast<size_t>(actor->GetAttribute<int>("index", 0));
 					if (index < muted.size())
 					{
-						muted.at(index) = !muted.at(index).get<bool>();
-						send("chordPads.set", {{"mutedSections", muted}});
+						const bool on = !muted.at(index).get<bool>();
+						muted.at(index) = on;
+						toggle("mute-" + std::to_string(index), "chordPads.set", {{"mutedSections", muted}}, on);
 					}
 				}
 				else if (modifies(name) && m_pressedModifier)
@@ -1154,11 +1201,18 @@ namespace gnubase::ui
 		const std::vector<int> pads = selected();
 		const int first = pads.empty() ? -1 : pads.front();
 		const Json& items = m_pads.at("pads");
+		// A toggle goes from what it shows (#1896).
+		const auto shown = [this](const std::string& toggle)
+		{
+			const Rml::Element* button = find("chord-pads-" + toggle);
+			return button != nullptr && button->HasAttribute("checked");
+		};
 		if (name == "stepInput" || name == "moveInsert" || name == "remote" || name == "outputMode" ||
 			name == "filterNotes" || name == "latch" || name == "modifiers" || name == "snapPlayback" ||
 			name == "flats" || name == "latchPads" || name == "spread" || name == "velocityFromKeyboard")
 		{
-			send("chordPads.set", {{name, !m_pads.at(name).get<bool>()}});
+			const bool on = !shown(name);
+			toggle(name, "chordPads.set", {{name, on}}, on);
 		}
 		else if (name == "previousPreset" || name == "nextPreset")
 		{
@@ -1272,18 +1326,19 @@ namespace gnubase::ui
 			// One undo step for all the selected pads. Locked pads refuse adaptive voicing, which would fail the
 			// whole transaction, so they are left out of turning it on.
 			const char* state = name == "lock" ? "locked" : "adaptive";
-			const bool on = !items[static_cast<size_t>(first)].at(state).get<bool>();
+			const bool on = !shown(name);
 			const bool skipLocked = on && name == "adaptive";
 			Json commands = Json::array();
 			for (const int pad : pads)
 				if (!skipLocked || !items[static_cast<size_t>(pad)].at("locked").get<bool>())
 					commands.push_back({{"command", "chordPads.setPad"}, {"parameters", {{"pad", pad}, {state, on}}}});
 			if (!commands.empty())
-				send("history.transaction", {{"description", "Change chord pads"}, {"commands", commands}});
+				toggle(name, "history.transaction", {{"description", "Change chord pads"}, {"commands", commands}}, on);
 		}
 		else if (first >= 0 && name == "reference")
 		{
-			send("chordPads.setPad", {{"pad", first}, {"reference", m_pads.at("reference") != first}});
+			const bool on = !shown(name);
+			toggle(name, "chordPads.setPad", {{"pad", first}, {"reference", on}}, on);
 		}
 	}
 

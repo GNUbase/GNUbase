@@ -19,6 +19,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -67,6 +68,93 @@ namespace gnubase::engine
 			std::optional<time::Samples> start;
 			time::Samples end = 0;
 		};
+
+		struct EventRender
+		{
+			time::Samples start = 0;
+			time::Samples end = 0;
+			std::vector<ObjectId> events;
+		};
+
+		bool feedsInstrument(const RenderSnapshot& snapshot, const RenderChannel& channel, ObjectId instrument)
+		{
+			const bool output = channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel &&
+				snapshot.channels.at(static_cast<size_t>(channel.output.index)).id == instrument;
+			return output ||
+				std::any_of(channel.midiSendOutputs.begin(), channel.midiSendOutputs.end(), [&](int target)
+					{ return target >= 0 && snapshot.channels.at(static_cast<size_t>(target)).id == instrument; });
+		}
+
+		// Event and part boundaries, rather than note boundaries, define separate files and adjacent blocks.
+		std::vector<EventRender> eventRenders(
+			const Project& project, const RenderSnapshot& snapshot, const Track& track, const Json& parameters)
+		{
+			const std::string mode = parameters.value("mode", std::string("oneEvent"));
+			std::set<ObjectId> selected;
+			if (parameters.contains("events"))
+				for (const auto& event : parameters.at("events"))
+					selected.insert(event.get<ObjectId>());
+			std::vector<EventRender> events;
+			const auto add = [&](ObjectId id, time::Samples start, time::Samples end)
+			{
+				if (!selected.empty() && selected.count(id) == 0)
+					return;
+				if (parameters.contains("start"))
+				{
+					start = std::max(start, parameters.at("start").get<time::Samples>());
+					end = std::min(end, parameters.at("end").get<time::Samples>());
+				}
+				if (end > start)
+					events.push_back({start, end, {id}});
+			};
+			std::set<ObjectId> inputs{track.id};
+			for (const auto& channel : snapshot.channels)
+			{
+				if (feedsInstrument(snapshot, channel, track.channel))
+					inputs.insert(channel.track);
+				if (channel.track != track.id)
+					continue;
+				for (const auto& event : channel.audioEvents)
+					if (project.audioEvents.at(event.id).part == 0 || selected.count(event.id) != 0)
+					{
+						const double ratio =
+							snapshot.sampleRate / snapshot.media.at(static_cast<size_t>(event.media)).sampleRate;
+						add(event.id, event.start,
+							event.start +
+								static_cast<time::Samples>(std::llround(static_cast<double>(event.length) * ratio)));
+					}
+			}
+			const auto parts = [&](const auto& collection)
+			{
+				for (const auto& [id, part] : collection)
+					if (inputs.count(part.track) != 0)
+					{
+						auto end = part.position;
+						end.value += part.length;
+						add(id, time::toSamples(part.position, project.tempo, project.sampleRate),
+							time::toSamples(end, project.tempo, project.sampleRate));
+					}
+			};
+			parts(project.audioParts);
+			parts(project.midiParts);
+			std::sort(events.begin(), events.end(), [](const auto& a, const auto& b)
+				{ return std::tie(a.start, a.end, a.events) < std::tie(b.start, b.end, b.events); });
+			std::vector<EventRender> groups;
+			for (auto& event : events)
+			{
+				if (groups.empty() || mode == "separateEvents" ||
+					(mode == "blockEvents" && event.start > groups.back().end))
+				{
+					groups.push_back(std::move(event));
+				}
+				else
+				{
+					groups.back().end = std::max(groups.back().end, event.end);
+					groups.back().events.insert(groups.back().events.end(), event.events.begin(), event.events.end());
+				}
+			}
+			return groups;
+		}
 
 		Span spanOf(const RenderSnapshot& snapshot, ObjectId channel)
 		{
@@ -179,12 +267,7 @@ namespace gnubase::engine
 			// MIDI outputs and MIDI sends can feed a rendered instrument from another track.
 			for (const auto& channel : snapshot->channels)
 			{
-				bool feeds = channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel &&
-					snapshot->channels.at(static_cast<size_t>(channel.output.index)).id == track->second.channel;
-				for (const int output : channel.midiSendOutputs)
-					if (output >= 0 && snapshot->channels.at(static_cast<size_t>(output)).id == track->second.channel)
-						feeds = true;
-				if (feeds)
+				if (feedsInstrument(*snapshot, channel, track->second.channel))
 				{
 					tracks.insert(channel.track);
 					ranges[channel.track].insert(i);
@@ -561,11 +644,17 @@ namespace gnubase::engine
 				"with dry for a frozen track (its freeze file is already through the slots that dry copies), and "
 				"with completeSignalPath for a silent track: muted, or silenced by another track's solo. One undo "
 				"step when the background job finishes. Returns a cancellable job whose result holds the new tracks, "
-				"media "
-				"files and events, in order. Affected tracks and rendered events are locked until it ends.",
+				"media files and events, in order. mode: oneEvent (default), separateEvents (one file per event or "
+				"part), or blockEvents (combine adjacent or overlapping events and parts). Each source gets one "
+				"destination track. events optionally limits the input to audio event, audio part and MIDI part ids "
+				"on the selected tracks, excluding other material even where it overlaps or plays in the tail. "
+				"start/end clips those event ranges. Event selection and separate/block modes require unfrozen "
+				"tracks. Affected tracks and rendered events are locked until the job ends.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
-						{{"tracks", ids}, {"start", {{"type", "integer"}, {"minimum", 0}}},
+						{{"tracks", ids}, {"events", {{"type", "array"}, {"items", integer}, {"minItems", 1}}},
+							{"mode", {{"type", "string"}, {"enum", {"oneEvent", "separateEvents", "blockEvents"}}}},
+							{"start", {{"type", "integer"}, {"minimum", 0}}},
 							{"end", {{"type", "integer"}, {"minimum", 0}}}, {"processing", processing}, {"tail", tail},
 							{"sampleFormat",
 								{{"type", "string"}, {"enum", {"int16", "int24", "int32", "float32", "float64"}}}},
@@ -579,6 +668,34 @@ namespace gnubase::engine
 				const Json& parameters = context.parameters();
 				const std::vector<ObjectId> tracks = trackList(parameters);
 				require(parameters.contains("start") == parameters.contains("end"), "give both start and end, or none");
+				if (parameters.contains("start"))
+					require(parameters.at("end").get<time::Samples>() > parameters.at("start").get<time::Samples>(),
+						"the range is empty: end must be after start");
+				if (parameters.contains("events"))
+				{
+					require(!parameters.at("events").empty(), "events must not be empty");
+					std::set<ObjectId> selected;
+					for (const auto& value : parameters.at("events"))
+					{
+						const ObjectId id = value.get<ObjectId>();
+						require(selected.insert(id).second, "events names an event twice");
+						ObjectId owner = 0;
+						const auto find = [&](const auto& collection)
+						{
+							const auto found = collection.find(id);
+							if (found != collection.end())
+								owner = found->second.track;
+						};
+						find(project.audioEvents);
+						find(project.audioParts);
+						find(project.midiParts);
+						require(owner != 0, "there is no audio event or part " + std::to_string(id));
+						require(std::find(tracks.begin(), tracks.end(), owner) != tracks.end(),
+							"events must belong to the selected tracks");
+					}
+				}
+				const bool split =
+					parameters.contains("events") || parameters.value("mode", std::string("oneEvent")) != "oneEvent";
 				const std::string mode = parameters.value("processing", std::string("channelSettings"));
 				const char* point = "output";
 				if (mode == "dry")
@@ -586,7 +703,7 @@ namespace gnubase::engine
 				else if (mode == "channelSettings")
 					point = "strip";
 				const RenderSnapshot& snapshot = m_snapshots.latest();
-				std::vector<Span> spans;
+				std::vector<std::vector<EventRender>> groups;
 				for (const ObjectId id : tracks)
 				{
 					const Track& track = renderable(project, id);
@@ -594,33 +711,46 @@ namespace gnubase::engine
 					// A freeze file is already through the pre section and the slots that dry copies onto the new
 					// track.
 					require(mode != "dry" || !track.frozen, track.name + " is frozen: unfreeze it to render it dry");
+					require(!split || !track.frozen, track.name + " is frozen: unfreeze it to render events or parts");
 					// The complete signal path ends after the mute, through which solo silences the other tracks.
 					const auto render = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
 						[&track](const RenderChannel& channel) { return channel.id == track.channel; });
 					require(mode != "completeSignalPath" || render == snapshot.channels.end() || !render->silent,
 						track.name + " is silent: unmute it, or solo it too, to render its complete signal path");
+					if (split)
+					{
+						groups.push_back(eventRenders(project, snapshot, track, parameters));
+						require(!groups.back().empty(), track.name + " has no events or parts in the render range");
+						continue;
+					}
 					Span span = spanOf(snapshot, track.channel);
 					if (parameters.contains("start"))
 						span = {parameters.at("start").get<time::Samples>(), parameters.at("end").get<time::Samples>()};
 					require(span.start.has_value(), track.name + " has nothing to render");
 					require(span.end > *span.start, "the range is empty: end must be after start");
-					spans.push_back(span);
+					groups.push_back({{*span.start, span.end, {}}});
 				}
 				const fs::path folder =
 					m_file.empty() ? unsavedMediaFolder(m_settingsDirectory) : mediaFolderFor(fs::u8path(m_file));
 				auto render = std::make_shared<TrackRender>();
 				render->parameters = parameters;
-				render->tracks = tracks;
 				for (size_t i = 0; i < tracks.size(); ++i)
 				{
 					const Track& track = project.trackById.at(tracks[i]);
-					render->starts.push_back(*spans[i].start);
-					render->ends.push_back(spans[i].end);
-					render->work.push_back(engine.prepareMixdown(
-						{{"folder", folder.u8string()}, {"name", parameters.value("name", fileNameOf(track))},
-							{"channels", {track.channel}}, {"start", *spans[i].start}, {"end", spans[i].end},
-							{"point", point}, {"tail", parameters.value("tail", 0.0)},
-							{"sampleFormat", parameters.value("sampleFormat", std::string("float32"))}}));
+					for (const auto& group : groups[i])
+					{
+						render->tracks.push_back(track.id);
+						render->starts.push_back(group.start);
+						render->ends.push_back(group.end);
+						Json request = {{"folder", folder.u8string()},
+							{"name", parameters.value("name", fileNameOf(track))}, {"channels", {track.channel}},
+							{"start", group.start}, {"end", group.end}, {"point", point},
+							{"tail", parameters.value("tail", 0.0)},
+							{"sampleFormat", parameters.value("sampleFormat", std::string("float32"))}};
+						if (split)
+							request["renderEvents"] = group.events;
+						render->work.push_back(engine.prepareMixdown(request));
+					}
 				}
 				return startTrackRender(engine, render, context);
 			});
@@ -708,6 +838,7 @@ namespace gnubase::engine
 				Json added = Json::array();
 				Json media = Json::array();
 				Json events = Json::array();
+				std::map<ObjectId, ObjectId> destinations;
 
 				for (size_t i = 0; i < tracks.size(); ++i)
 				{
@@ -727,7 +858,14 @@ namespace gnubase::engine
 						trackParameters["format"] = formatName(from.format);
 					if (from.output != 0)
 						trackParameters["output"] = from.output;
-					const auto track = run("track.add", trackParameters).at("track").at("id").get<ObjectId>();
+					const bool first = destinations.count(source.id) == 0;
+					if (first)
+					{
+						destinations[source.id] =
+							run("track.add", trackParameters).at("track").at("id").get<ObjectId>();
+						added.push_back(destinations.at(source.id));
+					}
+					const ObjectId track = destinations.at(source.id);
 					const auto clip =
 						run("clip.add", {{"media", mediaFile.at("id")}}).at("clip").at("id").get<ObjectId>();
 					const time::Position at = time::rebase({time::TimeBase::Linear, *spans[i].start},
@@ -743,8 +881,9 @@ namespace gnubase::engine
 							{{"event", event}, {"rootKey", transposed ? std::string() : rootKeyName(project.rootKey)},
 								{"globalTranspose", transposed ? "independent" : "follow"}});
 					events.push_back(event);
-					added.push_back(track);
 					media.push_back(mediaFile.at("id"));
+					if (!first)
+						continue;
 
 					// The settings that weren't rendered.
 					Channel& channel = project.channels.at(project.trackById.at(track).channel);
@@ -778,7 +917,7 @@ namespace gnubase::engine
 				}
 
 				const std::string sources = parameters.value("sourceTracks", std::string("keep"));
-				for (const ObjectId id : tracks)
+				for (const auto& [id, destination] : destinations)
 				{
 					if (sources == "mute")
 						run("channel.set", {{"channel", project.trackById.at(id).channel}, {"mute", true}});

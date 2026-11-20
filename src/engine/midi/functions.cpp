@@ -1008,6 +1008,7 @@ namespace gnubase::engine::midi
 			combined.id = project.newId();
 			combined.track = earliest->track;
 			combined.name = earliest->name;
+			combined.color = earliest->color;
 			combined.lane = lane;
 			combined.transpose = setting.transpose;
 			combined.velocity = setting.velocity;
@@ -1619,12 +1620,12 @@ namespace gnubase::engine::midi
 					piece.velocity = original.velocity;
 					piece.rootKey = original.rootKey;
 					piece.independent = original.independent;
+					piece.color = original.color;
 					Ticks pieceStart = originalStart;
 					Ticks pieceEnd = originalEnd;
 					if (to == DissolveTo::Lanes)
 					{
 						piece.name = original.name + " " + suffixOf(key);
-						piece.color = original.color;
 						piece.lane = laneFor.at(key);
 					}
 					else

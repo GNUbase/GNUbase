@@ -102,6 +102,19 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 
 - The range is `start` to `end` (a range selection, p. 1474), or from the start of the track's first event or note
   to the end of its last; `tail` adds seconds after it (default 0).
+- `mode` (pp. 1472, 1475): `oneEvent` (the default) combines the input into one file; `separateEvents` writes a file per
+  audio event, audio part or MIDI part; `blockEvents` combines adjacent or overlapping events and parts into one file
+  per block. All files of a source go onto one destination track, in time order, each at its source range's start. Parts
+  use their whole boundaries, including silence before or after their notes. Each file renders only its own input,
+  including during its tail, so another event cannot play into that tail. A source-track option applies once per source,
+  and all destination tracks, files and events belong to the same undo step. MIDI parts feeding the instrument through
+  either a MIDI output or a MIDI send participate in the grouping, using the same routing check as the render input
+  locks.
+- `events` optionally selects audio event, audio part and MIDI part ids on the tracks in `tracks`. Only that material
+  renders, including where unselected material overlaps it; `start` and `end`, if given, clip the selected ranges. The
+  selection must be nonempty, without duplicate or unknown ids, and each requested track must have material in the
+  range. Selected events and separate/block modes require unfrozen tracks. These options are available through the
+  engine API, MCP and Lua; the event display's selection is not wired to them yet.
 - `processing` (p. 1472): `dry` renders at `source`, and the new track gets the channel's plugin slots (copies, with
   their state), strip sections, fader, pan and sends; `channelSettings` (the default) renders at `strip`, and the new
   track gets the fader, pan and sends; `completeSignalPath` renders at `output`, so a mono track panned on a stereo
@@ -129,9 +142,9 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 - The Render Tracks, Render Selection, Freeze Channel Options and Unfreeze Channel Options dialogs, with options that
   are saved for the next time; Freeze Channel in the inspector and the mixer, and the lit freeze buttons.
 - Locking a frozen track's events, parts and controls (p. 220); edits of them play once the track is unfrozen.
-- As Separate Events and As Block Events, rendering events or parts selected in the event display, Mix down to One
-  Audio File and Hide Source Tracks (pp. 1472-1473); Complete Signal Path + Master FX, and groups and effect returns
-  in the complete signal path; copying the track's automation to the new track.
+- Wiring the event display's selection to rendering, the selection dialog's Keep/Mute Source Events, Mix down to One
+  Audio File and Hide Source Tracks (pp. 1472-1473); Complete Signal Path + Master FX, and groups and effect returns in
+  the complete signal path; copying the track's automation to the new track.
 - Freezing only the instrument (p. 991) or the inserts before a given slot (p. 548), freezing external instruments
   and effects, and removing freeze files when unfreezing.
 - Plugin delay compensation (#71): a freeze file rendered at `inserts` holds its slots' latency, so once latency is
@@ -155,3 +168,13 @@ The follow-up regressions in `tests/renderinplace_tests.cpp` check the completed
 input changes during a render, and refusal of undo and redo that would change a locked track's pre gain, preserving both
 project and history. They also check that newly routed MIDI and newly inserted plugins remain protected.
 `tests/theme_tests.cpp` checks the rendering-state style in every generated theme.
+
+The selection regressions in `tests/renderinplace_tests.cpp` check separate files and adjacent blocks on one destination
+track, their positions and audio, distinct file names, source disabling and removal, undo/redo, exclusion of overlapping
+unselected audio and MIDI parts, full MIDI part boundaries, later events excluded from tails, and invalid selections
+rejected before a job starts. They also null-test separate dry renders with their copied effects and check that a
+failure in the second file removes the first without an edit or remaining locks. Outside Windows, a save with a freeze
+file in a folder that cannot be searched must fail without changing the existing project file or leaving a `.saving`
+file. The UI regression in `tests/projectfiles_tests.cpp` checks that Save, Save As and Save New Version name media and
+freeze files in the missing-files notice. A MIDI send regression compares separate files and overlapping blocks with
+direct MIDI routing, checking that the send parts get their files and remain audible in a combined block.

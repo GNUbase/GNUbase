@@ -78,8 +78,9 @@ engine commands, so whichever client changes the project or the view, the mixer 
   more contrast over the color than light text (WCAG 2's relative luminance). Every theme gives the text over it
   ([themes.md](themes.md)). Busses and tracks without a color show the theme's.
 - **Notes and pictures** (p. 497). The notepad shows the channel's notes; what is typed is sent with `channel.set`
-  when the field loses the focus. The picture section shows the track's picture (an `<img>`, or an `<svg>` for SVG
-  files); a double click opens the OS's file dialog for a picture, then `track.set`.
+  when the field loses the focus, unless another project came in the meantime (`project.reset`), which drops it, as
+  the inspector does. The picture section shows the track's picture (an `<img>`, or an `<svg>` for SVG files); a
+  double click opens the OS's file dialog for a picture, then `track.set`.
 
 ## Windows and the lower zone
 
@@ -112,9 +113,9 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
   once; the fader, the dB text and the mute and solo buttons both ways; two windows, the Visibility tab and the type
   filter hiding channels in one window only, Show All Channels, and `mixer.set` from the engine; Alt+F3 showing the
   lower zone's mixer with its own view and hiding the zone again; a closed window letting go of its mixer; the setup
-  pane's Pictures, Notepad and Fader, notes from the engine and typed in the notepad, a picture shown and removed, and
-  channel names dragged onto others reordering the tracks, while busses stay. A strip's name shows its track's color as
-  `track.set` changes it, marked bright or not, and the theme's once the color is gone. A fader and a send's level
+  pane's Pictures, Notepad and Fader, notes from the engine and typed in the notepad, and dropped when another
+  project loads, a picture shown and removed, and channel names dragged onto others reordering the tracks, while
+  busses stay. A strip's name shows its track's color as `track.set` changes it, marked bright or not, and the theme's once the color is gone. A fader and a send's level
   dragged and the panner turned while the engine answers late follow the mouse, never back, end where the engine is, and
   are one undo step; values set through MCP show at once, and during a drag when it ends. A fader step the engine
   refuses, its track being gone, shows in the command log, leaves no undo step and, once an undo brings the track back,

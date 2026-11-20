@@ -555,15 +555,13 @@ TEST_CASE("midi.setPort sets an input's MPE setup, which midi.ports lists and mi
 	// The setting's schema lists every member of mpe, as midi.setPort takes it (#1749).
 	const Json mpeSchema = midi::mpeSchema();
 	const Json definitions = run(client, "settings.list").at("settings");
-	for (const Json& definition : definitions)
-		if (definition.at("key") == "midi.portSettings")
-			for (const auto& member : mpeSchema.at("properties").items())
-				CHECK(definition.at("schema")
-						.at("additionalProperties")
-						.at("properties")
-						.at("mpe")
-						.at("properties")
-						.contains(member.key()));
+	const auto definition = std::find_if(
+		definitions.begin(), definitions.end(), [](const Json& each) { return each.at("key") == "midi.portSettings"; });
+	REQUIRE(definition != definitions.end()); // else nothing is checked (#1832)
+	const Json& listed =
+		definition->at("schema").at("additionalProperties").at("properties").at("mpe").at("properties");
+	for (const auto& member : mpeSchema.at("properties").items())
+		CHECK(listed.contains(member.key()));
 
 	// Back to the defaults, the port's entry goes.
 	run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", midi::MpeSetup().toJson()}});
@@ -665,6 +663,27 @@ TEST_CASE("midi.activity takes the MIDI input that arrived and announces it", "[
 	const Json log = run(client, "engine.commandLog");
 	for (const Json& entry : log.at("commands"))
 		CHECK(entry.at("command") != "midi.activity");
+}
+
+TEST_CASE("midi.activityListen is on while any listener has it on", "[integration]")
+{
+	// #1832: the studio setup dialog's off leaves a script's or an MCP session's on, and theirs leaves the dialog's.
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "midi.activityListen", {{"on", true}});
+	run(client, "midi.activityListen", {{"on", true}, {"listener", "studioSetup"}});
+	setup.play(*setup.keys, {{0xB0, 1, 1}});
+	run(client, "midi.activityListen", {{"on", false}, {"listener", "studioSetup"}});
+	setup.play(*setup.keys, {{0xB0, 1, 2}});
+	// Still on, so nothing was dropped.
+	CHECK(run(client, "midi.activity").at("received").size() == 2);
+	run(client, "midi.activityListen", {{"on", true}, {"listener", "studioSetup"}});
+	run(client, "midi.activityListen", {{"on", false}});
+	setup.play(*setup.keys, {{0xB0, 1, 3}});
+	CHECK(run(client, "midi.activity").at("received").size() == 1);
+	run(client, "midi.activityListen", {{"on", false}, {"listener", "studioSetup"}});
+	setup.play(*setup.keys, {{0xB0, 1, 4}});
+	CHECK(run(client, "midi.activity").at("received").empty());
 }
 
 TEST_CASE(
@@ -1100,4 +1119,8 @@ TEST_CASE("midi.inject plays its messages through an MPE setup as a port with it
 	CHECK_THAT(reject(client, "midi.inject",
 				   {{"channel", setup.channel}, {"messages", Json::array()}, {"mpe", {{"mode", "middle"}}}}),
 		ContainsSubstring("mode"));
+	// direct skips the track's input, where the MPE setup plays (#1819).
+	CHECK_THAT(reject(client, "midi.inject",
+				   {{"channel", setup.channel}, {"messages", Json::array()}, {"direct", true}, {"mpe", lower}}),
+		ContainsSubstring("MPE setup"));
 }

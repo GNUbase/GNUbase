@@ -361,11 +361,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
 	target_link_libraries(gnubase-tests PRIVATE PkgConfig::ALSA)
 endif()
-gnubase_target_defaults(gnubase-tests)
-# Sanitizer builds are too slow for benchmarks.
-if(GNUBASE_SANITIZERS)
-	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_SANITIZED)
-endif()
+gnubase_target_defaults(gnubase-tests) # also defines GNUBASE_SANITIZED in sanitizer builds, too slow for benchmarks
 
 # Every TEST_CASE becomes a ctest test; its tags ([unit], [integration], [ui], [slow], [realtime], [jack]) become ctest
 # labels. PRE_TEST discovery lets cross-compiled builds (e.g. Windows ARM64 on x64) configure and build.
@@ -393,6 +389,7 @@ function(gnubase_add_shell_test name script)
 endfunction()
 gnubase_add_shell_test("the clang-tidy cache reruns clang-tidy only when an input changed" clang_tidy_cache_tests.sh)
 gnubase_add_shell_test("the keyword guard blocks private keywords in commits and pull requests" keyword_guard_tests.sh)
+gnubase_add_shell_test("a failed CI run on main is reported in an issue" report_ci_failure_tests.sh)
 gnubase_add_shell_test("the license header check lists files without the SPDX header" spdx_check_tests.sh)
 gnubase_add_shell_test("tidy-changed.sh checks the changed lines and compiles the changed files" tidy_changed_tests.sh)
 

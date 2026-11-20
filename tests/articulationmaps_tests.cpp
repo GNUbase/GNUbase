@@ -3,6 +3,7 @@
 // export and import, a track's map, directions and attributes in MIDI parts, playback through the sound slots'
 // output events and MIDI modifiers, and remote triggers in recordings.
 #include "engine/document/rendersnapshot.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/articulationmaps.h"
 #include "engine/midi/midivalues.h"
@@ -1294,6 +1295,34 @@ TEST_CASE("remote triggers played into a track select sound slots", "[integratio
 		CHECK(play({{0x90, 40, 100}, {0x91, 40, 100}, {0x81, 40, 0}}) ==
 			Played{{0xB0, 33, 127}, {0xB0, 33, 0}, {0xB1, 33, 127}, {0xB1, 33, 0}});
 	}
+	SECTION("an add-on pressed again after a setup edit put another one on into its group")
+	{
+		// F1 turns Damp on, of a group of its own, then E1 Mute. The setup moves Damp's attribute into Mute's group
+		// Length; both stay on. E1 again, on channel 2: Damp ends, Mute goes off on channel 1 and on on channel 2,
+		// where its release ends it (#1744).
+		Json settings = stringsSettings();
+		settings["map"] = map;
+		settings["latch"] = false;
+		settings["groups"].push_back("Damping");
+		settings["articulations"].push_back({{"name", "Damped"}, {"type", "attribute"}, {"group", 2}});
+		settings["slots"].push_back(
+			{{"name", "Mute"}, {"addOn", true}, {"articulations", {"Staccato"}}, {"trigger", 40},
+				{"outputs",
+					{{{"status", "controller"}, {"data1", 33}, {"data2", 127}},
+						{{"status", "controller"}, {"data1", 33}, {"data2", 0}, {"off", true}}}}});
+		settings["slots"].push_back({{"name", "Damp"}, {"addOn", true}, {"articulations", {"Damped"}}, {"trigger", 41},
+			{"outputs",
+				{{{"status", "controller"}, {"data1", 34}, {"data2", 127}},
+					{{"status", "controller"}, {"data1", 34}, {"data2", 0}, {"off", true}}}}});
+		call("articulationMap.set", settings);
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 41, 100}, {0x90, 40, 100}}) == Played{{0xB0, 34, 127}, {0xB0, 33, 127}});
+		settings["articulations"][3]["group"] = 1;
+		call("articulationMap.set", settings);
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x91, 40, 100}, {0x81, 40, 0}}) ==
+			Played{{0xB0, 34, 0}, {0xB0, 33, 0}, {0xB1, 33, 127}, {0xB1, 33, 0}});
+	}
 	SECTION("add-on slots follow the notes to the channel of another slot, also the default slot coming back")
 	{
 		// Arco, the default slot, plays Senza sordino of the add-on Sordino's group Mute. Pizzicato held, Sordino
@@ -1574,7 +1603,8 @@ TEST_CASE("sound slots follow the notes to their own channels, as add-on slots d
 {
 	Fixture f;
 	// An instrument track has no MIDI channel: the notes keep their own. Arco, the default slot, switches with the
-	// key C0; the add-on Legato turns on with controller 68 at 127 and off with it at 0 (#1718).
+	// key C0; the add-on Legato turns on with controller 68 at 127 and off with it at 0 (#1718). Each channel keeps
+	// what it was sent, so that notes on several channels sound together with their slots (#1744).
 	const Json settings = {{"name", "Add-on"}, {"groups", {"Legato"}},
 		{"articulations", {{{"name", "Legato"}, {"type", "attribute"}, {"group", 0}}}},
 		{"slots",
@@ -1611,7 +1641,8 @@ TEST_CASE("sound slots follow the notes to their own channels, as add-on slots d
 	CHECK(switches[1].first < second.start);
 	CHECK(switches[1].first > first.start);
 	CHECK(switches[1].second == 1);
-	// Legato goes the same way: off on channel 1 and on again on channel 2 with the second note.
+	// Legato goes the same way: on on channel 2 with the second note, and off there with the third; channel 1 keeps
+	// it, as no note there plays without it.
 	std::vector<std::tuple<int64_t, int, uint32_t>> found;
 	found.reserve(channel.controllers.size());
 	for (const engine::RenderController& controller : channel.controllers)
@@ -1620,7 +1651,88 @@ TEST_CASE("sound slots follow the notes to their own channels, as add-on slots d
 	const uint32_t on = engine::midi::controllerFromMidi1(127);
 	CHECK(found ==
 		std::vector<std::tuple<int64_t, int, uint32_t>>{
-			{first.start, 0, on}, {second.start, 0, 0}, {second.start, 1, on}, {notePlaying(channel, 62).start, 1, 0}});
+			{first.start, 0, on}, {second.start, 1, on}, {notePlaying(channel, 62).start, 1, 0}});
+
+	// A chord on channels 1 and 2, as from MPE input: each channel gets the slot and Legato, and neither goes off
+	// where the other's note starts.
+	f.call("note.add", {{"part", f.part}, {"notes", {note(0, 63, 1, {"Legato"})}}});
+	const engine::RenderChannel chord = f.rendered();
+	switches.clear();
+	found.clear();
+	for (const engine::RenderNote& each : chord.notes)
+		if (each.pitch == 24)
+			switches.emplace_back(each.start, each.channel);
+	for (const engine::RenderController& controller : chord.controllers)
+		found.emplace_back(controller.position, controller.channel, controller.value);
+	std::sort(switches.begin(), switches.end());
+	std::sort(found.begin(), found.end());
+	REQUIRE(switches.size() == 2);
+	CHECK(switches[0].second == 0);
+	CHECK(switches[1].second == 1);
+	CHECK(switches[1].first <= first.start);
+	CHECK(found ==
+		std::vector<std::tuple<int64_t, int, uint32_t>>{
+			{first.start, 0, on}, {first.start, 1, on}, {notePlaying(chord, 62).start, 1, 0}});
+}
+
+TEST_CASE("notes of two own channels that slots send to one channel switch it each time", "[unit]")
+{
+	Fixture f;
+	// An instrument track: the notes keep their own channels, and each is a line of its own (#1744). Arco, the default
+	// slot, switches with the key C0 and Staccato with D0, both on channel 3; the add-on Legato turns on with
+	// controller 68 at 127 and off with it at 0. Notes on channels 1 and 2 alternate between the slots: each sends
+	// its slot and add-ons again, as the channel they play on last got the other's.
+	const Json settings = {{"name", "Shared"}, {"groups", {"Technique", "Legato"}},
+		{"articulations",
+			{{{"name", "Staccato"}, {"type", "attribute"}, {"group", 0}},
+				{{"name", "Legato"}, {"type", "attribute"}, {"group", 1}}}},
+		{"slots",
+			{{{"name", "Arco"}, {"channel", 2}, {"outputs", {{{"status", "note"}, {"data1", 24}}}}},
+				{{"name", "Staccato"}, {"articulations", {"Staccato"}}, {"channel", 2},
+					{"outputs", {{{"status", "note"}, {"data1", 26}}}}},
+				{{"name", "Legato"}, {"articulations", {"Legato"}}, {"addOn", true},
+					{"outputs",
+						{{{"status", "controller"}, {"data1", 68}, {"data2", 127}},
+							{{"status", "controller"}, {"data1", 68}, {"data2", 0}, {"off", true}}}}}}}};
+	const auto id = f.call("articulationMap.add", settings).at("map").at("id");
+	f.call("track.set", {{"track", f.track}, {"articulationMap", id}});
+	const auto note = [](int64_t position, int pitch, int channel, Json articulations)
+	{
+		return Json{{"position", position}, {"length", g_quarter / 2}, {"pitch", pitch}, {"velocity", 0.5},
+			{"channel", channel}, {"articulations", std::move(articulations)}};
+	};
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{note(0, 60, 0, {"Staccato", "Legato"}), note(g_quarter, 61, 1, Json::array()),
+					note(2 * g_quarter, 62, 0, {"Staccato", "Legato"}), note(3 * g_quarter, 63, 1, Json::array())}}});
+	const engine::RenderChannel channel = f.rendered();
+	std::vector<std::tuple<int64_t, int, int>> switches;
+	for (const engine::RenderNote& each : channel.notes)
+		if (each.pitch == 24 || each.pitch == 26)
+			switches.emplace_back(each.start, each.pitch, each.channel);
+	std::sort(switches.begin(), switches.end());
+	REQUIRE(switches.size() == 4);
+	const std::vector<int> pitches = {60, 61, 62, 63};
+	const std::vector<int> keys = {26, 24, 26, 24};
+	for (size_t index = 0; index < switches.size(); ++index)
+	{
+		const engine::RenderNote& played = notePlaying(channel, pitches.at(index));
+		CHECK(played.channel == 2);
+		CHECK(std::get<0>(switches.at(index)) <= played.start);
+		CHECK(std::get<1>(switches.at(index)) == keys.at(index));
+		CHECK(std::get<2>(switches.at(index)) == 2);
+	}
+	std::vector<std::tuple<int64_t, int, uint32_t>> found;
+	found.reserve(channel.controllers.size());
+	for (const engine::RenderController& controller : channel.controllers)
+		found.emplace_back(controller.position, controller.channel, controller.value);
+	std::sort(found.begin(), found.end());
+	const uint32_t on = engine::midi::controllerFromMidi1(127);
+	CHECK(found ==
+		std::vector<std::tuple<int64_t, int, uint32_t>>{{notePlaying(channel, 60).start, 2, on},
+			{notePlaying(channel, 61).start, 2, 0}, {notePlaying(channel, 62).start, 2, on},
+			{notePlaying(channel, 63).start, 2, 0}});
 }
 
 TEST_CASE("articulationMap.remoteTriggers transposes, reassigns and removes the remote triggers", "[unit]")
@@ -1777,7 +1889,8 @@ TEST_CASE("muted articulations are saved, renamed with the map and stay muted in
 		{{"part", f.part},
 			{"controllers",
 				{{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
-					{{"position", 10}, {"type", "articulation"}, {"articulation", "Arco"}, {"muted", true}}}}});
+					{{"position", 10}, {"type", "articulation"}, {"articulation", "Arco"}, {"muted", true}},
+					{{"position", g_quarter}, {"type", "articulation"}, {"articulation", "Arco"}, {"muted", true}}}}});
 	f.call("note.add",
 		{{"part", f.part},
 			{"notes",
@@ -1798,16 +1911,19 @@ TEST_CASE("muted articulations are saved, renamed with the map and stay muted in
 	f.call("articulationMap.set", settings);
 	CHECK(f.partJson().at("notes").at(0).at("mutedArticulations") == Json{"Stacc"});
 
-	// Merge MIDI in Loop: the muted Arco isn't in effect where the range starts, Pizzicato is; the muted attribute
-	// stays muted.
+	// Merge MIDI in Loop: the muted Arco isn't in effect where the range starts, Pizzicato is; the muted Arco inside
+	// the range is copied, muted (#1799), and the muted attribute stays muted.
 	const Json changes = f.call("midi.merge", {{"start", 12000}, {"end", 96000}});
 	Json merged;
 	const Json project = f.call("project.get");
 	for (const Json& part : project.at("midiParts"))
 		if (part.at("id") == changes.at("parts").at(0))
 			merged = part;
-	REQUIRE(merged.at("controllers").size() == 1);
+	REQUIRE(merged.at("controllers").size() == 2);
 	CHECK(merged.at("controllers").at(0).at("articulation") == "Pizzicato");
+	CHECK_FALSE(merged.at("controllers").at(0).contains("muted"));
+	CHECK(merged.at("controllers").at(1).at("articulation") == "Arco");
+	CHECK(merged.at("controllers").at(1).value("muted", false));
 	CHECK(merged.at("notes").at(0).at("mutedArticulations") == Json{"Stacc"});
 }
 
@@ -1836,4 +1952,41 @@ TEST_CASE("the selected notes' entries name the attributes selected of them", "[
 	// A new selection without them selects all of a note's attributes again.
 	CHECK(f.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", first}}}}})
 			  .at("selection") == Json::array({{{"part", f.part}, {"note", first}}}));
+
+	// Only the note's own, each once, and not none (#1762, #1799).
+	const auto select = [&](const Json& names)
+	{
+		return Json{
+			{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", first}, {"articulations", names}}}}};
+	};
+	CHECK_THAT(f.fails("editor.set", select(Json{"Pizzicato"})), ContainsSubstring("Pizzicato"));
+	CHECK_THAT(f.fails("editor.set", select(Json::array())), ContainsSubstring("articulations"));
+	CHECK(f.call("editor.set", select(Json{"Staccato", "Staccato"})).at("selection").at(0).at("articulations") ==
+		Json{"Staccato"});
+	// An attribute that goes leaves the entry; with none of them left the note is no longer selected, as after
+	// Delete on the lane.
+	f.call("editor.set",
+		{{"editor", "window"},
+			{"selection",
+				{{{"part", f.part}, {"note", first}, {"articulations", {"Staccato"}}},
+					{{"part", f.part}, {"note", second}}}}});
+	f.call("note.set", {{"part", f.part}, {"notes", {{{"id", first}, {"articulations", Json::array()}}}}});
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("selection") ==
+		Json::array({{{"part", f.part}, {"note", second}}}));
+}
+
+TEST_CASE("a loaded project keeps only a note's own muted attributes, each once", "[unit]")
+{
+	// #1762, #1799: as note.add and note.set take them.
+	Fixture f;
+	f.strings();
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5},
+					{"articulations", {"Staccato"}}}}}});
+	Json saved = f.call("project.get");
+	saved["midiParts"][0]["notes"][0]["mutedArticulations"] = {"Pizzicato", "Staccato", "Staccato"};
+	const engine::Project loaded = engine::projectFromJson(saved);
+	CHECK(loaded.midiParts.at(f.part).notes.begin()->second.mutedArticulations == std::vector<std::string>{"Staccato"});
 }

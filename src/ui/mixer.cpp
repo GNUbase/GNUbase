@@ -5,11 +5,13 @@
 #include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
+#include <RmlUi/Core/SystemInterface.h>
 
 #include <algorithm>
 #include <array>
@@ -338,6 +340,33 @@ namespace gnubase::ui
 		return {{"solo", solo}, {"exclusive", exclusive && solo}};
 	}
 
+	bool anyChannelHas(const Json& project, const std::string& state)
+	{
+		const Json channels = project.value("channels", Json::array());
+		return std::any_of(channels.begin(), channels.end(), [&state](const Json& channel)
+			{ return channel.value(state, false) || (state == "solo" && channel.value("soloDefeat", false)); });
+	}
+
+	void SoloHold::pressed(Rml::Element* target)
+	{
+		m_button = {};
+		for (Rml::Element* up = target; up != nullptr; up = up->GetParentNode())
+			if (up->HasAttribute("control"))
+			{
+				if (up->GetAttribute<Rml::String>("control", "") == "solo")
+				{
+					m_button = up->GetObserverPtr();
+					m_at = Rml::GetSystemInterface()->GetElapsedTime();
+				}
+				return;
+			}
+	}
+
+	bool SoloHold::held(const Rml::Element& button) const
+	{
+		return m_button.get() == &button && Rml::GetSystemInterface()->GetElapsedTime() - m_at >= g_seconds;
+	}
+
 	std::vector<MixerChannel> mixerChannels(const Json& project)
 	{
 		std::vector<MixerChannel> result;
@@ -452,8 +481,19 @@ namespace gnubase::ui
 				[this, reset = std::string(event) == "project.reset"](const engine::Event&)
 				{
 					requestProject();
-					if (reset)
-						requestView();
+					if (!reset)
+						return;
+					// A note being typed belongs to the project that went, as the inspector's edits do
+					// (Inspector::dropEdits).
+					Rml::Context* context = m_root ? m_root->GetContext() : nullptr;
+					if (Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
+						focus != nullptr && focus->IsClassSet("mixer-notes-field") && m_root->Contains(focus))
+					{
+						m_dropping = true;
+						focus->Blur();
+						m_dropping = false;
+					}
+					requestView();
 				}));
 		m_subscriptions.push_back(m_binding.on("mixer.changed",
 			[this](const engine::Event& event)
@@ -629,11 +669,7 @@ namespace gnubase::ui
 				: nullptr;
 			if (button == nullptr)
 				continue;
-			bool any = false;
-			for (const Json& channel : m_project.value("channels", Json::array()))
-				any = any || channel.value(state, false) ||
-					(std::string(state) == "solo" && channel.value("soloDefeat", false));
-			button->SetClass("checked", any);
+			button->SetClass("checked", anyChannelHas(m_project, state));
 		}
 		if (Rml::Element* menu = m_menus.front().get())
 			for (const auto& [type, label] : g_types)
@@ -1089,11 +1125,12 @@ namespace gnubase::ui
 			{
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->channel != nullptr)
 				{
-					// Solo: Ctrl-click (Cmd on macOS) solos exclusively, Alt-click switches solo defeat (p. 466).
+					// Solo: Ctrl-click (Cmd on macOS) solos exclusively, Alt-click and click and hold switch solo
+					// defeat (p. 466).
 					const std::string control = attribute(*target, "control");
 					Json parameters = control == "solo"
 						? soloClick(*channel->channel, held(event, "ctrl_key") || held(event, "meta_key"),
-							  held(event, "alt_key"))
+							  held(event, "alt_key") || m_soloHold.held(*target))
 						: Json{{control, !channel->channel->at(control).get<bool>()}};
 					parameters["channel"] = channel->id;
 					m_binding.send("channel.set", std::move(parameters));
@@ -1111,6 +1148,7 @@ namespace gnubase::ui
 			const MixerChannel* channel =
 				closest(target, "mixer-channel-name", m_root.get()) != nullptr ? channelOf(target) : nullptr;
 			m_dragged = channel != nullptr ? channel->id : 0;
+			m_soloHold.pressed(target);
 			break;
 		}
 		case Rml::EventId::Mouseup:
@@ -1128,7 +1166,7 @@ namespace gnubase::ui
 				}
 			break;
 		case Rml::EventId::Blur:
-			if (target->IsClassSet("mixer-notes-field"))
+			if (target->IsClassSet("mixer-notes-field") && !m_dropping)
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->channel != nullptr)
 					if (auto* field = dynamic_cast<Rml::ElementFormControl*>(target);
 						field != nullptr && field->GetValue() != channel->channel->value("notes", std::string()))

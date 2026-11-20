@@ -61,7 +61,15 @@ namespace gnubase::app
 						m_keys.run(command, Json::object(), window != nullptr ? *window : m_main, nullptr);
 					},
 					[this](const std::string& command, Json parameters)
-					{ quantizeAudioTracks(command, std::move(parameters)); });
+					{ quantizeAudioTracks(command, std::move(parameters)); },
+					[this](int gesture)
+					{
+						// Auto Apply: what Quantize takes, a value field's drag as one undo step.
+						ui::Window* window = m_docking.windowOf("quantize");
+						quantize("quantize.apply", "Quantize",
+							quantizeTarget(window != nullptr ? *window : m_main, nullptr),
+							gesture != 0 ? "quantize auto apply " + std::to_string(gesture) : std::string());
+					});
 				panel->showHitpointTracks(hitpointTracks());
 				m_quantizePanel = panel;
 				return panel;
@@ -87,37 +95,98 @@ namespace gnubase::app
 				m_keys.bind({each.keys, each.id});
 		}
 
-		// Create Groove Quantize Preset (pp. 367, 373, 376): a groove of the first part it would quantize, or of the
-		// first selected audio event's hitpoints, which then is the project's quantize settings.
+		// Create Groove Quantize Preset (pp. 367, 373, 376): a groove of the first part it would quantize that has
+		// notes, or of the first selected audio event's hitpoints, which then is the project's quantize settings. It is
+		// named after the part or the event's clip, with a number added where a preset has the name, so that it
+		// replaces none.
 		m_keys.add({"edit.createGrooveQuantize",
 			"Makes a groove quantize preset of the selected MIDI part's rhythm, or of the selected audio event's "
 			"hitpoints, and quantizes to it.",
 			[this](ui::Window& window, Rml::Element* zone)
 			{
 				const QuantizeTarget target = quantizeTarget(window, zone);
-				if (target.parts.empty() && target.events.empty())
+				const uint64_t part = groovePart(target);
+				if (part == 0 && target.events.empty())
 					return;
-				m_binding.send("quantize.extractGroove",
-					target.parts.empty() ? Json{{"event", target.events.front()}}
-										 : Json{{"part", target.parts.front().first}},
-					[this](const engine::Result& result)
+				Json parameters = part != 0 ? Json{{"part", part}} : Json{{"event", target.events.front()}};
+				// The name quantize.extractGroove would give it, from the project as the project window has it.
+				std::string name;
+				if (m_eventDisplay)
+				{
+					const Json& project = m_eventDisplay->project();
+					// The object of the list with the id, by reference: the parts have their notes.
+					const auto find = [&project](const char* list, uint64_t id) -> const Json*
 					{
-						// Refused, as for an audio event without hitpoints, it is logged as a refused Slice is.
-						if (!result.ok())
+						if (const auto all = project.find(list); all != project.end())
+							for (const Json& each : *all)
+								if (each.value("id", uint64_t{0}) == id)
+									return &each;
+						return nullptr;
+					};
+					const Json* named = part != 0 ? find("midiParts", part) : nullptr;
+					if (part == 0)
+						if (const Json* event = find("audioEvents", target.events.front()))
+							named = find("clips", event->value("clip", uint64_t{0}));
+					if (named != nullptr)
+						name = named->value("name", std::string());
+				}
+				m_binding.send("quantize.presets", Json::object(),
+					[this, parameters, name](const engine::Result& presets) mutable
+					{
+						if (presets.ok() && !name.empty())
 						{
-							logging::warning("Creating a groove quantize preset failed: {}", result.error);
-							return;
+							const auto taken = [&presets](const std::string& candidate)
+							{
+								const Json& list = presets.value.at("presets");
+								return std::any_of(list.begin(), list.end(),
+									[&candidate](const Json& preset) { return preset.at("name") == candidate; });
+							};
+							std::string free = name;
+							for (int number = 2; taken(free); ++number)
+								free = name + " " + std::to_string(number);
+							parameters["name"] = free;
 						}
-						m_binding.send(
-							"quantize.set", {{"preset", result.value.at("preset").at("name").get<std::string>()}});
+						m_binding.send("quantize.extractGroove", parameters,
+							[this](const engine::Result& result)
+							{
+								// Refused, as for an audio event without hitpoints, it is logged as a refused Slice
+								// is.
+								if (!result.ok())
+								{
+									logging::warning("Creating a groove quantize preset failed: {}", result.error);
+									return;
+								}
+								m_binding.send("quantize.set",
+									{{"preset", result.value.at("preset").at("name").get<std::string>()}});
+							});
 					});
 			}});
 		m_keys.enableWhen("edit.createGrooveQuantize",
 			[this](ui::Window& window, Rml::Element* zone)
 			{
 				const QuantizeTarget target = quantizeTarget(window, zone);
-				return !target.parts.empty() || !target.events.empty();
+				return groovePart(target) != 0 || !target.events.empty();
 			});
+	}
+
+	uint64_t AppUi::groovePart(const QuantizeTarget& target) const
+	{
+		const Json none = Json::array();
+		const Json* parts = &none;
+		if (m_eventDisplay)
+			if (const auto found = m_eventDisplay->project().find("midiParts");
+				found != m_eventDisplay->project().end())
+				parts = &*found;
+		for (const auto& [part, notes] : target.parts)
+		{
+			if (!notes.empty())
+				return part; // selected notes
+			const auto found = std::find_if(parts->begin(), parts->end(),
+				[part = part](const Json& each) { return each.value("id", uint64_t{0}) == part; });
+			if (found != parts->end() && !found->value("notes", Json::array()).empty())
+				return part;
+		}
+		return 0;
 	}
 
 	AppUi::QuantizeTarget AppUi::quantizeTarget(ui::Window& window, Rml::Element* zone) const
@@ -291,7 +360,8 @@ namespace gnubase::app
 			});
 	}
 
-	void AppUi::quantize(const std::string& command, const std::string& step, const QuantizeTarget& target)
+	void AppUi::quantize(
+		const std::string& command, const std::string& step, const QuantizeTarget& target, const std::string& merge)
 	{
 		const bool audio = (command == "quantize.apply" || command == "quantize.reset") &&
 			(!target.events.empty() || !target.audioParts.empty());
@@ -339,9 +409,10 @@ namespace gnubase::app
 			if (!result.ok())
 				logging::warning("{} failed: {}", step, result.error);
 		};
-		if (commands.size() == 1)
+		if (commands.size() == 1 && merge.empty())
 			m_binding.send(command, commands[0].at("parameters"), refused);
 		else
-			m_binding.send("history.transaction", {{"description", step}, {"commands", std::move(commands)}}, refused);
+			m_binding.send("history.transaction",
+				{{"description", step}, {"commands", std::move(commands)}, {"merge", merge}}, refused);
 	}
 }

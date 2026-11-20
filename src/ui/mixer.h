@@ -39,8 +39,27 @@ namespace gnubase::ui
 
 	// The channel.set parameters of a click on a channel's solo button (reference manual p. 466), from the channel's
 	// JSON: solo on or off, exclusive turns the other channels' solo off as it goes on, defeat switches solo defeat
-	// instead. The mixer and the track list use it.
+	// instead. The mixer, the track list and the inspector use it.
 	engine::Json soloClick(const engine::Json& channel, bool exclusive, bool defeat);
+
+	// Whether any of the project's channels has the state, mute, solo (solo defeat too) or listen: what the Deactivate
+	// All buttons show (reference manual pp. 58, 447).
+	bool anyChannelHas(const engine::Json& project, const std::string& state);
+
+	// Click and hold on a solo button switches solo defeat, as Alt-click does (p. 466): a view tells it where the mouse
+	// went down, and asks at the click on a solo button (control="solo") whether the press there was that long.
+	class SoloHold
+	{
+	public:
+		static constexpr double g_seconds = 0.5;
+
+		void pressed(Rml::Element* target);
+		bool held(const Rml::Element& button) const;
+
+	private:
+		Rml::ObserverPtr<Rml::Element> m_button; // the solo button pressed
+		double m_at = 0.0;                       // RmlUi's clock at the press
+	};
 
 	// Every channel of a project in the mixer's order: the input busses, the tracks' channels from top to bottom, then
 	// the output busses.
@@ -152,8 +171,10 @@ namespace gnubase::ui
 		std::map<uint64_t, Rml::Element*> m_stripOf; // by channel id, while m_strips lives
 		bool m_loading = false;
 		bool m_stale = false;
-		uint64_t m_dragged = 0;          // the channel whose name a mouse button went down on
-		bool m_updating = false;         // while the strips show the project's values
+		uint64_t m_dragged = 0;  // the channel whose name a mouse button went down on
+		bool m_updating = false; // while the strips show the project's values
+		bool m_dropping = false; // while another project drops the notes being typed
+		SoloHold m_soloHold;
 		double m_defaultSendLevel = 0.0; // the user setting audio.defaultSendLevel
 
 		std::vector<Subscription> m_subscriptions;

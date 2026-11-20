@@ -98,7 +98,8 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
 ```
 .key-editor.drum-editor
   .toolbar.key-editor-toolbar
-    button.key-tool[key-tool]       Object Selection, Drumstick (key-tool draw), Line, Erase
+    button.key-tool[key-tool]       Object Selection, Drumstick (key-tool draw), Line, Erase, Mute (the key editor's,
+                                    which mutes on the Articulations lane, #1684, #1799)
     #key-length-quantize            Insert Length, menu #key-length-menu with Drum-Map Link (length drumMap)
     #drum-map                       the active track's map's name, or No Drum Map; menu #drum-map-menu
     .key-input[setting=pitchVisibility], #drum-pitch-options (menu #drum-pitch-menu with

@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The window tests (ctest label ui) on Apple Silicon, where SDL_GPU draws through Metal. CI's macOS job runs on an Intel
 # runner, whose virtual GPU SDL_GPU can't use, because hosted Apple Silicon runners often never pick jobs up. For the
-# same reason this workflow runs only on main (and by hand), not on pull requests, which it would leave waiting.
+# same reason this workflow runs only on main (and by hand), not on pull requests, which it would leave waiting. While
+# CI's macOS job is paused, it is also the only macOS build: a failure on main opens an issue, or comments on the open
+# one. Authors of rendering or window changes can run it on their branch before merging (docs/features/ui-tests.md).
 name: UI tests (macOS)
 
 on:
@@ -9,12 +11,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# A merge cancels the run on main that is still testing the merge before it, on purpose: it frees one of the few macOS
+# runners for the newest commit. During a busy stretch of merges no run may finish until merging stops; without the
+# cancel, a run waiting for a runner that never comes would hold back the next one.
 concurrency:
   group: ui-macos-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
+  issues: write # tools/report-ci-failure.sh
 
 jobs:
   ui-macos-arm64:
@@ -59,3 +65,9 @@ jobs:
           path: build/macos/tests/output/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Report the failure
+        if: failure() && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tools/report-ci-failure.sh "UI tests (macOS) fail on main"

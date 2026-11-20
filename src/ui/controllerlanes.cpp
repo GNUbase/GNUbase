@@ -1449,18 +1449,24 @@ namespace gnubase::ui
 					const Json& event = *group[i].second;
 					if (event.at("articulation") != name)
 						continue;
+					// A muted direction ends no direction before it, as in playback (#1762, #1799): one that plays
+					// lasts until the next one of its group that isn't muted, a muted one until the next one.
 					const bool reset = event.value("reset", false);
+					const bool muted = event.value("muted", false);
 					const int64_t start = part.start + group[i].first;
 					int64_t until = part.end;
+					size_t next = i + 1;
+					while (!muted && next < group.size() && group[next].second->value("muted", false))
+						++next;
 					if (reset)
 						until = start;
-					else if (i + 1 < group.size())
-						until = part.start + group[i + 1].first;
+					else if (next < group.size())
+						until = part.start + group[next].first;
 					const uint64_t id = event.at("id").get<uint64_t>();
 					items.push_back({part.id, id, start, until, 0.0, 0, part.editable,
 						m_controllerSelection.count({part.id, id}) != 0, std::string()});
 					rml += element(reset ? "articulation-item direction reset" : "articulation-item direction",
-							   items.back(), "controller", row, event.value("muted", false)) +
+							   items.back(), "controller", row, muted) +
 						end;
 				}
 			}

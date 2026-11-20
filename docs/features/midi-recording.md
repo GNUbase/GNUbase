@@ -58,9 +58,12 @@ undo step.
   keeps none). `midi.insertRetrospective` inserts a track's buffer as one part through `recording.add` in the new parts
   mode, without chord events (`chordEvents` false): input from playback where it played, input from stop mode at the
   project cursor with its timing. Input after an insert starts the buffer afresh, and so does input in stop mode while
-  the buffer holds input in stop mode, when it comes over 30 seconds after the last input, from playback or not, or on
-  the next audio device: the recorder counts the buffers' frames on across devices, as each device counts its own from
-  0, which leaves out how long the old device ran. `midi.clearRetrospective` empties one track's buffer or all of them.
+  the buffer holds input in stop mode, when it comes over 30 seconds after the last input, from playback or not (p.
+  354). On the next audio device, the first input in stop mode leaves out only the earlier devices' input in stop
+  mode, which the insert can't place against the new device's: the recorder counts the buffers' frames on across
+  devices, as each device counts its own from 0, which leaves out how long the old device ran. Input during playback
+  stays, before or after the device change, as the insert places it where it played (`tests/midirecording_tests.cpp`).
+  `midi.clearRetrospective` empties one track's buffer or all of them.
 
 ## Not yet
 

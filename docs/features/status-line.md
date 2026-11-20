@@ -13,7 +13,9 @@ The project window's status line (#407, reference manual pp. 26, 71, 129), a str
   (#104, p. 356), from `recording.remainingTime` ([recording.md](recording.md)): "Max. Record Time: 52 h 07 min", under
   an hour "4 min 09 s", and "-" while no track would record. The status line reads it again every second
   (`StatusLine::update`, which `app::AppUi` calls with `Shell::every`), as arming tracks, the record format and the
-  disk filling up, also by other programs, change it.
+  disk filling up, also by other programs, change it; only while the field is shown (#645), as the engine measures
+  the disk on its command thread, which a slow record folder, such as one on a network drive, holds up. Shown again,
+  the field follows within a second.
 - **Lost audio device.** While a device is lost, `#lost-device` shows "Audio Device Lost: " and the device's name, with
   the reason it can't be opened and the device's id in parentheses as its tooltip (`title`) (#455): the id tells devices
   of one name apart, and is left out for a device without a name, which shows its id already. Otherwise it has the

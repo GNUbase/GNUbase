@@ -229,7 +229,7 @@ namespace gnubase::engine
 		time::Samples m_position = 0;
 		time::Samples m_start = 0;     // where playback started or was last located to
 		bool m_inPreRoll = false;      // the pre-roll plays: the position hasn't reached m_start yet
-		time::Samples m_recordAt = -1; // a recording from stop starts here, after the pre-roll
+		time::Samples m_recordAt = -1; // a recording from stop, or one that waits for the punch in, starts here
 		time::Samples m_stopAt = -1;   // after an automatic punch out: where playback stops
 		uint64_t m_locate = 0;         // the last locate applied
 		uint8_t m_published = 0;       // what m_state says

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/settings/usersettings.h"
 
+#include "engine/document/document.h"
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/devices.h"
@@ -439,7 +440,8 @@ namespace gnubase::engine::settings
 					"after the post-roll if it's on (see transport.set), unless it cycles.",
 					Json{{"type", "boolean"}}, false, true},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
-					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
+					Json{{"type", "number"}, {"minimum", g_lowestSampleRate}, {"maximum", g_highestSampleRate}},
+					48000.0},
 				{"chordPads.presets",
 					"The user's own chord pads presets by name (chordPads.savePreset): each with pads (chord, voicings "
 					"and adaptive of each pad), rootKey, scale, players (without their tracks), player, mode and "
@@ -596,7 +598,8 @@ namespace gnubase::engine::settings
 				{"midi.portSettings",
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
-					"all MIDI inputs (inAllInputs) and its MPE input (mpe, what differs from its defaults). Ports "
+					"all MIDI inputs (inAllInputs) and its MPE input (mpe: the whole setup once a member differs from "
+					"the defaults or the detected device's preset). Ports "
 					"without an entry show their system name, are visible, belong to all MIDI inputs and have no MPE "
 					"input, but for a detected MPE device's input (mpeDevice in midi.ports), which has the device's "
 					"preset. Members of an entry that this GNUbase doesn't know, from a later one, stay.",
@@ -821,8 +824,8 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, false, true},
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
-					"folder, marker, ruler, tempo, transpose, chord), in order: mute, solo, record, monitor (audio, "
-					"instrument "
+					"folder, marker, ruler, tempo, signature, transpose, chord), in order: mute, solo, record, monitor "
+					"(audio, instrument "
 					"and MIDI tracks), read (automation), timeBase, midiChannel (MIDI tracks: their channel.set "
 					"midiChannel, Any or "
 					"1 to 16), on the tempo track tempoTrack (Activate Tempo "
@@ -834,8 +837,10 @@ namespace gnubase::engine::settings
 					"to Project Cursor Position), and for the transpose track transposeMute (Mute Transpose Events), "
 					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock), for the chord track "
 					"chordRecord (Record Enable), chordMute (Mute Chord Track), chordAudition (Select Track for "
-					"Auditioning) and showScales (Show Scales), and for folders groupEditing (Group Editing). "
-					"Mute and solo always show on tracks with a channel; a type left out shows none.",
+					"Auditioning) and showScales (Show Scales), for the signature track signatureLock (Lock) and "
+					"signatureOptions (Signature Track Options), and for "
+					"folders groupEditing (Group Editing). Mute and solo always show on tracks with a channel; a type "
+					"left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "array"},
@@ -848,7 +853,7 @@ namespace gnubase::engine::settings
 												"transposeLock", "chordRecord", "chordMute", "chordAudition",
 												"showScales", "addPositionMarker", "addCycleMarker",
 												"activateMarkerTrack", "markerLocate", "markerCycle", "markerZoom",
-												"groupEditing"}}}}}}},
+												"groupEditing", "signatureLock", "signatureOptions"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
@@ -857,7 +862,8 @@ namespace gnubase::engine::settings
 							{"addPositionMarker", "addCycleMarker", "activateMarkerTrack", "markerLocate",
 								"markerCycle", "markerZoom"}},
 						{"ruler", {"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}},
-						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}}, {"signature", Json::array()},
+						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}},
+						{"signature", {"signatureLock", "signatureOptions"}},
 						{"transpose", {"transposeMute", "keepInOctave", "timeBase", "transposeLock"}},
 						{"chord", {"chordRecord", "chordMute", "showScales", "timeBase", "chordAudition"}}}},
 				{"ui.trackWidths",

@@ -752,6 +752,29 @@ TEST_CASE("a press in the list editor ends a gesture whose mouseup never came, w
 	CHECK(f.steps() == before);
 }
 
+TEST_CASE("a value display drag whose release was lost ends without its effect as the mouse leaves the window", "[ui]")
+{
+	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so no dragend
+	// comes. The drag ends at the leave, without its effect (#1756): the mouse back over the value display with the
+	// button up sets nothing.
+	Fixture f;
+	const size_t before = f.steps();
+	const std::string volume = row("controller", f.events[0]);
+	const std::string values = volume + " .list-value-lane";
+	const int y = f.middle(values);
+	f.press(f.xAt(values, 0.25), y);
+	REQUIRE(std::abs(f.bar(volume) - 0.25) < 0.05);
+	f.context().ProcessMouseLeave();
+	f.context().ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(f.bar(volume) - controller(100)) < 0.05);
+	f.moveTo(f.xAt(values, 0.75), y);
+	CHECK(std::abs(f.bar(volume) - controller(100)) < 0.05);
+	f.settle(f.low);
+	CHECK(std::abs(f.event("controllers", f.events[0]).at("value").get<double>() - controller(100)) < 1e-9);
+	CHECK(f.steps() == before);
+}
+
 TEST_CASE("another button pressed and released during a move doesn't end it", "[ui]")
 {
 	Fixture f;
