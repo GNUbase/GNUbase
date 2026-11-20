@@ -287,10 +287,12 @@ TEST_CASE("recordings are written in the project setup's record file type and bi
 	};
 	const Case cases[] = {
 		{"wav", "int16", AudioFormat::Wav, SampleFormat::Int16, ".wav", 1.0f / 32768.0f},
+		{"wav", "int32", AudioFormat::Wav, SampleFormat::Int32, ".wav", 1.0f / 8388608.0f},
 		{"wav", "float64", AudioFormat::Wav, SampleFormat::Float64, ".wav", 0.0f},
 		{"aiff", "int24", AudioFormat::Aiff, SampleFormat::Int24, ".aif", 1.0f / 8388608.0f},
 		{"aiff", "int32", AudioFormat::Aiff, SampleFormat::Int32, ".aif", 1.0f / 8388608.0f},
 		{"flac", "int16", AudioFormat::Flac, SampleFormat::Int16, ".flac", 1.0f / 32768.0f},
+		{"flac", "int24", AudioFormat::Flac, SampleFormat::Int24, ".flac", 1.0f / 8388608.0f},
 		{"broadcastWav", "float32", AudioFormat::Wav, SampleFormat::Float32, ".wav", 0.0f},
 	};
 	for (const Case& each : cases)
@@ -366,6 +368,30 @@ TEST_CASE("a Broadcast Wave recording's time reference includes the pre-recorded
 	REQUIRE(reader->info().broadcast.has_value());
 	CHECK(
 		reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference == (3600ULL * 48000) - 2400);
+}
+
+TEST_CASE("a long track name is cut between two UTF-8 characters for the description and the file name (#580)",
+	"[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	// 127 two-byte characters and a three-byte one: 257 bytes, so the description's 256 would split the last one.
+	std::string name;
+	for (int i = 0; i < 127; ++i)
+		name += "\xc3\xa9";
+	name += "\xe2\x82\xac";
+	run(client, "track.set", {{"track", setup.track}, {"name", name}});
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	const std::string path = pathOf(client, events[0]);
+	CHECK(std::filesystem::u8path(path).filename().u8string() == name.substr(0, 200) + ".wav");
+	const auto reader = AudioFileReader::open(path);
+	CHECK(reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).description == name.substr(0, 254));
 }
 
 TEST_CASE("cycle recording makes a take per lap, all in one file", "[integration]")
