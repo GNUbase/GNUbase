@@ -150,6 +150,8 @@ namespace gnubase::engine
 		// An auto save opens untitled and unsaved, so that saving it neither overwrites the auto save nor makes Auto
 		// Saves the project folder.
 		const bool autoSave = isAutoSave(fs::u8path(file));
+		// The color the user last applied is the application's (reference manual p. 1621), not the project's.
+		project.lastAppliedColor = std::move(m_project.lastAppliedColor);
 		m_project = std::move(project);
 		m_file = autoSave ? std::string() : file;
 		m_history.clear();

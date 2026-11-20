@@ -1758,6 +1758,13 @@ meter .meter-peak
 	padding: 0 2dp;
 }
 
+/* The signature track's Signature Track Options (docs/features/signature-track.md), next to Lock. */
+.track-list .track-controls select.signature-options
+{
+	width: 64dp;
+	padding: 0 2dp;
+}
+
 /* A MIDI track's MIDI channel (docs/features/mixer.md): Any, 1 to 16. */
 .track-list .track-controls select.midi-channel
 {

@@ -26,18 +26,18 @@ namespace gnubase::ui
 	// The sampler panel (#1029, reference manual pp. 710-717, 730, docs/features/sampler-track.md), a panel of the
 	// lower zone that shows the selected sampler track: its toolbar (Import Audio File, the sample's file name,
 	// Normalize Sample and Lock Parameter Settings), the waveform display with the sample's start and end and the
-	// loop's markers, the Playback, Pitch, Filter and Amp sections with a control per sampler parameter (from
-	// processor.list) and the keyboard section with the pitchbend range, the root key and the key range above a
-	// keyboard that shows them, with a handle for each (p. 730). The root gets the class empty while the selected
-	// track isn't a sampler track.
+	// loop's markers and the bars between them, the Playback, Pitch, Filter and Amp sections with a control per sampler
+	// parameter (from processor.list) and the keyboard section with the pitchbend range, the root key and the key range
+	// above a keyboard that shows them, with a handle for each (p. 730). The root gets the class empty while the
+	// selected track isn't a sampler track.
 	//
-	// Controls, markers and handles set the sampler's parameters (parameter.set), a drag or a widget's gesture one
-	// undo step (EngineBinding::sendStep); a click on a key sets the root key. A file dropped on the panel, or chosen
-	// with Import Audio File, loads into the sampler (sampler.load path), keeping the settings with Lock Parameter
-	// Settings; Normalize Sample runs sampler.normalize with the toolbar's Normalization Level (p. 735). Why a load
-	// or Normalize Sample failed shows in the toolbar (#1122). Lock Parameter Settings and the Normalization Level are
-	// the user setting ui.samplerPanel, so they last when the panel is made anew. Use it on the UI thread; the
-	// binding must outlive it.
+	// Controls, markers, bars and handles set the sampler's parameters (parameter.set), a drag or a widget's gesture
+	// one undo step (EngineBinding::sendStep); a click on a key sets the root key. A file dropped on the panel, or
+	// chosen with Import Audio File, loads into the sampler (sampler.load path), keeping the settings with Lock
+	// Parameter Settings; Normalize Sample runs sampler.normalize with the toolbar's Normalization Level (p. 735). Why
+	// a load or Normalize Sample failed shows in the toolbar (#1122). Lock Parameter Settings and the Normalization
+	// Level are the user setting ui.samplerPanel, so they last when the panel is made anew. Use it on the UI thread;
+	// the binding must outlive it.
 	class SamplerPanel final : private Rml::EventListener
 	{
 	public:
@@ -81,12 +81,14 @@ namespace gnubase::ui
 		void set(uint32_t id, double value, int gesture);
 		void drag(const Rml::Event& event);
 		void dragKey(const Rml::Event& event);
+		void dragBar(const Rml::Event& event);
 		void showMessage(const std::string& text);
 		void applySettings(const engine::Json& settings);
 		void saveSettings();
 		double value(const std::string& name) const;
 		const Parameter* parameter(const std::string& name) const;
 		std::string stepKey(uint32_t id) const;
+		std::string barKey(const std::string& bar) const;
 		Rml::Element* find(const std::string& id) const;
 
 		EngineBinding& m_binding;
@@ -108,8 +110,12 @@ namespace gnubase::ui
 		float m_askedWidth = 0.0F; // the display's width in pixels that it asked for
 		std::string m_dragged;     // the marker a drag moves: the parameter's name
 		std::string m_handle;      // the keyboard's handle a drag moves: root, low or high
-		int m_gesture = 0;         // counts drags down, each one undo step: value fields number theirs up from 1
-		bool m_showing = false;    // while show sets the controls, whose changes aren't the user's
+		std::string m_bar;         // the bar a drag moves: range (Start and End) or loop
+		float m_barMouse = 0.0F;   // where its drag began
+		double m_barFrom = 0.0;    // and its markers' values then
+		double m_barTo = 0.0;
+		int m_gesture = 0;      // counts drags down, each one undo step: value fields number theirs up from 1
+		bool m_showing = false; // while show sets the controls, whose changes aren't the user's
 		engine::Json m_settings = engine::Json::object(); // ui.samplerPanel, with what later versions add to it
 		bool m_lock = false;                              // Lock Parameter Settings, the user setting ui.samplerPanel's
 		double m_level = 0.0;                             // the Normalization Level, dBFS, likewise

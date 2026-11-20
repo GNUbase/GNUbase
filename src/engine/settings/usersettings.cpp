@@ -840,7 +840,8 @@ namespace gnubase::engine::settings
 					"chordRecord (Record Enable), chordMute (Mute Chord Track), chordAudition (Select Track for "
 					"Auditioning) and showScales (Show Scales), for the arranger track arrangerChain (Select Active "
 					"Arranger Chain), arrangerItem (Current Item), arrangerRepeat (Current Repeat, such as 2/4) and "
-					"arrangerMode (Activate Arranger Mode), for the signature track signatureLock (Lock), and for "
+					"arrangerMode (Activate Arranger Mode), for the signature track signatureLock (Lock) and "
+					"signatureOptions (Signature Track Options), and for "
 					"folders groupEditing (Group Editing). Mute and solo always show on tracks with a channel; a type "
 					"left out shows none.",
 					Json{{"type", "object"},
@@ -855,8 +856,8 @@ namespace gnubase::engine::settings
 												"transposeLock", "chordRecord", "chordMute", "chordAudition",
 												"showScales", "addPositionMarker", "addCycleMarker",
 												"activateMarkerTrack", "markerLocate", "markerCycle", "markerZoom",
-												"groupEditing", "signatureLock", "arrangerChain", "arrangerItem",
-												"arrangerRepeat", "arrangerMode"}}}}}}},
+												"groupEditing", "signatureLock", "signatureOptions", "arrangerChain",
+												"arrangerItem", "arrangerRepeat", "arrangerMode"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
@@ -865,7 +866,8 @@ namespace gnubase::engine::settings
 							{"addPositionMarker", "addCycleMarker", "activateMarkerTrack", "markerLocate",
 								"markerCycle", "markerZoom"}},
 						{"ruler", {"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}},
-						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}}, {"signature", {"signatureLock"}},
+						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}},
+						{"signature", {"signatureLock", "signatureOptions"}},
 						{"transpose", {"transposeMute", "keepInOctave", "timeBase", "transposeLock"}},
 						{"chord", {"chordRecord", "chordMute", "showScales", "timeBase", "chordAudition"}},
 						{"arranger", {"arrangerMode", "timeBase", "arrangerChain", "arrangerItem", "arrangerRepeat"}}}},

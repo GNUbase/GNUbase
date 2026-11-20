@@ -882,11 +882,15 @@ TEST_CASE("a save that refers to missing media files instead of having them in i
 	const test::TempDir dir;
 	const fs::path gone = dir.path() / "gone.wav";
 	app.call("media.add", {{"path", utf8(gone)}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 10}});
-	fileMenu(app, "file.saveAs");
-	answer(app, {dir.path() / "Song.dawproject"});
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	const std::string command = GENERATE("file.save", "file.saveAs", "file.saveNewVersion");
+	fileMenu(app, command);
+	if (command == "file.saveAs")
+		answer(app, {dir.path() / "Song.dawproject"});
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
-	CHECK_THAT(
-		elements(app, "#project-error-message").at(0).at("text").get<std::string>(), ContainsSubstring("gone.wav"));
+	const std::string message = elements(app, "#project-error-message").at(0).at("text").get<std::string>();
+	CHECK_THAT(message, ContainsSubstring("gone.wav"));
+	CHECK_THAT(message, ContainsSubstring("media and freeze files"));
 	CHECK(fs::is_regular_file(dir.path() / "Song.dawproject"));
 	click(app, "#project-error-dialog button[result=ok]");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));

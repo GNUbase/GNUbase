@@ -1447,7 +1447,8 @@ TEST_CASE("the track controls settings dialog chooses and orders each track type
 	Tracks tracks;
 	const uint64_t audio = tracks.add({{"type", "audio"}});
 	const uint64_t midi = tracks.add({{"type", "midi"}});
-	tracks.rows(2);
+	const uint64_t signature = tracks.add({{"type", "signature"}});
+	tracks.rows(3);
 	const auto controls = [&tracks](uint64_t track)
 	{
 		std::vector<std::string> names;
@@ -1456,6 +1457,14 @@ TEST_CASE("the track controls settings dialog chooses and orders each track type
 		return names;
 	};
 	CHECK(controls(audio) == std::vector<std::string>{"mute", "solo", "record", "monitor", "read"});
+	// The signature track's controls are fixed (reference manual p. 189): the dialog doesn't list them and OK keeps
+	// them.
+	const auto signatureControls = [&tracks, signature]
+	{
+		return elements(tracks.app, row(signature) + " [control=signatureLock]").size() +
+			elements(tracks.app, row(signature) + " select[control=signatureOptions]").size();
+	};
+	REQUIRE(tracks.app.waitUntil([&] { return signatureControls() == 2; }));
 
 	const auto open = [&tracks] { return !elements(tracks.app, "#track-controls-dialog").empty(); };
 	tracks.click("#track-controls-settings");
@@ -1481,6 +1490,7 @@ TEST_CASE("the track controls settings dialog chooses and orders each track type
 	REQUIRE(tracks.app.waitUntil(
 		[&] { return controls(audio) == std::vector<std::string>{"mute", "solo", "record", "timeBase", "read"}; }));
 	CHECK(controls(midi) == std::vector<std::string>{"mute", "solo", "record", "monitor", "read"});
+	CHECK(signatureControls() == 2);
 	CHECK(tracks.app.call("settings.get", {{"key", "ui.trackControls"}}).at("value").at("audio") ==
 		Json{"mute", "solo", "record", "timeBase", "read"});
 	// Switch Time Base switches the track's time base.
@@ -2191,4 +2201,22 @@ TEST_CASE("the signature track's Lock in the track list locks its time signature
 	REQUIRE(tracks.app.waitUntil([&] { return !elements(tracks.app, lock + ".checked").empty(); }));
 	tracks.click(lock);
 	REQUIRE(tracks.app.waitUntil([&] { return !tracks.track(signature).value("lock", true); }));
+}
+
+TEST_CASE("the signature track's options in the track list open the Process Bars dialog", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t signature = tracks.add({{"type", "signature"}});
+	tracks.rows(1);
+	// Signature Track Options (reference manual pp. 163-164): its name, then Process Bars Dialog. The click pattern
+	// options come with patterns per time signature event (docs/features/metronome.md).
+	const std::string options = row(signature) + " select[control=signatureOptions]";
+	REQUIRE(tracks.app.waitUntil([&] { return test::selectOptions(tracks.app, options).size() == 2; }));
+	CHECK(elements(tracks.app, "#process-bars-dialog").empty());
+	tracks.click(options);
+	tracks.app.ui().key(std::nullopt, "Down");
+	tracks.click(options);
+	REQUIRE(tracks.app.waitUntil([&] { return !elements(tracks.app, "#process-bars-dialog").empty(); }));
+	// The list's value is its name's again, so that choosing the option again opens the dialog again.
+	CHECK(elements(tracks.app, options).at(0).at("attributes").value("value", "x").empty());
 }

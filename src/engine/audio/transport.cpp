@@ -252,6 +252,8 @@ namespace gnubase::engine
 			return;
 		case Request::Type::Set:
 			m_settings = request.settings;
+			if (!m_settings.stopAfterPunchOut)
+				m_stopAt = -1;   // switched off during the post-roll: playback goes on
 			if (m_recordAt >= 0) // waiting for the record start: it follows the punch in (#588)
 				m_recordAt = recordStart(m_settings, std::max(m_start, m_position), m_position);
 			return;

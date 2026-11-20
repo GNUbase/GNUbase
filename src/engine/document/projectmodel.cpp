@@ -351,7 +351,8 @@ namespace gnubase::engine
 				return project.lastAppliedColor;
 			if (mode == "random")
 			{
-				static std::mt19937 random{std::random_device{}()}; // only the command thread adds tracks
+				// Each engine adds tracks on its own command thread.
+				thread_local std::mt19937 random{std::random_device{}()};
 				return colors[std::uniform_int_distribution<size_t>(0, colors.size() - 1)(random)].color;
 			}
 			if (mode != "previous" && mode != "previousPlusOne")
@@ -494,6 +495,12 @@ namespace gnubase::engine
 			}
 			track.timeOffsetOn = parameters.value("timeOffsetOn", track.timeOffsetOn);
 		}
+	}
+
+	std::string newTrackColor(const Project& project, ObjectId parent, size_t index, CommandContext& context)
+	{
+		const std::string inherited = folderColor(project, parent, context);
+		return inherited.empty() ? autoTrackColor(project, parent, index, context) : inherited;
 	}
 
 	void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context)
@@ -1334,7 +1341,7 @@ namespace gnubase::engine
 			track.type = type;
 			track.name = parameters.value("name", defaultTrackName(project, type));
 			track.color =
-				parameters.contains("color") ? color(parameters, {}) : autoTrackColor(project, parent, index, context);
+				parameters.contains("color") ? color(parameters, {}) : newTrackColor(project, parent, index, context);
 			track.timeBase = parameters.contains("timeBase")
 				? timeBaseFromName(parameters.at("timeBase").get<std::string>())
 				: defaultTimeBase(project, type, context);
@@ -1376,11 +1383,6 @@ namespace gnubase::engine
 				route(project, *channel, project.channels.at(channel->id), parameters);
 				channel = project.channels.at(channel->id);
 			}
-
-			if (const std::string inherited =
-					parameters.contains("color") ? std::string() : folderColor(project, parent, context);
-				!inherited.empty())
-				project.trackById.at(track.id).color = inherited;
 
 			Json result = {{"track", toJson(project.trackById.at(track.id))},
 				{"channel", channel ? toJson(*channel) : Json(nullptr)}};
@@ -4231,6 +4233,8 @@ namespace gnubase::engine
 				opened(std::move(project), {}, context);
 				return Json::object();
 			});
+		const Json colorSet =
+			arraySchema(objectSchema({{"name", stringSchema}, {"color", stringSchema}}, {"name", "color"}));
 		add(engine,
 			{"project.set", 1,
 				"Changes the project's name, sample rate (8000 to 768000 Hz), stereo pan law or maximum volume, or "
@@ -4260,11 +4264,7 @@ namespace gnubase::engine
 					{"sampleRate",
 						{{"type", "number"}, {"minimum", g_lowestSampleRate}, {"maximum", g_highestSampleRate}}},
 					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}, {"tempo", numberSchema},
-					{"tempoTrackActive", booleanSchema},
-					{"colors",
-						{{"type", "array"},
-							{"items",
-								objectSchema({{"name", stringSchema}, {"color", stringSchema}}, {"name", "color"})}}},
+					{"tempoTrackActive", booleanSchema}, {"colors", colorSet},
 					{"signature",
 						objectSchema({{"numerator", {{"type", "integer"}}}, {"denominator", {{"type", "integer"}}}},
 							{"numerator", "denominator"})},
@@ -4298,9 +4298,7 @@ namespace gnubase::engine
 			{"project.factoryColors", 1,
 				"The factory color set, which new projects have: each color's name and color (#rrggbb). The project "
 				"colors setup dialog resets colors to it.",
-				objectSchema(Json::object()),
-				{{"type", "object"}, {"properties", {{"colors", {{"type", "array"}}}}}, {"required", {"colors"}}},
-				true},
+				objectSchema(Json::object()), objectSchema({{"colors", colorSet}}, {"colors"}), true},
 			[](Project&, CommandContext&) { return Json{{"colors", toJson(factoryColors())}}; });
 
 		const Json directions = enumSchema({"input", "output"});
@@ -4428,8 +4426,9 @@ namespace gnubase::engine
 			{"track.add", 1,
 				"Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks "
 				"(default: last). Audio channels default to stereo; format or channels set another format, as in "
-				"bus.add. timeBase is musical (positions in ticks, which follow tempo changes) or linear (in "
-				"samples, which keep their time); without it the user setting editing.defaultTimeBase decides. "
+				"bus.add. timeBase is musical (positions in ticks, 1,720,320 to the quarter note, which follow tempo "
+				"changes) or linear (in samples, which keep their time); without it the user setting "
+				"editing.defaultTimeBase decides. "
 				"Folders get a channel only with groupChannel. New channels play through the main output, "
 				"or through the group channel of the nearest folder around them that has one, and audio tracks record "
 				"from the first input bus; input, output and instrument set them as channel.set does. tracks moves "
@@ -4821,7 +4820,8 @@ namespace gnubase::engine
 			addAudioPart);
 		add(engine,
 			{"midiPart.add", 1,
-				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base. "
+				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base: "
+				"ticks on musical tracks, 1,720,320 to the quarter note, samples on linear ones. "
 				"lane puts it on that lane of the track, from 0 (default), as event.set does. pattern makes it a "
 				"pattern event (#181), which plays that pattern (pattern.add) from its start over and over instead "
 				"of its notes; a pattern of another track plays as its copy on the part's track (pattern.add), which "

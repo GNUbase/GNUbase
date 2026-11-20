@@ -47,7 +47,8 @@ namespace gnubase::engine::processors
 	// key, or in slice mode a slice per key from the root key up. Positions (start, end, loop start and end) are
 	// shares of the sample's length, so they stay where they are when the sample's sample rate changes. Reverse plays
 	// the sample backwards with every position measured from its end. Each voice has an amp envelope (attack, decay,
-	// sustain, release) and its own filter, whose cutoff follows the key by the key follow share.
+	// sustain, release) and its own filter, whose cutoff follows the key by the key follow share. Glide bends a new
+	// note's pitch from the note before; the fades and the loop's crossfade are shares of the sample too.
 	class Sampler : public SamplePlayer
 	{
 	public:
@@ -85,6 +86,11 @@ namespace gnubase::engine::processors
 			Sustain, // %
 			Release, // ms
 			Gain,    // the sample's gain, dB, which sampler.normalize sets
+			Glide,   // ms, 0: off
+			Fingered,
+			FadeIn, // shares of the sample, like Start and End
+			FadeOut,
+			LoopCrossfade,
 		};
 
 		enum class Loop : uint8_t
@@ -127,6 +133,8 @@ namespace gnubase::engine::processors
 			bool active = false;
 			bool held = false; // its key is down (one-shot voices ignore note-offs)
 			uint8_t note = 0;
+			double key = 0.0;   // the key it plays at, which glides to note
+			double glide = 0.0; // keys a frame while it glides, else 0
 			uint8_t channel = 0;
 			uint64_t started = 0;
 			double position = 0.0; // in the sample's frames, counted from its end when reversed
@@ -145,12 +153,22 @@ namespace gnubase::engine::processors
 
 		void noteOn(uint8_t channel, uint8_t note, uint16_t velocity) noexcept;
 		void noteOff(uint8_t channel, uint8_t note) noexcept;
-		void start(uint8_t channel, uint8_t note, uint16_t velocity, const Sample& sample) noexcept;
+		void start(uint8_t channel, uint8_t note, uint16_t velocity, const Sample& sample, double from) noexcept;
 		void release(Voice& voice) noexcept;
 		void fadeOut(Voice& voice) const noexcept;
 		Voice* monophonicVoice() noexcept;
+		double glideFrom() const noexcept;
+		void glide(Voice& voice, double from) const noexcept;
 		void setParameter(uint32_t id, double value) noexcept;
 		void render(const graph::ProcessContext& context, uint32_t begin, uint32_t end, const Sample& sample) noexcept;
+		struct LoopRange
+		{
+			double start = 0.0;
+			double end = 0.0;
+			bool alternate = false; // forwards and backwards
+			bool wraps = false;     // back to its start from its end
+		};
+		LoopRange loopOf(const Voice& voice, double frames) const noexcept;
 		bool advance(Voice& voice, double step, double frames) const noexcept;
 		double increment(const Voice& voice, const Sample& sample) const noexcept;
 		double envelope(Voice& voice) noexcept;
@@ -159,9 +177,10 @@ namespace gnubase::engine::processors
 		rt::SnapshotPublisher<std::shared_ptr<const Sample>> m_sample;
 		const Sample* m_playing = nullptr; // what the block that runs plays: m_sample's, acquired once per block
 		double m_sampleRate = 48000.0;
-		std::array<double, Gain + 1> m_values{};
+		std::array<double, LoopCrossfade + 1> m_values{};
 		double m_bend = 0.0; // -1 to 1
 		uint64_t m_notes = 0;
+		int m_lastNote = -1; // the key started last, where glide starts from once nothing sounds
 		// When each key went down (0: up), so releasing the monophonic note goes back to the latest held.
 		std::array<uint64_t, 128> m_heldSince{};
 		std::array<Voice, g_samplerVoices> m_voices{};

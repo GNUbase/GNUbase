@@ -15,7 +15,8 @@ themselves are in [channel-strip.md](channel-strip.md) and [routing.md](routing.
 - **`channel.pasteSettings`** `{channels}` gives each channel what was copied, in one undo step (Paste Channel
   Settings): the copy as it was when it was copied, whatever the source does since. A channel's inserts are replaced by
   copies of the copied ones, and the automation of the plugins it had goes with them, as with `plugin.remove`. A send
-  keeps its destination only where the channel may send, so not to itself and never in a loop (`routingLoops`);
+  keeps its destination only where the channel may send, so not to itself and never in a loop (`routingLoops`), and
+  only in the project it was copied in, since ids start again in every project (`ProjectModel::openedRevision`);
   otherwise it keeps its other settings without a destination. It refuses MIDI and VCA channels, and pastes nothing
   before something was copied.
 - **Linking** (p. 458). A link group's `eq`, `dynamics` and `sends` (`linkGroup.add`, `linkGroup.set`) pass
@@ -74,14 +75,15 @@ write states, the routing and the selection (p. 458).
 
 ## Checks
 
-- `tests/channelsettings_tests.cpp`: `channel.copySettings` and `channel.pasteSettings` copy the sections, the sends
-  and copies of the inserts, not the fader, in one undo step, paste what was copied rather than what the source is
-  now, drop a send's destination that would go to the channel itself, and refuse MIDI channels, unknown channels and
+- `tests/channelsettings_tests.cpp`: `channel.copySettings` and `channel.pasteSettings` copy the sections, the sends and
+  copies of the inserts, not the fader, in one undo step, paste what was copied rather than what the source is now,
+  remove the replaced plugins' automation lanes (`automationLane.removed` before `plugin.removed`), drop a send's
+  destination that would go to the channel itself, close a loop through another channel or was copied in another
+  project, bring a send's level down to the project's `maxVolume`, and refuse MIDI channels, unknown channels and
   pasting before a copy; link groups pass the equalizer's, the dynamics' and the sends' changes on, not by default but
-  for the sends, skip a send to the channel itself, take one undo step, and respect `linked` false. In the app: the
-  mixer's `e` opens the window for its channel and selects the track; the sections it shows; a control sending
-  `channel.set`; previous, next and Go to Output; following the track selection and not following it; the UI command;
-  a removed track; Copy and Paste Channel Settings; Add Effect Track to Send through the add track dialog, below the
-  track whose send it is; and the
-  inspector's `e`.
+  for the sends, skip a send to the channel itself or one that would close a loop through another channel, take one undo
+  step, and respect `linked` false. In the app: the mixer's `e` opens the window for its channel and selects the track;
+  the sections it shows; a control sending `channel.set`; previous, next and Go to Output; following the track selection
+  and not following it; the UI command; a removed track; Copy and Paste Channel Settings; Add Effect Track to Send
+  through the add track dialog, below the track whose send it is; and the inspector's `e`.
 - `tests/linkgroups_tests.cpp`: the link group's JSON with `eq`, `dynamics` and `sends`.
