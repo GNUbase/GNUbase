@@ -168,7 +168,7 @@ namespace gnubase::audio
 		virtual uint64_t position() const = 0;
 
 		// Why the device plays silence while it runs, e.g. because its driver runs at another sample rate that a reset
-		// doesn't change; empty while it plays. Not on the audio thread.
+		// doesn't change; empty while it plays. A change is reported as a latency change. Not on the audio thread.
 		virtual std::string silenceReason() const { return {}; }
 
 		// Opens the driver's control panel, if it has one (DeviceInfo::controlPanel).
@@ -191,9 +191,9 @@ namespace gnubase::audio
 			m_reset = std::move(handler);
 		}
 
-		// Called when what latency() returns changes while the device is open, e.g. once the driver learns the
-		// latency of what it is connected to. Never called on the audio thread, but possibly on a driver's thread
-		// while this is set.
+		// Called when what latency() or silenceReason() returns changes while the device is open, e.g. once the driver
+		// learns the latency of what it is connected to. Never called on the audio thread, but possibly on a driver's
+		// thread while this is set.
 		void onLatencyChange(std::function<void()> handler)
 		{
 			const std::scoped_lock lock(m_handlerMutex);
@@ -210,7 +210,8 @@ namespace gnubase::audio
 		// yet, as before the engine has read a device it just opened: a backend asks again later then (#371).
 		bool requestReset() const { return call(m_reset); }
 
-		// For backends, when the latency they report changes. Not on the audio thread; the same as requestReset.
+		// For backends, when the latency or silence reason they report changes. Not on the audio thread; the same as
+		// requestReset.
 		void reportLatencyChange() const { call(m_latencyChange); }
 
 		// For backends, when their driver reports a dropout. Any thread, the audio thread too.

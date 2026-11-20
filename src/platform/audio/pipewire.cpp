@@ -822,8 +822,8 @@ namespace gnubase::audio
 				const auto frames = static_cast<uint32_t>(position->clock.duration);
 				// The latency counts in quanta: a new quantum is a new latency, which the loop thread reports
 				// (signalling the event only writes to an eventfd).
-				if (m_quantum.exchange(frames, std::memory_order_relaxed) != frames && m_latencyEvent != nullptr)
-					pw_loop_signal_event(pw_thread_loop_get_loop(m_connection.loop()), m_latencyEvent);
+				if (m_quantum.exchange(frames, std::memory_order_relaxed) != frames)
+					wake(m_latencyEvent);
 				for (size_t c = 0; c < m_inputPorts.size(); ++c)
 					m_inputBuffers[c] = static_cast<const float*>(pw_filter_get_dsp_buffer(m_inputPorts[c], frames));
 				for (size_t c = 0; c < m_outputPorts.size(); ++c)
@@ -840,13 +840,16 @@ namespace gnubase::audio
 				// graph's rate or learns why it can't (open refuses a rate it asks for while another is forced). A
 				// client that holds the graph at its rate itself, as another GNUbase does with node.force-rate, takes
 				// it back once the reopened device has it: if the graph runs at that rate again before the device
-				// has played 5 s, it doesn't ask again, and reports why it plays silence instead (#422).
+				// has played 5 s, it doesn't ask again, and reports why it plays silence instead (#422), as a latency
+				// change, so that the engine announces it; and once the graph runs at its rate again, or moves on to
+				// a third one, which counts as a new streak that may ask for a reset.
 				const bool rate = static_cast<double>(position->clock.rate.denom) == m_format.sampleRate &&
 					position->clock.rate.num == 1;
 				if (callback != nullptr && rate)
 				{
 					m_offRateFrames = 0;
-					m_heldRate.store(0, std::memory_order_relaxed);
+					if (m_heldRate.exchange(0, std::memory_order_relaxed) != 0)
+						wake(m_latencyEvent);
 					const auto settled = static_cast<uint64_t>(m_format.sampleRate * g_onRateSeconds);
 					if (m_onRateFrames < settled && m_onRateFrames + frames >= settled)
 						m_lastOffRate->store(0);
@@ -856,15 +859,27 @@ namespace gnubase::audio
 				else if (callback != nullptr)
 				{
 					m_onRateFrames = 0;
+					if (position->clock.rate.denom != m_offRate)
+					{
+						m_offRate = position->clock.rate.denom;
+						m_offRateFrames = 0;
+						if (m_heldRate.exchange(0, std::memory_order_relaxed) != 0)
+							wake(m_latencyEvent);
+					}
 					const auto limit = static_cast<uint64_t>(m_format.sampleRate * g_offRateSeconds);
 					if (m_offRateFrames < limit && m_offRateFrames + frames >= limit && m_resetEvent != nullptr)
 					{
 						const uint64_t offRate = (static_cast<uint64_t>(std::llround(m_format.sampleRate)) << 32U) |
 							position->clock.rate.denom;
 						if (m_lastOffRate->exchange(offRate) == offRate)
+						{
 							m_heldRate.store(position->clock.rate.denom, std::memory_order_relaxed);
+							wake(m_latencyEvent);
+						}
 						else
-							pw_loop_signal_event(pw_thread_loop_get_loop(m_connection.loop()), m_resetEvent);
+						{
+							wake(m_resetEvent);
+						}
 					}
 					m_offRateFrames += frames;
 					if (!m_rateWarned.exchange(true))
@@ -875,6 +890,13 @@ namespace gnubase::audio
 					}
 				}
 				m_busy.fetch_sub(1);
+			}
+
+			// Wakes the loop thread for one of the events. Only writes to an eventfd, so the audio thread may.
+			void wake(spa_source* event) noexcept
+			{
+				if (event != nullptr)
+					pw_loop_signal_event(pw_thread_loop_get_loop(m_connection.loop()), event);
 			}
 
 			void run(AudioCallback& callback, uint32_t frames) noexcept
@@ -991,6 +1013,7 @@ namespace gnubase::audio
 			HostTime m_lastTime = 0;
 			uint64_t m_offRateFrames = 0;           // processed in a row while the graph runs at another rate
 			uint64_t m_onRateFrames = 0;            // and at the device's
+			uint32_t m_offRate = 0;                 // the graph's in the last streak at another rate
 			std::shared_ptr<OffRate> m_lastOffRate; // the backend's: across the reopen a reset causes
 			std::atomic<uint32_t> m_heldRate{0};    // the graph's while it plays silence without asking for a reset
 

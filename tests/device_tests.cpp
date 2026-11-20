@@ -46,6 +46,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -619,7 +620,8 @@ namespace
 	// Forcing the graph's settings changes how everything in it plays, a desktop session's daemon too, and a test that
 	// is killed leaves them forced. So the tests that do run only against the private daemon that
 	// tools/start-pipewire.sh starts, which GNUBASE_REQUIRE_PIPEWIRE=1 says runs, and skip otherwise (#423). There they
-	// first clear what a killed test may have left forced, which ForcedSetting would otherwise give back (#540).
+	// first clear what a killed test may have left forced or widened, which ForcedSetting would otherwise give back
+	// (#540): the rates allowed go back to that daemon's, PipeWire's default of its default rate.
 	void skipUnlessPrivateDaemon()
 	{
 		if (!required("GNUBASE_REQUIRE_PIPEWIRE"))
@@ -627,6 +629,7 @@ namespace
 				 "changed (GNUBASE_REQUIRE_PIPEWIRE=1)");
 		for (const char* key : {"clock.force-rate", "clock.force-quantum"})
 			pw("pw-metadata", {"-n", "settings", "0", key, "0"});
+		pw("pw-metadata", {"-n", "settings", "0", "clock.allowed-rates", "[ " + graphSetting("clock.rate") + " ]"});
 	}
 
 	// ctest keeps the [pipewire] tests apart with a RESOURCE_LOCK and runs the [jack] ones alone, but only within one
@@ -905,7 +908,8 @@ TEST_CASE("a PipeWire device asks for a reset when another client forces the gra
 
 // Two clients that hold the graph at their own rates, as two GNUbase instances at different rates do with
 // node.force-rate, take the graph from each other whenever one opens again. Each device asks for a reset once at most;
-// then one of them plays silence and says why, instead of both resetting every second (#422).
+// then one of them plays silence and says why, instead of both resetting every second, and plays again once the other
+// one closes (#422).
 TEST_CASE("PipeWire devices at different rates don't keep resetting each other", "[integration][pipewire]")
 {
 	skipUnlessPrivateDaemon(); // the graph changes rates
@@ -917,15 +921,23 @@ TEST_CASE("PipeWire devices at different rates don't keep resetting each other",
 	const ForcedSetting allowed("clock.allowed-rates", "[ 44100 48000 ]");
 	const double rate = probe->open(config("default"))->format().sampleRate;
 	const double other = rate != 44100.0 ? 44100.0 : 48000.0;
-	Reopening first(makePipeWireBackend(), config("default", rate));
-	REQUIRE(eventually([&first] { return first.blocks() >= 8; }));
-	Reopening second(makePipeWireBackend(), config("default", other));
-	reopenFor(first, second, std::chrono::seconds(5));
-	INFO("resets: " << first.resets() << " and " << second.resets());
-	CHECK(first.resets() <= 1);
-	CHECK(second.resets() <= 1);
-	CHECK(first.resets() + second.resets() >= 1);
-	CHECK(first.device().silenceReason().empty() != second.device().silenceReason().empty());
+	std::optional<Reopening> first(std::in_place, makePipeWireBackend(), config("default", rate));
+	REQUIRE(eventually([&first] { return first->blocks() >= 8; }));
+	std::optional<Reopening> second(std::in_place, makePipeWireBackend(), config("default", other));
+	reopenFor(*first, *second, std::chrono::seconds(5));
+	INFO("resets: " << first->resets() << " and " << second->resets());
+	CHECK(first->resets() <= 1);
+	CHECK(second->resets() <= 1);
+	CHECK(first->resets() + second->resets() >= 1);
+	const bool firstPlays = first->device().silenceReason().empty();
+	REQUIRE(firstPlays != second->device().silenceReason().empty());
+
+	// Once the playing one closes, the graph runs at the silent one's rate again, and it plays.
+	(firstPlays ? first : second).reset();
+	const Reopening& silent = firstPlays ? *second : *first;
+	const size_t blocks = silent.blocks();
+	CHECK(eventually(
+		[&silent, blocks] { return silent.device().silenceReason().empty() && silent.blocks() >= blocks + 8; }));
 }
 
 // The latency counts in quanta: when another client changes the graph's quantum while a device runs, the device
