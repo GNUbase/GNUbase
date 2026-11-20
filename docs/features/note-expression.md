@@ -24,10 +24,10 @@ the points it gives there, and keeps the note's other points as the project has 
 makes before it has seen its last one keeps that one. Its points end up sorted by position, a new one after the old
 ones at its position; it is one undo step, and changes that leave every note's points as they were change nothing,
 so the project doesn't count as modified (run on its own: in a `history.transaction` the transaction counts as a
-change). A point lies at most the longest project's end after its note's start (#1831), so that the two can't overflow
-together (#1906); past the note's end is fine, as a note shortened by the trim tool keeps its points there. A project
-whose file has points out of range loads with them clamped, as the notes' other values, their positions cut at the
-longest project's end, and without points of expressions it doesn't know.
+change). The commands refuse a point more than the longest project's end after its note's start (#1831), so that the two
+can't overflow together (#1906); past the note's end is fine, as a note shortened by the trim tool keeps its points
+there. A project whose file has points out of range loads with them clamped, as the notes' other values, their positions
+cut at the longest project's end, and without points of expressions it doesn't know.
 
 **Cutting and resizing.** Splitting a part with `splitNotes` (`event.split`) leaves the first piece of a cut note its
 points before the cut, and the rest gets the points from the cut on, moved back by the cut, with each expression's

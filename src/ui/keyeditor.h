@@ -74,7 +74,8 @@ namespace gnubase::ui
 		KeyEditor& operator=(KeyEditor&&) = delete;
 
 		// read is EngineBinding::handed() when the answer that brought project was handed on, or 0 if unknown, which
-		// counts as older than every edit: the expression editor asks whether its last edit is in the project (#1795).
+		// counts as older than every edit that changed points: the expression editor asks whether its last edit that
+		// changed points is in the project (#1795, #1831).
 		void show(const engine::Json& project, const engine::Json& view, uint64_t read = 0);
 
 		KeyTool tool() const { return m_tool; }

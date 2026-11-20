@@ -235,3 +235,38 @@ TEST_CASE("an expression edit that changed nothing leaves the editor as it was",
 	f.app.call("engine.version");
 	CHECK(f.app.call("project.revision") == revision);
 }
+
+TEST_CASE("an expression edit of one note that changed nothing leaves the editor as it was", "[ui]")
+{
+	// #1831: the same with only the first note selected, where an edit goes as a lone note.replaceExpression, whose
+	// answer lists no notes when it changed nothing.
+	Fixture f;
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	f.app.call("editor.set",
+		{{"editor", "window"}, {"selection", Json::array({{{"part", f.parts[0]}, {"note", f.notes[0]}}})}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.selected").size() == 1; }));
+	REQUIRE(!f.has(".key-expression-editor", "off"));
+	// A point drawn on the first note, answered and shown.
+	f.keys().setTool(ui::KeyTool::Draw);
+	f.click(0.6, 0.25);
+	REQUIRE(f.app.waitUntil([&] { return f.lines() == 2; }));
+	CHECK(f.points(1) == Json::array());
+	const Json project = f.app.call("project.get");
+	const Json view = f.app.call("editor.get", {{"editor", "window"}});
+	const uint64_t read = binding.handed(); // a read after the draw was answered
+	// While the editor shows a read from before the draw, an erase where the note has no point goes out, as the draw
+	// might have drawn there, and changes nothing.
+	f.keys().show(project, view, 0);
+	f.keys().setTool(ui::KeyTool::Erase);
+	f.click(0.1, 0.5);
+	REQUIRE(binding.waiting("note.replaceExpression") == 1);
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("note.replaceExpression") == 0; }));
+	const Json revision = f.app.call("project.revision");
+	// With the read after the draw shown, another erase where there is nothing sends nothing.
+	f.keys().show(project, view, read);
+	f.click(0.2, 0.5);
+	CHECK(binding.waiting("note.replaceExpression") == 0);
+	CHECK(binding.waiting("history.transaction") == 0);
+	f.app.call("engine.version");
+	CHECK(f.app.call("project.revision") == revision);
+}

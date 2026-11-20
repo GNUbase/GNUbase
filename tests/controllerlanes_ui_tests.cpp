@@ -610,13 +610,14 @@ TEST_CASE(
 	CHECK(f.controllers()[0].at("type") == "polyPressure");
 	CHECK(f.controllers()[0].at("number") == 64);
 	CHECK(f.controllers()[0].at("value").get<double>() == Approx(0.5).margin(0.03));
-	// With two notes selected, the first one's pitch, not the other one's (#864).
+	// With two notes selected, the first one's pitch, not the other one's, nor 60, which a lane takes without a
+	// selected note (#864).
 	f.app.call("editor.set",
-		{{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", low}}, {{"part", f.part}, {"note", high}}}}});
+		{{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", high}}, {{"part", f.part}, {"note", low}}}}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.selected").size() == 2; }));
 	f.choose("#controller-lane-create", R"(#controller-create-menu menuitem[lane-type="polyPressure"])");
 	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 3; }));
-	CHECK(f.lanes()[2] == Json{{"type", "polyPressure"}, {"number", 60}});
+	CHECK(f.lanes()[2] == Json{{"type", "polyPressure"}, {"number", 64}});
 
 	// On a program change lane the value is the program, 0 at the bottom, 127 at the top.
 	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "program"}}}}});
@@ -853,7 +854,7 @@ TEST_CASE("a drag on a lane released over another document of the window ends th
 	// A panel over the toolbar's spare space, above the lanes, and above the editor's document, which a press brings to
 	// the front.
 	const ui::Point spare = f.spare().point.value_or(ui::Point{});
-	ui::Window* window = f.app.shell().find(*f.window);
+	ui::Window* window = f.window ? f.app.shell().find(*f.window) : nullptr;
 	REQUIRE(window != nullptr);
 	Rml::ElementDocument* panel = window->context().LoadDocumentFromMemory(
 		"<rml><head><style>body { position: absolute; left: " + std::to_string(spare.x - 20) +
@@ -904,7 +905,7 @@ TEST_CASE("only the left button ends a gesture on a lane", "[ui]")
 		{{"part", f.part}, {"controllers", {{{"position", 4 * g_sixteenth}, {"number", 1}, {"value", 0.25}}}}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 1; }));
 	const auto value = [&] { return f.controllers().at(0).at("value").get<double>(); };
-	ui::Window* window = f.app.shell().find(*f.window);
+	ui::Window* window = f.window ? f.app.shell().find(*f.window) : nullptr;
 	REQUIRE(window != nullptr);
 	const auto right = [&](const ui::Target& target, bool down)
 	{
