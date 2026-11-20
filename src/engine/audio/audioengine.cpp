@@ -355,10 +355,17 @@ namespace gnubase::engine
 						const uint64_t applied = m_transport.appliedRequests();
 						const time::Samples countInStart = m_transport.countInStart();
 						cue.position = m_transport.position();
-						// At a start the command thread cued, until the audio thread plays from there, and while it
-						// counts in, where playback starts after it. Either may begin while this cues: the voice it
-						// reads stays.
-						if (state.start >= 0 && applied < state.startRequests)
+						// At a locate the command thread has cued and not sent yet, as its cue did but over this
+						// window: exactly there, keeping the voices the transport plays on from (#1136). At a start the
+						// command thread cued, until the audio thread plays from there, and while it counts in, where
+						// playback starts after it; either may begin while this cues: the voice it reads stays.
+						if (state.locate >= 0)
+						{
+							cue.playsOn = cue.playing ? cue.position : -1;
+							cue.position = state.locate;
+							cue.playing = false;
+						}
+						else if (state.start >= 0 && applied < state.startRequests)
 						{
 							cue.position = state.start;
 							cue.enter = state.enter;
@@ -389,6 +396,13 @@ namespace gnubase::engine
 		m_cueState.enter = enter;
 		m_cueState.startRequests = m_transport.sentRequests() + 1;
 		m_cueState.playing = true; // until sent() reads the transport, also when the start is applied before it
+	}
+
+	void AudioEngine::cueLocate(time::Samples position)
+	{
+		const std::scoped_lock order(m_cueOrderMutex); // after a cue the cue thread may be making for the old position
+		const std::scoped_lock lock(m_cueMutex);
+		m_cueState.locate = position;
 	}
 
 	void AudioEngine::rotatePlans(const std::shared_ptr<const ArrangerPlan>& newest)
@@ -459,6 +473,12 @@ namespace gnubase::engine
 	{
 		const std::scoped_lock lock(m_cueStartHookMutex);
 		m_cueStartHook = std::move(hook);
+	}
+
+	void AudioEngine::setLocateCuedHook(std::function<void()> hook)
+	{
+		const std::scoped_lock lock(m_locateCuedHookMutex);
+		m_locateCuedHook = std::move(hook);
 	}
 
 	void AudioEngine::stopCueing()
@@ -2835,6 +2855,7 @@ namespace gnubase::engine
 			const std::scoped_lock lock(m_cueMutex);
 			m_cueState.playing = m_transport.playing();
 			m_cueState.settings = m_transport.settings();
+			m_cueState.locate = -1; // sent or not, the cursor shows where playback goes (cueLocate)
 			if (!accepted)
 				m_cueState.start = -1; // the start cueStart announced doesn't come
 		}
@@ -3182,10 +3203,28 @@ namespace gnubase::engine
 			throw CommandError("give a position, by or target");
 		}
 		// Exactly there, like a start; while playing, playback plays on from the cursor until the audio thread
-		// takes the locate.
+		// takes the locate. The cue thread cues the same way until it is sent.
 		if (m_device)
-			cue(position, false, m_device->format().blockSize, true, -1,
-				m_transport.playing() ? m_transport.position() : -1);
+		{
+			cueLocate(position);
+			try
+			{
+				cue(position, false, m_device->format().blockSize, true, -1,
+					m_transport.playing() ? m_transport.position() : -1);
+				std::function<void()> hook;
+				{
+					const std::scoped_lock lock(m_locateCuedHookMutex);
+					hook = m_locateCuedHook;
+				}
+				if (hook)
+					hook();
+			}
+			catch (...)
+			{
+				cueLocate(-1);
+				throw;
+			}
+		}
 		sent(m_transport.locate(position));
 		if (m_transport.countingIn()) // again, so that it ends on the bar line where playback now starts
 			sent(m_transport.record(true, cueCountIn()));
