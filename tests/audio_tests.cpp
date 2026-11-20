@@ -1117,6 +1117,7 @@ TEST_CASE("a device lost while the project's sample rate changes returns at the 
 	const Json device = run(client, "audio.get").at("device");
 	CHECK(device.at("sampleRate") == 44100.0);
 	CHECK(device.at("sampleRateMismatch") == false);
+	CHECK(device.at("silenceReason").is_null()); // it plays (#422)
 }
 
 TEST_CASE(

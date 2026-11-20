@@ -2191,11 +2191,13 @@ namespace gnubase::engine
 		const audio::DeviceFormat& format = m_device->format();
 		const audio::DeviceLatency latency = m_device->latency();
 		Json device = toJson(m_device->info());
+		const std::string silenceReason = m_device->silenceReason();
 		device.update({{"backend", m_backend}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
 			{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels},
 			{"inputLatency", latency.input}, {"outputLatency", latency.output}, {"recordShift", m_recordShift},
 			{"recordOffset", m_recordOffset.load(std::memory_order_relaxed)}, {"directMonitoring", m_directMonitoring},
-			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate}});
+			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate},
+			{"silenceReason", silenceReason.empty() ? Json(nullptr) : Json(silenceReason)}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
 			{"projectSampleRate", projectRate}, {"recordBitDepth", recordBitDepth},
 			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
@@ -2491,7 +2493,9 @@ namespace gnubase::engine
 				"of audio track playback were silent because a disk stream "
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
 				"sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as "
-				"it doesn't support the project's or was asked for another, and plays faster or slower; a new project "
+				"it doesn't support the project's or was asked for another, and plays faster or slower, and "
+				"silenceReason why a running device plays silence (e.g. a PipeWire graph that another client holds at "
+				"another rate), or null; a new project "
 				"sample rate sends audio.changed. recordBitDepth is the project's (see project.set), for the record "
 				"format; a new one also sends audio.changed. lost: the device that went away (its backend, device id, "
 				"its name "

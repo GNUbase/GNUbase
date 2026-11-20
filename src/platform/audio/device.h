@@ -167,6 +167,10 @@ namespace gnubase::audio
 		// Frames processed since the device was opened.
 		virtual uint64_t position() const = 0;
 
+		// Why the device plays silence while it runs, e.g. because its driver runs at another sample rate that a reset
+		// doesn't change; empty while it plays. Not on the audio thread.
+		virtual std::string silenceReason() const { return {}; }
+
 		// Opens the driver's control panel, if it has one (DeviceInfo::controlPanel).
 		virtual void openControlPanel() {}
 

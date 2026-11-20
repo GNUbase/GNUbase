@@ -37,6 +37,12 @@ namespace gnubase::audio
 		constexpr std::array<uint32_t, 7> g_blockSizes{32, 64, 128, 256, 512, 1024, 2048};
 		constexpr auto g_timeout = std::chrono::seconds(5); // for the daemon's answers
 		constexpr double g_offRateSeconds = 0.5;            // at another rate for this long, a device asks for a reset
+		constexpr double g_onRateSeconds = 5.0;             // at its rate for this long, a device's reset helped (#422)
+
+		// A device's sample rate and the other one the graph ran at when it last asked for a reset, as one value, so
+		// that the audio thread can swap it without a lock.
+		using OffRate = std::atomic<uint64_t>;
+		static_assert(OffRate::is_always_lock_free);
 
 		struct Node
 		{
@@ -268,12 +274,17 @@ namespace gnubase::audio
 			}
 
 			// Called on the loop thread when one of these globals (nodes, ports) goes away, when the daemon does, when
-			// another client forces a rate or lifts the force (clock.force-rate) and, if followsDefault, when the
-			// default sink or source changes.
-			void watch(std::vector<uint32_t> globals, bool followsDefault, std::function<void()> changed)
+			// another client forces a rate (clock.force-rate) other than the device's or lifts a force that gave the
+			// device its rate (rateFromForce: opened without a rate while one was forced) and, if followsDefault, when
+			// the default sink or source changes. A force of the device's own rate, and lifting it, change nothing
+			// for it (#430).
+			void watch(std::vector<uint32_t> globals, bool followsDefault, double rate, bool rateFromForce,
+				std::function<void()> changed)
 			{
 				m_watched = std::move(globals);
 				m_followsDefault = followsDefault;
+				m_rate = rate;
+				m_rateFromForce = rateFromForce;
 				m_changed = std::move(changed);
 			}
 
@@ -421,7 +432,8 @@ namespace gnubase::audio
 				else
 					self.m_settingsValues[key] = value;
 				// Another client forces a rate or lifts the force: the device opens at the graph's rate again.
-				if (self.forcedRate() != forced)
+				const uint32_t now = self.forcedRate();
+				if (now != forced && (now != 0 ? static_cast<double>(now) != self.m_rate : self.m_rateFromForce))
 					self.changed();
 				return 0;
 			}
@@ -494,6 +506,8 @@ namespace gnubase::audio
 
 			std::vector<uint32_t> m_watched;
 			bool m_followsDefault = false;
+			double m_rate = 0.0;
+			bool m_rateFromForce = false;
 			std::function<void()> m_changed;
 		};
 
@@ -569,8 +583,9 @@ namespace gnubase::audio
 		public:
 			// Takes over the connection the endpoints were found on.
 			PipeWireDevice(std::unique_ptr<Connection> connection, DeviceInfo info, const Endpoints& endpoints,
-				double rate, uint32_t blockSize)
-				: m_connectionOwner(std::move(connection)), m_connection(*m_connectionOwner), m_info(std::move(info))
+				double rate, bool rateFromForce, uint32_t blockSize, std::shared_ptr<OffRate> lastOffRate)
+				: m_connectionOwner(std::move(connection)), m_connection(*m_connectionOwner), m_info(std::move(info)),
+				  m_lastOffRate(std::move(lastOffRate))
 			{
 				const Connection::Lock lock(m_connection);
 				m_format.sampleRate = rate;
@@ -623,14 +638,15 @@ namespace gnubase::audio
 				for (const auto* ports : {&playback, &capture})
 					for (const auto& entry : *ports)
 						watched.push_back(entry.first);
-				m_connection.watch(std::move(watched), m_info.id == "default", [this] { requestReset(); });
+				m_connection.watch(
+					std::move(watched), m_info.id == "default", rate, rateFromForce, [this] { requestReset(); });
 			}
 
 			~PipeWireDevice() override
 			{
 				PipeWireDevice::stop(); // not virtually: a derived device would be gone already
 				const Connection::Lock lock(m_connection);
-				m_connection.watch({}, false, nullptr);
+				m_connection.watch({}, false, 0.0, false, nullptr);
 				destroyFilter();
 				for (spa_source* event : {m_latencyEvent, m_resetEvent})
 					if (event != nullptr)
@@ -654,6 +670,16 @@ namespace gnubase::audio
 
 			bool running() const override { return m_running; }
 			uint64_t position() const override { return m_position.load(std::memory_order_acquire); }
+
+			std::string silenceReason() const override
+			{
+				const uint32_t held = m_heldRate.load(std::memory_order_relaxed);
+				if (held == 0)
+					return {};
+				return "PipeWire runs at " + std::to_string(held) + " Hz, not at the device's " +
+					std::to_string(std::lround(m_format.sampleRate)) +
+					" Hz: another client holds the graph at its rate";
+			}
 
 			void start(AudioCallback& callback) override
 			{
@@ -811,19 +837,35 @@ namespace gnubase::audio
 				AudioCallback* callback = m_callback.load();
 				// The graph runs at another rate if another client forced one: then the device plays silence rather
 				// than at the wrong speed, and asks for a reset if that lasts, so that the engine opens it again at the
-				// graph's rate or learns why it can't (open refuses a rate it asks for while another is forced).
+				// graph's rate or learns why it can't (open refuses a rate it asks for while another is forced). A
+				// client that holds the graph at its rate itself, as another GNUbase does with node.force-rate, takes
+				// it back once the reopened device has it: if the graph runs at that rate again before the device
+				// has played 5 s, it doesn't ask again, and reports why it plays silence instead (#422).
 				const bool rate = static_cast<double>(position->clock.rate.denom) == m_format.sampleRate &&
 					position->clock.rate.num == 1;
 				if (callback != nullptr && rate)
 				{
 					m_offRateFrames = 0;
+					m_heldRate.store(0, std::memory_order_relaxed);
+					const auto settled = static_cast<uint64_t>(m_format.sampleRate * g_onRateSeconds);
+					if (m_onRateFrames < settled && m_onRateFrames + frames >= settled)
+						m_lastOffRate->store(0);
+					m_onRateFrames += frames;
 					run(*callback, frames);
 				}
 				else if (callback != nullptr)
 				{
+					m_onRateFrames = 0;
 					const auto limit = static_cast<uint64_t>(m_format.sampleRate * g_offRateSeconds);
 					if (m_offRateFrames < limit && m_offRateFrames + frames >= limit && m_resetEvent != nullptr)
-						pw_loop_signal_event(pw_thread_loop_get_loop(m_connection.loop()), m_resetEvent);
+					{
+						const uint64_t offRate = (static_cast<uint64_t>(std::llround(m_format.sampleRate)) << 32U) |
+							position->clock.rate.denom;
+						if (m_lastOffRate->exchange(offRate) == offRate)
+							m_heldRate.store(position->clock.rate.denom, std::memory_order_relaxed);
+						else
+							pw_loop_signal_event(pw_thread_loop_get_loop(m_connection.loop()), m_resetEvent);
+					}
 					m_offRateFrames += frames;
 					if (!m_rateWarned.exchange(true))
 					{
@@ -947,7 +989,10 @@ namespace gnubase::audio
 			MidiBuffer m_midiIn;
 			MidiBuffer m_midiOut;
 			HostTime m_lastTime = 0;
-			uint64_t m_offRateFrames = 0; // processed in a row while the graph runs at another rate
+			uint64_t m_offRateFrames = 0;           // processed in a row while the graph runs at another rate
+			uint64_t m_onRateFrames = 0;            // and at the device's
+			std::shared_ptr<OffRate> m_lastOffRate; // the backend's: across the reopen a reset causes
+			std::atomic<uint32_t> m_heldRate{0};    // the graph's while it plays silence without asking for a reset
 
 			std::atomic<AudioCallback*> m_callback{nullptr};
 			std::atomic<int> m_busy{0};
@@ -1028,10 +1073,14 @@ namespace gnubase::audio
 						" Hz, which another client forces (clock.force-rate)");
 				if (std::find(info.sampleRates.begin(), info.sampleRates.end(), rate) == info.sampleRates.end())
 					throw DeviceError("PipeWire doesn't run at " + std::to_string(std::lround(rate)) + " Hz");
+				const bool rateFromForce = config.sampleRate == 0.0 && connection->forcedRate() != 0;
 				lock.reset(); // the thread loop's lock nests, but waiting in it would keep the outer level locked
-				return std::make_unique<PipeWireDevice>(
-					std::move(connection), std::move(info), endpoints, rate, config.blockSize);
+				return std::make_unique<PipeWireDevice>(std::move(connection), std::move(info), endpoints, rate,
+					rateFromForce, config.blockSize, m_lastOffRate);
 			}
+
+		private:
+			std::shared_ptr<OffRate> m_lastOffRate = std::make_shared<OffRate>(0);
 		};
 	}
 

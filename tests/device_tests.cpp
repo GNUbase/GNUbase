@@ -595,10 +595,12 @@ namespace
 	class ForcedSetting
 	{
 	public:
-		ForcedSetting(std::string key, uint32_t value) : m_key(std::move(key)), m_previous(graphSetting(m_key))
+		ForcedSetting(std::string key, const std::string& value)
+			: m_key(std::move(key)), m_previous(graphSetting(m_key))
 		{
-			REQUIRE(pw("pw-metadata", {"-n", "settings", "0", m_key, std::to_string(value)}));
+			REQUIRE(pw("pw-metadata", {"-n", "settings", "0", m_key, value}));
 		}
+		ForcedSetting(std::string key, uint32_t value) : ForcedSetting(std::move(key), std::to_string(value)) {}
 		~ForcedSetting()
 		{
 			if (m_previous.empty())
@@ -672,6 +674,67 @@ namespace
 			return true;
 		WARN("no pw-cli and pw-metadata to change the graph with");
 		return false;
+	}
+
+	// A device whose reset handler has the test thread open it again with the same config, as the engine does
+	// (audio.reset): poll() does that. It counts the resets.
+	class Reopening
+	{
+	public:
+		Reopening(std::unique_ptr<Backend> backend, DeviceConfig config)
+			: m_backend(std::move(backend)), m_config(std::move(config))
+		{
+			open();
+		}
+		~Reopening() { m_device->stop(); } // before the callback goes
+
+		Reopening(const Reopening&) = delete;
+		Reopening& operator=(const Reopening&) = delete;
+
+		void poll()
+		{
+			if (!m_pending.exchange(false))
+				return;
+			m_device.reset();
+			open();
+		}
+
+		int resets() const { return m_resets; }
+		const Device& device() const { return *m_device; }
+		size_t blocks() const { return m_callback->blocks(); }
+
+	private:
+		void open()
+		{
+			m_device = m_backend->open(m_config);
+			m_device->onReset(
+				[this]
+				{
+					++m_resets;
+					m_pending = true;
+				});
+			m_callback = std::make_unique<ContractCallback>(m_device->format());
+			m_device->start(*m_callback);
+		}
+
+		std::unique_ptr<Backend> m_backend;
+		DeviceConfig m_config;
+		std::unique_ptr<ContractCallback> m_callback; // before the device, which goes first
+		std::unique_ptr<Device> m_device;
+		std::atomic<int> m_resets{0};
+		std::atomic<bool> m_pending{false};
+	};
+
+	// Polls both devices for the given time, as two engines would.
+	void reopenFor(Reopening& first, Reopening& second, std::chrono::milliseconds time)
+	{
+		const auto end = std::chrono::steady_clock::now() + time;
+		while (std::chrono::steady_clock::now() < end)
+		{
+			first.poll();
+			second.poll();
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
 	}
 
 	// In the contract's test case, so that the contract never meets the sink that comes and goes when ctest runs
@@ -792,6 +855,24 @@ TEST_CASE("a PipeWire device asks for a reset when another client forces the gra
 			}));
 		CHECK(callback.violations() == 0);
 	}
+	SECTION("a force of the device's own rate, and lifting it, change nothing for it (#430)")
+	{
+		const std::unique_ptr<Device> device = backend->open(config("default"));
+		std::atomic<int> resets{0};
+		device->onReset([&resets] { ++resets; });
+		ContractCallback callback(device->format());
+		device->start(callback);
+		REQUIRE(callback.waitFor(8));
+		{
+			const ForcedSetting forced("clock.force-rate", static_cast<uint32_t>(device->format().sampleRate));
+			std::this_thread::sleep_for(std::chrono::milliseconds(300)); // the device has seen the force
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(300));
+		CHECK(resets == 0);
+		CHECK(callback.waitFor(8));
+		CHECK(callback.violations() == 0);
+		device->stop();
+	}
 	SECTION("the engine, with the device set as the studio setup sets it")
 	{
 		std::vector<std::unique_ptr<Backend>> backends;
@@ -820,6 +901,31 @@ TEST_CASE("a PipeWire device asks for a reset when another client forces the gra
 		}
 		CHECK(eventually([&runsAt, rate] { return runsAt(rate, false); }));
 	}
+}
+
+// Two clients that hold the graph at their own rates, as two GNUbase instances at different rates do with
+// node.force-rate, take the graph from each other whenever one opens again. Each device asks for a reset once at most;
+// then one of them plays silence and says why, instead of both resetting every second (#422).
+TEST_CASE("PipeWire devices at different rates don't keep resetting each other", "[integration][pipewire]")
+{
+	skipUnlessPrivateDaemon(); // the graph changes rates
+	const std::unique_ptr<Backend> probe = pipeWireOrSkip();
+	if (!probe)
+		SKIP("no PipeWire daemon runs here");
+	if (!havePipeWireTools())
+		return;
+	const ForcedSetting allowed("clock.allowed-rates", "[ 44100 48000 ]");
+	const double rate = probe->open(config("default"))->format().sampleRate;
+	const double other = rate != 44100.0 ? 44100.0 : 48000.0;
+	Reopening first(makePipeWireBackend(), config("default", rate));
+	REQUIRE(eventually([&first] { return first.blocks() >= 8; }));
+	Reopening second(makePipeWireBackend(), config("default", other));
+	reopenFor(first, second, std::chrono::seconds(5));
+	INFO("resets: " << first.resets() << " and " << second.resets());
+	CHECK(first.resets() <= 1);
+	CHECK(second.resets() <= 1);
+	CHECK(first.resets() + second.resets() >= 1);
+	CHECK(first.device().silenceReason().empty() != second.device().silenceReason().empty());
 }
 
 // The latency counts in quanta: when another client changes the graph's quantum while a device runs, the device
