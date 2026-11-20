@@ -278,7 +278,7 @@ namespace gnubase::engine
 				std::vector<fs::path> candidates;
 				for (auto file = first; file != last; ++file)
 					candidates.push_back(file->second);
-				// The same spelling first.
+				// The same spelling first, so it wins between files equally close in length.
 				std::stable_partition(candidates.begin(), candidates.end(),
 					[&name](const fs::path& path) { return path.filename().u8string() == name; });
 				// A file of another length would leave events pointing past its end. But a length that another
@@ -806,12 +806,12 @@ namespace gnubase::engine
 		addControl(engine,
 			{"media.locate", 1,
 				"Looks for missing media files in folder and the folders inside it (the Resolve Missing Files "
-				"dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, the same spelling "
-				"first, else with ASCII letters in another case (other letters must match exactly), and the media "
-				"file's sample rate, channel count and length, within a millisecond's frames for the rounding of a "
-				"duration in another application's project.xml, the closest length first. media limits it to those "
-				"media files (default: every "
-				"missing one). It runs as a job, so it can't be part of a history.transaction: this returns at once, "
+				"dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, ASCII letters in "
+				"any case (other letters must match exactly), and the media file's sample rate, channel count and "
+				"length, within a millisecond's frames for the rounding of a duration in another application's "
+				"project.xml. Of those it takes the closest length, and of equally close ones the same spelling. "
+				"media limits it to those media files (default: every missing one). It runs as a job, so it can't be "
+				"part of a history.transaction: this returns at once, "
 				"job.progress events say which folder it looks in and then which media file it checks, job.cancel "
 				"stops it, and once it is done the files found are relinked as one undo step, which skips media "
 				"files relinked or removed meanwhile, files found that changed or went since, and every one if "

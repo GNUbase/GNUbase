@@ -508,6 +508,8 @@ TEST_CASE("media.locate takes a file within a millisecond of a length that anoth
 	fs::remove_all(song.library);
 	const fs::path moved = song.dir.path() / "moved";
 	writeFile(moved / "take.wav", 4820, 1);
+	// Closer in length, so it wins over the same spelling: the spelling decides only between files equally close.
+	writeFile(moved / "near" / "TAKE.wav", 4810, 1);
 	writeFile(moved / "far.wav", 4800, 1); // another take, 96 frames off: more than a millisecond
 	song.reopen();
 
@@ -525,7 +527,8 @@ TEST_CASE("media.locate takes a file within a millisecond of a length that anoth
 	CHECK(located.at("relinked") == Json::array({named("take.wav").at("id")}));
 	CHECK(located.at("missing") == Json::array({named("far.wav").at("id")}));
 	const Json take = byId(run(song.client, "project.get").at("media"), named("take.wav").at("id"));
-	CHECK(fs::equivalent(fs::u8path(take.at("path").get<std::string>()), moved / "take.wav"));
+	CHECK(fs::equivalent(fs::u8path(take.at("path").get<std::string>()), moved / "near" / "TAKE.wav"));
+	CHECK(fs::u8path(take.at("path").get<std::string>()).filename().u8string() == "TAKE.wav");
 }
 
 TEST_CASE("media.removeMissing removes missing files with their clips and events", "[integration]")

@@ -29,17 +29,17 @@ the pool and conforming files to the project's sample rate. The engine commands 
   too: a clip without any has nowhere to keep a key, so `clip.set` refuses its `rootKey` (#1719).
 - **`pool.removeUnused`** removes the clips that no audio event uses, then the media files no clip uses, as one undo
   step. The files stay on disk.
-- **`media.locate`** looks for missing media files in a folder and the folders inside it, by file name: the same
-  spelling first, else one whose ASCII letters (A to Z) differ in case; other letters, such as Ä and ä, must match
-  exactly, since folding them would need Unicode's case tables. It takes a file only if it has the media file's
-  sample rate, channel count and length, so a same-named file of another take (a common kick.wav) isn't relinked
-  with events pointing past its end. A length that another application's project.xml gave for a file missing at
-  load is its `duration` times the sample rate, off by the duration's rounding, so a file within a millisecond's
-  frames fits too, the closest length first (#506). `media` limits it to some media files, each looked for once however often it is
-  given. Since the folder can be large (a whole drive), it runs as a job (see below). A file found that goes or
-  changes before the job relinks it is skipped and reported as `changed` (its `media.relink` entry has the `length`
-  the file must have), so the other files found are still relinked. A single file is relinked with `media.relink`
-  ([backup.md](backup.md)).
+- **`media.locate`** looks for missing media files in a folder and the folders inside it, by file name, matching ASCII
+  letters (A to Z) in any case; other letters, such as Ä and ä, must match exactly, since folding them would need
+  Unicode's case tables. It takes a file only if it has the media file's sample rate, channel count and length, so a
+  same-named file of another take (a common kick.wav) isn't relinked with events pointing past its end. A length that
+  another application's project.xml gave for a file missing at load is its `duration` times the sample rate, off by the
+  duration's rounding, so a file within a millisecond's frames fits too (#506). Of the files that fit, it takes the one
+  closest in length, and of those equally close the one with the same spelling. `media` limits it to some media files,
+  each looked for once however often it is given. Since the folder can be large (a whole drive), it runs as a job (see
+  below). A file found that goes or changes before the job relinks it is skipped and reported as `changed` (its
+  `media.relink` entry has the `length` the file must have), so the other files found are still relinked. A single file
+  is relinked with `media.relink` ([backup.md](backup.md)).
 - **`media.removeMissing`** removes the missing media files with their clips and the audio events that play them
   (`audioEvent.remove`, so crossfades from them go too), as one undo step.
 - **`media.conform`** writes each media file at another sample rate than the project's into the media folder as a
@@ -157,13 +157,14 @@ given twice conformed once; and `audioFile.import` with `clipsOnly`. The accepta
 saved project's files are moved into another folder while it is closed, the loaded project shows them missing,
 `media.locate` finds one in a subfolder under another letter case and skips one whose channel count doesn't fit, the
 event plays the same section, the saved project keeps the new path, and undo brings back the old one. Another test
-has `media.locate` skip a same-named file of another length but take one within a millisecond of a length that
-another application's project.xml rounded, prefer the same spelling over another case, match ASCII letters in any
-case but not Ö for ö, and look for a media file given twice once. Both run as jobs, which the tests
-wait for: `transport.locate` is answered while `media.locate` on a folder of 2500 files runs, whose progress names
-the folder; `job.cancel` stops `media.locate` and `media.conform` with nothing changed and no file left in the media
-folder; a missing file removed while `media.locate` looks for it, a media file relinked by hand while `media.conform`
-converts it, and a new project sample rate set meanwhile keep the edit, and the conformed file is removed;
+has `media.locate` skip a same-named file of another length but take one within a millisecond of a length that another
+application's project.xml rounded, prefer the closest length over the same spelling and the same spelling over another
+case among equally close ones, match ASCII letters in any case but not Ö for ö, and look for a media file given twice
+once. Both run as jobs, which the tests wait for: `transport.locate` is answered while `media.locate` on a folder of
+2500 files runs, whose progress names the folder; `job.cancel` stops `media.locate` and `media.conform` with nothing
+changed and no file left in the media folder; a missing file removed while `media.locate` looks for it, a media file
+relinked by hand while `media.conform` converts it, and a new project sample rate set meanwhile keep the edit, and the
+conformed file is removed;
 `media.locate` relinks a file it found although another one it found no longer fits by the time of the relink (undo took
 its media file back to another sample rate while the job looked), which it reports as `changed`; `media.relinkResampled`
 refuses unknown media files, files of another channel count, missing or empty files and a media file given twice, and
