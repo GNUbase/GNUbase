@@ -22,8 +22,8 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
 | `range.insertSilence` | Moves what lies after the range's start, cut there, on by the range's length | pp. 292-293 |
 | `range.copy` | Copies the range to the range clipboard; without a range everything between the locators (Global Copy) | p. 292 |
 | `range.cut` | `range.copy`, then `range.delete`; `time` (Cut Time) closes the gap | pp. 292, 425 |
-| `range.paste` | Pastes the clipboard at `position` (default the cursor); `time` (Paste Time) first makes room | p. 292 |
-| `range.move` | Moves what is in the range to `position`, on the same tracks or from `track` on, without the clipboard; `copy` leaves it and pastes a copy | pp. 291, 432 |
+| `range.paste` | Pastes the clipboard at `position` (default the cursor) or `positionTicks`; `time` (Paste Time) first makes room | p. 292 |
+| `range.move` | Moves what is in the range to `position` or `positionTicks`, on the same tracks or from `track` on, without the clipboard; `copy` leaves it and pastes a copy | pp. 291, 432 |
 
 - **Cuts at the edges.** Events and parts that cross an edge are split there first, as `event.split` splits them, so
   only what lies in the range is affected (p. 291). A MIDI part's notes across an edge stay in the part they start in,
@@ -111,7 +111,13 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
   pasted at another tempo than it was copied at, where it no longer lies in that sample, or an event of an audio part
   cut in the sample it starts in, which stays whole in the piece after the cut, starting before it. Then the earliest of
   them lands on tick 0. `range.paste` lands the same way at its `position`, and so does what `arranger.flatten` pastes.
-  Not yet: a `position` in ticks, so that a drag that snaps to a bar lands on the bar's own tick (#1785).
+- **At a tick.** Instead of `position` in samples, `range.move` and `range.paste` take `positionTicks`, a tick of the
+  tempo map (#1785): the first in ticks of what starts in the range's start sample on a musical track lands on that
+  tick exactly, and without such an event what lies on musical tracks moves by the ticks from the range's start tick
+  to it. Linear tracks go to the sample the tick lies in. A bar's tick can lie up to half a sample from the bar's
+  sample, so a part on a bar moved to another bar's sample lands on the tick nearest to it, or keeps its distance in
+  ticks where that lands in the sample; at the other bar's tick it lands on that tick. Nothing lands before tick 0
+  here either.
 - **Global copy** copies every track between the locators: the events, parts and automation. Markers, the tempo and
   the signatures stay where they are.
 
@@ -134,18 +140,19 @@ With a selection range ([tools.md](tools.md)) the edit commands work on it, and 
 | `edit.nudgeTopUp`, `edit.nudgeTopDown`, `edit.nudgeBottomUp`, `edit.nudgeBottomDown` | Alt+Up, Alt+Shift+Down, Alt+Shift+Up, Alt+Down | Take the track above or below it in, or its top or bottom track out, as long as one stays (p. 289) |
 
 The grid step is the nudges' for events ([parts-and-events.md](parts-and-events.md)), at the edge that moves, and
-nothing moves before the project start. With the range tool, a press in the range on one of its tracks, without
-Shift, drags its contents (p. 291): the range follows the mouse across, its start snapped, and down or up by as many
-tracks as the mouse, as far as there are tracks for all of its own, and the release moves what is in it there
-(`range.move`, with `track` when the tracks changed), or with the tool modifier Copy (`dragDrop.copy`, Alt by default)
-a copy of it; the range stays where it went, and a drag that came back to the press leaves it where it was, one that
-came back across only its position. A press within 6 dp inside one of its edges, without Shift, drags that edge
-instead (p. 288), with the pointers `resize` at the start and the end and `resizeVertical` at the top and the bottom
-([tools.md](tools.md)): the start or the end follows the mouse across, snapped, and past the other edge becomes that
-one; the top or the bottom goes to the track under the mouse, taking the tracks it passes in or out, not past the
-other edge. Only a range wider or higher than 18 dp has those edges. A click there selects a range as anywhere. Shift
-and a drag in the range selects a new range, just the stretch dragged over, and Shift and a drag outside it adds to
-the range (p. 288). A drag released outside the window puts the range back at the next press.
+nothing moves before the project start. With the range tool, a press in the range on one of its tracks, without Shift,
+drags its contents (p. 291): the range follows the mouse across, its start snapped, and down or up by as many tracks as
+the mouse, as far as there are tracks for all of its own, and the release moves what is in it there (`range.move`, with
+`track` when the tracks changed, and at `positionTicks` when its start snapped to a musical grid line, so that a part on
+a bar lands on another bar's own tick), or with the tool modifier Copy (`dragDrop.copy`, Alt by default) a copy of it;
+the range stays where it went, and a drag that came back to the press leaves it where it was, one that came back across
+only its position. A press within 6 dp inside one of its edges, without Shift, drags that edge instead (p. 288), with
+the pointers `resize` at the start and the end and `resizeVertical` at the top and the bottom ([tools.md](tools.md)):
+the start or the end follows the mouse across, snapped, and past the other edge becomes that one; the top or the bottom
+goes to the track under the mouse, taking the tracks it passes in or out, not past the other edge. Only a range wider or
+higher than 18 dp has those edges. A click there selects a range as anywhere. Shift and a drag in the range selects a
+new range, just the stretch dragged over, and Shift and a drag outside it adds to the range (p. 288). A drag released
+outside the window puts the range back at the next press.
 
 The main menu's Edit menu has Cut, Copy and Paste, and the Range submenu Global Copy, Cut Time, Delete Time, Paste
 Time, Split, Crop and Insert Silence. Menus and keys disable the commands that only edit the range while there is
@@ -202,6 +209,12 @@ Not yet (#1978): a range of several tracks dragged past a folded folder. The dis
   the next bar; from sample 1 with a faster tempo at the end, the part and its point landing on tick 0 where the length
   would put them before it; and with a faster tempo at the end past a point just before the range's start sample, which
   moves onto the joint.
+- `tests/eventedit_tests.cpp`, landing at a tick (#1785): `range.move`, its copy and `range.paste` at `positionTicks`
+  of a bar, a part on another bar landing on that tick at every bar, also where the bar's sample puts it off the tick,
+  and a linear part in that tick's sample, and the errors for no position, both, a negative tick and one past the
+  longest project; moving and pasting a musical track's range onto a linear track at position 0, its lane's points in
+  the start sample before the part's tick or at the range's start tick landing on sample 0 with the part, the
+  downbeat's point last there.
 - `tests/eventedit_tests.cpp`, the range tests of the later rounds: `range.delete` and `range.copy` with a 44.1 kHz
   clip, taking the piece the cut at the end leaves; `range.paste` after `project.new`, refused; with a 22.05 kHz clip,
   an event at `end - 1` staying whole after `range.delete` and not copied, Delete Time moving it back by the range's
@@ -220,14 +233,14 @@ Not yet (#1978): a range of several tracks dragged past a folded folder. The dis
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; without a range the range
   commands can't run, and Paste can't until a cut, nor after `project.new`; split, Delete Time, cut and paste on a
   selection range, which stays; paste at the cursor without a range, selecting what it pasted; a drag in the range
-  moving its contents on a MIDI track in one undo step with the range, Alt and a drag copying them, a click in it
-  selecting a range of no length, and Duplicate copying them to the range's end twice in a row; a drag down a lane
-  and across, straight down and with Alt taking the part or a copy onto the track below, and one below the last lane
-  stopping at the last track; the edges' pointers, and dragging the start and the end across, snapped and past the
-  other edge, and the bottom and top down and up, taking tracks in and out and stopping at the other edge, while the
-  project stays as it was; the nudges moving the
-  range and its edges by a beat, not before the project start nor the start past the end, and the top and bottom
-  nudges taking tracks in and out, never the last, while the project stays as it was.
+  moving its contents on a MIDI track in one undo step with the range, snapped to a bar at a tempo whose bars lie
+  between samples landing on the bar's tick, Alt and a drag copying them, a click in it selecting a range of no length,
+  and Duplicate copying them to the range's end twice in a row; a drag down a lane and across, straight down and with
+  Alt taking the part or a copy onto the track below, and one below the last lane stopping at the last track; the edges'
+  pointers, and dragging the start and the end across, snapped and past the other edge, and the bottom and top down and
+  up, taking tracks in and out and stopping at the other edge, while the project stays as it was; the nudges moving the
+  range and its edges by a beat, not before the project start nor the start past the end, and the top and bottom nudges
+  taking tracks in and out, never the last, while the project stays as it was.
 - `tests/markertrack_ui_tests.cpp`: the same drag on the marker track, also released outside the window.
 - `tests/uiapp_tests.cpp`: the context menu disables the range commands without a range and Paste until something is
   cut.

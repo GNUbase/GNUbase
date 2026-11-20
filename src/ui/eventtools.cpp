@@ -523,6 +523,19 @@ namespace gnubase::ui
 				break;
 			Json parameters = {{"start", from.start}, {"end", from.end}, {"tracks", from.tracks},
 				{"position", to.start}, {"copy", modifiers("dragDrop.copy")}};
+			// Snapped to a musical grid line, it goes to the line's tick: a part on a bar lands on another bar's own
+			// tick, which can lie up to half a sample from the sample the range shows (#1785).
+			if (to.start != from.start)
+			{
+				const double start = static_cast<double>(from.start) / m_time.sampleRate;
+				const time::Position snapped = snapAt(start + ((x - m_pressX) * m_view.scale), start);
+				if (snapped.base == time::TimeBase::Musical && snapped.value >= 0 &&
+					time::toSamples(snapped, m_time.tempo, m_time.sampleRate) == to.start)
+				{
+					parameters.erase("position");
+					parameters["positionTicks"] = snapped.value;
+				}
+			}
 			if (to.tracks != from.tracks)
 			{
 				// Where the range's top track goes: range.move names the tracks from the top.

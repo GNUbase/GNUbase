@@ -45,6 +45,7 @@ using std::chrono::milliseconds;
 namespace
 {
 	constexpr int64_t g_quarter = time::g_ticksPerQuarter;
+	constexpr int64_t g_bar = 4 * g_quarter;
 
 	ui::Target point(double x, double y)
 	{
@@ -2587,6 +2588,84 @@ TEST_CASE(
 	f.run("edit.duplicate");
 	REQUIRE(f.waitUntil([&] { return positions().size() == 3; }));
 	CHECK(positions()[2] == 10 * g_quarter);
+}
+
+TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar on that bar's own tick", "[unit]")
+{
+	// At tempos whose bars lie between samples a bar's tick can lie up to half a sample from the sample the range
+	// shows, and a part on a bar moved to that sample can land off the bar's tick. Snapped to the bar, the drag moves
+	// it to the bar's tick (range.move's positionTicks, #1785).
+	Fixture f;
+	const auto midi = f.call("project.get").at("tracks")[1].at("id").get<uint64_t>();
+	f.call("event.remove", {{"events", {f.part}}});
+	f.call("project.set", {{"tempoTrackActive", true}});
+	const auto startOf = [&f](uint64_t id)
+	{ return f.call("event.get", {{"events", {id}}}).at("events").at(0).at("start").get<int64_t>(); };
+	const auto positionOf = [&f](uint64_t id)
+	{
+		for (const Json& part : f.parts())
+			if (part.at("id") == id)
+				return part.at("position").get<int64_t>();
+		return int64_t{-1};
+	};
+	const auto add = [&f, midi](int64_t position, int64_t length)
+	{
+		return f.call("midiPart.add", {{"track", midi}, {"position", position}, {"length", length}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	};
+	// A tempo and a bar where moving the part on it by a range from its start sample to the next bar's sample puts it
+	// off the next bar's tick.
+	double bpm = 0.0;
+	int64_t bar = 0;
+	uint64_t part = 0;
+	for (const double candidate : {97.3, 133.7, 101.3, 89.9, 111.1})
+	{
+		f.call("tempo.add", {{"position", 0}, {"bpm", candidate}, {"ramp", false}});
+		for (int64_t each = 1; each <= 2 && bar == 0; ++each)
+		{
+			const uint64_t id = add(each * g_bar, g_bar);
+			const uint64_t probe = add((each + 1) * g_bar, g_quarter);
+			const int64_t at = startOf(probe);
+			f.call("event.remove", {{"events", {probe}}});
+			const int64_t start = startOf(id);
+			f.call("range.move", {{"start", start}, {"end", start + 48000}, {"tracks", {midi}}, {"position", at}});
+			const bool off = positionOf(id) != (each + 1) * g_bar;
+			f.call("history.undo");
+			if (off)
+			{
+				bpm = candidate;
+				bar = each;
+				part = id;
+			}
+			else
+			{
+				f.call("event.remove", {{"events", {id}}});
+			}
+		}
+		if (bar != 0)
+			break;
+	}
+	REQUIRE(bar != 0);
+	INFO(bpm << " BPM, bar " << bar);
+
+	f.call("snap.set", {{"on", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().on; }));
+	const int64_t start = startOf(part);
+	const double seconds = static_cast<double>(start) / 48000.0;
+	REQUIRE(f.waitUntil(
+		[&f, seconds]
+		{
+			const std::vector<ui::TimeSpan>& events = f.lanes("events")[1].events;
+			return events.size() == 1 && std::abs(events[0].start - seconds) < 1.0 / 48000.0;
+		}));
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{start, start + 48000, {midi}});
+	// 100 dp a second: pressed in the range and dragged by a bar.
+	const double x = (seconds * 100.0) + 20.0;
+	f.drag(x, 60, x + (4.0 * 60.0 / bpm * 100.0), 60);
+	REQUIRE(f.waitUntil([&] { return positionOf(part) == (bar + 1) * g_bar; }));
 }
 
 TEST_CASE("a drag in the selection range takes its contents onto other tracks too, Alt a copy of them", "[unit]")
