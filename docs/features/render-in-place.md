@@ -107,7 +107,9 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
   per block. All files of a source go onto one destination track, in time order, each at its source range's start. Parts
   use their whole boundaries, including silence before or after their notes. Each file renders only its own input,
   including during its tail, so another event cannot play into that tail. A source-track option applies once per source,
-  and all destination tracks, files and events belong to the same undo step.
+  and all destination tracks, files and events belong to the same undo step. MIDI parts feeding the instrument through
+  either a MIDI output or a MIDI send participate in the grouping, using the same routing check as the render input
+  locks.
 - `events` optionally selects audio event, audio part and MIDI part ids on the tracks in `tracks`. Only that material
   renders, including where unselected material overlaps it; `start` and `end`, if given, clip the selected ranges. The
   selection must be nonempty, without duplicate or unknown ids, and each requested track must have material in the
@@ -174,4 +176,5 @@ rejected before a job starts. They also null-test separate dry renders with thei
 failure in the second file removes the first without an edit or remaining locks. Outside Windows, a save with a freeze
 file in a folder that cannot be searched must fail without changing the existing project file or leaving a `.saving`
 file. The UI regression in `tests/projectfiles_tests.cpp` checks that Save, Save As and Save New Version name media and
-freeze files in the missing-files notice.
+freeze files in the missing-files notice. A MIDI send regression compares separate files and overlapping blocks with
+direct MIDI routing, checking that the send parts get their files and remain audible in a combined block.

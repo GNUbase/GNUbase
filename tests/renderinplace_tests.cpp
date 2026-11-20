@@ -1054,6 +1054,54 @@ TEST_CASE("render in place isolates selected MIDI parts and uses their whole bou
 			CHECK(firstDifference(samplesOf(media.at("path").get<std::string>()), original) == -1);
 }
 
+TEST_CASE("separate and block renders keep the parts feeding an instrument through a MIDI send", "[integration]")
+{
+	Session project;
+	const auto synth = project.addSynth();
+	const Json midi =
+		run(project.client, "track.add", {{"type", "midi"}, {"timeBase", "linear"}, {"output", synth.channel}});
+	for (const int64_t position : {0, 24000})
+	{
+		const Json part = run(project.client, "midiPart.add",
+			{{"track", midi.at("track").at("id")}, {"position", position}, {"length", 12000}})
+							  .at("part")
+							  .at("id");
+		run(project.client, "note.add",
+			{{"part", part}, {"notes", {{{"position", 0}, {"length", 430080}, {"pitch", 36}, {"velocity", 0.9}}}}});
+	}
+	const std::string mode = GENERATE("separateEvents", "blockEvents");
+	const auto audioOf = [&](const Json& result)
+	{
+		const Json state = run(project.client, "project.get");
+		std::vector<std::vector<float>> audio;
+		for (const auto& id : result.at("media"))
+		{
+			const auto found = std::find_if(state.at("media").begin(), state.at("media").end(),
+				[&](const Json& media) { return media.at("id") == id; });
+			REQUIRE(found != state.at("media").end());
+			audio.push_back(samplesOf(found->at("path").get<std::string>()));
+			CHECK(peakOf(audio.back()) > 0.01f);
+		}
+		return audio;
+	};
+	// Direct routing provides the expected files: one per part, or one block including the overlapping send parts.
+	const Json baseline = run(project.client, "track.renderInPlace", {{"tracks", {synth.track}}, {"mode", mode}});
+	REQUIRE(baseline.at("media").size() == (mode == "separateEvents" ? size_t{3} : size_t{1}));
+	const auto expected = audioOf(baseline);
+	run(project.client, "history.undo");
+	run(project.client, "channel.set",
+		{{"channel", midi.at("channel").at("id")}, {"output", 0},
+			{"midiSends",
+				{{"slots",
+					{{{"effect", "transformer"}, {"parameters", {{"value", 0}}}, {"output", synth.channel}}}}}}});
+	const Json rendered = run(project.client, "track.renderInPlace", {{"tracks", {synth.track}}, {"mode", mode}});
+	REQUIRE(rendered.at("tracks").size() == 1);
+	const auto actual = audioOf(rendered);
+	REQUIRE(actual.size() == expected.size());
+	for (size_t i = 0; i < expected.size(); ++i)
+		CHECK(firstDifference(actual[i], expected[i]) == -1);
+}
+
 TEST_CASE("separate renders exclude later events from their tail and remove each source once", "[integration]")
 {
 	Session project;

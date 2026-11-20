@@ -76,6 +76,15 @@ namespace gnubase::engine
 			std::vector<ObjectId> events;
 		};
 
+		bool feedsInstrument(const RenderSnapshot& snapshot, const RenderChannel& channel, ObjectId instrument)
+		{
+			const bool output = channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel &&
+				snapshot.channels.at(static_cast<size_t>(channel.output.index)).id == instrument;
+			return output ||
+				std::any_of(channel.midiSendOutputs.begin(), channel.midiSendOutputs.end(), [&](int target)
+					{ return target >= 0 && snapshot.channels.at(static_cast<size_t>(target)).id == instrument; });
+		}
+
 		// Event and part boundaries, rather than note boundaries, define separate files and adjacent blocks.
 		std::vector<EventRender> eventRenders(
 			const Project& project, const RenderSnapshot& snapshot, const Track& track, const Json& parameters)
@@ -101,8 +110,7 @@ namespace gnubase::engine
 			std::set<ObjectId> inputs{track.id};
 			for (const auto& channel : snapshot.channels)
 			{
-				if (channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel &&
-					snapshot.channels.at(static_cast<size_t>(channel.output.index)).id == track.channel)
+				if (feedsInstrument(snapshot, channel, track.channel))
 					inputs.insert(channel.track);
 				if (channel.track != track.id)
 					continue;
@@ -259,12 +267,7 @@ namespace gnubase::engine
 			// MIDI outputs and MIDI sends can feed a rendered instrument from another track.
 			for (const auto& channel : snapshot->channels)
 			{
-				bool feeds = channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel &&
-					snapshot->channels.at(static_cast<size_t>(channel.output.index)).id == track->second.channel;
-				for (const int output : channel.midiSendOutputs)
-					if (output >= 0 && snapshot->channels.at(static_cast<size_t>(output)).id == track->second.channel)
-						feeds = true;
-				if (feeds)
+				if (feedsInstrument(*snapshot, channel, track->second.channel))
 				{
 					tracks.insert(channel.track);
 					ranges[channel.track].insert(i);
