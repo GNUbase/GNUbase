@@ -240,6 +240,8 @@ namespace gnubase::ui
 		// Rename Version (p. 236): names the selected tracks' active version, asking in rename-version.rml.
 		void openRenameDialog();
 		void closedRenameDialog(Rml::Event& event);
+		// The arranger the arranger track's controls show (arranger.get); the display's project must be read.
+		const engine::Json& arranger() const;
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
@@ -310,6 +312,9 @@ namespace gnubase::ui
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_playback; // while playing, Current Tempo follows the cursor (#831)
 		bool m_playing = false;                 // the transport status followTransport last heard
+		engine::Json m_arrangerPlaying = engine::Json::object(); // its arranger: the step, repeat and event playing
+		engine::Json m_arranger;       // the last arranger.changed (arranger.get), which arranger.setMode sends alone
+		uint64_t m_arrangerHanded = 0; // when it was handed on (EngineBinding::handed)
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 		uint64_t m_addTrackMerges = 0; // addTrack's merge keys, one per double click
 	};

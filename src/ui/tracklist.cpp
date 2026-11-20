@@ -113,6 +113,35 @@ namespace gnubase::ui
 				control == "showScales";
 		}
 
+		// The arranger track's controls (reference manual p. 164), besides Switch Time Base: Select Active Arranger
+		// Chain, Current Item, Current Repeat and Activate Arranger Mode.
+		bool arrangerControl(const std::string& control)
+		{
+			return control == "arrangerChain" || control == "arrangerItem" || control == "arrangerRepeat" ||
+				control == "arrangerMode";
+		}
+
+		// What Current Item or Current Repeat shows of the arranger state playing (transport.get's arranger): the
+		// event's name, and the repeat of the step's repeats, such as 2/4; nothing outside the chain.
+		std::string arrangerText(const Json& arranger, const Json& playing, const std::string& control)
+		{
+			const auto event = playing.value("event", uint64_t{0});
+			const auto step = playing.value("step", int64_t{-1});
+			if (control == "arrangerItem")
+			{
+				for (const Json& each : arranger.value("events", Json::array()))
+					if (each.at("id") == event)
+						return each.at("name").get<std::string>();
+				return "";
+			}
+			for (const Json& chain : arranger.value("chains", Json::array()))
+				if (chain.at("id") == arranger.value("chain", Json()) && step >= 0 &&
+					static_cast<size_t>(step) < chain.at("steps").size())
+					return std::to_string(playing.value("repeat", int64_t{0}) + 1) + "/" +
+						std::to_string(chain.at("steps")[static_cast<size_t>(step)].at("repeats").get<int64_t>());
+			return "";
+		}
+
 		// What chord.setTrack calls a chord track button.
 		std::string chordKey(const std::string& control)
 		{
@@ -200,6 +229,8 @@ namespace gnubase::ui
 				return type == "transpose" && (transposeControl(control) || control == "timeBase");
 			if (type == "chord" || chordControl(control))
 				return type == "chord" && (chordControl(control) || control == "timeBase");
+			if (type == "arranger" || arrangerControl(control))
+				return type == "arranger" && (arrangerControl(control) || control == "timeBase");
 			// The signature track's Lock and Signature Track Options (reference manual pp. 163-164).
 			const bool signatureControl = control == "signatureLock" || control == "signatureOptions";
 			if (type == "signature" || signatureControl)
@@ -230,6 +261,13 @@ namespace gnubase::ui
 				return R"(<select class="time-format" control="timeFormat" title="Time Format"/>)";
 			if (control == "chordAudition")
 				return R"(<select class="chord-audition" control="chordAudition" title="Select Track for Auditioning"/>)";
+			if (control == "arrangerChain")
+				return R"(<select class="arranger-chain" control="arrangerChain" title="Select Active Arranger Chain"/>)";
+			if (control == "arrangerItem" || control == "arrangerRepeat")
+				return R"(<textdisplay class="display )" +
+					std::string(control == "arrangerItem" ? "arranger-item" : "arranger-repeat") + R"(" control=")" +
+					control + R"(" title=")" + (control == "arrangerItem" ? "Current Item" : "Current Repeat") +
+					R"(" disabled/>)";
 			if (control == "midiChannel")
 				return R"(<select class="midi-channel" control="midiChannel" title="MIDI Channel"/>)";
 			if (control == "timeOffset")
@@ -254,8 +292,9 @@ namespace gnubase::ui
 				{"signatureLock", {"Lock", "L"}},
 				{"chordRecord", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
 				{"chordMute", {"Mute Chord Track", "M"}}, {"showScales", {"Show Scales", "S"}},
-				{"addPositionMarker", {"Add Position Marker", "+"}}, {"addCycleMarker", {"Add Cycle Marker", "[+]"}},
-				{"activateMarkerTrack", {"Activate Track", "A"}}, {"groupEditing", {"Group Editing", "G"}}};
+				{"arrangerMode", {"Activate Arranger Mode", "A"}}, {"addPositionMarker", {"Add Position Marker", "+"}},
+				{"addCycleMarker", {"Add Cycle Marker", "[+]"}}, {"activateMarkerTrack", {"Activate Track", "A"}},
+				{"groupEditing", {"Group Editing", "G"}}};
 			const auto& [title, content] = looks.at(control);
 			// A click on one leaves the track selection as it is (#1852): selecting the track on a click on its Solo is
 			// a preference (reference manual p. 1600, not yet), and its other buttons never select it.
@@ -673,6 +712,22 @@ namespace gnubase::ui
 					if (!alive.expired() && result.ok() && result.value.at("value").is_boolean())
 						*value = result.value.at("value").get<bool>();
 				});
+		// The arranger track's controls follow arranger.changed: arranger.setMode isn't an undo step, so no project
+		// read follows it. Turning arranger mode off or switching to an empty chain announces no transport.changed,
+		// so Current Item and Current Repeat read the transport again, as the arranger editor does.
+		m_subscriptions.push_back(m_binding.on("arranger.changed",
+			[this](const engine::Event& event)
+			{
+				m_arranger = event.data;
+				m_arrangerHanded = m_binding.handed();
+				showState();
+				m_binding.send("transport.get", Json::object(),
+					[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+					{
+						if (!alive.expired() && result.ok())
+							followTransport(result.value);
+					});
+			}));
 		// Current Tempo follows the project cursor, also while playing (#831), when the cursor moves without events.
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
@@ -1071,6 +1126,7 @@ namespace gnubase::ui
 		TimeContext time;
 		readTimeContext(project, time);
 		const ProjectMarkers markers = readMarkers(project);
+		const Json& arranger = this->arranger();
 		const double nameWidth = widthOf(m_widths, "name", widthOf(m_defaultWidths, "name"));
 		const Json controlsWidths = m_widths.value("controls", Json::object());
 		const Json defaultControls = m_defaultWidths.value("controls", Json::object());
@@ -1191,6 +1247,22 @@ namespace gnubase::ui
 						midiChannel.is_number_integer() ? std::to_string(midiChannel.get<int>()) : "any");
 					continue;
 				}
+				if (name == "arrangerChain")
+				{
+					widgets::Options chains;
+					for (const Json& chain : arranger.at("chains"))
+						chains.emplace_back(
+							std::to_string(chain.at("id").get<uint64_t>()), chain.at("name").get<std::string>());
+					widgets::fill(*button, chains, std::to_string(arranger.value("chain", uint64_t{0})));
+					continue;
+				}
+				if (name == "arrangerItem" || name == "arrangerRepeat")
+				{
+					const std::string text = arrangerText(arranger, m_arrangerPlaying, name);
+					if (button->GetAttribute<Rml::String>("value", "") != text)
+						button->SetAttribute("value", text);
+					continue;
+				}
 				if (name == "chordAudition")
 				{
 					// Select Track for Auditioning: the MIDI and instrument tracks.
@@ -1222,6 +1294,8 @@ namespace gnubase::ui
 					on = project.at("transpose").value(transposeKey(name), false);
 				else if (chordControl(name))
 					on = project.at("chords").value(chordKey(name), false);
+				else if (name == "arrangerMode")
+					on = arranger.value("mode", false);
 				else if (name == "read")
 					on = !lanes.empty() && std::all_of(lanes.begin(), lanes.end(), [](bool read) { return read; });
 				else
@@ -1253,9 +1327,22 @@ namespace gnubase::ui
 			context->RequestNextUpdate(0);
 	}
 
+	const Json& TrackList::arranger() const
+	{
+		// The last arranger.changed, unless a project read handed on after it is newer.
+		return m_arranger.is_object() && m_display.read() < m_arrangerHanded ? m_arranger
+																			 : m_display.project().at("arranger");
+	}
+
 	void TrackList::followTransport(const Json& status)
 	{
 		m_playing = status.value("playing", false);
+		// Current Item and Current Repeat (reference manual p. 164).
+		if (Json arranger = status.value("arranger", Json::object()); arranger != m_arrangerPlaying)
+		{
+			m_arrangerPlaying = std::move(arranger);
+			showState();
+		}
 		followTempo();
 		showTempo();
 	}
@@ -1829,13 +1916,17 @@ namespace gnubase::ui
 				midiChannelChange(*target, event.GetParameter<Rml::String>("value", ""));
 				markerChange(*target, event.GetParameter<Rml::String>("value", ""));
 				signatureOption(*target, event.GetParameter<Rml::String>("value", ""));
-				// Select Track for Auditioning.
+				// Select Track for Auditioning and Select Active Arranger Chain: a track's or chain's ID.
 				const Json& project = m_display.project();
-				const auto audition = static_cast<uint64_t>(
+				const auto control = target->GetAttribute<Rml::String>("control", "");
+				const auto chosen = static_cast<uint64_t>(
 					std::strtoull(event.GetParameter<Rml::String>("value", "0").c_str(), nullptr, 10));
-				if (target->GetAttribute<Rml::String>("control", "") == "chordAudition" && project.is_object() &&
-					project.at("chords").value("audition", uint64_t{0}) != audition)
-					m_binding.send("chord.setTrack", {{"audition", audition}});
+				if (control == "chordAudition" && project.is_object() &&
+					project.at("chords").value("audition", uint64_t{0}) != chosen)
+					m_binding.send("chord.setTrack", {{"audition", chosen}});
+				if (control == "arrangerChain" && project.is_object() && chosen != 0 &&
+					arranger().value("chain", uint64_t{0}) != chosen)
+					m_binding.send("arranger.setMode", {{"chain", chosen}});
 			}
 			else if (m_renaming != 0 && target != nullptr && target->GetTagName() == "input" &&
 				event.GetParameter<bool>("linebreak", false))
@@ -1917,8 +2008,9 @@ namespace gnubase::ui
 			m_binding.send("track.set", {{"track", row.id}, {"timeOffset", "cursor"}});
 			return;
 		}
-		if (name == "timeFormat" || name == "timeOffset" || name == "chordAudition")
-			return; // they change with what is chosen or typed
+		if (name == "timeFormat" || name == "timeOffset" || name == "chordAudition" || name == "arrangerChain" ||
+			name == "arrangerItem" || name == "arrangerRepeat")
+			return; // they change with what is chosen or typed, or only show
 		// The switches. Each goes from what its button shows, which is what the user saw and the engine's state unless
 		// an earlier click's command is still out, and shows what it sends at once (#1852).
 		const bool on = button.IsClassSet("checked");
@@ -1953,6 +2045,11 @@ namespace gnubase::ui
 		if (chordControl(name))
 		{
 			m_binding.send("chord.setTrack", {{chordKey(name), !on}}, clicked(button, row.id, name, !on));
+			return;
+		}
+		if (name == "arrangerMode")
+		{
+			m_binding.send("arranger.setMode", {{"mode", !on}}, clicked(button, row.id, name, !on));
 			return;
 		}
 		if (name == "timeOffsetOn" || name == "groupEditing" || name == "signatureLock")
@@ -2022,7 +2119,12 @@ namespace gnubase::ui
 	const TrackList::Clicked* TrackList::click(uint64_t track, const std::string& name) const
 	{
 		const auto found = m_clicked.find({track, name});
-		if (found == m_clicked.end() || (found->second.out <= 0 && m_display.read() > found->second.answered))
+		if (found == m_clicked.end())
+			return nullptr;
+		// Activate Arranger Mode's arranger.setMode brings no project read, but an arranger.changed after its answer.
+		const uint64_t answered = found->second.answered;
+		if (found->second.out <= 0 &&
+			(m_display.read() > answered || (name == "arrangerMode" && m_arrangerHanded > answered)))
 			return nullptr;
 		return &found->second;
 	}
