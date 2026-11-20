@@ -825,17 +825,17 @@ namespace gnubase::engine
 				routed[channel.id] = &channel;
 			}
 
-		// A MIDI track's chase is told by its automation when the track is heard again after playback moved while it
-		// was silent (AutomationPlayer::heardAgain). The channel's state is there from the graph before, which had
-		// the track while it was silent.
+		// A MIDI or instrument track's chase is told by its automation when the track is heard again after playback
+		// moved while it was silent, or ran while it was soloed out or disabled (AutomationPlayer::heardAgain). The
+		// channel's state is there from the graph before, which had the track while it wasn't heard.
 		const auto chaseTrack = [this](const RenderChannel& channel)
 		{
 			ChaseTrack track = makeChaseTrack(channel.controllers, channel.midiParts);
-			if (const auto state = m_channelStates.find(channel.id);
-				channel.type == TrackType::Midi && state != m_channelStates.end())
+			if (const auto state = m_channelStates.find(channel.id); state != m_channelStates.end())
 			{
 				track.heardAgain = state->second->automation.heardAgain();
-				track.channelKinds = channelChaseKinds(channel);
+				if (channel.type == TrackType::Midi)
+					track.channelKinds = channelChaseKinds(channel);
 			}
 			return track;
 		};
@@ -1314,10 +1314,17 @@ namespace gnubase::engine
 		result.reserve(m_releases.size());
 		for (const PendingRelease& pending : m_releases)
 		{
-			Release release{pending.channel, pending.departed, pending.departedSend, {}, {}};
+			Release release{pending.channel, pending.departed, pending.departedSend, {}, {}, {}};
 			const Instrument& instrument = m_instruments.at(pending.instrument);
 			for (const ObjectId source : instrument.sources)
+			{
 				release.staying.push_back(m_sequencers.at(source));
+				// A note its mute dropped doesn't sound on the instrument, though its sequencer holds it.
+				const auto state = m_channelStates.find(source);
+				release.passed.push_back(state != m_channelStates.end()
+						? InstrumentChannel::PassedNotes(state->second, &state->second->midiHeld)
+						: nullptr);
+			}
 			for (const auto& entry : instrument.sends)
 				release.stayingSends.push_back(entry.second);
 			result.push_back(std::move(release));
@@ -1336,9 +1343,11 @@ namespace gnubase::engine
 			m_running = program.generation;
 			for (const Release& release : program.releases)
 				if (release.departedSend)
-					release.channel->releaseNotesOf(*release.departedSend, release.staying, release.stayingSends);
+					release.channel->releaseNotesOf(
+						*release.departedSend, release.staying, release.stayingSends, release.passed);
 				else
-					release.channel->releaseNotesOf(*release.departed, release.staying, release.stayingSends);
+					release.channel->releaseNotesOf(
+						*release.departed, release.staying, release.stayingSends, release.passed);
 			for (size_t i = 0; i < program.sequencers.size(); ++i)
 				program.sequencers[i].second->playOn(program.destinations[i]);
 			m_started.store(program.generation, std::memory_order_release);
