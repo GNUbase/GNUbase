@@ -1262,15 +1262,15 @@ namespace gnubase::ui
 		endResize();
 		m_resizeLanded = false;
 		m_binding.send("event.resize", std::move(parameters),
-			[this, previewed, release = ++m_resizeReleases, alive = std::weak_ptr<bool>(m_alive)](
-				const engine::Result& result)
+			[this, previewed, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (alive.expired())
 					return;
 				if (!result.ok())
 					showRefusal(result.error);
-				if (release == m_resizeReleases) // the last one: its preview goes with the next project
-					m_resizeLanded = true;
+				// Its preview goes with the next project. A client gets its answers in order, and a later release's
+				// preview is asked after this resize, so this answer can't come after a later release's preview.
+				m_resizeLanded = true;
 				if (!result.ok() || !previewed)
 					requestProject();
 			});
