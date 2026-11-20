@@ -1625,19 +1625,24 @@ namespace gnubase::ui
 		}
 		if (!delta || key == nullptr)
 			return;
+		const auto partStart = [this](uint64_t id)
+		{
+			for (const Part& part : m_parts)
+				if (part.id == id)
+					return part.start;
+			return int64_t{0};
+		};
+		// A start before a note's part's start moves the notes only as far as that, as a drag does.
+		if (std::string(key) == "position")
+			for (const Note* note : notes)
+				delta = std::max(*delta, partStart(note->part) - note->start);
 		std::map<uint64_t, Json> changes;
 		for (const Note* note : notes)
 		{
 			Json change = noteChange(note->id);
 			const std::string name = key;
 			if (name == "position")
-				change["position"] = std::max<int64_t>(note->start + *delta, 0) - [&]
-				{
-					for (const Part& part : m_parts)
-						if (part.id == note->part)
-							return part.start;
-					return int64_t{0};
-				}();
+				change["position"] = note->start + *delta - partStart(note->part);
 			else if (name == "length")
 				change["length"] = std::max<int64_t>(note->length + *delta, 1);
 			else if (name == "pitch")

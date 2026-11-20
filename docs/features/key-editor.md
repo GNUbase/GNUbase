@@ -160,9 +160,10 @@ lower zone, Delete deletes the notes, not the project window's selected events.
   has answered them all, the view has the selection shown, unless the last one was refused, as when another client had
   just deleted the note: then the view's selection shows again (#1897).
 - **Info line** (p. 1199). Start, end and length in bars and beats, the pitch as a name such as C3 (typing a number
-  works too), velocities 0-127, the channel 1-16 and the Articulations, the attributes of the track's articulation
-  map that the note has, names separated by commas ([articulation-maps.md](articulation-maps.md)). A value typed
-  moves every selected note by as much as the first one's changes; the channel and the attributes are set for all.
+  works too), velocities 0-127, the channel 1-16 and the Articulations, the attributes of the track's articulation map
+  that the note has, names separated by commas ([articulation-maps.md](articulation-maps.md)). A value typed moves every
+  selected note by as much as the first one's changes; a start before a note's part's start moves them only as far as
+  that, as a drag does. The channel and the attributes are set for all.
 - **Chord Editing** (pp. 1215-1218) is in the editor window's inspector, under Global Tracks: the chord the selected
   notes make ("No Chord" for none), and buttons that send `note.voicing` for each part's selected notes.
 - **Toolbox** (p. 65). A right click in the note display opens `#key-editor-toolbox`, the toolbar's tools at the
@@ -214,14 +215,14 @@ menu.
   released there ending without its effect, its note keeping the length the mouse gives it while the display is shown
   again during it; a move's notes at the time under the mouse as the range changes during it; the erase, trim (and with
   Alt), split and glue tools, and the split tool splitting the selected notes of two parts at one position in one undo
-  step; the transpose palette, Up and Down (with Shift), Delete and Backspace, and typing a pitch on the info line; step
-  input with its cursor, a click moving it, and MIDI input selecting the next note; the Chord Editing section naming and
-  changing a chord; the toolbox with the setting on and off, with and without a modifier key, choosing tools; drags on
-  the keyboard's left part zooming the rows in and out between the limits, from the height a style sheet gives them,
-  also after a style change at a zoom and back at 1, the keyboard as high as the rows of any height, nothing zoomed or
-  scrolled without a row height to scale and no height left on the rows for a later style, the zoom snapping to 1 near
-  it, and scrolling the note display, while a click there zooms nothing, and a click and a drag there leaving a note an
-  earlier press selected and the history alone; the lower zone's key editor at its default size giving the note display
-  more room than the controller lanes, at dp ratios 1 and 2, and the lanes whole in a lower zone of 400 dp; the editor
-  window's lane keeping its 64 dp and the note display its 40%, and the in-place editor's lanes keeping their height
-  with its toolbar shown.
+  step; the transpose palette, Up and Down (with Shift), Delete and Backspace, and typing a pitch and a start before the
+  part's on the info line; step input with its cursor, a click moving it, and MIDI input selecting the next note; the
+  Chord Editing section naming and changing a chord; the toolbox with the setting on and off, with and without a
+  modifier key, choosing tools; drags on the keyboard's left part zooming the rows in and out between the limits, from
+  the height a style sheet gives them, also after a style change at a zoom and back at 1, the keyboard as high as the
+  rows of any height, nothing zoomed or scrolled without a row height to scale and no height left on the rows for a
+  later style, the zoom snapping to 1 near it, and scrolling the note display, while a click there zooms nothing, and a
+  click and a drag there leaving a note an earlier press selected and the history alone; the lower zone's key editor at
+  its default size giving the note display more room than the controller lanes, at dp ratios 1 and 2, and the lanes
+  whole in a lower zone of 400 dp; the editor window's lane keeping its 64 dp and the note display its 40%, and the
+  in-place editor's lanes keeping their height with its toolbar shown.

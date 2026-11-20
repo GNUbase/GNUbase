@@ -1433,6 +1433,24 @@ TEST_CASE("the transpose palette and the info line edit the selected notes", "[u
 	CHECK(f.note(ids[1]).at("pitch") == 64);
 }
 
+TEST_CASE("a start typed on the info line before the part's start moves the selected notes as far as it", "[ui]")
+{
+	Fixture f;
+	f.app.call("midiPart.set", {{"part", f.part}, {"position", g_bar}});
+	const std::vector<uint64_t> ids = f.add({{g_quarter, 60, g_quarter}, {2 * g_quarter, 64, g_quarter}});
+	f.click(of(noteSelector(ids[0])));
+	f.click(of(noteSelector(ids[1])), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-editor-info", "multiple"); }));
+	CHECK(f.elements(".key-editor-info textdisplay[field=start]").at(0).at("attributes").at("value") == "2.2.1.0");
+	f.click(of(".key-editor-info textdisplay[field=start]"), 2);
+	f.app.ui().key(f.window, "Mod+A");
+	f.app.ui().text(f.window, "1.3.1.0");
+	f.app.ui().key(f.window, "Enter");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("position") == 0; }));
+	f.settle();
+	CHECK(f.note(ids[1]).at("position") == g_quarter);
+}
+
 TEST_CASE("Up and Down transpose the selected notes, Delete and Backspace delete them", "[ui]")
 {
 	Fixture f;
