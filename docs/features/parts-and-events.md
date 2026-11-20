@@ -196,7 +196,8 @@ that the arrow keys select into view.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
   and Backspace; Left and Right selecting parts, Up and Down stepping the tracks and selecting their first parts, also across a track
   without parts, and only the track with no part selected; and Mod+K,
-  whose Repeat Events dialog makes three shared copies, and real copies from just a number typed and Enter. It also adds
+  whose Repeat Events dialog makes three shared copies, and real copies from just a number typed and Enter; its count
+  is edited as the dialog shows, before the next update, and again when Tab or Shift+Tab moves to it. It also adds
   MIDI and instrument parts while the start screen is open and after it closed, which show at their time and length (#1855).
 - The project-start checks cover move and copy previews and release at 1024 by 600, single and multiple selections,
   snapping on and off, musical and linear tracks, other tracks, and one-step undo. The fake-window checks cover left
