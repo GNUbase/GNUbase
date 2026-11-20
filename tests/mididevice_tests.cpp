@@ -676,11 +676,11 @@ TEST_CASE("the JACK MIDI backend stamps input with the server's cycle times", "[
 	// A cycle's filtered start is jackd's estimate; without real-time priority on a busy machine, a callback now and
 	// then runs before it. JackLibrary::cycle() takes a start up to a period ahead, but falls back to the callback's
 	// start for a cycle without cycle times or with a start further ahead or more than a second ago. Such a cycle has
-	// nothing to compare with: its injection is retried, at most 10 of them.
+	// nothing to compare with: its injection is retried, at most 3 of them since #434, and the log says how many were.
 	int stamped = 0;
 	int close = 0;
 	size_t injected = 0;
-	while (stamped < 20 && injected < 30)
+	while (stamped < 20 && injected < 23)
 	{
 		const HostTime expected = loopback->inject();
 		REQUIRE(inbox.waitFor(++injected));
@@ -690,6 +690,8 @@ TEST_CASE("the JACK MIDI backend stamps input with the server's cycle times", "[
 		if (std::llabs(inbox.messages().back().second - expected) < 20000)
 			++close;
 	}
+	if (injected > 20)
+		WARN(injected - 20 << " injections retried: their cycles fell back to the callback's start (#522)");
 	REQUIRE(stamped == 20);
 	CHECK(close >= 18);
 }
