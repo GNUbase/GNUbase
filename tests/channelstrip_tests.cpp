@@ -4,18 +4,17 @@
 #include "engine/document/stripparameters.h"
 #include "engine/engine.h"
 #include "engine/graph/events.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
-#include <chrono>
 #include <cmath>
 #include <memory>
 #include <optional>
 #include <string>
-#include <thread>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -384,11 +383,7 @@ TEST_CASE("the pre section runs before the plugin slots, the equalizer and the d
 	const Json slot = run(strip.client, "plugin.insert", {{"channel", strip.channel}, {"plugin", "builtin:limiter"}})
 						  .at("slot")
 						  .at("id");
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-	while (run(strip.client, "plugin.get", {{"slot", slot}}).at("slot").at("status") != "active" &&
-		std::chrono::steady_clock::now() < deadline)
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	run(strip.client, "audio.updatePlugins");
+	gnubase::test::waitForPlugin(strip.client, slot);
 	constexpr uint32_t ceiling = 1; // the limiter plugin's ceiling in dB
 	run(strip.client, "parameter.set",
 		{{"channel", strip.channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", ceiling}}},

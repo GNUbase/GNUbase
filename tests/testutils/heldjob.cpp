@@ -179,6 +179,22 @@ namespace gnubase::test
 		}
 	}
 
+	void waitForPlugin(engine::Client& client, const engine::Json& slot, const std::string& status)
+	{
+		const auto now = [&client, &slot]
+		{ return run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status").get<std::string>(); };
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+		std::string current = now();
+		while (current != status && std::chrono::steady_clock::now() < deadline)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			current = now();
+		}
+		INFO("slot " << slot << "'s plugin is " << current << ", not " << status);
+		REQUIRE(current == status);
+		run(client, "audio.updatePlugins", engine::Json::object());
+	}
+
 	engine::Json whileHeld(engine::Engine& engine, engine::Client& client, const std::string& command,
 		engine::Json parameters, const std::function<void(uint64_t job)>& during, std::vector<engine::Json>* progress,
 		std::chrono::milliseconds hold)

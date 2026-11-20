@@ -5,13 +5,13 @@
 #include "engine/processors/builtin.h"
 #include "engine/processors/gainpan.h"
 #include "engine/processors/testsynth.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -23,7 +23,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -66,22 +65,6 @@ namespace
 		const TestTrack synth = addTrack(client, "instrument");
 		run(client, "channel.set", {{"channel", synth.channel}, {"instrument", "testSynth"}});
 		return synth;
-	}
-
-	// Waits until a slot's plugin is active, then builds the graph with it, as the engine does on its own then: until
-	// that, the slot passes its audio unchanged (#1777).
-	void waitUntilActive(Client& client, ObjectId slot)
-	{
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-		std::string status;
-		while (status != "active" && std::chrono::steady_clock::now() < deadline)
-		{
-			status = run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status").get<std::string>();
-			if (status != "active")
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		}
-		REQUIRE(status == "active");
-		run(client, "audio.updatePlugins");
 	}
 
 	Json instrumentTarget(uint32_t parameter)
@@ -475,7 +458,7 @@ TEST_CASE("a built-in plugin's state values out of range report and play clamped
 		run(client, "project.load", {{"path", file}});
 		run(client, "channel.set", {{"channel", audio.channel}, {"monitor", true}});
 		// The loaded state's plugin is a new instance, which loads on a job thread.
-		waitUntilActive(client, slot);
+		gnubase::test::waitForPlugin(client, slot);
 
 		const auto target = [slot](uint32_t parameter)
 		{ return Json{{"type", "plugin"}, {"slot", slot}, {"parameter", parameter}}; };
