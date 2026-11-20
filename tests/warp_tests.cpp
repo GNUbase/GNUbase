@@ -7,6 +7,7 @@
 #include "engine/dsp/warp.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -1138,8 +1139,10 @@ TEST_CASE("snapping and Detect Silence in a warped event go through its warp", "
 	SECTION("Detect Silence's splits")
 	{
 		// The event that remains plays its audio where it played.
-		const Json kept =
-			run(client, "event.stripSilence", {{"events", {loop.event}}, {"minimumClosed", 0}}).at("events");
+		const Json job = run(client, "event.stripSilence", {{"events", {loop.event}}, {"minimumClosed", 0}}).at("job");
+		const Json done = test::waitForJob(client, job.at("id").get<uint64_t>());
+		REQUIRE(done.at("state") == "done");
+		const Json kept = done.at("result").at("events");
 		REQUIRE(kept.size() == 1);
 		const Json piece = eventOf(client, kept.at(0).get<ObjectId>());
 		const std::vector<engine::dsp::WarpPoint> map{{0.0, 0.0}, {52000.0, 49000.0}, {96000.0, 96000.0}};
@@ -1176,7 +1179,9 @@ TEST_CASE("Apply Fades of Strip Silence fit into what a squeezed warped event pl
 	run(client, "project.set", {{"tempo", 240.0}});
 
 	// A second each asks for 48000 frames, half the event's length: each gets half of the 48000 it plays.
-	run(client, "event.stripSilence", {{"events", {loop.event}}, {"strip", false}, {"fades", 1000}});
+	const Json job =
+		run(client, "event.stripSilence", {{"events", {loop.event}}, {"strip", false}, {"fades", 1000}}).at("job");
+	REQUIRE(test::waitForJob(client, job.at("id").get<uint64_t>()).at("state") == "done");
 	const Json event = eventOf(client, loop.event);
 	CHECK(event.at("fadeIn").at("length") == 24000);
 	CHECK(event.at("fadeOut").at("length") == 24000);

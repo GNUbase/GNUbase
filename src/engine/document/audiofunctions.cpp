@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The audio functions (#147, reference manual pp. 603-609): Detect Silence, the Spectrum Analyzer and Statistics. They
-// read the clip's file on the command thread (src/engine/analysis/statistics.h). event.stripSilence makes its events
+// read the clip's file on job threads (src/engine/analysis/statistics.h). event.stripSilence makes its events
 // and regions with the commands that make such things, run as part of it (ProjectModel::runEdit), so that it is one
 // undo step.
 #include "engine/document/audiofunctions.h"
@@ -12,6 +12,7 @@
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/engine.h"
+#include "engine/jobs/jobs.h"
 
 #include <algorithm>
 #include <array>
@@ -95,7 +96,8 @@ namespace gnubase::engine
 
 		// Reads the frames of a media file from range.start to range.end in blocks of interleaved frames: feed(frames,
 		// count).
-		template <typename Feed> void readRange(AudioFileReader& reader, const MediaFile& media, Range range, Feed feed)
+		template <typename Feed> void readRange(AudioFileReader& reader, const MediaFile& media, Range range,
+			JobContext& job, Feed feed, double from = 0.0, double share = 1.0)
 		{
 			try
 			{
@@ -103,12 +105,15 @@ namespace gnubase::engine
 				std::vector<float> buffer(g_readFrames * static_cast<size_t>(channelsOf(reader)));
 				for (time::Samples at = range.start; at < range.end;)
 				{
+					job.checkCancelled();
 					const auto wanted = static_cast<size_t>(std::min<time::Samples>(g_readFrames, range.end - at));
 					const size_t read = reader.read(buffer.data(), wanted);
-					if (read == 0)
-						break;
+					require(read != 0, "file ends before the requested range");
 					feed(buffer.data(), read);
 					at += static_cast<time::Samples>(read);
+					const double fraction =
+						static_cast<double>(at - range.start) / static_cast<double>(range.end - range.start);
+					job.progress(0.95 * (from + (share * fraction)), media.path);
 				}
 			}
 			catch (const AudioFileError& error)
@@ -141,13 +146,14 @@ namespace gnubase::engine
 		}
 
 		// The sections of a clip's range that aren't silent, in clip frames.
-		std::vector<analysis::Section> detectSilence(
-			const MediaFile& media, Range range, const analysis::SilenceSettings& settings)
+		std::vector<analysis::Section> detectSilence(const MediaFile& media, Range range,
+			const analysis::SilenceSettings& settings, JobContext& job, double from = 0.0, double share = 1.0)
 		{
 			const std::unique_ptr<AudioFileReader> reader = openMedia(media);
 			analysis::SilenceDetector detector(media.sampleRate, channelsOf(*reader), settings);
-			readRange(*reader, media, range,
-				[&detector](const float* frames, size_t count) { detector.feed(frames, count); });
+			readRange(
+				*reader, media, range, job,
+				[&detector](const float* frames, size_t count) { detector.feed(frames, count); }, from, share);
 			std::vector<analysis::Section> sections = detector.finish();
 			for (analysis::Section& section : sections)
 			{
@@ -181,7 +187,7 @@ namespace gnubase::engine
 			"joining those that then overlap.";
 	}
 
-	void registerAudioFunctionCommands(ProjectModel& model, Engine& engine)
+	void registerAudioFunctionCommands(ProjectModel& model, Engine& engine, Jobs& jobs)
 	{
 		const Json integer = {{"type", "integer"}};
 		const Json number = {{"type", "number"}};
@@ -201,41 +207,128 @@ namespace gnubase::engine
 		};
 		const std::string rangeText = "The audio of clip from frame start to end (default: the whole clip).";
 
-		engine.registerCommand(
+		// Copy the source on the command thread; only the job reads and measures its audio.
+		const auto addAnalysis = [&](CommandInfo info, auto analyze)
+		{
+			std::string kind = info.name;
+			Json resultSchema = info.result;
+			info.version = 2;
+			info.description +=
+				" Returns a job at once; job.progress reports progress, job.cancel cancels it, "
+				"and job.finished/job.get contain the measurements in job.result. The source is captured at start.";
+			Json jobSchema = Jobs::schema();
+			jobSchema["properties"]["result"] = info.result;
+			jobSchema["properties"]["result"]["type"] = {"object", "null"};
+			info.result = objectSchema({{"job", jobSchema}}, {"job"});
+			engine.registerCommand(std::move(info),
+				[&model, &jobs, kind = std::move(kind), analyze, resultSchema = std::move(resultSchema)](
+					CommandContext& context)
+				{
+					const Json& parameters = context.parameters();
+					const Project& project = model.project();
+					const Clip& clip = clipOf(project, parameters);
+					const Range range = rangeOf(project, clip, parameters);
+					if (kind == "clip.detectSilence")
+						silenceSettings(parameters);
+					return Json{{"job",
+						jobs.start(kind,
+							[id = clip.id, media = project.media.at(clip.media), range, parameters = parameters,
+								analyze, resultSchema = resultSchema](JobContext& job)
+							{
+								job.progress(0.0, media.path);
+								job.checkCancelled();
+								Json result = analyze(id, media, range, parameters, job);
+								const std::string problem = validate(result, resultSchema, "result");
+								require(problem.empty(), problem);
+								job.checkCancelled();
+								return result;
+							})}};
+				});
+		};
+
+		addAnalysis(
 			{"clip.detectSilence", 1,
 				"Finds the sections of a clip that aren't silent (the Detect Silence dialog's Analyze, reference "
 				"manual pp. 603-606). " +
 					rangeText + " " + g_settingsText +
 					" Reads the clip's file. Returns the clip and its sections, start to end in clip frames, by start.",
 				rangeSchema(settingsProperties), objectSchema({{"clip", integer}, {"sections", sectionsSchema}}), true},
-			[&model](CommandContext& context)
+			[](ObjectId clip, const MediaFile& media, Range range, const Json& parameters, JobContext& job)
 			{
-				const Json& parameters = context.parameters();
-				const Project& project = model.project();
-				const Clip& clip = clipOf(project, parameters);
-				const Range range = rangeOf(project, clip, parameters);
-				const analysis::SilenceSettings settings = silenceSettings(parameters);
-				return Json{{"clip", clip.id},
-					{"sections", sectionsJson(detectSilence(project.media.at(clip.media), range, settings))}};
+				return Json{{"clip", clip},
+					{"sections", sectionsJson(detectSilence(media, range, silenceSettings(parameters), job))}};
 			});
 
 		Json stripProperties = settingsProperties;
 		stripProperties.update({{"events", ids}, {"strip", boolean}, {"regions", boolean}, {"regionName", string},
 			{"autoNumberStart", integer}, {"fades", number}});
+		engine.registerCommand(
+			{"event.stripSilence", 2,
+				"Detects silence in events as a cancellable job with job.progress, then runs "
+				"event.applySilenceSections "
+				"on the command thread, one undo step. Uses clip.detectSilence's settings and "
+				"event.applySilenceSections' strip, regions, regionName, autoNumberStart and fades options. "
+				"Returns a job; its result is the edit's result. Fails if the project changed meanwhile. " +
+					std::string(g_settingsText),
+				objectSchema(stripProperties, {"events"}), objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
+			[&model, &jobs](CommandContext& context)
+			{
+				Json parameters = context.parameters();
+				const auto settings = silenceSettings(parameters);
+				require(parameters.value("fades", 0.0) >= 0.0, "fades must not be negative");
+				const Project& project = model.project();
+				std::vector<std::pair<MediaFile, Range>> sources;
+				std::vector<ObjectId> ids;
+				for (const Json& item : parameters.at("events"))
+				{
+					const auto id = item.get<ObjectId>();
+					const auto found = project.audioEvents.find(id);
+					require(found != project.audioEvents.end(), "no audio event " + std::to_string(id));
+					require(std::find(ids.begin(), ids.end(), id) == ids.end(), "duplicate audio event");
+					ids.push_back(id);
+					const AudioEvent& event = found->second;
+					require(!parameters.value("strip", true) || !event.lock,
+						"audio event " + std::to_string(id) + " is locked");
+					sources.push_back({project.media.at(project.clips.at(event.clip).media),
+						{event.offset, event.offset + event.length}});
+				}
+				require(!sources.empty(), "events must not be empty");
+				parameters["revision"] = context.call("project.revision").at("revision");
+				for (const char* key :
+					{"openThreshold", "closeThreshold", "minimumOpen", "minimumClosed", "preRoll", "postRoll"})
+					parameters.erase(key);
+				return Json{{"job",
+					jobs.start("event.stripSilence",
+						[sources, settings, parameters](JobContext& job) mutable
+						{
+							job.progress(0.0, sources.front().first.path);
+							job.checkCancelled();
+							parameters["sections"] = Json::array();
+							const double share = 1.0 / static_cast<double>(sources.size());
+							for (size_t i = 0; i < sources.size(); ++i)
+								parameters["sections"].push_back(sectionsJson(detectSilence(sources[i].first,
+									sources[i].second, settings, job, static_cast<double>(i) * share, share)));
+							job.checkCancelled();
+							return job.command("event.applySilenceSections", parameters);
+						})}};
+			});
+		const Json applyProperties = {{"events", ids}, {"strip", boolean}, {"regions", boolean}, {"regionName", string},
+			{"autoNumberStart", integer}, {"fades", number}, {"revision", integer},
+			{"sections", {{"type", "array"}, {"items", sectionsSchema}}}};
 		model.addEdit(engine,
-			{"event.stripSilence", 1,
+			{"event.applySilenceSections", 1,
 				"Processes the sections of audio events that aren't silent (the Detect Silence dialog's Process, "
 				"reference manual pp. 603-606), as clip.detectSilence finds them in the section of the clip each "
-				"plays. " +
-					std::string(g_settingsText) +
-					" strip (Strip Silence, default true) splits each event at the sections' edges and removes the "
-					"silent parts between them; regions (Add as Regions) adds a region of the clip for each section, "
-					"named regionName (default Region) and a number from autoNumberStart (default 1) up, across the "
-					"events; fades (Apply Fades, ms) gives the events that remain a fade in and a fade out of that "
-					"length, at most half of what each plays for in frames at the clip's sample rate (its length, "
-					"unless it plays warped). An event that strip would remove completely, or that is locked, is an "
-					"error. Returns the events that remain and the regions, and the number of sections.",
-				objectSchema(stripProperties, {"events"}),
+				"plays. Takes sections already measured, one array per event in the same order, and revision "
+				"from project.revision; fails if the project changed meanwhile. Does no file I/O. "
+				" strip (Strip Silence, default true) splits each event at the sections' edges and removes the "
+				"silent parts between them; regions (Add as Regions) adds a region of the clip for each section, "
+				"named regionName (default Region) and a number from autoNumberStart (default 1) up, across the "
+				"events; fades (Apply Fades, ms) gives the events that remain a fade in and a fade out of that "
+				"length, at most half of what each plays for in frames at the clip's sample rate (its length, "
+				"unless it plays warped). An event that strip would remove completely, or that is locked, is an "
+				"error. Returns the events that remain and the regions, and the number of sections.",
+				objectSchema(applyProperties, {"events", "sections", "revision"}),
 				objectSchema(
 					{{"events", ids}, {"regions", ids}, {"sections", integer}}, {"events", "regions", "sections"}),
 				false},
@@ -243,7 +336,11 @@ namespace gnubase::engine
 			[&model](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
-				const analysis::SilenceSettings settings = silenceSettings(parameters);
+				require(context.call("project.revision").at("revision") == parameters.at("revision"),
+					"project changed meanwhile; analyze again");
+				require(parameters.at("sections").size() == parameters.at("events").size(),
+					"sections must have one array per event");
+				size_t index = 0;
 				const bool strip = parameters.value("strip", true);
 				const bool regions = parameters.value("regions", false);
 				const std::string name = parameters.value("regionName", std::string("Region"));
@@ -263,8 +360,18 @@ namespace gnubase::engine
 					require(found != project.audioEvents.end(), "no audio event " + std::to_string(id));
 					const AudioEvent event = found->second;
 					const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
-					const std::vector<analysis::Section> sections =
-						detectSilence(media, {event.offset, event.offset + event.length}, settings);
+					std::vector<analysis::Section> sections;
+					time::Samples previous = event.offset;
+					for (const Json& given : parameters.at("sections").at(index++))
+					{
+						const analysis::Section section{
+							given.at("start").get<time::Samples>(), given.at("end").get<time::Samples>()};
+						require(section.start >= previous && section.start < section.end &&
+								section.end <= event.offset + event.length,
+							"sections must be ordered within the event");
+						previous = section.end;
+						sections.push_back(section);
+					}
 					count += static_cast<int64_t>(sections.size());
 					if (regions)
 						for (const analysis::Section& section : sections)
@@ -327,7 +434,7 @@ namespace gnubase::engine
 
 		const Json spectrumChannel = objectSchema(
 			{{"channel", integer}, {"levels", {{"type", "array"}, {"items", nullable}}}}, {"channel", "levels"});
-		engine.registerCommand(
+		addAnalysis(
 			{"clip.spectrum", 1,
 				"The average spectrum of a clip (the Spectrum Analyzer, reference manual pp. 607-608). " + rangeText +
 					" Welch's method with 4-term Blackman-Harris windows of 8192 samples that overlap by half (shorter "
@@ -341,16 +448,11 @@ namespace gnubase::engine
 						{"channels", {{"type", "array"}, {"items", spectrumChannel}}}},
 					{"clip", "sampleRate", "frequencies", "channels"}),
 				true},
-			[&model](CommandContext& context)
+			[](ObjectId clip, const MediaFile& media, Range range, const Json&, JobContext& job)
 			{
-				const Json& parameters = context.parameters();
-				const Project& project = model.project();
-				const Clip& clip = clipOf(project, parameters);
-				const Range range = rangeOf(project, clip, parameters);
-				const MediaFile& media = project.media.at(clip.media);
 				const std::unique_ptr<AudioFileReader> reader = openMedia(media);
 				std::vector<analysis::PowerSpectrum> spectra(static_cast<size_t>(channelsOf(*reader)));
-				readRange(*reader, media, range,
+				readRange(*reader, media, range, job,
 					[&spectra](const float* frames, size_t count)
 					{
 						for (size_t c = 0; c < spectra.size(); ++c)
@@ -369,7 +471,7 @@ namespace gnubase::engine
 						levels.push_back(orNull(level));
 					channels.push_back({{"channel", c}, {"levels", std::move(levels)}});
 				}
-				return Json{{"clip", clip.id}, {"sampleRate", media.sampleRate}, {"frequencies", frequencies},
+				return Json{{"clip", clip}, {"sampleRate", media.sampleRate}, {"frequencies", frequencies},
 					{"channels", channels}};
 			});
 
@@ -395,7 +497,7 @@ namespace gnubase::engine
 			objectSchema({{"maxMomentary", nullable}, {"maxShortTerm", nullable}, {"integrated", nullable},
 							 {"range", nullable}, {"maxTruePeak", nullable}},
 				{"maxMomentary", "maxShortTerm", "integrated", "range", "maxTruePeak"});
-		engine.registerCommand(
+		addAnalysis(
 			{"clip.statistics", 1,
 				"The statistics of a clip (the Statistics window, reference manual p. 609). " + rangeText +
 					" Per channel: minSample and maxSample, the lowest and highest sample; peak, the largest absolute "
@@ -415,13 +517,8 @@ namespace gnubase::engine
 								 {"maxRmsAllChannels", nullable}, {"loudness", loudnessSchema}},
 					{"clip", "sampleRate", "frames", "channels", "maxRmsAllChannels", "loudness"}),
 				true},
-			[&model](CommandContext& context)
+			[](ObjectId clip, const MediaFile& media, Range range, const Json&, JobContext& job)
 			{
-				const Json& parameters = context.parameters();
-				const Project& project = model.project();
-				const Clip& clip = clipOf(project, parameters);
-				const Range range = rangeOf(project, clip, parameters);
-				const MediaFile& media = project.media.at(clip.media);
 				const std::unique_ptr<AudioFileReader> reader = openMedia(media);
 				const auto channelCount = static_cast<size_t>(channelsOf(*reader));
 				analysis::StatisticsMeter meter(media.sampleRate, static_cast<int>(channelCount));
@@ -443,7 +540,7 @@ namespace gnubase::engine
 					loudness.process(
 						pointers.data(), static_cast<int>(planar.size()), static_cast<uint32_t>(count), measuring);
 				};
-				readRange(*reader, media, range,
+				readRange(*reader, media, range, job,
 					[&](const float* samples, size_t count)
 					{
 						meter.feed(samples, count);
@@ -487,7 +584,7 @@ namespace gnubase::engine
 						{"pitch", orNull(channel.pitch)}, {"averageRms", aes17(channel.averageRms)},
 						{"maxRms", aes17(channel.maxRms)}});
 				}
-				return Json{{"clip", clip.id}, {"sampleRate", media.sampleRate}, {"frames", frames},
+				return Json{{"clip", clip}, {"sampleRate", media.sampleRate}, {"frames", frames},
 					{"channels", channels}, {"maxRmsAllChannels", aes17(maxRms)},
 					{"loudness",
 						{{"maxMomentary", orNull(measured.momentaryMax)},
