@@ -1069,6 +1069,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".se-region-shown", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent2"],
                               "background-color": c["accent2"] + "1a"}),
         (".se-region.selected", {"background-color": mix(c["surface"], c["accent"], .4)}),
+        (".se-region-handle", {"border-color": c["accent2"]}),
         # Its hitpoints (docs/features/hitpoints.md): lines with a handle, locked ones' handles lit, disabled ones dim
         (".se-hitpoint-line, .se-hitpoint-handle", {"background-color": c["accent"]}),
         (".se-hitpoint.locked .se-hitpoint-handle", {"background-color": c["accent2"]}),

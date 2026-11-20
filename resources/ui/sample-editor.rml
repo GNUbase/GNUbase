@@ -27,7 +27,7 @@
 		}
 	</style>
 </head>
-<body>
+<body focuszone="sampleEditor">
 	<div id="sample-editor"/>
 </body>
 </rml>
