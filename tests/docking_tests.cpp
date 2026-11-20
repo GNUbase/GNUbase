@@ -782,6 +782,33 @@ TEST_CASE("a panel moves between its zone and a window of its own", "[ui]")
 	CHECK(app.shell().bounds(docking.windowOf("test")->id()) == placed);
 }
 
+TEST_CASE("Tab and Shift+Tab move between the controls of a panel in a window of its own", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	ui::Docking& docking = app.appUi().docking();
+	docking.add({"controls", "Controls", "project", "lower", [](Rml::Element& element)
+		{
+			element.SetInnerRML("<button id='controls-first'>One</button><button id='controls-second'>Two</button>");
+			return std::shared_ptr<void>();
+		}});
+	docking.setFloating("controls", true);
+	app.shell().step(std::chrono::milliseconds(0));
+	ui::Window* window = docking.windowOf("controls");
+	REQUIRE(window != nullptr);
+	app.ui().click(window->id(), at("#controls-first"), ui::MouseButton::Left, 1, {});
+	Rml::Context& context = window->context();
+	const auto focusedId = [&context]
+	{ return context.GetFocusElement() != nullptr ? context.GetFocusElement()->GetId() : std::string(); };
+	REQUIRE(focusedId() == "controls-first");
+
+	// The panel's document has no zones: Tab is the document's, not Focus Next's.
+	app.ui().key(window->id(), "Tab");
+	CHECK(focusedId() == "controls-second");
+	app.ui().key(window->id(), "Shift+Tab");
+	CHECK(focusedId() == "controls-first");
+}
+
 TEST_CASE("documents that live reload loads again are docking windows again", "[ui]")
 {
 	// A copy of the resources, whose files the test can change.

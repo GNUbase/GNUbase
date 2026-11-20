@@ -1626,9 +1626,10 @@ namespace gnubase::ui
 		}
 		case Rml::EventId::Keydown:
 			// Tab runs its key command (Focus Next and Previous: the next and previous zone, unless the user bound the
-			// key to another command) before the document moves between its controls.
+			// key to another command) before the document moves between its controls. Only in a docking window: a
+			// panel in a window of its own has no zones, and Tab moves between its controls there.
 			if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_TAB &&
-				!keepsTab(*target) && pressTab(*target, event))
+				!window.empty() && !keepsTab(*target) && pressTab(*target, event))
 				event.StopPropagation();
 			break;
 		case Rml::EventId::Tabchange:
