@@ -2150,12 +2150,28 @@ TEST_CASE("list views stop scrolling for a drag whose element is gone, also with
 {
 	test::UiApp app;
 	const ViewsPage page(app);
-	// A focusable handle: removing it passes the focus to its parent in the view, so the view doesn't blur.
-	DragScrollView drag(app, page, R"(<div id="handle" tabindex="auto" style="drag: drag; height: 10dp;"/>)");
+	// Elements take the focus unless they have focus: none, so removing the handle passes the focus to its parent in
+	// the view, which doesn't blur.
+	DragScrollView drag(app, page, R"(<div id="handle" style="drag: drag; height: 10dp;"/>)");
 	drag.dragBelow(app);
 	Rml::Element* handle = drag.view->GetElementById("handle");
 	REQUIRE(handle != nullptr);
-	drag.view->RemoveChild(handle);
+	// Kept alive, so that the view can't tell by a pointer that went null: the handle is no longer in the view.
+	const Rml::ElementPtr removed = drag.view->RemoveChild(handle);
+	CHECK(drag.staysAtTop(app));
+	drag.context.ProcessMouseButtonUp(0, 0);
+}
+
+TEST_CASE("list views stop scrolling for a drag whose element is no longer held, without a dragend", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	DragScrollView drag(app, page, R"(<div id="handle" style="drag: drag; height: 10dp;"/>)");
+	drag.dragBelow(app);
+	Rml::Element* handle = drag.view->GetElementById("handle");
+	REQUIRE(handle != nullptr);
+	REQUIRE(handle->IsPseudoClassSet("active"));
+	handle->SetPseudoClass("active", false);
 	CHECK(drag.staysAtTop(app));
 	drag.context.ProcessMouseButtonUp(0, 0);
 }

@@ -686,20 +686,42 @@ TEST_CASE("at the maximum number of steps, a note typed for a step stays with it
 	CHECK(steps.at(2).at("details").get<std::string>().empty());
 }
 
-TEST_CASE("a note typed in the edit history goes to its step by id when the oldest step went meanwhile", "[ui]")
+TEST_CASE("Enter racing another client's action sends the note by the step's id", "[ui]")
 {
 	test::UiApp app({1200, 700});
 	threeSteps(app);
-	click(app, "#history tbody tr input", 2);
-	app.ui().text(std::nullopt, "late");
 
-	// Lowering the maximum drops the oldest step, so that the step is a row higher before the note is sent: it goes to
-	// the step it was typed for.
+	// Lowering the maximum drops the oldest step, and Enter comes before the panel has seen it (it sees engine events
+	// only when the shell steps), so the panel's index is out of date: a note for the second step goes to that step,
+	// now the first, and not to the one after it.
+	click(app, "#history tbody tr input", 1);
+	app.ui().text(std::nullopt, "late");
 	app.call("history.set", {{"maxSteps", 2}});
-	REQUIRE(app.waitUntil([&app] { return elements(app, "#history tbody tr").size() == 3; }));
 	app.ui().key(std::nullopt, "Enter");
-	REQUIRE(app.waitUntil([&app] { return app.call("history.get").at("steps").at(1).at("details") == "late"; }));
-	CHECK(app.call("history.get").at("steps").at(0).at("details").get<std::string>().empty());
+	REQUIRE(app.waitUntil([&app] { return app.call("history.get").at("steps").at(0).at("details") == "late"; }));
+	CHECK(app.call("history.get").at("steps").at(1).at("details").get<std::string>().empty());
+}
+
+TEST_CASE("a note for the oldest step, which another client's lower maximum drops, goes to no step", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	threeSteps(app);
+	engine::Client listener(app.engine());
+
+	click(app, "#history tbody tr input", 0);
+	app.ui().text(std::nullopt, "gone");
+	app.call("history.set", {{"maxSteps", 2}});
+	app.ui().key(std::nullopt, "Enter");
+	// The engine refuses the id, and the panel shows the steps as they are.
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#history tbody tr").size() == 3; }));
+	app.waitUntil([] { return false; }, std::chrono::milliseconds(300));
+	const Json steps = app.call("history.get").at("steps");
+	REQUIRE(steps.size() == 2);
+	for (const Json& step : steps)
+		CHECK(step.at("details").get<std::string>().empty());
+	for (const Json& input : elements(app, "#history tbody tr input"))
+		CHECK(input.at("attributes").value("value", "").empty());
+	CHECK(changesSoon(app, listener, 1) == 1); // history.set's only
 }
 
 TEST_CASE("the edit history's separator drag ends when another client's step drops the oldest at the maximum", "[ui]")
