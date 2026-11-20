@@ -679,6 +679,32 @@ TEST_CASE("embedded media files whose names differ only in case load from entrie
 	}
 	const fs::path saved = project.folder.path() / "kicks.dawproject";
 	run(project.client, "project.save", {{"path", saved.u8string()}});
+	std::map<std::string, std::string> entries = gnubase::test::readZip(saved.u8string());
+	const std::string renamed = "audio/" + std::to_string(media[1]) + "-kick.wav";
+	CHECK(entries.count("audio/Kick.wav") == 1);
+	CHECK(entries.count(renamed) == 1);
+	CHECK(entries.count("audio/kick.wav") == 0);
+
+	SECTION("as this build saves them")
+	{
+	}
+
+	SECTION("as earlier builds saved them, apart only in case")
+	{
+		// Those named the second one audio/kick.wav: each media file still loads from the entry of its exact name.
+		REQUIRE(entries.count(renamed) == 1);
+		entries["audio/kick.wav"] = entries.at(renamed);
+		entries.erase(renamed);
+		for (auto& [name, text] : entries)
+		{
+			if (name.rfind("audio/", 0) == 0)
+				continue; // the files themselves; project.xml and gnubase.json refer to them
+			for (size_t at = text.find(renamed); at != std::string::npos; at = text.find(renamed, at))
+				text.replace(at, renamed.size(), "audio/kick.wav");
+		}
+		gnubase::test::writeZip(saved.u8string(), entries);
+	}
+
 	run(project.client, "project.load", {{"path", saved.u8string()}});
 	const Json loaded = run(project.client, "project.get").at("media");
 	for (size_t i = 0; i < media.size(); ++i)
@@ -860,6 +886,42 @@ TEST_CASE("media.prepareArchive copies freeze files from outside the project fol
 		CHECK(copied.at("tracks") == Json::array({audio.track}));
 		CHECK(done.at("result").at("changedTracks") == Json::array({copy}));
 		CHECK(project.track(audio.track).at("frozen").at("path") == copied.at("to"));
+	}
+
+	SECTION("but removes the copy that no track plays any more")
+	{
+		const Json done = gnubase::test::whileHeld(project.engine, project.client, "media.prepareArchive",
+			Json::object(), [&project, &audio, copy](uint64_t)
+			{ run(project.client, "track.unfreeze", {{"tracks", {audio.track, copy}}}); });
+		REQUIRE(done.at("state") == "done");
+		CHECK(done.at("result").at("copied").size() == 1); // the media file
+		CHECK(done.at("result").at("changedTracks") == Json::array({audio.track, copy}));
+		CHECK(!fs::exists(folder / "Freeze" / fs::u8path(freeze).filename()));
+	}
+
+	SECTION("and lists one it can't read as missing, whose tracks keep its path")
+	{
+		fs::remove(fs::u8path(freeze));
+		const Json job = run(project.client, "media.prepareArchive").at("job");
+		const Json done = waitForJob(project.client, job.at("id").get<uint64_t>());
+		REQUIRE(done.at("state") == "done");
+		CHECK(done.at("result").at("missing") == Json::array({{{"tracks", {audio.track, copy}}, {"path", freeze}}}));
+		CHECK(done.at("result").at("copied").size() == 1);
+		CHECK(project.track(audio.track).at("frozen").at("path") == freeze);
+		CHECK(project.track(copy).at("frozen").at("path") == freeze);
+	}
+
+	SECTION("but not with media, which limits it to those media files")
+	{
+		const Json media = run(project.client, "project.get").at("media");
+		REQUIRE(media.size() == 1);
+		const Json job = run(project.client, "media.prepareArchive", {{"media", {media.at(0).at("id")}}}).at("job");
+		const Json done = waitForJob(project.client, job.at("id").get<uint64_t>());
+		REQUIRE(done.at("state") == "done");
+		CHECK(done.at("result").at("copied").size() == 1);
+		CHECK(done.at("result").at("copied").at(0).contains("media"));
+		CHECK(project.track(audio.track).at("frozen").at("path") == freeze);
+		CHECK(!fs::exists(folder / "Freeze"));
 	}
 }
 
