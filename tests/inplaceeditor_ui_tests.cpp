@@ -894,7 +894,7 @@ TEST_CASE("the track list's Edit In-Place opens and closes the in-place editor, 
 	"[ui]")
 {
 	Fixture f;
-	// Edit In-Place among the MIDI track's controls (reference manual pp. 193, 1261); audio tracks have none.
+	// Edit In-Place among the MIDI track's controls (reference manual pp. 194, 1261); audio tracks have none.
 	Json controls = f.app.call("settings.get", {{"key", "ui.trackControls"}}).at("value");
 	controls["midi"].push_back("editInPlace");
 	controls["audio"].push_back("editInPlace");
@@ -942,6 +942,27 @@ TEST_CASE("the track list's Edit In-Place opens and closes the in-place editor, 
 	f.click(button);
 	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
 	CHECK_FALSE(f.has(f.editor(), "toolbar-shown"));
+
+	// A press on the triangle dragged down past the audio track's middle doesn't move the track in the list.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(triangle).at(0).at("visible").get<bool>(); }));
+	const auto order = [&f]
+	{
+		std::vector<uint64_t> ids;
+		const Json project = f.app.call("project.get");
+		for (const Json& track : project.at("tracks"))
+			ids.push_back(track.at("id").get<uint64_t>());
+		return ids;
+	};
+	const std::vector<uint64_t> before = order();
+	const Json from = f.box(triangle);
+	const Json below = f.box(row(f.audio));
+	const int x = static_cast<int>(from.at("x").get<double>() + (from.at("width").get<double>() / 2));
+	const int y = static_cast<int>(from.at("y").get<double>() + (from.at("height").get<double>() / 2));
+	const int lower = static_cast<int>(below.at("y").get<double>() + below.at("height").get<double>() - 2);
+	f.app.ui().drag(std::nullopt, {"", 0, ui::Point{x, y}}, {"", 0, ui::Point{x, lower}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(order() == before);
 }
 
 TEST_CASE("an in-place editor's notes stay under the ruler across a tempo change in the view", "[ui]")
@@ -959,6 +980,11 @@ TEST_CASE("an in-place editor's notes stay under the ruler across a tempo change
 	f.settle(2);
 	f.display.scrollTo(1.0);
 	f.settle(2);
+	// The part's box and the velocity lane's bars lie on the tempo map too.
+	const Json partBox = f.box(f.editor() + " .editor-part[part=\"" + std::to_string(f.part) + "\"]");
+	CHECK(std::abs(partBox.at("x").get<double>() + partBox.at("width").get<double>() - f.timelineX(2 * g_bar)) <= 1.5);
+	const Json bar = f.box(f.editor() + " .controller-bar[note=\"" + std::to_string(f.notes[1]) + "\"]");
+	CHECK(std::abs(bar.at("x").get<double>() - f.timelineX(g_bar + g_quarter)) <= 1.5);
 	// A click lands where the ruler has its time: on the second note, after the tempo change.
 	f.scroll(64);
 	f.click(f.at(g_bar + g_quarter + (g_quarter / 2), 64));
@@ -968,7 +994,7 @@ TEST_CASE("an in-place editor's notes stay under the ruler across a tempo change
 
 TEST_CASE("with Acoustic Feedback an in-place editor plays the notes it moves and draws", "[ui]")
 {
-	// Acoustic Feedback in the toolbar (reference manual pp. 1259-1260): a note sounds while it is moved, at the pitch
+	// Acoustic Feedback in the toolbar (reference manual p. 1259): a note sounds while it is moved, at the pitch
 	// it is dragged to, and a note being drawn sounds, until the mouse is released.
 	Fixture f;
 	const uint64_t strings = f.app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();

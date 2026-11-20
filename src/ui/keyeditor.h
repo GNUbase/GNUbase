@@ -206,9 +206,9 @@ namespace gnubase::ui
 		void placeItems();
 		// The expression editor alone, as its gesture changes it.
 		void placeExpression();
-		// The ticks of a pixel of the note display, or 0 before its layout.
 		// Where a time lies across the grid, 0 at its left edge and 1 at its right (axisFraction).
 		double fraction(int64_t ticks) const;
+		// The ticks of a pixel of the note display, or 0 before its layout.
 		int64_t ticksPerPixel() const;
 		// Whether the notes' expression lines or the expression editor show, whose lines fitLines fits.
 		bool linesShown() const;

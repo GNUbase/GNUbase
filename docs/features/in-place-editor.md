@@ -85,7 +85,7 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
   instrument tracks, Edit In-Place (`editor.editInPlace`, Mod+Shift+I, p. 1261) opens or closes each one, both disabled
   until such a track is selected, and the inspector's Edit In-Place button (`button[control=editInPlace]`,
   [inspector.md](inspector.md)) the selected track's, checked while it is open. The track list's Edit In-Place
-  (`editInPlace` in the user setting `ui.trackControls`, for MIDI and instrument tracks, pp. 193, 1261,
+  (`editInPlace` in the user setting `ui.trackControls`, for MIDI and instrument tracks, pp. 194, 1261,
   [track-list.md](track-list.md)) opens and closes its row's track's editor, checked while it is open; the default
   controls leave it out, so the track controls settings dialog adds it. A double click on the controller lanes'
   footer strip, the place below the controller display (p. 1261, [controller-lanes.md](controller-lanes.md)), closes

@@ -340,7 +340,7 @@ TEST_CASE("note.chord and note.voicing edit the chord of notes", "[unit]")
 
 TEST_CASE("the key editor's Acoustic Feedback is view state and off at first", "[unit]")
 {
-	// Acoustic Feedback in the toolbar (reference manual pp. 1259-1260).
+	// Acoustic Feedback in the toolbar (reference manual p. 1192).
 	Fixture f;
 	CHECK(f.view().at("acousticFeedback") == false);
 	const int64_t revision = f.call("project.revision").at("revision").get<int64_t>();

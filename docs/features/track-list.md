@@ -95,7 +95,8 @@ sends engine commands, so whatever another client changes shows at once.
   .track-list-header              the global track controls: #add-track, #track-controls-settings (document)
   .track-rows                     clips the rows, under the overview line and ruler's height
     listview.tracks[multiple]     the list view (widgets.md), scrolled with the event display
-      listitem[value=<id>][level][type]   a tree row per track; .selected, .disabled, .renaming, .versions
+      listitem[value=<id>][level][type]   a tree row per track; .selected, .disabled, .renaming, .versions,
+                                          .in-place while the track's in-place editor is open
         .tree-indent, .tree-toggle        from the list view, by level
         .track-color                      the track's color strip, attribute color only with a color (colors.md)
         .track-name, input.track-name-field   .track-version in the name while ui.showVersionName
@@ -144,7 +145,7 @@ sends engine commands, so whatever another client changes shows at once.
   (every automation lane of the track reads, or with a click none does; disabled without lanes), `timeBase`
   (musical or linear, `.checked` when linear) and on MIDI tracks `midiChannel` (MIDI Channel, p. 349), a drop-down list
   of Any and 1 to 16 that sends `channel.set` `midiChannel` as the inspector's does ([mixer.md](mixer.md)), and on MIDI
-  and instrument tracks `editInPlace` (Edit In-Place, p. 193), which opens and closes the track's in-place editor
+  and instrument tracks `editInPlace` (Edit In-Place, p. 194), which opens and closes the track's in-place editor
   with `editor.inPlace` and is `.checked` once it is open ([in-place-editor.md](in-place-editor.md)). A click
   sends `channel.set`, `automationLane.set` in one transaction, or `track.set`. A switch's click, and that of an
   automation lane's Read, goes from what its button shows and shows what it sends at once (`.checked`, solo's

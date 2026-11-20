@@ -242,7 +242,7 @@ namespace gnubase::ui
 			// The MIDI channel, as in the inspector (reference manual p. 349).
 			if (control == "midiChannel")
 				return type == "midi";
-			// Edit In-Place (reference manual pp. 193, 1261).
+			// Edit In-Place (reference manual pp. 194, 1261).
 			if (control == "editInPlace")
 				return type == "midi" || type == "instrument";
 			// Switch Time Base (reference manual pp. 179-180, 229).
@@ -2601,7 +2601,7 @@ namespace gnubase::ui
 			part = part->GetParentNode())
 			if (part->HasAttribute("control") || part->GetTagName() == "input" || part->IsClassSet("tree-toggle") ||
 				part->IsClassSet("automation-rows") || part->IsClassSet("automation-toggle") ||
-				part->IsClassSet("track-versions-toggle"))
+				part->IsClassSet("track-versions-toggle") || part->IsClassSet("in-place-toolbar-toggle"))
 				return; // the control's, or the automation tracks'
 		Rml::Element* element = rowElement(row->id);
 		const auto y = event.GetParameter<float>("mouse_y", 0.0F);

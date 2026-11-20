@@ -85,7 +85,7 @@ namespace gnubase::engine
 			bool soundSlotsLane = true;
 			std::set<int> collapsedGroups;
 			bool autoSelectControllers = false;
-			bool acousticFeedback = false;                                  // Acoustic Feedback (pp. 1259-1260)
+			bool acousticFeedback = false;                                  // Acoustic Feedback (pp. 1192, 1259)
 			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection; // each a part and a controller event of it
 			// The attributes selected of selected notes on the Articulations lane (#1688, p. 1289), by part and note;
 			// a selected note without them has all its attributes selected.
@@ -751,7 +751,7 @@ namespace gnubase::engine
 			"expression (pp. 1303-1313): showExpression shows the notes' expression over them, expressionDoubleClick "
 			"makes a double click on a note open the expression editor instead of deleting it, and expressionType is "
 			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. "
-			"acousticFeedback: the editor plays a note while it is moved or drawn (pp. 1259-1260). View state: no "
+			"acousticFeedback: the editor plays a note while it is moved or drawn (pp. 1192, 1259). View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors.";
 		const auto editorOnly = [&](Json properties = Json::object())
 		{
