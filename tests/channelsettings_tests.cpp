@@ -513,8 +513,8 @@ TEST_CASE("the channel settings window's controls dragged while the engine answe
 	}
 }
 
-TEST_CASE("a send knob's Ctrl-click value follows the default send level also while the knob is ahead of the engine",
-	"[ui]")
+TEST_CASE(
+	"a send knob's Ctrl-click value follows the default send level also while the knob is ahead of the engine", "[ui]")
 {
 	test::UiApp app({1200, 700});
 	app.appUi().showProject();
