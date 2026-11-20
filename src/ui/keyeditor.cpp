@@ -1632,7 +1632,7 @@ namespace gnubase::ui
 					return part.start;
 			return int64_t{0};
 		};
-		// A start before a note's part's start moves the notes only as far as that, as a drag does.
+		// A start before a note's part's start moves the notes only as far as that.
 		if (std::string(key) == "position")
 			for (const Note* note : notes)
 				delta = std::max(*delta, partStart(note->part) - note->start);

@@ -239,35 +239,39 @@ TEST_CASE(
 	"[unit]")
 {
 	Fixture f;
-	const std::vector<uint64_t> ids = f.notes({{0, 60}, {2 * g_sixteenth, 62}});
-	f.call("note.set", {{"part", f.part}, {"notes", Json::array({{{"id", ids[0]}, {"channel", 3}}})}});
-	f.call("note.set", {{"part", f.part}, {"notes", Json::array({{{"id", ids[1]}, {"channel", 9}}})}});
+	const std::vector<uint64_t> ids = f.notes({{0, 60}, {g_sixteenth, 61}, {2 * g_sixteenth, 62}});
+	f.call("note.set",
+		{{"part", f.part},
+			{"notes",
+				Json::array({{{"id", ids[0]}, {"channel", 3}}, {{"id", ids[1]}, {"channel", 5}},
+					{{"id", ids[2]}, {"channel", 9}}})}});
 	f.call("editor.set", {{"editor", "window"}, {"stepInput", true}, {"lengthQuantize", "1/4"}});
 	const auto input = [&f](int pitch)
 	{ return f.call("editor.input", {{"editor", "window"}, {"notes", Json::array({{{"pitch", pitch}}})}}); };
 
-	SECTION("a replaced note gives no channel: the one before the cursor that stays does")
+	SECTION("a replaced note gives no channel: the last one before the cursor that stays does")
 	{
 		f.call("editor.set", {{"editor", "window"}, {"stepPosition", (4 * g_quarter) + (2 * g_sixteenth)}});
 		const Json added = input(64).at("notes");
 		REQUIRE(added.size() == 1);
-		CHECK(added[0].at("channel") == 3);
+		CHECK(added[0].at("channel") == 5);
 	}
 	SECTION("at the part's start, the first note that stays")
 	{
 		f.call("editor.set", {{"editor", "window"}, {"stepPosition", 4 * g_quarter}});
-		CHECK(input(64).at("notes")[0].at("channel") == 9);
+		CHECK(input(64).at("notes")[0].at("channel") == 5);
 	}
 	SECTION("Move Insert Mode moves the notes by the inserted notes' length where it is longer than a step")
 	{
 		f.call("editor.set", {{"editor", "window"}, {"stepPosition", 4 * g_quarter}, {"moveInsert", true}});
 		input(64);
 		const Json notes = f.partNotes();
-		REQUIRE(notes.size() == 3);
+		REQUIRE(notes.size() == 4);
 		CHECK(notes[0].at("pitch") == 64);
 		CHECK(notes[0].at("length") == g_quarter);
 		CHECK(notes[1].at("position") == g_quarter);
-		CHECK(notes[2].at("position") == g_quarter + (2 * g_sixteenth));
+		CHECK(notes[2].at("position") == g_quarter + g_sixteenth);
+		CHECK(notes[3].at("position") == g_quarter + (2 * g_sixteenth));
 		CHECK(f.view().at("stepPosition") == (4 * g_quarter) + g_sixteenth); // the cursor still moves by a step
 	}
 	SECTION("an inserted note ends at the part's end")

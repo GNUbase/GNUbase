@@ -6,9 +6,11 @@
 #include "ui/automation.h"
 #include "ui/docking.h"
 #include "ui/enginebinding.h"
+#include "ui/eventdisplay.h"
 #include "ui/keyeditor.h"
 #include "ui/midieditor.h"
 #include "ui/rmlui.h"
+#include "ui/tracklist.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -1488,6 +1490,51 @@ TEST_CASE("Up and Down transpose the selected notes, Delete and Backspace delete
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[2]).is_null(); }));
 	f.settle();
 	CHECK(f.partNotes().size() == 2);
+}
+
+TEST_CASE("in the lower zone Up, Down and Delete edit the selected notes, not the project window's selection", "[ui]")
+{
+	// The keys are bound in the project window's focus zone too: Delete to edit.delete, Up and Down to
+	// track.selectPrevious and track.selectNext. The note display takes them first (p. 1214).
+	Fixture f({1024, 768});
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	ui::EventDisplay& display = f.app.appUi().showProject();
+	f.window = f.app.main().id();
+	const uint64_t other = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const Json added = f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				Json::array({{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}})}});
+	const uint64_t first = added.at("notes").at(0).at("id").get<uint64_t>();
+	f.app.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 2; }));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			ui::MidiEditor* editor = f.app.appUi().lowerZoneEditor();
+			return editor != nullptr && editor->keyEditor() != nullptr && editor->keyEditor()->scrollToPitch(60);
+		}));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const auto selected = [&f] { return f.app.call("editor.get", {{"editor", "lower"}}).at("selection").size(); };
+	f.click(of(noteSelector(first)));
+	REQUIRE(f.app.waitUntil([&] { return selected() == 1; }));
+	// The part and the other track selected in the project window.
+	display.select({f.part});
+	f.app.appUi().trackList()->select({other});
+	f.app.shell().step(std::chrono::milliseconds(0));
+
+	f.app.ui().key(f.window, "Up");
+	REQUIRE(f.app.waitUntil([&] { return f.note(first).at("pitch") == 61; }));
+	f.settle();
+	CHECK(f.app.appUi().trackList()->selection() == std::vector<uint64_t>{other});
+
+	f.app.ui().key(f.window, "Delete");
+	REQUIRE(f.app.waitUntil([&] { return f.note(first).is_null(); }));
+	f.settle();
+	CHECK(f.partNotes().size() == 1);
+	CHECK(display.selection() == std::vector<uint64_t>{f.part});
 }
 
 TEST_CASE("step input and MIDI input in the key editor", "[ui]")

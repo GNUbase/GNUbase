@@ -163,7 +163,7 @@ lower zone, Delete deletes the notes, not the project window's selected events.
   works too), velocities 0-127, the channel 1-16 and the Articulations, the attributes of the track's articulation map
   that the note has, names separated by commas ([articulation-maps.md](articulation-maps.md)). A value typed moves every
   selected note by as much as the first one's changes; a start before a note's part's start moves them only as far as
-  that, as a drag does. The channel and the attributes are set for all.
+  that. The channel and the attributes are set for all.
 - **Chord Editing** (pp. 1215-1218) is in the editor window's inspector, under Global Tracks: the chord the selected
   notes make ("No Chord" for none), and buttons that send `note.voicing` for each part's selected notes.
 - **Toolbox** (p. 65). A right click in the note display opens `#key-editor-toolbox`, the toolbar's tools at the
