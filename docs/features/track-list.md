@@ -279,19 +279,26 @@ data blocks and Move Selected Tracks to New Folder are in [folder-tracks.md](fol
   disabled and a soloed MIDI track into an instrument, and checks that muted, soloed-out and disabled ones send it no
   automation (controller, pitch bend and channel pressure), MIDI volume, pan or program, and that one heard again keeps
   its part's program and CC 7 and sends what changed meanwhile, each once, also while the transport stands, nothing for
-  values changed back by undo, and after playback started, stopped, located or jumped meanwhile the channel's values,
-  then its parts' chase, disabled or muted, also stopped at the cursor, not without the chase settings, and with another
-  track's later program change, which comes back after the channel's, and CC 1, which isn't sent again, a pedal the
-  chase presses that its mute releases, playing and while the transport stands, a track disabled at one move and muted
-  by its button at a later one chased in full, the channel's values before what the mute kept after a stop, and a value
-  its MIDI input sent into the mute forgotten for the chase; `tests/midi_tests.cpp` chases a track heard again in the
-  sequencer, playing, stopped, with its channel's kinds, muted only by its button, with a cycle jump in the same block,
-  without chase settings and after a chase that didn't fit, a bank select with another track's program, also between the
-  select's MSB and LSB, its LSB alone, a program at the select's position on an earlier or a later track and a track
-  muted by its button whose channel has a bank, and a routed track's chase into its strip alone, in that block;
-  `tests/automation_tests.cpp` has the strip forget what the mute kept of the kinds chased for a track heard again, of a
-  soloed-out track's whole chase and of an unrouted track's chase in its events; `tests/dawproject_tests.cpp` saves and
-  loads mute, solo and disabled tracks, also from `project.xml` alone.
+  values changed back by undo, and after playback started, located or jumped meanwhile (also a cycle jump) the channel's
+  values, then its parts' chase, disabled or muted, also stopped at the cursor, but nothing again after a stop where
+  playback ended, which isn't a move, not without the chase settings, and with another track's later program change,
+  which comes back after the channel's, and CC 1, which isn't sent again, a pedal the chase presses that its mute
+  releases, playing and while the transport stands, a track disabled at one move and muted by its button at a later one
+  chased in full, the channel's values before what the mute kept after a stop, and a value its MIDI input sent into the
+  mute forgotten for the chase, a track that playback ran over while it was disabled, not muted by its button, chased
+  once it is heard again, a track heard again when another track's solo ends chased after a move or after playback ran,
+  an instrument track enabled after playback moved or ran while it was disabled chasing its parts, a note that another
+  track's mute button kept from it ended when a MIDI track leaves its instrument, a cycle jump or a start forgetting
+  what the mute dropped before it, a track muted by its button and disabled at a move, enabled first and unmuted later,
+  chased once, and a track that its button unmutes in the block of a locate getting the locate's chase once;
+  `tests/midi_tests.cpp` chases a track heard again in the sequencer, playing, stopped, with its channel's kinds, muted
+  only by its button, with a cycle jump in the same block, without chase settings and after a chase that didn't fit, a
+  bank select with another track's program, also between the select's MSB and LSB, its LSB alone, a program at the
+  select's position on an earlier or a later track and a track muted by its button whose channel has a bank, and a
+  routed track's chase into its strip alone, in that block; `tests/automation_tests.cpp` has the strip forget what the
+  mute kept of the kinds chased for a track heard again, of a soloed-out track's whole chase and of an unrouted track's
+  chase in its events; `tests/dawproject_tests.cpp` saves and loads mute, solo and disabled tracks, also from
+  `project.xml` alone.
 - `tests/tracklayout_tests.cpp`: `trackLayout.set` setting heights and replacing the folded folders, refusing unknown
   tracks, folded tracks that aren't folders and heights out of range or not a number, not an undo step, without
   tracks that are gone, and saved and loaded with the project; a new project starts without; undo and redo announcing

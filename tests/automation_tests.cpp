@@ -3189,26 +3189,37 @@ TEST_CASE(
 {
 	using Type = graph::ProcessEvent::Type;
 	// The mute lane unmutes at the start of the third block. The CC 7 lane steps to 0.5 at 100, and the track's own CC
-	// 7 at 300, later, plays into the mute. In the third block, new points either change the lane's value there or only
-	// add a point after it.
+	// 7 at 300, later, plays into the mute. In the third block, new points either change the lane's value there, only
+	// add a point after it, or are those of a lane that the channel didn't have before.
+	enum class Edit
+	{
+		Change,
+		AddAfter,
+		NewLane
+	};
+	const Edit change = GENERATE(Edit::Change, Edit::AddAfter, Edit::NewLane);
+	CAPTURE(static_cast<int>(change));
 	RenderAutomationLane lane;
 	lane.target = {AutomationTargetType::Controller, 0, 7, 0, 0};
 	lane.points = {{0, 0.0, AutomationShape::Step, 0.0}, {100, 0.5, AutomationShape::Step, 0.0}};
-	MidiStrip strip({{0, 1.0}, {2 * g_midiBlock, 0.0}}, {lane});
+	MidiStrip strip({{0, 1.0}, {2 * g_midiBlock, 0.0}},
+		change == Edit::NewLane ? std::vector<RenderAutomationLane>{} : std::vector<RenderAutomationLane>{lane});
 	CHECK(strip.play({}).empty());
 	CHECK(strip.play({midiEvent(Type::Controller, 300 - g_midiBlock, 0, 7, 20)}).empty());
-	const bool changes = GENERATE(true, false);
-	CAPTURE(changes);
 	RenderChannel channel = strip.channel();
+	if (change == Edit::NewLane)
+		channel.automation.push_back(lane);
 	std::vector<RenderAutomationPoint>& points = channel.automation.back().points;
-	if (changes)
+	if (change == Edit::Change)
 		points[1].value = 0.75;
-	else
+	else if (change == Edit::AddAfter)
 		points.push_back({5000, 1.0, AutomationShape::Step, 0.0});
 	strip.setChannel(channel);
 	// The lane's new value goes out after the track's CC 7 and wins; a value it had before goes out again before it.
-	CHECK(controllerValues(midiValuesOf(strip.play({})), 0, 7) ==
-		(changes ? std::vector<uint32_t>{20, midiValueOf(0.75)} : std::vector<uint32_t>{midiValueOf(0.5), 20}));
+	const std::vector<uint32_t> expected = change == Edit::Change ? std::vector<uint32_t>{20, midiValueOf(0.75)}
+		: change == Edit::NewLane                                 ? std::vector<uint32_t>{20, midiValueOf(0.5)}
+																  : std::vector<uint32_t>{midiValueOf(0.5), 20};
+	CHECK(controllerValues(midiValuesOf(strip.play({})), 0, 7) == expected);
 }
 
 TEST_CASE("a ramp's step of a MIDI lane at the first sample of a block that sends the values again, where a mute lane "
@@ -3286,12 +3297,34 @@ TEST_CASE("a MIDI track whose mute lane mutes where playback jumps to releases t
 {
 	using Type = graph::ProcessEvent::Type;
 	// The mute lane mutes from 1000 to 2000; the sustain pedal goes down at 10, before it. Playback goes on into the
-	// mute, or jumps into it.
-	const bool jump = GENERATE(false, true);
-	CAPTURE(jump);
+	// mute, jumps into it, or stops and is located into it while the transport stands.
+	enum class Into
+	{
+		PlayingOn,
+		Jump,
+		LocateStopped
+	};
+	const Into into = GENERATE(Into::PlayingOn, Into::Jump, Into::LocateStopped);
+	CAPTURE(static_cast<int>(into));
+	const bool jump = into != Into::PlayingOn;
 	MidiStrip strip({{0, 0.0}, {1000, 1.0}, {2000, 0.0}});
 	CHECK(midiValuesOf(strip.play({midiEvent(Type::Controller, 10, 0, 64, 0xFFFFFFFFU)})) ==
 		MidiValues{{g_controller, 10, 0, 64, 0xFFFFFFFFU}});
+	if (into == Into::LocateStopped)
+	{
+		CHECK(strip.playStopped({}).empty()); // stopped where playback ended
+		strip.locate(int64_t{4} * g_midiBlock);
+		// The locate's mute releases the pedal while the transport stands.
+		CHECK(midiValuesOf(strip.playStopped({})) == MidiValues{{g_controller, 0, 0, 64, 0}});
+		// Unmuted there while it still stands (starting playback would be a jump of its own): the pedal isn't
+		// pressed again, as at a jump.
+		RenderChannel channel = strip.channel();
+		std::vector<RenderAutomationPoint>& mute = channel.automation.front().points;
+		mute.insert(mute.begin() + 2, {int64_t{4} * g_midiBlock, 0.0, AutomationShape::Step, 0.0});
+		strip.setChannel(channel);
+		CHECK(strip.playStopped({}).empty());
+		return;
+	}
 	if (jump)
 		strip.locate(int64_t{4} * g_midiBlock);
 	else
