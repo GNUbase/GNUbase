@@ -543,6 +543,31 @@ TEST_CASE("the CoreMIDI backend keeps the port contract and notices virtual port
 		WARN("the IAC driver is off: its loopback isn't checked");
 }
 
+// A backend hears of setup changes only once it lists or opens ports, so its owner sets the change handler before
+// that without a race with the notifications of another backend's changes (#356).
+TEST_CASE("a CoreMIDI backend hears of setup changes from its first listing on", "[integration]")
+{
+	const std::unique_ptr<Backend> listing = makeCoreMidiBackend();
+	std::atomic<int> listed{0};
+	listing->onPortsChanged([&listed] { ++listed; });
+	listing->ports();
+	const std::unique_ptr<Backend> unlisted = makeCoreMidiBackend();
+	std::atomic<int> unlistedChanges{0};
+	unlisted->onPortsChanged([&unlistedChanges] { ++unlistedChanges; });
+	{
+		const VirtualLoopback loopback("GNUbase test setup change");
+		REQUIRE(eventually([&listed] { return listed > 0; }));
+	}
+	std::this_thread::sleep_for(std::chrono::milliseconds(200)); // the loopback's removal is announced too
+	CHECK(unlistedChanges == 0);
+
+	unlisted->ports();
+	{
+		const VirtualLoopback loopback("GNUbase test setup change");
+		CHECK(eventually([&unlistedChanges] { return unlistedChanges > 0; }));
+	}
+}
+
 TEST_CASE("the CoreMIDI backend receives MIDI 2.0 sources as MIDI 1.0 messages", "[integration]")
 {
 	const std::unique_ptr<Backend> backend = makeCoreMidiBackend();
