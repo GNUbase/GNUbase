@@ -4156,11 +4156,11 @@ namespace gnubase::engine
 				"into it unless embedMedia is false; then the file refers to them where they are, relative to itself "
 				"if they are in its folder. One that is missing is referred to by its absolute path, so that the file "
 				"has no copy of it: the result lists them (missing). The file becomes the first of the recent "
-				"projects (project.recent). Media files in the folder where a project without a file records and "
-				"converts imported files to, as after the first save of such a project, are then copied into the "
-				"media folder as a job, returned as job (null without one) with the result media.prepareArchive's "
-				"job has; the media are pointed at the copies as an undo step of its own, which the next save "
-				"keeps.",
+				"projects (project.recent). Media and freeze files in the folder where a project without a file "
+				"records, freezes and converts imported files to, as after the first save of such a project, are then "
+				"copied into the media and Freeze folders as a job, returned as job (null without one) with the "
+				"result media.prepareArchive's job has; the media and frozen tracks are pointed at the copies as an "
+				"undo step of its own, which the next save keeps.",
 				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}),
 				objectSchema(
 					{{"missing", {{"type", "array"}, {"items", stringSchema}}}, {"job", saveJob}}, {"missing", "job"}),
@@ -4187,9 +4187,12 @@ namespace gnubase::engine
 				// manual p. 360), as media.prepareArchive does it.
 				std::vector<MediaCopy> recordings;
 				if (const std::filesystem::path unsaved = unsavedMediaFolder(m_settingsDirectory); !unsaved.empty())
+				{
 					for (const auto& [id, media] : m_project.media)
 						if (isInside(media.path, unsaved))
-							recordings.push_back({id, media.path, {}});
+							recordings.push_back({id, media.path, {}, {}});
+					addFreezeCopies(m_project, unsaved, true, recordings);
+				}
 				Json job = nullptr;
 				if (!recordings.empty())
 					job = startMediaCopy(jobs, "project.save", std::move(recordings),
@@ -4739,7 +4742,7 @@ namespace gnubase::engine
 				result["job"] = nullptr;
 				const MediaFile& media = project.media.at(result.at("media").at("id").get<ObjectId>());
 				if (context.parameters().value("copy", false) && !isInside(media.path, mediaFolder.parent_path()))
-					result["job"] = startMediaCopy(jobs, "media.add", {MediaCopy{media.id, media.path, {}}},
+					result["job"] = startMediaCopy(jobs, "media.add", {MediaCopy{media.id, media.path, {}, {}}},
 						mediaFolder, "Copy media file into the project", m_openedRevision);
 				return result;
 			});
@@ -5174,14 +5177,17 @@ namespace gnubase::engine
 		addControl(engine,
 			{"media.prepareArchive", 1,
 				"Makes the project self-contained, so that its folder can be archived or moved: copies every media "
-				"file from outside the project folder into its media folder and points the media at the copies. The "
+				"file from outside the project folder into its media folder and every freeze file of a frozen track "
+				"from outside it into its Freeze folder, and points the media and tracks at the copies. The "
 				"copies run as a job: this returns at once, job.progress and job.finished events follow, and "
-				"job.cancel stops it and removes the copies. Once they are done, the media are pointed at them as one "
-				"undo step. The job's result lists the copies as copied, media files that couldn't be read as "
-				"missing (they keep their paths), and media whose path changed while the job ran as changed (they "
-				"keep the new path). The project must have been saved; save it again without embedding media to keep "
-				"the new paths. media limits it to those media files, such as the ones track.import added (Copy to "
-				"Active Project Folder, reference manual p. 205).",
+				"job.cancel stops it and removes the copies. Once they are done, the media and tracks are pointed at "
+				"them as one undo step (media.relink, track.relinkFreeze). The job's result lists the copies as "
+				"copied ({media or tracks, from, to}), files that couldn't be read as missing ({media or tracks, "
+				"path}; they keep their paths), and media and tracks whose path changed while the job ran as changed "
+				"and changedTracks (they keep the new path). The project must have been saved; save it again without "
+				"embedding media to keep "
+				"the new paths. media limits it to those media files, without freeze files, such as the ones "
+				"track.import added (Copy to Active Project Folder, reference manual p. 205).",
 				objectSchema({{"media", {{"type", "array"}, {"items", integerSchema}}}}),
 				objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
 			[this, &jobs](CommandContext& context)
@@ -5202,7 +5208,9 @@ namespace gnubase::engine
 				std::vector<MediaCopy> files;
 				for (const auto& [id, media] : m_project.media)
 					if (chosen(id) && !isInside(media.path, file.parent_path()))
-						files.push_back({id, media.path, {}});
+						files.push_back({id, media.path, {}, {}});
+				if (!parameters.contains("media"))
+					addFreezeCopies(m_project, file.parent_path(), false, files);
 				return Json{{"job",
 					startMediaCopy(jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file),
 						"Prepare archive", m_openedRevision)}};

@@ -624,6 +624,48 @@ namespace gnubase::engine
 				}
 				return Json{{"tracks", std::move(result)}};
 			});
+		const Json relinkEntry = {{"type", "object"}, {"additionalProperties", false},
+			{"properties", {{"track", integer}, {"from", {{"type", "string"}}}, {"path", {{"type", "string"}}}}},
+			{"required", {"track", "from", "path"}}};
+		addEdit(engine,
+			{"track.relinkFreeze", 1,
+				"Points frozen tracks at other freeze files, such as copies that media.prepareArchive made, as one "
+				"undo step. An entry applies only if its track is still frozen and plays from; otherwise it is "
+				"skipped, and with project every entry is skipped unless that project is still open "
+				"(project.revision's project). Returns the tracks it relinked and the ones it skipped.",
+				{{"type", "object"}, {"additionalProperties", false},
+					{"properties", {{"files", {{"type", "array"}, {"items", relinkEntry}}}, {"project", integer}}},
+					{"required", {"files"}}},
+				{{"type", "object"}, {"properties", {{"relinked", ids}, {"skipped", ids}}},
+					{"required", {"relinked", "skipped"}}},
+				false},
+			"Relink freeze files",
+			[this](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				// Files copied for another project don't belong to this one.
+				const bool otherProject =
+					parameters.contains("project") && parameters.at("project").get<uint64_t>() != m_openedRevision;
+				Json relinked = Json::array();
+				Json skipped = Json::array();
+				for (const Json& entry : parameters.at("files"))
+				{
+					const auto id = entry.at("track").get<ObjectId>();
+					const std::string path = entry.at("path").get<std::string>();
+					require(!path.empty(), "path must not be empty");
+					const auto track = project.trackById.find(id);
+					if (otherProject || track == project.trackById.end() || !track->second.frozen ||
+						track->second.frozen->path != entry.at("from").get<std::string>())
+					{
+						skipped.push_back(id);
+						continue;
+					}
+					track->second.frozen->path = path;
+					context.emit("track.changed", {{"track", toJson(track->second)}});
+					relinked.push_back(id);
+				}
+				return Json{{"relinked", std::move(relinked)}, {"skipped", std::move(skipped)}};
+			});
 
 		const Json processing = {{"type", "string"}, {"enum", {"dry", "channelSettings", "completeSignalPath"}}};
 		engine.registerCommand(

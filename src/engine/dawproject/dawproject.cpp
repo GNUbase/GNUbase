@@ -540,11 +540,12 @@ namespace gnubase::engine
 						m_mediaPaths[id] = referencePath(media.path, fileFolder);
 						continue;
 					}
+					// Unique in any case, as the file's entries are looked up in any case (#871).
 					std::string name = "audio/" + pathOf(media.path).filename().u8string();
-					if (!taken.insert(name).second)
+					if (!taken.insert(foldedName(pathOf(name))).second)
 					{
 						name = "audio/" + std::to_string(id) + "-" + pathOf(media.path).filename().u8string();
-						taken.insert(name);
+						taken.insert(foldedName(pathOf(name)));
 					}
 					m_mediaPaths[id] = name;
 				}
