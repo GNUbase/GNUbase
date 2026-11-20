@@ -15,8 +15,14 @@
 #include "platform/jacklibrary.h"
 #include "platform/process.h"
 
+#include <catch2/catch_test_case_info.hpp>
+#include <catch2/reporters/catch_reporter_event_listener.hpp>
+#include <catch2/reporters/catch_reporter_registrars.hpp>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <jack/jack.h>
+#include <sys/file.h>
+#include <unistd.h>
 #endif
 #include "devicecontract.h"
 #include "engine/document/document.h"
@@ -610,13 +616,54 @@ namespace
 
 	// Forcing the graph's settings changes how everything in it plays, a desktop session's daemon too, and a test that
 	// is killed leaves them forced. So the tests that do run only against the private daemon that
-	// tools/start-pipewire.sh starts, which GNUBASE_REQUIRE_PIPEWIRE=1 says runs, and skip otherwise (#423).
+	// tools/start-pipewire.sh starts, which GNUBASE_REQUIRE_PIPEWIRE=1 says runs, and skip otherwise (#423). There they
+	// first clear what a killed test may have left forced, which ForcedSetting would otherwise give back (#540).
 	void skipUnlessPrivateDaemon()
 	{
 		if (!required("GNUBASE_REQUIRE_PIPEWIRE"))
 			SKIP("forces the graph's settings, which only the private daemon of tools/start-pipewire.sh may have "
 				 "changed (GNUBASE_REQUIRE_PIPEWIRE=1)");
+		for (const char* key : {"clock.force-rate", "clock.force-quantum"})
+			pw("pw-metadata", {"-n", "settings", "0", key, "0"});
 	}
+
+	// ctest keeps the [pipewire] tests apart with a RESOURCE_LOCK and runs the [jack] ones alone, but only within one
+	// run: several runs at once, as tools/ci-local.sh starts them, still meet on one daemon. So each such test case
+	// holds an flock on a file for its daemon: PipeWire's in its runtime directory, jackd's in /tmp (#540).
+	class DaemonLock final : public Catch::EventListenerBase
+	{
+	public:
+		using Catch::EventListenerBase::EventListenerBase;
+
+		void testCaseStarting(const Catch::TestCaseInfo& info) override
+		{
+			const char* runtime = std::getenv("XDG_RUNTIME_DIR");
+			for (const Catch::Tag& tag : info.tags)
+			{
+				std::string path;
+				if (tag.original == Catch::StringRef("pipewire"))
+					path = std::string(runtime != nullptr ? runtime : "/tmp") + "/gnubase-pipewire-tests.lock";
+				else if (tag.original == Catch::StringRef("jack"))
+					path = "/tmp/gnubase-jack-tests.lock";
+				if (path.empty())
+					continue;
+				m_lock = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+				if (m_lock >= 0)
+					flock(m_lock, LOCK_EX); // released when the file closes, also when the run is killed
+				return;
+			}
+		}
+
+		void testCaseEnded(const Catch::TestCaseStats& /*stats*/) override
+		{
+			if (m_lock >= 0)
+				::close(m_lock);
+			m_lock = -1;
+		}
+
+	private:
+		int m_lock = -1;
+	};
 
 	// The tests that change the graph need PipeWire's command line tools, which come with the daemon.
 	bool havePipeWireTools()
@@ -668,6 +715,26 @@ namespace
 		device.reset();
 		CHECK(!listed());
 	}
+}
+
+CATCH_REGISTER_LISTENER(DaemonLock)
+
+// The forcing tests rely on ForcedSetting giving back what it found, which it reads from pw-metadata's output (#540).
+TEST_CASE("a forced setting of the PipeWire graph gets its previous value back", "[integration][pipewire]")
+{
+	skipUnlessPrivateDaemon();
+	if (!havePipeWireTools())
+		return;
+	{
+		const ForcedSetting outer("clock.force-quantum", 256);
+		CHECK(forcedQuantum() == 256);
+		{
+			const ForcedSetting inner("clock.force-quantum", 512);
+			CHECK(forcedQuantum() == 512);
+		}
+		CHECK(forcedQuantum() == 256);
+	}
+	CHECK(forcedQuantum() == 0);
 }
 
 TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset when a sink's ports change or it goes "

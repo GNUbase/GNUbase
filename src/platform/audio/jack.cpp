@@ -217,7 +217,9 @@ namespace gnubase::audio
 			// Undoes the device's buffer size request, unless another client has set a size since (#371). jackd gets
 			// the size it had back. PipeWire's JACK layer may have turned the request into the graph's
 			// clock.force-quantum, which would outlast the client, so a size of 0 clears it instead (#389); it may not
-			// have followed the request yet, and an inactive client sees the size it saw last.
+			// have followed the request yet, and an inactive client sees the size it saw last. PipeWire's layer sends
+			// that request without waiting, and closing the client stops its thread before it may have gone out:
+			// registering a port and unregistering it waits for the daemon, which has the request then (#540).
 			void giveBufferSizeBack() const
 			{
 				if (m_requestedBufferSize == m_previousBufferSize)
@@ -225,7 +227,13 @@ namespace gnubase::audio
 				jack_client_t* const handle = m_client->get();
 				const uint32_t size = m_jack.getBufferSize(handle);
 				if (m_jack.pipeWire && (size == m_requestedBufferSize || size == m_previousBufferSize))
+				{
 					m_jack.setBufferSize(handle, 0);
+					if (jack_port_t* port =
+							m_jack.portRegister(handle, "sync", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
+						port != nullptr)
+						m_jack.portUnregister(handle, port);
+				}
 				else if (!m_jack.pipeWire && size == m_requestedBufferSize)
 					m_jack.setBufferSize(handle, m_previousBufferSize);
 			}
