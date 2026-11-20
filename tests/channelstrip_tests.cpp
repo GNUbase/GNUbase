@@ -377,6 +377,31 @@ TEST_CASE("the strip's gate, compressor and limiter shape the dynamics", "[integ
 	CHECK_THAT(strip.peakDb(), WithinAbs(6.0, 0.05));
 }
 
+TEST_CASE("the strip's gate and compressor fade in and out when they switch on and off", "[integration]")
+{
+	// The sine is at -6 dB. Its peak over the first 1.5 ms after a switch stays on the side of where the level was,
+	// halfway in amplitude, through the switch's 5 ms crossfade, and from 10 ms on it is there.
+	const auto check = [](const char* section, const Json& settings)
+	{
+		Strip strip(1000.0, -6.0);
+		Json on = settings;
+		on["on"] = true;
+		strip.set({{"strip", {{section, on}}}});
+		const double level = strip.peakDb();
+		CHECK(level < -15.0);
+		const double halfway = 20.0 * std::log10((std::pow(10.0, level / 20.0) + std::pow(10.0, -6.0 / 20.0)) / 2.0);
+		strip.set({{"strip", {{section, {{"on", false}}}}}});
+		CHECK(strip.renderPeakDb(g_block, 0, 72) < halfway);
+		CHECK_THAT(strip.renderPeakDb(g_block, 480, g_block), WithinAbs(-6.0, 0.05));
+		strip.set({{"strip", {{section, {{"on", true}}}}}});
+		CHECK(strip.renderPeakDb(g_block, 0, 72) > halfway);
+		CHECK_THAT(strip.renderPeakDb(g_block, 480, g_block), WithinAbs(level, 1.0));
+	};
+	// A gate that stays closed, and a compressor that takes more than 9 dB off.
+	check("gate", {{"threshold", -3.0}, {"range", -40.0}});
+	check("compressor", {{"threshold", -30.0}, {"ratio", 4.0}, {"attack", 0.1}});
+}
+
 TEST_CASE("the pre section runs before the plugin slots, the equalizer and the dynamics after them", "[integration]")
 {
 	Strip strip(1000.0, -6.0);

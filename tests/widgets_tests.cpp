@@ -546,7 +546,7 @@ TEST_CASE("meters show the level and the peak in dB", "[ui]")
 	const Json level = page.box("#left .meter-level");
 	CHECK(level.at("height").get<int>() == 87);
 	CHECK(level.at("y").get<int>() + level.at("height").get<int>() == bottom);
-	const Json fill = page.box("#left .meter-fill");
+	const Json fill = page.box("#left .meter-level .meter-fill");
 	CHECK(fill.at("height").get<int>() == 120);
 	CHECK(fill.at("y").get<int>() + fill.at("height").get<int>() == bottom);
 	CHECK(page.box("#left .meter-peak").at("y").get<int>() == bottom - 98);
@@ -557,6 +557,14 @@ TEST_CASE("meters show the level and the peak in dB", "[ui]")
 	page.document->GetElementById("right")->SetAttribute("value", "0");
 	CHECK(app.waitUntil([&page] { return page.box("#right .meter-level").at("height").get<int>() == 109; }));
 	CHECK_FALSE(test::compareImages(app.ui().screenshot(std::nullopt, at("#right")), silent, {8}).equal);
+
+	// The RMS level shows over the level up to its height, and only with an rms attribute.
+	CHECK(page.box("#left .meter-rms").at("height").get<int>() == 0);
+	page.document->GetElementById("left")->SetAttribute("rms", "-27");
+	CHECK(app.waitUntil([&page] { return page.box("#left .meter-rms").at("height").get<int>() == 60; }));
+	const Json rms = page.box("#left .meter-rms");
+	CHECK(rms.at("y").get<int>() + rms.at("height").get<int>() == bottom);
+	CHECK(page.box("#left .meter-rms .meter-fill").at("height").get<int>() == 120);
 }
 
 namespace

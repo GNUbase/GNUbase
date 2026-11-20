@@ -10,6 +10,7 @@
 #include "ui/historypanel.h"
 #include "ui/inspector.h"
 #include "ui/keyeditor.h"
+#include "ui/meterpanel.h"
 #include "ui/poolpanel.h"
 #include "ui/timeformat.h"
 #include "ui/widgets.h"
@@ -680,6 +681,10 @@ namespace gnubase::app
 						m_lowerEditor = shown;
 					return std::shared_ptr<void>(shown);
 				};
+			// The meter display (reference manual pp. 533-538, docs/features/metering.md).
+			else if (added.id == "meter")
+				added.create = [this](Rml::Element& element)
+				{ return std::make_shared<ui::MeterPanel>(m_engine, m_binding, element); };
 			m_docking.add(std::move(added));
 		}
 		addMixers();

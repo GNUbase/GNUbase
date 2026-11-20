@@ -756,6 +756,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".meter", {"decorator": skin("meter-background")}),
         (".meter-fill", {"decorator": skin("meter-fill")}),
         (".meter-peak", {"decorator": skin("meter-peak")}),
+        # A meter with an RMS level: the peak level dimmed under it
+        ("meter[rms] .meter-level", {"opacity": "0.4"}),
         (".tree-toggle", {"decorator": skin("dropdown-arrow")}),
         # Widgets whose parts have the skins: the focus ring around them
         ("knob:focus-visible, fader:focus-visible, slider:focus-visible, input.range:focus-visible",
