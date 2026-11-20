@@ -6,6 +6,7 @@
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "testutils/heldjob.h"
+#include "testutils/tempfolder.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
