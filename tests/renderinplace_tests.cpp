@@ -25,8 +25,10 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -543,6 +545,32 @@ TEST_CASE("a frozen track stays frozen in the project file", "[integration]")
 	}
 }
 
+#ifndef _WIN32
+TEST_CASE("a save fails on a freeze file that the file system can't say is there", "[integration]")
+{
+	Session project;
+	const Session::Track audio = project.addTrack("Ramp");
+	run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+	const fs::path freeze = fs::u8path(project.track(audio.track).at("frozen").at("path").get<std::string>());
+	run(project.client, "project.save", {{"embedMedia", false}});
+	const fs::path file = project.media.path() / "project.dawproject";
+	const std::string before = gnubase::test::readText(file);
+	fs::permissions(freeze.parent_path(), fs::perms::none);
+	std::error_code error;
+	if (fs::exists(freeze, error) || !error)
+	{
+		fs::permissions(freeze.parent_path(), fs::perms::owner_all);
+		SKIP("the folder can be searched here anyway, e.g. by root");
+	}
+	const Result failed = project.client.call("project.save", Json::object());
+	fs::permissions(freeze.parent_path(), fs::perms::owner_all);
+	CHECK(!failed.ok());
+	CHECK_THAT(failed.error, ContainsSubstring("Ramp.wav"));
+	CHECK(gnubase::test::readText(file) == before);
+	CHECK(!fs::exists(fs::u8path(file.u8string() + ".saving")));
+}
+#endif
+
 TEST_CASE("freeze files of the same name, also in another case, keep apart in the project file", "[integration]")
 {
 	Session project;
@@ -902,6 +930,232 @@ TEST_CASE("render in place puts what a track plays on a new audio track", "[inte
 		CHECK(copy.at("slot").at("id") != gain);
 		CHECK(copy.at("slot").at("plugin") == "builtin:gainPan");
 	}
+}
+
+TEST_CASE("render in place separates events or combines adjacent blocks on one destination track", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	const Json initial = run(project.client, "project.get").at("audioEvents").at(0).at("id");
+	run(project.client, "audioEvent.set", {{"event", initial}, {"length", 1000}});
+	for (const int64_t position : {2000, 5000})
+		run(project.client, "audioEvent.add",
+			{{"track", source.track}, {"clip", project.clip}, {"position", position}, {"length", 1000}});
+	const std::string mode = GENERATE("separateEvents", "blockEvents", "oneEvent");
+	const Json rendered = run(project.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"mode", mode}, {"sourceTracks", "disable"}});
+	REQUIRE(rendered.at("tracks").size() == 1);
+	std::vector<int64_t> expectedPositions{1000};
+	if (mode == "separateEvents")
+		expectedPositions = {1000, 2000, 5000};
+	else if (mode == "blockEvents")
+		expectedPositions = {1000, 5000};
+	const size_t count = expectedPositions.size();
+	REQUIRE(rendered.at("events").size() == count);
+	REQUIRE(rendered.at("media").size() == count);
+	const Json state = run(project.client, "project.get");
+	std::vector<int64_t> positions;
+	for (const auto& event : state.at("audioEvents"))
+		if (event.at("track") == rendered.at("tracks").at(0))
+			positions.push_back(event.at("position").get<int64_t>());
+	CHECK(positions == expectedPositions);
+	std::set<std::string> paths;
+	for (const auto& media : state.at("media"))
+		if (std::find(rendered.at("media").begin(), rendered.at("media").end(), media.at("id")) !=
+			rendered.at("media").end())
+		{
+			paths.insert(media.at("path").get<std::string>());
+			const auto samples = samplesOf(media.at("path").get<std::string>());
+			CHECK(samples.front() == 1.0f / 8192.0f);
+			size_t expectedLength = 1000;
+			if (mode == "oneEvent")
+				expectedLength = 5000;
+			else if (mode == "blockEvents" && media.at("id") == rendered.at("media").at(0))
+				expectedLength = 2000;
+			CHECK(samples.size() == expectedLength);
+		}
+	CHECK(paths.size() == count);
+	CHECK(project.track(source.track).at("enabled") == false);
+	run(project.client, "history.undo");
+	CHECK(run(project.client, "project.get").at("tracks").size() == 1);
+	CHECK(project.track(source.track).at("enabled") == true);
+	run(project.client, "history.redo");
+	CHECK(run(project.client, "project.get").at("tracks").size() == 2);
+}
+
+TEST_CASE("render in place renders only selected audio events even under an overlapping event", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	const Json selected = run(project.client, "project.get").at("audioEvents").at(0).at("id");
+	run(project.client, "audioEvent.add",
+		{{"track", source.track}, {"clip", project.clip}, {"position", 1000}, {"offset", 2000}, {"length", 1000}});
+	const Json rendered = run(project.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"events", {selected}}, {"start", 1000}, {"end", 2000}});
+	const Json state = run(project.client, "project.get");
+	for (const auto& media : state.at("media"))
+		if (media.at("id") == rendered.at("media").at(0))
+		{
+			const auto samples = samplesOf(media.at("path").get<std::string>());
+			REQUIRE(samples.size() == 1000);
+			CHECK(samples.front() == 1.0f / 8192.0f);
+			CHECK(samples.back() == 1000.0f / 8192.0f);
+		}
+	CHECK(state.at("audioEvents").size() == 3);
+}
+
+TEST_CASE("render in place rejects invalid event selections without starting a job", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	const auto other = project.addTrack("Other", 1);
+	const Json selected = run(project.client, "project.get").at("audioEvents").at(0).at("id");
+	for (const Json& events : {Json::array(), Json::array({999999}), Json::array({selected, selected})})
+		CHECK(!project.client.call("track.renderInPlace", {{"tracks", {source.track}}, {"events", events}}).ok());
+	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {other.track}}, {"events", {selected}}}),
+		ContainsSubstring("selected tracks"));
+	CHECK(run(project.client, "track.renderLocks").at("locks").empty());
+}
+
+TEST_CASE("render in place isolates selected MIDI parts and uses their whole boundaries", "[integration]")
+{
+	Session project;
+	const auto synth = project.addSynth();
+	const Json part = run(project.client, "project.get").at("midiParts").at(0).at("id");
+	const Json expected = run(project.client, "track.renderInPlace",
+		{{"tracks", {synth.track}}, {"events", {part}}, {"mode", "separateEvents"}});
+	std::vector<float> original;
+	const Json before = run(project.client, "project.get");
+	for (const auto& media : before.at("media"))
+		if (media.at("id") == expected.at("media").at(0))
+			original = samplesOf(media.at("path").get<std::string>());
+	REQUIRE(original.size() == size_t{48000} * 2);
+	run(project.client, "history.undo");
+	const Json other = run(project.client, "midiPart.add", {{"track", synth.track}, {"position", 0}, {"length", 48000}})
+						   .at("part")
+						   .at("id");
+	run(project.client, "note.add",
+		{{"part", other}, {"notes", {{{"position", 0}, {"length", 1720320}, {"pitch", 36}, {"velocity", 1.0}}}}});
+	const Json rendered = run(project.client, "track.renderInPlace", {{"tracks", {synth.track}}, {"events", {part}}});
+	const Json after = run(project.client, "project.get");
+	for (const auto& media : after.at("media"))
+		if (media.at("id") == rendered.at("media").at(0))
+			CHECK(firstDifference(samplesOf(media.at("path").get<std::string>()), original) == -1);
+}
+
+TEST_CASE("separate and block renders keep the parts feeding an instrument through a MIDI send", "[integration]")
+{
+	Session project;
+	const auto synth = project.addSynth();
+	const Json midi =
+		run(project.client, "track.add", {{"type", "midi"}, {"timeBase", "linear"}, {"output", synth.channel}});
+	for (const int64_t position : {0, 24000})
+	{
+		const Json part = run(project.client, "midiPart.add",
+			{{"track", midi.at("track").at("id")}, {"position", position}, {"length", 12000}})
+							  .at("part")
+							  .at("id");
+		run(project.client, "note.add",
+			{{"part", part}, {"notes", {{{"position", 0}, {"length", 430080}, {"pitch", 36}, {"velocity", 0.9}}}}});
+	}
+	const std::string mode = GENERATE("separateEvents", "blockEvents");
+	const auto audioOf = [&](const Json& result)
+	{
+		const Json state = run(project.client, "project.get");
+		std::vector<std::vector<float>> audio;
+		for (const auto& id : result.at("media"))
+		{
+			const auto found = std::find_if(state.at("media").begin(), state.at("media").end(),
+				[&](const Json& media) { return media.at("id") == id; });
+			REQUIRE(found != state.at("media").end());
+			audio.push_back(samplesOf(found->at("path").get<std::string>()));
+			CHECK(peakOf(audio.back()) > 0.01f);
+		}
+		return audio;
+	};
+	// Direct routing provides the expected files: one per part, or one block including the overlapping send parts.
+	const Json baseline = run(project.client, "track.renderInPlace", {{"tracks", {synth.track}}, {"mode", mode}});
+	REQUIRE(baseline.at("media").size() == (mode == "separateEvents" ? size_t{3} : size_t{1}));
+	const auto expected = audioOf(baseline);
+	run(project.client, "history.undo");
+	run(project.client, "channel.set",
+		{{"channel", midi.at("channel").at("id")}, {"output", 0},
+			{"midiSends",
+				{{"slots",
+					{{{"effect", "transformer"}, {"parameters", {{"value", 0}}}, {"output", synth.channel}}}}}}});
+	const Json rendered = run(project.client, "track.renderInPlace", {{"tracks", {synth.track}}, {"mode", mode}});
+	REQUIRE(rendered.at("tracks").size() == 1);
+	const auto actual = audioOf(rendered);
+	REQUIRE(actual.size() == expected.size());
+	for (size_t i = 0; i < expected.size(); ++i)
+		CHECK(firstDifference(actual[i], expected[i]) == -1);
+}
+
+TEST_CASE("separate renders exclude later events from their tail and remove each source once", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	const Json first = run(project.client, "project.get").at("audioEvents").at(0).at("id");
+	run(project.client, "audioEvent.set", {{"event", first}, {"length", 1000}});
+	run(project.client, "audioEvent.add",
+		{{"track", source.track}, {"clip", project.clip}, {"position", 3000}, {"length", 1000}});
+	const Json rendered = run(project.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"mode", "separateEvents"}, {"tail", 0.1}, {"sourceTracks", "remove"}});
+	REQUIRE(rendered.at("tracks").size() == 1);
+	REQUIRE(rendered.at("media").size() == 2);
+	const Json state = run(project.client, "project.get");
+	CHECK(state.at("tracks").size() == 1);
+	for (const auto& media : state.at("media"))
+		if (media.at("id") == rendered.at("media").at(0))
+			CHECK(samplesOf(media.at("path").get<std::string>()).size() == 1000);
+	run(project.client, "history.undo");
+	CHECK(project.track(source.track).at("name") == "Mono");
+}
+
+TEST_CASE("separate dry renders copy the source effects once and preserve the track's audio", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	run(project.client, "audioEvent.add",
+		{{"track", source.track}, {"clip", project.clip}, {"position", 10000}, {"length", 1000}});
+	project.insertGain(source.channel, -6.0);
+	const auto expected = project.mainMix();
+	const Json rendered = run(project.client, "track.renderInPlace",
+		{{"tracks", {source.track}}, {"mode", "separateEvents"}, {"processing", "dry"}, {"sourceTracks", "remove"}});
+	REQUIRE(rendered.at("tracks").size() == 1);
+	REQUIRE(rendered.at("events").size() == 2);
+	const Json state = run(project.client, "project.get");
+	REQUIRE(state.at("channels").size() == 1);
+	CHECK(state.at("slots").size() == 1);
+	project.activate({state.at("channels").at(0).at("id").get<ObjectId>()});
+	CHECK(firstDifference(project.mainMix(), expected) == -1);
+}
+
+TEST_CASE("a failed second event render removes the first file and releases every lock", "[integration]")
+{
+	Session project;
+	const auto source = project.addTrack("Mono", 1);
+	run(project.client, "audioEvent.add",
+		{{"track", source.track}, {"clip", project.clip}, {"position", 10000}, {"length", 1000}});
+	project.insertGain(source.channel, -6.0);
+	const auto made = std::make_shared<std::atomic<int>>(0);
+	project.engine.setRenderPluginFactory(
+		[made](const std::string& plugin, uint32_t channels,
+			gnubase::plugin::Host& host) -> std::unique_ptr<gnubase::plugin::Plugin>
+		{
+			if (++*made == 2)
+				return nullptr;
+			return processors::BuiltinFactory(channels).create(plugin, host);
+		});
+	const Json before = run(project.client, "project.get");
+	const Json history = run(project.client, "history.get");
+	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {source.track}}, {"mode", "separateEvents"}}),
+		ContainsSubstring("plugin"));
+	CHECK(made->load() == 2);
+	CHECK(run(project.client, "project.get") == before);
+	CHECK(run(project.client, "history.get") == history);
+	CHECK(run(project.client, "track.renderLocks").at("locks").empty());
+	CHECK(fs::directory_iterator(project.media.path() / "Audio") == fs::directory_iterator());
 }
 
 TEST_CASE("a rendered event under a transpose event is independent of it", "[integration]")

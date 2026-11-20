@@ -105,7 +105,8 @@ namespace gnubase::ui
 		std::string files;
 		for (const Json& path : *found)
 			files += (files.empty() ? "" : ", ") + path.get<std::string>();
-		return "The file was saved without the media files that are missing; it refers to them where they were: " +
+		return "The file was saved without the media and freeze files that are missing; it refers to them where they "
+			   "were: " +
 			files + ".";
 	}
 
