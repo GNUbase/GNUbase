@@ -15,9 +15,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -148,6 +150,31 @@ namespace
 		FAIL_CHECK("no " << id);
 		return {};
 	}
+
+	// Makes the temporary folder folder while it lives, as testrun_tempfolder.cpp does for the whole run.
+	class TempFolderAt
+	{
+	public:
+		explicit TempFolderAt(const fs::path& folder) : m_previous(fs::temp_directory_path()) { set(folder); }
+		~TempFolderAt() { set(m_previous); }
+		TempFolderAt(const TempFolderAt&) = delete;
+		TempFolderAt& operator=(const TempFolderAt&) = delete;
+		TempFolderAt(TempFolderAt&&) = delete;
+		TempFolderAt& operator=(TempFolderAt&&) = delete;
+
+	private:
+		static void set(const fs::path& folder)
+		{
+#ifdef _WIN32
+			_wputenv_s(L"TMP", folder.c_str());
+			_wputenv_s(L"TEMP", folder.c_str());
+#else
+			setenv("TMPDIR", folder.c_str(), 1);
+#endif
+		}
+
+		fs::path m_previous;
+	};
 
 	// An engine with a saved project, so that imports can copy and convert into its media folder.
 	struct SavedProject
@@ -406,8 +433,7 @@ TEST_CASE("audioFile.import converts MP3 and Ogg Vorbis files of an unsaved proj
 	CHECK(run(client, "project.get") == empty);
 	CHECK(!fs::exists(recordings / "sine440.wav"));
 
-	// Like the recordings of an unsaved project, they go into Recordings in the settings folder and are referenced
-	// from there, also once the project is saved.
+	// Like the recordings of an unsaved project, they go into Recordings in the settings folder.
 	const Json result = run(client, "audioFile.import", {{"files", files}, {"oneTrack", true}});
 	const Json project = run(client, "project.get");
 	const std::vector<std::string> names{"sine440.wav", "sine440-2.wav"};
@@ -423,20 +449,45 @@ TEST_CASE("audioFile.import converts MP3 and Ogg Vorbis files of an unsaved proj
 
 	const fs::path folder = dir.path() / "project";
 	fs::create_directories(folder);
-	run(client, "project.save", {{"path", utf8(folder / "Song.dawproject")}, {"embedMedia", false}});
-	CHECK(
-		byId(run(client, "project.get").at("media"), result.at("media")[0]).at("path") == utf8(recordings / names[0]));
-
-	// media.prepareArchive brings them into the project's media folder; the files in Recordings stay.
-	const Json prepared = run(client, "media.prepareArchive");
-	REQUIRE(waitForJob(client, prepared.at("job").at("id").get<uint64_t>()).at("state") == "done");
-	const Json archived = run(client, "project.get");
+	// The first save copies them into the project's media folder with a job and points the media at the copies as
+	// an undo step of its own (reference manual p. 360); the file from outside stays where it is.
+	const Json saved = run(client, "project.save", {{"path", utf8(folder / "Song.dawproject")}, {"embedMedia", false}});
+	REQUIRE(saved.at("job").is_object());
+	CHECK(saved.at("job").at("kind") == "project.save");
+	const Json job = waitForJob(client, saved.at("job").at("id").get<uint64_t>());
+	REQUIRE(job.at("state") == "done");
+	CHECK(job.at("result").at("copied").size() == 2);
+	const Json moved = run(client, "project.get");
 	for (size_t i = 0; i < names.size(); ++i)
 	{
 		INFO(names[i]);
-		CHECK(byId(archived.at("media"), result.at("media")[i]).at("path") == utf8(folder / "Audio" / names[i]));
-		CHECK(fs::exists(recordings / names[i]));
+		CHECK(byId(moved.at("media"), result.at("media")[i]).at("path") == utf8(folder / "Audio" / names[i]));
 	}
+	CHECK(byId(moved.at("media"), result.at("media")[2]).at("path") == files[2]);
+	CHECK(run(client, "history.get").at("steps").back().at("action") == "Copy recordings into the project");
+	run(client, "history.undo");
+	CHECK(
+		byId(run(client, "project.get").at("media"), result.at("media")[0]).at("path") == utf8(recordings / names[0]));
+	run(client, "history.redo");
+
+	// Saving again, also as another file, copies nothing: the files are the project's now.
+	CHECK(run(client, "project.save").at("job").is_null());
+	CHECK(run(client, "project.save", {{"path", utf8(folder / "Copy.dawproject")}}).at("job").is_null());
+}
+
+TEST_CASE("audioFile.import refuses MP3 files of an unsaved project without a folder to convert them into (#611)",
+	"[integration]")
+{
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "not a folder";
+	REQUIRE(std::ofstream(file) << "a file");
+	const TempFolderAt temporary(file); // and there is no settings folder
+	Engine engine;
+	Client client(engine);
+	const Json before = run(client, "project.get");
+	CHECK_THAT(
+		reject(client, "audioFile.import", {{"files", {dataFile("sine440.mp3")}}}), ContainsSubstring("no folder"));
+	CHECK(run(client, "project.get") == before);
 }
 
 TEST_CASE("audioFile.import splits channels into mono files on tracks of their own", "[integration]")

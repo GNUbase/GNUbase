@@ -39,7 +39,9 @@ transport's record state and the record mode setting.
   whatever its case and extension: `CON_.wav`, `lpt1_.take.wav`), into the project's media folder `Audio`; an unsaved
   project records into `Recordings` in the settings folder (the temporary folder without one; `unsavedMediaFolder`,
   where its imported MP3 and Ogg Vorbis files are converted too, [file-import.md](file-import.md)), and its files are
-  referenced from there. A name that differs only in case from a file in the folder, or from another track's, counts as
+  referenced from there until it is saved: `project.save` then copies them into its media folder as a job and points
+  the media at the copies as an undo step of its own (#611). Without a settings and a temporary folder the recording
+  fails with `recording.failed` and writes no file. A name that differs only in case from a file in the folder, or from another track's, counts as
   taken on every file system, also on those that tell them apart, so that the files can be copied to one that doesn't
   (`createFreeFile`). One listing of the folder when a recording starts finds the free names of all tracks; a file made
   after it is still found when the file is created, and a file whose name can't be read as text (an invalid UTF-16 name

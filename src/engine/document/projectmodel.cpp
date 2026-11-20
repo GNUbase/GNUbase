@@ -4147,6 +4147,8 @@ namespace gnubase::engine
 				"processed in. object is the bus, channel or slot id.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
+		Json saveJob = Jobs::schema();
+		saveJob["type"] = {"object", "null"};
 		addControl(engine,
 			{"project.save", 1,
 				"Saves the project as a DAWproject file: as path, which is then the project's file (save as), or "
@@ -4154,10 +4156,16 @@ namespace gnubase::engine
 				"into it unless embedMedia is false; then the file refers to them where they are, relative to itself "
 				"if they are in its folder. One that is missing is referred to by its absolute path, so that the file "
 				"has no copy of it: the result lists them (missing). The file becomes the first of the recent "
-				"projects (project.recent).",
+				"projects (project.recent). Media files in the folder where a project without a file records and "
+				"converts imported files to, as after the first save of such a project, are then copied into the "
+				"media folder as a job, returned as job (null without one) with the result media.prepareArchive's "
+				"job has; the media are pointed at the copies as an undo step of its own, which the next save "
+				"keeps.",
 				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}),
-				objectSchema({{"missing", {{"type", "array"}, {"items", stringSchema}}}}, {"missing"}), false},
-			[this](CommandContext& context)
+				objectSchema(
+					{{"missing", {{"type", "array"}, {"items", stringSchema}}}, {"job", saveJob}}, {"missing", "job"}),
+				false},
+			[this, &jobs](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				DawProjectSaveOptions options;
@@ -4175,7 +4183,19 @@ namespace gnubase::engine
 					throw CommandError(error.what());
 				}
 				saved(std::filesystem::absolute(std::filesystem::u8path(path)).u8string(), context);
-				return Json{{"missing", missing}};
+				// What the project recorded and converted while it had no file goes into its media folder (reference
+				// manual p. 360), as media.prepareArchive does it.
+				std::vector<MediaCopy> recordings;
+				if (const std::filesystem::path unsaved = unsavedMediaFolder(m_settingsDirectory); !unsaved.empty())
+					for (const auto& [id, media] : m_project.media)
+						if (isInside(media.path, unsaved))
+							recordings.push_back({id, media.path, {}});
+				Json job = nullptr;
+				if (!recordings.empty())
+					job = startMediaCopy(jobs, "project.save", std::move(recordings),
+						mediaFolderFor(std::filesystem::u8path(m_file)), "Copy recordings into the project",
+						m_openedRevision);
+				return Json{{"missing", missing}, {"job", std::move(job)}};
 			});
 		addControl(engine,
 			{"project.load", 1,
