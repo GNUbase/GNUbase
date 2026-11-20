@@ -41,8 +41,9 @@ signature map itself, which converts between ticks and bars and beats, is the ti
   sets the signature typed, such as "7/8"; a press elsewhere in the row closes it, and a press on empty space with the
   select tool deselects the events. The project window selects events, markers, a range or time signature events, one
   of them at a time: selecting one deselects the others or ends the range, so Backspace and Delete (`edit.delete`)
-  remove what was selected last. A lane that isn't shown, such as without the signature track, has none selected. A drag or a signature the engine refuses, such as a move onto a bar
-  that has an event, shows why in the event display's `#edit-refused` (`EventDisplay::showRefusal`).
+  remove what was selected last. A lane that isn't shown, such as without the signature track, has none selected. A
+  drag or a signature the engine refuses, such as a move onto a bar that has an event, shows why in the event
+  display's `#edit-refused` (`EventDisplay::showRefusal`).
 - **Insert Time Signature Event** (p. 1469): the UI command `signature.insertAtCursor`, without a key until the user
   gives it one, opens `resources/ui/insert-signature.rml` with the signature at the project cursor; OK adds a time
   signature event with the numerator and denominator typed at the bar the cursor is in (`signature.add` with `bar:
@@ -57,15 +58,17 @@ signature map itself, which converts between ticks and bars and beats, is the ti
 - Lengths in bars and beats, such as the info line's, count the bars from their start: two bars from the third beat
   of a 4/4 bar before a 3/4 bar end on the third beat of the bar after it.
 - Project > Add Track has a Signature page. The track list leaves the signature track out of Duplicate Tracks, Move
-  Selected Tracks to New Folder and drags into folders, and shows its Lock (`signatureLock`, `.checked` while on, in
-  the user setting `ui.trackControls`). Remove Empty Tracks, the engine
+  Selected Tracks to New Folder and drags into folders, and shows its Lock (`signatureLock`, `.checked` while on) and
+  Signature Track Options (pp. 163-164, `signatureOptions`), a list whose Process Bars Dialog opens Process Bars
+  ([time-warp.md](time-warp.md)), both in the user setting `ui.trackControls`. Remove Empty Tracks, the engine
   command `track.removeEmpty`, never removes it.
 
 ## Not yet
 
-Click patterns and the click itself (the metronome, #101, whose golden test covers signature changes), with the
-signature track's options for them (p. 163), its Inspector list (p. 183) and signature events in the middle of a
-bar.
+The signature track's options for click patterns (pp. 163-164: copying, pasting, applying and resetting them, Show Click
+Patterns and rendering the click between the locators), which need click patterns per time signature event rather
+than per signature ([metronome.md](metronome.md), #101); its Inspector list (p. 183) and signature events in the
+middle of a bar.
 
 ## Tests
 
@@ -77,5 +80,5 @@ the signature track's lane with clicks that add, edit, move and erase events, an
 signature display with its info line, draw tool and Delete, the project window's lane with Delete, Backspace, a press
 on empty space and a refused drag, the tempo track editor's refused drag, the time signature events, markers and
 range selected one at a time and a hidden lane without a selection, the bars in the lane's background, and Insert
-Time Signature Event. `tests/timeformat_tests.cpp`: lengths in bars across
-signature changes. `tests/tracklist_tests.cpp`: the track list's commands leaving the signature track out, and its Lock.
+Time Signature Event. `tests/timeformat_tests.cpp`: lengths in bars across signature changes.
+`tests/tracklist_tests.cpp`: the track list's commands leaving the signature track out, its Lock and its options.

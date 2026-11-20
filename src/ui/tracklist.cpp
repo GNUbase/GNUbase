@@ -200,9 +200,10 @@ namespace gnubase::ui
 				return type == "transpose" && (transposeControl(control) || control == "timeBase");
 			if (type == "chord" || chordControl(control))
 				return type == "chord" && (chordControl(control) || control == "timeBase");
-			// The signature track's Lock (reference manual p. 163).
-			if (type == "signature" || control == "signatureLock")
-				return type == "signature" && control == "signatureLock";
+			// The signature track's Lock and Signature Track Options (reference manual pp. 163-164).
+			const bool signatureControl = control == "signatureLock" || control == "signatureOptions";
+			if (type == "signature" || signatureControl)
+				return type == "signature" && signatureControl;
 			if (!hasChannel)
 				return control == "timeBase" && type != "folder" && type != "ruler" && type != "signature";
 			if (control == "record" || control == "monitor")
@@ -236,6 +237,9 @@ namespace gnubase::ui
 			if (control == "setTimeOffset")
 				return R"(<button class="set-time-offset" control="setTimeOffset" keepselection="" )"
 					   R"(title="Set Time Offset to Project Cursor Position">C</button>)";
+			if (control == "signatureOptions")
+				return R"(<select class="signature-options" control="signatureOptions" )"
+					   R"(title="Signature Track Options"/>)";
 			if (markerMenu(control))
 				return R"(<select class="marker-menu" control=")" + control + R"(" title=")" + markerMenuName(control) +
 					R"("/>)";
@@ -1170,6 +1174,13 @@ namespace gnubase::ui
 					widgets::fill(*button, markerOptions(markers, row.id, name), "");
 					continue;
 				}
+				if (name == "signatureOptions")
+				{
+					// Process Bars Dialog; the click pattern options wait for patterns per time signature event
+					// (docs/features/metronome.md).
+					widgets::fill(*button, {{"", "Options"}, {"processBars", "Process Bars Dialog"}}, "");
+					continue;
+				}
 				if (name == "midiChannel")
 				{
 					widgets::Options channels{{"any", "Any"}};
@@ -1817,6 +1828,7 @@ namespace gnubase::ui
 				rulerChange(*target, event.GetParameter<Rml::String>("value", ""));
 				midiChannelChange(*target, event.GetParameter<Rml::String>("value", ""));
 				markerChange(*target, event.GetParameter<Rml::String>("value", ""));
+				signatureOption(*target, event.GetParameter<Rml::String>("value", ""));
 				// Select Track for Auditioning.
 				const Json& project = m_display.project();
 				const auto audition = static_cast<uint64_t>(
@@ -1881,7 +1893,8 @@ namespace gnubase::ui
 	void TrackList::control(
 		Rml::Element& button, const Row& row, const std::string& name, bool exclusive, bool defeat, bool shift)
 	{
-		if (name == "currentTempo" || name == "tempoType" || name == "midiChannel" || markerMenu(name))
+		if (name == "currentTempo" || name == "tempoType" || name == "midiChannel" || name == "signatureOptions" ||
+			markerMenu(name))
 			return; // fields and lists, which change
 		if (name == "addPositionMarker")
 		{
@@ -2039,6 +2052,16 @@ namespace gnubase::ui
 				if (item.id == marker)
 					m_display.zoomTo(item.start, item.end);
 		}
+	}
+
+	void TrackList::signatureOption(Rml::Element& control, const std::string& value)
+	{
+		if (control.GetAttribute<Rml::String>("control", "") != "signatureOptions" || value.empty())
+			return;
+		if (auto* list = dynamic_cast<Rml::ElementFormControl*>(&control))
+			list->SetValue(""); // so that the same option can be chosen again, as in the marker tracks' lists
+		if (value == "processBars")
+			m_display.actions().at("tempo.openProcessBars")();
 	}
 
 	void TrackList::midiChannelChange(Rml::Element& control, const std::string& value)
