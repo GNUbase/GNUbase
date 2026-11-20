@@ -973,6 +973,46 @@ TEST_CASE("range.fades fades events in to or out from a range's edges, and adjus
 	CHECK(!client.call("range.fades", {{"start", 2000}, {"end", 3000}, {"fade", "sideways"}}).ok());
 }
 
+TEST_CASE("range.fades crossfades the events a range crosses, fits crossfades to it and removes them", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId other = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 20000, one));
+	const ObjectId a = session.addEvent(track, clip, 0, 3000);    // 0 to 3000
+	const ObjectId b = session.addEvent(track, clip, 2000, 3000); // 2000 to 5000
+	const ObjectId c = session.addEvent(other, clip, 0, 3000);
+	const ObjectId d = session.addEvent(other, clip, 2000, 3000);
+	const auto crossfade = [&client](ObjectId id) { return eventOf(client, id).at("crossfade"); };
+
+	// Crossfade (reference manual p. 388): the events the range crosses on its tracks, as event.crossfade does it.
+	CHECK(run(client, "range.fades", {{"start", 2200}, {"end", 2800}, {"tracks", {track}}, {"fade", "crossfade"}})
+			  .at("events") == Json{b});
+	CHECK(crossfadeFrom(client, b) == a);
+	CHECK(crossfadeFrom(client, d) == 0);
+	run(client, "event.crossfade", {{"events", {c, d}}});
+
+	// Adjust Fades to Range on a crossfade (p. 389): its fade in to the range's end, its fade out from its start; the
+	// events' own fades stay.
+	run(client, "audioEvent.setFades", {{"event", b}, {"fadeIn", {{"length", 100}}}});
+	CHECK(run(client, "range.fades", {{"start", 2200}, {"end", 2600}, {"tracks", {track}}, {"fade", "adjust"}})
+			  .at("events") == Json{b});
+	CHECK(crossfade(b).at("length") == 600);
+	CHECK(crossfade(b).at("outLength") == 800);
+	CHECK(fadeLengths(client, b) == Lengths{100, 0});
+	CHECK(fadeLengths(client, a) == Lengths{0, 0});
+	CHECK(crossfade(d).at("length") == 0);
+
+	// Remove Fades on a range (p. 396): the crossfades that play in it.
+	CHECK(run(client, "range.fades", {{"start", 2500}, {"end", 4000}, {"fade", "remove"}}).at("events") == Json{b, d});
+	CHECK(crossfade(b).is_null());
+	CHECK(crossfade(d).is_null());
+	CHECK_THAT(reject(client, "range.fades", {{"start", 2500}, {"end", 4000}, {"fade", "remove"}}),
+		ContainsSubstring("no crossfade"));
+}
+
 TEST_CASE("event.crossfade joins selected events with the overlapping ones next to them", "[unit]")
 {
 	const gnubase::test::TempDir dir;

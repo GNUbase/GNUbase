@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -222,6 +223,22 @@ namespace gnubase::engine
 
 		// The Fades menu's range functions (reference manual pp. 384-385, 388): fade in to the range's start or
 		// from its end, fade out from its end or start, or both to fit it.
+		Json crossfade(Project& project, std::vector<ObjectId> given, CommandContext& context);
+
+		// The crossfades that play on the tracks (all with none) where their events overlap within start to end.
+		std::vector<AudioEvent*> crossfadesIn(
+			Project& project, const std::vector<ObjectId>& tracks, time::Samples start, time::Samples end)
+		{
+			std::vector<AudioEvent*> found;
+			for (auto& [id, to] : project.audioEvents)
+				if ((tracks.empty() || std::find(tracks.begin(), tracks.end(), to.track) != tracks.end()) &&
+					crossfadeApplies(project, to) &&
+					start < eventSpan(project, project.audioEvents.at(to.crossfade.from)).end &&
+					end > eventSpan(project, to).start)
+					found.push_back(&to);
+			return found;
+		}
+
 		Json fadesToRange(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -234,10 +251,54 @@ namespace gnubase::engine
 			std::vector<ObjectId> tracks;
 			if (parameters.contains("tracks"))
 				tracks = parameters.at("tracks").get<std::vector<ObjectId>>();
+			const auto onTracks = [&tracks](const AudioEvent& event)
+			{ return tracks.empty() || std::find(tracks.begin(), tracks.end(), event.track) != tracks.end(); };
 			Json events = Json::array();
+			if (kind == "crossfade")
+			{
+				std::vector<ObjectId> crossing;
+				for (const auto& [id, event] : project.audioEvents)
+					if (const EventSpan span = eventSpan(project, event);
+						onTracks(event) && start < span.end && end > span.start)
+						crossing.push_back(id);
+				require(!crossing.empty(), "no audio event on the range's tracks crosses the range");
+				return crossfade(project, crossing, context);
+			}
+			// A crossfade that plays in the range: removed, or fitted to it, its fade in up to the range's end and
+			// its fade out from its start, instead of its events' own fades.
+			std::set<ObjectId> crossfaded;
+			for (AudioEvent* to : crossfadesIn(project, tracks, start, end))
+			{
+				const AudioEvent& from = project.audioEvents.at(to->crossfade.from);
+				if (kind == "remove")
+				{
+					to->crossfade = Crossfade();
+				}
+				else if (kind == "adjust")
+				{
+					const EventSpan in = eventSpan(project, *to);
+					const EventSpan out = eventSpan(project, from);
+					to->crossfade.length = std::max<time::Samples>(
+						1, std::llround(static_cast<double>(std::min(end, out.end) - in.start) / in.ratio));
+					to->crossfade.outLength = std::max<time::Samples>(
+						1, std::llround(static_cast<double>(out.end - std::max(start, in.start)) / out.ratio));
+				}
+				else
+				{
+					continue;
+				}
+				crossfaded.insert({to->id, from.id});
+				changed(*to, context);
+				events.push_back(to->id);
+			}
+			if (kind == "remove")
+			{
+				require(!events.empty(), "no crossfade plays in the range");
+				return {{"events", events}};
+			}
 			for (auto& [id, event] : project.audioEvents)
 			{
-				if (!tracks.empty() && std::find(tracks.begin(), tracks.end(), event.track) == tracks.end())
+				if (!onTracks(event) || crossfaded.count(id) != 0)
 					continue;
 				const EventSpan span = eventSpan(project, event);
 				const bool coversStart = start <= span.start;
@@ -279,9 +340,8 @@ namespace gnubase::engine
 
 		// Crossfade (reference manual p. 388): each event given with the events next to it on its track that it
 		// overlaps, as crossfade.set does it with the default settings; crossfades there already stay.
-		Json crossfadeEvents(Project& project, CommandContext& context)
+		Json crossfade(Project& project, std::vector<ObjectId> given, CommandContext& context)
 		{
-			std::vector<ObjectId> given = context.parameters().at("events").get<std::vector<ObjectId>>();
 			for (const ObjectId id : given)
 				audioEvent(project, id);
 			std::sort(given.begin(), given.end());
@@ -326,6 +386,11 @@ namespace gnubase::engine
 			require(!events.empty(), "the events don't overlap an event next to them on their track");
 			std::sort(events.begin(), events.end());
 			return {{"events", events}};
+		}
+
+		Json crossfadeEvents(Project& project, CommandContext& context)
+		{
+			return crossfade(project, context.parameters().at("events").get<std::vector<ObjectId>>(), context);
 		}
 
 		// Remove Fade In, Remove Fade Out and Remove Fades (reference manual pp. 385, 395).
@@ -534,10 +599,14 @@ namespace gnubase::engine
 				"event's start to the range's start, or to its end where the range covers the event's start. out "
 				"(Fade Out from Range End): fades out from the range's end to the event's end, or from its start where "
 				"the range covers the event's end. adjust (Adjust Fades to Range): the fades at the edges of the event "
-				"that the range covers, both when the range is inside it. Shapes stay; a fade that no longer fits next "
-				"to the one set gets shorter. Returns the events changed.",
+				"that the range covers, both when the range is inside it; a crossfade that plays where its events "
+				"overlap within the range instead gets its fade in up to the range's end and its fade out from the "
+				"range's start, and its events' own fades stay. Shapes stay; a fade that no longer fits next to the "
+				"one set gets shorter. crossfade (Crossfade): the events that cross the range, as event.crossfade "
+				"does it with them. remove (Remove Fades): the crossfades that play within the range. Returns the "
+				"events changed, for crossfade and remove those that fade in.",
 				object({{"start", integer}, {"end", integer}, {"tracks", ids},
-						   {"fade", {{"type", "string"}, {"enum", {"in", "out", "adjust"}}}}},
+						   {"fade", {{"type", "string"}, {"enum", {"in", "out", "adjust", "crossfade", "remove"}}}}},
 					{"start", "end", "fade"}),
 				eventsResult, false},
 			"Fades to Range", fadesToRange);

@@ -2608,6 +2608,15 @@ TEST_CASE("the Fades menu's commands fade to the range, crossfade and remove fad
 	f.run("audio.removeFades");
 	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 0; }));
 	CHECK(fadeLength(f.audioEvents()[0], "fadeOut") == 0);
+
+	// With a selection range, Crossfade crossfades the events it crosses and Remove Fades removes the crossfades in it
+	// (reference manual pp. 388, 396).
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{115200, 120000, {track}});
+	f.run("audio.crossfade");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[1].at("crossfade").is_object(); }));
+	f.run("audio.removeFades");
+	CHECK(f.waitUntil([&f] { return f.audioEvents()[1].at("crossfade").is_null(); }));
 }
 
 TEST_CASE("fade lines move with the events a drag moves", "[unit]")

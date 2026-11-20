@@ -235,18 +235,19 @@ namespace gnubase::ui
 
 	bool EventDisplay::openSelectedCrossfade()
 	{
-		// A crossfade that plays between two selected events, as showFades has it: not one from or to an event that
-		// isn't selected, nor one that rests.
+		// A crossfade that plays (as showFades has it) between two selected events, or into or out of the one selected
+		// (reference manual p. 389): not one with another neighbour of a selected event, nor one that rests.
 		std::map<uint64_t, const Shown*> shown;
 		for (const Shown& event : m_events)
 			shown[event.id] = &event;
-		const auto selected = [this](uint64_t id)
-		{ return std::binary_search(m_selection.begin(), m_selection.end(), id) && m_fades.count(id) != 0; };
+		const std::vector<uint64_t> audio = selectedAudio();
+		const auto selected = [&audio](uint64_t id) { return std::binary_search(audio.begin(), audio.end(), id); };
 		for (const auto& [to, fades] : m_fades)
 		{
 			const auto from = shown.find(fades.crossfade.from);
 			const auto into = shown.find(to);
-			if (from == shown.end() || into == shown.end() || !selected(from->first) || !selected(to))
+			if (from == shown.end() || into == shown.end() ||
+				!(audio.size() == 1 ? selected(from->first) || selected(to) : selected(from->first) && selected(to)))
 				continue;
 			const Shown& out = *from->second;
 			const Shown& in = *into->second;
@@ -303,20 +304,23 @@ namespace gnubase::ui
 
 	void EventDisplay::addFadeActions()
 	{
-		const auto toRange = [this](const char* fade)
+		// range.fades on the selection range, if there is one.
+		const auto onRange = [this](const char* fade)
 		{
-			return [this, fade]
-			{
-				if (m_range && m_range->end > m_range->start)
-					edit("range.fades",
-						{{"start", m_range->start}, {"end", m_range->end}, {"tracks", m_range->tracks},
-							{"fade", fade}});
-			};
+			if (!m_range || m_range->end <= m_range->start)
+				return false;
+			edit("range.fades",
+				{{"start", m_range->start}, {"end", m_range->end}, {"tracks", m_range->tracks}, {"fade", fade}});
+			return true;
 		};
-		const auto remove = [this](bool in, bool out)
+		const auto toRange = [onRange](const char* fade) { return [onRange, fade] { onRange(fade); }; };
+		// Remove Fades on a selection range removes the crossfades in it (reference manual p. 396).
+		const auto remove = [this, onRange](bool in, bool out)
 		{
-			return [this, in, out]
+			return [this, in, out, onRange]
 			{
+				if (in && out && onRange("remove"))
+					return;
 				if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
 					edit("event.removeFades", {{"events", events}, {"fadeIn", in}, {"fadeOut", out}});
 			};
@@ -370,13 +374,13 @@ namespace gnubase::ui
 					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
 						edit("event.unstretch", {{"events", events}});
 				}},
-			// Crossfade (reference manual pp. 388-389): crossfades the selected events, or opens the crossfade editor
-			// for the crossfade that one of them has.
+			// Crossfade (reference manual pp. 388-389): crossfades the events a selection range crosses, or the
+			// selected events, or opens the crossfade editor for the crossfade between them.
 			{"audio.crossfade",
-				[this]
+				[this, onRange]
 				{
 					const std::vector<uint64_t> events = selectedAudio();
-					if (!openSelectedCrossfade() && !events.empty())
+					if (!onRange("crossfade") && !openSelectedCrossfade() && !events.empty())
 						edit("event.crossfade", {{"events", events}});
 				}},
 			// The quantize panel's Open Crossfade Editor (p. 379): only the editor.

@@ -248,6 +248,11 @@ TEST_CASE("Crossfade opens the editor only for a crossfade that plays between se
 	REQUIRE(app.waitUntil([&app, third] { return eventOf(app, third).at("crossfade").is_object(); }));
 	CHECK(eventOf(app, third).at("crossfade").at("from") == events.second);
 	CHECK_FALSE(open(app, "#crossfade-editor"));
+	// The first event alone: it has one crossfade, which opens (reference manual p. 389).
+	display.select({events.first});
+	run(app, "audio.crossfade", "#crossfade-editor");
+	click(app, "#crossfade-cancel");
+	closes(app, "#crossfade-editor");
 
 	// A crossfade that rests, as the events no longer overlap, doesn't open either.
 	app.call("event.move", {{"events", {third}}, {"delta", 48000}});
