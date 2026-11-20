@@ -533,11 +533,7 @@ namespace gnubase::ui
 						}
 						else
 						{
-							// Each track once: its automation tracks' lanes have its id too (#121).
-							std::vector<uint64_t> order;
-							for (const uint64_t track : m_laneTracks)
-								if (std::find(order.begin(), order.end(), track) == order.end())
-									order.push_back(track);
+							const std::vector<uint64_t> order = shownTracks();
 							const auto edgeTrack =
 								std::find(order.begin(), order.end(), top ? range.tracks.front() : range.tracks.back());
 							if (edgeTrack == order.end() ||
@@ -925,6 +921,14 @@ namespace gnubase::ui
 		const Tool tool = toolAt(y);
 		if (scrubEdgeAt(x, y) != 0) // the play tool in scrub mode resizes at an audio event's lower corners
 			return "resize";
+		if (tool == Tool::RangeSelection && keys.find("shift") == std::string::npos)
+		{
+			const RangeEdge edge = rangeEdgeAt(x, y); // a press there drags the edge
+			if (edge == RangeEdge::Start || edge == RangeEdge::End)
+				return "resize";
+			if (edge != RangeEdge::None)
+				return "resizeVertical";
+		}
 		if (tool != Tool::ObjectSelection)
 			return toolName(tool);
 		// What a press with the object selection tool and the keys does (areaDown, areaUp).
@@ -1096,9 +1100,9 @@ namespace gnubase::ui
 				return;
 			}
 		}
-		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::RangeMove || drag == Drag::DrawPart ||
-			drag == Drag::Comp || drag == Drag::Play || drag == Drag::Click || drag == Drag::VolumePoint ||
-			drag == Drag::TimeWarp)
+		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::RangeMove || drag == Drag::RangeEdge ||
+			drag == Drag::DrawPart || drag == Drag::Comp || drag == Drag::Play || drag == Drag::Click ||
+			drag == Drag::VolumePoint || drag == Drag::TimeWarp)
 		{
 			toolUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
 				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());

@@ -2541,15 +2541,57 @@ namespace gnubase::engine
 			return added;
 		}
 
-		// range.move without copy: what lies in the range, cut at its edges, moves to at on its tracks. It keeps its
-		// ids, so that an editor open on a moved part keeps it, a crossfade between two moved events stays and a shared
-		// copy of a MIDI part stays one (one cut at an edge is a real copy, as range.split makes it). A cut gives the
-		// piece after it the new id: of what starts before the range the moved piece is new, of what starts in it and
-		// ends after it the piece that stays. A crossfade between a moved event and one that stays ends. Its audio
-		// comes in front where it lands, as range.paste puts it. The automation in the range moves as range.cut and
-		// range.paste move it. Returns what moved.
-		Json moveRange(Project& project, const Range& range, time::Samples at, CommandContext& context)
+		// The project's tracks in order without the hidden ones (trackVisibility.set), as the project window shows
+		// them, but with those of keep.
+		std::vector<ObjectId> shownTracks(const Project& project, const std::vector<ObjectId>& keep)
 		{
+			std::vector<ObjectId> order = project.trackOrder();
+			const std::vector<ObjectId> hidden = hiddenTracks(project);
+			order.erase(std::remove_if(order.begin(), order.end(), [&hidden, &keep](ObjectId id)
+							{ return !contains(keep, id) && std::binary_search(hidden.begin(), hidden.end(), id); }),
+				order.end());
+			return order;
+		}
+
+		// Where range.move puts the range's tracks for its track: the top one onto track, and each of the others as
+		// many tracks further on in the order the project window shows, so that the range keeps its shape.
+		std::vector<ObjectId> movedTracks(const Project& project, const std::vector<ObjectId>& tracks, ObjectId first)
+		{
+			require(project.trackById.count(first) != 0, "no track " + std::to_string(first));
+			require(!tracks.empty(), "the range has no tracks to move");
+			std::vector<ObjectId> keep = tracks;
+			keep.push_back(first);
+			const std::vector<ObjectId> order = shownTracks(project, keep);
+			const auto index = [&order](ObjectId id)
+			{ return std::find(order.begin(), order.end(), id) - order.begin(); };
+			const std::ptrdiff_t by = index(first) - index(tracks.front());
+			std::vector<ObjectId> moved;
+			for (const ObjectId id : tracks)
+			{
+				const std::ptrdiff_t to = index(id) + by;
+				require(to >= 0 && to < static_cast<std::ptrdiff_t>(order.size()),
+					"there aren't enough tracks from track " + std::to_string(first) + " on for the range's " +
+						std::to_string(tracks.size()) + " tracks");
+				moved.push_back(order[static_cast<size_t>(to)]);
+			}
+			return moved;
+		}
+
+		// range.move without copy: what lies in the range, cut at its edges, moves to at, from each of its tracks onto
+		// the one at the same place in onto. It keeps its ids, so that an editor open on a moved part keeps it, a
+		// crossfade between two moved events stays and a shared copy of a MIDI part stays one (one cut at an edge is a
+		// real copy, as range.split makes it). A cut gives the piece after it the new id: of what starts before the
+		// range the moved piece is new, of what starts in it and ends after it the piece that stays. A crossfade
+		// between a moved event and one that stays ends. Its audio comes in front where it lands, as range.paste puts
+		// it. The automation in the range moves as range.cut and range.paste move it. Returns what moved.
+		Json moveRange(Project& project, const Range& range, time::Samples at, const std::vector<ObjectId>& onto,
+			CommandContext& context)
+		{
+			const auto target = [&range, &onto](ObjectId track)
+			{
+				const auto index = std::find(range.tracks.begin(), range.tracks.end(), track) - range.tracks.begin();
+				return onto.at(static_cast<size_t>(index));
+			};
 			const std::vector<AutomationLane> automation = automationIn(project, range);
 			splitTracks(project, range.tracks, range.start, range.splitNotes, false, context);
 			splitTracks(project, range.tracks, range.end, range.splitNotes, false, context);
@@ -2581,8 +2623,10 @@ namespace gnubase::engine
 			const Gap landed =
 				landing(project, items, shift, ticks(project, {time::TimeBase::Linear, range.start}), at);
 			for (const Item& item : items)
+				checkTrack(project, item, target(item.track()));
+			for (const Item& item : items)
 			{
-				place(project, item, landed.shift(item.position().base, 1), item.track());
+				place(project, item, landed.shift(item.position().base, 1), target(item.track()));
 				announce(project, context, item, "changed");
 			}
 			for (auto& [id, event] : project.audioEvents)
@@ -2594,7 +2638,7 @@ namespace gnubase::engine
 			cutAutomationIn(project, range, std::nullopt, context);
 			for (const AutomationLane& copied : automation)
 				for (auto& [id, lane] : project.automation)
-					if (lane.track == copied.track && lane.target == copied.target)
+					if (lane.track == target(copied.track) && lane.target == copied.target)
 						pasteAutomation(project, lane, copied, landed, context);
 			return {{"events", idsOf(items)}};
 		}
@@ -2618,11 +2662,7 @@ namespace gnubase::engine
 			{
 				// The tracks the project window shows: a folded folder's lane stands for the tracks in it.
 				const auto first = parameters.at("track").get<ObjectId>();
-				std::vector<ObjectId> order = project.trackOrder();
-				const std::vector<ObjectId> hidden = hiddenTracks(project);
-				order.erase(std::remove_if(order.begin(), order.end(), [&hidden, first](ObjectId id)
-								{ return id != first && std::binary_search(hidden.begin(), hidden.end(), id); }),
-					order.end());
+				const std::vector<ObjectId> order = shownTracks(project, {first});
 				const auto found = std::find(order.begin(), order.end(), first);
 				require(found != order.end(), "no track " + std::to_string(first));
 				require(static_cast<size_t>(order.end() - found) >= tracks.size(),
@@ -3368,11 +3408,15 @@ namespace gnubase::engine
 		Json withPosition = rangeParameters;
 		withPosition["position"] = integer();
 		withPosition["copy"] = boolean();
+		withPosition["track"] = integer();
 		addEdit(engine,
 			{"range.move", 1,
 				"Moves what lies in " + range +
-					" to position (project samples) on the same tracks, as dragging a selection range does (reference "
-					"manual p. 291), without the range clipboard: cut at its edges (splitNotes as in range.split), "
+					" to position (project samples), as dragging a selection range does (reference manual p. 291), "
+					"without the range clipboard: on the same tracks, or with track onto other tracks, the range's top "
+					"track onto track and each of the others as many tracks further on in the project's order of "
+					"tracks that aren't hidden (trackVisibility.set), which must take the events moved there. Cut at "
+					"its edges (splitNotes as in range.split), "
 					"what lies in it moves by position minus start, in ticks on musical tracks, where what starts at "
 					"start lands at position exactly (of several, the first in ticks) and everything on musical "
 					"tracks moves by the same ticks, keeping its distance from that on every track. What moves "
@@ -3390,13 +3434,17 @@ namespace gnubase::engine
 			[](Project& project, CommandContext& context)
 			{
 				const Range range = rangeFrom(project, context, true);
-				const auto at = context.parameters().at("position").get<time::Samples>();
+				const Json& parameters = context.parameters();
+				const auto at = parameters.at("position").get<time::Samples>();
 				require(at >= 0, "position must not be before the project start");
-				if (!context.parameters().value("copy", false))
-					return moveRange(project, range, at, context);
+				const std::vector<ObjectId> onto = parameters.contains("track")
+					? movedTracks(project, range.tracks, parameters.at("track").get<ObjectId>())
+					: range.tracks;
+				if (!parameters.value("copy", false))
+					return moveRange(project, range, at, onto, context);
 				// Locked events aren't copied, as they don't move; nor are the events of a locked audio part.
 				const RangeClipboard copied = copyRange(project, range, false);
-				return Json{{"events", idsOf(pasteClipboard(project, copied, range.tracks, at, context))}};
+				return Json{{"events", idsOf(pasteClipboard(project, copied, onto, at, context))}};
 			});
 
 		addEdit(engine,

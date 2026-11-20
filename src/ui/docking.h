@@ -110,6 +110,10 @@ namespace gnubase::ui
 		// The UI commands that show and hide zones and strips and go through tabs, with the reference's keys.
 		void addKeyCommands(KeyCommands& keys);
 
+		// Gives the keyboard focus to the zone of the docking window as Tab does: to the control that had it last in
+		// the zone, or else its main control. False if the zone isn't shown.
+		bool focus(const std::string& window, const std::string& name);
+
 		// The layout as ui.layout has it: what the user changed, without the defaults.
 		const engine::Json& layout() const { return m_layout; }
 
@@ -207,8 +211,13 @@ namespace gnubase::ui
 
 		void ProcessEvent(Rml::Event& event) override;
 		// Gives the keyboard focus to the zone step zones on from the one from is in, among the shown zones of its
-		// document, around the ends; false if the document has none.
-		static bool focusZone(Rml::Element& from, int step);
+		// document, around the ends: to the control that had it last in the zone, if that is still shown, or else to
+		// the zone's main control (its maincontrol attribute), or else to the zone. False if the document has none.
+		bool focusZone(Rml::Element& from, int step);
+		bool focusIn(Rml::Element& zone); // the focus into the zone, as focusZone does
+		// Runs the command that Tab, with the modifiers the keydown event has, is bound to, before the document moves
+		// the focus between its controls; false if there is none.
+		bool pressTab(Rml::Element& target, const Rml::Event& event);
 		void listen(Rml::Element& document, bool on);
 		void makeMenus(const std::string& name, Attached& attached);
 		static std::vector<Rml::Element*> elements(Rml::Element& root, const std::string& selector);
@@ -291,7 +300,10 @@ namespace gnubase::ui
 		// Whether ui.layout has the app's window maximized.
 		bool savedMaximized(const std::string& name) const;
 		std::vector<AppWindow> m_appWindows;
-		std::string m_contextTab; // the tab last right-clicked
+		std::string m_contextTab;      // the tab last right-clicked
+		KeyCommands* m_keys = nullptr; // addKeyCommands's
+		// The control that had the focus last in each zone, by window and zone name, for focusZone.
+		std::map<std::string, Rml::ObserverPtr<Rml::Element>> m_lastFocus;
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the shell's tasks
 	};

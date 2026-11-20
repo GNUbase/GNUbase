@@ -186,7 +186,9 @@ namespace gnubase::ui
 
 	void HistoryPanel::request()
 	{
-		m_binding.send("history.get", Json::object(),
+		// Quietly: show draws its own window, so a step's answer, read after every step of a drag, doesn't draw every
+		// window again (#1881).
+		m_binding.sendQuietly("history.get", Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!alive.expired() && result.ok())

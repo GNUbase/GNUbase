@@ -5,6 +5,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/commandholds.h"
 #include "testutils/fakeui.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
@@ -173,6 +174,99 @@ namespace
 		return a.start == Approx(b.start).margin(1e-9) && a.scale == Approx(b.scale) && a.top == Approx(b.top) &&
 			a.trackZoom == Approx(b.trackZoom);
 	}
+}
+
+TEST_CASE(
+	"a channel that comes while the display's read is out doesn't make its project newer than that read", "[unit]")
+{
+	test::CommandHolds holds; // declared before the fixture: its engine's command thread waits in hold()
+	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
+	f.engine.registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	f.call("track.add", {{"type", "audio"}, {"name", "Vox"}});
+	REQUIRE(
+		f.waitUntil([&f] { return f.display.project().is_object() && f.display.project().at("tracks").size() == 1; }));
+	REQUIRE(f.waitUntil([&f] { return f.binding.waiting("project.get") == 0; }));
+	const Json track = f.display.project().at("tracks").at(0);
+	const auto volume = [&f, &track]
+	{
+		for (const Json& channel : f.display.project().at("channels"))
+			if (channel.at("id") == track.at("channel"))
+				return channel.at("volume").get<double>();
+		return 0.0;
+	};
+	const uint64_t read = f.display.read();
+
+	// Another client's track change and channel change, queued behind a hold, and a second hold after them: the read
+	// that the display sends for the track change waits behind it, and the channel comes meanwhile (#1881).
+	engine::Client holder(f.engine, "holder");
+	engine::Client other(f.engine, "other");
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	other.send("track.set", {{"track", track.at("id")}, {"name", "Lead"}});
+	other.send("channel.set", {{"channel", track.at("channel")}, {"volume", -6.0}});
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	REQUIRE(f.waitUntil([&volume] { return volume() == -6.0; }));
+	// The project has the channel but not yet the track change, so it is no newer than before for the views that ask
+	// whether it has their steps (EngineBinding::ahead).
+	CHECK(f.binding.waiting("project.get") != 0);
+	CHECK(f.display.project().at("tracks").at(0).at("name") == "Vox");
+	CHECK(f.display.read() == read);
+
+	holds.release(2);
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("tracks").at(0).at("name") == "Lead"; }));
+	CHECK(f.display.read() > read);
+	CHECK(volume() == -6.0);
+}
+
+TEST_CASE("the channels of a step that changed more than channels wait for the display's read", "[unit]")
+{
+	test::CommandHolds holds; // declared before the fixture: its engine's command thread waits in hold()
+	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
+	f.engine.registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	const Json vox = f.call("track.add", {{"type", "audio"}, {"name", "Vox"}}).at("track");
+	REQUIRE(
+		f.waitUntil([&f] { return f.display.project().is_object() && f.display.project().at("tracks").size() == 1; }));
+	REQUIRE(f.waitUntil([&f] { return f.binding.waiting("project.get") == 0; }));
+	const auto output = [&f, &vox]
+	{
+		for (const Json& channel : f.display.project().at("channels"))
+			if (channel.at("id") == vox.at("channel"))
+				return channel.at("output");
+		return Json();
+	};
+	const Json before = output();
+	size_t layouts = 0;
+	f.display.onLayout([&layouts] { ++layouts; });
+
+	// A group track that Vox plays into: its step changes Vox's channel and adds a channel, which only the display's
+	// read brings. Vox's channel alone would play into a channel that the project doesn't have yet, which the
+	// inspector's and the mixer's routing lists showed as none and sent back (#1881).
+	engine::Client holder(f.engine, "holder");
+	engine::Client other(f.engine, "other");
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	other.send("track.add", {{"type", "group"}, {"tracks", Json::array({vox.at("id")})}});
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	REQUIRE(f.waitUntil([&f] { return f.binding.waiting("project.get") != 0; }));
+	CHECK(output() == before);
+	CHECK(f.display.project().at("tracks").size() == 1);
+	CHECK(layouts == 0);
+
+	holds.release(2);
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("tracks").size() == 2; }));
+	const Json group = f.display.project().at("tracks").at(1);
+	CHECK(group.at("type") == "group");
+	CHECK(output() == group.at("channel"));
 }
 
 TEST_CASE("the event display shows events and the project cursor where the engine has them", "[unit]")

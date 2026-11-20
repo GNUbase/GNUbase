@@ -411,6 +411,26 @@ TEST_CASE("meter.get reads a channel, the main mix and its loudness through the 
 	CHECK(meters.at("loudness").at("seconds").get<double>() == Approx(4.0).margin(0.1));
 	CHECK(meters.at("main").at("truePeakMax").at(0).get<double>() == Approx(-6.02).margin(0.1));
 
+	// The master meter's reset keeps the loudness measurement and the channels' maxima, the loudness meter's the
+	// main mix's maxima (reference manual pp. 535 and 538).
+	run(client, "meter.reset", {{"meters", "main"}});
+	meters = run(client, "meter.get");
+	CHECK(meters.at("main").at("peakMax").at(0).is_null());
+	CHECK(meters.at("main").at("rmsMax").at(0).is_null());
+	CHECK(meters.at("loudness").at("integrated").get<double>() == Approx(-6.02).margin(0.1));
+	CHECK(meters.at("loudness").at("seconds").get<double>() == Approx(4.0).margin(0.1));
+	CHECK(meters.at("main").at("truePeakMax").at(0).get<double>() == Approx(-6.02).margin(0.1));
+	CHECK_FALSE(meters.at("channels").at(0).at("rmsMax").at(0).is_null());
+	run(client, "audio.render", {{"frames", 4800}});
+	run(client, "meter.reset", {{"meters", "loudness"}});
+	meters = run(client, "meter.get");
+	CHECK(meters.at("loudness").at("integrated").is_null());
+	CHECK(meters.at("loudness").at("seconds") == 0.0);
+	CHECK(meters.at("main").at("truePeakMax").at(0).is_null());
+	CHECK(meters.at("main").at("peakMax").at(0).get<double>() == Approx(-6.02).margin(0.1));
+	CHECK_FALSE(meters.at("channels").at(0).at("rmsMax").at(0).is_null());
+	CHECK_THAT(reject(client, "meter.reset", {{"meters", "channels"}}), ContainsSubstring("meters"));
+
 	// A reset starts over; with meter.resetOnStart every start does.
 	run(client, "meter.reset");
 	meters = run(client, "meter.get");
@@ -427,6 +447,48 @@ TEST_CASE("meter.get reads a channel, the main mix and its loudness through the 
 	CHECK(run(client, "meter.get").at("loudness").at("seconds").get<double>() == Approx(0.5).margin(0.1));
 
 	CHECK_THAT(reject(client, "meter.get", {{"channels", {999}}}), ContainsSubstring("999"));
+}
+
+TEST_CASE("the master meter holds the true peak maximum, which only its own reset clears", "[integration]")
+{
+	// An 8 kHz sine at 48 kHz, 6 samples a period: its samples reach only 0.866 of its peaks, -7.27 dBFS for a
+	// -6.02 dBTP sine. Monitored while the transport stands, so the loudness meter's truePeakMax counts nothing.
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 8000.0}, {"Level", 0.5}}}}}});
+	const auto channel = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", channel}, {"recordEnable", true}});
+	// The sine's sudden start overshoots between the samples: the master meter's reset starts over past it.
+	run(client, "audio.render", {{"frames", 4800}});
+	CHECK(run(client, "meter.get").at("main").at("truePeakHold").at(0).get<double>() > -6.0);
+	run(client, "meter.reset", {{"meters", "main"}});
+	run(client, "audio.render", {{"frames", 48000}});
+
+	Json main = run(client, "meter.get").at("main");
+	REQUIRE(main.at("truePeakHold").size() == 2);
+	CHECK(main.at("peakMax").at(0).get<double>() == Approx(-7.27).margin(0.05));
+	CHECK(main.at("truePeakHold").at(0).get<double>() == Approx(-6.02).margin(0.1));
+	CHECK(main.at("truePeakHold").at(1).get<double>() == Approx(-6.02).margin(0.1));
+	CHECK(main.at("truePeakMax").at(0).is_null());
+	MeterFrame frame;
+	engine.readMeters(frame);
+	CHECK(decibels(frame.loudness.truePeakHold[0]) == Approx(-6.02).margin(0.1));
+	CHECK(frame.loudness.truePeak[0] <= frame.loudness.truePeakHold[0]);
+	CHECK(decibels(frame.loudness.truePeak[0]) == Approx(-6.02).margin(0.1));
+
+	// Reset Loudness keeps it, the master meter's reset clears it, and it counts again from the next block.
+	run(client, "meter.reset", {{"meters", "loudness"}});
+	CHECK(run(client, "meter.get").at("main").at("truePeakHold").at(0).get<double>() == Approx(-6.02).margin(0.1));
+	run(client, "meter.reset", {{"meters", "main"}});
+	CHECK(run(client, "meter.get").at("main").at("truePeakHold").at(0).is_null());
+	engine.readMeters(frame);
+	CHECK(frame.loudness.truePeak[0] == 0.0f);
+	run(client, "audio.render", {{"frames", 4800}});
+	CHECK(run(client, "meter.get").at("main").at("truePeakHold").at(1).get<double>() == Approx(-6.02).margin(0.1));
+	run(client, "meter.reset");
+	CHECK(run(client, "meter.get").at("main").at("truePeakHold").at(1).is_null());
 }
 
 TEST_CASE("a mono channel's meter reads both sides of its panner, and muting silences both", "[integration]")

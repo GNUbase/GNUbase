@@ -2229,6 +2229,18 @@ namespace
 			return m_out;
 		}
 
+		// Plays the next block with events while the transport stands at the position; returns what the strip lets
+		// through.
+		const graph::EventBuffer& playStopped(const std::vector<graph::ProcessEvent>& events)
+		{
+			graph::EventBuffer in(graph::g_maxEventsPerBlock);
+			for (const graph::ProcessEvent& event : events)
+				in.add(event);
+			m_out.clear();
+			m_strip.process({nullptr, 0, g_midiBlock, in, m_out, {false, m_position, nullptr, 0}});
+			return m_out;
+		}
+
 	private:
 		RenderChannel m_channel;
 		std::shared_ptr<ChannelState> m_state = std::make_shared<ChannelState>();
@@ -3104,6 +3116,22 @@ TEST_CASE("a MIDI track of another project on the channel releases the pedals th
 		CHECK(full[full.size() - 2].value == last - 2);
 		CHECK(midiValuesOf(strip.play({})) == MidiValues{{g_controller, 0, 0, 2, last}});
 	}
+	SECTION("another project in a full block that presses a pedal and releases it")
+	{
+		// The releases take the places of the block's last CC 2 and of a press of the sustain pedal, which the new
+		// track releases after it in the block: the release replaces the press, which doesn't go out in the next block.
+		strip.strip().playsProject(2);
+		std::vector<graph::ProcessEvent> events;
+		while (events.size() + 2 < graph::g_maxEventsPerBlock)
+			events.push_back(midiEvent(Type::Controller, 10, 0, 2, static_cast<uint32_t>(events.size())));
+		const uint32_t last = events.back().value;
+		events.push_back(midiEvent(Type::Controller, 15, 3, 64, 0xFFFFFFFFU));
+		events.push_back(midiEvent(Type::Controller, 20, 3, 64, 0));
+		const graph::EventBuffer& full = strip.play(events);
+		REQUIRE(full.size() == graph::g_maxEventsPerBlock);
+		CHECK(midiValuesOf(full).back() == std::array<uint32_t, 5>{g_controller, 20, 3, 64, 0});
+		CHECK(midiValuesOf(strip.play({})) == MidiValues{{g_controller, 0, 0, 2, last}});
+	}
 }
 
 TEST_CASE("the values a MIDI track's mute keeps wait as a list in the order of their latest events", "[unit]")
@@ -3152,4 +3180,257 @@ TEST_CASE("the values a MIDI track's mute keeps wait as a list in the order of t
 	CHECK(!dropped.waiting());
 	dropped.drop(midiEvent(Type::Controller, 0, 0, 10, 3));
 	CHECK(sendAll(10) == MidiValues{{g_controller, 7, 0, 10, 3}});
+}
+
+TEST_CASE(
+	"a MIDI lane whose new points change its value where a mute lane unmutes at a block's first sample sends that "
+	"value after what the mute kept",
+	"[unit]")
+{
+	using Type = graph::ProcessEvent::Type;
+	// The mute lane unmutes at the start of the third block. The CC 7 lane steps to 0.5 at 100, and the track's own CC
+	// 7 at 300, later, plays into the mute. In the third block, new points either change the lane's value there, only
+	// add a point after it, or are those of a lane that the channel didn't have before.
+	enum class Edit : uint8_t
+	{
+		Change,
+		AddAfter,
+		NewLane
+	};
+	const Edit change = GENERATE(Edit::Change, Edit::AddAfter, Edit::NewLane);
+	CAPTURE(static_cast<int>(change));
+	RenderAutomationLane lane;
+	lane.target = {AutomationTargetType::Controller, 0, 7, 0, 0};
+	lane.points = {{0, 0.0, AutomationShape::Step, 0.0}, {100, 0.5, AutomationShape::Step, 0.0}};
+	MidiStrip strip({{0, 1.0}, {2 * g_midiBlock, 0.0}},
+		change == Edit::NewLane ? std::vector<RenderAutomationLane>{} : std::vector<RenderAutomationLane>{lane});
+	CHECK(strip.play({}).empty());
+	CHECK(strip.play({midiEvent(Type::Controller, 300 - g_midiBlock, 0, 7, 20)}).empty());
+	RenderChannel channel = strip.channel();
+	if (change == Edit::NewLane)
+		channel.automation.push_back(lane);
+	std::vector<RenderAutomationPoint>& points = channel.automation.back().points;
+	if (change == Edit::Change)
+		points[1].value = 0.75;
+	else if (change == Edit::AddAfter)
+		points.push_back({5000, 1.0, AutomationShape::Step, 0.0});
+	strip.setChannel(channel);
+	// The lane's new value goes out after the track's CC 7 and wins; a value it had before goes out again before it.
+	std::vector<uint32_t> expected{midiValueOf(0.5), 20};
+	if (change == Edit::Change)
+		expected = {20, midiValueOf(0.75)};
+	else if (change == Edit::NewLane)
+		expected = {20, midiValueOf(0.5)};
+	CHECK(controllerValues(midiValuesOf(strip.play({})), 0, 7) == expected);
+}
+
+TEST_CASE("a ramp's step of a MIDI lane at the first sample of a block that sends the values again, where a mute lane "
+		  "unmutes, goes out after what the mute kept",
+	"[unit]")
+{
+	// The CC 7 lane ramps from 0 to 1 over four blocks; the mute keeps its step at 448, and unmutes at the start of the
+	// third block, at its step at 512, where new automation (another instrument) sends the values again.
+	RenderAutomationLane lane;
+	lane.target = {AutomationTargetType::Controller, 0, 7, 0, 0};
+	lane.points = {{0, 0.0, AutomationShape::Linear, 0.0}, {int64_t{4} * g_midiBlock, 1.0, AutomationShape::Step, 0.0}};
+	MidiStrip strip({{0, 1.0}, {2 * g_midiBlock, 0.0}}, {lane});
+	CHECK(strip.play({}).empty());
+	CHECK(strip.play({}).empty());
+	RenderChannel channel = strip.channel();
+	channel.instrument = "another";
+	strip.setChannel(channel);
+	std::vector<uint32_t> atUnmute;
+	for (const std::array<uint32_t, 5>& value : midiValuesOf(strip.play({})))
+		if (value[1] == 0 && value[0] == g_controller && value[3] == 7)
+			atUnmute.push_back(value[4]);
+	CHECK(atUnmute == std::vector<uint32_t>{midiValueOf(0.4375), midiValueOf(0.5)});
+}
+
+TEST_CASE("unmuting a MIDI track while the transport stands sends what its mute kept before a MIDI volume set with it",
+	"[unit]")
+{
+	using Type = graph::ProcessEvent::Type;
+	RenderChannel channel;
+	channel.type = TrackType::Midi;
+	channel.format = ChannelFormat::None;
+	channel.midiVolume = 100;
+	MidiStrip strip({});
+	strip.setChannel(channel);
+	CHECK(!strip.playStopped({}).empty());
+	channel.muted = true;
+	channel.silent = true;
+	strip.setChannel(channel);
+	CHECK(strip.playStopped({}).empty());
+	CHECK(strip.playStopped({midiEvent(Type::Controller, 5, 0, 7, 20)}).empty()); // the MIDI input into the mute
+	// One change: unmuted with a new MIDI volume, which is later than what the mute kept.
+	channel.muted = false;
+	channel.silent = false;
+	channel.midiVolume = 90;
+	strip.setChannel(channel);
+	CHECK(controllerValues(midiValuesOf(strip.playStopped({})), 0, 7) ==
+		std::vector<uint32_t>{20, midi::controllerFromMidi1(90)});
+}
+
+TEST_CASE(
+	"a MIDI automation lane that a program set where a mute lane unmutes brings along goes out after what the mute "
+	"kept",
+	"[unit]")
+{
+	using Type = graph::ProcessEvent::Type;
+	// A CC 1 lane at 0.5 from the start; the track's CC 1 plays into the mute, which unmutes at the third block.
+	RenderAutomationLane lane;
+	lane.target = {AutomationTargetType::Controller, 0, 1, 0, 0};
+	lane.points = {{0, 0.5, AutomationShape::Step, 0.0}};
+	MidiStrip strip({{0, 1.0}, {2 * g_midiBlock, 0.0}}, {lane});
+	CHECK(strip.play({}).empty());
+	CHECK(strip.play({midiEvent(Type::Controller, 5, 0, 1, 20)}).empty());
+	RenderChannel channel = strip.channel();
+	channel.program = 5;
+	strip.setChannel(channel);
+	const MidiValues unmuted = midiValuesOf(strip.play({}));
+	CHECK(controllerValues(unmuted, 0, 1) == std::vector<uint32_t>{20, midiValueOf(0.5)});
+	REQUIRE(!unmuted.empty());
+	CHECK(unmuted.back() == std::array<uint32_t, 5>{g_controller, 0, 0, 1, midiValueOf(0.5)});
+}
+
+TEST_CASE("a MIDI track whose mute lane mutes where playback jumps to releases the pedals it had down before the jump "
+		  "without keeping them",
+	"[unit]")
+{
+	using Type = graph::ProcessEvent::Type;
+	// The mute lane mutes from 1000 to 2000; the sustain pedal goes down at 10, before it. Playback goes on into the
+	// mute, jumps into it, or stops and is located into it while the transport stands.
+	enum class Into : uint8_t
+	{
+		PlayingOn,
+		Jump,
+		LocateStopped
+	};
+	const Into into = GENERATE(Into::PlayingOn, Into::Jump, Into::LocateStopped);
+	CAPTURE(static_cast<int>(into));
+	const bool jump = into != Into::PlayingOn;
+	MidiStrip strip({{0, 0.0}, {1000, 1.0}, {2000, 0.0}});
+	CHECK(midiValuesOf(strip.play({midiEvent(Type::Controller, 10, 0, 64, 0xFFFFFFFFU)})) ==
+		MidiValues{{g_controller, 10, 0, 64, 0xFFFFFFFFU}});
+	if (into == Into::LocateStopped)
+	{
+		CHECK(strip.playStopped({}).empty()); // stopped where playback ended
+		strip.locate(int64_t{4} * g_midiBlock);
+		// The locate's mute releases the pedal while the transport stands.
+		CHECK(midiValuesOf(strip.playStopped({})) == MidiValues{{g_controller, 0, 0, 64, 0}});
+		// Unmuted there while it still stands (starting playback would be a jump of its own): the pedal isn't
+		// pressed again, as at a jump.
+		RenderChannel channel = strip.channel();
+		std::vector<RenderAutomationPoint>& mute = channel.automation.front().points;
+		mute.insert(mute.begin() + 2, {int64_t{4} * g_midiBlock, 0.0, AutomationShape::Step, 0.0});
+		strip.setChannel(channel);
+		CHECK(strip.playStopped({}).empty());
+		return;
+	}
+	if (jump)
+		strip.locate(int64_t{4} * g_midiBlock);
+	else
+		for (int block = 1; block < 4; ++block)
+			strip.play({});
+	// The block from 1024: the jump's mute releases the pedal at its start; playing on, the mute at 1000 did.
+	CHECK(midiValuesOf(strip.play({})) == (jump ? MidiValues{{g_controller, 0, 0, 64, 0}} : MidiValues{}));
+	CHECK(strip.play({}).empty());
+	CHECK(strip.play({}).empty());
+	// Unmuting at 2000 presses the pedal again only where the mute released it while playing on: at the jump, the
+	// chase sets what is down where playback lands.
+	CHECK(midiValuesOf(strip.play({})) ==
+		(jump ? MidiValues{} : MidiValues{{g_controller, 2000 - (7 * g_midiBlock), 0, 64, 0xFFFFFFFFU}}));
+}
+
+TEST_CASE("automation that changes only whether a MIDI or instrument track is soloed out or disabled sends no value "
+		  "again",
+	"[unit]")
+{
+	const TrackType type = GENERATE(TrackType::Midi, TrackType::Instrument);
+	CAPTURE(static_cast<int>(type));
+	RenderChannel channel;
+	channel.type = type;
+	channel.format = type == TrackType::Midi ? ChannelFormat::None : ChannelFormat::Stereo;
+	channel.midiVolume = 100;
+	channel.muted = true;
+	channel.silent = type == TrackType::Midi;
+	AutomationPlayer player;
+	graph::EventBuffer source(graph::g_maxEventsPerBlock);
+	graph::EventBuffer fader(graph::g_maxEventsPerBlock);
+	graph::EventBuffer plugins(graph::g_maxEventsPerBlock);
+	int64_t position = 0;
+	// Plays a block; returns how many events the automation sent.
+	const auto play = [&]
+	{
+		source.clear();
+		fader.clear();
+		const graph::TransportSegment at{0, 64, position};
+		player.play({true, position, &at, 1}, {}, {}, source, fader, plugins);
+		position += 64;
+		return source.size() + fader.size();
+	};
+	player.setAutomation(channelAutomation(channel, 6.0));
+	CHECK(play() > 0);
+	CHECK(play() == 0);
+	// Soloed out and back: the mute and the other values aren't sent again.
+	channel.quiet = true;
+	channel.silent = true;
+	player.setAutomation(channelAutomation(channel, 6.0));
+	CHECK(player.latest().quiet);
+	CHECK(play() == 0);
+	channel.quiet = false;
+	channel.silent = type == TrackType::Midi;
+	player.setAutomation(channelAutomation(channel, 6.0));
+	CHECK(play() == 0);
+	// Playback ran while it was soloed out: the instrument track is chased now; the MIDI track, which its button still
+	// mutes, once it is heard.
+	CHECK(player.heardNow() == (type == TrackType::Midi ? HeardAgain::No : HeardAgain::Quiet));
+}
+
+TEST_CASE("a MIDI track heard again after a move forgets what its mute kept of its channel's pitch bend lane and of a "
+		  "controller lane on another MIDI channel",
+	"[unit]")
+{
+	using Type = graph::ProcessEvent::Type;
+	// The channel's lanes: pitch bend on MIDI channel 3 and CC 20 on channel 5. The mute keeps the track's pitch bend
+	// there, its CC 20 and its CC 21 on channel 5, which no lane sends.
+	RenderChannel channel;
+	channel.type = TrackType::Midi;
+	channel.format = ChannelFormat::None;
+	RenderAutomationLane bend;
+	bend.target = {AutomationTargetType::PitchBend, 0, 0, 2, 0};
+	bend.points = {{0, 0.5, AutomationShape::Step, 0.0}};
+	RenderAutomationLane controller;
+	controller.target = {AutomationTargetType::Controller, 0, 20, 4, 0};
+	controller.points = {{0, 0.25, AutomationShape::Step, 0.0}};
+	channel.automation = {bend, controller};
+	MidiStrip strip({});
+	auto chaser = std::make_shared<MidiSequencer>();
+	MidiChase chase;
+	chase.controllers = true;
+	chase.pitchBend = true;
+	chaser->setChase(chase);
+	std::vector<graph::ProcessEvent> kinds;
+	for (const uint16_t kind : channelChaseKinds(channel))
+		kinds.push_back(chaseKindEvent(kind));
+	CHECK(kinds.size() == 2);
+	strip.strip().chasedWhenHeard(std::move(kinds), chaser);
+	strip.setChannel(channel);
+	CHECK(!strip.play({}).empty());
+	channel.muted = true;
+	channel.silent = true;
+	strip.setChannel(channel);
+	CHECK(strip.play({}).empty());
+	strip.locate(10000);
+	CHECK(strip
+			.play({midiEvent(Type::PitchBend, 5, 2, 0, 1234), midiEvent(Type::Controller, 6, 4, 20, 2),
+				midiEvent(Type::Controller, 7, 4, 21, 3)})
+			.empty());
+	channel.muted = false;
+	channel.silent = false;
+	strip.setChannel(channel);
+	// The lanes' values, which the chase follows, then CC 21 alone of what the mute kept.
+	CHECK(midiValuesOf(strip.play({})) ==
+		MidiValues{{static_cast<uint32_t>(Type::PitchBend), 0, 2, 0, midiValueOf(0.5)},
+			{g_controller, 0, 4, 20, midiValueOf(0.25)}, {g_controller, 0, 4, 21, 3}});
 }

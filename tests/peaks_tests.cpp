@@ -210,24 +210,6 @@ namespace
 		CHECK(columns.max == expected.max);
 	}
 
-	// The next event named name in a client's queue, waiting up to timeout; null if none came.
-	Json waitForEvent(
-		Client& client, const std::string& name, std::chrono::milliseconds timeout = std::chrono::seconds(20))
-	{
-		const auto until = std::chrono::steady_clock::now() + timeout;
-		while (std::chrono::steady_clock::now() < until)
-		{
-			const auto left =
-				std::chrono::duration_cast<std::chrono::milliseconds>(until - std::chrono::steady_clock::now());
-			std::optional<Message> message = client.wait(std::max(left, std::chrono::milliseconds(1)));
-			if (!message)
-				break;
-			if (const auto* event = std::get_if<Event>(&*message); event != nullptr && event->name == name)
-				return event->data;
-		}
-		return nullptr;
-	}
-
 	// Makes the peak worker wait before it reads a chunk of an audio file while a Hold lives, so a test sees peaks
 	// being generated however fast the worker would be done with a small file.
 	class WorkerGate
@@ -1073,7 +1055,8 @@ TEST_CASE("media.peaks returns min and max columns of a media file", "[integrati
 	Client client(engine);
 	const Json added = run(client, "media.add", {{"path", file.u8string()}});
 	const Json id = added.at("media").at("id");
-	const Json ready = waitForEvent(client, "media.peaksReady");
+	const Json ready =
+		test::waitForEvent(client, "media.peaksReady", nullptr, std::chrono::seconds(20)).value_or(Json());
 	REQUIRE_FALSE(ready.is_null());
 	CHECK(ready.at("media") == id);
 
@@ -1112,7 +1095,8 @@ TEST_CASE("media.peaks returns min and max columns of a media file", "[integrati
 	run(client, "media.remove", {{"media", id}});
 	CHECK_FALSE(client.call("media.peaks", {{"media", id}, {"pixels", 10}}).ok());
 	run(client, "history.undo", Json::object());
-	const Json again = waitForEvent(client, "media.peaksReady");
+	const Json again =
+		test::waitForEvent(client, "media.peaksReady", nullptr, std::chrono::seconds(20)).value_or(Json());
 	REQUIRE_FALSE(again.is_null());
 	CHECK(again.at("generated") == false);
 }
@@ -1127,7 +1111,7 @@ TEST_CASE("media.peaks picks channels and limits pixels times channels", "[integ
 	Engine engine;
 	Client client(engine);
 	const Json id = run(client, "media.add", {{"path", file.u8string()}}).at("media").at("id");
-	REQUIRE_FALSE(waitForEvent(client, "media.peaksReady").is_null());
+	REQUIRE(test::waitForEvent(client, "media.peaksReady", nullptr, std::chrono::seconds(20)).has_value());
 	const peaks::Columns expected = peaks::columns(build(samples, 8, peaks::defaultLevels()), 0, 5000, 20);
 
 	const Json picked = run(client, "media.peaks", {{"media", id}, {"pixels", 20}, {"channels", {7, 2}}});
@@ -1250,7 +1234,8 @@ TEST_CASE("the waveform of a one-hour file is answered in milliseconds once its 
 		Engine engine;
 		Client client(engine);
 		run(client, "media.add", {{"path", file.u8string()}});
-		const Json ready = waitForEvent(client, "media.peaksReady", std::chrono::minutes(5));
+		const Json ready =
+			test::waitForEvent(client, "media.peaksReady", nullptr, std::chrono::minutes(5)).value_or(Json());
 		REQUIRE_FALSE(ready.is_null());
 		CHECK(ready.at("generated") == true);
 	}
@@ -1260,7 +1245,8 @@ TEST_CASE("the waveform of a one-hour file is answered in milliseconds once its 
 	Client client(engine);
 	const auto added = std::chrono::steady_clock::now();
 	const Json id = run(client, "media.add", {{"path", file.u8string()}}).at("media").at("id");
-	const Json ready = waitForEvent(client, "media.peaksReady", std::chrono::seconds(30));
+	const Json ready =
+		test::waitForEvent(client, "media.peaksReady", nullptr, std::chrono::seconds(30)).value_or(Json());
 	REQUIRE_FALSE(ready.is_null());
 	CHECK(ready.at("generated") == false);
 	const auto loaded = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - added);

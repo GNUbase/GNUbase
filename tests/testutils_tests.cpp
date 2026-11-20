@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/engine.h"
 #include "testutils/goldenimage.h"
 #include "testutils/stopandjoin.h"
 #include "testutils/testutils.h"
@@ -21,6 +22,31 @@
 #include <thread>
 
 using namespace gnubase::test;
+using gnubase::engine::Json;
+
+TEST_CASE("waitForEvent returns the next matching event's data and nothing after its timeout", "[unit]")
+{
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	REQUIRE(client.call("track.add", {{"type", "audio"}}).ok());
+	REQUIRE(client.call("track.add", {{"type", "instrument"}}).ok());
+
+	// The matcher skips the audio track's event.
+	const Json instrument = waitForEvent(client, "track.added",
+		[](const Json& data)
+		{
+			return data.at("track").at("type") == "instrument";
+		}).value_or(Json());
+	CHECK(instrument.at("track").at("type") == "instrument");
+
+	// Without a matcher, any event of that name; none is left, so nothing after the timeout.
+	const auto start = std::chrono::steady_clock::now();
+	CHECK_FALSE(waitForEvent(client, "track.added", nullptr, std::chrono::milliseconds(100)).has_value());
+	CHECK(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(100));
+
+	REQUIRE(client.call("track.add", {{"type", "group"}}).ok());
+	CHECK(waitForEvent(client, "track.added").value_or(Json()).at("track").at("type") == "group");
+}
 
 TEST_CASE("StopAndJoin joins a thread before an exception leaves its scope", "[unit]")
 {

@@ -271,9 +271,9 @@ namespace gnubase::ui
 		// The project as the display read it first, another project, or a change to this one: the open editors, such
 		// as ones an MCP client opened or one whose track an undo brought back, and their views' parts and selections
 		// may have changed with it, without an editor.changed.
-		if (m_display.loads() != m_loads)
+		if (m_display.answers() != m_loads)
 		{
-			m_loads = m_display.loads();
+			m_loads = m_display.answers();
 			reconcile();
 		}
 		for (auto& [track, editor] : m_editors)

@@ -106,6 +106,11 @@ namespace gnubase::engine::midi
 	// midi.setPort's mpe parameter.
 	Json mpeSchema();
 
+	// A MIDI Message (MpeSetup::messages) as JSON names it, pitchBend, aftertouch or cc0 to cc127, and back: none for
+	// any other name.
+	std::string messageName(uint8_t message);
+	std::optional<uint8_t> messageNamed(const std::string& name);
+
 	// Turns one port's MPE input into per-note expression, on the audio thread: on the notes' channels, the messages of
 	// the dimensions (by default pitch bend with Use for Tuning, channel pressure and CC 74) are NoteExpression events
 	// of the notes that sound there, the expressions assigned to them (tuning by the pitch range, pressure and

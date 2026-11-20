@@ -49,6 +49,7 @@ test.case("closing the main window or quitting as the OS does asks about unsaved
 	gnubase.track.add{type = "audio"}
 	for _, request in ipairs{{quit = false}, {quit = true}} do
 		ui.close(request) -- runs in the UI's next step, which ui.wait steps
+		test.equal(#ui.dom{selector = "#discard-changes-dialog"}.elements, 0) -- not before that step
 		ui.wait{selector = "#discard-changes-dialog"}
 		ui.click{selector = "#discard-changes-dialog button[result=cancel]"}
 		ui.wait{selector = "#discard-changes-dialog", visible = false}
