@@ -168,10 +168,11 @@ namespace
 	// rounds could then take many minutes, beyond the 300 s after which ctest fails a test, with correct code. An
 	// overloaded run checks fewer rounds instead, but never fewer than g_minRaceRounds, whatever the clock says, so
 	// that a starved run still checks the race instead of passing empty, and fails if it doesn't (reportRounds). Even
-	// the slowest rate measured, 44 rounds a second (Windows, more busy threads than cores), plays those in about 23 s.
-	// An unloaded run plays all rounds well within the budget (each test took under a second in a Debug build on an
-	// x86-64 desktop). A run the budget cut short says so: Catch2's warning reaches ctest's log, which CI shows only
-	// for a failing test, so CI's test steps list the warnings of passing ones too (.github/workflows/ci.yml).
+	// the slowest rates seen, 44 rounds a second (Windows, more busy threads than cores) and 19 (375 rounds in 20 s,
+	// the overload of #1270), play those in about 23 s and 53 s, far below the timeout. An unloaded run plays all
+	// rounds well within the budget (each test took under a second in a Debug build on an x86-64 desktop). A run the
+	// budget cut short says so: Catch2's warning reaches ctest's log, which CI shows only for a failing test, so CI's
+	// test steps list the warnings of passing ones too (.github/workflows/ci.yml).
 	constexpr auto g_raceBudget = std::chrono::seconds(20);
 	constexpr int g_minRaceRounds = 1000;
 
@@ -195,10 +196,11 @@ namespace
 
 	// Says how many rounds a race test checked when the budget ended them early, on one line that CI's test steps pick
 	// out of ctest's log (the budget is g_raceBudget), and fails when it was fewer than the minimum.
-	void reportRounds(int checked, int rounds)
+	void reportRounds(const char* test, int checked, int rounds)
 	{
 		if (checked < rounds)
-			WARN("race test cut short: " << checked << " of " << rounds << " rounds"); // one line, for CI's step
+			WARN("race test cut short: " << test << ", " << checked << " of " << rounds
+										 << " rounds"); // one line, for CI's step
 		CHECK(checked >= std::min(rounds, g_minRaceRounds));
 	}
 }
@@ -1099,7 +1101,7 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 	}
 	done = true;
 	reader.join();
-	reportRounds(checked, rounds);
+	reportRounds("peak of a block that ends while a frame reads", checked, rounds);
 	CHECK(lost == 0);
 }
 
@@ -1170,7 +1172,7 @@ TEST_CASE("a frame loses no peak of the first block after a reset, also when it 
 	}
 	done = true;
 	reader.join();
-	reportRounds(checked, rounds);
+	reportRounds("peak of the first block after a reset", checked, rounds);
 	CHECK(lost == 0);
 }
 

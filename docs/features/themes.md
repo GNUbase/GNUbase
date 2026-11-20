@@ -7,9 +7,9 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
 
 - **Design system.** The shared style sheets in `resources/styles` lay out every widget in `dp`: sizes, padding, the
   parts of drop-down lists, sliders, scroll bars and tabs. RmlUi has no default style sheet, so they also make `div`,
-  `p` and the like blocks. They hold no colors, fonts or skins, and no font sizes, apart from the small labels of the key editor's and the
-  controller lanes' sheets, which a list in `tests/theme_tests.cpp` holds until they move to the themes (#594); that
-  test reads every sheet in the folder.
+  `p` and the like blocks. They hold no colors, fonts or skins, and no font sizes, apart from the small labels of the
+  key editor's and the controller lanes' sheets, which a list in `tests/theme_tests.cpp` holds until they move to the
+  themes (#594); that test reads every sheet in the folder.
 - **Themes.** A theme is a folder in `resources/themes` with its skins (SVG), `manifest.json`, `tokens.json` and
   `theme.rcss`. `tools/skin/generate.py` makes all of them from one table of tokens per theme (colors, radii, border
   widths, font sizes and families, and the events' look: how opaque colored events' bodies are, the one shade that
