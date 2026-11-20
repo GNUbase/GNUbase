@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* The sampler panel (ui/samplerpanel.h, docs/features/sampler-track.md): the toolbar, the waveform display with the
-   markers, the loop and the shades outside the start and end, the keyboard, and the sections side by side. Code
+   markers, the bars between them, the loop and the shades outside the start and end, the keyboard, and the sections side by side. Code
    places the markers, the loop and the shades in percent of the sample. The root gets .empty without a sampler track,
-   the loop and its markers .off without a loop mode, the loop's markers .loop, the marker being dragged .dragged,
+   the loop and its markers .off without a loop mode, the loop's markers .loop, the marker or bar being dragged .dragged, the loop's bar .loop and .off,
    keys .black, .root and .outside (the key range), the keyboard's handles .root (the root key's, the others the key
    range's) and .dragged, and the toolbar's message .error; the themes color them. Code places the handles on their
    keys in percent of the keyboard. */
@@ -102,6 +102,27 @@
 	margin-left: -4dp;
 	cursor: resize-horizontal;
 	drag: drag; /* its drag ends wherever the button goes up, outside the window too */
+}
+
+/* A bar spans its two markers at their flags' height; the themes show it on hover and while it is dragged. */
+.sampler-bar
+{
+	position: absolute;
+	top: 0;
+	height: 6dp;
+	cursor: move;
+	drag: drag;
+}
+
+.sampler-bar.loop
+{
+	top: auto;
+	bottom: 0;
+}
+
+.sampler-bar.off
+{
+	display: none;
 }
 
 .sampler-marker-line

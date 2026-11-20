@@ -209,6 +209,59 @@ TEST_CASE("the sampler panel shows the selected sampler track and sets its param
 	REQUIRE(f.app.waitUntil([&] { return !f.has(".sampler-loop", "off"); }));
 }
 
+TEST_CASE("the bars between the markers move start and end, or the loop, together", "[ui]")
+{
+	Fixture f;
+	f.set("Start", 0.2);
+	f.set("End", 0.4);
+	f.set("Loop mode", 1.0);
+	f.set("Loop start", 0.05);
+	f.set("Loop end", 0.15);
+	f.open();
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".sampler-bar[bar=loop]", "off"); }));
+	const Json display = f.box("#sampler-display");
+	const double x = display.at("x").get<double>();
+	const double width = display.at("width").get<double>();
+	const auto centre = [&](const std::string& selector)
+	{
+		const Json bar = f.box(selector);
+		return ui::Point{static_cast<int>(bar.at("x").get<double>() + (bar.at("width").get<double>() / 2)),
+			static_cast<int>(bar.at("y").get<double>() + (bar.at("height").get<double>() / 2))};
+	};
+	// The bar lies between its markers.
+	CHECK_THAT(f.box(".sampler-bar[bar=range]").at("x").get<double>(), WithinAbs(x + (0.2 * width), 2.0));
+	CHECK_THAT(f.box(".sampler-bar[bar=range]").at("width").get<double>(), WithinAbs(0.2 * width, 2.0));
+
+	// Dragging it keeps the distance, in one undo step.
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	const ui::Point from = centre(".sampler-bar[bar=range]");
+	f.app.ui().drag(std::nullopt, of(".sampler-bar[bar=range]"),
+		{"", 0, ui::Point{from.x + static_cast<int>(0.3 * width), from.y}});
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Start") - 0.5) < 0.01; }));
+	CHECK_THAT(f.parameter("End") - f.parameter("Start"), WithinAbs(0.2, 1e-9));
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+	REQUIRE(f.app.waitUntil(
+		[&] { return std::abs(f.box(".sampler-bar[bar=range]").at("x").get<double>() - (x + (0.5 * width))) < 2.0; }));
+
+	// It stops at the end of the sample.
+	const ui::Point moved = centre(".sampler-bar[bar=range]");
+	f.app.ui().drag(std::nullopt, of(".sampler-bar[bar=range]"),
+		{"", 0, ui::Point{moved.x + static_cast<int>(0.35 * width), moved.y}});
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("End") == 1.0; }));
+	CHECK_THAT(f.parameter("Start"), WithinAbs(0.8, 1e-9));
+
+	// The loop's bar moves the loop.
+	const ui::Point loop = centre(".sampler-bar[bar=loop]");
+	f.app.ui().drag(
+		std::nullopt, of(".sampler-bar[bar=loop]"), {"", 0, ui::Point{loop.x + static_cast<int>(0.3 * width), loop.y}});
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Loop start") - 0.35) < 0.01; }));
+	CHECK_THAT(f.parameter("Loop end") - f.parameter("Loop start"), WithinAbs(0.1, 1e-9));
+
+	// Without a loop mode the loop's bar is gone with the loop.
+	f.set("Loop mode", 0.0);
+	REQUIRE(f.app.waitUntil([&] { return f.has(".sampler-bar[bar=loop]", "off"); }));
+}
+
 TEST_CASE("the sampler panel loads dropped files and normalizes the sample", "[ui]")
 {
 	Fixture f;

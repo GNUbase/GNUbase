@@ -502,7 +502,7 @@ namespace gnubase::engine::processors
 			return hermite(at(data, i - 1), at(data, i), at(data, i + 1), at(data, i + 2), position - whole);
 		};
 		const auto length = static_cast<double>(frames);
-		// The fades and the loop's crossfade (p. 716), in frames.
+		// The fades and the loop's crossfade (p. 717), in frames.
 		const double fadeIn = std::max(m_values[FadeIn], 0.0) * length;
 		const double fadeOut = std::max(m_values[FadeOut], 0.0) * length;
 		const double crossfade = std::max(m_values[LoopCrossfade], 0.0) * length;
