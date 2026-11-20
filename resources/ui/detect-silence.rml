@@ -79,6 +79,7 @@
 			margin-left: 6dp;
 		}
 	</style>
+	<script src="analysis-job.lua"/>
 	<script>
 		-- The dialog's state, in the UI's Lua: the events to process, the one shown, and its sections.
 		DetectSilence = {}
@@ -145,6 +146,7 @@
 				document:Close()
 				return
 			end
+			dialog.job = createAnalysisJob(function(text) message(document, text) end)
 			dialog.index = 1
 			local all = document:GetElementById("ds-process-all")
 			if #dialog.events < 2 then
@@ -160,21 +162,22 @@
 			parameters.clip = event.clip
 			parameters.start = event.offset
 			parameters["end"] = event.offset + event.length
-			local ok, result = pcall(gnubase.clip.detectSilence, parameters)
-			if not ok then
-				message(document, tostring(result))
-				return
-			end
-			message(document, nil)
-			local sections = {}
-			for _, section in ipairs(result.sections) do
-				local left = (section.start - event.offset) * 100 / event.length
-				local width = (section["end"] - section.start) * 100 / event.length
-				sections[#sections + 1] = string.format('<div class="ds-section" style="left: %.4f%%; width: %.4f%%"/>',
-					left, width)
-			end
-			document:GetElementById("ds-display").inner_rml = table.concat(sections)
-			document:GetElementById("ds-sections").inner_rml = tostring(#result.sections)
+			dialog.job.start(gnubase.clip.detectSilence, parameters, function(ok, result)
+				if not ok then
+					message(document, tostring(result))
+					return
+				end
+				message(document, nil)
+				local sections = {}
+				for _, section in ipairs(result.sections) do
+					local left = (section.start - event.offset) * 100 / event.length
+					local width = (section["end"] - section.start) * 100 / event.length
+					sections[#sections + 1] = string.format('<div class="ds-section" style="left: %.4f%%; width: %.4f%%"/>',
+						left, width)
+				end
+				document:GetElementById("ds-display").inner_rml = table.concat(sections)
+				document:GetElementById("ds-sections").inner_rml = tostring(#result.sections)
+			end)
 		end
 
 		-- A change of a setting: Linked keeps the thresholds the same, the close threshold stays at most the open
@@ -209,21 +212,22 @@
 			if checked(document, "ds-apply-fades") then
 				parameters.fades = numberOf(document, "ds-fade-length")
 			end
-			local ok, failure = pcall(gnubase.event.stripSilence, parameters)
-			if not ok then
-				message(document, tostring(failure))
-				return
-			end
-			if all or dialog.index == #dialog.events then
-				document:Close()
-				return
-			end
-			dialog.index = dialog.index + 1
-			show(document)
+			dialog.job.start(gnubase.event.stripSilence, parameters, function(ok, failure)
+				if not ok then
+					message(document, tostring(failure))
+					return
+				end
+				if all or dialog.index == #dialog.events then
+					document:Close()
+					return
+				end
+				dialog.index = dialog.index + 1
+				show(document)
+			end)
 		end
 	</script>
 </head>
-<body onshow="DetectSilence.load(document)">
+<body onshow="DetectSilence.load(document)" onunload="if DetectSilence.job then DetectSilence.job.close() end">
 	<dialog id="detect-silence-dialog">
 		<div class="dialog-titlebar">Detect Silence</div>
 		<div id="ds-event"/>

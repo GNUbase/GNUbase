@@ -447,6 +447,13 @@ TEST_CASE("the WASAPI backends list their devices and refuse unknown ones", "[un
 		CHECK_THROWS_AS(backend->open(config("no such device")), DeviceError);
 	}
 }
+
+// The thread can't be driven without an endpoint that fails, so this checks its decision (#431).
+TEST_CASE("a WASAPI endpoint that hangs counts as a dropout, a stream that fails doesn't", "[unit]")
+{
+	CHECK(wasapiDropout(WasapiGaveUp::Hung));
+	CHECK(!wasapiDropout(WasapiGaveUp::CallFailed)); // e.g. invalidated, as its format changed in the sound settings
+}
 #endif
 
 #ifdef __APPLE__
@@ -1410,10 +1417,29 @@ TEST_CASE("the dummy device names its channels and keeps the format it was given
 TEST_CASE("a device passes its driver's reset requests on", "[unit]")
 {
 	DummyDevice device(DeviceFormat{}, 0);
-	CHECK(!device.requestReset()); // nobody listens: nothing happens, and the driver learns so
 	int resets = 0;
 	device.onReset([&resets] { ++resets; });
-	CHECK(device.requestReset());
+	device.requestReset();
+	CHECK(resets == 1);
+	device.requestReset();
+	CHECK(resets == 2);
+}
+
+// Drivers may ask before the engine has read the device it opened and set the handler, e.g. ASIO drivers right after
+// they are initialized (#432): the request waits for the handler, which gets it once.
+TEST_CASE("a device keeps a reset its driver asks for before there is a handler", "[unit]")
+{
+	DummyDevice device(DeviceFormat{}, 0);
+	device.requestReset();
+	device.requestReset(); // still one reset: the device opens again once
+	int resets = 0;
+	device.onReset([&resets] { ++resets; });
+	CHECK(resets == 1);
+	int later = 0;
+	device.onReset([&later] { ++later; });
+	CHECK(later == 0); // taken already
+	device.requestReset();
+	CHECK(later == 1);
 	CHECK(resets == 1);
 }
 

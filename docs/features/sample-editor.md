@@ -102,15 +102,15 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 
 ## Not yet
 
-The editor in the lower zone and its inspector in the left zone; Keep Editor Contents and following the project
-window's selection; several events at once (Clip Editing Mode, Clip Display Mode, Activate Clip for Editing); the
-ruler, the grid and snapping to it, the level scale and vertical zoom, and horizontal scrolling and zoom other than the
-zoom tool and the overview; the Zoom submenu; Solo Editor, Audition, auto-scroll, the independent track loop and the
-toolbar's context menu; positions in the project's time format, and typing them; the Draw tool's volume curve and
-sample editing; moving regions' edges with the mouse and dragging regions into the project window; the clip's snap
-point when opened from the pool; the Process section's Cut, Copy, Paste, Delete and Insert Silence (pp. 619-620).
-Hooks for other tickets: offline processing (#141) and making a sampler track of the range; what warping doesn't have
-yet is in [warp.md](warp.md).
+The editor in the lower zone and its inspector in the left zone; Keep Editor Contents and following the project window's
+selection; several events at once (Clip Editing Mode, Clip Display Mode, Activate Clip for Editing); the ruler, the grid
+and snapping to it, the level scale and vertical zoom, and horizontal scrolling and zoom other than the zoom tool and
+the overview; the Zoom submenu; Solo Editor, Audition, auto-scroll, the independent track loop and the toolbar's context
+menu; positions in the project's time format, and typing them; the Draw tool's volume curve and sample editing; moving
+regions' edges with the mouse and dragging regions into the project window; the clip's snap point when opened from the
+pool; the Process section's Cut, Copy, Paste, Delete and Insert Silence (#1968, pp. 619-620). Hooks for other tickets:
+offline processing (#141) and making a sampler track of the range; what warping doesn't have yet is in
+[warp.md](warp.md).
 
 ## Checks
 
