@@ -322,7 +322,12 @@ namespace gnubase::app
 			double insertVelocity = 100.0 / 127.0; // the editor's, for Fixed Velocity
 		};
 		QuantizeTarget quantizeTarget(ui::Window& window, Rml::Element* zone) const;
-		void quantize(const std::string& command, const std::string& step, const QuantizeTarget& target);
+		// With a merge key, as for the steps of a gesture of the quantize panel's Auto Apply, it is one undo step with
+		// the last one of the same key (history.transaction's merge).
+		void quantize(const std::string& command, const std::string& step, const QuantizeTarget& target,
+			const std::string& merge = {});
+		// The first part of the target with notes to make a groove of, or 0.
+		uint64_t groovePart(const QuantizeTarget& target) const;
 		// The quantize panel's commands for several audio tracks (#145): command with parameters on the project
 		// window's selected audio events and the events of its selected audio parts.
 		void quantizeAudioTracks(const std::string& command, engine::Json parameters);
