@@ -1430,6 +1430,7 @@ TEST_CASE("merge with Include Inserts plays the track's MIDI insert effects into
 		CHECK(mergedNotes() == arpeggio);
 		const MidiPart& part = project.midiParts.rbegin()->second;
 		std::vector<int> velocities;
+		velocities.reserve(part.notes.size());
 		for (const auto& [id, note] : part.notes)
 			velocities.push_back(velocityToMidi1(note.velocity));
 		CHECK(velocities == std::vector<int>{100, 90});
@@ -1528,6 +1529,16 @@ TEST_CASE(
 		channel.midiSends.slots[1] = {"transformer", true, {0, 0, 127, 0, 24}, 0};
 		CHECK(mergedPitches() == std::vector<int64_t>{60, 72, 84});
 		channel.midiSends.bypass = true;
+		CHECK(mergedPitches() == std::vector<int64_t>{60});
+	}
+	SECTION("a send to another instrument track only where that one is heard")
+	{
+		settings.includeSends = true;
+		const ObjectId organ = addTrack(project, TrackType::Instrument, "Organ");
+		Channel& other = project.channels.at(project.trackById.at(organ).channel);
+		project.channels.at(project.trackById.at(piano).channel).midiSends.slots[0].output = other.id;
+		CHECK(mergedPitches() == std::vector<int64_t>{60, 72});
+		other.mute = true;
 		CHECK(mergedPitches() == std::vector<int64_t>{60});
 	}
 }

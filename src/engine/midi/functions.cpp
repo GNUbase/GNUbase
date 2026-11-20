@@ -1092,12 +1092,30 @@ namespace gnubase::engine::midi
 		// Plays notes through MIDI effects, each playing what the one before it played, as a track's sequencer runs
 		// them from the first note on, with the slots' values and the project's tempo map. Offline, in blocks of a
 		// fixed size, so that the same notes give the same result every time (rule 6); the effects play the same for
-		// every block size anyway. A note-on of a channel and pitch that sounds already ends the note there.
-		std::vector<PlayedNote> runEffects(
-			const Project& project, const std::vector<const EffectSlot*>& chain, const std::vector<PlayedNote>& notes)
+		// every block size anyway. A note-on of a channel and pitch that sounds already ends the note there. It stops
+		// once the notes that start before until have ended: what starts later isn't merged.
+		std::vector<PlayedNote> runEffects(const Project& project, const std::vector<const EffectSlot*>& chain,
+			std::vector<PlayedNote> notes, time::Samples until)
 		{
 			using Type = graph::ProcessEvent::Type;
 			constexpr uint32_t block = 256;
+			// As the sequencer plays them: in the order of their starts and then pitches, as the render snapshot sorts
+			// them, a note of no samples not at all, and one that starts where a note of its channel and pitch sounds
+			// ends that one, its own end taking the place of the earlier one's.
+			std::stable_sort(notes.begin(), notes.end(), [](const PlayedNote& a, const PlayedNote& b)
+				{ return std::tie(a.start, a.pitch) < std::tie(b.start, b.pitch); });
+			std::array<size_t, size_t{16} * 128> last{}; // per channel and pitch, 1 + the last note in notes, or 0
+			for (size_t i = 0; i < notes.size(); ++i)
+			{
+				size_t& before = last[((notes[i].channel % 16) * 128) + (notes[i].pitch % 128)];
+				if (before != 0 && notes[before - 1].end > notes[i].start)
+					notes[before - 1].end = notes[i].start;
+				if (notes[i].end > notes[i].start)
+					before = i + 1;
+			}
+			notes.erase(std::remove_if(
+							notes.begin(), notes.end(), [](const PlayedNote& note) { return note.end <= note.start; }),
+				notes.end());
 			if (chain.empty() || notes.empty())
 				return notes;
 			struct Timed
@@ -1140,8 +1158,12 @@ namespace gnubase::engine::midi
 			std::vector<PlayedNote> played;
 			std::array<size_t, size_t{16} * 128> sounding{}; // per channel and pitch, 1 + its note in played, or 0
 			size_t next = 0;
+			size_t held = 0; // the notes out that start before until and sound still
 			for (time::Samples at = in.front().at; at <= in.back().at; at += block)
 			{
+				// Past until, only the ends of the notes that started before it count.
+				if (at >= until && held == 0)
+					break;
 				buffers[0].clear();
 				for (; next < in.size() && in[next].at < at + block; ++next)
 				{
@@ -1173,12 +1195,14 @@ namespace gnubase::engine::midi
 					if ((event.type == Type::NoteOn || event.type == Type::NoteOff) && note != 0)
 					{
 						played[note - 1].end = sample;
+						held -= played[note - 1].start < until ? 1 : 0;
 						note = 0;
 					}
 					if (event.type == Type::NoteOn)
 					{
 						played.push_back({sample, sample, event.channel, event.key, event.velocity});
 						note = played.size();
+						held += sample < until ? 1 : 0;
 					}
 				}
 			}
@@ -1271,6 +1295,11 @@ namespace gnubase::engine::midi
 			bool pre = false;
 		};
 		std::map<ObjectId, TrackEffects> effects;
+		// A send to another instrument track counts where that one is heard, as nothing else plays what it sent.
+		std::set<ObjectId> heardChannels;
+		if (settings.includeSends)
+			for (const ObjectId track : playingTracks(project))
+				heardChannels.insert(project.trackById.at(track).channel);
 		for (const ObjectId track : tracks)
 		{
 			const Channel& channel = project.channels.at(project.trackById.at(track).channel);
@@ -1278,7 +1307,9 @@ namespace gnubase::engine::midi
 			if (settings.includeInserts)
 				playing.inserts = playingEffects(channel.midiInserts, true);
 			if (settings.includeSends)
-				playing.sends = playingEffects(channel.midiSends, false);
+				for (const EffectSlot* slot : playingEffects(channel.midiSends, false))
+					if (slot->output == 0 || heardChannels.count(slot->output) != 0)
+						playing.sends.push_back(slot);
 			playing.pre = channel.midiSends.pre;
 			if (!playing.inserts.empty() || !playing.sends.empty())
 				effects[track] = std::move(playing);
@@ -1586,13 +1617,15 @@ namespace gnubase::engine::midi
 			for (const Candidate& candidate : unmodified)
 				if (candidate.source->track == track)
 					play(candidate, before);
-			std::vector<PlayedNote> out = runEffects(project, playing.inserts, notes);
+			std::vector<PlayedNote> out = runEffects(project, playing.inserts, notes, settings.end);
 			// Each send on what the inserts played, not on another send's notes; without Include Inserts nothing
 			// changed the notes before the sends.
-			const std::vector<PlayedNote> sent = !playing.pre ? out : settings.includeInserts ? before : notes;
+			std::vector<PlayedNote> sent = out;
+			if (playing.pre)
+				sent = settings.includeInserts ? before : notes;
 			for (const EffectSlot* slot : playing.sends)
 			{
-				const std::vector<PlayedNote> more = runEffects(project, {slot}, sent);
+				const std::vector<PlayedNote> more = runEffects(project, {slot}, sent, settings.end);
 				out.insert(out.end(), more.begin(), more.end());
 			}
 			// What starts in the range, with the new part's global transpose taken off, else on an Independent part.

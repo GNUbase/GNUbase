@@ -344,35 +344,62 @@ TEST_CASE("a MIDI track routed away from an instrument ends the notes its effect
 
 TEST_CASE("merging with Include Inserts and Include Sends plays what the track's MIDI effects played", "[integration]")
 {
-	// The effects run in time: an arpeggio, a chord for each of its notes, and a send an octave higher.
-	const auto setUp = [](EffectTrack& track)
+	// The effects run in time and play the notes as the sequencer sends them to them.
+	struct Case
 	{
-		track.add({{0, 1, 60, 100}, {0, 1, 64, 90}, {2, 1.5, 67, 80}});
-		track.set("midiInserts",
+		const char* name;
+		std::vector<std::vector<double>> notes;
+		Json inserts;
+		Json sends;
+	};
+	const Json octaveSend = {{"slots", {slot("transformer", {{"action", "Transpose"}, {"value", 12}})}}};
+	const std::vector<Case> cases = {
+		{"an arpeggio, a chord for each of its notes and a send an octave higher",
+			{{0, 1, 60, 100}, {0, 1, 64, 90}, {2, 1.5, 67, 80}},
 			{{"slots",
 				{slot("arpeggiator", {{"mode", "Up/Down"}, {"rate", "1/8"}, {"gate", 30}}),
-					slot("chordGenerator", {{"chord", "Power"}})}}});
-		track.set("midiSends", {{"slots", {slot("transformer", {{"action", "Transpose"}, {"value", 12}})}}});
+					slot("chordGenerator", {{"chord", "Power"}})}}},
+			octaveSend},
+		// The second note of a pitch ends the first, and its end counts.
+		{"two notes of one pitch that overlap, and one within another",
+			{{0, 1, 60, 100}, {0.3, 1, 60, 90}, {2, 1.5, 62, 80}, {2.2, 0.5, 62, 70}},
+			{{"slots", {slot("chordGenerator", {{"chord", "Power"}}), slot("arpeggiator", {{"rate", "1/8"}})}}},
+			octaveSend},
+		// Notes at one position by pitch, not as they were added; one shorter than a sample doesn't play.
+		{"notes at one position and one shorter than a sample",
+			{{0, 1, 67, 100}, {0, 1, 60, 90}, {2, 1.0 / 200000, 64, 80}, {3, 0.5, 62, 70}},
+			{{"slots", {slot("arpeggiator", {{"mode", "As played"}, {"rate", "1/8"}})}}}, Json()},
 	};
-	EffectTrack played;
-	setUp(played);
-	run(played.client, "transport.play");
-	played.render(4 * g_beat);
-	const std::string expected = played.captured();
-	REQUIRE(!expected.empty());
+	for (const Case& each : cases)
+		DYNAMIC_SECTION(each.name)
+		{
+			const auto setUp = [&each](EffectTrack& track)
+			{
+				track.add(each.notes);
+				track.set("midiInserts", each.inserts);
+				if (!each.sends.is_null())
+					track.set("midiSends", each.sends);
+			};
+			EffectTrack played;
+			setUp(played);
+			run(played.client, "transport.play");
+			played.render(4 * g_beat);
+			const std::string expected = played.captured();
+			REQUIRE(!expected.empty());
 
-	// Merged onto a new MIDI track that plays into the instrument, whose own effects don't apply to it, with the
-	// track's part muted.
-	EffectTrack merged;
-	setUp(merged);
-	const Json changes = run(merged.client, "midi.merge",
-		{{"start", 0}, {"end", 4 * g_beat}, {"tracks", {merged.track}}, {"includeInserts", true},
-			{"includeSends", true}});
-	REQUIRE(changes.at("tracks").size() == 1);
-	run(merged.client, "event.set", {{"events", {merged.part}}, {"mute", true}});
-	run(merged.client, "transport.play");
-	merged.render(4 * g_beat);
-	CHECK(merged.captured() == expected);
+			// Merged onto a new MIDI track that plays into the instrument, whose own effects don't apply to it, with
+			// the track's part muted.
+			EffectTrack merged;
+			setUp(merged);
+			const Json changes = run(merged.client, "midi.merge",
+				{{"start", 0}, {"end", 4 * g_beat}, {"tracks", {merged.track}}, {"includeInserts", true},
+					{"includeSends", true}});
+			REQUIRE(changes.at("tracks").size() == 1);
+			run(merged.client, "event.set", {{"events", {merged.part}}, {"mute", true}});
+			run(merged.client, "transport.play");
+			merged.render(4 * g_beat);
+			CHECK(merged.captured() == expected);
+		}
 }
 
 TEST_CASE("the arpeggiator returns when its output is full, and ends its note once there is room", "[unit]")

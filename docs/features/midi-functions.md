@@ -44,12 +44,15 @@ Functions that edit MIDI parts as a whole (#133, #838).
   else it goes into the notes. With `includeInserts` a track's notes then also go through its MIDI insert effects
   ([midi-effects.md](midi-effects.md)) below the divider, each playing what the one before it played, and with
   `includeSends` (Include Sends, p. 1120) through each of its MIDI send effects, which get the notes before the
-  modifiers and the inserts with Pre, else after them; what the sends play is added, as playback plays both. Without
-  `includeInserts` the sends get the notes without the modifiers, which stay on the track. The effects run in time (the
+  modifiers and the inserts with Pre, else after them; what the sends play is added, as playback plays both, that of a
+  send to another instrument track only where that track is heard (`playingTracks`). Without `includeInserts` the
+  sends get the notes without the modifiers, which stay on the track. The effects run in time (the
   arpeggiator follows the tempo) and make notes of their own, so they run offline over the notes in the range: as the
-  track's sequencer plays them into the effects (with their play probability and velocity variance drawn), from the
-  first one on, with the slots' values and the project's tempo map, in blocks of a fixed size, so that the same notes
-  give the same result every time (rule 6). What the effects play that starts in the range is written as it played, the
+  track's sequencer plays them into the effects (with their play probability and velocity variance drawn, in the order
+  of their starts and pitches, a note shorter than a sample left out, and a note that starts where one of its channel
+  and pitch sounds ending that one), from the first one on, as playback from the left locator without note chase plays
+  them (notes held from before the range don't reach the effects), with the slots' values and the project's tempo map, in blocks of a fixed size, so that the same notes
+  give the same result every time (rule 6), until the notes that start in the range have ended. What the effects play that starts in the range is written as it played, the
   new part's global transpose taken off, or, where that takes a pitch beyond 0-127, on an Independent part of its own,
   as it played. The first new part, with the controllers, is on the first lane: the one with the setting
   the parts share, else the one of the earliest source part. The others, in the order of their earliest source parts as
