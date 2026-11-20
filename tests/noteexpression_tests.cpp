@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -65,6 +66,16 @@ namespace
 				return event->data;
 		}
 		return nullptr;
+	}
+
+	// The data of the events since the last call, by name.
+	std::map<std::string, std::vector<Json>> events(Client& client)
+	{
+		std::map<std::string, std::vector<Json>> found;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message))
+				found[event->name].push_back(event->data);
+		return found;
 	}
 
 	// An instrument track playing the note probe, record-enabled, on the dummy device.
@@ -647,7 +658,7 @@ TEST_CASE("resizing a note's start keeps its expression where it was", "[integra
 
 TEST_CASE("sends before the modifiers get the notes' expression", "[integration]")
 {
-	for (const bool pre : {false, true})
+	for (const auto& [pre, bypass] : {std::pair{false, false}, std::pair{true, false}, std::pair{true, true}})
 	{
 		Setup setup;
 		Client& client = setup.client;
@@ -666,6 +677,7 @@ TEST_CASE("sends before the modifiers get the notes' expression", "[integration]
 				{"midiSends",
 					{{"pre", pre},
 						{"slots", {{{"effect", "transformer"}, {"parameters", {{"value", 1}}}, {"output", other}}}}}}});
+		run(client, "noteExpression.set", {{"track", setup.track}, {"bypass", bypass}});
 		run(client, "audio.render", {{"frames", 64}});
 		const auto start = run(client, "audio.get").at("position").get<int64_t>();
 		run(client, "midi.capture", {{"start", true}});
@@ -677,9 +689,13 @@ TEST_CASE("sends before the modifiers get the notes' expression", "[integration]
 			if (captured.at("channel") == other)
 				sent.push_back({captured.at("position").get<int64_t>() - start,
 					captured.at("bytes").at(0).get<int64_t>(), captured.at("bytes").at(1).get<int64_t>()});
-		INFO("sends " << (pre ? "pre" : "post"));
-		// The transformer moves the note with its expression (#1618), whose initial point comes before it.
-		CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0xE2, 0}, {0, 0x92, pre ? 61 : 73}, {100, 0xE2, 0}});
+		INFO("sends " << (pre ? "pre" : "post") << (bypass ? ", expression bypassed" : ""));
+		// The transformer moves the note with its expression (#1618), whose initial point comes before it; with the
+		// track's expression bypassed, also the sends before the modifiers get the note alone.
+		if (bypass)
+			CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0x92, 61}});
+		else
+			CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0xE2, 0}, {0, 0x92, pre ? 61 : 73}, {100, 0xE2, 0}});
 	}
 }
 
@@ -928,12 +944,18 @@ TEST_CASE("noteExpression.set sets a track's bypass and input assignments, which
 	Client& client = setup.client;
 	CHECK(setupOf(client, setup.channel) == Json{{"bypass", false}, {"inputs", Json::array()}});
 
+	events(client);
 	const Json set = run(client, "noteExpression.set",
 		{{"track", setup.track}, {"bypass", true},
 			{"inputs", {input("tuning", "pitchBend", -12.0, 12.0), input("brightness", "cc74", 0.25, 0.75)}}});
 	const Json expected = {{"bypass", true},
 		{"inputs", {input("tuning", "pitchBend", -12.0, 12.0), input("brightness", "cc74", 0.25, 0.75)}}};
 	CHECK(set == Json{{"track", setup.track}, {"noteExpression", expected}});
+	// Clients that follow events, like the inspector, see the new setup.
+	const std::vector<Json> changes = events(client)["channel.changed"];
+	REQUIRE(changes.size() == 1);
+	CHECK(changes[0].at("channel").at("id") == setup.channel);
+	CHECK(changes[0].at("channel").at("noteExpression") == expected);
 	CHECK(setupOf(client, setup.channel) == expected);
 	CHECK(run(client, "history.get").at("steps").back().at("action") == "Change note expression setup");
 

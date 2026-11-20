@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Changing the notes and controllers of a MIDI part (#27): note.set and controller.set, the key editor's split and
 // glue tools (#1419): note.split and note.glue, its chord editing (#127): note.chord and note.voicing, and a track's
-// note expression setup (#1513): noteExpression.set. Like every
-// command that changes the project, each is one undo step and changes nothing if it fails (ProjectModel::add).
+// note expression setup (#1513): noteExpression.set. Like every command that changes the project, each is one undo
+// step and changes nothing if it fails (ProjectModel::add).
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
@@ -124,8 +124,7 @@ namespace gnubase::engine
 			return {{"notes", result}};
 		}
 
-		// The key editor's expression editor (#1512, #1795): each change replaces the note's points of one expression
-		// from `from` to `to` with its points, so that an edit sent before the client saw the last one keeps it.
+		// A MIDI or instrument track's note expression setup (#1513): its bypass and input assignments.
 		Json setNoteExpression(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -137,9 +136,12 @@ namespace gnubase::engine
 			require(channel != project.channels.end(), "no MIDI or instrument track " + std::to_string(id));
 			NoteExpressionSetup& setup = channel->second.noteExpression;
 			setup = noteExpressionFromJson(parameters, setup, false);
+			context.emit("channel.changed", {{"channel", toJson(channel->second)}});
 			return {{"track", id}, {"noteExpression", toJson(setup)}};
 		}
 
+		// The key editor's expression editor (#1512, #1795): each change replaces the note's points of one expression
+		// from `from` to `to` with its points, so that an edit sent before the client saw the last one keeps it.
 		Json replaceExpression(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
