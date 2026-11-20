@@ -47,6 +47,7 @@
 			margin: 8dp 12dp 0 12dp;
 		}
 	</style>
+	<script src="analysis-job.lua"/>
 	<script>
 		Statistics = {}
 		local dialog = Statistics
@@ -146,19 +147,33 @@
 				names[clip.id] = clip.name
 			end
 			local tables = {}
+			local events = {}
 			for _, event in ipairs(project.audioEvents) do
 				if wanted[event.id] then
-					local ok, result = pcall(gnubase.clip.statistics,
-						{clip = event.clip, start = event.offset, ["end"] = event.offset + event.length})
-					tables[#tables + 1] = ok and tableOf(names[event.clip] or "", result) or
-						('<div class="st-event">' .. escape(tostring(result)) .. "</div>")
+					events[#events + 1] = event
 				end
 			end
-			document:GetElementById("st-tables").inner_rml = table.concat(tables)
+			local index = 1
+			dialog.job = createAnalysisJob(function(text)
+				document:GetElementById("st-tables").inner_rml = table.concat(tables) .. escape(text)
+			end)
+			local function nextEvent()
+				local event = events[index]
+				if not event then return end
+				dialog.job.start(gnubase.clip.statistics,
+					{clip = event.clip, start = event.offset, ["end"] = event.offset + event.length}, function(ok, result)
+						tables[#tables + 1] = ok and tableOf(names[event.clip] or "", result) or
+							('<div class="st-event">' .. escape(tostring(result)) .. "</div>")
+						document:GetElementById("st-tables").inner_rml = table.concat(tables)
+						index = index + 1
+						nextEvent()
+					end)
+			end
+			nextEvent()
 		end
 	</script>
 </head>
-<body onshow="Statistics.load(document)">
+<body onshow="Statistics.load(document)" onunload="if Statistics.job then Statistics.job.close() end">
 	<dialog id="statistics-dialog">
 		<div class="dialog-titlebar">Statistics</div>
 		<div id="st-tables"/>

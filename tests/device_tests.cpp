@@ -15,8 +15,14 @@
 #include "platform/jacklibrary.h"
 #include "platform/process.h"
 
+#include <catch2/catch_test_case_info.hpp>
+#include <catch2/reporters/catch_reporter_event_listener.hpp>
+#include <catch2/reporters/catch_reporter_registrars.hpp>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <jack/jack.h>
+#include <sys/file.h>
+#include <unistd.h>
 #endif
 #include "devicecontract.h"
 #include "engine/document/document.h"
@@ -38,8 +44,10 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -447,6 +455,13 @@ TEST_CASE("the WASAPI backends list their devices and refuse unknown ones", "[un
 		CHECK_THROWS_AS(backend->open(config("no such device")), DeviceError);
 	}
 }
+
+// The thread can't be driven without an endpoint that fails, so this checks its decision (#431).
+TEST_CASE("a WASAPI endpoint that hangs counts as a dropout, a stream that fails doesn't", "[unit]")
+{
+	CHECK(wasapiDropout(WasapiGaveUp::Hung));
+	CHECK(!wasapiDropout(WasapiGaveUp::CallFailed)); // e.g. invalidated, as its format changed in the sound settings
+}
 #endif
 
 #ifdef __APPLE__
@@ -589,10 +604,12 @@ namespace
 	class ForcedSetting
 	{
 	public:
-		ForcedSetting(std::string key, uint32_t value) : m_key(std::move(key)), m_previous(graphSetting(m_key))
+		ForcedSetting(std::string key, const std::string& value)
+			: m_key(std::move(key)), m_previous(graphSetting(m_key))
 		{
-			REQUIRE(pw("pw-metadata", {"-n", "settings", "0", m_key, std::to_string(value)}));
+			REQUIRE(pw("pw-metadata", {"-n", "settings", "0", m_key, value}));
 		}
+		ForcedSetting(std::string key, uint32_t value) : ForcedSetting(std::move(key), std::to_string(value)) {}
 		~ForcedSetting()
 		{
 			if (m_previous.empty())
@@ -610,13 +627,56 @@ namespace
 
 	// Forcing the graph's settings changes how everything in it plays, a desktop session's daemon too, and a test that
 	// is killed leaves them forced. So the tests that do run only against the private daemon that
-	// tools/start-pipewire.sh starts, which GNUBASE_REQUIRE_PIPEWIRE=1 says runs, and skip otherwise (#423).
+	// tools/start-pipewire.sh starts, which GNUBASE_REQUIRE_PIPEWIRE=1 says runs, and skip otherwise (#423). There they
+	// first clear what a killed test may have left forced or widened, which ForcedSetting would otherwise give back
+	// (#540): the rates allowed go back to that daemon's, PipeWire's default of its default rate.
 	void skipUnlessPrivateDaemon()
 	{
 		if (!required("GNUBASE_REQUIRE_PIPEWIRE"))
 			SKIP("forces the graph's settings, which only the private daemon of tools/start-pipewire.sh may have "
 				 "changed (GNUBASE_REQUIRE_PIPEWIRE=1)");
+		for (const char* key : {"clock.force-rate", "clock.force-quantum"})
+			pw("pw-metadata", {"-n", "settings", "0", key, "0"});
+		pw("pw-metadata", {"-n", "settings", "0", "clock.allowed-rates", "[ " + graphSetting("clock.rate") + " ]"});
 	}
+
+	// ctest keeps the [pipewire] tests apart with a RESOURCE_LOCK and runs the [jack] ones alone, but only within one
+	// run: several runs at once, as tools/ci-local.sh starts them, still meet on one daemon. So each such test case
+	// holds an flock on a file for its daemon: PipeWire's in its runtime directory, jackd's in /tmp (#540).
+	class DaemonLock final : public Catch::EventListenerBase
+	{
+	public:
+		using Catch::EventListenerBase::EventListenerBase;
+
+		void testCaseStarting(const Catch::TestCaseInfo& info) override
+		{
+			const char* runtime = std::getenv("XDG_RUNTIME_DIR");
+			for (const Catch::Tag& tag : info.tags)
+			{
+				std::string path;
+				if (tag.original == Catch::StringRef("pipewire"))
+					path = std::string(runtime != nullptr ? runtime : "/tmp") + "/gnubase-pipewire-tests.lock";
+				else if (tag.original == Catch::StringRef("jack"))
+					path = "/tmp/gnubase-jack-tests.lock";
+				if (path.empty())
+					continue;
+				m_lock = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+				if (m_lock >= 0)
+					flock(m_lock, LOCK_EX); // released when the file closes, also when the run is killed
+				return;
+			}
+		}
+
+		void testCaseEnded(const Catch::TestCaseStats& /*stats*/) override
+		{
+			if (m_lock >= 0)
+				::close(m_lock);
+			m_lock = -1;
+		}
+
+	private:
+		int m_lock = -1;
+	};
 
 	// The tests that change the graph need PipeWire's command line tools, which come with the daemon.
 	bool havePipeWireTools()
@@ -625,6 +685,67 @@ namespace
 			return true;
 		WARN("no pw-cli and pw-metadata to change the graph with");
 		return false;
+	}
+
+	// A device whose reset handler has the test thread open it again with the same config, as the engine does
+	// (audio.reset): poll() does that. It counts the resets.
+	class Reopening
+	{
+	public:
+		Reopening(std::unique_ptr<Backend> backend, DeviceConfig config)
+			: m_backend(std::move(backend)), m_config(std::move(config))
+		{
+			open();
+		}
+		~Reopening() { m_device->stop(); } // before the callback goes
+
+		Reopening(const Reopening&) = delete;
+		Reopening& operator=(const Reopening&) = delete;
+
+		void poll()
+		{
+			if (!m_pending.exchange(false))
+				return;
+			m_device.reset();
+			open();
+		}
+
+		int resets() const { return m_resets; }
+		const Device& device() const { return *m_device; }
+		size_t blocks() const { return m_callback->blocks(); }
+
+	private:
+		void open()
+		{
+			m_device = m_backend->open(m_config);
+			m_device->onReset(
+				[this]
+				{
+					++m_resets;
+					m_pending = true;
+				});
+			m_callback = std::make_unique<ContractCallback>(m_device->format());
+			m_device->start(*m_callback);
+		}
+
+		std::unique_ptr<Backend> m_backend;
+		DeviceConfig m_config;
+		std::unique_ptr<ContractCallback> m_callback; // before the device, which goes first
+		std::unique_ptr<Device> m_device;
+		std::atomic<int> m_resets{0};
+		std::atomic<bool> m_pending{false};
+	};
+
+	// Polls the devices for the given time, as their engines would.
+	void reopenFor(std::initializer_list<Reopening*> devices, std::chrono::milliseconds time)
+	{
+		const auto end = std::chrono::steady_clock::now() + time;
+		while (std::chrono::steady_clock::now() < end)
+		{
+			for (Reopening* device : devices)
+				device->poll();
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
 	}
 
 	// In the contract's test case, so that the contract never meets the sink that comes and goes when ctest runs
@@ -668,6 +789,26 @@ namespace
 		device.reset();
 		CHECK(!listed());
 	}
+}
+
+CATCH_REGISTER_LISTENER(DaemonLock)
+
+// The forcing tests rely on ForcedSetting giving back what it found, which it reads from pw-metadata's output (#540).
+TEST_CASE("a forced setting of the PipeWire graph gets its previous value back", "[integration][pipewire]")
+{
+	skipUnlessPrivateDaemon();
+	if (!havePipeWireTools())
+		return;
+	{
+		const ForcedSetting outer("clock.force-quantum", 256);
+		CHECK(forcedQuantum() == 256);
+		{
+			const ForcedSetting inner("clock.force-quantum", 512);
+			CHECK(forcedQuantum() == 512);
+		}
+		CHECK(forcedQuantum() == 256);
+	}
+	CHECK(forcedQuantum() == 0);
 }
 
 TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset when a sink's ports change or it goes "
@@ -725,6 +866,24 @@ TEST_CASE("a PipeWire device asks for a reset when another client forces the gra
 			}));
 		CHECK(callback.violations() == 0);
 	}
+	SECTION("a force of the device's own rate, and lifting it, change nothing for it (#430)")
+	{
+		const std::unique_ptr<Device> device = backend->open(config("default"));
+		std::atomic<int> resets{0};
+		device->onReset([&resets] { ++resets; });
+		ContractCallback callback(device->format());
+		device->start(callback);
+		REQUIRE(callback.waitFor(8));
+		{
+			const ForcedSetting forced("clock.force-rate", static_cast<uint32_t>(device->format().sampleRate));
+			std::this_thread::sleep_for(std::chrono::milliseconds(300)); // the device has seen the force
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(300));
+		CHECK(resets == 0);
+		CHECK(callback.waitFor(8));
+		CHECK(callback.violations() == 0);
+		device->stop();
+	}
 	SECTION("the engine, with the device set as the studio setup sets it")
 	{
 		std::vector<std::unique_ptr<Backend>> backends;
@@ -753,6 +912,40 @@ TEST_CASE("a PipeWire device asks for a reset when another client forces the gra
 		}
 		CHECK(eventually([&runsAt, rate] { return runsAt(rate, false); }));
 	}
+}
+
+// Two clients that hold the graph at their own rates, as two GNUbase instances at different rates do with
+// node.force-rate, take the graph from each other whenever one opens again. Each device asks for a reset once at most;
+// then one of them plays silence and says why, instead of both resetting every second, and plays again once the other
+// one closes (#422).
+TEST_CASE("PipeWire devices at different rates don't keep resetting each other", "[integration][pipewire]")
+{
+	skipUnlessPrivateDaemon(); // the graph changes rates
+	const std::unique_ptr<Backend> probe = pipeWireOrSkip();
+	if (!probe)
+		SKIP("no PipeWire daemon runs here");
+	if (!havePipeWireTools())
+		return;
+	const ForcedSetting allowed("clock.allowed-rates", "[ 44100 48000 ]");
+	const double rate = probe->open(config("default"))->format().sampleRate;
+	const double other = rate != 44100.0 ? 44100.0 : 48000.0;
+	std::optional<Reopening> first(std::in_place, makePipeWireBackend(), config("default", rate));
+	REQUIRE(eventually([&first] { return first->blocks() >= 8; }));
+	std::optional<Reopening> second(std::in_place, makePipeWireBackend(), config("default", other));
+	reopenFor({&*first, &*second}, std::chrono::seconds(5));
+	INFO("resets: " << first->resets() << " and " << second->resets());
+	CHECK(first->resets() <= 1);
+	CHECK(second->resets() <= 1);
+	CHECK(first->resets() + second->resets() >= 1);
+	const bool firstPlays = first->device().silenceReason().empty();
+	REQUIRE(firstPlays != second->device().silenceReason().empty());
+
+	// Once the playing one closes, the graph runs at the silent one's rate again, and it plays.
+	(firstPlays ? first : second).reset();
+	const Reopening& silent = firstPlays ? *second : *first;
+	const size_t blocks = silent.blocks();
+	CHECK(eventually(
+		[&silent, blocks] { return silent.device().silenceReason().empty() && silent.blocks() >= blocks + 8; }));
 }
 
 // The latency counts in quanta: when another client changes the graph's quantum while a device runs, the device
@@ -1158,6 +1351,37 @@ namespace
 		CHECK(other.setBufferSize(found) == 0);
 	}
 
+	// Two clients that ask for different buffer sizes, as two GNUbase instances can, no longer reset each other through
+	// the reopen: the device that another client's size reset opens again without asking for its own (#433).
+	void checkJackTwoBlockSizes(const std::string& library)
+	{
+		const TestClient other(library, "gnubase-test-client", false);
+		const uint32_t found = other.bufferSize();
+		const uint32_t firstSize = found != 512 ? 512 : 1024;
+		const uint32_t secondSize = found != 128 ? 128 : 64;
+		{
+			Reopening first(makeJackBackend(library), config("default", 0.0, firstSize));
+			REQUIRE(waitUntil(
+				[&first, &other, firstSize]
+				{
+					first.poll();
+					return other.bufferSize() == firstSize;
+				}));
+			// jackd's latencies may follow the device's own request late, which resets it once: it opens again at
+			// the size it set then, and only the resets after that count.
+			reopenFor({&first}, std::chrono::milliseconds(300));
+			const int settled = first.resets();
+			Reopening second(makeJackBackend(library), config("default", 0.0, secondSize));
+			reopenFor({&first, &second}, std::chrono::seconds(1));
+			INFO("resets: " << first.resets() - settled << " and " << second.resets());
+			CHECK(first.resets() - settled <= 1);
+			CHECK(second.resets() <= 1);
+			CHECK(other.bufferSize() == secondSize);
+			CHECK(first.device().format().blockSize == firstSize); // in blocks of at most that size
+		}
+		CHECK(other.setBufferSize(found) == 0);
+	}
+
 	// A reset the device finds before it has a handler, as between the engine opening it and reading its info and
 	// latency, comes once the handler is set (#371).
 	void checkJackResetBeforeHandler(Backend& backend, std::unique_ptr<TestClient> hardware)
@@ -1289,6 +1513,7 @@ TEST_CASE(
 	checkJackResets(*backend, true);
 	checkJackOwnBufferSize(*backend, "libjack.so.0", false);
 	checkJackOtherClientsBufferSize(*backend, "libjack.so.0");
+	checkJackTwoBlockSizes("libjack.so.0");
 	checkJackXruns(*backend);
 	checkJackStopWhileLate(*backend);
 	checkJackCycleTimes(*backend, "libjack.so.0");
@@ -1410,10 +1635,29 @@ TEST_CASE("the dummy device names its channels and keeps the format it was given
 TEST_CASE("a device passes its driver's reset requests on", "[unit]")
 {
 	DummyDevice device(DeviceFormat{}, 0);
-	CHECK(!device.requestReset()); // nobody listens: nothing happens, and the driver learns so
 	int resets = 0;
 	device.onReset([&resets] { ++resets; });
-	CHECK(device.requestReset());
+	device.requestReset();
+	CHECK(resets == 1);
+	device.requestReset();
+	CHECK(resets == 2);
+}
+
+// Drivers may ask before the engine has read the device it opened and set the handler, e.g. ASIO drivers right after
+// they are initialized (#432): the request waits for the handler, which gets it once.
+TEST_CASE("a device keeps a reset its driver asks for before there is a handler", "[unit]")
+{
+	DummyDevice device(DeviceFormat{}, 0);
+	device.requestReset();
+	device.requestReset(); // still one reset: the device opens again once
+	int resets = 0;
+	device.onReset([&resets] { ++resets; });
+	CHECK(resets == 1);
+	int later = 0;
+	device.onReset([&later] { ++later; });
+	CHECK(later == 0); // taken already
+	device.requestReset();
+	CHECK(later == 1);
 	CHECK(resets == 1);
 }
 

@@ -6,13 +6,17 @@ Statistics.
 ## In the engine
 
 The measurements are in `src/engine/analysis` ([analysis.md](analysis.md)), the commands in
-`src/engine/document/audiofunctions.cpp`. They read the clip's file in blocks on the command thread. Positions are the
-clip's sample frames; `start` and `end` default to the whole clip.
+`src/engine/document/audiofunctions.cpp`. The four analysis commands return a job immediately (version 2): the source
+media and range are copied on the command thread, and the job reads and measures the file in blocks. `job.progress`
+reports progress, `job.cancel` cancels between blocks, and `job.finished` and `job.get` contain the measurements in
+`job.result`. File errors fail the job. Positions are clip sample frames; `start` and `end` default to the whole clip.
+Read-only analysis results describe the captured source even if the document changes meanwhile.
 
 | Command | What it does | Reference |
 |---|---|---|
 | `clip.detectSilence` | Analyze: the sections of `clip` from `start` to `end` that aren't silent, by start | pp. 603-606 |
-| `event.stripSilence` | Process for audio `events`: the same in the section each plays, then Strip Silence, Add as Regions and Apply Fades | pp. 603-606 |
+| `event.stripSilence` | A job analyzes audio `events`, then applies Strip Silence, Add as Regions and Apply Fades in one edit | pp. 603-606 |
+| `event.applySilenceSections` | Applies measured `sections`, one array per event, only at the given project `revision`; no file I/O | |
 | `clip.spectrum` | The average spectrum from `start` to `end`, per channel | pp. 607-608 |
 | `clip.statistics` | The statistics from `start` to `end`, per channel, and its loudness | p. 609 |
 
@@ -25,10 +29,13 @@ clip's sample frames; `start` and `end` default to the whole clip.
 - **Process** (`event.stripSilence`, one undo step, "Detect silence"): `regions` adds a region of the clip per section
   ([sample-editor.md](sample-editor.md)), named `regionName` and a number counting from `autoNumberStart` across the
   events; `strip` (the default) splits each event at the sections' edges (`event.split`) and removes the silent parts
-  (`event.remove`); `fades` gives the events that remain a fade in and out of that many milliseconds, at most half
-  of what each plays for in frames at the clip's sample rate (its length, unless it plays warped: `fadeRoom`,
-  [warp.md](warp.md)) each (`audioEvent.setFades`). It runs those commands as part of it (`ProjectModel::runEdit`). Stripping
-  an event that is silent or locked is an error.
+  (`event.remove`); `fades` gives the events that remain a fade in and out of that many milliseconds, at most half of
+  what each plays for in frames at the clip's sample rate (its length, unless it plays warped: `fadeRoom`,
+  [warp.md](warp.md)) each (`audioEvent.setFades`). The job posts `event.applySilenceSections` to the command thread
+  with its measured sections and the project's starting revision. That edit runs those commands as part of it
+  (`ProjectModel::runEdit`). An edit, undo, redo or project replacement during analysis fails the job rather than
+  applying stale sections. Stripping a silent or locked event is an error. `event.stripSilence` cannot be part of a
+  history transaction; the apply command can.
 - **Spectrum** (`analysis::PowerSpectrum`, `analysis::spectrumCurve`): Welch's average power spectrum, as
   `audio.analyze` measures it, at points 1/24 octave apart from 20 Hz up to the Nyquist frequency. Each point has the
   level of the strongest bin within 1/48 octave of it, or between the bins next to it where they are farther apart,
@@ -45,9 +52,11 @@ clip's sample frames; `start` and `end` default to the whole clip.
 ## In the UI
 
 The Audio menu has Advanced > Detect Silence..., Spectrum Analyzer and Statistics, the UI commands
-`audio.detectSilence`, `audio.spectrumAnalyzer` and `audio.statistics` of the event display. They open a dialog for
-the selected audio events, as the fade dialog does ([fades.md](fades.md)), whose Lua does the rest through the engine
-API.
+`audio.detectSilence`, `audio.spectrumAnalyzer` and `audio.statistics` of the event display. They open a dialog for the
+selected audio events, as the fade dialog does ([fades.md](fades.md)), whose Lua does the rest through the engine API.
+Each dialog follows its job's progress without waiting on the UI thread, shows failures, and cancels pending work when
+closed. A new Analyze or Auto request cancels the previous job and ignores its later results. Statistics analyzes
+selected events successively, showing each table as it finishes.
 
 ```
 #detect-silence-dialog          detect-silence.rml
@@ -90,12 +99,15 @@ whose overtone is louder, not their strongest frequency.
 
 - `tests/audiofunctions_tests.cpp`: Detect Silence on tones whose edges are known, with both thresholds, the minimum
   times, pre-roll and post-roll; `clip.detectSilence` in a range and its errors; `event.stripSilence` splitting,
-  regions, fades, one undo step, regions alone and its errors; the statistics of reference signals (a sine's levels,
-  RMS and pitch, the true peak of a sine at a quarter of the sample rate, DC offset, 16 and 8 bit samples, the
-  highest RMS, EBU Tech 3341 and 3342's loudness signals, silence and a range); the spectrum of sines in two channels
-  and of silence.
+  regions, fades, one undo step, regions alone and its errors; the statistics of reference signals (a sine's levels, RMS
+  and pitch, the true peak of a sine at a quarter of the sample rate, DC offset, 16 and 8 bit samples, the highest RMS,
+  EBU Tech 3341 and 3342's loudness signals, silence and a range); the spectrum of sines in two channels and of silence;
+  all four jobs held at their first progress to check command responsiveness, cancellation, progress and completion;
+  Strip Silence refusing results after an edit, undo, event removal or project replacement; missing files and invalid
+  measured sections.
 - `tests/audiofunctions_ui_tests.cpp` drives the dialogs with `ui::Automation`: Analyze and its sections along the
-  event, Add as Regions and Process for the first event, Auto, Linked and the open threshold for the second;
-  Cancel, and Process All Selected Events with Apply Fades; the Statistics window's values; the Spectrum Analyzer's
-  bars, the values under the mouse, the reference of a right click and D, a click dropping it, the error of a clip
-  whose file can't be read, and the channel of a stereo clip that its selector chooses.
+  event, Add as Regions and Process for the first event, Auto, Linked and the open threshold for the second; Cancel, and
+  Process All Selected Events with Apply Fades; the Statistics window's values; the Spectrum Analyzer's bars, the values
+  under the mouse, the reference of a right click and D, a click dropping it, the error of a clip whose file can't be
+  read, and the channel of a stereo clip that its selector chooses; all three dialogs remaining responsive during held
+  analysis jobs and cancelling pending analysis or processing when closed.

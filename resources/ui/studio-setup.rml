@@ -308,7 +308,7 @@
 		-- MPE setup (mpe in midi.ports) shows below it; each input has its fields, the others' hidden. Built again after
 		-- Apply, it keeps showing the input selected (setup.mpeShown, its backend/id).
 		local mpeModes = {{"off", "Off"}, {"lower", "MPE Mode, Lower Zone"}, {"upper", "MPE Mode, Upper Zone"},
-			{"rotation", "Channel Rotation"}}
+			{"rotation", "Channel Rotation"}, {"both", "MPE Mode, Both Zones"}}
 		local initialsX = {{"off", "Off"}, {"center", "Center (64)"}}
 		local initialsY = {{"off", "Off"}, {"min", "Min (0)"}, {"center", "Center (64)"}, {"max", "Max (127)"}}
 		-- A dimension's MIDI Message (#1674): aftertouch, pitch bend or a controller.
@@ -318,7 +318,8 @@
 		end
 		-- Its Note Expression Assignment.
 		local mpeExpressions = {{"none", "None"}, {"volume", "Volume"}, {"pan", "Pan"}, {"tuning", "Tuning"},
-			{"vibrato", "Vibrato"}, {"expression", "Expression"}, {"brightness", "Brightness"}, {"pressure", "Pressure"}}
+			{"vibrato", "Vibrato"}, {"expression", "Expression"}, {"brightness", "Brightness"}, {"pressure", "Pressure"},
+			{"polyPressure", "MIDI PolyPressure"}}
 		-- The members of mpe that the page edits with a select, by its class.
 		local mpeSelects = {mode = "mpe-mode", initialX = "mpe-initial-x", initialY = "mpe-initial-y",
 			xMessage = "mpe-x-message", pressureMessage = "mpe-pressure-message", yMessage = "mpe-y-message",
@@ -406,6 +407,8 @@
 						field("Multi-Channel Input Mode", named("mpe-mode", mpeModes, mpe.mode,
 							' onchange="StudioSetup.mpeModeChanged(element)"')) ..
 						field("Used Channels", numbered("mpe-channels", 16, mpe.channels)) ..
+						field("Upper Zone Channels", numbered("mpe-upper-channels", 13, mpe.upperChannels,
+							mpe.mode ~= "both")) ..
 						field("First Channel", numbered("mpe-first-channel", 16, mpe.firstChannel,
 							mpe.mode ~= "rotation")) ..
 						field("MIDI Activity", "") ..
@@ -549,17 +552,17 @@
 			end
 		end
 
-		-- First Channel is only for channel rotation. The page starts with it as the mode is; while it is built, the
-		-- mode's select reports its value before First Channel exists.
+		-- First Channel is only for channel rotation, Upper Zone Channels only for both zones (#1675). The page starts
+		-- with them as the mode is; while it is built, the mode's select reports its value before they exist.
 		function setup.mpeModeChanged(element)
-			local first = element.parent_node.parent_node:QuerySelector("select.mpe-first-channel")
-			if first == nil then
-				return
-			end
-			if element:GetAttribute("value") == "rotation" then
-				first:RemoveAttribute("disabled")
-			else
-				first:SetAttribute("disabled", "")
+			local mode = element:GetAttribute("value")
+			for class, enabledIn in pairs{["mpe-first-channel"] = "rotation", ["mpe-upper-channels"] = "both"} do
+				local select = element.parent_node.parent_node:QuerySelector("select." .. class)
+				if select ~= nil and mode == enabledIn then
+					select:RemoveAttribute("disabled")
+				elseif select ~= nil then
+					select:SetAttribute("disabled", "")
+				end
 			end
 		end
 
@@ -689,6 +692,7 @@
 				else
 					local mpe = {channels = math.tointeger(tonumber(valueOf(fields:QuerySelector("select.mpe-channels")))),
 						firstChannel = math.tointeger(tonumber(valueOf(fields:QuerySelector("select.mpe-first-channel")))),
+						upperChannels = math.tointeger(tonumber(valueOf(fields:QuerySelector("select.mpe-upper-channels")))),
 						pitchRange = pitchRange, tuning = checked(fields:QuerySelector("input.mpe-tuning"))}
 					for name, class in pairs(mpeSelects) do
 						mpe[name] = valueOf(fields:QuerySelector("select." .. class))

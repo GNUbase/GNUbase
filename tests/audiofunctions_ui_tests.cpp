@@ -5,6 +5,7 @@
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "testutils/heldjob.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
@@ -81,11 +82,20 @@ namespace
 		step(app);
 	}
 
-	void run(test::UiApp& app, const std::string& command, const std::string& dialog)
+	void run(test::UiApp& app, const std::string& command, const std::string& dialog, bool wait = true)
 	{
 		app.keys().run(command, Json::object(), app.main(), nullptr);
 		REQUIRE(app.waitUntil([&app, &dialog] { return open(app, dialog); }));
 		step(app);
+		if (wait && dialog == "#statistics-dialog")
+			REQUIRE(app.waitUntil([&] { return !elements(app, ".st-event").empty(); }));
+		if (wait && dialog == "#spectrum-analyzer-dialog")
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					return !elements(app, ".sa-bar").empty() ||
+						text(app, "#sa-value").find("can't read") != std::string::npos;
+				}));
 	}
 
 	void closes(test::UiApp& app, const std::string& dialog)
@@ -205,7 +215,7 @@ TEST_CASE(
 
 	// Analyze: two sections along the event, the first from a sixth of it (0.5 of 3 seconds) to half of it.
 	click(app, "#ds-analyze");
-	CHECK(text(app, "#ds-sections") == "2");
+	REQUIRE(app.waitUntil([&] { return text(app, "#ds-sections") == "2" && text(app, "#ds-message").empty(); }));
 	const Json display = element(app, "#ds-display").at("box");
 	const Json sections = elements(app, ".ds-section");
 	REQUIRE(sections.size() == 2);
@@ -223,14 +233,14 @@ TEST_CASE(
 	// The second event: Auto analyzes as the settings change; Linked makes the close threshold the open one, and an
 	// open threshold of -10 dBFS leaves the quieter tone out.
 	REQUIRE(open(app, "#detect-silence-dialog"));
-	CHECK_THAT(text(app, "#ds-event"), ContainsSubstring("(2 of 2)"));
+	REQUIRE(app.waitUntil([&] { return text(app, "#ds-event").find("(2 of 2)") != std::string::npos; }));
 	click(app, "#ds-add-regions");
 	click(app, "#ds-auto");
-	CHECK(text(app, "#ds-sections") == "2");
+	REQUIRE(app.waitUntil([&] { return text(app, "#ds-sections") == "2" && text(app, "#ds-message").empty(); }));
 	click(app, "#ds-linked");
 	type(app, "#ds-open-threshold", "-10");
 	CHECK(element(app, "#ds-close-threshold").at("attributes").at("value") == "-10");
-	CHECK(text(app, "#ds-sections") == "1");
+	REQUIRE(app.waitUntil([&] { return text(app, "#ds-sections") == "1" && text(app, "#ds-message").empty(); }));
 
 	click(app, "#ds-process");
 	closes(app, "#detect-silence-dialog");
@@ -388,4 +398,72 @@ TEST_CASE("Create Sampler Track in the Audio menu makes a sampler track of the f
 			CHECK(channel.at("sample") == project.at("clips").at(0).at("id"));
 		}
 	CHECK(app.call("history.get").at("steps").back().at("action") == "Create sampler track");
+}
+
+TEST_CASE("analysis dialogs stay responsive while their jobs run and cancel them on close", "[ui]")
+{
+	for (const std::string kind : {"clip.statistics", "clip.spectrum", "clip.detectSilence", "event.stripSilence"})
+	{
+		INFO(kind);
+		test::UiApp app({1000, 760});
+		const Tones tones(app);
+		showTones(app, tones, 1);
+		test::HeldJob held(app.engine(), kind);
+		const bool statistics = kind == "clip.statistics";
+		const bool spectrum = kind == "clip.spectrum";
+		std::string selector = "#detect-silence-dialog";
+		std::string command = "audio.detectSilence";
+		std::string closeButton = "#ds-cancel";
+		if (statistics)
+		{
+			selector = "#statistics-dialog";
+			command = "audio.statistics";
+			closeButton = "#st-close";
+		}
+		else if (spectrum)
+		{
+			selector = "#spectrum-analyzer-dialog";
+			command = "audio.spectrumAnalyzer";
+			closeButton = "#sa-close";
+		}
+		run(app, command, selector, false);
+		if (!statistics && !spectrum)
+			click(app, kind == "clip.detectSilence" ? "#ds-analyze" : "#ds-process");
+		REQUIRE(held.waitUntilHeld());
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				return text(app,
+						   statistics     ? "#st-tables"
+							   : spectrum ? "#sa-value"
+										  : "#ds-message")
+						   .find("0%") != std::string::npos;
+			}));
+		CHECK(audioEvents(app) == 2);
+		click(app, closeButton);
+		closes(app, selector);
+		CHECK(held.release());
+		REQUIRE(app.waitUntil(
+			[&] { return app.call("job.get", {{"job", held.job()}}).at("job").at("state") == "cancelled"; }));
+		CHECK(audioEvents(app) == 2);
+	}
+}
+
+TEST_CASE("Detect Silence Auto replaces a pending analysis without showing its obsolete result", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	const Tones tones(app);
+	showTones(app, tones, 1);
+	test::HeldJob held(app.engine(), "clip.detectSilence");
+	run(app, "audio.detectSilence", "#detect-silence-dialog");
+	click(app, "#ds-auto");
+	REQUIRE(held.waitUntilHeld());
+	type(app, "#ds-open-threshold", "-10");
+	REQUIRE(app.waitUntil([&] { return text(app, "#ds-sections") == "1" && text(app, "#ds-message").empty(); }));
+	CHECK(held.release());
+	REQUIRE(
+		app.waitUntil([&] { return app.call("job.get", {{"job", held.job()}}).at("job").at("state") == "cancelled"; }));
+	CHECK(text(app, "#ds-sections") == "1");
+	click(app, "#ds-cancel");
+	closes(app, "#detect-silence-dialog");
 }

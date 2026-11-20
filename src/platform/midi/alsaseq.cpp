@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -333,18 +334,30 @@ namespace gnubase::midi
 				}
 			}
 
+			// An event may stand for several messages, all with a status byte: a 14-bit controller for two control
+			// changes, an RPN or NRPN change for four.
 			void receive(const snd_seq_event_t& event, HostTime time)
 			{
 				std::array<unsigned char, 16> bytes{};
-				const long size = snd_midi_event_decode(m_decoder, bytes.data(), bytes.size(), &event);
-				if (size < 1 || size != messageSize(bytes[0]))
-					return; // SysEx and what isn't MIDI
-				audio::MidiMessage message;
-				message.size = static_cast<uint8_t>(size);
-				std::copy_n(bytes.begin(), message.size, message.bytes.begin());
+				const long decoded = snd_midi_event_decode(m_decoder, bytes.data(), bytes.size(), &event);
+				if (decoded < 1)
+					return; // what isn't MIDI
+				const auto size = static_cast<size_t>(decoded);
 				const std::scoped_lock lock(m_receiversMutex);
-				if (const auto receiver = m_receivers.find(event.dest.port); receiver != m_receivers.end())
+				const auto receiver = m_receivers.find(event.dest.port);
+				if (receiver == m_receivers.end())
+					return;
+				for (size_t at = 0; at < size;)
+				{
+					const int length = messageSize(bytes[at]);
+					if (length == 0 || at + static_cast<size_t>(length) > size)
+						return; // SysEx
+					audio::MidiMessage message;
+					message.size = static_cast<uint8_t>(length);
+					std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(at), length, message.bytes.begin());
 					receiver->second(message, time);
+					at += message.size;
+				}
 			}
 
 			std::mutex m_mutex; // guards the client's use outside the reader

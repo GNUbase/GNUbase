@@ -237,6 +237,7 @@ namespace gnubase::engine
 			const auto bar = parameters.at("bar").get<int64_t>();
 			const auto bars = parameters.at("bars").get<int64_t>();
 			require(bar >= 0 && bars >= 1, "bar must not be negative and bars at least 1");
+			require(!signatureTrackLocked(project), "the signature track is locked");
 			const std::string type = parameters.at("type").get<std::string>();
 			const time::TimeSignature signature = signatureFrom(parameters);
 			const time::SignatureMap& map = project.signatures;
@@ -546,7 +547,7 @@ namespace gnubase::engine
 				"too, with the tempo scaled so that they last as long as before, and what musical tracks hold keeps "
 				"its time. Otherwise events, parts, markers and automation keep their positions, as for any time "
 				"signature change. Returns the tempo as tempo.changed and the time signature events as "
-				"signature.changed report them.",
+				"signature.changed report them. Refused while the signature track is locked (track.set lock).",
 				objectSchema(
 					{{"bar", integer}, {"bars", integer},
 						{"type", {{"type", "string"}, {"enum", {"insert", "delete", "replace", "reinterpret"}}}},

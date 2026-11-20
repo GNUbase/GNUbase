@@ -1660,6 +1660,7 @@ namespace gnubase::engine
 					engine->post("audio.updateLatency");
 			});
 		m_recordOffset = recordOffset();
+		m_silenceReason = m_device->silenceReason();
 		m_played = PlayedPositions(static_cast<size_t>(g_maxRecordOffset) + m_device->format().blockSize);
 		m_recorder.prepare(m_device->format().inputChannels, m_device->format().blockSize);
 		m_loudness.prepare(m_device->format().sampleRate, keepMeasurement);
@@ -1874,9 +1875,13 @@ namespace gnubase::engine
 			m_parameters["inputLatency"] = input; // for audio.reset
 			m_parameters["outputLatency"] = output;
 		}
+		// A device that starts or stops playing silence reports it as a latency change (#422).
+		std::string silenceReason = m_device->silenceReason();
+		const bool silence = silenceReason != m_silenceReason;
+		m_silenceReason = std::move(silenceReason);
 		const int64_t offset = recordOffset();
 		if (offset == m_recordOffset.load(std::memory_order_relaxed))
-			return set;
+			return set || silence;
 		// The audio thread takes it at its next block and keeps the positions it has, which cover any offset.
 		m_recordOffset.store(offset, std::memory_order_relaxed);
 		return true;
@@ -2191,11 +2196,13 @@ namespace gnubase::engine
 		const audio::DeviceFormat& format = m_device->format();
 		const audio::DeviceLatency latency = m_device->latency();
 		Json device = toJson(m_device->info());
+		const std::string silenceReason = m_device->silenceReason();
 		device.update({{"backend", m_backend}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
 			{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels},
 			{"inputLatency", latency.input}, {"outputLatency", latency.output}, {"recordShift", m_recordShift},
 			{"recordOffset", m_recordOffset.load(std::memory_order_relaxed)}, {"directMonitoring", m_directMonitoring},
-			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate}});
+			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate},
+			{"silenceReason", silenceReason.empty() ? Json(nullptr) : Json(silenceReason)}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
 			{"projectSampleRate", projectRate}, {"recordBitDepth", recordBitDepth},
 			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
@@ -2491,7 +2498,9 @@ namespace gnubase::engine
 				"of audio track playback were silent because a disk stream "
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
 				"sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as "
-				"it doesn't support the project's or was asked for another, and plays faster or slower; a new project "
+				"it doesn't support the project's or was asked for another, and plays faster or slower, and "
+				"silenceReason why a running device plays silence (e.g. a PipeWire graph that another client holds at "
+				"another rate), or null, which sends audio.changed when it changes; a new project "
 				"sample rate sends audio.changed. recordBitDepth is the project's (see project.set), for the record "
 				"format; a new one also sends audio.changed. lost: the device that went away (its backend, device id, "
 				"its name "
@@ -2620,10 +2629,11 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"audio.updateLatency", 1,
-				"Reads the audio device's latencies again and places recordings by the new record offset (see "
-				"audio.get); a running device keeps running and switches at its next block. Drivers that learn their "
-				"latency after the device opens, or whose latency changes with the graph, report the change; the "
-				"engine then runs this on its own. Only for the dummy device, and only while it is stopped: "
+				"Reads the audio device's latencies and silenceReason again and places recordings by the new record "
+				"offset (see audio.get); a running device keeps running and switches at its next block. Drivers that "
+				"learn their latency after the device opens, or whose latency changes with the graph, report the "
+				"change, as they do when they start or stop playing silence; the engine then runs this on its own. "
+				"Only for the dummy device, and only while it is stopped: "
 				"inputLatency and "
 				"outputLatency (default: as they are) first change what it reports, and with loopback its round "
 				"trip, as such a driver's would. Sends audio.changed if anything changed.",

@@ -54,6 +54,7 @@
 			justify-content: flex-end;
 		}
 	</style>
+	<script src="analysis-job.lua"/>
 	<script>
 		SpectrumAnalyzer = {}
 		local dialog = SpectrumAnalyzer
@@ -111,24 +112,29 @@
 				document:Close()
 				return
 			end
-			local ok, result = pcall(gnubase.clip.spectrum, {clip = event.clip, start = event.offset,
-				["end"] = event.offset + event.length})
-			if not ok then
-				dialog.result = nil
-				document:GetElementById("sa-value").inner_rml = escape(tostring(result))
-				return
-			end
-			dialog.result = result
-			local count = #dialog.result.channels
-			local options = {}
-			for i = 1, count do
-				options[#options + 1] = '<option value="' .. i .. '"' .. (i == 1 and " selected" or "") .. ">" ..
-					escape(channelName(i, count)) .. "</option>"
-			end
-			document:GetElementById("sa-channel").inner_rml = table.concat(options)
-			dialog.channel = 1
-			dialog.reference = nil
-			draw(document)
+			dialog.result = nil
+			dialog.job = createAnalysisJob(function(text)
+				document:GetElementById("sa-value").inner_rml = escape(text)
+			end)
+			dialog.job.start(gnubase.clip.spectrum, {clip = event.clip, start = event.offset,
+				["end"] = event.offset + event.length}, function(ok, result)
+				if not ok then
+					dialog.result = nil
+					document:GetElementById("sa-value").inner_rml = escape(tostring(result))
+					return
+				end
+				dialog.result = result
+				local count = #dialog.result.channels
+				local options = {}
+				for i = 1, count do
+					options[#options + 1] = '<option value="' .. i .. '"' .. (i == 1 and " selected" or "") .. ">" ..
+						escape(channelName(i, count)) .. "</option>"
+				end
+				document:GetElementById("sa-channel").inner_rml = table.concat(options)
+				dialog.channel = 1
+				dialog.reference = nil
+				draw(document)
+			end)
 		end
 
 		function dialog.chooseChannel(document)
@@ -193,7 +199,7 @@
 		end
 	</script>
 </head>
-<body onshow="SpectrumAnalyzer.load(document)">
+<body onshow="SpectrumAnalyzer.load(document)" onunload="if SpectrumAnalyzer.job then SpectrumAnalyzer.job.close() end">
 	<dialog id="spectrum-analyzer-dialog">
 		<div class="dialog-titlebar">Spectrum Analyzer</div>
 		<div class="row">

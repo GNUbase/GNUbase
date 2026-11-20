@@ -140,6 +140,7 @@ namespace
 		std::atomic<bool> asioLike{false};
 		std::atomic<bool> failedOpen{false};
 		std::atomic<bool> unnamed{false}; // fake-1 has no name, as with a driver that reports none
+		std::atomic<bool> silent{false};  // fake-1 plays silence, as a driver whose clock another client holds
 	};
 
 	DeviceInfo fakeInfo(const FakeDriver& driver)
@@ -175,6 +176,7 @@ namespace
 
 		DeviceLatency latency() const override { return {format().blockSize, 2 * format().blockSize}; }
 		void openControlPanel() override { ++m_driver.controlPanels; }
+		std::string silenceReason() const override { return m_driver.silent ? "the clock is held elsewhere" : ""; }
 
 		void start(AudioCallback& callback) override
 		{
@@ -1117,6 +1119,31 @@ TEST_CASE("a device lost while the project's sample rate changes returns at the 
 	const Json device = run(client, "audio.get").at("device");
 	CHECK(device.at("sampleRate") == 44100.0);
 	CHECK(device.at("sampleRateMismatch") == false);
+	CHECK(device.at("silenceReason").is_null()); // it plays (#422)
+}
+
+TEST_CASE("a device that starts or stops playing silence sends audio.changed with its reason", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	// As the PipeWire device does when another client holds the graph at its rate, and when it lets go (#422).
+	driver->silent = true;
+	driver->device.load()->reportLatencyChange();
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data)
+		{
+			return data.at("device").is_object() &&
+				data.at("device").at("silenceReason") == "the clock is held elsewhere";
+		}));
+	driver->silent = false;
+	driver->device.load()->reportLatencyChange();
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data)
+		{ return data.at("device").is_object() && data.at("device").at("silenceReason").is_null(); }));
+	CHECK(run(client, "audio.get").at("device").at("silenceReason").is_null());
+	run(client, "audio.stop");
 }
 
 TEST_CASE(
@@ -1404,8 +1431,8 @@ TEST_CASE("midi.ports lists the MIDI ports and keeps their settings while they a
 		Json{{"backend", "dummy"}, {"id", "Keys"}, {"input", true}, {"name", "Keys"}, {"showAs", "Keys"},
 			{"visible", true}, {"inAllInputs", true}, {"present", true}, {"open", true}, {"midi2", false},
 			{"mpe",
-				{{"mode", "off"}, {"channels", 15}, {"firstChannel", 1}, {"pitchRange", 48}, {"tuning", true},
-					{"initialX", "off"}, {"initialY", "off"}, {"xMessage", "pitchBend"},
+				{{"mode", "off"}, {"channels", 15}, {"upperChannels", 7}, {"firstChannel", 1}, {"pitchRange", 48},
+					{"tuning", true}, {"initialX", "off"}, {"initialY", "off"}, {"xMessage", "pitchBend"},
 					{"pressureMessage", "aftertouch"}, {"yMessage", "cc74"}, {"xExpression", "none"},
 					{"pressureExpression", "pressure"}, {"yExpression", "brightness"}}}});
 	CHECK(ports[1].at("input") == false);

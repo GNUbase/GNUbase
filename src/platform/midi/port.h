@@ -71,8 +71,8 @@ namespace gnubase::midi
 		virtual std::unique_ptr<Input> openInput(const std::string& id, Receiver receiver) = 0;
 		virtual std::unique_ptr<Output> openOutput(const std::string& id) = 0;
 
-		// Called when ports appear or disappear (hot-plug), on any thread but an audio thread. Set it before opening
-		// ports.
+		// Called when ports appear or disappear (hot-plug), on any thread but an audio thread. Set it before listing or
+		// opening ports.
 		void onPortsChanged(std::function<void()> handler) { m_portsChanged = std::move(handler); }
 
 	protected:

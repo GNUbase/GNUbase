@@ -4,6 +4,7 @@
 // tests/audiofunctions_ui_tests.cpp drives their dialogs in the app.
 #include "engine/analysis/statistics.h"
 #include "engine/engine.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_approx.hpp>
@@ -14,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
@@ -100,14 +102,23 @@ namespace
 			const engine::Result result = client.call(command, parameters, timeout);
 			INFO(command << ": " << result.error);
 			REQUIRE(result.ok());
-			return result.value;
+			if (command != "clip.statistics" && command != "clip.spectrum" && command != "clip.detectSilence" &&
+				command != "event.stripSilence")
+				return result.value;
+			const Json job = test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
+			INFO(job);
+			REQUIRE(job.at("state") == "done");
+			return job.at("result");
 		}
 
 		std::string fails(const std::string& command, const Json& parameters)
 		{
 			const engine::Result result = client.call(command, parameters);
-			REQUIRE(!result.ok());
-			return result.error;
+			if (!result.ok())
+				return result.error;
+			const Json job = test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
+			REQUIRE(job.at("state") == "failed");
+			return job.at("error").get<std::string>();
 		}
 
 		// A clip of audio, and an event that plays all of it on a linear audio track from one second.
@@ -424,4 +435,101 @@ TEST_CASE("clip.spectrum shows the levels of a signal's frequencies", "[unit]")
 		f.call("clip.spectrum", {{"clip", f.add(make(0.05, 1, [](int, double) { return 0.0; }), "silent")}});
 	for (const Json& level : silent.at("channels").at(0).at("levels"))
 		CHECK(level.is_null());
+}
+
+TEST_CASE("audio function jobs keep commands available and report progress or cancellation", "[unit]")
+{
+	for (const std::string command : {"clip.statistics", "clip.spectrum", "clip.detectSilence", "event.stripSilence"})
+	{
+		INFO(command);
+		Fixture f;
+		f.add(tones(), "jobs");
+		const Json parameters = command == "event.stripSilence" ? Json{{"events", {f.event}}} : Json{{"clip", f.clip}};
+		const Json before = f.call("project.get");
+		std::vector<Json> progress;
+		const Json cancelled = test::whileHeld(
+			f.engine, f.client, command, parameters,
+			[&](uint64_t job)
+			{
+				CHECK(f.call("project.get") == before);
+				f.call("job.cancel", {{"job", job}});
+			},
+			&progress);
+		CHECK(cancelled.at("state") == "cancelled");
+		CHECK(f.call("project.get") == before);
+		REQUIRE(!progress.empty());
+		CHECK(progress.front().at("progress") == 0.0);
+		const Json done = test::whileHeld(
+			f.engine, f.client, command, parameters, [&](uint64_t) { CHECK(f.call("project.get") == before); },
+			&progress);
+		INFO(done);
+		CHECK(done.at("state") == "done");
+		CHECK(done.at("progress") == 1.0);
+		CHECK(done.at("result").is_object());
+	}
+}
+
+TEST_CASE("Strip Silence jobs never apply sections to a changed project", "[unit]")
+{
+	for (const std::string change : {"edit", "undo", "new project", "remove"})
+	{
+		INFO(change);
+		Fixture f;
+		f.add(tones(), "stale");
+		Json changed;
+		const Json done = test::whileHeld(f.engine, f.client, "event.stripSilence", {{"events", {f.event}}},
+			[&](uint64_t)
+			{
+				if (change == "edit")
+					f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+				else if (change == "undo")
+					f.call("history.undo");
+				else if (change == "new project")
+					f.call("project.new");
+				else
+					f.call("event.remove", {{"events", {f.event}}});
+				changed = f.call("project.get");
+			});
+		CHECK(done.at("state") == "failed");
+		CHECK_THAT(done.at("error").get<std::string>(), ContainsSubstring("changed meanwhile"));
+		CHECK(f.call("project.get") == changed);
+	}
+}
+
+TEST_CASE("audio function jobs report unreadable files without changing the document", "[unit]")
+{
+	for (const std::string command : {"clip.statistics", "clip.spectrum", "clip.detectSilence", "event.stripSilence"})
+	{
+		INFO(command);
+		Fixture f;
+		f.add(tones(), "missing");
+		test::settlePeaks(f.client);
+		const Json before = f.call("project.get");
+		REQUIRE(std::filesystem::remove(f.dir.path() / "missing.wav"));
+		const Json parameters = command == "event.stripSilence" ? Json{{"events", {f.event}}} : Json{{"clip", f.clip}};
+		CHECK_THAT(f.fails(command, parameters), ContainsSubstring("can't read"));
+		CHECK(f.call("project.get") == before);
+	}
+}
+
+TEST_CASE("applying measured silence sections validates every range and needs no source file", "[unit]")
+{
+	Fixture f;
+	f.add(tones(), "sections");
+	test::settlePeaks(f.client);
+	const Json before = f.call("project.get");
+	Json parameters = {{"events", {f.event}}, {"revision", f.call("project.revision").at("revision")}};
+	for (const Json& sections : {Json::array(), Json{{{{"start", -1}, {"end", 100}}}},
+			 Json{{{{"start", 100}, {"end", 50}}}}, Json{{{{"start", 0}, {"end", 4 * g_rate}}}},
+			 Json{{{{"start", 100}, {"end", 200}}, {{"start", 150}, {"end", 300}}}}})
+	{
+		parameters["sections"] = sections;
+		CHECK(!f.fails("event.applySilenceSections", parameters).empty());
+		CHECK(f.call("project.get") == before);
+	}
+	REQUIRE(std::filesystem::remove(f.dir.path() / "sections.wav"));
+	parameters["sections"] = Json{{{{"start", at(0.5)}, {"end", at(1.5)}}}};
+	CHECK(f.call("event.applySilenceSections", parameters).at("events").size() == 1);
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
 }
