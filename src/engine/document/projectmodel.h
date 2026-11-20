@@ -57,6 +57,11 @@ namespace gnubase::engine
 	// versions' events and parts keep their place in the new one.
 	void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context);
 
+	// The color a track added at index among parent's tracks (0: the top level) gets without a color of its own
+	// (docs/features/colors.md): its folder's with the user setting editing.applyFolderColor, else the one
+	// editing.autoTrackColor chooses. Every way to add a track gives it this color.
+	std::string newTrackColor(const Project& project, ObjectId parent, size_t index, CommandContext& context);
+
 	// The project's tempo as project.get and the tempo.changed event report it (tempo.cpp): the tempo it plays, whether
 	// the tempo track is active, the tempo track's events and the fixed tempo.
 	Json tempoJson(const Project& project);
