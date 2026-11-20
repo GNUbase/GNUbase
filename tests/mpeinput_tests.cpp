@@ -111,6 +111,10 @@ namespace
 			case Type::ChannelPressure:
 				lines.push_back("pressure " + std::to_string(each.channel));
 				break;
+			case Type::PolyPressure:
+				lines.push_back("poly " + at + std::to_string(each.key) + " " +
+					std::to_string(midi::controllerToMidi1(each.value)));
+				break;
 			case Type::Controller:
 				lines.push_back("cc " + at + std::to_string(each.key));
 				break;
@@ -602,7 +606,7 @@ TEST_CASE("midi.setPort sets an input's MPE setup, which midi.ports lists and mi
 		CHECK_THAT(reject(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"xMessage", message}}}}),
 			ContainsSubstring("xMessage"));
 	CHECK_THAT(reject(client, "midi.setPort",
-				   {{"id", "MPE"}, {"input", true}, {"mpe", {{"pressureExpression", "polyPressure"}}}}),
+				   {{"id", "MPE"}, {"input", true}, {"mpe", {{"pressureExpression", "aftertouch"}}}}),
 		ContainsSubstring("pressureExpression"));
 }
 
@@ -1169,4 +1173,54 @@ TEST_CASE("midi.setPort sets both MPE zones of an input, whose notes play as per
 	CHECK(captured(client) ==
 		std::vector<std::vector<int64_t>>{{0xE1, 0, 96}, {0x91, 48, 100}, {0xEE, 0, 32}, {0x9E, 72, 100}, {0xE0, 0, 80},
 			{0xEF, 0, 80}, {0x81, 48, 0}, {0x8E, 72, 0}});
+}
+
+TEST_CASE("MIDI PolyPressure as a dimension's assignment plays the notes' poly pressure", "[unit]")
+{
+	// Pressure plays the notes' poly pressure (p. 1299, #1829), each note its own, also as its initial value.
+	midi::MpeSetup setup = midi::MpeSetup::fromJson({{"mode", "lower"}, {"pressureExpression", "polyPressure"}});
+	CHECK(setup.playsPolyPressure(midi::MpeSetup::Pressure));
+	CHECK_FALSE(setup.expression(midi::MpeSetup::Pressure).has_value());
+	CHECK(setup.toJson().at("pressureExpression") == "polyPressure");
+	midi::MpeInput input;
+	CHECK(through(input, setup,
+			  {event(Type::NoteOn, 1, 60), event(Type::ChannelPressure, 1, 0, 40), event(Type::NoteOn, 2, 64),
+				  event(Type::ChannelPressure, 2, 0, 90), event(Type::NoteOn, 1, 62)}) ==
+		Lines{"on 1 60", "poly 1 60 40", "on 2 64", "poly 2 64 90", "on 1 62", "poly 1 62 40"});
+
+	// X's own assignment can be it too, which Use for Tuning overrides: from the pitch bend as it is.
+	setup = midi::MpeSetup::fromJson({{"mode", "lower"}, {"xExpression", "polyPressure"}});
+	CHECK_FALSE(setup.playsPolyPressure(midi::MpeSetup::X));
+	CHECK(setup.expression(midi::MpeSetup::X) == plugin::NoteExpression::Tuning);
+	setup.tuning = false;
+	CHECK(setup.playsPolyPressure(midi::MpeSetup::X));
+	input.reset();
+	CHECK(through(input, setup, {event(Type::NoteOn, 1, 60), event(Type::PitchBend, 1, 0, 96)}) ==
+		Lines{"on 1 60", "poly 1 60 96"});
+
+	// It packs into the 64 bits, and none of the others is it.
+	const midi::MpeSetup unpacked = midi::MpeSetup::unpack(setup.pack());
+	CHECK(unpacked == setup);
+	CHECK(unpacked.toJson() == setup.toJson());
+	CHECK(unpacked.polyPressure == std::array<bool, 3>{true, false, false});
+	CHECK(midi::MpeSetup::fromJson({{"xExpression", "pan"}}, setup).polyPressure ==
+		std::array<bool, 3>{false, false, false});
+}
+
+TEST_CASE("an MPE port whose pressure is MIDI PolyPressure plays the notes' poly pressure", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const Json set = run(client, "midi.setPort",
+		{{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "lower"}, {"pressureExpression", "polyPressure"}}}});
+	CHECK(set.at("mpe").at("pressureExpression") == "polyPressure");
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	// The instrument gets each note's pressure as its poly pressure, on the note's channel.
+	setup.play(*setup.mpe, {{0x91, 60, 100}, {0x92, 64, 100}});
+	setup.play(*setup.mpe, {{0xD1, 40}, {0xD2, 90}});
+	setup.play(*setup.mpe, {{0x81, 60, 0}, {0x82, 64, 0}});
+	CHECK(captured(client) ==
+		std::vector<std::vector<int64_t>>{
+			{0x91, 60, 100}, {0x92, 64, 100}, {0xA1, 60, 40}, {0xA2, 64, 90}, {0x81, 60, 0}, {0x82, 64, 0}});
 }

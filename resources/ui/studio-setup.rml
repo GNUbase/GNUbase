@@ -318,7 +318,8 @@
 		end
 		-- Its Note Expression Assignment.
 		local mpeExpressions = {{"none", "None"}, {"volume", "Volume"}, {"pan", "Pan"}, {"tuning", "Tuning"},
-			{"vibrato", "Vibrato"}, {"expression", "Expression"}, {"brightness", "Brightness"}, {"pressure", "Pressure"}}
+			{"vibrato", "Vibrato"}, {"expression", "Expression"}, {"brightness", "Brightness"}, {"pressure", "Pressure"},
+			{"polyPressure", "MIDI PolyPressure"}}
 		-- The members of mpe that the page edits with a select, by its class.
 		local mpeSelects = {mode = "mpe-mode", initialX = "mpe-initial-x", initialY = "mpe-initial-y",
 			xMessage = "mpe-x-message", pressureMessage = "mpe-pressure-message", yMessage = "mpe-y-message",

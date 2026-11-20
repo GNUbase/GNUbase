@@ -316,6 +316,8 @@ TEST_CASE("the Note Expression Input page sets each dimension's MIDI Message and
 	CHECK(element(app, fields + "select.mpe-pressure-message").at("value") == "cc11");
 	choose(app, fields + "select.mpe-y-expression", 5); // Volume, five above Brightness
 	CHECK(element(app, fields + "select.mpe-y-expression").at("value") == "volume");
+	choose(app, fields + "select.mpe-pressure-expression", -1); // MIDI PolyPressure, below Pressure (#1829)
+	CHECK(element(app, fields + "select.mpe-pressure-expression").at("value") == "polyPressure");
 	// Off, X plays none and can be another expression; Tuning turns it on again.
 	click(app, fields + "input.mpe-tuning");
 	CHECK(element(app, fields + "select.mpe-x-expression").at("value") == "none");
@@ -326,6 +328,7 @@ TEST_CASE("the Note Expression Input page sets each dimension's MIDI Message and
 	Json mpe = port(app.call("midi.ports"), "Keys", true).at("mpe");
 	CHECK(mpe.at("pressureMessage") == "cc11");
 	CHECK(mpe.at("yExpression") == "volume");
+	CHECK(mpe.at("pressureExpression") == "polyPressure");
 	CHECK(mpe.at("tuning") == false);
 	CHECK(mpe.at("xExpression") == "pan");
 	choose(app, fields + "select.mpe-x-expression", -1); // Tuning, below Pan

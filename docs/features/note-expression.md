@@ -62,16 +62,17 @@ need them. On the notes' channels, the messages of the three dimensions of the d
 Pressure and Vertical/Y, are the expression of the notes that sound on the channel (#1674, pp. 1296-1298). Each
 dimension's MIDI Message (`xMessage`, `pressureMessage`, `yMessage`) is `pitchBend`, `aftertouch` (channel pressure) or
 a controller, `cc0` to `cc127`: by default pitch bend, aftertouch and CC 74. Its Note Expression Assignment
-(`xExpression`, `pressureExpression`, `yExpression`) is the note expression it plays, one of the seven, or `none`, which
-passes the message as it is: by default none for X, pressure and brightness. Tuning is by the port's pitch range
-(`pitchRange`, 48 semitones by default, MPE's), from any message, a controller's center being no bend; volume goes from
-0 to its gain of 4, the others from 0 to 1. Use for Tuning (`tuning`, on by default) sets X's assignment to tuning (p.
-1297): X plays tuning over its own assignment (`xExpression`), which it keeps and plays again with Use for Tuning off
-(for devices that don't glide but play a new note for each key), `none` by default, so pitch bend stays pitch bend. X's
-own assignment is never tuning: as on the page, `midi.setPort` with `xExpression` `tuning` turns Use for Tuning on and
-keeps X's own (with `tuning` false it is rejected), and an earlier GNUbase's `tuning` in `midi.portSettings` reads as
-`none` (#1749). Two dimensions of one message both play it. The master channel's messages and the notes' channels' other
-messages are what they were.
+(`xExpression`, `pressureExpression`, `yExpression`) is the note expression it plays, one of the seven, MIDI
+PolyPressure (`polyPressure`, p. 1299, #1829), which plays the message's value as the poly pressure of the channel's
+notes, which then follows each note on the track as poly pressure does, or `none`, which passes the message as it is: by
+default none for X, pressure and brightness. Tuning is by the port's pitch range (`pitchRange`, 48 semitones by default,
+MPE's), from any message, a controller's center being no bend; volume goes from 0 to its gain of 4, the others from 0 to
+1. Use for Tuning (`tuning`, on by default) sets X's assignment to tuning (p. 1297): X plays tuning over its own
+assignment (`xExpression`), which it keeps and plays again with Use for Tuning off (for devices that don't glide but
+play a new note for each key), `none` by default, so pitch bend stays pitch bend. X's own assignment is never tuning: as
+on the page, `midi.setPort` with `xExpression` `tuning` turns Use for Tuning on and keeps X's own (with `tuning` false
+it is rejected), and an earlier GNUbase's `tuning` in `midi.portSettings` reads as `none` (#1749). Two dimensions of one
+message both play it. The master channel's messages and the notes' channels' other messages are what they were.
 
 **Detected devices** (p. 1295). A MIDI input whose name is a known MPE device's (`midi::detectMpeDevice`: a Seaboard,
 LinnStrument, Sensel Morph or Osmose) is listed with the device's name (`mpeDevice` in `midi.ports`) and gets a page of
@@ -254,9 +255,9 @@ following it.
 - The inspector's Note Expression section with its input assignments, MIDI learn, value ranges and bypass (pp.
   1300-1302, #1513).
 - The Note Expression Assignment's Preferred and Alternative rules (Expression Name Contains, Note Expression Number, As
-  Recommended by Instrument) and MIDI PolyPressure (p. 1299), and renewing the assignments when the instrument or its
-  preset changes (p. 1298, #1829): they choose among a plugin's own expressions, which need #1516; with the seven common
-  ones the assignment is what the page sets. More known MPE devices, which are detected by their port's name only.
+  Recommended by Instrument, p. 1299), and renewing the assignments when the instrument or its preset changes (p. 1298,
+  #1829): they choose among a plugin's own expressions and need to know which expressions an instrument has, which need
+  #1516; with the seven common ones and MIDI PolyPressure the assignment is what the page sets. More known MPE devices, which are detected by their port's name only.
 - Recording MIDI controllers as note expression, overdub and converting controller events into note expression (pp.
   1316-1318, #1515), with the toolbar switch that records expression for a selected note from MIDI input (pp. 1303,
   1308) and the dialog that sets which MIDI messages record as expression (pp. 1314-1315).

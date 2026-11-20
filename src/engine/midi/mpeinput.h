@@ -66,6 +66,9 @@ namespace gnubase::engine::midi
 		std::array<uint8_t, 3> messages = {g_pitchBend, g_aftertouch, 74};
 		std::array<std::optional<plugin::NoteExpression>, 3> expressions = {
 			std::nullopt, plugin::NoteExpression::Pressure, plugin::NoteExpression::Brightness};
+		// Per dimension, whether its assignment is MIDI PolyPressure instead (p. 1299, #1829): it plays the notes'
+		// poly pressure, its expression being none.
+		std::array<bool, 3> polyPressure = {false, false, false};
 
 		// From an mpe value as midi.setPort and midi.portSettings have it; what it lacks keeps its default (or
 		// defaults'), a zone's channels are at most 15, and both zones' together at most 14, the upper zone keeping
@@ -81,6 +84,11 @@ namespace gnubase::engine::midi
 		bool notesChannel(uint8_t channel) const;
 		// The note expression the dimension plays, by Use for Tuning for X.
 		std::optional<plugin::NoteExpression> expression(size_t dimension) const;
+		// Whether the dimension plays the notes' poly pressure, which Use for Tuning overrides for X.
+		bool playsPolyPressure(size_t dimension) const
+		{
+			return polyPressure.at(dimension) && (dimension != X || !tuning);
+		}
 		bool operator==(const MpeSetup& other) const { return pack() == other.pack(); }
 	};
 
@@ -101,7 +109,7 @@ namespace gnubase::engine::midi
 	// Turns one port's MPE input into per-note expression, on the audio thread: on the notes' channels, the messages of
 	// the dimensions (by default pitch bend with Use for Tuning, channel pressure and CC 74) are NoteExpression events
 	// of the notes that sound there, the expressions assigned to them (tuning by the pitch range, pressure and
-	// brightness); without a note they only set the channel's state. A released
+	// brightness) or their poly pressure; without a note they only set the channel's state. A released
 	// note (or one the sustain pedal holds) keeps getting them while it fades, until the channel's next note-on, as MPE
 	// has it. After a note-on come the note's initial values, each the channel's latest one or the fixed one Send
 	// Initial Value gives, which the channel's other sounding notes then get too. Everything else passes as it is. No
