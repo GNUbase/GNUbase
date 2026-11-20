@@ -730,11 +730,48 @@ TEST_CASE(
 	}
 }
 
+namespace
+{
+	// A style sheet's text without its comments, which may name a property they explain.
+	std::string withoutComments(std::string text)
+	{
+		for (size_t begin = text.find("/*"); begin != std::string::npos; begin = text.find("/*", begin))
+		{
+			const size_t end = text.find("*/", begin + 2);
+			text.erase(begin, end == std::string::npos ? std::string::npos : end + 2 - begin);
+		}
+		return text;
+	}
+}
+
 TEST_CASE("the shared style sheets leave font sizes to the themes", "[unit]")
 {
-	const std::string base =
-		gnubase::test::readText(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "styles" / "base.rcss");
-	CHECK(base.find("font-size") == std::string::npos);
+	// Shared sheets that set the size of a small label to fit its row (8 to 10 dp, in the key editor and the controller
+	// lanes) and still name one. They belong in the themes, which own every font size (docs/features/themes.md); the
+	// list holds them until they move there (#594), and may only shrink: a sheet that no longer names a font size
+	// has to leave it, a new one never joins it.
+	const std::set<std::string> sheetsWithFontSizes{"controllerlanes.rcss", "keyeditor.rcss"};
+	std::set<std::string> found;
+	std::set<std::string> checked;
+	const std::filesystem::path styles = std::filesystem::path(GNUBASE_RESOURCES_DIR) / "styles";
+	for (const auto& entry : std::filesystem::recursive_directory_iterator(styles))
+	{
+		if (entry.path().extension() != ".rcss")
+			continue;
+		const std::string name = entry.path().lexically_relative(styles).generic_string();
+		checked.insert(name);
+		const std::string text = withoutComments(gnubase::test::readText(entry.path()));
+		INFO(name << (sheetsWithFontSizes.count(name) != 0 ? " is on the list of sheets with font sizes (#594)" : ""));
+		if (text.find("font-size") != std::string::npos)
+		{
+			found.insert(name);
+			CHECK(sheetsWithFontSizes.count(name) != 0);
+		}
+	}
+	// Both the base sheet and the mixer's, which started this check (#560, #535), are among those read.
+	CHECK(checked.count("base.rcss") != 0);
+	CHECK(checked.count("mixer.rcss") != 0);
+	CHECK(found == sheetsWithFontSizes);
 }
 
 TEST_CASE("rendering track appearance belongs to each theme", "[unit]")

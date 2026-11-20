@@ -208,6 +208,17 @@ jobs:
           GNUBASE_REQUIRE_GPU: ${{ runner.os != 'macOS' && '1' || '0' }}
         run: ctest --preset ${{ matrix.preset }} -C Release --parallel 4
 
+      # ctest shows a passing test's output only with -V, so a race test that the wall-clock budget cut short would pass
+      # without a trace (tests/meter_tests.cpp, g_raceBudget). Its warning is in ctest's log; this lists them.
+      - name: Race tests cut short
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          log=build/${{ matrix.preset }}/Testing/Temporary/LastTest.log
+          if [ -f "$log" ]; then
+            { grep -h "race test cut short" "$log" || true; } | sort -u | sed 's/^ *//; s/^/::warning::/'
+          fi
+
       # What failing tests wrote for a look, such as a screenshot that differs from its golden image.
       - name: Upload test output
         if: failure()
@@ -410,6 +421,17 @@ jobs:
         env:
           GNUBASE_REQUIRE_GPU: 1
         run: ctest --preset linux-clang --parallel ${{ matrix.tests }}
+
+      # ctest shows a passing test's output only with -V, so a race test that the wall-clock budget cut short would pass
+      # without a trace (tests/meter_tests.cpp, g_raceBudget). Its warning is in ctest's log; this lists them.
+      - name: Race tests cut short
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          log=build/linux-clang/Testing/Temporary/LastTest.log
+          if [ -f "$log" ]; then
+            { grep -h "race test cut short" "$log" || true; } | sort -u | sed 's/^ *//; s/^/::warning::/'
+          fi
 
   clang-tidy:
     # A change to a widely included header took 82 min on main (0cdb3d17, Nov 2026). A job cancelled at its limit saves
