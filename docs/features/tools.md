@@ -16,7 +16,7 @@ project or undo.
 | Tool (`tool`) | Click | Drag | Double click | Reference |
 |---|---|---|---|---|
 | Object Selection (`objectSelection`) | Selects ([parts-and-events.md](parts-and-events.md)) | Moves, copies, resizes; from an empty spot a rectangle that selects what it touches (Ctrl or Shift: adds it) | Adds a part on an empty MIDI lane | pp. 253, 256-270 |
-| Range Selection (`rangeSelection`) | A range of no length there | A range from where it started, across the lanes it passes | The range of the event, or of the gap between two events; with Shift added to the range | pp. 285-287 |
+| Range Selection (`rangeSelection`) | A range of no length there | A range from where it started, across the lanes it passes; in the range on its tracks it moves the range's contents, and Alt copies them ([range-editing.md](range-editing.md)) | The range of the event, or of the gap between two events; with Shift added to the range | pp. 285-287 |
 | Comp (`comp`) | Brings the take to the front; with Shift selects it | On a lane of a track whose lanes show: comps the range ([comping.md](comping.md)) | | p. 228 |
 | Draw (`draw`) | The bar there as an empty part | An empty part from where it started, shown while dragging | | p. 250 |
 | Erase (`erase`) | Deletes the event | | | p. 255 |

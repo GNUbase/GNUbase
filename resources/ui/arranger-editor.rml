@@ -32,9 +32,10 @@
 			margin-right: 4dp;
 		}
 
-		#arranger-chain, #jump-mode
+		#arranger-chain, #jump-mode, #chain-name
 		{
 			width: 110dp;
+			flex-shrink: 0;
 		}
 
 		#arranger-lists
@@ -109,6 +110,19 @@
 			return table.concat(rml)
 		end
 
+		-- Fills a drop-down list: a select's inner_rml would add the options to those it has. The changes that filling
+		-- it sends aren't the user's.
+		local function fill(element, values, names, selected)
+			local select = Element.As.ElementFormControlSelect(element)
+			editor.filling = true
+			select:RemoveAll()
+			for index, value in ipairs(values) do
+				select:Add(escape(names[value]), value)
+				if value == selected then select.selection = index end
+			end
+			editor.filling = false
+		end
+
 		-- The active chain of an arranger.get result.
 		local function activeChain(arranger)
 			for _, chain in ipairs(arranger.chains) do
@@ -142,8 +156,12 @@
 				chains[#chains + 1] = tostring(chain.id)
 				chainNames[tostring(chain.id)] = chain.name
 			end
-			document:GetElementById("arranger-chain").inner_rml = options(chains, chainNames, tostring(arranger.chain))
-			document:GetElementById("jump-mode").inner_rml = options(jumps, jumpNames, arranger.jumpMode)
+			fill(document:GetElementById("arranger-chain"), chains, chainNames, tostring(arranger.chain))
+			-- Rename Arranger Chain (p. 406): the active chain's name, unless it is being typed.
+			local nameField = document:GetElementById("chain-name")
+			local active = activeChain(arranger)
+			if not editor.typing then nameField:SetAttribute("value", active and active.name or "") end
+			fill(document:GetElementById("jump-mode"), jumps, jumpNames, arranger.jumpMode)
 
 			local names = {}
 			local rows = {}
@@ -248,11 +266,23 @@
 
 		function editor.setChain(value)
 			local chain = math.tointeger(tonumber(value))
-			if chain ~= nil and chain ~= editor.arranger.chain then gnubase.arranger.setMode{chain = chain} end
+			if not editor.filling and chain ~= nil and chain ~= editor.arranger.chain then gnubase.arranger.setMode{chain = chain} end
+		end
+
+		-- Enter renames the active chain; an empty name keeps the old one.
+		function editor.renameChain(event)
+			local name = tostring(event.parameters.value or "")
+			local chain = activeChain(editor.arranger)
+			if not event.parameters.linebreak or chain == nil then return end
+			if name == "" then
+				event.current_element:SetAttribute("value", chain.name)
+			elseif name ~= chain.name then
+				gnubase.arranger.setChain{name = name}
+			end
 		end
 
 		function editor.setJumpMode(value)
-			if value ~= editor.arranger.jumpMode then gnubase.arranger.setMode{jumpMode = value} end
+			if not editor.filling and value ~= editor.arranger.jumpMode then gnubase.arranger.setMode{jumpMode = value} end
 		end
 
 		function editor.load(document)
@@ -277,6 +307,7 @@
 		<button id="first-repeat" title="First Repeat of Current Chain Step" onclick="ArrangerEditor.repeatOf(false)">First Repeat</button>
 		<button id="last-repeat" title="Last Repeat of Current Chain Step" onclick="ArrangerEditor.repeatOf(true)">Last Repeat</button>
 		<select id="arranger-chain" title="Select Active Chain" onchange="ArrangerEditor.setChain(element:GetAttribute('value'))"/>
+		<input type="text" id="chain-name" title="Rename Arranger Chain" onchange="ArrangerEditor.renameChain(event)" onfocus="ArrangerEditor.typing = true" onblur="ArrangerEditor.typing = false; ArrangerEditor.refresh()"/>
 		<button id="new-chain" title="Create New Chain" onclick="gnubase.arranger.addChain{}">New</button>
 		<button id="duplicate-chain" title="Duplicate Current Chain" onclick="gnubase.arranger.addChain{duplicate = true}">Duplicate</button>
 		<button id="remove-chain" title="Remove Current Chain" onclick="gnubase.arranger.removeChain{}">Remove</button>

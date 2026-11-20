@@ -115,12 +115,12 @@ sends engine commands, so whatever another client changes shows at once.
   both takes the room from the track list once the event display is at its minimum.
 - **Name and controls widths** (p. 191). The user setting `ui.trackWidths` has the track name's width for every track
   type (`name`, 20 to 400 dp) and each type's controls area width (`controls`, 0 to 800 dp). Defaults are 120 dp, except
-  marker and ruler controls at 140 dp, tempo at 144 dp so its three controls fit on one line, and chord at 160 dp. A
-  missing width uses the setting's default for that type, in both the track list and its settings dialog (#857). The
-  name and controls area are as wide as that, and controls go onto more lines when they don't fit, as many as the
-  track's height shows. In a row too narrow for both, such as deep in folders or in a narrow track list, the name gives
-  way; what still doesn't fit is hidden at the row's right. The dialog keeps what the setting has that it doesn't know,
-  such as another type's width from a later GNUbase.
+  marker and ruler controls at 140 dp, tempo at 144 dp so its three controls fit on one line, and chord and arranger at
+  160 dp ([arranger.md](arranger.md)). A missing width uses the setting's default for that type, in both the track list
+  and its settings dialog (#857). The name and controls area are as wide as that, and controls go onto more lines when
+  they don't fit, as many as the track's height shows. In a row too narrow for both, such as deep in folders or in a
+  narrow track list, the name gives way; what still doesn't fit is hidden at the row's right. The dialog keeps what the
+  setting has that it doesn't know, such as another type's width from a later GNUbase.
 - **Track colors** (#1314). Code gives a track's `.track-color` strip its color as `background-color` and, only
   while the track has one, the attribute `color`; the themes do the rest. The default theme, after the mockup
   (`art/mockups/main-window.webp`), draws the strip as a 5 dp bar at the row's left edge, tints a folder's row in its

@@ -584,24 +584,6 @@ namespace gnubase::ui
 				event.StopPropagation();
 				return;
 			}
-			// A drag on the marker track in the selection range moves its contents (p. 432); with Shift it adds to the
-			// range, as on any lane.
-			if (const std::optional<RangeSelection>& range = m_display.range(); !shift && range &&
-				range->end > range->start &&
-				std::find(range->tracks.begin(), range->tracks.end(), track.id) != range->tracks.end())
-			{
-				const double rate = m_markers.time.sampleRate;
-				const double start = static_cast<double>(range->start) / rate;
-				if (seconds < start || seconds > static_cast<double>(range->end) / rate)
-					return;
-				m_drag = Drag::Range;
-				m_dragRange = range;
-				m_dragFrom = start;
-				m_press = mouse;
-				m_dragMoved = false;
-				listen(true);
-				event.StopPropagation(); // the display selects no other range
-			}
 			return;
 		case Tool::Erase:
 		{
@@ -705,8 +687,6 @@ namespace gnubase::ui
 	{
 		if (m_drag == Drag::None)
 			return;
-		if (m_drag == Drag::Range)
-			m_display.setRange(m_dragRange);
 		m_drag = Drag::None;
 		listen(false);
 		m_preview.reset();
@@ -725,26 +705,6 @@ namespace gnubase::ui
 			listen(false);
 		}
 		const auto mouseX = event.GetParameter<float>("mouse_x", 0.0F);
-		if (drag == Drag::Range)
-		{
-			// The selection range follows the mouse, snapped; released, its contents go where it is, or a copy of
-			// them with the tool modifier Copy (Alt). Released without a drag across, it selects a range as on any
-			// lane: of no length at a click, over the lanes between press and release after a drag up or down.
-			m_dragMoved = m_dragMoved || std::abs(mouseX - m_press.x) / ratio() >= g_dragStart;
-			if (release && !m_dragMoved)
-				m_display.clickRange(m_press, event);
-			if (!m_dragMoved || !m_dragRange)
-				return;
-			const RangeSelection& from = *m_dragRange;
-			const double to = m_dragFrom + ((mouseX - m_press.x) / ratio() * m_display.view().scale);
-			const int64_t start = positionSamples(m_display.snapped(to, m_dragFrom), m_markers.time.sampleRate);
-			m_display.setRange(RangeSelection{start, start + (from.end - from.start), from.tracks});
-			if (release && start != from.start)
-				m_binding.send("range.move",
-					{{"start", from.start}, {"end", from.end}, {"tracks", from.tracks}, {"position", start},
-						{"copy", m_display.toolModifier("dragDrop.copy", event)}});
-			return;
-		}
 		// Moved onto another marker track's lane, the markers go there.
 		uint64_t onto = m_dragTrack;
 		if (const std::optional<LanePoint> lane = markerLaneAt(event); drag == Drag::Move && lane)
