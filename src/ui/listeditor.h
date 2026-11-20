@@ -3,6 +3,7 @@
 
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
+#include "ui/timeformat.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
@@ -103,7 +104,8 @@ namespace gnubase::ui
 		std::string text(const Row& row, const std::string& field) const;
 		// The field's value as a whole number in the list's units, if the row's type has it.
 		static std::optional<int64_t> number(const Row& row, const std::string& field);
-		std::optional<int64_t> parse(const std::string& field, const std::string& typed, const Row& row) const;
+		// A value typed for the field: spaces around it don't count, and a pitch name can be in either case.
+		std::optional<int64_t> parse(const std::string& field, const std::string& text, const Row& row) const;
 		// The value display's bar: 0-1, if the row's type has one.
 		static std::optional<double> bar(const Row& row);
 
@@ -139,6 +141,7 @@ namespace gnubase::ui
 		std::set<std::string> m_hidden; // event types the filters bar hides
 		engine::Json m_project = engine::Json::object();
 		engine::Json m_view = engine::Json::object();
+		TimeContext m_time; // the project's, read once per show
 		std::vector<Part> m_parts;
 		std::vector<Row> m_rows;
 		std::set<std::pair<uint64_t, uint64_t>> m_selection; // notes and controller events: ids are unique
