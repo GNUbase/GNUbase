@@ -2589,6 +2589,152 @@ TEST_CASE(
 	CHECK(positions()[2] == 10 * g_quarter);
 }
 
+TEST_CASE("a drag in the selection range takes its contents onto other tracks too, Alt a copy of them", "[unit]")
+{
+	Fixture f;
+	const auto midi = f.call("project.get").at("tracks")[1].at("id").get<uint64_t>();
+	const auto below = f.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").size() == 3; }));
+	const auto placed = [&f]
+	{
+		std::vector<std::pair<uint64_t, int64_t>> result; // track, position
+		for (const Json& part : f.parts())
+			result.emplace_back(part.at("track").get<uint64_t>(), part.at("position").get<int64_t>());
+		std::sort(result.begin(), result.end());
+		return result;
+	};
+	const auto range = [&f] { return f.display.range().value_or(ui::RangeSelection{-1, -1, {}}); };
+	f.display.setTool(ui::Tool::RangeSelection);
+	const ui::RangeSelection part{48000, 144000, {midi}}; // the part's, 1 to 3 seconds
+
+	// Down a lane and 2 seconds later: the part goes onto the track below, and the range with it (p. 291).
+	f.display.setRange(part);
+	f.drag(150, 60, 350, 100);
+	REQUIRE(f.waitUntil([&] { return placed() == decltype(placed()){{below, 6 * g_quarter}}; }));
+	CHECK(range().start == 144000);
+	CHECK(range().tracks == std::vector<uint64_t>{below});
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return placed() == decltype(placed()){{midi, 2 * g_quarter}}; }));
+
+	// Straight down it keeps its position. (A click elsewhere first: two presses there would be a double click.)
+	f.click(900, 20);
+	f.display.setRange(part);
+	f.drag(150, 60, 150, 100);
+	REQUIRE(f.waitUntil([&] { return placed() == decltype(placed()){{below, 2 * g_quarter}}; }));
+	CHECK(range().start == 48000);
+	CHECK(range().tracks == std::vector<uint64_t>{below});
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return placed() == decltype(placed()){{midi, 2 * g_quarter}}; }));
+
+	// With Alt a copy goes there and the part stays.
+	f.click(900, 20);
+	f.display.setRange(part);
+	f.drag(150, 60, 150, 100, {"alt"});
+	REQUIRE(f.waitUntil([&] { return placed() == decltype(placed()){{midi, 2 * g_quarter}, {below, 2 * g_quarter}}; }));
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return placed().size() == 1; }));
+
+	// Below the last lane it stops at the last track.
+	f.click(900, 20);
+	f.display.setRange(part);
+	f.drag(150, 60, 150, f.display.laneTops().back() + 20.0);
+	REQUIRE(f.waitUntil([&] { return placed() == decltype(placed()){{below, 2 * g_quarter}}; }));
+
+	// Audio dragged down onto the MIDI track is refused: nothing moves, and the range goes back to the audio track.
+	const auto audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	const size_t steps = f.call("history.get").at("steps").size();
+	f.click(900, 60);
+	f.display.setRange(ui::RangeSelection{96000, 120000, {audio}}); // the audio event's, 2 to 2.5 seconds
+	f.drag(220, 20, 220, 60);
+	REQUIRE(f.waitUntil([&] { return range().tracks == std::vector<uint64_t>{audio}; }));
+	CHECK(range().start == 96000);
+	CHECK(range().end == 120000);
+	CHECK(f.audioEvents()[0].at("track") == audio);
+	CHECK(f.audioEvents()[0].at("position") == 96000);
+	CHECK(f.call("history.get").at("steps").size() == steps);
+}
+
+TEST_CASE("the selection range's edges drag across and up or down, snapped, and show the resize pointers", "[unit]")
+{
+	Fixture f;
+	const Json tracks = f.call("project.get").at("tracks");
+	const auto audio = tracks[0].at("id").get<uint64_t>();
+	const auto midi = tracks[1].at("id").get<uint64_t>();
+	const auto below = f.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").size() == 3; }));
+	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	const auto pointerAt = [&f, area](double x, double y)
+	{
+		f.automation.move(std::nullopt, f.at(x, y));
+		f.step();
+		return area->GetAttribute<std::string>("pointer", "");
+	};
+	const auto range = [&f] { return f.display.range().value_or(ui::RangeSelection{-1, -1, {}}); };
+	const std::vector<double> tops = f.display.laneTops();
+	REQUIRE(tops.size() >= 4);
+	const double top = tops[1] + 1.0; // just inside the MIDI lane's top
+	const double bottom = tops[2] - 1.0;
+	const double middle = (tops[1] + tops[2]) / 2.0;
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{48000, 144000, {midi}}); // 1 to 3 seconds
+
+	// Just inside its edges the pointers resize, inside it the range tool's (#1857).
+	CHECK(pointerAt(101, middle) == "resize");
+	CHECK(pointerAt(299, middle) == "resize");
+	CHECK(pointerAt(200, top) == "resizeVertical");
+	CHECK(pointerAt(200, bottom) == "resizeVertical");
+	CHECK(pointerAt(200, middle) == "rangeSelection");
+
+	// Across: the start and the end follow the mouse, and nothing moves (reference manual p. 288).
+	f.drag(101, middle, 51, middle);
+	CHECK(range().start == 24000);
+	CHECK(range().end == 144000);
+	f.drag(299, middle, 499, middle);
+	CHECK(range().start == 24000);
+	CHECK(range().end == 240000);
+	CHECK(range().tracks == std::vector<uint64_t>{midi});
+	// Snapped to bars: 3.3 seconds is bar 3, 4 seconds.
+	f.call("snap.set", {{"on", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().on; }));
+	f.drag(499, middle, 330, middle);
+	CHECK(range().end == 192000);
+	// Dragged past the other edge, it becomes the other edge.
+	f.drag(52, middle, 610, middle);
+	CHECK(range().start == 192000);
+	CHECK(range().end == 288000);
+
+	// Up or down: the bottom takes the track below in, the top the one above; past the other edge it stops there.
+	f.drag(500, bottom, 500, (tops[2] + tops[3]) / 2.0);
+	CHECK(range().tracks == std::vector<uint64_t>{midi, below});
+	f.drag(500, top, 500, tops[0] + 5.0);
+	CHECK(range().tracks == std::vector<uint64_t>{audio, midi, below});
+	f.drag(500, tops[0] + 1.0, 500, tops.back() + 20.0);
+	CHECK(range().tracks == std::vector<uint64_t>{below});
+	CHECK(range().start == 192000);
+	CHECK(range().end == 288000);
+	CHECK(f.parts()[0].at("position") == 2 * g_quarter);
+	CHECK(f.audioEvents()[0].at("position") == 96000);
+
+	// An edge drag released outside the window, where RmlUi has no element to send the mouseup to: the next press
+	// puts the range back where it was, before it does what it does: in the range it starts a drag of its contents.
+	const ui::RangeSelection before = range();
+	const double lane = (tops[2] + tops[3]) / 2.0; // the track below's
+	f.automation.press(std::nullopt, f.at(598, lane), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(800, lane));
+	f.step();
+	CHECK(range().end != before.end);
+	f.automation.release(std::nullopt, point(1100, 300), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(450, lane));
+	f.step();
+	f.automation.press(std::nullopt, f.at(450, lane), ui::MouseButton::Left);
+	f.step();
+	CHECK(range().start == before.start);
+	CHECK(range().end == before.end);
+	CHECK(range().tracks == before.tracks);
+	f.automation.release(std::nullopt, f.at(450, lane), ui::MouseButton::Left);
+	f.step();
+}
+
 TEST_CASE("with a selection range, the nudge commands move the range or its edges, and its contents stay", "[unit]")
 {
 	Fixture f;

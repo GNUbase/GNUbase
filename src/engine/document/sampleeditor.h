@@ -10,6 +10,6 @@ namespace gnubase::engine
 	class ProjectModel;
 
 	// sampleEditor.get, sampleEditor.open, sampleEditor.set, sampleEditor.close, clip.addRegion, clip.setRegion and
-	// clip.removeRegion.
+	// clip.removeRegion, and the sampleEditor.process Basic Commands as cancellable jobs.
 	void registerSampleEditorCommands(ProjectModel& model, Engine& engine);
 }
