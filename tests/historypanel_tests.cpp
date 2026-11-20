@@ -664,9 +664,14 @@ TEST_CASE("at the maximum number of steps, a note typed for a step stays with it
 	click(app, "#history tbody tr input", 2);
 	app.ui().text(std::nullopt, "mine");
 	app.call("project.set", {{"name", "D"}});
+	// The state before and after the new step looks alike (as many rows, the same position): wait for the note to
+	// move up with its step.
 	REQUIRE(app.waitUntil(
-		[&app, &before] { return app.call("history.get").at("steps")[0].at("id") == before[1].at("id"); }));
-	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 3); }));
+		[&app]
+		{
+			const Json fields = elements(app, "#history tbody tr input");
+			return fields.size() == 3 && fields[1].at("attributes").value("value", "") == "mine";
+		}));
 	const Json field = elements(app, "#history tbody tr input").at(1);
 	CHECK(focused(field));
 	CHECK(field.at("attributes").value("value", "") == "mine");
