@@ -1316,10 +1316,9 @@ namespace gnubase::engine
 			const Json& parameters = context.parameters();
 			const std::vector<Item> items = itemsFrom(project, parameters, false);
 			const bool recolor = parameters.contains("color");
-			const std::string color = recolor && parameters.at("color").is_string()
-				? parameters.at("color").get<std::string>()
-				: std::string();
-			require(color.empty() || isColor(color), "color must be #rrggbb");
+			const bool ownColor = recolor && parameters.at("color").is_string(); // null: their track's
+			const std::string color = ownColor ? parameters.at("color").get<std::string>() : std::string();
+			require(!ownColor || isColor(color), "color must be #rrggbb");
 			const bool rename = parameters.contains("name");
 			for (const Item& item : items)
 				require(!rename || item.audio == nullptr, "audio events have their clip's name; name renames parts");

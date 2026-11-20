@@ -1633,7 +1633,7 @@ namespace gnubase::engine
 		// Snap and grid (#87): settings, not part of undo.
 		SnapSettings snap;
 		// The color last given to events or parts, for editing.autoTrackColor's lastApplied: not part of undo or the
-		// file.
+		// file, and kept when another project is opened or a new one made (reference manual p. 1621).
 		std::string lastAppliedColor;
 		// Solo Instrument (reference manual p. 1223): the selected notes of the drum editors that have it on. Of the
 		// tracks with a drum map that these notes are on, only the notes with their pitches play. Set from the editor
