@@ -249,19 +249,25 @@ namespace gnubase::engine::settings
 						fits = fitting(*found, setting, left);
 					Json value = changed(fits ? *fits : setting.defaultValue);
 					// The entries that don't fit stay in the file, for the GNUbase that wrote them, unless the change
-					// gives their key a value of its own.
+					// gives their key a value of its own; also when none of them fits, which counted as the default.
+					// left has entries only for a setting of entries by key.
 					Json kept = value;
-					if (fits)
+					if (!left.empty())
 					{
-						for (const auto& [entry, old] : left.items())
+						for (const auto& [entry, old] : (fits ? left : *found).items())
 						{
 							if (!value.is_object() || value.contains(entry))
-								dropped[entry] = old;
+							{
+								if (left.contains(entry))
+									dropped[entry] = old;
+							}
 							else
+							{
 								kept[entry] = old;
+							}
 						}
 					}
-					else if (found != fileValues.end())
+					else if (found != fileValues.end() && !fits)
 					{
 						dropped = *found;
 					}

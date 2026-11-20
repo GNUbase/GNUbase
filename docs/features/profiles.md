@@ -114,7 +114,8 @@ on macOS and Linux.
   folder gone after a failed switch and after an unfinished one was undone, and the copies of an unfinished switch
   gone after Delete program preferences; a folder that can't be renamed (a file in it open on Windows, no write
   permission elsewhere) deleted under its name, or `profile.remove` failing when that fails too; a settings file that
-  can't take the next profile's staying as it was while the switch is undone.
+  can't take the next profile's staying as it was while the switch is undone, and one staying in place when the
+  copy of the active profile's file that a failed switch puts back can't be read.
 - `tests/profiles_ui_tests.cpp`: the Profile Manager from the Edit menu, adding, duplicating, renaming and deleting
   profiles through its name field and buttons, a taken name's error, and Activate Profile saying that the profile
   becomes active at the next start; Export and Import through the file dialogs, answered as `ui_file_dialog` does;

@@ -1606,6 +1606,8 @@ TEST_CASE("audio.setPort and midi.setPort send settings.changed only when the po
 	changes();
 	run(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Mic"}});
 	CHECK(changes() == 1);
+	CHECK(settingsFile(dir.path()).at("audio.portSettings") ==
+		Json{{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}}}, {"dummy/dummy/in/Input 3", {{"visible", "no"}}}});
 	run(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Mic"}});
 	CHECK(changes() == 0);
 	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}});

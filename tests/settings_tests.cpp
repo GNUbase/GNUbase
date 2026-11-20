@@ -751,6 +751,14 @@ TEST_CASE(
 	store.modify("names", [](const Json&) { return Json::array({"B"}); });
 	CHECK(readJson(file).at("values").at("names") == Json::array({"B"}));
 	CHECK_THAT(readText(log), ContainsSubstring(R"(["A",2])"));
+
+	// Entries of which none fits count as the default, and a change keeps them in the file all the same.
+	writeText(file, R"({"version": 1, "values": {"ports": {"In 9": {"visible": 1}}}})");
+	settings::Store later(format, dir.path());
+	CHECK(later.value("ports") == Json::object());
+	later.modify("ports", [](const Json&) { return Json{{"In 1", {{"visible", true}}}}; });
+	CHECK(readJson(file).at("values").at("ports") ==
+		Json::parse(R"({"In 1": {"visible": true}, "In 9": {"visible": 1}})"));
 }
 
 // Every version of the user settings file that a GNUbase release wrote is in tests/data/settings, as

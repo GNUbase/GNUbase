@@ -94,6 +94,8 @@ MCP and Lua scripts can do all it does.
   the one open dialog. `tests/audio_tests.cpp` checks `audio.set` and
   `audio.setPort`, and that port settings survive an engine restart with the same settings folder, wait for an
   unplugged MIDI port and a device that is not open, and follow `settings.reset`; that two engines on one settings
-  folder each change a port and the file keeps both; that a later GNUbase's members of an entry stay; and that
+  folder each change a port and the file keeps both; that a later GNUbase's members of an entry stay, and an entry
+  that doesn't fit stays in the file while the others count; that repeating the same `audio.setPort` or
+  `midi.setPort` sends no second `settings.changed`; and that
   `settings.set` and `settings.reset` on the port settings send `audio.portsChanged` and `midi.changed`, while no
   settings change lists the MIDI ports again, counted with a dummy MIDI backend.
