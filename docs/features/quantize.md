@@ -25,9 +25,11 @@ and the toolbar's section.
 - **Edit menu.** Quantize (`edit.quantize`, Q), Reset Quantize (`edit.resetQuantize`), Quantize Panel
   (`window.quantizePanel`) and Advanced Quantize: Quantize MIDI Event Lengths (`edit.quantizeLengths`), Quantize MIDI
   Event Ends (`edit.quantizeEnds`), Freeze MIDI Quantize (`edit.freezeQuantize`) and Create Groove Quantize Preset
-  (`edit.createGrooveQuantize`, which makes a preset of the first MIDI part, or without one of the first selected
-  audio event's hitpoints ([audio-quantize.md](audio-quantize.md)), with `quantize.extractGroove` and makes it the
-  project's settings). They are UI commands that send `quantize.apply`, `quantize.reset`, `quantize.lengths`,
+  (`edit.createGrooveQuantize`, which makes a preset of the first MIDI part with notes, or without one of the first
+  selected audio event's hitpoints ([audio-quantize.md](audio-quantize.md)), with `quantize.extractGroove` and makes
+  it the project's settings; it is named after the part or the event's clip, with a number added, as in "Keys 2",
+  where a preset already has that name, so that it replaces no user preset and isn't refused for a factory preset's
+  name). They are UI commands that send `quantize.apply`, `quantize.reset`, `quantize.lengths`,
   `quantize.ends` and `quantize.freeze`, so what they do is what MCP and Lua can do.
 - **What they quantize.** Run from an editor (the editor window, the lower zone while it shows the Editor tab, or an
   in-place editor in the project window, [in-place-editor.md](in-place-editor.md)), the
@@ -45,14 +47,19 @@ and the toolbar's section.
   groove, Velocity, Length, Pre-Q, Max. Move and Orig. Position; Safe Range and Rough Quantize. Ticks show as the
   reference counts them, 120 to a 1/16. The grid display shows a bar of 4/4 of the grid's or groove's positions
   (`QuantizeGrid`, as quantizing finds them) with the catch range around each. Every change is a `quantize.set`. Apply
-  and Reset run `edit.quantize` and `edit.resetQuantize`; with Auto Apply on, every change runs `edit.quantize` too.
+  and Reset run `edit.quantize` and `edit.resetQuantize`. With Auto Apply on, every change of the settings quantizes
+  what `edit.quantize` takes (p. 375), whichever client made it (`quantize.changed`): the panel, the toolbar's section,
+  MCP or Lua. The steps of a value field's gesture, such as a drag or wheel turns, are one undo step
+  (`history.transaction`'s merge key); a preset saved or renamed without changing the settings applies nothing.
 - **Toolbar.** Apply Quantize, the Quantize Presets menu, Soft Quantize and Open Quantize Panel, after the snap
-  controls. The section shows where the toolbar has room for it ([docking.md](docking.md)).
+  controls. The section shows where the toolbar has room for it ([docking.md](docking.md)); the presets button has a
+  fixed width and ends a longer name with an ellipsis, so that a preset's name doesn't change the section's size.
 
 Audio events and parts, Warp Quantize On/Off and the panel's section for several audio tracks are in
 [audio-quantize.md](audio-quantize.md).
 
 Not yet: Move MIDI Controllers (moving controllers with their notes) and dragging a part onto the grid display to make
-a groove; the Edit menu's items always take the project window's selection, since the menu bar is in its zone.
+a groove; the Edit menu's items always take the project window's selection, since the menu bar is in its zone; and
+the transport bar's MIDI Auto Quantize switch (p. 353): auto quantize is `quantize.set` with `autoQuantize` for now.
 
 `tests/quantize_ui_tests.cpp` drives all of it in the app's UI with `ui::Automation`, as MCP's UI tools do.
