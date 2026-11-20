@@ -69,6 +69,12 @@ namespace gnubase::ui
 			return false;
 		}
 
+		// Whether the control, which is in the zone or not, can take the keyboard focus from Tab now.
+		bool usable(const Rml::Element& zone, Rml::Element& control)
+		{
+			return zone.Contains(&control) && control.IsVisible(true) && !control.HasAttribute("disabled");
+		}
+
 		std::string attribute(const Rml::Element& element, const char* name)
 		{
 			return element.GetAttribute<Rml::String>(name, "");
@@ -540,12 +546,17 @@ namespace gnubase::ui
 				[this, name = std::string(toggle.name)](Window& window, Rml::Element* /*zone*/)
 				{
 					const std::string docked = windowIn(window);
-					if (!docked.empty())
-						setVisible(docked, name, !visible(docked, name));
+					if (docked.empty())
+						return;
+					setVisible(docked, name, !visible(docked, name));
+					// Showing the lower zone with a key command gives it the keyboard focus (p. 100).
+					if (name == "lower" && visible(docked, name))
+						focus(docked, name);
 				}});
 			for (const char* binding : toggle.keys)
 				keys.bind({binding, toggle.id});
 		}
+		m_keys = &keys;
 		const std::array<std::pair<const char*, int>, 2> steps = {{{"window.previousTab", -1}, {"window.nextTab", 1}}};
 		for (const auto& [id, step] : steps)
 		{
@@ -559,6 +570,23 @@ namespace gnubase::ui
 						stepTab(windowOf(*element), attribute(*element, "zone"), step);
 				}});
 			keys.bind({step < 0 ? "Mod+Alt+Left" : "Mod+Alt+Right", id});
+		}
+		// Focus Next and Previous (p. 1565): the keyboard focus to the next and previous zone, as Tab and Shift+Tab do.
+		const std::array<std::pair<const char*, int>, 2> focus = {{{"focus.previous", -1}, {"focus.next", 1}}};
+		for (const auto& [id, step] : focus)
+		{
+			keys.add({id,
+				step < 0 ? "Moves the keyboard focus to the previous zone."
+						 : "Moves the keyboard focus to the next zone.",
+				[this, step = step](Window& window, Rml::Element* zone)
+				{
+					Rml::Element* from = window.context().GetFocusElement();
+					if (from == nullptr)
+						from = zone;
+					if (from != nullptr)
+						focusZone(*from, step);
+				}});
+			keys.bind({step < 0 ? "Shift+Tab" : "Tab", id});
 		}
 	}
 
@@ -1439,7 +1467,42 @@ namespace gnubase::ui
 		const auto at = std::find(zones.begin(), zones.end(), closestWith(&from, "zone"));
 		const auto count = static_cast<std::ptrdiff_t>(zones.size());
 		const std::ptrdiff_t index = at == zones.end() ? 0 : at - zones.begin();
-		return zones[static_cast<size_t>((((index + step) % count) + count) % count)]->Focus(true);
+		return focusIn(*zones[static_cast<size_t>((((index + step) % count) + count) % count)]);
+	}
+
+	bool Docking::focusIn(Rml::Element& zone)
+	{
+		Rml::Element* control = &zone;
+		if (const auto last = m_lastFocus.find(windowOf(zone) + "/" + attribute(zone, "zone"));
+			last != m_lastFocus.end())
+			if (Rml::Element* remembered = last->second.get(); remembered != nullptr && usable(zone, *remembered))
+				control = remembered;
+		if (control == &zone)
+			if (const std::string main = attribute(zone, "maincontrol"); !main.empty())
+				if (Rml::Element* found = zone.QuerySelector(main); found != nullptr && usable(zone, *found))
+					control = found;
+		return control->Focus(true) || (control != &zone && zone.Focus(true));
+	}
+
+	bool Docking::focus(const std::string& window, const std::string& name)
+	{
+		Rml::Element* zone = element(window, "[zone=" + name + "]");
+		return zone != nullptr && visible(window, name) && !zone->IsClassSet("hidden") && focusIn(*zone);
+	}
+
+	bool Docking::pressTab(Rml::Element& target, const Rml::Event& event)
+	{
+		if (m_keys == nullptr)
+			return false;
+		const auto held = [&event](const char* name, int modifier)
+		{ return event.GetParameter(name, false) ? modifier : 0; };
+		const KeyPress keys{Rml::Input::KI_TAB,
+			held("ctrl_key", Rml::Input::KM_CTRL) | held("shift_key", Rml::Input::KM_SHIFT) |
+				held("alt_key", Rml::Input::KM_ALT) | held("meta_key", Rml::Input::KM_META)};
+		for (Window* window : m_shell.windows())
+			if (&window->context() == target.GetContext())
+				return m_keys->press(*window, keys);
+		return false;
 	}
 
 	void Docking::later(std::function<void()> change)
@@ -1486,6 +1549,8 @@ namespace gnubase::ui
 		case Rml::EventId::Focus:
 		{
 			const Rml::Element* area = closestWith(target, "zone");
+			if (area != nullptr && area != target && !window.empty())
+				m_lastFocus[window + "/" + attribute(*area, "zone")] = target->GetObserverPtr();
 			if (Rml::ElementDocument* document = target->GetOwnerDocument())
 				for (Rml::Element* other : elements(*document, "[zone]"))
 					if (other != nullptr)
@@ -1598,11 +1663,11 @@ namespace gnubase::ui
 			break;
 		}
 		case Rml::EventId::Keydown:
-			// Tab and Shift+Tab move between the zones, before the document moves between its controls.
+			// Tab runs its key command (Focus Next and Previous: the next and previous zone, unless the user bound the
+			// key to another command) before the document moves between its controls. Only in a docking window: a
+			// panel in a window of its own has no zones, and Tab moves between its controls there.
 			if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_TAB &&
-				!event.GetParameter("ctrl_key", false) && !event.GetParameter("alt_key", false) &&
-				!event.GetParameter("meta_key", false) && !keepsTab(*target) &&
-				focusZone(*target, event.GetParameter("shift_key", false) ? -1 : 1))
+				!window.empty() && !keepsTab(*target) && pressTab(*target, event))
 				event.StopPropagation();
 			break;
 		case Rml::EventId::Tabchange:

@@ -36,7 +36,7 @@ undo step. A new project has none.
 
 | Command | What it does | Reference |
 |---|---|---|
-| `articulationMap.add` | Add Map (New Map with Group 1) or Duplicate Map (`copy`), with the settings given | pp. 1267, 1280 |
+| `articulationMap.add` | Add Map (New Map with Group 1) or Duplicate Map (`copy`), with the settings given; Import Key Switches with `keySwitches`, a track (below) | pp. 1267, 1280, 1284 |
 | `articulationMap.set` | Changes a map; `articulations` and `slots` replace the whole lists | pp. 1268-1279 |
 | `articulationMap.remove` | Removes a map; the tracks that used it have none | p. 1267 |
 | `articulationMap.export` | Saves a map as an articulation map file (`.articulationmap`) | p. 1292 |
@@ -47,6 +47,14 @@ undo step. A new project has none.
 
 They emit `articulationMap.added`, `articulationMap.changed` and `articulationMap.removed` with the map (its id for
 removed).
+
+- **Import Key Switches** (`articulationMap.add` `keySwitches`, p. 1284). The instrument of a MIDI or instrument track
+  (a MIDI track's: the instrument track's it plays) reports the key switches of its preset through the plugin
+  wrapper's `KeySwitches` extension ([plugin-api.md](../plugin-api.md#gnubase-extensions)): a name and a key each.
+  Each becomes a direction of the first group and a sound slot with its name and that articulation, the key as its
+  remote trigger and a note on the key at velocity 100 as its output mapping; a name that comes twice is one
+  direction. An instrument that reports none, or a track without one, is refused. Of the built-in instruments, only
+  the test synth has key switches, Sustain (C-2) and Staccato (C#-2), for the tests; they play like other notes.
 
 - **Renaming and removing articulations** (`articulationMap.set`). An articulation renamed at its place in the list
   (a list as long as before, its old name gone, the new one not the map's before), as the setup renames them, is
@@ -157,42 +165,43 @@ removed).
 ## In the UI
 
 - **Articulation Map Setup** (MIDI > Articulation Map Setup..., the UI command `midi.articulationMapSetup`, and the
-  inspector's Setup... button; `resources/ui/articulation-maps.rml`, pp. 1264-1283). The project's maps on the left:
-  Add Map, Duplicate Map, Remove Map, Import Map and Export Map (the OS's file dialogs through
+  inspector's Setup... button; `resources/ui/articulation-maps.rml`, pp. 1264-1283). The project's maps on the left: Add
+  Map, Duplicate Map, Remove Map, Import Map and Export Map (the OS's file dialogs through
   `gnubase.ui.importArticulationMap` and `gnubase.ui.exportArticulationMap`; Export Map offers the map's name as the
   file name, with the characters file names can't have replaced, `engine::safeFileName`), and Assign to Track for the
-  selected MIDI or instrument track. On the right the selected map: its name, Remote Trigger (Key Switch or Program
-  Change) and latch; its groups; its articulations with their type and group; its sound slots with their articulations
-  (names separated by commas) and remote trigger; the output mapping (status, data 1, data 2, on or off events) and
-  MIDI modifiers (channel 1-16 or empty for the notes' own, length and velocity in percent, transpose) of the slot
-  picked with its radio button, which an add-on slot doesn't have (`.add-on-modifiers` says so instead). Each change
-  goes to `articulationMap.set` at once, text fields with Enter or when they lose the focus; a change the engine refuses
-  shows its message and the field as it was, and so does an import or export that fails. While it is open it follows
-  `articulationMap.added`, `changed` and `removed` and `project.reset`, so it shows the maps after an import, an undo or
-  a change through MCP or Lua, and selects a map that comes; it unsubscribes its handlers when it closes
-  (`gnubase.off`), as the profile manager and the workspaces organizer do. Like them it opens once (`AppUi::openOnce`):
-  opening it again, from another window's inspector or the UI command through MCP, brings the open one to the front, so
-  that one set of handlers follows the engine. Opened again for another track, it is that track's setup: it selects the
-  track's map, if it has one, and Assign to Track assigns to it (the setup's `track` attribute and its `trackchange`
-  event). Opened again without a MIDI or instrument track selected, it has no track, as when it opens without one, and
-  hides Assign to Track. Opened again for the same track, it keeps the map it shows. A new or loaded project
-  (`project.reset`) drops its track too, since object ids are per project: Assign to Track would otherwise assign to
-  whatever track has that id in the new project. The maps list has a search field (by name) and Show only Maps used in
-  this Project, and marks the maps the project's tracks use with P (p. 1267), which follow `track.added`,
-  `track.changed` and `track.removed` and Assign to Track (#1667). Where they leave the selected map out, the first map
-  listed is selected, or none with none listed. The sound slot actions (p. 1273, #1113) act on the slot picked with its
-  radio button: Add Sound Slot and Add Sound Slot (Add-on) (marked Add-on in its row) add a slot with the articulations
-  checked in the articulation combinations, named after them; Duplicate (without the trigger), Move Up, Move Down, As
-  Default, Cut, Copy and Paste (after the picked slot) send the slots to `articulationMap.set`, and pick the slot they
-  move or add once the engine took the change (an add-on slot isn't the default: it stays picked); Copy and Cut keep a
-  copy of the slot, down to its output mapping, which later changes of the slot leave as it was (#1667); Remote
-  Trigger's Transpose Up and Down change the picked slot's trigger by a semitone, and Transpose All (by semitones or
-  octaves, optionally of all maps in the project), Reassign All (from a start key, all, white or black keys, Skip First
-  Slot) and Remove All run `articulationMap.remoteTriggers`. The articulation combinations (pp. 1275-1276) list a check
-  box for each articulation of the map by group, the picked slot's checked, written again when a group or an
-  articulation changes or the picked slot's articulations are typed (#1667); Apply to Slot gives the picked slot the
-  checked ones, and the search shows only the articulations whose names have one of its terms, separated by `OR` or `|`.
-  The MIDI modifiers have Attack Compensation, Separation and the pitch and velocity ranges too.
+  selected MIDI or instrument track. With that track, Import Key Switches beside Add Map, checked, makes Add Map import
+  the track's key switches (p. 1285, the reference's Add Map dialog has it). On the right the selected map: its name,
+  Remote Trigger (Key Switch or Program Change) and latch; its groups; its articulations with their type and group; its
+  sound slots with their articulations (names separated by commas) and remote trigger; the output mapping (status, data
+  1, data 2, on or off events) and MIDI modifiers (channel 1-16 or empty for the notes' own, length and velocity in
+  percent, transpose) of the slot picked with its radio button, which an add-on slot doesn't have (`.add-on-modifiers`
+  says so instead). Each change goes to `articulationMap.set` at once, text fields with Enter or when they lose the
+  focus; a change the engine refuses shows its message and the field as it was, and so does an import or export that
+  fails. While it is open it follows `articulationMap.added`, `changed` and `removed` and `project.reset`, so it shows
+  the maps after an import, an undo or a change through MCP or Lua, and selects a map that comes; it unsubscribes its
+  handlers when it closes (`gnubase.off`), as the profile manager and the workspaces organizer do. Like them it opens
+  once (`AppUi::openOnce`): opening it again, from another window's inspector or the UI command through MCP, brings the
+  open one to the front, so that one set of handlers follows the engine. Opened again for another track, it is that
+  track's setup: it selects the track's map, if it has one, and Assign to Track assigns to it (the setup's `track`
+  attribute and its `trackchange` event). Opened again without a MIDI or instrument track selected, it has no track, as
+  when it opens without one, and hides Assign to Track. Opened again for the same track, it keeps the map it shows. A
+  new or loaded project (`project.reset`) drops its track too, since object ids are per project: Assign to Track would
+  otherwise assign to whatever track has that id in the new project. The maps list has a search field (by name) and Show
+  only Maps used in this Project, and marks the maps the project's tracks use with P (p. 1267), which follow
+  `track.added`, `track.changed` and `track.removed` and Assign to Track (#1667). Where they leave the selected map out,
+  the first map listed is selected, or none with none listed. The sound slot actions (p. 1273, #1113) act on the slot
+  picked with its radio button: Add Sound Slot and Add Sound Slot (Add-on) (marked Add-on in its row) add a slot with
+  the articulations checked in the articulation combinations, named after them; Duplicate (without the trigger), Move
+  Up, Move Down, As Default, Cut, Copy and Paste (after the picked slot) send the slots to `articulationMap.set`, and
+  pick the slot they move or add once the engine took the change (an add-on slot isn't the default: it stays picked);
+  Copy and Cut keep a copy of the slot, down to its output mapping, which later changes of the slot leave as it was
+  (#1667); Remote Trigger's Transpose Up and Down change the picked slot's trigger by a semitone, and Transpose All (by
+  semitones or octaves, optionally of all maps in the project), Reassign All (from a start key, all, white or black
+  keys, Skip First Slot) and Remove All run `articulationMap.remoteTriggers`. The articulation combinations (pp.
+  1275-1276) list a check box for each articulation of the map by group, the picked slot's checked, written again when a
+  group or an articulation changes or the picked slot's articulations are typed (#1667); Apply to Slot gives the picked
+  slot the checked ones, and the search shows only the articulations whose names have one of its terms, separated by
+  `OR` or `|`. The MIDI modifiers have Attack Compensation, Separation and the pitch and velocity ranges too.
 - **Inspector** ([inspector.md](inspector.md), p. 1263): MIDI and instrument tracks' Articulation Map section chooses
   the track's map, or No Map (`track.set articulationMap`), and opens the setup.
 - **Articulations lane** (`ui::ControllerLanes`, pp. 1287-1289): the lane type `articulations` of the key, drum and
@@ -279,8 +288,9 @@ the notes played into a track, which aren't known to end yet; Sound Slot event c
 editors' event colors menu (p. 1133, [colors.md](colors.md)); the slot actions Rename and Reset Color (the slots'
 names and colors are typed or set through `articulationMap.set`), the keyboard preview and assigning triggers from a
 MIDI keyboard; the sound slot actions as a menu and Transpose All and Reassign All as dialogs of their own (they are
-rows of the setup); changing several maps' remote trigger mode and latch at once; Import Key Switches from instrument
-presets; importing the reference's own files and other applications' maps.
+rows of the setup); changing several maps' remote trigger mode and latch at once; key switches of plugins in host
+processes (the `KeySwitches` extension's proxy and stub, and VST3's `IKeyswitchController` in the VST3 adapter) and
+the Add Map dialog with the map's name; importing the reference's own files and other applications' maps.
 
 ## Checks
 
@@ -324,7 +334,8 @@ presets; importing the reference's own files and other applications' maps.
   on a reset selecting it and its arrow beside it; the list editor's menu opening for another row's cell and not while
   a cell is edited, and closing on a second click on its cell after the rows rendered anew (#1799); a direction lasting
   on the lane through a muted one, which keeps its own span, and the note display's selection changes keeping the lane's
-  attributes selected of the notes that stay (#1762).
+  attributes selected of the notes that stay (#1762). One more (#1114): Add Map with Import Key Switches checked
+  imports the test synth's key switches, unchecked it adds an empty map; without a track the option is hidden.
   `tests/scripting_tests.cpp` checks empty Lua tables as lists and `gnubase.off`.
 - `tests/articulationmaps_tests.cpp`: maps added, copied, changed and removed with their errors and undo, a track's map;
   directions and attributes; playback through the slots' output events and MIDI modifiers, the closest slot and resets;
@@ -368,7 +379,9 @@ presets; importing the reference's own files and other applications' maps.
   setup edit put another one on into its group (#1744); a slot following the notes to their own channels in playback,
   as its add-ons do (#1718), and a chord across two channels keeping both channels' slots, and notes of two own channels
   whose slots share a channel of their own, alternating slots, sending their slot and add-on there again each time
-  (#1744).
+  (#1744). Import Key Switches (#1114): the directions and slots of the test synth's key switches, one undo step, a MIDI
+  track's instrument, the settings given changing the imported map, and the refusals (an instrument without key
+  switches, no track, a MIDI track that plays none).
   `tests/midi_tests.cpp` and `tests/sequencing_tests.cpp` check the chased key switches, and
   `tests/sequencing_tests.cpp` a jump with the chase limited to parts into a part that continues the slot of the part
   before it (#1521), and a MIDI track heard again there after it was disabled (#1600); `tests/midi_tests.cpp` the

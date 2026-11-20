@@ -30,6 +30,6 @@ namespace gnubase::engine
 	HitpointGroove hitpointGroove(const Project& project, const AudioEvent& event);
 
 	// clip.detectHitpoints (a job), clip.setHitpoints, clip.setHitpointFilter, clip.addHitpoint, clip.setHitpoint,
-	// clip.removeHitpoints and event.fromHitpoints.
+	// clip.removeHitpoints, event.fromHitpoints and event.deleteOverlaps.
 	void registerHitpointCommands(ProjectModel& model, Engine& engine, Jobs& jobs);
 }

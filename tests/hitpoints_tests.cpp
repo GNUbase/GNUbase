@@ -499,6 +499,76 @@ TEST_CASE("slices, events, regions, markers, a groove and MIDI notes are made of
 	}
 }
 
+TEST_CASE("Delete Overlaps trims selected slices in their part with one undo step", "[integration]")
+{
+	Fixture f;
+	const auto second =
+		f.call("audioEvent.add",
+			 {{"track", f.track}, {"clip", f.clip}, {"position", 120000}, {"offset", 12000}, {"length", 48000}})
+			.at("event")
+			.at("id");
+	const auto third =
+		f.call("audioEvent.add", {{"track", f.track}, {"clip", f.clip}, {"position", 160000}, {"length", 48000}})
+			.at("event")
+			.at("id");
+	f.call("event.toPart", {{"events", {f.event, second, third}}});
+	const Json before = f.call("project.get");
+	const Json history = f.call("history.get");
+	const Json result = f.call("event.deleteOverlaps", {{"events", {third, f.event, second}}});
+	CHECK(result.at("events").size() == 2);
+	const Json after = f.call("project.get");
+	for (const Json& event : after.at("audioEvents"))
+	{
+		if (event.at("id") == f.event)
+		{
+			CHECK(event.at("length") == 24000);
+		}
+		else if (event.at("id") == second)
+		{
+			CHECK(event.at("length") == 40000);
+			CHECK(event.at("offset") == 12000);
+		}
+		else
+		{
+			CHECK(event.at("length") == 48000);
+		}
+	}
+	CHECK(f.call("history.get").at("steps").size() == history.at("steps").size() + 1);
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+	f.call("history.redo");
+	CHECK(f.call("project.get") == after);
+}
+
+TEST_CASE("Delete Overlaps respects part boundaries and rejects invalid or locked selections", "[integration]")
+{
+	Fixture f;
+	const auto other =
+		f.call("audioEvent.add", {{"track", f.track}, {"clip", f.clip}, {"position", 120000}, {"length", 48000}})
+			.at("event")
+			.at("id");
+	f.call("event.toPart", {{"events", {other}}});
+	const Json before = f.call("project.get");
+	CHECK(f.call("event.deleteOverlaps", {{"events", {f.event, other}}}).at("events").empty());
+	CHECK(f.call("project.get") == before);
+	CHECK_THAT(f.fails("event.deleteOverlaps", {{"events", {f.event, f.event}}}), ContainsSubstring("duplicate"));
+	CHECK_THAT(f.fails("event.deleteOverlaps", {{"events", {f.event, -1}}}), ContainsSubstring("no audio event"));
+	CHECK_THAT(f.fails("event.deleteOverlaps", {{"events", Json::array()}}), ContainsSubstring("empty"));
+	// Coincident slices keep the newer event, and undo restores the removed one with all its content.
+	const auto same =
+		f.call("audioEvent.add", {{"track", f.track}, {"clip", f.clip}, {"position", 96000}, {"length", 48000}})
+			.at("event")
+			.at("id");
+	const Json coincident = f.call("project.get");
+	CHECK(f.call("event.deleteOverlaps", {{"events", {same, f.event}}}).at("removed") == Json::array({f.event}));
+	f.call("history.undo");
+	CHECK(f.call("project.get") == coincident);
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	const Json locked = f.call("project.get");
+	CHECK_THAT(f.fails("event.deleteOverlaps", {{"events", {other, f.event}}}), ContainsSubstring("locked"));
+	CHECK(f.call("project.get") == locked);
+}
+
 TEST_CASE("a sound is measured where it starts as the detection measures the onsets it finds", "[unit]")
 {
 	for (const Loop& loop : {rockLoop(), swingLoop()})

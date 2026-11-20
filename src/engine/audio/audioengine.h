@@ -121,6 +121,10 @@ namespace gnubase::engine
 		// Any thread: how long an offline render waits for the samplers' samples before it logs a warning and waits
 		// again (30 s), 20 rounds at most before it fails.
 		void setOfflineSampleWait(std::chrono::milliseconds wait) { m_offlineSampleWait = wait; }
+		// Any thread: calls hook on the cue thread that a device start starts, when the thread first runs, before
+		// anything else it does (Engine::setCueStartHook). The thread gets a copy: a new hook applies from the next
+		// start on.
+		void setCueStartHook(std::function<void()> hook);
 
 		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or
 		// midi.portSettings (midiPorts): emits the audio ports as audio.portsChanged, and the MIDI ports follow their
@@ -174,6 +178,8 @@ namespace gnubase::engine
 			std::shared_ptr<MidiSendTap> departedSend;
 			std::vector<std::shared_ptr<MidiSequencer>> staying;    // the MIDI tracks still routed to the instrument
 			std::vector<std::shared_ptr<MidiSendTap>> stayingSends; // the other tracks' MIDI sends still playing there
+			// The notes the staying tracks' strips let through, in their order (InstrumentChannel::PassedNotes).
+			std::vector<InstrumentChannel::PassedNotes> passed;
 		};
 
 		// What the audio thread runs: the graph and its links to the device, and the releases to do before its first
@@ -435,6 +441,7 @@ namespace gnubase::engine
 		std::atomic<int64_t> m_recordOffset{0};
 		PlayedPositions m_played; // audio thread; for any record offset
 		bool m_directMonitoring = false;
+		std::string m_silenceReason;                   // the device's, as audio.changed last announced it
 		std::map<int, audio::InputMonitor> m_monitors; // by input port, those the device monitors directly
 		// Per input channel of the device, what it recorded at each project position from 0, for captureSeconds.
 		// Written by the audio thread, read while the device stands.
@@ -572,6 +579,8 @@ namespace gnubase::engine
 		std::pair<const ArrangerPlan*, ArrangerState> cuePlan(const CueState& state) const;
 		std::atomic<bool> m_cueing{false};
 		std::thread m_cueThread;
+		std::mutex m_cueStartHookMutex; // guards m_cueStartHook, which startCueing copies for the cue thread
+		std::function<void()> m_cueStartHook;
 
 		// The dummy device's input generator, if any; runs on the audio thread.
 		std::shared_ptr<graph::Processor> m_generator;

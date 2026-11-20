@@ -36,10 +36,12 @@ the project (#491).
   track doesn't change the instrument that other tracks play. Once it is heard again, its automation curves send their
   values at once, but its MIDI volume, pan and program only what changed while it was silent (a new program with the
   MIDI volume and pan after it), so a program change or CC 7 a part played before it went silent stays; if playback
-  started, stopped, located or jumped meanwhile, or the instrument changed, it sends them all, as a jump does. A value
-  changed and changed back while it was silent, e.g. by undo, didn't change: the player compares with the lanes of the
-  automation last heard. A soloed-out or disabled track's parts weren't in the snapshot when playback moved, so once it
-  is heard again they are chased as the jump would have with the chase settings: in that block its automation raises
+  started, located, jumped or stopped somewhere else meanwhile, or ran while it was soloed out or disabled, or the
+  instrument changed, it sends them all, as a jump does. A stop where playback ended moves nothing, as for the
+  sequencer: the values stay as playback left them, also those its parts played. A value changed and changed back
+  while it was silent, e.g. by undo, didn't change: the player compares with the lanes of the automation last heard. A
+  soloed-out or disabled track's parts weren't in the snapshot when playback moved or ran, so once it is heard again
+  they are chased as the jump would have with the chase settings: in that block its automation raises
   `AutomationPlayer::heardAgain`, and the sequencer that chases the track at jumps (`MidiSequencer`: its
   instrument's, or its own if it isn't routed to one) sends, after the channel's values, the latest controller event
   of each kind before the position (stopped: up to and including the cursor) where that is the track's, or where it is
@@ -54,8 +56,13 @@ the project (#491).
   mute kept of every kind of that chase and of the kinds the channel sent, so each goes out once, with the chased value.
   A track that isn't routed to an instrument has its own sequencer chase it into its events, after the channel's values:
   before it sends what waits, its strip forgets what the mute kept of the kinds of its events at the block's start, but
-  for the kinds of the values the channel sent again there, over which what the mute kept wins. Notes that started while
-  it was silent aren't chased. Silent channels don't monitor their input directly either.
+  for the kinds of the values the channel sent again there, over which what the mute kept wins. A disabled instrument
+  track's parts aren't in the snapshot either: heard again after playback moved or ran while it was soloed out or
+  disabled, its own sequencer chases them the same way (a soloed-out one's played, and their latest values go out
+  again: the reference manual, p. 1610, chases when soloing too). Notes that started while it was silent aren't
+  chased, also with `midi.chaseNotes` on: being heard again isn't a jump, after which the instrument has no notes left,
+  and like a mute lane that unmutes in the middle of a note it plays the notes that start from there on, not those that
+  sound there. Silent channels don't monitor their input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
   channel is silent. Other track types refuse it.
@@ -95,7 +102,8 @@ sends engine commands, so whatever another client changes shows at once.
   .track-list-header              the global track controls: #add-track, #track-controls-settings (document)
   .track-rows                     clips the rows, under the overview line and ruler's height
     listview.tracks[multiple]     the list view (widgets.md), scrolled with the event display
-      listitem[value=<id>][level][type]   a tree row per track; .selected, .disabled, .renaming, .versions
+      listitem[value=<id>][level][type]   a tree row per track; .selected, .disabled, .renaming, .versions,
+                                          .in-place while the track's in-place editor is open
         .tree-indent, .tree-toggle        from the list view, by level
         .track-color                      the track's color strip, attribute color only with a color (colors.md)
         .track-name, input.track-name-field   .track-version in the name while ui.showVersionName
@@ -103,6 +111,8 @@ sends engine commands, so whatever another client changes shows at once.
                                           #track-versions-menu (track-versions.md)
         .track-controls > button.toggle[control]   .checked while on, disabled without anything to do
         .track-controls > select.midi-channel[control=midiChannel]   MIDI tracks: value any or 0-15
+        button.in-place-toolbar-toggle    MIDI and instrument rows, shown while .in-place: the in-place editor's
+                                          toolbar triangle (in-place-editor.md)
     .drop-line                    where dragged tracks go, .shown while dragging
 ```
 
@@ -141,7 +151,9 @@ sends engine commands, so whatever another client changes shows at once.
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
   (every automation lane of the track reads, or with a click none does; disabled without lanes), `timeBase`
   (musical or linear, `.checked` when linear) and on MIDI tracks `midiChannel` (MIDI Channel, p. 349), a drop-down list
-  of Any and 1 to 16 that sends `channel.set` `midiChannel` as the inspector's does ([mixer.md](mixer.md)). A click
+  of Any and 1 to 16 that sends `channel.set` `midiChannel` as the inspector's does ([mixer.md](mixer.md)), and on MIDI
+  and instrument tracks `editInPlace` (Edit In-Place, p. 194), which opens and closes the track's in-place editor
+  with `editor.inPlace` and is `.checked` once it is open ([in-place-editor.md](in-place-editor.md)). A click
   sends `channel.set`, `automationLane.set` in one transaction, or `track.set`. A switch's click, and that of an
   automation lane's Read, goes from what its button shows and shows what it sends at once (`.checked`, solo's
   `.defeated`), as the inspector's toggles do, and doesn't wait for the project read after the command (#1852): the
@@ -272,19 +284,26 @@ data blocks and Move Selected Tracks to New Folder are in [folder-tracks.md](fol
   disabled and a soloed MIDI track into an instrument, and checks that muted, soloed-out and disabled ones send it no
   automation (controller, pitch bend and channel pressure), MIDI volume, pan or program, and that one heard again keeps
   its part's program and CC 7 and sends what changed meanwhile, each once, also while the transport stands, nothing for
-  values changed back by undo, and after playback started, stopped, located or jumped meanwhile the channel's values,
-  then its parts' chase, disabled or muted, also stopped at the cursor, not without the chase settings, and with another
-  track's later program change, which comes back after the channel's, and CC 1, which isn't sent again, a pedal the
-  chase presses that its mute releases, playing and while the transport stands, a track disabled at one move and muted
-  by its button at a later one chased in full, the channel's values before what the mute kept after a stop, and a value
-  its MIDI input sent into the mute forgotten for the chase; `tests/midi_tests.cpp` chases a track heard again in the
-  sequencer, playing, stopped, with its channel's kinds, muted only by its button, with a cycle jump in the same block,
-  without chase settings and after a chase that didn't fit, a bank select with another track's program, also between the
-  select's MSB and LSB, its LSB alone, a program at the select's position on an earlier or a later track and a track
-  muted by its button whose channel has a bank, and a routed track's chase into its strip alone, in that block;
-  `tests/automation_tests.cpp` has the strip forget what the mute kept of the kinds chased for a track heard again, of a
-  soloed-out track's whole chase and of an unrouted track's chase in its events; `tests/dawproject_tests.cpp` saves and
-  loads mute, solo and disabled tracks, also from `project.xml` alone.
+  values changed back by undo, and after playback started, located or jumped meanwhile (also a cycle jump) the channel's
+  values, then its parts' chase, disabled or muted, also stopped at the cursor, but nothing again after a stop where
+  playback ended, which isn't a move, not without the chase settings, and with another track's later program change,
+  which comes back after the channel's, and CC 1, which isn't sent again, a pedal the chase presses that its mute
+  releases, playing and while the transport stands, a track disabled at one move and muted by its button at a later one
+  chased in full, the channel's values before what the mute kept after a stop, and a value its MIDI input sent into the
+  mute forgotten for the chase, a track that playback ran over while it was disabled, not muted by its button, chased
+  once it is heard again, a track heard again when another track's solo ends chased after a move or after playback ran,
+  an instrument track enabled after playback moved or ran while it was disabled chasing its parts, a note that another
+  track's mute button kept from it ended when a MIDI track leaves its instrument, a cycle jump or a start forgetting
+  what the mute dropped before it, a track muted by its button and disabled at a move, enabled first and unmuted later,
+  chased once, and a track that its button unmutes in the block of a locate getting the locate's chase once;
+  `tests/midi_tests.cpp` chases a track heard again in the sequencer, playing, stopped, with its channel's kinds, muted
+  only by its button, with a cycle jump in the same block, without chase settings and after a chase that didn't fit, a
+  bank select with another track's program, also between the select's MSB and LSB, its LSB alone, a program at the
+  select's position on an earlier or a later track and a track muted by its button whose channel has a bank, and a
+  routed track's chase into its strip alone, in that block; `tests/automation_tests.cpp` has the strip forget what the
+  mute kept of the kinds chased for a track heard again, of a soloed-out track's whole chase and of an unrouted track's
+  chase in its events; `tests/dawproject_tests.cpp` saves and loads mute, solo and disabled tracks, also from
+  `project.xml` alone.
 - `tests/tracklayout_tests.cpp`: `trackLayout.set` setting heights and replacing the folded folders, refusing unknown
   tracks, folded tracks that aren't folders and heights out of range or not a number, not an undo step, without
   tracks that are gone, and saved and loaded with the project; a new project starts without; undo and redo announcing

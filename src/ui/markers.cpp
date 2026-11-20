@@ -146,8 +146,14 @@ namespace gnubase::ui
 					place();
 			});
 
+		// Not after a step that changed only channels, which it doesn't show (#1881).
 		for (const char* event : {"history.changed", "project.reset"})
-			m_subscriptions.push_back(m_binding.on(event, [this](const engine::Event&) { requestProject(); }));
+			m_subscriptions.push_back(m_binding.on(event,
+				[this](const engine::Event& changed)
+				{
+					if (!changedOnly(changed, {"channel.changed"}))
+						requestProject();
+				}));
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
 			{

@@ -141,9 +141,10 @@ namespace gnubase::ui
 		float dpRatio() const;
 
 		void layout();
-		void build();     // the rows, from the project
-		void showState(); // names, controls and state classes
-		bool showTempo(); // the tempo track's Current Tempo and Type of New Tempo Points; whether a text changed
+		void build();       // the rows, from the project
+		void showState();   // names, controls and state classes
+		void showInPlace(); // the rows of tracks with open in-place editors: Edit In-Place and the toolbar triangle
+		bool showTempo();   // the tempo track's Current Tempo and Type of New Tempo Points; whether a text changed
 		void followTransport(const engine::Json& status); // Current Tempo, also while playing (#831)
 		// The cursor watch while playing, which Current Tempo follows (#831): only while the list has the field, so
 		// that the frames of other projects cost nothing (#1338). Made and dropped as playback and the rows change.
@@ -270,8 +271,10 @@ namespace gnubase::ui
 		// The rows' Current Tempo and Type of New Tempo Points, kept by showState so that a frame doesn't search for
 		// them (#1406); one whose row went is null.
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_tempoFields;
-		bool m_showingTempo = false; // the tempo controls' change events aren't the user's
-		uint64_t m_loads = 0;        // the display's, when the rows were last built
+		bool m_showingTempo = false;        // the tempo controls' change events aren't the user's
+		uint64_t m_loads = 0;               // the display's, when the rows were last built
+		std::set<uint64_t> m_inPlaceShown;  // the display's open in-place editors, as showInPlace showed them
+		std::set<uint64_t> m_toolbarsShown; // and those of them that show their toolbars
 		bool m_layingOut = false;
 		uint64_t m_renaming = 0;
 		std::string m_renamed;                         // the name before renaming

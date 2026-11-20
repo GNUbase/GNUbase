@@ -103,7 +103,24 @@ namespace gnubase::ui
 				return "Num" + std::to_string(key - KI_NUMPAD0);
 			if (key >= KI_F1 && key <= KI_F24)
 				return "F" + std::to_string(key - KI_F1 + 1);
+			if (key == KI_RMENU)
+				return "Alt"; // the Right Alt key is Alt too, as parseKeys reads it
 			return "Key" + std::to_string(key);
+		}
+
+		bool isAlt(KeyIdentifier key)
+		{
+			return key == KI_LMENU || key == KI_RMENU;
+		}
+
+		// Throws std::invalid_argument for keys that can't be bound: Alt pressed and released on its own opens the menu
+		// bar (Popups in popupwidgets.cpp, docs/features/widgets.md), so a command bound to it would run with the key
+		// down and toggle the menu bar with the key up. Alt as a modifier of other keys, and with another modifier, is
+		// fine.
+		void checkBindable(const KeyPress& keys)
+		{
+			if (isAlt(keys.key) && (keys.modifiers & ~KM_ALT) == 0)
+				throw std::invalid_argument("Alt on its own opens the menu bar and can't be bound to a command");
 		}
 	}
 
@@ -156,7 +173,7 @@ namespace gnubase::ui
 			{{KM_CTRL, "Ctrl"}, {KM_ALT, mac ? "Opt" : "Alt"}, {KM_SHIFT, "Shift"}, {KM_META, mac ? "Cmd" : "Meta"}}};
 		std::string name;
 		for (const auto& [flag, text] : modifiers)
-			if ((keys.modifiers & flag) != 0 && (flag != KM_ALT || keys.key != KI_LMENU)) // Alt, not Alt+Alt
+			if ((keys.modifiers & flag) != 0 && (flag != KM_ALT || !isAlt(keys.key))) // Alt, not Alt+Alt
 			{
 				name += text;
 				name += '+';
@@ -171,7 +188,7 @@ namespace gnubase::ui
 			{KM_ALT, "Alt"}, {KM_SHIFT, "Shift"}, {KM_META & ~command, "Meta"}}};
 		std::string name;
 		for (const auto& [flag, text] : modifiers)
-			if (flag != 0 && (keys.modifiers & flag) != 0 && (flag != KM_ALT || keys.key != KI_LMENU))
+			if (flag != 0 && (keys.modifiers & flag) != 0 && (flag != KM_ALT || !isAlt(keys.key)))
 			{
 				name += text;
 				name += '+';
@@ -272,6 +289,7 @@ namespace gnubase::ui
 	void KeyCommands::bind(const KeyBinding& binding)
 	{
 		Bound bound{binding.zone, parseKeys(binding.keys, m_platform), binding.command, binding.parameters};
+		checkBindable(bound.keys);
 		check(binding.command, binding.parameters);
 		const auto same = std::find_if(m_bindings.begin(), m_bindings.end(),
 			[&bound](const Bound& other) { return other.zone == bound.zone && other.keys == bound.keys; });
@@ -305,7 +323,10 @@ namespace gnubase::ui
 			{
 				check(customized.command, customized.parameters);
 				for (const Json& keys : entry.value("keys", Json::array()))
+				{
 					customized.keys.push_back(parseKeys(keys.get<std::string>(), m_platform));
+					checkBindable(customized.keys.back());
+				}
 			}
 			catch (const std::exception& error)
 			{

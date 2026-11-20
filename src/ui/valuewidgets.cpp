@@ -7,8 +7,10 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
@@ -337,12 +339,24 @@ namespace gnubase::ui
 			return !change.GetParameter("linebreak", false);
 		}
 
+		// Starts editing the value field with autofocus that its document focused as it showed, at once rather than in
+		// the next update: ElementDocument::Show sends show once it has set the focus. Then the field's text field has
+		// the focus, and SDL's text input is on, for the keys typed next, whose text SDL makes only while it is (#548).
+		// Stateless, for every document; it leaves a document once it has shown.
+		class ShowListener final : public Rml::EventListener
+		{
+		public:
+			void ProcessEvent(Rml::Event& event) override;
+		};
+
+		ShowListener g_showListener; // only on the UI thread
+
 		// <valuefield>: the value as text, with the decimals (2) and the unit that its attributes give. Besides
 		// dragging, a double click, or Enter while it has the focus, edits it as text, with the state class .editing:
 		// Enter or leaving the field takes the number typed, Escape keeps the value, and so does a field nothing was
 		// typed into, so that a value with more decimals than it shows isn't rounded to them. With autofocus, it is
 		// edited, all of it selected so that the number typed replaces it, whenever it gets a visible focus: when its
-		// document shows it focused, or Tab moves to it, but not on a click.
+		// document shows it focused, at once, or Tab moves to it, but not on a click.
 		class ValueField final : public ValueControl
 		{
 		public:
@@ -403,8 +417,9 @@ namespace gnubase::ui
 
 			void ProcessDefaultAction(Rml::Event& event) override
 			{
-				// A key before that update, typed while the document was loading, starts editing too, so that the text
-				// it types goes into the text field.
+				// A key before the update after Tab moved to it starts editing too, so that text handed to the context
+				// after that keydown goes into the text field. A real keyboard's keydown right after Tab has no text:
+				// SDL's text input is still off then, as the field itself, not its text field, had the focus.
 				if (event == Rml::EventId::Keydown && m_focused)
 					startFocused();
 				ValueControl::ProcessDefaultAction(event);
@@ -420,11 +435,21 @@ namespace gnubase::ui
 					HasAttribute("autofocus") && event.GetParameter("focus_visible", false))
 				{
 					m_focused = true;
+					if (Rml::ElementDocument* document = GetOwnerDocument())
+						document->AddEventListener(Rml::EventId::Show, &g_showListener);
 				}
 			}
 
+			// Its document showed: if it has the focus that a visible focus gave it, editing starts.
+			void shown()
+			{
+				if (m_focused)
+					startFocused();
+			}
+
 		protected:
-			// Editing starts on the update after the focus event, whose focus change is still under way.
+			// Editing starts on the update after the focus event, whose focus change is still under way, unless the
+			// document showing started it.
 			void OnUpdate() override
 			{
 				ValueControl::OnUpdate();
@@ -488,6 +513,15 @@ namespace gnubase::ui
 			bool m_typed = false;   // the user typed while editing, even if the text is the same again
 			bool m_focused = false; // it has autofocus and got a visible focus, and editing hasn't started yet
 		};
+
+		void ShowListener::ProcessEvent(Rml::Event& event)
+		{
+			Rml::Element* document = event.GetCurrentElement();
+			document->RemoveEventListener(Rml::EventId::Show, this);
+			if (Rml::Context* context = document->GetContext())
+				if (auto* field = dynamic_cast<ValueField*>(context->GetFocusElement()))
+					field->shown();
+		}
 
 		// <textdisplay>: its value attribute as text, drawn like a display, such as a position in a time format. A
 		// double click edits it as text, with the state class .editing: Enter, or leaving the field, sends change with
@@ -593,8 +627,10 @@ namespace gnubase::ui
 			bool m_typed = false; // the user typed while editing, even if the text is the same again
 		};
 
-		// <meter>: a level meter, value and peak in dB between min (-60) and max (6). The level shows the lower part
-		// of the theme's meter fill, and the peak sits at its height. Engine meters arrive once a frame (#111).
+		// <meter>: a level meter, value and peak in dB between min (-60) and max (6), and an optional rms, the RMS
+		// level. The level shows the lower part of the theme's meter fill, and the peak sits at its height; the RMS
+		// level shows the fill again over it, up to its height (the style sheets tell them apart by [rms]). Engine
+		// meters arrive once a frame (#111).
 		class Meter final : public Rml::Element
 		{
 		public:
@@ -603,6 +639,8 @@ namespace gnubase::ui
 				appendPart(*this, "meter");
 				m_level = appendPart(*this, "meter-level");
 				m_fill = appendPart(*m_level, "meter-fill");
+				m_rms = appendPart(*this, "meter-rms");
+				m_rmsFill = appendPart(*m_rms, "meter-fill");
 				m_peak = appendPart(*this, "meter-peak");
 				show();
 			}
@@ -619,6 +657,7 @@ namespace gnubase::ui
 			{
 				Rml::Element::OnResize();
 				m_fill->SetProperty("height", format(GetClientHeight()) + "px");
+				m_rmsFill->SetProperty("height", format(GetClientHeight()) + "px");
 			}
 
 		private:
@@ -635,11 +674,14 @@ namespace gnubase::ui
 				if (m_peak == nullptr)
 					return;
 				m_level->SetProperty("height", percent(fraction("value")));
+				m_rms->SetProperty("height", percent(fraction("rms")));
 				m_peak->SetProperty("bottom", percent(fraction("peak")));
 			}
 
 			Rml::Element* m_level = nullptr;
 			Rml::Element* m_fill = nullptr;
+			Rml::Element* m_rms = nullptr;
+			Rml::Element* m_rmsFill = nullptr;
 			Rml::Element* m_peak = nullptr;
 		};
 	}

@@ -278,6 +278,33 @@ TEST_CASE("automation tracks show and hide below their track, and the parameter 
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("automationLane.list", {{"track", other}}).at("lanes").empty(); }));
 }
 
+TEST_CASE("a volume lane's static value line follows the channel without a project read", "[ui]")
+{
+	// A step that changed only channels, such as each step of a fader drag, reads no project (#1881): the display
+	// asks again for the lanes' targets, whose values the line shows.
+	Automation f;
+	const Json volume = f.show();
+	REQUIRE(f.app.waitUntil([&] { return f.curve("static-value", volume).size() == 1; }));
+	CHECK(f.curve("static-value", volume)[0].value == Approx(60.0 / 66.0)); // 0 dB from -60 to 6
+	Json channel;
+	const Json project = f.app.call("project.get");
+	for (const Json& each : project.at("tracks"))
+		if (each.at("id") == f.track)
+			channel = each.at("channel");
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	REQUIRE(f.app.waitUntil([&binding] { return binding.waiting("project.get") == 0; }));
+	size_t reads = 0;
+	const ui::Subscription counted = binding.onResult("project.get", [&reads](const engine::Result&) { ++reads; });
+	f.app.call("channel.set", {{"channel", channel}, {"volume", -6.0}});
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			const auto line = f.curve("static-value", volume);
+			return line.size() == 1 && line[0].value == Approx(54.0 / 66.0);
+		}));
+	CHECK(reads == 0);
+}
+
 TEST_CASE("Show/Hide Automation lies in its track's lower left corner, inside the row, at every track height", "[ui]")
 {
 	// #1773: the button ended on the row's last pixel, over the selection frame and the separator to the next row, and

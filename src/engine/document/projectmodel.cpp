@@ -3809,7 +3809,7 @@ namespace gnubase::engine
 				step.change = std::move(change);
 				step.movedTracks.insert(step.movedTracks.end(), m_movingTracks.begin(), m_movingTracks.end());
 			}
-			announceHistory(context);
+			announceHistory(context, true);
 			return;
 		}
 		ProjectChange change = known ? std::move(*known) : difference(before, m_project);
@@ -3818,17 +3818,22 @@ namespace gnubase::engine
 		HistoryStep step{std::move(action), now(), {}, std::move(change), std::move(merge)};
 		step.movedTracks = m_movingTracks;
 		m_history.record(std::move(step));
-		announceHistory(context);
+		announceHistory(context, true);
 	}
 
-	void ProjectModel::announceHistory(CommandContext& context) const
+	void ProjectModel::announceHistory(CommandContext& context, bool step) const
 	{
 		const std::vector<HistoryStep>& steps = m_history.steps();
 		const size_t position = m_history.position();
-		context.emit("history.changed",
-			{{"position", position}, {"steps", steps.size()},
-				{"undo", position > 0 ? Json(steps[position - 1].action) : Json(nullptr)},
-				{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}});
+		Json data = {{"position", position}, {"steps", steps.size()},
+			{"undo", position > 0 ? Json(steps[position - 1].action) : Json(nullptr)},
+			{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}};
+		// Only where the events tell the whole change: not inside another command, which may announce more after it
+		// (eventNames is empty there), nor for undo and redo, which put back what the steps recorded.
+		if (const std::vector<std::string> events = step ? context.eventNames() : std::vector<std::string>();
+			!events.empty())
+			data["events"] = events;
+		context.emit("history.changed", std::move(data));
 	}
 
 	void ProjectModel::updateSoloNotes()
@@ -4648,7 +4653,9 @@ namespace gnubase::engine
 				"[{band (1 to 4), on, type (bell; band 1 also lowShelf or lowCut, band 4 highShelf or highCut, cuts "
 				"at 12 dB per octave), frequency (Hz, 20 to 20000), gain (dB, -24 to 24), q (0.1 to 12)}]}, then "
 				"the strip's limiter {on, threshold (dB, -30 to 0: no sample leaves above it, 1 ms of latency), "
-				"release (ms, 1 to 1000)}. Everything starts off; changes glide. sends (audio channels only) "
+				"release (ms, 1 to 1000)}. Everything starts off; changes glide, the gate and the compressor "
+				"crossfade with their input over 5 ms when they switch on or off, and turning the limiter on "
+				"changes the channel's latency and starts it with 1 ms of silence. sends (audio channels only) "
 				"changes the channel's eight sends, each by its send number (1 to 8) and only in what it has: "
 				"destination (a group or effect channel, 0 for none), on, level (dB, from -144 to the project's "
 				"maxVolume, stopping there, default 0) and preFader (before the fader and the mute button, after the "

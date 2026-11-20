@@ -152,6 +152,7 @@ RmlUi's `cursor` property; the pointers are SVG files in `resources/cursors` ([s
 | `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp), except on a fade handle ([fades.md](fades.md)), and except with Ctrl or Shift held unless they are a tool modifier (they add to the selection then) | `resize` |
 | `split` | The object selection tool on an event with the tool modifier Split Event held (Alt), where a click splits it (p. 268) | `tool-split` |
 | `draw` | The object selection tool on an empty spot of an audio, MIDI or instrument lane with Split Event held, where a drag draws a part (p. 250) | `tool-draw` |
+| `resize`, `resizeVertical` | The range selection tool just inside the selection range's start or end, or its top or bottom, where a drag moves that edge, without Shift ([range-editing.md](range-editing.md)) | `resize`, the OS's `ns-resize` |
 | `rangeSelection` | The range selection tool, and with the selection tools combined the upper half of a lane two rows high (p. 253) | `tool-range` |
 | `draw`, `erase`, `split`, `glue`, `mute`, `zoom`, `line`, `play` | That tool | `tool-<name>`, the play tool's `tool-play` |
 

@@ -677,6 +677,18 @@ meter .meter-fill
 	bottom: 0;
 }
 
+/* A meter's RMS level: the fill again over its level, up to the RMS level's height; themes dim the level under it. */
+meter .meter-rms
+{
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	width: 100%;
+	height: 0;
+	overflow: hidden;
+	clip: always;
+}
+
 /* The peak's top edge marks the level; at the bottom the meter hides it. */
 meter .meter-peak
 {
@@ -1493,6 +1505,11 @@ meter .meter-peak
 	cursor: resize;
 }
 
+.event-display .event-area[pointer=resizeVertical]
+{
+	cursor: ns-resize;
+}
+
 /* The name of a tool chosen with a key command, for a moment, at the top of the event lanes; the document gives it
    the tooltip's look. */
 .event-display .tool-notification
@@ -1813,6 +1830,32 @@ meter .meter-peak
 	display: block;
 }
 
+/* The in-place editor's toolbar triangle (docs/features/in-place-editor.md) in the upper right corner of its track's
+   row, while the editor is open (.in-place); .checked while the toolbar shows. */
+.track-list .in-place-toolbar-toggle
+{
+	display: none;
+	position: absolute;
+	top: 0;
+	right: 0;
+	min-width: 16dp;
+	width: 16dp;
+	height: 16dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list listitem.in-place .in-place-toolbar-toggle
+{
+	display: block;
+}
+
+.track-list .in-place-toolbar-toggle svg.icon
+{
+	width: 12dp;
+	height: 12dp;
+}
+
 /* Automation tracks (docs/features/automation-tracks.md): Show/Hide Automation in a track's lower left corner and
    the automation tracks' rows below the track's own. Code sets where the corner and the rows are, and each row's
    height, from the event display's lanes. */
@@ -1899,6 +1942,13 @@ menu
 menu.open, menuitem:hover > menu
 {
 	display: block;
+}
+
+/* Once keys moved the focus in a menu they have it, not the mouse resting on an item: only a submenu that Right
+   opened (.open) shows, until the mouse moves again. */
+menu.keys menuitem:hover > menu:not(.open)
+{
+	display: none;
 }
 
 menuitem
@@ -2497,6 +2547,64 @@ splitter.column .splitter-grip-horizontal
 .inspector textarea.notepad
 {
 	width: 100%;
+}
+
+/* The meter display (ui/meterpanel.h): the master meter's page, or with .loudness the loudness meter's, each with
+   its reset under its values, over the buttons that switch between them; the selected one is .checked. */
+.meter-display
+{
+	display: block;
+	padding: 6dp;
+}
+
+.meter-display .meter-loudness, .meter-display.loudness .meter-master
+{
+	display: none;
+}
+
+.meter-display.loudness .meter-loudness
+{
+	display: block;
+}
+
+.meter-display .meter-bars
+{
+	display: block;
+	height: 160dp;
+}
+
+.meter-display .meter-bars meter
+{
+	height: 160dp;
+	margin-right: 2dp;
+}
+
+.meter-display .meter-values div
+{
+	display: block;
+	padding: 2dp 0;
+}
+
+.meter-display .meter-values span
+{
+	float: right;
+}
+
+.meter-display .meter-reset
+{
+	margin-top: 4dp;
+}
+
+.meter-display .meter-buttons
+{
+	display: block;
+	margin-top: 6dp;
+}
+
+.meter-display .meter-buttons button
+{
+	min-width: 0;
+	margin-right: 4dp;
 }
 
 /* The edit history panel (ui/historypanel.h): a table of the undo steps that fills its panel, cut by the separator

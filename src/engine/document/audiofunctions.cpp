@@ -9,6 +9,7 @@
 #include "engine/analysis/statistics.h"
 #include "engine/audio/meters.h"
 #include "engine/audiofile/audiofile.h"
+#include "engine/document/channelformat.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/engine.h"
@@ -212,7 +213,7 @@ namespace gnubase::engine
 		{
 			std::string kind = info.name;
 			Json resultSchema = info.result;
-			info.version = 2;
+			info.version = kind == "clip.estimatePitch" ? 1 : 2;
 			info.description +=
 				" Returns a job at once; job.progress reports progress, job.cancel cancels it, "
 				"and job.finished/job.get contain the measurements in job.result. The source is captured at start.";
@@ -475,6 +476,44 @@ namespace gnubase::engine
 					{"channels", channels}};
 			});
 
+		addAnalysis(
+			{"clip.estimatePitch", 1,
+				"Estimates a monophonic fundamental per channel in Hz, from 40 to 2000 Hz, including sounds whose "
+				"overtones are louder. " +
+					rangeText +
+					" Uses periodicity in the loudest analysis window (about 0.17 s); null for silence, nonperiodic "
+					"or too short audio. This is an estimate for single notes, not polyphonic transcription.",
+				rangeSchema(Json::object()),
+				objectSchema(
+					{{"clip", integer}, {"frames", integer},
+						{"channels",
+							{{"type", "array"},
+								{"items",
+									objectSchema({{"channel", integer}, {"pitch", nullable}}, {"channel", "pitch"})}}}},
+					{"clip", "frames", "channels"}),
+				true},
+			[](ObjectId clip, const MediaFile& media, Range range, const Json&, JobContext& job)
+			{
+				const auto reader = openMedia(media);
+				std::vector<analysis::PitchEstimator> estimators;
+				estimators.reserve(static_cast<size_t>(channelsOf(*reader)));
+				for (int c = 0; c < channelsOf(*reader); ++c)
+					estimators.emplace_back(media.sampleRate);
+				readRange(*reader, media, range, job,
+					[&](const float* frames, size_t count)
+					{
+						for (size_t c = 0; c < estimators.size(); ++c)
+							estimators[c].feed(frames + c, count, estimators.size());
+					});
+				Json channels = Json::array();
+				for (size_t c = 0; c < estimators.size(); ++c)
+				{
+					job.checkCancelled();
+					channels.push_back({{"channel", c}, {"pitch", orNull(estimators[c].finish())}});
+				}
+				return Json{{"clip", clip}, {"frames", range.end - range.start}, {"channels", channels}};
+			});
+
 		Json statisticsChannel = {{"type", "object"}, {"properties", Json::object()}, {"required", Json::array()},
 			{"additionalProperties", false}};
 		for (const char* name : {"channel", "bitDepth"})
@@ -503,12 +542,15 @@ namespace gnubase::engine
 					" Per channel: minSample and maxSample, the lowest and highest sample; peak, the largest absolute "
 					"sample; truePeak, the largest absolute level between the samples too, 4 times oversampled; "
 					"dcOffset, the mean of the samples, also in percent of full scale; bitDepth, the bits the samples "
-					"need (32 for floating point beyond 24 bits, 0 for silence); pitch, the strongest frequency in Hz; "
+					"need (32 for floating point beyond 24 bits, 0 for silence); pitch, the monophonic fundamental "
+					"in Hz as clip.estimatePitch measures it; "
 					"averageRms, the RMS of every sample, and maxRms, the highest RMS of 50 ms windows 10 ms apart, "
 					"both in dB as AES17 has it, where a full-scale sine reads 0 dB. The levels are linear and in "
 					"dBFS (Db; minSampleDb and maxSampleDb of the samples' absolute values); null for silence. "
-					"maxRmsAllChannels is the highest maxRms. loudness (EBU R 128, every channel weighted like front "
-					"left and right): maxMomentary (400 ms) and maxShortTerm (3 s) in LUFS, ungated; integrated in "
+					"maxRmsAllChannels is the highest maxRms. loudness (EBU R 128, using the default channel format "
+					"for the file's channel count, front weight 1, surround weight 1.41, LFE excluded; unknown "
+					"formats weight every channel 1): maxMomentary (400 ms) and maxShortTerm (3 s) in LUFS, ungated; "
+					"integrated in "
 					"LUFS (ITU-R BS.1770); range in LU (EBU Tech 3342); maxTruePeak in dBTP; null for silence or "
 					"audio shorter than their windows. Reads the clip's file.",
 				rangeSchema(Json::object()),
@@ -525,6 +567,18 @@ namespace gnubase::engine
 				LoudnessMeter loudness;
 				loudness.prepare(media.sampleRate);
 				std::vector<std::vector<float>> planar(std::min<size_t>(channelCount, g_maxMeterChannels));
+				std::array<double, g_maxMeterChannels> weights;
+				weights.fill(1.0);
+				const auto& arrangement = speakers(defaultFormat(static_cast<int>(channelCount)));
+				for (size_t c = 0; c < arrangement.size(); ++c)
+				{
+					const Speaker speaker = arrangement[c];
+					if (speaker == Speaker::Lfe)
+						weights[c] = 0.0;
+					else if (speaker == Speaker::Ls || speaker == Speaker::Rs || speaker == Speaker::Cs ||
+						speaker == Speaker::Sl || speaker == Speaker::Sr)
+						weights[c] = 1.41;
+				}
 				int64_t frames = 0;
 				// The loudness meter's channels of interleaved frames, or silence without them.
 				const auto measure = [&](const float* samples, size_t count, bool measuring)
@@ -537,8 +591,8 @@ namespace gnubase::engine
 							planar[c][i] = samples != nullptr ? samples[(i * channelCount) + c] : 0.0F;
 						pointers.push_back(planar[c].data());
 					}
-					loudness.process(
-						pointers.data(), static_cast<int>(planar.size()), static_cast<uint32_t>(count), measuring);
+					loudness.process(pointers.data(), static_cast<int>(planar.size()), static_cast<uint32_t>(count),
+						measuring, weights.data());
 				};
 				readRange(*reader, media, range, job,
 					[&](const float* samples, size_t count)

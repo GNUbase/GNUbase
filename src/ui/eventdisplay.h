@@ -178,13 +178,21 @@ namespace gnubase::ui
 		// The tracks whose in-place editors are open (#131, ui/inplaceeditor.h): they are at least g_inPlaceHeight
 		// high, for the editor over their lane.
 		void setInPlaceTracks(std::set<uint64_t> tracks);
+		const std::set<uint64_t>& inPlaceTracks() const { return m_inPlace; }
+		// Whether an open in-place editor shows its toolbar and info line, which the triangle in its track's row of
+		// the track list switches (reference manual p. 1259); hidden again once the editor closes.
+		bool inPlaceToolbarShown(uint64_t track) const { return m_inPlaceToolbars.count(track) != 0; }
+		const std::set<uint64_t>& inPlaceToolbars() const { return m_inPlaceToolbars; }
+		void showInPlaceToolbar(uint64_t track, bool shown);
 		// The quantize panel's cutting positions (#1579, reference manual p. 378): a .cutting-position line over the
 		// event lanes where Slice would cut, at each of the project samples, by position. Each line shows that is
 		// at least g_cutDistance dp after the one shown before it (#1668), so that a flam zoomed out keeps the others.
 		void setCuttingPositions(std::vector<int64_t> positions);
 		const std::vector<int64_t>& cuttingPositions() const { return m_cuttingPositions; }
-		// The project as project.get last returned it, or null before the first answer; loads() counts the answers,
-		// and read() is when the binding handed the last one on (EngineBinding::handed).
+		// The project as project.get last returned it, with the channels that channel.changed brought since, or null
+		// before the first answer; loads() counts the answers and those channels, answers() only the answers, for the
+		// views that show no channel (#1881), and read() is when the binding handed the last of them on
+		// (EngineBinding::handed), a channel only while no answer is out, which may be older than it.
 		const engine::Json& project() const { return m_project; }
 		// Where each audio event of the project plays, in seconds, as the project window shows it: from its position
 		// in its track's time base to where its warp puts its end (playedLength), or else as long as its clip frames
@@ -197,6 +205,7 @@ namespace gnubase::ui
 		};
 		const std::map<uint64_t, AudioEventSpan>& audioEventSpans() const { return m_audioSpans; }
 		uint64_t loads() const { return m_loads; }
+		uint64_t answers() const { return m_answers; }
 		uint64_t read() const { return m_read; }
 		// The tempo map and signatures of project(), read once per answer.
 		const TimeContext& time() const { return m_time; }
@@ -208,7 +217,7 @@ namespace gnubase::ui
 		// and parts of the tracks inside a folder's lane, by the user setting ui.folderData (always, never, or
 		// hideWhenExpanded: while the folder is folded); empty for the other lanes.
 		const std::vector<EventLanes::Lane>& folderData() const { return m_folderData; }
-		// Called after the lanes or the view changed.
+		// Called after the lanes, the view or a channel (channel.changed, #1881) changed.
 		void onLayout(std::function<void()> listener) { m_layoutListener = std::move(listener); }
 		// Called for a double click below the tracks instead of adding a MIDI track, e.g. by the track list, which
 		// adds a track like the selected one (docs/features/add-track.md).
@@ -313,9 +322,10 @@ namespace gnubase::ui
 		// The selection range, also in the root's attributes range ("start end") and range-tracks (ids); none
 		// without the range selection tool. Choosing another tool selects the events in the range instead.
 		const std::optional<RangeSelection>& range() const { return m_range; }
-		// A drag in it on one of its tracks, without Shift, moves its contents (range.move), with the tool modifier
-		// dragDrop.copy copies them, and the range goes with them (reference manual p. 291); a click there without a
-		// drag selects a range of no length, as anywhere.
+		// A drag in it on one of its tracks, without Shift, moves its contents (range.move), across and onto other
+		// tracks, with the tool modifier dragDrop.copy copies them, and the range goes with them (reference manual
+		// p. 291); a drag just inside one of its edges moves that edge (p. 288); a click there without a drag selects
+		// a range of no length, as anywhere.
 		void setRange(std::optional<RangeSelection> range);
 		// Importing files (#92, fileimport.cpp, docs/features/file-import.md). MIDI files (.mid, .midi, .smf) are
 		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the
@@ -434,6 +444,7 @@ namespace gnubase::ui
 			Rectangle,     // a rectangle that selects, mutes or zooms
 			Range,         // a selection range
 			RangeMove,     // the selection range's contents, or a copy of them, from m_dragRange
+			RangeEdge,     // m_rangeEdge of the selection range, from m_dragRange
 			DrawPart,      // a new MIDI part
 			Comp,          // brings what it is released on to the front, or comps the range dragged on a lane
 			Play,          // auditions or scrubs until the mouse is released
@@ -508,6 +519,8 @@ namespace gnubase::ui
 		double dpFrom(Rml::Element& element, float x) const;
 
 		void requestProject();
+		// Puts a channel-only step's channel into the project, as its channel.changed brought it (#1881).
+		void takeChannel(const engine::Event& channelChanged);
 		// Shows m_project, with event.previewResize's answer over it while an edge is dragged.
 		void showProject();
 		void loadProject(const engine::Json& project);
@@ -760,8 +773,23 @@ namespace gnubase::ui
 		void toolMove(double x, double y);
 		void toolUp(double x, double y);
 		bool toolDoubleClick(double x, double y); // whether it took the double click
-		void setRangeFrom(double x, double y);    // from the drag's start
-		void selectRange();                       // the events in it, when another tool takes over
+		// The selection range's edges, of which a press just inside one drags it, with the range tool and no Shift.
+		enum class RangeEdge : uint8_t
+		{
+			None,
+			Start,
+			End,
+			Top,
+			Bottom,
+		};
+		RangeEdge rangeEdgeAt(double x, double y) const;
+		// The lanes' tracks, each once: a track's automation tracks' lanes have its id too (#121).
+		std::vector<uint64_t> shownTracks() const;
+		// Where a RangeMove drag to x and y dp has the range from, and a RangeEdge drag.
+		RangeSelection movedRange(const RangeSelection& from, double x, double y) const;
+		RangeSelection resizedRange(const RangeSelection& from, double x, double y) const;
+		void setRangeFrom(double x, double y); // from the drag's start
+		void selectRange();                    // the events in it, when another tool takes over
 		void showRange();
 		// Moves the range's edges to zero crossings of the audio on its tracks (reference manual p. 285), with Snap to
 		// Zero Crossing on: snap.zeroCrossings answers later, and actions wait until it has (EngineBinding::sendAwaited
@@ -778,6 +806,9 @@ namespace gnubase::ui
 		// Automation tracks (automationtracks.cpp).
 		void addAutomationActions();
 		void readAutomation(const engine::Json& project); // m_automation, and asks for the targets it needs
+		// Asks again for the targets of the tracks with open lanes whose track, channel, plugins or lanes changed in
+		// the project, e.g. a channel's volume, which a volume lane without points shows.
+		void requestChangedTargets();
 		// Asks for the track's automationLane.targets again; then runs when they are in.
 		void requestTargets(uint64_t track, std::function<void()> then = {});
 		// Adds a lane for the target to the track and shows it below the track's others, with the commands before it
@@ -888,12 +919,15 @@ namespace gnubase::ui
 		std::vector<EventLanes::Lane> m_tracks; // events in seconds, heights before zoom
 		std::vector<uint64_t> m_laneTracks;     // the track of each lane
 		std::set<uint64_t> m_inPlace;           // setInPlaceTracks'
+		std::set<uint64_t> m_inPlaceToolbars;   // showInPlaceToolbar's, of those
 		std::vector<double> m_laneTops = {0.0};
 		std::map<uint64_t, double> m_heights; // set by setTrackHeight, before zoom
 		std::set<uint64_t> m_hidden;
 		engine::Json m_project;
 		uint64_t m_loads = 0;
+		uint64_t m_answers = 0;
 		uint64_t m_read = 0;
+		ChannelSteps m_channelSteps; // channel.changed until their step's history.changed (#1881)
 		std::function<void()> m_layoutListener;
 		std::function<void()> m_addTrack;     // onAddTrack
 		std::vector<std::string> m_laneTypes; // and its type
@@ -931,9 +965,10 @@ namespace gnubase::ui
 		uint64_t m_resizeGesture = 0;   // counts drags of edges, so that late answers are dropped
 		uint64_t m_dragEvent = 0;       // pressed on
 		bool m_dragMoved = false;
-		double m_dragDy = 0.0;              // dp, dragging the event volume or a curve point
-		std::optional<size_t> m_dragPoint;  // the curve point dragged, none for a new one
-		bool m_dragStarted = false;         // moving events, after the drag delay; a RangeMove drag, once across
+		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
+		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
+		// Moving events, after the drag delay; a RangeMove drag, once across or on other tracks.
+		bool m_dragStarted = false;
 		bool m_dragToggles = false;         // a Ctrl/Shift click takes the pressed event or point out of the selection
 		bool m_clickSelectsPoint = false;   // a click on a point of a larger selection selects only that point
 		double m_pressTime = 0.0;           // RmlUi's clock, in seconds
@@ -990,7 +1025,8 @@ namespace gnubase::ui
 		std::optional<RangeSelection> m_range;
 		std::optional<RangeSelection> m_rangeBase; // what a drag with Shift adds to
 		bool m_rangeAnew = false;                  // a Shift press in m_rangeBase, which a drag replaces
-		std::optional<RangeSelection> m_dragRange; // the range a RangeMove drag moves, as it was
+		std::optional<RangeSelection> m_dragRange; // the range a RangeMove or RangeEdge drag changes, as it was
+		RangeEdge m_rangeEdge = RangeEdge::None;   // the edge a RangeEdge drag moves
 		double m_pressX = 0.0;                     // dp in the event lanes
 		double m_pressY = 0.0;
 		std::string m_pressed; // the modifiers held at the press: ctrl, alt and shift joined with +

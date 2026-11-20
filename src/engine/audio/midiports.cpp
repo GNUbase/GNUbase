@@ -255,8 +255,6 @@ namespace gnubase::engine
 					addInput(slot, message, allInputs);
 				}
 				const Received received{slot, block.position + message.offset, message};
-				if (!m_monitor.tryPush(received))
-					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
 				// Only while someone listens, and without system real-time messages (clock, active sensing), which
 				// some devices send all the time.
 				if (m_activityListen.load(std::memory_order_relaxed) && message.bytes[0] < 0xF8)
@@ -265,6 +263,9 @@ namespace gnubase::engine
 						m_activityDropped.fetch_add(1, std::memory_order_relaxed);
 					m_activityCount.fetch_add(1, std::memory_order_relaxed);
 				}
+				// After the count: a thread that midi.monitor gave the message sees it counted (#1889).
+				if (!m_monitor.tryPush(received))
+					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
 			});
 	}
 
@@ -702,16 +703,19 @@ namespace gnubase::engine
 				"are closed. inAllInputs, for inputs: whether tracks set to all MIDI inputs receive it. mpe, for "
 				"inputs: its MPE input (reference manual pp. 1295-1298), whose members the call leaves out stay as "
 				"they were: mode off, lower (MPE's lower zone: master channel 1, the notes on channels 2 and up), "
-				"upper (its upper zone: master channel 16, the notes on 15 and down) or rotation (channel rotation: "
-				"the notes on the used channels from firstChannel on, up to 16, no master channel); channels, the "
-				"notes' channels (a zone has at most 15); pitchRange, the semitones of the notes' pitch bend; tuning "
+				"upper (its upper zone: master channel 16, the notes on 15 and down), rotation (channel rotation: "
+				"the notes on the used channels from firstChannel on, up to 16, no master channel) or both (both "
+				"zones at once); channels, the notes' channels (a zone has at most 15), with both the lower zone's; "
+				"upperChannels, with both the upper zone's (at most 13; the lower zone gets at most the rest of 14); "
+				"pitchRange, the semitones of the notes' pitch bend; tuning "
 				"(Use for Tuning), whether the notes' pitch bend is their tuning; initialX and initialY (Send Initial "
 				"Value), what each note's X and Y start at: off, the channel's latest value, or center, min or max (Y "
 				"only); xMessage, pressureMessage and yMessage (MIDI Message), the message of each dimension: "
 				"pitchBend, aftertouch (channel pressure) or cc0 to cc127, by default pitchBend, aftertouch and cc74; "
 				"xExpression, pressureExpression and yExpression (Note Expression Assignment), the note expression "
-				"each plays (volume, pan, tuning, vibrato, expression, brightness, pressure) or none, which passes "
-				"the message as it is, by default none (X), pressure and brightness; with tuning X plays tuning "
+				"each plays (volume, pan, tuning, vibrato, expression, brightness, pressure), polyPressure (MIDI "
+				"PolyPressure: the notes' poly pressure) or none, which passes the message as it is, by default "
+				"none (X), pressure and brightness; with tuning X plays tuning "
 				"over its own assignment, which it plays again without it, and xExpression tuning turns tuning "
 				"on (with tuning false it is rejected), keeping X's own. On the notes' channels the dimensions' "
 				"messages are the expression of the notes that sound there, as per-note expression, live and in "

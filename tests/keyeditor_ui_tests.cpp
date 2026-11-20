@@ -6,9 +6,11 @@
 #include "ui/automation.h"
 #include "ui/docking.h"
 #include "ui/enginebinding.h"
+#include "ui/eventdisplay.h"
 #include "ui/keyeditor.h"
 #include "ui/midieditor.h"
 #include "ui/rmlui.h"
+#include "ui/tracklist.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -1433,6 +1435,108 @@ TEST_CASE("the transpose palette and the info line edit the selected notes", "[u
 	CHECK(f.note(ids[1]).at("pitch") == 64);
 }
 
+TEST_CASE("a start typed on the info line before the part's start moves the selected notes as far as it", "[ui]")
+{
+	Fixture f;
+	f.app.call("midiPart.set", {{"part", f.part}, {"position", g_bar}});
+	const std::vector<uint64_t> ids = f.add({{g_quarter, 60, g_quarter}, {2 * g_quarter, 64, g_quarter}});
+	f.click(of(noteSelector(ids[0])));
+	f.click(of(noteSelector(ids[1])), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-editor-info", "multiple"); }));
+	CHECK(f.elements(".key-editor-info textdisplay[field=start]").at(0).at("attributes").at("value") == "2.2.1.0");
+	f.click(of(".key-editor-info textdisplay[field=start]"), 2);
+	f.app.ui().key(f.window, "Mod+A");
+	f.app.ui().text(f.window, "1.3.1.0");
+	f.app.ui().key(f.window, "Enter");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("position") == 0; }));
+	f.settle();
+	CHECK(f.note(ids[1]).at("position") == g_quarter);
+}
+
+TEST_CASE("Up and Down transpose the selected notes, Delete and Backspace delete them", "[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids =
+		f.add({{0, 60, g_quarter}, {g_quarter, 64, g_quarter}, {2 * g_quarter, 67, g_quarter}});
+	f.click(of(noteSelector(ids[0])));
+	f.click(of(noteSelector(ids[1])), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
+	// By a semitone, with Shift by an octave (p. 1214).
+	f.app.ui().key(f.window, "Up");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).at("pitch") == 65; }));
+	f.settle();
+	CHECK(f.note(ids[0]).at("pitch") == 61);
+	f.app.ui().key(f.window, "Shift+Down");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 49; }));
+	f.settle();
+	f.app.ui().key(f.window, "Shift+Up");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 61; }));
+	f.settle();
+	f.app.ui().key(f.window, "Down");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 60; }));
+	f.settle();
+	CHECK(f.note(ids[1]).at("pitch") == 64);
+	CHECK(f.note(ids[2]).at("pitch") == 67);
+
+	// Delete removes the selected notes in one step; after its undo Backspace does too.
+	f.app.ui().key(f.window, "Delete");
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
+	f.settle();
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
+	f.click(of(noteSelector(ids[2])));
+	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{ids[2]}; }));
+	f.app.ui().key(f.window, "Backspace");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[2]).is_null(); }));
+	f.settle();
+	CHECK(f.partNotes().size() == 2);
+}
+
+TEST_CASE("in the lower zone Up, Down and Delete edit the selected notes, not the project window's selection", "[ui]")
+{
+	// The keys are bound in the project window's focus zone too: Delete to edit.delete, Up and Down to
+	// track.selectPrevious and track.selectNext. The note display takes them first (p. 1214).
+	Fixture f({1024, 768});
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	ui::EventDisplay& display = f.app.appUi().showProject();
+	f.window = f.app.main().id();
+	const uint64_t other = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const Json added = f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				Json::array({{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}})}});
+	const uint64_t first = added.at("notes").at(0).at("id").get<uint64_t>();
+	f.app.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 2; }));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			ui::MidiEditor* editor = f.app.appUi().lowerZoneEditor();
+			return editor != nullptr && editor->keyEditor() != nullptr && editor->keyEditor()->scrollToPitch(60);
+		}));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const auto selected = [&f] { return f.app.call("editor.get", {{"editor", "lower"}}).at("selection").size(); };
+	f.click(of(noteSelector(first)));
+	REQUIRE(f.app.waitUntil([&] { return selected() == 1; }));
+	// The part and the other track selected in the project window.
+	display.select({f.part});
+	f.app.appUi().trackList()->select({other});
+	f.app.shell().step(std::chrono::milliseconds(0));
+
+	f.app.ui().key(f.window, "Up");
+	REQUIRE(f.app.waitUntil([&] { return f.note(first).at("pitch") == 61; }));
+	f.settle();
+	CHECK(f.app.appUi().trackList()->selection() == std::vector<uint64_t>{other});
+
+	f.app.ui().key(f.window, "Delete");
+	REQUIRE(f.app.waitUntil([&] { return f.note(first).is_null(); }));
+	f.settle();
+	CHECK(f.partNotes().size() == 1);
+	CHECK(display.selection() == std::vector<uint64_t>{f.part});
+}
+
 TEST_CASE("step input and MIDI input in the key editor", "[ui]")
 {
 	Fixture f;
@@ -2212,9 +2316,10 @@ TEST_CASE("the editor window's key editor and the in-place editor keep their con
 	const std::string editor = ".in-place-editor[track=\"" + std::to_string(f.track) + "\"]";
 	f.app.call("editor.set", {{"editor", "inPlace:" + std::to_string(f.track)}, {"lanes", {{{"type", "velocity"}}}}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(editor + " .controller-lane").size() == 1; }));
-	REQUIRE(
-		f.app.waitUntil([&] { return f.elements(editor + " .in-place-toolbar-toggle").at(0).at("visible") == true; }));
-	f.click(of(editor + " .in-place-toolbar-toggle"));
+	const std::string triangle =
+		".track-list listitem[value=\"" + std::to_string(f.track) + "\"] .in-place-toolbar-toggle";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(triangle).at(0).at("visible") == true; }));
+	f.click(of(triangle));
 	REQUIRE(f.app.waitUntil([&] { return f.has(editor, "toolbar-shown"); }));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	f.app.shell().step(std::chrono::milliseconds(0));

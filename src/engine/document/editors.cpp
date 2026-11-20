@@ -85,6 +85,7 @@ namespace gnubase::engine
 			bool soundSlotsLane = true;
 			std::set<int> collapsedGroups;
 			bool autoSelectControllers = false;
+			bool acousticFeedback = false;                                  // Acoustic Feedback (pp. 1192, 1259)
 			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection; // each a part and a controller event of it
 			// The attributes selected of selected notes on the Articulations lane (#1688, p. 1289), by part and note;
 			// a selected note without them has all its attributes selected.
@@ -413,7 +414,7 @@ namespace gnubase::engine
 				{"collapsedGroups", view.collapsedGroups}, {"autoSelectControllers", view.autoSelectControllers},
 				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection},
 				{"showExpression", view.showExpression}, {"expressionDoubleClick", view.expressionDoubleClick},
-				{"expressionType", view.expressionType}};
+				{"expressionType", view.expressionType}, {"acousticFeedback", view.acousticFeedback}};
 		}
 
 		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
@@ -477,14 +478,17 @@ namespace gnubase::engine
 
 		// Solo Instrument (p. 1223): the selected notes of the open drum editors that have it on, as editor.get has
 		// them now. The render snapshot solos them on the tracks with a drum map, also one assigned after they were
-		// selected.
+		// selected. current() never opens a view or turns on the drum editor or Solo Instrument, so the stored view
+		// rules out the others before current() costs a copy, the parts ordered and the selection filtered on every
+		// edit.
 		std::vector<std::pair<ObjectId, ObjectId>> soloNotes(const Views& views, const ProjectModel& model)
 		{
 			std::vector<std::pair<ObjectId, ObjectId>> notes;
-			for (const auto& stored : views)
-				if (const EditorView view = current(views, model, stored.first);
-					view.open && view.content == "drum" && view.soloInstrument)
-					notes.insert(notes.end(), view.selection.begin(), view.selection.end());
+			for (const auto& [name, stored] : views)
+				if (stored.open && stored.content == "drum" && stored.soloInstrument)
+					if (const EditorView view = current(views, model, name);
+						view.open && view.content == "drum" && view.soloInstrument)
+						notes.insert(notes.end(), view.selection.begin(), view.selection.end());
 			std::sort(notes.begin(), notes.end());
 			notes.erase(std::unique(notes.begin(), notes.end()), notes.end());
 			return notes;
@@ -680,7 +684,7 @@ namespace gnubase::engine
 			{"autoSelectControllers", boolean}, {"pitchVisibility", boolean}, {"reverseSounds", boolean},
 			{"visibleSounds", visibleSoundsSchema}, {"soloInstrument", boolean}, {"showNoteLength", boolean},
 			{"gridType", gridTypeSchema}, {"showExpression", boolean}, {"expressionDoubleClick", boolean},
-			{"expressionType", expressionTypeSchema}};
+			{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -693,7 +697,7 @@ namespace gnubase::engine
 					"content", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soundNames",
 					"soloInstrument", "showNoteLength", "gridType", "lanes", "showLanes", "soundSlotsLane",
 					"collapsedGroups", "autoSelectControllers", "controllerSelection", "eventSelection",
-					"showExpression", "expressionDoubleClick", "expressionType"}}};
+					"showExpression", "expressionDoubleClick", "expressionType", "acousticFeedback"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		viewSchema["properties"]["soundsInUse"] = {{"type", {"array", "null"}}, {"items", idSchema}};
 		viewSchema["properties"]["soundNames"] = {
@@ -749,7 +753,8 @@ namespace gnubase::engine
 			"whether selecting notes selects the controller events from their start to their end. Per-note "
 			"expression (pp. 1303-1313): showExpression shows the notes' expression over them, expressionDoubleClick "
 			"makes a double click on a note open the expression editor instead of deleting it, and expressionType is "
-			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. View state: no "
+			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. "
+			"acousticFeedback: the editor plays a note while it is moved or drawn (pp. 1192, 1259). View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors.";
 		const auto editorOnly = [&](Json properties = Json::object())
 		{
@@ -857,7 +862,7 @@ namespace gnubase::engine
 					{"soundSlotsLane", boolean}, {"collapsedGroups", groupsSchema}, {"autoSelectControllers", boolean},
 					{"controllerSelection", controllerSelectionSchema}, {"eventSelection", idsSchema},
 					{"showExpression", boolean}, {"expressionDoubleClick", boolean},
-					{"expressionType", expressionTypeSchema}}),
+					{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -1049,6 +1054,7 @@ namespace gnubase::engine
 				view.showExpression = parameters.value("showExpression", view.showExpression);
 				view.expressionDoubleClick = parameters.value("expressionDoubleClick", view.expressionDoubleClick);
 				view.expressionType = parameters.value("expressionType", view.expressionType);
+				view.acousticFeedback = parameters.value("acousticFeedback", view.acousticFeedback);
 				const bool autoSelectTurnsOn = parameters.value("autoSelectControllers", view.autoSelectControllers) &&
 					!view.autoSelectControllers;
 				if (parameters.contains("autoSelectControllers"))
@@ -1138,9 +1144,12 @@ namespace gnubase::engine
 				"1219-1220): "
 				"each a pitch 0-127, velocity 0-1 (default the editor's insertVelocity) and releaseVelocity 0-1 "
 				"(default 0.5). With stepInput, they go into the active part at the step input cursor as notes of the "
-				"length quantize's length, and the cursor moves on by a step of the quantize grid; moveInsert first "
-				"moves the part's notes from the cursor on by a step, and without keepNotes the notes that start "
-				"within the step go. With midiInput (and stepInput off), the first selected note takes the lowest "
+				"length quantize's length, ending at the part's end at the latest, on the MIDI channel of the part's "
+				"last note before the cursor that stays (else its first after it, else channel 0), and the cursor "
+				"moves on by a step of the quantize grid; moveInsert first moves the part's notes from the cursor on "
+				"by a step, or by the longest inserted note where that is longer, and without keepNotes the notes "
+				"that start within the step go. With midiInput (and stepInput off), the first selected note takes the "
+				"lowest "
 				"note's pitch, velocity and release velocity, as far as recordPitch, recordVelocity and "
 				"recordReleaseVelocity say, and the other notes of a chord are added with its position and length; "
 				"with keepNotes, all of them are added and the selected note stays. Then the next note of its part "
@@ -1150,7 +1159,7 @@ namespace gnubase::engine
 				{{"type", "object"}, {"required", {"part", "notes"}},
 					{"properties", {{"part", idSchema}, {"notes", {{"type", "array"}}}}}},
 				false},
-			"Step input",
+			"Note input",
 			[views, &model, store](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
@@ -1174,31 +1183,48 @@ namespace gnubase::engine
 					require(at >= 0 && view.stepPosition < partEnd(project, part),
 						"the step input cursor isn't within the active part");
 					const time::Ticks step = project.quantize.grid.ticks();
-					uint8_t channel = 0;
-					std::vector<ObjectId> removed;
-					for (auto& [id, note] : part.notes)
+					const time::Ticks end = partEnd(project, part) - start;
+					// The I-notes (p. 1239), and lengths that end at the part's end at the latest.
+					std::vector<std::pair<Played, time::Ticks>> inserted;
+					time::Ticks longest = step;
+					for (Played each : played)
 					{
+						each.pitch = midi::inputPitch(project, part.track, each.pitch);
+						const time::Ticks length =
+							std::min(noteLength(project, view, part.track, each.pitch), end - at);
+						inserted.emplace_back(each, length);
+						longest = std::max(longest, length);
+					}
+					std::vector<ObjectId> removed;
+					const Note* kept = nullptr; // the last note that stays before the cursor, else the first after
+					const auto nearer = [at](const Note& a, const Note& b)
+					{
+						if ((a.position < at) != (b.position < at))
+							return a.position < at;
+						return a.position < at ? a.position > b.position : a.position < b.position;
+					};
+					for (auto& [id, note] : part.notes)
+						if (!view.moveInsert && !view.keepNotes && note.position >= at && note.position < at + step)
+							removed.push_back(id);
+						else if (kept == nullptr || nearer(note, *kept))
+							kept = &note;
+					// The new notes' channel: the kept note's, or in an empty part channel 1, as drawn notes'.
+					const uint8_t channel = kept != nullptr ? kept->channel : uint8_t{0};
+					// Move Insert Mode makes room for the inserted notes: a step, or the longest of them.
+					for (auto& [id, note] : part.notes)
 						if (view.moveInsert && note.position >= at)
 						{
-							note.position += step;
+							note.position += longest;
 							changed.push_back(toJson(note));
 						}
-						else if (!view.keepNotes && note.position >= at && note.position < at + step)
-						{
-							removed.push_back(id);
-						}
-						channel = note.channel;
-					}
 					for (const ObjectId id : removed)
 						part.notes.erase(id);
 					if (!removed.empty())
 						context.emit("note.removed", {{"part", partId}, {"notes", removed}});
 					view.selection.clear();
-					for (Played each : played)
+					for (const auto& [each, length] : inserted)
 					{
-						each.pitch = midi::inputPitch(project, part.track, each.pitch); // the I-notes (p. 1239)
-						const Note note = newNote(
-							project, view, each, at, noteLength(project, view, part.track, each.pitch), channel);
+						const Note note = newNote(project, view, each, at, length, channel);
 						part.notes[note.id] = note;
 						added.push_back(toJson(note));
 						view.selection.emplace_back(partId, note.id);

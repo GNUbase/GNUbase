@@ -139,9 +139,9 @@ namespace gnubase::ui
 	void GlobalEventLane::follow()
 	{
 		const Json& project = m_display.project();
-		if (!project.is_object() || m_display.loads() == m_loaded)
+		if (!project.is_object() || m_display.answers() == m_loaded)
 			return;
-		m_loaded = m_display.loads();
+		m_loaded = m_display.answers();
 		const char* section = "chords";
 		if (m_kind == LaneKind::Transpose || m_kind == LaneKind::Arranger)
 			section = m_kind == LaneKind::Transpose ? "transpose" : "arranger";

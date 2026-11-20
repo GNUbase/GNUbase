@@ -44,7 +44,9 @@ the lanes and the display has the class `cross-hair` (`setCrossHair`), with the 
 attributes show the view to MCP's `ui_dom`.
 
 - **Data.** On `history.changed` (every change to the project and every undo) and `project.reset` it asks for
-  `project.get` again, one request at a time, and shows each track's audio events and MIDI parts in seconds: musical
+  `project.get` again, one request at a time, but not after a step that changed only channels, whose
+  `channel.changed` it takes into the project it read instead (#1881, [ui-engine-binding.md](ui-engine-binding.md)),
+  and shows each track's audio events and MIDI parts in seconds: musical
   positions through the tempo map, linear ones by the sample rate, audio lengths by their media file's rate, and a
   warped event's by its `playedLength`, where its warp ends it, its waveform stretched evenly over it
   ([warp.md](warp.md)). The

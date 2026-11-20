@@ -428,6 +428,48 @@ TEST_CASE("articulation maps export to a file and import from it unchanged", "[i
 		ContainsSubstring("no articulation map 999"));
 }
 
+TEST_CASE(
+	"Import Key Switches adds a direction and a sound slot for each key switch of the track's instrument", "[unit]")
+{
+	// The test synth reports the key switches Sustain (C-2, 0) and Staccato (C#-2, 1) through the plugin wrapper.
+	Fixture f;
+	const auto channel = f.trackJson().at("channel");
+	f.call("channel.set", {{"channel", channel}, {"instrument", "noteProbe"}});
+	CHECK_THAT(f.fails("articulationMap.add", {{"keySwitches", f.track}}), ContainsSubstring("no key switches"));
+	CHECK_THAT(f.fails("articulationMap.add", {{"keySwitches", 999}}), ContainsSubstring("no MIDI or instrument"));
+	CHECK(f.maps().empty());
+
+	f.call("channel.set", {{"channel", channel}, {"instrument", "testSynth"}});
+	const Json map = f.call("articulationMap.add", {{"name", "Synth"}, {"keySwitches", f.track}}).at("map");
+	CHECK(map.at("name") == "Synth");
+	CHECK(map.at("groups") == Json{"Group 1"});
+	CHECK(map.at("articulations") ==
+		Json{{{"name", "Sustain"}, {"type", "direction"}, {"group", 0}},
+			{{"name", "Staccato"}, {"type", "direction"}, {"group", 0}}});
+	REQUIRE(map.at("slots").size() == 2);
+	for (size_t i = 0; i < 2; ++i)
+	{
+		const Json& slot = map.at("slots").at(i);
+		const std::string name = i == 0 ? "Sustain" : "Staccato";
+		CHECK(slot.at("name") == name);
+		CHECK(slot.at("articulations") == Json{name});
+		CHECK(slot.at("trigger") == i);
+		CHECK(slot.at("outputs") == Json{{{"status", "note"}, {"data1", i}, {"data2", 100}, {"off", false}}});
+	}
+	f.call("history.undo"); // one undo step
+	CHECK(f.maps().empty());
+
+	// A MIDI track's are those of the instrument track it plays; what is given changes the imported map.
+	const auto midi = f.call("track.add", {{"type", "midi"}, {"output", channel}}).at("track").at("id").get<uint64_t>();
+	const Json fromMidi =
+		f.call("articulationMap.add", {{"keySwitches", midi}, {"remoteTrigger", "programChange"}}).at("map");
+	CHECK(fromMidi.at("name") == "New Map");
+	CHECK(fromMidi.at("slots").size() == 2);
+	CHECK(fromMidi.at("remoteTrigger") == "programChange");
+	const auto unplayed = f.call("track.add", {{"type", "midi"}}).at("track").at("id");
+	CHECK_THAT(f.fails("articulationMap.add", {{"keySwitches", unplayed}}), ContainsSubstring("no key switches"));
+}
+
 TEST_CASE("articulation maps, the tracks' maps and the articulations are saved and loaded", "[integration]")
 {
 	Fixture f;

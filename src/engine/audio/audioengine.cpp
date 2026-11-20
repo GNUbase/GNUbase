@@ -291,11 +291,20 @@ namespace gnubase::engine
 	void AudioEngine::startCueing()
 	{
 		m_cueing = true;
+		std::function<void()> hook;
+		{
+			const std::scoped_lock lock(m_cueStartHookMutex);
+			hook = m_cueStartHook;
+		}
 		// Taken before the device starts, not when the thread first runs, which may be after the audio thread changed
 		// them: such a change would never be announced (#1886).
 		m_cueThread = std::thread(
-			[this, changes = m_transport.changes(), activity = m_midi.activity()]() mutable
+			[this, changes = m_transport.changes(), activity = m_midi.activity(), hook = std::move(hook)]() mutable
 			{
+				// For tests, before the thread reads anything: one that holds it back here lets the audio thread change
+				// what the counts above count first, however the threads are scheduled (#1889).
+				if (hook)
+					hook();
 				auto activityTaken = std::chrono::steady_clock::now();
 				while (m_cueing)
 				{
@@ -444,6 +453,12 @@ namespace gnubase::engine
 			events.push_back(std::move(each));
 		}
 		return events;
+	}
+
+	void AudioEngine::setCueStartHook(std::function<void()> hook)
+	{
+		const std::scoped_lock lock(m_cueStartHookMutex);
+		m_cueStartHook = std::move(hook);
 	}
 
 	void AudioEngine::stopCueing()
@@ -810,17 +825,17 @@ namespace gnubase::engine
 				routed[channel.id] = &channel;
 			}
 
-		// A MIDI track's chase is told by its automation when the track is heard again after playback moved while it
-		// was silent (AutomationPlayer::heardAgain). The channel's state is there from the graph before, which had
-		// the track while it was silent.
+		// A MIDI or instrument track's chase is told by its automation when the track is heard again after playback
+		// moved while it was silent, or ran while it was soloed out or disabled (AutomationPlayer::heardAgain). The
+		// channel's state is there from the graph before, which had the track while it wasn't heard.
 		const auto chaseTrack = [this](const RenderChannel& channel)
 		{
 			ChaseTrack track = makeChaseTrack(channel.controllers, channel.midiParts);
-			if (const auto state = m_channelStates.find(channel.id);
-				channel.type == TrackType::Midi && state != m_channelStates.end())
+			if (const auto state = m_channelStates.find(channel.id); state != m_channelStates.end())
 			{
 				track.heardAgain = state->second->automation.heardAgain();
-				track.channelKinds = channelChaseKinds(channel);
+				if (channel.type == TrackType::Midi)
+					track.channelKinds = channelChaseKinds(channel);
 			}
 			return track;
 		};
@@ -1299,10 +1314,17 @@ namespace gnubase::engine
 		result.reserve(m_releases.size());
 		for (const PendingRelease& pending : m_releases)
 		{
-			Release release{pending.channel, pending.departed, pending.departedSend, {}, {}};
+			Release release{pending.channel, pending.departed, pending.departedSend, {}, {}, {}};
 			const Instrument& instrument = m_instruments.at(pending.instrument);
 			for (const ObjectId source : instrument.sources)
+			{
 				release.staying.push_back(m_sequencers.at(source));
+				// A note its mute dropped doesn't sound on the instrument, though its sequencer holds it.
+				const auto state = m_channelStates.find(source);
+				release.passed.push_back(state != m_channelStates.end()
+						? InstrumentChannel::PassedNotes(state->second, &state->second->midiHeld)
+						: nullptr);
+			}
 			for (const auto& entry : instrument.sends)
 				release.stayingSends.push_back(entry.second);
 			result.push_back(std::move(release));
@@ -1321,9 +1343,11 @@ namespace gnubase::engine
 			m_running = program.generation;
 			for (const Release& release : program.releases)
 				if (release.departedSend)
-					release.channel->releaseNotesOf(*release.departedSend, release.staying, release.stayingSends);
+					release.channel->releaseNotesOf(
+						*release.departedSend, release.staying, release.stayingSends, release.passed);
 				else
-					release.channel->releaseNotesOf(*release.departed, release.staying, release.stayingSends);
+					release.channel->releaseNotesOf(
+						*release.departed, release.staying, release.stayingSends, release.passed);
 			for (size_t i = 0; i < program.sequencers.size(); ++i)
 				program.sequencers[i].second->playOn(program.destinations[i]);
 			m_started.store(program.generation, std::memory_order_release);
@@ -1456,6 +1480,7 @@ namespace gnubase::engine
 		{
 			m_mainMeter.reset();
 			m_loudness.reset();
+			m_loudness.resetTruePeakHold();
 		}
 		m_meterPlaying = playing;
 		std::array<const float*, g_maxMeterChannels> channels{};
@@ -1660,6 +1685,7 @@ namespace gnubase::engine
 					engine->post("audio.updateLatency");
 			});
 		m_recordOffset = recordOffset();
+		m_silenceReason = m_device->silenceReason();
 		m_played = PlayedPositions(static_cast<size_t>(g_maxRecordOffset) + m_device->format().blockSize);
 		m_recorder.prepare(m_device->format().inputChannels, m_device->format().blockSize);
 		m_loudness.prepare(m_device->format().sampleRate, keepMeasurement);
@@ -1874,9 +1900,13 @@ namespace gnubase::engine
 			m_parameters["inputLatency"] = input; // for audio.reset
 			m_parameters["outputLatency"] = output;
 		}
+		// A device that starts or stops playing silence reports it as a latency change (#422).
+		std::string silenceReason = m_device->silenceReason();
+		const bool silence = silenceReason != m_silenceReason;
+		m_silenceReason = std::move(silenceReason);
 		const int64_t offset = recordOffset();
 		if (offset == m_recordOffset.load(std::memory_order_relaxed))
-			return set;
+			return set || silence;
 		// The audio thread takes it at its next block and keeps the positions it has, which cover any offset.
 		m_recordOffset.store(offset, std::memory_order_relaxed);
 		return true;
@@ -2191,11 +2221,13 @@ namespace gnubase::engine
 		const audio::DeviceFormat& format = m_device->format();
 		const audio::DeviceLatency latency = m_device->latency();
 		Json device = toJson(m_device->info());
+		const std::string silenceReason = m_device->silenceReason();
 		device.update({{"backend", m_backend}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
 			{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels},
 			{"inputLatency", latency.input}, {"outputLatency", latency.output}, {"recordShift", m_recordShift},
 			{"recordOffset", m_recordOffset.load(std::memory_order_relaxed)}, {"directMonitoring", m_directMonitoring},
-			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate}});
+			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate},
+			{"silenceReason", silenceReason.empty() ? Json(nullptr) : Json(silenceReason)}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
 			{"projectSampleRate", projectRate}, {"recordBitDepth", recordBitDepth},
 			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
@@ -2491,7 +2523,9 @@ namespace gnubase::engine
 				"of audio track playback were silent because a disk stream "
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
 				"sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as "
-				"it doesn't support the project's or was asked for another, and plays faster or slower; a new project "
+				"it doesn't support the project's or was asked for another, and plays faster or slower, and "
+				"silenceReason why a running device plays silence (e.g. a PipeWire graph that another client holds at "
+				"another rate), or null, which sends audio.changed when it changes; a new project "
 				"sample rate sends audio.changed. recordBitDepth is the project's (see project.set), for the record "
 				"format; a new one also sends audio.changed. lost: the device that went away (its backend, device id, "
 				"its name "
@@ -2620,10 +2654,11 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"audio.updateLatency", 1,
-				"Reads the audio device's latencies again and places recordings by the new record offset (see "
-				"audio.get); a running device keeps running and switches at its next block. Drivers that learn their "
-				"latency after the device opens, or whose latency changes with the graph, report the change; the "
-				"engine then runs this on its own. Only for the dummy device, and only while it is stopped: "
+				"Reads the audio device's latencies and silenceReason again and places recordings by the new record "
+				"offset (see audio.get); a running device keeps running and switches at its next block. Drivers that "
+				"learn their latency after the device opens, or whose latency changes with the graph, report the "
+				"change, as they do when they start or stop playing silence; the engine then runs this on its own. "
+				"Only for the dummy device, and only while it is stopped: "
 				"inputLatency and "
 				"outputLatency (default: as they are) first change what it reports, and with loopback its round "
 				"trip, as such a driver's would. Sends audio.changed if anything changed.",
