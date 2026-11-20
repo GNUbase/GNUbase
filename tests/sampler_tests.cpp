@@ -649,6 +649,35 @@ TEST_CASE("a loop's crossfade blends its end into what comes before its start", 
 		CHECK(again[549] == rampAt(549));
 		CHECK_THAT(again[575], WithinAbs((0.5 * rampAt(575)) + (0.5 * rampAt(25)), 1e-6));
 	}
+	SECTION("no longer than what lies between Start and the loop's start")
+	{
+		bench.add(parameter(0, Sampler::Start, 0.3));
+		bench.add(parameter(0, Sampler::LoopCrossfade, 0.2));
+		bench.add(note(0, false, 60));
+		bench.add(note(0, true, 60));
+		const std::vector<float> after = bench.left(4); // frame i plays position 300 + i
+		CHECK(after[199] == rampAt(499));
+		CHECK_THAT(after[250], WithinAbs((0.5 * rampAt(550)) + (0.5 * rampAt(350)), 1e-6));
+		// With Start inside the loop, the loop starts at Start and nothing comes before it to blend in.
+		bench.add(parameter(0, Sampler::Start, 0.5));
+		bench.add(note(0, false, 60));
+		bench.add(note(0, true, 60));
+		const std::vector<float> inside = bench.left(2); // frame i plays position 500 + i
+		CHECK(inside[50] == rampAt(550));
+		CHECK(inside[99] == rampAt(599));
+	}
+	SECTION("only while the loop wraps: Once not after its round")
+	{
+		bench.add(parameter(0, Sampler::LoopMode, static_cast<double>(Sampler::Loop::Once)));
+		bench.add(note(0, false, 60));
+		bench.add(note(0, true, 60));
+		const std::vector<float> once = bench.left(10);
+		CHECK_THAT(once[550], WithinAbs((0.5 * rampAt(550)) + (0.5 * rampAt(350)), 1e-6));
+		CHECK(once[600] == rampAt(400));
+		// The second pass doesn't wrap, so it plays the sample as it is, on past the loop's end.
+		CHECK(once[750] == rampAt(550));
+		CHECK(once[800] == rampAt(600));
+	}
 }
 
 TEST_CASE("drive is part of the filter: off with it", "[unit]")

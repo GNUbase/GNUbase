@@ -531,9 +531,11 @@ namespace gnubase::engine::processors
 					voice.glide = there ? 0.0 : voice.glide;
 					step = increment(voice, sample);
 				}
-				// A loop that wraps blends its last frames into those before its start, which it goes on with.
+				// A loop that wraps blends its last frames into those between Start and its start, which it goes on
+				// with.
 				const LoopRange loop = loopOf(voice, length);
-				const double fading = loop.wraps ? std::min({crossfade, loop.end - loop.start, loop.start}) : 0.0;
+				const double fading =
+					loop.wraps ? std::min({crossfade, loop.end - loop.start, loop.start - voice.from}) : 0.0;
 				const double blend =
 					fading > 0.0 ? std::clamp((voice.position - (loop.end - fading)) / fading, 0.0, 1.0) : 0.0;
 				const auto play = [&](const std::vector<float>& data)

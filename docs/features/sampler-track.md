@@ -48,7 +48,8 @@ How it plays:
   falls to 0 at End, both straight lines and counted in the sample's positions, so a loop inside a fade plays faded.
   Slices don't fade. Loop crossfade blends a loop's last frames into those just before its start while the loop
   wraps (Continuous, Once before its round, Until release while the key is held), so the wrap goes on with what it
-  faded into; it is no longer than the loop and than what comes before its start. Alternating loops don't crossfade.
+  faded into; it is no longer than the loop and than what lies between Start and the loop's start. Alternating loops
+  don't crossfade.
 - Glide (p. 721) bends a new note's pitch from the note before to its own in the glide time, linearly in semitones:
   from the key of the note played last, also while that still glides, or from the one started last once nothing
   sounds. With Fingered only a note played while another is held glides, from the latest held; going back to a held
