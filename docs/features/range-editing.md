@@ -23,7 +23,7 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
 | `range.copy` | Copies the range to the range clipboard; without a range everything between the locators (Global Copy) | p. 292 |
 | `range.cut` | `range.copy`, then `range.delete`; `time` (Cut Time) closes the gap | pp. 292, 425 |
 | `range.paste` | Pastes the clipboard at `position` (default the cursor); `time` (Paste Time) first makes room | p. 292 |
-| `range.move` | Moves what is in the range to `position` on the same tracks, without the clipboard; `copy` leaves it and pastes a copy | pp. 291, 432 |
+| `range.move` | Moves what is in the range to `position`, on the same tracks or from `track` on, without the clipboard; `copy` leaves it and pastes a copy | pp. 291, 432 |
 
 - **Cuts at the edges.** Events and parts that cross an edge are split there first, as `event.split` splits them, so
   only what lies in the range is affected (p. 291). A MIDI part's notes across an edge stay in the part they start in,
@@ -87,8 +87,11 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
   `range.cut` and `range.paste` would move it. With `copy` the range stays and a copy is pasted at `position` as
   `range.paste` pastes, with new ids. Either way the audio that lands comes in front of the events there, every event in
   the order it was stacked, so that the events of an audio part keep their places among the others. Locked events stay
-  where they are and aren't copied. The event display does it when the range is dragged, and Duplicate does it with
-  `copy` at the range's end (pp. 291, 432).
+  where they are and aren't copied. With `track` it goes onto other tracks: the range's top track onto `track` and each
+  of the others as many tracks further on in the project's order of tracks that aren't hidden, so that the range keeps
+  its shape, as `range.paste` skips hidden tracks; the tracks there must take the events (audio onto audio tracks, MIDI
+  parts onto MIDI and instrument tracks), and the automation lands on their lanes of the same parameter. The event
+  display does it when the range is dragged, and Duplicate does it with `copy` at the range's end (pp. 291, 432).
 - **Where it lands.** On musical tracks what lies in the range moves by the gap between `start` and `position` in
   ticks, so that it keeps its distance from the range's start in beats. What starts where the range starts lands at
   `position` exactly, a piece cut there and an event that starts there alike: an event's start in ticks can lie up to
@@ -132,12 +135,17 @@ With a selection range ([tools.md](tools.md)) the edit commands work on it, and 
 
 The grid step is the nudges' for events ([parts-and-events.md](parts-and-events.md)), at the edge that moves, and
 nothing moves before the project start. With the range tool, a press in the range on one of its tracks, without
-Shift, drags its contents (p. 291): the range follows the mouse across, its start snapped, and the release moves what
-is in it there (`range.move`), or with the tool modifier Copy (`dragDrop.copy`, Alt by default) a copy of it; the
-range stays where it went, and a drag that came back to the press leaves it where it was. A click there, or a drag
-straight up or down, selects a range as anywhere. Shift and a drag there selects a new range, just the stretch dragged
-over, and Shift and a drag outside it adds to the range (p. 288). A drag released outside the window puts the range
-back at the next press.
+Shift, drags its contents (p. 291): the range follows the mouse across, its start snapped, and down or up by as many
+tracks as the mouse, as far as there are tracks for all of its own, and the release moves what is in it there
+(`range.move`, with `track` when the tracks changed), or with the tool modifier Copy (`dragDrop.copy`, Alt by default)
+a copy of it; the range stays where it went, and a drag that came back to the press leaves it where it was, one that
+came back across only its position. A press within 6 dp inside one of its edges, without Shift, drags that edge
+instead (p. 288), with the pointers `resize` at the start and the end and `resizeVertical` at the top and the bottom
+([tools.md](tools.md)): the start or the end follows the mouse across, snapped, and past the other edge becomes that
+one; the top or the bottom goes to the track under the mouse, taking the tracks it passes in or out, not past the
+other edge. Only a range wider or higher than 18 dp has those edges. A click there selects a range as anywhere. Shift
+and a drag in the range selects a new range, just the stretch dragged over, and Shift and a drag outside it adds to
+the range (p. 288). A drag released outside the window puts the range back at the next press.
 
 The main menu's Edit menu has Cut, Copy and Paste, and the Range submenu Global Copy, Cut Time, Delete Time, Paste
 Time, Split, Crop and Insert Silence. Menus and keys disable the commands that only edit the range while there is
@@ -146,7 +154,9 @@ since the project opened).
 
 Not yet (#1910): copying and pasting selected events without a range, Paste at Origin and Paste Relative to Cursor,
 Range Tool Splits Partly Selected Events, the info line's range fields, the range in the editors (they come with their
-tickets), and the controller events at the edges of a range inside a part.
+tickets), and the controller events at the edges of a range inside a part. A range of several tracks dragged past a
+folded folder: the display counts the folder's lane once, `range.move` the tracks inside it too, so the range's other
+tracks can land further off than its top one.
 
 ## Checks
 
@@ -200,14 +210,21 @@ tickets), and the controller events at the edges of a range inside a part.
   paste, none before it at position 0 and none with virgin territory; a `range.cut` in a failed `history.transaction`
   leaving the clipboard as it was; `range.crop` announcing the removal of the parts and events it takes away, not of
   the pieces after the end, also of an audio part with an event moved whole into such a piece; a range on a folder
-  track editing the tracks inside it, and `range.paste` onto a track skipping a hidden one; `range.paste` and
+  track editing the tracks inside it, and `range.paste` onto a track skipping a hidden one; `range.move` onto the two
+  tracks below, past a hidden one, as `range.cut` and `range.paste` onto them would put it, with the automation and in
+  one undo step, a copy there, and moves refused onto a track of the wrong type, past the last track and onto no track,
+  changing nothing; `range.paste` and
   `automation.paste` refused after a sample rate change and pasting again after its undo; an end of the largest integer
   deleting up to the end and a start past 2^48 refused.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; without a range the range
   commands can't run, and Paste can't until a cut, nor after `project.new`; split, Delete Time, cut and paste on a
   selection range, which stays; paste at the cursor without a range, selecting what it pasted; a drag in the range
   moving its contents on a MIDI track in one undo step with the range, Alt and a drag copying them, a click in it
-  selecting a range of no length, and Duplicate copying them to the range's end twice in a row; the nudges moving the
+  selecting a range of no length, and Duplicate copying them to the range's end twice in a row; a drag down a lane
+  and across, straight down and with Alt taking the part or a copy onto the track below, and one below the last lane
+  stopping at the last track; the edges' pointers, and dragging the start and the end across, snapped and past the
+  other edge, and the bottom and top down and up, taking tracks in and out and stopping at the other edge, while the
+  project stays as it was; the nudges moving the
   range and its edges by a beat, not before the project start nor the start past the end, and the top and bottom
   nudges taking tracks in and out, never the last, while the project stays as it was.
 - `tests/markertrack_ui_tests.cpp`: the same drag on the marker track, also released outside the window.
