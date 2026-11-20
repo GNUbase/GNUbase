@@ -63,9 +63,8 @@ MCP and Lua scripts can do all it does.
   save it (`Engine::modifySetting`, through `settings::Store::modify`), so several GNUbase processes on one settings
   folder keep each other's port settings (#452); then the process uses the file's whole value, applies it and sends
   `settings.changed` like `settings.set`. `audio.ports` and `midi.ports` read it. An entry's schema allows members
-  this GNUbase doesn't know, so a later GNUbase can add one without this version dropping the whole value, and a
-  change keeps them; `settings.set` therefore accepts a misspelled member, which nothing reads. A member of another
-  type is a change of the settings version, so an older GNUbase only reads that file and writes nothing. Whichever
+  this GNUbase doesn't know, and an entry that doesn't fit leaves the others alone, as for every collection setting
+  ([settings.md](settings.md)); `settings.set` therefore accepts a misspelled member, which nothing reads. Whichever
   command changes these keys, the port commands or `settings.set` and `settings.reset`, the engine
   (`Engine::settingsChanged`) sends the ports afterwards: `audio.portsChanged` with `audio.ports` for
   `audio.portSettings`, `midi.changed` with `midi.ports` for `midi.portSettings` (#436). The listed MIDI ports follow

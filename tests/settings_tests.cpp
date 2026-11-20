@@ -6,6 +6,7 @@
 #include "engine/settings/usersettings.h"
 #include "mcp/server.h"
 #include "platform/files.h"
+#include "platform/log.h"
 #include "platform/rt/realtime.h"
 #include "testutils/testutils.h"
 
@@ -696,6 +697,51 @@ TEST_CASE("modify changes a setting from the value that another process saved me
 	CHECK(first.loadReport().readOnly);
 	CHECK(first.modify("title", Append{"?"}) == "GNUbase!??");
 	CHECK(readText(file) == newer);
+}
+
+TEST_CASE(
+	"a setting of entries uses those of the file's value that fit when one doesn't, and modify keeps them", "[unit]")
+{
+	const TempDir dir;
+	const fs::path file = dir.path() / "ports.json";
+	settings::Format format;
+	format.name = "ports";
+	format.version = 1;
+	format.definitions = {
+		{"ports", "Port settings by id.", Json::parse(R"({"type": "object", "additionalProperties": {"type": "object",
+				"properties": {"visible": {"type": "boolean"}}}})"),
+			Json::object()},
+		{"names", "A list, not entries by key.", Json::parse(R"({"type": "array", "items": {"type": "string"}})"),
+			Json::array()},
+	};
+	// One entry edited by hand doesn't fit.
+	writeText(file,
+		R"({"version": 1, "values": {"ports": {"In 1": {"visible": false}, "In 2": {"visible": "no"}},
+			"names": ["A", 2]}})");
+	const TempDir logs;
+	const fs::path log = logs.path() / "gnubase.log";
+	const gnubase::logging::Session session(log);
+	settings::Store store(format, dir.path());
+	CHECK(store.value("ports") == Json::parse(R"({"In 1": {"visible": false}})"));
+	CHECK(store.value("names") == Json::array());
+	REQUIRE(store.loadReport().problems.size() == 2);
+	CHECK_THAT(store.loadReport().problems[1], ContainsSubstring("using the entries that fit"));
+
+	// A change starts from the entries that fit; the one that doesn't goes, and the log keeps it.
+	store.modify("ports",
+		[](const Json& value)
+		{
+			Json ports = value;
+			ports["In 3"] = {{"visible", true}};
+			return ports;
+		});
+	CHECK(readJson(file).at("values").at("ports") ==
+		Json::parse(R"({"In 1": {"visible": false}, "In 3": {"visible": true}})"));
+	CHECK_THAT(readText(log), ContainsSubstring(R"({"In 2":{"visible":"no"}})"));
+	// A value of which nothing fits counts as the default, and the log keeps what it replaces.
+	store.modify("names", [](const Json&) { return Json::array({"B"}); });
+	CHECK(readJson(file).at("values").at("names") == Json::array({"B"}));
+	CHECK_THAT(readText(log), ContainsSubstring(R"(["A",2])"));
 }
 
 // Every version of the user settings file that a GNUbase release wrote is in tests/data/settings, as
