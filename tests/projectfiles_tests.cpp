@@ -788,11 +788,20 @@ namespace
 		return window != nullptr && (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) != 0;
 	}
 
-	// Minimizes the window and steps until SDL says so.
-	void minimizeWindow(test::UiApp& app, gnubase::ui::WindowId id)
+	// Minimizes the window and steps until SDL says so. False, with a warning, where SDL's video driver can't minimize a
+	// window, as the offscreen driver the tests use on Linux can't.
+	bool minimizeWindow(test::UiApp& app, gnubase::ui::WindowId id)
 	{
-		app.shell().minimize(id);
+		SDL_Window* window = SDL_GetWindowFromID(static_cast<SDL_WindowID>(id));
+		REQUIRE(window != nullptr);
+		if (!SDL_MinimizeWindow(window))
+		{
+			WARN("SDL's video driver cannot minimize a window (" << SDL_GetError()
+																 << "): the window isn't checked for being restored.");
+			return false;
+		}
 		REQUIRE(app.waitUntil([id] { return minimizedWindow(id); }));
+		return true;
 	}
 
 	// What SDL sends when the user closes the last visible window (SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE): the window's
@@ -1381,16 +1390,17 @@ TEST_CASE(
 
 TEST_CASE("a quit request brings the window with the question to the front, also when asked again", "[ui]")
 {
-	test::UiApp app({1200, 700});
+	test::UiApp app({900, 640});
 	app.appUi().showProject();
 	app.call("track.add", {{"type", "audio"}});
 	const gnubase::ui::WindowId main = app.main().id();
 
 	// The OS's quit request while the main window is minimized: the question restores it.
-	minimizeWindow(app, main);
+	const bool minimized = minimizeWindow(app, main);
 	app.ui().close(std::nullopt, true);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
 	CHECK(!minimizedWindow(main));
+	CHECK(app.ui().dom(main, "#discard-changes-dialog", 0).at("elements").size() == 1);
 	click(app, "#discard-changes-dialog button[result=cancel]");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
 
@@ -1405,9 +1415,11 @@ TEST_CASE("a quit request brings the window with the question to the front, also
 	REQUIRE(app.waitUntil(
 		[&app, panel] { return app.ui().dom(panel, "#discard-changes-dialog", 0).at("elements").size() == 1; }));
 	app.call("project.revision"); // after the engine answered the question's second look
-	minimizeWindow(app, panel);
+	if (minimized)
+		minimizeWindow(app, panel);
 	app.ui().close(std::nullopt, true);
 	REQUIRE(app.waitUntil([panel] { return !minimizedWindow(panel); }));
+	app.shell().step(std::chrono::milliseconds(0)); // where nothing was minimized: the request is handled
 	CHECK(app.ui().dom(panel, "#discard-changes-dialog", 0).at("elements").size() == 1);
 	CHECK(!shown(app, "#discard-changes-dialog")); // still one question, not in the main window
 }

@@ -16,10 +16,11 @@ elements, and mouse and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guid
   `ui_drag`, `ui_drop`, `ui_wheel`, `ui_key`, `ui_text`, `ui_close`, which asks to close a window or to quit as the
   OS does, `ui_window`, which activates, minimizes or restores a window as the Windows dialog does
   ([workspaces.md](workspaces.md)), and `ui_file_dialog`, which answers file dialogs (`Shell::answerFileDialog`), to
-  the MCP server; the windowed app serves them with `--mcp-http`, next to the engine's tools and `script_run`. Headless GNUbase has no UI and no UI tools. A screenshot comes back as MCP
-  image content, a PNG: a tool returns the PNG as `Json::binary`, which `mcp::Server` sends as an image. PNG encoding
-  runs on the server's thread. `app::addUiFunctions` adds the same tools to the UI's Lua as `gnubase.ui.click` and so
-  on, from the same list ([ui-lua.md](ui-lua.md)).
+  the MCP server; the windowed app serves them with `--mcp-http`, next to the engine's tools and `script_run`.
+  Headless GNUbase has no UI and no UI tools. A screenshot comes back as MCP image content, a PNG: a tool returns the
+  PNG as `Json::binary`, which `mcp::Server` sends as an image. PNG encoding runs on the server's thread.
+  `app::addUiFunctions` adds the same tools to the UI's Lua as `gnubase.ui.click` and so on, from the same list
+  ([ui-lua.md](ui-lua.md)).
 - **Coordinates.** Everything is in the window's pixels, as in its screenshots: an element's box, the points that
   mouse tools take, the window's size. A window's dp ratio (its monitor's scale times the UI scale, #53) converts to dp.
 - **The DOM.** An element has its tag, id, classes, other attributes, a form control's value, a drop-down list's
