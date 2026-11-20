@@ -2146,7 +2146,11 @@ namespace gnubase::app
 						m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
 						// Opening it explicitly brings the Editor tab forward, even from behind the Mixer.
 						if (editor == "lower")
+						{
 							m_docking.open("editor");
+							// The lower zone's editor gets the keyboard focus (p. 100).
+							m_docking.focus("project", "lower");
+						}
 					}
 					else if (const std::vector<uint64_t> events = selected("audioEvents");
 						!events.empty() && editor == "window")

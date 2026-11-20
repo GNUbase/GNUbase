@@ -1898,6 +1898,13 @@ menu.open, menuitem:hover > menu
 	display: block;
 }
 
+/* Once keys moved the focus in a menu they have it, not the mouse resting on an item: only a submenu that Right
+   opened (.open) shows, until the mouse moves again. */
+menu.keys menuitem:hover > menu:not(.open)
+{
+	display: none;
+}
+
 menuitem
 {
 	display: block;

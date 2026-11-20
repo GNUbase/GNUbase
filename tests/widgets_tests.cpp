@@ -779,6 +779,8 @@ TEST_CASE("items with a submenu show an arrow, and Right and Left open and close
 {
 	test::UiApp app;
 	const Events events(app.show("popups.rml"));
+	// The arrows are there from the load, before a menu opens.
+	CHECK(app.ui().dom(std::nullopt, "#color > .menu-arrow", 0).at("elements").size() == 1);
 
 	const Json track = element(app, "#track").at("box");
 	app.ui().click(std::nullopt, point(track.at("x").get<int>() + 10, track.at("y").get<int>() + 10),
@@ -828,6 +830,11 @@ TEST_CASE("items with a submenu show an arrow, and Right and Left open and close
 	CHECK(visible(app, "#colors")); // under the mouse again
 	moveAway(app);
 	app.ui().key(std::nullopt, "Right");
+	REQUIRE(visible(app, "#colors"));
+	app.ui().key(std::nullopt, "Escape"); // closes the submenu first
+	CHECK_FALSE(visible(app, "#colors"));
+	CHECK(visible(app, "#track-menu"));
+	CHECK(focused(app, "#color"));
 	app.ui().key(std::nullopt, "Escape");
 	CHECK_FALSE(visible(app, "#track-menu"));
 	app.ui().click(std::nullopt, point(track.at("x").get<int>() + 10, track.at("y").get<int>() + 10),
@@ -925,6 +932,141 @@ TEST_CASE("menu Tab stops find nested controls and skip controls that cannot tak
 	CHECK(focused(app, "#controls-last"));
 	app.ui().key(std::nullopt, "Up");
 	CHECK(focused(app, "#controls-first"));
+}
+
+TEST_CASE("Tab and Shift+Tab in a menu with no enabled item keep the menu and its focus", "[ui]")
+{
+	test::UiApp app;
+	app.show("popups.rml");
+	click(app, "#blocked-button");
+	REQUIRE(visible(app, "#blocked-menu"));
+	moveAway(app);
+	const Rml::Element* menu = app.main().context().GetFocusElement();
+	REQUIRE(menu != nullptr);
+	REQUIRE(menu->GetId() == "blocked-menu");
+	// The keys that step between items find none and keep the focus where it is, rather than leaving for the controls
+	// around the menu.
+	for (const char* key : {"Tab", "Shift+Tab", "Ctrl+Tab", "Down", "Up"})
+	{
+		app.ui().key(std::nullopt, key);
+		CHECK(visible(app, "#blocked-menu"));
+		CHECK(app.main().context().GetFocusElement() == menu);
+	}
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(!visible(app, "#blocked-menu"));
+}
+
+TEST_CASE("keys take over from the mouse resting on an item, so that two submenus don't show", "[ui]")
+{
+	test::UiApp app;
+	app.show("popups.rml");
+	const Json track = element(app, "#track").at("box");
+	app.ui().click(std::nullopt, point(track.at("x").get<int>() + 10, track.at("y").get<int>() + 10),
+		ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+
+	// The mouse rests on Lock, which shows its submenu; Up goes to Color, and Right opens its submenu.
+	app.ui().move(std::nullopt, at("#lock"));
+	REQUIRE(visible(app, "#locks"));
+	app.ui().key(std::nullopt, "Up");
+	app.ui().key(std::nullopt, "Up");
+	REQUIRE(focused(app, "#color"));
+	app.ui().key(std::nullopt, "Right");
+	CHECK(visible(app, "#colors"));
+	CHECK(!visible(app, "#locks"));
+
+	// A move within Lock, which sends no Mouseover, gives the menu back to the mouse as entering Lock does: Lock's
+	// submenu shows, and the one that keys opened closes.
+	const Json lock = element(app, "#lock").at("box");
+	app.ui().move(std::nullopt, point(lock.at("x").get<int>() + 3, lock.at("y").get<int>() + 3));
+	CHECK(visible(app, "#locks"));
+	CHECK(!visible(app, "#colors"));
+	// The focus went back to Color, whose submenu Right opens again.
+	REQUIRE(focused(app, "#color"));
+	app.ui().key(std::nullopt, "Right");
+	REQUIRE(visible(app, "#colors"));
+
+	// The mouse moving to Lock shows its submenu again, and closes the one that keys opened.
+	app.ui().move(std::nullopt, at("#rename"));
+	app.ui().move(std::nullopt, at("#lock"));
+	CHECK(visible(app, "#locks"));
+	CHECK(!visible(app, "#colors"));
+	app.ui().key(std::nullopt, "Escape");
+}
+
+TEST_CASE("Escape closes the innermost submenu that keys opened first, then the menu", "[ui]")
+{
+	test::UiApp app;
+	app.show("popups.rml");
+	click(app, "#file-title");
+	REQUIRE(visible(app, "#file"));
+	moveAway(app);
+	app.ui().key(std::nullopt, "Down");
+	app.ui().key(std::nullopt, "Down");
+	REQUIRE(focused(app, "#recent"));
+	app.ui().key(std::nullopt, "Right");
+	REQUIRE(visible(app, "#recent-menu"));
+	REQUIRE(focused(app, "#first-recent"));
+
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(!visible(app, "#recent-menu"));
+	CHECK(visible(app, "#file"));
+	CHECK(focused(app, "#recent"));
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(!visible(app, "#file"));
+}
+
+TEST_CASE("a closed menu gives the focus back to the element that had it before it opened", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	click(app, "#field");
+	REQUIRE(focused(app, "#field"));
+
+	// A context menu closed with Escape, or by a click on an item, and the menu bar closed by Alt.
+	app.ui().click(std::nullopt, at("#track"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	CHECK(!focused(app, "#field"));
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(!visible(app, "#track-menu"));
+	CHECK(focused(app, "#field"));
+	app.ui().click(std::nullopt, at("#track"), ui::MouseButton::Right, 1, {});
+	click(app, "#rename");
+	CHECK(!visible(app, "#track-menu"));
+	CHECK(focused(app, "#field"));
+#ifndef __APPLE__
+	app.ui().key(std::nullopt, "Alt");
+	REQUIRE(visible(app, "#file"));
+	app.ui().key(std::nullopt, "Alt");
+	CHECK(!visible(app, "#file"));
+	CHECK(focused(app, "#field"));
+
+	// Moving to another menu of the menu bar keeps what had the focus first.
+	app.ui().key(std::nullopt, "Alt");
+	app.ui().key(std::nullopt, "Right");
+	REQUIRE(visible(app, "#view"));
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(focused(app, "#field"));
+#endif
+
+	// A menu under its button doesn't give the focus back to the button, whose Space and Enter would open the menu
+	// again.
+	click(app, "#edit-button");
+	REQUIRE(visible(app, "#edit"));
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(!visible(app, "#edit"));
+	CHECK(!focused(app, "#edit-button"));
+
+	// An element that is gone doesn't take the focus: it goes to the document.
+	click(app, "#field");
+	app.ui().click(std::nullopt, at("#track"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	Rml::Element* field = document.GetElementById("field");
+	REQUIRE(field != nullptr);
+	field->GetParentNode()->RemoveChild(field);
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(!visible(app, "#track-menu"));
+	CHECK(app.main().context().GetFocusElement() == &document);
 }
 
 TEST_CASE("in a menu bar the mouse and Left and Right move between the open menus", "[ui]")
@@ -1079,13 +1221,23 @@ TEST_CASE("Alt opens the menu bar's first menu on Windows and Linux, and closes 
 	// Nor when the window gets the keyboard with Alt held, e.g. by a window manager's Alt+J: SDL then presses the keys
 	// held for the window (on Linux), and Alt released after that isn't Alt pressed alone. The tests' windows never
 	// have the keyboard, so Alt is released directly.
-	const auto pushAltDown = [&app](SDL_EventType before, Uint64 delay)
+	const auto pushAltDown = [&app](SDL_EventType before, Uint64 delay, bool mouseMoves = false)
 	{
 		SDL_Event pushed{};
 		pushed.type = before;
 		pushed.window.windowID = app.main().id();
 		pushed.window.timestamp = SDL_GetTicksNS();
 		REQUIRE(SDL_PushEvent(&pushed));
+		if (mouseMoves)
+		{
+			pushed = {};
+			pushed.type = SDL_EVENT_MOUSE_MOTION;
+			pushed.motion.timestamp = SDL_GetTicksNS();
+			pushed.motion.windowID = app.main().id();
+			pushed.motion.x = 5.0F;
+			pushed.motion.y = 5.0F;
+			REQUIRE(SDL_PushEvent(&pushed));
+		}
 		pushed = {};
 		pushed.type = SDL_EVENT_KEY_DOWN;
 		pushed.key.timestamp = SDL_GetTicksNS() + delay;
@@ -1107,6 +1259,12 @@ TEST_CASE("Alt opens the menu bar's first menu on Windows and Linux, and closes 
 	CHECK(visible(app, "#file"));
 	app.ui().key(std::nullopt, "Escape");
 	pushAltDown(SDL_EVENT_WINDOW_FOCUS_GAINED, 1'000'000'000);
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, 0);
+	CHECK(visible(app, "#file"));
+	app.ui().key(std::nullopt, "Escape");
+	// An input event other than a key-down ends the window's getting the keyboard: the Alt pressed after a mouse
+	// motion isn't one that SDL pressed for the focus, so releasing it opens the menu bar.
+	pushAltDown(SDL_EVENT_WINDOW_FOCUS_GAINED, 0, true);
 	context.ProcessKeyUp(Rml::Input::KI_LMENU, 0);
 	CHECK(visible(app, "#file"));
 	app.ui().key(std::nullopt, "Escape");
