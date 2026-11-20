@@ -29,7 +29,6 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -252,22 +251,12 @@ namespace
 		// slots pass their audio on unchanged (#951).
 		void activate(const std::vector<ObjectId>& channels)
 		{
-			const auto active = [&]
+			for (const ObjectId channel : channels)
 			{
-				for (const ObjectId channel : channels)
-				{
-					const Json slots = run(client, "plugin.list", {{"channel", channel}}).at("slots");
-					if (!std::all_of(
-							slots.begin(), slots.end(), [](const Json& slot) { return slot.at("status") == "active"; }))
-						return false;
-				}
-				return true;
-			};
-			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-			while (!active() && std::chrono::steady_clock::now() < deadline)
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-			REQUIRE(active());
-			run(client, "audio.updatePlugins");
+				const Json slots = run(client, "plugin.list", {{"channel", channel}}).at("slots");
+				for (const Json& slot : slots)
+					gnubase::test::waitForPlugin(client, slot.at("id"));
+			}
 		}
 
 		// The main mix from 0 to 40000 as a 32-bit float file's samples.

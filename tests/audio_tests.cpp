@@ -664,15 +664,9 @@ TEST_CASE("the device commands announce the slots whose status they changed, als
 	const Json limiter =
 		run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:limiter"}}).at("slot").at("id");
 	run(client, "plugin.set", {{"slot", limiter}, {"active", false}});
-	const auto statusIs = [&client](const Json& slot, const char* wanted)
-	{ return run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status") == wanted; };
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-	while (!(statusIs(eq, "active") && statusIs(limiter, "inactive")) && std::chrono::steady_clock::now() < deadline)
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	REQUIRE(statusIs(eq, "active"));
-	REQUIRE(statusIs(limiter, "inactive"));
-	run(client, "audio.updatePlugins"); // the statuses are announced now
-	run(client, "audio.get");           // after whatever the plugins' jobs posted
+	gnubase::test::waitForPlugin(client, eq); // its audio.updatePlugins announces the status
+	gnubase::test::waitForPlugin(client, limiter, "inactive");
+	run(client, "audio.get"); // after whatever the plugins' jobs posted
 	while (client.poll())
 		;
 

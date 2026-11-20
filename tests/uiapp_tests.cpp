@@ -1584,3 +1584,40 @@ TEST_CASE("event drags past the project start clamp the preview and the edit tog
 		CHECK(undone[i].at("track") == track.at("id"));
 	}
 }
+
+TEST_CASE("MIDI parts show at their time and length in the project the app starts with (#1855)", "[ui]")
+{
+	// As the app starts without a project given: the project window, then the start screen over it. Musical positions
+	// are in ticks, time::g_ticksPerQuarter to the quarter note: the 3840 ticks of #1855 are about a millisecond.
+	test::UiApp app({800, 600});
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return count(app, "#start-screen") == 1 && visible(app, "#start-screen"); }));
+	const auto lanes = [&app]() -> const std::vector<ui::EventLanes::Lane>&
+	{
+		auto* found =
+			dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+		REQUIRE(found != nullptr);
+		return found->lanes();
+	};
+	// A part from 1 to 3 seconds at 120 BPM on a new track, as the last lane shows it.
+	const auto addPart = [&](const char* type)
+	{
+		const Json track = app.call("track.add", {{"type", type}}).at("track");
+		app.call("midiPart.add",
+			{{"track", track.at("id")}, {"position", 2 * time::g_ticksPerQuarter},
+				{"length", 4 * time::g_ticksPerQuarter}});
+		const size_t lane = app.call("project.get").at("tracks").size() - 1;
+		REQUIRE(app.waitUntil([&] { return lanes().size() > lane && !lanes()[lane].events.empty(); }));
+		INFO(type);
+		CHECK(lanes()[lane].events[0].start == Catch::Approx(1.0));
+		CHECK(lanes()[lane].events[0].length == Catch::Approx(2.0));
+	};
+	addPart("midi");
+	addPart("instrument");
+	// And once the start screen was closed without a project chosen.
+	click(app, selector("#start-screen button[result=cancel]"));
+	REQUIRE(app.waitUntil([&app] { return count(app, "#start-screen") == 0 || !visible(app, "#start-screen"); }));
+	addPart("midi");
+}
