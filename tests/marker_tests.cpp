@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Marker tracks, position and cycle markers, and locating with them (#91); marker CSV files (#171).
+#include "engine/document/document.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
@@ -19,6 +20,7 @@
 
 using namespace gnubase::engine;
 using Catch::Matchers::ContainsSubstring;
+using gnubase::time::g_maxPosition;
 using gnubase::time::g_ticksPerQuarter;
 
 namespace
@@ -320,6 +322,42 @@ TEST_CASE("a marker track's time base and the sample rate keep markers at their 
 	CHECK(marker.at("positionSamples") == 4 * g_quarterSamples);
 	CHECK(marker.at("endSamples") == 8 * g_quarterSamples);
 	CHECK(idOf(marker) == idOf(cycle));
+}
+
+TEST_CASE("markers end at the longest project, on linear and musical marker tracks", "[unit]")
+{
+	// Past it, marker.locate and marker.setLocators would send positions that the transport refuses (#686).
+	Engine engine;
+	Client client(engine);
+	const ObjectId linear = addMarkerTrack(client, {{"timeBase", "linear"}});
+	const ObjectId musical = addMarkerTrack(client, {{"timeBase", "musical"}});
+	for (const auto& [track, longest] :
+		{std::pair{linear, g_maxPosition}, std::pair{musical, longestProjectTicks(newProject())}})
+	{
+		INFO("longest " << longest);
+		const std::string past = "must be at most " + std::to_string(longest) + ", the longest project";
+		CHECK_THAT(reject(client, "marker.add", {{"track", track}, {"position", longest + 1}}),
+			ContainsSubstring("position " + past));
+		CHECK_THAT(
+			reject(client, "marker.add", {{"track", track}, {"type", "cycle"}, {"position", 0}, {"end", longest + 1}}),
+			ContainsSubstring("end " + past));
+		const Json marker = addMarker(client, {{"track", track}, {"position", longest}});
+		CHECK(marker.at("position") == longest);
+		CHECK_THAT(reject(client, "marker.set", {{"marker", idOf(marker)}, {"position", longest + 1}}),
+			ContainsSubstring("position " + past));
+
+		// A cycle marker moves as a whole, so not when that takes its end past it.
+		const ObjectId cycle =
+			idOf(addMarker(client, {{"track", track}, {"type", "cycle"}, {"position", 0}, {"end", longest}}));
+		CHECK_THAT(reject(client, "marker.set", {{"marker", cycle}, {"position", 1}}),
+			ContainsSubstring("the marker's end would lie past the end of the longest project"));
+		CHECK_THAT(
+			reject(client, "marker.set", {{"marker", cycle}, {"end", longest + 1}}), ContainsSubstring("end " + past));
+		const Json moved =
+			run(client, "marker.set", {{"marker", cycle}, {"position", 1}, {"end", longest}}).at("marker");
+		CHECK(moved.at("position") == 1);
+		CHECK(moved.at("end") == longest);
+	}
 }
 
 TEST_CASE("cycle markers end at least one sample after their position and stay so when rebased or rescaled", "[unit]")

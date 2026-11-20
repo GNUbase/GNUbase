@@ -2296,6 +2296,7 @@ namespace gnubase::engine
 		Importer importer(zip, std::filesystem::absolute(pathOf(path)).parent_path(),
 			extractMedia ? pathOf(mediaFolder) : std::filesystem::path());
 		Project fromXml = importer.load(root);
+		cutAtLongest(fromXml);
 		if (!zip.contains(g_extensionEntry))
 			return fromXml;
 		try

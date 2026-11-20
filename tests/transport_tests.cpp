@@ -1158,10 +1158,10 @@ TEST_CASE("go to project end locates to the end of the last event", "[integratio
 		{{"track", audio.at("track").at("id")}, {"clip", clip.at("clip").at("id")}, {"position", 12345}});
 	CHECK(run(client, "transport.locate", {{"target", "projectEnd"}}).at("position") == 12345 + 48000);
 
-	// One whose end in project samples is past what a time::Samples holds: the end stops at the largest position
-	// (#596).
+	// One whose end in project samples is past the largest position, its media as long as media.add takes: the end
+	// stops at the largest position (#596).
 	const Json longest = run(client, "media.add",
-		{{"path", "/audio/longest.wav"}, {"sampleRate", 24000.0}, {"channels", 1}, {"length", Samples{1} << 62}});
+		{{"path", "/audio/longest.wav"}, {"sampleRate", 24000.0}, {"channels", 1}, {"length", g_maxPosition}});
 	const Json longClip = run(client, "clip.add", {{"media", longest.at("media").at("id")}});
 	const Json other = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}});
 	run(client, "audioEvent.add",

@@ -45,9 +45,13 @@ namespace gnubase::engine
 			return nullptr;
 		}
 
+		// Saturated, so that a clip of a far lower rate than the project's can't overflow an event's end (#1906).
 		time::Samples scaled(time::Samples frames, double ratio)
 		{
-			return static_cast<time::Samples>(std::llround(static_cast<double>(frames) * ratio));
+			if (frames == 0)
+				return 0; // even when a tiny clip rate makes the ratio infinite
+			const auto limit = static_cast<double>(time::g_maxPosition);
+			return std::llround(std::clamp(static_cast<double>(frames) * ratio, -limit, limit));
 		}
 
 		// An event on the track, in the project's samples, with the fades at its start and end.

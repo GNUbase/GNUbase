@@ -2676,6 +2676,7 @@ namespace gnubase::engine
 				check(version->midiParts.back().track);
 			}
 		}
+		cutAtLongest(project); // so that a position plus a length can't overflow (#1906)
 		// Files from before marker tracks have markers without a track, type and number: position markers in ticks.
 		for (const Json& item : json.at("markers"))
 		{
