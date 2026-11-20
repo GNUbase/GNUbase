@@ -2082,6 +2082,84 @@ TEST_CASE("list views with dragscroll scroll while a drag in them is held past t
 	context.ProcessMouseButtonUp(0, 0);
 }
 
+namespace
+{
+	// A list view of forty rows with a drag handle at its top, which scrolls while a drag of the handle is held past
+	// the view's bottom edge (dragscroll).
+	struct DragScrollView
+	{
+		DragScrollView(test::UiApp& app, const ViewsPage& page, const std::string& handle)
+			: view(page.document->GetElementById("table")), context(app.main().context())
+		{
+			REQUIRE(view != nullptr);
+			std::string rml = handle + "<table><tbody>";
+			for (int i = 0; i < 40; ++i)
+				rml += R"(<tr value=")" + std::to_string(i) + R"("><td>Row</td></tr>)";
+			view->SetInnerRML(rml + "</tbody></table>");
+			view->SetAttribute("dragscroll", "dragscroll");
+			const Json grip = element(app, "#handle").at("box");
+			const Json box = element(app, "#table").at("box");
+			x = grip.at("x").get<int>() + 5;
+			y = grip.at("y").get<int>() + 5;
+			below = box.at("y").get<int>() + box.at("height").get<int>() + 60;
+		}
+
+		// The button goes down on the handle and the mouse goes below the view, which scrolls it.
+		void dragBelow(test::UiApp& app)
+		{
+			context.ProcessMouseMove(x, y, 0);
+			context.ProcessMouseButtonDown(0, 0);
+			context.ProcessMouseMove(x, y + 2, 0);
+			context.ProcessMouseMove(x, below, 0);
+			REQUIRE(app.waitUntil([this] { return view->GetScrollTop() > 0.0F; }));
+		}
+
+		// The view stays where it is put, with the button held below it.
+		bool staysAtTop(test::UiApp& app) const
+		{
+			view->SetScrollTop(0.0F);
+			return !app.waitUntil([this] { return view->GetScrollTop() > 0.0F; }, std::chrono::milliseconds(300));
+		}
+
+		Rml::Element* view;
+		Rml::Context& context;
+		int x = 0;
+		int y = 0;
+		int below = 0;
+	};
+}
+
+TEST_CASE("list views stop scrolling for a drag when they lose the focus", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	DragScrollView drag(app, page, R"(<div id="handle" style="drag: drag; height: 10dp;"/>)");
+	drag.dragBelow(app);
+	REQUIRE(drag.view->IsPseudoClassSet("focus"));
+
+	// RmlUi drops a drag whose element leaves the document, e.g. as the docking moves the panel: the view loses the
+	// focus, but no dragend comes.
+	Rml::Element* other = page.document->AppendChild(page.document->CreateElement("input"));
+	other->Focus();
+	REQUIRE(!drag.view->IsPseudoClassSet("focus"));
+	CHECK(drag.staysAtTop(app));
+	drag.context.ProcessMouseButtonUp(0, 0);
+}
+
+TEST_CASE("list views stop scrolling for a drag whose element is gone, also with the focus still in the view", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	// A focusable handle: removing it passes the focus to its parent in the view, so the view doesn't blur.
+	DragScrollView drag(app, page, R"(<div id="handle" tabindex="auto" style="drag: drag; height: 10dp;"/>)");
+	drag.dragBelow(app);
+	Rml::Element* handle = drag.view->GetElementById("handle");
+	REQUIRE(handle != nullptr);
+	drag.view->RemoveChild(handle);
+	CHECK(drag.staysAtTop(app));
+	drag.context.ProcessMouseButtonUp(0, 0);
+}
+
 TEST_CASE("table views keep the selection of rows rebuilt twice between two updates", "[ui]")
 {
 	test::UiApp app;

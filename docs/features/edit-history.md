@@ -41,11 +41,11 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
   step went past the maximum number of steps, so that the step is a row higher; when the step itself is gone (a new
   action drops the undone steps, or the step was the oldest; a gesture that ends where it started removes its step),
   what was typed goes with it and the list gets the focus. A gesture that joins the last step (below) keeps that step.
-  Nothing is sent before Enter or the user moving the focus. `history.get` has no step ids, so the panel recognizes a
-  step by its action and time and by where it is: steps only go at the end (the undone ones) and, at the maximum, at the
-  start. At the maximum, a run of steps of the same action within one second can't be told apart, and Enter racing
-  another client's action sends the note by the step's index; step ids in `history.get` and `history.describe` would
-  settle both.
+  Nothing is sent before Enter or the user moving the focus. The panel follows a step by its id from `history.get`
+  (which stays with the step while the oldest steps and the undone ones go, and whatever other clients do), also among
+  steps of one action within one second at the maximum number of steps, and sends the note by that id
+  (`history.describe` takes `id` or `step`, exactly one of them): a step that went meanwhile gets no note, and the panel
+  shows the steps as they are.
 - **Gestures.** A `history.transaction` with a `merge` key joins the last step instead of adding one when that step is a
   transaction with the same key and nothing was undone since; a gesture that ends where it started leaves no step. The
   UI makes each gesture on a value widget one step this way (`EngineBinding::sendStep`, with the gesture number of the

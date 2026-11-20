@@ -4059,15 +4059,35 @@ namespace gnubase::engine
 				return Json::object();
 			});
 		addControl(engine,
-			{"history.describe", 1, "Sets the details of a history step, a note for the user.",
-				objectSchema({{"step", {{"type", "integer"}}}, {"details", {{"type", "string"}}}}, {"step", "details"}),
+			{"history.describe", 1,
+				"Sets the details of a history step, a note for the user. The step is given by its index (step) or by "
+				"its id from history.get (id), which stays with it when the oldest steps go, so a client that "
+				"follows ids describes the step it means whatever other clients did meanwhile; exactly one of them.",
+				objectSchema(
+					{{"step", {{"type", "integer"}}}, {"id", {{"type", "integer"}}}, {"details", {{"type", "string"}}}},
+					{"details"}),
 				Json::object(), false},
 			[this](CommandContext& context)
 			{
-				const auto step = context.parameters().at("step").get<int64_t>();
-				requireRange(step, 0, static_cast<int64_t>(m_history.steps().size()) - 1, "step");
-				m_history.step(static_cast<size_t>(step)).details =
-					context.parameters().at("details").get<std::string>();
+				const Json& parameters = context.parameters();
+				require(parameters.contains("step") != parameters.contains("id"), "give either step or id");
+				size_t index = 0;
+				if (parameters.contains("id"))
+				{
+					const auto id = parameters.at("id").get<int64_t>();
+					const auto& steps = m_history.steps();
+					const auto found = std::find_if(steps.begin(), steps.end(),
+						[id](const HistoryStep& step) { return static_cast<int64_t>(step.id) == id; });
+					require(found != steps.end(), "id is not the id of a step");
+					index = static_cast<size_t>(found - steps.begin());
+				}
+				else
+				{
+					const auto step = parameters.at("step").get<int64_t>();
+					requireRange(step, 0, static_cast<int64_t>(m_history.steps().size()) - 1, "step");
+					index = static_cast<size_t>(step);
+				}
+				m_history.step(index).details = parameters.at("details").get<std::string>();
 				announceHistory(context);
 				return Json::object();
 			});

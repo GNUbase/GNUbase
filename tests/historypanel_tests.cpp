@@ -646,3 +646,161 @@ TEST_CASE("the edit history's separator is grabbed a little above and below its 
 	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 0); }));
 	CHECK(position(app) == 0);
 }
+
+TEST_CASE("at the maximum number of steps, a note typed for a step stays with it among steps of one action", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("history.set", {{"maxSteps", 3}});
+	for (const char* name : {"A", "B", "C"})
+		app.call("project.set", {{"name", name}});
+	app.keys().run("window.history", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 3); }));
+	const Json before = app.call("history.get").at("steps");
+	REQUIRE(before.size() == 3);
+
+	// Three steps of one action, probably within one second: the note for the third can't be told from the others by
+	// its action and time. Another client's new step drops the oldest one, so the step is a row higher.
+	click(app, "#history tbody tr input", 2);
+	app.ui().text(std::nullopt, "mine");
+	app.call("project.set", {{"name", "D"}});
+	REQUIRE(app.waitUntil(
+		[&app, &before] { return app.call("history.get").at("steps")[0].at("id") == before[1].at("id"); }));
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 3); }));
+	const Json field = elements(app, "#history tbody tr input").at(1);
+	CHECK(focused(field));
+	CHECK(field.at("attributes").value("value", "") == "mine");
+	CHECK(elements(app, "#history tbody tr input").at(2).at("attributes").value("value", "").empty());
+
+	// Enter gives it to the step it was typed for, by its id, and to no other.
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&app] { return app.call("history.get").at("steps").at(1).at("details") == "mine"; }));
+	const Json steps = app.call("history.get").at("steps");
+	CHECK(steps.at(1).at("id") == before[2].at("id"));
+	CHECK(steps.at(0).at("details").get<std::string>().empty());
+	CHECK(steps.at(2).at("details").get<std::string>().empty());
+}
+
+TEST_CASE("a note typed in the edit history goes to its step by id when the oldest step went meanwhile", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	threeSteps(app);
+	click(app, "#history tbody tr input", 2);
+	app.ui().text(std::nullopt, "late");
+
+	// Lowering the maximum drops the oldest step, so that the step is a row higher before the note is sent: it goes to
+	// the step it was typed for.
+	app.call("history.set", {{"maxSteps", 2}});
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#history tbody tr").size() == 3; }));
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&app] { return app.call("history.get").at("steps").at(1).at("details") == "late"; }));
+	CHECK(app.call("history.get").at("steps").at(0).at("details").get<std::string>().empty());
+}
+
+TEST_CASE("the edit history's separator drag ends when another client's step drops the oldest at the maximum", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	threeSteps(app);
+	app.call("history.set", {{"maxSteps", 3}});
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 3); }));
+	engine::Client listener(app.engine());
+
+	Rml::Context& context = app.main().context();
+	const ui::Point from = separator(app).point.value_or(ui::Point{});
+	const int to = under(app, 1, separator(app)).point.value_or(ui::Point{}).y;
+	context.ProcessMouseMove(from.x, from.y, 0);
+	context.ProcessMouseButtonDown(0, 0);
+	for (const int y : {from.y - 2, (from.y + to) / 2, to})
+		context.ProcessMouseMove(from.x, y, 0);
+	REQUIRE(app.waitUntil([&app] { return undoneAfter(app, 1); }));
+	historyChanges(listener); // the maximum's
+
+	// A new step drops the first one: as many rows as before, but the drag is over, and its drop sends nothing.
+	app.call("project.set", {{"name", "Newest"}});
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 3); }));
+	CHECK(cell(app, 3, "action") == "Change project");
+	CHECK(cell(app, 2, "action") == "Change project");
+	CHECK(cell(app, 1, "action") == "Add track");
+	CHECK(historyChanges(listener) == 1);
+	context.ProcessMouseMove(from.x, to, 0);
+	context.ProcessMouseButtonUp(0, 0);
+	size_t changes = 0;
+	CHECK(!app.waitUntil(
+		[&]
+		{
+			changes += historyChanges(listener);
+			return changes > 0;
+		},
+		std::chrono::milliseconds(300)));
+	CHECK(position(app) == 3);
+	CHECK(showsPosition(app, 3));
+}
+
+TEST_CASE("typing in the middle of a note or over a selection goes on there when the rows are made again", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	threeSteps(app);
+	click(app, "#history tbody tr input", 2);
+	app.ui().text(std::nullopt, "abcd");
+	app.ui().key(std::nullopt, "Left");
+	app.ui().key(std::nullopt, "Left");
+
+	// Another client's new step makes the rows again; the caret is still between b and c.
+	app.call("track.add", {{"type", "audio"}});
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 4, 5); }));
+	CHECK(focused(elements(app, "#history tbody tr input").at(2)));
+	app.ui().text(std::nullopt, "X");
+	CHECK(elements(app, "#history tbody tr input").at(2).at("attributes").value("value", "") == "abXcd");
+
+	// A selection of "c" stays selected, and what is typed replaces it.
+	app.ui().key(std::nullopt, "Shift+Right");
+	app.call("track.add", {{"type", "midi"}});
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 5, 6); }));
+	app.ui().text(std::nullopt, "Y");
+	CHECK(elements(app, "#history tbody tr input").at(2).at("attributes").value("value", "") == "abXYd");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&app] { return app.call("history.get").at("steps").at(2).at("details") == "abXYd"; }));
+}
+
+TEST_CASE("a note typed for the last step goes when the step goes off the end", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	threeSteps(app);
+	const Json channel = app.call("project.get").at("channels").at(0).at("id");
+	const auto volume = [&app, &channel](double to)
+	{
+		app.call("history.transaction",
+			{{"description", "Change Volume"}, {"merge", "fader:1"},
+				{"commands", {{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"volume", to}}}}}}});
+	};
+	volume(-3.0);
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 4, 5); }));
+	engine::Client listener(app.engine());
+
+	// Another client's gesture ends where it started: its step, the last one, is removed.
+	click(app, "#history tbody tr input", 3);
+	app.ui().text(std::nullopt, "last");
+	volume(0.0);
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 3); }));
+	for (const Json& field : elements(app, "#history tbody tr input"))
+	{
+		CHECK(field.at("attributes").value("value", "").empty());
+		CHECK(!focused(field));
+	}
+	CHECK(focused(list(app)));
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(changesSoon(app, listener, 1) == 1); // the gesture's, not a note
+	const Json steps = app.call("history.get").at("steps");
+	for (const Json& step : steps)
+		CHECK(step.at("details").get<std::string>().empty());
+
+	// A new project clears the history: the note typed for the last step goes with it.
+	click(app, "#history tbody tr input", 2);
+	app.ui().text(std::nullopt, "cleared");
+	app.call("project.new");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#history tbody tr").size() == 1; }));
+	CHECK(elements(app, "#history tbody tr input").empty());
+	CHECK(focused(list(app)));
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(app.call("history.get").at("steps").empty());
+}

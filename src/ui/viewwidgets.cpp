@@ -101,6 +101,8 @@ namespace gnubase::ui
 			void OnUpdate() override
 			{
 				Rml::Element::OnUpdate();
+				if (m_dragScrolling && !dragContinues())
+					m_dragScrolling = false;
 				if (m_dragScrolling)
 					scrollWhileDragged(); // before the rows are looked at: a scroll can move them, as in the edit
 										  // history
@@ -120,8 +122,21 @@ namespace gnubase::ui
 					select(all, value);
 			}
 
-			// A drag in the view goes on (with dragscroll), or is over: it ends, the button goes up, or the view loses
-			// the focus, as when RmlUi drops a drag whose element leaves the document.
+			// Whether the element that is dragged is still in the view and held: RmlUi drops a drag without a dragend
+			// when its element is removed, and the view keeps the focus if the element passed it on to its parent.
+			bool dragContinues() const
+			{
+				const Rml::Element* element = m_dragElement.get();
+				if (element == nullptr || !element->IsPseudoClassSet("active"))
+					return false;
+				while (element != nullptr && element != this)
+					element = element->GetParentNode();
+				return element != nullptr;
+			}
+
+			// A drag in the view goes on (with dragscroll), or is over: it ends, the button goes up, the dragged
+			// element is gone or let go (no longer :active), or the view loses the focus, as when RmlUi drops a drag
+			// whose element leaves the document.
 			void dragged(const Rml::Event& event)
 			{
 				if (event == Rml::EventId::Drag && HasAttribute("dragscroll"))
@@ -132,6 +147,8 @@ namespace gnubase::ui
 						m_dragTime = Rml::GetSystemInterface()->GetElapsedTime();
 						m_dragRemainder = 0.0F;
 					}
+					m_dragElement = event.GetTargetElement() == nullptr ? Rml::ObserverPtr<Rml::Element>()
+																		: event.GetTargetElement()->GetObserverPtr();
 					m_dragMouse = event.GetParameter("mouse_y", 0.0F);
 					if (Rml::Context* context = GetContext())
 						context->RequestNextUpdate(0);
@@ -518,6 +535,7 @@ namespace gnubase::ui
 			// While a drag in it scrolls it (dragscroll): the mouse's last y in the window, when it last scrolled, and
 			// the part of a pixel it has yet to scroll.
 			bool m_dragScrolling = false;
+			Rml::ObserverPtr<Rml::Element> m_dragElement; // what is dragged
 			float m_dragMouse = 0.0F;
 			double m_dragTime = 0.0;
 			float m_dragRemainder = 0.0F;
