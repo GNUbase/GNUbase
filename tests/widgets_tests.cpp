@@ -2272,6 +2272,97 @@ TEST_CASE("list views select a row that code replaced on its own, with as many r
 	CHECK(tracksValue(page) == "2,4");
 }
 
+TEST_CASE("multiple list views keep the keys' row and the Shift anchor when code replaces another row", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	click(app, "#bass");
+	ctrlClick(app, "#vocals", "ctrl"); // the keys and the anchor are at Vocals
+	REQUIRE(tracksValue(page) == "2,4");
+
+	// Code replaces Keys, which isn't selected, with a new row with its value; Bass and Vocals stay.
+	Rml::Element& tracks = byId(page, "tracks");
+	Rml::ElementPtr row = page.document->CreateElement("listitem");
+	row->SetId("new-keys");
+	row->SetAttribute("value", "3");
+	row->SetInnerRML("Keys");
+	const bool replaced = tracks.ReplaceChild(std::move(row), &byId(page, "keys")) != nullptr;
+	REQUIRE(replaced);
+	app.waitUntil([] { return false; }, std::chrono::milliseconds(50)); // the view updates
+
+	// Shift+Up goes from Vocals to the new Keys and extends from Vocals, not from Bass to Drums.
+	app.ui().key(std::nullopt, "Shift+Up");
+	CHECK(tracksValue(page) == "3,4");
+}
+
+TEST_CASE("list views select by value rows that kept their elements but got other values", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	click(app, "#bass");
+	REQUIRE(tracksValue(page) == "2");
+
+	// As data-for does when its items are reordered with the same count: the elements stay, their values change.
+	// Bass's value 2 is now the third row's.
+	const std::array<std::pair<const char*, const char*>, 4> reversed = {
+		{{"drums", "4"}, {"bass", "3"}, {"keys", "2"}, {"vocals", "1"}}};
+	for (const auto& [id, value] : reversed)
+		byId(page, id).SetAttribute("value", value);
+	CHECK(app.waitUntil([&app] { return selected(app, "#keys") && !selected(app, "#bass"); }));
+	CHECK(tracksValue(page) == "2");
+
+	// The keys move from the row that has the value now.
+	app.ui().key(std::nullopt, "Down");
+	CHECK(tracksValue(page) == "1");
+	CHECK(selected(app, "#vocals"));
+}
+
+TEST_CASE("tree views move the keys from the nearest shown row above a selected row that is hidden", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	Rml::Element& tree = byId(page, "tree");
+	REQUIRE(byId(page, "snare").IsClassSet("hidden")); // Audio is collapsed
+
+	// Code selects Snare, inside the collapsed Audio: Down goes from Audio to MIDI, not to the first row.
+	click(app, "#midi"); // the tree has the focus
+	tree.SetAttribute("value", "snare");
+	CHECK(app.waitUntil([&page] { return byId(page, "snare").IsClassSet("selected"); }));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(tree.GetAttribute<Rml::String>("value", "") == "midi");
+
+	// So does Shift for a multiple tree, from Audio as the anchor; the range doesn't keep the hidden Kick.
+	tree.SetAttribute("multiple", "");
+	tree.SetAttribute("value", "kick");
+	CHECK(app.waitUntil([&page] { return byId(page, "kick").IsClassSet("selected"); }));
+	app.ui().key(std::nullopt, "Shift+Down");
+	CHECK(tree.GetAttribute<Rml::String>("value", "") == "audio,midi");
+
+	// The keys' row and the anchor that a collapse hides afterwards: Down goes from Audio to MIDI, not to Project.
+	click(app, "#audio .tree-toggle");
+	click(app, "#kick");
+	click(app, "#audio .tree-toggle");
+	REQUIRE(byId(page, "kick").IsClassSet("hidden"));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(tree.GetAttribute<Rml::String>("value", "") == "midi");
+
+	// And Shift+Down extends from Audio.
+	click(app, "#audio .tree-toggle");
+	click(app, "#kick");
+	click(app, "#audio .tree-toggle");
+	app.ui().key(std::nullopt, "Shift+Down");
+	CHECK(tree.GetAttribute<Rml::String>("value", "") == "audio,midi");
+
+	// Right expands Audio, the nearest shown row above the hidden Kick, and Kick is shown again.
+	click(app, "#audio .tree-toggle");
+	click(app, "#kick");
+	click(app, "#audio .tree-toggle");
+	REQUIRE(byId(page, "kick").IsClassSet("hidden"));
+	app.ui().key(std::nullopt, "Right");
+	CHECK(app.waitUntil([&page] { return !byId(page, "kick").IsClassSet("hidden"); }));
+	CHECK(byId(page, "audio").HasAttribute("expanded"));
+}
+
 TEST_CASE("splitters move the boundary between the elements of a row or a column", "[ui]")
 {
 	test::UiApp app;
