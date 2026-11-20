@@ -1171,8 +1171,22 @@ namespace gnubase::ui
 		if (tracks == m_inPlace)
 			return;
 		m_inPlace = std::move(tracks);
+		for (auto shown = m_inPlaceToolbars.begin(); shown != m_inPlaceToolbars.end();)
+			shown = m_inPlace.count(*shown) == 0 ? m_inPlaceToolbars.erase(shown) : std::next(shown);
 		setLanes();
 		setView(m_view);
+	}
+
+	void EventDisplay::showInPlaceToolbar(uint64_t track, bool shown)
+	{
+		if (shown == inPlaceToolbarShown(track) || (shown && m_inPlace.count(track) == 0))
+			return;
+		if (shown)
+			m_inPlaceToolbars.insert(track);
+		else
+			m_inPlaceToolbars.erase(track);
+		if (m_layoutListener)
+			m_layoutListener();
 	}
 
 	void EventDisplay::setTrackHeight(uint64_t track, double height)

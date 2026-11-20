@@ -55,6 +55,12 @@ namespace gnubase::ui
 	// while the frames go by.
 	uint64_t projectTimeBuilds();
 
+	// Where a time in project ticks lies on a view's time axis from one tick to another, 0 at from and 1 at to, and the
+	// ticks at such a place: linear in ticks, or with a tempo map linear in seconds, as the project window's timeline
+	// is, which the in-place editor's notes lie on (docs/features/in-place-editor.md).
+	double axisFraction(double ticks, int64_t from, int64_t to, const time::TempoMap* tempo);
+	double axisTicks(double fraction, int64_t from, int64_t to, const time::TempoMap* tempo);
+
 	// Bounds a UI time to the largest project position before converting it to samples or tempo-map ticks.
 	// This also keeps NaN and negative input at the project start.
 	double clampPositionSeconds(double seconds, double sampleRate);

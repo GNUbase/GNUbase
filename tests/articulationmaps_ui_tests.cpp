@@ -860,8 +860,10 @@ TEST_CASE("the in-place editor has the Articulations lane", "[ui]")
 	CHECK(elements(slot).at(0).at("attributes").at("title") == "Arco");
 
 	// The draw tool adds a direction in its row, where the second note starts.
-	REQUIRE(app.waitUntil([&] { return visible(editor + " .in-place-toolbar-toggle"); }));
-	click(of(editor + " .in-place-toolbar-toggle"));
+	const std::string triangle =
+		".track-list listitem[value=\"" + std::to_string(track) + "\"] .in-place-toolbar-toggle";
+	REQUIRE(app.waitUntil([&] { return visible(triangle); }));
+	click(of(triangle));
 	const std::string draw = editor + " .key-tool[key-tool=draw]";
 	REQUIRE(app.waitUntil([&] { return visible(draw); }));
 	click(of(draw));

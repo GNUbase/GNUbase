@@ -1805,6 +1805,32 @@ meter .meter-peak
 	display: block;
 }
 
+/* The in-place editor's toolbar triangle (docs/features/in-place-editor.md) in the upper right corner of its track's
+   row, while the editor is open (.in-place); .checked while the toolbar shows. */
+.track-list .in-place-toolbar-toggle
+{
+	display: none;
+	position: absolute;
+	top: 0;
+	right: 0;
+	min-width: 16dp;
+	width: 16dp;
+	height: 16dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list listitem.in-place .in-place-toolbar-toggle
+{
+	display: block;
+}
+
+.track-list .in-place-toolbar-toggle svg.icon
+{
+	width: 12dp;
+	height: 12dp;
+}
+
 /* Automation tracks (docs/features/automation-tracks.md): Show/Hide Automation in a track's lower left corner and
    the automation tracks' rows below the track's own. Code sets where the corner and the rows are, and each row's
    height, from the event display's lanes. */

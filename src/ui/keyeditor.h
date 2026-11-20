@@ -27,6 +27,11 @@ namespace gnubase::ui
 	class ControllerLanes;
 }
 
+namespace gnubase::time
+{
+	class TempoMap;
+}
+
 // The key editor (#127, reference manual pp. 1189-1220): docs/features/key-editor.md describes it.
 namespace gnubase::ui
 {
@@ -79,8 +84,9 @@ namespace gnubase::ui
 		void setTool(KeyTool tool);
 
 		// The notes' time axis, project ticks across the grid, instead of the parts' range: the in-place editor's
-		// (#131, ui/inplaceeditor.h) is the project window's timeline. Without one it fits the parts' range.
-		void setTimeRange(std::optional<std::pair<int64_t, int64_t>> range);
+		// (#131, ui/inplaceeditor.h) is the project window's timeline, linear in seconds on the tempo map, which must
+		// outlive the editor or the next call. Without a range it fits the parts' range, linear in ticks.
+		void setTimeRange(std::optional<std::pair<int64_t, int64_t>> range, const time::TempoMap* tempo = nullptr);
 
 		// After the update of a window's context, if the editor is in it: builds the notes' expression lines again
 		// when a pixel has other ticks than they were built with, as after the editor's first layout and when its
@@ -201,6 +207,8 @@ namespace gnubase::ui
 		// The expression editor alone, as its gesture changes it.
 		void placeExpression();
 		// The ticks of a pixel of the note display, or 0 before its layout.
+		// Where a time lies across the grid, 0 at its left edge and 1 at its right (axisFraction).
+		double fraction(int64_t ticks) const;
 		int64_t ticksPerPixel() const;
 		// Whether the notes' expression lines or the expression editor show, whose lines fitLines fits.
 		bool linesShown() const;
@@ -322,6 +330,7 @@ namespace gnubase::ui
 		int64_t m_from = 0;      // the notes' time axis, project ticks
 		int64_t m_to = 1;
 		std::optional<std::pair<int64_t, int64_t>> m_range; // setTimeRange's
+		const time::TempoMap* m_tempo = nullptr;            // and its tempo map
 		bool m_scrolled = false;
 		std::string m_notesRml;      // the notes' elements as last set
 		std::string m_expressionRml; // the expression editor's lines as last set

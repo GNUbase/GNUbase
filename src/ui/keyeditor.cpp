@@ -630,16 +630,20 @@ namespace gnubase::ui
 		m_lanes->show(m_project, view, m_from, m_to, shown);
 	}
 
-	void KeyEditor::setTimeRange(std::optional<std::pair<int64_t, int64_t>> range)
+	void KeyEditor::setTimeRange(std::optional<std::pair<int64_t, int64_t>> range, const time::TempoMap* tempo)
 	{
 		// The in-place editor's first show() comes before its layout: its first scroll to the notes waits for one.
 		scrollToNotes();
-		if (range == m_range)
+		if (!range)
+			tempo = nullptr;
+		if (range == m_range && tempo == m_tempo)
 			return;
 		m_range = range;
+		m_tempo = tempo;
 		if (!m_range)
 		{
 			show(Json(m_project), Json(m_view)); // the parts' range again
+			m_lanes->setRange(m_from, m_to);
 			return;
 		}
 		// The in-place editor's range changes while the project window scrolls or zooms: the notes move, nothing is
@@ -647,7 +651,7 @@ namespace gnubase::ui
 		m_from = m_range->first;
 		m_to = std::max(m_range->second, m_from + 1);
 		placeItems();
-		m_lanes->setRange(m_from, m_to);
+		m_lanes->setRange(m_from, m_to, m_tempo);
 		if (const Rml::Element* root = m_root.get(); root != nullptr && root->GetContext() != nullptr)
 			root->GetContext()->RequestNextUpdate(0);
 	}
@@ -728,11 +732,11 @@ namespace gnubase::ui
 
 	void KeyEditor::place(Rml::Element& element, int64_t start, int64_t length, int pitch) const
 	{
-		const auto range = static_cast<double>(m_to - m_from);
-		element.SetProperty(Rml::PropertyId::Left, percent(static_cast<double>(start - m_from) / range * 100.0));
+		const double left = fraction(start);
+		element.SetProperty(Rml::PropertyId::Left, percent(left * 100.0));
 		// The drum editor's notes are diamonds at their start (p. 1233): the style sheet sizes them.
 		if (!element.IsClassSet("drum-note"))
-			element.SetProperty(Rml::PropertyId::Width, percent(static_cast<double>(length) / range * 100.0));
+			element.SetProperty(Rml::PropertyId::Width, percent((fraction(start + length) - left) * 100.0));
 		if (pitch >= 0)
 		{
 			const double row = m_rowOf.at(static_cast<size_t>(pitch));
@@ -1093,18 +1097,13 @@ namespace gnubase::ui
 		// right edge, it grows to the left from their end, so that it stays inside the note display there too (#1713).
 		// Anywhere else it starts at the notes, so that it keeps still as an in-place editor's range scrolls (#1746).
 		Rml::Element* grid = editor->GetParentNode();
-		const auto range = static_cast<double>(m_to - m_from);
 		const double wide = grid != nullptr ? grid->GetBox().GetSize(Rml::BoxArea::Border).x : 0.0;
 		m_expressionWide = static_cast<float>(wide);
 		const double least = Rml::ResolveValue(editor->GetComputedValues().min_width(), static_cast<float>(wide));
-		if (wide > 0.0 &&
-			(static_cast<double>(from - m_from) / range * wide) +
-					std::max(static_cast<double>(to - from) / range * wide, least) >
-				wide)
+		if (wide > 0.0 && (fraction(from) * wide) + std::max((fraction(to) - fraction(from)) * wide, least) > wide)
 		{
 			editor->RemoveProperty(Rml::PropertyId::Left);
-			editor->SetProperty(Rml::PropertyId::Right,
-				percent(static_cast<double>(m_to - to) / static_cast<double>(m_to - m_from) * 100.0));
+			editor->SetProperty(Rml::PropertyId::Right, percent((1.0 - fraction(to)) * 100.0));
 		}
 		else
 		{
@@ -1130,6 +1129,11 @@ namespace gnubase::ui
 					  ((row + 0.5) * height / g_pitches) - (own.value / 2.0), 0.0, std::max(height - own.value, 0.0)) *
 				100.0 / height;
 		editor->SetProperty(Rml::PropertyId::Top, percent(top));
+	}
+
+	double KeyEditor::fraction(int64_t ticks) const
+	{
+		return axisFraction(static_cast<double>(ticks), m_from, m_to, m_tempo);
 	}
 
 	int64_t KeyEditor::ticksPerPixel() const
@@ -1394,8 +1398,7 @@ namespace gnubase::ui
 		const float y = (mouseY - origin.y) / std::max(size.y, 1.0F);
 		const int rows = static_cast<int>(m_order.size());
 		const int row = std::clamp(static_cast<int>(std::floor(y * static_cast<float>(rows))), 0, rows - 1);
-		return {static_cast<double>(m_from) + (x * static_cast<double>(m_to - m_from)),
-			m_order.at(static_cast<size_t>(row))};
+		return {axisTicks(static_cast<double>(x), m_from, m_to, m_tempo), m_order.at(static_cast<size_t>(row))};
 	}
 
 	// The quantize grid (quantize.set, p. 1196) from the project start; Ctrl (Cmd) turns snap off (p. 1213).
@@ -2487,7 +2490,7 @@ namespace gnubase::ui
 		}
 		const double x = (event.GetParameter("mouse_x", 0.0F) - origin.x) / size.x;
 		const double y = (event.GetParameter("mouse_y", 0.0F) - origin.y) / size.y;
-		const double ticks = static_cast<double>(m_from) + (x * static_cast<double>(m_to - m_from));
+		const double ticks = axisTicks(x, m_from, m_to, m_tempo);
 		const int row = std::clamp(static_cast<int>(std::floor(y * g_pitches)), 0, g_pitches - 1);
 		const int64_t dt = delta(Gesture::Move, ticks);
 		const int rows = row - m_rowOf.at(static_cast<size_t>(m_pressedAt.second));

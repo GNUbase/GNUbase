@@ -44,15 +44,19 @@ keep its own height.
                                       .toolbar-shown while the toolbar shows; the focus zone "inPlace"
       .key-editor                     the key editor (key-editor.md): the parts' row, keyboard, grid, controller lanes
         .key-editor-toolbar           starts with button.in-place-editing-mode and button.in-place-active-part
-      button.in-place-toolbar-toggle  shows or hides the toolbar and the info line (p. 1259)
+#track-list listitem[value=<track>]   the track's row (track-list.md); .in-place while its editor is open
+  button.in-place-toolbar-toggle      the triangle at its upper right, shown while .in-place: shows or hides the
+                                      toolbar and the info line (p. 1259), .checked while they show
 menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-inPlace-<track>   in the body
 ```
 
 - **Timeline.** The key editor's grid lies on the project window's timeline: once a frame (`InPlaceEditors::update`)
   the grid's left and right edges get the times the ruler has there (`KeyEditor::setTimeRange`), so the notes and the
   parts' boxes are under their times while the project window zooms and scrolls. The keyboard at the left covers the
-  start of the view. Between the edges the axis is linear in ticks: across a tempo change in the view the notes drift
-  from the ruler until the key editor gets a tempo-mapped axis. The tempo map is the display's (`EventDisplay::time`),
+  start of the view. Between the edges the axis is linear in seconds on the tempo map, as the ruler is
+  (`axisFraction` and `axisTicks` in `src/ui/timeformat.h`), for the notes, the parts' boxes, the controller lanes'
+  bars and steps and where a click or a drop lands, so across a tempo change in the view they stay under the ruler;
+  a note's expression lines inside it are linear in ticks. The tempo map is the display's (`EventDisplay::time`),
   read once per project it reads, and a new range only moves the notes, a note being drawn, the parts' boxes and the
   controller lanes' bars (`KeyEditor::placeItems`, `ControllerLanes::setRange`), so scrolling, zooming and following
   the project cursor read and build nothing again.
@@ -80,9 +84,16 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
 - **Opening and closing.** MIDI > Open In-Place Editor (`editor.openInPlace`) opens it for the selected MIDI and
   instrument tracks, Edit In-Place (`editor.editInPlace`, Mod+Shift+I, p. 1261) opens or closes each one, both disabled
   until such a track is selected, and the inspector's Edit In-Place button (`button[control=editInPlace]`,
-  [inspector.md](inspector.md)) the selected track's, checked while it is open. A double click on the controller lanes'
+  [inspector.md](inspector.md)) the selected track's, checked while it is open. The track list's Edit In-Place
+  (`editInPlace` in the user setting `ui.trackControls`, for MIDI and instrument tracks, pp. 193, 1261,
+  [track-list.md](track-list.md)) opens and closes its row's track's editor, checked while it is open; the default
+  controls leave it out, so the track controls settings dialog adds it. A double click on the controller lanes'
   footer strip, the place below the controller display (p. 1261, [controller-lanes.md](controller-lanes.md)), closes
   that track's editor too; one on the strip's Create and Setup buttons doesn't.
+- **Toolbar.** The triangle at the upper right of the track's row in the track list shows and hides the editor's
+  toolbar and info line (p. 1259); the event display keeps which ones show (`EventDisplay::inPlaceToolbarShown`), so
+  the row and the editor follow it, and an editor that closes and opens again starts without them. It is view state
+  of the UI, like the zoom.
 - **The project window's info line** (p. 1259) shows an editor's selected notes while its selection changed last, also
   while its own toolbar, and with it its own info line, is hidden, and edits them as that info line does
   ([inspector.md](inspector.md)).
@@ -92,11 +103,9 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
 
 ## Not yet
 
-Tracked in #1158: the setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
-([docking.md](docking.md)); a tempo-mapped time axis; the keyboard in the track list's column; Edit In-Place in the
-track list's controls, with the toolbar's triangle at the upper right of the track's row in the track list (p. 1259)
-instead of over the editor; the toolbar's Acoustic Feedback, Indicate Transpositions and Event Colors (the key editor
-has none yet).
+Tracked in #1766: the setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
+([docking.md](docking.md)); the keyboard in the track list's column; the toolbar's Acoustic Feedback, Indicate
+Transpositions and Event Colors (the key editor has none yet).
 
 ## Checks
 
@@ -123,7 +132,11 @@ has none yet).
   selected note, back with an undo into its selection, and dropped where the other track has no part or where a note
   wouldn't fit staying where it is; a selected controller event going along to the other part with its id, back with the
   note in one undo, also from another part of the source track that gives only controller events; the menu commands
-  waiting for a MIDI or instrument track; a note being drawn moving with the notes while the project window zooms.
+  waiting for a MIDI or instrument track; a note being drawn moving with the notes while the project window zooms; the
+  track list's Edit In-Place, only on MIDI tracks, opening and closing the editor and checked while it is open, and the
+  triangle at the upper right of the row while it is open showing and hiding the toolbar, hidden again after the editor
+  closes; the notes under the ruler across a tempo change in the view, also after zooming and scrolling, and a click
+  on a note after the tempo change selecting it.
 - `tests/midiedit_tests.cpp`: `note.move` moving notes to another part as one undo step, keeping every field, a quantize
   origin included, and their ids, two notes keeping their distance, with its `note.removed` and `note.added` events,
   undo and redo; ticks counting on the project's timeline, so that parts starting at different places and a part on a
