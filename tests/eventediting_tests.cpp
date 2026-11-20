@@ -1979,6 +1979,124 @@ TEST_CASE("the play tool's resize in scrub mode plays the clip at the dragged ed
 	CHECK(f.call("transport.get").at("position") == 0);
 }
 
+TEST_CASE("the play tool in scrub mode resizes at an audio event's lower left corner, not on a narrow event", "[unit]")
+{
+	Fixture f;
+	f.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	f.call("audio.start");
+	const auto audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	const Json clip = f.audioEvents()[0].at("clip");
+	f.call("audioEvent.set", {{"event", f.event}, {"offset", 4800}});
+	std::vector<Json> auditions;
+	const ui::Subscription subscription =
+		f.binding.on("audition.changed", [&auditions](const engine::Event& event) { auditions.push_back(event.data); });
+	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	const auto pointer = [area] { return area->GetAttribute<std::string>("pointer", ""); };
+	const auto moveTo = [&f](double x, double y)
+	{
+		f.automation.move(std::nullopt, f.at(x, y));
+		f.step();
+	};
+	const auto scrubs = [&f]
+	{
+		Json found = Json::array();
+		const Json log = f.call("engine.commandLog").at("commands");
+		for (const Json& each : log)
+			if (each.at("command") == "audition.scrub")
+				found.push_back(each.at("parameters"));
+		return found;
+	};
+	f.display.setTool(ui::Tool::Play);
+	f.display.setPlayMode(ui::PlayMode::Scrub);
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioEvents")[0].at("offset") == 4800; }));
+
+	// The lower left corner shows the resize pointer, the upper part of the left edge the play tool's.
+	moveTo(202, 30);
+	CHECK(pointer() == "resize");
+	moveTo(202, 10);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+
+	// A drag from the lower left corner 20 dp to the right starts the event a fifth of a second later, and scrubs the
+	// event's clip at its start, not the track: the first scrub is at the clip frame the event started at, its
+	// offset, and the cursor stays.
+	f.drag(202, 30, 222, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 96000 + 9600; }));
+	CHECK(f.audioEvents()[0].at("offset") == 4800 + 9600);
+	CHECK(f.audioEvents()[0].at("length") == 24000 - 9600);
+	REQUIRE(f.waitUntil([&auditions] { return auditions.size() >= 2 && auditions.back().at("mode") == "off"; }));
+	CHECK(auditions[0].at("mode") == "scrub");
+	CHECK(auditions[0].at("track") == 0);
+	CHECK(auditions[0].at("clip") == clip);
+	const Json first = scrubs();
+	REQUIRE(first.size() == 1); // the log keeps the first of a run of scrubs
+	CHECK(first[0].at("clip") == clip);
+	CHECK(first[0].at("position") == 4800);
+	CHECK(f.call("transport.get").at("position") == 0);
+
+	// An event of 18 dp has no edges: its lower corners scrub the track, and move the cursor, as anywhere else.
+	const auto narrow =
+		f.call("audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 288000}, {"length", 8640}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 2; }));
+	moveTo(601, 30);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+	moveTo(617, 30);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+	auditions.clear();
+	f.drag(617, 30, 627, 30);
+	REQUIRE(f.waitUntil([&auditions] { return auditions.size() >= 2 && auditions.back().at("mode") == "off"; }));
+	CHECK(auditions[0].at("mode") == "scrub");
+	CHECK(auditions[0].at("track") == audio);
+	CHECK(f.call("transport.get").at("position") == 627 * 480);
+	for (const Json& shown : f.audioEvents())
+		if (shown.at("id") == narrow)
+			CHECK(shown.at("length") == 8640);
+}
+
+TEST_CASE("an event display that goes away while the play tool auditions ends the audition", "[unit]")
+{
+	// As when the project window closes during a press of the play tool, by a key command (#1136): the track mustn't
+	// play on, neither what the play tool plays nor the scrub of a resize at an audio event's lower corner.
+	Fixture f;
+	f.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	f.call("audio.start");
+	std::vector<std::string> modes;
+	const ui::Subscription subscription = f.binding.on("audition.changed",
+		[&modes](const engine::Event& event) { modes.push_back(event.data.at("mode").get<std::string>()); });
+	const auto goesAway = [&f, &modes](ui::PlayMode mode, double x, double y, double toX)
+	{
+		// A display of its own, in front of the fixture's, in the same place.
+		Rml::ElementDocument& document = f.load();
+		document.PullToFront();
+		auto display = std::make_unique<ui::EventDisplay>(f.engine, f.binding, *document.GetElementById("display"));
+		REQUIRE(f.waitUntil(
+			[&document]
+			{
+				const auto* lanes = dynamic_cast<ui::EventLanes*>(document.QuerySelector("event-lanes.events"));
+				return lanes != nullptr && lanes->lanes().size() == 2 && !lanes->lanes()[0].events.empty();
+			}));
+		display->setTool(ui::Tool::Play);
+		display->setPlayMode(mode);
+		modes.clear();
+		f.automation.press(std::nullopt, f.at(x, y), ui::MouseButton::Left);
+		f.step();
+		f.automation.move(std::nullopt, f.at(toX, y));
+		f.step();
+		REQUIRE(f.waitUntil([&modes] { return !modes.empty(); }));
+		CHECK(modes.back() != "off");
+		display.reset();
+		CHECK(f.waitUntil([&modes] { return modes.back() == "off"; }));
+		document.Close();
+		f.automation.release(std::nullopt, f.at(toX, y), ui::MouseButton::Left);
+		f.step();
+	};
+	goesAway(ui::PlayMode::Play, 300, 10, 300);
+	goesAway(ui::PlayMode::Scrub, 220, 10, 240);
+	goesAway(ui::PlayMode::Scrub, 248, 30, 268); // the resize at the event's lower right corner
+}
+
 TEST_CASE("the range selection tool selects ranges, snapped, by dragging and double clicking", "[unit]")
 {
 	Fixture f;
