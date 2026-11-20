@@ -328,24 +328,19 @@ namespace gnubase::audio
 				static_cast<JackDevice*>(data)->m_shutdown = true;
 			}
 
-			// Asks for a reset when the server goes away, changes its sample rate or buffer size, a physical port goes
-			// away or the latency changes: once a handler took it, and until then every 20 ms, since the engine sets
-			// the handler only after it has read the device it opened (#371).
+			// Asks for a reset, once, when the server goes away, changes its sample rate or buffer size, a physical
+			// port goes away or the latency changes.
 			void watch()
 			{
-				const char* reason = nullptr;
 				while (m_watching)
 				{
 					std::this_thread::sleep_for(std::chrono::milliseconds(20));
-					if (reason == nullptr)
+					if (const char* reason = whyReset())
 					{
-						reason = whyReset();
-						if (reason == nullptr)
-							continue;
 						logging::info("The JACK device asks for a reset: {}", reason);
-					}
-					if (requestReset())
+						requestReset();
 						return; // the handler may have closed the device
+					}
 				}
 			}
 

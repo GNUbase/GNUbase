@@ -180,11 +180,20 @@ namespace gnubase::audio
 
 		// Called when the driver asks to be opened again, e.g. because its settings changed in its control panel or its
 		// device went away (opening it again then fails until it returns). Never
-		// called on the audio thread, but possibly on a driver's thread while this is set.
+		// called on the audio thread, but possibly on a driver's thread while this is set. A reset the driver asked for
+		// while there was no handler, as before the engine has read a device it just opened, is passed on right here,
+		// once (#371, #432).
 		void onReset(std::function<void()> handler)
 		{
-			const std::scoped_lock lock(m_handlerMutex);
-			m_reset = std::move(handler);
+			std::function<void()> pending;
+			{
+				const std::scoped_lock lock(m_handlerMutex);
+				m_reset = std::move(handler);
+				if (m_reset && std::exchange(m_resetPending, false))
+					pending = m_reset;
+			}
+			if (pending)
+				pending();
 		}
 
 		// Called when what latency() returns changes while the device is open, e.g. once the driver learns the
@@ -202,9 +211,19 @@ namespace gnubase::audio
 
 	protected:
 		// For backends, when their driver asks for a reset. Not on the audio thread. The handler runs on a copy,
-		// outside the lock: what it sets off may destroy this device before it returns. False if no handler is set
-		// yet, as before the engine has read a device it just opened: a backend asks again later then (#371).
-		bool requestReset() const { return call(m_reset); }
+		// outside the lock: what it sets off may destroy this device before it returns. Without a handler the request
+		// waits for the next one (onReset).
+		void requestReset() const
+		{
+			std::function<void()> handler;
+			{
+				const std::scoped_lock lock(m_handlerMutex);
+				handler = m_reset;
+				m_resetPending = !handler;
+			}
+			if (handler)
+				handler();
+		}
 
 		// For backends, when the latency they report changes. Not on the audio thread; the same as requestReset.
 		void reportLatencyChange() const { call(m_latencyChange); }
@@ -213,21 +232,20 @@ namespace gnubase::audio
 		void reportOverload() noexcept { m_overloads.fetch_add(1, std::memory_order_relaxed); }
 
 	private:
-		bool call(const std::function<void()>& slot) const
+		void call(const std::function<void()>& slot) const
 		{
 			std::function<void()> handler;
 			{
 				const std::scoped_lock lock(m_handlerMutex);
 				handler = slot;
 			}
-			if (!handler)
-				return false;
-			handler();
-			return true;
+			if (handler)
+				handler();
 		}
 
-		mutable std::mutex m_handlerMutex; // guards m_reset and m_latencyChange
+		mutable std::mutex m_handlerMutex; // guards m_reset, m_resetPending and m_latencyChange
 		std::function<void()> m_reset;
+		mutable bool m_resetPending = false; // asked for without a handler
 		std::function<void()> m_latencyChange;
 		std::atomic<uint64_t> m_overloads{0};
 	};
