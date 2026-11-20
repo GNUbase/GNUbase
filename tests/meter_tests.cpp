@@ -166,25 +166,51 @@ namespace
 	// How long the race tests play their rounds at most, on the wall clock. Each round waits for the other thread, and
 	// when more threads run than there are cores (CI runs four tests at a time), each wait can cost a time slice: the
 	// rounds could then take many minutes, beyond the 300 s after which ctest fails a test, with correct code. An
-	// overloaded run checks fewer rounds instead, and says so; an unloaded one plays all of them well within this (each
-	// test took under a second in a Debug build on an x86-64 desktop).
+	// overloaded run checks fewer rounds instead, but never fewer than g_minRaceRounds, whatever the clock says, so
+	// that a starved run still checks the race instead of passing empty, and fails if it doesn't (reportRounds). Even
+	// the slowest rate measured, 44 rounds a second (Windows, more busy threads than cores), plays those in about 23 s.
+	// An unloaded run plays all rounds well within the budget (each test took under a second in a Debug build on an
+	// x86-64 desktop). A run the budget cut short says so: Catch2's warning reaches ctest's log, which CI shows only
+	// for a failing test, so CI's test steps list the warnings of passing ones too (.github/workflows/ci.yml).
 	constexpr auto g_raceBudget = std::chrono::seconds(20);
+	constexpr int g_minRaceRounds = 1000;
 
 	class RaceClock
 	{
 	public:
-		[[nodiscard]] bool running() const { return std::chrono::steady_clock::now() < m_end; }
+		explicit RaceClock(std::chrono::steady_clock::duration budget = g_raceBudget)
+			: m_end(std::chrono::steady_clock::now() + budget)
+		{
+		}
+
+		// Whether the race test plays its round: the first g_minRaceRounds always, then while the budget lasts.
+		[[nodiscard]] bool running(int round) const
+		{
+			return round <= g_minRaceRounds || std::chrono::steady_clock::now() < m_end;
+		}
 
 	private:
-		std::chrono::steady_clock::time_point m_end = std::chrono::steady_clock::now() + g_raceBudget;
+		std::chrono::steady_clock::time_point m_end;
 	};
 
-	// Says how many rounds a race test checked when the budget ended them early.
+	// Says how many rounds a race test checked when the budget ended them early, on one line that CI's test steps pick
+	// out of ctest's log (the budget is g_raceBudget), and fails when it was fewer than the minimum.
 	void reportRounds(int checked, int rounds)
 	{
 		if (checked < rounds)
-			WARN("the wall-clock budget ended the rounds after " << checked << " of " << rounds);
+			WARN("race test cut short: " << checked << " of " << rounds << " rounds"); // one line, for CI's step
+		CHECK(checked >= std::min(rounds, g_minRaceRounds));
 	}
+}
+
+TEST_CASE("a race test's rounds run at least the minimum when the budget is over, then stop", "[unit]")
+{
+	const RaceClock over(std::chrono::steady_clock::duration::zero());
+	CHECK(over.running(1));
+	CHECK(over.running(g_minRaceRounds));
+	CHECK(!over.running(g_minRaceRounds + 1));
+	const RaceClock plenty(std::chrono::hours(1));
+	CHECK(plenty.running(g_minRaceRounds + 1));
 }
 
 TEST_CASE("a level meter reads a sine's peak and RMS level and keeps their maxima", "[unit]")
@@ -1031,7 +1057,8 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 {
 	// Without a reset the maximum read limits no peak, if the audio thread publishes it before it raises the held peak
 	// and the reader takes the peak before it reads the maximum. Each round one block, the loudest so far, races one
-	// frame's read; that frame or the next one has its peak. The rounds end early under load (RaceClock).
+	// frame's read; that frame or the next one has its peak. The rounds end early under load, but not before the
+	// minimum (RaceClock).
 	constexpr int rounds = 50000;
 	const auto level = [](int round) { return static_cast<float>(round) / rounds; };
 	LevelMeter meter;
@@ -1060,7 +1087,7 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 		});
 	const StopAndJoin stop(done, reader);
 	const RaceClock clock;
-	for (int round = 1; round <= rounds && clock.running(); ++round)
+	for (int round = 1; round <= rounds && clock.running(round); ++round)
 	{
 		const float sample = level(round);
 		const float* const channel = &sample;
@@ -1073,7 +1100,6 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 	done = true;
 	reader.join();
 	reportRounds(checked, rounds);
-	CHECK(checked > 0);
 	CHECK(lost == 0);
 }
 
@@ -1090,7 +1116,7 @@ TEST_CASE("a frame loses no peak of the first block after a reset, also when it 
 	// builds on x86-64 desktops (MSVC, GCC and Clang), though not in unoptimized ones: of CI's jobs only the Release
 	// builds (windows-x64, linux-x64-gcc) can be expected to catch it, though that isn't measured on CI's runners yet,
 	// while a local Debug run and the sanitizer jobs, which build Debug, say nothing about raise. The rounds end early
-	// under load (RaceClock).
+	// under load, but not before the minimum (RaceClock).
 	constexpr int rounds = 50000;
 	constexpr auto last = static_cast<size_t>(g_maxMeterChannels - 1);
 	// Both levels are new every round, so that a frame with the quieter peak, whether it took it or limited the loud
@@ -1121,7 +1147,7 @@ TEST_CASE("a frame loses no peak of the first block after a reset, also when it 
 	const RaceClock clock;
 	int checked = 0;
 	int lost = 0;
-	for (int round = 1; round <= rounds && clock.running(); ++round)
+	for (int round = 1; round <= rounds && clock.running(round); ++round)
 	{
 		const float loud = loudLevel(round);
 		const float quiet = quietLevel(round);
@@ -1145,7 +1171,6 @@ TEST_CASE("a frame loses no peak of the first block after a reset, also when it 
 	done = true;
 	reader.join();
 	reportRounds(checked, rounds);
-	CHECK(checked > 0);
 	CHECK(lost == 0);
 }
 
