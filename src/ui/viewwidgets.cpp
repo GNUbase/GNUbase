@@ -278,7 +278,8 @@ namespace gnubase::ui
 					return;
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 				// A collapsed parent can hide the keys' row, e.g. one clicked before the parent collapsed.
-				const auto at = std::find(shown.begin(), shown.end(), shownAt(all, m_current.get()));
+				Rml::Element* current = shownAt(all, m_current.get());
+				const auto at = std::find(shown.begin(), shown.end(), current);
 				const std::ptrdiff_t index = at == shown.end() ? -1 : at - shown.begin();
 				std::ptrdiff_t next = 0;
 				switch (key)
@@ -304,8 +305,8 @@ namespace gnubase::ui
 					break;
 				case Rml::Input::KI_RIGHT:
 				case Rml::Input::KI_LEFT:
-					if (m_current && m_current->IsClassSet("parent"))
-						toggle(*m_current.get(), key == Rml::Input::KI_RIGHT);
+					if (current != nullptr && current->IsClassSet("parent"))
+						toggle(*current, key == Rml::Input::KI_RIGHT);
 					event.StopPropagation();
 					return;
 				default:

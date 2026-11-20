@@ -2186,6 +2186,15 @@ TEST_CASE("tree views move the keys from the nearest shown row above a selected 
 	click(app, "#audio .tree-toggle");
 	app.ui().key(std::nullopt, "Shift+Down");
 	CHECK(tree.GetAttribute<Rml::String>("value", "") == "audio,midi");
+
+	// Right expands Audio, the nearest shown row above the hidden Kick, and Kick is shown again.
+	click(app, "#audio .tree-toggle");
+	click(app, "#kick");
+	click(app, "#audio .tree-toggle");
+	REQUIRE(byId(page, "kick").IsClassSet("hidden"));
+	app.ui().key(std::nullopt, "Right");
+	CHECK(app.waitUntil([&page] { return !byId(page, "kick").IsClassSet("hidden"); }));
+	CHECK(byId(page, "audio").HasAttribute("expanded"));
 }
 
 TEST_CASE("splitters move the boundary between the elements of a row or a column", "[ui]")
