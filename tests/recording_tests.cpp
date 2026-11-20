@@ -370,13 +370,33 @@ TEST_CASE("a Broadcast Wave recording's time reference includes the pre-recorded
 		reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference == (3600ULL * 48000) - 2400);
 }
 
+TEST_CASE("a pre-record that reaches back before 0:00:00 gives a time reference of 0 (#580)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "audio.preRecordSeconds"}, {"value", 0.05}}); // 2400 frames
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}, {"startTime", 0.0}});
+	run(client, "audio.render", {{"frames", 4800}}); // stopped
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 1000}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("offset") == 2400);
+	const auto reader = AudioFileReader::open(pathOf(client, events[0]));
+	REQUIRE(reader->info().broadcast.has_value());
+	CHECK(reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference == 0);
+}
+
 TEST_CASE("a long track name is cut between two UTF-8 characters for the description and the file name (#580)",
 	"[integration]")
 {
 	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
 	Client& client = setup.client;
-	// 127 two-byte characters and a three-byte one: 257 bytes, so the description's 256 would split the last one.
-	std::string name;
+	// An ASCII character, 127 two-byte characters and a three-byte one: 258 bytes, so the file name's 200 would split
+	// the 100th two-byte character and the description's 256 the three-byte one.
+	std::string name = "a";
 	for (int i = 0; i < 127; ++i)
 		name += "\xc3\xa9";
 	name += "\xe2\x82\xac";
@@ -389,9 +409,9 @@ TEST_CASE("a long track name is cut between two UTF-8 characters for the descrip
 	const std::vector<Json> events = eventsOn(client, setup.track);
 	REQUIRE(events.size() == 1);
 	const std::string path = pathOf(client, events[0]);
-	CHECK(std::filesystem::u8path(path).filename().u8string() == name.substr(0, 200) + ".wav");
+	CHECK(std::filesystem::u8path(path).filename().u8string() == name.substr(0, 199) + ".wav");
 	const auto reader = AudioFileReader::open(path);
-	CHECK(reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).description == name.substr(0, 254));
+	CHECK(reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).description == name.substr(0, 255));
 }
 
 TEST_CASE("a change of only the start time reaches the next Broadcast Wave recording (#581)", "[integration]")
