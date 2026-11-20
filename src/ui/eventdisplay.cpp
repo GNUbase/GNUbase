@@ -161,7 +161,8 @@ namespace gnubase::ui
 
 		// A step that changed only channels, such as each step of a fader drag, needs no read (#1881): the display
 		// takes their channel.changed into its project, for the views that show it (the track list, the inspector),
-		// and asks again for the automation targets whose static values the channels may have changed.
+		// shows the toolbar's state buttons again and asks again for the automation targets whose static values the
+		// channels may have changed.
 		for (const char* event : {"history.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event,
 				[this](const engine::Event& changed)
@@ -172,7 +173,10 @@ namespace gnubase::ui
 						for (const engine::Event& channel : channels)
 							takeChannel(channel);
 						if (!channels.empty())
+						{
+							showStates(m_project); // the toolbar's mute, solo and listen buttons
 							requestChangedTargets();
+						}
 						return;
 					}
 					requestProject();

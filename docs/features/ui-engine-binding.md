@@ -78,7 +78,8 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   `history.changed` (`ChannelSteps`) and drop them for a step that changed more, which they read: a `track.add` that
   routes the selected tracks into its new group channel changes their channels too, and taken before the read brought
   the group, they named a channel the project didn't have, which the inspector's output list showed as none and sent
-  back. The event display asks again for the targets of the tracks with open automation lanes whose channel changed
+  back. The event display lights the toolbar's mute, solo and listen buttons again and asks again for the targets of
+  the tracks with open automation lanes whose channel changed
   (`requestChangedTargets`), whose static value line shows the channel's value. It counts the channel in `loads()`,
   so the views that show channels from its project, the track list, the inspector and the sampler and drum machine
   panels, show it too,
