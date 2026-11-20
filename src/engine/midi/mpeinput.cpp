@@ -56,31 +56,12 @@ namespace gnubase::engine::midi
 			return std::clamp(json.value(member, fallback), low, high);
 		}
 
-		// A dimension's MIDI Message as JSON has it: pitchBend, aftertouch or cc0 to cc127.
-		std::string messageName(uint8_t message)
-		{
-			if (message == MpeSetup::g_pitchBend)
-				return "pitchBend";
-			if (message == MpeSetup::g_aftertouch)
-				return "aftertouch";
-			return "cc" + std::to_string(message);
-		}
-
 		uint8_t messageOf(const Json& json, const char* member, uint8_t fallback)
 		{
 			const auto found = json.find(member);
 			if (found == json.end() || !found->is_string())
 				return fallback;
-			const auto name = found->get<std::string>();
-			if (name == "pitchBend")
-				return MpeSetup::g_pitchBend;
-			if (name == "aftertouch")
-				return MpeSetup::g_aftertouch;
-			if (name.size() < 3 || name.size() > 5 || name.compare(0, 2, "cc") != 0 ||
-				!std::all_of(name.begin() + 2, name.end(), [](char c) { return c >= '0' && c <= '9'; }))
-				return fallback;
-			const int number = std::stoi(name.substr(2));
-			return number <= 127 ? static_cast<uint8_t>(number) : fallback;
+			return messageNamed(found->get<std::string>()).value_or(fallback);
 		}
 
 		// A dimension's assignment's index in g_assignments, and back.
@@ -136,6 +117,30 @@ namespace gnubase::engine::midi
 			const double unit = controllerToUnit(value);
 			return expression == plugin::NoteExpression::Volume ? unit * 4.0 : unit;
 		}
+	}
+
+	std::string messageName(uint8_t message)
+	{
+		if (message == MpeSetup::g_pitchBend)
+			return "pitchBend";
+		if (message == MpeSetup::g_aftertouch)
+			return "aftertouch";
+		return "cc" + std::to_string(message);
+	}
+
+	std::optional<uint8_t> messageNamed(const std::string& name)
+	{
+		if (name == "pitchBend")
+			return MpeSetup::g_pitchBend;
+		if (name == "aftertouch")
+			return MpeSetup::g_aftertouch;
+		if (name.size() < 3 || name.size() > 5 || name.compare(0, 2, "cc") != 0 ||
+			!std::all_of(name.begin() + 2, name.end(), [](char c) { return c >= '0' && c <= '9'; }))
+			return std::nullopt;
+		const int number = std::stoi(name.substr(2));
+		if (number > 127)
+			return std::nullopt;
+		return static_cast<uint8_t>(number);
 	}
 
 	MpeSetup MpeSetup::fromJson(const Json& json, const MpeSetup& defaults)

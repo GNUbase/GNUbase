@@ -1086,6 +1086,72 @@ TEST_CASE("range.move moves what is in the range, or copies it, in one undo step
 	CHECK_THAT(f.fails("range.move", f.range({{"position", -1}})), ContainsSubstring("before the project start"));
 }
 
+TEST_CASE("range.move onto other tracks moves each of the range's tracks by as many tracks as its top one, or copies "
+		  "it there",
+	"[unit]")
+{
+	RangeFixture f;
+	const int64_t audio2 = f.track("audio", "linear");
+	const int64_t hidden = f.track("audio", "linear"); // which the move skips, as the project window does
+	f.call("trackVisibility.set", {{"hidden", Json::array({hidden})}});
+	const int64_t midi2 = f.track("instrument");
+	const int64_t pan2 = f.lane(audio2, {{"type", "pan"}}, {{0, 0.0}});
+	const auto points = [&f](int64_t laneId)
+	{
+		Points result;
+		const Json lanes = f.call("automationLane.list");
+		for (const Json& lane : lanes.at("lanes"))
+			if (lane.at("id") == laneId)
+				for (const Json& point : lane.at("points"))
+					result.emplace_back(point.at("position").get<int64_t>(), point.at("value").get<double>());
+		return result;
+	};
+	const auto state = [&]
+	{
+		return std::make_tuple(
+			f.spans(f.audioTrack), f.spans(f.midiTrack), f.spans(audio2), f.spans(midi2), points(f.pan), points(pan2));
+	};
+	const auto before = state();
+
+	// Onto the two tracks below: what lies in the range goes there as range.cut and range.paste onto track put it,
+	// the automation too, and keeps its ids, in one undo step.
+	const size_t steps = f.steps();
+	const Json moved = f.call("range.move", f.range({{"position", 5 * g_second}, {"track", audio2}})).at("events");
+	REQUIRE(moved.size() == 2);
+	CHECK(f.audio(moved[0]).at("track") == audio2);
+	CHECK(f.midi(moved[1]).at("track") == midi2);
+	CHECK(f.spans(audio2) == Spans{{5 * g_second, (11 * g_second) / 2}});
+	CHECK(f.spans(midi2) == Spans{{5 * g_second, 6 * g_second}});
+	CHECK(f.steps() == steps + 1);
+	const auto movedState = state();
+	f.call("history.undo");
+	REQUIRE(state() == before);
+	f.call("range.cut", f.range());
+	f.call("range.paste", {{"position", 5 * g_second}, {"track", audio2}});
+	CHECK(state() == movedState);
+	f.call("history.undo");
+	f.call("history.undo");
+	REQUIRE(state() == before);
+
+	// With copy the range stays and a copy goes there.
+	f.call("range.move", f.range({{"position", 0}, {"track", audio2}, {"copy", true}}));
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}});
+	CHECK(f.spans(audio2) == Spans{{0, g_second / 2}});
+	CHECK(f.spans(midi2) == Spans{{0, g_second}});
+	f.call("history.undo");
+
+	// The tracks there must take the events, and there must be as many: a refused move changes nothing.
+	CHECK_THAT(
+		f.fails("range.move", f.range({{"position", 0}, {"track", f.midiTrack}})), ContainsSubstring("audio track"));
+	CHECK_THAT(f.fails("range.move", f.range({{"position", 0}, {"track", midi2}})), ContainsSubstring("enough tracks"));
+	CHECK_THAT(f.fails("range.move", f.range({{"position", 0}, {"track", 999}})), ContainsSubstring("no track"));
+	CHECK(state() == before);
+
+	// Shown, the track below audio2 is that audio track.
+	f.call("trackVisibility.set", {{"hidden", Json::array()}});
+	CHECK_THAT(f.fails("range.move", f.range({{"position", 0}, {"track", audio2}})), ContainsSubstring("MIDI parts"));
+}
+
 TEST_CASE("range.move onto its own range takes the automation out before it puts it back", "[unit]")
 {
 	RangeFixture f;
@@ -1742,7 +1808,7 @@ TEST_CASE(
 	const int64_t audio2 = f.track("audio", "linear");
 	const int64_t hidden = f.track("midi");
 	const int64_t midi2 = f.track("midi");
-	f.call("trackVisibility.set", {{"hidden", {hidden}}});
+	f.call("trackVisibility.set", {{"hidden", Json::array({hidden})}});
 	f.call("range.copy", f.range());
 	f.call("range.paste", {{"position", 0}, {"track", audio2}});
 	CHECK(f.spans(audio2) == Spans{{0, g_second / 2}});

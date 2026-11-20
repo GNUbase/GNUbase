@@ -159,13 +159,31 @@ namespace gnubase::ui
 			};
 		setToolModifiers(Json::object());
 
+		// A step that changed only channels, such as each step of a fader drag, needs no read (#1881): the display
+		// takes their channel.changed into its project, for the views that show it (the track list, the inspector),
+		// shows the toolbar's state buttons again and asks again for the automation targets whose static values the
+		// channels may have changed.
 		for (const char* event : {"history.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event,
-				[this](const engine::Event&)
+				[this](const engine::Event& changed)
 				{
+					const std::vector<engine::Event> channels = m_channelSteps.settle(changed);
+					if (changedOnly(changed, {"channel.changed"}))
+					{
+						for (const engine::Event& channel : channels)
+							takeChannel(channel);
+						if (!channels.empty())
+						{
+							showStates(m_project); // the toolbar's mute, solo and listen buttons
+							requestChangedTargets();
+						}
+						return;
+					}
 					requestProject();
 					requestMarkers();
 				}));
+		m_subscriptions.push_back(
+			m_binding.on("channel.changed", [this](const engine::Event& event) { m_channelSteps.keep(event); }));
 		// A dialog for the old project's events or parts closes: OK would act on whatever has those ids in the new
 		// project (#1586).
 		m_subscriptions.push_back(m_binding.on("project.reset",
@@ -390,7 +408,25 @@ namespace gnubase::ui
 		return (x - element.GetAbsoluteLeft()) / dpRatio();
 	}
 
-	// ponytail: reads the whole project after every change; read only what the events name if large projects lag.
+	void EventDisplay::takeChannel(const engine::Event& channelChanged)
+	{
+		Json before;
+		const Json* after = ui::takeChannel(m_project, channelChanged, &before);
+		if (after == nullptr)
+			return;
+		++m_loads;
+		// A read that is out may come from before a step that came before this channel: the project isn't as new as
+		// this channel until it is in.
+		if (!m_loading)
+			m_read = m_binding.handed();
+		// The track lanes show nothing of a channel, the track list's controls may; the automation lanes' static values
+		// come from their targets (requestChangedTargets).
+		if (m_layoutListener && !levelsOnly(before, *after))
+			m_layoutListener();
+	}
+
+	// ponytail: reads the whole project after every change but the channels' (#1881); read only what the events name
+	// if large projects lag.
 	void EventDisplay::requestProject()
 	{
 		if (m_loading)
@@ -409,6 +445,7 @@ namespace gnubase::ui
 				{
 					m_project = result.value;
 					++m_loads;
+					++m_answers;
 					m_read = m_binding.handed();
 					// Settings, not undo steps: only a fresh answer has them, not m_project shown again later.
 					takeSnap(m_project.at("snap"));
@@ -1536,14 +1573,14 @@ namespace gnubase::ui
 
 	void EventDisplay::mouseDown(Rml::Event& event, Rml::Element& target)
 	{
-		// A drag of edges whose release the display didn't see (#732), or of a range's contents, which puts the range
-		// back.
+		// A drag whose release the display didn't see (#732): of events' edges, or of a range's contents or edges,
+		// which puts the range back.
 		if (!m_resizeWanted.is_null())
 		{
 			endResize();
 			showProject();
 		}
-		if (m_drag == Drag::RangeMove)
+		if (m_drag == Drag::RangeMove || m_drag == Drag::RangeEdge)
 			setRange(m_dragRange);
 		const auto x = event.GetParameter<float>("mouse_x", 0.0F);
 		const auto y = event.GetParameter<float>("mouse_y", 0.0F);
@@ -1648,6 +1685,7 @@ namespace gnubase::ui
 		case Drag::Rectangle:
 		case Drag::Range:
 		case Drag::RangeMove:
+		case Drag::RangeEdge:
 		case Drag::DrawPart:
 		case Drag::Comp:
 		case Drag::Play:

@@ -168,7 +168,7 @@
 		<div id="left-zone" zone="left" focuszone="left" size="240" default="hidden"/>
 		<splitter for="left"/>
 		<div class="zone-column">
-			<div id="main-zone" zone="main" focuszone="project">
+			<div id="main-zone" zone="main" focuszone="project" maincontrol=".track-list listview">
 				<div id="track-list" class="track-list" contextmenu="track-list-menu" resizable="trackList" size="280">
 					<!-- The global track controls (reference manual p. 67) -->
 					<div class="track-list-header">

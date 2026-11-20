@@ -10,10 +10,12 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -23,6 +25,60 @@
 namespace gnubase::ui
 {
 	class EngineBinding;
+
+	// Whether a history.changed announces a change that is all in events of these names: the engine names the events
+	// of a command's step ("events"), and a view that follows them itself, or shows nothing that they change, needn't
+	// read the project again, e.g. for each step of a fader drag (#1881). False for undo, redo and the history's other
+	// changes, which name none.
+	bool changedOnly(const engine::Event& historyChanged, std::initializer_list<std::string_view> names);
+
+	// Puts the channel that a channel.changed brings into a project as project.get returned it, in place of the one
+	// with its id: project.get shows channels the same way. Returns the channel's place in the project's channels, or
+	// null if it has none of that id, e.g. a project read before the channel was added. A view that keeps the project
+	// follows the channels' changes so, without reading the project again (changedOnly). With before, the channel as
+	// the project had it goes there.
+	engine::Json* takeChannel(
+		engine::Json& project, const engine::Event& channelChanged, engine::Json* before = nullptr);
+
+	// The channel.changed of a step, kept until the step's history.changed tells whether it changed only channels
+	// (#1881). Only then may a view put them into the project it read: a step that changed more is read again, and its
+	// channels alone could name what the project doesn't have yet, such as the new channel of a track.add that routes
+	// the selected tracks into it, which a routing list would show as none and send back.
+	class ChannelSteps
+	{
+	public:
+		void keep(const engine::Event& channelChanged) { m_kept.push_back(channelChanged); }
+		// Of a history.changed or project.reset: the kept channel.changed, in the order they came, if the step changed
+		// only channels (changedOnly); none otherwise. Either way they go.
+		std::vector<engine::Event> settle(const engine::Event& changed);
+
+	private:
+		std::vector<engine::Event> m_kept;
+	};
+
+	// Whether a channel changed only in its levels or sends (volume, pan, MIDI volume and pan, sends), as each step of
+	// a fader, panner or send drag changes it (#1881). False if either isn't a channel.
+	bool levelsOnly(const engine::Json& before, const engine::Json& after);
+
+	// For a view that shows no channel, but what comes from channels: the pool shows which clips the sampler tracks
+	// and drum pads play, a drum editor which pitches the drum pads play. It keeps each step's channel.changed and
+	// the channels as they were, and tells at the step's history.changed whether the step changed only channels, and
+	// of them only levels and sends (#1881). The view needn't ask again then, also not during a drag; after any other
+	// channel-only step, such as Reset Pad, it does. A channel it hasn't seen in a channel.changed or a project read
+	// counts as changed.
+	class LevelSteps
+	{
+	public:
+		void keep(const engine::Event& channelChanged) { m_kept.push_back(channelChanged); }
+		// The channels of a project.get answer.
+		void read(const engine::Json& project);
+		// Of a history.changed or project.reset.
+		bool levelsOnly(const engine::Event& changed);
+
+	private:
+		std::vector<engine::Event> m_kept;
+		std::map<uint64_t, engine::Json> m_channels; // as the last channel.changed of each brought it
+	};
 
 	// A handler that the binding calls while the subscription exists. Subscriptions must not outlive their binding.
 	class Subscription
@@ -116,8 +172,10 @@ namespace gnubase::ui
 		uint64_t handed() const { return m_handed; }
 
 		// Whether the control that sends the steps of what is ahead of the engine's answer that update() handed on as
-		// handed() returned read: a step of it is on its way, or the last one that the engine took was answered after
-		// that answer. A refused step changes nothing, so it doesn't count. Once what's last step is answered and a
+		// handed() returned read: a step of it is on its way, or the engine announced the last one that it took after
+		// that answer, with its first event (with its answer if it announced none), so that a view that takes the
+		// step's events into what it shows, e.g. channel.changed, isn't ahead of the step (#1881). A refused step
+		// changes nothing, so it doesn't count. Once what's last step is answered and a
 		// project read (project.get) answered after it was handed on, such as the one after its history.changed, and no
 		// other is out, its record goes away in the next update(), so it is ahead of no answer from then on; a failed
 		// read doesn't count. So records go only while some view reads the project, as the event display does: a
@@ -225,7 +283,11 @@ namespace gnubase::ui
 		{
 			std::deque<std::function<void(const engine::Result&)>> inFlight;
 			std::deque<Step> waiting;
-			uint64_t taken = 0; // m_handed when its result was handed on
+			// The newest step in flight and m_handed when its first event was handed on, 0 before.
+			engine::RequestId request = 0;
+			uint64_t announced = 0;
+			uint64_t taken =
+				0; // when the engine took the last step: announced, or m_handed at its result without events
 			engine::Json shown; // sendStep's, merged
 		};
 

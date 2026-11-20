@@ -407,6 +407,10 @@
 	{
 		decorator: svg(meter-peak.svg);
 	}
+	meter[rms] .meter-level
+	{
+		opacity: 0.4;
+	}
 	.tree-toggle
 	{
 		decorator: svg(dropdown-arrow.svg);

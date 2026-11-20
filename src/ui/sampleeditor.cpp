@@ -240,8 +240,10 @@ namespace gnubase::ui
 
 		for (const char* event : {"history.changed", "project.reset", "snap.changed"})
 			m_subscriptions.push_back(m_binding.on(event,
-				[this, reset = std::string(event) == "project.reset"](const engine::Event&)
+				[this, reset = std::string(event) == "project.reset"](const engine::Event& changed)
 				{
+					if (changedOnly(changed, {"channel.changed"}))
+						return; // a step that changed only channels, which it doesn't show (#1881)
 					requestProject();
 					if (reset)
 						requestView(); // a new project closes the editor

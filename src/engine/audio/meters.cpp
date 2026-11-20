@@ -336,6 +336,13 @@ namespace gnubase::engine
 			m_resetsSeen = resets;
 			clear();
 		}
+		const uint32_t holdResets = m_holdResets.load(std::memory_order_acquire);
+		const bool afterHoldReset = holdResets != m_holdResetsSeen;
+		if (afterHoldReset)
+		{
+			m_holdResetsSeen = holdResets;
+			m_truePeakHold.fill(0.0f);
+		}
 		// Playback stopped within a step: what played of it counts, unless a reset came since.
 		if (m_wasMeasuring && !measuring && !afterReset)
 			stop();
@@ -346,7 +353,9 @@ namespace gnubase::engine
 			{
 				m_windowTruePeak[c] = 0.0f;
 				m_truePeakMax[c] = 0.0f;
+				m_truePeakHold[c] = 0.0f;
 				m_truePeak[c].store(0.0f, std::memory_order_relaxed);
+				m_publishedTruePeakHold[c].store(0.0f, std::memory_order_relaxed);
 				m_frameTruePeak[c].store(0.0f, std::memory_order_relaxed);
 				m_publishedTruePeakMax[c].store(0.0f, std::memory_order_relaxed);
 			}
@@ -415,8 +424,17 @@ namespace gnubase::engine
 			if (++m_stepFrames == m_stepLength)
 				step(measuring);
 		}
+		// The hold before the frame's held true peak, and after a reset of the hold replacing it, as the level meter's
+		// peakMax and frame peak (LevelMeter::process).
 		for (size_t c = 0; c < static_cast<size_t>(channels); ++c)
-			raise(m_frameTruePeak[c], blockTruePeak[c]);
+		{
+			m_truePeakHold[c] = std::max(m_truePeakHold[c], blockTruePeak[c]);
+			m_publishedTruePeakHold[c].store(m_truePeakHold[c], std::memory_order_relaxed);
+			if (afterHoldReset)
+				m_frameTruePeak[c].store(blockTruePeak[c], std::memory_order_release);
+			else
+				raise(m_frameTruePeak[c], blockTruePeak[c]);
+		}
 	}
 
 	void LoudnessMeter::step(bool measuring) noexcept
@@ -556,16 +574,29 @@ namespace gnubase::engine
 		{
 			reading.truePeak[c] = m_truePeak[c].load(std::memory_order_relaxed);
 			reading.truePeakMax[c] = m_publishedTruePeakMax[c].load(std::memory_order_relaxed);
+			reading.truePeakHold[c] = m_publishedTruePeakHold[c].load(std::memory_order_relaxed);
 		}
 		return reading;
 	}
 
 	LoudnessReading LoudnessMeter::readFrame() noexcept
 	{
+		// The true peaks first, then the hold that limits them, as LevelMeter::readFrame.
+		std::array<float, g_maxMeterChannels> peaks{};
+		for (size_t c = 0; c < peaks.size(); ++c)
+			peaks[c] = m_frameTruePeak[c].exchange(0.0f, std::memory_order_acquire);
 		LoudnessReading reading = read();
 		for (size_t c = 0; c < static_cast<size_t>(reading.channels); ++c)
-			reading.truePeak[c] = m_frameTruePeak[c].exchange(0.0f, std::memory_order_acquire);
+			reading.truePeak[c] = std::min(peaks[c], reading.truePeakHold[c]);
 		return reading;
+	}
+
+	void LoudnessMeter::resetTruePeakHold() noexcept
+	{
+		// The audio thread clears its own at its next block, as LevelMeter::reset.
+		for (std::atomic<float>& peak : m_publishedTruePeakHold)
+			peak.store(0.0f, std::memory_order_relaxed);
+		m_holdResets.fetch_add(1, std::memory_order_release);
 	}
 
 	void LoudnessMeter::reset() noexcept

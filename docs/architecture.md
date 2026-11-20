@@ -41,6 +41,7 @@ flowchart LR
 - **gnubase** is the application: the engine, the UI (left out with `--headless`), the MCP server and the Lua runtime.
 - **gnubase-pluginhost** runs third-party plugins. How plugins are grouped into host processes is a user setting: all in one, per vendor (the default until #76 measures), per plugin or per instance, with an override per plugin. There is no in-process mode (#64). Variants for 32-bit plugins (Windows, Linux) and for x86-64 plugins on Apple Silicon (Rosetta) and Windows ARM64 (emulation) speak the same protocol (#151, #152, #153).
 - **Plugin scanning** uses the host binary in scan mode: one short-lived process per plugin file, with a timeout. A crash only blocklists that plugin (#66).
+- **gnubase-crashdump** (Windows) is started by every GNUbase process that keeps a log, waits for it to crash and writes its minidump from outside ([crash reports](features/crash-reports.md)).
 - When a host process crashes or misses its deadline, its plugins output silence, the UI is told, and the plugins can be reloaded with their last state (#65). GNUbase keeps running.
 
 ## Modules
@@ -108,7 +109,7 @@ Data moves between threads only through:
 - Every process (the app, each plugin host) writes its own log file in the per-user log folder, through a `logging::Session` created in `main`. The previous run's file is kept as `<name>.previous.log` (#8).
 - Audio threads log without allocating or locking: the message and its strings are copied into a lock-free queue, and the log writer thread writes them. If the queue is full, messages are dropped and the number is logged.
 - `GNUBASE_ASSERT` checks in every build: a failure is logged, and debug builds stop there. `GNUBASE_ASSERT_REALTIME` marks code that must run on an audio thread; `rt::assertNotRealtime` marks code that must not.
-- A crash adds a backtrace to the log (macOS, Linux) or writes a minidump next to it (Windows).
+- A crash adds a backtrace to the log (macOS, Linux) or writes a minidump next to it (Windows), from a helper process ([crash reports](features/crash-reports.md)).
 
 ## Engine API
 
