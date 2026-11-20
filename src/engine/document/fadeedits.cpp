@@ -617,9 +617,10 @@ namespace gnubase::engine
 				"that the range covers, both when the range is inside it; a crossfade that plays where its events "
 				"overlap within the range instead gets its fade in up to the range's end and its fade out from the "
 				"range's start, and its events' own fades stay. Shapes stay; a fade that no longer fits next to the "
-				"one set gets shorter. crossfade (Crossfade): the events that cross the range, as event.crossfade "
-				"does it with them. remove (Remove Fades): the crossfades that play within the range. Returns the "
-				"events changed, for crossfade and remove those that fade in.",
+				"one set gets shorter. crossfade (Crossfade): the events on the tracks where the range touches their "
+				"overlap, as event.crossfade does it with them, with the crossfades fitted to the range as adjust "
+				"does it; a range that touches no overlap is refused. remove (Remove Fades): the crossfades that play "
+				"within the range. Returns the events changed, for crossfade and remove those that fade in.",
 				object({{"start", integer}, {"end", integer}, {"tracks", ids},
 						   {"fade", {{"type", "string"}, {"enum", {"in", "out", "adjust", "crossfade", "remove"}}}}},
 					{"start", "end", "fade"}),
