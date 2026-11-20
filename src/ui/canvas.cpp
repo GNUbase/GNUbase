@@ -182,6 +182,7 @@ namespace gnubase::ui
 			.AddParser("keyword", "none")
 			.AddParser("color");
 		Rml::StyleSheetSpecification::RegisterProperty("event-inset", "0px", false).AddParser("length");
+		Rml::StyleSheetSpecification::RegisterProperty("handle-size", "6dp", false).AddParser("length");
 		rmlui.registerElement<EventLanes>("event-lanes");
 		rmlui.registerElement<EventNames>("event-names");
 		rmlui.registerElement<PartContents>("part-contents");
@@ -859,7 +860,8 @@ namespace gnubase::ui
 		const double from = frame.from();
 		const double to = frame.to();
 		const double right = frame.right - frame.left;
-		const double handleSize = std::round(6.0 * frame.dpRatio);
+		const Rml::Property* size = GetProperty("handle-size");
+		const double handleSize = size == nullptr ? 0.0 : std::round(ResolveLength(size->GetNumericValue()));
 		Rml::Mesh mesh;
 		double top = 0.0; // dp
 		for (const Lane& lane : m_lanes)

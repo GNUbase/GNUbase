@@ -353,10 +353,9 @@ namespace gnubase::engine
 							defaultExpression(initial.at(i)).value_or(0.0)});
 		}
 
-		// An audio part's event plays only within the part (#471): cut at its edges, where its fades are cut short. A
-		// muted part's events, and those it hides, don't play. Returns whether the event plays.
-		// ponytail: a fade cut by the part restarts from its beginning over what is left of it; a part that cuts its
-		// events this way doesn't keep their crossfades.
+		// An audio part's event plays only within the part (#471): cut at its edges, where its fades play on up to the
+		// cut. A muted part's events, and those it hides, don't play. Returns whether the event plays.
+		// ponytail: a part that cuts an event's start drops its crossfade.
 		bool inPart(const Project& project, const AudioPart& part, double ratio, RenderAudioEvent& event)
 		{
 			if (part.mute)
@@ -371,7 +370,7 @@ namespace gnubase::engine
 				event.start = start;
 				event.offset += cut;
 				event.length -= cut;
-				event.fadeIn.length = std::max<time::Samples>(0, event.fadeIn.length - cut);
+				event.cutStart = cut;
 				event.crossfade = Crossfade();
 			}
 			const time::Samples eventEnd =
@@ -379,7 +378,7 @@ namespace gnubase::engine
 			if (const time::Samples cut = frames(eventEnd - end); cut > 0)
 			{
 				event.length -= cut;
-				event.fadeOut.length = std::max<time::Samples>(0, event.fadeOut.length - cut);
+				event.cutEnd = cut;
 			}
 			return event.length > 0;
 		}
@@ -904,7 +903,7 @@ namespace gnubase::engine
 				event.length, static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute, event.fadeIn,
 				event.fadeOut, clip.fadeIn, clip.fadeOut,
 				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve),
-				frontOf(event), event.rank, 0, 0};
+				frontOf(event), event.rank, 0, 0, 0, 0};
 			if (warped(clip) || mayShift(project, event))
 			{
 				// An event that plays as it is maps its clip's frames from its offset onto its own.

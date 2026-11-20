@@ -571,13 +571,14 @@ namespace gnubase::ui
 			{"edit.nudgeEndLeft", nudge("end", -1)},
 			{"edit.nudgeEndRight", nudge("end", 1)},
 			{"edit.snap", [this] { setSnap({{"on", !m_snap.on}}); }},
-			// Snap Point to Cursor (reference manual p. 105): the selected audio events that the cursor is in.
+			// Snap Point to Cursor (reference manual p. 105): the selected audio events that the cursor is in, not
+			// audio parts, which have no snap point.
 			{"edit.snapPointToCursor",
 				[this]
 				{
 					std::vector<uint64_t> events;
 					for (const Shown& shown : m_events)
-						if (m_laneTypes[shown.lane] == "audio" && shown.start <= m_cursor && m_cursor < shown.end &&
+						if (m_fades.count(shown.id) != 0 && shown.start <= m_cursor && m_cursor < shown.end &&
 							std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
 							events.push_back(shown.id);
 					if (!events.empty())

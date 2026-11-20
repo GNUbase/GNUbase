@@ -685,7 +685,8 @@ namespace gnubase::ui
 		};
 		void addFadeActions();
 		void readFades(const engine::Json& event, double rate, double timeRate);
-		// The fade handle of the event at x and y dp in the event lanes: -1 its fade in's, 1 its fade out's, 0 none.
+		// The fade handle at x and y dp in the event lanes, of a selected event (only those have handles): -1 its
+		// fade in's, 1 its fade out's, 0 none.
 		int fadeHandleAt(const Shown& shown, double x, double y) const;
 		// Starts dragging a fade handle when x and y dp in the event lanes are at one of the pressed event's.
 		bool fadeDown(const Shown& shown, double x, double y);
@@ -695,7 +696,8 @@ namespace gnubase::ui
 		void showFades(); // the fade lines and the selected audio events' handles
 		// A double click on an event at seconds: in a crossfade's zone, opens the crossfade editor.
 		bool openCrossfadeAt(const Shown& shown, double seconds); // whether there is one
-		// The crossfade editor of the first crossfade into or out of a selected audio event; whether there is one.
+		// The crossfade editor of a crossfade that plays between two of the selected audio events, or into or out of
+		// the only selected one; whether there is one.
 		bool openSelectedCrossfade();
 		// The selected audio events, by id.
 		std::vector<uint64_t> selectedAudio() const;
