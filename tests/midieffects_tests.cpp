@@ -342,6 +342,39 @@ TEST_CASE("a MIDI track routed away from an instrument ends the notes its effect
 	CHECK(track.captured() == "10 90 3c 64\n10 90 40 64\n10 90 43 64\n64 80 3c 00\n64 80 40 00\n64 80 43 00\n");
 }
 
+TEST_CASE("merging with Include Inserts and Include Sends plays what the track's MIDI effects played", "[integration]")
+{
+	// The effects run in time: an arpeggio, a chord for each of its notes, and a send an octave higher.
+	const auto setUp = [](EffectTrack& track)
+	{
+		track.add({{0, 1, 60, 100}, {0, 1, 64, 90}, {2, 1.5, 67, 80}});
+		track.set("midiInserts",
+			{{"slots",
+				{slot("arpeggiator", {{"mode", "Up/Down"}, {"rate", "1/8"}, {"gate", 30}}),
+					slot("chordGenerator", {{"chord", "Power"}})}}});
+		track.set("midiSends", {{"slots", {slot("transformer", {{"action", "Transpose"}, {"value", 12}})}}});
+	};
+	EffectTrack played;
+	setUp(played);
+	run(played.client, "transport.play");
+	played.render(4 * g_beat);
+	const std::string expected = played.captured();
+	REQUIRE(!expected.empty());
+
+	// Merged onto a new MIDI track that plays into the instrument, whose own effects don't apply to it, with the
+	// track's part muted.
+	EffectTrack merged;
+	setUp(merged);
+	const Json changes = run(merged.client, "midi.merge",
+		{{"start", 0}, {"end", 4 * g_beat}, {"tracks", {merged.track}}, {"includeInserts", true},
+			{"includeSends", true}});
+	REQUIRE(changes.at("tracks").size() == 1);
+	run(merged.client, "event.set", {{"events", {merged.part}}, {"mute", true}});
+	run(merged.client, "transport.play");
+	merged.render(4 * g_beat);
+	CHECK(merged.captured() == expected);
+}
+
 TEST_CASE("the arpeggiator returns when its output is full, and ends its note once there is room", "[unit]")
 {
 	using namespace gnubase::engine::graph;

@@ -3,12 +3,15 @@
 
 #include "engine/document/chordtrack.h"
 #include "engine/document/rendersnapshot.h"
+#include "engine/graph/graph.h"
 #include "engine/midi/articulationmaps.h"
 #include "engine/midi/chords.h"
+#include "engine/midi/controllerlanes.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/patterns.h"
 #include "engine/midi/trackchannel.h"
+#include "engine/processors/midieffects.h"
 
 #include <algorithm>
 #include <array>
@@ -16,10 +19,12 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace gnubase::engine::midi
 {
@@ -1061,6 +1066,124 @@ namespace gnubase::engine::midi
 			}
 			return combined;
 		}
+
+		// A note as a track's sequencer plays it into its MIDI effects, in project samples.
+		struct PlayedNote
+		{
+			time::Samples start = 0;
+			time::Samples end = 0;
+			uint8_t channel = 0;
+			uint8_t pitch = 0;
+			uint16_t velocity = 0;
+		};
+
+		// The slots of a MIDI insert or send section whose effects play a track's parts, in order, as the sequencer
+		// takes them: none while the section is bypassed, and of the inserts only those below the divider, as those
+		// above play the track's input alone.
+		std::vector<const EffectSlot*> playingEffects(const EffectRack& rack, bool inserts)
+		{
+			std::vector<const EffectSlot*> slots;
+			for (size_t number = inserts ? rack.divider : 0; !rack.bypass && number < rack.slots.size(); ++number)
+				if (rack.slots[number].on && processors::findMidiEffect(rack.slots[number].effect) != nullptr)
+					slots.push_back(&rack.slots[number]);
+			return slots;
+		}
+
+		// Plays notes through MIDI effects, each playing what the one before it played, as a track's sequencer runs
+		// them from the first note on, with the slots' values and the project's tempo map. Offline, in blocks of a
+		// fixed size, so that the same notes give the same result every time (rule 6); the effects play the same for
+		// every block size anyway. A note-on of a channel and pitch that sounds already ends the note there.
+		std::vector<PlayedNote> runEffects(
+			const Project& project, const std::vector<const EffectSlot*>& chain, const std::vector<PlayedNote>& notes)
+		{
+			using Type = graph::ProcessEvent::Type;
+			constexpr uint32_t block = 256;
+			if (chain.empty() || notes.empty())
+				return notes;
+			struct Timed
+			{
+				time::Samples at;
+				graph::ProcessEvent event;
+			};
+			std::vector<Timed> in;
+			in.reserve(2 * notes.size());
+			for (const PlayedNote& note : notes)
+			{
+				graph::ProcessEvent event;
+				event.type = Type::NoteOn;
+				event.channel = note.channel;
+				event.key = note.pitch;
+				event.velocity = note.velocity;
+				in.push_back({note.start, event});
+				event.type = Type::NoteOff;
+				event.velocity = 0;
+				in.push_back({note.end, event});
+			}
+			// Note-offs before note-ons at the same sample, as the sequencer sends them.
+			std::stable_sort(in.begin(), in.end(),
+				[](const Timed& a, const Timed& b)
+				{
+					return std::make_pair(a.at, a.event.type != Type::NoteOff) <
+						std::make_pair(b.at, b.event.type != Type::NoteOff);
+				});
+			std::vector<std::shared_ptr<processors::MidiEffect>> effects;
+			for (const EffectSlot* slot : chain)
+			{
+				effects.push_back(processors::createMidiEffect(slot->effect));
+				effects.back()->prepareFor(project.sampleRate, block);
+				for (size_t parameter = 0; parameter < slot->parameters.size(); ++parameter)
+					effects.back()->setParameter(static_cast<uint32_t>(parameter), slot->parameters[parameter]);
+			}
+			std::vector<graph::EventBuffer> buffers;
+			for (size_t i = 0; i <= effects.size(); ++i)
+				buffers.emplace_back(graph::g_maxEventsPerBlock);
+			std::vector<PlayedNote> played;
+			std::array<size_t, size_t{16} * 128> sounding{}; // per channel and pitch, 1 + its note in played, or 0
+			size_t next = 0;
+			for (time::Samples at = in.front().at; at <= in.back().at; at += block)
+			{
+				buffers[0].clear();
+				for (; next < in.size() && in[next].at < at + block; ++next)
+				{
+					graph::ProcessEvent event = in[next].event;
+					event.offset = static_cast<uint32_t>(in[next].at - at);
+					// As the graph's buffers do, a full one keeps the note-offs.
+					if (event.type == Type::NoteOff)
+						buffers[0].addEnd(event);
+					else
+						buffers[0].add(event);
+				}
+				const graph::TransportSegment segment{0, block, at, false};
+				graph::TransportBlock transport;
+				transport.playing = true;
+				transport.position = at;
+				transport.segments = &segment;
+				transport.segmentCount = 1;
+				transport.tempo = project.tempo.bpmAt(project.tempo.toTicks(at, project.sampleRate));
+				transport.tempoMap = &project.tempo;
+				for (size_t i = 0; i < effects.size(); ++i)
+				{
+					buffers[i + 1].clear();
+					effects[i]->process({nullptr, 0, block, buffers[i], buffers[i + 1], transport});
+				}
+				for (const graph::ProcessEvent& event : buffers.back())
+				{
+					size_t& note = sounding[((event.channel % 16) * 128) + (event.key % 128)];
+					const time::Samples sample = at + event.offset;
+					if ((event.type == Type::NoteOn || event.type == Type::NoteOff) && note != 0)
+					{
+						played[note - 1].end = sample;
+						note = 0;
+					}
+					if (event.type == Type::NoteOn)
+					{
+						played.push_back({sample, sample, event.channel, event.key, event.velocity});
+						note = played.size();
+					}
+				}
+			}
+			return played;
+		}
 	}
 
 	std::vector<ObjectId> playingTracks(const Project& project)
@@ -1138,8 +1261,32 @@ namespace gnubase::engine::midi
 		const TrackPitches destinationPitches(project, settings.destination); // a new track maps nothing
 		const auto merged = [&](const MidiPart& part)
 		{ return !part.mute && std::find(tracks.begin(), tracks.end(), part.track) != tracks.end(); };
-		for (const auto& [id, part] : project.midiParts)
+		// The MIDI effects that play into the merged part, by track (#954, p. 1120): with Include Inserts the inserts,
+		// with Include Sends the sends, which play the notes before the modifiers and the inserts with Pre, the notes
+		// without the modifiers then in unmodified.
+		struct TrackEffects
 		{
+			std::vector<const EffectSlot*> inserts;
+			std::vector<const EffectSlot*> sends;
+			bool pre = false;
+		};
+		std::map<ObjectId, TrackEffects> effects;
+		for (const ObjectId track : tracks)
+		{
+			const Channel& channel = project.channels.at(project.trackById.at(track).channel);
+			TrackEffects playing;
+			if (settings.includeInserts)
+				playing.inserts = playingEffects(channel.midiInserts, true);
+			if (settings.includeSends)
+				playing.sends = playingEffects(channel.midiSends, false);
+			playing.pre = channel.midiSends.pre;
+			if (!playing.inserts.empty() || !playing.sends.empty())
+				effects[track] = std::move(playing);
+		}
+		std::vector<Candidate> unmodified;
+		for (const auto& [id, partOfId] : project.midiParts)
+		{
+			const MidiPart& part = partOfId; // for the lambda below, which can't capture a structured binding
 			if (!merged(part))
 				continue;
 			const Ticks partFrom = partStart(project, part);
@@ -1173,26 +1320,38 @@ namespace gnubase::engine::midi
 						groupEvents.push_back({partFrom, false, group, reset});
 					}
 				}
-			for (const auto& [noteId, note] : playedNotes(project, part))
+			// The notes as playback plays them with the modifiers given.
+			const auto collect = [&](const Modifiers& with, std::vector<Candidate>& into)
 			{
-				if (partFrom + note.position >= partTo || sourcePitches.silent(note.pitch))
-					continue;
-				const uint64_t seed = noteSeed(part.id, noteId);
-				Note copy = note;
-				copy.pitch = static_cast<uint8_t>(sourcePitches.played(note.pitch, partFrom + note.position));
-				// On the channel it plays on: its drum sound's, else its track's, else its own.
-				copy.channel = sourcePitches.channel(
-					note.pitch, static_cast<uint8_t>(sourcePitches.trackChannel().value_or(note.channel)));
-				// A note moved before its part's start, or the project's, starts there, with its length.
-				const Ticks moved = note.position + randomOffset(modifiers, RandomTarget::Position, seed);
-				const Ticks at = partFrom + std::max({moved, Ticks{0}, -partFrom});
-				if (at >= partTo || !inRange(at))
-					continue;
-				const Ticks length = note.length > 0 ? modifyLength(modifiers, seed, note.length) : 0;
-				copy.position = at;
-				copy.length = std::min(at + length, partTo) - at;
-				candidates.push_back(
-					{copy, seed, modifiers, &part, partFrom + note.position, note.pitch, note.channel});
+				for (const auto& [noteId, note] : playedNotes(project, part))
+				{
+					if (partFrom + note.position >= partTo || sourcePitches.silent(note.pitch))
+						continue;
+					const uint64_t seed = noteSeed(part.id, noteId);
+					Note copy = note;
+					copy.pitch = static_cast<uint8_t>(sourcePitches.played(note.pitch, partFrom + note.position));
+					// On the channel it plays on: its drum sound's, else its track's, else its own.
+					copy.channel = sourcePitches.channel(
+						note.pitch, static_cast<uint8_t>(sourcePitches.trackChannel().value_or(note.channel)));
+					// A note moved before its part's start, or the project's, starts there, with its length.
+					const Ticks moved = note.position + randomOffset(with, RandomTarget::Position, seed);
+					const Ticks at = partFrom + std::max({moved, Ticks{0}, -partFrom});
+					if (at >= partTo || !inRange(at))
+						continue;
+					const Ticks length = note.length > 0 ? modifyLength(with, seed, note.length) : 0;
+					copy.position = at;
+					copy.length = std::min(at + length, partTo) - at;
+					into.push_back({copy, seed, with, &part, partFrom + note.position, note.pitch, note.channel});
+				}
+			};
+			collect(modifiers, candidates);
+			const auto playing = effects.find(part.track);
+			if (settings.includeInserts && playing != effects.end() && playing->second.pre &&
+				!playing->second.sends.empty())
+			{
+				Modifiers partOnly;
+				partOnly.velocityShift = part.velocity;
+				collect(partOnly, unmodified);
 			}
 			for (const auto& [controllerId, controller] : part.controllers)
 			{
@@ -1344,6 +1503,8 @@ namespace gnubase::engine::midi
 		{
 			const MidiPart* source = sources[i];
 			const std::vector<const Candidate*>& own = sourceCandidates[i];
+			if (effects.count(source->track) != 0)
+				continue; // as its track's effects play them, below
 			const auto inNote = [&](const Candidate* candidate)
 			{
 				const std::pair<int, int> key{velocityToMidi1(candidate->note.velocity), source->velocity};
@@ -1394,6 +1555,78 @@ namespace gnubase::engine::midi
 			if (first == firstStart.end() || from < first->second)
 				firstStart[setting] = from;
 		}
+		// The notes of the tracks with effects as the effects play them, which make new notes of their own: as playback
+		// plays them into the effects (compilePart and the sequencer), with their play probability and velocity
+		// variance drawn, the global transposition in the pitch.
+		const auto play = [&](const Candidate& candidate, std::vector<PlayedNote>& into)
+		{
+			const MidiPart& source = *candidate.source;
+			if (candidate.note.length <= 0 || !notePlays(candidate.note, source.id))
+				return;
+			Modifiers with = candidate.modifiers;
+			with.transpose += playedAt(project, source, candidate.sourceAt);
+			uint8_t pitch = candidate.note.pitch;
+			uint16_t velocity = playedVelocity(candidate.note, source.id);
+			if (modifyNote(with, candidate.seed, pitch, velocity))
+				into.push_back(
+					{sampleOf(candidate.note.position), sampleOf(candidate.note.position + candidate.note.length),
+						candidate.note.channel, pitch, velocity});
+		};
+		for (const auto& [track, playing] : effects)
+		{
+			std::vector<PlayedNote> notes;
+			std::vector<PlayedNote> before; // for sends with Pre: without the modifiers
+			Ticks from = std::numeric_limits<Ticks>::max();
+			for (const Candidate& candidate : candidates)
+				if (candidate.source->track == track)
+				{
+					play(candidate, notes);
+					from = std::min(from, partStart(project, *candidate.source));
+				}
+			for (const Candidate& candidate : unmodified)
+				if (candidate.source->track == track)
+					play(candidate, before);
+			std::vector<PlayedNote> out = runEffects(project, playing.inserts, notes);
+			// Each send on what the inserts played, not on another send's notes; without Include Inserts nothing
+			// changed the notes before the sends.
+			const std::vector<PlayedNote> sent = !playing.pre ? out : settings.includeInserts ? before : notes;
+			for (const EffectSlot* slot : playing.sends)
+			{
+				const std::vector<PlayedNote> more = runEffects(project, {slot}, sent);
+				out.insert(out.end(), more.begin(), more.end());
+			}
+			// What starts in the range, with the new part's global transpose taken off, else on an Independent part.
+			std::vector<Note> written;
+			bool fits = true;
+			for (const PlayedNote& each : out)
+				if (each.start >= settings.start && each.start < settings.end)
+				{
+					Note note;
+					note.position = project.tempo.toTicks(each.start, project.sampleRate);
+					note.length = project.tempo.toTicks(each.end, project.sampleRate) - note.position;
+					note.pitch = each.pitch;
+					note.velocity = each.velocity;
+					note.channel = each.channel;
+					const int pitch = note.pitch - globalAt(project, newSetting, note.position);
+					fits = fits && pitch >= 0 && pitch <= 127;
+					written.push_back(note);
+				}
+			const BouncedSetting setting{0, 0, fits ? newSetting : GlobalSetting{newSetting.rootKey, true}};
+			for (Note& note : written)
+			{
+				const int pitch = note.pitch - globalAt(project, setting.global, note.position);
+				note.pitch = static_cast<uint8_t>(destinationPitches.stored(pitch, note.channel, note.position, pitch));
+				note.channel = destinationPitches.storedChannel(note.channel, note.channel, note.pitch);
+			}
+			if (written.empty())
+				continue;
+			std::vector<Note>& into = made[setting];
+			into.insert(into.end(), written.begin(), written.end());
+			const auto first = firstStart.find(setting);
+			if (first == firstStart.end() || from < first->second)
+				firstStart[setting] = from;
+		}
+
 		// The new part with the setting of the parts that need none of their own first, the others in the order of
 		// their earliest source parts, as bounce orders its parts; where nothing is merged, the first is there without
 		// notes.

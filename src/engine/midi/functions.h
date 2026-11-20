@@ -235,7 +235,8 @@ namespace gnubase::engine::midi
 		ObjectId destination = 0;     // a MIDI or instrument track; 0 adds a MIDI track
 		bool eraseDestination = false;
 		bool includeChase = false;
-		bool includeInserts = false; // also the tracks' MIDI modifiers (Include Inserts)
+		bool includeInserts = false; // also the tracks' MIDI modifiers and MIDI insert effects (Include Inserts)
+		bool includeSends = false;   // also what the tracks' MIDI send effects play (Include Sends)
 		std::string name;            // the new part's; empty: the destination track's
 	};
 
@@ -256,7 +257,12 @@ namespace gnubase::engine::midi
 	// root key and follow, and then each note the difference its part's global transposition makes transposed into
 	// it, so that it keeps the pitch it played with (#954): with includeInserts the modifiers' note ranges see the
 	// pitch that plays, with the source part's global transpose, before the new part's comes off; without it only the
-	// difference goes into the note, as the modifiers stay on the track. eraseDestination first
+	// difference goes into the note, as the modifiers stay on the track. With includeInserts the notes of a track then
+	// go through its MIDI insert effects below the divider, and with includeSends also through each of its MIDI send
+	// effects, before or after the modifiers and the inserts as their Pre says, which add what they play (p. 1120): run
+	// offline from the first note in the range on, with the slots' values and the tempo map, so that they play the same
+	// every time. The notes of such a track are written as they played, the new part's global transpose taken off,
+	// or on a part of its own that is Independent where that takes one beyond 0-127. eraseDestination first
 	// removes the destination track's parts that lie in the range and the events of other parts that start in it, a
 	// shared copy leaving its copies for that: its notes get new ids, so their play probability, velocity variance and
 	// random MIDI modifier values draw anew. includeChase adds the last controller value of every controller, program

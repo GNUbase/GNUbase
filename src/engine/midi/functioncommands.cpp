@@ -187,6 +187,7 @@ namespace gnubase::engine::midi
 			settings.eraseDestination = parameters.value("eraseDestination", false);
 			settings.includeChase = parameters.value("includeChase", false);
 			settings.includeInserts = parameters.value("includeInserts", false);
+			settings.includeSends = parameters.value("includeSends", false);
 			settings.name = parameters.value("name", std::string());
 			return announce(project, merge(project, settings), context);
 		}
@@ -558,7 +559,14 @@ namespace gnubase::engine::midi
 				"modifiers, with the random values playback draws, their note ranges on the pitch that plays, before "
 				"the new part's global transpose comes off), leaving out notes they filter out or move out of the "
 				"range; without it the modifiers stay on the track and play after the stored pitch, so only the "
-				"difference of the two global transposes goes into a note. What a part's notes can't hold stays on a "
+				"difference of the two global transposes goes into a note. includeInserts also plays the notes of each "
+				"track through its MIDI insert effects below the divider (channel.set midiInserts), and includeSends "
+				"through each of its MIDI send effects (midiSends), before the modifiers and the inserts with their "
+				"pre, "
+				"adding what they play: run from the first note in the range on, with the slots' values and the tempo "
+				"map, so that they play the same every time. Such a track's notes are written as they played, less "
+				"the new part's global transpose, or as they played in an Independent part of their own where that "
+				"takes one beyond 0-127. What a part's notes can't hold stays on a "
 				"new part of its own: a pitch that plays and that the new part's global transpose or the part's "
 				"transpose takes beyond 0-127 (with includeInserts in an Independent part as it played, without in a "
 				"part with the part's transpose and root key and Global Transpose setting, where the destination's "
@@ -585,10 +593,10 @@ namespace gnubase::engine::midi
 				"with maps share the new part's one lane, so they can't all keep their slots: one track's direction "
 				"also selects the other tracks' slots, and a reset where another track's part starts ends it." +
 					returns,
-				objectSchema(
-					{{"start", integerSchema}, {"end", integerSchema}, {"tracks", ids}, {"destination", idSchema},
-						{"eraseDestination", booleanSchema}, {"includeChase", booleanSchema},
-						{"includeInserts", booleanSchema}, {"name", {{"type", "string"}}}},
+				objectSchema({{"start", integerSchema}, {"end", integerSchema}, {"tracks", ids},
+								 {"destination", idSchema}, {"eraseDestination", booleanSchema},
+								 {"includeChase", booleanSchema}, {"includeInserts", booleanSchema},
+								 {"includeSends", booleanSchema}, {"name", {{"type", "string"}}}},
 					{"start", "end"}),
 				changesResult, false},
 			"Merge MIDI in loop", runMerge);
