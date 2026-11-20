@@ -1480,6 +1480,7 @@ namespace gnubase::engine
 		{
 			m_mainMeter.reset();
 			m_loudness.reset();
+			m_loudness.resetTruePeakHold();
 		}
 		m_meterPlaying = playing;
 		std::array<const float*, g_maxMeterChannels> channels{};

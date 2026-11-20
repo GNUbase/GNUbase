@@ -316,7 +316,7 @@ namespace gnubase::engine
 					playedChannel(note, sound, slot, trackChannel), false, 0});
 				for (const ExpressionPoint& point : note.expressions)
 				{
-					if (start + position + point.position >= noteEnd)
+					if (channel.expressionBypass || start + position + point.position >= noteEnd)
 						continue;
 					channel.expressions.push_back({toSamples(project, start + position + point.position) - early, pitch,
 						channel.notes.back().channel, point.type, point.value});
@@ -808,6 +808,7 @@ namespace gnubase::engine
 			render.midiChannel = static_cast<uint8_t>(channel.midiChannel.value_or(0));
 			render.inputChannel = static_cast<int8_t>(midi::trackMidiChannel(project, trackId).value_or(-1));
 			render.modifiers = channel.modifiers;
+			render.expressionBypass = channel.noteExpression.bypass;
 			if (const ArticulationMap* articulations = midi::articulationMapOf(project, track.id))
 				render.articulations = *articulations;
 			render.midiInserts = channel.midiInserts;
@@ -956,6 +957,7 @@ namespace gnubase::engine
 			if (!preNotes(channel))
 				continue;
 			RenderChannel unmodified;
+			unmodified.expressionBypass = channel.expressionBypass;
 			compilePart(project, id, compiled, follower(part.track), unmodified, nullptr);
 			channel.preNotes.insert(channel.preNotes.end(), unmodified.notes.begin(), unmodified.notes.end());
 			channel.preExpressions.insert(
