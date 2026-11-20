@@ -20,7 +20,9 @@
 #include <cmath>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -194,6 +196,74 @@ namespace gnubase::engine
 		}
 	}
 
+	namespace
+	{
+		void registerSliceEdits(ProjectModel& model, Engine& engine)
+		{
+			const Json ids = {{"type", "array"}, {"items", {{"type", "integer"}}}};
+			model.addEdit(engine,
+				{"event.deleteOverlaps", 1,
+					"Deletes overlaps between selected audio slices (reference manual p. 643). Within each track, "
+					"part and lane, trims each event's end to the next selected event's start, preserving its offset "
+					"and using event.resize's fade and warp handling. Equal starts keep the highest id and remove "
+					"the others. Unselected events and the last event stay as they are. Fails for locked events or "
+					"parts. One undo step; returns trimmed events and removed ids. Does not generate crossfades; "
+					"the track's automatic fades still apply.",
+					objectSchema({{"events", ids}}, {"events"}),
+					objectSchema({{"events", ids}, {"removed", ids}}, {"events", "removed"}), false},
+				"Delete overlaps",
+				[&model](Project& project, CommandContext& context)
+				{
+					std::vector<AudioEvent> events;
+					std::set<ObjectId> seen;
+					for (const Json& item : context.parameters().at("events"))
+					{
+						const ObjectId id = item.get<ObjectId>();
+						const auto found = project.audioEvents.find(id);
+						require(found != project.audioEvents.end(), "no audio event " + std::to_string(id));
+						require(seen.insert(id).second, "duplicate audio event");
+						const AudioEvent& event = found->second;
+						require(!event.lock && (event.part == 0 || !project.audioParts.at(event.part).lock),
+							"audio event or part is locked");
+						events.push_back(event);
+					}
+					require(!events.empty(), "events must not be empty");
+					const auto key = [&project](const AudioEvent& event)
+					{
+						return std::make_tuple(
+							event.track, event.part, event.lane, eventSpan(project, event).start, event.id);
+					};
+					std::sort(events.begin(), events.end(),
+						[&](const AudioEvent& a, const AudioEvent& b) { return key(a) < key(b); });
+					Json trimmed = Json::array();
+					Json removed = Json::array();
+					for (size_t i = 1; i < events.size(); ++i)
+					{
+						const AudioEvent& previous = events[i - 1];
+						const AudioEvent& next = events[i];
+						if (previous.track != next.track || previous.part != next.part || previous.lane != next.lane)
+							continue;
+						const EventSpan span = eventSpan(project, previous);
+						const auto start = eventSpan(project, next).start;
+						if (start >= span.end)
+							continue;
+						if (start == span.start)
+						{
+							model.runEdit("event.remove", project, {{"events", {previous.id}}}, context);
+							removed.push_back(previous.id);
+						}
+						else
+						{
+							model.runEdit("event.resize", project,
+								{{"events", {previous.id}}, {"edge", "end"}, {"delta", start - span.end}}, context);
+							trimmed.push_back(previous.id);
+						}
+					}
+					return Json{{"events", trimmed}, {"removed", removed}};
+				});
+		}
+	}
+
 	HitpointGroove hitpointGroove(const Project& project, const AudioEvent& event)
 	{
 		const Clip& clip = project.clips.at(event.clip);
@@ -254,6 +324,7 @@ namespace gnubase::engine
 
 	void registerHitpointCommands(ProjectModel& model, Engine& engine, Jobs& jobs)
 	{
+		registerSliceEdits(model, engine);
 		const Json integer = {{"type", "integer"}};
 		const Json number = {{"type", "number"}};
 		const Json boolean = {{"type", "boolean"}};
