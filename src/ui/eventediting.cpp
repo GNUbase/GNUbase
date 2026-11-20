@@ -1221,7 +1221,7 @@ namespace gnubase::ui
 	{
 		if (m_resizeLanded)
 		{
-			// The first project after the last release's resize shows it: its preview has done its part.
+			// The first project after a release's resize shows it: its preview has done its part.
 			m_resizeLanded = false;
 			m_releasedPreview = Json();
 		}

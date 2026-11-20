@@ -920,7 +920,7 @@ namespace gnubase::ui
 		engine::Json m_resizePreview;   // the answer shown, null for none
 		double m_resizeDx = 0.0;        // dp the edge was dragged
 		engine::Json m_releasedPreview; // the last release's, until the project shows its resize
-		bool m_resizeLanded = false;    // the last release's event.resize is done; the next project shows it
+		bool m_resizeLanded = false;    // a release's event.resize is done; the next project shows it
 		uint64_t m_resizeGesture = 0;   // counts drags of edges, so that late answers are dropped
 		uint64_t m_dragEvent = 0;       // pressed on
 		bool m_dragMoved = false;
