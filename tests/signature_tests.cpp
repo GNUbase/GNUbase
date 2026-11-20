@@ -239,3 +239,40 @@ TEST_CASE("the signature track's lock keeps its time signature events as they ar
 	run(client, "history.undo");
 	CHECK_THAT(reject(client, "signature.remove", {{"bars", {2}}}), ContainsSubstring("locked"));
 }
+
+TEST_CASE("the signature track's lock also keeps Process Bars and imports off its events", "[integration]")
+{
+	// Lock (reference manual p. 163) locks all editing of the track's events (#1956): Process Bars and tempo track and
+	// MIDI file imports that would change them are refused too; imports that leave them as they are still work.
+	const gnubase::test::TempDir dir;
+	const std::string plainMidi = (dir.path() / "plain.mid").u8string();
+	const std::string changedMidi = (dir.path() / "changed.mid").u8string();
+	const std::string plainTempo = (dir.path() / "plain.xml").u8string();
+	const std::string changedTempo = (dir.path() / "changed.xml").u8string();
+	Engine engine;
+	Client client(engine);
+	run(client, "midiFile.export", {{"path", plainMidi}});
+	run(client, "tempo.export", {{"path", plainTempo}});
+	run(client, "signature.add", change(2, 7, 8));
+	run(client, "midiFile.export", {{"path", changedMidi}});
+	run(client, "tempo.export", {{"path", changedTempo}});
+
+	run(client, "project.new");
+	const ObjectId track = addTrack(client, {{"type", "signature"}});
+	run(client, "track.set", {{"track", track}, {"lock", true}});
+	const Json before = run(client, "project.get").at("signatures");
+	CHECK_THAT(reject(client, "tempo.processBars",
+				   {{"bar", 1}, {"bars", 1}, {"type", "insert"}, {"numerator", 3}, {"denominator", 4}}),
+		ContainsSubstring("locked"));
+	CHECK_THAT(reject(client, "tempo.import", {{"path", changedTempo}}), ContainsSubstring("locked"));
+	CHECK_THAT(reject(client, "midiFile.import", {{"path", changedMidi}}), ContainsSubstring("locked"));
+	CHECK(run(client, "project.get").at("signatures") == before);
+	run(client, "tempo.import", {{"path", plainTempo}});
+	run(client, "midiFile.import", {{"path", plainMidi}});
+	run(client, "midiFile.import", {{"path", changedMidi}, {"tempo", false}});
+	CHECK(run(client, "project.get").at("signatures") == before);
+
+	run(client, "track.set", {{"track", track}, {"lock", false}});
+	run(client, "midiFile.import", {{"path", changedMidi}});
+	CHECK(run(client, "project.get").at("signatures") != before);
+}
