@@ -259,21 +259,22 @@ namespace gnubase::engine::midi
 	// pitch that plays, with the source part's global transpose, before the new part's comes off; without it only the
 	// difference goes into the note, as the modifiers stay on the track. With includeInserts the notes of a track then
 	// go through its MIDI insert effects below the divider, and with includeSends also through each of its MIDI send
-	// effects, before or after the modifiers and the inserts as their Pre says, which add what they play (p. 1120): run
-	// offline from the first note in the range on, with the slots' values and the tempo map, so that they play the same
-	// every time. The notes of such a track are written as they played, the new part's global transpose taken off,
-	// or on a part of its own that is Independent where that takes one beyond 0-127. eraseDestination first
-	// removes the destination track's parts that lie in the range and the events of other parts that start in it, a
-	// shared copy leaving its copies for that: its notes get new ids, so their play probability, velocity variance and
-	// random MIDI modifier values draw anew. includeChase adds the last controller value of every controller, program
-	// and channel before start at the new part's start, and in any case the new part starts with the directions of
-	// the tracks' articulation maps in effect at start (#175). What a source part's notes can't hold (a pitch beyond
-	// 0-127, its velocity under a note's velocity variance or the destination's modifiers) stays on a new part of its
-	// own with the part's setting (#1240, #1253): the first new part, on the first lane, is the one with the shared
-	// setting, else the one of the earliest source part, and has the controllers; the others follow in the order of
-	// their earliest source parts on new lanes, with the articulation events only. A part of its own that no note goes
-	// into (all of them left out, or playing nowhere) is left out, and the next one takes its place (#1491). A new
-	// destination track goes to the end of the track list, routed to the instrument of the first track merged.
+	// effects, before the modifiers and the inserts with the sends' Pre, else after them, which add what they play
+	// (p. 1120): run offline from the first note in the range on, with the slots' values and the tempo map, so that
+	// they play the same every time. What the effects play is written as it played, the new part's global transpose
+	// taken off, or on a part of its own that is Independent where that takes a pitch beyond 0-127; a track whose notes
+	// no insert plays has its own notes written as a track without effects has. eraseDestination first removes the
+	// destination track's parts that lie in the range and the events of other parts that start in it, a shared copy
+	// leaving its copies for that: its notes get new ids, so their play probability, velocity variance and random MIDI
+	// modifier values draw anew. includeChase adds the last controller value of every controller, program and channel
+	// before start at the new part's start, and in any case the new part starts with the directions of the tracks'
+	// articulation maps in effect at start (#175). What a source part's notes can't hold (a pitch beyond 0-127, its
+	// velocity under a note's velocity variance or the destination's modifiers) stays on a new part of its own with the
+	// part's setting (#1240, #1253): the first new part, on the first lane, is the one with the shared setting, else
+	// the one of the earliest source part, and has the controllers; the others follow in the order of their earliest
+	// source parts on new lanes, with the articulation events only. A part of its own that no note goes into (all of
+	// them left out, or playing nowhere) is left out, and the next one takes its place (#1491). A new destination track
+	// goes to the end of the track list, routed to the instrument of the first track merged.
 	PartChanges merge(Project& project, const MergeSettings& settings);
 
 	enum class DissolveBy : uint8_t

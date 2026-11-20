@@ -1100,18 +1100,20 @@ namespace gnubase::engine::midi
 			using Type = graph::ProcessEvent::Type;
 			constexpr uint32_t block = 256;
 			// As the sequencer plays them: in the order of their starts and then pitches, as the render snapshot sorts
-			// them, a note of no samples not at all, and one that starts where a note of its channel and pitch sounds
-			// ends that one, its own end taking the place of the earlier one's.
+			// them, a note of no samples not at all and without ending another (MidiSequencer::setSequence), and one
+			// that starts where a note of its channel and pitch sounds ends that one, its own end taking the place of
+			// the earlier one's.
 			std::stable_sort(notes.begin(), notes.end(), [](const PlayedNote& a, const PlayedNote& b)
 				{ return std::tie(a.start, a.pitch) < std::tie(b.start, b.pitch); });
 			std::array<size_t, size_t{16} * 128> last{}; // per channel and pitch, 1 + the last note in notes, or 0
 			for (size_t i = 0; i < notes.size(); ++i)
 			{
+				if (notes[i].end <= notes[i].start)
+					continue;
 				size_t& before = last[((notes[i].channel % 16) * 128) + (notes[i].pitch % 128)];
 				if (before != 0 && notes[before - 1].end > notes[i].start)
 					notes[before - 1].end = notes[i].start;
-				if (notes[i].end > notes[i].start)
-					before = i + 1;
+				before = i + 1;
 			}
 			notes.erase(std::remove_if(
 							notes.begin(), notes.end(), [](const PlayedNote& note) { return note.end <= note.start; }),
@@ -1534,8 +1536,11 @@ namespace gnubase::engine::midi
 		{
 			const MidiPart* source = sources[i];
 			const std::vector<const Candidate*>& own = sourceCandidates[i];
-			if (effects.count(source->track) != 0)
-				continue; // as its track's effects play them, below
+			// As its track's inserts play them, below; the notes no insert plays are written here with everything
+			// they have, and only what the sends play is added below.
+			const auto playing = effects.find(source->track);
+			if (playing != effects.end() && !playing->second.inserts.empty())
+				continue;
 			const auto inNote = [&](const Candidate* candidate)
 			{
 				const std::pair<int, int> key{velocityToMidi1(candidate->note.velocity), source->velocity};
@@ -1586,9 +1591,10 @@ namespace gnubase::engine::midi
 			if (first == firstStart.end() || from < first->second)
 				firstStart[setting] = from;
 		}
-		// The notes of the tracks with effects as the effects play them, which make new notes of their own: as playback
+		// What the effects of the tracks with effects play, which make new notes of their own: the notes as playback
 		// plays them into the effects (compilePart and the sequencer), with their play probability and velocity
-		// variance drawn, the global transposition in the pitch.
+		// variance drawn, the global transposition in the pitch. Of a track whose notes no insert plays, only what its
+		// sends play: its own notes are written above.
 		const auto play = [&](const Candidate& candidate, std::vector<PlayedNote>& into)
 		{
 			const MidiPart& source = *candidate.source;
@@ -1617,10 +1623,12 @@ namespace gnubase::engine::midi
 			for (const Candidate& candidate : unmodified)
 				if (candidate.source->track == track)
 					play(candidate, before);
-			std::vector<PlayedNote> out = runEffects(project, playing.inserts, notes, settings.end);
+			std::vector<PlayedNote> out;
+			if (!playing.inserts.empty())
+				out = runEffects(project, playing.inserts, notes, settings.end);
 			// Each send on what the inserts played, not on another send's notes; without Include Inserts nothing
 			// changed the notes before the sends.
-			std::vector<PlayedNote> sent = out;
+			std::vector<PlayedNote> sent = playing.inserts.empty() ? notes : out;
 			if (playing.pre)
 				sent = settings.includeInserts ? before : notes;
 			for (const EffectSlot* slot : playing.sends)

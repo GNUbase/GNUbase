@@ -365,9 +365,11 @@ TEST_CASE("merging with Include Inserts and Include Sends plays what the track's
 			{{0, 1, 60, 100}, {0.3, 1, 60, 90}, {2, 1.5, 62, 80}, {2.2, 0.5, 62, 70}},
 			{{"slots", {slot("chordGenerator", {{"chord", "Power"}}), slot("arpeggiator", {{"rate", "1/8"}})}}},
 			octaveSend},
-		// Notes at one position by pitch, not as they were added; one shorter than a sample doesn't play.
+		// Notes at one position by pitch, not as they were added; one shorter than a sample doesn't play, and doesn't
+		// end a longer note of its pitch either.
 		{"notes at one position and one shorter than a sample",
-			{{0, 1, 67, 100}, {0, 1, 60, 90}, {2, 1.0 / 200000, 64, 80}, {3, 0.5, 62, 70}},
+			{{0, 1, 67, 100}, {0, 1, 60, 90}, {2, 1.0 / 200000, 64, 80}, {3, 0.9, 62, 70},
+				{3.25, 1.0 / 200000, 62, 60}},
 			{{"slots", {slot("arpeggiator", {{"mode", "As played"}, {"rate", "1/8"}})}}}, Json()},
 	};
 	for (const Case& each : cases)

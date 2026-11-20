@@ -1543,6 +1543,87 @@ TEST_CASE(
 	}
 }
 
+TEST_CASE("merge with Include Sends keeps everything of the notes of a track whose inserts don't play them", "[unit]")
+{
+	Project project = newProject();
+	const ObjectId piano = addTrack(project, TrackType::Instrument, "Piano");
+	ArticulationMap strings;
+	strings.id = project.newId();
+	strings.name = "Strings";
+	strings.groups = {"Technique"};
+	strings.articulations = {{"Accent", ArticulationType::Attribute, 0}};
+	SoundSlot accent;
+	accent.name = "Accent";
+	accent.articulations = {"Accent"};
+	strings.slots = {SoundSlot{}, accent};
+	project.articulationMaps[strings.id] = strings;
+	project.trackById.at(piano).articulationMap = strings.id;
+	const ObjectId part = addPart(
+		project, piano, 0, 4 * g_quarter, PartBuilder().note(1, 0, g_quarter, 60, 0, velocityFromMidi1(100)).part);
+	project.midiParts.at(part).velocity = velocityFromMidi1(10);
+	Note& note = project.midiParts.at(part).notes.begin()->second;
+	note.releaseVelocity = velocityFromMidi1(30);
+	note.articulations = {"Accent"};
+	note.expressions = {{gnubase::plugin::NoteExpression::Tuning, g_quarter / 2, 0.75}};
+	Channel& channel = project.channels.at(project.trackById.at(piano).channel);
+	channel.modifiers.transpose = 2;
+	channel.midiSends.slots[0] = {"transformer", true, {0, 0, 127, 0, 12}, 0}; // transposes by 12
+	MergeSettings settings;
+	settings.end = project.tempo.toSamples(4 * g_quarter, project.sampleRate);
+	settings.tracks = {piano};
+	settings.includeSends = true;
+	// The new part's velocity and its notes but their ids, by pitch.
+	using Merged = std::pair<int,
+		std::map<int, std::tuple<Ticks, Ticks, int, int, int, std::vector<std::string>, std::vector<ExpressionPoint>>>>;
+	const auto merged = [&]
+	{
+		const PartChanges changes = merge(project, settings);
+		REQUIRE(changes.addedParts.size() == 1);
+		const MidiPart& made = project.midiParts.at(changes.addedParts[0]);
+		Merged result{made.velocity, {}};
+		for (const auto& [id, each] : made.notes)
+			result.second[each.pitch] = {each.position, each.length, each.velocity, each.channel, each.releaseVelocity,
+				each.articulations, each.expressions};
+		return result;
+	};
+	SECTION("without the inserts")
+	{
+	}
+	SECTION("with Include Inserts, the track having none")
+	{
+		settings.includeInserts = true;
+	}
+	channel.midiSends.bypass = true;
+	const Merged without = merged();
+	channel.midiSends.bypass = false;
+	const Merged with = merged();
+	CHECK(with.first == without.first);
+	REQUIRE(without.second.size() == 1);
+	REQUIRE(with.second.size() == 2);
+	// Its own note as without the send, and what the send played, an octave above the note that went into it.
+	CHECK(with.second.begin()->first == without.second.begin()->first);
+	CHECK(with.second.begin()->second == without.second.begin()->second);
+	CHECK(with.second.rbegin()->first == (settings.includeInserts ? 74 : 72));
+}
+
+TEST_CASE("merge with Include Inserts writes only what the effects play before the right locator", "[unit]")
+{
+	Project project = newProject();
+	const ObjectId piano = addTrack(project, TrackType::Instrument, "Piano");
+	// Held past the right locator, at a quarter, and the part's end.
+	addPart(project, piano, 0, 64 * g_quarter, PartBuilder().note(1, 0, 64 * g_quarter, 60).part);
+	Channel& channel = project.channels.at(project.trackById.at(piano).channel);
+	channel.midiInserts.slots[0] = {"arpeggiator", true, {0, 1, 50, 1}, 0}; // in eighths, each for half a step
+	MergeSettings settings;
+	settings.end = project.tempo.toSamples(g_quarter, project.sampleRate);
+	settings.tracks = {piano};
+	settings.includeInserts = true;
+	const PartChanges changes = merge(project, settings);
+	REQUIRE(changes.addedParts.size() == 1);
+	CHECK(notesOf(project.midiParts.at(changes.addedParts[0])) ==
+		std::vector<std::vector<int64_t>>{{0, 60, g_quarter / 4, 0}, {g_quarter / 2, 60, g_quarter / 4, 0}});
+}
+
 TEST_CASE("merge writes the notes of a track with effects as they played, or on an Independent part", "[unit]")
 {
 	Project project = newProject();
