@@ -86,11 +86,12 @@ namespace gnubase::engine
 	{
 		if (points.empty())
 			return false;
-		// Between points the gain only rises or falls, so it is level where no point is inside and both ends agree.
+		// Between points the gain only rises or falls, so it is level where no point is inside and the block's first
+		// and last frames agree. Not the frame after it: a jump there can return to the first frame's gain (#670).
 		const auto next = after(points, static_cast<double>(position));
 		return (next != points.end() && next->position < position + frames) ||
 			curveGain(points, static_cast<double>(position)) !=
-			curveGain(points, static_cast<double>(position + frames));
+			curveGain(points, static_cast<double>(position + frames - 1));
 	}
 
 	std::vector<GainPoint> gainPoints(const std::vector<VolumePoint>& points)

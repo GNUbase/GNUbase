@@ -402,7 +402,9 @@ TEST_CASE("with the range tool, a drag on the marker track in a range selected b
 	// step, and the range with it.
 	selectBetween(150, 2);
 	const size_t steps = fixture.call("history.get").at("steps").size();
-	fixture.drag(150, 70, 350, 70);
+	// (From beside the double click: a press where it was would make RmlUi's next double click, as the marker track
+	// stops the second press.)
+	fixture.drag(155, 70, 355, 70);
 	REQUIRE(fixture.waitUntil([&] { return parts() == std::vector<int64_t>{6 * g_quarter}; }));
 	CHECK(fixture.call("history.get").at("steps").size() == steps + 1);
 	const ui::RangeSelection moved =
@@ -418,7 +420,7 @@ TEST_CASE("with the range tool, a drag on the marker track in a range selected b
 	// (A click elsewhere first: the drag's press and the next one there would be a double click.)
 	fixture.automation.click(std::nullopt, fixture.lanesAt(900, 70), ui::MouseButton::Left, 1, {});
 	selectBetween(150, 2);
-	fixture.drag(150, 70, 650, 70, {"alt"});
+	fixture.drag(155, 70, 655, 70, {"alt"});
 	REQUIRE(fixture.waitUntil([&] { return parts() == std::vector<int64_t>{2 * g_quarter, 12 * g_quarter}; }));
 
 	// A drag on the marker track outside the range selects a range as before.
@@ -465,12 +467,14 @@ TEST_CASE("with the range tool, a click on the marker track in the selection ran
 	CHECK(range().end == clicked.start);
 	CHECK(range().tracks == std::vector<uint64_t>{fixture.audio, fixture.first});
 
-	// Shift and a drag from in it to 4.5 seconds adds to it, as on any lane, and moves nothing.
+	// Shift and a drag from in it to 4.5 seconds selects a new range from the press, as on any lane (reference manual
+	// p. 288), and moves nothing.
 	selectBetween();
 	fixture.drag(170, 70, 450, 70, {"shift"});
-	CHECK(range().start == 2 * g_quarterSamples);
+	CHECK(range().start > 2 * g_quarterSamples);
+	CHECK(range().start < 4 * g_quarterSamples);
 	CHECK(range().end > 8 * g_quarterSamples);
-	CHECK(range().tracks == std::vector<uint64_t>{fixture.audio, fixture.first, fixture.second});
+	CHECK(range().tracks == std::vector<uint64_t>{fixture.first});
 	REQUIRE(fixture.settled());
 	CHECK(fixture.call("history.get").at("steps").size() == steps);
 }
@@ -493,9 +497,10 @@ TEST_CASE("a range drag on the marker track released outside the window ends at 
 	const size_t steps = fixture.call("history.get").at("steps").size();
 
 	// Dragged by the marker track a second later, the range follows the mouse; released right of the window, where
-	// RmlUi has no element to send the mouseup to, and the mouse comes back in.
-	fixture.automation.press(std::nullopt, fixture.lanesAt(150, 70), ui::MouseButton::Left);
-	fixture.automation.move(std::nullopt, fixture.lanesAt(250, 70));
+	// RmlUi has no element to send the mouseup to, and the mouse comes back in. (From beside the double click, as it
+	// would make RmlUi's next one there.)
+	fixture.automation.press(std::nullopt, fixture.lanesAt(155, 70), ui::MouseButton::Left);
+	fixture.automation.move(std::nullopt, fixture.lanesAt(255, 70));
 	fixture.step();
 	CHECK(fixture.display.range().value_or(selected).start != selected.start);
 	fixture.automation.release(std::nullopt, point(1100, 70), ui::MouseButton::Left);
