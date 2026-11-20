@@ -417,8 +417,9 @@ namespace gnubase::ui
 
 			void ProcessDefaultAction(Rml::Event& event) override
 			{
-				// A key before the update after Tab moved to it starts editing too, so that the text it types goes into
-				// the text field.
+				// A key before the update after Tab moved to it starts editing too, so that text handed to the context
+				// after that keydown goes into the text field. A real keyboard's keydown right after Tab has no text:
+				// SDL's text input is still off then, as the field itself, not its text field, had the focus.
 				if (event == Rml::EventId::Keydown && m_focused)
 					startFocused();
 				ValueControl::ProcessDefaultAction(event);
