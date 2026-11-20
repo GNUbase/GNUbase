@@ -212,34 +212,35 @@ The reference's defaults (p. 1572), bound everywhere; they act on the docking wi
 is the focus zone `project` too, so the project window's keys, such as zooming, work from the toolbar and from a side
 zone that doesn't bind them itself.
 
-**Moving the focus between zones** (#379, #515, p. 100). A click into a zone gives it the keyboard focus. Tab activates the
-next shown zone of the docking window and Shift+Tab the previous one, around the ends, in the reference's order: the
-project zone, the Channel zone, then the left, lower and right zones. From outside the zones, such as
-the toolbar, Tab goes on as from the project zone. Tab and Shift+Tab are the key commands `focus.next` and
-`focus.previous`, which the key commands dialog lists and the user can bind to other keys (F6, say, which then works
-as any key command does). Tab itself has to take the key before RmlUi's document moves the focus between its controls,
-so the docking system looks up what Tab is bound to in its keydown listener (`KeyCommands::press`) and runs that,
-whatever it is; a key that nothing is bound to, such as Alt+Tab and Cmd+Tab, which belong to the window manager, and
-Ctrl+Tab, goes on to RmlUi. The zone gets `.focused` and its keys ([key-commands.md](key-commands.md)) work there. The
-focus goes to the control that had it last in the zone, if that is still shown and not disabled, so that a list view
-that was clicked takes its arrow keys again; else to the zone's main control (its `maincontrol` attribute: the track
-list's list view in the project zone); else to the zone's element. In a text field or a select box Tab moves
-between controls as RmlUi does (#60), an open menu keeps it, and so do dialogs, which are modal documents of their own,
-and a panel in a window of its own, whose document has no zones. `Docking::focus(window, zone)` does the same for a
-zone by name: showing the lower zone with its key command (Mod+Alt+E) and opening the lower zone's editor with
-`window.lowerZoneEditor` give the zone the keyboard focus, as the reference's editor in the lower zone gets it after a
-key command (p. 100). A double click on an event or part and Return open the editor window, not the lower zone's,
-until a setting for that exists, so they don't move the focus.
+**Moving the focus between zones** (#379, #515, p. 100). A click into a zone gives it the keyboard focus. Tab activates
+the next shown zone of the docking window and Shift+Tab the previous one, around the ends, in the reference's order: the
+project zone, the Channel zone, then the left, lower and right zones. From outside the zones, such as the toolbar, Tab
+goes on as from the project zone. Tab and Shift+Tab are the key commands `focus.next` and `focus.previous`, which the
+key commands dialog lists and the user can bind to other keys (F6, say, which then works as any key command does). Tab
+itself has to take the key before RmlUi's document moves the focus between its controls, so the docking system looks up
+what Tab is bound to in its keydown listener (`KeyCommands::press`) and runs that, whatever it is; a key that nothing is
+bound to, such as Alt+Tab and Cmd+Tab, which belong to the window manager, and Ctrl+Tab, goes on to RmlUi. The zone gets
+`.focused` and its keys ([key-commands.md](key-commands.md)) work there. The focus goes to the control that had it last
+in the zone, if that is still shown and not disabled, so that a list view that was clicked takes its arrow keys again;
+else to the zone's main control (its `maincontrol` attribute: the track list's list view in the project zone); else to
+the zone's element. In a text field or a select box Tab moves between controls as RmlUi does (#60), an open menu keeps
+it, and so do dialogs, which are modal documents of their own, and a panel in a window of its own, whose document has no
+zones. `Docking::focus(window, zone)` does the same for a zone by name: showing the lower zone with its key command
+(Mod+Alt+E) and opening the lower zone's editor with `window.lowerZoneEditor` give the zone the keyboard focus, as the
+reference's editor in the lower zone gets it after a key command (p. 100). A double click on an event or part and Return
+open the editor window, not the lower zone's, until a setting for that exists, so they don't move the focus.
 
 ## Not yet
 
 Removing and renaming setup pane presets; the setup panes of the editors' toolbars and info lines (p. 1575: the key,
-drum, list, audio part and in-place editors), which have no sections yet; the toolbar's Left and Right Divider (p. 65), which would keep the sections outside them shown. Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
-with the channel strip (#107), shown as its zone's one tab until then; a theme look for tabs at the bottom, whose
-active tab has its marker on the side away from the panels; dragging a tab out of its zone to open it in a window; the
-editor in the lower zone taking the focus when it opens (p. 100), once editors open there; and after live reload, what
-the app fills outside panels (the transport bar and its sections, the event display, the mixer, editor and transport
-panel windows) stays empty until GNUbase opens again.
+drum, list, audio part and in-place editors), which have no sections yet; the toolbar's Left and Right Divider (p. 65),
+which would keep the sections outside them shown. Sections in a panel that shows in a window of its own keep the
+document's order; the Channel zone's contents (p. 73) with the channel strip (#107), shown as its zone's one tab until
+then; a theme look for tabs at the bottom, whose active tab has its marker on the side away from the panels; dragging a
+tab out of its zone to open it in a window; a double click on an event or part and Return opening the editor in the
+lower zone, which then takes the focus (p. 100, #1934); and after live reload, what the app fills outside panels (the
+transport bar and its sections, the event display, the mixer, editor and transport panel windows) stays empty until
+GNUbase opens again.
 
 ## Checks
 
@@ -252,15 +253,17 @@ tabs, hiding the zone; splitters dragged in a row and a column, for zones before
 after them, held at the zones' minimums, and a double click that collapses a zone whose size comes back; tabs dragged
 into a new order, hidden through the tab menu, stepped through with the keys in the zone with the focus, which gets
 the focus frame, and the active tab remembered; whether a panel shows, behind another tab, in a hidden zone or in a
-window of its own; Tab and Shift+Tab through the shown zones in the reference's order, the Channel zone right after
-the project zone, around the ends and past hidden zones, with a zone's keys working in the zone they reach (and no longer after Tab leaves it), the
-control last focused in a zone or the track list taking the focus back, Focus Next and Previous bound to other keys, and
-Tab in a text field or a select box, Ctrl+Tab, Alt+Tab, Meta+Tab and Tab in an open menu left alone; the lower zone
-taking the focus when its key command shows it or opens its editor; a panel moved into a window of its own through the tab menu, with its
-contents made there and gone from the zone, docked with the Dock button and by closing its window, which reopens where
-it was; `open` on a panel in a window of its own that is behind the project window, minimized, or both, which brings
-its window to the front, restored and with the focus, and leaves the layout alone (on the fake window system, which
-knows the windows' order, minimized state and focus); the project window's and a panel window's documents loaded
+window of its own; Tab and Shift+Tab through the shown zones in the reference's order, the Channel zone right after the
+project zone, around the ends and past hidden zones, with a zone's keys working in the zone they reach (and no longer
+after Tab leaves it), the control last focused in a zone or the track list taking the focus back, Focus Next and
+Previous bound to other keys, and Tab in a text field or a select box, Ctrl+Tab, Alt+Tab, Meta+Tab and Tab in an open
+menu left alone, and Tab and Shift+Tab moving between the controls of a panel in a window of its own; the lower zone
+taking the focus when its key command shows it or opens its editor; a panel moved into a window of its own through the
+tab menu, with its contents made there and gone from the zone, docked with the Dock button and by closing its window,
+which reopens where it was; `open` on a panel in a window of its own that is behind the project window, minimized, or
+both, which brings its window to the front, restored and with the focus, and leaves the layout alone (on the fake window
+system, which knows the windows' order, minimized state and focus); the project window's and a panel window's documents
+loaded
 again by live reload, from a copy of the resources, with the panels' contents released before the old elements and
 made once in the new documents, an event naming something other than a document of the window ignored, a panel window
 without `#panel-content` left empty until its panel docks, and the zone toggles, keys, splitters, tabs, tab menu and

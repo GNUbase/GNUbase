@@ -120,10 +120,11 @@ attributes, through a data model or directly.
   for a control outside it while the menu stays open (#524). Enter clicks the focused item. Right opens the focused
   item's submenu (with the state class `.open`) and focuses its first item, unless all its items are disabled; Left
   closes the submenu and goes back to its item. A submenu that keys opened closes when the mouse goes to another item of
-  its menu, and with its menu. Escape closes the innermost submenu that keys opened and, with none open, every open menu. A menu that closes with
-  the focus in it gives the focus to its item, if it is a submenu, or else back to the element that had it when the
-  menu opened (a text field or list that keeps its keys and its focus zone), or to its document if that is gone,
-  hidden, disabled, or the title that opened the menu, whose Space and Enter would open it again.
+  its menu or moves within one, and with its menu. Escape closes the innermost submenu that keys opened and, with none
+  open, every open menu. A menu that closes with the focus in it gives the focus to its item, if it is a submenu, or
+  else back to the element that had it when the menu opened (a text field or list that keeps its keys and its focus
+  zone), or to its document if that is gone, hidden, disabled, or the title that opened the menu, whose Space and Enter
+  would open it again.
 - `<menubar>` holds the titles of menus: elements with a `menu` attribute, usually buttons. While one title's menu is
   open, the mouse over another title opens that one's menu instead; in a title's menu (and its submenus) Right and
   Left open the next and previous title's menu where they don't go into or out of a submenu, with its first item

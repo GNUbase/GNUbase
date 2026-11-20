@@ -114,8 +114,9 @@ namespace gnubase::ui
 		}
 
 		// Throws std::invalid_argument for keys that can't be bound: Alt pressed and released on its own opens the menu
-		// bar (ui/widgets.h), so a command bound to it would run with the key down and toggle the menu bar with the key
-		// up. Alt as a modifier of other keys, and with another modifier, is fine.
+		// bar (Popups in popupwidgets.cpp, docs/features/widgets.md), so a command bound to it would run with the key
+		// down and toggle the menu bar with the key up. Alt as a modifier of other keys, and with another modifier, is
+		// fine.
 		void checkBindable(const KeyPress& keys)
 		{
 			if (isAlt(keys.key) && (keys.modifiers & ~KM_ALT) == 0)
