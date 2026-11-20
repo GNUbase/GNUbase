@@ -7,6 +7,7 @@
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
 #include "ui/inplaceeditor.h"
+#include "ui/keyeditor.h"
 #include "ui/tracklist.h"
 #include "uiapp.h"
 
@@ -1238,6 +1239,83 @@ TEST_CASE(
 	REQUIRE(f.app.waitUntil([&] { return points().size() == 2; }));
 	CHECK(f.display.selection() == std::vector<uint64_t>{otherPart});
 	CHECK(!f.has(editor, "off"));
+}
+
+TEST_CASE("the expression editor of an in-place editor knows the project read it shows: an erase over nothing in two "
+		  "parts leaves the project unmodified",
+	"[ui]")
+{
+	// #1831: the in-place editor hands its key editor the event display's read. Without it every gesture after the
+	// first edit would count as made before that edit's read arrived and go to each note it reached, so that one
+	// over notes of two parts that changes nothing would go as a history.transaction, which counts as a change.
+	Fixture f;
+	const uint64_t second =
+		f.app.call("midiPart.add", {{"track", f.track}, {"position", 2 * g_bar}, {"length", g_bar}, {"name", "More"}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	const uint64_t other =
+		f.app
+			.call("note.add",
+				{{"part", second},
+					{"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 62}, {"velocity", 0.5}}}}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 3; }));
+	f.scroll(61);
+	const std::string name = "inPlace:" + std::to_string(f.track);
+	f.app.call("editor.set",
+		{{"editor", name}, {"expressionDoubleClick", true},
+			{"selection",
+				Json::array({{{"part", f.part}, {"note", f.notes[0]}}, {{"part", second}, {"note", other}}})}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note.selected").size() == 2; }));
+	REQUIRE(
+		f.app.waitUntil([&] { return f.has(f.editor() + " .key-input[setting=expressionDoubleClick]", "checked"); }));
+	const std::string editor = f.editor() + " .key-expression-editor";
+	f.click(ui::Target{f.note(f.notes[0]), 0, std::nullopt}, 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(editor, "off"); }));
+	const std::string area = f.editor() + " .key-expression-area";
+	// The editor spans both notes, from the first one's start to the other one's end: five quarters.
+	const Json box = f.box(area);
+	const double width = box.at("width").get<double>();
+	REQUIRE(width >= 100);
+	const auto at = [&](double share)
+	{
+		return ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(box.at("x").get<double>() + (share * width))),
+				static_cast<int>(std::lround(box.at("y").get<double>() + (box.at("height").get<double>() / 2)))}};
+	};
+	const auto points = [&f]
+	{
+		size_t count = 0;
+		const Json project = f.app.call("project.get"); // kept: a range-for keeps no temporary it reaches into
+		for (const Json& part : project.at("midiParts"))
+			for (const Json& note : part.at("notes"))
+				count += note.value("expressions", Json::array()).size();
+		return count;
+	};
+
+	// A point drawn on the first note, in the first tenth of the span; the editor shows it once its read arrives.
+	ui::KeyEditor& keys = *f.app.appUi().inPlaceEditors()->keyEditor(f.track);
+	keys.setTool(ui::KeyTool::Draw);
+	f.click(at(0.1));
+	REQUIRE(f.app.waitUntil([&] { return points() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(area + " .key-expression-step").size() == 1; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+
+	// The erase tool dragged over both notes where neither has a point sends nothing.
+	keys.setTool(ui::KeyTool::Erase);
+	const Json revision = f.app.call("project.revision");
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	f.app.ui().drag(std::nullopt, at(0.15), at(0.95));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.call("engine.version");
+	CHECK(f.app.call("project.revision") == revision);
+	CHECK(f.app.call("history.get").at("steps").size() == steps);
+	CHECK(points() == 1);
 }
 
 TEST_CASE("an in-place editor joins a dense note's expression steps by its pixels, after its layout and as the "

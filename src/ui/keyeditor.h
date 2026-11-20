@@ -292,8 +292,8 @@ namespace gnubase::ui
 		// empty, runs with the result.
 		void edit(const std::string& description, engine::Json commands,
 			std::function<void(const engine::Result&)> done = {});
-		// Whether the project shown may lack the last edit that the expression editor sent: it is out, or was answered
-		// after the read of the project shown.
+		// Whether the project shown may lack an edit that the expression editor sent: one is out, or the last one that
+		// changed points was answered after the read of the project shown. An edit that changed nothing isn't missing.
 		bool expressionBehind() const;
 		// Notes of the pitch at the starts, each of the length.
 		// At the view's insert velocity unless one is given.
@@ -368,7 +368,8 @@ namespace gnubase::ui
 		int64_t m_paintTo = -1;
 		uint64_t m_read = 0;                // show()'s read
 		uint64_t m_expressionEdits = 0;     // the expression editor's edits sent
-		uint64_t m_expressionAnswered = 0;  // EngineBinding::handed() when the last one was answered, 0 while it is out
+		uint64_t m_expressionAnswered = 0;  // and answered
+		uint64_t m_expressionChanged = 0;   // EngineBinding::handed() at the last answer that changed points, 0 before
 		int64_t m_linesPixel = -1;          // the ticks per pixel the notes' expression lines were built with
 		bool m_linesKept = false;           // an update laid the notes' lines out with those ticks (refitLines)
 		bool m_toolboxOnRightClick = false; // ui.toolboxOnRightClick
