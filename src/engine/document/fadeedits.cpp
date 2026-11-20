@@ -17,6 +17,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -287,15 +288,16 @@ namespace gnubase::engine
 			const auto isGiven = [&given](ObjectId id) { return std::binary_search(given.begin(), given.end(), id); };
 			// Several events crossfade with each other, one event with its neighbours.
 			const bool single = given.size() == 1;
-			// Each track's events by start.
+			// Each track's events by start, and by id where they start together, so that it doesn't depend on the
+			// standard library.
 			std::map<ObjectId, std::vector<std::pair<EventSpan, AudioEvent*>>> tracks;
 			for (auto& [id, event] : project.audioEvents)
 				tracks[event.track].emplace_back(eventSpan(project, event), &event);
 			std::vector<ObjectId> events;
 			for (auto& [track, row] : tracks)
 			{
-				std::sort(
-					row.begin(), row.end(), [](const auto& a, const auto& b) { return a.first.start < b.first.start; });
+				std::sort(row.begin(), row.end(), [](const auto& a, const auto& b)
+					{ return std::tie(a.first.start, a.second->id) < std::tie(b.first.start, b.second->id); });
 				for (size_t i = 1; i < row.size(); ++i)
 				{
 					const EventSpan& out = row[i - 1].first;

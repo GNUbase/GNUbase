@@ -3,7 +3,8 @@
      crossfade from the audio event in the document's attribute from into the one in to. ui::EventDisplay opens it
      (audio.crossfade on events that crossfade). Its Lua reads the crossfade when the dialog shows: its mode, the
      curves of its fade out and fade in, and their lengths in milliseconds, up to the overlap of the two events. OK
-     sends them with crossfade.set, Remove removes the crossfade (crossfade.remove), Cancel drops the changes. -->
+     sends them with crossfade.set, a length left as shown as it was, not rounded to the 0.1 ms shown; Remove removes
+     the crossfade (crossfade.remove), Cancel drops the changes. -->
 <rml>
 <head>
 	<title>Crossfade</title>
@@ -119,6 +120,9 @@
 			dialog.overlap = (where[1]["end"] - where[2].start) / project.sampleRate * 1000
 			local inLength = crossfade.length > 0 and crossfade.length / dialog.inRate or dialog.overlap
 			local outLength = crossfade.outLength > 0 and crossfade.outLength / dialog.outRate or dialog.overlap
+			-- What the length fields show, and the clip frames they stand for while they show it.
+			dialog.shown = {["crossfade-in-length"] = {milliseconds(inLength), crossfade.length},
+				["crossfade-out-length"] = {milliseconds(outLength), crossfade.outLength}}
 			document:GetElementById("crossfade-fields").inner_rml =
 				field("Mode", dropDown("crossfade-mode", modes, crossfade.mode)) ..
 				field("Fade Out", dropDown("crossfade-out-shape", shapes, crossfade.outShape)) ..
@@ -139,6 +143,9 @@
 
 		-- A length typed in milliseconds as crossfade.set takes it: clip frames, 0 for the whole overlap.
 		local function frames(document, id, rate)
+			if valueOf(document, id) == dialog.shown[id][1] then
+				return dialog.shown[id][2]
+			end
 			local ms = tonumber(valueOf(document, id))
 			if ms == nil then
 				return nil

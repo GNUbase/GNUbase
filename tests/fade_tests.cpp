@@ -1000,6 +1000,21 @@ TEST_CASE("event.crossfade joins selected events with the overlapping ones next 
 	CHECK_THAT(reject(client, "event.crossfade", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
 }
 
+TEST_CASE("event.crossfade takes events with the same start in the order of their ids", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 20000, one));
+	const ObjectId a = session.addEvent(track, clip, 0, 3000);
+	const ObjectId first = session.addEvent(track, clip, 2000, 4000);
+	const ObjectId second = session.addEvent(track, clip, 2000, 3000);
+	CHECK(run(client, "event.crossfade", {{"events", {second, first, a}}}).at("events") == Json{first});
+	CHECK(crossfadeFrom(client, first) == a);
+	CHECK(crossfadeFrom(client, second) == 0);
+}
+
 TEST_CASE("event.removeFades removes the fades and crossfades at an event's ends", "[unit]")
 {
 	const gnubase::test::TempDir dir;

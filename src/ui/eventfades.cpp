@@ -170,8 +170,21 @@ namespace gnubase::ui
 				{static_cast<float>(i + 1 < m_laneTops.size() ? m_laneTops[i + 1] - m_laneTops[i]
 															  : trackHeight(m_laneTracks[i]) * m_view.trackZoom),
 					{}, {}, {}});
+		// The selected events where a drag moves them, as setLanes shows them.
+		std::vector<Shown> events = m_events;
+		if (m_drag == Drag::Events && m_dragMoved)
+			for (Shown& event : events)
+				if (std::binary_search(m_selection.begin(), m_selection.end(), event.id) &&
+					static_cast<int64_t>(event.lane) + m_dragLanes >= 0)
+				{
+					const double length = event.end - event.start;
+					event.start = m_dragTicks ? m_time.tempo.toSeconds(m_time.tempo.toTicks(event.start) + *m_dragTicks)
+											  : event.start + (m_dragDx * m_view.scale);
+					event.end = event.start + length;
+					event.lane = static_cast<size_t>(static_cast<int64_t>(event.lane) + m_dragLanes);
+				}
 		std::map<uint64_t, const Shown*> shown;
-		for (const Shown& event : m_events)
+		for (const Shown& event : events)
 			if (const auto fades = m_fades.find(event.id);
 				fades != m_fades.end() && fades->second.rate > 0.0 && event.lane < lanes.size())
 				shown[event.id] = &event;
@@ -222,14 +235,28 @@ namespace gnubase::ui
 
 	bool EventDisplay::openSelectedCrossfade()
 	{
-		for (const uint64_t id : selectedAudio())
-			for (const auto& [to, fades] : m_fades)
-				if ((to == id && fades.crossfade.from != 0) || (fades.crossfade.from == id))
-				{
-					openFadeDialog(
-						"crossfade.rml", {{"from", std::to_string(fades.crossfade.from)}, {"to", std::to_string(to)}});
-					return true;
-				}
+		// A crossfade that plays between two selected events, as showFades has it: not one from or to an event that
+		// isn't selected, nor one that rests.
+		std::map<uint64_t, const Shown*> shown;
+		for (const Shown& event : m_events)
+			shown[event.id] = &event;
+		const auto selected = [this](uint64_t id)
+		{ return std::binary_search(m_selection.begin(), m_selection.end(), id) && m_fades.count(id) != 0; };
+		for (const auto& [to, fades] : m_fades)
+		{
+			const auto from = shown.find(fades.crossfade.from);
+			const auto into = shown.find(to);
+			if (from == shown.end() || into == shown.end() || !selected(from->first) || !selected(to))
+				continue;
+			const Shown& out = *from->second;
+			const Shown& in = *into->second;
+			if (out.lane == in.lane && out.start < in.start && in.start < out.end && out.end <= in.end && !out.mute &&
+				!in.mute)
+			{
+				openFadeDialog("crossfade.rml", {{"from", std::to_string(out.id)}, {"to", std::to_string(to)}});
+				return true;
+			}
+		}
 		return false;
 	}
 

@@ -2610,6 +2610,29 @@ TEST_CASE("the Fades menu's commands fade to the range, crossfade and remove fad
 	CHECK(fadeLength(f.audioEvents()[0], "fadeOut") == 0);
 }
 
+TEST_CASE("fade lines move with the events a drag moves", "[unit]")
+{
+	Fixture f;
+	f.call("audioEvent.setFades", {{"event", f.event}, {"fadeIn", {{"length", 4800}}}});
+	f.call("snap.set", {{"on", false}});
+	REQUIRE(f.waitUntil([&f] { return !f.display.snap().on && fadeLines(f).lanes()[0].fades.size() == 1; }));
+	f.display.select({f.event});
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true); // RmlUi's time stands still but for advance()
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	// The event from 2 seconds pressed low in its lane, held past the drag delay and 50 dp, half a second, further
+	// right.
+	f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left);
+	clock->advance(1.0);
+	f.automation.move(std::nullopt, f.at(275, 20));
+	f.step();
+	CHECK(std::abs(fadeLines(f).lanes()[0].fades[0].start - 2.5) < 1e-6);
+	f.automation.release(std::nullopt, f.at(275, 20), ui::MouseButton::Left);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 120000; }));
+	CHECK(f.waitUntil([&f] { return std::abs(fadeLines(f).lanes()[0].fades[0].start - 2.5) < 1e-6; }));
+}
+
 namespace
 {
 	double eventVolume(const Json& event)
