@@ -11,6 +11,7 @@
 #include "engine/document/drumtrack.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
+#include "engine/document/trackvisibility.h"
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/drummaps.h"
@@ -105,13 +106,25 @@ namespace gnubase::engine
 				throw CommandError(message);
 		}
 
+		// The global tracks of the reference manual, p. 1144, that GNUbase has.
 		bool isGlobal(const Project& project, ObjectId id)
 		{
 			const auto found = project.trackById.find(id);
-			return found != project.trackById.end() &&
-				(found->second.type == TrackType::Marker || found->second.type == TrackType::Ruler ||
-					found->second.type == TrackType::Arranger || found->second.type == TrackType::Transpose ||
-					found->second.type == TrackType::Chord);
+			if (found == project.trackById.end())
+				return false;
+			switch (found->second.type)
+			{
+			case TrackType::Tempo:
+			case TrackType::Signature:
+			case TrackType::Chord:
+			case TrackType::Ruler:
+			case TrackType::Arranger:
+			case TrackType::Marker:
+			case TrackType::Transpose:
+				return true;
+			default:
+				return false;
+			}
 		}
 
 		bool isPart(const Project& project, ObjectId id)
@@ -215,10 +228,28 @@ namespace gnubase::engine
 							}),
 						view.selection.end());
 			dropUneditable(project, editable, view.controllerSelection, &MidiPart::controllers);
+			// The attributes selected keep only those the note still has (#1762): a note whose attributes selected all
+			// went, as Delete on the lane removes them, is no longer selected.
 			for (auto each = view.selectedArticulations.begin(); each != view.selectedArticulations.end();)
-				each = std::find(view.selection.begin(), view.selection.end(), each->first) != view.selection.end()
-					? std::next(each)
-					: view.selectedArticulations.erase(each);
+			{
+				const auto selected = std::find(view.selection.begin(), view.selection.end(), each->first);
+				if (selected != view.selection.end())
+				{
+					const std::vector<std::string>& has =
+						project.midiParts.at(each->first.first).notes.at(each->first.second).articulations;
+					std::vector<std::string>& names = each->second;
+					names.erase(std::remove_if(names.begin(), names.end(), [&has](const std::string& name)
+									{ return std::find(has.begin(), has.end(), name) == has.end(); }),
+						names.end());
+					if (!names.empty())
+					{
+						++each;
+						continue;
+					}
+					view.selection.erase(selected);
+				}
+				each = view.selectedArticulations.erase(each);
+			}
 			view.eventSelection.erase(
 				std::remove_if(view.eventSelection.begin(), view.eventSelection.end(),
 					[&](ObjectId event) { return editablePartOf(project, editable, event) == 0; }),
@@ -480,6 +511,30 @@ namespace gnubase::engine
 			return std::find(items.begin(), items.end(), item) != items.end();
 		}
 
+		// The Visibility tab can't show a track hidden in the project window, or a track or folder that holds locked
+		// events or parts (p. 1151).
+		void requireShowable(const Project& project, ObjectId track, const std::vector<ObjectId>& hidden)
+		{
+			const std::string name = "track " + std::to_string(track);
+			require(project.trackById.count(track) != 0, "no " + name);
+			require(!contains(hidden, track), name + " is hidden in the project window");
+			const auto inside = [&project, track](ObjectId id) // the track, or a track inside it
+			{
+				for (auto found = project.trackById.find(id); found != project.trackById.end();
+					found = project.trackById.find(found->second.parent))
+					if (found->first == track)
+						return true;
+				return false;
+			};
+			const auto locked = [&inside](const auto& items)
+			{
+				return std::any_of(items.begin(), items.end(),
+					[&inside](const auto& item) { return item.second.lock && inside(item.second.track); });
+			};
+			require(!locked(project.midiParts) && !locked(project.audioParts) && !locked(project.audioEvents),
+				name + " holds locked events or parts");
+		}
+
 		std::vector<ObjectId> checkedParts(const Project& project, const std::vector<ObjectId>& parts)
 		{
 			for (const ObjectId id : parts)
@@ -598,7 +653,8 @@ namespace gnubase::engine
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note"}},
 					{"properties",
 						{{"part", idSchema}, {"note", idSchema},
-							{"articulations", {{"type", "array"}, {"items", {{"type", "string"}}}}}}}}}};
+							{"articulations",
+								{{"type", "array"}, {"items", {{"type", "string"}}}, {"minItems", 1}}}}}}}};
 		const Json groupsSchema = {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}}};
 		const Json lanesSchema = {{"type", "array"},
 			{"items",
@@ -651,9 +707,11 @@ namespace gnubase::engine
 			"active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing "
 			"reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; "
 			"keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the "
-			"marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): "
+			"global tracks (tempo, signature, chord, ruler, arranger, marker and transpose tracks) the editor window "
+			"shows above its events. The key editor's (pp. 1189-1220): "
 			"selection, the selected notes, each {part, note}, of the editable parts, with articulations, the "
-			"attributes selected of it on the Articulations lane, where not all are; stepInput and midiInput, what "
+			"attributes selected of it on the Articulations lane, where not all are: some of the note's own, and a "
+			"note whose attributes selected all go is no longer selected; stepInput and midiInput, what "
 			"editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, "
 			"recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), "
 			"the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, "
@@ -770,10 +828,13 @@ namespace gnubase::engine
 				"Changes what an open editor shows (reference manual pp. 1142-1156); what isn't given stays. "
 				"parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, "
 				"showTracks shows every MIDI part of these tracks (all tracks in a folder), in the audio part editor "
-				"(content audioPart, also one given with it) every audio part, and activates the last, "
+				"(content audioPart, also one given with it) every audio part, and activates the last; tracks hidden "
+				"in the project window (trackVisibility.set) and tracks or folders that hold locked events or parts "
+				"can't show, and a folder leaves out its hidden tracks. "
 				"hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, "
 				"activePart a part shown. editingMode (an in-place editor's allParts or activePart), keepContents and "
-				"globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. "
+				"globalTracks (tempo, signature, chord, ruler, arranger, marker and transpose tracks, the editor "
+				"window only) also apply to a closed editor. "
 				"selection replaces the selected notes, of the "
 				"editable MIDI parts, controllerSelection the selected controller events and eventSelection the "
 				"selected "
@@ -826,9 +887,15 @@ namespace gnubase::engine
 				if (parameters.contains("content"))
 					view.content = parameters.at("content").get<std::string>();
 				const bool audio = showsAudio(view);
+				const std::vector<ObjectId> hidden = hiddenTracks(project);
 				for (const ObjectId track : ids(parameters, "showTracks"))
 				{
-					const std::vector<ObjectId> shown = partsOf(project, track, audio);
+					requireShowable(project, track, hidden);
+					std::vector<ObjectId> shown = partsOf(project, track, audio);
+					shown.erase(std::remove_if(shown.begin(), shown.end(),
+									[&](ObjectId part) { return contains(hidden, trackOf(project, part)); }),
+						shown.end());
+					require(!shown.empty(), "track " + std::to_string(track) + " has no parts that can show");
 					view.parts.insert(view.parts.end(), shown.begin(), shown.end());
 					view.activePart = shown.front(); // showing a track activates it (p. 1151)
 				}
@@ -891,14 +958,27 @@ namespace gnubase::engine
 					}
 				};
 				select("selection", "note", &MidiPart::notes, view.selection);
+				// The attributes selected of a note: some of its own, each once (#1762, #1799); the schema refuses
+				// none.
 				if (parameters.contains("selection"))
 				{
 					view.selectedArticulations.clear();
 					for (const Json& item : parameters.at("selection"))
 						if (item.contains("articulations"))
-							view.selectedArticulations[{
-								item.at("part").get<ObjectId>(), item.at("note").get<ObjectId>()}] =
-								item.at("articulations").get<std::vector<std::string>>();
+						{
+							const auto part = item.at("part").get<ObjectId>();
+							const auto note = item.at("note").get<ObjectId>();
+							const std::vector<std::string>& has =
+								project.midiParts.at(part).notes.at(note).articulations;
+							std::vector<std::string>& names = view.selectedArticulations[{part, note}];
+							for (const std::string& name : item.at("articulations").get<std::vector<std::string>>())
+							{
+								require(std::find(has.begin(), has.end(), name) != has.end(),
+									"note " + std::to_string(note) + " has no articulation " + name);
+								if (!contains(names, name))
+									names.push_back(name);
+							}
+						}
 				}
 				select("controllerSelection", "controller", &MidiPart::controllers, view.controllerSelection);
 				if (parameters.contains("eventSelection"))

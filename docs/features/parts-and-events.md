@@ -26,6 +26,10 @@ nothing if it fails.
 | `event.toRealCopy` | Turns shared copies into real ones: a part's own notes, an audio event's own clip | p. 272 |
 | `event.get` | Where events are, in project samples and ticks, their name, mute, lock and shared group | p. 72 |
 
+- **Ticks.** Events, parts and notes on musical tracks have their positions and lengths in ticks, 1,720,320 to the
+  quarter note (`time::g_ticksPerQuarter`, so that every common note value is a whole number of them): a part from
+  the second beat, a quarter note long, is `midiPart.add` with `position` and `length` 1720320, and 3840 ticks are
+  about a millisecond at 120 BPM (#1855). On linear tracks they are in samples.
 - **Positions.** Distances are project samples (`delta`), like the locators, or ticks (`ticks`), which are exact for
   events on musical tracks: a part moved by a bar in ticks starts on the bar. Blocks of events (duplicate, fill loop)
   are measured in ticks when every event is on a musical track, otherwise in samples; a block with no length in its
@@ -48,8 +52,9 @@ nothing if it fails.
   from the first start to the last end, with every note and controller.
 - **Muting.** Muted audio events and MIDI parts don't play (the render snapshot leaves muted parts out). In DAWproject a
   muted part, like a muted event, is a disabled clip.
-- **Locks.** A locked event can't be moved, resized, split, glued or removed through the `event.*` commands; it can
-  still be copied, muted and unlocked. Without `events`, `event.split` leaves locked events alone. The object commands
+- **Locks.** A locked event can't be moved, resized, split, glued or removed through the `event.*` commands, and
+  `event.set` doesn't put it on another lane unless the same call unlocks it; it can still be copied, muted and
+  unlocked. Without `events`, `event.split` leaves locked events alone. The object commands
   (`audioEvent.set`, `midiPart.set`) stay low-level and don't check locks. The reference's lock attributes (position,
   length, other) come with the preferences.
 - **Copies.** A copy is unlocked and has no crossfade; copies of audio events play the same clip.
@@ -173,11 +178,14 @@ that the arrow keys select into view.
   drag of an audio event's end and start showing, at every step, the box, waveform, fades and volume line the release
   leaves: both edges in both sizing modes, snapped and with Disable Snapping pressed and released mid-drag, while
   another client moves the event; an audio event and a MIDI part selected together, and a second drag pressed before the
-  display has the first one's project; a locked event staying as it is; Escape cancelling it.
+  display has the first one's project; a locked event staying as it is; Escape cancelling it. With the engine held,
+  a second release before the first one's project reaches the display, and the project that lands a release coming in
+  during the next drag with another client's move in it, which asks that drag's preview again.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
   and Backspace; Left and Right selecting parts, Up and Down stepping the tracks and selecting their first parts, also across a track
   without parts, and only the track with no part selected; and Mod+K,
-  whose Repeat Events dialog makes three shared copies, and real copies from just a number typed and Enter.
+  whose Repeat Events dialog makes three shared copies, and real copies from just a number typed and Enter. It also adds
+  MIDI and instrument parts while the start screen is open and after it closed, which show at their time and length (#1855).
 - The project-start checks cover move and copy previews and release at 1024 by 600, single and multiple selections,
   snapping on and off, musical and linear tracks, other tracks, and one-step undo. The fake-window checks cover left
   nudges, moving to the cursor, a musical preview across a tempo change, and musical nudges of mixed audio/MIDI

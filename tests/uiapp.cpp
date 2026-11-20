@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -117,6 +118,11 @@ namespace gnubase::test
 		m_ui->shell().showOsFileDialogs(false); // tests answer them (Shell::answerFileDialog)
 		m_automation = std::make_unique<ui::Automation>(m_ui->shell());
 		shell().step(std::chrono::milliseconds(0));
+		// macOS fits a window to its monitor (#1078): the test lays out differently there than elsewhere.
+		const ui::Rect opened = shell().bounds(m_ui->mainWindow().id());
+		if (opened.width < m_size.width || opened.height < m_size.height)
+			WARN("The main window opened at " << opened.width << "x" << opened.height << ", not at the " << m_size.width
+											  << "x" << m_size.height << " asked for: the monitor is smaller.");
 	}
 
 	engine::Json UiApp::call(const std::string& command, const engine::Json& parameters)
@@ -224,6 +230,24 @@ namespace gnubase::test
 		}
 	}
 
+	namespace
+	{
+		// Messages as hex bytes, e.g. "[90 3c 64] [80 3c 00]".
+		std::string describe(const std::vector<std::vector<int>>& messages)
+		{
+			std::ostringstream text;
+			text << std::hex << std::setfill('0');
+			for (std::size_t index = 0; index < messages.size(); ++index)
+			{
+				text << (index == 0 ? "[" : " [");
+				for (std::size_t byte = 0; byte < messages[index].size(); ++byte)
+					text << (byte == 0 ? "" : " ") << std::setw(2) << messages[index][byte];
+				text << "]";
+			}
+			return messages.empty() ? "nothing" : text.str();
+		}
+	}
+
 	NoteProbe::NoteProbe(UiApp& app, uint64_t track) : m_app(app)
 	{
 		app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
@@ -238,7 +262,7 @@ namespace gnubase::test
 
 	bool NoteProbe::plays(const std::vector<std::vector<int>>& expected)
 	{
-		return m_app.waitUntil(
+		const bool heard = m_app.waitUntil(
 			[&]
 			{
 				m_app.call("audio.render", {{"frames", 128}});
@@ -251,6 +275,9 @@ namespace gnubase::test
 				}
 				return m_played == expected;
 			});
+		if (!heard)
+			UNSCOPED_INFO("heard " << describe(m_played) << ", expected " << describe(expected));
+		return heard;
 	}
 
 	double controlValue(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector)

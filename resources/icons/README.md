@@ -68,6 +68,7 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `general-save.svg` — Save the project.
 - `general-open.svg` — Open a project or file.
 - `general-snap.svg` — Toggle snapping to the grid.
+- `general-quantize.svg` — Apply quantize: move notes and events onto the grid.
 - `general-zero-crossing.svg` — Toggle snapping to zero crossings.
 - `general-color.svg` — Choose a color for the selected tracks or events.
 - `general-lock.svg` — Lock the selected item.

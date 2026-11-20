@@ -154,6 +154,7 @@ namespace gnubase::engine::processors
 			voice.active = false;
 		m_heldSince.fill(0);
 		m_bend = 0.0;
+		m_lastNote = -1;
 	}
 
 	int Sampler::activeVoices() const
@@ -168,8 +169,8 @@ namespace gnubase::engine::processors
 			m_values[id] = value;
 	}
 
-	// Starts a note on a free voice, or else on the oldest.
-	void Sampler::start(uint8_t channel, uint8_t note, uint16_t velocity, const Sample& sample) noexcept
+	// Starts a note on a free voice, or else on the oldest, gliding from the key from (none if negative).
+	void Sampler::start(uint8_t channel, uint8_t note, uint16_t velocity, const Sample& sample, double from) noexcept
 	{
 		Voice* const first = m_voices.data();
 		Voice* const last = first + m_voices.size();
@@ -198,6 +199,8 @@ namespace gnubase::engine::processors
 			voice.from = start + (index * length);
 			voice.to = voice.from + length;
 		}
+		glide(voice, from);
+		m_lastNote = note;
 		voice.position = voice.from;
 		voice.amplitude = velocity / 65535.0;
 		voice.level = m_values[Attack] > 0.0 ? 0.0 : 1.0;
@@ -237,6 +240,40 @@ namespace gnubase::engine::processors
 		return playing;
 	}
 
+	// Where a new note's pitch glides from (reference manual p. 721): the key of the note played last, also while it
+	// glides, or once nothing sounds of the one started last; with Fingered only from a note still held, so that only
+	// legato notes glide. Negative: no glide.
+	double Sampler::glideFrom() const noexcept
+	{
+		if (m_values[Glide] <= 0.0)
+			return -1.0;
+		const Voice* latest = nullptr;
+		const Voice* held = nullptr;
+		for (const Voice& voice : m_voices)
+		{
+			if (!voice.active)
+				continue;
+			if (latest == nullptr || voice.started > latest->started)
+				latest = &voice;
+			if (voice.held && voice.stage != Stage::Release && (held == nullptr || voice.started > held->started))
+				held = &voice;
+		}
+		if (m_values[Fingered] >= 0.5)
+			return held != nullptr ? held->key : -1.0;
+		return latest != nullptr ? latest->key : m_lastNote;
+	}
+
+	// Lets the voice's pitch glide from the key from to its note in the glide time, or sets it at once.
+	void Sampler::glide(Voice& voice, double from) const noexcept
+	{
+		voice.key = voice.note;
+		voice.glide = 0.0;
+		if (from < 0.0 || voice.slice || m_values[Glide] <= 0.0)
+			return;
+		voice.glide = std::abs(voice.key - from) / std::max(milliseconds(m_values[Glide], m_sampleRate), 1.0);
+		voice.key = from;
+	}
+
 	void Sampler::noteOn(uint8_t channel, uint8_t note, uint16_t velocity) noexcept
 	{
 		if (velocity == 0)
@@ -253,6 +290,7 @@ namespace gnubase::engine::processors
 				   : (note < std::round(m_values[KeyLow]) || note > std::round(m_values[KeyHigh])))
 			return;
 
+		const double from = glideFrom(); // before the notes it takes over fade out
 		// Also in polyphonic mode, so that a key held when monophonic mode comes on is known as held (#1180).
 		m_heldSince[note] = m_notes + 1;
 		if (m_values[Monophonic] >= 0.5)
@@ -268,6 +306,8 @@ namespace gnubase::engine::processors
 				playing->note = note;
 				playing->channel = channel;
 				playing->started = ++m_notes;
+				glide(*playing, from);
+				m_lastNote = note;
 				playing->filter = filterFor(*playing);
 				return;
 			}
@@ -276,7 +316,7 @@ namespace gnubase::engine::processors
 				if (voice.active)
 					fadeOut(voice);
 		}
-		start(channel, note, velocity, sample);
+		start(channel, note, velocity, sample, from);
 	}
 
 	void Sampler::noteOff(uint8_t channel, uint8_t note) noexcept
@@ -311,21 +351,25 @@ namespace gnubase::engine::processors
 				release(voice);
 				continue;
 			}
+			// Back to a held key is legato, so it glides also with Fingered.
+			const double from = voice.key;
 			if (m_values[Legato] >= 0.5 && !voice.slice)
 			{
 				voice.note = back;
+				glide(voice, from);
+				m_lastNote = back;
 				voice.filter = filterFor(voice);
 				continue;
 			}
 			const auto velocity = static_cast<uint16_t>(std::lround(voice.amplitude * 65535.0));
 			fadeOut(voice);
-			start(channel, back, velocity, *m_playing);
+			start(channel, back, velocity, *m_playing, from);
 		}
 	}
 
 	dsp::Biquad Sampler::filterFor(const Voice& voice) const noexcept
 	{
-		const double keys = static_cast<double>(voice.note) - std::round(m_values[RootKey]);
+		const double keys = voice.key - std::round(m_values[RootKey]);
 		const double cutoff = std::clamp(
 			m_values[Cutoff] * std::pow(2.0, keys * m_values[KeyFollow] / 1200.0), 20.0, 0.49 * m_sampleRate);
 		// 0 % resonance is a Butterworth response, 100 % a Q of about 23.
@@ -341,50 +385,55 @@ namespace gnubase::engine::processors
 	double Sampler::increment(const Voice& voice, const Sample& sample) const noexcept
 	{
 		const bool keyed = !voice.slice && m_values[FixedPitch] < 0.5;
-		const double semitones = (keyed ? static_cast<double>(voice.note) - std::round(m_values[RootKey]) : 0.0) +
+		const double semitones = (keyed ? voice.key - std::round(m_values[RootKey]) : 0.0) +
 			(12.0 * std::round(m_values[Octave])) + std::round(m_values[Coarse]) + (m_values[Fine] / 100.0) +
 			(m_bend * std::round(m_values[PitchBendRange]));
 		return std::pow(2.0, semitones / 12.0) * sample.sampleRate / m_sampleRate;
+	}
+
+	// The loop the voice plays, if any, in its positions: whether it alternates or wraps right now.
+	Sampler::LoopRange Sampler::loopOf(const Voice& voice, double frames) const noexcept
+	{
+		LoopRange range;
+		range.start = std::clamp(m_values[LoopStart] * frames, voice.from, voice.to);
+		range.end = std::clamp(m_values[LoopEnd] * frames, voice.from, voice.to);
+		const auto loop = static_cast<Loop>(std::lround(m_values[LoopMode]));
+		if (voice.slice || m_values[OneShot] >= 0.5 || loop == Loop::None || range.end - range.start < 1.0)
+			return range;
+		const bool held = voice.held && voice.stage != Stage::Release;
+		range.alternate = loop == Loop::Alternate || (loop == Loop::AlternateUntilRelease && held);
+		range.wraps = loop == Loop::Continuous || (loop == Loop::UntilRelease && held) ||
+			(loop == Loop::Once && !voice.loopedOnce);
+		return range;
 	}
 
 	// Moves the voice on by step frames; false once it has played its range.
 	bool Sampler::advance(Voice& voice, double step, double frames) const noexcept
 	{
 		voice.position += voice.direction * step;
-		const auto loop = static_cast<Loop>(std::lround(m_values[LoopMode]));
-		const double loopStart = std::clamp(m_values[LoopStart] * frames, voice.from, voice.to);
-		const double loopEnd = std::clamp(m_values[LoopEnd] * frames, voice.from, voice.to);
-		const bool looping =
-			!voice.slice && m_values[OneShot] < 0.5 && loop != Loop::None && loopEnd - loopStart >= 1.0;
-		if (looping)
+		const LoopRange loop = loopOf(voice, frames);
+		const double length = loop.end - loop.start;
+		if (loop.alternate)
 		{
-			const bool held = voice.held && voice.stage != Stage::Release;
-			const bool alternate = loop == Loop::Alternate || (loop == Loop::AlternateUntilRelease && held);
-			const bool wraps = loop == Loop::Continuous || (loop == Loop::UntilRelease && held) ||
-				(loop == Loop::Once && !voice.loopedOnce);
-			const double length = loopEnd - loopStart;
-			if (alternate)
+			// Wherever a step goes, also past both ends of a short loop at a high pitch: the loop unfolded is a
+			// cycle twice its length, forwards and then backwards.
+			if ((voice.direction > 0.0 && voice.position >= loop.end) ||
+				(voice.direction < 0.0 && voice.position <= loop.start))
 			{
-				// Wherever a step goes, also past both ends of a short loop at a high pitch: the loop unfolded is a
-				// cycle twice its length, forwards and then backwards.
-				if ((voice.direction > 0.0 && voice.position >= loopEnd) ||
-					(voice.direction < 0.0 && voice.position <= loopStart))
-				{
-					const double x = voice.position - loopStart;
-					double cycle = std::fmod(voice.direction > 0.0 ? x : (2.0 * length) - x, 2.0 * length);
-					if (cycle < 0.0)
-						cycle += 2.0 * length;
-					voice.direction = cycle < length ? 1.0 : -1.0;
-					voice.position = loopStart + (cycle < length ? cycle : (2.0 * length) - cycle);
-				}
-				return true;
+				const double x = voice.position - loop.start;
+				double cycle = std::fmod(voice.direction > 0.0 ? x : (2.0 * length) - x, 2.0 * length);
+				if (cycle < 0.0)
+					cycle += 2.0 * length;
+				voice.direction = cycle < length ? 1.0 : -1.0;
+				voice.position = loop.start + (cycle < length ? cycle : (2.0 * length) - cycle);
 			}
-			voice.direction = 1.0; // a released alternating loop plays on to the end
-			if (wraps && voice.position >= loopEnd)
-			{
-				voice.position = loopStart + std::fmod(voice.position - loopStart, length);
-				voice.loopedOnce = true;
-			}
+			return true;
+		}
+		voice.direction = 1.0; // a released alternating loop plays on to the end
+		if (loop.wraps && voice.position >= loop.end)
+		{
+			voice.position = loop.start + std::fmod(voice.position - loop.start, length);
+			voice.loopedOnce = true;
 		}
 		return voice.position < voice.to;
 	}
@@ -452,6 +501,11 @@ namespace gnubase::engine::processors
 			const auto i = static_cast<int64_t>(whole);
 			return hermite(at(data, i - 1), at(data, i), at(data, i + 1), at(data, i + 2), position - whole);
 		};
+		const auto length = static_cast<double>(frames);
+		// The fades and the loop's crossfade (p. 717), in frames.
+		const double fadeIn = std::max(m_values[FadeIn], 0.0) * length;
+		const double fadeOut = std::max(m_values[FadeOut], 0.0) * length;
+		const double crossfade = std::max(m_values[LoopCrossfade], 0.0) * length;
 		const double gain = dsp::dbToGain(m_values[Volume] + m_values[Gain]);
 		const double pan = std::clamp(m_values[Pan], -1.0, 1.0);
 		const double leftPan = std::min(1.0, 1.0 - pan);
@@ -464,14 +518,42 @@ namespace gnubase::engine::processors
 		{
 			if (!voice.active)
 				continue;
-			const double step = increment(voice, sample);
+			double step = increment(voice, sample);
 			if (filter)
 				voice.filter = filterFor(voice);
 			for (uint32_t i = begin; i < end && voice.active; ++i)
 			{
-				double l = read(sample.left, voice.position);
-				double r = stereo ? read(sample.right, voice.position) : l;
-				const double scale = voice.amplitude * gain * envelope(voice);
+				if (voice.glide > 0.0)
+				{
+					const double distance = static_cast<double>(voice.note) - voice.key;
+					const bool there = std::abs(distance) <= voice.glide;
+					voice.key = there ? voice.note : voice.key + std::copysign(voice.glide, distance);
+					voice.glide = there ? 0.0 : voice.glide;
+					step = increment(voice, sample);
+				}
+				// A loop that wraps blends its last frames into those between Start and its start, which it goes on
+				// with.
+				const LoopRange loop = loopOf(voice, length);
+				const double fading =
+					loop.wraps ? std::min({crossfade, loop.end - loop.start, loop.start - voice.from}) : 0.0;
+				const double blend =
+					fading > 0.0 ? std::clamp((voice.position - (loop.end - fading)) / fading, 0.0, 1.0) : 0.0;
+				const auto play = [&](const std::vector<float>& data)
+				{
+					const double value = read(data, voice.position);
+					return blend > 0.0
+						? value + (blend * (read(data, voice.position - (loop.end - loop.start)) - value))
+						: value;
+				};
+				double l = play(sample.left);
+				double r = stereo ? play(sample.right) : l;
+				// The fades belong to the sample's range, not to slices.
+				double fade = 1.0;
+				if (!voice.slice && fadeIn > 0.0)
+					fade = std::min(fade, (voice.position - voice.from) / fadeIn);
+				if (!voice.slice && fadeOut > 0.0)
+					fade = std::min(fade, (voice.to - voice.position) / fadeOut);
+				const double scale = voice.amplitude * gain * envelope(voice) * std::max(fade, 0.0);
 				l *= scale;
 				r *= scale;
 				if (drive > 0.0)

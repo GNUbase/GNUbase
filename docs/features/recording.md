@@ -21,7 +21,11 @@ transport's record state and the record mode setting.
   to the recorder's disk thread through lock-free queues (`Recorder` in `src/engine/audio/recorder.h`). It sends
   chunks only while some track is armed. A block that finds no free chunk is lost and counted; if a later chunk shows
   that the take just went on, the gap is written as silence, so the take keeps its timing. The disk thread polls
-  every 2 ms, since the audio thread can't wake it; the pool holds over a second of input. What the next recording
+  every 2 ms while a track is armed or records, since the audio thread can't wake it; the pool holds over a second of
+  input. Otherwise only MIDI input for the retrospective buffers comes, and it polls every 50 ms (a new setup wakes
+  it); without a device it sleeps until one opens (#531). An offline render (`audio.render`) makes the blocks much
+  faster than a device: before each block it waits for the disk thread once half the pool is in use
+  (`Recorder::waitForChunks`), so a recording made offline of any length loses no input. What the next recording
   records and where (`Recorder::setup`) is numbered when the engine hands it over, not applied: each chunk carries the
   latest number, and the disk thread applies a setup when a chunk sent after it comes, or when it finds none. So a
   recording that the audio thread started before keeps the setup it started with, and handing a setup over never
@@ -30,34 +34,46 @@ transport's record state and the record mode setting.
   that started the recording wait meanwhile, and so do a device change and the engine's end. Those two commands
   handle the chunks that came in only up to one that starts a recording, which they leave to the disk thread
   (#1356).
-- **Files.** The disk thread writes one file per track, named after the track (`Audio 1.wav`, `Audio 1-2.wav` if
-  that is taken; characters that file systems refuse become `_`), into the project's media folder `Audio`; an unsaved
+- **Files.** The disk thread writes one file per track, named after the track (`Audio 1.wav`, `Audio 1-2.wav` if that is
+  taken; characters that file systems refuse become `_`, and `_` follows a name that Windows reserves for a device,
+  whatever its case and extension: `CON_.wav`, `lpt1_.take.wav`), into the project's media folder `Audio`; an unsaved
   project records into `Recordings` in the settings folder (the temporary folder without one; `unsavedMediaFolder`,
   where its imported MP3 and Ogg Vorbis files are converted too, [file-import.md](file-import.md)), and its files are
-  referenced from there. A name that differs only in case from a file in the folder, or from another track's, counts
-  as taken on every file system, also on those that tell them apart, so that the files can be copied to one that
-  doesn't (`createFreeFile`). One listing of the folder when a recording starts finds the free names of all tracks;
-  a file made after it is still found when the file is created, and a file whose name can't be read as text (an
-  invalid UTF-16 name on Windows) doesn't count. The format comes from one function, `recordFormat`: the project
-  setup's record file type and bit depth ([project-setup.md](project-setup.md), p. 342) at the project's sample
-  rate, read when a recording starts. Wave and Broadcast Wave files end in `.wav`, AIFF in `.aif`, FLAC in `.flac`.
-  A Broadcast Wave file has a bext chunk with the track name as its description, GNUbase as its originator, the
-  local date and time the recording started, and as its time reference the position of the file's first frame
-  (pre-recorded input included) plus the project's start time, in samples since midnight. A file is complete once
-  the recording ends; after a crash the frames written so far are in it, as the reference describes (p. 347).
+  referenced from there. A name that differs only in case from a file in the folder, or from another track's, counts as
+  taken on every file system, also on those that tell them apart, so that the files can be copied to one that doesn't
+  (`createFreeFile`). One listing of the folder when a recording starts finds the free names of all tracks; a file made
+  after it is still found when the file is created, and a file whose name can't be read as text (an invalid UTF-16 name
+  on Windows) doesn't count. The format comes from one function, `recordFormat`: the project setup's record file type
+  and bit depth ([project-setup.md](project-setup.md), p. 342) at the project's sample rate, read when a recording
+  starts. Wave and Broadcast Wave files end in `.wav`, AIFF in `.aif`, FLAC in `.flac`. A Broadcast Wave file has a bext
+  chunk with the track name as its description (cut to the field's 256 bytes between two UTF-8 characters), GNUbase as
+  its originator, the local date and time the recording started, and as its time reference the position of the file's
+  first frame (pre-recorded input included) plus the project's start time, in samples since midnight. The time
+  reference doesn't wrap at midnight: a file that starts past 24 h counts on, as the 64-bit field allows, and a
+  pre-record that reaches back before 0:00:00 gives 0. File names are cut to 200 bytes in the same way, so a long track
+  name still fits the file systems' 255. A file is complete once the recording ends; after a crash the frames written
+  so far are in it, as the reference describes (p. 347): until a WAV or AIFF file is closed, its RIFF or FORM size and
+  its data or SSND size are 0xFFFFFFFF, which readers take as "up to the end of the file", and a FLAC file's STREAMINFO
+  has no sample count, for which the FLAC reader counts the frames that decode. A writer opens its file for others to
+  read along. Tests: `tests/audiofile_tests.cpp` (a file that was never closed), `tests/recording_tests.cpp` (formats,
+  the Broadcast Wave chunk and the time reference).
 - **Takes.** A file holds everything recorded from the start of the recording to its end. Each run of consecutive
-  project positions is a take: a cycle lap, or what was recorded between punching in and out
-  (`transport.record` with `record: false` or a punch out at the right locator ends a recording, and recording again
-  or a punch in at the left locator starts a new one, see [playback.md](playback.md); a cycle lap that punches out at
-  the right locator and in at the left one goes on in the same file). When the recording
-  ends, the engine runs `recording.add` with each track's file and takes, one undo step named Record: a media file and
-  a clip per file, and an audio event per take at its position, playing its part of the file. `recording.added`
-  announces the media files, clips and events; a file that can't be created or written is announced with
-  `recording.failed` and its reason, and the others go on. Undo removes the events, clips and media files; the files
-  stay on disk. A recording belongs to the project it was started in (`project.revision`'s `project`, which
-  `recording.add` gets as `project`): if another project was opened meanwhile, nothing is added and
-  `recording.failed` says so, and a track removed while it recorded is skipped with `recording.failed` while the
-  other tracks' takes are added.
+  project positions is a take: a cycle lap, or what was recorded between punching in and out (`transport.record` with
+  `record: false` or a punch out at the right locator ends a recording, and recording again or a punch in at the left
+  locator starts a new one, see [playback.md](playback.md); a cycle lap that punches out at the right locator and in at
+  the left one goes on in the same file). When the recording ends, the engine runs `recording.add` with each track's
+  file and takes, one undo step named Record: a media file and a clip per file, and an audio event per take at its
+  position, playing its part of the file. `recording.added` announces the media files, clips and events; a file that
+  can't be created or written is announced with `recording.failed` and its reason, and the others go on. Undo removes
+  the events, clips and media files; the files stay on disk. The takes come after `transport.stop` or a punch out has
+  returned, once the input still on its way has come in: a client waits for `recording.added` before `project.save`, or
+  the project is saved without them, and `project.load`, `project.new` or `project.revert` before it drop them (#546,
+  the command descriptions say so). `recording.added` follows unless no file could be written, which only
+  `recording.failed` reports. A recording that adds nothing, because its project is no longer open or all its tracks are
+  gone, leaves the project unmodified, without an undo step. A recording belongs to the project it was started in
+  (`project.revision`'s `project`, which `recording.add` gets as `project`): if another project was opened meanwhile,
+  nothing is added and `recording.failed` says so, and a track removed while it recorded is skipped with
+  `recording.failed` while the other tracks' takes are added.
 - **Audio record modes** (p. 345). `transport.set` with `audioRecordMode`, which `transport.get` reports and the
   Transport menu's Audio Record Mode sets, decides what happens to the unlocked events of the track that the takes
   overlap: `keepHistory` (the default) keeps them, and the newest event plays where they overlap; `cycleHistoryReplace`
@@ -65,9 +81,12 @@ transport's record state and the record mode setting.
   also of the takes before it, so of a cycle recording the last lap stays wherever laps overlap. Cutting out splits an
   event at the take's edges and removes what lies inside, as `event.split` and `event.remove` do. Locked events stay.
 - **Audio pre-record** (p. 346). The user setting `audio.preRecordSeconds` (0 to 60, 0 by default) keeps that much of
-  the armed tracks' input from before recording starts, while stopped or playing, on the disk thread, and puts it at
-  the start of the file. The event starts where recording started, with its offset after the pre-recorded frames, so
-  resizing its start to the left brings them out. Input from before a gap (a lost chunk, a new device) isn't kept.
+  the armed tracks' input from before recording starts, while stopped or playing, on the disk thread, and puts it at the
+  start of the file. It keeps only the device inputs that the armed tracks record, so its memory grows with them, not
+  with the device's inputs, and arming another track starts it afresh. If it can't be allocated, there is no pre-record
+  and `recording.failed` says so; recording works as without it (#531). The event starts where recording started, with
+  its offset after the pre-recorded frames, so resizing its start to the left brings them out. Input from before a gap
+  (a lost chunk, a new device) isn't kept.
 - **Lock Record** (#104, p. 356) keeps a recording from ending by accident. `transport.set` with `lockRecord`, which
   the Transport menu's Lock Record and Unlock Record set (the reference has key commands without default keys for
   them; the key commands editor will bind them), turns it on and off; it stays on for later recordings until it is

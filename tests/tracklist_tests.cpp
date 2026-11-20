@@ -11,9 +11,12 @@
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/rmlui.h"
+#include "ui/themes.h"
 #include "ui/tracklist.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_approx.hpp>
@@ -305,6 +308,27 @@ TEST_CASE("the track list's buttons show their click at once, also against a pro
 	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("automationLane.set") == 0; }));
 	CHECK(tracks.app.call("automationLane.list", {{"track", audio}}).at("lanes")[0].at("read") == false);
 	CHECK(!laneReads());
+}
+
+TEST_CASE("a click held on a track's S switches solo defeat", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t other = tracks.add({{"type", "audio"}});
+	tracks.rows(1);
+	// As Alt-click does (reference manual p. 466); a short click solos.
+	const std::string solo = row(other) + " button.solo";
+	tracks.app.ui().press(std::nullopt, {solo, 0, std::nullopt}, ui::MouseButton::Left);
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0);
+	tracks.app.ui().release(std::nullopt, {solo, 0, std::nullopt}, ui::MouseButton::Left);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.channel(other).at("soloDefeat") == true; }));
+	CHECK(tracks.channel(other).at("solo") == false);
+	CHECK(hasClass(elements(tracks.app, solo).at(0), "defeated"));
+	clock->advance(1.0); // no double click with the press before
+	tracks.click(solo);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.channel(other).at("solo") == true; }));
+	CHECK(tracks.channel(other).at("soloDefeat") == true);
 }
 
 // #1852: what the engine makes of a click wins over what the click showed: an exclusive solo turns the other
@@ -1420,7 +1444,8 @@ TEST_CASE("the track controls settings dialog chooses and orders each track type
 	Tracks tracks;
 	const uint64_t audio = tracks.add({{"type", "audio"}});
 	const uint64_t midi = tracks.add({{"type", "midi"}});
-	tracks.rows(2);
+	const uint64_t signature = tracks.add({{"type", "signature"}});
+	tracks.rows(3);
 	const auto controls = [&tracks](uint64_t track)
 	{
 		std::vector<std::string> names;
@@ -1429,6 +1454,14 @@ TEST_CASE("the track controls settings dialog chooses and orders each track type
 		return names;
 	};
 	CHECK(controls(audio) == std::vector<std::string>{"mute", "solo", "record", "monitor", "read"});
+	// The signature track's controls are fixed (reference manual p. 189): the dialog doesn't list them and OK keeps
+	// them.
+	const auto signatureControls = [&tracks, signature]
+	{
+		return elements(tracks.app, row(signature) + " [control=signatureLock]").size() +
+			elements(tracks.app, row(signature) + " select[control=signatureOptions]").size();
+	};
+	REQUIRE(tracks.app.waitUntil([&] { return signatureControls() == 2; }));
 
 	const auto open = [&tracks] { return !elements(tracks.app, "#track-controls-dialog").empty(); };
 	tracks.click("#track-controls-settings");
@@ -1454,6 +1487,7 @@ TEST_CASE("the track controls settings dialog chooses and orders each track type
 	REQUIRE(tracks.app.waitUntil(
 		[&] { return controls(audio) == std::vector<std::string>{"mute", "solo", "record", "timeBase", "read"}; }));
 	CHECK(controls(midi) == std::vector<std::string>{"mute", "solo", "record", "monitor", "read"});
+	CHECK(signatureControls() == 2);
 	CHECK(tracks.app.call("settings.get", {{"key", "ui.trackControls"}}).at("value").at("audio") ==
 		Json{"mute", "solo", "record", "timeBase", "read"});
 	// Switch Time Base switches the track's time base.
@@ -1850,6 +1884,7 @@ TEST_CASE("missing track widths use each type's default and keep tempo controls 
 TEST_CASE("folder tracks: new folders for the selected tracks, group channels and data blocks", "[ui]")
 {
 	Tracks tracks;
+	tracks.app.setDpRatio(0.5F); // the group-channel actions fit in the context menu
 	const uint64_t audio = tracks.add({{"type", "audio"}});
 	const uint64_t other = tracks.add({{"type", "audio"}});
 	const uint64_t marker = tracks.add({{"type", "marker"}});
@@ -2118,15 +2153,17 @@ TEST_CASE(
 	select->CancelSelectBox();
 	settle();
 
-	// The other themes: the 4 dp strip on every row, also the selected one and the folder's; and back to the default
+	// Every theme: the 4 dp strip on every row, also the selected one and the folder's; and back to the default
 	// theme's.
-	for (const char* theme : {"dark", "light", "high-contrast", "gnubase"})
+	std::vector<std::string> themes = test::themes(GNUBASE_RESOURCES_DIR);
+	themes.emplace_back(ui::g_defaultTheme);
+	for (const std::string& theme : themes)
 	{
 		INFO("theme " << theme);
 		app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
-		REQUIRE(app.waitUntil([&app, theme] { return app.shell().theme() == theme; }));
+		REQUIRE(app.waitUntil([&app, &theme] { return app.shell().theme() == theme; }));
 		settle();
-		const bool flat = std::string(theme) == "gnubase";
+		const bool flat = theme == ui::g_defaultTheme;
 		CHECK(std::abs(width(row(lead) + " .track-color") - (flat ? width(row(lead)) : 4.0)) <= 1.0);
 		CHECK(std::abs(width(row(folder) + " .track-color") - (flat ? width(row(folder)) : 4.0)) <= 1.0);
 	}
@@ -2144,4 +2181,39 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&] { return !attributes(lead).contains("color"); }));
 	settle();
 	CHECK(width(row(lead) + " .track-color") <= 8.0);
+}
+
+TEST_CASE("the signature track's Lock in the track list locks its time signature events", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t signature = tracks.add({{"type", "signature"}});
+	tracks.rows(1);
+	const std::string lock = row(signature) + " button[control=signatureLock]";
+	REQUIRE(elements(tracks.app, lock).size() == 1);
+	tracks.click(lock);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(signature).value("lock", false); }));
+	CHECK(!engine::Client(tracks.app.engine())
+			.call("signature.add", {{"bar", 2}, {"numerator", 3}, {"denominator", 4}})
+			.ok());
+	REQUIRE(tracks.app.waitUntil([&] { return !elements(tracks.app, lock + ".checked").empty(); }));
+	tracks.click(lock);
+	REQUIRE(tracks.app.waitUntil([&] { return !tracks.track(signature).value("lock", true); }));
+}
+
+TEST_CASE("the signature track's options in the track list open the Process Bars dialog", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t signature = tracks.add({{"type", "signature"}});
+	tracks.rows(1);
+	// Signature Track Options (reference manual pp. 163-164): its name, then Process Bars Dialog. The click pattern
+	// options come with patterns per time signature event (docs/features/metronome.md).
+	const std::string options = row(signature) + " select[control=signatureOptions]";
+	REQUIRE(tracks.app.waitUntil([&] { return test::selectOptions(tracks.app, options).size() == 2; }));
+	CHECK(elements(tracks.app, "#process-bars-dialog").empty());
+	tracks.click(options);
+	tracks.app.ui().key(std::nullopt, "Down");
+	tracks.click(options);
+	REQUIRE(tracks.app.waitUntil([&] { return !elements(tracks.app, "#process-bars-dialog").empty(); }));
+	// The list's value is its name's again, so that choosing the option again opens the dialog again.
+	CHECK(elements(tracks.app, options).at(0).at("attributes").value("value", "x").empty());
 }

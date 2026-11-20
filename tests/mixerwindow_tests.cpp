@@ -9,11 +9,13 @@
 #include "ui/keycommands.h"
 #include "ui/mixer.h"
 #include "ui/renderer.h"
+#include "ui/rmlui.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Property.h>
@@ -409,6 +411,34 @@ TEST_CASE("each mixer window and the lower zone's mixer hide channels of their o
 	REQUIRE(app.waitUntil([&] { return app.appUi().mixer(2) == nullptr; }));
 }
 
+TEST_CASE("another project drops the notes being typed in a mixer channel's notepad", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "song.dawproject").string();
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added a = addTrack(app, "audio", "A");
+	const Added b = addTrack(app, "audio", "B");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 4; }));
+	app.call("project.save", {{"path", file}});
+	click(app, window, "#mixer-layout");
+	click(app, window, "#mixer-layout-pane [setup-section=notes]");
+	REQUIRE(app.waitUntil([&] { return !has(element(app, window, strip(a.channel) + " .mixer-notes"), "hidden"); }));
+	app.ui().key(window, "Escape");
+
+	// Another client loads the project, whose channels have the same ids: the notes typed are dropped, not saved to
+	// the loaded project's channel when the field is left.
+	click(app, window, strip(a.channel) + " .mixer-notes-field");
+	app.ui().text(window, "Bass DI");
+	app.call("project.load", {{"path", file}});
+	REQUIRE(app.waitUntil(
+		[&] { return element(app, window, strip(a.channel) + " .mixer-notes-field").value("value", "").empty(); }));
+	click(app, window, strip(b.channel) + " .mixer-channel-name");
+	CHECK_FALSE(app.waitUntil(
+		[&] { return !channelJson(app, a.channel).value("notes", "").empty(); }, std::chrono::milliseconds(300)));
+}
+
 TEST_CASE("mixer channels show notes and pictures, and a channel dragged onto another moves its track", "[ui]")
 {
 	const test::TempDir dir;
@@ -692,10 +722,20 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&] { return has(button(guitar, "solo"), "defeated"); }));
 	CHECK(channelJson(app, guitar.channel).at("soloDefeat") == true);
 	CHECK_FALSE(has(button(guitar, "solo"), "checked"));
+	// So does a click held down, on a soloed channel too.
+	const std::string bassSolo = strip(bass.channel) + " button[control=solo]";
+	app.ui().press(window, {bassSolo, 0, std::nullopt}, ui::MouseButton::Left);
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0);
+	app.ui().release(window, {bassSolo, 0, std::nullopt}, ui::MouseButton::Left);
+	REQUIRE(app.waitUntil([&] { return has(button(bass, "solo"), "defeated"); }));
+	CHECK(channelJson(app, bass.channel).at("solo") == true);
 	// Deactivate All Solo States takes both.
 	click(app, window, ".mixer-toolbar button[deactivate=solo]");
 	REQUIRE(app.waitUntil([&] { return !has(toolbar("solo"), "checked"); }));
 	CHECK(channelJson(app, bass.channel).at("solo") == false);
+	CHECK(channelJson(app, bass.channel).at("soloDefeat") == false);
 	CHECK(channelJson(app, guitar.channel).at("soloDefeat") == false);
 
 	// Listen and mute, and their Deactivate All buttons.

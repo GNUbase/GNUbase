@@ -31,7 +31,8 @@ namespace gnubase::engine
 	Controller controllerFrom(const Json& item, const std::string& name);
 
 	// A note's muted attributes from note.add or note.set (#1684): item's mutedArticulations, else those of the note's
-	// that it still has; only its own attributes, each once. Throws CommandError with messages that start with name.
+	// that it still has, as a loaded project's (#1762); only its own attributes, each once. Throws CommandError with
+	// messages that start with name.
 	std::vector<std::string> mutedArticulationsFrom(const Json& item, const Note& note, const std::string& name);
 
 	// Automation follows events (projectmodel.cpp): moves the automation of a track from where an event or part was
@@ -44,12 +45,22 @@ namespace gnubase::engine
 	bool hasStepCurve(const Project& project, const AutomationLane& lane);
 
 	// Changes the project's sample rate (projectmodel.cpp). Linear positions are in samples, so they are rescaled to
-	// keep their time.
-	void changeSampleRate(Project& project, double sampleRate, CommandContext& context);
+	// keep their time, bounded to plus or minus time::g_maxPosition. Without context no events are emitted, for
+	// repairing a loaded project. The old rate must be finite and positive.
+	void changeSampleRate(Project& project, double sampleRate, CommandContext* context = nullptr);
+	inline void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
+	{
+		changeSampleRate(project, sampleRate, &context);
+	}
 
 	// Changes a track's time base (projectmodel.cpp): its events, parts, markers, automation points and other
 	// versions' events and parts keep their place in the new one.
 	void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context);
+
+	// The color a track added at index among parent's tracks (0: the top level) gets without a color of its own
+	// (docs/features/colors.md): its folder's with the user setting editing.applyFolderColor, else the one
+	// editing.autoTrackColor chooses. Every way to add a track gives it this color.
+	std::string newTrackColor(const Project& project, ObjectId parent, size_t index, CommandContext& context);
 
 	// The project's tempo as project.get and the tempo.changed event report it (tempo.cpp): the tempo it plays, whether
 	// the tempo track is active, the tempo track's events and the fixed tempo.
@@ -90,6 +101,7 @@ namespace gnubase::engine
 		time::Samples end = 0;
 		time::Ticks startTicks = 0;
 		time::Ticks endTicks = 0;
+		double sampleRate = 0.0;             // the project's when it was copied, which its samples count in
 		std::vector<ObjectId> tracks;        // the tracks it was copied from, from top to bottom
 		std::vector<AudioEvent> audioEvents; // with those of the audio parts
 		std::vector<AudioPart> audioParts;
@@ -112,7 +124,8 @@ namespace gnubase::engine
 
 		time::Samples start = 0; // the range's start, in project samples and in ticks
 		time::Ticks startTicks = 0;
-		std::vector<ObjectId> tracks; // the tracks of the copied lanes, from top to bottom
+		double sampleRate = 0.0;      // the project's when it was copied, which its samples count in
+		std::vector<ObjectId> tracks; // from top to bottom: the given tracks, or else those of the copied lanes
 		std::vector<Lane> lanes;      // in the order of their tracks
 	};
 
@@ -243,8 +256,9 @@ namespace gnubase::engine
 		// name.
 		Project loadTemplate(const std::string& name) const;
 		// Records what changed since before as a step; one with a merge key joins the last step if that has the key.
-		void record(std::string action, const Project& before, ProjectChange change, CommandContext& context,
-			std::string merge = {});
+		// known is that change if the caller computed it already, else record does.
+		void record(std::string action, const Project& before, std::optional<ProjectChange> known,
+			CommandContext& context, std::string merge = {});
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
 		Json join(CommandContext& context);
@@ -289,7 +303,9 @@ namespace gnubase::engine
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
-		std::optional<RangeClipboard> m_clipboard; // range.copy and range.cut
+		// range.copy and range.cut; shared, so that an edit can keep the one before it cheaply and put it back if it
+		// fails, as range.cut in a failed history.transaction must leave it.
+		std::shared_ptr<const RangeClipboard> m_clipboard;
 		std::function<std::string(ObjectId)> m_slotStatus;
 		// What the chord pads' remote keys and chordPads.listen keep about the project, cleared when another one opens.
 		std::function<void(CommandContext& context)> m_chordPadsOpened;

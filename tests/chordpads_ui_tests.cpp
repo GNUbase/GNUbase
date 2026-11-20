@@ -968,6 +968,97 @@ TEST_CASE("MIDI Learn and Assign from MIDI Input clicked twice before the engine
 	CHECK_FALSE(window.hasClass(assign, "checked"));
 }
 
+// The settings toggles go from what they show, which they show at the click, as MIDI Learn does (#1896): a double click
+// before the engine answers turns Latch, Lock or a section's Mute on and off again.
+TEST_CASE("Latch, Lock and Mute clicked twice before the engine answers are off again", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	Window window;
+	const test::ReleaseHolds releaseHolds{holds};
+	window.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(window.app.engine(), "holder");
+	window.open();
+	window.click("#chord-pads-pane-remote-button");
+	window.click(Window::pad(0));
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(Window::pad(0), "selected"); }));
+	const auto answered = [&]
+	{
+		return window.app.waitUntil(
+			[&]
+			{
+				const ui::EngineBinding& binding = window.app.appUi().binding();
+				return binding.waiting("chordPads.set") == 0 && binding.waiting("history.transaction") == 0 &&
+					binding.waiting("chordPads.get") == 0;
+			});
+	};
+	const auto twice = [&](int hold, const std::string& button)
+	{
+		holder.send("test.hold");
+		REQUIRE(holds.waitEntered(hold));
+		window.click(button);
+		CHECK(window.hasClass(button, "checked"));
+		window.click(button);
+		CHECK_FALSE(window.hasClass(button, "checked"));
+		holds.release(hold);
+		REQUIRE(answered());
+		window.step();
+		CHECK_FALSE(window.hasClass(button, "checked"));
+	};
+	twice(1, "#chord-pads-latch");
+	CHECK(window.call("chordPads.get").at("latch") == false);
+	twice(2, "#chord-pads-lock");
+	CHECK(window.pads()[0].at("locked") == false);
+	// Ctrl+Shift+L is Lock too, and lights the button.
+	window.app.ui().key(std::nullopt, "Mod+Shift+L");
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[0].at("locked") == true; }));
+	REQUIRE(answered());
+	window.step();
+	CHECK(window.hasClass("#chord-pads-lock", "checked"));
+	window.click("#chord-pads-pane-playerRemote-button");
+	twice(3, "#chord-pads-mute-1");
+	CHECK(window.call("chordPads.get").at("mutedSections")[1] == false);
+}
+
+// A panel built while the engine listens already shows it, as chordPads.get says (#1896): MIDI Learn started through
+// MCP or Lua stops with a click.
+TEST_CASE("a chord pads panel opened while MIDI Learn listens shows it and stops it with a click", "[ui]")
+{
+	Window window;
+	window.call("chordPads.listen", {{"learn", "range"}});
+	window.open();
+	window.click("#chord-pads-pane-remote-button");
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learn-range", "checked"); }));
+	window.click("#chord-pads-learn-range");
+	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("listening").is_null(); }));
+	// Saving or deleting a preset shows the pads again without a new chordPads.get: the button keeps showing what the
+	// engine listens for, also when that changed after the panel's last chordPads.get.
+	const auto presetShown = [&](bool shown)
+	{
+		return window.app.waitUntil(
+			[&]
+			{
+				const Json options = window.elements("#chord-pads-preset")[0].value("options", Json::array());
+				return shown ==
+					std::any_of(options.begin(), options.end(),
+						[](const Json& option) { return option.value("value", "") == "Learned"; });
+			});
+	};
+	window.call("chordPads.listen", {{"learn", "range"}});
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learn-range", "checked"); }));
+	window.call("chordPads.savePreset", {{"name", "Learned"}});
+	REQUIRE(presetShown(true));
+	window.step();
+	CHECK(window.hasClass("#chord-pads-learn-range", "checked"));
+	window.click("#chord-pads-learn-range");
+	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("listening").is_null(); }));
+	window.call("chordPads.deletePreset", {{"name", "Learned"}});
+	REQUIRE(presetShown(false));
+	window.step();
+	CHECK_FALSE(window.hasClass("#chord-pads-learn-range", "checked"));
+}
+
 TEST_CASE(
 	"MIDI Learn of every remote key and control, the section keys, the pad layout and Import from MIDI Loop", "[ui]")
 {

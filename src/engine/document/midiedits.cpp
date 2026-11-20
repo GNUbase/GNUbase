@@ -613,9 +613,8 @@ namespace gnubase::engine
 				"Changes controller events of a MIDI part: each change names a controller event by id and gives what "
 				"changes: position in ticks, type, and the fields of the type as controller.add takes them (number, "
 				"value, channel, bank, data, articulation, reset, muted). A field the type doesn't have is an error, "
-				"such as "
-				"value on a program "
-				"change; a null bank removes it. A new type keeps the fields it shares with the old one and needs the "
+				"such as value on a program change; a null bank removes it. A new type keeps the fields it shares with "
+				"the old one and needs the "
 				"others. Returns the changed controller events.",
 				changesSchema("controllers",
 					{{"position", integer},

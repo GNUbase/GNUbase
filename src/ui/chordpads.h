@@ -99,6 +99,12 @@ namespace gnubase::ui
 		std::vector<int> selected() const;
 		void send(const std::string& command, engine::Json parameters);
 		void listen(engine::Json parameters); // chordPads.listen
+		// A settings toggle, such as Latch or Lock (the button chord-pads-<name>): sends command and shows on at once,
+		// kept against the engine's reads until it answered every command of the toggle, so that a second click before
+		// then goes from what the first sent (#1896).
+		void toggle(const std::string& name, const std::string& command, engine::Json parameters, bool on);
+		// What the toggle shows: what it sent last while commands of it are out, else the engine's value.
+		bool toggled(const std::string& name, bool engine) const;
 		// What the panel shows it listens for: what it asked for last while the engine hasn't answered it, else what
 		// the engine said.
 		const engine::Json& listening() const { return m_listenSent ? *m_listenSent : m_listening; }
@@ -129,11 +135,13 @@ namespace gnubase::ui
 		int m_keyLow = 24;
 		int m_keyCount = 73;
 		std::optional<std::array<float, 4>> m_keyDrag;
-		engine::Json m_listening;                   // what chordPads.listen listens for, or null, as its event said
-		std::optional<engine::Json> m_listenSent;   // what the last chordPads.listen sent asks for, until answered
-		int m_listensSending = 0;                   // the chordPads.listen commands the engine hasn't answered yet
-		std::map<int, std::vector<int>> m_sounding; // the pitches each pad plays (-1: an audition)
-		int m_hovered = -1;                         // the pad under the mouse
+		engine::Json m_listening; // what chordPads.listen listens for, or null, as its event said
+		// What the last chordPads.listen sent asks for, until the engine answered every one sent.
+		std::optional<engine::Json> m_listenSent;
+		int m_listensSending = 0; // the chordPads.listen commands the engine hasn't answered yet
+		std::map<std::string, std::pair<int, bool>> m_toggled; // per toggle: its commands out, what it sent last
+		std::map<int, std::vector<int>> m_sounding;            // the pitches each pad plays (-1: an audition)
+		int m_hovered = -1;                                    // the pad under the mouse
 		int m_auditionPad = -1;         // the pad that a pad modifier button's press plays until the button goes up
 		bool m_pressedModifier = false; // a pad modifier button acted on its press, so its click does nothing
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went

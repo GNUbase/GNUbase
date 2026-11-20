@@ -812,6 +812,7 @@ TEST_CASE("a range dragged in a cycle marker on the marker track's lane and Mod+
 TEST_CASE("the track list's context menu shows the marker lines of the active marker track, all or none", "[ui]")
 {
 	test::UiApp app({900, 560});
+	app.setDpRatio(0.5F); // the Marker Lines submenu fits in the window
 	app.appUi().showProject();
 	const auto track = app.call("track.add", {{"type", "marker"}}).at("track").at("id").get<uint64_t>();
 	REQUIRE(app.waitUntil([&] { return exists(app, control(track, "addPositionMarker")); }));

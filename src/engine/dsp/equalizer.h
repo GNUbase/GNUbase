@@ -91,7 +91,8 @@ namespace gnubase::engine::dsp
 		// one-pole over g_smoothingSeconds, and the sections are designed anew from where they are every
 		// g_designInterval frames, so every step on the way is a proper bell, shelf or cut. Turning a band on or off,
 		// or changing its type or slope, morphs the coefficients in a straight line from where the band was to the
-		// new design over the same time; sections beyond those in use are pass-throughs, so they can come and go.
+		// new design over the same time; sections beyond those in use are pass-throughs, so they can come and go. A
+		// band that is off and has no sections in use takes every change at once, so that it comes in at its settings.
 		struct Band
 		{
 			Smoothed octaves{0.0, 1e-9}; // log2 of the frequency

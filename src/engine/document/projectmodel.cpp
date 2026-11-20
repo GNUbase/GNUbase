@@ -351,7 +351,8 @@ namespace gnubase::engine
 				return project.lastAppliedColor;
 			if (mode == "random")
 			{
-				static std::mt19937 random{std::random_device{}()}; // only the command thread adds tracks
+				// Each engine adds tracks on its own command thread.
+				thread_local std::mt19937 random{std::random_device{}()};
 				return colors[std::uniform_int_distribution<size_t>(0, colors.size() - 1)(random)].color;
 			}
 			if (mode != "previous" && mode != "previousPlusOne")
@@ -457,7 +458,10 @@ namespace gnubase::engine
 
 		int64_t rescale(int64_t value, double factor)
 		{
-			return std::llround(static_cast<double>(value) * factor);
+			if (value == 0)
+				return 0; // even when a tiny source rate makes the factor infinite
+			const auto limit = static_cast<double>(time::g_maxPosition);
+			return std::llround(std::clamp(static_cast<double>(value) * factor, -limit, limit));
 		}
 
 		// Only ruler tracks have a time format and a time offset.
@@ -491,6 +495,12 @@ namespace gnubase::engine
 			}
 			track.timeOffsetOn = parameters.value("timeOffsetOn", track.timeOffsetOn);
 		}
+	}
+
+	std::string newTrackColor(const Project& project, ObjectId parent, size_t index, CommandContext& context)
+	{
+		const std::string inherited = folderColor(project, parent, context);
+		return inherited.empty() ? autoTrackColor(project, parent, index, context) : inherited;
 	}
 
 	void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context)
@@ -575,7 +585,7 @@ namespace gnubase::engine
 		track.timeBase = base;
 	}
 
-	void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
+	void changeSampleRate(Project& project, double sampleRate, CommandContext* context)
 	{
 		const double factor = sampleRate / project.sampleRate;
 		// Only linear positions are in samples; the inactive versions' events and parts change without an event, since
@@ -587,8 +597,8 @@ namespace gnubase::engine
 				if (event.position.base != time::TimeBase::Linear)
 					return;
 				event.position.value = rescale(event.position.value, factor);
-				if (plays)
-					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+				if (context != nullptr && plays)
+					context->emit("audioEvent.changed", {{"event", toJson(event)}});
 			},
 			[&](AudioPart& part, bool plays)
 			{
@@ -596,8 +606,8 @@ namespace gnubase::engine
 					return;
 				part.position.value = rescale(part.position.value, factor);
 				part.length = rescale(part.length, factor);
-				if (plays)
-					context.emit("audioPart.changed", {{"part", toJson(part)}});
+				if (context != nullptr && plays)
+					context->emit("audioPart.changed", {{"part", toJson(part)}});
 			},
 			[&](MidiPart& part, bool plays)
 			{
@@ -605,8 +615,8 @@ namespace gnubase::engine
 					return;
 				part.position.value = rescale(part.position.value, factor);
 				part.length = rescale(part.length, factor);
-				if (plays)
-					context.emit("midiPart.changed", {{"part", toJson(part)}});
+				if (context != nullptr && plays)
+					context->emit("midiPart.changed", {{"part", toJson(part)}});
 			});
 		for (auto& [id, lane] : project.automation)
 		{
@@ -617,14 +627,15 @@ namespace gnubase::engine
 					point.position.value = rescale(point.position.value, factor);
 					changed = true;
 				}
-			if (changed)
-				context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+			if (context != nullptr && changed)
+				context->emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 		for (auto& [id, track] : project.trackById)
 			if (track.type == TrackType::Ruler && track.timeBase == time::TimeBase::Linear)
 			{
 				track.timeOffset = rescale(track.timeOffset, factor);
-				context.emit("track.changed", {{"track", toJson(track)}});
+				if (context != nullptr)
+					context->emit("track.changed", {{"track", toJson(track)}});
 			}
 		project.sampleRate = sampleRate;
 		// At a lower rate, a short cycle marker may become shorter than a sample, in either time base.
@@ -635,9 +646,11 @@ namespace gnubase::engine
 			{
 				marker.position.value = rescale(marker.position.value, factor);
 				marker.end.value = rescale(marker.end.value, factor);
+				if (marker.type == MarkerType::Cycle)
+					marker.position.value = std::min(marker.position.value, time::g_maxPosition - 1);
 			}
-			if (keepMinimumLength(project, marker) || linear)
-				context.emit("marker.changed", {{"marker", toJson(marker)}});
+			if ((keepMinimumLength(project, marker) || linear) && context != nullptr)
+				context->emit("marker.changed", {{"marker", toJson(marker)}});
 		}
 		bool arranged = false;
 		for (ArrangerEvent& event : project.arranger.events)
@@ -646,12 +659,13 @@ namespace gnubase::engine
 			{
 				event.position.value = rescale(event.position.value, factor);
 				event.end.value = rescale(event.end.value, factor);
+				event.position.value = std::min(event.position.value, time::g_maxPosition - 1);
 				arranged = true;
 			}
 			arranged = keepMinimumLength(project, event) || arranged;
 		}
-		if (arranged)
-			context.emit("arranger.changed", arrangerJson(project));
+		if (context != nullptr && arranged)
+			context->emit("arranger.changed", arrangerJson(project));
 		bool transposed = false;
 		for (TransposeEvent& event : project.transpose.events)
 			if (event.position.base == time::TimeBase::Linear)
@@ -659,8 +673,8 @@ namespace gnubase::engine
 				event.position.value = rescale(event.position.value, factor);
 				transposed = true;
 			}
-		if (transposed)
-			context.emit("transpose.changed", transposeJson(project));
+		if (context != nullptr && transposed)
+			context->emit("transpose.changed", transposeJson(project));
 		bool chorded = false;
 		for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
 			for (ChordEvent& event : *events)
@@ -669,8 +683,8 @@ namespace gnubase::engine
 					event.position.value = rescale(event.position.value, factor);
 					chorded = true;
 				}
-		if (chorded)
-			context.emit("chord.changed", chordJson(project));
+		if (context != nullptr && chorded)
+			context->emit("chord.changed", chordJson(project));
 	}
 
 	namespace
@@ -1327,7 +1341,7 @@ namespace gnubase::engine
 			track.type = type;
 			track.name = parameters.value("name", defaultTrackName(project, type));
 			track.color =
-				parameters.contains("color") ? color(parameters, {}) : autoTrackColor(project, parent, index, context);
+				parameters.contains("color") ? color(parameters, {}) : newTrackColor(project, parent, index, context);
 			track.timeBase = parameters.contains("timeBase")
 				? timeBaseFromName(parameters.at("timeBase").get<std::string>())
 				: defaultTimeBase(project, type, context);
@@ -1369,11 +1383,6 @@ namespace gnubase::engine
 				route(project, *channel, project.channels.at(channel->id), parameters);
 				channel = project.channels.at(channel->id);
 			}
-
-			if (const std::string inherited =
-					parameters.contains("color") ? std::string() : folderColor(project, parent, context);
-				!inherited.empty())
-				project.trackById.at(track.id).color = inherited;
 
 			Json result = {{"track", toJson(project.trackById.at(track.id))},
 				{"channel", channel ? toJson(*channel) : Json(nullptr)}};
@@ -1524,6 +1533,11 @@ namespace gnubase::engine
 			{
 				require(track.type == TrackType::Folder, "only folder tracks have group editing");
 				track.groupEditing = parameters.at("groupEditing").get<bool>();
+			}
+			if (parameters.contains("lock"))
+			{
+				require(track.type == TrackType::Signature, "only the signature track has a lock");
+				track.lock = parameters.at("lock").get<bool>();
 			}
 			Json result = {{"track", toJson(track)}};
 			context.emit("track.changed", result);
@@ -2186,9 +2200,9 @@ namespace gnubase::engine
 			const Channel before = channel;
 			channel = changed;
 			const std::set<ObjectId> soloed = passOn(project, before, channel.id, parameters, context);
-			// Exclusive solo (reference manual p. 466): every other channel's solo goes off, but for those the solo
-			// went on to.
-			if (parameters.value("exclusive", false))
+			// Exclusive solo (reference manual p. 466): with solo on, every other channel's solo goes off, but for
+			// those the solo went on to.
+			if (parameters.value("exclusive", false) && parameters.value("solo", false))
 				for (auto& [id, other] : project.channels)
 					if (id != channel.id && other.solo && soloed.count(id) == 0)
 					{
@@ -3102,8 +3116,9 @@ namespace gnubase::engine
 		std::vector<std::string> muted;
 		if (!item.contains("mutedArticulations"))
 		{
-			std::copy_if(
-				note.mutedArticulations.begin(), note.mutedArticulations.end(), std::back_inserter(muted), has);
+			for (const std::string& each : note.mutedArticulations)
+				if (has(each) && std::find(muted.begin(), muted.end(), each) == muted.end())
+					muted.push_back(each);
 			return muted;
 		}
 		for (const std::string& each : item.at("mutedArticulations").get<std::vector<std::string>>())
@@ -3235,7 +3250,8 @@ namespace gnubase::engine
 			const Json& parameters = context.parameters();
 			const double sampleRate = parameters.value("sampleRate", project.sampleRate);
 			require(sampleRate >= g_lowestSampleRate && sampleRate <= g_highestSampleRate,
-				"sampleRate must be from 8000 to 768000 Hz");
+				"sampleRate must be from " + std::to_string(static_cast<int>(g_lowestSampleRate)) + " to " +
+					std::to_string(static_cast<int>(g_highestSampleRate)) + " Hz");
 			const double maxVolume = parameters.value("maxVolume", project.maxVolume);
 			require(maxVolume == 6.0 || maxVolume == 12.0, "maxVolume must be 6 or 12 dB");
 			ProjectSetup setup;
@@ -3671,8 +3687,9 @@ namespace gnubase::engine
 				const ResetRender resetRender{m_applyingRender, applying};
 				Project before = m_project;
 				const bool followsEvents = m_automationFollowsEvents; // automation.set in a transaction changes it
+				const std::shared_ptr<const RangeClipboard> clipboard = m_clipboard; // and range.cut this
 				Json result;
-				ProjectChange change;
+				std::optional<ProjectChange> change; // computed here only for the render locks, else by record (#1850)
 				try
 				{
 					result = handler(m_project, context);
@@ -3681,13 +3698,17 @@ namespace gnubase::engine
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
 					followTrackFolders(m_project, context, before);
-					change = difference(before, m_project);
-					checkRenderLocks(m_project, {&change});
+					if (!m_trackRenders.empty())
+					{
+						change = difference(before, m_project);
+						checkRenderLocks(m_project, {&*change});
+					}
 				}
 				catch (...)
 				{
 					m_project = std::move(before);
 					m_automationFollowsEvents = followsEvents;
+					m_clipboard = clipboard;
 					throw;
 				}
 				announceWarpedEvents(before, m_project, context);
@@ -3725,8 +3746,8 @@ namespace gnubase::engine
 		engine.registerCommand(std::move(info), std::move(handler));
 	}
 
-	void ProjectModel::record(
-		std::string action, const Project& before, ProjectChange change, CommandContext& context, std::string merge)
+	void ProjectModel::record(std::string action, const Project& before, std::optional<ProjectChange> known,
+		CommandContext& context, std::string merge)
 	{
 		const std::vector<HistoryStep>& steps = m_history.steps();
 		if (!merge.empty() && !steps.empty() && m_history.position() == steps.size() && steps.back().merge == merge)
@@ -3734,7 +3755,7 @@ namespace gnubase::engine
 			// The step joins the last one: what changed since before that one.
 			Project start = before;
 			apply(start, steps.back().change, Direction::Undo);
-			change = difference(start, m_project);
+			ProjectChange change = difference(start, m_project);
 			// Compose only format edits, excluding display choices made between the gesture's commands.
 			change.timeFormatBefore = steps.back().change.timeFormatBefore;
 			change.timeFormatAfter = steps.back().change.timeFormatAfter;
@@ -3776,6 +3797,7 @@ namespace gnubase::engine
 			announceHistory(context, true);
 			return;
 		}
+		ProjectChange change = known ? std::move(*known) : difference(before, m_project);
 		if (change.empty())
 			return;
 		HistoryStep step{std::move(action), now(), {}, std::move(change), std::move(merge)};
@@ -4151,10 +4173,13 @@ namespace gnubase::engine
 				"it are extracted to mediaFolder, by default a folder named after the file next to it. With "
 				"revision, it loads only if the project is still at that revision (see project.revision), and fails "
 				"otherwise, so that no change made meanwhile is lost. An auto save (see project.autoSave) opens "
-				"without a file and with unsaved changes, and isn't a recent project.",
+				"without a file and with unsaved changes, and isn't a recent project. A sample rate outside the "
+				"supported range is clamped to the nearest bound, keeping GNUbase-only data. Linear positions keep "
+				"their time within the project bounds; with a non-positive rate sample counts stay unchanged. Returns "
+				"warnings, an array of repair messages (empty when no repair was needed).",
 				objectSchema(
 					{{"path", stringSchema}, {"mediaFolder", stringSchema}, {"revision", integerSchema}}, {"path"}),
-				noResult, false},
+				objectSchema({{"warnings", {{"type", "array"}, {"items", stringSchema}}}}, {"warnings"}), false},
 			[this](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
@@ -4167,16 +4192,17 @@ namespace gnubase::engine
 				const std::string folder = parameters.value("mediaFolder",
 					(file.parent_path() / std::filesystem::u8path(file.stem().u8string() + " media")).u8string());
 				Project project;
+				std::vector<std::string> warnings;
 				try
 				{
-					project = loadDawProject(path, folder);
+					project = loadDawProject(path, folder, true, &warnings);
 				}
 				catch (const std::exception& error)
 				{
 					throw CommandError(error.what());
 				}
 				opened(std::move(project), std::filesystem::absolute(file).u8string(), context);
-				return Json::object();
+				return Json{{"warnings", warnings}};
 			});
 		addControl(engine,
 			{"project.new", 1,
@@ -4212,41 +4238,38 @@ namespace gnubase::engine
 				opened(std::move(project), {}, context);
 				return Json::object();
 			});
+		const Json colorSet =
+			arraySchema(objectSchema({{"name", stringSchema}, {"color", stringSchema}}, {"name", "color"}));
 		add(engine,
 			{"project.set", 1,
 				"Changes the project's name, sample rate (8000 to 768000 Hz), stereo pan law or maximum volume, or "
-				"the other settings of the project setup. Linear positions keep their time at a new sample rate; media "
-				"files keep theirs "
-				"(see media.conform). panLaw is how much a mono channel panned to the center is turned down on "
-				"each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same "
-				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
-				"faders, 6 (the default) or 12 dB; faders, send levels and volume automation above a lower maximum "
-				"come down to it. tempo (1 to 999 BPM) and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} "
-				"are the project's first tempo and "
-				"time signature, as the transport bar sets them: the fixed tempo, or in tempo track mode the tempo "
-				"track's first event; later changes stay, and musical positions keep their ticks. tempoTrackActive "
-				"switches between fixed tempo mode (false, a new project's) and tempo track mode, in which the "
-				"project plays the tempo track's events (tempo.add); each mode keeps its tempo while the other is in "
-				"use (emits tempo.changed). colors is the project's color set, which track and event colors are picked "
-				"from: at least "
-				"one {name, color (#rrggbb)}, in order. recordFileType (wav, the default, broadcastWav, aiff or "
-				"flac) and recordBitDepth (int16, int24, the default, int32, float32 or float64) are what recording "
-				"writes: AIFF only integers, FLAC 16 or 24 bit, 64 bit float only Wave. frameRate is the timecode's "
-				"(default 25). startTime (seconds, under 24 hours) is the time shown at the project start, length "
-				"(seconds, up to 24 hours, default 600) how long the project is, barOffset (-9999 to 9999) is added "
-				"to the bar numbers shown, and timeFormat is the primary time format of rulers and position "
-				"displays. A new timeFormat, also by undo or redo, is the snap settings' format too (see snap.set; "
-				"emits snap.changed). rootKey is the Project Root Key (\"\" for none, C, C# and so on to B): MIDI "
-				"parts "
+				"the other settings of the project setup. Linear positions keep their time at a new sample rate; "
+				"media files keep theirs (see media.conform). panLaw is how much a mono channel panned to the center "
+				"is turned down on each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the "
+				"power stays the same wherever it is panned); the side panned toward is always at 0 dB. maxVolume is "
+				"the top of the faders, 6 (the default) or 12 dB; faders, send levels and volume automation above a "
+				"lower maximum come down to it. tempo (1 to 999 BPM) and signature {numerator 1 to 99, denominator "
+				"1, 2, 4, 8 or 16} are the project's first tempo and time signature, as the transport bar sets them: "
+				"the fixed tempo, or in tempo track mode the tempo track's first event; later changes stay, and "
+				"musical positions keep their ticks. tempoTrackActive switches between fixed tempo mode (false, a "
+				"new project's) and tempo track mode, in which the project plays the tempo track's events "
+				"(tempo.add); each mode keeps its tempo while the other is in use (emits tempo.changed). colors is "
+				"the project's color set, which track and event colors are picked from: at least one {name, color "
+				"(#rrggbb)}, in order. recordFileType (wav, the default, broadcastWav, aiff or flac) and "
+				"recordBitDepth (int16, int24, the default, int32, float32 or float64) are what recording writes: "
+				"AIFF only integers, FLAC 16 or 24 bit, 64 bit float only Wave. frameRate is the timecode's (default "
+				"25). startTime (seconds, under 24 hours) is the time shown at the project start, length (seconds, "
+				"up to 24 hours, default 600) how long the project is, barOffset (-9999 to 9999) is added to the bar "
+				"numbers shown, and timeFormat is the primary time format of rulers and position displays. A new "
+				"timeFormat, also by undo or redo, is the snap settings' format too (see snap.set; emits "
+				"snap.changed). rootKey is the Project Root Key (\"\" for none, C, C# and so on to B): MIDI parts "
 				"with a root key of their own that follow global transpose play transposed to it, the nearer way "
 				"(midiPart.set rootKey and globalTranspose; transpose.assignRootKey).",
-				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
+				objectSchema({{"name", stringSchema},
+					{"sampleRate",
+						{{"type", "number"}, {"minimum", g_lowestSampleRate}, {"maximum", g_highestSampleRate}}},
 					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}, {"tempo", numberSchema},
-					{"tempoTrackActive", booleanSchema},
-					{"colors",
-						{{"type", "array"},
-							{"items",
-								objectSchema({{"name", stringSchema}, {"color", stringSchema}}, {"name", "color"})}}},
+					{"tempoTrackActive", booleanSchema}, {"colors", colorSet},
 					{"signature",
 						objectSchema({{"numerator", {{"type", "integer"}}}, {"denominator", {{"type", "integer"}}}},
 							{"numerator", "denominator"})},
@@ -4280,9 +4303,7 @@ namespace gnubase::engine
 			{"project.factoryColors", 1,
 				"The factory color set, which new projects have: each color's name and color (#rrggbb). The project "
 				"colors setup dialog resets colors to it.",
-				objectSchema(Json::object()),
-				{{"type", "object"}, {"properties", {{"colors", {{"type", "array"}}}}}, {"required", {"colors"}}},
-				true},
+				objectSchema(Json::object()), objectSchema({{"colors", colorSet}}, {"colors"}), true},
 			[](Project&, CommandContext&) { return Json{{"colors", toJson(factoryColors())}}; });
 
 		const Json directions = enumSchema({"input", "output"});
@@ -4410,8 +4431,9 @@ namespace gnubase::engine
 			{"track.add", 1,
 				"Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks "
 				"(default: last). Audio channels default to stereo; format or channels set another format, as in "
-				"bus.add. timeBase is musical (positions in ticks, which follow tempo changes) or linear (in "
-				"samples, which keep their time); without it the user setting editing.defaultTimeBase decides. "
+				"bus.add. timeBase is musical (positions in ticks, 1,720,320 to the quarter note, which follow tempo "
+				"changes) or linear (in samples, which keep their time); without it the user setting "
+				"editing.defaultTimeBase decides. "
 				"Folders get a channel only with groupChannel. New channels play through the main output, "
 				"or through the group channel of the nearest folder around them that has one, and audio tracks record "
 				"from the first input bus; input, output and instrument set them as channel.set does. tracks moves "
@@ -4478,13 +4500,14 @@ namespace gnubase::engine
 				"the slot's output events, and the notes after it get the slot's channel, transpose and velocity. "
 				"gmNames, for a MIDI or instrument track, is its name list (reference manual p. 1239): true for GM "
 				"Default, which names its pitches by General MIDI's percussion sounds in the editors while it has no "
-				"drum map, false for No Names.",
+				"drum map, false for No Names. lock, for the signature track, is its Lock (reference manual p. 163): "
+				"while it is on, signature.add, signature.set and signature.remove are refused.",
 				objectSchema(
 					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
 						{"timeFormat", timeFormats}, {"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
 						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"groupEditing", booleanSchema},
 						{"picture", stringSchema}, {"drumMap", idSchema}, {"articulationMap", idSchema},
-						{"gmNames", booleanSchema}},
+						{"gmNames", booleanSchema}, {"lock", booleanSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
@@ -4575,7 +4598,9 @@ namespace gnubase::engine
 				"channels and VCA faders don't pass them on to it. mute silences a channel; "
 				"while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
-				"channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; "
+				"channels that play into them are heard; exclusive with solo true turns every other channel's solo "
+				"off, "
+				"and does nothing without it; "
 				"soloDefeat keeps a channel and the channels it plays through heard while others are soloed. listen "
 				"(not MIDI channels) also plays the channel after its fader on the monitoring bus, the main mix, which "
 				"is turned down to the user setting audio.listenDim while any channel listens; the listening channels "
@@ -4800,7 +4825,8 @@ namespace gnubase::engine
 			addAudioPart);
 		add(engine,
 			{"midiPart.add", 1,
-				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base. "
+				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base: "
+				"ticks on musical tracks, 1,720,320 to the quarter note, samples on linear ones. "
 				"lane puts it on that lane of the track, from 0 (default), as event.set does. pattern makes it a "
 				"pattern event (#181), which plays that pattern (pattern.add) from its start over and over instead "
 				"of its notes; a pattern of another track plays as its copy on the part's track (pattern.add), which "

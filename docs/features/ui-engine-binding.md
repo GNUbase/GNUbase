@@ -127,15 +127,14 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   and no other window does for it. An `apply` that returns `bool` tells whether it changed what an element shows, and
   the window draws only then (#745): the transport controls' time displays follow the position once a frame, but their
   window draws only when a display's text changed, so the time display window that shows only the beat draws twice a
-  second at 120 BPM. A view whose element changes in some other way passes null and asks for its window itself when it
-  changed something: the markers window follows the position but draws only when its locate arrow moves to another
-  marker. While the transport plays, the windows whose displays change draw once a frame at most, and the others stay
-  idle. Watches that end a gesture after a pause, the tempo field's wheel turns and Tap Tempo's taps, pass the transport
-  controls' root: their `apply` shows the field and the Tap button again, and after a single tap no command is sent, so
-  no answer would draw the window (#795). While the binding watches values, the shell steps at least once a frame
-  (`ui::g_framePeriod`, 16 ms) even without events, but draws only what changed; without watches it sleeps.
-  `Engine::playbackPosition` reads the project cursor without a command and without waiting; the meters follow with
-  #111. MCP and Lua get the same values through queries (`transport.get`).
+  second at 120 BPM. The markers window uses the same bool result: it follows the position but draws only when its
+  locate arrow moves to another marker. While the transport plays, the windows whose displays change draw once a frame
+  at most, and the others stay idle. Watches that end a gesture after a pause, the tempo field's wheel turns and Tap
+  Tempo's taps, pass the transport controls' root: their `apply` shows the field and the Tap button again, and after a
+  single tap no command is sent, so no answer would draw the window (#795). While the binding watches values, the shell
+  steps at least once a frame (`ui::g_framePeriod`, 16 ms) even without events, but draws only what changed; without
+  watches it sleeps. `Engine::playbackPosition` reads the project cursor without a command and without waiting; the
+  meters follow with #111. MCP and Lua get the same values through queries (`transport.get`).
 - **Command log.** `engine.commandLog` returns the last 256 commands that ran, oldest first, without queries: each
   with its request id, the client that sent it (`ui`, `mcp`, `lua`, `app` for the command line, `engine` for the
   engine's own commands such as a driver's reset), the command, its parameters, and the error if it failed. An MCP
@@ -190,6 +189,11 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   for an event that no C++ view takes. `tests/engine_tests.cpp` checks the command log and the clients' wake-up,
   `tests/shell_tests.cpp` the step tasks, the frame rate, and that posted work and file dialog answers, the OS's and
   automation's, draw.
+
+The transport playback test also opens the transport panel, whose time displays are `<textdisplay>`s, and checks that
+its window draws in every step its primary display changes in, without input. The marker window tests also close its
+native window while playing: its playback watch ends, later edits send no project reads for it, and reopening it lists
+the current markers.
 
 Each value step first sends older steps waiting under other keys, including the last waiting step of another view's gesture. This also holds when returning to a view whose earlier step is still in flight. Switching from a mixer fader to the inspector therefore leaves the engine at the inspector's newer value, with the completed drag before it in undo history. A control's ongoing drag still coalesces its own pending steps.
 

@@ -36,7 +36,10 @@ namespace gnubase::ui
 			linear ? static_cast<double>(offset) / context.sampleRate : context.tempo.toSeconds(ticks);
 		context.startTime = -seconds;
 		context.sampleStart = -seconds;
-		context.barOffset = -static_cast<int>(context.signatures.toBarsBeats(ticks).bar);
+		// Bar 1 starts at the offset, also within a bar: the bars move by as much as it is into its bar (#814).
+		const int64_t bar = context.signatures.toBarsBeats(ticks).bar;
+		context.barOffset = -static_cast<int>(bar);
+		context.barShift = ticks - context.signatures.barStart(bar);
 		return context;
 	}
 

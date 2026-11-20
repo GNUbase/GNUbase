@@ -11,7 +11,8 @@ its track's.
 - **Event and part colors** (pp. 114–115): audio events and MIDI parts have a `color` too, null by default, which
   means they follow their track's color. `event.set` with `color` gives selected events and parts a color of their
   own, also locked ones, so they no longer follow the track; `color` null makes them follow it again (Set Event Color
-  to Track). Pieces of a split event, copies and duplicates keep the color.
+  to Track). Pieces of a split event, copies and duplicates keep the color, and so do the parts Dissolve Part and
+  Bounce MIDI make (a bounced part has the first part's).
 - **The color set** (pp. 115–118) is the project's list of named colors that colors are picked from: `colors` in
   `project.get`, at least one `{name, color}`. New projects have the factory set of 16 colors
   (`project.factoryColors`). `project.set` `colors` replaces the set, one undo step, and `project.changed` announces
@@ -21,9 +22,10 @@ its track's.
   track above it in the list: the one before it among its siblings, or the last track inside that one if it's a
   folder, or the folder it's added to), `previousPlusOne` (the color after that one in the color set, around at the
   end; the set's first color when that one has none or one outside the set), `lastApplied` (the color `event.set`
-  last gave events or parts in this session, not part of undo or the file) or `random` (a color of the set). With
-  `editing.applyFolderColor`, a folder's color wins inside it. Add Track, importing audio files and every other way to
-  add a track go through `track.add`.
+  last gave events or parts, not part of undo or the file and kept when another project is opened or a new one made)
+  or `random` (a color of the set). With `editing.applyFolderColor`, a folder's color wins inside it. Add Track,
+  importing audio files and the other ways to add a track go through `track.add`; the MIDI tracks Dissolve Part and
+  Merge MIDI in Loop add get the same color (`newTrackColor` in `src/engine/document/projectmodel.h`).
 - **DAWproject:** a track's color is its `color` attribute, an event's or part's own color its clip's; project.xml
   without GNUbase's entry gives them back. The color set and which events follow their track are GNUbase's
   (`gnubase.json`); a project from project.xml alone has the factory set.
@@ -66,11 +68,13 @@ color (p. 1621, with the mixer, #106, and the inspector, #89), and the MIDI edit
 ## Checks
 
 - `tests/color_tests.cpp`: `event.set` colors audio events and parts, also locked ones, null follows the track again,
-  split pieces keep it, undo, bad colors refused; the factory set, `project.set` `colors` with its event, undo and
-  redo, and refused sets; every `editing.autoTrackColor` mode, a given color winning, and a folder's color with
-  `editing.applyFolderColor`. In the app's project window: the track list's strip and the event lanes' colors
-  following track and event colors; the color menu on selected tracks and events, both reset items and the undo step;
-  the setup dialog's remove, duplicate, recolor, insert, apply, reset to factory settings and cancel.
+  split pieces keep it, undo, bad colors and the empty string refused; the factory set, `project.set` `colors` with
+  its event, undo and redo, and refused sets; every `editing.autoTrackColor` mode, `lastApplied` across `project.new`,
+  a given color winning, and a folder's color with `editing.applyFolderColor`; Dissolve Part and Bounce MIDI keeping
+  part colors, and the tracks Dissolve Part and Merge MIDI in Loop add colored as new tracks. In the app's project
+  window: the track list's strip and the event lanes' colors following track and event colors; the color menu on
+  selected tracks and events, both reset items and the undo step; the setup dialog's remove, duplicate, recolor,
+  insert, rename, reset color, apply, reset to factory settings and cancel.
 - `tests/canvas_tests.cpp`: an event with a color of its own is filled with it, outlined by `stroke-color`, or by
   the tinted color in `stroke-width` with `own-color-tint`, also without a `stroke-color`; a waveform in the tinted
   color, `event-inset` inside its padding.

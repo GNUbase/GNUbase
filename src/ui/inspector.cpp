@@ -39,7 +39,8 @@ namespace gnubase::ui
 			R"(<button class="section-header">Basics</button><div class="section-body">)"
 			R"(<div class="inspector-buttons">)"
 			R"(<button type="toggle" class="toggle mute" control="mute" title="Mute">M</button>)"
-			R"(<button type="toggle" class="toggle solo" control="solo" title="Solo">S</button>)"
+			R"(<button class="toggle solo" control="solo" title="Solo">S</button>)"
+			R"(<button class="toggle listen" control="listen" title="Listen">L</button>)"
 			R"(<button type="toggle" class="toggle record" control="record" title="Record Enable">)"
 			R"(<svg class="icon" src="../icons/track-record-arm.svg"/></button>)"
 			R"(<button type="toggle" class="toggle monitor" control="monitor" title="Monitor">)"
@@ -538,6 +539,7 @@ namespace gnubase::ui
 		for (Rml::Element* control : controls)
 			control->SetAttribute("contextmenu", "");
 		root.AddEventListener(Rml::EventId::Click, this);
+		root.AddEventListener(Rml::EventId::Mousedown, this); // for click and hold on S
 		root.AddEventListener(Rml::EventId::Change, this);
 		root.AddEventListener(Rml::EventId::Blur, this, true);    // blur doesn't bubble
 		root.AddEventListener(Rml::EventId::Keydown, this, true); // Escape leaves the notepad
@@ -571,6 +573,7 @@ namespace gnubase::ui
 		if (!m_root)
 			return;
 		m_root->RemoveEventListener(Rml::EventId::Click, this);
+		m_root->RemoveEventListener(Rml::EventId::Mousedown, this);
 		m_root->RemoveEventListener(Rml::EventId::Change, this);
 		m_root->RemoveEventListener(Rml::EventId::Blur, this, true);
 		m_root->RemoveEventListener(Rml::EventId::Keydown, this, true);
@@ -797,8 +800,8 @@ namespace gnubase::ui
 			showVersions(*track);
 		if (channel != nullptr)
 		{
-			for (const auto& [control, key] : {std::pair{"mute", "mute"}, std::pair{"solo", "solo"},
-					 std::pair{"record", "recordEnable"}, std::pair{"monitor", "monitor"}})
+			for (const auto& [control, key] :
+				{std::pair{"mute", "mute"}, std::pair{"record", "recordEnable"}, std::pair{"monitor", "monitor"}})
 				if (Rml::Element* button = element("button[control=" + std::string(control) + "]"))
 				{
 					if (channel->value(key, false))
@@ -806,6 +809,13 @@ namespace gnubase::ui
 					else
 						button->RemoveAttribute("checked");
 				}
+			// S and L, which take their clicks themselves (Click), as the mixer's do.
+			for (const char* control : {"solo", "listen"})
+				if (Rml::Element* button = element("button[control=" + std::string(control) + "]"))
+					setClass(*button, "checked", channel->value(control, false));
+			if (Rml::Element* solo = element("button[control=solo]"))
+				setClass(*solo, "defeated", channel->value("soloDefeat", false));
+			available("button[control=listen]", type != "midi"); // MIDI channels have no audio to listen to
 			const auto key = [this, channel](const char* name)
 			{ return stepKey(m_stepOwner, channel->at("id"), name); };
 			if (Rml::Element* volume = element("valuefield[control=volume]"); volume != nullptr && (audio || vca))
@@ -1191,7 +1201,22 @@ namespace gnubase::ui
 			return;
 		switch (event.GetId())
 		{
+		case Rml::EventId::Mousedown:
+			m_soloHold.pressed(target);
+			break;
 		case Rml::EventId::Click:
+			// S: Ctrl-click (Cmd on macOS) solos exclusively, Alt-click and click and hold switch solo defeat
+			// (reference manual p. 466); L listens.
+			if (const auto control = target->GetAttribute<Rml::String>("control", "");
+				(control == "solo" || control == "listen") && m_channel.is_object())
+			{
+				const auto held = [&event](const char* key) { return event.GetParameter<int>(key, 0) != 0; };
+				Json parameters = control == "solo" ? soloClick(m_channel, held("ctrl_key") || held("meta_key"),
+														  held("alt_key") || m_soloHold.held(*target))
+													: Json{{"listen", !m_channel.value("listen", false)}};
+				parameters["channel"] = m_channel.at("id");
+				m_binding.send("channel.set", std::move(parameters), whenRefused());
+			}
 			if (target->IsClassSet("inspector-edit") && m_editChannel && m_track != 0)
 				m_editChannel(m_track); // Edit Channel Settings (reference manual p. 500)
 			if (target->IsClassSet("inspector-articulation-setup") && m_setupArticulations && m_track != 0)
@@ -1436,7 +1461,7 @@ namespace gnubase::ui
 		}
 		std::string key = name;
 		Json value;
-		if (name == "mute" || name == "solo" || name == "monitor" || name == "record")
+		if (name == "mute" || name == "monitor" || name == "record")
 		{
 			key = name == "record" ? "recordEnable" : name;
 			value = event.GetParameter<bool>("value", false);

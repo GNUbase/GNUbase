@@ -3,6 +3,7 @@
 
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
+#include "ui/mixer.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
@@ -109,8 +110,9 @@ namespace gnubase::ui
 		engine::Json m_devices = engine::Json::object();    // the user setting midi.devices
 		engine::Json m_channel;                             // the track's, null without one
 		engine::Json m_midiEffects = engine::Json::array(); // midiEffect.list's
-		bool m_showing = false;        // while show sets the controls, whose changes aren't the user's
-		bool m_dropping = false;       // while dropEdits ends edits, which then aren't taken
+		bool m_showing = false;  // while show sets the controls, whose changes aren't the user's
+		bool m_dropping = false; // while dropEdits ends edits, which then aren't taken
+		SoloHold m_soloHold;
 		bool m_stale = false;          // a change was refused: show again
 		int m_dividerTo = -1;          // while the divider is dragged, where it goes
 		engine::Json m_dividerChannel; // and the id of the channel whose divider it is

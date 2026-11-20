@@ -4,6 +4,7 @@
 
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/file.h"
+#include "engine/document/projectmodel.h"
 #include "engine/document/renderinplace.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
@@ -17,7 +18,6 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <climits>
 #include <cmath>
 #include <cstdint>
@@ -418,6 +418,21 @@ namespace gnubase::engine
 					tempo.push_back({position, value, ramp});
 				ramp = std::string(point.attribute("interpolation").as_string("hold")) == "linear";
 			}
+			std::optional<time::TempoMap> tempoMap;
+			try
+			{
+				tempoMap.emplace(tempo);
+			}
+			catch (const std::invalid_argument& error)
+			{
+				throw DawProjectError(std::string("the file's tempo or time signature is invalid: ") + error.what());
+			}
+			// The signature commands refuse bars past the longest possible project (#729), and so does a file: at the
+			// lowest sample rate, as a tempo track file has none.
+			const time::Ticks longest =
+				tempoMap->toTicks(static_cast<double>(time::g_maxPosition) / g_lowestSampleRate);
+			const char* const pastLongest =
+				"the file's time signature is invalid: a bar is past the longest possible project";
 			const pugi::xml_node signature = transport.child("TimeSignature");
 			time::TimeSignature first{
 				signature.attribute("numerator").as_int(4), signature.attribute("denominator").as_int(4)};
@@ -435,8 +450,13 @@ namespace gnubase::engine
 					changes.front().signature = next;
 					continue;
 				}
+				// Before its bar could overflow.
+				if (!(beat * time::g_ticksPerQuarter <= static_cast<double>(longest)))
+					throw DawProjectError(pastLongest);
 				const time::TimeSignature previous = changes.back().signature;
 				const double barBeats = previous.numerator * 4.0 / previous.denominator;
+				if (!(barBeats > 0.0))
+					throw DawProjectError("the file's time signature is invalid");
 				const int64_t bar = changes.back().bar + std::llround((beat - changeBeat) / barBeats);
 				if (bar > changes.back().bar)
 				{
@@ -444,9 +464,28 @@ namespace gnubase::engine
 					changeBeat = beat;
 				}
 			}
+			// The signature commands take numerators up to 99, and so does a file (#771); each bar starts within the
+			// longest project, as signature.cpp counts them.
+			time::Ticks start = 0;
+			for (size_t i = 0; i < changes.size(); ++i)
+			{
+				if (changes[i].signature.numerator > 99)
+					throw DawProjectError("the file's time signature is invalid: its numerator is above 99");
+				if (i == 0)
+					continue;
+				const time::TimeSignature& previous = changes[i - 1].signature;
+				const time::Ticks barLength = previous.denominator > 0
+					? time::g_ticksPerQuarter * 4 * previous.numerator / previous.denominator
+					: 0;
+				if (barLength <= 0)
+					throw DawProjectError("the file's time signature is invalid");
+				if (changes[i].bar - changes[i - 1].bar > (longest - start) / barLength)
+					throw DawProjectError(pastLongest);
+				start += (changes[i].bar - changes[i - 1].bar) * barLength;
+			}
 			try
 			{
-				return {time::TempoMap(tempo), time::SignatureMap(changes)};
+				return {*tempoMap, time::SignatureMap(changes)};
 			}
 			catch (const std::invalid_argument& error)
 			{
@@ -457,13 +496,6 @@ namespace gnubase::engine
 		std::string xmlId(const char* prefix, ObjectId id)
 		{
 			return prefix + std::to_string(id);
-		}
-
-		bool validColor(const std::string& color)
-		{
-			return color.size() == 7 && color[0] == '#' &&
-				std::all_of(color.begin() + 1, color.end(),
-					[](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
 		}
 
 		// How project.xml refers to a media file it doesn't contain: relative to the project file if the media file
@@ -1357,7 +1389,7 @@ namespace gnubase::engine
 				track.type = type;
 				track.name = node.attribute("name").as_string(trackTypeName(type));
 				const std::string color = node.attribute("color").as_string("");
-				track.color = validColor(color) ? color : std::string();
+				track.color = isColor(color) ? color : std::string();
 				track.parent = parent;
 				track.enabled = !canDisable(type) || node.attribute("loaded").as_bool(true);
 				if (type != TrackType::Folder || !channelNode.empty())
@@ -1655,7 +1687,7 @@ namespace gnubase::engine
 					content.seconds = std::string(unit.as_string()) == "seconds";
 				content.origin = content.seconds == context.seconds ? start - playStart : 0.0;
 				content.enabled = context.enabled && clip.attribute("enable").as_bool(true);
-				if (const std::string color = clip.attribute("color").as_string(""); validColor(color))
+				if (const std::string color = clip.attribute("color").as_string(""); isColor(color))
 					content.color = color;
 				if (!clip.attribute("fadeInTime").empty() || !clip.attribute("fadeOutTime").empty())
 					readFades(clip, context, start, duration, content);
@@ -2107,7 +2139,7 @@ namespace gnubase::engine
 					marker.end = marker.position;
 					marker.name = element.attribute("name").as_string("");
 					const std::string color = element.attribute("color").as_string("");
-					marker.color = validColor(color) ? color : std::string();
+					marker.color = isColor(color) ? color : std::string();
 					read.push_back(marker);
 				}
 				std::stable_sort(read.begin(), read.end(),
@@ -2247,7 +2279,8 @@ namespace gnubase::engine
 		return missing;
 	}
 
-	Project loadDawProject(const std::string& path, const std::string& mediaFolder, bool extractMedia)
+	Project loadDawProject(
+		const std::string& path, const std::string& mediaFolder, bool extractMedia, std::vector<std::string>* warnings)
 	{
 		ZipReader zip(path);
 		const std::string xml = zip.text("project.xml");
@@ -2266,10 +2299,19 @@ namespace gnubase::engine
 			return fromXml;
 		try
 		{
-			const Json extension = Json::parse(zip.text(g_extensionEntry));
+			Json extension = Json::parse(zip.text(g_extensionEntry));
 			if (extension.value("format", 0) != g_extensionFormat || extension.value("projectXml", "") != checksum(xml))
 				return fromXml;
+			Json& native = extension.at("project");
+			const double sampleRate = native.at("sampleRate").get<double>();
+			const double repairedRate = std::clamp(sampleRate, g_lowestSampleRate, g_highestSampleRate);
+			native["sampleRate"] = repairedRate;
 			Project project = projectFromJson(extension.at("project"));
+			if (repairedRate != sampleRate && std::isfinite(sampleRate) && sampleRate > 0.0)
+			{
+				project.sampleRate = sampleRate;
+				changeSampleRate(project, repairedRate);
+			}
 			const Json& media = extension.at("media");
 			for (auto& [id, file] : project.media)
 			{
@@ -2297,6 +2339,12 @@ namespace gnubase::engine
 			for (auto& entry : project.clips)
 				if (entry.second.warp.musical && entry.second.warp.tempo <= 0.0)
 					entry.second.warp.tempo = definitionTempo(project, entry.second);
+			if (warnings != nullptr && repairedRate != sampleRate)
+				warnings->push_back("The project's sample rate was clamped from " + Json(sampleRate).dump() + " to " +
+					Json(repairedRate).dump() + " Hz; GNUbase-only data was kept. " +
+					(sampleRate > 0.0
+							? "Linear positions keep their time within the project bounds."
+							: "The old rate has no meaningful time scale; sample counts were left unchanged."));
 			return project;
 		}
 		catch (const std::overflow_error&)
@@ -2329,11 +2377,30 @@ namespace gnubase::engine
 		std::ostringstream xml;
 		document.save(xml, "  ", pugi::format_default, pugi::encoding_utf8);
 		const std::string text = xml.str();
-		const detail::File out = detail::openFile(path, "wb");
-		if (!out)
-			throw DawProjectError("can't write " + path + ": " + detail::lastError());
-		if (std::fwrite(text.data(), 1, text.size(), out.get()) != text.size() || std::fflush(out.get()) != 0)
-			throw DawProjectError("can't write " + path + ": " + detail::lastError());
+		// Written next to the file and then moved over it, as saveDawProject does, so a failed export leaves the
+		// earlier file as it was (#771).
+		const std::string temporary = path + ".saving";
+		std::string failure;
+		{
+			const detail::File out = detail::openFile(temporary, "wb");
+			if (!out)
+				throw DawProjectError("can't write " + path + ": " + detail::lastError());
+			if (std::fwrite(text.data(), 1, text.size(), out.get()) != text.size() || std::fflush(out.get()) != 0)
+				failure = detail::lastError();
+		}
+		if (failure.empty())
+		{
+			std::error_code error;
+			std::filesystem::rename(pathOf(temporary), pathOf(path), error);
+			if (error)
+				failure = error.message();
+		}
+		if (!failure.empty())
+		{
+			std::error_code ignored;
+			std::filesystem::remove(pathOf(temporary), ignored);
+			throw DawProjectError("can't write " + path + ": " + failure);
+		}
 	}
 
 	TempoTrackFile loadTempoTrack(const std::string& path)

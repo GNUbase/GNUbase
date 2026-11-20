@@ -7,6 +7,7 @@
 #include <RmlUi/Core/Element.h>
 
 #include <memory>
+#include <optional>
 
 namespace gnubase::ui
 {
@@ -63,8 +64,8 @@ namespace gnubase::ui
 		float m_measured = 0;
 		Rect m_measuredBounds;
 		// The bounds the last fit asked for, which a window system that moves windows later, such as X11's, gives the
-		// window only after the fit looked at its bounds again.
-		Rect m_asked;
+		// window only after the fit looked at its bounds again; none before this opening's first fit asked for any.
+		std::optional<Rect> m_asked;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the shell's tasks
 	};
 }

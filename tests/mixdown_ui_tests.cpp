@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -53,11 +54,12 @@ namespace
 		app.ui().text(std::nullopt, text);
 	}
 
+	// Opens the select, moves down that many options (up for a negative number) and closes it.
 	void choose(test::UiApp& app, const std::string& select, int down)
 	{
 		click(app, select);
-		for (int i = 0; i < down; ++i)
-			app.ui().key(std::nullopt, "Down");
+		for (int i = 0; i < std::abs(down); ++i)
+			app.ui().key(std::nullopt, down < 0 ? "Up" : "Down");
 		click(app, select);
 	}
 
@@ -128,6 +130,11 @@ TEST_CASE("File > Export > Audio Mixdown exports the checked channels over the l
 			return !jobs.empty() &&
 				std::none_of(jobs.begin(), jobs.end(), [](const Json& job) { return job.at("state") == "running"; });
 		}));
+	// The one job is the export: it must end done, and a failed one shows its error instead of a missing file.
+	const Json jobs = app.call("job.list").at("jobs");
+	REQUIRE(jobs.size() == 1);
+	INFO(jobs.dump());
+	REQUIRE(jobs.front().at("state") == "done");
 	REQUIRE(std::filesystem::exists(dir.path() / "out" / "take.flac"));
 
 	const std::unique_ptr<engine::AudioFileReader> reader =
@@ -141,17 +148,50 @@ TEST_CASE("File > Export > Quick Audio Export writes the whole project into the 
 {
 	test::UiApp app({1000, 700});
 	const test::TempDir dir;
+	std::vector<std::filesystem::path> opened;
+	app.appUi().openExternallyWith([&opened](const std::filesystem::path& path, bool) { opened.push_back(path); });
+	const auto quickExport = [&app, &dir]
+	{
+		app.keys().run("file.quickExport", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+		CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {dir.path() / "song"}));
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	// Without events, the export shows why it failed (#718).
+	quickExport();
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#project-error-dialog").empty(); }));
+	CHECK_THAT(element(app, "#project-error-message").value("text", std::string()), ContainsSubstring("no events"));
+	click(app, "#project-error-dialog button[result=ok]");
+	CHECK(opened.empty());
+
 	addTrack(app, dir);
-	app.keys().run("file.quickExport", Json::object(), app.main(), nullptr);
-	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
-	CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {dir.path() / "song"}));
-	app.shell().step(std::chrono::milliseconds(0));
-	app.call("project.revision"); // after the export, which the command thread runs first
+	quickExport();
+	// Then the file's folder opens, as in the reference (manual p. 1479). The job renders the whole 30 s tail before it
+	// trims it, which takes longer than waitUntil's default 5 s under TSan.
+	REQUIRE(app.waitUntil([&opened] { return !opened.empty(); }, std::chrono::seconds(60)));
 	const std::filesystem::path file = dir.path() / "song.wav";
+	CHECK(std::filesystem::equivalent(opened.front(), dir.path()));
 	REQUIRE(std::filesystem::exists(file));
 	const std::unique_ptr<engine::AudioFileReader> reader = engine::AudioFileReader::open(file.u8string());
 	CHECK(reader->info().frames == 4800);
 	CHECK(reader->info().sampleFormat == engine::SampleFormat::Int24);
+}
+
+TEST_CASE("the Export Audio Mixdown dialog offers dither only for 16 and 24 bits", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.keys().run("file.exportMixdown", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return open(app); }));
+	app.shell().step(std::chrono::milliseconds(0));
+	const auto disabled = [&app] { return element(app, "#mixdown-dither").at("attributes").contains("disabled"); };
+	CHECK(!disabled());                   // 24 bits
+	choose(app, "#mixdown-bit-depth", 1); // 32 bits, which the engine doesn't dither (#718)
+	CHECK(disabled());
+	choose(app, "#mixdown-bit-depth", 1); // 32-bit float
+	CHECK(disabled());
+	choose(app, "#mixdown-bit-depth", -3); // 16 bits
+	CHECK(!disabled());
+	click(app, "#mixdown-cancel");
 }
 
 TEST_CASE("background render progress can cancel and track rows show their render lock", "[ui]")

@@ -2,6 +2,7 @@
 // The tempo curve, the tempo track's lane in the event display and the tempo track editor (ui/tempotrack.h).
 #include "ui/tempotrack.h"
 
+#include "platform/log.h"
 #include "ui/canvas.h"
 #include "ui/signaturetrack.h"
 
@@ -615,6 +616,14 @@ namespace gnubase::ui
 		{
 			m_signatures = std::make_unique<SignatureRow>(binding, *area);
 			m_signatures->setTool([this] { return m_tool; });
+			// A move or a signature the engine refuses says why, as in the project window (#729).
+			m_signatures->onRefusal(
+				[this](const std::string& error)
+				{
+					logging::warning("An edit of time signature events failed: {}", error);
+					if (Rml::Element* refused = m_document ? m_document->GetElementById("edit-refused") : nullptr)
+						refused->SetAttribute("text", error);
+				});
 			m_signatures->onSelect(
 				[this]
 				{

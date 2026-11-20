@@ -217,6 +217,26 @@ TEST_CASE("the start screen creates a project from a template with the keyboard 
 	CHECK(!shown(app, "#start-screen"));
 }
 
+TEST_CASE("Enter on the start screen's selected row does what its button does, as a double click", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}});
+	app.call("project.saveTemplate", {{"name", "One Track"}});
+	app.call("project.new");
+
+	key(app, "Mod+N");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#start-templates listitem").size() == 1; }));
+	CHECK(idOf(key(app, "Tab")) == "start-templates");
+	// Before a row is selected, Enter does nothing: the start screen stays open.
+	key(app, "Enter");
+	CHECK(shown(app, "#start-screen"));
+	CHECK(idOf(key(app, "Down")) == "start-templates");
+	key(app, "Enter");
+	REQUIRE(app.waitUntil([&app] { return tracks(app) == 1; }));
+	CHECK(!shown(app, "#start-screen"));
+}
+
 TEST_CASE("every button that shows only an icon has a title, for its tooltip and a screen reader's name", "[unit]")
 {
 	const std::regex button("<button[^>]*icon-only[^>]*>");
