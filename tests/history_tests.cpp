@@ -11,6 +11,7 @@
 #include <random>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::engine;
@@ -643,4 +644,95 @@ TEST_CASE("joining finds the steps by id when the oldest ones were dropped", "[u
 	CHECK(history.at("steps")[0].at("action") == "Three tracks");
 	run(client, "history.undo");
 	CHECK(run(client, "project.get").at("tracks").size() == 3);
+}
+
+TEST_CASE("history.changed names the events of a command's step, so that clients following them needn't read the "
+		  "project",
+	"[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	Client listener(engine);
+	// The data of the last history.changed the listener heard, and the names of the events before it.
+	std::vector<std::string> heard;
+	const auto changed = [&listener, &heard]
+	{
+		Json data;
+		heard.clear();
+		while (const auto message = listener.poll())
+			if (const auto* event = std::get_if<Event>(&*message))
+			{
+				if (event->name == "history.changed")
+					data = event->data;
+				else
+					heard.push_back(event->name);
+			}
+		REQUIRE(data.is_object());
+		return data;
+	};
+	const ObjectId first = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
+	Json data = changed();
+	REQUIRE(data.contains("events"));
+	CHECK(contains(data.at("events").get<std::vector<std::string>>(), "track.added"));
+	CHECK(!contains(data.at("events").get<std::vector<std::string>>(), "history.changed"));
+	const ObjectId second = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
+	run(client, "linkGroup.add", {{"channels", {first, second}}});
+	changed();
+
+	const auto volume = [&client, first](double to, const std::string& merge)
+	{
+		run(client, "history.transaction",
+			{{"description", "Change Volume"}, {"merge", merge},
+				{"commands", {{{"command", "channel.set"}, {"parameters", {{"channel", first}, {"volume", to}}}}}}});
+	};
+	// A fader drag: its first step and those joining it each name the events of their command, once each, though
+	// the linked channel's fader moved with it.
+	volume(-1.0, "fader:1");
+	data = changed();
+	CHECK(data.at("events") == Json::array({"channel.changed"}));
+	CHECK(std::count(heard.begin(), heard.end(), "channel.changed") == 2);
+	volume(-2.0, "fader:1");
+	CHECK(changed().at("events") == Json::array({"channel.changed"}));
+	// Back where it started, the step goes: the events still say what changed.
+	volume(0.0, "fader:1");
+	CHECK(changed().at("events") == Json::array({"channel.changed"}));
+	run(client, "channel.set", {{"channel", first}, {"volume", -3.0}});
+	CHECK(changed().at("events") == Json::array({"channel.changed"}));
+
+	// Steps that history.join makes one name none: they are several commands' changes, which the clients read.
+	const Json before = run(client, "history.get").at("steps").back().at("id");
+	run(client, "channel.set", {{"channel", second}, {"pan", 0.5}});
+	CHECK(changed().at("events") == Json::array({"channel.changed"}));
+	run(client, "channel.set", {{"channel", second}, {"pan", -0.5}});
+	CHECK(changed().at("events") == Json::array({"channel.changed"}));
+	CHECK(run(client, "history.join", {{"after", before}, {"action", "Pan"}}).at("steps") == 2);
+	CHECK(!changed().contains("events"));
+
+	// Nor does a step recorded inside another command, which may change more after it, as a chord pad command runs
+	// a transaction: the step's own events would tell a client that only channels changed.
+	engine.registerCommand({"test.outer", 1, "Records a channel step, then changes something else.",
+							   CommandInfo{}.parameters, Json::object(), false},
+		[first](CommandContext& context)
+		{
+			context.call("history.transaction",
+				{{"description", "Inner"},
+					{"commands",
+						{{{"command", "channel.set"}, {"parameters", {{"channel", first}, {"volume", -4.0}}}}}}});
+			context.emit("test.changed");
+			return Json::object();
+		});
+	run(client, "test.outer");
+	CHECK(!changed().contains("events"));
+	CHECK(contains(heard, "channel.changed"));
+	CHECK(contains(heard, "test.changed"));
+
+	// Undo, redo and the other changes of the history itself name none: clients read the project then.
+	run(client, "history.undo");
+	CHECK(!changed().contains("events"));
+	run(client, "history.redo");
+	CHECK(!changed().contains("events"));
+	run(client, "history.describe", {{"step", 0}, {"details", "first"}});
+	CHECK(!changed().contains("events"));
+	run(client, "history.set", {{"maxSteps", 100}});
+	CHECK(!changed().contains("events"));
 }

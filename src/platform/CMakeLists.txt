@@ -7,6 +7,7 @@ add_library(gnubase-platform STATIC
 	audio/dummydevice.cpp audio/dummydevice.h
 	audio/inputfifo.h
 	audio/sampleformat.cpp audio/sampleformat.h
+	crashdump.h
 	crashhandler.cpp crashhandler.h
 	files.cpp files.h
 	hosttime.h
@@ -76,6 +77,17 @@ target_compile_definitions(gnubase-platform PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_C
 target_link_libraries(gnubase-platform PUBLIC Threads::Threads PRIVATE
 	"$<$<PLATFORM_ID:Windows>:avrt;cfgmgr32;dbghelp;ole32;shell32;winmm>" $<$<PLATFORM_ID:Linux>:rt>)
 gnubase_target_defaults(gnubase-platform)
+
+# Windows: writes a crashed process's minidump from outside it (crashhandler.cpp, #1883). The crash handler starts it
+# from the running program's folder, so every program that links gnubase-platform has it built next to it.
+if(WIN32)
+	add_executable(gnubase-crashdump
+		crashdump.cpp crashdump.h)
+	target_include_directories(gnubase-crashdump PRIVATE ${PROJECT_SOURCE_DIR}/src)
+	target_link_libraries(gnubase-crashdump PRIVATE dbghelp)
+	gnubase_target_defaults(gnubase-crashdump)
+	add_dependencies(gnubase-platform gnubase-crashdump)
+endif()
 
 # RT checker: replaces the global operator new/delete to report allocations in real-time code.
 # An object library, so the replacement is always linked; only test and debug executables use it.

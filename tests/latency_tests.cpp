@@ -30,11 +30,10 @@ using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
 using gnubase::engine::Client;
 using gnubase::engine::Engine;
-using gnubase::engine::Event;
 using gnubase::engine::Json;
-using gnubase::engine::Message;
 using gnubase::engine::ObjectId;
 using gnubase::engine::Result;
+using gnubase::test::waitForEvent;
 
 namespace
 {
@@ -274,20 +273,6 @@ namespace
 	private:
 		std::atomic<SettlingDevice*>& m_opened;
 	};
-
-	// Waits for an event whose data matches; false after five seconds.
-	template <typename Match> bool waitForEvent(Client& client, const std::string& name, Match match)
-	{
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-		while (std::chrono::steady_clock::now() < deadline)
-		{
-			const std::optional<Message> message = client.wait(std::chrono::milliseconds(50));
-			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
-			if (event != nullptr && event->name == name && match(event->data))
-				return true;
-		}
-		return false;
-	}
 }
 
 TEST_CASE("the dummy device reports its latency and loops its outputs back a round trip later", "[unit]")

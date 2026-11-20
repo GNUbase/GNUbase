@@ -10,6 +10,7 @@
 #include "engine/document/trackvisibility.h"
 #include "engine/midi/articulationmaps.h"
 #include "engine/midi/drummaps.h"
+#include "engine/midi/mpeinput.h"
 #include "engine/midi/patterns.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/drummachine.h"
@@ -602,7 +603,8 @@ namespace gnubase::engine
 			{"soloDefeat", channel.soloDefeat}, {"listen", channel.listen}, {"slots", channel.slots},
 			{"notes", channel.notes}, {"modifiers", toJson(channel.modifiers)},
 			{"midiInserts", toJson(channel.midiInserts, false)}, {"midiSends", toJson(channel.midiSends, true)},
-			{"inputTransformer", midi::toJson(channel.inputTransformer)}};
+			{"inputTransformer", midi::toJson(channel.inputTransformer)},
+			{"noteExpression", toJson(channel.noteExpression)}};
 		json.update(toJson(channel.sections));
 		Json sends = Json::array();
 		if (channel.format != ChannelFormat::None)
@@ -1858,17 +1860,7 @@ namespace gnubase::engine
 				point.position = 0;
 			if (point.position < 0)
 				throw std::invalid_argument(where + ".position must not be negative");
-			double minimum = 0.0;
-			double maximum = 1.0;
-			if (point.type == plugin::NoteExpression::Tuning)
-			{
-				minimum = -120.0;
-				maximum = 120.0;
-			}
-			else if (point.type == plugin::NoteExpression::Volume)
-			{
-				maximum = 4.0;
-			}
+			const auto [minimum, maximum] = expressionRange(point.type);
 			point.value = loading ? std::clamp(item.at("value").get<double>(), minimum, maximum)
 								  : checkedNumber(item.at("value"), minimum, maximum, where + ".value");
 			points.push_back(point);
@@ -1886,6 +1878,62 @@ namespace gnubase::engine
 					{"properties",
 						{{"type", {{"type", "string"}, {"enum", g_expressionNames}}},
 							{"position", {{"type", "integer"}}}, {"value", {{"type", "number"}}}}}}}};
+	}
+
+	Json toJson(const NoteExpressionSetup& setup)
+	{
+		Json inputs = Json::array();
+		for (const auto& [type, input] : setup.inputs)
+			inputs.push_back({{"type", g_expressionNames.at(static_cast<size_t>(type))},
+				{"input", input.message ? midi::messageName(*input.message) : "none"}, {"min", input.min},
+				{"max", input.max}});
+		return {{"bypass", setup.bypass}, {"inputs", std::move(inputs)}};
+	}
+
+	NoteExpressionSetup noteExpressionFromJson(const Json& json, const NoteExpressionSetup& fallback, bool loading)
+	{
+		if (!json.is_object())
+			throw std::invalid_argument("noteExpression must be an object");
+		NoteExpressionSetup setup = fallback;
+		read(json, "bypass", setup.bypass, "noteExpression");
+		for (const Json& item : json.value("inputs", Json::array()))
+		{
+			const auto name = item.at("type").get<std::string>();
+			const auto index = static_cast<size_t>(
+				std::find(g_expressionNames.begin(), g_expressionNames.end(), name) - g_expressionNames.begin());
+			if (index == g_expressionNames.size() && loading)
+				continue;
+			if (index == g_expressionNames.size())
+				throw std::invalid_argument("noteExpression.inputs: there is no expression " + name);
+			const auto type = static_cast<plugin::NoteExpression>(index);
+			const auto found = setup.inputs.find(type);
+			ExpressionInput input = found != setup.inputs.end() ? found->second : ExpressionInput::none(type);
+			const std::string where = "noteExpression.inputs." + name;
+			if (item.contains("input"))
+			{
+				const auto message = item.at("input").get<std::string>();
+				input.message = midi::messageNamed(message);
+				if (!input.message && message != "none" && !loading)
+					throw std::invalid_argument(
+						(where + ".input must be none, pitchBend, aftertouch or cc0 to cc127, not ") += message);
+			}
+			const auto [minimum, maximum] = expressionRange(type);
+			for (const auto& [key, value] : {std::pair{"min", &input.min}, std::pair{"max", &input.max}})
+			{
+				if (!item.contains(key))
+					continue;
+				const auto number = item.at(key).get<double>();
+				if (!loading && (number < minimum || number > maximum))
+					throw std::invalid_argument(
+						where + "." + key + " must be " + numberText(minimum) + " to " + numberText(maximum));
+				*value = std::clamp(number, minimum, maximum);
+			}
+			if (input == ExpressionInput::none(type))
+				setup.inputs.erase(type);
+			else
+				setup.inputs[type] = input;
+		}
+		return setup;
 	}
 
 	ChannelSections sectionsFromJson(const Json& json, const ChannelSections& fallback)
@@ -2351,6 +2399,9 @@ namespace gnubase::engine
 			// Files from before #134 have no modifiers, nor do tracks other than MIDI and instrument tracks.
 			if (midi && item.contains("modifiers"))
 				channel.modifiers = modifiersFromJson(item.at("modifiers"));
+			// Files from before #1513 have no note expression setup.
+			if (midi && item.contains("noteExpression"))
+				channel.noteExpression = noteExpressionFromJson(item.at("noteExpression"), {}, true);
 			// Files from before #135 have no MIDI inserts and sends.
 			if (midi && item.contains("midiInserts"))
 				channel.midiInserts = effectRackFromJson(item.at("midiInserts"), {}, false);

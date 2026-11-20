@@ -15,6 +15,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -33,6 +35,7 @@ namespace gnubase::ui
 		constexpr std::chrono::seconds g_waitingActionsTimeout{2};
 		// How far across a press in the selection range moves before it drags the range's contents, in dp.
 		constexpr double g_rangeDragStart = 3.0;
+		constexpr double g_rangeEdge = 6.0; // dp just inside the selection range's edges where a press drags them
 
 		Rml::Property dp(double value)
 		{
@@ -247,6 +250,13 @@ namespace gnubase::ui
 					std::find(m_range->tracks.begin(), m_range->tracks.end(), m_laneTracks[*lane]) !=
 						m_range->tracks.end();
 				const bool shift = m_pressed.find("shift") != std::string::npos;
+				if (const RangeEdge edge = shift ? RangeEdge::None : rangeEdgeAt(x, y); edge != RangeEdge::None)
+				{
+					m_dragRange = m_range;
+					m_rangeEdge = edge;
+					m_drag = Drag::RangeEdge;
+					return true;
+				}
 				if (inRange && !shift)
 				{
 					m_dragRange = m_range;
@@ -369,14 +379,15 @@ namespace gnubase::ui
 		case Drag::RangeMove:
 			if (m_dragRange)
 			{
-				// The range follows the mouse across, its start snapped.
-				m_dragStarted = m_dragStarted || std::abs(x - m_pressX) >= g_rangeDragStart;
-				const RangeSelection& from = *m_dragRange;
-				const double start = static_cast<double>(from.start) / m_time.sampleRate;
-				const int64_t to =
-					std::max<int64_t>(0, samples(snapped(start + ((x - m_pressX) * m_view.scale), start)));
-				setRange(RangeSelection{to, to + (from.end - from.start), from.tracks});
+				RangeSelection to = movedRange(*m_dragRange, x, y);
+				m_dragStarted =
+					m_dragStarted || std::abs(x - m_pressX) >= g_rangeDragStart || to.tracks != m_dragRange->tracks;
+				setRange(std::move(to));
 			}
+			break;
+		case Drag::RangeEdge:
+			if (m_dragRange)
+				setRange(resizedRange(*m_dragRange, x, y));
 			break;
 		case Drag::DrawPart:
 		case Drag::Comp:
@@ -491,8 +502,8 @@ namespace gnubase::ui
 		case Drag::RangeMove:
 		{
 			// Released, its contents go where the range is, or with the tool modifier Copy (Alt) a copy of them; a
-			// click, or a drag straight up or down, selects a range of no length there, over the lanes between. A
-			// drag that went across and came back leaves the range where it was.
+			// click selects a range of no length there. A drag that came back to the press leaves the range where it
+			// was, and one that came back across only keeps its position.
 			if (!moved || !m_dragRange || !m_dragStarted)
 			{
 				m_rangeBase = std::nullopt;
@@ -501,18 +512,55 @@ namespace gnubase::ui
 				break;
 			}
 			const RangeSelection from = *m_dragRange;
+			RangeSelection to = movedRange(from, x, y);
 			if (std::abs(x - m_pressX) < g_rangeDragStart)
 			{
-				setRange(from);
-				break;
+				to.start = from.start;
+				to.end = from.end;
 			}
-			toolMove(x, y);
-			if (m_range && m_range->start != from.start)
-				edit("range.move",
-					{{"start", from.start}, {"end", from.end}, {"tracks", from.tracks}, {"position", m_range->start},
-						{"copy", modifiers("dragDrop.copy")}});
+			setRange(to);
+			if (to.start == from.start && to.tracks == from.tracks)
+				break;
+			Json parameters = {{"start", from.start}, {"end", from.end}, {"tracks", from.tracks},
+				{"position", to.start}, {"copy", modifiers("dragDrop.copy")}};
+			if (to.tracks != from.tracks)
+			{
+				// Where the range's top track goes: range.move names the tracks from the top.
+				const std::vector<uint64_t> order = shownTracks();
+				size_t top = 0;
+				for (size_t i = 1; i < from.tracks.size(); ++i)
+					if (std::find(order.begin(), order.end(), from.tracks[i]) <
+						std::find(order.begin(), order.end(), from.tracks[top]))
+						top = i;
+				parameters["track"] = to.tracks[top];
+			}
+			// Refused, e.g. audio onto a MIDI track, the range goes back to its contents, unless it moved since.
+			const RangeSelection shown = m_range.value_or(to);
+			m_binding.send("range.move", std::move(parameters),
+				[this, from, shown, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (alive.expired() || result.ok())
+						return;
+					showRefusal(result.error);
+					if (m_range && m_range->start == shown.start && m_range->end == shown.end &&
+						m_range->tracks == shown.tracks)
+						setRange(from);
+				});
 			break;
 		}
+		case Drag::RangeEdge:
+			// A click selects a range of no length there, as anywhere.
+			if (!moved || !m_dragRange)
+			{
+				m_rangeBase = std::nullopt;
+				setRangeFrom(x, y);
+			}
+			else
+			{
+				setRange(resizedRange(*m_dragRange, x, y));
+			}
+			zeroCrossRange();
+			break;
 		case Drag::DrawPart:
 		{
 			const std::optional<size_t> lane = visibleLaneAt(m_pressY);
@@ -676,6 +724,126 @@ namespace gnubase::ui
 			m_laneTracks, m_pressed == "shift" ? m_range : std::nullopt, samples(start), samples(end), *lane, *lane));
 		zeroCrossRange();
 		return true;
+	}
+
+	EventDisplay::RangeEdge EventDisplay::rangeEdgeAt(double x, double y) const
+	{
+		if (!m_range || m_range->tracks.empty())
+			return RangeEdge::None;
+		const RangeSelection& range = *m_range;
+		// Its box: from its top track's first lane to its bottom track's last.
+		const auto first =
+			std::find_first_of(m_laneTracks.begin(), m_laneTracks.end(), range.tracks.begin(), range.tracks.end());
+		const auto last =
+			std::find_first_of(m_laneTracks.rbegin(), m_laneTracks.rend(), range.tracks.begin(), range.tracks.end());
+		if (first == m_laneTracks.end())
+			return RangeEdge::None;
+		const double top = m_laneTops[static_cast<size_t>(first - m_laneTracks.begin())] - m_view.top;
+		const double bottom =
+			m_laneTops[m_laneTracks.size() - static_cast<size_t>(last - m_laneTracks.rbegin())] - m_view.top;
+		const auto across = [this](int64_t sample)
+		{ return ((static_cast<double>(sample) / m_time.sampleRate) - m_view.start) / m_view.scale; };
+		const double left = across(range.start);
+		const double right = across(range.end);
+		if (x < left || x > right || y < top || y > bottom)
+			return RangeEdge::None;
+		// As an event's, only where it's wide or high enough to have edges.
+		if (right - left > 3.0 * g_rangeEdge)
+		{
+			if (x - left <= g_rangeEdge)
+				return RangeEdge::Start;
+			if (right - x <= g_rangeEdge)
+				return RangeEdge::End;
+		}
+		if (bottom - top > 3.0 * g_rangeEdge)
+		{
+			if (y - top <= g_rangeEdge)
+				return RangeEdge::Top;
+			if (bottom - y <= g_rangeEdge)
+				return RangeEdge::Bottom;
+		}
+		return RangeEdge::None;
+	}
+
+	std::vector<uint64_t> EventDisplay::shownTracks() const
+	{
+		std::vector<uint64_t> order;
+		for (const uint64_t track : m_laneTracks)
+			if (std::find(order.begin(), order.end(), track) == order.end())
+				order.push_back(track);
+		return order;
+	}
+
+	RangeSelection EventDisplay::movedRange(const RangeSelection& from, double x, double y) const
+	{
+		// Across with the mouse, its start snapped.
+		const double start = static_cast<double>(from.start) / m_time.sampleRate;
+		const int64_t to = std::max<int64_t>(0, samples(snapped(start + ((x - m_pressX) * m_view.scale), start)));
+		RangeSelection range{to, to + (from.end - from.start), from.tracks};
+		if (m_laneTracks.empty())
+			return range;
+		// Down or up by as many tracks as the mouse, as far as there are tracks for all of its own (p. 291).
+		const std::vector<uint64_t> order = shownTracks();
+		const auto index = [&order](uint64_t track)
+		{ return static_cast<std::ptrdiff_t>(std::find(order.begin(), order.end(), track) - order.begin()); };
+		const auto trackAt = [this](double dpY)
+		{ return m_laneTracks[std::min(laneAt(dpY + m_view.top), m_laneTracks.size() - 1)]; };
+		const auto size = static_cast<std::ptrdiff_t>(order.size());
+		std::ptrdiff_t top = size;
+		std::ptrdiff_t bottom = -1;
+		for (const uint64_t track : from.tracks)
+		{
+			top = std::min(top, index(track));
+			bottom = std::max(bottom, index(track));
+		}
+		if (bottom >= size) // a track the lanes don't show
+			return range;
+		const std::ptrdiff_t by = std::clamp(index(trackAt(y)) - index(trackAt(m_pressY)), -top, size - 1 - bottom);
+		for (uint64_t& track : range.tracks)
+			track = order[static_cast<size_t>(index(track) + by)];
+		return range;
+	}
+
+	RangeSelection EventDisplay::resizedRange(const RangeSelection& from, double x, double y) const
+	{
+		RangeSelection range = from;
+		if (m_rangeEdge == RangeEdge::Start || m_rangeEdge == RangeEdge::End)
+		{
+			// The edge follows the mouse across, snapped; past the other edge it becomes that one (p. 288).
+			const bool start = m_rangeEdge == RangeEdge::Start;
+			const double edge = static_cast<double>(start ? from.start : from.end) / m_time.sampleRate;
+			const int64_t to = std::max<int64_t>(0, samples(snapped(edge + ((x - m_pressX) * m_view.scale), edge)));
+			const int64_t other = start ? from.end : from.start;
+			range.start = std::min(to, other);
+			range.end = std::max(to, other);
+			return range;
+		}
+		// The top or the bottom goes to the track under the mouse, not past the other edge: the tracks it passes
+		// come in or go.
+		const std::vector<uint64_t> order = shownTracks();
+		const auto index = [&order](uint64_t track)
+		{ return static_cast<std::ptrdiff_t>(std::find(order.begin(), order.end(), track) - order.begin()); };
+		const auto size = static_cast<std::ptrdiff_t>(order.size());
+		std::ptrdiff_t top = size;
+		std::ptrdiff_t bottom = -1;
+		for (const uint64_t track : from.tracks)
+		{
+			top = std::min(top, index(track));
+			bottom = std::max(bottom, index(track));
+		}
+		if (m_laneTracks.empty() || bottom >= size)
+			return range;
+		const std::ptrdiff_t mouse = index(m_laneTracks[std::min(laneAt(y + m_view.top), m_laneTracks.size() - 1)]);
+		range.tracks.clear();
+		for (std::ptrdiff_t i = 0; i < size; ++i)
+		{
+			const uint64_t track = order[static_cast<size_t>(i)];
+			const bool in = std::find(from.tracks.begin(), from.tracks.end(), track) != from.tracks.end();
+			if (m_rangeEdge == RangeEdge::Top ? i >= std::min(mouse, bottom) && (in || i < top)
+											  : i <= std::max(mouse, top) && (in || i > bottom))
+				range.tracks.push_back(track);
+		}
+		return range;
 	}
 
 	// From where the drag started to x and y, snapped (reference manual p. 287); with Select Full Vertical on every

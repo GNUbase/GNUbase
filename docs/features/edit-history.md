@@ -52,6 +52,13 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
   widget's `change`, [widgets.md](widgets.md)): a drag of the mixer's faders, of the inspector's volume and pan and of
   the info line's volume ([inspector.md](inspector.md)), wheel turns until the mouse leaves, an arrow key until it is
   released. The steps of a gesture still go to the engine one by one, so that it is heard while it lasts.
+- **What a step changed** (#1881). `history.changed` has `position`, `steps`, `undo` and `redo`, and for a step that a
+  command made or joined, `events`: the names of the events that the command announced before it, each once, which
+  tell the whole change. A client that follows those events itself needn't read the project again: the UI's views
+  read no `project.get` after a step that announced only `channel.changed`, such as each step of a fader drag, and take
+  the channels from the events instead ([ui-engine-binding.md](ui-engine-binding.md)). Undo, redo, `history.join`,
+  `history.set`, `history.describe`, a new or opened project and a transaction that another command runs (which may
+  announce more after it) name no events, so clients read the project then.
 - **Joining steps.** Each step has an id in `history.get`, growing with each new step. `history.join` with `after`, an
   id, and `action` joins the done steps whose id is greater into one step named action, so that a client's several
   commands are undone and redone at once: a user script is one undo step this way ([scripts.md](scripts.md)). Steps

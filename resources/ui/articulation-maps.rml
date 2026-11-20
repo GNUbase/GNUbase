@@ -3,7 +3,8 @@
      opens it (MIDI > Articulation Map Setup..., the UI command midi.articulationMapSetup, and the inspector's
      Articulation Map section) with the attribute track, the selected MIDI or instrument track, or none. Its Lua shows
      the project's maps from project.get and changes them right away, each change one undo step: Add Map, Duplicate
-     Map and Remove Map run articulationMap.add and articulationMap.remove; Import Map and Export Map choose a file
+     Map and Remove Map run articulationMap.add and articulationMap.remove, Add Map with Import Key Switches checked
+     with the track's key switches (p. 1284, shown only with a track); Import Map and Export Map choose a file
      (gnubase.ui.importArticulationMap and exportArticulationMap); Assign to Track runs track.set articulationMap. The
      selected map's name, remote trigger mode, latch, groups, articulations and sound slots, and the selected slot's
      output mapping and MIDI modifiers, go to articulationMap.set as they change, text fields with Enter or when they
@@ -124,8 +125,8 @@
 			display: none;
 		}
 
-		/* Without a map, or a track to assign it to. */
-		#articulation-map.unavailable, #articulation-map-assign.unavailable
+		/* Without a map, or a track to assign it to or import key switches from. */
+		#articulation-map.unavailable, #articulation-map-assign.unavailable, #articulation-key-switches.unavailable
 		{
 			display: none;
 		}
@@ -415,6 +416,7 @@
 				track = nil
 				document:RemoveAttribute("track")
 				document:GetElementById("articulation-map-assign"):SetClass("unavailable", true)
+				document:GetElementById("articulation-key-switches"):SetClass("unavailable", true)
 			end
 			if busy then
 				return
@@ -459,6 +461,7 @@
 				end
 			end
 			document:GetElementById("articulation-map-assign"):SetClass("unavailable", track == nil)
+			document:GetElementById("articulation-key-switches"):SetClass("unavailable", track == nil)
 			dialog.show(document)
 		end
 
@@ -622,6 +625,9 @@
 			local parameters = {}
 			if copy and current() ~= nil then
 				parameters.copy = current().id
+			elseif not copy and track ~= nil and
+				document:GetElementById("articulation-map-import-key-switches"):HasAttribute("checked") then
+				parameters.keySwitches = track
 			end
 			if run(document, function() gnubase.articulationMap.add(parameters) end) then
 				selected = #maps
@@ -1018,6 +1024,10 @@
 		</div>
 		<div class="row">
 			<button id="articulation-map-add" onclick="ArticulationMaps.add(document, false)">Add Map</button>
+			<span id="articulation-key-switches">
+				<input type="checkbox" id="articulation-map-import-key-switches"/>
+				<label for="articulation-map-import-key-switches">Import Key Switches</label>
+			</span>
 			<button id="articulation-map-duplicate" onclick="ArticulationMaps.add(document, true)">Duplicate Map</button>
 			<button id="articulation-map-remove" onclick="ArticulationMaps.remove(document)">Remove Map</button>
 			<button id="articulation-map-import" onclick="ArticulationMaps.import(document)">Import Map</button>
