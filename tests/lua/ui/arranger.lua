@@ -129,3 +129,47 @@ test.case("the editor disables its step buttons outside arranger mode and shows 
 	test.ok(disabled("first-repeat", false), "first-repeat works with a step playing")
 	test.ok(disabled("last-repeat", false), "last-repeat works with a step playing")
 end)
+
+test.case("the editor renames the active chain", function()
+	test.cleanup(function()
+		if #ui.windows().windows > 1 then ui.command{command = "window.arranger"} end
+	end)
+	gnubase.track.add{type = "arranger", timeBase = "linear"}
+	ui.command{command = "window.arranger"}
+	local window = openedWindow()
+	test.ok(window)
+	ui.wait{window = window, selector = "#chain-name"}
+	test.equal(ui.dom{window = window, selector = "#chain-name"}.elements[1].value, "Chain 1")
+
+	-- Rename Arranger Chain (reference manual p. 406): Enter renames it, and the chain list shows the new name.
+	ui.click{window = window, selector = "#chain-name"}
+	ui.key{window = window, keys = "Mod+A"}
+	ui.text{window = window, text = "Verse Mix"}
+	ui.key{window = window, keys = "Enter"}
+	-- The field's change and arranger.changed land in later UI steps, which a wait steps.
+	local function settled(read, want)
+		local value
+		for _ = 1, 50 do
+			value = read()
+			if value == want then break end
+			pcall(ui.wait, {window = window, selector = "#no-such-element", seconds = 0.05})
+		end
+		return value
+	end
+	test.equal(settled(function() return gnubase.arranger.get().chains[1].name end, "Verse Mix"), "Verse Mix")
+	test.equal(settled(function()
+		return ui.dom{window = window, selector = "#arranger-chain"}.elements[1].options[1].text
+	end, "Verse Mix"), "Verse Mix")
+
+	-- An empty name keeps the old one.
+	ui.key{window = window, keys = "Mod+A"}
+	ui.key{window = window, keys = "Backspace"}
+	ui.key{window = window, keys = "Enter"}
+	test.equal(settled(function()
+		return ui.dom{window = window, selector = "#chain-name"}.elements[1].value
+	end, "Verse Mix"), "Verse Mix")
+	test.equal(gnubase.arranger.get().chains[1].name, "Verse Mix")
+	-- Refreshing the drop-down lists replaces their options instead of adding to them.
+	test.equal(#ui.dom{window = window, selector = "#arranger-chain"}.elements[1].options, 1)
+	test.equal(#ui.dom{window = window, selector = "#jump-mode"}.elements[1].options, 6)
+end)

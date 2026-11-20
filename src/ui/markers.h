@@ -89,10 +89,9 @@ namespace gnubase::ui
 	// .marker-name-field to type); a double click on a cycle marker sets the locators to it, and with Alt zooms to it.
 	// The erase tool deletes the marker clicked, with the tool modifier erase.deleteLaterEvents every later one on its
 	// track; with the range tool a double click selects the range between the markers around it on every track, and a
-	// drag in the selection range moves its contents (range.move), with the tool modifier dragDrop.copy copies them;
-	// a click there without a drag, and Shift and a drag, select a range as on any lane. Moves and new markers snap. A
-	// drag whose mouseup never comes, released outside the window, ends without its effect at the next press. Use it on
-	// the UI thread; the display, the engine and the binding must outlive it.
+	// click and a drag select a range or drag its contents as on any lane (ui/eventdisplay.h). Moves and new markers
+	// snap. A drag whose mouseup never comes, released outside the window, ends without its effect at the next press.
+	// Use it on the UI thread; the display, the engine and the binding must outlive it.
 	class MarkerLines final : private Rml::EventListener
 	{
 	public:
@@ -151,7 +150,6 @@ namespace gnubase::ui
 			Start,
 			End,
 			NewCycle,
-			Range, // the selection range's contents
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -189,11 +187,10 @@ namespace gnubase::ui
 		uint64_t m_dragTrack = 0;    // the track it was pressed on
 		double m_dragFrom = 0.0;     // seconds: the marker's start, end, or the snapped press for a new cycle marker
 		double m_pressSeconds = 0.0; // seconds: the press, unsnapped
-		std::optional<RangeSelection> m_dragRange; // the selection range a range drag moves, as it was
-		Rml::Vector2f m_press;                     // the mouse at the press, in the window's pixels
-		bool m_dragMoved = false;                  // further than a click
-		bool m_renameNew = false;                  // a new cycle marker opens its name
-		uint64_t m_renaming = 0;                   // the marker whose name opens, or is open
+		Rml::Vector2f m_press;       // the mouse at the press, in the window's pixels
+		bool m_dragMoved = false;    // further than a click
+		bool m_renameNew = false;    // a new cycle marker opens its name
+		uint64_t m_renaming = 0;     // the marker whose name opens, or is open
 		bool m_fieldOpen = false;
 		MarkerLineMode m_mode = MarkerLineMode::Active;
 		bool m_showIds = true;

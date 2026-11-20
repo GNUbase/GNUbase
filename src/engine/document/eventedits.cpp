@@ -179,7 +179,8 @@ namespace gnubase::engine
 			return ids;
 		}
 
-		// Announces an item; an audio part's events come and change with it.
+		// Announces an item; an audio part's events come and change with it. Of a new part, the events older than it
+		// (ids only grow) were there before and moved into it, as with a split or a glue: they changed.
 		void announce(Project& project, CommandContext& context, const Item& item, const std::string& what)
 		{
 			if (item.audio != nullptr)
@@ -190,7 +191,9 @@ namespace gnubase::engine
 			{
 				context.emit("audioPart." + what, {{"part", toJson(*item.audioPart)}});
 				for (const AudioEvent* event : eventsIn(project, item.audioPart->id))
-					context.emit("audioEvent." + what, {{"event", toJson(*event)}});
+					context.emit(
+						what == "added" && event->id < item.audioPart->id ? "audioEvent.changed" : "audioEvent." + what,
+						{{"event", toJson(*event)}});
 			}
 			else
 			{
@@ -1401,7 +1404,7 @@ namespace gnubase::engine
 		}
 
 		// Dissolve Part (reference manual p. 250): an audio part's events become events of their own on its track, cut
-		// at its edges so that they play as they did; those it hid entirely go.
+		// at its edges so that they play as they did, muted if it was; those it hid entirely go.
 		Json dissolveParts(Project& project, CommandContext& context)
 		{
 			Json events = Json::array();
@@ -1428,6 +1431,7 @@ namespace gnubase::engine
 						continue;
 					}
 					kept.audio->part = 0;
+					kept.audio->mute = kept.audio->mute || item.audioPart->mute;
 					announce(project, context, kept, kept.id() == original ? "changed" : "added");
 					events.push_back(kept.id());
 				}
@@ -2621,10 +2625,15 @@ namespace gnubase::engine
 
 		// Flatten Chain (#167, reference manual pp. 407-411): from the start of the chain's first event on, the project
 		// becomes what the chain plays, every step's event repeated, one after the other. What lies before stays.
-		// Returns where the flattened chain starts and ends, in samples.
+		// Returns where the flattened chain starts and ends, in samples. The notes that cross a section's edges are cut
+		// there, or with dontSplit (Don't Split Events, p. 408) a section has only the notes that start and end in it.
+		// With keepTrack and renameEvents (Rename Arranger Events) each section's event has its event's name and how
+		// often that event came so far: A 1, B 1, A 2.
 		Json flattenChain(Project& project, CommandContext& context, bool keepTrack)
 		{
 			const Json& parameters = context.parameters();
+			const bool dontSplit = parameters.value("dontSplit", false);
+			const bool rename = parameters.value("renameEvents", false);
 			const ArrangerChain* chain = activeArrangerChain(project);
 			if (parameters.contains("chain"))
 			{
@@ -2660,18 +2669,31 @@ namespace gnubase::engine
 			for (const Section& section : sections)
 				last = std::max(last, section.end);
 			const time::Samples start = sections.front().start;
-			deleteRange(project, {start, last + 1, tracks, false}, false, context);
+			deleteRange(project, {start, last + 1, tracks, !dontSplit}, false, context);
 			// ponytail: sections follow each other in samples; on musical tracks with tempo changes a section may land
 			// a few ticks off its beat. Chain the positions in ticks if that matters.
 			time::Samples at = start;
 			std::vector<ArrangerEvent> placed;
+			std::map<ObjectId, int> count; // of each event's sections so far
 			for (const Section& section : sections)
 			{
-				pasteClipboard(project, copyRange(original, {section.start, section.end, tracks, false}, true), tracks,
-					at, context);
+				RangeClipboard copied = copyRange(original, {section.start, section.end, tracks, !dontSplit}, true);
+				// Uncut, the notes that started before the section stayed before it; those that end after it go.
+				if (dontSplit)
+					for (MidiPart& part : copied.midiParts)
+					{
+						const time::Ticks end =
+							ticks(original, {time::TimeBase::Linear, section.end}) - ticks(original, part.position);
+						for (auto note = part.notes.begin(); note != part.notes.end();)
+							note = note->second.position + note->second.length > end ? part.notes.erase(note)
+																					 : std::next(note);
+					}
+				pasteClipboard(project, copied, tracks, at, context);
 				const time::TimeBase base = section.event->position.base;
+				const int number = ++count[section.event->id];
 				placed.push_back(
-					{project.newId(), section.event->name, rebased(project, {time::TimeBase::Linear, at}, base),
+					{project.newId(), rename ? section.event->name + " " + std::to_string(number) : section.event->name,
+						rebased(project, {time::TimeBase::Linear, at}, base),
 						rebased(project, {time::TimeBase::Linear, at + (section.end - section.start)}, base)});
 				at += section.end - section.start;
 			}
@@ -3181,9 +3203,9 @@ namespace gnubase::engine
 		addEdit(engine,
 			{"event.dissolvePart", 1,
 				"Dissolve Part (Audio menu): removes audio parts (events, by id) and makes their audio events events "
-				"of "
-				"their own on the track, cut at the part's edges so that they play as they did; events the part hid "
-				"entirely are removed. Locked parts are refused. The events keep their lane numbers, now lanes of the "
+				"of their own on the track, cut at the part's edges so that they play as they did, muted if the part "
+				"was; events the part hid entirely are removed. Locked parts are refused. The events keep their lane "
+				"numbers, now lanes of the "
 				"track. Returns the events.",
 				schema({{"events", events()}}, {"events"}), eventsResult(), false},
 			"Dissolve Part", dissolveParts);
@@ -3363,11 +3385,16 @@ namespace gnubase::engine
 				"Flatten Chain (#167): makes the project play the arranger chain (default: the active one) linearly. "
 				"From the start of the chain's first event on, every track's events, parts and automation are "
 				"replaced by the chain's sections, each step's event as often as it repeats, one after the other; "
-				"what lies before stays, and so do locked events. Copies are real copies. Without keepTrack (Keep "
-				"Arranger Track) the arranger track goes; with it, it has an event per section where it now is and "
-				"one chain that plays them in order. One undo step. Returns where the flattened chain starts and "
+				"what lies before stays, and so do locked events. Copies are real copies. MIDI notes that cross a "
+				"section's edges are cut there; with dontSplit (Don't Split Events) a section has only the notes "
+				"that start and end in it. Without keepTrack (Keep Arranger Track) the arranger track goes; with it, "
+				"it has an event per section where it now is and one chain that plays them in order, and with "
+				"renameEvents (Rename Arranger Events) each of those events has a number after its name, how often "
+				"its event came so far (A 1, B 1, A 2). One undo step. Returns where the flattened chain starts and "
 				"ends, in samples.",
-				schema({{"chain", integer()}, {"keepTrack", boolean()}}, {}),
+				schema({{"chain", integer()}, {"keepTrack", boolean()}, {"dontSplit", boolean()},
+						   {"renameEvents", boolean()}},
+					{}),
 				schema({{"start", integer()}, {"end", integer()}}, {"start", "end"}), false},
 			"Flatten arranger chain",
 			[this](Project& project, CommandContext& context)
