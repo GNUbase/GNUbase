@@ -208,9 +208,14 @@ TEST_CASE("the lower zone's editor follows the project window's selection unless
 			{ return ids(app, app.appUi().editorWindowId(), ".editor-part", "part") == std::vector<uint64_t>{part}; });
 	};
 	f.select({f.keys1, f.bass1});
+	// From the project zone's focus, the lower zone's editor takes the keyboard focus when it opens (p. 100).
+	REQUIRE(app.appUi().docking().focus("project", "main"));
+	REQUIRE(has(elements(app, std::nullopt, "#main-zone").at(0), "focused"));
 	app.keys().run("window.lowerZoneEditor", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editor"); }));
 	CHECK(app.appUi().lowerZoneEditor() != nullptr);
+	CHECK(app.waitUntil([&] { return has(elements(app, std::nullopt, "#lower-zone").at(0), "focused"); }));
+	CHECK(!has(elements(app, std::nullopt, "#main-zone").at(0), "focused"));
 	REQUIRE(app.waitUntil(
 		[&]
 		{

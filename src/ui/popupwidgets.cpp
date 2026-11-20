@@ -137,6 +137,7 @@ namespace gnubase::ui
 			void open(Rml::Vector2f at)
 			{
 				m_button.reset();
+				remember();
 				addArrows(*this);
 				SetClass("open", true);
 				m_at = at;
@@ -167,21 +168,28 @@ namespace gnubase::ui
 			}
 
 			// Closes the menu and the submenus that keys opened in it. The focus doesn't stay on a hidden item: it goes
-			// to a submenu's item, or else to the document.
+			// to a submenu's item, or else back to the element that had it before the menu opened, if that still can,
+			// or else to the document.
 			void close()
 			{
 				SetClass("open", false);
+				SetClass("keys", false);
 				m_at.reset();
 				Rml::ElementList open;
 				QuerySelectorAll(open, "menu.open");
 				for (Rml::Element* submenu : open)
 					submenu->SetClass("open", false);
+				Rml::Element* before = m_before.get();
+				m_before.reset();
 				for (const Rml::Element* focused = GetContext() != nullptr ? GetContext()->GetFocusElement() : nullptr;
 					focused != nullptr; focused = focused->GetParentNode())
 					if (focused == this)
 					{
 						if (Rml::Element* item = GetParentNode(); item != nullptr && item->GetTagName() == "menuitem")
 							item->Focus();
+						else if (before != nullptr && before->GetContext() == GetContext() && before->IsVisible(true) &&
+							!before->HasAttribute("disabled") && !before->HasAttribute("menu") && before->Focus())
+							break;
 						else
 							GetOwnerDocument()->Focus();
 						break;
@@ -191,6 +199,7 @@ namespace gnubase::ui
 			// The mouse is over one of the menu's items: the submenus that keys opened in its other items close.
 			void hover(const Rml::Element& item)
 			{
+				outermost().SetClass("keys", false);
 				for (int i = 0; i < GetNumChildren(); ++i)
 					if (GetChild(i) != &item)
 						if (Menu* submenu = submenuOf(*GetChild(i)))
@@ -210,6 +219,52 @@ namespace gnubase::ui
 
 			// Focuses the first item that isn't disabled, for a menu that keys opened; false if there is none.
 			bool focusFirst() { return moveFocus(1); }
+
+			// The mouse moved within the menu: it shows the submenus of the items it is over again, which the keys
+			// had taken over (the class .keys).
+			void moved() { outermost().SetClass("keys", false); }
+
+			// Gives the items with a submenu, in the menu and in its submenus, their arrow once.
+			static void addArrows(Rml::Element& menu)
+			{
+				for (int i = 0; i < menu.GetNumChildren(); ++i)
+				{
+					Rml::Element* item = menu.GetChild(i);
+					Menu* submenu = item->GetTagName() == "menuitem" ? submenuOf(*item) : nullptr;
+					if (submenu == nullptr)
+						continue;
+					addArrows(*submenu);
+					Rml::ElementList arrows;
+					item->GetElementsByClassName(arrows, "menu-arrow");
+					if (std::none_of(arrows.begin(), arrows.end(),
+							[item](const Rml::Element* arrow) { return arrow->GetParentNode() == item; }))
+						// First, so that it floats right of the item's text.
+						item->InsertBefore(item->GetOwnerDocument()->CreateElement("span"), item->GetFirstChild())
+							->SetClass("menu-arrow", true);
+				}
+			}
+
+			// The menu's innermost submenu that keys opened, or null; with how deep it is in depth.
+			Menu* innermostOpen(int& depth)
+			{
+				Menu* found = nullptr;
+				depth = 0;
+				Rml::ElementList open;
+				QuerySelectorAll(open, "menu.open");
+				for (Rml::Element* element : open)
+					if (auto* submenu = dynamic_cast<Menu*>(element); submenu != nullptr && submenu != this)
+					{
+						int level = 0;
+						for (const Rml::Element* up = submenu; up != nullptr && up != this; up = up->GetParentNode())
+							level += dynamic_cast<const Menu*>(up) != nullptr ? 1 : 0;
+						if (level > depth)
+						{
+							depth = level;
+							found = submenu;
+						}
+					}
+				return found;
+			}
 
 			void ProcessDefaultAction(Rml::Event& event) override
 			{
@@ -233,7 +288,8 @@ namespace gnubase::ui
 						left();
 					else
 						return;
-					event.StopPropagation(); // the keys stay in the open menu
+					outermost().SetClass("keys", true); // the keys have the menu now, not the mouse
+					event.StopPropagation();            // the keys stay in the open menu
 				}
 			}
 
@@ -272,26 +328,6 @@ namespace gnubase::ui
 					if (auto* submenu = dynamic_cast<Menu*>(item.GetChild(i)))
 						return submenu;
 				return nullptr;
-			}
-
-			// Gives the menu's items with a submenu, and those of the submenus, their arrow once.
-			static void addArrows(Rml::Element& menu)
-			{
-				for (int i = 0; i < menu.GetNumChildren(); ++i)
-				{
-					Rml::Element* item = menu.GetChild(i);
-					Menu* submenu = item->GetTagName() == "menuitem" ? submenuOf(*item) : nullptr;
-					if (submenu == nullptr)
-						continue;
-					addArrows(*submenu);
-					Rml::ElementList arrows;
-					item->GetElementsByClassName(arrows, "menu-arrow");
-					if (std::none_of(arrows.begin(), arrows.end(),
-							[item](const Rml::Element* arrow) { return arrow->GetParentNode() == item; }))
-						// First, so that it floats right of the item's text.
-						item->InsertBefore(item->GetOwnerDocument()->CreateElement("span"), item->GetFirstChild())
-							->SetClass("menu-arrow", true);
-				}
 			}
 
 			Rml::Element* focusedItem() const
@@ -419,10 +455,24 @@ namespace gnubase::ui
 				return true;
 			}
 
+			// Remembers the element that has the focus as the one to give it back to when the menu closes, unless the
+			// menu is open already, or the focus is in a menu: another menu closes first and gives it back.
+			void remember()
+			{
+				if (IsClassSet("open") || GetContext() == nullptr)
+					return;
+				Rml::Element* focus = GetContext()->GetFocusElement();
+				for (const Rml::Element* up = focus; up != nullptr; up = up->GetParentNode())
+					if (dynamic_cast<const Menu*>(up) != nullptr)
+						return;
+				m_before = focus != nullptr ? focus->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+			}
+
 			// Where open() opened the menu and, once it settled, where it is; until it closes.
 			std::optional<Rml::Vector2f> m_at;
 			Rml::ObserverPtr<Rml::Element> m_button; // what it opened under
 			std::string m_buttonPath;                // and what that stands for (pathOf)
+			Rml::ObserverPtr<Rml::Element> m_before; // what had the focus before it opened
 			bool m_settling = false;                 // no input came since it opened
 			bool m_resized = false;                  // since the last update
 		};
@@ -749,6 +799,10 @@ namespace gnubase::ui
 			void OnDocumentLoad(Rml::ElementDocument* document) override
 			{
 				m_tooltips[document] = document->AppendChild(document->CreateElement("tooltip"))->GetObserverPtr();
+				Rml::ElementList menus;
+				document->GetElementsByTagName(menus, "menu");
+				for (Rml::Element* menu : menus)
+					Menu::addArrows(*menu);
 				for (const Rml::EventId id : g_events)
 					document->AddEventListener(id, &m_listener, true);
 			}
@@ -771,6 +825,16 @@ namespace gnubase::ui
 					// that comes after the element under it is gone. Every move gets here, also during a drag.
 					if (tooltip != nullptr)
 						tooltip->moved(mouse);
+					// The mouse took a menu over from the keys: over an item, as when it entered it (#568).
+					if (const Rml::Element* item = closestTag(event.GetTargetElement(), "menuitem"))
+					{
+						if (auto* menu = dynamic_cast<Menu*>(item->GetParentNode()))
+							menu->hover(*item);
+					}
+					else if (auto* menu = dynamic_cast<Menu*>(closestTag(event.GetTargetElement(), "menu")))
+					{
+						menu->moved();
+					}
 					return;
 				}
 				Rml::Element* target = event.GetTargetElement();
@@ -857,9 +921,25 @@ namespace gnubase::ui
 					{
 						if (const std::vector<Menu*> open = openMenus(*document); !open.empty())
 						{
+							// A submenu that keys opened closes first, the innermost one, as Left does; without one,
+							// every open menu closes.
+							Menu* inner = nullptr;
+							int depth = 0;
 							for (Menu* menu : open)
-								menu->close();
-							event.StopPropagation();
+							{
+								int level = 0;
+								if (Menu* submenu = menu->innermostOpen(level); level > depth)
+								{
+									inner = submenu;
+									depth = level;
+								}
+							}
+							if (inner != nullptr)
+								inner->close();
+							else
+								for (Menu* menu : open)
+									menu->close();
+							event.StopPropagation(); // Escape closed the menu, not the dialog around it
 							break;
 						}
 						if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(target);

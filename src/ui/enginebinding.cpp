@@ -9,12 +9,102 @@
 #include <chrono>
 #include <iterator>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
 namespace gnubase::ui
 {
+	bool changedOnly(const engine::Event& historyChanged, std::initializer_list<std::string_view> names)
+	{
+		const auto events = historyChanged.data.find("events");
+		if (events == historyChanged.data.end() || !events->is_array() || events->empty())
+			return false;
+		return std::all_of(events->begin(), events->end(),
+			[names](const engine::Json& event)
+			{
+				return event.is_string() &&
+					std::find(names.begin(), names.end(), event.get_ref<const std::string&>()) != names.end();
+			});
+	}
+
+	engine::Json* takeChannel(engine::Json& project, const engine::Event& channelChanged, engine::Json* before)
+	{
+		const auto channel = channelChanged.data.find("channel");
+		const auto channels = project.find("channels");
+		if (channel == channelChanged.data.end() || !channel->is_object() || channels == project.end() ||
+			!channels->is_array())
+			return nullptr;
+		const engine::Json id = channel->value("id", engine::Json());
+		for (engine::Json& each : *channels)
+			if (each.is_object() && each.value("id", engine::Json()) == id)
+			{
+				if (before != nullptr)
+					*before = std::move(each);
+				each = *channel; // in place, so pointers to it stay valid
+				return &each;
+			}
+		return nullptr;
+	}
+
+	std::vector<engine::Event> ChannelSteps::settle(const engine::Event& changed)
+	{
+		std::vector<engine::Event> kept = std::exchange(m_kept, {});
+		if (!changedOnly(changed, {"channel.changed"}))
+			kept.clear();
+		return kept;
+	}
+
+	bool levelsOnly(const engine::Json& before, const engine::Json& after)
+	{
+		if (!before.is_object() || !after.is_object() || before.size() != after.size())
+			return false;
+		for (auto value = after.begin(); value != after.end(); ++value)
+		{
+			const std::string& key = value.key();
+			const bool level = key == "volume" || key == "pan" || key == "panLeft" || key == "panRight" ||
+				key == "midiVolume" || key == "midiPan" || key == "sends";
+			if (!level && before.value(key, engine::Json()) != value.value())
+				return false;
+		}
+		return true;
+	}
+
+	void LevelSteps::read(const engine::Json& project)
+	{
+		const auto channels = project.find("channels");
+		if (channels == project.end() || !channels->is_array())
+			return;
+		for (const engine::Json& channel : *channels)
+			if (channel.is_object())
+				m_channels[channel.value("id", uint64_t{0})] = channel;
+	}
+
+	bool LevelSteps::levelsOnly(const engine::Event& changed)
+	{
+		const std::vector<engine::Event> kept = std::exchange(m_kept, {});
+		if (changed.name == "project.reset")
+		{
+			m_channels.clear(); // the next project's channels may have the same ids
+			return false;
+		}
+		bool levels = changedOnly(changed, {"channel.changed"});
+		// Every kept channel is the channel as it is now, also after a step that changed more: a later step that
+		// changes it back isn't levels only.
+		for (const engine::Event& event : kept)
+		{
+			const auto channel = event.data.find("channel");
+			if (channel == event.data.end() || !channel->is_object())
+				continue;
+			engine::Json& before = m_channels[channel->value("id", uint64_t{0})];
+			if (!ui::levelsOnly(before, *channel))
+				levels = false;
+			before = *channel;
+		}
+		return levels;
+	}
+
 	Subscription::Subscription(Subscription&& other) noexcept
 		: m_binding(std::exchange(other.m_binding, nullptr)), m_id(other.m_id)
 	{
@@ -159,9 +249,10 @@ namespace gnubase::ui
 		Step step = std::move(steps.waiting.front());
 		steps.waiting.pop_front();
 		steps.inFlight.push_back(std::move(step.done));
+		steps.announced = 0;
 		// An entry goes only in update() and only once no step of it waits for its answer, so the key outlives it.
 		const std::string* key = &entry->first;
-		transmit(
+		steps.request = transmit(
 			"history.transaction",
 			{{"description", std::move(step.description)}, {"merge", std::move(step.merge)},
 				{"commands", std::move(step.commands)}},
@@ -176,7 +267,12 @@ namespace gnubase::ui
 			done = std::move(steps->second.inFlight.front()); // results come in the order the steps went
 			steps->second.inFlight.pop_front();
 			if (result.ok())
-				steps->second.taken = m_handed;
+				steps->second.taken = steps->second.announced != 0 ? steps->second.announced : m_handed;
+			if (steps->second.request == result.request)
+			{
+				steps->second.request = 0;
+				steps->second.announced = 0;
+			}
 		}
 		if (done)
 			done(result);
@@ -363,6 +459,12 @@ namespace gnubase::ui
 	bool EngineBinding::dispatch(const engine::Event& event)
 	{
 		++m_handed;
+		// A step's events come before its answer and show what it changed: for a view that follows them, the engine
+		// took the step with the first one (ahead).
+		if (event.request != 0)
+			for (auto& entry : m_steps)
+				if (entry.second.request == event.request && entry.second.announced == 0)
+					entry.second.announced = m_handed;
 		std::vector<uint64_t> ids;
 		for (const auto& [id, handler] : m_handlers)
 			if (handler.event == event.name)

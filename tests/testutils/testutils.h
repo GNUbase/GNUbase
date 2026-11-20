@@ -1,11 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <nlohmann/json_fwd.hpp>
+
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
+
+namespace gnubase::engine
+{
+	class Client;
+}
 
 namespace gnubase::test
 {
@@ -107,4 +117,10 @@ namespace gnubase::test
 
 	// Writes the entries as a zip archive, replacing the file. Throws if it can't be written.
 	void writeZip(const std::string& path, const std::map<std::string, std::string>& entries);
+
+	// The data of the next event named name that match accepts (any, without match), waiting up to timeout for it;
+	// nothing if none came. Takes the client's messages up to that event, also the results and events it skips.
+	std::optional<nlohmann::json> waitForEvent(engine::Client& client, const std::string& name,
+		const std::function<bool(const nlohmann::json&)>& match = nullptr,
+		std::chrono::milliseconds timeout = std::chrono::seconds(5));
 }

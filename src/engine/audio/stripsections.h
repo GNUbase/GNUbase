@@ -8,6 +8,7 @@
 #include "engine/graph/events.h"
 
 #include <cstdint>
+#include <vector>
 
 namespace gnubase::engine
 {
@@ -70,6 +71,10 @@ namespace gnubase::engine
 		void play(const graph::EventBuffer& events, bool pre, uint32_t frames, const Render& render) noexcept;
 		void applyPre() noexcept;
 		void applyPost() noexcept;
+		// Runs a dynamics core that is on, and while it switches on or off, crossfades between what comes in and what
+		// it makes of it along wet.
+		template <typename Core> void crossfade(
+			Core& core, ParameterRamp& wet, float* const* audio, int channels, uint32_t begin, uint32_t end) noexcept;
 
 		double m_sampleRate = 0.0;
 		uint32_t m_maxFrames = 0;
@@ -82,6 +87,10 @@ namespace gnubase::engine
 		dsp::Gate m_gate;
 		dsp::Compressor m_compressor;
 		dsp::Limiter m_limiter;
+		ParameterRamp m_gateWet; // 1 while the gate is on
+		ParameterRamp m_compressorWet;
+		uint32_t m_switchFrames = 0; // that a switch of the gate or the compressor crossfades over
+		std::vector<float> m_dry;    // the input while they do, dsp::g_maxChannels channels of m_maxFrames
 		bool m_limiterRuns = false;
 		ChannelSections m_appliedPre; // the values the cores have
 		ChannelSections m_appliedPost;

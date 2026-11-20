@@ -1124,6 +1124,26 @@ TEST_CASE("Show Drum Sounds in Use by Instrument shows the sounds of a drum trac
 	CHECK(f.elements(padless).size() == 1);
 }
 
+TEST_CASE("Show Drum Sounds in Use by Instrument follows a pad that the drum machine resets", "[ui]")
+{
+	// Reset Pad changes only the drum track's channel: the editor reads no project after it (#1881), but asks for
+	// its view again, whose sounds in use come from the pads.
+	Fixture f;
+	const Json drums = f.app.call("drum.create");
+	const Json track = drums.at("track").at("id");
+	f.app.call("track.set", {{"track", track}, {"drumMap", f.map}});
+	const auto part =
+		f.app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}}).at("part").at("id");
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part})}});
+	f.app.call("editor.set", {{"editor", "window"}, {"pitchVisibility", true}, {"visibleSounds", "inUse"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").size() == 11; })); // the kit's pads
+	CHECK(f.elements(".drum-sound").at(0).at("attributes").at("pitch") == "36");
+
+	f.app.call("drum.resetPad", {{"track", track}, {"pad", 36}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").size() == 10; }));
+	CHECK(f.elements(".drum-sound").at(0).at("attributes").at("pitch") != "36");
+}
+
 TEST_CASE("with Show Drum Sounds in Use by Instrument the drum editor opens scrolled to the listed notes", "[ui]")
 {
 	// The first scroll goes to the middle of the rows of the notes the list shows, not to a note of a sound it hides.

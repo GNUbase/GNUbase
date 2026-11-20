@@ -188,6 +188,7 @@ namespace gnubase::ui
 		uint64_t m_questions = 0; // how often unlessUnsaved asked the engine, so that a question knows a newer one came
 		bool m_quitting = false;  // a quit request waits for the engine to say whether to ask
 		Rml::ObserverPtr<Rml::Element> m_quitQuestion; // and then for the question, while it is m_dialog
+		WindowId m_quitQuestionWindow = 0;             // the window it opens in
 		std::vector<std::string> m_templates;          // the start screen's templates, by name
 		std::vector<std::string> m_recent;             // and its recent projects, by file
 

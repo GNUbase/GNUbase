@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 
 namespace gnubase::engine::dsp
 {
@@ -117,6 +118,7 @@ namespace gnubase::engine::dsp
 			return;
 		const int band = static_cast<int>((id - 1) / BandParameterCount);
 		BandSettings& settings = m_bands[static_cast<size_t>(band)];
+		const BandSettings before = settings;
 		bool discrete = true;
 		switch (static_cast<BandParameter>((id - 1) % BandParameterCount))
 		{
@@ -144,7 +146,12 @@ namespace gnubase::engine::dsp
 		default:
 			return;
 		}
-		update(band, discrete);
+		// A value the band has already changes nothing: a switch, type or slope would start a morph that holds a
+		// glide back, for a host that sends every band whenever one changes.
+		const auto fields = [](const BandSettings& s)
+		{ return std::tie(s.on, s.type, s.frequency, s.gain, s.q, s.slope); };
+		if (fields(settings) != fields(before))
+			update(band, discrete);
 	}
 
 	int Equalizer::design(const BandSettings& s, Sections& sections, bool keepFlat) const noexcept

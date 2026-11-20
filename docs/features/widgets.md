@@ -62,10 +62,11 @@ The widgets:
   typed, clamped to the range; Escape, text that isn't a number, or nothing typed keeps the value, so that a value with
   more decimals than the field shows isn't rounded to them. Typing the number shown takes it. With `autofocus`, it is
   edited, all of it selected, whenever it gets a visible focus: when its document shows it focused, or Tab moves to it,
-  but not on a click. Keys typed before the next update go into it too. In a dialog it is then the main field, which
-  works like a text field: Enter takes the number typed and clicks OK, Escape cancels. While the user types, the field's
-  text field sends RmlUi's own `change` events with the text; the field's `change`, with the field as its target, has
-  the number.
+  but not on a click. When its document shows it, keys typed before the next update go into it too; after Tab, a key
+  before the next update starts editing, but only text that comes after that key goes into it. In a dialog it is then
+  the main field, which works like a text field: Enter takes the number typed and clicks OK, Escape cancels. While the
+  user types, the field's text field sends RmlUi's own `change` events with the text; the field's `change`, with the
+  field as its target, has the number.
 
 `<textdisplay>` shows text, its `value` attribute, such as a position in a time format; documents give it the look of
 a display with the class `.display`. A double click edits it as text (`.editing`): Enter, or leaving the field, sends
@@ -109,17 +110,22 @@ attributes, through a data model or directly.
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.
 - A `<menu>` inside an item is its submenu, shown beside the item while the mouse is over it (pure RCSS:
-  `menuitem:hover > menu`); a click on that item keeps the menu open. The menu gives such an item a `.menu-arrow`
-  part when it opens, first in the item so that it floats right; the themes draw it with their dropdown arrow, turned
-  to point right.
+  `menuitem:hover > menu`); a click on that item keeps the menu open. Such an item gets a `.menu-arrow` part when its
+  document loads, and again when its menu opens for those that came later, first in the item so that it floats right;
+  the themes draw it with their dropdown arrow, turned to point right. Once a key moved the focus in a menu it has
+  the state class `.keys` until the mouse moves or goes over another item, and then a submenu that the mouse rests on
+  stays hidden unless Right opened it, so that two submenus never show at once.
 - Keys: Down and Up move the focus between the items that are shown and not disabled, round the ends, skipping items
   hidden with `display: none` such as those a search leaves out. Tab and Shift+Tab (with Ctrl, Alt or Cmd too) do the
   same and also reach the menu's other controls, such as a search field, so that the focus doesn't leave an open menu
   for a control outside it while the menu stays open (#524). Enter clicks the focused item. Right opens the focused
   item's submenu (with the state class `.open`) and focuses its first item, unless all its items are disabled; Left
   closes the submenu and goes back to its item. A submenu that keys opened closes when the mouse goes to another item of
-  its menu, and with its menu. Escape closes every open menu. A menu that closes with the focus in it gives the focus to
-  its item, if it is a submenu, or else to its document.
+  its menu or moves within one, and with its menu. Escape closes the innermost submenu that keys opened and, with none
+  open, every open menu. A menu that closes with the focus in it gives the focus to its item, if it is a submenu, or
+  else back to the element that had it when the menu opened (a text field or list that keeps its keys and its focus
+  zone), or to its document if that is gone, hidden, disabled, or the title that opened the menu, whose Space and Enter
+  would open it again.
 - `<menubar>` holds the titles of menus: elements with a `menu` attribute, usually buttons. While one title's menu is
   open, the mouse over another title opens that one's menu instead; in a title's menu (and its submenus) Right and
   Left open the next and previous title's menu where they don't go into or out of a submenu, with its first item
@@ -257,8 +263,9 @@ presses it as the window gets it, nor behind a modal dialog). A right click with
 `modifiercontextmenu`, and the `contextmenu` where an element has no other.
 Tooltips show after a rest and go with the mouse. Notifications show for their duration, again when set again.
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result,
-and with `ui::closeDialog`, once, also when closed again from its own close event; a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter
-there clicks OK, while another value field keeps Enter.
+and with `ui::closeDialog`, once, also when closed again from its own close event; a value field with autofocus is
+edited as its dialog opens, even by keys typed before the next update, and Enter there clicks OK, while another value
+field keeps Enter.
 Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand and
 collapse by click and keys, with indents by level; tables select body rows only, and the keys go through several tables
 in the document's order. Rows rebuilt by code keep the selection given by the view's `value`: all rows rebuilt twice

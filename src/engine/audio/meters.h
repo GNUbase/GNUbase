@@ -99,7 +99,10 @@ namespace gnubase::engine
 		// The last 100 ms, 4x oversampled; in a frame's reading (readFrame), the largest since the last one.
 		std::array<float, g_maxMeterChannels> truePeak{};
 		std::array<float, g_maxMeterChannels> truePeakMax{}; // while measuring
-		double seconds = 0.0;                                // how long it measured
+		// The largest true peak since resetTruePeakHold, also while the transport stands: the master meter's peak
+		// marks and Peak Max., which count as the level meters' peakMax do.
+		std::array<float, g_maxMeterChannels> truePeakHold{};
+		double seconds = 0.0; // how long it measured
 	};
 
 	// The loudness and true peak of the main mix. Momentary and short-term loudness and the true peak always follow
@@ -120,10 +123,11 @@ namespace gnubase::engine
 
 		// Any thread.
 		LoudnessReading read() const noexcept;
-		void reset() noexcept; // everything but momentary and short-term loudness
+		void reset() noexcept; // everything but momentary and short-term loudness, and truePeakHold
+		void resetTruePeakHold() noexcept;
 
 		// The one reader that reads once a frame (Engine::readMeters): the same as read, but truePeak is the largest
-		// since its last readFrame.
+		// since its last readFrame, and never above truePeakHold, as LevelMeter::readFrame's peaks.
 		LoudnessReading readFrame() noexcept;
 
 	private:
@@ -167,11 +171,13 @@ namespace gnubase::engine
 		std::optional<double> m_shortTermMax;
 		std::array<float, g_maxMeterChannels> m_windowTruePeak{};
 		std::array<float, g_maxMeterChannels> m_truePeakMax{};
+		std::array<float, g_maxMeterChannels> m_truePeakHold{};
 		uint64_t m_measuredFrames = 0; // since the last reset
 		uint64_t m_playingSteps = 0;   // since playback last started
 		bool m_wasMeasuring = false;
 		int m_freshSamples = 0; // the samples left after playback started until the interpolator holds only newer ones
 		uint32_t m_resetsSeen = 0;
+		uint32_t m_holdResetsSeen = 0;
 		int m_channels = 0;
 		double m_sampleRate = 0.0; // that it was last prepared for
 
@@ -187,7 +193,9 @@ namespace gnubase::engine
 		std::array<std::atomic<float>, g_maxMeterChannels> m_truePeak{};
 		std::array<std::atomic<float>, g_maxMeterChannels> m_frameTruePeak{}; // since the last readFrame
 		std::array<std::atomic<float>, g_maxMeterChannels> m_publishedTruePeakMax{};
+		std::array<std::atomic<float>, g_maxMeterChannels> m_publishedTruePeakHold{};
 		std::atomic<uint32_t> m_resets{0};
+		std::atomic<uint32_t> m_holdResets{0};
 	};
 
 	// All meters at once, as the UI reads them once a frame (Engine::readMeters): the channels to read go in, the

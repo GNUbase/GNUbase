@@ -201,6 +201,50 @@ TEST_CASE("the pool panel lists folders and clips, renames them and moves clips 
 	REQUIRE(app.waitUntil([&app] { return rows(app).size() == 6; }));
 }
 
+TEST_CASE("the pool panel's Used column follows the clips of drum pads", "[ui]")
+{
+	// Reset Pad changes only the drum track's channel, which the pool skipped (#1881); steps that change only levels,
+	// such as a fader drag's, it still skips.
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const uint64_t kick = addClip(app, writeAudio(dir.path() / "kick.wav", 4800));
+	const std::string k = "c" + std::to_string(kick);
+	openPool(app, 2);
+	const auto used = [&app, &k]
+	{ return has(elements(app, "#pool listitem").at(static_cast<size_t>(rowIndex(app, k))), "unused"); };
+	CHECK(used());
+
+	const Json drums = app.call("drum.create");
+	const Json track = drums.at("track").at("id");
+	app.call("drum.loadPad", {{"track", track}, {"pad", 36}, {"clip", kick}});
+	REQUIRE(app.waitUntil([&] { return cell(app, k, "used") == "1"; }));
+	CHECK(!used());
+
+	ui::EngineBinding& binding = app.appUi().binding();
+	REQUIRE(app.waitUntil([&binding] { return binding.waiting("pool.get") == 0; }));
+	size_t asked = 0;
+	const ui::Subscription counted = binding.onResult("pool.get", [&asked](const engine::Result&) { ++asked; });
+	app.call("channel.set", {{"channel", drums.at("channel").at("id")}, {"volume", -6.0}});
+	app.call("channel.set", {{"channel", drums.at("channel").at("id")}, {"volume", -7.0}});
+	// Once the display took the second step's channel, the pool heard both steps.
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			for (const Json& channel : display.project().at("channels"))
+				if (channel.at("id") == drums.at("channel").at("id"))
+					return channel.at("volume") == -7.0;
+			return false;
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(binding.waiting("pool.get") == 0);
+	CHECK(asked == 0);
+
+	app.call("drum.resetPad", {{"track", track}, {"pad", 36}});
+	REQUIRE(app.waitUntil([&] { return cell(app, k, "used").empty(); }));
+	CHECK(used());
+}
+
 TEST_CASE("the pool panel's Key column shows and sets the root key of a clip's audio events", "[ui]")
 {
 	const test::TempDir dir;
