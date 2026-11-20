@@ -5,6 +5,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -1176,6 +1177,48 @@ TEST_CASE("a pre-record history that can't be allocated fails the pre-record, no
 	CHECK_THAT(failures[0], ContainsSubstring("pre-record"));
 }
 
+TEST_CASE("a recording without a folder it can record into fails once and writes no file (#611)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::filesystem::path folder;
+	SECTION("none, as without a settings or a temporary folder")
+	{
+	}
+	SECTION("a file where the folder would be")
+	{
+		folder = dir.path() / "file";
+		std::ofstream(folder) << "not a folder";
+	}
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::vector<std::string> failures;
+	bool finished = false;
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				const std::scoped_lock lock(mutex);
+				if (name == "recording.failed")
+					failures.push_back(data.at("reason").get<std::string>());
+				finished = finished || name == "recording.finished";
+				changed.notify_all();
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(folder));
+		engine::PlayedPositions played(size_t{4} * g_blockFrames);
+		processBlock(recorder, played, 0, true);
+		processBlock(recorder, played, 1, false);
+		std::unique_lock lock(mutex);
+		REQUIRE(changed.wait_for(lock, 5s, [&] { return !failures.empty(); }));
+	} // the disk thread has ended
+	REQUIRE(failures.size() == 1);
+	CHECK_THAT(failures[0], ContainsSubstring("folder"));
+	CHECK(!finished);
+	CHECK(!std::filesystem::exists("Audio.wav")); // not in the working folder either
+}
+
 TEST_CASE(
 	"an offline render that waits for the recorder's chunks loses none while the disk thread is slow (#531)", "[unit]")
 {
@@ -1222,6 +1265,47 @@ TEST_CASE(
 		std::unique_lock lock(mutex);
 		REQUIRE(changed.wait_for(lock, 5s, [&] { return paths.size() == 2; }));
 		CHECK(channelOf(paths[1], 0).size() == blocks * g_blockFrames);
+	}
+}
+
+TEST_CASE("the first save of a project copies its recordings into the project's media folder (#611)", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	const Json added = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}});
+	run(client, "channel.set", {{"channel", added.at("channel").at("id")}, {"recordEnable", true}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(waitForRecording(client).is_object());
+	const std::vector<Json> events = eventsOn(client, idOf(added, "track"));
+	REQUIRE(events.size() == 1);
+	const std::filesystem::path recording = std::filesystem::u8path(pathOf(client, events[0]));
+	CHECK(recording.parent_path() == dir.path() / "settings" / "Recordings");
+
+	SECTION("once, also when it is saved again meanwhile")
+	{
+		gnubase::test::HeldJob held(engine, "project.save");
+		const Json saved = run(client, "project.save", {{"path", (dir.path() / "Song.dawproject").u8string()}});
+		REQUIRE(saved.at("job").is_object());
+		REQUIRE(held.waitUntilHeld());
+		CHECK(run(client, "project.save").at("job").is_null()); // the copies run already
+		REQUIRE(held.release());
+		REQUIRE(gnubase::test::waitForJob(client, saved.at("job").at("id").get<uint64_t>()).at("state") == "done");
+		const std::filesystem::path audio = dir.path() / "Audio";
+		CHECK(pathOf(client, events[0]) == (audio / recording.filename()).u8string());
+		CHECK(channelOf(pathOf(client, events[0]), 0) == channelOf(recording.u8string(), 0));
+		CHECK(!std::filesystem::exists(audio / (recording.stem().u8string() + "-2.wav")));
+	}
+
+	SECTION("but not into a project folder inside the recordings folder")
+	{
+		const std::filesystem::path inside = recording.parent_path() / "Song.dawproject";
+		CHECK(run(client, "project.save", {{"path", inside.u8string()}}).at("job").is_null());
+		CHECK(pathOf(client, events[0]) == recording.u8string());
 	}
 }
 
