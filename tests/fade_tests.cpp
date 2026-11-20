@@ -864,7 +864,19 @@ TEST_CASE("an audio part that cuts an event's fades plays them on up to its edge
 		run(session.client, "event.resize", {{"events", {part}}, {"edge", "start"}, {"delta", 2000}});
 		run(session.client, "event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", -1500}});
 	}
-	const auto output = session.render(16000);
+	// Parts inside a fade, which they cut at both ends: from 19000 to 20000 of an event from 17000 to 23000 with a fade
+	// in, and from 27000 to 28000 of one from 25000 to 31000 with a fade out. The fades keep the whole events'
+	// curves, from 17000 to 21500 and from 26500 to 31000.
+	for (const auto& [position, in] : {std::pair{int64_t{17000}, true}, std::pair{int64_t{25000}, false}})
+	{
+		const ObjectId event = session.addEvent(track, constant, position, 6000);
+		run(session.client, "audioEvent.setFades",
+			{{"event", event}, {in ? "fadeIn" : "fadeOut", {{"length", 4500}, {"shape", in ? "linear" : "sCurve"}}}});
+		const Json part = run(session.client, "event.toPart", {{"events", {event}}}).at("events").at(0);
+		run(session.client, "event.resize", {{"events", {part}}, {"edge", "start"}, {"delta", 2000}});
+		run(session.client, "event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", -3000}});
+	}
+	const auto output = session.render(32000);
 	const std::vector<float> first(output[0].begin(), output[0].begin() + 8000);
 	checkSamples(first,
 		[](int64_t at)
@@ -874,9 +886,21 @@ TEST_CASE("an audio part that cuts an event's fades plays them on up to its edge
 			return fadeIn("linear", at, 1000, 3500) * fadeOut("sCurve", at, 7000, 2500);
 		});
 	const gnubase::test::AudioDiff diff = gnubase::test::compareWithGolden(
-		"fades-cut-by-part", mono(std::vector<float>(output[0].begin() + 8000, output[0].end())), 1e-6f);
+		"fades-cut-by-part", mono(std::vector<float>(output[0].begin() + 8000, output[0].begin() + 16000)), 1e-6f);
 	INFO(diff.report);
 	CHECK(diff.equal);
+	const std::vector<float> inside(output[0].begin() + 16000, output[0].end());
+	checkSamples(
+		inside,
+		[](int64_t at)
+		{
+			if (at >= 19000 && at < 20000)
+				return fadeIn("linear", at, 17000, 4500);
+			if (at >= 27000 && at < 28000)
+				return fadeOut("sCurve", at, 31000, 4500);
+			return 0.0;
+		},
+		1e-6, 16000);
 }
 
 TEST_CASE("a render of equal power crossfades matches its golden file", "[integration]")
@@ -987,10 +1011,17 @@ TEST_CASE("range.fades crossfades the events a range crosses, fits crossfades to
 	const ObjectId d = session.addEvent(other, clip, 2000, 3000);
 	const auto crossfade = [&client](ObjectId id) { return eventOf(client, id).at("crossfade"); };
 
-	// Crossfade (reference manual p. 388): the events the range crosses on its tracks, as event.crossfade does it.
+	// Crossfade (reference manual p. 388): where the range touches the overlap of events on its tracks, as
+	// event.crossfade does it, fitted to the range; not in a range inside one event, away from its overlaps.
+	CHECK_THAT(
+		reject(client, "range.fades", {{"start", 3500}, {"end", 4500}, {"tracks", {track}}, {"fade", "crossfade"}}),
+		ContainsSubstring("overlap"));
+	CHECK(crossfadeFrom(client, b) == 0);
 	CHECK(run(client, "range.fades", {{"start", 2200}, {"end", 2800}, {"tracks", {track}}, {"fade", "crossfade"}})
 			  .at("events") == Json{b});
 	CHECK(crossfadeFrom(client, b) == a);
+	CHECK(crossfade(b).at("length") == 800);
+	CHECK(crossfade(b).at("outLength") == 800);
 	CHECK(crossfadeFrom(client, d) == 0);
 	run(client, "event.crossfade", {{"events", {c, d}}});
 

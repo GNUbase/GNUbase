@@ -167,12 +167,16 @@ namespace gnubase::engine
 		}
 
 		// An event's own fade in or out, shortened to the event, if it has one. Where its audio part cuts it, the fade
-		// goes on from where the cut leaves it, as far as anything of it plays.
+		// keeps the curve of the whole, uncut event and goes on from where the cut leaves it, as far as anything of it
+		// plays.
 		std::optional<GainRamp> ownFade(const Placed& placed, bool out)
 		{
 			const Fade& fade = out ? placed.event->fadeOut : placed.event->fadeIn;
-			const time::Samples cut = scaled(out ? placed.event->cutEnd : placed.event->cutStart, placed.ratio);
-			const time::Samples n = std::min(placed.end - placed.start + cut, scaled(fade.length, placed.ratio));
+			const time::Samples cutStart = scaled(placed.event->cutStart, placed.ratio);
+			const time::Samples cutEnd = scaled(placed.event->cutEnd, placed.ratio);
+			const time::Samples cut = out ? cutEnd : cutStart;
+			const time::Samples whole = placed.end - placed.start + cutStart + cutEnd;
+			const time::Samples n = std::min(whole, scaled(fade.length, placed.ratio));
 			if (n <= cut)
 				return std::nullopt;
 			return out ? GainRamp{placed.end + cut - n, placed.end + cut, fade.shape, true}

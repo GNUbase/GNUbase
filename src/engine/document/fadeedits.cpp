@@ -221,9 +221,76 @@ namespace gnubase::engine
 			context.emit("audioEvent.changed", {{"event", toJson(event)}});
 		}
 
-		// The Fades menu's range functions (reference manual pp. 384-385, 388): fade in to the range's start or
-		// from its end, fade out from its end or start, or both to fit it.
-		Json crossfade(Project& project, std::vector<ObjectId> given, CommandContext& context);
+		// Fits a crossfade to a range, as Adjust Fades to Range does it (reference manual p. 389): its fade in up to
+		// the range's end and its fade out from its start, within where its events overlap.
+		void fitCrossfade(Project& project, AudioEvent& to, time::Samples start, time::Samples end)
+		{
+			const EventSpan in = eventSpan(project, to);
+			const EventSpan out = eventSpan(project, project.audioEvents.at(to.crossfade.from));
+			to.crossfade.length = std::max<time::Samples>(
+				1, std::llround(static_cast<double>(std::min(end, out.end) - in.start) / in.ratio));
+			to.crossfade.outLength = std::max<time::Samples>(
+				1, std::llround(static_cast<double>(out.end - std::max(start, in.start)) / out.ratio));
+		}
+
+		// Crossfade (reference manual p. 388): each event given with the events next to it on its track that it
+		// overlaps, as crossfade.set does it with the default settings; crossfades there already stay. With a range,
+		// only where the range touches the overlap, and the crossfades are fitted to the range.
+		Json crossfade(Project& project, std::vector<ObjectId> given, CommandContext& context,
+			const std::optional<std::pair<time::Samples, time::Samples>>& range = std::nullopt)
+		{
+			for (const ObjectId id : given)
+				audioEvent(project, id);
+			std::sort(given.begin(), given.end());
+			const auto isGiven = [&given](ObjectId id) { return std::binary_search(given.begin(), given.end(), id); };
+			// Several events crossfade with each other, one event with its neighbours.
+			const bool single = given.size() == 1;
+			// Each track's events by start, and by id where they start together, so that it doesn't depend on the
+			// standard library.
+			std::map<ObjectId, std::vector<std::pair<EventSpan, AudioEvent*>>> tracks;
+			for (auto& [id, event] : project.audioEvents)
+				tracks[event.track].emplace_back(eventSpan(project, event), &event);
+			std::vector<ObjectId> events;
+			for (auto& [track, row] : tracks)
+			{
+				std::sort(row.begin(), row.end(), [](const auto& a, const auto& b)
+					{ return std::tie(a.first.start, a.second->id) < std::tie(b.first.start, b.second->id); });
+				for (size_t i = 1; i < row.size(); ++i)
+				{
+					const EventSpan& out = row[i - 1].first;
+					const EventSpan& in = row[i].first;
+					const AudioEvent& from = *row[i - 1].second;
+					AudioEvent& to = *row[i].second;
+					const bool chosen =
+						single ? isGiven(from.id) || isGiven(to.id) : isGiven(from.id) && isGiven(to.id);
+					if (!chosen || out.start >= in.start || in.start >= out.end || out.end > in.end ||
+						(range && (range->first >= out.end || range->second <= in.start)))
+						continue;
+					if (to.crossfade.from != from.id)
+					{
+						for (auto& [id, other] : project.audioEvents)
+							if (other.crossfade.from == from.id)
+							{
+								other.crossfade = Crossfade();
+								changed(other, context);
+							}
+						to.crossfade = Crossfade();
+						to.crossfade.from = from.id;
+						if (!range)
+							changed(to, context);
+					}
+					if (range)
+					{
+						fitCrossfade(project, to, range->first, range->second);
+						changed(to, context);
+					}
+					events.push_back(to.id);
+				}
+			}
+			require(!events.empty(), "the events don't overlap an event next to them on their track");
+			std::sort(events.begin(), events.end());
+			return {{"events", events}};
+		}
 
 		// The crossfades that play on the tracks (all with none) where their events overlap within start to end.
 		std::vector<AudioEvent*> crossfadesIn(
@@ -239,6 +306,9 @@ namespace gnubase::engine
 			return found;
 		}
 
+		// The Fades menu's range functions (reference manual pp. 384-385, 388-389, 396): fade in to the range's start
+		// or from its end, fade out from its end or start, or both to fit it; crossfade the events where the range
+		// touches their overlap, or remove the crossfades that play in it.
 		Json fadesToRange(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -262,7 +332,7 @@ namespace gnubase::engine
 						onTracks(event) && start < span.end && end > span.start)
 						crossing.push_back(id);
 				require(!crossing.empty(), "no audio event on the range's tracks crosses the range");
-				return crossfade(project, crossing, context);
+				return crossfade(project, crossing, context, std::pair{start, end});
 			}
 			// A crossfade that plays in the range: removed, or fitted to it, its fade in up to the range's end and
 			// its fade out from its start, instead of its events' own fades.
@@ -276,12 +346,7 @@ namespace gnubase::engine
 				}
 				else if (kind == "adjust")
 				{
-					const EventSpan in = eventSpan(project, *to);
-					const EventSpan out = eventSpan(project, from);
-					to->crossfade.length = std::max<time::Samples>(
-						1, std::llround(static_cast<double>(std::min(end, out.end) - in.start) / in.ratio));
-					to->crossfade.outLength = std::max<time::Samples>(
-						1, std::llround(static_cast<double>(out.end - std::max(start, in.start)) / out.ratio));
+					fitCrossfade(project, *to, start, end);
 				}
 				else
 				{
@@ -335,56 +400,6 @@ namespace gnubase::engine
 				events.push_back(id);
 			}
 			require(!events.empty(), "no audio event on the range's tracks crosses the range");
-			return {{"events", events}};
-		}
-
-		// Crossfade (reference manual p. 388): each event given with the events next to it on its track that it
-		// overlaps, as crossfade.set does it with the default settings; crossfades there already stay.
-		Json crossfade(Project& project, std::vector<ObjectId> given, CommandContext& context)
-		{
-			for (const ObjectId id : given)
-				audioEvent(project, id);
-			std::sort(given.begin(), given.end());
-			const auto isGiven = [&given](ObjectId id) { return std::binary_search(given.begin(), given.end(), id); };
-			// Several events crossfade with each other, one event with its neighbours.
-			const bool single = given.size() == 1;
-			// Each track's events by start, and by id where they start together, so that it doesn't depend on the
-			// standard library.
-			std::map<ObjectId, std::vector<std::pair<EventSpan, AudioEvent*>>> tracks;
-			for (auto& [id, event] : project.audioEvents)
-				tracks[event.track].emplace_back(eventSpan(project, event), &event);
-			std::vector<ObjectId> events;
-			for (auto& [track, row] : tracks)
-			{
-				std::sort(row.begin(), row.end(), [](const auto& a, const auto& b)
-					{ return std::tie(a.first.start, a.second->id) < std::tie(b.first.start, b.second->id); });
-				for (size_t i = 1; i < row.size(); ++i)
-				{
-					const EventSpan& out = row[i - 1].first;
-					const EventSpan& in = row[i].first;
-					const AudioEvent& from = *row[i - 1].second;
-					AudioEvent& to = *row[i].second;
-					const bool chosen =
-						single ? isGiven(from.id) || isGiven(to.id) : isGiven(from.id) && isGiven(to.id);
-					if (!chosen || out.start >= in.start || in.start >= out.end || out.end > in.end)
-						continue;
-					if (to.crossfade.from != from.id)
-					{
-						for (auto& [id, other] : project.audioEvents)
-							if (other.crossfade.from == from.id)
-							{
-								other.crossfade = Crossfade();
-								changed(other, context);
-							}
-						to.crossfade = Crossfade();
-						to.crossfade.from = from.id;
-						changed(to, context);
-					}
-					events.push_back(to.id);
-				}
-			}
-			require(!events.empty(), "the events don't overlap an event next to them on their track");
-			std::sort(events.begin(), events.end());
 			return {{"events", events}};
 		}
 
