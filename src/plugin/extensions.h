@@ -397,6 +397,26 @@ namespace gnubase::plugin
 		~NoteNames() = default;
 	};
 
+	struct KeySwitch
+	{
+		std::string name; // the articulation it plays, e.g. "Staccato"
+		int16_t key = 0;  // 0-127
+	};
+
+	// GNUbase extension: the key switches of an instrument's loaded preset, the keys that switch it to another
+	// articulation, so that Import Key Switches (reference manual p. 1284) makes an articulation map of them.
+	class KeySwitches
+	{
+	public:
+		static constexpr std::string_view extensionId() { return "gnubase.key-switches"; }
+
+		// [main] The key switches in the order the instrument lists them; none without a preset that has some.
+		virtual std::vector<KeySwitch> keySwitches() = 0;
+
+	protected:
+		~KeySwitches() = default;
+	};
+
 	// ---- Voices ----
 
 	struct VoiceInfo

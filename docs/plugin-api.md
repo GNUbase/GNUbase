@@ -109,6 +109,7 @@ The extensions of the draft (`src/plugin/extensions.h`):
 | `Tail`, `HostTail` | both | how long the plugin sounds after its input went quiet, and its changes |
 | `Render` | plugin | the plugin depends on real time, so offline and prefetch blocks must come in real time |
 | `NoteNames` | plugin | names of keys, e.g. a drum kit |
+| `KeySwitches` | plugin | GNUbase extension, see "GNUbase extensions" |
 | `Voices`, `HostVoices` | both | how many voices the plugin plays and can play, for per-note modulators (pp. 1049–1077); its changes |
 | `Gui`, `HostGui` | both | the editor, see below; key presses the editor didn't handle go to GNUbase's key commands |
 | `RemoteControls` | plugin | pages of eight parameters for hardware controllers and the editor's remote controls (p. 1089) |
@@ -344,6 +345,7 @@ The tables name each format's own functions and flags. Where a format has no equ
 | MIDI output | output events | output event bus | MIDI output callback / block | output atom port | `audioMasterProcessEvents` |
 | `HostNotePorts` | `note-ports.rescan` | `restartComponent(kIoChanged)` | property listeners | none | `audioMasterIOChanged` |
 | `NoteNames` | `note-name` | `IUnitInfo` program pitch names | none | midnam extension | none |
+| `KeySwitches` | none | `IKeyswitchController`: each key switch's title and `keyswitchMin` | none | none | none |
 
 ### Parameters
 
@@ -392,7 +394,7 @@ The tables name each format's own functions and flags. Where a format has no equ
 Features beyond any single format go into extensions under the same mechanism. Built-in plugins implement them; third-party plugins opt in through their format, for example a CLAP extension or a VST3 interface defined by GNUbase, which the adapter offers as the wrapper extension (#154 decides how). Proposed, with the first in the draft:
 
 - **`gnubase.low-latency`** (`LowLatency`): a mode for playing live without look-ahead, so the plugin's latency drops. While latency is constrained for live playing (p. 994), the engine turns it on for plugins on live paths and reads their latency again; plugins without it are bypassed on those paths, as in the reference. Effects on send channels are left alone.
-- **Articulations** (#154, #175): the articulations or key switches an instrument offers, so articulation maps can be built from the plugin (VST3's `IKeyswitchController` maps to it).
+- **`gnubase.key-switches`** (`KeySwitches`, #1114): the key switches of an instrument's loaded preset, each a name and a key, which Import Key Switches makes the sound slots of a new articulation map (reference manual p. 1284, [articulation-maps.md](features/articulation-maps.md)). Of the built-in instruments only the test synth reports some, for tests. VST3's `IKeyswitchController` maps to it; the VST3 adapter and the proxy and stub don't offer it yet.
 - **Inline display** (#154): a small display that the mixer draws in the plugin's slot, such as a compressor's curve (the LV2 inline-display extension maps to it).
 - **Controller hints** (#154): which parameters a plugin suggests for hardware controllers and the remote controls, beyond pages of eight.
 - **`gnubase.builtin.tempo-map`** (`processors::HostTempoMap`, built-in plugins only): the engine's tempo map for the block, so the built-in MIDI effects find the tempo at any frame, also under ramps (#1380). A plugin in a host process can't share the engine's map; third-party MIDI effects need the map in the transport or an extension that carries it.
