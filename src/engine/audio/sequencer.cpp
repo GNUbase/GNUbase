@@ -1396,13 +1396,17 @@ namespace gnubase::engine
 		// is on, it goes off there first (#1718).
 		if (found->addOn)
 		{
-			size_t at = 0;
-			while (at < m_inputAddOnCount && m_inputAddOns[at].slot != slot)
-				++at;
-			const bool on = at < m_inputAddOnCount;
+			// Where its entry is, looked up after endAddOns, which moves entries (#1744).
+			const auto entry = [this, slot]
+			{
+				size_t at = 0;
+				while (at < m_inputAddOnCount && m_inputAddOns[at].slot != slot)
+					++at;
+				return at;
+			};
 			if (event.type == Type::NoteOff)
 			{
-				if (!map.latch && on)
+				if (const size_t at = entry(); !map.latch && at < m_inputAddOnCount)
 				{
 					sendSlotEvents(*found, true, m_inputAddOns[at].channel, event.offset, out);
 					m_inputAddOns[at] = m_inputAddOns[--m_inputAddOnCount];
@@ -1410,6 +1414,8 @@ namespace gnubase::engine
 				return true;
 			}
 			endAddOns(map, *found, event.offset, out);
+			const size_t at = entry();
+			const bool on = at < m_inputAddOnCount;
 			const uint8_t to = notesChannel(map, channel);
 			const InputAddOn added{slot, to, static_cast<uint8_t>(event.channel % 16)};
 			if (on)

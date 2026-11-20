@@ -159,9 +159,12 @@ sends engine commands, so whatever another client changes shows at once.
   (`keepselection`, [widgets.md](widgets.md)) leaves the track selection as it is, so that the frame that shows it
   doesn't also lay out the inspector for another track: selecting the track on a click on Solo is a preference
   (p. 1600, Select Channel/Track on Solo, not yet). Folders show Group Editing
-  (`groupEditing`, [folder-tracks.md](folder-tracks.md)), and those without a group channel nothing else; signature
-  tracks show none. The tempo track's controls are `tempoTrack`, Activate Tempo Track (`project.set`
-  `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
+  (`groupEditing`, [folder-tracks.md](folder-tracks.md)), and those without a group channel nothing else; the
+  signature track shows Lock (`signatureLock`, `track.set` `lock`) and Signature Track Options (`signatureOptions`,
+  [signature-track.md](signature-track.md)), a fixed set (p. 189) that the track controls settings dialog doesn't
+  list and keeps as `ui.trackControls` has it. The
+  tempo track's controls are `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`), `currentTempo`,
+  Current Tempo, a text field
   with the tempo at the project cursor, following it during playback, that takes a tempo typed with Enter, and
   `tempoType`, Type of New Tempo Points, a drop-down list for `editing.tempoType`
   ([tempo-track.md](tempo-track.md)); ruler tracks have `timeFormat`, `timeOffsetOn`, `timeOffset` and `setTimeOffset`

@@ -287,10 +287,12 @@ TEST_CASE("recordings are written in the project setup's record file type and bi
 	};
 	const Case cases[] = {
 		{"wav", "int16", AudioFormat::Wav, SampleFormat::Int16, ".wav", 1.0f / 32768.0f},
+		{"wav", "int32", AudioFormat::Wav, SampleFormat::Int32, ".wav", 1.0f / 8388608.0f},
 		{"wav", "float64", AudioFormat::Wav, SampleFormat::Float64, ".wav", 0.0f},
 		{"aiff", "int24", AudioFormat::Aiff, SampleFormat::Int24, ".aif", 1.0f / 8388608.0f},
 		{"aiff", "int32", AudioFormat::Aiff, SampleFormat::Int32, ".aif", 1.0f / 8388608.0f},
 		{"flac", "int16", AudioFormat::Flac, SampleFormat::Int16, ".flac", 1.0f / 32768.0f},
+		{"flac", "int24", AudioFormat::Flac, SampleFormat::Int24, ".flac", 1.0f / 8388608.0f},
 		{"broadcastWav", "float32", AudioFormat::Wav, SampleFormat::Float32, ".wav", 0.0f},
 	};
 	for (const Case& each : cases)
@@ -366,6 +368,76 @@ TEST_CASE("a Broadcast Wave recording's time reference includes the pre-recorded
 	REQUIRE(reader->info().broadcast.has_value());
 	CHECK(
 		reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference == (3600ULL * 48000) - 2400);
+}
+
+TEST_CASE("a pre-record that reaches back before 0:00:00 gives a time reference of 0 (#580)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "audio.preRecordSeconds"}, {"value", 0.05}}); // 2400 frames
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}, {"startTime", 0.0}});
+	run(client, "audio.render", {{"frames", 4800}}); // stopped
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 1000}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("offset") == 2400);
+	const auto reader = AudioFileReader::open(pathOf(client, events[0]));
+	REQUIRE(reader->info().broadcast.has_value());
+	CHECK(reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference == 0);
+}
+
+TEST_CASE("a long track name is cut between two UTF-8 characters for the description and the file name (#580)",
+	"[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	// An ASCII character, 127 two-byte characters and a three-byte one: 258 bytes, so the file name's 200 would split
+	// the 100th two-byte character and the description's 256 the three-byte one.
+	std::string name = "a";
+	for (int i = 0; i < 127; ++i)
+		name += "\xc3\xa9";
+	name += "\xe2\x82\xac";
+	run(client, "track.set", {{"track", setup.track}, {"name", name}});
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	const std::string path = pathOf(client, events[0]);
+	CHECK(std::filesystem::u8path(path).filename().u8string() == name.substr(0, 199) + ".wav");
+	const auto reader = AudioFileReader::open(path);
+	CHECK(reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).description == name.substr(0, 255));
+}
+
+TEST_CASE("a change of only the start time reaches the next Broadcast Wave recording (#581)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}, {"startTime", 3600.0}});
+	const auto record = [&](int64_t position)
+	{
+		run(client, "transport.locate", {{"position", position}});
+		run(client, "transport.record");
+		run(client, "audio.render", {{"frames", 640}});
+		REQUIRE(setup.stop().is_object());
+		std::string path;
+		for (const Json& event : eventsOn(client, setup.track))
+			if (event.at("position") == position)
+				path = pathOf(client, event);
+		REQUIRE(!path.empty());
+		return AudioFileReader::open(path)->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference;
+	};
+	CHECK(record(0) == 3600ULL * 48000);
+	run(client, "project.set", {{"startTime", 7200.0}});
+	CHECK(record(48000) == 7201ULL * 48000);
+	// 23:59:59 and 2 s into the project: past midnight, which the time reference doesn't wrap at.
+	run(client, "project.set", {{"startTime", 86399.0}});
+	CHECK(record(96000) == 86401ULL * 48000);
 }
 
 TEST_CASE("cycle recording makes a take per lap, all in one file", "[integration]")
@@ -447,6 +519,11 @@ TEST_CASE("a four-lap cycle recording makes four takes on lanes of their own, th
 	}
 	// The last take was added last, so it plays where the takes overlap.
 	CHECK(events[3].at("id") == added.at("events").at(3));
+	// Its clip has a region per take (reference manual p. 226).
+	const Json project = run(client, "project.get");
+	for (const Json& clip : project.at("clips"))
+		if (clip.at("id") == added.at("clips").at(0))
+			CHECK(clip.at("regions").size() == 4);
 	const Json info = run(client, "event.get", {{"events", Json::array({events[2].at("id")})}});
 	CHECK(info.at("events").at(0).at("lane") == 2);
 }
@@ -509,6 +586,25 @@ TEST_CASE("punch recording replaces only the punch range, after the pre-roll and
 	CHECK(take == recorded(client, 0, 2400, 2400));
 }
 
+TEST_CASE("switching off stop after punch out during the post-roll lets playback go on", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "audio.stopAfterPunchOut"}, {"value", true}});
+	run(client, "transport.set",
+		{{"left", 640}, {"right", 1280}, {"punchIn", true}, {"punchOut", true}, {"postRoll", true},
+			{"postRollAmount", 1280}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 1920}}); // punched out at 1280, the stop waits at 2560
+	REQUIRE(waitForRecording(client).is_object());
+	run(client, "settings.set", {{"key", "audio.stopAfterPunchOut"}, {"value", false}});
+	run(client, "audio.render", {{"frames", 1280}});
+	const Json transport = run(client, "transport.get");
+	CHECK(transport.at("playing") == true);
+	CHECK(transport.at("position") == 3200);
+	run(client, "transport.stop");
+}
+
 TEST_CASE("only record-enabled audio tracks record, and nothing records without recording", "[integration]")
 {
 	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
@@ -554,6 +650,29 @@ TEST_CASE("tracks of the same name record into files of their own, next to the o
 			names.insert(std::filesystem::u8path(pathOf(client, event)).filename().u8string());
 	CHECK(names == std::set<std::string>{"Vocals-2.wav", "Vocals-3.wav"});
 	CHECK(gnubase::test::readText(audio / "VOCALS.wav") == "there");
+}
+
+TEST_CASE(
+	"a track named after a Windows device records into a file of its own name with _ added (#531)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	const auto name = GENERATE(as<std::string>{}, "con", "Nul .mix", "COM1", "lpt9.take", "Console");
+	run(client, "track.set", {{"track", setup.track}, {"name", name}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	const std::string file = std::filesystem::u8path(pathOf(client, events[0])).filename().u8string();
+	if (name == "Console")
+		CHECK(file == "Console.wav");
+	else if (name == "Nul .mix")
+		CHECK(file == "Nul _.mix.wav");
+	else
+		CHECK(
+			file == name.substr(0, name.find('.')) + "_" + name.substr(std::min(name.find('.'), name.size())) + ".wav");
 }
 
 TEST_CASE("a recording isn't added to a project opened while it was recorded", "[integration]")
@@ -701,6 +820,55 @@ TEST_CASE("recording.add applies the audio record modes to the events a take ove
 		add("keepHistory", one);
 		for (const Json& event : eventsOn(client, track))
 			CHECK(event.at("lane") == 0);
+	}
+	SECTION("only takes that overlap another take go onto lanes of their own")
+	{
+		// The third take, after a locate during recording, overlaps no other take: it stays on the first lane.
+		add("keepHistory",
+			Json::array({{{"position", 400}, {"offset", 0}, {"length", 200}},
+				{{"position", 500}, {"offset", 200}, {"length", 200}},
+				{{"position", 1500}, {"offset", 400}, {"length", 100}}}));
+		std::vector<std::pair<int64_t, int64_t>> lanes;
+		for (const Json& event : eventsOn(client, track))
+			lanes.emplace_back(event.at("position").get<int64_t>(), event.at("lane").get<int64_t>());
+		std::sort(lanes.begin(), lanes.end());
+		CHECK(lanes == std::vector<std::pair<int64_t, int64_t>>{{0, 0}, {400, 1}, {500, 2}, {1500, 0}});
+	}
+	SECTION("the takes' lanes stop at the last lane event.set can set")
+	{
+		run(client, "event.set", {{"events", {existing}}, {"lane", 999}});
+		add("keepHistory",
+			Json::array({{{"position", 400}, {"offset", 0}, {"length", 200}},
+				{{"position", 400}, {"offset", 200}, {"length", 200}},
+				{{"position", 400}, {"offset", 400}, {"length", 200}}}));
+		for (const Json& event : eventsOn(client, track))
+			if (event.at("id") != existing)
+				CHECK(event.at("lane") == 1000);
+	}
+	SECTION("a cycle recording makes a region of each take on its clip")
+	{
+		const bool cycle = GENERATE(false, true);
+		const Json added = run(client, "recording.add",
+			{{"cycle", cycle}, {"tracks", Json::array({{{"track", track}, {"path", file}, {"takes", two}}})}});
+		Json regions = Json::array();
+		const Json project = run(client, "project.get");
+		for (const Json& each : project.at("clips"))
+			if (each.at("id") == added.at("clips").at(0))
+				regions = each.at("regions");
+		if (!cycle) // a linear recording's takes, after a locate, are no laps
+		{
+			CHECK(regions.empty());
+		}
+		else
+		{
+			REQUIRE(regions.size() == 2);
+			CHECK(regions[0].at("name") == "Take 1");
+			CHECK(regions[0].at("start") == 0);
+			CHECK(regions[0].at("end") == 200);
+			CHECK(regions[1].at("name") == "Take 2");
+			CHECK(regions[1].at("start") == 200);
+			CHECK(regions[1].at("end") == 400);
+		}
 	}
 	SECTION("a locked event stays")
 	{
@@ -907,4 +1075,175 @@ TEST_CASE("the retrospective buffer leaves a recording's start to the disk threa
 		}
 	}
 	CHECK_FALSE(startedOnCommandThread);
+}
+
+TEST_CASE("audio pre-record keeps only the armed tracks' input channels (#531)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::string path;
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				if (name != "recording.finished")
+					return;
+				const std::scoped_lock lock(mutex);
+				path = data.at("tracks").at(0).at("path").get<std::string>();
+				changed.notify_all();
+			});
+		// Four input channels, each frame of channel c c + 1 and the block's index tenths; the track records the third.
+		recorder.prepare(4, g_blockFrames);
+		engine::RecordSetup setup = recordInto(dir.path());
+		setup.tracks = {{1, "Audio", {2}}};
+		setup.preRecordFrames = int64_t{2} * g_blockFrames;
+		recorder.setup(setup);
+		engine::PlayedPositions played(size_t{8} * g_blockFrames);
+		const auto block = [&](uint64_t index, bool recording)
+		{
+			std::vector<std::vector<float>> input(4);
+			std::vector<const float*> inputs;
+			for (size_t c = 0; c < input.size(); ++c)
+			{
+				input[c].assign(g_blockFrames, static_cast<float>(c + 1) + (static_cast<float>(index) / 10.0f));
+				inputs.push_back(input[c].data());
+			}
+			const gnubase::audio::MidiBuffer midiIn;
+			gnubase::audio::MidiBuffer midiOut;
+			const engine::MidiTap::Sequencers sequencers;
+			const uint64_t position = index * g_blockFrames;
+			const engine::graph::TransportSegment segment{0, g_blockFrames, static_cast<int64_t>(position), recording};
+			engine::graph::TransportBlock transport;
+			transport.playing = true;
+			transport.segments = &segment;
+			transport.segmentCount = 1;
+			transport.recording = recording;
+			played.add(position, g_blockFrames, transport);
+			recorder.process(
+				{inputs.data(), nullptr, g_blockFrames, position, 0, midiIn, midiOut}, played, 0, sequencers);
+		};
+		for (uint64_t index = 0; index < 3; ++index)
+			block(index, false);
+		block(3, true);
+		block(4, false);
+		std::unique_lock lock(mutex);
+		REQUIRE(changed.wait_for(lock, 5s, [&] { return !path.empty(); }));
+	}
+	// The last two blocks before recording started, then the recorded one, all of the third channel.
+	const std::vector<float> file = channelOf(path, 0);
+	REQUIRE(file.size() == 3 * g_blockFrames);
+	for (size_t f = 0; f < file.size(); ++f)
+	{
+		const size_t block = (f / g_blockFrames) + 1;
+		REQUIRE(file[f] == 3.0f + (static_cast<float>(block) / 10.0f));
+	}
+}
+
+TEST_CASE("a pre-record history that can't be allocated fails the pre-record, not the recording (#531)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::vector<std::string> failures;
+	bool finished = false;
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				const std::scoped_lock lock(mutex);
+				if (name == "recording.failed")
+					failures.push_back(data.at("reason").get<std::string>());
+				finished = finished || name == "recording.finished";
+				changed.notify_all();
+			});
+		recorder.prepare(1, g_blockFrames);
+		engine::RecordSetup setup = recordInto(dir.path());
+		setup.preRecordFrames = int64_t{1} << 62; // more than a vector holds
+		recorder.setup(setup);
+		engine::PlayedPositions played(size_t{4} * g_blockFrames);
+		processBlock(recorder, played, 0, false);
+		processBlock(recorder, played, 1, true);
+		processBlock(recorder, played, 2, false);
+		std::unique_lock lock(mutex);
+		REQUIRE(changed.wait_for(lock, 5s, [&] { return finished; }));
+	}
+	REQUIRE(failures.size() == 1);
+	CHECK_THAT(failures[0], ContainsSubstring("pre-record"));
+}
+
+TEST_CASE(
+	"an offline render that waits for the recorder's chunks loses none while the disk thread is slow (#531)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::vector<std::string> paths;
+	{
+		// The disk thread takes a while to report the first recording, as on a slow disk.
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				if (name != "recording.finished")
+					return;
+				std::unique_lock lock(mutex);
+				paths.push_back(data.at("tracks").at(0).at("path").get<std::string>());
+				changed.notify_all();
+				if (paths.size() == 1)
+				{
+					lock.unlock();
+					std::this_thread::sleep_for(300ms);
+				}
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(dir.path()));
+		engine::PlayedPositions played(size_t{4} * g_blockFrames);
+		processBlock(recorder, played, 0, true);
+		processBlock(recorder, played, 1, false);
+		{
+			std::unique_lock lock(mutex);
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return paths.size() == 1; }));
+		}
+		// Twice the chunks the pool holds (65536 frames), each block after the wait an offline render makes.
+		constexpr uint64_t blocks = 2048;
+		for (uint64_t index = 2; index < 2 + blocks; ++index)
+		{
+			REQUIRE(recorder.waitForChunks(5s));
+			processBlock(recorder, played, index, true);
+		}
+		processBlock(recorder, played, 2 + blocks, false);
+		CHECK(recorder.dropped() == 0);
+		std::unique_lock lock(mutex);
+		REQUIRE(changed.wait_for(lock, 5s, [&] { return paths.size() == 2; }));
+		CHECK(channelOf(paths[1], 0).size() == blocks * g_blockFrames);
+	}
+}
+
+TEST_CASE("a recording that adds nothing leaves the project unmodified (#546)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	const auto modified = [&client] { return run(client, "project.revision").at("modified").get<bool>(); };
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	SECTION("another project was opened")
+	{
+		run(client, "project.new");
+	}
+	SECTION("every recorded track was removed")
+	{
+		run(client, "track.remove", {{"track", setup.track}});
+		run(client, "project.save");
+	}
+	REQUIRE(!modified());
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(waitFor(client, "recording.failed").is_object()); // recording.add runs on the command thread
+	CHECK(!modified());
 }

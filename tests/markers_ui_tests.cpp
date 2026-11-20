@@ -18,7 +18,7 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
+#include <SDL3/SDL.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -452,9 +452,15 @@ namespace
 		CHECK(rows[1]->QuerySelector(".type")->GetInnerRML() == "Cycle");
 		CHECK(field(document, 1, "position") == ui::formatTime(ui::TimeFormat::BarsBeats, 2.0, context));
 		CHECK(field(document, 1, "end") == ui::formatTime(ui::TimeFormat::BarsBeats, 4.0, context));
-		auto* tracks = dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("marker-track"));
-		REQUIRE(tracks != nullptr);
-		CHECK(tracks->GetValue() == std::to_string(track));
+		// The marker track list's selected track, as the UI tools see it.
+		const auto picked = [&app, window]
+		{
+			for (const Json& option : test::selectOptions(app, "#marker-track", window))
+				if (option.at("selected").get<bool>())
+					return option.at("value").get<std::string>();
+			return std::string();
+		};
+		CHECK(picked() == std::to_string(track));
 
 		// A click in the locate column locates there, and the arrow shows at the marker at the cursor.
 		app.ui().click(window, at("#marker-rows .locate", 1), ui::MouseButton::Left, 1, {});
@@ -508,8 +514,11 @@ namespace
 		const auto other = app.call("track.add", {{"type", "marker"}}).at("track").at("id").get<uint64_t>();
 		REQUIRE(app.waitUntil([&markers] { return markers.markers().empty(); }));
 		CHECK(test::selectOptions(app, "#marker-track", window).size() == 2);
-		CHECK(tracks->GetValue() == std::to_string(other));
-		tracks->SetSelection(0);
+		REQUIRE(picked() == std::to_string(other));
+		// Opened, one up to the first track, closed.
+		app.ui().click(window, at("#marker-track"), ui::MouseButton::Left, 1, {});
+		app.ui().key(window, "Up");
+		app.ui().click(window, at("#marker-track"), ui::MouseButton::Left, 1, {});
 		REQUIRE(app.waitUntil([&app, track] { return app.call("project.get").at("activeMarkerTrack") == track; }));
 		REQUIRE(app.waitUntil([&markers] { return markers.markers().size() == 3; }));
 
@@ -585,6 +594,44 @@ namespace
 		CHECK(still > 10);
 		app.call("transport.stop");
 		app.call("audio.stop");
+	}
+
+	TEST_CASE("closing the markers window ends its project reads and playback watch", "[ui]")
+	{
+		test::UiApp app;
+		app.call("track.add", {{"type", "marker"}});
+		app.call("marker.add", {{"position", g_quarter}});
+		openMarkers(app, 1);
+		app.call("transport.play");
+		settle(app);
+		CHECK(app.appUi().binding().update()); // the open window watches playback, even without an audio device
+
+		SDL_Event close{};
+		close.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
+		close.window.windowID = app.appUi().markersWindow();
+		REQUIRE(SDL_PushEvent(&close));
+		REQUIRE(app.waitUntil([&app] { return app.appUi().markers() == nullptr; }));
+		settle(app);
+		CHECK(!app.appUi().binding().update()); // no other view is open to watch playback
+
+		// An edit after the close must not leave a project read waiting for the closed window.
+		app.call("marker.add", {{"position", 2 * g_quarter}});
+		app.appUi().binding().update();
+		CHECK(app.appUi().binding().waiting("project.get") == 0);
+		app.call("transport.stop");
+		const ui::MarkersWindow& reopened = openMarkers(app, 2);
+		CHECK(reopened.markers()[1].start == 1.0);
+	}
+
+	TEST_CASE("marker overlays leave the event lanes as the mouse target", "[ui]")
+	{
+		test::UiApp app;
+		// Put both marker overlays above the ordinary lanes, without the muted and selected event overlays that
+		// cover them in the project window, so either marker overlay intercepting input fails this check.
+		app.show("marker-overlays.rml");
+		const Json target = app.ui().move(std::nullopt, at("event-lanes.events")).at("element");
+		CHECK(target.at("tag") == "event-lanes");
+		CHECK(target.at("classes") == Json::array({"events"}));
 	}
 
 	TEST_CASE("the markers window's lengths don't count from the project's start time", "[ui]")

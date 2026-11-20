@@ -122,6 +122,20 @@ namespace
 	}
 }
 
+TEST_CASE("project.set advertises the sample rate bounds", "[unit]")
+{
+	const engine::Engine engine;
+	for (const engine::CommandInfo& command : engine.commands())
+		if (command.name == "project.set")
+		{
+			const Json& rate = command.parameters.at("properties").at("sampleRate");
+			CHECK(rate.at("minimum") == engine::g_lowestSampleRate);
+			CHECK(rate.at("maximum") == engine::g_highestSampleRate);
+			return;
+		}
+	FAIL("project.set is missing");
+}
+
 TEST_CASE("the project setup's settings are set, announced, undone and saved", "[integration]")
 {
 	engine::Engine engine;

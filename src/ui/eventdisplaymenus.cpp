@@ -6,6 +6,7 @@
 
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
+#include "ui/mixer.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -14,6 +15,7 @@
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
@@ -136,6 +138,9 @@ namespace gnubase::ui
 		Rml::ElementList buttons;
 		m_document->QuerySelectorAll(buttons, "button[tool], menuitem[tool]");
 		m_toolButtons.assign(buttons.begin(), buttons.end());
+		buttons.clear();
+		m_document->QuerySelectorAll(buttons, "#toolbar button[deactivate]");
+		m_stateButtons.assign(buttons.begin(), buttons.end());
 		m_combineButton = m_document->GetElementById("combine-selection-tools");
 		m_objectMenu = m_document->GetElementById("object-selection-menu");
 		m_lineMenu = m_document->GetElementById("line-menu");
@@ -204,6 +209,12 @@ namespace gnubase::ui
 		{
 			if (const std::optional<Tool> tool = toolFromName(button->GetAttribute<Rml::String>("tool", "")))
 				setTool(*tool);
+			return;
+		}
+		if (const Rml::Element* button = closest(target, "button");
+			std::find(m_stateButtons.begin(), m_stateButtons.end(), button) != m_stateButtons.end())
+		{
+			m_binding.send("channel.deactivateAll", {{"state", button->GetAttribute<Rml::String>("deactivate", "")}});
 			return;
 		}
 		const Rml::Element* item = closest(target, "menuitem");
@@ -390,14 +401,26 @@ namespace gnubase::ui
 	}
 
 	// The Tempo Detection dialog's buttons (reference manual pp. 1460-1461): Analyze detects the tempo afresh, the
-	// factors, Offbeat Correction and Smooth Tempo detect it again with them, Reset removes what it made.
+	// factors, Offbeat Correction and Smooth Tempo detect it again with them, Reset removes what it made. Offbeat
+	// Correction and Smooth Tempo switch on and off, and are .checked while on (#812).
 	void EventDisplay::detectTempo(const std::string& button)
 	{
 		TempoDetection& detection = m_detection;
+		const auto showSwitches = [this, &detection]
+		{
+			if (Rml::Element* dialog = m_dialog.get())
+			{
+				if (Rml::Element* offbeat = dialog->GetElementById("tempo-detection-offbeat"))
+					offbeat->SetClass("checked", detection.offbeat);
+				if (Rml::Element* smooth = dialog->GetElementById("tempo-detection-smooth"))
+					smooth->SetClass("checked", detection.smooth);
+			}
+		};
 		Json parameters = {{"event", detection.event}};
 		if (button == "tempo-detection-reset")
 		{
 			detection = TempoDetection{detection.event};
+			showSwitches();
 			parameters["reset"] = true;
 			edit("tempo.detect", std::move(parameters));
 			return;
@@ -415,9 +438,10 @@ namespace gnubase::ui
 		else if (button == "tempo-detection-offbeat")
 			detection.offbeat = !detection.offbeat;
 		else if (button == "tempo-detection-smooth")
-			detection.smooth = true;
+			detection.smooth = !detection.smooth;
 		else
 			return;
+		showSwitches();
 		parameters["factor"] = detection.factor;
 		parameters["offbeat"] = detection.offbeat;
 		parameters["smooth"] = detection.smooth;
@@ -547,6 +571,13 @@ namespace gnubase::ui
 			if (chosen && m_rootKeyButton != nullptr && m_rootKeyButton->GetInnerRML() != item->GetInnerRML())
 				m_rootKeyButton->SetInnerRML(item->GetInnerRML());
 		}
+	}
+
+	// The toolbar's state buttons light up while any channel has their state, as the mixer's do.
+	void EventDisplay::showStates(const Json& project)
+	{
+		for (Rml::Element* button : m_stateButtons)
+			button->SetClass("checked", anyChannelHas(project, button->GetAttribute<Rml::String>("deactivate", "")));
 	}
 
 	// The buttons show the settings, the snap type menu checks the type, the grid type menu has the format's grid

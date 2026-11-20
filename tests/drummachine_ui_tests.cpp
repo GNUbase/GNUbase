@@ -15,8 +15,6 @@
 #include "ui/tracklist.h"
 
 #include <RmlUi/Core/Context.h>
-#include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -393,35 +391,22 @@ TEST_CASE(
 
 TEST_CASE("Set Color shows a pad's color that the project's color set doesn't have as an option of its own", "[ui]")
 {
-	// #1614: a track preset from another project, or a color set edited since, leaves a pad with another color. The
-	// drop-down list's options aren't in the DOM that the UI tools see.
+	// #1614: a track preset from another project, or a color set edited since, leaves a pad with another color.
 	Fixture f;
 	f.open();
-	const auto select = [&]
-	{
-		Rml::Element* element = nullptr;
-		Rml::Context& context = f.app.main().context();
-		for (int i = 0; element == nullptr && i < context.GetNumDocuments(); ++i)
-			element = context.GetDocument(i)->QuerySelector("#drum-pad-color");
-		auto* found = dynamic_cast<Rml::ElementFormControlSelect*>(element);
-		REQUIRE(found != nullptr);
-		return found;
-	};
-	// The value and the text of the option shown, and whether there is one for the color.
+	// The value and the text of the option shown, and whether there is one for the color, as the UI tools see them.
 	const auto shown = [&]
 	{
-		Rml::ElementFormControlSelect* list = select();
-		const Rml::Element* option = list->GetSelection() >= 0 ? list->GetOption(list->GetSelection()) : nullptr;
-		return option == nullptr ? std::string("none")
-								 : option->GetAttribute<Rml::String>("value", "") + " " + option->GetInnerRML();
+		for (const Json& option : test::selectOptions(f.app, "#drum-pad-color"))
+			if (option.at("selected").get<bool>())
+				return option.at("value").get<std::string>() + " " + option.at("text").get<std::string>();
+		return std::string("none");
 	};
 	const auto offered = [&]
 	{
-		Rml::ElementFormControlSelect* list = select();
-		for (int i = 0; i < list->GetNumOptions(); ++i)
-			if (list->GetOption(i)->GetAttribute<Rml::String>("value", "") == "#123456")
-				return true;
-		return false;
+		const Json options = test::selectOptions(f.app, "#drum-pad-color");
+		return std::any_of(
+			options.begin(), options.end(), [](const Json& option) { return option.at("value") == "#123456"; });
 	};
 	f.app.call("drum.setPad", {{"track", f.track}, {"pad", 36}, {"color", "#123456"}});
 	REQUIRE(f.app.waitUntil([&] { return f.has(Fixture::pad(36), "colored"); }));

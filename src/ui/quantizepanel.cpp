@@ -176,23 +176,26 @@ namespace gnubase::ui
 	}
 
 	QuantizePanel::QuantizePanel(EngineBinding& binding, Rml::Element& element, Layout layout,
-		std::function<void(const std::string&)> run, std::function<void(const std::string&, engine::Json)> audio)
+		std::function<void(const std::string&)> run, std::function<void(const std::string&, engine::Json)> audio,
+		std::function<void(int gesture)> autoApply)
 		: m_binding(binding), m_root(element.GetObserverPtr()), m_layout(layout),
 		  m_prefix(layout == Layout::Panel ? "quantize" : "toolbar-quantize"),
 		  m_presetAttribute(layout == Layout::Panel ? "preset" : "toolbar-preset"), m_run(std::move(run)),
-		  m_audio(std::move(audio))
+		  m_audio(std::move(audio)), m_autoApply(std::move(autoApply))
 	{
 		std::string menus = "<menu id=\"" + m_prefix + "-presets-menu\"/>";
 		if (layout == Layout::Toolbar)
 		{
 			element.SetInnerRML(
 				R"(<button id="toolbar-quantize-apply" class="icon-only" action="apply" title="Apply Quantize">)"
-				R"(Q</button><button id="toolbar-quantize-presets" menu="toolbar-quantize-presets-menu" )"
+				R"(<svg class="icon" src="../icons/general-quantize.svg"/></button>)"
+				R"(<button id="toolbar-quantize-presets" menu="toolbar-quantize-presets-menu" )"
 				R"(title="Quantize Presets"/><button id="toolbar-quantize-soft" type="toggle" action="soft" )"
 				R"(title="Soft Quantize On/Off">Soft</button><button id="toolbar-quantize-warp" type="toggle" )"
 				R"(action="warp" fit="spare" title="Warp Quantize On/Off">Warp</button>)"
 				R"(<button id="toolbar-quantize-panel" class="icon-only" )"
-				R"(action="panel" title="Open Quantize Panel">...</button>)");
+				R"(action="panel" title="Open Quantize Panel"><svg class="icon" src="../icons/general-more.svg"/>)"
+				R"(</button>)");
 		}
 		else
 		{
@@ -271,8 +274,13 @@ namespace gnubase::ui
 		element.AddEventListener(Rml::EventId::Click, this);
 		element.AddEventListener(Rml::EventId::Change, this);
 
-		m_subscriptions.push_back(
-			m_binding.on("quantize.changed", [this](const engine::Event& event) { showSettings(event.data); }));
+		m_subscriptions.push_back(m_binding.on("quantize.changed",
+			[this](const engine::Event& event)
+			{
+				const Json before = m_settings;
+				showSettings(event.data);
+				applyAuto(before, event.request);
+			}));
 		m_subscriptions.push_back(m_binding.on("quantize.presetsChanged", [this](const engine::Event&) { request(); }));
 		m_subscriptions.push_back(m_binding.on("project.reset",
 			[this](const engine::Event&)
@@ -347,10 +355,11 @@ namespace gnubase::ui
 			}
 			const std::string setting = attribute(*target, "setting");
 			const auto value = static_cast<double>(event.GetParameter<float>("value", 0.0F));
+			const int gesture = event.GetParameter<int>("gesture", 0);
 			if (percent(setting))
-				set({{"settings", {{setting, value / 100.0}}}});
+				set({{"settings", {{setting, value / 100.0}}}}, gesture);
 			else
-				set({{"settings", {{setting, static_cast<int64_t>(std::llround(value)) * g_displayTick}}}});
+				set({{"settings", {{setting, static_cast<int64_t>(std::llround(value)) * g_displayTick}}}}, gesture);
 			return;
 		}
 		if (target->HasAttribute("disabled"))
@@ -413,12 +422,30 @@ namespace gnubase::ui
 		}
 	}
 
-	void QuantizePanel::set(Json parameters)
+	void QuantizePanel::set(Json parameters, int gesture)
 	{
-		m_binding.send("quantize.set", std::move(parameters));
-		// Auto Apply is the toggle's own state: it changes nothing else.
-		const Rml::Element* autoApply = m_layout == Layout::Panel ? find("quantize-auto-apply") : nullptr;
-		if (autoApply != nullptr && autoApply->HasAttribute("checked"))
+		const engine::RequestId request = m_binding.send("quantize.set", std::move(parameters));
+		if (gesture != 0 && m_layout == Layout::Panel)
+			m_gestures[request] = gesture;
+	}
+
+	void QuantizePanel::applyAuto(const Json& before, engine::RequestId request)
+	{
+		// Requests answered by now made their events already: one refused made none.
+		int gesture = 0;
+		for (auto each = m_gestures.begin(); each != m_gestures.end() && each->first <= request;)
+		{
+			if (each->first == request)
+				gesture = each->second;
+			each = m_gestures.erase(each);
+		}
+		// Auto Apply is the toggle's own state: it changes nothing else. A preset saved or renamed changes no setting.
+		const Rml::Element* toggle = m_layout == Layout::Panel ? find("quantize-auto-apply") : nullptr;
+		if (toggle == nullptr || !toggle->HasAttribute("checked") || before.empty() || before == m_settings)
+			return;
+		if (m_autoApply)
+			m_autoApply(gesture);
+		else
 			m_run("edit.quantize");
 	}
 
@@ -559,6 +586,9 @@ namespace gnubase::ui
 		setClass(find("quantize-markers-reset"), "hidden", !warp);
 
 		const bool groove = m_settings.at("groove").is_object();
+		// A groove's strength is its Position (p. 376).
+		if (Rml::Element* strength = find("quantize-strength"))
+			strength->SetAttribute("title", groove ? "Position" : "Quantize Strength");
 		setClass(find("quantize-grid-settings"), "hidden", groove);
 		setClass(find("quantize-groove-settings"), "hidden", !groove);
 		const std::string grid = m_settings.at("grid").get<std::string>();

@@ -74,6 +74,11 @@ namespace gnubase::test
 	// or a folder that is written into.
 	void settlePeaks(engine::Client& client);
 
+	// Waits until the slot's plugin has the status, 30 seconds at most, as plugins load slowly on a busy machine, then
+	// builds the graph with it through audio.updatePlugins, as the engine does on its own then. Until that, renders
+	// and exports pass the slot's audio on unchanged (#725, #1777).
+	void waitForPlugin(engine::Client& client, const engine::Json& slot, const std::string& status = "active");
+
 	// Starts a job with the command, through client, and holds it at its first job.progress while during runs with the
 	// job's id; then checks that the job still runs and was held all along, lets it go on and returns the job once it
 	// ended (#1154). So what during does comes before anything the job does after its first job.progress, however the

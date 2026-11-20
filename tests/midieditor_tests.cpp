@@ -176,6 +176,9 @@ TEST_CASE("the editor window opens for several parts on several tracks and edits
 	REQUIRE(app.waitUntil(
 		[&] { return ids(app, window, ".editor-global-track", "track") == std::vector<uint64_t>{markers}; }));
 	CHECK(has(elements(app, window, toggle).at(0), "checked"));
+	// The signature track is one too (#729).
+	app.call("track.add", {{"type", "signature"}});
+	REQUIRE(app.waitUntil([&] { return elements(app, window, ".editor-global-toggle").size() == 2; }));
 
 	// Open/Close Editor without a part selected closes it; closing its window does too.
 	f.select({});

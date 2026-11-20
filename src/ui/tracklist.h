@@ -4,6 +4,7 @@
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/mixer.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
@@ -56,6 +57,9 @@ namespace gnubase::ui
 		// The selected automation tracks' lanes (#125): a click on an automation track's row, beside its buttons,
 		// selects it, Ctrl or Shift adds or removes it, a click on a track's own row deselects them.
 		std::vector<uint64_t> selectedLanes() const;
+		// Whether automation.copy copied automation (its event automation.copied) since the project started: when the
+		// Paste Automation commands have something to paste.
+		bool automationCopied() const { return m_automationCopied; }
 		// Whether a selected folder has a group channel (withGroupChannel) or has none: when Disable or Enable Group
 		// Channel has something to do.
 		bool selectsFolder(bool withGroupChannel) const;
@@ -175,6 +179,8 @@ namespace gnubase::ui
 		const Clicked* click(uint64_t track, const std::string& name) const;
 		// A marker chosen in a marker track's Locate, Cycle or Zoom list.
 		void markerChange(Rml::Element& control, const std::string& value);
+		// An option chosen in the signature track's Signature Track Options (reference manual pp. 163-164).
+		void signatureOption(Rml::Element& control, const std::string& value);
 		// A ruler track's time format chosen or time offset typed (reference manual p. 159).
 		void rulerChange(Rml::Element& control, const std::string& value);
 		// The MIDI channel a MIDI track's row chose (channel.set midiChannel).
@@ -250,7 +256,8 @@ namespace gnubase::ui
 		std::string m_versionRml;                // what it shows
 		Rml::Element* m_versionsMenu = nullptr;  // the document's #track-versions-menu
 		std::set<uint64_t> m_selectedLanes;      // the selected automation tracks' lanes
-		std::vector<Row> m_tracks;               // every track in the project's order
+		bool m_automationCopied = false;
+		std::vector<Row> m_tracks; // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
 		std::set<uint64_t> m_folded;
 		std::set<uint64_t> m_filtered;                         // what the track visibility hides (#166)
@@ -296,6 +303,7 @@ namespace gnubase::ui
 			bool defeated = false; // solo defeat
 		};
 		std::map<std::pair<uint64_t, std::string>, Clicked> m_clicked;
+		SoloHold m_soloHold;
 
 		std::map<std::string, std::function<void()>> m_actions;
 		std::function<void(uint64_t, bool)> m_onMarker;

@@ -465,7 +465,8 @@ namespace gnubase::engine
 			{"audition.scrub", 1,
 				"Scrubs an audio track, as the scrub tool does while the mouse drags: plays its events from where the "
 				"audio got to in the last scrub of the track (where that one starts if it hasn't played yet), to "
-				"position (samples), forwards or backwards, in seconds (default: the time since that scrub, 0.01 to "
+				"position (samples, 0 to 2^48), forwards or backwards, in seconds (default: the time since that scrub, "
+				"0.01 to "
 				"0.1 seconds), so speed and pitch follow how fast the positions come, and scrubs that come faster "
 				"than they play carry on without gaps. The first scrub only sets where the next one starts, and is the "
 				"only one of a drag in engine.commandLog. Like audition.start it goes straight to the main mix's "

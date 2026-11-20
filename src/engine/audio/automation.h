@@ -160,17 +160,19 @@ namespace gnubase::engine
 		// with the slot's index in slots as their key, and the others to source. processors are the source processor
 		// and the slots' plugins, top to bottom (only compared, to send every value again to new ones), and slots the
 		// slots' ids in the same order: those of the program that plays, which may be older or newer than the
-		// automation, so plugin lanes whose slot isn't in it are left out. New automation's smooth lanes glide to their
-		// values over smoothing frames, and mute glides over them from the sample where it changes, so it doesn't
-		// click. sentAgain, if any, gets a copy of the events for source that set a value again, where a start, a
-		// locate, a jump, new automation, a new processor or being heard again sends the values (also while stopped),
-		// and not those of a new value: a lane's step or ramp, also one at the sample where the values are sent again,
-		// a program or MIDI controller without points set in this block, or a MIDI lane's value that new points in
-		// this block changed. A MIDI track's strip sends what its mute kept after the values set again and before the
-		// new ones.
+		// automation, so plugin lanes whose slot isn't in it are left out. midiOutput is that program's MIDI
+		// destination channel (0 for none): rerouting sends the patch and controllers when the graph with the new route
+		// plays. New automation's smooth lanes glide to their values over smoothing frames, and mute glides over them
+		// from the sample where it changes, so it doesn't click. sentAgain, if any, gets a copy of the events for
+		// source that set a value again, where a start, a locate, a jump, new automation, a new processor or being
+		// heard again sends the values (also while stopped), and not those of a new value: a lane's step or ramp, also
+		// one at the sample where the values are sent again, a program or MIDI controller without points set in this
+		// block, or a MIDI lane's value that new points in this block changed. A MIDI track's strip sends what its mute
+		// kept after the values set again and before the new ones.
 		void play(const graph::TransportBlock& transport, const std::vector<const void*>& processors,
 			const std::vector<ObjectId>& slots, graph::EventBuffer& source, graph::EventBuffer& fader,
-			graph::EventBuffer& plugins, uint32_t smoothing = 0, graph::EventBuffer* sentAgain = nullptr) noexcept;
+			graph::EventBuffer& plugins, uint32_t smoothing = 0, graph::EventBuffer* sentAgain = nullptr,
+			ObjectId midiOutput = 0) noexcept;
 
 	private:
 		rt::SnapshotPublisher<ChannelAutomation> m_automation;
@@ -184,9 +186,11 @@ namespace gnubase::engine
 
 		// Audio thread.
 		uint64_t m_played = 0; // the revision played last
-		// The revision played last while not silent; 0 when playback moved or the processors changed while silent, so
-		// that the program and MIDI lanes all go out again once it is heard.
+		// The revision played last while not silent; 0 when playback moved, or ran while the track was soloed out or
+		// disabled, or the processors changed while silent, so that the program and MIDI lanes all go out again once
+		// it is heard.
 		uint64_t m_heard = 0;
+		ObjectId m_midiOutput = 0; // the MIDI destination played for last
 		// Playback moved while it was silent, or played while it was quiet (then Quiet): it raises m_heardAgain once
 		// it is heard.
 		HeardAgain m_missed = HeardAgain::No;
@@ -487,8 +491,13 @@ namespace gnubase::engine
 		void playsProject(uint64_t opened) { m_project = opened; }
 		// Command thread, before the graph compiles: the strip runs a MIDI track's source, whose mute mutes the
 		// track's events (muteMidi). It gets room for the values that the automation sends again in a block, which
-		// only such a strip reads.
-		void playsMidiTrack() { m_sentAgain = graph::EventBuffer(graph::g_maxEventsPerBlock); }
+		// only such a strip reads. output is this graph's destination channel (0 for none), so automation received
+		// before the graph can't consume a reroute before its destination can receive the values.
+		void playsMidiTrack(ObjectId output = 0)
+		{
+			m_midiOutput = output;
+			m_sentAgain = graph::EventBuffer(graph::g_maxEventsPerBlock);
+		}
 
 		// Scales the block's first channels from gain to target, frame by frame, and keeps target as the gain; a gain
 		// below 0 (before the first block) starts at the target.
@@ -529,7 +538,8 @@ namespace gnubase::engine
 		bool m_keepChase = false;
 		std::vector<graph::ProcessEvent> m_channelKinds; // see chasedWhenHeard
 		std::shared_ptr<const MidiSequencer> m_chaser;
-		uint64_t m_project = 0; // see playsProject
+		uint64_t m_project = 0;    // see playsProject
+		ObjectId m_midiOutput = 0; // this graph's MIDI destination (playsMidiTrack)
 	};
 
 	// The processor of a send node (graph::NodeKind::Send): a post-fader send's input is its channel's output, a

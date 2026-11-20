@@ -79,10 +79,13 @@ the port's entry in `midi.portSettings` keeps what differs from the preset, so i
 such as clock and active sensing, 0xF8 to 0xFF) for `midi.activity`, which the engine runs itself at most ten times a
 second while input arrives and a device processes blocks (the audio engine's cue thread notices it); it takes the
 messages with their ports and announces them as the event `midi.activity`, which the Note Expression Input page shows.
-Its runs stay out of the command log. Turning `midi.activityListen` on, and starting a device, drop what was queued
-before, so nothing old is announced as new. Rendered offline (`audio.render`), nothing runs it: a client calls it. The
-user settings `midi.mpeInput` and `midi.mpePitchRange`, which before #1514 made MIDI recording take every input as MPE's
-lower zone, are gone without a migration: a port's MPE input is set up again on the Note Expression Input page.
+Its runs stay out of the command log. Each `listener` (the dialog's is `studioSetup`, calls without one share one)
+turns it on and off for itself, and it is on while any has it on, so the dialog closing leaves a script's or an MCP
+session's on, and their off leaves the dialog's (#1832). Turning `midi.activityListen` on while no listener has it on,
+and starting a device, drop what was queued before, so nothing old is announced as new; a second listener turning it on
+keeps the queue, which the first one still reads. Rendered offline (`audio.render`), nothing runs it: a client calls it.
+The user settings `midi.mpeInput` and `midi.mpePitchRange`, which before #1514 made MIDI recording take every input as
+MPE's lower zone, are gone without a migration: a port's MPE input is set up again on the Note Expression Input page.
 
 `midi::MpeInput` does this on the audio thread, per port, before the ports' input merges into all MIDI inputs
 (`MidiPorts::take`): it keeps each channel's sounding notes and latest values, without allocating, and the port's setup
@@ -118,7 +121,8 @@ record filter filters note expression by its channel only, as it is no MIDI mess
 and plays plain MIDI; `midi.inject` does too, unless its `mpe` gives it an MPE setup to play through, as a port with it
 would, so MCP and Lua reach MPE input without a MIDI port. The track keeps that setup's state of the channels from one
 call to the next, and a message waits for the next block unless the track's input has room for all it adds, a point
-for each note of its channel (`MpeInput::maxEvents`, #1685).
+for each note of its channel (`MpeInput::maxEvents`, #1685). `direct` and `mpe` together are refused: `direct`
+skips the track's input, where the setup plays (#1819).
 
 **Playback.** The sequencer sends a note's points that lie within it as note expression events
 (`graph::ProcessEvent::Type::NoteExpression`, with the note's pitch and channel) where they are, after the note-on at
@@ -184,11 +188,12 @@ first.
   the row of the note double-clicked and kept inside the note display at the top and bottom rows, never narrower than
   its button, and it stays there as the pitches zoom; it shows their points of the chosen expression the same way. On
   notes narrower than its button it spreads their time over its whole width, so that its lines no longer lie over the
-  notes' time behind it and join their steps by the note display's coarser pixels, and at the note display's right
-  edge it moves left to stay inside (#1713). Its
-  button at the top left is Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point
-  where it clicks, and a drag draws points along the way where the value changes (not one per mouse position), replacing
-  those of the expression in the range it went over; at the right edge it draws at the last note's last tick. With
+  notes' time behind it and join their steps by the note display's coarser pixels, and only where it would end past
+  the note display's right edge it moves left to stay inside (#1713), so that an in-place editor's keeps still as the
+  project window scrolls (#1746); a window or zone that changes its width places it again. Its button at the top left
+  is Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point where it clicks, and a drag
+  draws points along the way where the value changes (not one per mouse position), replacing those of the expression in
+  the range it went over; at the right edge it draws at the last note's last tick. With
   Shift, tuning goes in semitone steps (Vertical Snap). The erase tool deletes the points of the expression it is
   dragged over, a click those within a few dp: it is GNUbase's own, standing in until points can be selected and deleted
   with Edit > Delete as the reference manual does (pp. 1310-1311). An edit reaches every selected note at the time where
@@ -212,7 +217,8 @@ click deletes the note. With several selected notes of two parts they check the 
 of them over their span, centered on the note clicked, an edit reaching each note at its time, a drag leaving a point
 where the value changes, one undo step for both parts, Vertical Snap and the editor closing when the selection empties;
 the editor centered on its note while the pitches zoom; on the top row the editor inside the note display and wider than
-its button, and a draw released outside the window; a dense note's lines a pixel each after the window's layout and a
+its button, and a draw released outside the window; on a short note right of the note display's middle the editor
+starting at the note; a dense note's lines a pixel each after the window's layout and a
 resize, a resize by less than a quarter keeping them, and lines that first show after the window narrowed by less than
 a quarter, also on the box of the layout before, built for the narrower width. `tests/inplaceeditor_ui_tests.cpp`
 checks the draw tool on a line of the editor in an in-place editor and a dense note's lines a pixel each after its

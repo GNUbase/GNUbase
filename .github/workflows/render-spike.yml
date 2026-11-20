@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The render backend spike (#47): renders RmlUi documents through OpenGL 3 and SDL_GPU on every platform and uploads
 # the screenshots, timings and a summary. A backend that can't run on a runner is a result, so only build errors fail.
+# Only by hand (gh workflow run render-spike.yml --ref <branch>): the spike is done, and on a pull request its
+# macos-arm64 job would wait for a runner that often never comes, as in ui-macos.yml, and end cancelled.
 name: Render spike
 
 on:
-  pull_request:
-    paths:
-      - spikes/render-backend/**
-      - .github/workflows/render-spike.yml
   workflow_dispatch:
 
 concurrency:

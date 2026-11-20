@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -183,6 +184,7 @@ namespace gnubase::engine
 		std::atomic<uint64_t> m_activityCount{0};
 		std::atomic<size_t> m_activityDropped{0};
 		std::atomic<bool> m_activityListen{false}; // midi.activityListen
+		std::set<std::string> m_activityListeners; // command thread: who has it on (its listener)
 		// Command thread: empties m_activity.
 		void dropActivity()
 		{

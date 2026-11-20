@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The MIDI device manager (#136, docs/features/midi-devices.md, reference manual pp. 1109-1114): the installed MIDI
-     devices, installing a GM device or defining a new one, removing one, and the selected device's patch banks.
+     devices, installing a GM device or defining a new one, removing one, and editing its banks, folders and presets.
      app::AppUi opens it (the UI command window.midiDeviceManager). Its Lua reads the devices from the user setting
-     midi.devices and changes them only through engine commands, at once, as the reference's manager does. -->
+     midi.devices, follows settings.changed, and changes them only through engine commands, at once. -->
 <rml>
 <head>
 	<title>MIDI Device Manager</title>
@@ -35,6 +35,23 @@
 		#patch-banks
 		{
 			flex: 1;
+		}
+
+		.patches
+		{
+			display: flex;
+			flex-direction: column;
+			flex: 1;
+		}
+
+		.patches input.text
+		{
+			width: 0dp;
+		}
+
+		.patches .unavailable
+		{
+			display: none;
 		}
 
 		.patch-program
@@ -84,6 +101,11 @@
 		-- The dialog's state, in the UI's Lua: the devices' names in the order the list shows them.
 		MidiDevices = {}
 		local manager = MidiDevices
+		local busy = false
+
+		local function selectedName(document)
+			return manager.names[tonumber(document:GetElementById("installed-devices"):GetAttribute("value"))]
+		end
 
 		local function escape(text)
 			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
@@ -104,7 +126,7 @@
 
 		-- The selected device's banks, with their folders and patches, as a tree.
 		local function showPatches(document)
-			local device = manager.devices[manager.names[tonumber(document:GetElementById("installed-devices"):GetAttribute("value"))]]
+			local device = manager.devices[selectedName(document)]
 			local rows = {}
 			local function row(level, value, text)
 				rows[#rows + 1] = '<listitem level="' .. level .. '" value="' .. value .. '" expanded="">' .. text ..
@@ -112,26 +134,36 @@
 			end
 			for b, bank in ipairs(device and device.banks or {}) do
 				row(0, "bank" .. b, escape(bank.name))
-				local folder = nil
+				local groups, order = {}, {}
 				for p, patch in ipairs(bank.patches) do
-					local level = 1
-					if patch.folder ~= nil and patch.folder ~= "" then
-						if patch.folder ~= folder then
-							row(1, "folder" .. b .. "-" .. p, escape(patch.folder))
-						end
-						level = 2
+					local folder = patch.folder or ""
+					if groups[folder] == nil then
+						groups[folder] = {}
+						order[#order + 1] = folder
 					end
-					folder = patch.folder
-					row(level, "patch" .. b .. "-" .. p, '<span class="patch-name">' .. escape(patch.name) ..
-						'</span><span class="patch-program">' .. numbers(patch) .. "</span>")
+					groups[folder][#groups[folder] + 1] = p
+				end
+				for _, folder in ipairs(order) do
+					if folder ~= "" then
+						row(1, "folder" .. b .. "-" .. groups[folder][1], escape(folder))
+					end
+					for _, p in ipairs(groups[folder]) do
+						local patch = bank.patches[p]
+						row(folder == "" and 1 or 2, "patch" .. b .. "-" .. p,
+							'<span class="patch-name">' .. escape(patch.name) ..
+							'</span><span class="patch-program">' .. numbers(patch) .. "</span>")
+					end
 				end
 			end
 			document:GetElementById("patch-banks").inner_rml = table.concat(rows)
+			document:GetElementById("patch-banks"):SetAttribute("value", "")
 		end
 
 		-- Reads the devices from the engine; selected is the name to select.
-		function manager.load(document, selected)
-			manager.devices = gnubase.settings.get{key = "midi.devices"}.value
+		function manager.load(document, selected, devices)
+			busy = true
+			manager.devices = devices or gnubase.settings.get{key = "midi.devices"}.value
+			busy = false
 			manager.names = {}
 			for name in pairs(manager.devices) do
 				manager.names[#manager.names + 1] = name
@@ -153,10 +185,174 @@
 				document:GetElementById("remove-device"):RemoveAttribute("disabled")
 			end
 			showPatches(document)
+			manager.edit(document)
+		end
+
+		function manager.follow(event)
+			local document = manager.document
+			local devices = event.data.values["midi.devices"]
+			if not busy and document ~= nil and devices ~= nil then
+				manager.load(document, selectedName(document), devices)
+			end
+		end
+
+		function manager.open(document)
+			manager.document = document
+			manager.load(document)
+			gnubase.on("settings.changed", manager.follow)
+		end
+
+		function manager.close()
+			manager.document = nil
+			gnubase.off("settings.changed", manager.follow)
 		end
 
 		function manager.select(document)
 			showPatches(document)
+			manager.edit(document)
+		end
+
+		local function selection(document)
+			local device = manager.devices[selectedName(document)]
+			local key = tostring(document:GetElementById("patch-banks"):GetAttribute("value") or "")
+			local kind, b, p = key:match("^(%a+)(%d+)%-?(%d*)$")
+			local bank = device and device.banks[tonumber(b)]
+			return device, bank, bank and bank.patches[tonumber(p)], kind, tonumber(b), tonumber(p)
+		end
+
+		local function enable(document, id, enabled)
+			local element = document:GetElementById(id)
+			if enabled then
+				element:RemoveAttribute("disabled")
+			else
+				element:SetAttribute("disabled", "")
+			end
+		end
+
+		-- Selection fills the editor; Enable Edit protects both the controls and their handlers.
+		function manager.edit(document)
+			local device, bank, patch, kind = selection(document)
+			local editing = document:GetElementById("enable-edit"):HasAttribute("checked")
+			local item = kind == "patch" and patch or kind == "bank" and bank or nil
+			if kind == "folder" and patch ~= nil then
+				item = {name = patch.folder}
+			end
+			enable(document, "create-bank", editing and device ~= nil)
+			enable(document, "new-preset", editing and bank ~= nil)
+			enable(document, "multiple-presets", editing and bank ~= nil)
+			enable(document, "preset-count", editing and bank ~= nil)
+			enable(document, "remove-patch", editing and item ~= nil)
+			document:GetElementById("patch-editor"):SetClass("unavailable", not editing or item == nil)
+			document:GetElementById("preset-fields"):SetClass("unavailable", kind ~= "patch")
+			for id, value in pairs({["patch-name"] = item and item.name or "",
+				["patch-folder"] = patch and patch.folder or "", ["patch-program"] = patch and patch.program + 1 or 1,
+				["patch-bank"] = patch and patch.bank and patch.bank + 1 or ""}) do
+				document:GetElementById(id):SetAttribute("value", tostring(value))
+			end
+		end
+
+		function manager.change(document, action)
+			if not document:GetElementById("enable-edit"):HasAttribute("checked") then
+				return
+			end
+			local name = selectedName(document)
+			local _, _, _, kind, b, p = selection(document)
+			local function value(id)
+				return tostring(document:GetElementById(id):GetAttribute("value") or "")
+			end
+			busy = true -- Engine events arrive during the call; reload once the edit has completed.
+			local ok, result = pcall(function()
+				local device = gnubase.settings.get{key = "midi.devices"}.value[name]
+				assert(device ~= nil, "Select an installed device")
+				local bank = device.banks[b]
+				local key = ""
+				if action == "bank" then
+					device.banks[#device.banks + 1] = {name = "New Bank", patches = {}}
+					key = "bank" .. #device.banks
+				else
+					assert(bank ~= nil, "Select a bank")
+					local patch = bank.patches[p]
+					if action == "preset" or action == "multiple" then
+						local count = 1
+						if action == "multiple" then
+							count = tonumber(value("preset-count"))
+						end
+						local first = action == "multiple" and patch and patch.program or 0
+						assert(count and count % 1 == 0 and count >= 1 and first + count <= 128,
+							"Preset count must be a positive integer whose range fits programs 1 to 128")
+						for i = 1, count do
+							bank.patches[#bank.patches + 1] = {
+								name = action == "multiple" and (patch and patch.name or "Preset") .. " " .. i or "New Preset",
+								program = first + i - 1, bank = action == "multiple" and patch and patch.bank or nil,
+								folder = patch and patch.folder or nil}
+						end
+						key = "patch" .. b .. "-" .. #bank.patches
+					elseif action == "remove" then
+						if kind == "bank" then
+							table.remove(device.banks, b)
+						elseif kind == "patch" and patch ~= nil then
+							table.remove(bank.patches, p)
+							key = "bank" .. b
+						elseif kind == "folder" and patch ~= nil then
+							for i = #bank.patches, 1, -1 do
+								if bank.patches[i].folder == patch.folder then
+									table.remove(bank.patches, i)
+								end
+							end
+							key = "bank" .. b
+						end
+					elseif action == "apply" then
+						local item = kind == "patch" and patch or kind == "bank" and bank or nil
+						if kind == "folder" and patch ~= nil then
+							item = {name = patch.folder}
+						end
+						assert(item ~= nil, "Select a bank or preset")
+						assert(value("patch-name"):find("%S"), "Enter a name")
+						local oldName = item.name
+						item.name = value("patch-name")
+						if kind == "patch" then
+							local program, number = tonumber(value("patch-program")), tonumber(value("patch-bank"))
+							assert(program and program % 1 == 0 and program >= 1 and program <= 128,
+								"Program must be an integer from 1 to 128")
+							assert(value("patch-bank") == "" or
+								(number and number % 1 == 0 and number >= 1 and number <= 16384),
+								"Bank must be blank or an integer from 1 to 16384")
+							patch.program, patch.bank = program - 1, number and number - 1 or nil
+							patch.folder = value("patch-folder") ~= "" and value("patch-folder") or nil
+						end
+						key = kind == "patch" and "patch" .. b .. "-" .. p or "bank" .. b
+						if kind == "folder" then
+							for _, candidate in ipairs(bank.patches) do
+								if candidate.folder == oldName then
+									candidate.folder = item.name
+								end
+							end
+							for i, candidate in ipairs(bank.patches) do
+								if candidate.folder == item.name then
+									key = "folder" .. b .. "-" .. i
+									break
+								end
+							end
+						end
+					end
+				end
+				gnubase.midiDevice.set{name = name, banks = device.banks}
+				return key
+			end)
+			busy = false
+			report(document, ok and "" or tostring(result))
+			if ok then
+				manager.load(document, name)
+				document:GetElementById("patch-banks"):SetAttribute("value", result)
+				manager.edit(document)
+			end
+		end
+
+		function manager.key(document, event)
+			if gnubase.ui.keyName{key = event.parameters.key_identifier}.keys == "Backspace" then
+				event:StopPropagation()
+				manager.change(document, "remove")
+			end
 		end
 
 		-- Install Device: a GM device or a new one (Define New), with the name typed.
@@ -183,7 +379,7 @@
 		end
 	</script>
 </head>
-<body onload="MidiDevices.load(document)">
+<body onload="MidiDevices.open(document)" onunload="MidiDevices.close()">
 	<dialog id="midi-devices">
 		<div class="dialog-titlebar">MIDI Device Manager</div>
 		<div class="content">
@@ -203,7 +399,35 @@
 					<button id="remove-device" onclick="MidiDevices.remove(document)">Remove Device</button>
 				</div>
 			</div>
-			<listview id="patch-banks" title="Patch Banks"/>
+			<div class="patches">
+				<listview id="patch-banks" title="Patch Banks" onchange="MidiDevices.edit(document)"
+					onkeydown="MidiDevices.key(document, event)"/>
+				<div class="row">
+					<label><input type="checkbox" class="checkbox" id="enable-edit"
+						onchange="MidiDevices.edit(document)"/>Enable Edit</label>
+				</div>
+				<div class="row">
+					<button id="create-bank" disabled onclick="MidiDevices.change(document, 'bank')">Create Bank</button>
+					<button id="new-preset" disabled onclick="MidiDevices.change(document, 'preset')">New Preset</button>
+					<button id="remove-patch" disabled onclick="MidiDevices.change(document, 'remove')">Remove</button>
+				</div>
+				<div class="row">
+					<input type="text" class="text" id="preset-count" title="Preset count" value="1" disabled/>
+					<button id="multiple-presets" disabled onclick="MidiDevices.change(document, 'multiple')"
+						title="Add a range from the selected preset's name, program, bank and folder">Add Multiple Presets</button>
+				</div>
+				<div id="patch-editor" class="unavailable">
+					<div class="row">Name <input type="text" class="text" id="patch-name" title="Name"/></div>
+					<div id="preset-fields">
+						<div class="row">Folder <input type="text" class="text" id="patch-folder" title="Folder"/></div>
+						<div class="row">
+							Program <input type="text" class="text" id="patch-program" title="Program (1-128)"/>
+							Bank <input type="text" class="text" id="patch-bank" title="Bank (blank or 1-16384)"/>
+						</div>
+					</div>
+					<div class="row"><button id="apply-patch" onclick="MidiDevices.change(document, 'apply')">Apply</button></div>
+				</div>
+			</div>
 		</div>
 		<div class="row buttons">
 			<div id="midi-devices-message"/>

@@ -495,6 +495,9 @@ namespace gnubase::engine
 			m_audition.cue(block, false);
 			m_playback.waitUntilBuffered(g_offlineWait);
 			m_audition.waitUntilBuffered(g_offlineWait);
+			// And for the recorder's disk thread: a recording made offline loses no input (#531).
+			if (!m_recorder.waitForChunks(g_offlineWait))
+				logging::warning("The render didn't wait any longer for the recorder: input to record may be lost");
 			if (m_dummy != nullptr)
 			{
 				m_dummy->render(*this, block);
@@ -568,6 +571,12 @@ namespace gnubase::engine
 			std::llround(std::clamp(m_settings.get(settings::g_audioPreRecordSeconds), 0.0, 60.0) * deviceRate);
 		setup.midiMode = m_transport.settings().midiRecordMode;
 		setup.midiCycleMode = m_transport.settings().midiCycleRecordMode;
+		if (const TransportSettings& transport = m_transport.settings();
+			transport.cycle && transport.left < transport.right)
+		{
+			setup.cycleLeft = transport.left;
+			setup.cycleRight = transport.right;
+		}
 		setup.midiFilter = MidiRecordFilter::fromJson(m_settings.value("midi.recordFilter"));
 		setup.snapToBars = m_settings.get(settings::g_midiSnapPartsToBars);
 		setup.catchFrames = std::llround(
@@ -1116,7 +1125,10 @@ namespace gnubase::engine
 					kinds.push_back(chaseKindEvent(kind));
 				sourceStrip->chasedWhenHeard(std::move(kinds), sequencer->second);
 				sourceStrip->playsProject(snapshot.opened);
-				sourceStrip->playsMidiTrack();
+				const ObjectId midiOutput = channel.output.kind == RenderTarget::Kind::Channel
+					? snapshot.channels[static_cast<size_t>(channel.output.index)].id
+					: 0;
+				sourceStrip->playsMidiTrack(midiOutput);
 			}
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
 				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)
@@ -3089,19 +3101,22 @@ namespace gnubase::engine
 		{
 			for (const RenderAudioEvent& event : channel.audioEvents)
 			{
-				// The event's length is in media frames; the project may run at another rate.
+				// The event's length is in media frames; the project may run at another rate. In doubles, so that an
+				// event however late or long can't overflow (#596).
 				double ratio = 1.0;
 				if (event.media >= 0 && static_cast<size_t>(event.media) < snapshot.media.size())
 					ratio = snapshot.sampleRate / snapshot.media[static_cast<size_t>(event.media)].sampleRate;
+				const double eventEnd = static_cast<double>(event.start) + (static_cast<double>(event.length) * ratio);
 				end = std::max(end,
-					event.start + static_cast<time::Samples>(std::llround(static_cast<double>(event.length) * ratio)));
+					static_cast<time::Samples>(std::llround(std::min(eventEnd, static_cast<double>(g_maxPosition)))));
 			}
 			for (const RenderNote& note : channel.notes)
 				end = std::max(end, note.end);
 			for (const RenderController& controller : channel.controllers)
 				end = std::max(end, controller.position);
 		}
-		return end;
+		// Where the transport would clamp it to, so that a locate cues the voices where the cursor goes (#596).
+		return std::min(end, g_maxPosition);
 	}
 
 	void AudioEngine::locate(const Json& parameters)
@@ -3263,7 +3278,13 @@ namespace gnubase::engine
 		command("transport.stop",
 			"Stops playback and recording. With returnToStart the cursor goes back to where playback started or was "
 			"last located to. While lockRecord is on (see transport.set), a recording stops only with confirmed: the "
-			"user confirmed it.",
+			"user confirmed it. A recording's takes come into the project later, not with this command: once the "
+			"input still on its way has come in and the files are closed, the engine runs recording.add, which "
+			"announces recording.added; a file that can't be created or written is announced with recording.failed. "
+			"Wait for recording.added before project.save, or the project is saved without the takes; it follows "
+			"unless no file could be written, which only recording.failed reports. project.load, project.new or "
+			"project.revert before it drop them with recording.failed, and their files stay in the old project's "
+			"media folder.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
@@ -3277,7 +3298,8 @@ namespace gnubase::engine
 			"punchIn before the left locator, recording starts at the left locator instead. From stop, with the "
 			"metronome's count-in on (metronome.set countIn), the metronome counts in first and playback starts at "
 			"the exact sample where the count-in ends; transport.stop ends a count-in. record false punches out "
-			"and playback goes on, refused while lockRecord is on. Record-enabled tracks may monitor their input "
+			"and playback goes on, refused while lockRecord is on; the takes come later, with recording.added, as "
+			"for transport.stop. Record-enabled tracks may monitor their input "
 			"meanwhile, by the user setting audio.autoMonitoring (see channel.set).",
 			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
@@ -3333,16 +3355,17 @@ namespace gnubase::engine
 				}
 			});
 		command("transport.locate",
-			"Moves the project cursor to a position in samples, by seconds from where it is (back if negative, not "
-			"before the project start: the transport bar's rewind and forward), or to a target: projectStart, "
-			"projectEnd (the end of the last event), leftLocator or rightLocator. While playing, playback continues "
-			"from there.",
+			"Moves the project cursor to a position in samples, 0 to 2^48, by seconds from where it is (back if "
+			"negative, not before the project start or past 2^48 samples: the transport bar's rewind and forward), or "
+			"to a target: projectStart, projectEnd (the end of the last event, at most 2^48 samples), leftLocator or "
+			"rightLocator. While playing, playback continues from there.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"position": {"type": "integer",
 				"minimum": 0, "maximum": 281474976710656}, "by": {"type": "number"}, "target": {"type": "string"}}})",
 			[this](const Json& parameters) { locate(parameters); });
 		command("transport.set",
-			"Changes the given settings and keeps the rest. left and right: the locators, in samples, or \"cursor\" "
-			"for the cursor position. cycle: cycle playback between the locators; with the right locator before the "
+			"Changes the given settings and keeps the rest. left and right: the locators, in samples (0 to 2^48), or "
+			"\"cursor\" for the cursor position. cycle: cycle playback between the locators; with the right locator "
+			"before the "
 			"left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). "
 			"returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left "
 			"locator starts recording there. punchOut: recording that reaches the right locator ends there and "
@@ -3362,8 +3385,8 @@ namespace gnubase::engine
 			"confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at "
 			"the right locator; it stays on until it is set off.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
-				"left": {"type": ["integer", "string"], "maximum": 281474976710656},
-				"right": {"type": ["integer", "string"], "maximum": 281474976710656},
+				"left": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},
+				"right": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},
 				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"},
 				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"},
 				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},

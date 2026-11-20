@@ -34,8 +34,10 @@ namespace gnubase::ui
 	// Quantize, the Quantize Presets menu, Soft Quantize and Open Quantize Panel.
 	//
 	// Apply and Reset run the UI commands edit.quantize and edit.resetQuantize through run, as the Edit menu does, so
-	// they quantize what it quantizes; with Auto Apply on, every change of the settings runs edit.quantize too. Open
-	// Quantize Panel runs window.quantizePanel. Use it on the UI thread; the binding must outlive it.
+	// they quantize what it quantizes. With Auto Apply on, every change of the settings quantizes again (p. 375),
+	// whichever client made it (quantize.changed): through autoApply with the gesture of the panel's value field that
+	// made it, or 0, so that a drag can be one undo step, or without autoApply by running edit.quantize. Open Quantize
+	// Panel runs window.quantizePanel. Use it on the UI thread; the binding must outlive it.
 	//
 	// Audio (#145, docs/features/audio-quantize.md): Warp Quantize On/Off (settings.warpQuantize) in both, and in the
 	// panel the section for several audio tracks: Range and Offset with Slice (quantize.slice) and its Reset
@@ -56,7 +58,8 @@ namespace gnubase::ui
 
 		QuantizePanel(EngineBinding& binding, Rml::Element& element, Layout layout,
 			std::function<void(const std::string&)> run,
-			std::function<void(const std::string&, engine::Json)> audio = {});
+			std::function<void(const std::string&, engine::Json)> audio = {},
+			std::function<void(int gesture)> autoApply = {});
 		~QuantizePanel() override;
 
 		// The panel's Hitpoint Tracks: [{track, name}], such as the tracks of the audio events it would slice that have
@@ -78,7 +81,9 @@ namespace gnubase::ui
 		// The preset the project's settings are, as quantize.get reports it, or "" for none.
 		std::string currentPreset() const;
 		bool isUserPreset(const std::string& name) const;
-		void set(engine::Json parameters);
+		void set(engine::Json parameters, int gesture = 0);
+		// Auto Apply: quantizes again if the settings changed from before.
+		void applyAuto(const engine::Json& before, engine::RequestId request);
 		void savePreset(bool rename);
 		std::string presetName() const;
 		// The value of one of the panel's own value fields.
@@ -98,6 +103,8 @@ namespace gnubase::ui
 		std::string m_presetAttribute; // of the presets menu's items: preset or toolbar-preset
 		std::function<void(const std::string&)> m_run;
 		std::function<void(const std::string&, engine::Json)> m_audio;
+		std::function<void(int)> m_autoApply;
+		std::map<engine::RequestId, int> m_gestures; // of the panel's quantize.set requests that a value field sent
 		engine::Json m_settings = engine::Json::object();
 		engine::Json m_presets = engine::Json::array();
 		engine::Json m_hitpointTracks = engine::Json::array(); // showHitpointTracks

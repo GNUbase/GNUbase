@@ -21,6 +21,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase;
@@ -370,18 +371,35 @@ TEST_CASE("a detected MPE device has a page, and the MIDI Activity display shows
 	CHECK(selected(app, "mpe-input") == "Keys");
 	CHECK(elements(app, activity + " .mpe-message").empty());
 
-	// Closed, the page stops listening (midi.activityListen): input is no activity then (#1749).
+	// Closed, the page stops listening (midi.activityListen), but not for a client that listens too, as an MCP
+	// session or a script may (#1832); once that stops, input is no activity (#1749).
+	app.call("midi.activityListen", {{"on", true}});
 	click(app, "#cancel");
 	CHECK(closed(app));
-	audio::MidiMessage message;
-	message.size = 3;
-	message.bytes = {0x91, 62, 100};
-	device->send(message, hostTime() - 1000000000);
-	if (!app.call("audio.get").at("running").get<bool>())
-		app.call("audio.render", {{"frames", 128}});
-	else
-		std::this_thread::sleep_for(std::chrono::milliseconds(300));
-	CHECK(app.call("midi.activity").at("received").empty());
+	engine::Client watcher(app.engine(), "watcher");
+	// Whether midi.activity announced input: offline the test runs it, as the engine doesn't.
+	const auto announced = [&](uint8_t pitch)
+	{
+		audio::MidiMessage message;
+		message.size = 3;
+		message.bytes = {0x91, pitch, 100};
+		device->send(message, hostTime() - 1000000000);
+		if (!app.call("audio.get").at("running").get<bool>())
+		{
+			app.call("audio.render", {{"frames", 128}});
+			app.call("midi.activity");
+		}
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+		while (std::chrono::steady_clock::now() < deadline)
+			if (const std::optional<engine::Message> next = watcher.wait(std::chrono::milliseconds(50)))
+				if (const auto* event = std::get_if<engine::Event>(&*next);
+					event != nullptr && event->name == "midi.activity")
+					return true;
+		return false;
+	};
+	CHECK(announced(62));
+	app.call("midi.activityListen", {{"on", false}});
+	CHECK_FALSE(announced(64));
 }
 
 TEST_CASE("the Note Expression Input page keeps each MIDI input's edits, and its input after Apply", "[ui]")

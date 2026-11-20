@@ -745,8 +745,8 @@ namespace gnubase::engine::midi
 				"pad), in melodic mode without lanes. copy duplicates a pattern "
 				"instead (Duplicate Pattern), on its track unless track is given. With part, the pattern is that "
 				"part's track's and the part plays it from its start: it becomes a pattern event. Then changed by the "
-				"settings "
-				"given. " +
+				"settings given. With copy, a shorter length without lanes drops steps beyond it on lanes that "
+				"follow the pattern's length and cuts their ties at the new end. " +
 					patternText + " Emits pattern.added (and midiPart.changed with part) and returns the pattern.",
 				object(addProperties, {}), patternResult, false},
 			"Add pattern", addPattern);
@@ -756,7 +756,9 @@ namespace gnubase::engine::midi
 			{"pattern.set", 1,
 				"Changes a pattern: what isn't given stays, and lanes replace the whole list; its pattern events play "
 				"the change. Switching between drum and melodic mode clears the lanes; from poly to mono mode the "
-				"lowest step at each position stays, and the lanes' own settings go (p. 913). " +
+				"lowest step at each position stays, and the lanes' own settings go (p. 913). A shorter length without "
+				"lanes drops steps beyond it on lanes that follow the pattern's length and cuts their ties at the new "
+				"end. " +
 					patternText + " Emits pattern.changed and returns the pattern.",
 				object(setProperties, {"pattern"}), patternResult, false},
 			"Change pattern", setPattern);
