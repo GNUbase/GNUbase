@@ -2491,6 +2491,59 @@ splitter.column .splitter-grip-horizontal
 	width: 100%;
 }
 
+/* The meter display (ui/meterpanel.h): the master meter's page, or with .loudness the loudness meter's, over the
+   buttons that switch between them; the selected one is .checked. */
+.meter-display
+{
+	display: block;
+	padding: 6dp;
+}
+
+.meter-display .meter-loudness, .meter-display.loudness .meter-master
+{
+	display: none;
+}
+
+.meter-display.loudness .meter-loudness
+{
+	display: block;
+}
+
+.meter-display .meter-bars
+{
+	display: block;
+	height: 160dp;
+}
+
+.meter-display .meter-bars meter
+{
+	height: 160dp;
+	margin-right: 2dp;
+}
+
+.meter-display .meter-values div
+{
+	display: block;
+	padding: 2dp 0;
+}
+
+.meter-display .meter-values span
+{
+	float: right;
+}
+
+.meter-display .meter-buttons
+{
+	display: block;
+	margin-top: 6dp;
+}
+
+.meter-display .meter-buttons button
+{
+	min-width: 0;
+	margin-right: 4dp;
+}
+
 /* The edit history panel (ui/historypanel.h): a table of the undo steps that fills its panel, cut by the separator
    after the done steps into a table of those and one of the undone steps, whose rows have the state class .undone.
    The separator is dragged up to undo and down to redo. */
