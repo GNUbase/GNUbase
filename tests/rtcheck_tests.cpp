@@ -22,6 +22,7 @@
 #include "plugin/extensions.h"
 #include "plugin/plugin.h"
 #include "plugin/remote/proxy.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -1232,13 +1233,7 @@ TEST_CASE("playing automation of volume, pan, instrument, plugin and strip param
 	const Json slot = run("plugin.insert", {{"channel", audio.at("channel").at("id")}, {"plugin", "builtin:gainPan"}})
 						  .at("slot")
 						  .at("id");
-	const auto active = [&run, &slot]()
-	{ return run("plugin.get", {{"slot", slot}}).at("slot").at("status") == "active"; };
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-	while (!active() && std::chrono::steady_clock::now() < deadline)
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	REQUIRE(active());
-	run("audio.updatePlugins", Json::object());
+	gnubase::test::waitForPlugin(client, slot);
 	run("automationPoint.add",
 		{{"lane", lane(audio, {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}})},
 			{"points", points({{0, -12.0}, {3000, 0.0}, {6000, -6.0}}, "linear")}});
