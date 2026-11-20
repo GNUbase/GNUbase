@@ -695,7 +695,7 @@ TEST_CASE("media can be copied into the project folder when they are added", "[i
 	const std::string copy = utf8(project / "Audio" / "take.wav");
 	CHECK(copied.at("result") ==
 		Json{{"copied", Json::array({{{"media", media}, {"from", utf8(elsewhere / "take.wav")}, {"to", copy}}})},
-			{"missing", Json::array()}, {"changed", Json::array()}});
+			{"missing", Json::array()}, {"changed", Json::array()}, {"changedTracks", Json::array()}});
 	CHECK(run(song.client, "project.get").at("media")[0].at("path") == copy);
 	CHECK(sameFiles(project / "Audio" / "take.wav", elsewhere / "take.wav"));
 	// Pointing it at the copy is an undo step of its own.

@@ -631,13 +631,17 @@ namespace gnubase::engine
 				{
 					if (file.to.empty())
 						continue;
-					const bool used = file.tracks.empty()
-						? skipped.count(file.media) == 0
-						: std::any_of(file.tracks.begin(), file.tracks.end(),
-							  [&](ObjectId track) { return skippedTracks.count(track) == 0; });
+					// The tracks that play the copy now.
+					MediaCopy relinked = file;
+					relinked.tracks.clear();
 					for (const ObjectId track : file.tracks)
+					{
 						if (skippedTracks.count(track) != 0)
 							changedTracks.push_back(track);
+						else
+							relinked.tracks.push_back(track);
+					}
+					const bool used = file.tracks.empty() ? skipped.count(file.media) == 0 : !relinked.tracks.empty();
 					if (!used)
 					{
 						if (file.tracks.empty())
@@ -645,7 +649,7 @@ namespace gnubase::engine
 						unused.push_back(file.to);
 						continue;
 					}
-					copied.push_back(resultEntry(file, {{"from", file.from}, {"to", file.to}}));
+					copied.push_back(resultEntry(relinked, {{"from", file.from}, {"to", file.to}}));
 				}
 				removeFiles(unused);
 				return Json{{"copied", std::move(copied)}, {"missing", std::move(missing)},

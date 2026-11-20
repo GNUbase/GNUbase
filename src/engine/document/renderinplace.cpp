@@ -3,6 +3,7 @@
 // track.unfreeze. Both render with mixdown.export, from a point inside the channel's strip, before they change the
 // project, so a render is bit-identical to an export of the same range; then they change it in one undo step.
 #include "engine/document/renderinplace.h"
+#include "engine/audiofile/audiofile.h"
 #include "engine/document/channelformat.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
@@ -630,9 +631,10 @@ namespace gnubase::engine
 		addEdit(engine,
 			{"track.relinkFreeze", 1,
 				"Points frozen tracks at other freeze files, such as copies that media.prepareArchive made, as one "
-				"undo step. An entry applies only if its track is still frozen and plays from; otherwise it is "
-				"skipped, and with project every entry is skipped unless that project is still open "
-				"(project.revision's project). Returns the tracks it relinked and the ones it skipped.",
+				"undo step. An entry applies only if its track is still frozen and plays from, and the new file can "
+				"be read and has the freeze file's sample rate, channels and length; otherwise it is skipped, and "
+				"with project every entry is skipped unless that project is still open (project.revision's "
+				"project). Returns the tracks it relinked and the ones it skipped.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties", {{"files", {{"type", "array"}, {"items", relinkEntry}}}, {"project", integer}}},
 					{"required", {"files"}}},
@@ -654,8 +656,22 @@ namespace gnubase::engine
 					const std::string path = entry.at("path").get<std::string>();
 					require(!path.empty(), "path must not be empty");
 					const auto track = project.trackById.find(id);
+					const auto fits = [&path](const Freeze& freeze)
+					{
+						try
+						{
+							const AudioFileInfo info = AudioFileReader::open(path)->info();
+							return info.sampleRate == freeze.sampleRate && info.channels == freeze.channels &&
+								info.frames == freeze.length;
+						}
+						catch (const AudioFileError&)
+						{
+							return false;
+						}
+					};
 					if (otherProject || track == project.trackById.end() || !track->second.frozen ||
-						track->second.frozen->path != entry.at("from").get<std::string>())
+						track->second.frozen->path != entry.at("from").get<std::string>() ||
+						!fits(*track->second.frozen))
 					{
 						skipped.push_back(id);
 						continue;

@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <future>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -535,6 +536,28 @@ TEST_CASE("a frozen track stays frozen in the project file", "[integration]")
 		CHECK(project.track(audio.track).at("frozen") == freeze);
 	}
 
+	SECTION("not from another track's entry of the same name in another case (#871)")
+	{
+		// A build before #1736 referred to a missing freeze file relatively, which entries looked up in any case
+		// would take for another track's embedded file.
+		run(project.client, "track.duplicate", {{"track", audio.track}});
+		const fs::path file = project.folder.path() / "cases.dawproject";
+		run(project.client, "project.save", {{"path", file.u8string()}});
+		std::map<std::string, std::string> entries = gnubase::test::readZip(file.u8string());
+		Json extension = Json::parse(entries.at("gnubase.json"));
+		const std::string other = extension.at("frozen").begin().key() == std::to_string(audio.track)
+			? std::next(extension.at("frozen").begin()).key()
+			: extension.at("frozen").begin().key();
+		extension.at("frozen")[other] = "FREEZE/ramp.wav";
+		entries["gnubase.json"] = extension.dump();
+		gnubase::test::writeZip(file.u8string(), entries);
+		run(project.client, "project.load", {{"path", file.u8string()}});
+		CHECK(project.track(std::stoull(other)).at("frozen").at("path") ==
+			(project.folder.path() / "FREEZE" / "ramp.wav").lexically_normal().u8string());
+		CHECK(firstDifference(
+				  samplesOf(project.track(audio.track).at("frozen").at("path").get<std::string>()), rendered) == -1);
+	}
+
 	SECTION("from a file without the freeze paths of its own (#871)")
 	{
 		// A file from before "frozen" in gnubase.json loads the paths the project itself holds.
@@ -659,9 +682,12 @@ TEST_CASE("embedded media files whose names differ only in case load from entrie
 	run(project.client, "project.load", {{"path", saved.u8string()}});
 	const Json loaded = run(project.client, "project.get").at("media");
 	for (size_t i = 0; i < media.size(); ++i)
-		for (const Json& entry : loaded)
-			if (entry.at("id") == media[i])
-				CHECK(samplesOf(entry.at("path").get<std::string>()) == std::vector<float>(1000, files[i].second));
+	{
+		const auto found =
+			std::find_if(loaded.begin(), loaded.end(), [&](const Json& entry) { return entry.at("id") == media[i]; });
+		REQUIRE(found != loaded.end());
+		CHECK(samplesOf(found->at("path").get<std::string>()) == std::vector<float>(1000, files[i].second));
+	}
 }
 
 TEST_CASE("embedded files that differ only in the case of a non-ASCII letter keep apart on load", "[integration]")
@@ -807,19 +833,60 @@ TEST_CASE("media.prepareArchive copies freeze files from outside the project fol
 	fs::create_directories(folder);
 	run(project.client, "project.save", {{"path", (folder / "moved.dawproject").u8string()}, {"embedMedia", false}});
 
-	const Json job = run(project.client, "media.prepareArchive").at("job");
-	const Json done = waitForJob(project.client, job.at("id").get<uint64_t>());
-	REQUIRE(done.at("state") == "done");
-	// Copied once for the two tracks that play it, which play the copy now, as one undo step with the media's.
-	const std::string copied = (folder / "Freeze" / fs::u8path(freeze).filename()).u8string();
-	CHECK(done.at("result").at("copied").at(1) ==
-		Json{{"tracks", {audio.track, copy}}, {"from", freeze}, {"to", copied}});
-	CHECK(project.track(audio.track).at("frozen").at("path") == copied);
-	CHECK(project.track(copy).at("frozen").at("path") == copied);
-	CHECK(firstDifference(samplesOf(copied), samplesOf(freeze)) == -1);
-	run(project.client, "history.undo");
-	CHECK(project.track(audio.track).at("frozen").at("path") == freeze);
-	CHECK(project.track(copy).at("frozen").at("path") == freeze);
+	SECTION("for the tracks that play it")
+	{
+		const Json job = run(project.client, "media.prepareArchive").at("job");
+		const Json done = waitForJob(project.client, job.at("id").get<uint64_t>());
+		REQUIRE(done.at("state") == "done");
+		// Copied once for the two tracks that play it, which play the copy now, as one undo step with the media's.
+		const std::string copied = (folder / "Freeze" / fs::u8path(freeze).filename()).u8string();
+		CHECK(done.at("result").at("copied").at(1) ==
+			Json{{"tracks", {audio.track, copy}}, {"from", freeze}, {"to", copied}});
+		CHECK(project.track(audio.track).at("frozen").at("path") == copied);
+		CHECK(project.track(copy).at("frozen").at("path") == copied);
+		CHECK(firstDifference(samplesOf(copied), samplesOf(freeze)) == -1);
+		run(project.client, "history.undo");
+		CHECK(project.track(audio.track).at("frozen").at("path") == freeze);
+		CHECK(project.track(copy).at("frozen").at("path") == freeze);
+	}
+
+	SECTION("but not for a track unfrozen meanwhile")
+	{
+		const Json done =
+			gnubase::test::whileHeld(project.engine, project.client, "media.prepareArchive", Json::object(),
+				[&project, copy](uint64_t) { run(project.client, "track.unfreeze", {{"tracks", {copy}}}); });
+		REQUIRE(done.at("state") == "done");
+		const Json copied = done.at("result").at("copied").at(1);
+		CHECK(copied.at("tracks") == Json::array({audio.track}));
+		CHECK(done.at("result").at("changedTracks") == Json::array({copy}));
+		CHECK(project.track(audio.track).at("frozen").at("path") == copied.at("to"));
+	}
+}
+
+TEST_CASE("track.relinkFreeze skips what it can't relink (#871)", "[integration]")
+{
+	Session project;
+	const Session::Track audio = project.addTrack("Ramp");
+	const Session::Track loose = project.addTrack("Loose");
+	const Json frozen = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+	const std::string freeze = frozen.at("tracks").at(0).at("frozen").at("path").get<std::string>();
+	const fs::path copy = project.folder.path() / "copy.wav";
+	fs::copy_file(fs::u8path(freeze), copy);
+	const fs::path mono = project.folder.path() / "mono.wav";
+	gnubase::test::writeWav(mono, {std::vector<float>(100, 0.5f), 1, 48000});
+	const Json skipped = run(project.client, "track.relinkFreeze",
+		{{"files",
+			{{{"track", audio.track}, {"from", "elsewhere.wav"}, {"path", copy.u8string()}},
+				{{"track", audio.track}, {"from", freeze}, {"path", mono.u8string()}},
+				{{"track", audio.track}, {"from", freeze}, {"path", (project.folder.path() / "gone.wav").u8string()}},
+				{{"track", loose.track}, {"from", freeze}, {"path", copy.u8string()}},
+				{{"track", 9999}, {"from", freeze}, {"path", copy.u8string()}}}}});
+	CHECK(skipped.at("relinked").empty());
+	CHECK(skipped.at("skipped") == Json::array({audio.track, audio.track, audio.track, loose.track, 9999}));
+	const Json entry = {{"track", audio.track}, {"from", freeze}, {"path", copy.u8string()}};
+	CHECK(run(project.client, "track.relinkFreeze", {{"files", {entry}}, {"project", 9999}}).at("relinked").empty());
+	CHECK(run(project.client, "track.relinkFreeze", {{"files", {entry}}}).at("relinked") == Json::array({audio.track}));
+	CHECK(project.track(audio.track).at("frozen").at("path") == copy.u8string());
 }
 
 TEST_CASE(
