@@ -505,8 +505,21 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		run(f.client, "project.applyRules", change);
 		CHECK(history() == unlocked + 1);
 		const Json changed = events();
-		CHECK(changed != before);
-		CHECK(f.object("audioEvents", first).at("part") == part);
+		for (const ObjectId id : {first, second})
+		{
+			const Json event = f.object("audioEvents", id);
+			const Json old = [&before, id]
+			{
+				for (const Json& item : before)
+					if (item.at("id") == id)
+						return item;
+				return Json();
+			}();
+			CHECK(event.at("part") == part);
+			CHECK(event.at("position").get<int64_t>() == old.at("position").get<int64_t>() + g_beatTicks);
+			CHECK(event.at("length") == 12000);
+			CHECK(event.at("color") == "#d0453e");
+		}
 		run(f.client, "history.undo");
 		CHECK(events() == before);
 		run(f.client, "history.redo");
@@ -703,21 +716,33 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 			CHECK(inPart(first) == 0);
 			CHECK(inPart(second) == g_beatTicks);
 		}
-		// A locked event keeps its part in place, as it keeps it from going: the part's other changes apply.
+		// A locked event keeps its part in place, as it keeps it from going, and from getting shorter, which would
+		// cut the event off: the part's other changes apply.
 		run(f.client, "event.set", {{"events", {first}}, {"lock", true}});
 		const Json held = f.object("audioParts", part);
 		const Json locked = f.object("audioEvents", first);
+		const auto heldLength = [&f, part] { return f.object("audioParts", part).at("length").get<int64_t>(); };
+		REQUIRE(heldLength() == 2 * g_beatTicks);
 		run(f.client, "project.applyRules",
 			{{"rules",
 				rules({filter("containerType", "equal", "part")}, "transform",
-					{action("position", "add", 480), action("name", "append", "!")})}});
+					{action("position", "add", 480), action("name", "append", "!"),
+						action("length", "multiplyBy", 0.25), action("color", "setFixed", "Red")})}});
 		CHECK(f.object("audioParts", part).at("position") == held.at("position"));
 		CHECK(f.object("audioParts", part).at("name") == held.at("name").get<std::string>() + "!");
+		CHECK(heldLength() == 2 * g_beatTicks);
+		CHECK(f.object("audioParts", part).at("color") == "#d0453e");
 		CHECK(f.object("audioEvents", first) == locked);
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({filter("containerType", "equal", "part")}, "transform", {action("length", "multiplyBy", 2)})}});
+		CHECK(heldLength() == 4 * g_beatTicks);
 		// Found with its events, the unlocked event moves in it alone, in one undo step that redo makes again.
 		const Json loose = f.object("audioEvents", second);
+		const size_t moves = history();
 		run(f.client, "project.applyRules",
 			{{"rules", rules(partsAndEvents(), "transform", {action("position", "add", 480)})}});
+		CHECK(history() == moves + 1);
 		CHECK(f.object("audioParts", part).at("position") == held.at("position"));
 		CHECK(f.object("audioEvents", first) == locked);
 		CHECK(inPart(second) == g_beatTicks + (480 * g_tick));
