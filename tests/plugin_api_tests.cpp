@@ -238,7 +238,7 @@ TEST_CASE("an instrument reports its key switches through the plugin wrapper", "
 	const std::unique_ptr<Plugin> synth = factory.create("builtin:testSynth", host);
 	REQUIRE(synth);
 	REQUIRE(synth->init());
-	KeySwitches* keySwitches = extension<KeySwitches>(*synth);
+	auto* keySwitches = extension<KeySwitches>(*synth);
 	REQUIRE(keySwitches != nullptr);
 	const std::vector<KeySwitch> reported = keySwitches->keySwitches();
 	REQUIRE(reported.size() == 2);
