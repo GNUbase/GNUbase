@@ -2620,6 +2620,16 @@ TEST_CASE("the event volume handle at the top middle of an audio event drags the
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 144000; }));
 }
 
+TEST_CASE("the event volume handle works with the draw tool too, instead of adding a curve point", "[unit]")
+{
+	// Reference manual p. 401: the object selection and the draw tool both drag the event volume.
+	Fixture f;
+	f.display.setTool(ui::Tool::Draw);
+	f.drag(225, 3, 225, 13);
+	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
+	CHECK(f.audioEvents()[0].at("volumeCurve").empty());
+}
+
 TEST_CASE("the draw tool adds and drags volume curve points, the erase tool removes them", "[unit]")
 {
 	Fixture f;
@@ -2659,6 +2669,11 @@ TEST_CASE("the draw tool adds and drags volume curve points, the erase tool remo
 	f.click(230, 10);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
 	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 19200);
+
+	// An unselected event shows no points, so the erase tool there removes the event, not a point (#670).
+	f.display.select({});
+	f.click(240, 20);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().empty(); }));
 }
 
 TEST_CASE("volume curve points on a warped event go where its waveform shows their clip frames", "[unit]")

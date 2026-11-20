@@ -286,6 +286,18 @@ TEST_CASE("a volume curve shapes an event's gain sample by sample, for any block
 	checkSamples(moved, [&](int64_t at) { return at >= 4000 ? 0.0 : gain(-6.0) * curveGain(points, at + 2000); });
 }
 
+TEST_CASE("a ramp that ends on a block's edge, where a jump returns to its start, plays in that block", "[integration]")
+{
+	// The block's first frame and the frame after it have the same gain, its last one doesn't (#670).
+	const gnubase::test::TempDir dir;
+	Session session(64);
+	const ObjectId clip = session.addClip(writeOnes(dir, 1000));
+	const ObjectId event = session.addEvent(clip, 0, 256);
+	const std::vector<Point> points = {{0, 0.0, 0.0}, {64, -6.0, 0.0}, {64, 0.0, 0.0}};
+	run(session.client, "audioEvent.setVolumeCurve", {{"event", event}, {"points", pointsJson(points)}});
+	checkSamples(session.render(256), [&](int64_t at) { return curveGain(points, at); });
+}
+
 TEST_CASE("glue keeps how split events played, whatever their volumes differ by", "[integration]")
 {
 	const gnubase::test::TempDir dir;

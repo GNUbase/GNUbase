@@ -185,6 +185,9 @@ namespace gnubase::ui
 
 	bool EventDisplay::eraseCurvePoint(const Shown& shown, double x, double y)
 	{
+		// Only selected events show their points (showVolume), so only theirs can be erased (#670).
+		if (!std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+			return false;
 		const std::optional<size_t> point = curvePointAt(shown, x, y);
 		if (!point)
 			return false;
