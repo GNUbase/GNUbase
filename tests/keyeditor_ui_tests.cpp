@@ -1433,6 +1433,45 @@ TEST_CASE("the transpose palette and the info line edit the selected notes", "[u
 	CHECK(f.note(ids[1]).at("pitch") == 64);
 }
 
+TEST_CASE("Up and Down transpose the selected notes, Delete and Backspace delete them", "[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids =
+		f.add({{0, 60, g_quarter}, {g_quarter, 64, g_quarter}, {2 * g_quarter, 67, g_quarter}});
+	f.click(of(noteSelector(ids[0])));
+	f.click(of(noteSelector(ids[1])), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
+	// By a semitone, with Shift by an octave (p. 1214).
+	f.app.ui().key(f.window, "Up");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).at("pitch") == 65; }));
+	f.settle();
+	CHECK(f.note(ids[0]).at("pitch") == 61);
+	f.app.ui().key(f.window, "Shift+Down");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 49; }));
+	f.settle();
+	f.app.ui().key(f.window, "Shift+Up");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 61; }));
+	f.settle();
+	f.app.ui().key(f.window, "Down");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 60; }));
+	f.settle();
+	CHECK(f.note(ids[1]).at("pitch") == 64);
+	CHECK(f.note(ids[2]).at("pitch") == 67);
+
+	// Delete removes the selected notes in one step; after its undo Backspace does too.
+	f.app.ui().key(f.window, "Delete");
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
+	f.settle();
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
+	f.click(of(noteSelector(ids[2])));
+	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{ids[2]}; }));
+	f.app.ui().key(f.window, "Backspace");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[2]).is_null(); }));
+	f.settle();
+	CHECK(f.partNotes().size() == 2);
+}
+
 TEST_CASE("step input and MIDI input in the key editor", "[ui]")
 {
 	Fixture f;
