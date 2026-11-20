@@ -832,7 +832,9 @@ namespace gnubase::ui
 							menu->hover(*item);
 					}
 					else if (auto* menu = dynamic_cast<Menu*>(closestTag(event.GetTargetElement(), "menu")))
+					{
 						menu->moved();
+					}
 					return;
 				}
 				Rml::Element* target = event.GetTargetElement();
