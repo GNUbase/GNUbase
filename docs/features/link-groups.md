@@ -61,13 +61,12 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
 ## Not yet
 
 The Link Group Settings dialog and the mixer toolbar's Link, Edit Link Group Settings, Q-Link, Sus and Abs buttons,
-which need channels selected in the mixer; linking inserts, automation read and write, routing and selection
-(p. 458); the Abs button's absolute instead of relative changes (p. 460): without it the equalizers', the
-dynamics' and the send levels' changes should go on by as much as they moved, as the fader and the pan do, but they go
-on as the values given; Add VCA Track to Selected Tracks and the project's VCA
-folder (pp. 154, 517); the VCA fader's meter of its channels' levels (p. 516); Combine Automation of VCA and Linked
-Channels, and the channels' automation tracks showing the combined curve (pp. 516, 519); VCA mute automation; and
-the display line's pop-up menu (p. 459).
+which need channels selected in the mixer; linking inserts, automation read and write, routing and selection (p. 458);
+the Abs button's absolute instead of relative changes (p. 460): without it the equalizers', the dynamics' and the send
+levels' changes should go on by as much as they moved, as the fader and the pan do, but they go on as the values given;
+Add VCA Track to Selected Tracks and the project's VCA folder (pp. 154, 517); the VCA fader's meter of its channels'
+levels (p. 516); Combine Automation of VCA and Linked Channels, and the channels' automation tracks showing the combined
+curve (pp. 516, 519); VCA mute automation; and the display line's pop-up menu (p. 459).
 
 ## Checks
 

@@ -57,7 +57,8 @@ namespace gnubase::engine
 
 		// Gives a channel the copied settings: its inserts are copies of the copied ones, and a send keeps its
 		// destination only where the channel may send, and only in the project it was copied in, as ids start again in
-		// every project.
+		// every project. Its level stays below the project's fader top, which can be lower than the one it was copied
+		// under.
 		void pasteSettings(const ProjectModel& model, Project& project, CommandContext& context, ObjectId id,
 			const ChannelClipboard& clipboard)
 		{
@@ -65,10 +66,13 @@ namespace gnubase::engine
 			channel.sections = clipboard.sections;
 			channel.sends = clipboard.sends;
 			for (Send& send : channel.sends)
+			{
+				send.level = std::clamp(send.level, g_minChannelVolume, project.maxVolume);
 				if (send.destination != 0 &&
 					(clipboard.project != model.openedRevision() || project.channels.count(send.destination) == 0 ||
 						!isSendDestination(project, send.destination) || routingLoops(project, id, send.destination)))
 					send.destination = 0;
+			}
 			replaceSlots(project, context, id, clipboard.slots);
 			context.emit("channel.changed", {{"channel", toJson(channel)}});
 			for (const ObjectId slot : channel.slots)
@@ -147,9 +151,9 @@ namespace gnubase::engine
 					what +
 					". Their inserts are replaced by copies of the copied ones, the automation of the plugins they "
 					"had goes with them. A send keeps its destination only if the channel may send there, so not to "
-					"itself and never in a loop, and only in the project it was copied in. Emits channel.changed, "
-					"plugin.removed and plugin.added. Returns the "
-					"channels.",
+					"itself and never in a loop, and only in the project it was copied in, and its level stays below "
+					"the project's maxVolume. Emits channel.changed, automationLane.removed, plugin.removed and "
+					"plugin.added. Returns the channels.",
 				{{"type", "object"},
 					{"properties", {{"channels", {{"type", "array"}, {"items", idSchema}, {"minItems", 1}}}}},
 					{"required", {"channels"}}, {"additionalProperties", false}},

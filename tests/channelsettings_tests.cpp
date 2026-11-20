@@ -189,14 +189,18 @@ TEST_CASE("channel.pasteSettings removes the replaced plugins' automation and dr
 	CHECK(channelJson(client, second).at("sends").at(0).at("level") == -6.0);
 
 	// Ids start again in another project, so a destination copied in one project means nothing in the next: the
-	// sends lose it there, the rest is pasted.
+	// sends lose it there, even where the new project has a channel of that id, and a level above the new project's
+	// fader top comes down to it; the rest is pasted.
+	run(client, "project.set", {{"maxVolume", 12.0}});
+	run(client, "channel.set", {{"channel", source}, {"sends", {{{"send", 1}, {"level", 10.0}}}}});
+	run(client, "channel.copySettings", {{"channel", source}});
 	run(client, "project.new");
 	const ObjectId other = add(client, "audio");
 	add(client, "effect");
-	add(client, "effect");
+	CHECK(add(client, "effect") == first);
 	run(client, "channel.pasteSettings", {{"channels", {other}}});
 	CHECK(channelJson(client, other).at("sends").at(0).at("destination") == 0);
-	CHECK(channelJson(client, other).at("sends").at(0).at("level") == -6.0);
+	CHECK(channelJson(client, other).at("sends").at(0).at("level") == 6.0);
 }
 
 TEST_CASE("link groups link the equalizers, the dynamics and the sends", "[unit]")
