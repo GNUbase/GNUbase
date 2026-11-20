@@ -477,14 +477,16 @@ namespace gnubase::engine
 
 		// Solo Instrument (p. 1223): the selected notes of the open drum editors that have it on, as editor.get has
 		// them now. The render snapshot solos them on the tracks with a drum map, also one assigned after they were
-		// selected.
+		// selected. current() never opens a view or turns on the drum editor or Solo Instrument, so the stored view
+		// rules out the others before current() costs a copy, the parts ordered and the selection filtered on every edit.
 		std::vector<std::pair<ObjectId, ObjectId>> soloNotes(const Views& views, const ProjectModel& model)
 		{
 			std::vector<std::pair<ObjectId, ObjectId>> notes;
-			for (const auto& stored : views)
-				if (const EditorView view = current(views, model, stored.first);
-					view.open && view.content == "drum" && view.soloInstrument)
-					notes.insert(notes.end(), view.selection.begin(), view.selection.end());
+			for (const auto& [name, stored] : views)
+				if (stored.open && stored.content == "drum" && stored.soloInstrument)
+					if (const EditorView view = current(views, model, name);
+						view.open && view.content == "drum" && view.soloInstrument)
+						notes.insert(notes.end(), view.selection.begin(), view.selection.end());
 			std::sort(notes.begin(), notes.end());
 			notes.erase(std::unique(notes.begin(), notes.end()), notes.end());
 			return notes;
