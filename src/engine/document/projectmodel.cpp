@@ -4156,11 +4156,12 @@ namespace gnubase::engine
 				"into it unless embedMedia is false; then the file refers to them where they are, relative to itself "
 				"if they are in its folder. One that is missing is referred to by its absolute path, so that the file "
 				"has no copy of it: the result lists them (missing). The file becomes the first of the recent "
-				"projects (project.recent). Media and freeze files in the folder where a project without a file "
-				"records, freezes and converts imported files to, as after the first save of such a project, are then "
-				"copied into the media and Freeze folders as a job, returned as job (null without one) with the "
-				"result media.prepareArchive's job has; the media and frozen tracks are pointed at the copies as an "
-				"undo step of its own, which the next save keeps.",
+				"projects (project.recent). The files a project records, converts on import, renders, flattens and "
+				"freezes while it has no file go into one folder outside any project; the save after that copies "
+				"those still in it into the project's media and Freeze folders as a job, returned as job (null "
+				"without one, and while an earlier save's copies still run) with the result media.prepareArchive's "
+				"job has, and points the media and frozen tracks at the copies as an undo step of its own, which "
+				"the next save keeps.",
 				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}),
 				objectSchema(
 					{{"missing", {{"type", "array"}, {"items", stringSchema}}}, {"job", saveJob}}, {"missing", "job"}),
@@ -4184,9 +4185,11 @@ namespace gnubase::engine
 				}
 				saved(std::filesystem::absolute(std::filesystem::u8path(path)).u8string(), context);
 				// What the project recorded and converted while it had no file goes into its media folder (reference
-				// manual p. 360), as media.prepareArchive does it.
+				// manual p. 360), as media.prepareArchive does it: once, so a save while the copies run starts none
+				// (the next one copies what is left), and not from a project folder inside that folder.
 				std::vector<MediaCopy> recordings;
-				if (const std::filesystem::path unsaved = unsavedMediaFolder(m_settingsDirectory); !unsaved.empty())
+				if (const std::filesystem::path unsaved = unsavedMediaFolder(m_settingsDirectory);
+					!unsaved.empty() && !jobs.runs("project.save") && !isInside(m_file, unsaved))
 				{
 					for (const auto& [id, media] : m_project.media)
 						if (isInside(media.path, unsaved))

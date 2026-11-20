@@ -161,6 +161,13 @@ namespace gnubase::engine
 			{"required", {"id", "kind", "state", "progress", "detail", "result", "error"}}};
 	}
 
+	bool Jobs::runs(const std::string& kind) const
+	{
+		const std::scoped_lock lock(m_mutex);
+		return std::any_of(m_jobs.begin(), m_jobs.end(),
+			[&kind](const auto& entry) { return entry.second->kind == kind && entry.second->state == "running"; });
+	}
+
 	bool Jobs::writesInto(const std::filesystem::path& folder) const
 	{
 		const std::string wanted = comparable(folder);

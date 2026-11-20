@@ -39,26 +39,28 @@ transport's record state and the record mode setting.
   whatever its case and extension: `CON_.wav`, `lpt1_.take.wav`), into the project's media folder `Audio`; an unsaved
   project records into `Recordings` in the settings folder (the temporary folder without one; `unsavedMediaFolder`,
   where its imported MP3 and Ogg Vorbis files are converted too, [file-import.md](file-import.md)), and its files are
-  referenced from there until it is saved: `project.save` then copies them into its media folder as a job and points
-  the media at the copies as an undo step of its own (#611). Without a settings and a temporary folder the recording
-  fails with `recording.failed` and writes no file. A name that differs only in case from a file in the folder, or from another track's, counts as
-  taken on every file system, also on those that tell them apart, so that the files can be copied to one that doesn't
-  (`createFreeFile`). One listing of the folder when a recording starts finds the free names of all tracks; a file made
-  after it is still found when the file is created, and a file whose name can't be read as text (an invalid UTF-16 name
-  on Windows) doesn't count. The format comes from one function, `recordFormat`: the project setup's record file type
-  and bit depth ([project-setup.md](project-setup.md), p. 342) at the project's sample rate, read when a recording
-  starts. Wave and Broadcast Wave files end in `.wav`, AIFF in `.aif`, FLAC in `.flac`. A Broadcast Wave file has a bext
-  chunk with the track name as its description (cut to the field's 256 bytes between two UTF-8 characters), GNUbase as
-  its originator, the local date and time the recording started, and as its time reference the position of the file's
-  first frame (pre-recorded input included) plus the project's start time, in samples since midnight. The time
-  reference doesn't wrap at midnight: a file that starts past 24 h counts on, as the 64-bit field allows, and a
-  pre-record that reaches back before 0:00:00 gives 0. File names are cut to 200 bytes in the same way, so a long track
-  name still fits the file systems' 255. A file is complete once the recording ends; after a crash the frames written
-  so far are in it, as the reference describes (p. 347): until a WAV or AIFF file is closed, its RIFF or FORM size and
-  its data or SSND size are 0xFFFFFFFF, which readers take as "up to the end of the file", and a FLAC file's STREAMINFO
-  has no sample count, for which the FLAC reader counts the frames that decode. A writer opens its file for others to
-  read along. Tests: `tests/audiofile_tests.cpp` (a file that was never closed), `tests/recording_tests.cpp` (formats,
-  the Broadcast Wave chunk and the time reference).
+  referenced from there until it is saved: `project.save` then copies them into its media folder as a job and points the
+  media at the copies as an undo step of its own (#611), as it does with the files the project rendered, flattened and
+  froze meanwhile. One save's copies at a time: a save while they run starts none, and a project saved into that folder
+  itself copies nothing. Without a settings and a temporary folder, or when the folder can't be made, the recording
+  fails with `recording.failed` once and writes no file. A name that differs only in case from a file in the folder, or
+  from another track's, counts as taken on every file system, also on those that tell them apart, so that the files can
+  be copied to one that doesn't (`createFreeFile`). One listing of the folder when a recording starts finds the free
+  names of all tracks; a file made after it is still found when the file is created, and a file whose name can't be read
+  as text (an invalid UTF-16 name on Windows) doesn't count. The format comes from one function, `recordFormat`: the
+  project setup's record file type and bit depth ([project-setup.md](project-setup.md), p. 342) at the project's sample
+  rate, read when a recording starts. Wave and Broadcast Wave files end in `.wav`, AIFF in `.aif`, FLAC in `.flac`. A
+  Broadcast Wave file has a bext chunk with the track name as its description (cut to the field's 256 bytes between two
+  UTF-8 characters), GNUbase as its originator, the local date and time the recording started, and as its time reference
+  the position of the file's first frame (pre-recorded input included) plus the project's start time, in samples since
+  midnight. The time reference doesn't wrap at midnight: a file that starts past 24 h counts on, as the 64-bit field
+  allows, and a pre-record that reaches back before 0:00:00 gives 0. File names are cut to 200 bytes in the same way, so
+  a long track name still fits the file systems' 255. A file is complete once the recording ends; after a crash the
+  frames written so far are in it, as the reference describes (p. 347): until a WAV or AIFF file is closed, its RIFF or
+  FORM size and its data or SSND size are 0xFFFFFFFF, which readers take as "up to the end of the file", and a FLAC
+  file's STREAMINFO has no sample count, for which the FLAC reader counts the frames that decode. A writer opens its
+  file for others to read along. Tests: `tests/audiofile_tests.cpp` (a file that was never closed),
+  `tests/recording_tests.cpp` (formats, the Broadcast Wave chunk and the time reference).
 - **Takes.** A file holds everything recorded from the start of the recording to its end. Each run of consecutive
   project positions is a take: a cycle lap, or what was recorded between punching in and out (`transport.record` with
   `record: false` or a punch out at the right locator ends a recording, and recording again or a punch in at the left

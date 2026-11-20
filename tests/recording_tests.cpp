@@ -1182,7 +1182,10 @@ TEST_CASE("a recording without a folder it can record into fails once and writes
 	using namespace std::chrono_literals;
 	namespace engine = gnubase::engine;
 	const gnubase::test::TempDir dir;
-	std::filesystem::path folder; // none, as without a settings or temporary folder
+	std::filesystem::path folder;
+	SECTION("none, as without a settings or a temporary folder")
+	{
+	}
 	SECTION("a file where the folder would be")
 	{
 		folder = dir.path() / "file";
@@ -1283,11 +1286,27 @@ TEST_CASE("the first save of a project copies its recordings into the project's 
 	const std::filesystem::path recording = std::filesystem::u8path(pathOf(client, events[0]));
 	CHECK(recording.parent_path() == dir.path() / "settings" / "Recordings");
 
-	const Json saved = run(client, "project.save", {{"path", (dir.path() / "Song.dawproject").u8string()}});
-	REQUIRE(saved.at("job").is_object());
-	REQUIRE(gnubase::test::waitForJob(client, saved.at("job").at("id").get<uint64_t>()).at("state") == "done");
-	CHECK(pathOf(client, events[0]) == (dir.path() / "Audio" / recording.filename()).u8string());
-	CHECK(channelOf(pathOf(client, events[0]), 0) == channelOf(recording.u8string(), 0));
+	SECTION("once, also when it is saved again meanwhile")
+	{
+		gnubase::test::HeldJob held(engine, "project.save");
+		const Json saved = run(client, "project.save", {{"path", (dir.path() / "Song.dawproject").u8string()}});
+		REQUIRE(saved.at("job").is_object());
+		REQUIRE(held.waitUntilHeld());
+		CHECK(run(client, "project.save").at("job").is_null()); // the copies run already
+		REQUIRE(held.release());
+		REQUIRE(gnubase::test::waitForJob(client, saved.at("job").at("id").get<uint64_t>()).at("state") == "done");
+		const std::filesystem::path audio = dir.path() / "Audio";
+		CHECK(pathOf(client, events[0]) == (audio / recording.filename()).u8string());
+		CHECK(channelOf(pathOf(client, events[0]), 0) == channelOf(recording.u8string(), 0));
+		CHECK(!std::filesystem::exists(audio / (recording.stem().u8string() + "-2.wav")));
+	}
+
+	SECTION("but not into a project folder inside the recordings folder")
+	{
+		const std::filesystem::path inside = recording.parent_path() / "Song.dawproject";
+		CHECK(run(client, "project.save", {{"path", inside.u8string()}}).at("job").is_null());
+		CHECK(pathOf(client, events[0]) == recording.u8string());
+	}
 }
 
 TEST_CASE("a recording that adds nothing leaves the project unmodified (#546)", "[integration]")

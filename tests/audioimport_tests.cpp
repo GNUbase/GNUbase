@@ -15,7 +15,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -150,31 +149,6 @@ namespace
 		FAIL_CHECK("no " << id);
 		return {};
 	}
-
-	// Makes the temporary folder folder while it lives, as testrun_tempfolder.cpp does for the whole run.
-	class TempFolderAt
-	{
-	public:
-		explicit TempFolderAt(const fs::path& folder) : m_previous(fs::temp_directory_path()) { set(folder); }
-		~TempFolderAt() { set(m_previous); }
-		TempFolderAt(const TempFolderAt&) = delete;
-		TempFolderAt& operator=(const TempFolderAt&) = delete;
-		TempFolderAt(TempFolderAt&&) = delete;
-		TempFolderAt& operator=(TempFolderAt&&) = delete;
-
-	private:
-		static void set(const fs::path& folder)
-		{
-#ifdef _WIN32
-			_wputenv_s(L"TMP", folder.c_str());
-			_wputenv_s(L"TEMP", folder.c_str());
-#else
-			setenv("TMPDIR", folder.c_str(), 1);
-#endif
-		}
-
-		fs::path m_previous;
-	};
 
 	// An engine with a saved project, so that imports can copy and convert into its media folder.
 	struct SavedProject
@@ -481,7 +455,7 @@ TEST_CASE("audioFile.import refuses MP3 files of an unsaved project without a fo
 	const test::TempDir dir;
 	const fs::path file = dir.path() / "not a folder";
 	REQUIRE(std::ofstream(file) << "a file");
-	const TempFolderAt temporary(file); // and there is no settings folder
+	const test::TempFolderAt temporary(file); // and there is no settings folder
 	Engine engine;
 	Client client(engine);
 	const Json before = run(client, "project.get");
