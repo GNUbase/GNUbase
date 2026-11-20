@@ -1582,6 +1582,12 @@ namespace gnubase::app
 	{
 		if (fill)
 			root.SetInnerRML(readText(m_resources / "ui" / "transport.rml"));
+		// The dividers only count where sections go for lack of room, the transport bar (reference manual p. 307);
+		// the transport panel takes its sections' width and has none.
+		if (fill && !root.HasAttribute("fit"))
+			for (int i = root.GetNumChildren() - 1; i >= 0; --i)
+				if (root.GetChild(i)->HasAttribute("divider"))
+					root.RemoveChild(root.GetChild(i));
 		const ui::WindowId id = window.id();
 		auto controls = std::make_unique<ui::TransportControls>(
 			m_engine, m_binding, root,

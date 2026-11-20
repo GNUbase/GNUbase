@@ -402,20 +402,37 @@ namespace gnubase::ui
 				changed = true;
 			}
 		};
-		std::vector<Rml::Element*> sections; // the shown ones before the spacer, which can go
+		// A shown divider keeps the sections on its side shown (reference manual p. 65): divider="left" those before
+		// it, divider="right" those after it. The others before the spacer can go.
+		const int count = container.GetNumChildren();
+		int first = 0;
+		int end = count;
+		for (int i = 0; i < count; ++i)
+			if (const Rml::Element* child = container.GetChild(i); !child->IsClassSet("hidden"))
+			{
+				const std::string divider = attribute(*child, "divider");
+				if (divider == "left")
+					first = i + 1;
+				else if (divider == "right" && end == count)
+					end = i;
+			}
+		std::vector<Rml::Element*> sections; // the shown ones that can go
 		float room = container.GetBox().GetSize(Rml::BoxArea::Content).x;
 		bool beforeSpacer = true;
-		for (int i = 0; i < container.GetNumChildren(); ++i)
+		for (int i = 0; i < count; ++i)
 		{
 			Rml::Element* child = container.GetChild(i);
 			const bool section = child->HasAttribute("section");
+			const bool canGo = beforeSpacer && i >= first && i < end;
+			const Rml::Style::ComputedValues& computed = child->GetComputedValues();
 			if (child->IsClassSet("spacer"))
 				beforeSpacer = false;
-			else if (section && beforeSpacer && !child->IsClassSet("hidden"))
+			else if (section && canGo && !child->IsClassSet("hidden"))
 				sections.push_back(child);
-			else if (child->GetComputedValues().display() != Rml::Style::Display::None)
+			else if (computed.display() != Rml::Style::Display::None &&
+				(section || computed.position() != Rml::Style::Position::Absolute)) // not an open menu over it
 				room -= width(*child);
-			if (section && (child->IsClassSet("hidden") || !beforeSpacer))
+			if (section && (child->IsClassSet("hidden") || !canGo))
 			{
 				setNoRoom(*child, false);
 				for (Rml::Element* spare : elements(*child, "[fit=spare]"))

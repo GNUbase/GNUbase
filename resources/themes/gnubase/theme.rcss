@@ -1481,6 +1481,10 @@
 	{
 		background-color: #10dff2;
 	}
+	.transport-divider
+	{
+		background-color: #303754;
+	}
 	.quantize-display
 	{
 		background-color: #101426;

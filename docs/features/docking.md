@@ -118,7 +118,10 @@ every Reset All, also of a set that had its defaults, so the app can fit the win
   shown sections before the spacer that don't fit the state class `.no-room`, the last of the order first, so the
   user's order says what goes first and a section hidden in the setup pane makes room for the next one. The style
   takes a section with `.no-room` out of the flow and doesn't show it (`resources/styles/base.rcss`), but lays it out,
-  so its width, with its labels as they are now, says when it fits again. The section after the spacer always shows.
+  so its width, with its labels as they are now, says when it fits again. The section after the spacer always shows,
+  and so do the sections outside a shown divider (p. 65): a section with `divider="left"` keeps those before it,
+  one with `divider="right"` those after it, such as the transport bar's ([transport-bar.md](transport-bar.md)).
+  An element out of the flow that isn't a section, such as an open setup pane inside the container, takes no room.
   So the room, not a fixed width, decides: at another UI scale, with wider labels such as the snap type Events + Grid
   + Cursor, and after the setup pane hid sections. Parts of sections with `fit="spare"`, such as the quantize
   section's Warp Quantize On/Off ([audio-quantize.md](audio-quantize.md)), go before any section does, the last one
@@ -223,7 +226,7 @@ and a panel in a window of its own, whose document has no zones. Ctrl+Tab, Alt+T
 ## Not yet
 
 Removing and renaming setup pane presets; the setup panes of the editors' toolbars and info lines (p. 1575: the key,
-drum, list, audio part and in-place editors), which have no sections yet; the toolbar's Left and Right Divider (p. 65), which would keep the sections outside them shown. Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
+drum, list, audio part and in-place editors), which have no sections yet; the toolbar's Left and Right Divider (p. 65), sections with `divider` as the transport bar has. Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
 with the channel strip (#107), shown as its zone's one tab until then; a theme look for tabs at the bottom, whose
 active tab has its marker on the side away from the panels; dragging a tab out of its zone to open it in a window; the
 editor in the lower zone taking the focus when it opens (p. 100), once editors open there; and after live reload, what

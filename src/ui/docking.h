@@ -67,6 +67,8 @@ namespace gnubase::ui
 	//                                 sections before its .spacer that don't fit in its width get the state class
 	//                                 .no-room, the last first, and show again once it has room for them. Its style
 	//                                 must keep the widths they need, so they stay laid out, out of the flow
+	//   divider="left|right"          a section of a fit="room" container that, while shown, keeps the sections
+	//                                 before it (left) or after it (right) shown, as the reference's dividers
 	//   fit="spare"                   an element in a section of a fit="room" container that goes before any
 	//                                 section does, the last one first: it gets .no-room while the sections fit only
 	//                                 without it, and its style keeps its width the same way

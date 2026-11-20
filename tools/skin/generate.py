@@ -1166,6 +1166,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
         (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
         (".history .history-separator", {"background-color": c["accent"]}),
+        # The transport bar's Left and Right Divider (docs/features/transport-bar.md)
+        (".transport-divider", {"background-color": c["border"]}),
         # The quantize panel's grid display (docs/features/quantize.md): the grid positions and the catch range around
         # them
         (".quantize-display", {"background-color": c["surface"]}),

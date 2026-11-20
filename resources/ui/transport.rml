@@ -4,7 +4,9 @@
      ui::TransportControls drives the controls by their command, state, time and field attributes. The sections come
      in the transport bar's order; the element they go into is a container of the set of sections "transport", whose
      context menu is the setup pane #transport-setup (docs/features/docking.md). Tap Tempo's own context menu is the
-     Tap Tempo Mode menu #tap-tempo-mode-menu (docs/features/tempo-track.md). -->
+     Tap Tempo Mode menu #tap-tempo-mode-menu (docs/features/tempo-track.md). The Left and Right Divider (pp. 307, 310)
+     keep the sections outside them shown in a transport bar too narrow for all; the transport panel has none. -->
+<div class="transport-section transport-divider" section="leftDivider" label="Left Divider" title="Left Divider" divider="left" default="hidden"/>
 <div class="transport-section" section="locators" label="Locators" title="Locators">
 	<button id="go-to-left" command="transport.locate" parameters='{"target": "leftLocator"}' title="Go to Left Locator Position">L</button>
 	<textdisplay id="left-locator" class="display" time="left" title="Left Locator Position"/>
@@ -42,6 +44,7 @@
 	<button id="tap-tempo" class="icon-only" field="tap" contextmenu="tap-tempo-mode-menu" title="Tap Tempo"><svg class="icon" src="../icons/transport-tap-tempo.svg"/></button>
 	<textdisplay id="signature" class="display" field="signature" title="Time Signature"/>
 </div>
+<div class="transport-section transport-divider" section="rightDivider" label="Right Divider" title="Right Divider" divider="right" default="hidden"/>
 <div class="transport-section" section="click" label="Click" title="Click">
 	<button id="metronome" class="icon-only" command="transport.toggle" parameters='{"setting": "metronome"}' state="metronome" title="Activate Metronome Click"><svg class="icon" src="../icons/transport-metronome.svg"/></button>
 </div>
