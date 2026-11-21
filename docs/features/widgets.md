@@ -20,10 +20,14 @@ so every document in the app and in UI tests has them.
 
 - `<button>` is clicked with the mouse, or with Space or Enter while it has the focus. With the `disabled` attribute it
   gets `:disabled`, takes no focus, and clicks pass through it. `button.primary`, `button.icon-only` and the small
-  track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme. Buttons in a
-  `.toolbar` (the project window's, the mixer's, the pool's) and in the transport controls (`.transport`) are for the
-  mouse, as in the reference (reference manual pp. 295-311): a click focuses them, but Tab skips them and Space and
-  Enter go on to the key commands, so Space still starts and stops playback after a click on Cycle or Snap (#456).
+  track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme. Buttons outside
+  dialogs are for the mouse, as in the reference (reference manual pp. 295-311): those in a `.toolbar` (the project
+  window's, the mixer's, the pool's, the markers window's and the panel windows'), in the transport controls
+  (`.transport`), in the track list, the inspector's track buttons, the mixer's channels, a zone's Close button and the
+  ruler's format button. A click focuses them, but Tab skips them and Space, Enter and NumEnter go on to the key
+  commands, so Space still starts and stops playback after a click on Cycle, Snap or a track's Mute or Solo (#456,
+  #653). Setup panes (`.setup-pane`), also those of a toolbar or the transport controls, keep Tab, Space and Enter for
+  their buttons.
 - `<button type="toggle">` is a toggle button: a click turns it on or off. Its state is the `checked` attribute, as
   for check boxes, shown by the state class `.checked`; it sends `change` with the new state as a bool, so
   `data-checked="muted"` binds it.
@@ -49,7 +53,8 @@ Widgets with a number share their behaviour (reference manual p. 1598, "Editing 
   data binding sets meanwhile, such as the engine's answer to an earlier step of the drag, doesn't move it, and the
   drag goes on from where the mouse put it; when the drag ends, the widget shows the last value set during it, unless
   the drag changed the value after that (#716, [ui-engine-binding.md](ui-engine-binding.md)). A value set while
-  `change` is handled, such as the change rounded, is the drag's.
+  `change` is handled, such as the change rounded, is the drag's. The drag goes on from its unrounded value, so a
+  document that rounds each change to a step doesn't hold back mouse moves smaller than half a step (#691).
 - `disabled` gives `:disabled` and ignores the user.
 
 The widgets:
