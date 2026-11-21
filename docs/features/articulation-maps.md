@@ -288,10 +288,11 @@ the notes played into a track, which aren't known to end yet; Sound Slot event c
 editors' event colors menu (p. 1133, [colors.md](colors.md)); the slot actions Rename and Reset Color (the slots'
 names and colors are typed or set through `articulationMap.set`), the keyboard preview and assigning triggers from a
 MIDI keyboard; the sound slot actions as a menu and Transpose All and Reassign All as dialogs of their own (they are
-rows of the setup); changing several maps' remote trigger mode and latch at once; Import Key Switches from the track's running
-instrument and from plugins, which waits for instrument tracks that host plugins (#73): the `KeySwitches` extension
-already reaches plugins in host processes and VST3's `IKeyswitchController` (#1988), but the import asks a new
-instance of the track's built-in instrument; the Add Map dialog with the map's name; importing the reference's own files and other applications' maps.
+rows of the setup); changing several maps' remote trigger mode and latch at once; Import Key Switches from the
+track's running instrument and from plugins, which waits for instrument tracks that host plugins (#73): the
+`KeySwitches` extension already reaches plugins in host processes and VST3's `IKeyswitchController` (#1988), but the
+import asks a new instance of the track's built-in instrument; the Add Map dialog with the map's name; importing the
+reference's own files and other applications' maps.
 
 ## Checks
 
@@ -382,9 +383,10 @@ instance of the track's built-in instrument; the Add Map dialog with the map's n
   whose slots share a channel of their own, alternating slots, sending their slot and add-on there again each time
   (#1744). Import Key Switches (#1114): the directions and slots of the test synth's key switches, one undo step, a MIDI
   track's instrument, the settings given changing the imported map, and the refusals (an instrument without key
-  switches, no track, a MIDI track that plays none). `tests/vst3_adapter_tests.cpp` checks the `KeySwitches`
-  extension of the adapter test plugin's `IKeyswitchController`, which follow the program it loaded, in the test
-  process and through a plugin host process after a program change, and none for a plugin without one (#1988).
+  switches, no track, a MIDI track that plays none). `tests/vst3_adapter_tests.cpp` checks the key switches that the
+  `KeySwitches` extension gives for the adapter test plugin's `IKeyswitchController`, which follow the program it
+  loaded and leave out a key outside 0-127, in the test process and through a plugin host process after a program
+  change, and no extension for a plugin without one (#1988).
   `tests/midi_tests.cpp` and `tests/sequencing_tests.cpp` check the chased key switches, and
   `tests/sequencing_tests.cpp` a jump with the chase limited to parts into a part that continues the slot of the part
   before it (#1521), and a MIDI track heard again there after it was disabled (#1600); `tests/midi_tests.cpp` the

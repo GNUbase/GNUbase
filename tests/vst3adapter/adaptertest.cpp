@@ -808,24 +808,28 @@ namespace
 		}
 
 		// IKeyswitchController, on every channel of the event input: Sustain (key 24), Staccato (25) and Pizzicato
-		// (26), as many of them as the program's number, from Init's 1 to Quiet's 3.
+		// (26), as many of them as the program's number, from Init's 1 to Quiet's 3, and after them Unplayable at key
+		// 128, outside MIDI's keys, with every program.
 		vst::int32 PLUGIN_API getKeyswitchCount(vst::int32 bus, vst::int16 /*channel*/) override
 		{
-			return bus == 0 ? programIndex(m_values[Program]) + 1 : 0;
+			return bus == 0 ? programIndex(m_values[Program]) + 2 : 0;
 		}
 
 		tresult PLUGIN_API getKeyswitchInfo(
 			vst::int32 bus, vst::int16 channel, vst::int32 index, sv::KeyswitchInfo& info) override
 		{
 			static constexpr std::array<const char*, 3> names{"Sustain", "Staccato", "Pizzicato"};
-			if (index < 0 || index >= getKeyswitchCount(bus, channel))
+			const vst::int32 count = getKeyswitchCount(bus, channel);
+			if (index < 0 || index >= count)
 				return kResultFalse;
+			const bool unplayable = index == count - 1;
+			const char* name = unplayable ? "Unplayable" : names[static_cast<size_t>(index)];
 			info = {};
 			info.typeId = sv::kNoteOnKeyswitchTypeID;
-			copy(info.title, names[static_cast<size_t>(index)]);
-			copy(info.shortTitle, names[static_cast<size_t>(index)]);
-			info.keyswitchMin = 24 + index;
-			info.keyswitchMax = 24 + index;
+			copy(info.title, name);
+			copy(info.shortTitle, name);
+			info.keyswitchMin = unplayable ? 128 : 24 + index;
+			info.keyswitchMax = info.keyswitchMin;
 			info.keyRemapped = -1;
 			return kResultOk;
 		}

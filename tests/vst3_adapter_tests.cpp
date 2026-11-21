@@ -1018,7 +1018,8 @@ namespace
 		return result;
 	}
 
-	// The adapter test plugin's key switches with a program: Init has 1, Loud 2 and Quiet 3.
+	// The adapter test plugin's key switches with a program: Init has 1, Loud 2 and Quiet 3. The plugin also reports
+	// Unplayable at key 128 with every program, which the adapter leaves out, as it is no MIDI key.
 	std::vector<std::pair<std::string, int16_t>> keySwitchesWith(size_t count)
 	{
 		const std::vector<std::pair<std::string, int16_t>> all{{"Sustain", 24}, {"Staccato", 25}, {"Pizzicato", 26}};
