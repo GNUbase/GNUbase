@@ -487,10 +487,12 @@ TEST_CASE("Alt-click on a track's color strip or the inspector's Basics header c
 	REQUIRE(window.app.waitUntil([&] { return window.project().at("tracks")[1].at("color") == "#2040e0"; }));
 	CHECK(window.project().at("tracks")[0].at("color") == "#e04020");
 
-	// The theme stretches a selected, colored track's strip across its row: right of the name it opens no pane.
+	// The theme stretches a selected, colored track's strip across its row: right of the name it opens no pane. The
+	// track list learns the color from the engine's event, after project.get already answers with it.
+	const std::string row = "#track-list listitem[value=\"" + std::to_string(midi) + "\"]";
+	REQUIRE(window.app.waitUntil([&] { return window.find(row + " .track-color[color=\"#2040e0\"]") != nullptr; }));
 	window.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE_FALSE(open());
-	const std::string row = "#track-list listitem[value=\"" + std::to_string(midi) + "\"]";
 	Rml::Element* strip = window.find(row + " .track-color");
 	name = window.find(row + " .track-name");
 	REQUIRE(strip != nullptr);
