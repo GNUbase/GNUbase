@@ -161,6 +161,23 @@ namespace gnubase::plugin::remote
 			reply.f64(value);
 			return true;
 		}
+		case Message::KeySwitches:
+		{
+			auto* keySwitches = gnubase::plugin::extension<KeySwitches>(plugin);
+			if (keySwitches == nullptr)
+			{
+				error = "the plugin has no key switches";
+				return false;
+			}
+			const std::vector<KeySwitch> list = keySwitches->keySwitches();
+			reply.u32(static_cast<uint32_t>(list.size()));
+			for (const KeySwitch& each : list)
+			{
+				reply.string(each.name);
+				reply.u16(static_cast<uint16_t>(each.key));
+			}
+			return true;
+		}
 		case Message::FlushParams:
 		{
 			// The audio thread flushes while the plugin processes (Params::flushParams); never both at once.
