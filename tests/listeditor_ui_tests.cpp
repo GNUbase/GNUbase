@@ -950,3 +950,33 @@ TEST_CASE("another button pressed and released during a move doesn't end it", "[
 	CHECK(f.event("notes", f.high).at("position") == g_quarter);
 	CHECK(f.steps() == before + 1);
 }
+
+TEST_CASE("Delete and Backspace delete the selected events, but not while a value is typed", "[ui]")
+{
+	Fixture f;
+	// Delete removes the selected note and controller event in one undo step (pp. 1255, 1258).
+	f.click(of(row("note", f.low) + " .list-type"));
+	f.click(of(row("controller", f.events[0]) + " .list-type"), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("controllerSelection").size() == 1; }));
+	REQUIRE(f.view().at("selection").size() == 1);
+	const size_t before = f.steps();
+	f.app.ui().key(f.window, "Delete");
+	REQUIRE(f.app.waitUntil([&] { return f.types().size() == 6; }));
+	CHECK(f.event("notes", f.low).is_null());
+	CHECK(f.event("controllers", f.events[0]).is_null());
+	CHECK(f.event("notes", f.high) != nullptr);
+	CHECK(f.steps() == before + 1);
+
+	// Backspace while a value is typed edits the text; once the SysEx message is selected, it deletes the message.
+	const std::string sysEx = row("controller", f.events[5]);
+	f.click(of(sysEx + " textdisplay[field=start]"), 2);
+	f.app.ui().key(f.window, "Backspace");
+	f.app.ui().key(f.window, "Escape");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click(of(sysEx + " .list-type"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("controllerSelection").size() == 1; }));
+	CHECK(f.event("controllers", f.events[5]) != nullptr);
+	f.app.ui().key(f.window, "Backspace");
+	REQUIRE(f.app.waitUntil([&] { return f.event("controllers", f.events[5]).is_null(); }));
+	CHECK(f.app.waitUntil([&] { return f.types().size() == 5; }));
+}

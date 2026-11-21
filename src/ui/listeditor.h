@@ -131,6 +131,8 @@ namespace gnubase::ui
 		void editField(const Row& edited, const std::string& field, const std::string& typed);
 		void add(int64_t start, int64_t length);
 		void erase(const Row& row);
+		// Deletes the selected events: Delete and Backspace (pp. 1255, 1258).
+		void eraseSelected();
 
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;

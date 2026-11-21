@@ -704,13 +704,14 @@ namespace gnubase::ui
 		m_binding.send("editor.set", std::move(parameters));
 	}
 
-	// Sends the changes, each part's note.set or controller.set: one alone, several in a history.transaction.
+	// Sends the changes, each part's note.* or controller.* command: one alone, several in a history.transaction.
 	void ListEditor::edit(const std::string& description, std::map<std::pair<uint64_t, std::string>, Json> changes)
 	{
 		Json commands = Json::array();
 		for (auto& [key, items] : changes)
 			commands.push_back({{"command", key.second},
-				{"parameters", {{"part", key.first}, {key.second == "note.set" ? "notes" : "controllers", items}}}});
+				{"parameters",
+					{{"part", key.first}, {key.second.rfind("note.", 0) == 0 ? "notes" : "controllers", items}}}});
 		if (commands.size() == 1)
 			m_binding.send(commands[0].at("command").get<std::string>(), commands[0].at("parameters"));
 		else if (!commands.empty())
@@ -839,6 +840,15 @@ namespace gnubase::ui
 			m_binding.send("controller.remove", {{"part", row.part}, {"controllers", Json::array({row.id})}});
 	}
 
+	void ListEditor::eraseSelected()
+	{
+		std::map<std::pair<uint64_t, std::string>, Json> changes;
+		for (const Row* row : selectedRows())
+			if (row->editable)
+				changes[{row->part, row->isNote() ? "note.remove" : "controller.remove"}].push_back(row->id);
+		edit("Delete", std::move(changes));
+	}
+
 	void ListEditor::openArticulationMenu(const Row& row)
 	{
 		m_menuRow.emplace(row.part, row.id);
@@ -926,8 +936,19 @@ namespace gnubase::ui
 		switch (event.GetId())
 		{
 		case Rml::EventId::Keydown:
+		{
 			m_ctrl = ctrl;
+			// While the list editor itself has the focus, not a value being typed, Delete and Backspace delete the
+			// selected events (pp. 1255, 1258) instead of the key commands.
+			const auto key = static_cast<Rml::Input::KeyIdentifier>(event.GetParameter<int>("key_identifier", 0));
+			if (target == m_root.get() && !ctrl && event.GetParameter("alt_key", 0) == 0 &&
+				(key == Rml::Input::KI_DELETE || key == Rml::Input::KI_BACK))
+			{
+				eraseSelected();
+				event.StopPropagation();
+			}
 			break;
+		}
 		case Rml::EventId::Mousedown:
 			if (event.GetParameter("button", 0) == 1 && event.GetCurrentElement() == m_root.get())
 			{
@@ -1056,6 +1077,7 @@ namespace gnubase::ui
 		Rml::Element* target = event.GetTargetElement();
 		if (closest(target, "list-editor-body", root) == nullptr)
 			return;
+		m_root->Focus(); // the list editor takes Delete and Backspace (ProcessEvent's Keydown)
 		const bool modified = event.GetParameter("shift_key", 0) != 0 || event.GetParameter("ctrl_key", 0) != 0 ||
 			event.GetParameter("meta_key", 0) != 0;
 		const Row* row = rowOf(target);
