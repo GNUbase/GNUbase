@@ -665,7 +665,8 @@ namespace gnubase::app
 										openDialog(m_main, "rule-editor.rml",
 											{{"target", "track"}, {"track", std::to_string(track)}});
 								});
-						});
+						},
+						[this] { m_shell.post([this] { openArranger(); }); });
 					m_inspector = inspector;
 					return std::shared_ptr<void>(inspector);
 				};
@@ -1822,6 +1823,8 @@ namespace gnubase::app
 				if (m_eventDisplay && m_eventDisplay->range())
 					m_eventDisplay->setRange(std::nullopt);
 			});
+		if (m_trackList)
+			m_trackList->onArrangerEditor([this] { m_shell.post([this] { openArranger(); }); });
 		// The marker tracks' Locate menus select the marker, Shift-click on Add Cycle Marker names the new one.
 		if (m_trackList)
 			m_trackList->onMarker(
@@ -1941,6 +1944,14 @@ namespace gnubase::app
 		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_engine, m_binding, *document);
 		m_docking.saveWindows();
 		return m_tempoEditor.get();
+	}
+
+	void AppUi::openArranger()
+	{
+		if (m_shell.find(m_arrangerWindow) != nullptr)
+			m_shell.raise(m_arrangerWindow);
+		else
+			toggleArranger();
 	}
 
 	void AppUi::toggleArranger()

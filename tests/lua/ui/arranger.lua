@@ -173,3 +173,40 @@ test.case("the editor renames the active chain", function()
 	test.equal(#ui.dom{window = window, selector = "#arranger-chain"}.elements[1].options, 1)
 	test.equal(#ui.dom{window = window, selector = "#jump-mode"}.elements[1].options, 6)
 end)
+
+test.case("the editor renames a step's arranger event with Alt and a double click", function()
+	test.cleanup(function()
+		if #ui.windows().windows > 1 then ui.command{command = "window.arranger"} end
+	end)
+	gnubase.track.add{type = "arranger", timeBase = "linear"}
+	local a = gnubase.arranger.add{position = 0, ["end"] = 48000}.event
+	gnubase.arranger.setChain{steps = {{event = a.id}}}
+	-- The last case's cleanup closes its editor in a later UI step: once it has, window.arranger opens a new one.
+	for _ = 1, 50 do
+		if arrangerWindow() == nil then break end
+		pcall(ui.wait, {selector = "#no-such-element", seconds = 0.05})
+	end
+	ui.command{command = "window.arranger"}
+	local window = openedWindow()
+	test.ok(window)
+	ui.wait{window = window, selector = "#step-0 .name"}
+
+	-- A plain double click doesn't open the name (reference manual p. 405: Alt and a double click).
+	ui.click{window = window, selector = "#step-0 .name", count = 2}
+	test.equal(ui.dom{window = window, selector = "#step-0 .name.editing"}.elements[1], nil)
+	ui.click{window = window, selector = "#step-0 .name", count = 2, modifiers = {"alt"}}
+	ui.wait{window = window, selector = "#step-0 .name.editing"}
+	-- A transport change refreshes the editor, but leaves the name being typed alone.
+	gnubase.transport.locate{position = 1000}
+	pcall(ui.wait, {window = window, selector = "#no-such-element", seconds = 0.1})
+	ui.wait{window = window, selector = "#step-0 .name.editing"}
+	ui.key{window = window, keys = "Mod+A"}
+	ui.text{window = window, text = "Intro"}
+	ui.key{window = window, keys = "Enter"}
+	for _ = 1, 50 do
+		if gnubase.arranger.get().events[1].name == "Intro" then break end
+		pcall(ui.wait, {window = window, selector = "#no-such-element", seconds = 0.05})
+	end
+	test.equal(gnubase.arranger.get().events[1].name, "Intro")
+	ui.wait{window = window, selector = "#event-" .. a.id .. " .name", text = "Intro"}
+end)

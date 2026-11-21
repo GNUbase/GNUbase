@@ -1816,8 +1816,14 @@ meter .meter-peak
 	padding: 0 2dp;
 }
 
-/* The arranger track's Current Repeat (docs/features/arranger.md), such as 2/4: narrow, so that it sits beside Current
-   Item under the other controls in the arranger track's default controls area of 160dp. */
+/* The arranger track's Current Item and Current Repeat (docs/features/arranger.md), such as 2/4: narrow, so that they
+   sit beside each other and Open Arranger Editor under the other controls in the arranger track's default controls
+   area of 160dp. */
+.track-list .track-controls textdisplay.arranger-item
+{
+	width: 84dp;
+}
+
 .track-list .track-controls textdisplay.arranger-repeat
 {
 	width: 36dp;
@@ -2508,6 +2514,70 @@ splitter.column .splitter-grip-horizontal
 {
 	flex: 0 0 auto;
 	margin-left: 6dp;
+}
+
+/* The Arranger Track section (docs/features/arranger.md): Open Arranger Editor beside its header, and its lists' rows,
+   a step's arrow, name and repeats, an event's arrow and name. The row playing (.arranger-row.current) is the theme's. */
+.inspector-section-title
+{
+	display: flex;
+	align-items: center;
+	margin-top: 4dp;
+}
+
+.inspector-section-title .section-header
+{
+	flex: 1 1 0;
+	width: auto;
+	margin-top: 0;
+}
+
+.inspector-arranger-editor, .inspector .arranger-row button
+{
+	flex-shrink: 0;
+	min-width: 0;
+	width: 22dp;
+	padding: 0;
+	text-align: center;
+}
+
+.inspector-arranger-editor
+{
+	margin-left: 4dp;
+}
+
+.inspector-list-title
+{
+	padding: 2dp 0;
+}
+
+.inspector .arranger-row
+{
+	display: flex;
+	align-items: center;
+	height: 22dp;
+}
+
+.inspector .arranger-row .name
+{
+	flex: 1 1 0;
+	min-width: 0;
+	height: 20dp;
+	margin: 0 4dp;
+	padding: 2dp 4dp;
+	text-align: left;
+	overflow: hidden;
+}
+
+.inspector .arranger-row textdisplay.name input.text
+{
+	text-align: left;
+}
+
+.inspector .arranger-row .repeats
+{
+	width: 24dp;
+	text-align: right;
 }
 
 /* The MIDI Inserts and MIDI Sends sections: a slot's control panel shows while its edit button opened it. */

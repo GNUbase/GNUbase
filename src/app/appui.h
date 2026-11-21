@@ -154,6 +154,9 @@ namespace gnubase::app
 		// docs/features/arranger.md), or closes it if it is open: the UI command window.arranger. Its script follows
 		// the engine on its own. Throws std::runtime_error if the document can't be loaded.
 		void toggleArranger();
+		// Opens the arranger editor, or brings it to the front if it is open: Open Arranger Editor in the track list
+		// and on the inspector's Arranger Track section (reference manual pp. 164, 405).
+		void openArranger();
 		ui::WindowId arrangerWindow() const { return m_arrangerWindow; }
 		// The tempo curve on the tempo track's lane in the project window, null before showProject.
 		ui::TempoLane* tempoLane() { return m_tempoLane.get(); }

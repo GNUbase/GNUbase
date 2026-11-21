@@ -170,6 +170,9 @@ one it has the class `empty` and says "No Track Selected".
 - **Chord Track** (pp. 1329, 1333-1335): the chord track's Adaptive Voicings, Automatic Scales, Acoustic Feedback,
   voicing library and subset, Octave Offset, the piano's Custom Voicing options and range, and Shift Chords
   (`chord.setTrack`).
+- **Arranger Track** (pp. 405, 410-411, [arranger.md](arranger.md)): the arranger track's Open Arranger Editor beside
+  the header, the Current Arranger Chain and Arranger Events lists, whose arrows play a step and trigger an event, with
+  the one playing highlighted, Jump Mode, and renaming a step's event with Alt and a double click on its name.
 - **Articulation Map** (pp. 1263, 1286, [articulation-maps.md](articulation-maps.md)): MIDI and instrument tracks'
   map, or No Map (`track.set` `articulationMap`), and Setup..., which opens the articulation map setup for the track.
 - **Track Versions** (pp. 231-232, [track-versions.md](track-versions.md)): the first selected track's active

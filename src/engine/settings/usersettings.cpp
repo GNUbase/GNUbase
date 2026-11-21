@@ -850,8 +850,10 @@ namespace gnubase::engine::settings
 					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock), for the chord track "
 					"chordRecord (Record Enable), chordMute (Mute Chord Track), chordAudition (Select Track for "
 					"Auditioning) and showScales (Show Scales), for the arranger track arrangerChain (Select Active "
-					"Arranger Chain), arrangerItem (Current Item), arrangerRepeat (Current Repeat, such as 2/4) and "
-					"arrangerMode (Activate Arranger Mode), for the signature track signatureLock (Lock) and "
+					"Arranger Chain), arrangerItem (Current Item), arrangerRepeat (Current Repeat, such as 2/4), "
+					"arrangerMode (Activate Arranger Mode) and arrangerEditor (Open Arranger Editor), for the "
+					"signature "
+					"track signatureLock (Lock) and "
 					"signatureOptions (Signature Track Options), and for "
 					"folders groupEditing (Group Editing). Mute and solo always show on tracks with a channel; a type "
 					"left out shows none.",
@@ -868,7 +870,8 @@ namespace gnubase::engine::settings
 												"showScales", "addPositionMarker", "addCycleMarker",
 												"activateMarkerTrack", "markerLocate", "markerCycle", "markerZoom",
 												"groupEditing", "signatureLock", "signatureOptions", "arrangerChain",
-												"arrangerItem", "arrangerRepeat", "arrangerMode", "editInPlace"}}}}}}},
+												"arrangerItem", "arrangerRepeat", "arrangerMode", "arrangerEditor",
+												"editInPlace"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
@@ -881,7 +884,9 @@ namespace gnubase::engine::settings
 						{"signature", {"signatureLock", "signatureOptions"}},
 						{"transpose", {"transposeMute", "keepInOctave", "timeBase", "transposeLock"}},
 						{"chord", {"chordRecord", "chordMute", "showScales", "timeBase", "chordAudition"}},
-						{"arranger", {"arrangerMode", "timeBase", "arrangerChain", "arrangerItem", "arrangerRepeat"}}}},
+						{"arranger",
+							{"arrangerMode", "timeBase", "arrangerChain", "arrangerItem", "arrangerRepeat",
+								"arrangerEditor"}}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
