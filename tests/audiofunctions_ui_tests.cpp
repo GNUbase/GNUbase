@@ -10,6 +10,9 @@
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -29,9 +32,20 @@ namespace
 {
 	constexpr double g_pi = 3.14159265358979323846;
 
+	ui::WindowId audioWindow(test::UiApp& app)
+	{
+		for (ui::Window* window : app.shell().windows())
+			if (window->id() != app.main().id())
+				for (int index = 0; index < window->context().GetNumDocuments(); ++index)
+					if (window->context().GetDocument(index)->QuerySelector(
+							"#detect-silence-dialog, #spectrum-analyzer-dialog, #statistics-dialog") != nullptr)
+						return window->id();
+		return app.main().id();
+	}
+
 	Json elements(test::UiApp& app, const std::string& selector)
 	{
-		return app.ui().dom(std::nullopt, selector, 0).at("elements");
+		return app.ui().dom(audioWindow(app), selector, 0).at("elements");
 	}
 
 	bool open(test::UiApp& app, const std::string& selector)
@@ -59,17 +73,17 @@ namespace
 
 	void click(test::UiApp& app, const std::string& selector, ui::MouseButton button = ui::MouseButton::Left)
 	{
-		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, button, 1, {});
+		app.ui().click(audioWindow(app), {selector, 0, std::nullopt}, button, 1, {});
 		step(app);
 	}
 
 	// Types a number into a value field: a double click edits it, Enter takes it.
 	void type(test::UiApp& app, const std::string& selector, const std::string& value)
 	{
-		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 2, {});
-		app.ui().key(std::nullopt, "Mod+A");
-		app.ui().text(std::nullopt, value);
-		app.ui().key(std::nullopt, "Enter");
+		app.ui().click(audioWindow(app), {selector, 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+		app.ui().key(audioWindow(app), "Mod+A");
+		app.ui().text(audioWindow(app), value);
+		app.ui().key(audioWindow(app), "Enter");
 		step(app);
 	}
 
@@ -77,7 +91,7 @@ namespace
 	void choose(test::UiApp& app, const std::string& select, const std::string& key)
 	{
 		click(app, select);
-		app.ui().key(std::nullopt, key);
+		app.ui().key(audioWindow(app), key);
 		click(app, select);
 		step(app);
 	}
@@ -298,7 +312,7 @@ TEST_CASE("the Spectrum Analyzer draws the spectrum, shows the values under the 
 	REQUIRE(bars.size() == 246); // 1/24 octave from 20 Hz up to 24 kHz
 	CHECK(barHeight(app, bar(1000.0)) > barHeight(app, bar(300.0)) + 50.0);
 
-	app.ui().move(std::nullopt, barTarget(app, bar(1000.0)));
+	app.ui().move(audioWindow(app), barTarget(app, bar(1000.0)));
 	step(app);
 	const std::string value = text(app, "#sa-value");
 	CHECK_THAT(value, ContainsSubstring("Mono"));
@@ -307,13 +321,13 @@ TEST_CASE("the Spectrum Analyzer draws the spectrum, shows the values under the 
 	CHECK_THAT(value, !ContainsSubstring("D:"));
 
 	// A right click on the tone, then the mouse at 300 Hz: far lower.
-	app.ui().click(std::nullopt, barTarget(app, bar(1000.0)), ui::MouseButton::Right, 1, {});
+	app.ui().click(audioWindow(app), barTarget(app, bar(1000.0)), ui::MouseButton::Right, 1, {});
 	step(app);
 	CHECK(elements(app, ".sa-bar.reference").size() == 1);
-	app.ui().move(std::nullopt, barTarget(app, bar(300.0)));
+	app.ui().move(audioWindow(app), barTarget(app, bar(300.0)));
 	step(app);
 	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("D: -"));
-	app.ui().click(std::nullopt, barTarget(app, bar(300.0)), ui::MouseButton::Left, 1, {});
+	app.ui().click(audioWindow(app), barTarget(app, bar(300.0)), ui::MouseButton::Left, 1, {});
 	step(app);
 	CHECK(elements(app, ".sa-bar.reference").empty());
 	CHECK_THAT(text(app, "#sa-value"), !ContainsSubstring("D:"));
@@ -366,14 +380,14 @@ TEST_CASE("the Spectrum Analyzer draws the channel of a stereo clip that #sa-cha
 
 	// The left channel first: its tone towers over the right channel's.
 	CHECK(barHeight(app, bar(1000.0)) > barHeight(app, bar(3000.0)) + 50.0);
-	app.ui().move(std::nullopt, barTarget(app, bar(1000.0)));
+	app.ui().move(audioWindow(app), barTarget(app, bar(1000.0)));
 	step(app);
 	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("Left"));
 
 	// Choosing the right channel redraws its bars, and the mouse shows its name.
 	choose(app, "#sa-channel", "Down");
 	CHECK(barHeight(app, bar(3000.0)) > barHeight(app, bar(1000.0)) + 50.0);
-	app.ui().move(std::nullopt, barTarget(app, bar(3000.0)));
+	app.ui().move(audioWindow(app), barTarget(app, bar(3000.0)));
 	step(app);
 	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("Right"));
 
@@ -383,7 +397,7 @@ TEST_CASE("the Spectrum Analyzer draws the channel of a stereo clip that #sa-cha
 	const std::string left = R"(.sa-bar[channel="1"][index=")" + std::to_string(bar(1000.0)) + "\"]";
 	const std::string right = R"(.sa-bar[channel="2"][index=")" + std::to_string(bar(3000.0)) + "\"]";
 	click(app, left, ui::MouseButton::Right);
-	app.ui().move(std::nullopt, {right, 0, std::nullopt});
+	app.ui().move(audioWindow(app), {right, 0, std::nullopt});
 	step(app);
 	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("Right"));
 	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("D:"));
@@ -391,13 +405,13 @@ TEST_CASE("the Spectrum Analyzer draws the channel of a stereo clip that #sa-cha
 
 	const double width = element(app, right).at("box").at("width").get<double>();
 	click(app, "#sa-zoom");
-	app.ui().key(std::nullopt, "Right");
-	app.ui().key(std::nullopt, "Right");
+	app.ui().key(audioWindow(app), "Right");
+	app.ui().key(audioWindow(app), "Right");
 	step(app);
 	CHECK(element(app, right).at("box").at("width").get<double>() > width * 2.0);
 	CHECK(elements(app, ".sa-bar.reference[channel=\"1\"]").size() == 1);
 
-	app.ui().move(std::nullopt, {right, 0, std::nullopt});
+	app.ui().move(audioWindow(app), {right, 0, std::nullopt});
 	step(app);
 	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("Right"));
 	CHECK(element(app, "#sa-value").at("attributes").at("index") == std::to_string(bar(3000.0)));
@@ -465,7 +479,10 @@ TEST_CASE("analysis dialogs stay responsive while their jobs run and cancel them
 						   .find("0%") != std::string::npos;
 			}));
 		CHECK(audioEvents(app) == 2);
-		click(app, closeButton);
+		if (statistics || spectrum)
+			app.shell().requestClose(audioWindow(app));
+		else
+			click(app, closeButton);
 		closes(app, selector);
 		CHECK(held.release());
 		REQUIRE(app.waitUntil(
@@ -491,4 +508,30 @@ TEST_CASE("Detect Silence Auto replaces a pending analysis without showing its o
 	CHECK(text(app, "#ds-sections") == "1");
 	click(app, "#ds-cancel");
 	closes(app, "#detect-silence-dialog");
+}
+
+TEST_CASE("audio functions open independent windows and close with the project", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	const Tones tones(app);
+	showTones(app, tones, 1);
+	std::vector<ui::WindowId> windows;
+	for (const char* command : {"audio.detectSilence", "audio.spectrumAnalyzer", "audio.statistics"})
+	{
+		app.keys().run(command, Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&] { return app.shell().windows().size() == windows.size() + 2; }));
+		ui::Window* window = app.shell().windows().back();
+		windows.push_back(window->id());
+		CHECK(window->id() != app.main().id());
+		REQUIRE(window->context().GetNumDocuments() == 1);
+		CHECK(!window->context().GetDocument(0)->IsModal());
+		app.keys().run(command, Json::object(), app.main(), nullptr);
+		step(app);
+		CHECK(app.shell().windows().size() == windows.size() + 1);
+	}
+	app.shell().requestClose(windows.back());
+	step(app);
+	CHECK(app.shell().find(windows.back()) == nullptr);
+	app.call("project.new");
+	REQUIRE(app.waitUntil([&] { return app.shell().windows().size() == 1; }));
 }

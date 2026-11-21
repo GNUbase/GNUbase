@@ -1184,6 +1184,10 @@
 	{
 		background-color: #00ffff;
 	}
+	.se-half-axis
+	{
+		background-color: #c8c8c866;
+	}
 	.se-outside
 	{
 		background-color: #00000099;

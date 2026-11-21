@@ -448,6 +448,17 @@ namespace gnubase::app
 				if (scripted)
 					m_shell.requestRender(); // what documents' gnubase.on handlers changed, wherever it shows
 				const bool follows = m_binding.update();
+				for (auto it = m_audioFunctions.begin(); it != m_audioFunctions.end();)
+				{
+					if (!it->second.document || it->second.document->GetParentNode() == nullptr ||
+						m_shell.find(it->second.window) == nullptr)
+					{
+						m_shell.close(it->second.window);
+						it = m_audioFunctions.erase(it);
+					}
+					else
+						++it;
+				}
 				if (m_menu)
 					m_menu->update();
 				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
@@ -1163,6 +1174,15 @@ namespace gnubase::app
 			m_keys.add({command.id, command.description,
 				[this, id = std::string(command.id)](ui::Window& window, Rml::Element*)
 				{
+					const char* audioFunction = id == "audio.detectSilence" ? "detect-silence.rml"
+						: id == "audio.spectrumAnalyzer"                    ? "spectrum-analyzer.rml"
+						: id == "audio.statistics"                          ? "statistics.rml"
+																			: nullptr;
+					if (audioFunction != nullptr)
+					{
+						openAudioFunction(audioFunction);
+						return;
+					}
 					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
 						ui::SampleEditor::isProcessCommand(id))
 					{
@@ -2821,6 +2841,47 @@ namespace gnubase::app
 		}
 		document->Show(Rml::ModalFlag::Modal);
 		return *document;
+	}
+
+	void AppUi::openAudioFunction(const std::string& file)
+	{
+		AudioFunctionWindow& shown = m_audioFunctions[file];
+		if (shown.document && shown.document->GetParentNode() != nullptr && m_shell.find(shown.window) != nullptr)
+		{
+			m_shell.raise(shown.window);
+			return;
+		}
+		std::string events;
+		if (m_eventDisplay)
+		{
+			const auto& selection = m_eventDisplay->selection();
+			for (const engine::Json& event : m_eventDisplay->project().at("audioEvents"))
+				if (std::find(selection.begin(), selection.end(), event.at("id").get<uint64_t>()) != selection.end())
+					events += event.at("id").dump() + " ";
+		}
+		if (events.empty())
+			return;
+		ui::WindowSpec spec;
+		spec.title = file == "detect-silence.rml" ? "Detect Silence"
+			: file == "spectrum-analyzer.rml"     ? "Spectrum Analyzer"
+												  : "Statistics";
+		spec.size = {760, 720};
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		shown.window = window.id();
+		auto* document = window.context().LoadDocument((m_resources / "ui" / file).generic_u8string());
+		if (document == nullptr)
+		{
+			m_shell.close(shown.window);
+			return;
+		}
+		document->SetAttribute("events", events);
+		shown.document = document->GetObserverPtr();
+		m_projectDialogs.erase(std::remove_if(m_projectDialogs.begin(), m_projectDialogs.end(),
+								   [](const Rml::ObserverPtr<Rml::Element>& open) { return !open; }),
+			m_projectDialogs.end());
+		m_projectDialogs.push_back(shown.document);
+		document->Show();
 	}
 
 	void AppUi::quickExportEnded(const engine::Json& job)
