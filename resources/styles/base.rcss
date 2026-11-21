@@ -312,7 +312,7 @@ tabset tab
 /* A section the toolbar has no room for, or a part it gives up first (fit="spare", such as Warp Quantize On/Off): out
    of the flow and unseen, so it takes no room and no gap, and still laid out, so the docking system knows the width it
    needs to show again. */
-.toolbar-section.no-room, .toolbar-section .no-room
+.toolbar-section.no-room, .toolbar-section .no-room, .transport-section.no-room
 {
 	position: absolute;
 	left: 0;
@@ -511,8 +511,9 @@ valuefield.editing .valuefield-text
 }
 
 /* The transport controls (docs/features/transport-bar.md): sections in a row, the time display window's big
-   display. The sections keep their contents' width, so a window too narrow for them cuts off the last ones at the
-   right edge rather than drawing sections over each other. */
+   display. The sections keep their contents' width; the transport bar hides those it has no room for (fit="room",
+   docs/features/docking.md), and a transport panel too narrow for them cuts off the last ones at the right edge,
+   rather than drawing sections over each other. */
 .transport
 {
 	display: flex;
@@ -538,6 +539,13 @@ valuefield.editing .valuefield-text
 .transport-section.hidden
 {
 	display: none;
+}
+
+/* The Left and Right Divider (fit="room", docs/features/docking.md): a line, the theme's color, between sections. */
+.transport-divider
+{
+	width: 1px;
+	height: 20dp;
 }
 
 .transport-section > *

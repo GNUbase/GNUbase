@@ -1523,6 +1523,10 @@
 	{
 		background-color: #5ea7b3;
 	}
+	.transport-divider
+	{
+		background-color: #484c50;
+	}
 	.quantize-display
 	{
 		background-color: #1e2022;
