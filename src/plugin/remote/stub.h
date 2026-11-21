@@ -51,8 +51,8 @@ namespace gnubase::plugin::remote
 		Plugin* plugin() const { return m_plugin.get(); }
 
 		// [main] Handles a request for this instance: Activate, Deactivate, SaveState, LoadState, ParamToText,
-		// TextToParam, FlushParams, Describe and SetProcessMode. Writes what it returns into `reply`, or returns false
-		// with the reason.
+		// TextToParam, FlushParams, Describe, SetProcessMode and KeySwitches. Writes what it returns into `reply`, or
+		// returns false with the reason.
 		bool handle(Message type, Reader& request, Writer& reply, std::string& error);
 
 		// [main] Calls Plugin::onMainThread if the plugin asked for it, and returns what the plugin asked of the engine
