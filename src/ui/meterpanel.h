@@ -23,7 +23,9 @@ namespace gnubase::ui
 	// The UI's one reader of the meters (Engine::readMeters, docs/features/metering.md), which every view that shows
 	// meters shares, since a second reader would take the first one's peaks: while any view shows meters, it reads
 	// them once a frame, the channels of all views at once. Views read frame() and level() in their own
-	// EngineBinding::watch. Use it on the UI thread; the engine and the binding must outlive it.
+	// EngineBinding::watch, which they make after they called show(): watches run in the order they were made, so a
+	// watch made before the reader's reads the previous frame. Use it on the UI thread; the engine and the binding must
+	// outlive it.
 	class MeterReader
 	{
 	public:

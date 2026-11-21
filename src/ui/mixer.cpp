@@ -291,8 +291,8 @@ namespace gnubase::ui
 				section("sends", "Sends", sends);
 		}
 
-		// The choices of a section's drop-down list (reference manual pp. 475-478): a cut filter's slope, or the type
-		// of EQ band 1 or 4.
+		// The choices of a section's drop-down list (reference manual pp. 474 and 480): a cut filter's slope, or the
+		// type of EQ band 1 or 4.
 		widgets::Options sectionChoices(const std::string& param)
 		{
 			if (endsWith(param, ".slope"))

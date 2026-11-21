@@ -7,11 +7,15 @@
 
 #include "engine/engine.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
+#include "ui/meterpanel.h"
 #include "ui/shell.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -170,7 +174,7 @@ TEST_CASE("the mixer's channel meters and the meter display read the same frames
 	REQUIRE(app.waitUntil([&mixer] { return mixer(".mixer-peak").size() == 1; }));
 	CHECK(mixer(".mixer-meter meter").empty());
 	CHECK(mixer(".mixer-peak").at(0).value("text", std::string()) == "-inf");
-	// A MIDI channel has no meter (reference manual p. 468: audio channels).
+	// MIDI channels have no meter yet.
 	CHECK(app.ui()
 			.dom(std::nullopt, ".mixer-channel[channel=" + std::to_string(midi) + "] .mixer-meter", 0)
 			.at("elements")
@@ -197,4 +201,20 @@ TEST_CASE("the mixer's channel meters and the meter display read the same frames
 	app.ui().click(std::nullopt, {strip + ".mixer-peak", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&mixer] { return mixer(".mixer-peak").at(0).value("text", std::string()) == "-inf"; }));
 	CHECK(text(app, ".peak-max") == "-6.0 dB");
+}
+
+TEST_CASE("the meter reader reads only while a view shows meters", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	ui::MeterReader reader(engine, binding);
+	CHECK_FALSE(binding.update()); // no view shows meters: the shell needn't step every frame
+
+	std::shared_ptr<std::vector<uint64_t>> shows = reader.show();
+	CHECK(binding.update());
+	CHECK(binding.update());
+
+	shows.reset();
+	CHECK_FALSE(binding.update()); // the reader ends its watch once no view shows meters
+	CHECK_FALSE(binding.update());
 }
