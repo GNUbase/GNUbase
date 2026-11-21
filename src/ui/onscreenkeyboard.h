@@ -2,11 +2,13 @@
 #pragma once
 
 #include "ui/enginebinding.h"
+#include "ui/keycommands.h"
 #include "ui/windowsystem.h"
 
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
 
+#include <optional>
 #include <vector>
 
 // The on-screen keyboard (#103, reference manual pp. 332-334, docs/features/onscreen-keyboard.md).
@@ -38,10 +40,13 @@ namespace gnubase::ui
 		OnScreenKeyboard(OnScreenKeyboard&&) = delete;
 		OnScreenKeyboard& operator=(OnScreenKeyboard&&) = delete;
 
-		// A key that no element used, while the window is open: a key of the two rows plays its note, and the window
-		// takes every other key but the few that keep their key commands (reference manual p. 332): Mod+S, Num*,
-		// Space, Num1, Delete, Backspace, Num/, F2 and Alt+K. Returns whether it took the key.
-		bool press(const KeyPress& keys);
+		// A key that no element used, while the window is open, with what the key commands would run for it
+		// (KeyCommands::bound): a key of the two rows plays its note, and the window takes every other key but those of
+		// the few commands that keep their keys (reference manual p. 332): Save, Start/Stop Record, Start/Stop
+		// Playback, Jump to Left Locator, Delete, Cycle on/off, Show/Hide Transport Panel and Show/Hide On-Screen
+		// Keyboard, by default Mod+S, Num*, Space, Num1, Delete and Backspace, Num/, F2 and Alt+K. A command the user
+		// gave another key keeps that key, and its old one plays or does nothing. Returns whether it took the key.
+		bool press(const KeyPress& keys, const std::optional<KeyBinding>& bound);
 		// The key went up: ends its note. KI_UNKNOWN ends every note, as when the window lost the keyboard focus.
 		void release(const KeyPress& keys);
 

@@ -532,7 +532,8 @@ namespace gnubase::app
 		m_shell.onUnusedKey(
 			[this](ui::Window& window, const ui::KeyPress& keys)
 			{
-				if (ui::OnScreenKeyboard* keyboard = this->keyboard(); keyboard == nullptr || !keyboard->press(keys))
+				if (ui::OnScreenKeyboard* keyboard = this->keyboard();
+					keyboard == nullptr || !keyboard->press(keys, m_keys.bound(window, keys)))
 					m_keys.press(window, keys);
 			});
 		m_shell.onKeyReleased(
