@@ -5,8 +5,11 @@
 // tests/controllerlanes_tests.cpp checks the engine's side.
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/shell.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -589,7 +592,7 @@ TEST_CASE(
 	"a poly pressure lane takes the pitch of the first selected note, a program change lane draws programs", "[ui]")
 {
 	Fixture f;
-	f.add({0});
+	const uint64_t low = f.add({0}).at(0);
 	const Json added = f.app.call("note.add",
 		{{"part", f.part},
 			{"notes", {{{"position", g_quarter}, {"length", g_sixteenth}, {"pitch", 64}, {"velocity", 0.5}}}}});
@@ -607,6 +610,14 @@ TEST_CASE(
 	CHECK(f.controllers()[0].at("type") == "polyPressure");
 	CHECK(f.controllers()[0].at("number") == 64);
 	CHECK(f.controllers()[0].at("value").get<double>() == Approx(0.5).margin(0.03));
+	// With two notes selected, the first one's pitch, not the other one's, nor 60, which a lane takes without a
+	// selected note (#864).
+	f.app.call("editor.set",
+		{{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", high}}, {{"part", f.part}, {"note", low}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.selected").size() == 2; }));
+	f.choose("#controller-lane-create", R"(#controller-create-menu menuitem[lane-type="polyPressure"])");
+	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 3; }));
+	CHECK(f.lanes()[2] == Json{{"type", "polyPressure"}, {"number", 64}});
 
 	// On a program change lane the value is the program, 0 at the bottom, 127 at the top.
 	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "program"}}}}});
@@ -826,6 +837,197 @@ TEST_CASE("a drag on a lane released outside the lanes ends there, and one whose
 	// The draw tool paints again after it.
 	f.click(f.at(0, 10.5, 0.5));
 	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 2; }));
+}
+
+TEST_CASE("a drag on a lane released over another document of the window ends there, and a press there ends one "
+		  "whose mouseup never came",
+	"[ui]")
+{
+	// #864: a floating panel is a document of its own in the window's context. The lanes hear the mouseup and the
+	// press that ends a gesture in every document of the window, not only in their own.
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	f.app.call("controller.add",
+		{{"part", f.part}, {"controllers", {{{"position", 4 * g_sixteenth}, {"number", 1}, {"value", 0.25}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 1; }));
+	const auto value = [&] { return f.controllers().at(0).at("value").get<double>(); };
+	// A panel over the toolbar's spare space, above the lanes, and above the editor's document, which a press brings to
+	// the front.
+	const ui::Point spare = f.spare().point.value_or(ui::Point{});
+	ui::Window* window = f.window ? f.app.shell().find(*f.window) : nullptr;
+	REQUIRE(window != nullptr);
+	Rml::ElementDocument* panel = window->context().LoadDocumentFromMemory(
+		"<rml><head><style>body { position: absolute; left: " + std::to_string(spare.x - 20) +
+		"px; top: " + std::to_string(spare.y - 8) +
+		"px; width: 40px; height: 16px; z-index: 100; }</style></head>"
+		"<body id=\"floating-panel\"/></rml>");
+	REQUIRE(panel != nullptr);
+	panel->Show();
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const ui::Target over{"", 0, spare};
+	REQUIRE(f.app.ui().move(f.window, over).at("element").at("id") == "floating-panel");
+	size_t lanes = 1;
+	const auto settle =
+		[&] // until the lanes' commands so far have arrived: a lane added from the menu comes after them
+	{
+		f.choose("#controller-lane-create", R"(#controller-create-menu menuitem[lane-type="pitchBend"])");
+		++lanes;
+		REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == lanes; }));
+	};
+
+	// A value drag released over the panel sets the value there, the top, and ends.
+	f.drag(f.at(0, 4.5, 0.1), over);
+	REQUIRE(f.app.waitUntil([&] { return value() > 0.95; }));
+	const size_t before = f.steps();
+	f.drag(over, f.at(0, 4.5, 0.5));
+	settle();
+	CHECK(value() > 0.95);
+	CHECK(f.steps() == before);
+
+	// A paint whose mouseup never came ends without its effect at a press over the panel, whose release over the
+	// lanes then paints nothing either.
+	f.tool("draw");
+	f.app.ui().press(f.window, f.at(0, 10.5, 0.5), ui::MouseButton::Left);
+	f.app.ui().press(f.window, over, ui::MouseButton::Left);
+	f.app.ui().release(f.window, f.at(0, 12.5, 0.5), ui::MouseButton::Left);
+	settle();
+	CHECK(f.controllers().size() == 1);
+	CHECK(f.steps() == before);
+	window->context().UnloadDocument(panel);
+}
+
+TEST_CASE("only the left button ends a gesture on a lane", "[ui]")
+{
+	// #864: a right release and press while a value drag goes on neither end nor cancel it; the left release edits.
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	f.app.call("controller.add",
+		{{"part", f.part}, {"controllers", {{{"position", 4 * g_sixteenth}, {"number", 1}, {"value", 0.25}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 1; }));
+	const auto value = [&] { return f.controllers().at(0).at("value").get<double>(); };
+	ui::Window* window = f.window ? f.app.shell().find(*f.window) : nullptr;
+	REQUIRE(window != nullptr);
+	const auto right = [&](const ui::Target& target, bool down)
+	{
+		const ui::Point at = target.point.value_or(ui::Point{});
+		Rml::Context& context = window->context();
+		context.ProcessMouseMove(at.x, at.y, 0);
+		if (down)
+			context.ProcessMouseButtonDown(1, 0);
+		else
+			context.ProcessMouseButtonUp(1, 0);
+		f.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const size_t before = f.steps();
+	f.app.ui().press(f.window, f.at(0, 4.5, 0.1), ui::MouseButton::Left);
+	f.app.ui().move(f.window, f.at(0, 4.5, 0.3));
+	// A right release over the lanes and a right press over the toolbar on the way: no edit.
+	right(f.at(0, 4.5, 0.6), false);
+	right(f.spare(), true);
+	f.app.call("engine.version");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(value() == Approx(0.25).margin(1e-6));
+	CHECK(f.steps() == before);
+	// The left release ends the drag with its effect: the value goes up by as much as the mouse went.
+	f.app.ui().release(f.window, f.at(0, 4.5, 0.6), ui::MouseButton::Left);
+	REQUIRE(f.app.waitUntil([&] { return value() > 0.7; }));
+	CHECK(value() == Approx(0.75).margin(0.03));
+	CHECK(f.steps() == before + 1);
+}
+
+TEST_CASE("the line tool released outside the lanes draws to where it went up, within the part", "[ui]")
+{
+	// #864: released left of the lane area, before the part's start, the line starts at the part's first tick;
+	// released above the lanes, over the toolbar past the part's end, it ends at the top value at the part's end.
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	REQUIRE(
+		f.app.waitUntil([&] { return f.elements(".controller-lane-type").at(0).at("text") == "Modulation (CC 1)"; }));
+	f.tool("line");
+	const Json header = f.box(".controller-lane-header");
+	const ui::Target left{"", 0,
+		ui::Point{static_cast<int>(std::lround(header.at("x").get<double>() + (header.at("width").get<double>() / 2))),
+			f.at(0, 0, 0.0).point.value_or(ui::Point{}).y}};
+	f.drag(f.at(0, 8, 1.0), left);
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 9; })); // every sixteenth from 0 to 8
+	CHECK(f.controllers().front().at("position") == 0);
+	CHECK(f.controllers().front().at("value").get<double>() == Approx(0.0).margin(0.03));
+	CHECK(f.controllers().at(4).at("value").get<double>() == Approx(0.5).margin(0.05));
+	CHECK(f.controllers().back().at("position") == 8 * g_sixteenth);
+	CHECK(f.controllers().back().at("value").get<double>() == Approx(1.0).margin(0.03));
+	REQUIRE(f.app.waitUntil([&] { return f.shows(0); }));
+
+	// From the bottom at 12 sixteenths to the toolbar, right of the part's end: it replaces nothing before 12 and
+	// ends at the part's last tick, at the top.
+	const Json area = f.box(Fixture::area(0));
+	const ui::Target above{"", 0,
+		ui::Point{static_cast<int>(std::lround(area.at("x").get<double>() + area.at("width").get<double>() + 4)),
+			f.spare().point.value_or(ui::Point{}).y}};
+	f.drag(f.at(0, 12, 0.0), above);
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().back().at("position") > 12 * g_sixteenth; }));
+	const std::vector<Json> events = f.controllers();
+	REQUIRE(events.size() > 10);
+	CHECK(events.at(8).at("position") == 8 * g_sixteenth);
+	CHECK(events.at(9).at("position") == 12 * g_sixteenth);
+	CHECK(events.at(9).at("value").get<double>() == Approx(0.0).margin(0.03));
+	CHECK(events.back().at("position").get<int64_t>() <= g_bar - 1);
+	CHECK(events.back().at("position").get<int64_t>() >= 15 * g_sixteenth);
+	CHECK(events.back().at("value").get<double>() == Approx(1.0).margin(0.03));
+}
+
+TEST_CASE("a value drag on a selected bar changes the selected notes of every part in one undo step", "[ui]")
+{
+	// #864: finishValue sends one history.transaction for the selected values of several parts.
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({0, 4});
+	const uint64_t second = f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}})
+								.at("part")
+								.at("id")
+								.get<uint64_t>();
+	const uint64_t third =
+		f.app
+			.call("note.add",
+				{{"part", second},
+					{"notes", {{{"position", 0}, {"length", g_sixteenth}, {"pitch", 60}, {"velocity", 0.5}}}}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", {f.part, second}}});
+	f.app.call("editor.set",
+		{{"editor", "window"},
+			{"selection", {{{"part", f.part}, {"note", ids[0]}}, {{"part", second}, {"note", third}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-bar").size() == 3; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-bar.selected").size() == 2; }));
+	const auto velocity = [&](uint64_t part, uint64_t id)
+	{
+		const Json project = f.app.call("project.get"); // kept: a range-for keeps no temporary it reaches into
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				for (const Json& note : each.at("notes"))
+					if (note.at("id") == id)
+						return note.at("velocity").get<double>();
+		return -1.0;
+	};
+	const size_t before = f.steps();
+	// A drag up from the middle of the first note's bar.
+	const Json bar = f.box(Fixture::area(0) + " .controller-bar[note=\"" + std::to_string(ids[0]) + "\"]");
+	const Json lane = f.box(Fixture::area(0));
+	const auto y = [&lane](double value)
+	{
+		return static_cast<int>(
+			std::lround(lane.at("y").get<double>() + ((1.0 - value) * (lane.at("height").get<double>() - 1.0))));
+	};
+	const int x = static_cast<int>(std::lround(bar.at("x").get<double>() + 1));
+	f.drag({"", 0, ui::Point{x, y(0.5)}}, {"", 0, ui::Point{x, y(0.75)}});
+	REQUIRE(f.app.waitUntil([&] { return velocity(second, third) > 0.7; }));
+	CHECK(velocity(f.part, ids[0]) == Approx(0.75).margin(0.03));
+	CHECK(velocity(second, third) == Approx(0.75).margin(0.03));
+	CHECK(velocity(f.part, ids[1]) == Approx(0.5).margin(1e-4));
+	CHECK(f.steps() == before + 1);
+	f.app.call("history.undo");
+	CHECK(velocity(f.part, ids[0]) == Approx(0.5).margin(1e-4));
+	CHECK(velocity(second, third) == Approx(0.5).margin(1e-4));
 }
 
 TEST_CASE("a paint on a controller lane goes into the part where it was pressed, wherever it is released", "[ui]")

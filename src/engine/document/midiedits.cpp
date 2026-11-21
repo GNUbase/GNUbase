@@ -110,7 +110,7 @@ namespace gnubase::engine
 				note.articulations = item.value("articulations", note.articulations);
 				note.mutedArticulations = mutedArticulationsFrom(item, note, name);
 				if (item.contains("expressions"))
-					note.expressions = expressionsFromJson(item.at("expressions"), name + ".expressions");
+					note.expressions = expressionsFromJson(item.at("expressions"), name + ".expressions", longest);
 				notes.push_back(note);
 			}
 			// Changed only once every item is valid. ProjectModel::add would restore the project anyway.
@@ -168,7 +168,8 @@ namespace gnubase::engine
 							" to " + std::to_string(to));
 					points.push_back({{"type", type}, {"position", position}, {"value", each.at("value")}});
 				}
-				const std::vector<ExpressionPoint> added = expressionsFromJson(points, name + ".points");
+				const std::vector<ExpressionPoint> added =
+					expressionsFromJson(points, name + ".points", longestProjectTicks(project));
 				auto [found, inserted] = notes.try_emplace(current.id, current);
 				if (inserted)
 					order.push_back(current.id);
@@ -588,9 +589,10 @@ namespace gnubase::engine
 				"other points stay, so an edit made before its sender saw the last one keeps that one. The points "
 				"end up sorted by position, a new one after the old ones at its position. A note named twice gets "
 				"both changes in order. Refuses, changing nothing, a part or a note that doesn't exist, a span whose "
-				"to is before its from and points outside it or out of range. Changes that leave every note's "
-				"points as they were change nothing, and the project doesn't count as modified. The changes are one "
-				"undo step. Returns the notes whose points changed.",
+				"to is before its from and points outside it or out of range (see note.add). Changes that leave every "
+				"note's points as they were change nothing, and the project doesn't count as modified, run on its "
+				"own: in a history.transaction the transaction counts as a change. The changes are one undo step. "
+				"Returns the notes whose points changed.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "type", "notes"}},
 					{"properties",
 						{{"part", integer}, {"type", {{"type", "string"}, {"enum", g_expressionNames}}},

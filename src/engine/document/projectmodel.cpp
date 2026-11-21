@@ -3109,7 +3109,8 @@ namespace gnubase::engine
 				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
 				note.articulations = item.value("articulations", std::vector<std::string>());
 				note.mutedArticulations = mutedArticulationsFrom(item, note, name);
-				note.expressions = expressionsFromJson(item.value("expressions", Json::array()), name + ".expressions");
+				note.expressions = expressionsFromJson(
+					item.value("expressions", Json::array()), name + ".expressions", longestProjectTicks(project));
 				notes.push_back(note);
 			}
 			Json added = Json::array();
@@ -4930,7 +4931,8 @@ namespace gnubase::engine
 				"lowers (negative) its velocity at most (default 0). articulations are the attributes of the track's "
 				"articulation map (articulationMap.add) that the note has, by name, and mutedArticulations those of "
 				"them that are muted, as the mute tool mutes them: they select no sound slot. expressions are its "
-				"per-note expression: points {type, position, value}, position in ticks from the note's start, type "
+				"per-note expression: points {type, position, value}, position in ticks from the note's start (at most "
+				"the longest project's end, also past the note's end), type "
 				"volume (a linear gain 0-4), pan (0-1, 0.5 the center), tuning (semitones, -120 to 120), vibrato, "
 				"expression, brightness or pressure (0-1).",
 				objectSchema({{"part", idSchema}, {"notes", arraySchema(note)}}, {"part", "notes"}),
