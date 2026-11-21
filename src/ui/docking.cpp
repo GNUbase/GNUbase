@@ -408,20 +408,37 @@ namespace gnubase::ui
 				changed = true;
 			}
 		};
-		std::vector<Rml::Element*> sections; // the shown ones before the spacer, which can go
+		// A shown divider keeps the sections on its side shown (reference manual p. 65): divider="left" those before
+		// it, divider="right" those after it. The others before the spacer can go.
+		const int count = container.GetNumChildren();
+		int first = 0;
+		int end = count;
+		for (int i = 0; i < count; ++i)
+			if (const Rml::Element* child = container.GetChild(i); !child->IsClassSet("hidden"))
+			{
+				const std::string divider = attribute(*child, "divider");
+				if (divider == "left")
+					first = i + 1;
+				else if (divider == "right" && end == count)
+					end = i;
+			}
+		std::vector<Rml::Element*> sections; // the shown ones that can go
 		float room = container.GetBox().GetSize(Rml::BoxArea::Content).x;
 		bool beforeSpacer = true;
-		for (int i = 0; i < container.GetNumChildren(); ++i)
+		for (int i = 0; i < count; ++i)
 		{
 			Rml::Element* child = container.GetChild(i);
 			const bool section = child->HasAttribute("section");
+			const bool canGo = beforeSpacer && i >= first && i < end;
+			const Rml::Style::ComputedValues& computed = child->GetComputedValues();
 			if (child->IsClassSet("spacer"))
 				beforeSpacer = false;
-			else if (section && beforeSpacer && !child->IsClassSet("hidden"))
+			else if (section && canGo && !child->IsClassSet("hidden"))
 				sections.push_back(child);
-			else if (child->GetComputedValues().display() != Rml::Style::Display::None)
+			else if (computed.display() != Rml::Style::Display::None &&
+				(section || computed.position() != Rml::Style::Position::Absolute)) // not an open menu over it
 				room -= width(*child);
-			if (section && (child->IsClassSet("hidden") || !beforeSpacer))
+			if (section && (child->IsClassSet("hidden") || !canGo))
 			{
 				setNoRoom(*child, false);
 				for (Rml::Element* spare : elements(*child, "[fit=spare]"))
@@ -776,19 +793,35 @@ namespace gnubase::ui
 		for (const std::string& id : strings(find(m_layout, {"windows", window, "sections", set, "order"})))
 			if (section(window, set, id) != nullptr && !contains(result, id))
 				result.push_back(id);
+		// A section the saved order doesn't name, such as one new since it was saved, goes after the section before it
+		// in the document.
 		if (const auto attached = m_windows.find(window); attached != m_windows.end())
 			if (const auto known = attached->second.sections.find(set); known != attached->second.sections.end())
+			{
+				auto at = result.begin();
 				for (const Section& entry : known->second)
-					if (!contains(result, entry.id))
-						result.push_back(entry.id);
+				{
+					if (const auto it = std::find(result.begin(), result.end(), entry.id); it != result.end())
+						at = it + 1;
+					else
+						at = result.insert(at, entry.id) + 1;
+				}
+			}
 		return result;
 	}
 
 	bool Docking::sectionHidden(const std::string& window, const std::string& set, const std::string& id) const
 	{
+		// The saved hidden list counts for the sections the saved set knows, those its order or its hidden list
+		// names; one it doesn't know yet, new since it was saved, has its default.
 		if (const Json* hidden = find(m_layout, {"windows", window, "sections", set, "hidden"});
 			hidden != nullptr && hidden->is_array())
-			return contains(strings(hidden), id);
+		{
+			const std::vector<std::string> names = strings(hidden);
+			if (contains(names, id) ||
+				contains(strings(find(m_layout, {"windows", window, "sections", set, "order"})), id))
+				return contains(names, id);
+		}
 		const Section* known = section(window, set, id);
 		return known != nullptr && known->hidden;
 	}
@@ -822,11 +855,16 @@ namespace gnubase::ui
 	{
 		if (section(window, set, id) == nullptr)
 			return;
-		std::vector<std::string> list; // every hidden one, so that the defaults no longer count
-		for (const std::string& name : sections(window, set))
+		// Every hidden one, so that the defaults no longer count, and the order, so that a later set can tell which
+		// sections this one had.
+		const std::vector<std::string> order = sections(window, set);
+		std::vector<std::string> list;
+		for (const std::string& name : order)
 			if (name == id ? hidden : sectionHidden(window, set, name))
 				list.push_back(name);
-		sectionsJson(window, set)["hidden"] = list;
+		Json& json = sectionsJson(window, set);
+		json["order"] = order;
+		json["hidden"] = list;
 		save();
 		apply();
 	}

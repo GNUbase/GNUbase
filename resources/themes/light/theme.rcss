@@ -1198,6 +1198,10 @@
 	{
 		background-color: #9dc3f0;
 	}
+	.se-region-handle
+	{
+		border-color: #6554c0;
+	}
 	.se-hitpoint-line, .se-hitpoint-handle
 	{
 		background-color: #0969da;
@@ -1339,9 +1343,45 @@
 	{
 		background-color: #0969da;
 	}
+	.sa-graph.all .sa-bar.channel-1
+	{
+		background-color: #bb2d8f;
+	}
+	.sa-graph.all .sa-bar.channel-2
+	{
+		background-color: #087fa4;
+	}
+	.sa-graph.all .sa-bar.channel-3
+	{
+		background-color: #6f42c1;
+	}
+	.sa-graph.all .sa-bar.channel-4
+	{
+		background-color: #008f83;
+	}
+	.sa-graph.all .sa-bar.channel-5
+	{
+		background-color: #a86f00;
+	}
+	.sa-graph.all .sa-bar.channel-6
+	{
+		background-color: #c83d52;
+	}
+	.sa-graph.all .sa-bar.channel-7
+	{
+		background-color: #7048c8;
+	}
+	.sa-graph.all .sa-bar.channel-8
+	{
+		background-color: #276fd3;
+	}
 	.sa-bar.reference
 	{
 		background-color: #6554c0;
+	}
+	.sa-graph.all .sa-bar.reference
+	{
+		background-color: #17202d;
 	}
 	.st-header, .st-name
 	{
@@ -1482,6 +1522,10 @@
 	.history .history-separator
 	{
 		background-color: #0969da;
+	}
+	.transport-divider
+	{
+		background-color: #b9c1cc;
 	}
 	.quantize-display
 	{

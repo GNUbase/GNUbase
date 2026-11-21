@@ -1025,16 +1025,30 @@ TEST_CASE("a setup pane shows, hides and reorders a window's sections, as ui.lay
 	CHECK(savedLayout(app).at("windows").at("test").at("sections").at("channel") ==
 		Json{{"order", {"fader", "routing", "inserts", "eq", "sends"}}, {"hidden", {"inserts"}}});
 
-	// Any client changes them through the user setting, as MCP and Lua do. Sections it leaves out follow in the
-	// document's order, and names that aren't sections are ignored.
+	// Any client changes them through the user setting, as MCP and Lua do. Names that aren't sections are ignored.
 	Json layout = savedLayout(app);
 	layout["windows"]["test"]["sections"]["channel"] = {
-		{"order", {"sends", "mixer", "fader"}}, {"hidden", {"routing"}}};
+		{"order", {"sends", "mixer", "fader", "routing", "inserts", "eq"}}, {"hidden", {"routing"}}};
 	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
 	REQUIRE(app.waitUntil(
 		[&app] { return sections(app, "#channel-1", true) == Names{"sends", "fader", "routing", "inserts", "eq"}; }));
 	CHECK(sections(app, "#channel-2") == Names{"sends", "fader", "inserts", "eq"});
 	CHECK(paneItems(app) == Names{"sends*", "fader*", "routing", "inserts*", "eq*"});
+
+	// A set saved before some of its sections existed doesn't know them: one its order and hidden list don't name
+	// goes after the section before it in the document, with its default, so EQ stays hidden.
+	layout["windows"]["test"]["sections"]["channel"] = {{"order", {"sends", "fader"}}, {"hidden", {"routing"}}};
+	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+	REQUIRE(app.waitUntil(
+		[&app] { return sections(app, "#channel-1", true) == Names{"routing", "inserts", "eq", "sends", "fader"}; }));
+	CHECK(sections(app, "#channel-2") == Names{"inserts", "sends", "fader"});
+	CHECK(paneItems(app) == Names{"routing", "inserts*", "eq", "sends*", "fader*"});
+
+	// Showing or hiding a section saves the order with the hidden list, so the set knows EQ from then on.
+	app.appUi().docking().setSectionHidden("test", "channel", "inserts", true);
+	waitUntilSaved(app);
+	CHECK(savedLayout(app).at("windows").at("test").at("sections").at("channel") ==
+		Json{{"order", {"routing", "inserts", "eq", "sends", "fader"}}, {"hidden", {"routing", "inserts", "eq"}}});
 
 	// The engine API checks the setting's shape.
 	Json bad = layout;
@@ -1127,7 +1141,8 @@ TEST_CASE("a window without containers of sections learns a set from the first c
 	test::UiApp app({1000, 700});
 	// The user's order and hidden sections from before, e.g. from a project that had channels.
 	Json layout = Json::object();
-	layout["windows"]["test"]["sections"]["channel"] = {{"order", {"sends", "fader"}}, {"hidden", {"routing"}}};
+	layout["windows"]["test"]["sections"]["channel"] = {
+		{"order", {"sends", "fader", "routing", "inserts", "eq"}}, {"hidden", {"routing"}}};
 	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
 	ui::Docking& docking = app.appUi().docking();
 	REQUIRE(app.waitUntil([&docking, &layout] { return docking.layout() == layout; }));
@@ -1170,7 +1185,8 @@ TEST_CASE("a window learns a set from containers in a docked panel's content", "
 {
 	test::UiApp app({1000, 700});
 	Json layout = Json::object();
-	layout["windows"]["test"]["sections"]["channel"] = {{"order", {"fader"}}, {"hidden", {"eq", "sends"}}};
+	layout["windows"]["test"]["sections"]["channel"] = {
+		{"order", {"fader", "routing", "eq", "sends"}}, {"hidden", {"eq", "sends"}}};
 	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
 	ui::Docking& docking = app.appUi().docking();
 	REQUIRE(app.waitUntil([&docking, &layout] { return docking.layout() == layout; }));
