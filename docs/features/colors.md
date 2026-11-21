@@ -50,20 +50,31 @@ its track's.
   to Track, makes them follow their track again; otherwise the color goes to the selected tracks, one undo step
   "Colorize Tracks", and the first item is Set Track Color to Default. Each item has the attribute `color`, the color
   it gives or empty.
+- **Colorizing single tracks** (p. 113): an Alt-click on the left area of a track in the track list, its color strip
+  or its row left of its name, or on the header of the inspector's Basics section opens the same menu at the mouse as
+  the Choose Track Color pane. Its color goes to that one track, also with events selected ("Colorize Tracks"); the
+  inspector's is the track it shows, the first selected one, and the Alt-click doesn't close the section. The pane
+  opens only while the inspector is docked in the project window, whose document has the menu.
 - **Project Colors Setup** (Project menu, the UI command `project.colorsSetup`, pp. 115–119):
   `resources/ui/project-colors.rml`, the color set as a list with swatches, a name field and the color picker
   ([widgets.md](widgets.md)) for the selected color, Insert Color, Duplicate Color, Remove Color (not the last one),
-  Reset Color (the factory color in its place) and Reset to Factory Settings. Apply sends `project.set` `colors`;
-  Cancel drops the changes.
+  Reset Color (the factory color in its place) and Reset to Factory Settings, on the Color Set tab. The Presets tab
+  (p. 117) makes a new set in its place: Number of Basic Colors (8, 16, 24 or 32), Number of Color Tints (1, 2 or 4:
+  the color, its Light tint, and a Dark and a Pale one for 4) and Sort Colors by (basic color: each color with its
+  tints; color tint: all colors of a tint, then the next), with the new set's swatches under them. 16 basic colors
+  are the factory set; another number spreads as many around the factory set's hues, mixing neighbours, with its grey
+  last, and names a color after the nearer hue (" 2" for the second of a name). A change of these settings replaces
+  the set being edited, which the Color Set tab then shows. Apply sends `project.set` `colors`; Cancel drops the
+  changes.
 - **Styling.** The swatches and the color strip get `background-color` from code because the color is user data
   (CLAUDE.md, UI conventions); `tests/stylerules_tests.cpp` lists those files, and checks the documents' Lua too.
 
 ## Not yet
 
-The color tool and its wheel and Alt-click (p. 114), Alt-click on the track list or the inspector's header for one
-track's color (p. 113), selecting colors by name, the color set's presets (8 to 32 colors with tints) and its options
-(saving a set as the default for new projects), colorizing track controls and mixer channels with their track's
-color (p. 1621, with the mixer, #106, and the inspector, #89), and the MIDI editors' event colors menu (p. 1133).
+The color tool and its wheel and Alt-click (p. 114), the Presets tab's Missing Current Project Colors (p. 118), the
+Options tab (saving a set as the default for new projects, selecting colors by name; p. 118), colorizing track
+controls and mixer channels with their track's color (p. 1621, with the mixer, #106, and the inspector, #89), and the
+MIDI editors' event colors menu (p. 1133).
 
 ## Checks
 
@@ -73,8 +84,10 @@ color (p. 1621, with the mixer, #106, and the inspector, #89), and the MIDI edit
   a given color winning, and a folder's color with `editing.applyFolderColor`; Dissolve Part and Bounce MIDI keeping
   part colors, and the tracks Dissolve Part and Merge MIDI in Loop add colored as new tracks. In the app's project
   window: the track list's strip and the event lanes' colors following track and event colors; the color menu on
-  selected tracks and events, both reset items and the undo step; the setup dialog's remove, duplicate, recolor,
-  insert, rename, reset color, apply, reset to factory settings and cancel.
+  selected tracks and events, both reset items and the undo step; the Choose Track Color pane from the strip, the row
+  left of the name and the inspector's Basics header, for that one track; the setup dialog's remove, duplicate,
+  recolor, insert, rename, reset color, apply, reset to factory settings and cancel, and its presets: 8 basic colors
+  with unique names, tints in both sort orders, 128 colors, 16 in one tint as the factory set and 24 applied.
 - `tests/canvas_tests.cpp`: an event with a color of its own is filled with it, outlined by `stroke-color`, or by
   the tinted color in `stroke-width` with `own-color-tint`, also without a `stroke-color`; a waveform in the tinted
   color, `event-inset` inside its padding.

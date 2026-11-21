@@ -132,7 +132,8 @@ sends engine commands, so whatever another client changes shows at once.
   narrow track list, the name gives way; what still doesn't fit is hidden at the row's right. The dialog keeps what the
   setting has that it doesn't know, such as another type's width from a later GNUbase.
 - **Track colors** (#1314). Code gives a track's `.track-color` strip its color as `background-color` and, only
-  while the track has one, the attribute `color`; the themes do the rest. The default theme, after the mockup
+  while the track has one, the attribute `color`; the themes do the rest. An Alt-click on the row left of the name
+  opens the Choose Track Color pane for the track ([colors.md](colors.md)). The default theme, after the mockup
   (`art/mockups/main-window.webp`), draws the strip as a 5 dp bar at the row's left edge, tints a folder's row in its
   color and lights the selected row in its track's color with an outline in it: the strip stretches across the row,
   and a nine-patch skin in the row's color (`track-row-folder`, `track-row-selected`) lets the color through. The
