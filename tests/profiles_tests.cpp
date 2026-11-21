@@ -3,11 +3,13 @@
 // duplicated, renamed, deleted, exported and imported, and activated when GNUbase starts again.
 #include "engine/engine.h"
 #include "engine/settings/profiles.h"
+#include "platform/log.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -23,6 +25,9 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+#include <aclapi.h>
+#include <sddl.h>
 #else
 #include <fcntl.h>
 #include <unistd.h>
@@ -545,61 +550,48 @@ TEST_CASE("what is left of a profile folder that couldn't be deleted goes at the
 	fs::create_directories(left / "folder");
 	std::ofstream(left / "settings.json") << "{}";
 	std::ofstream(f.dir.path() / "profile-removed-0000000000000001").close();
+	// Only what the deletes named so goes: other names that start the same stay.
+	std::vector<fs::path> others = {f.dir.path() / "profile-removed-0123456789", // too short
+		f.dir.path() / "profile-removed-0123456789abcdeg",                       // not a hex digit
+		f.dir.path() / "profile-removed-0123456789abcdef0",                      // too long
+		f.dir.path() / "profile-removed-notes.txt"};
+	for (const fs::path& other : others)
+		std::ofstream(other) << "mine";
 	f.start();
-	CHECK(removedFolders(f.dir.path()).empty());
+	std::vector<fs::path> kept = removedFolders(f.dir.path());
+	std::sort(kept.begin(), kept.end());
+	std::sort(others.begin(), others.end());
+	CHECK(kept == others);
 	CHECK(f.scale() == 1.5);
 	CHECK(f.names() == std::vector<std::string>{"Default"});
 }
 
-#ifndef _WIN32
-// Not on Windows: there a folder isn't renamed while a file in it is open, which is what keeps a file from being
-// deleted there.
-TEST_CASE(
-	"a deleted profile whose folder can't be deleted completely is gone at once and the rest goes later", "[unit]")
-{
-	namespace fs = std::filesystem;
-	Fixture f;
-	f.call("profile.add", {{"name", "Studio"}});
-	// A folder in it whose file can't be deleted.
-	const fs::path locked = f.dir.path() / "profiles" / "Studio" / "Locked";
-	fs::create_directories(locked);
-	std::ofstream(locked / "settings.json") << "{}";
-	fs::permissions(locked, fs::perms::owner_read | fs::perms::owner_exec);
-	if (std::ofstream(locked / "probe").good())
-	{
-		fs::permissions(locked, fs::perms::owner_all);
-		SKIP("the folder can be changed here anyway, e.g. by root");
-	}
-	f.call("profile.remove", {{"name", "Studio"}});
-	CHECK(f.names() == std::vector<std::string>{"Default"});
-	f.call("profile.add", {{"name", "Studio"}});
-	CHECK(f.names() == std::vector<std::string>{"Default", "Studio"});
-	CHECK(!fs::exists(locked));
-	const std::vector<fs::path> left = removedFolders(f.dir.path());
-	REQUIRE(left.size() == 1);
-	fs::permissions(left.front() / "Locked", fs::perms::owner_all);
-	f.start();
-	CHECK(removedFolders(f.dir.path()).empty());
-	CHECK(f.names() == std::vector<std::string>{"Default", "Studio"});
-}
-#endif
-
-#ifndef _WIN32
 namespace
 {
-	// A folder with a file that can't be deleted, as the folder's permissions keep it. When the test ends, also after
-	// a failed check, the folder can be changed again, where it is or in a profile-removed-* folder that a switch put
-	// it in, so that the settings folder can be deleted.
+	// Whether this process's permissions don't hold it back, as root's elsewhere: then the tests can't make a folder
+	// that it can't change. Windows has no such user: its access rules and open files hold back everyone.
+	bool privileged()
+	{
+#ifdef _WIN32
+		return false;
+#else
+		return geteuid() == 0;
+#endif
+	}
+
+	// A folder with a file that can't be deleted while the object lives: elsewhere the folder has no write
+	// permission, on Windows its access rules deny everyone deleting it and what is in it. It can still be renamed,
+	// with the folder it is in. When the test ends, also after a failed check, it can be changed again, where it is
+	// or in a profile-removed-* folder that a delete put it in, so that the settings folder can be deleted.
 	class LockedFolder
 	{
 	public:
 		LockedFolder(std::filesystem::path settings, std::filesystem::path folder)
 			: m_settings(std::move(settings)), m_folder(std::move(folder))
 		{
-			namespace fs = std::filesystem;
-			fs::create_directories(m_folder);
+			std::filesystem::create_directories(m_folder);
 			std::ofstream(m_folder / "settings.json") << "{}";
-			fs::permissions(m_folder, fs::perms::owner_read | fs::perms::owner_exec);
+			REQUIRE(lock(m_folder, true));
 		}
 		~LockedFolder() { unlock(); }
 		LockedFolder(const LockedFolder&) = delete;
@@ -607,27 +599,102 @@ namespace
 		LockedFolder(LockedFolder&&) = delete;
 		LockedFolder& operator=(LockedFolder&&) = delete;
 
-		// Whether the file can't be deleted indeed: root changes any folder.
-		bool locked() const { return !std::ofstream(m_folder / "probe").good(); }
+		// Whether the file can't be deleted indeed: root changes any folder, an administrator may own the rules.
+		bool locked() const
+		{
+			std::error_code error;
+			std::filesystem::remove(m_folder / "settings.json", error);
+			return static_cast<bool>(error);
+		}
 
 		void unlock() const
 		{
 			namespace fs = std::filesystem;
-			std::error_code ignored;
-			fs::permissions(m_folder, fs::perms::owner_all, ignored);
+			lock(m_folder, false);
 			std::error_code error;
 			for (fs::directory_iterator entry(m_settings, error), end; !error && entry != end; entry.increment(error))
-				if (entry->path().filename().u8string().rfind("profile-removed-", 0) == 0)
-					fs::permissions(entry->path() / m_folder.filename(), fs::perms::owner_all, ignored);
+				if (entry->path().filename().u8string().rfind("profile-removed-", 0) == 0 &&
+					fs::exists(entry->path() / m_folder.filename()))
+					lock(entry->path() / m_folder.filename(), false);
 		}
 
 	private:
+		static bool lock(const std::filesystem::path& folder, bool locked)
+		{
+#ifdef _WIN32
+			// Everyone (WD) is denied deleting (0x10000) and deleting what is in it (0x40), also what is made in it
+			// (OICI); without, the folder has only the rules it inherits.
+			PSECURITY_DESCRIPTOR descriptor = nullptr;
+			if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+					locked ? L"D:(D;OICI;0x10040;;;WD)" : L"D:", SDDL_REVISION_1, &descriptor, nullptr))
+				return false;
+			BOOL present = FALSE;
+			BOOL defaulted = FALSE;
+			PACL acl = nullptr;
+			std::wstring name = folder.wstring();
+			const bool done = GetSecurityDescriptorDacl(descriptor, &present, &acl, &defaulted) != FALSE &&
+				SetNamedSecurityInfoW(name.data(), SE_FILE_OBJECT,
+					DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, acl,
+					nullptr) == ERROR_SUCCESS;
+			LocalFree(descriptor);
+			return done;
+#else
+			namespace fs = std::filesystem;
+			std::error_code error;
+			fs::permissions(
+				folder, locked ? fs::perms::owner_read | fs::perms::owner_exec : fs::perms::owner_all, error);
+			return !error;
+#endif
+		}
+
 		std::filesystem::path m_settings;
 		std::filesystem::path m_folder;
 	};
 }
 
-// Not on Windows, as above.
+TEST_CASE(
+	"a deleted profile whose folder can't be deleted completely is gone at once and the rest goes later", "[unit]")
+{
+	namespace fs = std::filesystem;
+	const test::TempDir logs;
+	const fs::path log = logs.path() / "gnubase.log";
+	const logging::Session session(log);
+	Fixture f;
+	f.call("profile.add", {{"name", "Studio"}});
+	// A folder in it whose file can't be deleted.
+	const fs::path locked = f.dir.path() / "profiles" / "Studio" / "Locked";
+	const LockedFolder lock(f.dir.path(), locked);
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(lock.locked());
+	f.call("profile.remove", {{"name", "Studio"}});
+	CHECK(f.names() == std::vector<std::string>{"Default"});
+	f.call("profile.add", {{"name", "Studio"}});
+	CHECK(f.names() == std::vector<std::string>{"Default", "Studio"});
+	CHECK(!fs::exists(locked));
+	const std::vector<fs::path> left = removedFolders(f.dir.path());
+	REQUIRE(left.size() == 1);
+	// The log says what stays, when it is deleted and at each start that tries again.
+	const std::string line = "Cannot delete " + left.front().u8string() + " completely";
+	const auto lines = [&log, &line]
+	{
+		const std::string text = test::readText(log);
+		size_t count = 0;
+		for (size_t at = text.find(line); at != std::string::npos; at = text.find(line, at + 1))
+			++count;
+		return count;
+	};
+	CHECK(lines() == 1);
+	f.start();
+	CHECK(lines() == 2);
+	CHECK(removedFolders(f.dir.path()).size() == 1);
+	lock.unlock();
+	f.start();
+	CHECK(lines() == 2);
+	CHECK(removedFolders(f.dir.path()).empty());
+	CHECK(f.names() == std::vector<std::string>{"Default", "Studio"});
+}
+
 TEST_CASE(
 	"a profile switch deletes the next profile's folder at once though something in it can't be deleted", "[unit]")
 {
@@ -637,8 +704,9 @@ TEST_CASE(
 	f.call("profile.add", {{"name", "Studio"}});
 	const fs::path studio = f.dir.path() / "profiles" / "Studio";
 	const LockedFolder locked(f.dir.path(), studio / "Locked");
-	if (!locked.locked())
-		SKIP("the folder can be changed here anyway, e.g. by root");
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(locked.locked());
 	f.call("profile.activate", {{"name", "Studio"}});
 	f.start();
 	CHECK(f.call("profile.list").at("active") == "Studio");
@@ -665,7 +733,6 @@ TEST_CASE(
 	CHECK(f.scale() == 2.0);
 }
 
-// Not on Windows, as above.
 TEST_CASE(
 	"a profile switch goes ahead when a profile-switch folder that was left can't be deleted completely", "[unit]")
 {
@@ -677,8 +744,9 @@ TEST_CASE(
 	// What an earlier switch couldn't delete of its copies.
 	const fs::path staging = f.dir.path() / "profile-switch";
 	const LockedFolder locked(f.dir.path(), staging / "Locked");
-	if (!locked.locked())
-		SKIP("the folder can be changed here anyway, e.g. by root");
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(locked.locked());
 	f.call("profile.activate", {{"name", "Studio"}});
 	f.start();
 	const Json list = f.call("profile.list");
@@ -696,4 +764,375 @@ TEST_CASE(
 	f.start();
 	CHECK(f.scale() == 1.5);
 }
+
+TEST_CASE(
+	"a profile switch deletes its copies at once when it is done though something in them can't be deleted", "[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	f.setScale(1.5);
+	const fs::path dir = f.dir.path();
+	const fs::path staging = dir / "profile-switch";
+	if (privileged())
+		SKIP("root changes any folder");
+	// Something that can't be deleted gets into the switch's copies while it makes them.
+	std::unique_ptr<LockedFolder> locked;
+	bool lockedIndeed = false;
+	switchWith(f, "Studio",
+		[&](const fs::path& file)
+		{
+			if (!locked && file.parent_path() == staging / "next")
+			{
+				locked = std::make_unique<LockedFolder>(dir, staging / "Locked");
+				lockedIndeed = locked->locked();
+			}
+		});
+	REQUIRE(locked != nullptr);
+	REQUIRE(lockedIndeed);
+	CHECK(!fs::exists(staging));
+	CHECK(removedFolders(dir).size() == 1);
+	f.start();
+	const Json list = f.call("profile.list");
+	CHECK(list.at("active") == "Studio");
+	CHECK(list.at("unfinished") == false);
+	CHECK(f.scale() == 2.0);
+}
+
+TEST_CASE("a profile switch that fails deletes the active profile's folder at once though something in it can't be "
+		  "deleted",
+	"[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	f.setScale(1.5);
+	const fs::path dir = f.dir.path();
+	// A folder in the active profile's that can't be deleted, from before: the switch saves its files there.
+	const LockedFolder locked(dir, dir / "profiles" / "Default" / "Locked");
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(locked.locked());
+	bool failed = false;
+	switchWith(f, "Studio",
+		[&](const fs::path& file)
+		{
+			if (file == dir / "quantize-presets.json" && !failed)
+			{
+				failed = true;
+				throw std::runtime_error("can't be replaced");
+			}
+		});
+	REQUIRE(failed);
+	// The active profile has no folder of its own again, and what can't be deleted of it waits aside.
+	CHECK(!fs::exists(dir / "profiles" / "Default"));
+	CHECK(!fs::exists(dir / "profile-switch"));
+	CHECK(removedFolders(dir).size() == 1);
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Studio");
+	CHECK(f.scale() == 2.0);
+}
+
+TEST_CASE("an unfinished profile switch that is undone deletes the active profile's folder at once though something "
+		  "in it can't be deleted",
+	"[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	f.setScale(1.5);
+	interruptSwitch(f, "Studio");
+	const fs::path dir = f.dir.path();
+	const LockedFolder locked(dir, dir / "profiles" / "Default" / "Locked");
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(locked.locked());
+	// The start undoes the switch, then switches: the active profile's folder is made again, without what waits aside.
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Studio");
+	CHECK(f.scale() == 2.0);
+	CHECK(fs::is_regular_file(dir / "profiles" / "Default" / "settings.json"));
+	CHECK(!fs::exists(dir / "profiles" / "Default" / "Locked"));
+	CHECK(removedFolders(dir).size() == 1);
+	f.call("profile.activate", {{"name", "Default"}});
+	f.start();
+	CHECK(f.scale() == 1.5);
+}
+
+TEST_CASE("Delete program preferences drops an unfinished profile switch though something in its copies can't be "
+		  "deleted",
+	"[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.call("profile.add", {{"name", "Studio"}});
+	interruptSwitch(f, "Studio");
+	const fs::path staging = f.dir.path() / "profile-switch";
+	const LockedFolder locked(f.dir.path(), staging / "Locked");
+	if (privileged())
+		SKIP("root changes any folder");
+	REQUIRE(locked.locked());
+	engine::settings::cancelProfileSwitch(f.dir.path());
+	CHECK(!fs::exists(staging));
+	CHECK(removedFolders(f.dir.path()).size() == 1);
+	f.start();
+	const Json list = f.call("profile.list");
+	CHECK(list.at("active") == "Default");
+	CHECK(list.at("unfinished") == false);
+}
+
+namespace
+{
+	// A profile's folder that can't be renamed while the object lives: on Windows a file in it is open, shared for
+	// deleting it (deletable) or not; elsewhere the folder has no write permission, which keeps it from moving to
+	// another folder, and it holds a file unless deletable.
+	class UnmovableFolder
+	{
+	public:
+		UnmovableFolder(std::filesystem::path folder, bool deletable) : m_folder(std::move(folder))
+		{
+			namespace fs = std::filesystem;
+			fs::create_directories(m_folder);
+#ifdef _WIN32
+			std::ofstream(m_folder / "settings.json") << "{}";
+			m_handle = CreateFileW((m_folder / "settings.json").c_str(), GENERIC_READ,
+				FILE_SHARE_READ | FILE_SHARE_WRITE | (deletable ? FILE_SHARE_DELETE : 0), nullptr, OPEN_EXISTING,
+				FILE_ATTRIBUTE_NORMAL, nullptr);
+			REQUIRE(m_handle != INVALID_HANDLE_VALUE);
+#else
+			if (!deletable)
+				std::ofstream(m_folder / "settings.json") << "{}";
+			fs::permissions(m_folder, fs::perms::owner_read | fs::perms::owner_exec);
 #endif
+		}
+		~UnmovableFolder()
+		{
+#ifdef _WIN32
+			CloseHandle(m_handle);
+#else
+			std::error_code ignored;
+			std::filesystem::permissions(m_folder, std::filesystem::perms::owner_all, ignored);
+#endif
+		}
+		UnmovableFolder(const UnmovableFolder&) = delete;
+		UnmovableFolder& operator=(const UnmovableFolder&) = delete;
+		UnmovableFolder(UnmovableFolder&&) = delete;
+		UnmovableFolder& operator=(UnmovableFolder&&) = delete;
+
+		// Whether it can't move to the settings folder indeed: root moves it anyway, and some file systems too.
+		bool unmovable() const
+		{
+			namespace fs = std::filesystem;
+			const fs::path probe = m_folder.parent_path().parent_path() / "probe";
+			std::error_code error;
+			fs::rename(m_folder, probe, error);
+			if (error)
+				return true;
+			fs::rename(probe, m_folder);
+			return false;
+		}
+
+	private:
+		std::filesystem::path m_folder;
+#ifdef _WIN32
+		HANDLE m_handle = INVALID_HANDLE_VALUE;
+#endif
+	};
+}
+
+TEST_CASE("a deleted profile whose folder can't be put aside is deleted where it is, or the error says why", "[unit]")
+{
+	namespace fs = std::filesystem;
+	const test::TempDir logs;
+	const fs::path log = logs.path() / "gnubase.log";
+	const logging::Session session(log);
+	const Fixture f;
+	f.call("profile.add", {{"name", "Studio"}});
+	f.call("profile.add", {{"name", "Travel"}});
+	const fs::path studio = f.dir.path() / "profiles" / "Studio";
+	const fs::path travel = f.dir.path() / "profiles" / "Travel";
+	const UnmovableFolder deletable(studio, true);
+	const UnmovableFolder kept(travel, false);
+	if (privileged())
+		SKIP("root moves any folder");
+#ifdef _WIN32
+	REQUIRE(deletable.unmovable());
+	REQUIRE(kept.unmovable());
+#else
+	if (!deletable.unmovable() || !kept.unmovable())
+		SKIP("this file system moves a folder without write permission to another folder");
+#endif
+	f.call("profile.remove", {{"name", "Studio"}});
+	CHECK(!fs::exists(studio));
+	CHECK_THAT(f.fails("profile.remove", {{"name", "Travel"}}), ContainsSubstring("can't be changed"));
+	CHECK(fs::exists(travel));
+	CHECK(f.names() == std::vector<std::string>{"Default", "Travel"});
+	CHECK(removedFolders(f.dir.path()).empty());
+	// The log has it too, for the switches, which go on when a folder stays.
+	CHECK_THAT(test::readText(log), ContainsSubstring("Cannot delete " + travel.u8string() + ": "));
+}
+
+namespace
+{
+	// A file that can't be moved while the object lives: on Windows it is open without sharing its delete, elsewhere
+	// its folder has no write permission.
+	class HeldFile
+	{
+	public:
+		explicit HeldFile(std::filesystem::path file) : m_file(std::move(file))
+		{
+#ifdef _WIN32
+			m_handle = CreateFileW(m_file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+				OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+			REQUIRE(m_handle != INVALID_HANDLE_VALUE);
+#else
+			std::filesystem::permissions(
+				m_file.parent_path(), std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+#endif
+		}
+		~HeldFile()
+		{
+#ifdef _WIN32
+			CloseHandle(m_handle);
+#else
+			std::error_code ignored;
+			std::filesystem::permissions(m_file.parent_path(), std::filesystem::perms::owner_all, ignored);
+#endif
+		}
+		HeldFile(const HeldFile&) = delete;
+		HeldFile& operator=(const HeldFile&) = delete;
+		HeldFile(HeldFile&&) = delete;
+		HeldFile& operator=(HeldFile&&) = delete;
+
+	private:
+		std::filesystem::path m_file;
+#ifdef _WIN32
+		HANDLE m_handle = INVALID_HANDLE_VALUE;
+#endif
+	};
+}
+
+TEST_CASE("a profile switch replaces each file in one step, so one that can't take the next profile's stays as it was",
+	"[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	f.setScale(1.5);
+	const fs::path dir = f.dir.path();
+	if (privileged())
+		SKIP("root moves any file");
+	const std::string before = contents(dir / "settings.json");
+	std::unique_ptr<HeldFile> held;
+	bool undone = false;
+	switchWith(f, "Studio",
+		[&](const fs::path& file)
+		{
+			if (file != dir / "settings.json")
+				return;
+			if (!held)
+			{
+				// The next profile's settings.json, which comes next, can't move into the settings folder.
+				held = std::make_unique<HeldFile>(dir / "profile-switch" / "next" / "settings.json");
+				return;
+			}
+			if (!undone)
+			{
+				// The switch failed and puts the active profile's files back: settings.json was there all along.
+				undone = true;
+				CHECK(contents(file) == before);
+				held.reset();
+			}
+		});
+	REQUIRE(undone);
+	CHECK(contents(dir / "settings.json") == before);
+	CHECK(!fs::exists(dir / "profile-switch"));
+	CHECK(!fs::exists(dir / "profiles" / "Default"));
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Studio");
+	CHECK(f.scale() == 2.0);
+}
+
+namespace
+{
+	// A file that can't be read while the object lives: on Windows it is open without sharing, elsewhere it has no
+	// permissions.
+	class UnreadableFile
+	{
+	public:
+		explicit UnreadableFile(std::filesystem::path file) : m_file(std::move(file))
+		{
+#ifdef _WIN32
+			m_handle =
+				CreateFileW(m_file.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+			REQUIRE(m_handle != INVALID_HANDLE_VALUE);
+#else
+			std::filesystem::permissions(m_file, std::filesystem::perms::none);
+#endif
+		}
+		~UnreadableFile()
+		{
+#ifdef _WIN32
+			CloseHandle(m_handle);
+#else
+			std::error_code ignored;
+			std::filesystem::permissions(
+				m_file, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, ignored);
+#endif
+		}
+		UnreadableFile(const UnreadableFile&) = delete;
+		UnreadableFile& operator=(const UnreadableFile&) = delete;
+		UnreadableFile(UnreadableFile&&) = delete;
+		UnreadableFile& operator=(UnreadableFile&&) = delete;
+
+	private:
+		std::filesystem::path m_file;
+#ifdef _WIN32
+		HANDLE m_handle = INVALID_HANDLE_VALUE;
+#endif
+	};
+}
+
+TEST_CASE("a profile switch that can't copy a file back leaves the one there in place", "[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	f.setScale(1.5);
+	const fs::path dir = f.dir.path();
+	if (privileged())
+		SKIP("root reads any file");
+	const std::string studio = contents(dir / "profiles" / "Studio" / "settings.json");
+	std::unique_ptr<UnreadableFile> held;
+	int calls = 0;
+	// The switch fails after Studio's settings.json came in, and the copy of the active profile's, which would put
+	// the old one back, can't be read.
+	switchWith(f, "Studio",
+		[&](const fs::path& file)
+		{
+			if (file == dir / "quantize-presets.json" && !held)
+			{
+				held = std::make_unique<UnreadableFile>(dir / "profile-switch" / "active" / "settings.json");
+				throw std::runtime_error("can't be replaced");
+			}
+			if (file == dir / "settings.json")
+				++calls;
+		});
+	REQUIRE(held != nullptr);
+	CHECK(calls == 2);
+	// The settings folder still has a settings.json, not none, and the copies wait for the next start.
+	CHECK(contents(dir / "settings.json") == studio);
+	CHECK(fs::exists(dir / "profile-switch" / "active" / "settings.json"));
+	held.reset();
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Studio");
+	CHECK(f.scale() == 2.0);
+	f.call("profile.activate", {{"name", "Default"}});
+	f.start();
+	CHECK(f.scale() == 1.5);
+}

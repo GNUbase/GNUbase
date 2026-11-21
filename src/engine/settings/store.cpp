@@ -56,6 +56,32 @@ namespace gnubase::engine::settings
 			return ".v" + std::to_string(version);
 		}
 
+		// What of a value fits its setting's schema: the value itself, or for a setting of entries by key (an object
+		// schema with additionalProperties, such as the port settings) the entries that fit, so that one edited by
+		// hand, or one a later GNUbase gave a value this one doesn't accept, doesn't take the others along; nullopt if
+		// nothing fits, also when no entry does. left gets the entries that don't fit.
+		std::optional<Json> fitting(const Json& value, const Definition& setting, Json& left)
+		{
+			if (validate(value, setting.schema, setting.key).empty())
+				return value;
+			const auto entries = setting.schema.find("additionalProperties");
+			if (!value.is_object() || entries == setting.schema.end() || !entries->is_object())
+				return std::nullopt;
+			const Json properties = setting.schema.value("properties", Json::object());
+			Json kept = Json::object();
+			for (const auto& [key, entry] : value.items())
+			{
+				const auto known = properties.find(key);
+				if (validate(entry, known != properties.end() ? *known : *entries, setting.key + "." + key).empty())
+					kept[key] = entry;
+				else
+					left[key] = entry;
+			}
+			if (kept.empty() || !validate(kept, setting.schema, setting.key).empty())
+				return std::nullopt;
+			return kept;
+		}
+
 		void checkFormat(const Format& format)
 		{
 			const auto fail = [&format](const std::string& problem)
@@ -211,19 +237,49 @@ namespace gnubase::engine::settings
 		std::optional<Json> result;
 		if (!m_file.empty() && !m_report.readOnly)
 		{
+			Json dropped; // what the file had that doesn't fit, which the change replaces
 			update(
-				[&setting, &changed, &result](Json& fileValues)
+				[&setting, &changed, &result, &dropped](Json& fileValues)
 				{
+					dropped = Json();
 					const auto found = fileValues.find(setting.key);
-					const bool fits =
-						found != fileValues.end() && validate(*found, setting.schema, setting.key).empty();
-					Json value = changed(fits ? *found : setting.defaultValue);
-					if (value == setting.defaultValue)
+					Json left = Json::object();
+					std::optional<Json> fits;
+					if (found != fileValues.end())
+						fits = fitting(*found, setting, left);
+					Json value = changed(fits ? *fits : setting.defaultValue);
+					// The entries that don't fit stay in the file, for the GNUbase that wrote them, unless the change
+					// gives their key a value of its own; also when none of them fits, which counted as the default.
+					// left has entries only for a setting of entries by key.
+					Json kept = value;
+					if (!left.empty())
+					{
+						for (const auto& [entry, old] : (fits ? left : *found).items())
+						{
+							if (!value.is_object() || value.contains(entry))
+							{
+								if (left.contains(entry))
+									dropped[entry] = old;
+							}
+							else
+							{
+								kept[entry] = old;
+							}
+						}
+					}
+					else if (found != fileValues.end() && !fits)
+					{
+						dropped = *found;
+					}
+					if (kept == setting.defaultValue)
 						fileValues.erase(setting.key);
 					else
-						fileValues[setting.key] = value;
+						fileValues[setting.key] = kept;
 					result = std::move(value);
 				});
+			if (!dropped.is_null())
+				logging::warning(
+					"Settings: {} replaced what didn't fit in {}: {}", setting.key, m_file.u8string(), dropped.dump());
 		}
 		if (!result) // kept in memory or read-only, which the file of a newer GNUbase may just have made it
 			result = changed(m_values.find(setting.key)->second);
@@ -488,8 +544,14 @@ namespace gnubase::engine::settings
 			const Definition& setting = definition(key);
 			if (const std::string problem = validate(value, setting.schema, key); !problem.empty())
 			{
+				Json dropped = Json::object();
+				const std::optional<Json> part = fitting(value, setting, dropped);
 				m_report.problems.push_back(prefix);
-				m_report.problems.back().append(problem).append("; using the default, the value is left in the file");
+				m_report.problems.back().append(problem).append(part
+						? "; using the entries that fit, the value is left in the file"
+						: "; using the default, the value is left in the file");
+				if (part)
+					found->second = *part;
 				m_fileValues[key] = value;
 				continue;
 			}

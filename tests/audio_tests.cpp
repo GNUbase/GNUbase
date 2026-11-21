@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/engine.h"
+#include "engine/settings/usersettings.h"
 #include "platform/audio/dummydevice.h"
 #include "platform/hosttime.h"
 #include "platform/log.h"
@@ -1560,13 +1561,15 @@ TEST_CASE("two GNUbase processes on one settings folder each change a port and k
 
 TEST_CASE("port settings keep the members of a later GNUbase's entries", "[integration]")
 {
-	// A later GNUbase gave a port's entry a member this one doesn't know.
+	// A later GNUbase gave a port's entry a member this one doesn't know, and an entry edited by hand doesn't fit.
 	const gnubase::test::TempDir dir;
 	{
 		std::ofstream file(dir.path() / "settings.json");
-		file << Json{{"version", 1},
+		file << Json{{"version", gnubase::engine::settings::userFormat().version},
 			{"values",
-				{{"audio.portSettings", {{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}, {"color", "#ff0000"}}}}},
+				{{"audio.portSettings",
+					 {{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}, {"color", "#ff0000"}}},
+						 {"dummy/dummy/in/Input 3", {{"visible", "no"}}}}},
 					{"midi.portSettings", {{"dummy/in/Keys", {{"showAs", "My keys"}, {"channel", 3}}}}}}}}
 					.dump();
 	}
@@ -1576,7 +1579,8 @@ TEST_CASE("port settings keep the members of a later GNUbase's entries", "[integ
 	Client client(engine);
 	run(client, "audio.setDevice");
 
-	// This GNUbase uses the members it knows, and its changes keep the others and the other entries.
+	// This GNUbase uses the members it knows and the entries that fit, and its changes keep the others and the other
+	// entries, also the one that doesn't fit.
 	CHECK(run(client, "audio.ports").at("inputs")[0].at("showAs") == "Mic");
 	const Json midi = run(client, "midi.ports").at("ports");
 	CHECK(std::any_of(midi.begin(), midi.end(),
@@ -1586,8 +1590,44 @@ TEST_CASE("port settings keep the members of a later GNUbase's entries", "[integ
 	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", ""}});
 	CHECK(settingsFile(dir.path()).at("audio.portSettings") ==
 		Json{{"dummy/dummy/in/Input 1", {{"showAs", "Vocals"}, {"color", "#ff0000"}}},
-			{"dummy/dummy/in/Input 2", {{"visible", false}}}});
+			{"dummy/dummy/in/Input 2", {{"visible", false}}}, {"dummy/dummy/in/Input 3", {{"visible", "no"}}}});
 	CHECK(settingsFile(dir.path()).at("midi.portSettings") == Json{{"dummy/in/Keys", {{"channel", 3}}}});
+}
+
+TEST_CASE("audio.setPort and midi.setPort send settings.changed only when the port's entry changes", "[integration]")
+{
+	// The settings file has an entry that doesn't fit, which the changes keep.
+	const gnubase::test::TempDir dir;
+	std::ofstream(dir.path() / "settings.json") << Json{{"version", gnubase::engine::settings::userFormat().version},
+		{"values", {{"audio.portSettings", {{"dummy/dummy/in/Input 3", {{"visible", "no"}}}}}}}}
+													   .dump();
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	dummy->addLoopback("Keys");
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()), dir.path(), midiBackends(std::move(dummy)));
+	Client client(engine);
+	run(client, "audio.setDevice");
+	// The settings.changed events since the last call: a command's events come before its result.
+	const auto changes = [&client]
+	{
+		int count = 0;
+		while (const std::optional<Message> message = client.wait(std::chrono::milliseconds(0)))
+		{
+			const auto* event = std::get_if<Event>(&*message);
+			count += event != nullptr && event->name == "settings.changed" ? 1 : 0;
+		}
+		return count;
+	};
+	changes();
+	run(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Mic"}});
+	CHECK(changes() == 1);
+	CHECK(settingsFile(dir.path()).at("audio.portSettings") ==
+		Json{{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}}}, {"dummy/dummy/in/Input 3", {{"visible", "no"}}}});
+	run(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Mic"}});
+	CHECK(changes() == 0);
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}});
+	CHECK(changes() == 1);
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}});
+	CHECK(changes() == 0);
 }
 
 namespace

@@ -4450,20 +4450,27 @@ namespace gnubase::engine
 				return Json::object();
 			});
 		addControl(engine,
-			{"bus.removePreset", 1, "Removes one of the user's own bus presets.", presetName, noResult, false},
+			{"bus.removePreset", 1,
+				"Removes one of the user's own bus presets, also one that another GNUbase process on the same settings "
+				"folder removed already: then this one takes the presets of the settings file.",
+				presetName, noResult, false},
 			[&engine](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				const auto name = parameters.at("name").get<std::string>();
 				const BusDirection direction = busDirection(parameters.at("direction"));
+				// One that another GNUbase process removed from the settings file is still in this process's copy
+				// until it takes the file's value, which removing it here does.
+				const bool listed = userPresets(direction, context).contains(name);
 				engine.modifySetting(context, "audio.busPresets",
-					[direction, &name](const Json& value)
+					[direction, &name, listed](const Json& value)
 					{
 						Json presets = value;
 						Json& mine = presets[directionName(direction)];
-						require(mine.is_object() && mine.erase(name) == 1,
-							"no user bus preset " + name + "; only the user's own presets go");
-						return presets;
+						if (mine.is_object() && mine.erase(name) == 1)
+							return presets;
+						require(listed, "no user bus preset " + name + "; only the user's own presets go");
+						return value;
 					});
 				return Json::object();
 			});

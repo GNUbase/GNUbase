@@ -8,12 +8,15 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::engine;
@@ -597,6 +600,70 @@ TEST_CASE("two GNUbase processes on one settings folder each save bus presets an
 	CHECK(std::any_of(presets.begin(), presets.end(), [](const Json& p) { return p.at("name") == "One"; }));
 	run(one, "bus.savePreset", {{"direction", "output"}, {"name", "Four"}});
 	CHECK(run(one, "settings.get", {{"key", "audio.busPresets"}}).at("value").at("output").contains("Two"));
+}
+
+namespace
+{
+	// The values of the settings.changed events that came since the last call: a command's events come before its
+	// result.
+	std::vector<Json> settingsChanges(Client& client)
+	{
+		std::vector<Json> changes;
+		while (const std::optional<Message> message = client.wait(std::chrono::milliseconds(0)))
+			if (const auto* event = std::get_if<Event>(&*message);
+				event != nullptr && event->name == "settings.changed")
+				changes.push_back(event->data.at("values"));
+		return changes;
+	}
+}
+
+TEST_CASE("bus.savePreset and bus.removePreset send settings.changed with the user's presets", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	settingsChanges(client);
+	run(client, "bus.savePreset", {{"direction", "input"}, {"name", "Mine"}});
+	const Json saved = run(client, "settings.get", {{"key", "audio.busPresets"}}).at("value");
+	CHECK(saved.at("input").contains("Mine"));
+	CHECK(settingsChanges(client) == std::vector<Json>{Json{{"audio.busPresets", saved}}});
+	run(client, "bus.removePreset", {{"direction", "input"}, {"name", "Mine"}});
+	CHECK(settingsChanges(client) ==
+		std::vector<Json>{Json{{"audio.busPresets", {{"input", Json::object()}, {"output", Json::object()}}}}});
+}
+
+TEST_CASE("bus.removePreset of a preset that another GNUbase process removed takes the presets of the settings file",
+	"[integration]")
+{
+	const test::TempDir dir;
+	Engine first(gnubase::audio::makeBackends(), dir.path());
+	Engine second(gnubase::audio::makeBackends(), dir.path());
+	Client one(first);
+	Client two(second);
+	run(one, "bus.savePreset", {{"direction", "input"}, {"name", "One"}});
+	run(two, "bus.savePreset", {{"direction", "output"}, {"name", "Two"}}); // the second one now has One too
+	run(one, "bus.removePreset", {{"direction", "input"}, {"name", "One"}});
+	const auto names = [&two]
+	{
+		std::vector<std::string> result;
+		const Json presets = run(two, "bus.presets", {{"direction", "input"}}).at("presets");
+		for (const Json& preset : presets)
+			if (preset.at("kind") == "user")
+				result.push_back(preset.at("name").get<std::string>());
+		return result;
+	};
+	REQUIRE(names() == std::vector<std::string>{"One"});
+
+	// The second one still lists it: removing it there succeeds and takes what the file has.
+	settingsChanges(two);
+	run(two, "bus.removePreset", {{"direction", "input"}, {"name", "One"}});
+	const Json file = Json::parse(test::readText(dir.path() / "settings.json")).at("values").at("audio.busPresets");
+	CHECK(run(two, "settings.get", {{"key", "audio.busPresets"}}).at("value") == file);
+	CHECK(settingsChanges(two) == std::vector<Json>{Json{{"audio.busPresets", file}}});
+	CHECK(names().empty());
+	CHECK(file.at("output").contains("Two"));
+	// Gone from both, it is no preset of the user's.
+	CHECK_THAT(reject(two, "bus.removePreset", {{"direction", "input"}, {"name", "One"}}),
+		ContainsSubstring("no user bus preset One"));
 }
 
 TEST_CASE("a Default bus preset that doesn't work leaves new projects their standard busses", "[unit]")
