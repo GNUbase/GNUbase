@@ -46,6 +46,11 @@ namespace gnubase::ui
 	// All buttons show (reference manual pp. 58, 447).
 	bool anyChannelHas(const engine::Json& project, const std::string& state);
 
+	// Whether the audio of channel from reaches channel to through outputs and sends, as the engine checks for loops
+	// (engine::routingLoops): a channel can't play into one whose audio comes back to it. The mixer's send destination
+	// lists and the inspector's output list leave such channels out.
+	bool routesTo(const engine::Json& project, uint64_t from, uint64_t to);
+
 	// Click and hold on a solo button switches solo defeat, as Alt-click does (p. 466): a view tells it where the mouse
 	// went down, and asks at the click on a solo button (control="solo") whether the press there was that long.
 	class SoloHold

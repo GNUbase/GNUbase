@@ -18,6 +18,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Property.h>
 #include <RmlUi/Core/Types.h>
 #include <catch2/catch_approx.hpp>
@@ -685,6 +686,41 @@ TEST_CASE(
 				"0";
 		}));
 	CHECK(!has(element(app, window, control(guitar.channel, "sends.2.on")), "checked"));
+}
+
+TEST_CASE("a send's destination list leaves out the channels whose audio would come back", "[ui]")
+{
+	test::UiApp app({1200, 900});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added drums = addTrack(app, "group", "Drums");
+	const Added bus = addTrack(app, "group", "Bus");
+	const Added reverb = addTrack(app, "effect", "Reverb");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 6; }));
+	// The values of a channel's send 1 destination list.
+	const auto options = [&](uint64_t channel)
+	{
+		std::vector<std::string> values;
+		if (auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(
+				findElement(app, window, strip(channel) + " [param=\"sends.1.destination\"]")))
+			for (int option = 0; option < select->GetNumOptions(); ++option)
+				values.push_back(select->GetOption(option)->GetAttribute<Rml::String>("value", ""));
+		return values;
+	};
+	const auto id = [](const Added& added) { return std::to_string(added.channel); };
+	REQUIRE(app.waitUntil([&]
+		{ return options(guitar.channel) == std::vector<std::string>{"0", id(drums), id(bus), id(reverb), "add"}; }));
+
+	// Drums send to Reverb: Reverb can't send to Drums, which the engine refuses; the other strips' lists follow.
+	app.call("channel.set", {{"channel", drums.channel}, {"sends", {{{"send", 1}, {"destination", reverb.channel}}}}});
+	REQUIRE(app.waitUntil([&] { return options(reverb.channel) == std::vector<std::string>{"0", id(bus), "add"}; }));
+	CHECK(options(drums.channel) == std::vector<std::string>{"0", id(bus), id(reverb), "add"});
+	// And play into Bus: Bus can't send to Drums either, nor Reverb to Bus through them.
+	app.call("channel.set", {{"channel", reverb.channel}, {"output", bus.channel}});
+	REQUIRE(app.waitUntil([&] { return options(bus.channel) == std::vector<std::string>{"0", "add"}; }));
+	CHECK(options(reverb.channel) == std::vector<std::string>{"0", id(bus), "add"});
+	CHECK(options(guitar.channel) == std::vector<std::string>{"0", id(drums), id(bus), id(reverb), "add"});
 }
 
 TEST_CASE(

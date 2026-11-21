@@ -214,7 +214,7 @@ instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the
   of three markers giving them the first one's in one undo step; a note selected in an in-place editor with its fields
   shown and edited, pitch relative and with Ctrl+Enter, velocity, channel and start, a part selected after it, its
   editor deselecting and closing; the inspector's buttons, volume and pan both ways, the output from another client and
-  from the drop-down list, a refused output, the inserts overview with a bypassed slot, the notepad, renaming, notes and
+  from the drop-down list, an output list without the channels that would close a loop, the inserts overview with a bypassed slot, the notepad, renaming, notes and
   a name being typed when another track is selected and when another client loads a project, arrow keys in the notepad
   and the name, closing a section, hiding one in Set up Sections and opening it only from an empty area, and what a
   group and a marker track don't have; the info line's and the toolbar's setup panes, a hidden field staying hidden when

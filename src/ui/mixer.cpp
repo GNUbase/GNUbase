@@ -285,14 +285,24 @@ namespace gnubase::ui
 				section("sends", "Sends", sends);
 		}
 
-		// Where a channel's sends can go: no destination, or the group and effect channels other than its own; and with
-		// add, Add Effect Track to Send (reference manual p. 554).
-		widgets::Options sendDestinations(const std::vector<MixerChannel>& channels, uint64_t own, bool add)
+		// Where a channel plays: its output and its sends' destinations.
+		std::vector<Json> routing(const Json& channel)
+		{
+			std::vector<Json> to{channel.value("output", Json())};
+			for (const Json& send : channel.value("sends", Json::array()))
+				to.push_back(send.value("destination", Json()));
+			return to;
+		}
+
+		// Where a channel's sends can go: no destination, or the group and effect channels other than its own whose
+		// audio doesn't come back to it; and with add, Add Effect Track to Send (reference manual p. 554).
+		widgets::Options sendDestinations(
+			const Json& project, const std::vector<MixerChannel>& channels, uint64_t own, bool add)
 		{
 			widgets::Options options{{"0", "No Destination"}};
 			for (const MixerChannel& channel : channels)
 				if (channel.id != own && channel.channel != nullptr &&
-					(channel.type == "group" || channel.type == "effect"))
+					(channel.type == "group" || channel.type == "effect") && !routesTo(project, channel.id, own))
 					options.emplace_back(std::to_string(channel.id), channel.name);
 			if (add)
 				options.emplace_back(g_addEffect, "Add Effect Track to Send");
@@ -345,6 +355,31 @@ namespace gnubase::ui
 		const Json channels = project.value("channels", Json::array());
 		return std::any_of(channels.begin(), channels.end(), [&state](const Json& channel)
 			{ return channel.value(state, false) || (state == "solo" && channel.value("soloDefeat", false)); });
+	}
+
+	bool routesTo(const Json& project, uint64_t from, uint64_t to)
+	{
+		const auto channels = project.find("channels");
+		if (channels == project.end())
+			return false;
+		std::vector<uint64_t> pending{from};
+		std::set<uint64_t> seen;
+		while (!pending.empty())
+		{
+			const uint64_t next = pending.back();
+			pending.pop_back();
+			if (next == to)
+				return true;
+			if (!seen.insert(next).second)
+				continue;
+			const auto channel = std::find_if(
+				channels->begin(), channels->end(), [next](const Json& each) { return each.at("id") == next; });
+			if (channel != channels->end())
+				for (const Json& id : routing(*channel))
+					if (id.is_number_integer())
+						pending.push_back(id.get<uint64_t>());
+		}
+		return false;
 	}
 
 	void SoloHold::pressed(Rml::Element* target)
@@ -484,9 +519,19 @@ namespace gnubase::ui
 					const std::vector<engine::Event> channels = m_channelSteps.settle(changed);
 					if (changedOnly(changed, {"channel.changed"}))
 					{
+						// New routing changes which destinations the other strips' sends can take.
+						bool rerouted = false;
 						for (const engine::Event& each : channels)
-							if (const Json* channel = takeChannel(m_project, each))
+						{
+							Json before;
+							if (const Json* channel = takeChannel(m_project, each, &before))
+							{
+								rerouted = rerouted || routing(before) != routing(*channel);
 								showChannel(channel->at("id").get<uint64_t>());
+							}
+						}
+						if (rerouted)
+							show();
 						return;
 					}
 					requestProject();
@@ -844,6 +889,8 @@ namespace gnubase::ui
 		const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
 		const std::string lowest = widgets::format(static_cast<float>(std::min(m_defaultSendLevel, g_sendKnobMin)));
 		const std::string highest = widgets::format(m_project.value("maxVolume", 6.0F));
+		const widgets::Options destinations =
+			sendDestinations(m_project, m_channels, channel.id, channel.track != 0 && m_actions.addEffectTrack);
 		for (Rml::Element* control : controls)
 		{
 			const std::string param = attribute(*control, "param");
@@ -858,9 +905,7 @@ namespace gnubase::ui
 			if (control->GetTagName() == "select")
 			{
 				if (value.is_number())
-					widgets::fill(*control,
-						sendDestinations(m_channels, channel.id, channel.track != 0 && m_actions.addEffectTrack),
-						std::to_string(value.get<uint64_t>()));
+					widgets::fill(*control, destinations, std::to_string(value.get<uint64_t>()));
 			}
 			else if (value.is_boolean())
 			{
