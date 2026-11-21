@@ -49,16 +49,18 @@ the project or its undo history.
   `track.showUsedAutomation`, `track.hideAllAutomation`; Show All Used Automation adds to the automation tracks that
   show, unused ones too). Showing a track's automation shows its lanes with points, or else its first lane, or else
   its first parameter (volume on tracks with audio) without a lane. Append Automation Track shows the next parameter
-  in `automationLane.targets`' order that no automation track shows, with its lane or without one.
+  in `automationLane.targets`' order that no automation track shows, with its lane or without one. Selecting a track
+  with the keys scrolls it into view with its automation tracks, as far as they fit (`TrackList::reveal`). A new or
+  loaded project (`project.reset`) starts with none open and no points selected, since its tracks, lanes and points get
+  the old project's ids again.
 - **Unadded lanes** (#1918): an automation track whose parameter has no lane on the track shows an unadded lane
   (`EventDisplay::unaddedLane`, shaped like `project.get`'s lanes, with read off and no points, its id above the
   project's), so that opening automation tracks changes neither the project nor its undo history. The first points a
   tool draws on it add the lane, which reads, in their undo step: the lane's `history.transaction` and then the
-  points' with the same merge key. A lane that goes while its automation track shows, as when that step is undone,
-  leaves the track showing its parameter unadded, and a lane that comes for an unadded lane's parameter, as on redo,
-  takes its place. Read does nothing on an unadded lane, and copying selected automation tracks leaves them out. Selecting a track with the keys scrolls it into view with its automation
-  tracks, as far as they fit (`TrackList::reveal`). A new or loaded project (`project.reset`) starts with none open and
-  no points selected, since its tracks, lanes and points get the old project's ids again.
+  points' with the same merge key. Pasting onto it adds the lane in the paste's undo step the same way
+  ([copy-automation.md](copy-automation.md)). A lane that goes while its automation track shows, as when that step is
+  undone, leaves the track showing its parameter unadded, and a lane that comes for an unadded lane's parameter, as on
+  redo, takes its place. Read does nothing on an unadded lane, and copying selected automation tracks leaves them out.
 - **Parameter selector** (p. 880): the parameter's name opens a menu with a search field, which narrows the track's
   parameters to those whose name (not its RML, where `&`, `<` and `>` are entities) has the text in any case; Remove
   Parameter (`automationLane.remove`, p. 878), Remove Unused Parameters (the track's lanes without points, p. 880), and
@@ -102,32 +104,35 @@ places a point and where a moved point lands ([snap.md](snap.md)); Ctrl with Alt
 
 ## Not yet
 
-Write automation (#122), automation track heights of their own, the automation panel and its settings (Reduction
-Level, Reveal Parameter on Write), bézier handles and quick vertical scaling of one segment (pp. 874, 877), the
-editor's compress, relative and absolute centre scaling, Range Selection on automation tracks with its added points,
-Alt with the object selection tool to draw, a selection with unselected points in it that can't move past other points
-(p. 878), opening an automation track without recording an undo step (#1918), Shift to set the line
-tool's period, the most recent parameters at the top of the selector, Open Plugin Editor, setting terminators on the
-info line (#1917, [virgin-territory.md](virgin-territory.md)), and automation of the channel strip's sections (#658).
+Write automation (#122), automation track heights of their own, the automation panel and its settings (Reduction Level,
+Reveal Parameter on Write), bézier handles and quick vertical scaling of one segment (pp. 874, 877), the editor's
+compress, relative and absolute centre scaling, Range Selection on automation tracks with its added points, Alt with the
+object selection tool to draw, a selection with unselected points in it that can't move past other points (p. 878),
+Shift to set the line tool's period, the most recent parameters at the top of the selector, Open Plugin Editor, setting
+terminators on the info line (#1917, [virgin-territory.md](virgin-territory.md)), and automation of the channel strip's
+sections (#658).
 
 ## Checks
 
 - `tests/parameter_tests.cpp`: `automationLane.targets` on audio, MIDI, instrument and marker tracks, with lanes.
 - `tests/automationtracks_tests.cpp` drives the app's project window with `ui::Automation`: showing a track's automation
-  adds its first lane, level with its row, with the static value line; Show/Hide Automation inside its track's own part
-  of the row at every track height; Append Automation Track; the parameter selector with its search, picking a parameter
-  in one undo step, Remove Parameter and Remove Unused Parameters; hiding, Show All Used Automation, Hide All Automation
+  shows its first parameter unadded, level with its row, with the static value line; Show/Hide Automation inside its
+  track's own part of the row at every track height; Append Automation Track; the parameter selector with its search,
+  picking a parameter without an undo step, Remove Parameter on an unadded lane and on a lane with points, whose
+  automation track stays closed, and Remove Unused Parameters closing its automation track; opening and picking changing
+  neither the project nor its undo history, and the first points adding their lane in their undo step, whose undo leaves
+  the automation track unadded and whose redo puts the lane back; hiding, Show All Used Automation, Hide All Automation
   and the selected tracks' command; the draw tool's click and curve, the line tool's line, square, sine, triangle and
   parabola, nothing on a step curve, the erase tool, and reading off with the static value line; selecting points with
   clicks, Ctrl and a rectangle, the event editor's vertical scaling and moving, moving points by a drag, Delete, and
-  selecting events deselecting points; a Ctrl-drag of selected points in one direction, a Ctrl-click that deselects
-  one, the editor's tilt left, tilt right and stretch; a move that snaps the pressed point, and Ctrl with Shift or Alt
-  that turns snapping off; a moved selection that replaces the point where it lands, in its preview and in one undo
-  step, a click on one of the selected points, a click on an empty spot that ends the selection, a Ctrl-restricted
-  move released after Ctrl, and a range that deselects points; a vertical move of one of a jump's two points that
-  keeps the other; the zoom tool on an automation track, the play tool auditioning and scrubbing its track there, Show
-  All Used Automation keeping an unused automation track open, and selecting a track with the keys that reveals its
-  automation track; Show Only Automation Tracks of a plugin; a new project without the old one's open automation
-  tracks and selected points; the curve's terminators and virgin territory following `automation.set`.
+  selecting events deselecting points; a Ctrl-drag of selected points in one direction, a Ctrl-click that deselects one,
+  the editor's tilt left, tilt right and stretch; a move that snaps the pressed point, and Ctrl with Shift or Alt that
+  turns snapping off; a moved selection that replaces the point where it lands, in its preview and in one undo step, a
+  click on one of the selected points, a click on an empty spot that ends the selection, a Ctrl-restricted move released
+  after Ctrl, and a range that deselects points; a vertical move of one of a jump's two points that keeps the other; the
+  zoom tool on an automation track, the play tool auditioning and scrubbing its track there, Show All Used Automation
+  keeping an unused automation track open, and selecting a track with the keys that reveals its automation track; Show
+  Only Automation Tracks of a plugin; a new project without the old one's open automation tracks and selected points;
+  the curve's terminators and virgin territory following `automation.set`.
 - `tests/canvas_tests.cpp`: a curve's lines with a terminator in the middle and at the end, with virgin territory,
   and scrolled to start after a terminator.

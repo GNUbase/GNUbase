@@ -613,12 +613,13 @@ namespace gnubase::ui
 				if (const std::vector<uint64_t> tracks = selection(); !tracks.empty())
 					m_binding.send(std::string("automation.") + which, {{"tracks", tracks}});
 			};
-			m_actions[prefix + "AutomationSelectedParameters"] = [this, which]
-			{
-				if (const std::vector<uint64_t> lanes = selectedLanes(); !lanes.empty())
-					m_binding.send(std::string("automation.") + which, {{"lanes", lanes}});
-			};
 		}
+		m_actions["track.copyAutomationSelectedParameters"] = [this]
+		{
+			if (const std::vector<uint64_t> lanes = selectedLanes(); !lanes.empty())
+				m_binding.send("automation.copy", {{"lanes", lanes}});
+		};
+		m_actions["track.pasteAutomationSelectedParameters"] = [this] { pasteSelectedParameters(); };
 		m_parameterMenu = m_document->GetElementById("automation-parameter-menu");
 		if (m_parameterMenu != nullptr)
 			for (const Rml::EventId id : {Rml::EventId::Click, Rml::EventId::Change})
@@ -1874,6 +1875,9 @@ namespace gnubase::ui
 			}
 			if (Rml::Element* button = closest(target, "automation-append"))
 			{
+				// The new automation track can show at once, which builds the rows again and so deletes the button:
+				// the click goes no further (#1918).
+				event.StopPropagation();
 				if (const Row* row = rowOf(button))
 					m_display.appendAutomation(row->id);
 				return;
@@ -2483,13 +2487,49 @@ namespace gnubase::ui
 		return 0;
 	}
 
-	std::vector<uint64_t> TrackList::selectedLanes() const
+	std::vector<uint64_t> TrackList::selectedLanes(bool unadded) const
 	{
 		std::vector<uint64_t> lanes;
 		for (const uint64_t lane : m_selectedLanes)
-			if (laneOf(lane) != nullptr && m_display.unaddedLane(lane) == nullptr) // with automation to copy
+			if (laneOf(lane) != nullptr && (unadded || m_display.unaddedLane(lane) == nullptr))
 				lanes.push_back(lane);
 		return lanes;
+	}
+
+	void TrackList::pasteSelectedParameters()
+	{
+		const std::vector<uint64_t> selected = selectedLanes(true);
+		Json lanes = Json::array();
+		Json add = Json::array();
+		for (const uint64_t lane : selected)
+			if (const Json* unadded = m_display.unaddedLane(lane))
+				add.push_back({{"command", "automationLane.add"},
+					{"parameters", {{"track", unadded->at("track")}, {"target", unadded->at("target")}}}});
+			else
+				lanes.push_back(lane);
+		if (add.empty())
+		{
+			if (!lanes.empty())
+				m_binding.send("automation.paste", {{"lanes", std::move(lanes)}});
+			return;
+		}
+		// The unadded lanes are added in the paste's undo step (#1918), as a tool's first points add theirs: their
+		// transaction, then the paste's with the same merge key, which joins that step once their ids are known.
+		// A paste that fails then leaves that step with the lanes alone, as it can only when the sample rate changed.
+		const std::string merge = "automation-paste-" + std::to_string(selected.front());
+		m_binding.send("history.transaction",
+			{{"description", "Paste Automation"}, {"merge", merge}, {"commands", std::move(add)}},
+			[this, merge, lanes, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result) mutable
+			{
+				if (alive.expired() || !result.ok())
+					return;
+				for (const Json& added : result.value.at("results"))
+					lanes.push_back(added.at("lane").at("id"));
+				m_binding.send("history.transaction",
+					{{"description", "Paste Automation"}, {"merge", merge},
+						{"commands",
+							Json::array({{{"command", "automation.paste"}, {"parameters", {{"lanes", lanes}}}}})}});
+			});
 	}
 
 	void TrackList::selectLane(Rml::Event& event, uint64_t lane)
