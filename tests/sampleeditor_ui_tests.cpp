@@ -42,13 +42,15 @@ namespace
 	// frames, selected in the project window and open in the sample editor.
 	struct Fixture
 	{
-		explicit Fixture(int sampleRate = 48000) : display(app.appUi().showProject())
+		explicit Fixture(int sampleRate = 48000, int channels = 1) : display(app.appUi().showProject())
 		{
 			test::Audio sine;
 			sine.sampleRate = sampleRate;
+			sine.channels = channels;
 			for (int64_t frame = 0; frame < g_frames; ++frame)
-				sine.samples.push_back(
-					static_cast<float>(0.5 * std::sin(static_cast<double>(frame) * 3.14159265358979323846 / 100.0)));
+				for (int channel = 0; channel < channels; ++channel)
+					sine.samples.push_back(static_cast<float>(
+						0.5 * std::sin(static_cast<double>(frame) * 3.14159265358979323846 / 100.0)));
 			test::writeWav(file, sine);
 			track =
 				app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id").get<uint64_t>();
@@ -834,6 +836,81 @@ TEST_CASE("sample editor Draw edits samples only at sample zoom and selects the 
 		[&] { return f.app.call("job.get", {{"job", held.job()}}).at("job").at("state") == "cancelled"; }));
 	CHECK(f.view().at("selectionStart") == before.at("selectionStart"));
 	CHECK(f.view().at("selectionEnd") == before.at("selectionEnd"));
+}
+
+TEST_CASE("sample editor Draw shows its stroke during a held drag and until its job ends", "[ui]")
+{
+	Fixture f(48000, 2);
+	f.open();
+	f.selection(2100, 2300);
+	for (const char* action : {"selectionHorizontal", "inVertical"})
+	{
+		f.click(of("#se-zoom-menu"));
+		f.click(of(std::string("[zoom=") + action + "]"));
+	}
+	f.tool("draw");
+	Rml::ElementDocument* document = f.app.shell().find(f.window)->context().GetDocument(0);
+	REQUIRE(document != nullptr);
+	const auto stroke = [&] { return dynamic_cast<ui::Curve*>(document->QuerySelector(".se-draw-stroke")); };
+	for (const std::string outcome : {"done", "failed", "cancelled"})
+	{
+		CAPTURE(outcome);
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				const auto* wave = dynamic_cast<ui::Waveform*>(document->QuerySelector(".se-wave"));
+				return wave != nullptr && wave->channels().size() == 2 && wave->span().start == f.editor().start() &&
+					wave->GetAttribute<uint64_t>("media", 0) == f.view().at("media").get<uint64_t>();
+			}));
+		CHECK(stroke() == nullptr);
+		const size_t jobs = f.app.call("job.list").at("jobs").size();
+		const auto before = f.app.ui().screenshot(f.window, of(".se-display"));
+		const Json area = f.box(".se-display");
+		const auto target = [&](double frame, double y)
+		{
+			return ui::Target{"", 0,
+				ui::Point{static_cast<int>(std::lround(f.x(frame))),
+					static_cast<int>(std::lround(area.at("y").get<double>() + (area.at("height").get<double>() * y)))}};
+		};
+		const ui::Target from = target(2140, 0.625);
+		const ui::Target to = target(2180, 0.875);
+		test::HeldJob held(f.app.engine(), "sampleEditor.process");
+		f.app.ui().press(f.window, from, ui::MouseButton::Left);
+		f.app.ui().move(f.window, to);
+		REQUIRE(stroke() != nullptr);
+		const auto& points = stroke()->points();
+		REQUIRE(points.size() > 2);
+		const size_t count = points.size();
+		CHECK(std::abs(points.front().position - 2140.0) <= 1.0);
+		CHECK(std::abs(points.back().position - 2180.0) <= 1.0);
+		CHECK(points.front().value == Catch::Approx(0.75).margin(0.02));
+		CHECK(points.back().value == Catch::Approx(0.25).margin(0.02));
+		CHECK(stroke()->virginTerritory());
+		const Json lane = f.box(".se-draw-stroke");
+		CHECK(f.near(lane.at("x").get<double>(), area.at("x").get<double>()));
+		CHECK(f.near(lane.at("width").get<double>(), area.at("width").get<double>()));
+		CHECK(f.near(lane.at("y").get<double>(), area.at("y").get<double>() + (area.at("height").get<double>() / 2.0)));
+		CHECK(f.near(lane.at("height").get<double>(), area.at("height").get<double>() / 2.0));
+		const auto drawn = f.app.ui().screenshot(f.window, of(".se-display"));
+		CHECK(ui::writePng(drawn, test::outputDirectory() / "sample-editor-draw-stroke.png"));
+		CHECK(!test::compareImages(drawn, before, {}).equal);
+		CHECK(f.app.call("job.list").at("jobs").size() == jobs);
+		f.app.ui().release(f.window, to, ui::MouseButton::Left);
+		REQUIRE(held.waitUntilHeld());
+		REQUIRE(stroke() != nullptr);
+		CHECK(stroke()->points().size() == count);
+		if (outcome == "cancelled")
+			f.app.call("job.cancel", {{"job", held.job()}});
+		else if (outcome == "failed")
+			f.app.call("project.set", {{"name", "Changed during drawing"}});
+		CHECK(held.release());
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				return f.app.call("job.get", {{"job", held.job()}}).at("job").at("state") == outcome &&
+					stroke() == nullptr;
+			}));
+	}
 }
 
 TEST_CASE("sample editor half axes and sliders follow waveform zoom and scroll", "[ui]")

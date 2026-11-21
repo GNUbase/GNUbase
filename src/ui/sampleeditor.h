@@ -86,6 +86,7 @@ namespace gnubase::ui
 		void move(Rml::Event& event);
 		void release(Rml::Event& event);
 		void drawSamples(const Rml::Event& event);
+		void renderDraw();
 
 		void requestProject();
 		void requestView();

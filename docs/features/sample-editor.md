@@ -120,6 +120,12 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 | Play | Auditions the clip with its fades from the frame pressed until the release, also outside the event and past its end (`audition.start` with the `clip`, [audition.md](audition.md)) | p. 630 |
 | Scrub | A drag scrubs the clip (`audition.scrub` with the `clip`) and moves the project cursor to where the frame plays | p. 634 |
 
+While drawing, `curve.se-draw-stroke` overlays the collected samples in the pressed channel's waveform lane, following
+horizontal scroll and zoom and vertical waveform zoom. It draws only between the stroke's endpoints, with a handle for
+a single sample. The overlay remains while the shared-copy choice or processing job is pending and disappears when the
+edit is refused, cancelled or finished, or the editor switches to another event. Its color and line width belong to the
+themes.
+
 - **Snap point** (pp. 626-628): a line at the event's snap point, at its start without one of its own; a drag with any
   tool sets it within the event (`event.setSnapPoint`).
 - **Info line** (p. 614): the clip's sample rate and channels, its length, the selection range and the zoom in samples
@@ -176,7 +182,9 @@ doesn't have yet is in [warp.md](warp.md).
   conversion in both directions, inserted lengths, unchanged surrounding audio and undo/redo.
 - `tests/sampleeditor_ui_tests.cpp`: Draw refusing coarse zoom, drawing and selecting corrected samples with undo; half
   level guides toggled through the Level menu and both zoom sliders and horizontal scroll following the waveform;
-  cancelling a held Draw job preserving the selection.
+  cancelling a held Draw job preserving the selection; a stroke visible during a held drag in the second stereo
+  channel at vertical zoom, its frames and values, rendered pixels, and retention until a job succeeds, fails or is
+  cancelled.
 
 - `tests/uiapp_tests.cpp`: project and sample-editor Delete/Backspace assignments stay separate;
   `tests/theme_tests.cpp`: all shared style sheets leave new font sizes to the themes.

@@ -1188,6 +1188,12 @@
 	{
 		background-color: #56627366;
 	}
+	.se-draw-stroke
+	{
+		color: #6554c0;
+		stroke-color: #6554c0;
+		stroke-width: 2dp;
+	}
 	.se-outside
 	{
 		background-color: #eef1f599;

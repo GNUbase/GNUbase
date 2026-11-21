@@ -301,6 +301,7 @@ namespace gnubase::ui
 				if (job.at("id") != m_processJob)
 					return;
 				m_processJob = 0;
+				m_drawSamples.clear();
 				if (job.at("state") == "done" && m_processParameters.at("operation") == "draw" &&
 					m_processParameters.at("event") == m_event)
 					m_binding.send("sampleEditor.set",
@@ -370,6 +371,8 @@ namespace gnubase::ui
 			m_question->RemoveEventListener(g_dialogCloseEvent, this);
 			m_question.reset();
 			closeDialog(*dialog, "cancel");
+			m_drawSamples.clear();
+			renderDraw();
 		}
 	}
 
@@ -407,6 +410,8 @@ namespace gnubase::ui
 					setInner(
 						m_root->QuerySelector("#se-process-message"), Rml::StringUtilities::EncodeRml(result.error));
 				}
+				if (!result.ok() && !m_question)
+					m_drawSamples.clear();
 				render();
 			});
 	}
@@ -471,8 +476,12 @@ namespace gnubase::ui
 	{
 		if (m_view.empty() || !m_project.contains("audioEvents"))
 			return;
-		if (m_drag == Drag::Draw && (m_view.at("event") != m_event || m_view.at("media") != m_media))
-			m_drag = Drag::None;
+		if (m_view.at("event") != m_event || (m_drag == Drag::Draw && m_view.at("media") != m_media))
+		{
+			if (m_drag == Drag::Draw)
+				m_drag = Drag::None;
+			m_drawSamples.clear();
+		}
 		m_event = m_view.at("event").get<uint64_t>();
 		m_media = m_view.at("media").get<uint64_t>();
 		m_length = m_view.at("length").get<int64_t>();
@@ -682,6 +691,7 @@ namespace gnubase::ui
 		Rml::Element* editor = root != nullptr ? root->QuerySelector(".sample-editor") : nullptr;
 		if (editor == nullptr)
 			return;
+		renderDraw();
 		setClass(editor, "empty", !hasEvent());
 		const double full = std::max(g_minScale, static_cast<double>(m_length) / std::max(1.0, displayWidth()));
 		const double scrollRoom = std::max(0.0, static_cast<double>(m_length) - (displayWidth() * m_scale));
@@ -1120,6 +1130,10 @@ namespace gnubase::ui
 			{
 				m_processParameters["sharedCopies"] = answer;
 				sendProcess(m_processParameters);
+			}
+			else
+			{
+				m_drawSamples.clear();
 			}
 			render();
 			return;
@@ -1644,6 +1658,40 @@ namespace gnubase::ui
 			}
 		}
 		m_drawLast = frame;
+		renderDraw();
+	}
+
+	void SampleEditor::renderDraw()
+	{
+		Rml::Element* display = m_root ? m_root->QuerySelector(".se-display") : nullptr;
+		if (display == nullptr)
+			return;
+		auto* curve = dynamic_cast<Curve*>(display->QuerySelector(".se-draw-stroke"));
+		const auto* wave = dynamic_cast<Waveform*>(display->QuerySelector(".se-wave"));
+		if (!hasEvent() || m_drawSamples.empty() || wave == nullptr || wave->channels().empty())
+		{
+			if (curve != nullptr)
+				display->RemoveChild(curve);
+			return;
+		}
+		if (curve == nullptr)
+		{
+			curve = dynamic_cast<Curve*>(display->AppendChild(display->GetOwnerDocument()->CreateElement("curve")));
+			if (curve == nullptr)
+				return;
+			curve->SetClass("se-draw-stroke", true);
+			curve->setVirginTerritory(true);
+		}
+		const auto channels = static_cast<double>(wave->channels().size());
+		curve->SetProperty(Rml::PropertyId::Top, percent(100.0 * m_drawChannel / channels));
+		curve->SetProperty(Rml::PropertyId::Height, percent(100.0 / channels));
+		curve->SetAttribute("start", m_start);
+		curve->SetAttribute("scale", m_scale);
+		std::vector<CurvePoint> points;
+		points.reserve(m_drawSamples.size());
+		for (const auto& [frame, value] : m_drawSamples)
+			points.push_back({static_cast<double>(frame), std::clamp(0.5 + (0.5 * value * m_gain), 0.0, 1.0)});
+		curve->setPoints(std::move(points), m_drawSamples.size() == 1);
 	}
 
 	void SampleEditor::move(Rml::Event& event)
