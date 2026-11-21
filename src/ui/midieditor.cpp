@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <set>
 #include <utility>
 
 namespace gnubase::ui
@@ -81,6 +82,9 @@ namespace gnubase::ui
 		{
 			return std::to_string(value);
 		}
+
+		// How much a track in the Visibility tab indents per folder around it, in dp, as the track visibility's.
+		constexpr int g_indent = 12;
 	}
 
 	MidiEditor::MidiEditor(
@@ -166,6 +170,15 @@ namespace gnubase::ui
 				}));
 		m_subscriptions.push_back(
 			m_binding.on("channel.changed", [this](const engine::Event& event) { m_levelSteps.keep(event); }));
+		// Tracks hidden in the project window can't show (p. 1151); hiding them is no undo step.
+		if (m_part == EditorPart::Visibility)
+			m_subscriptions.push_back(m_binding.on("trackVisibility.changed",
+				[this](const engine::Event& event)
+				{
+					if (m_project.contains("trackVisibility"))
+						m_project["trackVisibility"]["hidden"] = event.data.at("hidden");
+					show();
+				}));
 		m_subscriptions.push_back(m_binding.on("editor.changed",
 			[this](const engine::Event& event)
 			{
@@ -242,13 +255,36 @@ namespace gnubase::ui
 		return nullptr;
 	}
 
-	std::pair<size_t, size_t> MidiEditor::partsShown(uint64_t track) const
+	std::vector<uint64_t> MidiEditor::inside(uint64_t track) const
 	{
 		std::vector<uint64_t> tracks = {track};
 		for (size_t i = 0; i < tracks.size(); ++i) // the folder's tracks, and theirs
 			for (const Json& child : m_project.value("tracks", Json::array()))
 				if (child.at("parent") == tracks[i])
 					tracks.push_back(child.at("id").get<uint64_t>());
+		return tracks;
+	}
+
+	// As editor.set's showTracks refuses them (p. 1151): a track hidden in the project window, by itself or in a
+	// hidden folder, or one that holds locked events or parts, also in a track inside it.
+	bool MidiEditor::showable(uint64_t id) const
+	{
+		const Json hidden = m_project.value("trackVisibility", Json::object()).value("hidden", Json::array());
+		for (const Json* found = track(id); found != nullptr; found = track(found->at("parent").get<uint64_t>()))
+			if (contains(hidden, found->at("id").get<uint64_t>()))
+				return false;
+		const std::vector<uint64_t> tracks = inside(id);
+		for (const char* kind : {"midiParts", "audioParts", "audioEvents"})
+			for (const Json& item : m_project.value(kind, Json::array()))
+				if (item.value("lock", false) &&
+					std::find(tracks.begin(), tracks.end(), item.at("track").get<uint64_t>()) != tracks.end())
+					return false;
+		return true;
+	}
+
+	std::pair<size_t, size_t> MidiEditor::partsShown(uint64_t track) const
+	{
+		const std::vector<uint64_t> tracks = inside(track);
 		std::pair<size_t, size_t> counts;
 		const Json parts = m_view.value("parts", Json::array());
 		for (const Json& part : projectParts())
@@ -290,7 +326,19 @@ namespace gnubase::ui
 		}
 		else if (m_part == EditorPart::Visibility)
 		{
-			setInner(root->QuerySelector(".editor-visibility"), visibilityRml());
+			if (Rml::Element* list = root->QuerySelector(".editor-visibility"))
+			{
+				list->SetClass("closed", !m_view.at("open").get<bool>());
+				setInner(list, visibilityRml());
+				// The indents, sized from the levels: folders nest without a limit, which no rule per level covers.
+				for (int i = 0; i < list->GetNumChildren(); ++i)
+				{
+					Rml::Element* row = list->GetChild(i);
+					const int width = row->GetAttribute<int>("level", 0) * g_indent;
+					if (Rml::Element* indent = row->QuerySelector(".tree-indent"))
+						indent->SetProperty("width", std::to_string(width) + "dp");
+				}
+			}
 		}
 		else
 		{
@@ -416,16 +464,27 @@ namespace gnubase::ui
 	}
 
 	// The tracks whose parts the editor can show (p. 1148): MIDI and instrument tracks, or in the audio part editor
-	// audio tracks, and folders with such tracks in them. A check while all their parts show, a rectangle (.partial)
-	// while some do (p. 1151).
+	// audio tracks, and folders with such tracks in them, the tracks in a folder indented under it unless it's
+	// collapsed. A check while all their parts show, a rectangle (.partial) while some do (p. 1151); disabled while a
+	// click would change nothing or ask editor.set for what it refuses.
 	std::string MidiEditor::visibilityRml() const
 	{
 		std::string rml;
+		std::map<uint64_t, int> levels;
+		std::set<uint64_t> folded; // the collapsed folders and every track inside them
+		const bool open = m_view.at("open").get<bool>();
 		for (const Json& track : m_project.at("tracks"))
 		{
 			const auto trackId = track.at("id").get<uint64_t>();
+			const auto parent = track.at("parent").get<uint64_t>();
+			const auto above = levels.find(parent);
+			const int level = above != levels.end() ? above->second + 1 : 0;
+			levels[trackId] = level;
 			const bool folder = track.at("type") == "folder";
-			if (!holdsParts(track, showsAudio()) && !folder)
+			const bool collapsed = m_collapsed.count(trackId) != 0;
+			if (folded.count(parent) != 0 || (folder && collapsed))
+				folded.insert(trackId);
+			if (folded.count(parent) != 0 || (!holdsParts(track, showsAudio()) && !folder))
 				continue;
 			const auto [parts, shown] = partsShown(trackId);
 			if (folder && parts == 0)
@@ -435,9 +494,17 @@ namespace gnubase::ui
 				state = " checked";
 			else if (shown > 0)
 				state = " partial";
-			rml += R"(<div class="editor-visibility-track)" +
-				std::string(m_view.at("activeTrack") == trackId ? " active" : "") + R"(" track=")" + idText(trackId) +
-				R"("><button class="editor-visibility-check)" + state + '"' + (parts == 0 ? R"( disabled="")" : "") +
+			const bool shows = showable(trackId);
+			const bool disabled = !open || parts == 0 || (!shows && shown < parts);
+			std::string classes = m_view.at("activeTrack") == trackId ? " active" : "";
+			classes += shows ? "" : " unavailable";
+			if (folder)
+				classes += collapsed ? " parent" : " parent expanded";
+			rml += R"(<div class="editor-visibility-track)" + classes + R"(" track=")" + idText(trackId) +
+				R"(" level=")" + std::to_string(level) + R"(">)";
+			rml += level > 0 ? R"(<span class="tree-indent"/>)" : "";
+			rml += folder ? R"(<span class="tree-toggle"/>)" : "";
+			rml += R"(<button class="editor-visibility-check)" + state + '"' + (disabled ? R"( disabled="")" : "") +
 				R"(/><span class="editor-visibility-name">)" + encode(track.at("name").get<std::string>()) +
 				"</span></div>";
 		}
@@ -489,7 +556,8 @@ namespace gnubase::ui
 	void MidiEditor::toggleTrack(uint64_t track, bool exclusive)
 	{
 		const auto [parts, shown] = partsShown(track);
-		if (parts == 0)
+		// A closed view has no parts to change, and a track that can't show can only hide what it shows.
+		if (parts == 0 || !m_view.at("open").get<bool>() || (!showable(track) && (exclusive || shown < parts)))
 			return;
 		if (exclusive)
 			set({{"exclusive", true}, {"showTracks", {track}}});
@@ -511,6 +579,18 @@ namespace gnubase::ui
 			// Double-clicking a track shows it exclusively (p. 1151).
 			if (closest(target, "editor-visibility-name", root) != nullptr)
 				toggleTrack(idOf(target, "track", root), true);
+			return;
+		}
+		// A click on a folder's name or its triangle collapses or expands it (p. 1151), in this tab only.
+		if (Rml::Element* row = closest(target, "editor-visibility-track", root); row != nullptr &&
+			row->IsClassSet("parent") &&
+			(closest(target, "tree-toggle", root) != nullptr ||
+				closest(target, "editor-visibility-name", root) != nullptr))
+		{
+			const uint64_t folder = idOf(row, "track", root);
+			if (m_collapsed.erase(folder) == 0)
+				m_collapsed.insert(folder);
+			show();
 			return;
 		}
 		if (target->HasAttribute("chord"))

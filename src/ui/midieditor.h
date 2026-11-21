@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -89,6 +90,8 @@ namespace gnubase::ui
 		void toggleTrack(uint64_t track, bool exclusive);
 		// The parts of a track, or of the tracks in a folder: how many there are and how many the editor shows.
 		std::pair<size_t, size_t> partsShown(uint64_t track) const;
+		std::vector<uint64_t> inside(uint64_t track) const; // the track and the tracks in it, nested too
+		bool showable(uint64_t id) const;                   // whether editor.set's showTracks takes it
 		const engine::Json* track(uint64_t id) const;
 
 		EngineBinding& m_binding;
@@ -103,6 +106,7 @@ namespace gnubase::ui
 		engine::Json m_view = engine::Json::object();
 		bool m_loading = false;
 		bool m_stale = false;
+		std::set<uint64_t> m_collapsed; // the Visibility tab's collapsed folders
 		std::unique_ptr<KeyEditor> m_keys;
 		std::unique_ptr<ListEditor> m_list;
 		std::unique_ptr<AudioPartEditor> m_audio;

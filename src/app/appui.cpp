@@ -2387,6 +2387,8 @@ namespace gnubase::app
 		if (editor != "lower" && editor != "window")
 			return; // an in-place editor (ui/inplaceeditor.h)
 		const bool open = view.at("open").get<bool>();
+		if (open && m_closing.count(editor) != 0)
+			return; // on its way from before the user closed it, which the editor.close sent closes
 		const bool wasOpen = m_editorViews.value(editor, engine::Json::object()).value("open", false);
 		m_editorViews[editor] = view;
 		if (editor == "lower")
@@ -2398,6 +2400,11 @@ namespace gnubase::app
 			return;
 		}
 		const bool shown = m_editor.window != 0 && m_shell.find(m_editor.window) != nullptr;
+		if (open && m_editor.window != 0 && !shown)
+		{
+			closeEditor(editor); // the user closed the window before followSelection saw it
+			return;
+		}
 		if (open == shown)
 			return;
 		m_editor.editor.reset();
@@ -2441,16 +2448,34 @@ namespace gnubase::app
 		m_docking.attach("editorWindow", *document);
 	}
 
+	void AppUi::closeEditor(const std::string& editor)
+	{
+		if (editor == "window")
+		{
+			m_editor.editor.reset();
+			m_editor.window = 0;
+		}
+		else
+		{
+			m_editorViews[editor]["open"] = false; // until editor.changed says so
+		}
+		// Until the engine answers, an editor.changed with the view open was sent before it closed (#625).
+		m_closing.insert(editor);
+		m_binding.send("editor.close", {{"editor", editor}},
+			[this, editor](const engine::Result& result)
+			{
+				m_closing.erase(editor);
+				if (!result.ok())
+					logging::warning("The {} editor didn't close: {}", editor, result.error);
+			});
+	}
+
 	void AppUi::followSelection()
 	{
 		// The user closed the editor window or the lower zone's editor: Keep Editor Contents goes off with it (p.
 		// 1153).
 		if (m_editor.window != 0 && m_shell.find(m_editor.window) == nullptr)
-		{
-			m_editor.editor.reset();
-			m_editor.window = 0;
-			m_binding.send("editor.close", {{"editor", "window"}});
-		}
+			closeEditor("window");
 		if (m_sampleEditor.window != 0 && m_shell.find(m_sampleEditor.window) == nullptr)
 		{
 			m_sampleEditor.quantize.reset();
@@ -2461,10 +2486,7 @@ namespace gnubase::app
 		const auto open = [this](const char* editor)
 		{ return m_editorViews.value(editor, engine::Json::object()).value("open", false); };
 		if (open("lower") && m_docking.windowOf("editor") == nullptr && !m_docking.visible("project", "lower"))
-		{
-			m_editorViews["lower"]["open"] = false; // until editor.changed says so
-			m_binding.send("editor.close", {{"editor", "lower"}});
-		}
+			closeEditor("lower");
 		if (!m_eventDisplay || m_eventDisplay->selection() == m_followed)
 			return;
 		// Editor Content Follows Event Selection (p. 1153): the MIDI parts, or else the audio parts, selected in the

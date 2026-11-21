@@ -75,6 +75,18 @@
 	overflow: hidden;
 }
 
+/* A folder's triangle (.tree-toggle, ui/widgets.h's), pointing right while the folder is collapsed; the indent before a
+   track in a folder is sized from its level by code. */
+.editor-visibility-track.parent > .tree-toggle
+{
+	visibility: visible;
+}
+
+.editor-visibility-track.expanded > .tree-toggle
+{
+	transform: none;
+}
+
 .editor-global-toggle
 {
 	display: block;

@@ -281,3 +281,93 @@ TEST_CASE("the lower zone's editor follows the project window's selection unless
 	app.appUi().docking().setVisible("project", "lower", false);
 	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
 }
+
+TEST_CASE("the Visibility tab indents and folds folders and marks the tracks that can't show", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	Fixture f(app);
+	const uint64_t folder =
+		app.call("track.add", {{"type", "folder"}, {"name", "Folder"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t pads = app.call("track.add", {{"type", "midi"}, {"name", "Pads"}, {"parent", folder}})
+							  .at("track")
+							  .at("id")
+							  .get<uint64_t>();
+	const uint64_t pads1 = addPart(app, pads, 0, "Pads A");
+	REQUIRE(app.waitUntil([&] { return f.display.project().at("midiParts").size() == 4; }));
+	app.call("editor.open", {{"editor", "window"}, {"parts", {f.keys1, pads1}}});
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	const Window window = app.appUi().editorWindowId();
+	const auto row = [](uint64_t track) { return ".editor-visibility-track[track=\"" + std::to_string(track) + "\"]"; };
+	const auto rowOf = [&](uint64_t track) { return elements(app, window, row(track)).at(0); };
+	const auto shows = [&](const std::vector<uint64_t>& shown) { return parts(view(app, "window")) == shown; };
+	REQUIRE(app.waitUntil([&] { return elements(app, window, ".editor-visibility-track").size() == 4; }));
+
+	// A folder's tracks are indented under it, and the folder has a triangle (p. 1151).
+	CHECK(rowOf(pads).at("attributes").at("level") == "1");
+	CHECK(rowOf(f.keys).at("attributes").at("level") == "0");
+	CHECK(has(rowOf(folder), "expanded"));
+	CHECK(elements(app, window, row(folder) + " .tree-toggle").size() == 1);
+	CHECK(elements(app, window, row(f.keys) + " .tree-toggle").empty());
+	// A click on the folder's name collapses it, one on the triangle expands it again.
+	click(app, window, row(folder) + " .editor-visibility-name");
+	REQUIRE(app.waitUntil([&] { return elements(app, window, row(pads)).empty(); }));
+	CHECK_FALSE(has(rowOf(folder), "expanded"));
+	CHECK(shows({f.keys1, pads1}));
+	click(app, window, row(folder) + " .tree-toggle");
+	REQUIRE(app.waitUntil([&] { return elements(app, window, row(pads)).size() == 1; }));
+
+	// Tracks that hold locked parts can't show (p. 1151): marked, and their checks show nothing.
+	app.call("event.set", {{"events", {f.bass1, f.keys2}}, {"lock", true}});
+	REQUIRE(app.waitUntil([&] { return has(rowOf(f.bass), "unavailable") && has(rowOf(f.keys), "unavailable"); }));
+	CHECK(!has(rowOf(pads), "unavailable"));
+	for (const uint64_t track : {f.bass, f.keys})
+		CHECK(elements(app, window, row(track) + " .editor-visibility-check")
+				.at(0)
+				.at("attributes")
+				.contains("disabled"));
+	click(app, window, row(f.bass) + " .editor-visibility-check");
+	click(app, window, row(f.keys) + " .editor-visibility-check", 1, true);
+	click(app, window, row(f.bass) + " .editor-visibility-name", 2);
+	for (int i = 0; i < 5; ++i)
+		app.shell().step(std::chrono::milliseconds(0));
+	CHECK(shows({f.keys1, pads1}));
+	// Nor can a track hidden in the project window, though what it shows still hides.
+	app.call("trackVisibility.set", {{"hidden", {pads}}});
+	REQUIRE(app.waitUntil([&] { return has(rowOf(pads), "unavailable"); }));
+	click(app, window, row(pads) + " .editor-visibility-check");
+	REQUIRE(app.waitUntil([&] { return shows({f.keys1}); }));
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return elements(app, window, row(pads) + " .editor-visibility-check")
+				.at(0)
+				.at("attributes")
+				.contains("disabled");
+		}));
+
+	// The project window's Visibility tab while the lower zone's editor isn't open: nothing to show or hide.
+	app.appUi().docking().open("visibility");
+	REQUIRE(app.waitUntil([&] { return !elements(app, std::nullopt, "#left-zone .editor-visibility").empty(); }));
+	REQUIRE(app.waitUntil(
+		[&] { return has(elements(app, std::nullopt, "#left-zone .editor-visibility").at(0), "closed"); }));
+	const Json checks = elements(app, std::nullopt, "#left-zone .editor-visibility-check");
+	REQUIRE(!checks.empty());
+	for (const Json& check : checks)
+		CHECK(check.at("attributes").contains("disabled"));
+}
+
+TEST_CASE("an editor the user closed doesn't open again for an editor.changed still on its way", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	Fixture f(app);
+	app.call("editor.open", {{"editor", "window"}, {"parts", {f.keys1}}});
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	// The user closes the window while an editor.changed with it open is still on its way to the UI.
+	app.shell().close(app.appUi().editorWindowId());
+	app.call("editor.set", {{"editor", "window"}, {"activePart", f.keys1}});
+	REQUIRE(app.waitUntil([&] { return view(app, "window").at("open") == false; }));
+	for (int i = 0; i < 5; ++i)
+		app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.appUi().editorWindow() == nullptr);
+	CHECK(view(app, "window").at("open") == false);
+}

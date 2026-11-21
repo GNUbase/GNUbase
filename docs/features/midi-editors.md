@@ -55,10 +55,16 @@ sends `editor.*` commands.
   .list-editor                      instead, while the view's content is list: the list editor (list-editor.md)
   .key-editor.drum-editor           instead, while the view's content is drum: the drum editor (drum-editor.md)
   .pattern-editor                   instead, while the view's content is pattern: the pattern editor (pattern-editor.md)
-.editor-visibility                  an .editor-visibility-track[track] per MIDI or instrument track or folder with them;
-                                    .active for the active track
-  button.editor-visibility-check    .checked while all its parts show, .partial while some do
-  .editor-visibility-name           a click activates a shown track, a double click shows it exclusively
+.editor-visibility                  an .editor-visibility-track[track][level] per MIDI or instrument track or folder with
+                                    them, level the folders around it; .active for the active track, .unavailable for
+                                    one that can't show; .closed while the view isn't open
+  .tree-indent                      before a track in a folder, sized from its level
+  .tree-toggle                      a folder's triangle; the folder's row is .parent, and .expanded while its tracks
+                                    are listed
+  button.editor-visibility-check    .checked while all its parts show, .partial while some do; disabled while it can't
+                                    change what shows
+  .editor-visibility-name           a click activates a shown track, or expands or collapses a folder, a double click
+                                    shows it exclusively
 .editor-global-tracks-section       button.editor-global-toggle[track] per global track, .checked while shown
 .editor-chord-editing               the inspector's Chord Editing section (key-editor.md)
 ```
@@ -66,7 +72,12 @@ sends `editor.*` commands.
 - **Activate Part for Editing** lists the parts under their tracks' names (disabled items `.editor-menu-track`), the
   active one checked.
 - **Visibility tab**: a click on the check shows or hides the track's parts, with Shift exclusively; on a rectangle it
-  shows them all (p. 1151).
+  shows them all (p. 1151). The tracks in a folder are indented under it, and a click on the folder's name or its
+  triangle collapses or expands it, in this tab only. A track that can't show (`editor.set`'s `showTracks` refuses it:
+  hidden in the project window, or it or a track in the folder holds locked events or parts) is `.unavailable`: its
+  check only hides what it still shows, and Shift or a double click do nothing. While the view isn't open, such as the
+  project window's Visibility tab before the lower zone's editor opens, the tab is `.closed` and its checks are
+  disabled, as `editor.set` couldn't change the parts.
 - **Windows and zones** (`app::AppUi`). The editor window (`resources/ui/editor.rml`, docking window `editorWindow`)
   opens and closes as the view `window` does, whichever client opens it; its left zone has the Visibility tab
   (`editorVisibility`) and the Inspector with the Global Tracks section (`editorInspector`). The view `lower` shows the
@@ -74,6 +85,8 @@ sends `editor.*` commands.
   on its Editor page ([track-visibility.md](track-visibility.md)).
   Closing the editor window, or hiding the lower zone while the Editor panel is docked there, closes the view, so Keep
   Editor Contents goes off (p. 1153); another tab of the lower zone in front of it doesn't. A new project closes both.
+  Until the engine answers that `editor.close`, an `editor.changed` with the view open that was already on its way,
+  for example from following the selection, doesn't open the window or show the lower zone again.
 - **Following the selection** (p. 1153): when the project window's selection changes, its MIDI parts, or else its
   audio parts, open in every open editor that doesn't keep its contents.
 - **Commands**: `editor.openClose` (Mod+E and Return in the project window, Edit > Open/Close Editor, p. 1189) opens
@@ -94,8 +107,9 @@ selection rectangle and Show Part Borders, Independent Track Loop, the global tr
 Tracks, track visibility configurations and agents, the Track Display and its settings, selecting tracks in the
 Visibility tab, the preference Editor Content Follows
 Event Selection and where editors open by default, double-clicking a part to open it, and saving the global track
-setup with the project. In the Visibility tab (p. 1151, #625), the checks of tracks that can't show are still
-offered and clicking them changes nothing, and folders aren't indented and don't expand or collapse.
+setup with the project. The lower zone's Editor tab without an open view (after Open in Separate Window, or when the
+user picks it from the tab bar) shows an empty editor until Edit > Open Editor in Lower Zone, and the engine sends no
+`editor.changed` when a new project closes the editors or removed parts leave a view (#625).
 
 ## Checks
 
@@ -110,6 +124,9 @@ offered and clicking them changes nothing, and folders aren't indented and don't
   activates one, the part editing mode marks the editable parts, a click activates a part; the Visibility tab's checks
   hide and show tracks, a double click shows one exclusively, a rectangle for a track not all of whose parts show;
   the Global Tracks section shows a marker track above the events; Open/Close Editor without a selection, closing the
-  window, an engine client and a new project open and close it. The lower zone's editor opens for selected parts,
-  follows the selection, stops following with Keep Editor Contents, moves to the window and back, and closes when the
-  lower zone hides.
+  window, an engine client and a new project open and close it, and an `editor.changed` on its way after the user
+  closed the window doesn't open it again. The Visibility tab indents a folder's tracks, folds them with a click on its
+  name and on its triangle, marks tracks with locked parts or hidden in the project window and sends nothing for their
+  checks, and is closed in the project window while the lower zone's editor isn't open. The lower zone's editor opens
+  for selected parts, follows the selection, stops following with Keep Editor Contents, moves to the window and back,
+  and closes when the lower zone hides.

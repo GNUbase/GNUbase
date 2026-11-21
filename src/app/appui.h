@@ -294,6 +294,8 @@ namespace gnubase::app
 		void addEditors();
 		// Shows or closes the editor window or the lower zone's editor as the engine's view says.
 		void followEditor(const engine::Json& view);
+		// Closes the editor (window or lower) that the user closed, Keep Editor Contents with it (p. 1153).
+		void closeEditor(const std::string& editor);
 		// The selected MIDI parts, or else audio parts, open in the editors that follow the project window's
 		// selection (p. 1153).
 		void followSelection();
@@ -488,6 +490,7 @@ namespace gnubase::app
 		SampleEditorWindow m_sampleEditor;
 		std::weak_ptr<ui::MidiEditor> m_lowerEditor;         // the docking system owns it while it is there
 		engine::Json m_editorViews = engine::Json::object(); // the engine's, by editor
+		std::set<std::string> m_closing;                     // the editors closeEditor closes, until the engine answers
 		std::vector<uint64_t> m_followed;                    // the selection the editors last followed
 		std::vector<ui::Subscription> m_editorSubscriptions;
 		// The key commands dialog (#161) and the user's key commands and macros, ui.keyCommands and ui.macros.
