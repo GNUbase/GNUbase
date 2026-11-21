@@ -164,6 +164,10 @@ namespace gnubase::ui
 		// Whether a menu item of the command and parameters is checked now, or nullopt if checkWhen says nothing.
 		std::optional<bool> checked(const std::string& command, const engine::Json& parameters) const;
 
+		// Changes whenever the keys bound to commands may have changed (bind, remove, customize), so that a menu works
+		// out the keys it shows only then (ui/mainmenu.h).
+		uint64_t bindingsRevision() const { return m_revision; }
+
 	private:
 		// Remembers a key that runs a command while it is held.
 		void hold(int key, const std::string& command);
@@ -198,5 +202,6 @@ namespace gnubase::ui
 		std::map<std::string, std::vector<std::pair<std::string, engine::Json>>> m_macros; // by command id
 		std::vector<Bound> m_effective;                  // what the keys run: the defaults with the user's key commands
 		std::vector<std::pair<int, std::string>> m_held; // the keys down with the commands they run while held
+		uint64_t m_revision = 0;                         // of m_effective
 	};
 }

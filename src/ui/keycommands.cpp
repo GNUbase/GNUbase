@@ -345,6 +345,7 @@ namespace gnubase::ui
 			return std::any_of(m_custom.begin(), m_custom.end(),
 				[&](const Customized& custom) { return custom.command == command && custom.parameters == parameters; });
 		};
+		++m_revision;
 		m_effective.clear();
 		for (const Bound& bound : m_bindings)
 			if (!customized(bound.command, bound.parameters))
