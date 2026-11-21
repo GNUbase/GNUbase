@@ -1182,6 +1182,10 @@ namespace gnubase::ui
 		listen(false);
 		dragBody(false);
 		const Gesture gesture = std::exchange(m_gesture, Gesture::None);
+		// A press and release without a drag only selects: snapped where it was, an event off the grid would move or
+		// copy to the nearest grid line, a note's end there.
+		if ((gesture == Gesture::Resize || gesture == Gesture::Move) && !m_dragged)
+			return;
 		const Rml::Element* root = m_root.get();
 		if (gesture == Gesture::Draw)
 		{
@@ -1230,7 +1234,8 @@ namespace gnubase::ui
 		else if (gesture == Gesture::Move && m_pressed)
 		{
 			// Moves the selected events by as far as the pressed one went, snapped, or with Alt (Opt) held at the
-			// press copies them there, each with every field but its id (p. 1255).
+			// press copies them there, each with every field but its id and its quantize origin: that is the original's
+			// timing before a quantize, which a copy at another position doesn't share (p. 1255).
 			const int64_t delta =
 				snap(static_cast<double>(m_pressed->start) + ticksAt(event, m_laneLeft, m_laneWidth) - m_pressedAt) -
 				m_pressed->start;

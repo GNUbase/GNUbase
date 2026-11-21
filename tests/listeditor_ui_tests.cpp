@@ -1030,3 +1030,37 @@ TEST_CASE("a drag at a note's end in the event display resizes the selected note
 	CHECK(f.event("controllers", f.events[0]).at("position") == 0);
 	CHECK(f.steps() == before + 1);
 }
+
+TEST_CASE("a click in the event display without a drag changes no event, off the quantize grid too", "[ui]")
+{
+	Fixture f;
+	// The low note ends a tenth of a quarter after the first one, off the grid; the SysEx message is a tick after
+	// three.
+	const std::string low = row("note", f.low);
+	const double width = f.box(low + " .list-event").at("width").get<double>();
+	f.app.call("note.set",
+		{{"part", f.part}, {"notes", Json::array({{{"id", f.low}, {"length", g_quarter + (g_quarter / 10)}}})}});
+	REQUIRE(f.event("notes", f.low).at("length") == g_quarter + (g_quarter / 10));
+	REQUIRE(f.app.waitUntil([&] { return f.box(low + " .list-event").at("width").get<double>() > width; }));
+	const size_t before = f.steps();
+
+	// A press and release at the note's end selects it, and its length stays.
+	const Json shown = f.box(low + " .list-event");
+	f.click(
+		Fixture::point(static_cast<int>(std::lround(shown.at("x").get<double>() + shown.at("width").get<double>() - 2)),
+			f.middle(low + " .list-event")));
+	f.settle(f.high);
+	CHECK(f.event("notes", f.low).at("length") == g_quarter + (g_quarter / 10));
+
+	// An Alt-click on the SysEx message copies nothing, a click moves it nowhere.
+	const Json sysEx = f.box(row("controller", f.events[5]) + " .list-event");
+	const ui::Target middle = Fixture::point(
+		static_cast<int>(std::lround(sysEx.at("x").get<double>() + (sysEx.at("width").get<double>() / 2))),
+		static_cast<int>(std::lround(sysEx.at("y").get<double>() + (sysEx.at("height").get<double>() / 2))));
+	f.click(middle, 1, {"alt"});
+	f.click(middle);
+	f.settle(f.high);
+	CHECK(f.event("controllers", f.events[5]).at("position") == (3 * g_quarter) + 1);
+	CHECK(f.types().size() == 8);
+	CHECK(f.steps() == before);
+}
