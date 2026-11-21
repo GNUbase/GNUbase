@@ -472,10 +472,11 @@ namespace gnubase::ui
 			return;
 		setLabel(root, "name", "Name");
 		setLabel(root, "start", "Start");
-		for (const char* field : {"end", "length", "mute", "lock"})
+		for (const char* field : {"name", "end", "length", "mute", "lock"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", false);
-		// The notes' fields show only for an in-place editor's selection (p. 1259).
+		// The notes' fields show only for an in-place editor's selection (p. 1259), the automation points' only for
+		// selected points (p. 881).
 		for (const char* field : {"pitch", "releaseVelocity", "channel", "value", "terminator"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", true);
@@ -628,6 +629,8 @@ namespace gnubase::ui
 			setFlag(*name, "disabled", false);
 		setLabel(root, "name", "Description");
 		setLabel(root, "start", "Position");
+		if (Rml::Element* shown = root.QuerySelector("[info-field=name]"))
+			setClass(*shown, "unavailable", false);
 		for (const char* field : {"end", "length"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", !first.cycle);

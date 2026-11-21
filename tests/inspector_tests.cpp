@@ -681,6 +681,14 @@ TEST_CASE("the info line shows the selected automation points, and its Terminato
 	CHECK(window.historyPosition() == before + 1);
 	REQUIRE(window.app.waitUntil(
 		[&] { return element(window.app, "#info-line button[field=terminator]").at("text") == "Yes"; }));
+	// Clicked again, it clears Terminator.
+	window.click("#info-line button[field=terminator]");
+	REQUIRE(window.app.waitUntil([&] { return !points().at(1).value("terminator", false); }));
+	REQUIRE(window.app.waitUntil(
+		[&] { return element(window.app, "#info-line button[field=terminator]").at("text") == "No"; }));
+	CHECK(window.historyPosition() == before + 2);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return points().at(1).value("terminator", false); }));
 	window.call("history.undo");
 	REQUIRE(window.app.waitUntil([&] { return !points().at(1).value("terminator", false); }));
 
@@ -693,6 +701,22 @@ TEST_CASE("the info line shows the selected automation points, and its Terminato
 	CHECK_FALSE(hasClass(window.app, "#info-line", "points"));
 	CHECK(window.display.selectedPoints().empty());
 	CHECK(hasClass(window.app, "#info-line [info-field=terminator]", "unavailable"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=name]", "unavailable"));
+
+	// A marker selected after the points shows its description.
+	window.addTrack({{"type", "marker"}});
+	const uint64_t marker = window.call("marker.add", {{"position", 2 * g_quarter}, {"name", "Intro"}})
+								.at("marker")
+								.at("id")
+								.get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("markers").size() == 1; }));
+	window.display.selectPoints({{lane, {first}}});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "points"); }));
+	window.app.appUi().markerLines()->setSelection({marker});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+	CHECK(hasClass(window.app, "#info-line", "markers"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=name]", "unavailable"));
+	CHECK(element(window.app, "#info-line [info-field=name] .info-label").at("text") == "Description");
 }
 
 TEST_CASE("the inspector shows the selected track, and its controls change the track's channel", "[ui]")
