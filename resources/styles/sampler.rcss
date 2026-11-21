@@ -149,6 +149,21 @@
 	bottom: 0;
 }
 
+/* The fades' and the loop crossfade's markers lie below the flags of Start and End and above the loop's, so that
+   those stay reachable where a length of 0 puts them on the same spot. */
+.sampler-marker.length
+{
+	top: 8dp;
+	bottom: auto;
+	height: 8dp;
+}
+
+.sampler-marker.loop.length
+{
+	top: auto;
+	bottom: 8dp;
+}
+
 .sampler-sections
 {
 	display: flex;

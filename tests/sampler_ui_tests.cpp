@@ -262,6 +262,111 @@ TEST_CASE("the bars between the markers move start and end, or the loop, togethe
 	REQUIRE(f.app.waitUntil([&] { return f.has(".sampler-bar[bar=loop]", "off"); }));
 }
 
+TEST_CASE("the markers of the fades and the loop crossfade set their lengths", "[ui]")
+{
+	Fixture f;
+	f.set("Start", 0.2);
+	f.set("End", 0.8);
+	f.set("Loop mode", 1.0);
+	f.set("Loop start", 0.4);
+	f.set("Loop end", 0.6);
+	f.open();
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".sampler-marker[marker=\"Loop crossfade\"]", "off"); }));
+	const Json display = f.box("#sampler-display");
+	const double x = display.at("x").get<double>();
+	const double width = display.at("width").get<double>();
+	const auto centre = [&](const std::string& name)
+	{
+		const Json marker = f.box(".sampler-marker[marker=\"" + name + "\"]");
+		return std::pair<double, double>{marker.at("x").get<double>() + (marker.at("width").get<double>() / 2),
+			marker.at("y").get<double>() + (marker.at("height").get<double>() / 2)};
+	};
+	const auto dragTo = [&](const std::string& name, double share)
+	{
+		f.app.ui().drag(std::nullopt, of(".sampler-marker[marker=\"" + name + "\"]"),
+			{"", 0, ui::Point{static_cast<int>(x + (share * width)), static_cast<int>(centre(name).second)}});
+	};
+	// Without fades they sit on Start and End, the crossfade's on the loop's end.
+	CHECK_THAT(centre("Fade in").first, WithinAbs(x + (0.2 * width), 2.0));
+	CHECK_THAT(centre("Fade out").first, WithinAbs(x + (0.8 * width), 2.0));
+	CHECK_THAT(centre("Loop crossfade").first, WithinAbs(x + (0.6 * width), 2.0));
+	// Start's and Loop end's markers can still be dragged from their flags where a length of 0 puts a marker on them.
+	const auto dragFlag = [&](const std::string& name, double share)
+	{
+		const Json flag = f.box(".sampler-marker[marker=\"" + name + "\"] .sampler-marker-flag");
+		const ui::Point from{static_cast<int>(flag.at("x").get<double>() + (flag.at("width").get<double>() / 2)),
+			static_cast<int>(flag.at("y").get<double>() + (flag.at("height").get<double>() / 2))};
+		f.app.ui().drag(std::nullopt, {"", 0, from}, {"", 0, ui::Point{static_cast<int>(x + (share * width)), from.y}});
+	};
+	dragFlag("Start", 0.25);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Start") - 0.25) < 0.01; }));
+	CHECK(f.parameter("Fade in") == 0.0);
+	CHECK_THAT(f.parameter("End"), WithinAbs(0.8, 1e-9));
+	dragFlag("Loop end", 0.65);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Loop end") - 0.65) < 0.01; }));
+	CHECK(f.parameter("Loop crossfade") == 0.0);
+	CHECK_THAT(f.parameter("Loop start"), WithinAbs(0.4, 1e-9));
+	f.set("Start", 0.2);
+	f.set("Loop end", 0.6);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(centre("Fade in").first - (x + (0.2 * width))) < 3.0; }));
+	REQUIRE(f.app.waitUntil([&] { return std::abs(centre("Loop crossfade").first - (x + (0.6 * width))) < 3.0; }));
+
+	// Dragging the fade-in's marker sets its length from Start, in one undo step.
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	dragTo("Fade in", 0.3);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Fade in") - 0.1) < 0.01; }));
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(centre("Fade in").first - (x + (0.3 * width))) < 3.0; }));
+	// The fade-out's from End; neither goes past the range.
+	dragTo("Fade out", 0.6);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Fade out") - 0.2) < 0.01; }));
+	dragTo("Fade in", 0.95);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Fade in") - 0.6) < 1e-9; }));
+	// The crossfade's from the loop's end, no longer than the loop.
+	dragTo("Loop crossfade", 0.5);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Loop crossfade") - 0.1) < 0.01; }));
+	dragTo("Loop crossfade", 0.05);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Loop crossfade") - 0.2) < 1e-9; }));
+
+	// Reversed, they are mirrored like the others.
+	f.set("Reverse", 1.0);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(centre("Fade out").first - (x + (0.4 * width))) < 3.0; }));
+	// Without a loop mode the crossfade's marker is gone with the loop.
+	f.set("Loop mode", 0.0);
+	REQUIRE(f.app.waitUntil([&] { return f.has(".sampler-marker[marker=\"Loop crossfade\"]", "off"); }));
+	CHECK(!f.has(".sampler-marker[marker=\"Fade in\"]", "off"));
+}
+
+TEST_CASE("the loop crossfade's marker goes no farther than the sampler's crossfade", "[ui]")
+{
+	// Between Start and the loop's start lies less than the loop: the sampler crossfades no more than that.
+	Fixture f;
+	f.set("Start", 0.3);
+	f.set("End", 0.8);
+	f.set("Loop mode", 1.0);
+	f.set("Loop start", 0.4);
+	f.set("Loop end", 0.6);
+	f.set("Loop crossfade", 0.2);
+	f.open();
+	const std::string selector = ".sampler-marker[marker=\"Loop crossfade\"]";
+	REQUIRE(f.app.waitUntil([&] { return !f.has(selector, "off"); }));
+	const Json display = f.box("#sampler-display");
+	const double x = display.at("x").get<double>();
+	const double width = display.at("width").get<double>();
+	const auto centre = [&]
+	{
+		const Json marker = f.box(selector);
+		return std::pair<double, double>{marker.at("x").get<double>() + (marker.at("width").get<double>() / 2),
+			marker.at("y").get<double>() + (marker.at("height").get<double>() / 2)};
+	};
+	REQUIRE(f.app.waitUntil([&] { return std::abs(centre().first - (x + (0.5 * width))) < 3.0; }));
+	f.set("Loop crossfade", 0.0);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(centre().first - (x + (0.6 * width))) < 3.0; }));
+	f.app.ui().drag(std::nullopt, of(selector),
+		{"", 0, ui::Point{static_cast<int>(x + (0.35 * width)), static_cast<int>(centre().second)}});
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Loop crossfade") - 0.1) < 1e-9; }));
+}
+
 TEST_CASE("the sampler panel loads dropped files and normalizes the sample", "[ui]")
 {
 	Fixture f;
