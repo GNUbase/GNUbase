@@ -8,6 +8,7 @@
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "testutils/heldjob.h"
+#include "testutils/tempfolder.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -20,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -770,6 +772,21 @@ TEST_CASE("a failed flatten leaves no files behind", "[integration]")
 	for (const auto& entry : std::filesystem::recursive_directory_iterator(dir.path()))
 		CHECK(entry.path().filename().u8string().find("Flattened") == std::string::npos);
 	CHECK(eventOf(client, loop.event).at("clip") == loop.clip);
+}
+
+TEST_CASE("flattening refuses an unsaved project without a folder to write into (#2001)", "[integration]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "not a folder";
+	REQUIRE(std::ofstream(file) << "a file");
+	const test::TempFolderAt temporary(file); // and there is no settings folder
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 49000, 73000}, 4 * g_quarter));
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	const Json before = run(client, "project.get");
+	CHECK_THAT(reject(client, "event.flatten", {{"events", {loop.event}}}), ContainsSubstring("no folder"));
+	CHECK(run(client, "project.get") == before);
 }
 
 TEST_CASE("timeline positions within a warped event go through its warp", "[integration]")

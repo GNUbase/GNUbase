@@ -541,12 +541,13 @@ namespace gnubase::engine
 		const Json ids = {{"type", "array"}, {"items", integer}};
 		const Json tail = {{"type", "number"}, {"minimum", 0}, {"maximum", 60}};
 		// Freeze files go into the Freeze folder in the project's folder (reference manual p. 220), or for a project
-		// without a file into the folder its recordings go to.
+		// without a file into the folder its recordings go to; without that folder there is none (#2001).
 		const auto freezeFolder = [this]
 		{
-			return (m_file.empty() ? unsavedMediaFolder(m_settingsDirectory)
-								   : fs::absolute(fs::u8path(m_file)).parent_path()) /
-				"Freeze";
+			const fs::path folder = m_file.empty() ? unsavedMediaFolder(m_settingsDirectory)
+												   : fs::absolute(fs::u8path(m_file)).parent_path();
+			require(!folder.empty(), "there is no folder for the freeze files: save the project first");
+			return folder / "Freeze";
 		};
 
 		engine.registerCommand(
@@ -556,7 +557,8 @@ namespace gnubase::engine
 				"inserts), offline from the project's start to the end of its last event or note, with up to tail "
 				"seconds more (0 to 60, default 30) that end after the last sample a 24-bit file doesn't hold as "
 				"silence, into a 32-bit float WAV file named after the track in the Freeze folder of the project's "
-				"folder (for a project without a file, of the folder its recordings go to). The track then plays the "
+				"folder (for a project without a file, of the folder its recordings go to, and refused without that "
+				"folder). The track then plays the "
 				"file from the project's start instead of its events, parts, instrument, pre section and slots, which "
 				"stay as they are; the strip's other sections, the fader, pan, mute and sends still play, with their "
 				"automation. Its monitor and record enable buttons go off, and those of the MIDI tracks that play it, "
@@ -583,6 +585,7 @@ namespace gnubase::engine
 					spans.push_back(spanOf(snapshot, track.channel));
 					require(spans.back().start.has_value(), track.name + " has nothing to freeze");
 				}
+				const fs::path folder = freezeFolder();
 				auto render = std::make_shared<TrackRender>();
 				render->parameters = parameters;
 				render->freeze = true;
@@ -592,7 +595,7 @@ namespace gnubase::engine
 					const Track& track = project.trackById.at(tracks[i]);
 					render->starts.push_back(0);
 					render->ends.push_back(spans[i].end);
-					render->work.push_back(engine.prepareMixdown({{"folder", freezeFolder().u8string()},
+					render->work.push_back(engine.prepareMixdown({{"folder", folder.u8string()},
 						{"name", fileNameOf(track)}, {"channels", {track.channel}}, {"start", 0}, {"end", spans[i].end},
 						{"point", "inserts"}, {"tail", seconds}, {"sampleFormat", "float32"}}));
 				}
@@ -691,7 +694,8 @@ namespace gnubase::engine
 				"note to the end of its last), with up to tail seconds more (0 to 60, default 0) that end after the "
 				"last sample a 24-bit file doesn't hold as silence, into a WAV file (sampleFormat as in "
 				"mixdown.export, default float32) in the project's media folder (for a project without a file, the "
-				"folder its recordings go to), named name or after the track, and puts it as one event at start on a "
+				"folder its recordings go to, and refused without that folder), named name or after the track, and "
+				"puts it as one event at start on a "
 				"new audio track below the track, named after it with (Rendered), which plays through the same "
 				"output. processing: dry renders what plays on the channel, before its pre section and plugin slots, "
 				"and the new track gets the channel's slots, strip, fader, pan and sends; channelSettings (the "
@@ -790,6 +794,7 @@ namespace gnubase::engine
 				}
 				const fs::path folder =
 					m_file.empty() ? unsavedMediaFolder(m_settingsDirectory) : mediaFolderFor(fs::u8path(m_file));
+				require(!folder.empty(), "there is no folder to render into: save the project first");
 				auto render = std::make_shared<TrackRender>();
 				render->parameters = parameters;
 				for (size_t i = 0; i < tracks.size(); ++i)

@@ -3,6 +3,7 @@
 // range, and the regions of clips. tests/sampleeditor_ui_tests.cpp drives the editor in the app.
 #include "engine/engine.h"
 #include "testutils/heldjob.h"
+#include "testutils/tempfolder.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -10,6 +11,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <map>
 #include <string>
@@ -431,6 +433,20 @@ TEST_CASE("sample editor Process rejects errors and discards cancelled or stale 
 		CHECK(f.call("project.get").at("media") == before.at("media"));
 		CHECK(f.call("project.get").at("audioEvents") == before.at("audioEvents"));
 	}
+}
+
+TEST_CASE("sample editor Process refuses an unsaved project without a folder to write into (#2001)", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	test::writeWav(path, processAudio());
+	const std::filesystem::path file = dir.path() / "not a folder";
+	REQUIRE(std::ofstream(file) << "a file");
+	const test::TempFolderAt temporary(file); // and there is no settings folder
+	Fixture f(path.u8string());
+	CHECK_THAT(
+		f.fails("sampleEditor.process", {{"event", f.event}, {"operation", "delete"}, {"start", 2000}, {"end", 3000}}),
+		ContainsSubstring("no folder"));
 }
 
 TEST_CASE("sample editor Process keeps inactive shared copies consistent and removes empty events", "[integration]")

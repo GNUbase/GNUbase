@@ -101,6 +101,11 @@ All of it is the one undo step of the import.
   `ui::EventDisplay::importToSelection` (`src/ui/fileimport.cpp`), at the project cursor, with the track list's
   selection (#480). MIDI File... asks first whether to create a new project, and the file goes to
   `ui::EventDisplay::importMidi`, at the project start or the left locator ([MIDI file import](#midi-file-import)).
+- **Refused imports** say why: when the engine refuses `audioFile.import` or `midiFile.import` from the project window,
+  such as for a file that can't be read or, with the signature track locked, a MIDI file in another time signature, the
+  event display tells the app (`EventDisplay::onImportFailed`), which shows the error in the dialog the project file
+  commands use (`project-error.rml`, [project-files.md](project-files.md)); without the app it is logged. So do File >
+  Import > Tempo Track and Markers and their exports ([tempo-track.md](tempo-track.md)) (#1976).
 - **The selected track** (reference manual p. 360): audio files go onto the selected track, and onto new tracks only
   when no track is selected. The manual describes one file and one selected track; for the other cases GNUbase
   follows the pool's Insert into Project (pp. 745-746), which inserts clips onto one track or each onto a different
@@ -241,7 +246,8 @@ kept without a part, and controllers in automation lanes with the sustain pedal 
 with Ignore Master Track Events on Merge, and Yes into a new project after the unsaved changes question, with the file's
 tempo; and drops MIDI files with the default settings (the part at the drop's bar, the first patch extracted), as a
 single part on the MIDI track dropped on, and on the track list at the project cursor, on the MIDI track of the row and
-below the rows on a new track. `tests/preferences_tests.cpp` checks every preference of the MIDI File page with the
+below the rows on a new track; and that a MIDI file that can't be read, dropped or chosen with File > Import > MIDI File
+or Tempo Track, says why in the error dialog and imports nothing. `tests/preferences_tests.cpp` checks every preference of the MIDI File page with the
 others. For the import preferences: Use Settings imports without the dialog with the stored options (on one track in an
 unsaved project; split with a name format and copied in a saved one; with Copy and Convert off a 44.1 kHz file keeps its
 path and no copy job starts; with Convert alone it is converted into the project's `Audio` folder at the project's

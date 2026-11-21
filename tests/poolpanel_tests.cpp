@@ -457,16 +457,29 @@ TEST_CASE(
 	CHECK(elements(app, "#prepare-archive-dialog").empty());
 }
 
-TEST_CASE("the pool panel says which media Prepare Archive left alone because they changed meanwhile", "[ui]")
+TEST_CASE("the pool panel says which media and frozen tracks Prepare Archive left alone because they changed meanwhile",
+	"[ui]")
 {
 	test::UiApp app({640, 480});
 	ui::EngineBinding binding{app.engine()};
 	Rml::ElementDocument& document = app.show("other.rml");
 	ui::PoolPanel panel(binding, *document.GetElementById("box"), [](const std::string&) {}, [] { return true; });
 	panel.report("media.prepareArchive",
-		{0, {{"copied", Json::array({1})}, {"missing", Json::array()}, {"changed", Json::array({2, 3})}}, {}});
+		{0,
+			{{"copied", Json::array({1})}, {"missing", Json::array()}, {"changed", Json::array({2, 3})},
+				{"changedTracks", Json::array()}},
+			{}});
 	CHECK(document.GetElementById("pool-message")->GetInnerRML() ==
 		"Copied 1 file into the project folder; 2 files changed meanwhile and were left as they are.");
+	// The frozen tracks whose freeze file changed meanwhile keep it (#2001).
+	panel.report("media.prepareArchive",
+		{0,
+			{{"copied", Json::array()}, {"missing", Json::array()}, {"changed", Json::array({2})},
+				{"changedTracks", Json::array({4})}},
+			{}});
+	CHECK(document.GetElementById("pool-message")->GetInnerRML() ==
+		"Copied 0 files into the project folder; 1 file changed meanwhile and was left as it is; 1 frozen track "
+		"changed meanwhile and was left as it is.");
 }
 
 TEST_CASE("the pool panel shows the Conform Files job's progress and that it was cancelled", "[ui]")

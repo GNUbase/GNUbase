@@ -864,7 +864,8 @@ namespace gnubase::engine
 			{"event.flatten", 1,
 				"Flattens the real-time processing of audio events (Flatten Real Time Processing, reference manual p. "
 				"657): renders what each event of a warped clip plays, as it plays it now, into a 32-bit float WAV "
-				"file in the project's media folder (for a project without a file, the folder its recordings go to) "
+				"file in the project's media folder (for a project without a file, the folder its recordings go to, "
+				"and refused without that folder) "
 				"with the algorithm preset (default the clip's), named after the clip with Flattened, and makes the "
 				"event play a new clip of it from its start, with its volume curve and snap point where its audio "
 				"is. It then no longer follows tempo changes or warp edits. Events of clips that aren't warped stay; "
@@ -883,6 +884,7 @@ namespace gnubase::engine
 				require(!events.empty(), "none of the events plays a warped clip");
 				const fs::path folder =
 					m_file.empty() ? unsavedMediaFolder(m_settingsDirectory) : mediaFolderFor(fs::u8path(m_file));
+				require(!folder.empty(), "there is no folder to flatten into: save the project first");
 				Json flattened = Json::array();
 				Json media = Json::array();
 				Json clips = Json::array();

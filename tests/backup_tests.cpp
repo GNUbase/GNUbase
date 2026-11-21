@@ -1232,6 +1232,53 @@ TEST_CASE("a copy whose media file changed meanwhile isn't used", "[integration]
 	CHECK(filesIn(project / "Audio").empty());
 }
 
+TEST_CASE("copies go into the folder of the file that the project was saved as while they ran (#2001)", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path first = dir.path() / "first";
+	const fs::path second = dir.path() / "second";
+	fs::create_directories(first);
+	fs::create_directories(second);
+
+	SECTION("media.prepareArchive")
+	{
+		writeNoise(dir.path() / "library" / "take.wav", 4800);
+		Song song;
+		const ObjectId media = song.addMedia(dir.path() / "library" / "take.wav");
+		run(song.client, "project.save", {{"path", utf8(first / "Song.dawproject")}, {"embedMedia", false}});
+		const Json finished = whileHeld(song.engine, song.client, "media.prepareArchive", Json::object(),
+			[&](uint64_t /*job*/)
+			{ run(song.client, "project.save", {{"path", utf8(second / "Song.dawproject")}, {"embedMedia", false}}); });
+		REQUIRE(finished.at("state") == "done");
+		CHECK(finished.at("result").at("copied") ==
+			Json::array({{{"media", media}, {"from", utf8(dir.path() / "library" / "take.wav")},
+				{"to", utf8(second / "Audio" / "take.wav")}}}));
+		CHECK(run(song.client, "project.get").at("media")[0].at("path") == utf8(second / "Audio" / "take.wav"));
+		CHECK(filesIn(first / "Audio").empty());
+	}
+	SECTION("the first save's copies, which a save meanwhile leaves to them")
+	{
+		Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+		Client client(engine);
+		const fs::path recording = dir.path() / "settings" / "Recordings" / "take.wav";
+		writeNoise(recording, 4800);
+		const ObjectId media = idOf(run(client, "media.add", {{"path", utf8(recording)}}), "media");
+		const Json finished = whileHeld(engine, client, "project.save",
+			{{"path", utf8(first / "Song.dawproject")}, {"embedMedia", false}},
+			[&](uint64_t /*job*/)
+			{
+				CHECK(run(client, "project.save", {{"path", utf8(second / "Song.dawproject")}, {"embedMedia", false}})
+						.at("job")
+						.is_null());
+			});
+		REQUIRE(finished.at("state") == "done");
+		CHECK(finished.at("result").at("copied") ==
+			Json::array({{{"media", media}, {"from", utf8(recording)}, {"to", utf8(second / "Audio" / "take.wav")}}}));
+		CHECK(run(client, "project.get").at("media")[0].at("path") == utf8(second / "Audio" / "take.wav"));
+		CHECK(filesIn(first / "Audio").empty());
+	}
+}
+
 TEST_CASE("media files can be pointed at other files", "[integration]")
 {
 	const test::TempDir dir;
