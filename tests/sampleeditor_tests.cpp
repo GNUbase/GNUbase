@@ -598,7 +598,7 @@ TEST_CASE("sample editor Paste converts clipboard rate and channels before repla
 		const auto inserted = 9600 * 48000 / source.sampleRate;
 		process(f, "paste", 2000, 3000);
 		const test::Audio result = eventAudio(f);
-		CHECK(result.frames() == 8600 + inserted);
+		CHECK(result.frames() == 8600U + static_cast<size_t>(inserted));
 		CHECK(result.sampleRate == 48000);
 		CHECK(result.channels == target.channels);
 		for (int channel = 0; channel < target.channels; ++channel)
