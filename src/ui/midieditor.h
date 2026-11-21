@@ -92,6 +92,8 @@ namespace gnubase::ui
 		std::pair<size_t, size_t> partsShown(uint64_t track) const;
 		std::vector<uint64_t> inside(uint64_t track) const; // the track and the tracks in it, nested too
 		bool showable(uint64_t id) const;                   // whether editor.set's showTracks takes it
+		bool hiddenInProject(uint64_t id) const;            // by itself or in a hidden folder
+		void fold(Rml::Element& list) const;                // the Visibility tab's rows, from m_collapsed
 		const engine::Json* track(uint64_t id) const;
 
 		EngineBinding& m_binding;

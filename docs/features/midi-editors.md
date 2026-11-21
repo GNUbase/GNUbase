@@ -57,10 +57,11 @@ sends `editor.*` commands.
   .pattern-editor                   instead, while the view's content is pattern: the pattern editor (pattern-editor.md)
 .editor-visibility                  an .editor-visibility-track[track][level] per MIDI or instrument track or folder with
                                     them, level the folders around it; .active for the active track, .unavailable for
-                                    one that can't show; .closed while the view isn't open
-  .tree-indent                      before a track in a folder, sized from its level
-  .tree-toggle                      a folder's triangle; the folder's row is .parent, and .expanded while its tracks
-                                    are listed
+                                    one that can't show, .hidden inside a collapsed folder; .closed while the view
+                                    isn't open
+  .tree-indent                      on every row, sized from its level
+  .tree-toggle                      on every row, shown as a folder's triangle; the folder's row is .parent, and
+                                    .expanded while its tracks are listed
   button.editor-visibility-check    .checked while all its parts show, .partial while some do; disabled while it can't
                                     change what shows
   .editor-visibility-name           a click activates a shown track, or expands or collapses a folder, a double click
@@ -73,11 +74,13 @@ sends `editor.*` commands.
   active one checked.
 - **Visibility tab**: a click on the check shows or hides the track's parts, with Shift exclusively; on a rectangle it
   shows them all (p. 1151). The tracks in a folder are indented under it, and a click on the folder's name or its
-  triangle collapses or expands it, in this tab only. A track that can't show (`editor.set`'s `showTracks` refuses it:
-  hidden in the project window, or it or a track in the folder holds locked events or parts) is `.unavailable`: its
-  check only hides what it still shows, and Shift or a double click do nothing. While the view isn't open, such as the
-  project window's Visibility tab before the lower zone's editor opens, the tab is `.closed` and its checks are
-  disabled, as `editor.set` couldn't change the parts.
+  triangle collapses or expands it, in this tab only, without rebuilding the rows, so a double click on its name still
+  shows it exclusively. A folder counts the parts of a track hidden in the project window only while they show, as
+  `showTracks` leaves them out, and isn't listed once none of its parts can show. A track that can't show
+  (`editor.set`'s `showTracks` refuses it: hidden in the project window, or it or a track in the folder holds locked
+  events or parts) is `.unavailable`: its check only hides what it still shows, and Shift or a double click do nothing.
+  While the view isn't open, such as the project window's Visibility tab before the lower zone's editor opens, the tab
+  is `.closed` and its checks are disabled, as `editor.set` couldn't change the parts.
 - **Windows and zones** (`app::AppUi`). The editor window (`resources/ui/editor.rml`, docking window `editorWindow`)
   opens and closes as the view `window` does, whichever client opens it; its left zone has the Visibility tab
   (`editorVisibility`) and the Inspector with the Global Tracks section (`editorInspector`). The view `lower` shows the
@@ -122,11 +125,12 @@ user picks it from the tab bar) shows an empty editor until Edit > Open Editor i
 - `tests/midieditor_tests.cpp` drives the app with `ui::Automation`: Open/Close Editor for three parts on two tracks
   opens the editor window with them in order, the Activate Part for Editing menu lists them under their tracks and
   activates one, the part editing mode marks the editable parts, a click activates a part; the Visibility tab's checks
-  hide and show tracks, a double click shows one exclusively, a rectangle for a track not all of whose parts show;
-  the Global Tracks section shows a marker track above the events; Open/Close Editor without a selection, closing the
-  window, an engine client and a new project open and close it, and an `editor.changed` on its way after the user
-  closed the window doesn't open it again. The Visibility tab indents a folder's tracks, folds them with a click on its
-  name and on its triangle, marks tracks with locked parts or hidden in the project window and sends nothing for their
-  checks, and is closed in the project window while the lower zone's editor isn't open. The lower zone's editor opens
-  for selected parts, follows the selection, stops following with Keep Editor Contents, moves to the window and back,
-  and closes when the lower zone hides.
+  hide and show tracks, a double click shows one exclusively, a rectangle for a track not all of whose parts show; the
+  Global Tracks section shows a marker track above the events; Open/Close Editor without a selection, closing the
+  window, an engine client and a new project open and close it, and an `editor.changed` on its way after the user closed
+  the window doesn't open it again. The Visibility tab indents a folder's tracks, folds them with a click on its name
+  and on its triangle, shows a folder exclusively with a double click on its name, marks tracks with locked parts or
+  hidden in the project window, whose checks only hide what shows, counts a hidden track's parts in its folder only
+  while they show, and is closed in the project window while the lower zone's editor isn't open. The lower zone's editor
+  opens for selected parts, follows the selection, stops following with Keep Editor Contents, moves to the window and
+  back, and closes when the lower zone hides.

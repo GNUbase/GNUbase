@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <array>
 #include <map>
-#include <set>
 #include <utility>
 
 namespace gnubase::ui
@@ -265,14 +264,21 @@ namespace gnubase::ui
 		return tracks;
 	}
 
-	// As editor.set's showTracks refuses them (p. 1151): a track hidden in the project window, by itself or in a
-	// hidden folder, or one that holds locked events or parts, also in a track inside it.
-	bool MidiEditor::showable(uint64_t id) const
+	bool MidiEditor::hiddenInProject(uint64_t id) const
 	{
 		const Json hidden = m_project.value("trackVisibility", Json::object()).value("hidden", Json::array());
 		for (const Json* found = track(id); found != nullptr; found = track(found->at("parent").get<uint64_t>()))
 			if (contains(hidden, found->at("id").get<uint64_t>()))
-				return false;
+				return true;
+		return false;
+	}
+
+	// As editor.set's showTracks refuses them (p. 1151): a track hidden in the project window, by itself or in a
+	// hidden folder, or one that holds locked events or parts, also in a track inside it.
+	bool MidiEditor::showable(uint64_t id) const
+	{
+		if (hiddenInProject(id))
+			return false;
 		const std::vector<uint64_t> tracks = inside(id);
 		for (const char* kind : {"midiParts", "audioParts", "audioEvents"})
 			for (const Json& item : m_project.value(kind, Json::array()))
@@ -288,11 +294,16 @@ namespace gnubase::ui
 		std::pair<size_t, size_t> counts;
 		const Json parts = m_view.value("parts", Json::array());
 		for (const Json& part : projectParts())
-			if (std::find(tracks.begin(), tracks.end(), part.at("track").get<uint64_t>()) != tracks.end())
+		{
+			const auto owner = part.at("track").get<uint64_t>();
+			const bool shown = contains(parts, part.at("id").get<uint64_t>());
+			// showTracks leaves out the parts of tracks hidden in the project window, so they count while they show.
+			if (std::find(tracks.begin(), tracks.end(), owner) != tracks.end() && (shown || !hiddenInProject(owner)))
 			{
 				++counts.first;
-				counts.second += contains(parts, part.at("id").get<uint64_t>()) ? 1 : 0;
+				counts.second += shown ? 1 : 0;
 			}
+		}
 		return counts;
 	}
 
@@ -338,6 +349,7 @@ namespace gnubase::ui
 					if (Rml::Element* indent = row->QuerySelector(".tree-indent"))
 						indent->SetProperty("width", std::to_string(width) + "dp");
 				}
+				fold(*list);
 			}
 		}
 		else
@@ -471,7 +483,6 @@ namespace gnubase::ui
 	{
 		std::string rml;
 		std::map<uint64_t, int> levels;
-		std::set<uint64_t> folded; // the collapsed folders and every track inside them
 		const bool open = m_view.at("open").get<bool>();
 		for (const Json& track : m_project.at("tracks"))
 		{
@@ -481,10 +492,7 @@ namespace gnubase::ui
 			const int level = above != levels.end() ? above->second + 1 : 0;
 			levels[trackId] = level;
 			const bool folder = track.at("type") == "folder";
-			const bool collapsed = m_collapsed.count(trackId) != 0;
-			if (folded.count(parent) != 0 || (folder && collapsed))
-				folded.insert(trackId);
-			if (folded.count(parent) != 0 || (!holdsParts(track, showsAudio()) && !folder))
+			if (!holdsParts(track, showsAudio()) && !folder)
 				continue;
 			const auto [parts, shown] = partsShown(trackId);
 			if (folder && parts == 0)
@@ -495,15 +503,13 @@ namespace gnubase::ui
 			else if (shown > 0)
 				state = " partial";
 			const bool shows = showable(trackId);
-			const bool disabled = !open || parts == 0 || (!shows && shown < parts);
+			const bool disabled = !open || parts == 0 || (!shows && shown == 0);
 			std::string classes = m_view.at("activeTrack") == trackId ? " active" : "";
 			classes += shows ? "" : " unavailable";
-			if (folder)
-				classes += collapsed ? " parent" : " parent expanded";
+			classes += folder ? " parent" : "";
 			rml += R"(<div class="editor-visibility-track)" + classes + R"(" track=")" + idText(trackId) +
 				R"(" level=")" + std::to_string(level) + R"(">)";
-			rml += level > 0 ? R"(<span class="tree-indent"/>)" : "";
-			rml += folder ? R"(<span class="tree-toggle"/>)" : "";
+			rml += R"(<span class="tree-indent"/><span class="tree-toggle"/>)";
 			rml += R"(<button class="editor-visibility-check)" + state + '"' + (disabled ? R"( disabled="")" : "") +
 				R"(/><span class="editor-visibility-name">)" + encode(track.at("name").get<std::string>()) +
 				"</span></div>";
@@ -553,15 +559,31 @@ namespace gnubase::ui
 		m_binding.send("editor.set", std::move(parameters)); // editor.changed shows it
 	}
 
+	// Hides the rows inside collapsed folders (.hidden) and marks the expanded folders (.expanded).
+	void MidiEditor::fold(Rml::Element& list) const
+	{
+		for (int i = 0; i < list.GetNumChildren(); ++i)
+		{
+			Rml::Element* row = list.GetChild(i);
+			const uint64_t id = idOf(row, "track", nullptr);
+			bool hidden = false;
+			for (const Json* above = track(id); above != nullptr; above = track(above->at("parent").get<uint64_t>()))
+				hidden = hidden || (above->at("id") != id && m_collapsed.count(above->at("id").get<uint64_t>()) != 0);
+			row->SetClass("hidden", hidden);
+			row->SetClass("expanded", row->IsClassSet("parent") && m_collapsed.count(id) == 0);
+		}
+	}
+
 	void MidiEditor::toggleTrack(uint64_t track, bool exclusive)
 	{
 		const auto [parts, shown] = partsShown(track);
 		// A closed view has no parts to change, and a track that can't show can only hide what it shows.
-		if (parts == 0 || !m_view.at("open").get<bool>() || (!showable(track) && (exclusive || shown < parts)))
+		const bool shows = showable(track);
+		if (parts == 0 || !m_view.at("open").get<bool>() || (!shows && (exclusive || shown == 0)))
 			return;
 		if (exclusive)
 			set({{"exclusive", true}, {"showTracks", {track}}});
-		else if (shown == parts)
+		else if (shown == parts || !shows)
 			set({{"hideTracks", {track}}});
 		else
 			set({{"showTracks", {track}}}); // also where some show: the rectangle shows them all
@@ -590,7 +612,8 @@ namespace gnubase::ui
 			const uint64_t folder = idOf(row, "track", root);
 			if (m_collapsed.erase(folder) == 0)
 				m_collapsed.insert(folder);
-			show();
+			// In place, as rebuilding the rows would lose the double click that shows the folder exclusively.
+			fold(*row->GetParentNode());
 			return;
 		}
 		if (target->HasAttribute("chord"))

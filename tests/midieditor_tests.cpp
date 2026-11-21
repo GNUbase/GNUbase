@@ -292,58 +292,78 @@ TEST_CASE("the Visibility tab indents and folds folders and marks the tracks tha
 							  .at("track")
 							  .at("id")
 							  .get<uint64_t>();
+	const uint64_t strings = app.call("track.add", {{"type", "midi"}, {"name", "Strings"}, {"parent", folder}})
+								 .at("track")
+								 .at("id")
+								 .get<uint64_t>();
 	const uint64_t pads1 = addPart(app, pads, 0, "Pads A");
-	REQUIRE(app.waitUntil([&] { return f.display.project().at("midiParts").size() == 4; }));
-	app.call("editor.open", {{"editor", "window"}, {"parts", {f.keys1, pads1}}});
+	const uint64_t strings1 = addPart(app, strings, 0, "Strings A");
+	REQUIRE(app.waitUntil([&] { return f.display.project().at("midiParts").size() == 5; }));
+	app.call("editor.open", {{"editor", "window"}, {"parts", {f.keys1, pads1, strings1}}});
 	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
 	const Window window = app.appUi().editorWindowId();
 	const auto row = [](uint64_t track) { return ".editor-visibility-track[track=\"" + std::to_string(track) + "\"]"; };
 	const auto rowOf = [&](uint64_t track) { return elements(app, window, row(track)).at(0); };
+	const auto checkOf = [&](uint64_t track)
+	{ return elements(app, window, row(track) + " .editor-visibility-check").at(0); };
 	const auto shows = [&](const std::vector<uint64_t>& shown) { return parts(view(app, "window")) == shown; };
-	REQUIRE(app.waitUntil([&] { return elements(app, window, ".editor-visibility-track").size() == 4; }));
+	REQUIRE(app.waitUntil([&] { return elements(app, window, ".editor-visibility-track").size() == 5; }));
 
-	// A folder's tracks are indented under it, and the folder has a triangle (p. 1151).
+	// A folder's tracks are indented under it, and the folder has a triangle (p. 1151). Every row has the triangle's
+	// part, shown only on folders, so the rows line up.
 	CHECK(rowOf(pads).at("attributes").at("level") == "1");
 	CHECK(rowOf(f.keys).at("attributes").at("level") == "0");
+	CHECK(has(rowOf(folder), "parent"));
 	CHECK(has(rowOf(folder), "expanded"));
-	CHECK(elements(app, window, row(folder) + " .tree-toggle").size() == 1);
-	CHECK(elements(app, window, row(f.keys) + " .tree-toggle").empty());
-	// A click on the folder's name collapses it, one on the triangle expands it again.
+	CHECK_FALSE(has(rowOf(f.keys), "parent"));
+	CHECK(elements(app, window, ".editor-visibility-track > .tree-toggle").size() == 5);
+	// A click on the folder's name collapses it in place, one on the triangle expands it again.
 	click(app, window, row(folder) + " .editor-visibility-name");
-	REQUIRE(app.waitUntil([&] { return elements(app, window, row(pads)).empty(); }));
+	REQUIRE(app.waitUntil([&] { return has(rowOf(pads), "hidden") && has(rowOf(strings), "hidden"); }));
 	CHECK_FALSE(has(rowOf(folder), "expanded"));
-	CHECK(shows({f.keys1, pads1}));
+	CHECK_FALSE(has(rowOf(f.keys), "hidden"));
+	CHECK(shows({f.keys1, pads1, strings1}));
 	click(app, window, row(folder) + " .tree-toggle");
-	REQUIRE(app.waitUntil([&] { return elements(app, window, row(pads)).size() == 1; }));
+	REQUIRE(app.waitUntil([&] { return !has(rowOf(pads), "hidden"); }));
+	CHECK(has(rowOf(folder), "expanded"));
+	// A double click on the folder's name shows its tracks exclusively, and leaves it expanded.
+	click(app, window, row(folder) + " .editor-visibility-name", 2);
+	REQUIRE(app.waitUntil([&] { return shows({pads1, strings1}); }));
+	CHECK(has(rowOf(folder), "expanded"));
+	app.call("editor.set", {{"editor", "window"}, {"parts", {f.keys1, pads1, strings1}}});
+	REQUIRE(app.waitUntil([&] { return shows({f.keys1, pads1, strings1}); }));
 
-	// Tracks that hold locked parts can't show (p. 1151): marked, and their checks show nothing.
+	// Tracks that hold locked parts can't show (p. 1151): marked, and their checks show nothing, but hide what shows.
 	app.call("event.set", {{"events", {f.bass1, f.keys2}}, {"lock", true}});
 	REQUIRE(app.waitUntil([&] { return has(rowOf(f.bass), "unavailable") && has(rowOf(f.keys), "unavailable"); }));
 	CHECK(!has(rowOf(pads), "unavailable"));
-	for (const uint64_t track : {f.bass, f.keys})
-		CHECK(elements(app, window, row(track) + " .editor-visibility-check")
-				.at(0)
-				.at("attributes")
-				.contains("disabled"));
+	CHECK(checkOf(f.bass).at("attributes").contains("disabled"));
+	CHECK_FALSE(checkOf(f.keys).value("attributes", Json::object()).contains("disabled"));
 	click(app, window, row(f.bass) + " .editor-visibility-check");
 	click(app, window, row(f.keys) + " .editor-visibility-check", 1, true);
 	click(app, window, row(f.bass) + " .editor-visibility-name", 2);
 	for (int i = 0; i < 5; ++i)
 		app.shell().step(std::chrono::milliseconds(0));
-	CHECK(shows({f.keys1, pads1}));
+	CHECK(shows({f.keys1, pads1, strings1}));
+	click(app, window, row(f.keys) + " .editor-visibility-check");
+	REQUIRE(app.waitUntil([&] { return shows({pads1, strings1}); }));
+	app.call("editor.set", {{"editor", "window"}, {"parts", {f.keys1, pads1, strings1}}});
+	REQUIRE(app.waitUntil([&] { return shows({f.keys1, pads1, strings1}); }));
+
 	// Nor can a track hidden in the project window, though what it shows still hides.
 	app.call("trackVisibility.set", {{"hidden", {pads}}});
 	REQUIRE(app.waitUntil([&] { return has(rowOf(pads), "unavailable"); }));
 	click(app, window, row(pads) + " .editor-visibility-check");
+	REQUIRE(app.waitUntil([&] { return shows({f.keys1, strings1}); }));
+	REQUIRE(app.waitUntil([&] { return checkOf(pads).at("attributes").contains("disabled"); }));
+	// A folder counts a hidden track's parts only while they show, as showTracks leaves them out: all its other parts
+	// show, so it has a check that hides them.
+	CHECK(has(checkOf(folder), "checked"));
+	click(app, window, row(folder) + " .editor-visibility-check");
 	REQUIRE(app.waitUntil([&] { return shows({f.keys1}); }));
-	REQUIRE(app.waitUntil(
-		[&]
-		{
-			return elements(app, window, row(pads) + " .editor-visibility-check")
-				.at(0)
-				.at("attributes")
-				.contains("disabled");
-		}));
+	// A folder whose tracks are all hidden has nothing that can show.
+	app.call("trackVisibility.set", {{"hidden", {pads, strings}}});
+	REQUIRE(app.waitUntil([&] { return elements(app, window, row(folder)).empty(); }));
 
 	// The project window's Visibility tab while the lower zone's editor isn't open: nothing to show or hide.
 	app.appUi().docking().open("visibility");
