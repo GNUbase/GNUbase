@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/mixer.h"
 
+#include "engine/analysis/analysis.h"
 #include "ui/docking.h"
 #include "ui/widgetutils.h"
 
@@ -97,8 +98,8 @@ namespace gnubase::ui
 		// The dB text under a fader: what the fader shows, which is the drag's during a drag.
 		void showVolume(const Rml::Element& fader)
 		{
-			Rml::Element* parent = fader.GetParentNode();
-			if (Rml::Element* text = parent != nullptr ? parent->QuerySelector(".mixer-volume") : nullptr)
+			Rml::Element* strip = fader.Closest(".mixer-fader");
+			if (Rml::Element* text = strip != nullptr ? strip->QuerySelector(".mixer-volume") : nullptr)
 				setText(*text, decibels(widgets::number(fader, "value", 0.0F)));
 		}
 
@@ -397,10 +398,11 @@ namespace gnubase::ui
 		return result;
 	}
 
-	Mixer::Mixer(EngineBinding& binding, Docking& docking, Rml::Element& root, std::string view, MixerKind kind,
-		MixerActions actions)
+	Mixer::Mixer(EngineBinding& binding, MeterReader& meters, Docking& docking, Rml::Element& root, std::string view,
+		MixerKind kind, MixerActions actions)
 		: m_binding(binding), m_stepOwner(binding.stepOwner("mixer")), m_docking(docking),
-		  m_root(root.GetObserverPtr()), m_view(std::move(view)), m_kind(kind), m_actions(std::move(actions))
+		  m_root(root.GetObserverPtr()), m_view(std::move(view)), m_kind(kind), m_actions(std::move(actions)),
+		  m_meterReader(meters), m_metered(meters.show())
 	{
 		Rml::ElementDocument* document = root.GetOwnerDocument();
 		const bool settings = m_kind == MixerKind::ChannelSettings;
@@ -551,6 +553,9 @@ namespace gnubase::ui
 					if (!alive.expired() && result.ok())
 						sync(result.value);
 				});
+		m_subscriptions.push_back(m_binding.watch<std::vector<std::vector<std::string>>>(
+			m_root.get(), [this] { return readMeters(); },
+			[this](const std::vector<std::vector<std::string>>& shown) { showMeters(shown); }));
 		if (!settings)
 			requestView();
 		requestProject();
@@ -723,6 +728,7 @@ namespace gnubase::ui
 		while (container.GetNumChildren() > 0)
 			container.RemoveChild(container.GetFirstChild());
 		m_stripOf.clear();
+		m_metered->clear();
 		Rml::ElementDocument* document = container.GetOwnerDocument();
 		for (const MixerChannel* channel : strips)
 		{
@@ -750,8 +756,15 @@ namespace gnubase::ui
 			// Edit Channel Settings (reference manual p. 500).
 			if (channel->channel != nullptr && m_kind != MixerKind::ChannelSettings && m_actions.editChannel)
 				rml += R"(<button class="mixer-edit" edit="" title="Edit Channel Settings">e</button>)";
-			if (audio || vca) // from -60 dB, linear until the channel strip's dB law (#107)
-				rml += R"(<fader min="-60" max="6" default="0" step="0.1"/><span class="mixer-volume"/>)";
+			// The fader, from -60 dB, linear until the channel strip's dB law (#107), and an audio channel's meter,
+			// whose bars come once the engine measured the channel (showMeters).
+			if (audio || vca)
+				rml += std::string(R"(<div class="mixer-level"><fader min="-60" max="6" default="0" step="0.1"/>)") +
+					(vca ? "" : R"(<div class="mixer-meter"/>)") +
+					R"(</div><div class="mixer-readouts"><span class="mixer-volume"/>)" +
+					(vca ? "" : R"(<span class="mixer-peak" title="Meter Peak Level"/>)") + "</div>";
+			if (audio && !vca)
+				m_metered->push_back(channel->id);
 			rml += "</div>";
 			Rml::Element* strip = container.AppendChild(document->CreateElement("div"));
 			strip->SetClass("mixer-channel", true);
@@ -762,6 +775,58 @@ namespace gnubase::ui
 			m_stripOf[channel->id] = strip;
 		}
 		m_docking.arrangeSections(container);
+		showMeters(readMeters()); // the watch shows only what changes
+	}
+
+	std::vector<std::vector<std::string>> Mixer::readMeters() const
+	{
+		std::vector<std::vector<std::string>> shown;
+		for (const uint64_t id : *m_metered)
+		{
+			std::vector<std::string> values;
+			const engine::LevelReading* level = m_meterReader.level(id);
+			float largest = 0.0f;
+			for (size_t c = 0; level != nullptr && c < static_cast<size_t>(level->channels); ++c)
+			{
+				values.push_back(meterValue(level->peak[c]));
+				values.push_back(meterValue(level->peakMax[c]));
+				largest = std::max(largest, level->peakMax[c]);
+			}
+			const std::optional<double> peak = engine::analysis::decibels(largest);
+			values.push_back(peak ? decibels(*peak) : "-inf");
+			shown.push_back(std::move(values));
+		}
+		return shown;
+	}
+
+	void Mixer::showMeters(const std::vector<std::vector<std::string>>& shown)
+	{
+		if (!m_strips)
+			return;
+		for (size_t i = 0; i < shown.size() && i < m_metered->size(); ++i)
+		{
+			const auto strip = m_stripOf.find((*m_metered)[i]);
+			Rml::Element* bars = strip != m_stripOf.end() ? strip->second->QuerySelector(".mixer-meter") : nullptr;
+			Rml::Element* peak = strip != m_stripOf.end() ? strip->second->QuerySelector(".mixer-peak") : nullptr;
+			if (bars == nullptr || peak == nullptr)
+				continue;
+			const std::vector<std::string>& values = shown[i];
+			const auto channels = static_cast<int>(values.size() / 2);
+			if (bars->GetNumChildren() != channels)
+			{
+				std::string rml;
+				for (int c = 0; c < channels; ++c)
+					rml += R"(<meter min="-60" max="6"/>)";
+				bars->SetInnerRML(rml);
+			}
+			for (int c = 0; c < channels; ++c)
+			{
+				Rml::Element* meter = bars->GetChild(c);
+				meter->SetAttribute("value", values[2 * static_cast<size_t>(c)]);
+				meter->SetAttribute("peak", values[(2 * static_cast<size_t>(c)) + 1]);
+			}
+			setText(*peak, values.back());
+		}
 	}
 
 	void Mixer::updateStrip(Rml::Element& strip, const MixerChannel& channel)
@@ -1153,6 +1218,10 @@ namespace gnubase::ui
 			{
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && m_actions.editChannel)
 					m_actions.editChannel(channel->track);
+			}
+			else if (target->IsClassSet("mixer-peak"))
+			{
+				m_binding.send("meter.reset", {{"meters", "channels"}}); // the peak level (p. 468)
 			}
 			else if (target->HasAttribute("deactivate"))
 			{

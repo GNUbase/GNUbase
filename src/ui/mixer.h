@@ -3,6 +3,7 @@
 
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
+#include "ui/meterpanel.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
@@ -96,19 +97,22 @@ namespace gnubase::ui
 	// container of the docking system's set of sections "channel": the picture, the notepad and the fader, which the
 	// Set up Window Layout pane (#mixer-layout-pane) shows, hides and reorders. A channel name dragged onto another
 	// channel moves its track there with track.move; busses keep their places. Each strip of a track's channel has
-	// Edit Channel Settings (button.mixer-edit), and its sends' destination lists Add Effect Track to Send.
+	// Edit Channel Settings (button.mixer-edit), and its sends' destination lists Add Effect Track to Send. An audio
+	// channel's strip has its meter next to the fader (.mixer-meter, a <meter> per audio channel with the peak since
+	// the last frame and the maximum as its mark, read once a frame through the meter reader) and its peak level
+	// under it (.mixer-peak, reference manual p. 468), which a click resets, every channel's (meter.reset channels).
 	//
 	// As the channel settings window's (MixerKind::ChannelSettings, view unused) it shows one track's channel, with the
 	// pre section, the equalizer, the strip, the sends and the fader shown by default, and a toolbar of its own: Go to
 	// Previous and Next Mixer Channel (#settings-previous, #settings-next), the channel's name (.settings-name), Go to
 	// Output (#settings-output) and the Functions menu (#settings-functions-menu) with Copy and Paste Channel Settings
-	// and Follow Edit Buttons or Selection Changes. Use it on the UI thread; the binding and the docking system must
-	// outlive it.
+	// and Follow Edit Buttons or Selection Changes. Use it on the UI thread; the binding, the meter reader and the
+	// docking system must outlive it.
 	class Mixer final : private Rml::EventListener
 	{
 	public:
-		Mixer(EngineBinding& binding, Docking& docking, Rml::Element& root, std::string view, MixerKind kind,
-			MixerActions actions);
+		Mixer(EngineBinding& binding, MeterReader& meters, Docking& docking, Rml::Element& root, std::string view,
+			MixerKind kind, MixerActions actions);
 		~Mixer() override;
 		Mixer(const Mixer&) = delete;
 		Mixer& operator=(const Mixer&) = delete;
@@ -152,6 +156,9 @@ namespace gnubase::ui
 		void showSettingsToolbar();
 		void goTo(uint64_t track);
 		const MixerChannel* channelOf(Rml::Element* element) const;
+		// The meters' values, per channel in m_metered: each audio channel's peak and maximum, then the peak level.
+		std::vector<std::vector<std::string>> readMeters() const;
+		void showMeters(const std::vector<std::vector<std::string>>& shown);
 
 		EngineBinding& m_binding;
 		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
@@ -175,6 +182,8 @@ namespace gnubase::ui
 		std::set<std::string> m_hiddenTypes;
 		std::vector<uint64_t> m_shown;
 		std::map<uint64_t, Rml::Element*> m_stripOf; // by channel id, while m_strips lives
+		MeterReader& m_meterReader;
+		std::shared_ptr<std::vector<uint64_t>> m_metered; // the channels whose strips have meters
 		bool m_loading = false;
 		bool m_stale = false;
 		uint64_t m_dragged = 0;  // the channel whose name a mouse button went down on

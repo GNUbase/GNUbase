@@ -149,17 +149,18 @@ namespace gnubase::engine
 				"loudness measurement over (integrated, range, seconds); see meter.get. meters chooses what: \"main\" "
 				"only the main mix's peakMax, rmsMax and truePeakHold (the master meter's reset), \"loudness\" only "
 				"the loudness meter's values, truePeakMax included (its Reset Loudness), \"mainRmsMax\" only the main "
-				"mix's rmsMax (a Ctrl-click on RMS Max.), \"mainTruePeakHold\" only its truePeakHold (on Peak Max.); "
-				"left out, everything, every channel's maxima included. Announces meter.reset with the meters given.",
+				"mix's rmsMax (a Ctrl-click on RMS Max.), \"mainTruePeakHold\" only its truePeakHold (on Peak Max.), "
+				"\"channels\" only every channel's peakMax and rmsMax (a click on a channel's peak level); left out, "
+				"everything, every channel's maxima included. Announces meter.reset with the meters given.",
 				Json::parse(R"({"type": "object", "additionalProperties": false,
 					"properties": {"meters": {"type": "string",
-						"enum": ["main", "loudness", "mainRmsMax", "mainTruePeakHold"]}}})"),
+						"enum": ["main", "loudness", "mainRmsMax", "mainTruePeakHold", "channels"]}}})"),
 				Json::parse(R"({"type": "object"})"), false},
 			[this](CommandContext& context)
 			{
 				const std::string meters = context.parameters().value("meters", std::string());
 				const bool all = meters.empty();
-				if (all)
+				if (all || meters == "channels")
 					for (const auto& [id, state] : m_channelStates)
 						state->meter.reset();
 				if (all || meters == "main")

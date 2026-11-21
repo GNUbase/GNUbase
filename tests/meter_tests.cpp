@@ -474,7 +474,8 @@ TEST_CASE("meter.get reads a channel, the main mix and its loudness through the 
 	CHECK_THAT(reject(client, "meter.get", {{"channels", {999}}}), ContainsSubstring("999"));
 }
 
-TEST_CASE("meter.reset resets the master meter's RMS Max. or Peak Max. alone", "[integration]")
+TEST_CASE(
+	"meter.reset resets the master meter's RMS Max. or Peak Max. alone, or only the channels' maxima", "[integration]")
 {
 	// A 1 kHz sine at -6 dBFS, monitored while the transport stands.
 	Engine engine;
@@ -505,6 +506,14 @@ TEST_CASE("meter.reset resets the master meter's RMS Max. or Peak Max. alone", "
 	CHECK(meters.at("main").at("rmsMax").at(0).get<double>() == Approx(-9.03).margin(0.1));
 	run(client, "audio.render", {{"frames", 4800}});
 	CHECK(run(client, "meter.get").at("main").at("truePeakHold").at(1).get<double>() == Approx(-6.02).margin(0.1));
+
+	// The channel meters' peak level (p. 468): every channel's maxima, not the main mix's.
+	run(client, "meter.reset", {{"meters", "channels"}});
+	meters = run(client, "meter.get");
+	CHECK(meters.at("channels").at(0).at("peakMax").at(0).is_null());
+	CHECK(meters.at("channels").at(0).at("rmsMax").at(0).is_null());
+	CHECK(meters.at("main").at("peakMax").at(0).get<double>() == Approx(-6.02).margin(0.05));
+	CHECK(meters.at("main").at("truePeakHold").at(0).get<double>() == Approx(-6.02).margin(0.1));
 }
 
 TEST_CASE("the master meter holds the true peak maximum, which only its own reset clears", "[integration]")

@@ -182,17 +182,46 @@
 	margin-bottom: 4dp;
 }
 
-.mixer-fader fader
+/* The fader with an audio channel's meter next to it, a bar per audio channel, over the fader's volume and the
+   meter's peak level. */
+.mixer-level
 {
 	flex: 1 1 0;
-	height: auto;
+	display: flex;
+	justify-content: center;
 	min-height: 60dp;
 }
 
-.mixer-volume
+.mixer-level fader
 {
+	height: auto;
+}
+
+.mixer-meter
+{
+	display: flex;
+	margin-left: 2dp;
+}
+
+.mixer-meter meter
+{
+	width: 5dp;
+	height: auto;
+	margin-left: 1dp;
+}
+
+.mixer-readouts
+{
+	display: flex;
 	flex-shrink: 0;
+	justify-content: space-between;
+	width: 100%;
 	margin-top: 4dp;
+}
+
+.mixer-peak
+{
+	cursor: pointer;
 }
 
 .mixer-visibility

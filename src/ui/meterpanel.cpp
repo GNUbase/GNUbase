@@ -21,12 +21,6 @@ namespace gnubase::ui
 		// The meters' attribute values for silence: below every scale.
 		constexpr const char* g_silence = "-200";
 
-		std::string decibels(float level)
-		{
-			const std::optional<double> db = engine::analysis::decibels(level);
-			return db ? widgets::format(static_cast<float>(*db), 1) : g_silence;
-		}
-
 		// A value of the display, or -inf for silence and -- for nothing measured.
 		std::string text(std::optional<double> value, const char* unit)
 		{
@@ -86,8 +80,60 @@ namespace gnubase::ui
 		}
 	}
 
-	MeterPanel::MeterPanel(engine::Engine& engine, EngineBinding& binding, Rml::Element& element)
-		: m_engine(engine), m_binding(binding), m_root(build(element).GetObserverPtr()),
+	std::string meterValue(float level)
+	{
+		const std::optional<double> db = engine::analysis::decibels(level);
+		return db ? widgets::format(static_cast<float>(*db), 1) : g_silence;
+	}
+
+	MeterReader::MeterReader(engine::Engine& engine, EngineBinding& binding) : m_engine(engine), m_binding(binding)
+	{
+	}
+
+	std::shared_ptr<std::vector<uint64_t>> MeterReader::show()
+	{
+		auto view = std::make_shared<std::vector<uint64_t>>();
+		m_views.push_back(view);
+		if (!m_reading) // the watch keeps the shell stepping once a frame, so only while views show meters
+			m_reading.emplace(m_binding.watch<uint64_t>(
+				nullptr,
+				[this]
+				{
+					read();
+					return ++m_reads;
+				},
+				[](uint64_t) { return false; }));
+		return view;
+	}
+
+	void MeterReader::read()
+	{
+		m_views.erase(std::remove_if(m_views.begin(), m_views.end(), [](const auto& view) { return view.expired(); }),
+			m_views.end());
+		m_frame.channels.clear();
+		if (m_views.empty())
+		{
+			m_reading.reset();
+			return;
+		}
+		for (const auto& view : m_views)
+		{
+			const std::shared_ptr<std::vector<uint64_t>> channels = view.lock();
+			m_frame.channels.insert(m_frame.channels.end(), channels->begin(), channels->end());
+		}
+		m_engine.readMeters(m_frame);
+	}
+
+	const engine::LevelReading* MeterReader::level(uint64_t channel) const
+	{
+		const auto found = std::find(m_frame.channels.begin(), m_frame.channels.end(), channel);
+		return found != m_frame.channels.end() && m_frame.levels.size() == m_frame.channels.size()
+			? &m_frame.levels[static_cast<size_t>(found - m_frame.channels.begin())]
+			: nullptr;
+	}
+
+	MeterPanel::MeterPanel(MeterReader& meters, EngineBinding& binding, Rml::Element& element)
+		: m_reader(meters), m_binding(binding), m_root(build(element).GetObserverPtr()), m_shows(meters.show()),
 		  m_meters(binding.watch<std::vector<std::string>>(
 			  m_root.get(), [this] { return read(); }, [this](const std::vector<std::string>& shown) { show(shown); }))
 	{
@@ -128,16 +174,15 @@ namespace gnubase::ui
 
 	std::vector<std::string> MeterPanel::read()
 	{
-		m_engine.readMeters(m_frame);
-		const engine::LevelReading& main = m_frame.main;
-		const engine::LoudnessReading& measured = m_frame.loudness;
+		const engine::LevelReading& main = m_reader.frame().main;
+		const engine::LoudnessReading& measured = m_reader.frame().loudness;
 		// The main channels' true peaks, RMS levels and true peak maxima, the loudness meter's bars, then the readouts.
 		std::vector<std::string> shown;
 		for (size_t c = 0; c < static_cast<size_t>(main.channels); ++c)
 		{
-			shown.push_back(decibels(measured.truePeak[c]));
-			shown.push_back(decibels(main.rms[c]));
-			shown.push_back(decibels(measured.truePeakHold[c]));
+			shown.push_back(meterValue(measured.truePeak[c]));
+			shown.push_back(meterValue(main.rms[c]));
+			shown.push_back(meterValue(measured.truePeakHold[c]));
 		}
 		shown.push_back(loudness(measured.momentary));
 		shown.push_back(loudness(measured.integrated));
