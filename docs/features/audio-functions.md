@@ -64,11 +64,12 @@ if the document changes meanwhile.
 ## In the UI
 
 The Audio menu has Advanced > Detect Silence..., Spectrum Analyzer and Statistics, the UI commands
-`audio.detectSilence`, `audio.spectrumAnalyzer` and `audio.statistics` of the event display. They open a dialog for the
-selected audio events, as the fade dialog does ([fades.md](fades.md)), whose Lua does the rest through the engine API.
-Each dialog follows its job's progress without waiting on the UI thread, shows failures, and cancels pending work when
-closed. A new Analyze or Auto request cancels the previous job and ignores its later results. Statistics analyzes
-selected events successively, showing each table as it finishes.
+`audio.detectSilence`, `audio.spectrumAnalyzer` and `audio.statistics` of the event display. They open separate,
+nonmodal windows for the selected audio events; each function has one window, and reopening it raises the existing
+window with its captured selection. Their Lua works through the engine API. Closing the document also closes its native
+window; replacing the project closes all three. Each window follows its job's progress without waiting on the UI thread,
+shows failures, and cancels pending work when closed. A new Analyze or Auto request cancels the previous job and ignores
+its later results. Statistics analyzes selected events successively, showing each table as it finishes.
 
 ```
 #detect-silence-dialog          detect-silence.rml
@@ -103,11 +104,13 @@ The themes color the sections, the graph and its bars (`tools/skin/generate.py`)
 
 ## Not yet
 
-Separate audio-function windows; the Detect Silence dialog's waveform with its threshold handles, preview playback with
-Mute Gaps, and zoom; clips in the pool and the sample editor's selection range as what they analyze (the engine takes a
-clip and a range already).
+The Detect Silence window's waveform with its threshold handles, preview playback with Mute Gaps, and zoom; clips in the
+pool and the sample editor's selection range as what they analyze (the engine takes a clip and a range already).
 
 ## Checks
+
+- `tests/audiofunctions_ui_tests.cpp`: separate nonmodal windows, reopening an existing function, closing through the
+  window system, and project replacement closing every function; held jobs cancel when their native windows close.
 
 - `tests/audiofunctions_tests.cpp`: Detect Silence on tones whose edges are known, with both thresholds, the minimum
   times, pre-roll and post-roll; `clip.detectSilence` in a range and its errors; `event.stripSilence` splitting,

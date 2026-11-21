@@ -3,6 +3,7 @@
 // drive it: opening it, the info line, the overview and the waveform display, the tools, the snap point, the
 // inspector's Range and Process sections, the regions list and the window layout. tests/sampleeditor_tests.cpp checks
 // the engine's side.
+#include "testutils/heldjob.h"
 #include "ui/canvas.h"
 #include "ui/enginebinding.h"
 #include "ui/rmlui.h"
@@ -41,13 +42,15 @@ namespace
 	// frames, selected in the project window and open in the sample editor.
 	struct Fixture
 	{
-		explicit Fixture(int sampleRate = 48000) : display(app.appUi().showProject())
+		explicit Fixture(int sampleRate = 48000, int channels = 1) : display(app.appUi().showProject())
 		{
 			test::Audio sine;
 			sine.sampleRate = sampleRate;
+			sine.channels = channels;
 			for (int64_t frame = 0; frame < g_frames; ++frame)
-				sine.samples.push_back(
-					static_cast<float>(0.5 * std::sin(static_cast<double>(frame) * 3.14159265358979323846 / 100.0)));
+				for (int channel = 0; channel < channels; ++channel)
+					sine.samples.push_back(static_cast<float>(
+						0.5 * std::sin(static_cast<double>(frame) * 3.14159265358979323846 / 100.0)));
 			test::writeWav(file, sine);
 			track =
 				app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id").get<uint64_t>();
@@ -805,6 +808,164 @@ TEST_CASE("Open/Close Editor without an audio event selected closes the sample e
 	f.app.keys().run("editor.openClose", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("open") == false; }));
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().sampleEditorWindow() == nullptr; }));
+}
+
+TEST_CASE("sample editor Draw edits samples only at sample zoom and selects the corrected range", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.tool("draw");
+	f.drag(f.at(2200), f.at(2250));
+	CHECK(f.app.call("job.list").at("jobs").empty());
+	f.selection(2100, 2300);
+	f.click(of("#se-zoom-menu"));
+	f.click(of("[zoom=selectionHorizontal]"));
+	REQUIRE(f.editor().scale() / f.dpRatio() <= 1.0);
+	f.drag(f.at(2200), f.at(2250));
+	f.jobsDone(1);
+	const Json parameters = f.lastParameters("sampleEditor.process");
+	REQUIRE(parameters.at("operation") == "draw");
+	const auto start = parameters.at("start").get<int64_t>();
+	const auto end = parameters.at("end").get<int64_t>();
+	CHECK(std::abs(start - 2200) <= 1);
+	CHECK(std::abs(end - 2251) <= 1);
+	CHECK(parameters.at("samples").size() == static_cast<size_t>(end - start));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selectionStart") == start; }));
+	CHECK(f.view().at("selectionEnd") == end);
+	const Json project = f.app.call("project.get");
+	const auto path = project.at("media").back().at("path").get<std::string>();
+	const test::Audio audio = test::readWav(path);
+	for (int64_t frame = start; frame < end; ++frame)
+		CHECK(std::abs(audio.samples.at(static_cast<size_t>(frame))) < 0.01F);
+	f.app.call("history.undo");
+	CHECK(f.app.call("project.get").at("media").size() == 1);
+	const Json before = f.view();
+	test::HeldJob held(f.app.engine(), "sampleEditor.process");
+	f.drag(f.at(2220), f.at(2240));
+	REQUIRE(held.waitUntilHeld());
+	CHECK(f.view().at("selectionStart") == before.at("selectionStart"));
+	CHECK(f.view().at("selectionEnd") == before.at("selectionEnd"));
+	f.app.call("job.cancel", {{"job", held.job()}});
+	CHECK(held.release());
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.app.call("job.get", {{"job", held.job()}}).at("job").at("state") == "cancelled"; }));
+	CHECK(f.view().at("selectionStart") == before.at("selectionStart"));
+	CHECK(f.view().at("selectionEnd") == before.at("selectionEnd"));
+}
+
+TEST_CASE("sample editor Draw shows its stroke during a held drag and until its job ends", "[ui]")
+{
+	Fixture f(48000, 2);
+	f.open();
+	f.selection(2100, 2300);
+	for (const char* action : {"selectionHorizontal", "inVertical"})
+	{
+		f.click(of("#se-zoom-menu"));
+		f.click(of(std::string("[zoom=") + action + "]"));
+	}
+	f.tool("draw");
+	Rml::ElementDocument* document = f.app.shell().find(f.window)->context().GetDocument(0);
+	REQUIRE(document != nullptr);
+	const auto stroke = [&] { return dynamic_cast<ui::Curve*>(document->QuerySelector(".se-draw-stroke")); };
+	for (const std::string outcome : {"done", "failed", "cancelled"})
+	{
+		CAPTURE(outcome);
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				const auto* wave = dynamic_cast<ui::Waveform*>(document->QuerySelector(".se-wave"));
+				return wave != nullptr && wave->channels().size() == 2 && wave->span().start == f.editor().start() &&
+					wave->GetAttribute<uint64_t>("media", 0) == f.view().at("media").get<uint64_t>();
+			}));
+		CHECK(stroke() == nullptr);
+		const size_t jobs = f.app.call("job.list").at("jobs").size();
+		const auto before = f.app.ui().screenshot(f.window, of(".se-display"));
+		const Json area = f.box(".se-display");
+		const auto target = [&](double frame, double y)
+		{
+			return ui::Target{"", 0,
+				ui::Point{static_cast<int>(std::lround(f.x(frame))),
+					static_cast<int>(std::lround(area.at("y").get<double>() + (area.at("height").get<double>() * y)))}};
+		};
+		const ui::Target from = target(2140, 0.625);
+		const ui::Target to = target(2180, 0.875);
+		test::HeldJob held(f.app.engine(), "sampleEditor.process");
+		f.app.ui().press(f.window, from, ui::MouseButton::Left);
+		f.app.ui().move(f.window, to);
+		REQUIRE(stroke() != nullptr);
+		const auto& points = stroke()->points();
+		REQUIRE(points.size() > 2);
+		const size_t count = points.size();
+		CHECK(std::abs(points.front().position - 2140.0) <= 1.0);
+		CHECK(std::abs(points.back().position - 2180.0) <= 1.0);
+		CHECK(points.front().value == Catch::Approx(0.75).margin(0.02));
+		CHECK(points.back().value == Catch::Approx(0.25).margin(0.02));
+		CHECK(stroke()->virginTerritory());
+		const Json lane = f.box(".se-draw-stroke");
+		CHECK(f.near(lane.at("x").get<double>(), area.at("x").get<double>()));
+		CHECK(f.near(lane.at("width").get<double>(), area.at("width").get<double>()));
+		CHECK(f.near(lane.at("y").get<double>(), area.at("y").get<double>() + (area.at("height").get<double>() / 2.0)));
+		CHECK(f.near(lane.at("height").get<double>(), area.at("height").get<double>() / 2.0));
+		const auto drawn = f.app.ui().screenshot(f.window, of(".se-display"));
+		CHECK(ui::writePng(drawn, test::outputDirectory() / "sample-editor-draw-stroke.png"));
+		CHECK(!test::compareImages(drawn, before, {}).equal);
+		CHECK(f.app.call("job.list").at("jobs").size() == jobs);
+		f.app.ui().release(f.window, to, ui::MouseButton::Left);
+		REQUIRE(held.waitUntilHeld());
+		REQUIRE(stroke() != nullptr);
+		CHECK(stroke()->points().size() == count);
+		if (outcome == "cancelled")
+			f.app.call("job.cancel", {{"job", held.job()}});
+		else if (outcome == "failed")
+			f.app.call("project.set", {{"name", "Changed during drawing"}});
+		CHECK(held.release());
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				return f.app.call("job.get", {{"job", held.job()}}).at("job").at("state") == outcome &&
+					stroke() == nullptr;
+			}));
+	}
+}
+
+TEST_CASE("sample editor half axes and sliders follow waveform zoom and scroll", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const double full = f.editor().scale();
+	f.click(of("#se-level-menu"));
+	f.click(of("#se-half-axis"));
+	CHECK(f.elements(".se-half-axis").size() == 2);
+	const Json area = f.box(".se-display");
+	CHECK(f.near(f.box(".se-half-axis").at("y").get<double>(),
+		area.at("y").get<double>() + (area.at("height").get<double>() * 0.25)));
+	const auto slide = [&](const char* id, double fraction, bool vertical = false)
+	{
+		const Json box = f.box(id);
+		const double x = box.at("x").get<double>() + (box.at("width").get<double>() * 0.5);
+		const double y = box.at("y").get<double>() + (box.at("height").get<double>() * 0.5);
+		f.drag({"", 0, ui::Point{static_cast<int>(x), static_cast<int>(y)}},
+			{"", 0,
+				ui::Point{static_cast<int>(x + (vertical ? 0 : box.at("width").get<double>() * fraction)),
+					static_cast<int>(y + (vertical ? box.at("height").get<double>() * fraction : 0))}});
+	};
+	slide("#se-horizontal-zoom", 0.3);
+	CHECK(f.editor().scale() < full);
+	slide("#se-scroll", 0.3);
+	CHECK(f.editor().start() > 0);
+	const auto value = [&](const char* id)
+	{ return std::stod(f.elements(id).at(0).at("attributes").at("value").get<std::string>()); };
+	CHECK(value("#se-scroll") > 0);
+	slide("#se-vertical-zoom", 0.15, true);
+	CHECK(value("#se-vertical-zoom") < 0);
+	CHECK(f.near(f.box(".se-half-axis").at("y").get<double>(),
+		area.at("y").get<double>() + (area.at("height").get<double>() * 0.25)));
+	f.click(of("#se-level-menu"));
+	f.click(of("#se-half-axis"));
+	CHECK(f.elements(".se-half-axis").empty());
+	f.click(of("#se-zoom-menu"));
+	f.click(of("[zoom=undo]"));
+	CHECK(value("#se-vertical-zoom") == 0.0);
 }
 
 // Tempo matching and warping (#144, docs/features/warp.md): the Warp section, Free Warp's gestures, Flatten and

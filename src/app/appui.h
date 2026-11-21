@@ -375,6 +375,7 @@ namespace gnubase::app
 		// tracks, parts or notes in its attributes, closes when project.reset replaces the project (#1464).
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
 			const std::vector<std::pair<std::string, std::string>>& attributes = {});
+		void openAudioFunction(const std::string& file);
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track);
 		// The articulation map setup (resources/ui/articulation-maps.rml, #175) for a MIDI or instrument track, or with
@@ -497,6 +498,12 @@ namespace gnubase::app
 			std::unique_ptr<ui::QuantizePanel> quantize; // its toolbar's quantize functions (#1344)
 		};
 		SampleEditorWindow m_sampleEditor;
+		struct AudioFunctionWindow
+		{
+			ui::WindowId window = 0;
+			Rml::ObserverPtr<Rml::Element> document;
+		};
+		std::map<std::string, AudioFunctionWindow> m_audioFunctions;
 		std::weak_ptr<ui::MidiEditor> m_lowerEditor;         // the docking system owns it while it is there
 		engine::Json m_editorViews = engine::Json::object(); // the engine's, by editor
 		std::set<std::string> m_closing;                     // the editors closeEditor closes, until the engine answers

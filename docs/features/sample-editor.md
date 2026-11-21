@@ -36,10 +36,14 @@ Snap to zero crossing reads the file on the command thread with `zeroCrossingFra
 ## Process commands
 
 `sampleEditor.process` implements the Basic Commands on an audio event's clip range (reference manual pp. 619-620). It
-takes `event`, `start` and `end` in clip frames and `operation`: `cut`, `copy`, `paste`, `delete` or `insertSilence`.
-Cut and Delete close the gap; Paste replaces the range with the copied samples; Insert Silence inserts the range's
-length at its start without replacing any audio. Copy and Cut replace an engine audio clipboard, independent of the
-system text clipboard and of undo. Paste currently requires matching sample rates and channel counts.
+takes `event`, `start` and `end` in clip frames and `operation`: `cut`, `copy`, `paste`, `delete`, `insertSilence` or
+`draw`. Cut and Delete close the gap; Paste replaces the range with the copied samples; Insert Silence inserts the
+range's length at its start without replacing any audio. Copy and Cut replace an engine audio clipboard, independent of
+the system text clipboard and of undo. Paste converts the clipboard to the destination sample rate with the engine
+resampler, then mixes its default speaker arrangement with the engine channel conversion gains. Mono duplicates at unity
+into stereo; stereo folds to mono at -3.01 dB per channel. Uncommon channel counts map matching indices and leave extra
+channels silent. The inserted length is rounded at the destination rate. Conversion streams on the job thread and leaves
+the clipboard unchanged.
 
 File reads and writes run as cancellable jobs, streaming blocks to new float WAV files in the project's media folder
 (the recording folder before saving). The result is `job`; its result contains `clip`, `media` and `length` for an edit,
@@ -69,6 +73,10 @@ Copy never asks. The question keeps the event and range that requested it, and c
 editor selection changes. Escape cancels too. The engine checks all users, including inactive versions and sampler
 instruments, before asking for the choice.
 
+The Draw tool uses `draw`, with a zero-based `channel` and `samples`: one value from -1 to 1 for each frame in the
+range, at most 65536. It replaces only that channel, preserving clip timing, regions, fades and the other channels. It
+uses the same shared-copy choice, cancellable job and undo as the other edits.
+
 ## In the UI
 
 `ui::SampleEditor` (`src/ui/sampleeditor.h`) fills the sample editor window (`resources/ui/sample-editor.rml`), which
@@ -78,7 +86,7 @@ crossfade editor), and with Open/Close Editor (Mod+E, Return) when audio events 
 first of them. Without either selected, Open/Close Editor closes it.
 
 ```
-.sample-editor[tool=range|zoom|play|scrub]   .empty without an event; .no-info, .no-overview, .no-regions
+.sample-editor[tool=range|draw|zoom|play|scrub]   .empty without an event; .no-info, .no-overview, .no-regions
   .toolbar.sample-editor-toolbar
     button.se-tool[se-tool]       the tools; .checked for the current one
     #se-zero-crossing             Snap to Zero Crossing (the project's snap setting); .checked while on
@@ -107,9 +115,16 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 | Tool | Gesture | Reference |
 |---|---|---|
 | Range Selection | A drag selects a range, with Snap to Zero Crossing at zero crossings; Shift and a click moves its nearer end; a click deselects | p. 635 |
+| Draw | At one sample per pixel or closer, draws replacement samples in the pressed channel, interpolating between pointer positions; release applies one edit and selects the corrected range | pp. 634-635 |
 | Zoom | A click zooms in around the frame clicked, with Alt out, at most to the whole clip | p. 630 |
 | Play | Auditions the clip with its fades from the frame pressed until the release, also outside the event and past its end (`audition.start` with the `clip`, [audition.md](audition.md)) | p. 630 |
 | Scrub | A drag scrubs the clip (`audition.scrub` with the `clip`) and moves the project cursor to where the frame plays | p. 634 |
+
+While drawing, `curve.se-draw-stroke` overlays the collected samples in the pressed channel's waveform lane, following
+horizontal scroll and zoom and vertical waveform zoom. It draws only between the stroke's endpoints, with a handle for
+a single sample. The overlay remains while the shared-copy choice or processing job is pending and disappears when the
+edit is refused, cancelled or finished, or the editor switches to another event. Its color and line width belong to the
+themes.
 
 - **Snap point** (pp. 626-628): a line at the event's snap point, at its start without one of its own; a drag with any
   tool sets it within the event (`event.setSnapPoint`).
@@ -124,8 +139,10 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 - **Layout and axes** (pp. 621-622): the ruler stays above the waveform and follows its horizontal zoom and scroll,
   using the project's time format, tempo, sample rate and the event's clip-to-project mapping. The level scale beside
   each channel shows percentages or dB, chosen from its Level menu, and follows vertical waveform zoom. Its labels use
-  the design system's `text-small` class, whose font size belongs to the theme. The regions list occupies the zone to the
-  right of the waveform.
+  the design system's `text-small` class, whose font size belongs to the theme. The regions list occupies the zone to
+  the right of the waveform. Show Half Level Axis in the Level menu toggles guides halfway between each channel's center
+  and its top and bottom. The bottom sliders scroll and zoom horizontally; the vertical slider zooms in when dragged
+  down. The controls follow the zoom menu and overview.
 - **Zoom menu** (p. 623): Zoom In/Out, Full, Selection, Selection (Horiz.), Event, vertical zoom and waveform vertical
   zoom, Undo/Redo Zoom. Zoom In and Out center the display on the project cursor, mapped to clip frames and clamped to
   the clip. Full and Selection show the whole clip, as clip-based zoom does without pitch analysis; Selection (Horiz.)
@@ -152,13 +169,22 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 
 The editor in the lower zone and its inspector in the left zone; Keep Editor Contents and following the project window's
 selection; several events at once (Clip Editing Mode, Clip Display Mode, Activate Clip for Editing); the grid and
-snapping to it, the half level axis, and scrolling and zoom sliders; Solo Editor, Audition, auto-scroll, the independent
-track loop and the toolbar's context menu; positions in the project's time format on the info line, and typing them; the
-Draw tool's volume curve and sample editing; dragging regions into the project window; the clip's snap point when opened
-from the pool; Process editing of warped clips and clipboard format conversion (#1968). Hooks for other tickets: offline
-processing (#141) and making a sampler track of the range; what warping doesn't have yet is in [warp.md](warp.md).
+snapping to it; Solo Editor, Audition, auto-scroll, the independent track loop and the toolbar's context menu; positions
+in the project's time format on the info line, and typing them; the Draw tool's volume curve; dragging regions into the
+project window; the clip's snap point when opened from the pool; Process editing of warped clips and edited definition
+grids (#1968). Hooks for other tickets: offline processing (#141) and making a sampler track of the range; what warping
+doesn't have yet is in [warp.md](warp.md).
 
 ## Checks
+
+- `tests/sampleeditor_tests.cpp`: Draw replacing one stereo channel with exact samples, unchanged clip regions and event
+  timing, source preservation, undo/redo and invalid channel or sample count; Paste resampling and mono/stereo
+  conversion in both directions, inserted lengths, unchanged surrounding audio and undo/redo.
+- `tests/sampleeditor_ui_tests.cpp`: Draw refusing coarse zoom, drawing and selecting corrected samples with undo; half
+  level guides toggled through the Level menu and both zoom sliders and horizontal scroll following the waveform;
+  cancelling a held Draw job preserving the selection; a stroke visible during a held drag in the second stereo
+  channel at vertical zoom, its frames and values, rendered pixels, and retention until a job succeeds, fails or is
+  cancelled.
 
 - `tests/uiapp_tests.cpp`: project and sample-editor Delete/Backspace assignments stay separate;
   `tests/theme_tests.cpp`: all shared style sheets leave new font sizes to the themes.

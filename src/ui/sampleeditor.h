@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -28,6 +29,7 @@ namespace gnubase::ui
 	enum class SampleTool : uint8_t
 	{
 		Range,
+		Draw,
 		Zoom,
 		Play,
 		Scrub,
@@ -68,6 +70,7 @@ namespace gnubase::ui
 		{
 			None,
 			Range,
+			Draw,
 			SnapPoint,
 			Play,
 			Scrub,
@@ -82,6 +85,8 @@ namespace gnubase::ui
 		void press(Rml::Event& event, Rml::Element& target);
 		void move(Rml::Event& event);
 		void release(Rml::Event& event);
+		void drawSamples(const Rml::Event& event);
+		void renderDraw();
 
 		void requestProject();
 		void requestView();
@@ -170,10 +175,15 @@ namespace gnubase::ui
 		uint64_t m_processJob = 0;
 		bool m_processPending = false;
 		bool m_levelDb = false;
+		bool m_halfAxis = false;
+		std::map<int64_t, float> m_drawSamples;
+		int m_drawChannel = 0;
+		int64_t m_drawLast = 0;
 		TimeContext m_time;
 		double m_gain = 1.0;
 		std::vector<std::array<double, 3>> m_zoomUndo;
 		std::vector<std::array<double, 3>> m_zoomRedo;
+		int m_zoomGesture = 0;
 		std::string m_regionEdge;
 		const std::string m_closeEvent;
 	};

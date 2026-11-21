@@ -32,7 +32,12 @@ namespace
 {
 	bool open(test::UiApp& app, const std::string& selector, std::optional<ui::WindowId> window = std::nullopt)
 	{
-		return !app.ui().dom(window, selector, 0).at("elements").empty();
+		if (window)
+			return !app.ui().dom(window, selector, 0).at("elements").empty();
+		for (const ui::Window* shown : app.shell().windows())
+			if (!app.ui().dom(shown->id(), selector, 0).at("elements").empty())
+				return true;
+		return false;
 	}
 
 	void click(test::UiApp& app, const std::string& selector, std::optional<ui::WindowId> window = std::nullopt,

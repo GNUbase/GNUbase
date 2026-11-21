@@ -6,6 +6,8 @@
 #include "engine/document/sampleeditor.h"
 
 #include "engine/audiofile/audiofile.h"
+#include "engine/audiofile/resampler.h"
+#include "engine/document/channelformat.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
@@ -180,7 +182,7 @@ namespace gnubase::engine
 
 		// Bounded interleaved blocks, including short-read checks; the silent section needs no input file.
 		void writeSection(AudioFileWriter& writer, const MediaFile& media, time::Samples start, time::Samples end,
-			JobContext& job, ProcessProgress& progress, bool silence = false)
+			JobContext& job, ProcessProgress& progress, bool silence = false, const Json& draw = Json::object())
 		{
 			std::unique_ptr<AudioFileReader> reader;
 			if (!silence)
@@ -198,6 +200,10 @@ namespace gnubase::engine
 				const auto count = static_cast<size_t>(std::min<time::Samples>(block, end - at));
 				const size_t read = reader ? reader->read(buffer.data(), count) : count;
 				require(read != 0, "file ends before the requested range");
+				if (!draw.empty())
+					for (size_t frame = 0; frame < read; ++frame)
+						buffer[(frame * static_cast<size_t>(media.channels)) + draw.at("channel").get<size_t>()] =
+							draw.at("samples").at(static_cast<size_t>(at - start) + frame).get<float>();
 				writer.write(buffer.data(), read);
 				at += static_cast<time::Samples>(read);
 				progress.done += static_cast<time::Samples>(read);
@@ -206,9 +212,69 @@ namespace gnubase::engine
 			}
 		}
 
+		// Clipboard conversion is streamed on the job thread. Use the engine's default speaker arrangements;
+		// uncommon channel counts preserve matching channel indices and leave additional channels silent.
+		void writeClipboard(AudioFileWriter& writer, const MediaFile& media, const MediaFile& target, JobContext& job,
+			ProcessProgress& progress)
+		{
+			if (media.sampleRate == target.sampleRate && media.channels == target.channels)
+			{
+				writeSection(writer, media, 0, media.length, job, progress);
+				return;
+			}
+			const auto reader = AudioFileReader::open(media.path);
+			require(reader->info().channels == media.channels && reader->info().sampleRate == media.sampleRate,
+				"the audio file's format changed");
+			constexpr size_t block = 65536;
+			const auto from = static_cast<size_t>(media.channels);
+			const auto to = static_cast<size_t>(target.channels);
+			std::vector<float> gains =
+				conversionGains(defaultFormat(media.channels), defaultFormat(target.channels), 1.0);
+			if (gains.empty())
+			{
+				gains.resize(from * to, 0.0F);
+				for (size_t channel = 0; channel < std::min(from, to); ++channel)
+					gains[(channel * from) + channel] = 1.0F;
+			}
+			Resampler resampler(media.sampleRate, target.sampleRate, media.channels, block);
+			std::vector<float> input(block * from);
+			std::vector<float> converted;
+			std::vector<float> mixed;
+			const auto write = [&]
+			{
+				job.checkCancelled();
+				const size_t frames = converted.size() / from;
+				mixed.assign(frames * to, 0.0F);
+				for (size_t out = 0; out < to; ++out)
+					for (size_t in = 0; in < from; ++in)
+						if (const float gain = gains[(out * from) + in]; gain != 0.0F)
+							for (size_t frame = 0; frame < frames; ++frame)
+								mixed[(frame * to) + out] += converted[(frame * from) + in] * gain;
+				if (frames != 0)
+					writer.write(mixed.data(), frames);
+				progress.done += static_cast<time::Samples>(frames);
+				job.progress(0.95 * static_cast<double>(progress.done) /
+						static_cast<double>(std::max<int64_t>(1, progress.total)),
+					media.path);
+				converted.clear();
+			};
+			for (time::Samples at = 0; at < media.length;)
+			{
+				job.checkCancelled();
+				const auto count = static_cast<size_t>(std::min<time::Samples>(block, media.length - at));
+				const size_t read = reader->read(input.data(), count);
+				require(read != 0, "file ends before the requested range");
+				resampler.process(input.data(), read, converted);
+				write();
+				at += static_cast<time::Samples>(read);
+			}
+			resampler.finish(converted);
+			write();
+		}
+
 		MediaFile writeProcessFile(const MediaFile& source, ProcessRange range, const MediaFile* paste,
 			const std::string& operation, const std::filesystem::path& folder, JobContext& job,
-			std::vector<std::string>& written, ProcessProgress& progress)
+			std::vector<std::string>& written, ProcessProgress& progress, const Json& draw = Json::object())
 		{
 			std::filesystem::create_directories(folder);
 			MediaFile output = source;
@@ -227,8 +293,10 @@ namespace gnubase::engine
 			else
 			{
 				writeSection(*writer, source, 0, range.start, job, progress);
-				if (paste != nullptr)
-					writeSection(*writer, *paste, 0, paste->length, job, progress);
+				if (operation == "draw")
+					writeSection(*writer, source, range.start, range.end, job, progress, false, draw);
+				else if (paste != nullptr)
+					writeClipboard(*writer, *paste, source, job, progress);
 				else if (range.inserted > 0)
 					writeSection(*writer, source, 0, range.inserted, job, progress, true);
 				writeSection(*writer, source, range.end, source.length, job, progress);
@@ -274,11 +342,13 @@ namespace gnubase::engine
 			const bool all = parameters.value("sharedCopies", std::string("all")) == "all";
 			checkProcess(project, selected, all);
 			Clip clip = project.clips.at(original);
-			const ProcessRange range{parameters.at("start").get<time::Samples>(),
-				parameters.at("end").get<time::Samples>(), parameters.at("inserted").get<time::Samples>()};
+			ProcessRange range{parameters.at("start").get<time::Samples>(), parameters.at("end").get<time::Samples>(),
+				parameters.at("inserted").get<time::Samples>()};
 			const Json& file = parameters.at("media");
 			MediaFile media{project.newId(), file.at("path").get<std::string>(), file.at("sampleRate").get<double>(),
 				file.at("channels").get<int>(), file.at("length").get<time::Samples>()};
+			if (parameters.at("operation") == "draw")
+				range = {media.length, media.length, 0}; // Sample replacement keeps every frame's position.
 			project.media[media.id] = media;
 			context.emit("media.added", {{"media", toJson(media)}});
 			clip.media = media.id;
@@ -388,8 +458,13 @@ namespace gnubase::engine
 		void registerProcessCommands(ProjectModel& model, Engine& engine)
 		{
 			const Json integer = {{"type", "integer"}, {"minimum", 0}, {"maximum", time::g_maxPosition}};
-			const Json operation = {{"type", "string"}, {"enum", {"cut", "copy", "paste", "delete", "insertSilence"}}};
+			const Json operation = {
+				{"type", "string"}, {"enum", {"cut", "copy", "paste", "delete", "insertSilence", "draw"}}};
 			const Json properties = {{"event", integer}, {"operation", operation}, {"start", integer}, {"end", integer},
+				{"channel", integer},
+				{"samples",
+					{{"type", "array"}, {"minItems", 1}, {"maxItems", 65536},
+						{"items", {{"type", "number"}, {"minimum", -1}, {"maximum", 1}}}}},
 				{"sharedCopies", {{"type", "string"}, {"enum", {"newVersion", "all"}}}}};
 			const Json mediaSchema =
 				objectSchema({{"id", integer}, {"path", {{"type", "string"}}}, {"sampleRate", {{"type", "number"}}},
@@ -441,21 +516,26 @@ namespace gnubase::engine
 					return result;
 				});
 			engine.registerCommand(
-				{"sampleEditor.process", 1,
+				{"sampleEditor.process", 2,
 					"Basic Commands on a clip range (reference manual pp. 619-620). event "
 					"identifies the clip; start/end are "
 					"clip frames, start before end. operation: cut copies then closes the gap, copy "
 					"replaces the engine audio "
 					"clipboard without undo, paste replaces the range, delete closes the gap, "
 					"insertSilence inserts the range's "
-					"length at its start. sharedCopies is required for shared clips: newVersion "
+					"length at its start. draw replaces start..end with samples in one zero-based channel, "
+					"one sample per frame (at most 65536, -1 to 1), preserving timing and the other channels. "
+					"Drawing corresponds to the Draw tool (reference manual p. 634). sharedCopies is required "
+					"for shared clips: newVersion "
 					"edits only this event, all edits "
 					"all copies, including inactive track versions. Sampler tracks and drum pads count as users too. "
 					"Without another user, omitting sharedCopies edits the clip in place and keeps its region ids. "
 					"Locked events/parts and frozen "
 					"tracks refuse edits. Flatten "
-					"warped clips first; edited definition grids are not supported. Paste needs "
-					"matching channels and sample rate. Writes new "
+					"warped clips first; edited definition grids are not supported. Paste converts to the target's "
+					"sample rate and default speaker arrangement, using engine downmix gains and unity mono "
+					"duplication. "
+					"Unknown channel counts map by index with silent extra channels. Writes new "
 					"float WAV files in the media "
 					"folder (for a project without a file, the folder its recordings go to, refused without that "
 					"folder) as a cancellable job; returns job (its result: clip, media, length or "
@@ -479,6 +559,21 @@ namespace gnubase::engine
 						parameters.at("start").get<time::Samples>(), parameters.at("end").get<time::Samples>(), 0};
 					require(range.start < range.end && range.end <= source.length,
 						"range must lie within the clip, start before end");
+					if (operation == "draw")
+					{
+						require(
+							parameters.contains("channel") && parameters.at("channel").get<int64_t>() < source.channels,
+							"draw requires a channel in the clip");
+						require(parameters.contains("samples") &&
+								parameters.at("samples").size() == static_cast<size_t>(range.end - range.start),
+							"draw sample count must match the range");
+						range.inserted = range.end - range.start;
+					}
+					else
+					{
+						require(!parameters.contains("samples") && !parameters.contains("channel"),
+							"samples and channel require draw");
+					}
 					if (!copy)
 					{
 						size_t copies = 0;
@@ -497,10 +592,8 @@ namespace gnubase::engine
 					if (operation == "paste")
 					{
 						require(paste != nullptr, "the audio clipboard is empty");
-						require(
-							paste->media.channels == source.channels && paste->media.sampleRate == source.sampleRate,
-							"clipboard channels and sample rate must match the clip");
-						range.inserted = paste->media.length;
+						range.inserted =
+							Resampler::outputLength(paste->media.length, paste->media.sampleRate, source.sampleRate);
 					}
 					if (operation == "insertSilence")
 					{
@@ -536,7 +629,8 @@ namespace gnubase::engine
 										source, range, nullptr, "copy", folder, job, written, progress));
 								if (operation != "copy")
 									parameters["media"] = toJson(writeProcessFile(source, range,
-										paste ? &paste->media : nullptr, operation, folder, job, written, progress));
+										paste ? &paste->media : nullptr, operation, folder, job, written, progress,
+										operation == "draw" ? parameters : Json::object()));
 								job.checkCancelled();
 								return job.command("sampleEditor.finishProcess", parameters);
 							}
