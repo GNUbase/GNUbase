@@ -81,6 +81,7 @@ namespace gnubase::ui
 		{
 			None,
 			Move,
+			Resize, // a note's end
 			Draw,
 			Values,
 		};

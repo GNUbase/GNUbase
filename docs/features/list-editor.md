@@ -79,14 +79,15 @@ doesn't have (#1580).
   have no channel, so with one of them first Event Channels hides nothing.
 - **Event display** (pp. 1252, 1254-1255). Object Selection: a click selects as in the list, a drag moves the selected
   events by as far as the event dragged went, snapped to the quantize grid; with Alt (Opt) held at the press it copies
-  them there instead, each with all its values, in one undo step. Draw: a click draws an event of the Insert
+  them there instead, each with all its values, in one undo step; a drag at a note's end (its last 6 dp) gives the
+  selected notes as much more or less length, snapped, but at least a tick. Draw: a click draws an event of the Insert
   Event Type at the snapped position into the editable part there, the active one first: a note on C3 of the length
   quantize's length (a drag a multiple of it) with the insert velocity, a controller event 1 (modulation) or poly
   pressure on C3 at 64, aftertouch at 64, pitch bend in the middle, program 0, an empty SysEx message. Erase: a click
   deletes the event, also on its row.
-- **Delete and Backspace** (pp. 1255, 1258) delete the selected events, those of several parts in one undo step. A
-  press in the list or the event display gives the list editor the keyboard focus, and it takes the keys before the
-  key commands; while a value is typed they edit its text.
+- **Delete and Backspace** (pp. 1255, 1258) delete the selected events, those of several parts in one undo step,
+  while the list or the event display has the keyboard focus, as a press there gives it: the list editor takes them
+  before the key commands. While a value is typed they edit its text.
 - **Value display** (pp. 1252, 1255): a press and a drag set the value of every event they cross from the mouse's
   place in the bar, in one undo step; a velocity is at least 1. While the drag goes on only the bars change, and the
   rows are built once per project and view the editor is given, with the project's time context read once for them.
@@ -113,10 +114,10 @@ The setup panes of the toolbar and the info line (p. 1575), which only the proje
 ([docking.md](docking.md)); the MIDI SysEx Editor dialog (address, ASCII, decimal and binary displays, Insert and
 Delete, importing and exporting .syx files); the auditioning column and the project cursor; the Focus menu's user
 presets and Setup (the transform editor); text, lyrics and SMF events, which the project has no type for; muting events
-and the mute tool (notes have no mute yet); resizing notes and the selection rectangle in the event display; key
-commands other than Delete and Backspace; the ruler, zooming and scrolling the event display; Set up Window Layout, the
-status line, nudging, snap and quantize on the toolbar; editing a program change's bank; a MIDI menu of its own (Open
-List Editor is in the Edit menu for now) and windows of their own for the key and list editors.
+and the mute tool (notes have no mute yet); the selection rectangle in the event display; key commands other than Delete
+and Backspace; the ruler, zooming and scrolling the event display; Set up Window Layout, the status line, nudging, snap
+and quantize on the toolbar; editing a program change's bank; a MIDI menu of its own (Open List Editor is in the Edit
+menu for now) and windows of their own for the key and list editors.
 
 ## Checks
 
@@ -141,4 +142,5 @@ List Editor is in the Edit menu for now) and windows of their own for the key an
   on; a move of two selected events that would take one before its part's start moving nothing, and one that moves
   both; the erase tool erasing in the event display; Focus on Event Channels with a SysEx event selected; Delete
   deleting a selected note and controller event in one undo step, and Backspace a SysEx message, but not while a
-  value is typed; Alt and a drag copying a selected note and controller event in one undo step.
+  value is typed; Alt and a drag copying a selected note and controller event in one undo step; a drag at a note's
+  end resizing both selected notes in one undo step.

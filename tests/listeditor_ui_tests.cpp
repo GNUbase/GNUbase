@@ -1006,3 +1006,27 @@ TEST_CASE("Alt and a drag in the event display copy the selected events", "[ui]"
 	CHECK(std::abs(volume.at("value").get<double>() - controller(100)) < 1e-9);
 	CHECK(f.steps() == before + 1);
 }
+
+TEST_CASE("a drag at a note's end in the event display resizes the selected notes", "[ui]")
+{
+	Fixture f;
+	// Both notes a quarter longer, snapped, in one undo step; the controller event selected too stays (p. 1255).
+	f.click(of(row("note", f.low) + " .list-type"));
+	f.click(of(row("note", f.high) + " .list-type"), 1, {"shift"});
+	f.click(of(row("controller", f.events[0]) + " .list-type"), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("controllerSelection").size() == 1; }));
+	const size_t before = f.steps();
+	const Json shown = f.box(row("note", f.low) + " .list-event");
+	const int x = static_cast<int>(std::lround(shown.at("x").get<double>() + shown.at("width").get<double>() - 2));
+	const int y = f.middle(row("note", f.low) + " .list-event");
+	const auto quarter =
+		static_cast<int>(std::lround(f.box(row("note", f.low) + " .list-event-lane").at("width").get<double>() / 4));
+	f.app.ui().drag(f.window, Fixture::point(x, y), Fixture::point(x + quarter, y));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.event("notes", f.high).at("length") == 2 * g_quarter; }));
+	CHECK(f.event("notes", f.low).at("length") == 2 * g_quarter);
+	CHECK(f.event("notes", f.low).at("position") == 0);
+	CHECK(f.event("notes", f.high).at("position") == g_quarter);
+	CHECK(f.event("controllers", f.events[0]).at("position") == 0);
+	CHECK(f.steps() == before + 1);
+}
