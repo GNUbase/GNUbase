@@ -166,10 +166,7 @@ namespace gnubase::ui
 			element->SetClass("in-place-editor", true);
 			element->SetAttribute("track", std::to_string(track));
 			element->SetAttribute("focuszone", "inPlace");
-			element->SetInnerRML(
-				R"(<div class="key-editor"/><button class="in-place-toolbar-toggle")"
-				R"( title="Show/Hide Toolbar"><svg class="icon" src="../icons/general-arrow-down.svg"/>)"
-				R"(</button>)");
+			element->SetInnerRML(R"(<div class="key-editor"/>)");
 			Rml::Element* added = area->AppendChild(std::move(element));
 			editor.element = added->GetObserverPtr();
 			editor.keys = std::make_unique<KeyEditor>(m_binding, *added->GetFirstChild(), name);
@@ -271,9 +268,9 @@ namespace gnubase::ui
 		// The project as the display read it first, another project, or a change to this one: the open editors, such
 		// as ones an MCP client opened or one whose track an undo brought back, and their views' parts and selections
 		// may have changed with it, without an editor.changed.
-		if (m_display.loads() != m_loads)
+		if (m_display.answers() != m_loads)
 		{
-			m_loads = m_display.loads();
+			m_loads = m_display.answers();
 			reconcile();
 		}
 		for (auto& [track, editor] : m_editors)
@@ -298,6 +295,8 @@ namespace gnubase::ui
 		if (!shown)
 			return;
 		const TimelineView& view = m_display.view();
+		// The toolbar and the info line, as the triangle in the track list has them (reference manual p. 1259).
+		setClass(*element, "toolbar-shown", m_display.inPlaceToolbarShown(track));
 		const std::pair<double, double> place{tops[lane] - view.top, tops[lane + 1] - tops[lane]};
 		if (editor.place != place)
 		{
@@ -319,12 +318,11 @@ namespace gnubase::ui
 				offset = (grid->GetAbsoluteOffset(Rml::BoxArea::Border).x - areaLeft) / ratio;
 				width = across / ratio;
 			}
-		// ponytail: the key editor's axis is linear in ticks, so it matches the ruler at the edges and wherever the
-		// tempo doesn't change in the view; a tempo-mapped axis in KeyEditor when tempo changes need it.
+		// Linear in seconds on the display's tempo map, as the ruler is, also across tempo changes in the view.
 		const TimeContext& time = m_display.time();
 		const double start = view.start + (offset * view.scale);
 		editor.keys->setTimeRange(
-			std::make_pair(time.tempo.toTicks(start), time.tempo.toTicks(start + (width * view.scale))));
+			std::make_pair(time.tempo.toTicks(start), time.tempo.toTicks(start + (width * view.scale))), &time.tempo);
 	}
 
 	void InPlaceEditors::ProcessEvent(Rml::Event& event)
@@ -369,25 +367,18 @@ namespace gnubase::ui
 		}
 		if (event.GetId() != Rml::EventId::Click)
 			return;
-		Rml::Element* editor = nullptr;
+		const Rml::Element* editor = nullptr;
 		const Rml::Element* part = nullptr;
-		const Rml::Element* toggle = nullptr;
-		for (Rml::Element* up = event.GetTargetElement(); up != nullptr && up != m_area.get(); up = up->GetParentNode())
+		for (const Rml::Element* up = event.GetTargetElement(); up != nullptr && up != m_area.get();
+			up = up->GetParentNode())
 		{
-			if (up->IsClassSet("in-place-toolbar-toggle"))
-				toggle = up;
-			else if (up->IsClassSet("editor-part") && up->HasAttribute("part"))
+			if (up->IsClassSet("editor-part") && up->HasAttribute("part"))
 				part = up;
 			else if (up->IsClassSet("in-place-editor"))
 				editor = up;
 		}
-		if (editor == nullptr)
-			return;
-		// The toolbar and the info line (reference manual p. 1259).
-		if (toggle != nullptr)
-			setClass(*editor, "toolbar-shown", !editor->IsClassSet("toolbar-shown"));
 		// A click on a part activates it (p. 1152).
-		if (part != nullptr)
+		if (editor != nullptr && part != nullptr)
 			m_binding.send("editor.set",
 				{{"editor", viewName(std::stoull(editor->GetAttribute<Rml::String>("track", "0")))},
 					{"activePart", std::stoull(part->GetAttribute<Rml::String>("part", "0"))}});

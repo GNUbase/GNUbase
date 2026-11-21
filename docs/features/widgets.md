@@ -110,17 +110,22 @@ attributes, through a data model or directly.
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.
 - A `<menu>` inside an item is its submenu, shown beside the item while the mouse is over it (pure RCSS:
-  `menuitem:hover > menu`); a click on that item keeps the menu open. The menu gives such an item a `.menu-arrow`
-  part when it opens, first in the item so that it floats right; the themes draw it with their dropdown arrow, turned
-  to point right.
+  `menuitem:hover > menu`); a click on that item keeps the menu open. Such an item gets a `.menu-arrow` part when its
+  document loads, and again when its menu opens for those that came later, first in the item so that it floats right;
+  the themes draw it with their dropdown arrow, turned to point right. Once a key moved the focus in a menu it has
+  the state class `.keys` until the mouse moves or goes over another item, and then a submenu that the mouse rests on
+  stays hidden unless Right opened it, so that two submenus never show at once.
 - Keys: Down and Up move the focus between the items that are shown and not disabled, round the ends, skipping items
   hidden with `display: none` such as those a search leaves out. Tab and Shift+Tab (with Ctrl, Alt or Cmd too) do the
   same and also reach the menu's other controls, such as a search field, so that the focus doesn't leave an open menu
   for a control outside it while the menu stays open (#524). Enter clicks the focused item. Right opens the focused
   item's submenu (with the state class `.open`) and focuses its first item, unless all its items are disabled; Left
   closes the submenu and goes back to its item. A submenu that keys opened closes when the mouse goes to another item of
-  its menu, and with its menu. Escape closes every open menu. A menu that closes with the focus in it gives the focus to
-  its item, if it is a submenu, or else to its document.
+  its menu or moves within one, and with its menu. Escape closes the innermost submenu that keys opened and, with none
+  open, every open menu. A menu that closes with the focus in it gives the focus to its item, if it is a submenu, or
+  else back to the element that had it when the menu opened (a text field or list that keeps its keys and its focus
+  zone), or to its document if that is gone, hidden, disabled, or the title that opened the menu, whose Space and Enter
+  would open it again.
 - `<menubar>` holds the titles of menus: elements with a `menu` attribute, usually buttons. While one title's menu is
   open, the mouse over another title opens that one's menu instead; in a title's menu (and its submenus) Right and
   Left open the next and previous title's menu where they don't go into or out of a submenu, with its first item
@@ -192,10 +197,13 @@ rows are in the document's order. Each row has a `value` attribute (without comm
   Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated by
   commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
   Rows that code adds, removes or replaces with new elements, all of them or only some, keep the selection that the
-  view's `value` gives, also with as many rows and the same value; the keys and Shift-click then go from the first
-  selected row. A click or a key before the next update finds the view caught up as well: with the new rows selected and
-  shaped as a tree, and with a `value` that code set. Not yet: a row that keeps its element but gets another `value`, as
-  when `data-for` reorders its items. Clicks and keys in a form control in a row, such as a text field, are the
+  view's `value` gives, also with as many rows and the same value, and so do rows that keep their elements but get
+  other values, as when `data-for` reorders its items. When only some rows changed and the `value` didn't, the keys'
+  row and the Shift-click anchor stay where they were if their rows kept their elements and values; otherwise the keys
+  and Shift-click go from the first selected row. A keys' row or an anchor that a collapsed parent hides counts as the
+  nearest shown row above it, and a Shift range deselects the hidden rows. A click or a key before the next update
+  finds the view caught up as well: with the new rows selected and shaped as a tree, and with a `value` that code set.
+  Clicks and keys in a form control in a row, such as a text field, are the
   control's and don't change the selection, and neither does a click on a control that opens a menu (a `menu`
   attribute), such as the track list's track versions arrow ([track-versions.md](track-versions.md)), so that its menu
   works on the rows that are selected, nor one with a `keepselection` attribute, such as the track list's Mute, which
@@ -258,15 +266,20 @@ presses it as the window gets it, nor behind a modal dialog). A right click with
 `modifiercontextmenu`, and the `contextmenu` where an element has no other.
 Tooltips show after a rest and go with the mouse. Notifications show for their duration, again when set again.
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result,
-and with `ui::closeDialog`, once, also when closed again from its own close event; a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter
-there clicks OK, while another value field keeps Enter.
+and with `ui::closeDialog`, once, also when closed again from its own close event; a value field with autofocus is
+edited as its dialog opens, even by keys typed before the next update, and Enter there clicks OK, while another value
+field keeps Enter.
 Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand and
 collapse by click and keys, with indents by level; tables select body rows only, and the keys go through several tables
 in the document's order. Rows rebuilt by code keep the selection given by the view's `value`: all rows rebuilt twice
 between two updates, a single row replaced, and rows rebuilt or a `value` set just before a key or a click, after which
 Down skips a collapsed parent's children, Right and Left expand and collapse, and Shift+Down, Shift-click and
-Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` deselects a selected row; a drag held past a view's edge scrolls it with `dragscroll` only; splitters
-move the boundary in a row and in a column, never below nothing. The color picker picks from its field, its hue strip
+Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` deselects a selected row. When code replaces
+a row that isn't selected, Shift+Up goes on from the keys' row and the anchor; rows that keep their elements but get
+other values are selected by value; and in a collapsed parent, Down and Shift+Down go from the nearest shown row above
+a selected row, also one that was clicked before the collapse, and the range deselects the hidden row. A drag held past
+a view's edge scrolls it with `dragscroll` only; splitters move the boundary in a row and in a column, never below
+nothing. The color picker picks from its field, its hue strip
 and its numbers, draws the old and the new color, and follows its data.
 `widgets::fill` drops a fill of a drop-down list from the change that its own fill sends, also with a fill of another
 list in between, so the list keeps the options of the fill that sent it (#1719), and also from the change of another

@@ -407,6 +407,10 @@
 	{
 		decorator: svg(meter-peak.svg);
 	}
+	meter[rms] .meter-level
+	{
+		opacity: 0.4;
+	}
 	.tree-toggle
 	{
 		decorator: svg(dropdown-arrow.svg);
@@ -1194,6 +1198,10 @@
 	{
 		background-color: #666600;
 	}
+	.se-region-handle
+	{
+		border-color: #00ffff;
+	}
 	.se-hitpoint-line, .se-hitpoint-handle
 	{
 		background-color: #ffff00;
@@ -1335,9 +1343,45 @@
 	{
 		background-color: #ffff00;
 	}
+	.sa-graph.all .sa-bar.channel-1
+	{
+		background-color: #ff80ff;
+	}
+	.sa-graph.all .sa-bar.channel-2
+	{
+		background-color: #00ffff;
+	}
+	.sa-graph.all .sa-bar.channel-3
+	{
+		background-color: #c0a0ff;
+	}
+	.sa-graph.all .sa-bar.channel-4
+	{
+		background-color: #40ffd0;
+	}
+	.sa-graph.all .sa-bar.channel-5
+	{
+		background-color: #ffd040;
+	}
+	.sa-graph.all .sa-bar.channel-6
+	{
+		background-color: #ff8c8c;
+	}
+	.sa-graph.all .sa-bar.channel-7
+	{
+		background-color: #a0a0ff;
+	}
+	.sa-graph.all .sa-bar.channel-8
+	{
+		background-color: #80c0ff;
+	}
 	.sa-bar.reference
 	{
 		background-color: #00ffff;
+	}
+	.sa-graph.all .sa-bar.reference
+	{
+		background-color: #ffffff;
 	}
 	.st-header, .st-name
 	{
@@ -1478,6 +1522,10 @@
 	.history .history-separator
 	{
 		background-color: #ffff00;
+	}
+	.transport-divider
+	{
+		background-color: #ffffff;
 	}
 	.quantize-display
 	{

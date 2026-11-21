@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstddef>
 #include <tuple>
 
 namespace gnubase::engine
@@ -14,6 +16,8 @@ namespace gnubase::engine
 
 		// How long an equalizer goes on running after its last band went off: its glide to a pass-through and more.
 		constexpr double g_filterTailSeconds = 0.1;
+		// How long the gate and the compressor crossfade when they switch on or off, as long as channel.set's glides.
+		constexpr double g_switchSeconds = 0.005;
 
 		double slopeIndex(int slope)
 		{
@@ -111,6 +115,8 @@ namespace gnubase::engine
 		m_sampleRate = sampleRate;
 		m_maxFrames = maxFrames;
 		m_tailFrames = static_cast<uint32_t>(sampleRate * g_filterTailSeconds);
+		m_switchFrames = static_cast<uint32_t>(std::lround(sampleRate * g_switchSeconds));
+		m_dry.assign(static_cast<size_t>(dsp::g_maxChannels) * maxFrames, 0.0f);
 		m_polarity.setTime(dsp::g_smoothingSeconds, sampleRate);
 		m_cuts.core.prepare(sampleRate, maxFrames);
 		m_eq.core.prepare(sampleRate, maxFrames);
@@ -191,10 +197,14 @@ namespace gnubase::engine
 			}
 		}
 
-		// Dynamics that come on start afresh, rather than with what they held when they went off.
+		// Dynamics that come on start afresh, rather than with what they held when they went off; they crossfade in
+		// and out, except with the first values.
+		const uint32_t fade = all ? 0 : m_switchFrames;
 		const StripGate& gate = settings.gate;
 		if (gate.on && (all || !old.gate.on))
 			m_gate.reset();
+		if (all || gate.on != old.gate.on)
+			m_gateWet.set(gate.on ? 1.0 : 0.0, fade);
 		m_gate.setParameter(dsp::Gate::Threshold, gate.threshold);
 		m_gate.setParameter(dsp::Gate::Range, gate.range);
 		m_gate.setParameter(dsp::Gate::Attack, gate.attack);
@@ -202,6 +212,8 @@ namespace gnubase::engine
 		const StripCompressor& compressor = settings.compressor;
 		if (compressor.on && (all || !old.compressor.on))
 			m_compressor.reset();
+		if (all || compressor.on != old.compressor.on)
+			m_compressorWet.set(compressor.on ? 1.0 : 0.0, fade);
 		m_compressor.setParameter(dsp::Compressor::Threshold, compressor.threshold);
 		m_compressor.setParameter(dsp::Compressor::Ratio, compressor.ratio);
 		m_compressor.setParameter(dsp::Compressor::Attack, compressor.attack);
@@ -213,6 +225,30 @@ namespace gnubase::engine
 		m_appliedPost = settings;
 		m_freshPost = false;
 		m_eq.core.glideChanges();
+	}
+
+	template <typename Core> void StripSections::crossfade(
+		Core& core, ParameterRamp& wet, float* const* audio, int channels, uint32_t begin, uint32_t end) noexcept
+	{
+		if (wet.length == 0)
+		{
+			if (wet.value != 0.0)
+				core.process(audio, channels, begin, end);
+			return;
+		}
+		const int count = std::min(channels, dsp::g_maxChannels);
+		for (int c = 0; c < count; ++c)
+			std::copy(audio[c] + begin, audio[c] + end, m_dry.begin() + (static_cast<std::ptrdiff_t>(c) * m_maxFrames));
+		core.process(audio, channels, begin, end);
+		for (uint32_t i = begin; i < end; ++i)
+		{
+			const auto amount = static_cast<float>(wet.next());
+			for (int c = 0; c < count; ++c)
+			{
+				const float dry = m_dry[(static_cast<size_t>(c) * m_maxFrames) + (i - begin)];
+				audio[c][i] = dry + (amount * (audio[c][i] - dry));
+			}
+		}
 	}
 
 	void StripSections::Filters::process(
@@ -251,10 +287,8 @@ namespace gnubase::engine
 			{
 				applyPost();
 				const ChannelSections& settings = m_values;
-				if (settings.gate.on)
-					m_gate.process(audio, channels, begin, end);
-				if (settings.compressor.on)
-					m_compressor.process(audio, channels, begin, end);
+				crossfade(m_gate, m_gateWet, audio, channels, begin, end);
+				crossfade(m_compressor, m_compressorWet, audio, channels, begin, end);
 				m_eq.process(audio, channels, begin, end, m_tailFrames);
 				// Only while its look-ahead counts in the channel's latency, so that it never delays a channel the
 				// graph doesn't compensate for; a limiter that starts running does so afresh, unless it ran bypassed

@@ -756,6 +756,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".meter", {"decorator": skin("meter-background")}),
         (".meter-fill", {"decorator": skin("meter-fill")}),
         (".meter-peak", {"decorator": skin("meter-peak")}),
+        # A meter with an RMS level: the peak level dimmed under it
+        ("meter[rms] .meter-level", {"opacity": "0.4"}),
         (".tree-toggle", {"decorator": skin("dropdown-arrow")}),
         # Widgets whose parts have the skins: the focus ring around them
         ("knob:focus-visible, fader:focus-visible, slider:focus-visible, input.range:focus-visible",
@@ -1067,6 +1069,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".se-region-shown", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent2"],
                               "background-color": c["accent2"] + "1a"}),
         (".se-region.selected", {"background-color": mix(c["surface"], c["accent"], .4)}),
+        (".se-region-handle", {"border-color": c["accent2"]}),
         # Its hitpoints (docs/features/hitpoints.md): lines with a handle, locked ones' handles lit, disabled ones dim
         (".se-hitpoint-line, .se-hitpoint-handle", {"background-color": c["accent"]}),
         (".se-hitpoint.locked .se-hitpoint-handle", {"background-color": c["accent2"]}),
@@ -1117,7 +1120,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".ds-display, .sa-graph", {"background-color": c["surface"]}),
         (".ds-section", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
         (".sa-bar", {"background-color": c["accent"]}),
+        *[(f".sa-graph.all .sa-bar.channel-{i + 1}", {"background-color": color})
+          for i, color in enumerate(c["trackPalette"])],
         (".sa-bar.reference", {"background-color": c["accent2"]}),
+        (".sa-graph.all .sa-bar.reference", {"background-color": c["text"]}),
         (".st-header, .st-name", {"color": c["textMuted"]}),
         # The pattern editor (docs/features/pattern-editor.md): empty steps darker every beat, steps lit where they
         # start and dimmer where ties cover them, the selected ones in the second accent, the selected lane's name lit
@@ -1166,6 +1172,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
         (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
         (".history .history-separator", {"background-color": c["accent"]}),
+        # The transport bar's Left and Right Divider (docs/features/transport-bar.md)
+        (".transport-divider", {"background-color": c["border"]}),
         # The quantize panel's grid display (docs/features/quantize.md): the grid positions and the catch range around
         # them
         (".quantize-display", {"background-color": c["surface"]}),

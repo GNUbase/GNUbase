@@ -3,11 +3,13 @@ add_library(gnubase-testutils STATIC
 	testutils/commandholds.h
 	testutils/fakeui.cpp testutils/fakeui.h
 	testutils/goldenimage.cpp testutils/goldenimage.h
+	testutils/heldcuethread.cpp testutils/heldcuethread.h
 	testutils/heldjob.cpp testutils/heldjob.h
 	testutils/library.h
 	testutils/schemaguards.h
 	testutils/slowframe.h
 	testutils/stopandjoin.h
+	testutils/tempfolder.cpp testutils/tempfolder.h
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
@@ -117,6 +119,7 @@ add_executable(gnubase-tests
 	mcpevents_tests.cpp
 	mcptools_tests.cpp
 	meter_tests.cpp
+	meterpanel_tests.cpp
 	metronome_tests.cpp
 	midi_tests.cpp
 	mididevice_tests.cpp

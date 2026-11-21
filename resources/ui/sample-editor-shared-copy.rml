@@ -1,0 +1,19 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<rml>
+<head>
+	<title>Shared Copies</title>
+	<link type="text/rcss" href="../styles/sampleeditor.rcss"/>
+</head>
+<body>
+	<dialog id="se-shared-copy-dialog">
+		<div class="dialog-titlebar">Shared Copies</div>
+		<div class="se-question-message">Another event or instrument uses this clip. Create a new version for this
+			event, or continue to edit all shared copies?</div>
+		<div class="se-question-buttons">
+			<button result="cancel">Cancel</button>
+			<button result="newVersion">New Version</button>
+			<button result="all">Continue</button>
+		</div>
+	</dialog>
+</body>
+</rml>

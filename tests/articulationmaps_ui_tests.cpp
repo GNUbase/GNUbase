@@ -363,6 +363,7 @@ TEST_CASE("the articulation map setup opened without a track can't assign, and a
 	open();
 	REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-map"); }));
 	CHECK_FALSE(f.shown("#articulation-map-assign"));
+	CHECK_FALSE(f.shown("#articulation-key-switches")); // nor one to import key switches from
 	f.click("#articulation-maps-close");
 	REQUIRE(f.app.waitUntil([&f] { return f.elements("#articulation-maps-dialog").empty(); }));
 
@@ -393,6 +394,33 @@ TEST_CASE("the articulation map setup opened without a track can't assign, and a
 	f.click("#articulation-map-assign");
 	f.track = track;
 	REQUIRE(f.app.waitUntil([&f, map] { return f.trackMap() == map; }));
+}
+
+TEST_CASE("Add Map with Import Key Switches makes the track's instrument's key switches the map's sound slots", "[ui]")
+{
+	// The test synth reports the key switches Sustain and Staccato (p. 1284).
+	Fixture f;
+	f.app.setDpRatio(0.5F); // the populated map and its actions fit on the monitor
+	const Json project = f.app.call("project.get");
+	f.app.call("channel.set", {{"channel", project.at("tracks").at(0).at("channel")}, {"instrument", "testSynth"}});
+	f.app.keys().run("midi.articulationMapSetup", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-maps-dialog"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+
+	f.click("#articulation-map-import-key-switches");
+	f.click("#articulation-map-add");
+	REQUIRE(f.app.waitUntil([&f] { return f.maps().size() == 1; }));
+	const Json map = f.maps().at(0);
+	REQUIRE(map.at("slots").size() == 2);
+	CHECK(map.at("slots").at(0).at("name") == "Sustain");
+	CHECK(map.at("slots").at(1).at("name") == "Staccato");
+	CHECK(map.at("slots").at(1).at("trigger") == 1);
+
+	// Unchecked, Add Map adds an empty map.
+	f.click("#articulation-map-import-key-switches");
+	f.click("#articulation-map-add");
+	REQUIRE(f.app.waitUntil([&f] { return f.maps().size() == 2; }));
+	CHECK(f.maps().at(1).at("slots").empty());
 }
 
 namespace
@@ -860,8 +888,10 @@ TEST_CASE("the in-place editor has the Articulations lane", "[ui]")
 	CHECK(elements(slot).at(0).at("attributes").at("title") == "Arco");
 
 	// The draw tool adds a direction in its row, where the second note starts.
-	REQUIRE(app.waitUntil([&] { return visible(editor + " .in-place-toolbar-toggle"); }));
-	click(of(editor + " .in-place-toolbar-toggle"));
+	const std::string triangle =
+		".track-list listitem[value=\"" + std::to_string(track) + "\"] .in-place-toolbar-toggle";
+	REQUIRE(app.waitUntil([&] { return visible(triangle); }));
+	click(of(triangle));
 	const std::string draw = editor + " .key-tool[key-tool=draw]";
 	REQUIRE(app.waitUntil([&] { return visible(draw); }));
 	click(of(draw));

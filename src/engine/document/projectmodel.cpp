@@ -3809,7 +3809,7 @@ namespace gnubase::engine
 				step.change = std::move(change);
 				step.movedTracks.insert(step.movedTracks.end(), m_movingTracks.begin(), m_movingTracks.end());
 			}
-			announceHistory(context);
+			announceHistory(context, true);
 			return;
 		}
 		ProjectChange change = known ? std::move(*known) : difference(before, m_project);
@@ -3818,17 +3818,22 @@ namespace gnubase::engine
 		HistoryStep step{std::move(action), now(), {}, std::move(change), std::move(merge)};
 		step.movedTracks = m_movingTracks;
 		m_history.record(std::move(step));
-		announceHistory(context);
+		announceHistory(context, true);
 	}
 
-	void ProjectModel::announceHistory(CommandContext& context) const
+	void ProjectModel::announceHistory(CommandContext& context, bool step) const
 	{
 		const std::vector<HistoryStep>& steps = m_history.steps();
 		const size_t position = m_history.position();
-		context.emit("history.changed",
-			{{"position", position}, {"steps", steps.size()},
-				{"undo", position > 0 ? Json(steps[position - 1].action) : Json(nullptr)},
-				{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}});
+		Json data = {{"position", position}, {"steps", steps.size()},
+			{"undo", position > 0 ? Json(steps[position - 1].action) : Json(nullptr)},
+			{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}};
+		// Only where the events tell the whole change: not inside another command, which may announce more after it
+		// (eventNames is empty there), nor for undo and redo, which put back what the steps recorded.
+		if (const std::vector<std::string> events = step ? context.eventNames() : std::vector<std::string>();
+			!events.empty())
+			data["events"] = events;
+		context.emit("history.changed", std::move(data));
 	}
 
 	void ProjectModel::updateSoloNotes()
@@ -4147,6 +4152,8 @@ namespace gnubase::engine
 				"processed in. object is the bus, channel or slot id.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
+		Json saveJob = Jobs::schema();
+		saveJob["type"] = {"object", "null"};
 		addControl(engine,
 			{"project.save", 1,
 				"Saves the project as a DAWproject file: as path, which is then the project's file (save as), or "
@@ -4154,10 +4161,17 @@ namespace gnubase::engine
 				"into it unless embedMedia is false; then the file refers to them where they are, relative to itself "
 				"if they are in its folder. One that is missing is referred to by its absolute path, so that the file "
 				"has no copy of it: the result lists them (missing). The file becomes the first of the recent "
-				"projects (project.recent).",
+				"projects (project.recent). The files a project records, converts on import, renders, flattens and "
+				"freezes while it has no file go into one folder outside any project; the save after that copies "
+				"those still in it into the project's media and Freeze folders as a job, returned as job (null "
+				"without one, and while an earlier save's copies still run) with the result media.prepareArchive's "
+				"job has, and points the media and frozen tracks at the copies as an undo step of its own, which "
+				"the next save keeps.",
 				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}),
-				objectSchema({{"missing", {{"type", "array"}, {"items", stringSchema}}}}, {"missing"}), false},
-			[this](CommandContext& context)
+				objectSchema(
+					{{"missing", {{"type", "array"}, {"items", stringSchema}}}, {"job", saveJob}}, {"missing", "job"}),
+				false},
+			[this, &jobs](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				DawProjectSaveOptions options;
@@ -4175,7 +4189,24 @@ namespace gnubase::engine
 					throw CommandError(error.what());
 				}
 				saved(std::filesystem::absolute(std::filesystem::u8path(path)).u8string(), context);
-				return Json{{"missing", missing}};
+				// What the project recorded and converted while it had no file goes into its media folder (reference
+				// manual p. 360), as media.prepareArchive does it: once, so a save while the copies run starts none
+				// (the next one copies what is left), and not from a project folder inside that folder.
+				std::vector<MediaCopy> recordings;
+				if (const std::filesystem::path unsaved = unsavedMediaFolder(m_settingsDirectory);
+					!unsaved.empty() && !jobs.runs("project.save") && !isInside(m_file, unsaved))
+				{
+					for (const auto& [id, media] : m_project.media)
+						if (isInside(media.path, unsaved))
+							recordings.push_back({id, media.path, {}, {}});
+					addFreezeCopies(m_project, unsaved, true, recordings);
+				}
+				Json job = nullptr;
+				if (!recordings.empty())
+					job = startMediaCopy(jobs, "project.save", std::move(recordings),
+						mediaFolderFor(std::filesystem::u8path(m_file)), "Copy recordings into the project",
+						m_openedRevision);
+				return Json{{"missing", missing}, {"job", std::move(job)}};
 			});
 		addControl(engine,
 			{"project.load", 1,
@@ -4648,7 +4679,9 @@ namespace gnubase::engine
 				"[{band (1 to 4), on, type (bell; band 1 also lowShelf or lowCut, band 4 highShelf or highCut, cuts "
 				"at 12 dB per octave), frequency (Hz, 20 to 20000), gain (dB, -24 to 24), q (0.1 to 12)}]}, then "
 				"the strip's limiter {on, threshold (dB, -30 to 0: no sample leaves above it, 1 ms of latency), "
-				"release (ms, 1 to 1000)}. Everything starts off; changes glide. sends (audio channels only) "
+				"release (ms, 1 to 1000)}. Everything starts off; changes glide, the gate and the compressor "
+				"crossfade with their input over 5 ms when they switch on or off, and turning the limiter on "
+				"changes the channel's latency and starts it with 1 ms of silence. sends (audio channels only) "
 				"changes the channel's eight sends, each by its send number (1 to 8) and only in what it has: "
 				"destination (a group or effect channel, 0 for none), on, level (dB, from -144 to the project's "
 				"maxVolume, stopping there, default 0) and preFader (before the fader and the mute button, after the "
@@ -4719,7 +4752,7 @@ namespace gnubase::engine
 				result["job"] = nullptr;
 				const MediaFile& media = project.media.at(result.at("media").at("id").get<ObjectId>());
 				if (context.parameters().value("copy", false) && !isInside(media.path, mediaFolder.parent_path()))
-					result["job"] = startMediaCopy(jobs, "media.add", {MediaCopy{media.id, media.path, {}}},
+					result["job"] = startMediaCopy(jobs, "media.add", {MediaCopy{media.id, media.path, {}, {}}},
 						mediaFolder, "Copy media file into the project", m_openedRevision);
 				return result;
 			});
@@ -5154,14 +5187,17 @@ namespace gnubase::engine
 		addControl(engine,
 			{"media.prepareArchive", 1,
 				"Makes the project self-contained, so that its folder can be archived or moved: copies every media "
-				"file from outside the project folder into its media folder and points the media at the copies. The "
+				"file from outside the project folder into its media folder and every freeze file of a frozen track "
+				"from outside it into its Freeze folder, and points the media and tracks at the copies. The "
 				"copies run as a job: this returns at once, job.progress and job.finished events follow, and "
-				"job.cancel stops it and removes the copies. Once they are done, the media are pointed at them as one "
-				"undo step. The job's result lists the copies as copied, media files that couldn't be read as "
-				"missing (they keep their paths), and media whose path changed while the job ran as changed (they "
-				"keep the new path). The project must have been saved; save it again without embedding media to keep "
-				"the new paths. media limits it to those media files, such as the ones track.import added (Copy to "
-				"Active Project Folder, reference manual p. 205).",
+				"job.cancel stops it and removes the copies. Once they are done, the media and tracks are pointed at "
+				"them as one undo step (media.relink, track.relinkFreeze). The job's result lists the copies as "
+				"copied ({media or tracks, from, to}), files that couldn't be read as missing ({media or tracks, "
+				"path}; they keep their paths), and media and tracks whose path changed while the job ran as changed "
+				"and changedTracks (they keep the new path). The project must have been saved; save it again without "
+				"embedding media to keep "
+				"the new paths. media limits it to those media files, without freeze files, such as the ones "
+				"track.import added (Copy to Active Project Folder, reference manual p. 205).",
 				objectSchema({{"media", {{"type", "array"}, {"items", integerSchema}}}}),
 				objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
 			[this, &jobs](CommandContext& context)
@@ -5182,7 +5218,9 @@ namespace gnubase::engine
 				std::vector<MediaCopy> files;
 				for (const auto& [id, media] : m_project.media)
 					if (chosen(id) && !isInside(media.path, file.parent_path()))
-						files.push_back({id, media.path, {}});
+						files.push_back({id, media.path, {}, {}});
+				if (!parameters.contains("media"))
+					addFreezeCopies(m_project, file.parent_path(), false, files);
 				return Json{{"job",
 					startMediaCopy(jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file),
 						"Prepare archive", m_openedRevision)}};

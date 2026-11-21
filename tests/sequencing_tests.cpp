@@ -560,14 +560,50 @@ TEST_CASE("a MIDI track heard again after playback moved while it was silent cha
 	mute(false);
 	CHECK(played() == chased);
 
-	// Stopping alone moves playback too.
+	// A stop where playback ended moves nothing, as for the sequencer: heard at the stop or heard again after it, the
+	// instrument keeps the part's program and CC 7 (playback.md).
+	run(song.client, "transport.play");
+	pastTheSecondCc7();
+	run(song.client, "transport.stop");
+	CHECK(played().empty());
 	run(song.client, "transport.play");
 	pastTheSecondCc7();
 	mute(true);
 	run(song.client, "transport.stop");
 	CHECK(played().empty());
 	mute(false);
-	CHECK(played() == chased);
+	CHECK(played().empty());
+
+	// A cycle jump while it is silent: chased where playback is when it is heard again, with the part's first CC 7;
+	// at one position the chase sends controllers before programs.
+	run(song.client, "transport.set", {{"left", 0}, {"right", 2500}, {"cycle", true}});
+	run(song.client, "transport.locate", {{"position", 2100}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 100}});
+	run(song.client, "midi.capture");
+	mute(true);
+	run(song.client, "audio.render", {{"frames", 500}}); // through the jump to 0, on to 200
+	CHECK(played().empty());
+	mute(false);
+	ControllerBytes fromTheStart = channelValues;
+	fromTheStart.insert(fromTheStart.end(), {{0xB0, 7, 127}, {0xC0, 9}});
+	CHECK(played() == fromTheStart);
+	run(song.client, "transport.stop");
+	run(song.client, "transport.set", {{"cycle", false}});
+
+	// Silent while playback runs on over the part's CC 7 at 2000, without a move: disabled, its parts weren't
+	// played, so they are chased once it is heard again, as after a move (the reference manual, p. 1610, chases when
+	// soloing too); muted by its button, the CC 7 played into its mute, which sends it.
+	run(song.client, "transport.locate", {{"position", 1000}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 500}});
+	run(song.client, "midi.capture");
+	mute(true);
+	run(song.client, "audio.render", {{"frames", 1000}});
+	CHECK(played().empty());
+	mute(false);
+	CHECK(played() == (button ? ControllerBytes{{0xB0, 7, 64}} : chased));
+	run(song.client, "transport.stop");
 
 	// Without chasing, the channel's values alone, as at a jump. Muted by its button, its strip sends the program and
 	// CC 7 that played into its mute, which it keeps as nothing chases them, after the channel's values, so they win.
@@ -1169,6 +1205,48 @@ TEST_CASE("what a MIDI track's mute dropped before a locate doesn't reach its in
 	CHECK(controllerValues(song.client, 64).empty());
 }
 
+TEST_CASE("what a MIDI track's mute dropped before a cycle jump or a start doesn't reach its instrument after it",
+	"[integration]")
+{
+	// Sustain down at 2000 and up at 8000; a mute lane from 3000 to 4000 releases it and keeps it down for unmuting.
+	// A cycle from 1000 to 3600 jumps out of the mute to where the track has no pedal down; a stop at 3520 and a start
+	// there, without a locate, start inside the mute.
+	const bool cycle = GENERATE(true, false);
+	INFO((cycle ? "cycle jump" : "start"));
+	Song song(64);
+	song.addControllers(1,
+		{{{"position", ticks(2000)}, {"number", 64}, {"value", 1.0}},
+			{{"position", ticks(8000)}, {"number", 64}, {"value", 0.0}}});
+	const ObjectId lane =
+		idOf(run(song.client, "automationLane.add", {{"track", song.midi}, {"target", {{"type", "mute"}}}}), "lane");
+	run(song.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0.0}}, {{"position", ticks(3000)}, {"value", 1.0}},
+					{{"position", ticks(4000)}, {"value", 0.0}}}}});
+	if (cycle)
+		run(song.client, "transport.set", {{"left", 1000}, {"right", 3600}, {"cycle", true}});
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 3520}});
+	CHECK(controllerValues(song.client, 64) == std::vector<int>{127, 0});
+	if (cycle)
+	{
+		// From 1000 on, past the unmute at the jump, to 1900: nothing presses the pedal.
+		run(song.client, "audio.render", {{"frames", 980}});
+		CHECK(controllerValues(song.client, 64).empty());
+		return;
+	}
+	run(song.client, "transport.stop");
+	run(song.client, "audio.render", {{"frames", 64}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 640}}); // past the unmute at 4000
+	// The pedal goes down once where the track has it down: what the mute kept before the start doesn't press it again.
+	const std::vector<int> values = controllerValues(song.client, 64);
+	CHECK(std::count(values.begin(), values.end(), 127) == 1);
+	CHECK(std::count(values.begin(), values.end(), 0) == 0);
+}
+
 TEST_CASE("a note that starts where another track's note of the same pitch ends sounds", "[integration]")
 {
 	const int blockSize = GENERATE(1, 64, 333);
@@ -1445,4 +1523,132 @@ TEST_CASE("a MIDI sequence rendered through the test synth matches its golden fi
 		gnubase::test::compareWithGolden("midi-sequencing", audio, 1e-5f); // sin() differs by platform
 	INFO(diff.report);
 	CHECK(diff.equal);
+}
+
+TEST_CASE("a MIDI track heard again when another track's solo ends is chased, after a move or after playback ran",
+	"[integration]")
+{
+	// The part: program 9 where it starts, CC 7 at 64 at 2000; the channel: program 5, MIDI volume 50 and pan 20.
+	const bool moved = GENERATE(false, true);
+	CAPTURE(moved);
+	Song song(64);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	song.addControllers(1,
+		{{{"position", 0}, {"type", "program"}, {"number", 9}},
+			{{"position", ticks(2000)}, {"number", 7}, {"value", 0.5}}});
+	run(song.client, "channel.set", {{"channel", channel}, {"program", 5}, {"midiVolume", 50}, {"midiPan", 20}});
+	const ObjectId soloist = idOf(run(song.client, "track.add", {{"type", "audio"}}), "track");
+	const auto solo = [&](bool on)
+	{ run(song.client, "channel.set", {{"channel", channelOf(song.client, soloist)}, {"solo", on}}); };
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.locate", {{"position", 1000}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 500}});
+	run(song.client, "midi.capture");
+	// Soloed out while playback passes the CC 7, or jumps past it.
+	solo(true);
+	if (moved)
+		run(song.client, "transport.locate", {{"position", 3000}});
+	run(song.client, "audio.render", {{"frames", 1000}});
+	CHECK(controllersPlayed(song.client, false).empty());
+	solo(false);
+	CHECK(controllersPlayed(song.client, false) ==
+		ControllerBytes{{0xC0, 5}, {0xB0, 7, 50}, {0xB0, 10, 20}, {0xC0, 9}, {0xB0, 7, 64}});
+	CHECK(controllersPlayed(song.client, false).empty());
+}
+
+TEST_CASE(
+	"an instrument track enabled after playback moved or ran while it was disabled chases its parts", "[integration]")
+{
+	// Its part: CC 1 where it starts, program 9 at 1000.
+	const bool moved = GENERATE(false, true);
+	CAPTURE(moved);
+	Song song(64);
+	song.addControllers(0,
+		{{{"position", 0}, {"number", 1}, {"value", 1.0}},
+			{{"position", ticks(1000)}, {"type", "program"}, {"number", 9}}});
+	run(song.client, "midi.capture", {{"start", true}});
+	if (!moved)
+	{
+		run(song.client, "transport.play");
+		run(song.client, "audio.render", {{"frames", 500}});
+		run(song.client, "midi.capture");
+	}
+	run(song.client, "track.set", {{"track", song.instrument}, {"enabled", false}});
+	if (moved)
+		run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 1000}});
+	run(song.client, "midi.capture");
+	run(song.client, "track.set", {{"track", song.instrument}, {"enabled", true}});
+	// CC 1 played before it was disabled when playback ran on: its chase sends what was in effect again.
+	CHECK(controllersPlayed(song.client, false) == ControllerBytes{{0xB0, 1, 127}, {0xC0, 9}});
+	CHECK(controllersPlayed(song.client, false).empty());
+}
+
+TEST_CASE("a MIDI track that leaves its instrument ends a note that another track's mute button kept from it",
+	"[integration]")
+{
+	Song song(64);
+	const auto [staying, stayingTrack] = song.addMidiTrack();
+	song.add(1, {0, 20000, 64}); // both MIDI tracks' parts hold 64, but the staying track's mute drops its
+	song.add(staying, {0, 20000, 64});
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, stayingTrack)}, {"mute", true}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 500}});
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, song.midi)}, {"output", 0}}); // rerouted
+	run(song.client, "audio.render", {{"frames", 500}});
+	const std::vector<float> count = song.capture(0, 1000);
+	const std::vector<float> pitches = song.capture(1, 1000);
+	CHECK(std::make_pair(count[499], pitches[499]) == std::make_pair(1.0f, 64.0f));
+	CHECK(std::make_pair(count[500], pitches[500]) == std::make_pair(0.0f, 0.0f));
+}
+
+TEST_CASE("a MIDI track muted by its button and disabled when playback moved, enabled first and unmuted later, has its "
+		  "parts chased once",
+	"[integration]")
+{
+	const int blockSize = GENERATE(17, 64);
+	CAPTURE(blockSize);
+	Song song(blockSize);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	// CC 1, which the channel doesn't send, and program 9 where the part starts; the channel's MIDI volume goes first.
+	song.addControllers(
+		1, {{{"position", 0}, {"number", 1}, {"value", 1.0}}, {{"position", 0}, {"type", "program"}, {"number", 9}}});
+	run(song.client, "channel.set", {{"channel", channel}, {"midiVolume", 50}, {"mute", true}});
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", false}});
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.play"); // a move while it is disabled
+	run(song.client, "audio.render", {{"frames", 500}});
+	run(song.client, "midi.capture");
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", true}});
+	CHECK(controllersPlayed(song.client, false).empty());
+	run(song.client, "channel.set", {{"channel", channel}, {"mute", false}});
+	CHECK(controllersPlayed(song.client, false) == ControllerBytes{{0xB0, 7, 50}, {0xB0, 1, 127}, {0xC0, 9}});
+	CHECK(controllersPlayed(song.client, false).empty());
+}
+
+TEST_CASE("a MIDI track that its button unmutes in the block of a locate gets the locate's chase once", "[integration]")
+{
+	const int blockSize = GENERATE(17, 64);
+	CAPTURE(blockSize);
+	Song song(blockSize);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	// The part: program 9 and CC 7 at 127 where it starts, CC 7 at 64 at 2000, which plays into the mute; the channel:
+	// program 5, MIDI volume 50 and pan 20.
+	song.addControllers(1,
+		{{{"position", 0}, {"type", "program"}, {"number", 9}}, {{"position", 0}, {"number", 7}, {"value", 1.0}},
+			{{"position", ticks(2000)}, {"number", 7}, {"value", 0.5}}});
+	run(song.client, "channel.set", {{"channel", channel}, {"program", 5}, {"midiVolume", 50}, {"midiPan", 20}});
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 500}});
+	run(song.client, "channel.set", {{"channel", channel}, {"mute", true}});
+	run(song.client, "audio.render", {{"frames", 1600}});
+	run(song.client, "midi.capture");
+	// Unmuted and located to 1000 before the next block: the locate's chase alone, without the CC 7 the mute kept.
+	run(song.client, "channel.set", {{"channel", channel}, {"mute", false}});
+	run(song.client, "transport.locate", {{"position", 1000}});
+	CHECK(controllersPlayed(song.client, false) ==
+		ControllerBytes{{0xC0, 5}, {0xB0, 7, 50}, {0xB0, 10, 20}, {0xB0, 7, 127}, {0xC0, 9}});
+	CHECK(controllersPlayed(song.client, false).empty());
 }

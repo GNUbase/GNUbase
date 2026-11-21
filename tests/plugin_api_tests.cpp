@@ -231,6 +231,29 @@ TEST_CASE("the plugin API describes a built-in processor through its factory and
 	}
 }
 
+TEST_CASE("an instrument reports its key switches through the plugin wrapper", "[unit]")
+{
+	BuiltinFactory factory;
+	TestHost host;
+	const std::unique_ptr<Plugin> synth = factory.create("builtin:testSynth", host);
+	REQUIRE(synth);
+	REQUIRE(synth->init());
+	auto* keySwitches = extension<KeySwitches>(*synth);
+	REQUIRE(keySwitches != nullptr);
+	const std::vector<KeySwitch> reported = keySwitches->keySwitches();
+	REQUIRE(reported.size() == 2);
+	CHECK(reported[0].name == "Sustain");
+	CHECK(reported[0].key == 0);
+	CHECK(reported[1].name == "Staccato");
+	CHECK(reported[1].key == 1);
+
+	// A plugin without key switches has no such extension.
+	const std::unique_ptr<Plugin> sampler = factory.create("builtin:sampler", host);
+	REQUIRE(sampler);
+	REQUIRE(sampler->init());
+	CHECK(extension<KeySwitches>(*sampler) == nullptr);
+}
+
 TEST_CASE("no built-in processor has a built-in MIDI effect's id, so a builtin: id names one of them", "[unit]")
 {
 	// The factory looks among the processors first: a MIDI effect with a processor's id would get the processor.

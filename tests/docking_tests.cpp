@@ -617,6 +617,114 @@ TEST_CASE("Tab and Shift+Tab move the keyboard focus through the zones", "[ui]")
 	app.ui().key(std::nullopt, "Escape");
 }
 
+TEST_CASE("Tab and Shift+Tab are the key commands Focus Next and Previous, and focus a control in the zone", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	ui::Docking& docking = app.appUi().docking();
+	for (const char* zone : {"left", "lower", "right"})
+		docking.setVisible("project", zone, true);
+	app.shell().step(std::chrono::milliseconds(0));
+	Rml::Context& context = app.main().context();
+	const auto focusedZone = [&context]
+	{
+		const Rml::Element* focus = context.GetFocusElement();
+		while (focus != nullptr && !focus->HasAttribute("zone"))
+			focus = focus->GetParentNode();
+		return focus == nullptr ? std::string() : focus->GetAttribute<Rml::String>("zone", "");
+	};
+	CHECK(app.keys().keysFor("focus.next") == std::vector<std::string>{"Tab"});
+	CHECK(app.keys().keysFor("focus.previous") == std::vector<std::string>{"Shift+Tab"});
+
+	// Another key does what Tab does, and a key bound to the commands in a zone does it there only.
+	app.keys().bind({"F6", "focus.next"});
+	app.keys().bind({"Shift+F6", "focus.previous"});
+	app.ui().click(std::nullopt, at("#event-display"), ui::MouseButton::Left, 1, {});
+	REQUIRE(focusedZone() == "main");
+	app.ui().key(std::nullopt, "F6");
+	CHECK(focusedZone() == "left");
+	app.ui().key(std::nullopt, "Shift+F6");
+	CHECK(focusedZone() == "main");
+
+	// A key command of one focus zone runs once Tab reaches that zone, and no longer after Tab leaves it.
+	int ran = 0;
+	app.keys().add({"test.lowerOnly", "Counts how often it ran.", [&ran](ui::Window&, Rml::Element*) { ++ran; }});
+	app.keys().bind({"F9", "test.lowerOnly", Json::object(), "lower"});
+	app.ui().key(std::nullopt, "F9");
+	CHECK(ran == 0);
+	app.ui().key(std::nullopt, "Tab");
+	app.ui().key(std::nullopt, "Tab");
+	REQUIRE(focusedZone() == "lower");
+	app.ui().key(std::nullopt, "F9");
+	CHECK(ran == 1);
+	app.ui().key(std::nullopt, "Tab");
+	REQUIRE(focusedZone() == "right");
+	app.ui().key(std::nullopt, "F9");
+	CHECK(ran == 1);
+
+	// Alt+Tab and Meta+Tab belong to the window manager and aren't taken, as Ctrl+Tab isn't.
+	for (const char* keys : {"Alt+Tab", "Meta+Tab", "Ctrl+Tab"})
+	{
+		app.ui().click(std::nullopt, at("#event-display"), ui::MouseButton::Left, 1, {});
+		app.ui().key(std::nullopt, keys);
+		INFO(keys);
+		CHECK(!context.GetFocusElement()->HasAttribute("zone"));
+	}
+
+	// A select box, like a text field, keeps Tab for moving between controls.
+	Rml::ElementDocument* document = context.GetFocusElement()->GetOwnerDocument();
+	Rml::Element* lower = document->GetElementById("lower-zone");
+	REQUIRE(lower != nullptr);
+	Rml::Element* select = lower->AppendChild(document->CreateElement("select"));
+	select->SetInnerRML(R"(<option value="a">A</option><option value="b">B</option>)");
+	REQUIRE(select->Focus());
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(!context.GetFocusElement()->HasAttribute("zone"));
+	lower->RemoveChild(select);
+
+	// Tab gives the focus back to the control that had it last in the zone, while that is still there.
+	Rml::Element* button = lower->AppendChild(document->CreateElement("button"));
+	button->SetId("remembered");
+	button->SetInnerRML("Remembered");
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(button->Focus());
+	app.ui().key(std::nullopt, "Tab"); // to the right zone
+	REQUIRE(focusedZone() == "right");
+	app.ui().key(std::nullopt, "Shift+Tab");
+	CHECK(focusedZone() == "lower");
+	CHECK(context.GetFocusElement() == button);
+	// A control that is gone doesn't: the zone has the focus then.
+	app.ui().key(std::nullopt, "Tab");
+	lower->RemoveChild(button);
+	app.ui().key(std::nullopt, "Shift+Tab");
+	CHECK(focusedZone() == "lower");
+	CHECK(context.GetFocusElement() == lower);
+}
+
+TEST_CASE("Tab to the project zone focuses the track list, and a key command focuses the lower zone", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	ui::Docking& docking = app.appUi().docking();
+	docking.setVisible("project", "right", true);
+	app.shell().step(std::chrono::milliseconds(0));
+	Rml::Context& context = app.main().context();
+	// Not clicked into yet, the project zone's main control is the track list, so that its arrow keys work at once.
+	REQUIRE(docking.focus("project", "right"));
+	app.ui().key(std::nullopt, "Tab");
+	const Rml::Element* focus = context.GetFocusElement();
+	REQUIRE(focus != nullptr);
+	CHECK(focus->GetTagName() == "listview");
+	CHECK(has(element(app, "#main-zone"), "focused"));
+	CHECK(!docking.focus("project", "channel")); // hidden
+
+	// Showing the lower zone with its key command gives it the keyboard focus (p. 100).
+	app.ui().key(std::nullopt, "Mod+Alt+E");
+	REQUIRE(docking.visible("project", "lower"));
+	CHECK(has(element(app, "#lower-zone"), "focused"));
+	CHECK(!has(element(app, "#main-zone"), "focused"));
+}
+
 TEST_CASE("a panel moves between its zone and a window of its own", "[ui]")
 {
 	test::UiApp app({1000, 700});
@@ -672,6 +780,33 @@ TEST_CASE("a panel moves between its zone and a window of its own", "[ui]")
 	docking.setFloating("test", true);
 	REQUIRE(docking.windowOf("test") != nullptr);
 	CHECK(app.shell().bounds(docking.windowOf("test")->id()) == placed);
+}
+
+TEST_CASE("Tab and Shift+Tab move between the controls of a panel in a window of its own", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	ui::Docking& docking = app.appUi().docking();
+	docking.add({"controls", "Controls", "project", "lower", [](Rml::Element& element)
+		{
+			element.SetInnerRML("<button id='controls-first'>One</button><button id='controls-second'>Two</button>");
+			return std::shared_ptr<void>();
+		}});
+	docking.setFloating("controls", true);
+	app.shell().step(std::chrono::milliseconds(0));
+	ui::Window* window = docking.windowOf("controls");
+	REQUIRE(window != nullptr);
+	app.ui().click(window->id(), at("#controls-first"), ui::MouseButton::Left, 1, {});
+	Rml::Context& context = window->context();
+	const auto focusedId = [&context]
+	{ return context.GetFocusElement() != nullptr ? context.GetFocusElement()->GetId() : std::string(); };
+	REQUIRE(focusedId() == "controls-first");
+
+	// The panel's document has no zones: Tab is the document's, not Focus Next's.
+	app.ui().key(window->id(), "Tab");
+	CHECK(focusedId() == "controls-second");
+	app.ui().key(window->id(), "Shift+Tab");
+	CHECK(focusedId() == "controls-first");
 }
 
 TEST_CASE("documents that live reload loads again are docking windows again", "[ui]")
@@ -890,16 +1025,30 @@ TEST_CASE("a setup pane shows, hides and reorders a window's sections, as ui.lay
 	CHECK(savedLayout(app).at("windows").at("test").at("sections").at("channel") ==
 		Json{{"order", {"fader", "routing", "inserts", "eq", "sends"}}, {"hidden", {"inserts"}}});
 
-	// Any client changes them through the user setting, as MCP and Lua do. Sections it leaves out follow in the
-	// document's order, and names that aren't sections are ignored.
+	// Any client changes them through the user setting, as MCP and Lua do. Names that aren't sections are ignored.
 	Json layout = savedLayout(app);
 	layout["windows"]["test"]["sections"]["channel"] = {
-		{"order", {"sends", "mixer", "fader"}}, {"hidden", {"routing"}}};
+		{"order", {"sends", "mixer", "fader", "routing", "inserts", "eq"}}, {"hidden", {"routing"}}};
 	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
 	REQUIRE(app.waitUntil(
 		[&app] { return sections(app, "#channel-1", true) == Names{"sends", "fader", "routing", "inserts", "eq"}; }));
 	CHECK(sections(app, "#channel-2") == Names{"sends", "fader", "inserts", "eq"});
 	CHECK(paneItems(app) == Names{"sends*", "fader*", "routing", "inserts*", "eq*"});
+
+	// A set saved before some of its sections existed doesn't know them: one its order and hidden list don't name
+	// goes after the section before it in the document, with its default, so EQ stays hidden.
+	layout["windows"]["test"]["sections"]["channel"] = {{"order", {"sends", "fader"}}, {"hidden", {"routing"}}};
+	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+	REQUIRE(app.waitUntil(
+		[&app] { return sections(app, "#channel-1", true) == Names{"routing", "inserts", "eq", "sends", "fader"}; }));
+	CHECK(sections(app, "#channel-2") == Names{"inserts", "sends", "fader"});
+	CHECK(paneItems(app) == Names{"routing", "inserts*", "eq", "sends*", "fader*"});
+
+	// Showing or hiding a section saves the order with the hidden list, so the set knows EQ from then on.
+	app.appUi().docking().setSectionHidden("test", "channel", "inserts", true);
+	waitUntilSaved(app);
+	CHECK(savedLayout(app).at("windows").at("test").at("sections").at("channel") ==
+		Json{{"order", {"routing", "inserts", "eq", "sends", "fader"}}, {"hidden", {"routing", "inserts", "eq"}}});
 
 	// The engine API checks the setting's shape.
 	Json bad = layout;
@@ -992,7 +1141,8 @@ TEST_CASE("a window without containers of sections learns a set from the first c
 	test::UiApp app({1000, 700});
 	// The user's order and hidden sections from before, e.g. from a project that had channels.
 	Json layout = Json::object();
-	layout["windows"]["test"]["sections"]["channel"] = {{"order", {"sends", "fader"}}, {"hidden", {"routing"}}};
+	layout["windows"]["test"]["sections"]["channel"] = {
+		{"order", {"sends", "fader", "routing", "inserts", "eq"}}, {"hidden", {"routing"}}};
 	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
 	ui::Docking& docking = app.appUi().docking();
 	REQUIRE(app.waitUntil([&docking, &layout] { return docking.layout() == layout; }));
@@ -1035,7 +1185,8 @@ TEST_CASE("a window learns a set from containers in a docked panel's content", "
 {
 	test::UiApp app({1000, 700});
 	Json layout = Json::object();
-	layout["windows"]["test"]["sections"]["channel"] = {{"order", {"fader"}}, {"hidden", {"eq", "sends"}}};
+	layout["windows"]["test"]["sections"]["channel"] = {
+		{"order", {"fader", "routing", "eq", "sends"}}, {"hidden", {"eq", "sends"}}};
 	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
 	ui::Docking& docking = app.appUi().docking();
 	REQUIRE(app.waitUntil([&docking, &layout] { return docking.layout() == layout; }));

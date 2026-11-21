@@ -10,6 +10,7 @@
 #include "ui/historypanel.h"
 #include "ui/inspector.h"
 #include "ui/keyeditor.h"
+#include "ui/meterpanel.h"
 #include "ui/poolpanel.h"
 #include "ui/timeformat.h"
 #include "ui/widgets.h"
@@ -680,6 +681,10 @@ namespace gnubase::app
 						m_lowerEditor = shown;
 					return std::shared_ptr<void>(shown);
 				};
+			// The meter display (reference manual pp. 533-538, docs/features/metering.md).
+			else if (added.id == "meter")
+				added.create = [this](Rml::Element& element)
+				{ return std::make_shared<ui::MeterPanel>(m_engine, m_binding, element); };
 			m_docking.add(std::move(added));
 		}
 		addMixers();
@@ -1155,26 +1160,58 @@ namespace gnubase::app
 			});
 		for (const ProjectCommand& command : g_projectCommands)
 		{
-			m_keys.add(
-				{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
+			m_keys.add({command.id, command.description,
+				[this, id = std::string(command.id)](ui::Window& window, Rml::Element*)
+				{
+					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
+						ui::SampleEditor::isProcessCommand(id))
 					{
-						// Delete removes the selected markers or time signature events, which the project window
-						// selects instead of events.
-						if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
-							return;
-						if (id == "edit.delete" && m_signatureLane && m_signatureLane->row().removeSelected())
-							return;
-						if (m_eventDisplay)
-							m_eventDisplay->actions().at(id)();
-					}});
+						m_sampleEditor.editor->process(id.substr(5));
+						return;
+					}
+					// Delete removes the selected markers or time signature events, which the project window
+					// selects instead of events.
+					if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
+						return;
+					if (id == "edit.delete" && m_signatureLane && m_signatureLane->row().removeSelected())
+						return;
+					if (m_eventDisplay)
+						m_eventDisplay->actions().at(id)();
+				}});
 			// Those that only edit the selection range wait for one, and paste for something copied
 			// (EventDisplay::canRun).
-			m_keys.enableWhen(command.id, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
-				{ return m_eventDisplay != nullptr && m_eventDisplay->canRun(id); });
+			m_keys.enableWhen(command.id,
+				[this, id = std::string(command.id)](ui::Window& window, Rml::Element*)
+				{
+					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
+						ui::SampleEditor::isProcessCommand(id))
+						return m_sampleEditor.editor->canProcess();
+					return m_eventDisplay != nullptr && m_eventDisplay->canRun(id);
+				});
 			if (command.keys != nullptr)
+			{
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
+				if (ui::SampleEditor::isProcessCommand(command.id))
+				{
+					const std::string sampleCommand = "sampleEditor." + std::string(command.id).substr(5);
+					m_keys.add({sampleCommand, "Processes the selected clip range in the sample editor.",
+						[this, operation = std::string(command.id).substr(5)](ui::Window& window, Rml::Element*)
+						{
+							if (window.id() == m_sampleEditor.window && m_sampleEditor.editor)
+								m_sampleEditor.editor->process(operation);
+						}});
+					m_keys.enableWhen(sampleCommand,
+						[this](ui::Window& window, Rml::Element*)
+						{
+							return window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
+								m_sampleEditor.editor->canProcess();
+						});
+					m_keys.bind({command.keys, sampleCommand, engine::Json::object(), "sampleEditor"});
+				}
+			}
 		}
 		m_keys.bind({"Backspace", "edit.delete", engine::Json::object(), "project"});
+		m_keys.bind({"Backspace", "sampleEditor.delete", engine::Json::object(), "sampleEditor"});
 		for (const ProjectCommand& command : g_trackCommands)
 		{
 			const std::string id = command.id;
@@ -1582,6 +1619,12 @@ namespace gnubase::app
 	{
 		if (fill)
 			root.SetInnerRML(readText(m_resources / "ui" / "transport.rml"));
+		// The dividers only count where sections go for lack of room, the transport bar (reference manual p. 307);
+		// the transport panel takes its sections' width and has none.
+		if (fill && !root.HasAttribute("fit"))
+			for (int i = root.GetNumChildren() - 1; i >= 0; --i)
+				if (root.GetChild(i)->HasAttribute("divider"))
+					root.RemoveChild(root.GetChild(i));
 		const ui::WindowId id = window.id();
 		auto controls = std::make_unique<ui::TransportControls>(
 			m_engine, m_binding, root,
@@ -2146,7 +2189,11 @@ namespace gnubase::app
 						m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
 						// Opening it explicitly brings the Editor tab forward, even from behind the Mixer.
 						if (editor == "lower")
+						{
 							m_docking.open("editor");
+							// The lower zone's editor gets the keyboard focus (p. 100).
+							m_docking.focus("project", "lower");
+						}
 					}
 					else if (const std::vector<uint64_t> events = selected("audioEvents");
 						!events.empty() && editor == "window")

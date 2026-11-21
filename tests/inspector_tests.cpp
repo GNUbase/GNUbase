@@ -1415,7 +1415,7 @@ TEST_CASE("the inspector's volume and pan fields dragged while the engine answer
 }
 
 TEST_CASE(
-	"the inspector's dragged volume stays while it shows a project read from before the drag's last step again", "[ui]")
+	"the inspector's dragged volume stays while it shows a project from before the drag's last step again", "[ui]")
 {
 	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
 	Window window;
@@ -1441,28 +1441,25 @@ TEST_CASE(
 		return found->at("volume").get<double>();
 	};
 
-	// A drag while the engine answers late. Once no step of it is out, its last one goes at once, and the engine
-	// takes it before the shell hands anything on: its answer and history.changed wait in the binding's mailbox.
+	// A drag while the engine answers late. Once no step of it is out, its last one goes at once, here behind a hold:
+	// the display shows the project from before the last step until the test lets the engine go on (#1305). A step
+	// the engine took brings its channel.changed, which the display's project takes before the answer (#1881).
 	const std::string field = ".inspector valuefield[control=volume]";
 	ui::EngineBinding& binding = window.app.appUi().binding();
 	test::LateDrag drag(window.app, std::nullopt, field);
 	drag.move(15, 1);
 	REQUIRE(window.app.waitUntil([&] { return binding.waiting("history.transaction") == 0; }));
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
 	drag.nudge(1);
 	const double dragged = drag.value();
 	drag.release(false);
-	REQUIRE(window.channel(audio).at("volume").get<double>() == Catch::Approx(dragged).margin(1e-5));
-	// The project read that the display sends for that history.changed queues behind a hold: the display shows a read
-	// from before the last step until the test lets the engine go on (#1305).
-	holder.send("test.hold");
-	REQUIRE(holds.waitEntered(1));
 	window.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(binding.waiting("history.transaction") == 0);
-	REQUIRE(binding.waiting("project.get") != 0); // the display's, and other views'
+	REQUIRE(binding.waiting("history.transaction") != 0);
 	REQUIRE(shown() != Catch::Approx(dragged).margin(1e-5));
 	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
 
-	// Another audio track shows its own volume in the same field, and back on the dragged one that older read shows
+	// Another audio track shows its own volume in the same field, and back on the dragged one that older project shows
 	// again: the field shows where the drag left it, not the other track's volume (#1421).
 	window.list.select({other});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
@@ -1471,9 +1468,10 @@ TEST_CASE(
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
 	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
 
-	// The read after the last step agrees with it.
+	// The engine's value once it took the last step agrees with it.
 	holds.release(1);
 	REQUIRE(window.app.waitUntil([&] { return shown() == Catch::Approx(dragged).margin(1e-5); }));
+	CHECK(window.channel(audio).at("volume").get<double>() == Catch::Approx(dragged).margin(1e-5));
 	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
 }
 

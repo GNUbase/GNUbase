@@ -178,13 +178,21 @@ namespace gnubase::ui
 		// The tracks whose in-place editors are open (#131, ui/inplaceeditor.h): they are at least g_inPlaceHeight
 		// high, for the editor over their lane.
 		void setInPlaceTracks(std::set<uint64_t> tracks);
+		const std::set<uint64_t>& inPlaceTracks() const { return m_inPlace; }
+		// Whether an open in-place editor shows its toolbar and info line, which the triangle in its track's row of
+		// the track list switches (reference manual p. 1259); hidden again once the editor closes.
+		bool inPlaceToolbarShown(uint64_t track) const { return m_inPlaceToolbars.count(track) != 0; }
+		const std::set<uint64_t>& inPlaceToolbars() const { return m_inPlaceToolbars; }
+		void showInPlaceToolbar(uint64_t track, bool shown);
 		// The quantize panel's cutting positions (#1579, reference manual p. 378): a .cutting-position line over the
 		// event lanes where Slice would cut, at each of the project samples, by position. Each line shows that is
 		// at least g_cutDistance dp after the one shown before it (#1668), so that a flam zoomed out keeps the others.
 		void setCuttingPositions(std::vector<int64_t> positions);
 		const std::vector<int64_t>& cuttingPositions() const { return m_cuttingPositions; }
-		// The project as project.get last returned it, or null before the first answer; loads() counts the answers,
-		// and read() is when the binding handed the last one on (EngineBinding::handed).
+		// The project as project.get last returned it, with the channels that channel.changed brought since, or null
+		// before the first answer; loads() counts the answers and those channels, answers() only the answers, for the
+		// views that show no channel (#1881), and read() is when the binding handed the last of them on
+		// (EngineBinding::handed), a channel only while no answer is out, which may be older than it.
 		const engine::Json& project() const { return m_project; }
 		// Where each audio event of the project plays, in seconds, as the project window shows it: from its position
 		// in its track's time base to where its warp puts its end (playedLength), or else as long as its clip frames
@@ -197,6 +205,7 @@ namespace gnubase::ui
 		};
 		const std::map<uint64_t, AudioEventSpan>& audioEventSpans() const { return m_audioSpans; }
 		uint64_t loads() const { return m_loads; }
+		uint64_t answers() const { return m_answers; }
 		uint64_t read() const { return m_read; }
 		// The tempo map and signatures of project(), read once per answer.
 		const TimeContext& time() const { return m_time; }
@@ -208,7 +217,7 @@ namespace gnubase::ui
 		// and parts of the tracks inside a folder's lane, by the user setting ui.folderData (always, never, or
 		// hideWhenExpanded: while the folder is folded); empty for the other lanes.
 		const std::vector<EventLanes::Lane>& folderData() const { return m_folderData; }
-		// Called after the lanes or the view changed.
+		// Called after the lanes, the view or a channel (channel.changed, #1881) changed.
 		void onLayout(std::function<void()> listener) { m_layoutListener = std::move(listener); }
 		// Called for a double click below the tracks instead of adding a MIDI track, e.g. by the track list, which
 		// adds a track like the selected one (docs/features/add-track.md).
@@ -510,6 +519,8 @@ namespace gnubase::ui
 		double dpFrom(Rml::Element& element, float x) const;
 
 		void requestProject();
+		// Puts a channel-only step's channel into the project, as its channel.changed brought it (#1881).
+		void takeChannel(const engine::Event& channelChanged);
 		// Shows m_project, with event.previewResize's answer over it while an edge is dragged.
 		void showProject();
 		void loadProject(const engine::Json& project);
@@ -795,6 +806,9 @@ namespace gnubase::ui
 		// Automation tracks (automationtracks.cpp).
 		void addAutomationActions();
 		void readAutomation(const engine::Json& project); // m_automation, and asks for the targets it needs
+		// Asks again for the targets of the tracks with open lanes whose track, channel, plugins or lanes changed in
+		// the project, e.g. a channel's volume, which a volume lane without points shows.
+		void requestChangedTargets();
 		// Asks for the track's automationLane.targets again; then runs when they are in.
 		void requestTargets(uint64_t track, std::function<void()> then = {});
 		// Adds a lane for the target to the track and shows it below the track's others, with the commands before it
@@ -905,12 +919,15 @@ namespace gnubase::ui
 		std::vector<EventLanes::Lane> m_tracks; // events in seconds, heights before zoom
 		std::vector<uint64_t> m_laneTracks;     // the track of each lane
 		std::set<uint64_t> m_inPlace;           // setInPlaceTracks'
+		std::set<uint64_t> m_inPlaceToolbars;   // showInPlaceToolbar's, of those
 		std::vector<double> m_laneTops = {0.0};
 		std::map<uint64_t, double> m_heights; // set by setTrackHeight, before zoom
 		std::set<uint64_t> m_hidden;
 		engine::Json m_project;
 		uint64_t m_loads = 0;
+		uint64_t m_answers = 0;
 		uint64_t m_read = 0;
+		ChannelSteps m_channelSteps; // channel.changed until their step's history.changed (#1881)
 		std::function<void()> m_layoutListener;
 		std::function<void()> m_addTrack;     // onAddTrack
 		std::vector<std::string> m_laneTypes; // and its type

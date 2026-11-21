@@ -69,6 +69,12 @@ namespace gnubase::ui
 			return false;
 		}
 
+		// Whether the control, which is in the zone or not, can take the keyboard focus from Tab now.
+		bool usable(const Rml::Element& zone, Rml::Element& control)
+		{
+			return zone.Contains(&control) && control.IsVisible(true) && !control.HasAttribute("disabled");
+		}
+
 		std::string attribute(const Rml::Element& element, const char* name)
 		{
 			return element.GetAttribute<Rml::String>(name, "");
@@ -402,20 +408,37 @@ namespace gnubase::ui
 				changed = true;
 			}
 		};
-		std::vector<Rml::Element*> sections; // the shown ones before the spacer, which can go
+		// A shown divider keeps the sections on its side shown (reference manual p. 65): divider="left" those before
+		// it, divider="right" those after it. The others before the spacer can go.
+		const int count = container.GetNumChildren();
+		int first = 0;
+		int end = count;
+		for (int i = 0; i < count; ++i)
+			if (const Rml::Element* child = container.GetChild(i); !child->IsClassSet("hidden"))
+			{
+				const std::string divider = attribute(*child, "divider");
+				if (divider == "left")
+					first = i + 1;
+				else if (divider == "right" && end == count)
+					end = i;
+			}
+		std::vector<Rml::Element*> sections; // the shown ones that can go
 		float room = container.GetBox().GetSize(Rml::BoxArea::Content).x;
 		bool beforeSpacer = true;
-		for (int i = 0; i < container.GetNumChildren(); ++i)
+		for (int i = 0; i < count; ++i)
 		{
 			Rml::Element* child = container.GetChild(i);
 			const bool section = child->HasAttribute("section");
+			const bool canGo = beforeSpacer && i >= first && i < end;
+			const Rml::Style::ComputedValues& computed = child->GetComputedValues();
 			if (child->IsClassSet("spacer"))
 				beforeSpacer = false;
-			else if (section && beforeSpacer && !child->IsClassSet("hidden"))
+			else if (section && canGo && !child->IsClassSet("hidden"))
 				sections.push_back(child);
-			else if (child->GetComputedValues().display() != Rml::Style::Display::None)
+			else if (computed.display() != Rml::Style::Display::None &&
+				(section || computed.position() != Rml::Style::Position::Absolute)) // not an open menu over it
 				room -= width(*child);
-			if (section && (child->IsClassSet("hidden") || !beforeSpacer))
+			if (section && (child->IsClassSet("hidden") || !canGo))
 			{
 				setNoRoom(*child, false);
 				for (Rml::Element* spare : elements(*child, "[fit=spare]"))
@@ -523,12 +546,17 @@ namespace gnubase::ui
 				[this, name = std::string(toggle.name)](Window& window, Rml::Element* /*zone*/)
 				{
 					const std::string docked = windowIn(window);
-					if (!docked.empty())
-						setVisible(docked, name, !visible(docked, name));
+					if (docked.empty())
+						return;
+					setVisible(docked, name, !visible(docked, name));
+					// Showing the lower zone with a key command gives it the keyboard focus (p. 100).
+					if (name == "lower" && visible(docked, name))
+						focus(docked, name);
 				}});
 			for (const char* binding : toggle.keys)
 				keys.bind({binding, toggle.id});
 		}
+		m_keys = &keys;
 		const std::array<std::pair<const char*, int>, 2> steps = {{{"window.previousTab", -1}, {"window.nextTab", 1}}};
 		for (const auto& [id, step] : steps)
 		{
@@ -542,6 +570,23 @@ namespace gnubase::ui
 						stepTab(windowOf(*element), attribute(*element, "zone"), step);
 				}});
 			keys.bind({step < 0 ? "Mod+Alt+Left" : "Mod+Alt+Right", id});
+		}
+		// Focus Next and Previous (p. 1565): the keyboard focus to the next and previous zone, as Tab and Shift+Tab do.
+		const std::array<std::pair<const char*, int>, 2> focus = {{{"focus.previous", -1}, {"focus.next", 1}}};
+		for (const auto& [id, step] : focus)
+		{
+			keys.add({id,
+				step < 0 ? "Moves the keyboard focus to the previous zone."
+						 : "Moves the keyboard focus to the next zone.",
+				[this, step = step](Window& window, Rml::Element* zone)
+				{
+					Rml::Element* from = window.context().GetFocusElement();
+					if (from == nullptr)
+						from = zone;
+					if (from != nullptr)
+						focusZone(*from, step);
+				}});
+			keys.bind({step < 0 ? "Shift+Tab" : "Tab", id});
 		}
 	}
 
@@ -748,19 +793,35 @@ namespace gnubase::ui
 		for (const std::string& id : strings(find(m_layout, {"windows", window, "sections", set, "order"})))
 			if (section(window, set, id) != nullptr && !contains(result, id))
 				result.push_back(id);
+		// A section the saved order doesn't name, such as one new since it was saved, goes after the section before it
+		// in the document.
 		if (const auto attached = m_windows.find(window); attached != m_windows.end())
 			if (const auto known = attached->second.sections.find(set); known != attached->second.sections.end())
+			{
+				auto at = result.begin();
 				for (const Section& entry : known->second)
-					if (!contains(result, entry.id))
-						result.push_back(entry.id);
+				{
+					if (const auto it = std::find(result.begin(), result.end(), entry.id); it != result.end())
+						at = it + 1;
+					else
+						at = result.insert(at, entry.id) + 1;
+				}
+			}
 		return result;
 	}
 
 	bool Docking::sectionHidden(const std::string& window, const std::string& set, const std::string& id) const
 	{
+		// The saved hidden list counts for the sections the saved set knows, those its order or its hidden list
+		// names; one it doesn't know yet, new since it was saved, has its default.
 		if (const Json* hidden = find(m_layout, {"windows", window, "sections", set, "hidden"});
 			hidden != nullptr && hidden->is_array())
-			return contains(strings(hidden), id);
+		{
+			const std::vector<std::string> names = strings(hidden);
+			if (contains(names, id) ||
+				contains(strings(find(m_layout, {"windows", window, "sections", set, "order"})), id))
+				return contains(names, id);
+		}
 		const Section* known = section(window, set, id);
 		return known != nullptr && known->hidden;
 	}
@@ -794,11 +855,16 @@ namespace gnubase::ui
 	{
 		if (section(window, set, id) == nullptr)
 			return;
-		std::vector<std::string> list; // every hidden one, so that the defaults no longer count
-		for (const std::string& name : sections(window, set))
+		// Every hidden one, so that the defaults no longer count, and the order, so that a later set can tell which
+		// sections this one had.
+		const std::vector<std::string> order = sections(window, set);
+		std::vector<std::string> list;
+		for (const std::string& name : order)
 			if (name == id ? hidden : sectionHidden(window, set, name))
 				list.push_back(name);
-		sectionsJson(window, set)["hidden"] = list;
+		Json& json = sectionsJson(window, set);
+		json["order"] = order;
+		json["hidden"] = list;
 		save();
 		apply();
 	}
@@ -1401,7 +1467,42 @@ namespace gnubase::ui
 		const auto at = std::find(zones.begin(), zones.end(), closestWith(&from, "zone"));
 		const auto count = static_cast<std::ptrdiff_t>(zones.size());
 		const std::ptrdiff_t index = at == zones.end() ? 0 : at - zones.begin();
-		return zones[static_cast<size_t>((((index + step) % count) + count) % count)]->Focus(true);
+		return focusIn(*zones[static_cast<size_t>((((index + step) % count) + count) % count)]);
+	}
+
+	bool Docking::focusIn(Rml::Element& zone)
+	{
+		Rml::Element* control = &zone;
+		if (const auto last = m_lastFocus.find(windowOf(zone) + "/" + attribute(zone, "zone"));
+			last != m_lastFocus.end())
+			if (Rml::Element* remembered = last->second.get(); remembered != nullptr && usable(zone, *remembered))
+				control = remembered;
+		if (control == &zone)
+			if (const std::string main = attribute(zone, "maincontrol"); !main.empty())
+				if (Rml::Element* found = zone.QuerySelector(main); found != nullptr && usable(zone, *found))
+					control = found;
+		return control->Focus(true) || (control != &zone && zone.Focus(true));
+	}
+
+	bool Docking::focus(const std::string& window, const std::string& name)
+	{
+		Rml::Element* zone = element(window, "[zone=" + name + "]");
+		return zone != nullptr && visible(window, name) && !zone->IsClassSet("hidden") && focusIn(*zone);
+	}
+
+	bool Docking::pressTab(Rml::Element& target, const Rml::Event& event)
+	{
+		if (m_keys == nullptr)
+			return false;
+		const auto held = [&event](const char* name, int modifier)
+		{ return event.GetParameter(name, false) ? modifier : 0; };
+		const KeyPress keys{Rml::Input::KI_TAB,
+			held("ctrl_key", Rml::Input::KM_CTRL) | held("shift_key", Rml::Input::KM_SHIFT) |
+				held("alt_key", Rml::Input::KM_ALT) | held("meta_key", Rml::Input::KM_META)};
+		for (Window* window : m_shell.windows())
+			if (&window->context() == target.GetContext())
+				return m_keys->press(*window, keys);
+		return false;
 	}
 
 	void Docking::later(std::function<void()> change)
@@ -1448,6 +1549,8 @@ namespace gnubase::ui
 		case Rml::EventId::Focus:
 		{
 			const Rml::Element* area = closestWith(target, "zone");
+			if (area != nullptr && area != target && !window.empty())
+				m_lastFocus[window + "/" + attribute(*area, "zone")] = target->GetObserverPtr();
 			if (Rml::ElementDocument* document = target->GetOwnerDocument())
 				for (Rml::Element* other : elements(*document, "[zone]"))
 					if (other != nullptr)
@@ -1560,11 +1663,11 @@ namespace gnubase::ui
 			break;
 		}
 		case Rml::EventId::Keydown:
-			// Tab and Shift+Tab move between the zones, before the document moves between its controls.
+			// Tab runs its key command (Focus Next and Previous: the next and previous zone, unless the user bound the
+			// key to another command) before the document moves between its controls. Only in a docking window: a
+			// panel in a window of its own has no zones, and Tab moves between its controls there.
 			if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_TAB &&
-				!event.GetParameter("ctrl_key", false) && !event.GetParameter("alt_key", false) &&
-				!event.GetParameter("meta_key", false) && !keepsTab(*target) &&
-				focusZone(*target, event.GetParameter("shift_key", false) ? -1 : 1))
+				!window.empty() && !keepsTab(*target) && pressTab(*target, event))
 				event.StopPropagation();
 			break;
 		case Rml::EventId::Tabchange:

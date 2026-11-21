@@ -130,7 +130,7 @@ namespace gnubase::ui
 		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::vector<uint64_t> m_selection;             // shown, or asked for
-		uint64_t m_loads = 0;                          // the display's project shown
+		uint64_t m_loads = 0;                          // the display's project shown (EventDisplay::answers)
 		TimeFormat m_format = TimeFormat::BarsBeats;   // the display's ruler's
 		engine::Json m_events = engine::Json::array(); // event.get's, the first one first
 		bool m_absolute = false;                       // while edit applies an absolute take

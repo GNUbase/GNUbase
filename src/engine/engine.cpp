@@ -395,6 +395,11 @@ namespace gnubase::engine
 		m_jobs->setProgressHook(std::move(hook));
 	}
 
+	void Engine::setCueStartHook(std::function<void()> hook)
+	{
+		m_audio->setCueStartHook(std::move(hook));
+	}
+
 	void Engine::readMeters(MeterFrame& frame)
 	{
 		m_audio->readMeters(frame);
@@ -479,6 +484,17 @@ namespace gnubase::engine
 			m_events.erase(std::remove_if(m_events.begin(), m_events.end(),
 							   [&name](const Event& event) { return event.name == name; }),
 				m_events.end());
+	}
+
+	std::vector<std::string> CommandContext::eventNames() const
+	{
+		std::vector<std::string> names;
+		if (m_outer != nullptr)
+			return names;
+		for (const Event& event : m_events)
+			if (std::find(names.begin(), names.end(), event.name) == names.end())
+				names.push_back(event.name);
+		return names;
 	}
 
 	Json CommandContext::call(const std::string& command, const Json& parameters)
