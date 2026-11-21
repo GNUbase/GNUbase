@@ -497,14 +497,14 @@ namespace gnubase::ui
 		return dialogs;
 	}
 
-	bool Shell::answerFileDialog(uint64_t id, std::vector<std::filesystem::path> files)
+	bool Shell::answerFileDialog(uint64_t id, std::vector<std::filesystem::path> files, std::string error)
 	{
 		const auto it = m_dialogs.find(id);
 		if (it == m_dialogs.end())
 			return false;
 		const std::function<void(const FileDialogResult&)> done = std::move(it->second.done);
 		m_dialogs.erase(it);
-		done(FileDialogResult{std::move(files), {}});
+		done(FileDialogResult{std::move(files), std::move(error)});
 		requestRender(); // as for the OS's answer
 		return true;
 	}

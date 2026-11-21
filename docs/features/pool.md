@@ -124,7 +124,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
   While a job runs, the line's row (`.pool-status`) has the state class `.running`, which shows Stop (`#pool-stop`,
   as the reference's file search dialog has, p. 751); Stop sends `job.cancel` for it. Stop is only hidden otherwise
   (`visibility`), so the row keeps its height and the list doesn't move when a job starts.
-  A rename, a move or New Folder that fails says so there too.
+  A rename, a move or New Folder that fails says so there too, and so does a folder dialog of Find Missing Files that
+  fails (`AppUi::reportInPool`).
 - **Editing.** The names of folders and clips are fields: what is typed renames them (`poolFolder.set`, `clip.set`)
   with Enter or when the field loses the focus; a name typed away keeps the old one. Clips dragged onto a folder's
   row move into it (`clip.set`, several selected clips in one `history.transaction`). A drag lasts only while the
@@ -190,7 +191,8 @@ Folder and Remove Unused Media with its message, undo from another client, Impor
 dialog; names sorted in any case, a clip let go outside the panel not moved by a click on a folder's name or a drag from
 outside, a name typed away kept, no reading while another tab shows; Conform Files from the Media menu on a project that
 was never saved opening the pool with the error, and on a saved one showing the job's result once it is done, its
-progress, and Stop, which cancels it without moving the list; Find Missing Files' result from its job; a failed job's
-message; and, with a panel and binding of its own, a job that ended before its command's result came (the `job.get`
-path) and found files that changed meanwhile counted among those looked for. `tests/docking_tests.cpp` checks
-`Docking::showing`, `tests/enginebinding_tests.cpp` `EngineBinding::onResult`.
+progress, and Stop, which cancels it without moving the list; Find Missing Files through its folder dialog, a failed
+dialog's message and its job's result; a failed job's message; and, with a panel and binding of its own, a job that
+ended before its command's result came (the `job.get` path) and found files that changed meanwhile counted among those
+looked for. `tests/docking_tests.cpp` checks `Docking::showing`, `tests/enginebinding_tests.cpp`
+`EngineBinding::onResult`.
