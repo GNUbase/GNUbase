@@ -280,9 +280,10 @@ Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` desel
 a row that isn't selected, Shift+Up goes on from the keys' row and the anchor; rows that keep their elements but get
 other values are selected by value; and in a collapsed parent, Down and Shift+Down go from the nearest shown row above
 a selected row, also one that was clicked before the collapse, and the range deselects the hidden row. A drag held past
-a view's edge scrolls it with `dragscroll` only, and it stops when the view loses the focus, when the dragged element is removed (also a focusable one, which passes the focus to the view) and when that element is no longer `:active` without a dragend; splitters move the boundary in a row and in a column, never below
-nothing. The color picker picks from its field, its hue strip
-and its numbers, draws the old and the new color, and follows its data.
+a view's edge scrolls it with `dragscroll` only, and it stops when the view loses the focus, when the dragged element
+is removed (also a focusable one, which passes the focus to the view) and when that element is no longer `:active`
+without a dragend; splitters move the boundary in a row and in a column, never below nothing. The color picker picks
+from its field, its hue strip and its numbers, draws the old and the new color, and follows its data.
 `widgets::fill` drops a fill of a drop-down list from the change that its own fill sends, also with a fill of another
 list in between, so the list keeps the options of the fill that sent it (#1719), and also from the change of another
 list that its change fills, at any depth (#1748).
