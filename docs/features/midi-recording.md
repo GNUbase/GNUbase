@@ -49,9 +49,9 @@ undo step.
   `midi.recordFilter` leaves message types (notes, controllers, pitch bend, channel and poly pressure, program changes),
   MIDI channels and controller numbers out of recordings, while they still play (MIDI Filter, Record, Channels and
   Controller, p. 1613).
-- **Auto quantize** (p. 353). With the project's auto quantize switch (`quantize.set` with `autoQuantize`),
-  `recording.add` quantizes the recorded notes with the project's quantize settings, as `quantize.apply` does, so
-  `quantize.reset` brings back what was played.
+- **Auto quantize** (p. 353). With the project's auto quantize switch (`quantize.set` with `autoQuantize`, the transport
+  bar's MIDI Auto Quantize section), `recording.add` quantizes the recorded notes with the project's quantize settings,
+  as `quantize.apply` does, so `quantize.reset` brings back what was played.
 - **Retrospective recording** (pp. 353-356). MIDI input that a track doesn't record, in stop mode or during playback,
   also that of a track that only monitors while the chord track records (it makes chord events, no part), goes into its
   retrospective buffer on the disk thread, which keeps the last `midi.retrospectiveEvents` events (10000 by default; 0

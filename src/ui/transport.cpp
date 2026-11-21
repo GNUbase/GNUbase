@@ -135,6 +135,13 @@ namespace gnubase::ui
 					if (!changedOnly(changed, {"channel.changed"}))
 						requestProject();
 				}));
+		m_subscriptions.push_back(m_binding.on("quantize.changed",
+			[this](const engine::Event& event)
+			{
+				m_autoQuantize = event.data.value("autoQuantize", false);
+				show();
+			}));
+		m_subscriptions.push_back(m_binding.on("project.reset", [this](const engine::Event&) { requestQuantize(); }));
 		m_subscriptions.push_back(m_binding.on("project.changed",
 			[this](const engine::Event& event)
 			{
@@ -158,6 +165,7 @@ namespace gnubase::ui
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
+		requestQuantize();
 		m_binding.send("transport.get", Json::object(),
 			[this, alive](const engine::Result& result)
 			{
@@ -369,6 +377,18 @@ namespace gnubase::ui
 			});
 	}
 
+	void TransportControls::requestQuantize()
+	{
+		m_binding.send("quantize.get", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok())
+					return;
+				m_autoQuantize = result.value.value("autoQuantize", false);
+				show();
+			});
+	}
+
 	void TransportControls::onShown(std::function<void()> shown)
 	{
 		if (m_unanswered == 0)
@@ -502,6 +522,13 @@ namespace gnubase::ui
 				{
 					m_tempoTrackActive = !m_tempoTrackActive; // until the project is read again
 					m_binding.send("project.set", {{"tempoTrackActive", m_tempoTrackActive}});
+					show();
+					return;
+				}
+				if (attribute(*field, "field") == "autoQuantize")
+				{
+					m_autoQuantize = !m_autoQuantize; // until quantize.changed says so
+					m_binding.send("quantize.set", {{"autoQuantize", m_autoQuantize}});
 					show();
 					return;
 				}
@@ -726,6 +753,8 @@ namespace gnubase::ui
 		showTempo();
 		for (Rml::Element* element : all("[field=tempoTrack]"))
 			setChecked(*element, m_tempoTrackActive);
+		for (Rml::Element* element : all("[field=autoQuantize]"))
+			setChecked(*element, m_autoQuantize);
 		for (Rml::Element* element : all("[field=tap]"))
 			element->SetClass("tapping", !m_taps.empty());
 		const time::TimeSignature signature = m_time.signatures.signatureAt(0);

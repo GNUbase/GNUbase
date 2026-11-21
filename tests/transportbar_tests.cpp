@@ -278,8 +278,9 @@ TEST_CASE(
 	REQUIRE(bar != nullptr);
 	const float right = bar->GetAbsoluteLeft() + bar->GetOffsetWidth();
 	const std::vector<std::string> order = app.appUi().docking().sections("project", "transport");
-	REQUIRE(order.size() == 9);
-	CHECK(order.front() == "leftDivider");
+	REQUIRE(order.size() == 10);
+	CHECK(order.front() == "midiAutoQuantize"); // before the left divider, as in the reference manual, p. 306
+	CHECK(order.at(1) == "leftDivider");
 	CHECK(order.at(order.size() - 2) == "rightDivider");
 	const auto shown = [&app] { return app.shownSections("transport-bar"); };
 	const auto has = [](const std::vector<std::string>& list, const std::string& id)
@@ -318,7 +319,8 @@ TEST_CASE(
 	};
 	checkShown();
 	std::vector<std::string> now = shown();
-	CHECK(!has(now, "leftDivider")); // hidden by default
+	CHECK(!has(now, "midiAutoQuantize")); // hidden by default
+	CHECK(!has(now, "leftDivider"));
 	CHECK(!has(now, "click"));
 	CHECK(has(now, "transportControls"));
 	click(app, "#punch-in");
@@ -336,7 +338,7 @@ TEST_CASE(
 	// displays and the tempo, between the dividers, go first, also in a window too narrow for those outside.
 	app.appUi().docking().moveSection("project", "transport", "leftDivider", "transportControls"); // after them
 	app.appUi().docking().setSectionHidden("project", "transport", "leftDivider", false);
-	REQUIRE(app.appUi().docking().sections("project", "transport").at(4) == "leftDivider");
+	REQUIRE(app.appUi().docking().sections("project", "transport").at(5) == "leftDivider");
 	app.setDpRatio(2.0F);
 	app.shell().step(std::chrono::milliseconds(0));
 	now = app.shownSections("transport-bar");
@@ -357,7 +359,7 @@ TEST_CASE(
 	const ui::WindowId panel = app.appUi().transportPanel()->id();
 	CHECK(app.ui().dom(panel, "[divider]", 0).at("elements").empty());
 	CHECK(app.ui().dom(panel, "[setup-section=leftDivider]", 0).at("elements").empty());
-	CHECK(app.appUi().docking().sections("transportPanel", "transport").size() == 7);
+	CHECK(app.appUi().docking().sections("transportPanel", "transport").size() == 8);
 }
 
 TEST_CASE("a transport set saved before the dividers keeps them hidden in their places, and the bar still hides its "
@@ -380,11 +382,12 @@ TEST_CASE("a transport set saved before the dividers keeps them hidden in their 
 		REQUIRE(app.waitUntil([&app, &layout] { return app.appUi().docking().layout() == layout; }));
 		app.shell().step(std::chrono::milliseconds(0));
 		CHECK(app.appUi().docking().sections("project", "transport") ==
-			std::vector<std::string>{"leftDivider", "locators", "locatorRange", "punchPoints", "transportControls",
-				"timeDisplays", "tempoSignature", "rightDivider", "click"});
+			std::vector<std::string>{"midiAutoQuantize", "leftDivider", "locators", "locatorRange", "punchPoints",
+				"transportControls", "timeDisplays", "tempoSignature", "rightDivider", "click"});
 		const std::vector<std::string> shown = app.shownSections("transport-bar");
 		const auto has = [&shown](const std::string& id)
 		{ return std::find(shown.begin(), shown.end(), id) != shown.end(); };
+		CHECK(!has("midiAutoQuantize"));
 		CHECK(!has("leftDivider"));
 		CHECK(!has("rightDivider"));
 		CHECK(!has("click"));
@@ -1952,7 +1955,7 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	CHECK(visible(app, "#transport-bar [section=transportControls]"));
 	const Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
 	CHECK(layout.at("windows").at("project").at("sections").at("transport").at("hidden") ==
-		Json::array({"leftDivider", "locators", "punchPoints", "rightDivider"}));
+		Json::array({"midiAutoQuantize", "leftDivider", "locators", "punchPoints", "rightDivider"}));
 
 	// The transport panel has sections of its own.
 	app.ui().key(std::nullopt, "F2");
@@ -2015,8 +2018,8 @@ TEST_CASE("setup panes save and recall presets and reset their sections to the d
 	const Json saved = presets().at("transport");
 	REQUIRE(saved.size() == 1);
 	CHECK(saved.at(0).at("name") == "Compact");
-	CHECK(saved.at(0).at("hidden") == Json::array({"leftDivider", "locators", "rightDivider"}));
-	CHECK(saved.at(0).at("order").at(1) == "locators");
+	CHECK(saved.at(0).at("hidden") == Json::array({"midiAutoQuantize", "leftDivider", "locators", "rightDivider"}));
+	CHECK(saved.at(0).at("order").at(2) == "locators");
 	REQUIRE(app.waitUntil([&exists] { return exists("#transport-setup [setup-preset=Compact]"); }));
 
 	// Reset All: the default order and sections, also after the sections were reordered.

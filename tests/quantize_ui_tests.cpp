@@ -460,6 +460,12 @@ TEST_CASE("the quantize panel's Apply, Reset and Auto Apply quantize the selecte
 	f.app.shell().step(std::chrono::milliseconds(50));
 	CHECK(f.startsAre({26 * g_unit, 50 * g_unit, 73 * g_unit}));
 
+	// Auto quantize isn't a quantize setting either, so switching it quantizes nothing.
+	f.app.call("quantize.set", {{"autoQuantize", true}});
+	REQUIRE(f.app.call("quantize.get").at("autoQuantize").get<bool>());
+	f.app.shell().step(std::chrono::milliseconds(50));
+	CHECK(f.startsAre({26 * g_unit, 50 * g_unit, 73 * g_unit}));
+
 	f.click("#quantize-auto-apply");
 	f.click("#quantize-grid");
 	f.click("menuitem[grid=\"1/8\"]");
@@ -601,4 +607,40 @@ TEST_CASE("Create Groove Quantize Preset keeps the presets there are and needs n
 	CHECK(!f.app.keys().canRun("edit.createGrooveQuantize", f.app.main(), nullptr));
 	f.display.select({empty, f.part});
 	CHECK(f.app.keys().canRun("edit.createGrooveQuantize", f.app.main(), nullptr));
+}
+
+TEST_CASE("the transport bar's MIDI Auto Quantize switches auto quantize and follows it", "[ui]")
+{
+	Fixture f;
+	f.app.appUi().docking().setVisible("project", "transportBar", true);
+	f.app.appUi().docking().setSectionHidden("project", "transport", "midiAutoQuantize", false);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const std::string button = "#transport-bar [field=autoQuantize]";
+	const auto autoQuantize = [&f] { return f.app.call("quantize.get").at("autoQuantize").get<bool>(); };
+	REQUIRE(!autoQuantize());
+	CHECK(!f.hasClass(button, "checked"));
+	const size_t steps = f.app.call("history.get").at("steps").size();
+
+	f.click(button);
+	CHECK(f.app.waitUntil([&] { return autoQuantize(); }));
+	CHECK(f.app.waitUntil([&] { return f.hasClass(button, "checked"); }));
+	CHECK(f.app.call("history.get").at("steps").size() == steps); // not an undo step
+
+	// The transport panel shows the same, and both follow other clients and a new project.
+	f.app.ui().key(std::nullopt, "F2");
+	REQUIRE(f.app.appUi().transportPanel() != nullptr);
+	const ui::WindowId panel = f.app.appUi().transportPanel()->id();
+	const auto panelChecked = [&f, panel]
+	{
+		const Json found = f.elements("[field=autoQuantize]", panel);
+		const Json classes = found.empty() ? Json::array() : found[0].value("classes", Json::array());
+		return std::find(classes.begin(), classes.end(), "checked") != classes.end();
+	};
+	CHECK(f.app.waitUntil(panelChecked));
+	f.app.call("quantize.set", {{"autoQuantize", false}});
+	CHECK(f.app.waitUntil([&] { return !f.hasClass(button, "checked") && !panelChecked(); }));
+	f.click(button);
+	REQUIRE(f.app.waitUntil([&] { return autoQuantize() && f.hasClass(button, "checked"); }));
+	f.app.call("project.new");
+	CHECK(f.app.waitUntil([&] { return !autoQuantize() && !f.hasClass(button, "checked"); }));
 }
