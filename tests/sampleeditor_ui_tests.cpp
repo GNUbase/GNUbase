@@ -374,12 +374,27 @@ TEST_CASE("the sample editor Zoom submenu fits the clip, selection and event and
 	zoom("selection"); // Without pitch analysis this command shows the whole clip (p. 623).
 	CHECK(f.editor().start() == 0);
 	CHECK(f.editor().scale() == Catch::Approx(full));
+	// The display asks media.peaks for the columns of the whole clip: compare screenshots once they are shown.
+	const auto* wave =
+		dynamic_cast<ui::Waveform*>(f.app.shell().find(f.window)->context().GetDocument(0)->QuerySelector(".se-wave"));
+	REQUIRE(wave != nullptr);
+	const auto wholeClipShown = [&]
+	{
+		return f.app.waitUntil(
+			[&]
+			{
+				return wave->span().start == 0.0 && wave->span().length == static_cast<double>(g_frames) &&
+					!wave->channels().empty();
+			});
+	};
+	REQUIRE(wholeClipShown());
 	const auto waveform = f.app.ui().screenshot(f.window, of(".se-wave"));
 	zoom("inVertical");
 	CHECK(f.text(".se-level-top") == "50%");
 	CHECK(!test::compareImages(f.app.ui().screenshot(f.window, of(".se-wave")), waveform, {}).equal);
 	zoom("outVertical");
 	CHECK(f.text(".se-level-top") == "100%");
+	REQUIRE(wholeClipShown());
 	CHECK(test::compareImages(f.app.ui().screenshot(f.window, of(".se-wave")), waveform, {}).equal);
 	zoom("full");
 	CHECK(f.editor().scale() == Catch::Approx(full));
