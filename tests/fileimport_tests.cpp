@@ -865,11 +865,11 @@ TEST_CASE("MIDI files dropped on the event display follow the MIDI import settin
 	CHECK(listPart.at("notes").size() == 2);
 }
 
-TEST_CASE("MIDI file and tempo track imports that fail say why in a dialog", "[ui]")
+TEST_CASE("Audio file, MIDI file and tempo track imports that fail say why in a dialog", "[ui]")
 {
 	// #1976: a refusal reached only the log, so the import did nothing visible.
 	const test::TempDir dir;
-	const std::filesystem::path broken = dir.path() / "broken.mid";
+	std::filesystem::path broken = dir.path() / "broken.mid";
 	REQUIRE(std::ofstream(broken) << "not a MIDI file");
 	test::UiApp app({900, 640});
 	app.appUi().showProject();
@@ -888,6 +888,13 @@ TEST_CASE("MIDI file and tempo track imports that fail say why in a dialog", "[u
 	{
 		drop(app, {broken.u8string()}, 100.0, 300.0);
 	}
+	SECTION("an audio file that can't be read, dropped on the event display")
+	{
+		broken = dir.path() / "broken.wav";
+		REQUIRE(std::ofstream(broken) << "not an audio file");
+		app.call("settings.set", {{"key", "editing.onImportAudio"}, {"value", "useSettings"}}); // no options dialog
+		drop(app, {broken.u8string()}, 100.0, 300.0);
+	}
 	SECTION("File > Import > MIDI File")
 	{
 		app.keys().run("file.importMidi", Json::object(), app.main(), nullptr);
@@ -903,7 +910,7 @@ TEST_CASE("MIDI file and tempo track imports that fail say why in a dialog", "[u
 		CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {broken}));
 	}
 	REQUIRE(app.waitUntil([&error] { return !error().empty(); }));
-	CHECK(error().find("broken.mid") != std::string::npos);
+	CHECK(error().find(broken.filename().u8string()) != std::string::npos);
 	close();
 	CHECK(app.call("project.get").at("tracks").empty());
 }

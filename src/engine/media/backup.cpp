@@ -569,18 +569,31 @@ namespace gnubase::engine
 					const Json now = job.command("project.location", Json::object()).at("mediaFolder");
 					return now.is_string() ? pathOf(now.get<std::string>()) : fs::path();
 				};
-				for (fs::path now = mediaFolderNow(); !now.empty() && now != folder; now = mediaFolderNow())
+				const auto copies = [&files]
 				{
-					std::vector<std::string> earlier;
+					std::vector<std::string> paths;
 					for (const MediaCopy& file : files)
 						if (!file.to.empty())
-							earlier.push_back(file.to);
-					removeFiles(earlier);
-					files.erase(std::remove_if(files.begin(), files.end(),
-									[&now](const MediaCopy& file) { return isInside(file.from, now.parent_path()); }),
-						files.end());
-					folder = now;
-					copyMedia(files, folder, job);
+							paths.push_back(file.to);
+					return paths;
+				};
+				try
+				{
+					for (fs::path now = mediaFolderNow(); !now.empty() && now != folder; now = mediaFolderNow())
+					{
+						removeFiles(copies());
+						files.erase(std::remove_if(files.begin(), files.end(), [&now](const MediaCopy& file)
+										{ return isInside(file.from, now.parent_path()); }),
+							files.end());
+						folder = now;
+						copyMedia(files, folder, job);
+					}
+				}
+				catch (...)
+				{
+					// The engine stopped while it looked, for one: the copies go, as below.
+					removeFiles(copies());
+					throw;
 				}
 				// Media files are relinked with media.relink, frozen tracks with track.relinkFreeze, in one step.
 				Json relink = Json::array();
