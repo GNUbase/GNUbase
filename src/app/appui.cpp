@@ -1160,26 +1160,58 @@ namespace gnubase::app
 			});
 		for (const ProjectCommand& command : g_projectCommands)
 		{
-			m_keys.add(
-				{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
+			m_keys.add({command.id, command.description,
+				[this, id = std::string(command.id)](ui::Window& window, Rml::Element*)
+				{
+					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
+						ui::SampleEditor::isProcessCommand(id))
 					{
-						// Delete removes the selected markers or time signature events, which the project window
-						// selects instead of events.
-						if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
-							return;
-						if (id == "edit.delete" && m_signatureLane && m_signatureLane->row().removeSelected())
-							return;
-						if (m_eventDisplay)
-							m_eventDisplay->actions().at(id)();
-					}});
+						m_sampleEditor.editor->process(id.substr(5));
+						return;
+					}
+					// Delete removes the selected markers or time signature events, which the project window
+					// selects instead of events.
+					if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
+						return;
+					if (id == "edit.delete" && m_signatureLane && m_signatureLane->row().removeSelected())
+						return;
+					if (m_eventDisplay)
+						m_eventDisplay->actions().at(id)();
+				}});
 			// Those that only edit the selection range wait for one, and paste for something copied
 			// (EventDisplay::canRun).
-			m_keys.enableWhen(command.id, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
-				{ return m_eventDisplay != nullptr && m_eventDisplay->canRun(id); });
+			m_keys.enableWhen(command.id,
+				[this, id = std::string(command.id)](ui::Window& window, Rml::Element*)
+				{
+					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
+						ui::SampleEditor::isProcessCommand(id))
+						return m_sampleEditor.editor->canProcess();
+					return m_eventDisplay != nullptr && m_eventDisplay->canRun(id);
+				});
 			if (command.keys != nullptr)
+			{
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
+				if (ui::SampleEditor::isProcessCommand(command.id))
+				{
+					const std::string sampleCommand = "sampleEditor." + std::string(command.id).substr(5);
+					m_keys.add({sampleCommand, "Processes the selected clip range in the sample editor.",
+						[this, operation = std::string(command.id).substr(5)](ui::Window& window, Rml::Element*)
+						{
+							if (window.id() == m_sampleEditor.window && m_sampleEditor.editor)
+								m_sampleEditor.editor->process(operation);
+						}});
+					m_keys.enableWhen(sampleCommand,
+						[this](ui::Window& window, Rml::Element*)
+						{
+							return window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
+								m_sampleEditor.editor->canProcess();
+						});
+					m_keys.bind({command.keys, sampleCommand, engine::Json::object(), "sampleEditor"});
+				}
+			}
 		}
 		m_keys.bind({"Backspace", "edit.delete", engine::Json::object(), "project"});
+		m_keys.bind({"Backspace", "sampleEditor.delete", engine::Json::object(), "sampleEditor"});
 		for (const ProjectCommand& command : g_trackCommands)
 		{
 			const std::string id = command.id;

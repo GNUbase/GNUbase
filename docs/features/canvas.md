@@ -56,6 +56,10 @@ Direct3D 12 and Vulkan, [render-backend.md](../render-backend.md)). The code is 
   ratio. What an element draws is clipped to its content box by scissor, which is screen-aligned: canvas elements
   can't sit inside a transform.
 
+The `<waveform>` attribute `gain` (default 1) magnifies the displayed amplitude, clipped to each channel's full scale,
+without changing the audio. Changing it rebuilds the geometry. The sample editor's vertical zoom and level scale use it;
+`tests/sampleeditor_ui_tests.cpp` checks the waveform's pixels before, during and after a vertical zoom.
+
 ## Virtualized drawing
 
 Thousands of events can't each be an element: RmlUi lays out, styles and draws every element in a document, in view

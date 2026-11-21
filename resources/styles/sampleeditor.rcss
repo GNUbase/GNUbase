@@ -80,12 +80,107 @@
 	margin-bottom: 2dp;
 }
 
+.se-inspector > *
+{
+	flex-shrink: 0;
+}
+
+#se-set-locators
+{
+	height: 40dp;
+}
+
+#se-shared-copy-dialog
+{
+	width: 400dp;
+}
+
+.se-question-message, .se-question-buttons
+{
+	margin: 8dp 12dp 0 12dp;
+}
+
+.se-question-buttons
+{
+	display: flex;
+	justify-content: flex-end;
+}
+
+.se-question-buttons button
+{
+	margin-left: 6dp;
+}
+
 .se-main
+{
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: row;
+	min-width: 0;
+}
+
+.se-canvas
 {
 	flex: 1 1 0;
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
+}
+
+.se-timeline, .se-wave-area
+{
+	display: flex;
+	flex-direction: row;
+}
+
+.se-timeline
+{
+	height: 24dp;
+	flex-shrink: 0;
+}
+
+.se-ruler
+{
+	display: block;
+	flex: 1 1 0;
+}
+
+.se-wave-area
+{
+	flex: 1 1 0;
+	min-height: 0;
+}
+
+#se-level-menu, .se-level
+{
+	width: 44dp;
+	min-width: 44dp;
+	box-sizing: border-box;
+	flex-shrink: 0;
+}
+
+.se-level, .se-level-channel
+{
+	display: flex;
+	flex-direction: column;
+}
+
+.se-level-channel
+{
+	flex: 1 1 0;
+	justify-content: space-between;
+	text-align: right;
+}
+
+.se-region-handle
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	min-width: 7dp;
+	margin-left: -3dp;
+	border-left-width: 1dp;
+	cursor: resize;
 }
 
 .se-display
@@ -94,6 +189,7 @@
 	flex: 1 1 0;
 	min-height: 0;
 	overflow: hidden;
+	clip: always;
 }
 
 .se-outside, .se-selection, .se-region-shown
@@ -247,7 +343,13 @@
 	flex-shrink: 0;
 	display: flex;
 	flex-direction: column;
-	height: 120dp;
+	width: 220dp;
+}
+
+.se-regions-toolbar
+{
+	flex-wrap: wrap;
+	height: auto;
 }
 
 .se-region-list

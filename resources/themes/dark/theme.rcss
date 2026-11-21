@@ -1198,6 +1198,10 @@
 	{
 		background-color: #38565c;
 	}
+	.se-region-handle
+	{
+		border-color: #7896bd;
+	}
 	.se-hitpoint-line, .se-hitpoint-handle
 	{
 		background-color: #5ea7b3;
