@@ -425,3 +425,117 @@ TEST_CASE("the arranger track's controls switch arranger mode and the chain and 
 			return value(row + " [control=arrangerItem]").empty() && value(row + " [control=arrangerRepeat]").empty();
 		}));
 }
+
+TEST_CASE(
+	"Open Arranger Editor in the track list and on the inspector's Arranger Track section opens the editor", "[ui]")
+{
+	// Reference manual pp. 164, 405: both open the editor, and leave it open when it is.
+	Window window;
+	window.app.call("arranger.add", {{"position", 0}, {"end", 8 * g_quarter}});
+	const std::string row = "listitem[type=arranger]";
+	const auto click = [&window](const std::string& selector)
+	{
+		window.app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	app::AppUi& appUi = window.app.appUi();
+	const auto open = [&] { return window.app.shell().find(appUi.arrangerWindow()) != nullptr; };
+	REQUIRE(window.app.waitUntil([&] { return window.shown(row + " button[control=arrangerEditor]") == 1; }));
+	// In the default controls area it sits beside Current Item and Current Repeat, on the second line.
+	CHECK(window.box(row + " button[control=arrangerEditor]").at("y") ==
+		window.box(row + " [control=arrangerItem]").at("y"));
+	click(row + " button[control=arrangerEditor]");
+	REQUIRE(window.app.waitUntil(open));
+	click(row + " button[control=arrangerEditor]");
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(open());
+	appUi.toggleArranger();
+	REQUIRE_FALSE(open());
+
+	// The inspector's Arranger Track section has it on its header, which it doesn't close.
+	window.app.appUi().docking().open("inspector");
+	window.display.setTool(ui::Tool::ObjectSelection);
+	click(row + " .track-name");
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".inspector [section=arranger]", "unavailable"); }));
+	click(".inspector .inspector-arranger-editor");
+	CHECK(window.app.waitUntil(open));
+	CHECK_FALSE(window.hasClass(".inspector [section=arranger]", "collapsed"));
+	appUi.toggleArranger();
+}
+
+TEST_CASE(
+	"the inspector's Arranger Track section lists the chain and the events, plays them and sets the jump mode", "[ui]")
+{
+	// Reference manual pp. 405, 410-411: the Current Arranger Chain and Arranger Events lists, and Jump Mode.
+	Window window;
+	const Json a = window.app.call("arranger.add", {{"position", 0}, {"end", 8 * g_quarter}}).at("event").at("id");
+	const Json b =
+		window.app.call("arranger.add", {{"position", 8 * g_quarter}, {"end", 16 * g_quarter}}).at("event").at("id");
+	window.app.call("arranger.setChain", {{"steps", {{{"event", b}, {"repeats", 2}}, {{"event", a}}}}});
+	const std::string row = "listitem[type=arranger]";
+	const auto click = [&window](const std::string& selector)
+	{
+		window.app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto text = [&window](const std::string& selector) { return window.element(selector).value("text", ""); };
+	// A name is a textdisplay, its text the value attribute.
+	const auto name = [&window](const std::string& selector)
+	{ return window.element(selector + " .name").value("attributes", Json::object()).value("value", std::string()); };
+	const auto disabled = [&window](const std::string& selector)
+	{ return window.element(selector).value("attributes", Json::object()).contains("disabled"); };
+	REQUIRE(window.app.waitUntil([&] { return window.shown(row + " .track-name") == 1; }));
+	window.app.appUi().docking().open("inspector");
+	window.display.setTool(ui::Tool::ObjectSelection);
+	click(row + " .track-name");
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".inspector [section=arranger]", "unavailable"); }));
+	const std::string steps = ".inspector .inspector-arranger-steps ";
+	const std::string events = ".inspector .inspector-arranger-events ";
+	REQUIRE(window.shown(steps + ".arranger-row") == 2);
+	CHECK(name(steps + "[step=\"0\"]") == "B");
+	CHECK(text(steps + "[step=\"0\"] .repeats") == "2");
+	CHECK(name(steps + "[step=\"1\"]") == "A");
+	REQUIRE(window.shown(events + ".arranger-row") == 2);
+	CHECK(text(events + "[event=\"" + a.dump() + "\"] .name") == "A");
+
+	// Outside arranger mode the arrows can't play anything: arranger.goToStep and arranger.trigger refuse.
+	CHECK(disabled(steps + "[step=\"1\"] button.arranger-locate"));
+	CHECK(disabled(events + "[event=\"" + a.dump() + "\"] button.arranger-trigger"));
+	window.app.call("arranger.setMode", {{"mode", true}});
+	REQUIRE(window.app.waitUntil([&] { return !disabled(steps + "[step=\"1\"] button.arranger-locate"); }));
+
+	// A step's arrow plays from it, and its row shows it playing; an event's arrow triggers it.
+	click(steps + "[step=\"1\"] button.arranger-locate");
+	REQUIRE(window.app.waitUntil([&] { return window.app.call("transport.get").at("arranger").at("step") == 1; }));
+	CHECK(window.app.waitUntil([&] { return window.hasClass(steps + "[step=\"1\"]", "current"); }));
+	CHECK_FALSE(window.hasClass(steps + "[step=\"0\"]", "current"));
+	click(events + "[event=\"" + b.dump() + "\"] button.arranger-trigger");
+	REQUIRE(window.app.waitUntil([&] { return window.app.call("transport.get").at("arranger").at("event") == b; }));
+	CHECK(window.app.waitUntil([&] { return window.hasClass(events + "[event=\"" + b.dump() + "\"]", "current"); }));
+
+	// Jump Mode, and the list follows a change from elsewhere, which brings no project read.
+	click(".inspector select[control=arrangerJumpMode]");
+	window.app.ui().key(std::nullopt, "Down");
+	click(".inspector select[control=arrangerJumpMode]");
+	REQUIRE(window.app.waitUntil([&] { return window.app.call("arranger.get").at("jumpMode") == "4bars"; }));
+	window.app.call("arranger.setMode", {{"jumpMode", "end"}});
+	CHECK(window.app.waitUntil(
+		[&]
+		{
+			return window.element(".inspector select[control=arrangerJumpMode]").value("value", std::string()) == "end";
+		}));
+
+	// Alt and a double click on a step's name rename its event (p. 405); a plain double click doesn't.
+	window.app.ui().click(std::nullopt, {steps + "[step=\"1\"] .name", 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(window.hasClass(steps + "[step=\"1\"] .name", "editing"));
+	window.app.ui().click(
+		std::nullopt, {steps + "[step=\"1\"] .name", 0, std::nullopt}, ui::MouseButton::Left, 2, {"alt"});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(steps + "[step=\"1\"] .name", "editing"); }));
+	window.app.ui().key(std::nullopt, "Mod+A");
+	window.app.ui().text(std::nullopt, "Intro");
+	window.app.ui().key(std::nullopt, "Enter");
+	REQUIRE(window.app.waitUntil([&] { return window.events()[0].at("name") == "Intro"; }));
+	CHECK(window.app.waitUntil([&] { return text(events + "[event=\"" + a.dump() + "\"] .name") == "Intro"; }));
+}

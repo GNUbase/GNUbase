@@ -115,6 +115,8 @@ namespace gnubase::ui
 		// listener hears of the marker that Locate chooses (rename false), to select it, and of the one that a
 		// Shift-click on Add Cycle Marker adds (rename true), to name it.
 		void onMarker(std::function<void(uint64_t marker, bool rename)> listener) { m_onMarker = std::move(listener); }
+		// The arranger track's Open Arranger Editor (arrangerEditor, reference manual p. 164) calls the listener.
+		void onArrangerEditor(std::function<void()> listener) { m_onArrangerEditor = std::move(listener); }
 
 	private:
 		// A track as the list shows it, from the event display's project.
@@ -312,6 +314,7 @@ namespace gnubase::ui
 
 		std::map<std::string, std::function<void()>> m_actions;
 		std::function<void(uint64_t, bool)> m_onMarker;
+		std::function<void()> m_onArrangerEditor;
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_playback; // while playing, Current Tempo follows the cursor (#831)
 		bool m_playing = false;                 // the transport status followTransport last heard

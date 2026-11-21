@@ -114,11 +114,11 @@ namespace gnubase::ui
 		}
 
 		// The arranger track's controls (reference manual p. 164), besides Switch Time Base: Select Active Arranger
-		// Chain, Current Item, Current Repeat and Activate Arranger Mode.
+		// Chain, Current Item, Current Repeat, Activate Arranger Mode and Open Arranger Editor.
 		bool arrangerControl(const std::string& control)
 		{
 			return control == "arrangerChain" || control == "arrangerItem" || control == "arrangerRepeat" ||
-				control == "arrangerMode";
+				control == "arrangerMode" || control == "arrangerEditor";
 		}
 
 		// What Current Item or Current Repeat shows of the arranger state playing (transport.get's arranger): the
@@ -295,9 +295,9 @@ namespace gnubase::ui
 				{"signatureLock", {"Lock", "L"}},
 				{"chordRecord", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
 				{"chordMute", {"Mute Chord Track", "M"}}, {"showScales", {"Show Scales", "S"}},
-				{"arrangerMode", {"Activate Arranger Mode", "A"}}, {"addPositionMarker", {"Add Position Marker", "+"}},
-				{"addCycleMarker", {"Add Cycle Marker", "[+]"}}, {"activateMarkerTrack", {"Activate Track", "A"}},
-				{"groupEditing", {"Group Editing", "G"}},
+				{"arrangerMode", {"Activate Arranger Mode", "A"}}, {"arrangerEditor", {"Open Arranger Editor", "E"}},
+				{"addPositionMarker", {"Add Position Marker", "+"}}, {"addCycleMarker", {"Add Cycle Marker", "[+]"}},
+				{"activateMarkerTrack", {"Activate Track", "A"}}, {"groupEditing", {"Group Editing", "G"}},
 				{"editInPlace", {"Edit In-Place", R"(<svg class="icon" src="../icons/tool-draw.svg"/>)"}}};
 			const auto& [title, content] = looks.at(control);
 			// A click on one leaves the track selection as it is (#1852): selecting the track on a click on its Solo is
@@ -1237,7 +1237,8 @@ namespace gnubase::ui
 						button->SetAttribute("value", text);
 					continue;
 				}
-				if (name == "setTimeOffset" || name == "addPositionMarker" || name == "addCycleMarker")
+				if (name == "setTimeOffset" || name == "addPositionMarker" || name == "addCycleMarker" ||
+					name == "arrangerEditor")
 					continue;
 				if (markerMenu(name))
 				{
@@ -2045,6 +2046,12 @@ namespace gnubase::ui
 		if (name == "setTimeOffset")
 		{
 			m_binding.send("track.set", {{"track", row.id}, {"timeOffset", "cursor"}});
+			return;
+		}
+		if (name == "arrangerEditor")
+		{
+			if (m_onArrangerEditor)
+				m_onArrangerEditor();
 			return;
 		}
 		if (name == "editInPlace")
