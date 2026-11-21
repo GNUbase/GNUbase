@@ -73,12 +73,14 @@ a media file or a clip of the project.
   end before the position; scrubbing back at normal speed and forwards at twice the speed, sample by sample, and the
   cursor following; scrubs that come before the last one played out, or two before the audio thread plays either,
   carrying on from where it got to, with and without `seconds`, and only the first in the command log; stopping
-  closing the streams, and freeing what played also from the middle of an audio block; a media file played from frames
-  outside its event, past its end and at half the project's sample rate, scrubbed without moving the cursor, also at
-  half the project's sample rate, and its errors, also for a hand-edited project's file without a sample rate or
-  length; a clip played and scrubbed with its fades; an audition whose first block plays while the cue thread cues
+  closing the streams; a media file played from frames outside its event, past its end and at half the project's
+  sample rate, scrubbed without moving the cursor, also at half the project's sample rate, and its errors, also for a
+  hand-edited project's file without a sample rate or length; a clip played and scrubbed with its fades; an audition whose first block plays while the cue thread cues
   it, between reading where the audio thread plays and cueing the streams (`Audition::playedRead`), playing on
-  without a gap (after waiting for the streams, so that a slow disk thread fails as that).
+  without a gap (after waiting for the streams, so that a slow disk thread fails as that); an audition that starts
+  while another plays, with the cue thread cueing between its exact cue and its state going out
+  (`Audition::startCued`), starting with its own voice, which a cue for the one before would have taken for the next
+  event's start.
 - `tests/playback_tests.cpp`, in real time (`[realtime]`): stopping freeing what played also from the middle of an
   audio block; on the dummy device, scrubbing while the transport plays leaving the playback without dropouts, and an
   `audition.start` while another plays starting at its position without a frame left out (the cue thread held off,
