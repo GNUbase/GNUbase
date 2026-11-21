@@ -286,6 +286,8 @@ namespace gnubase::app
 		void chooseMidiImport(ui::Window& window, bool newProject);
 		// Media > Find Missing Files: the OS's folder dialog, then media.locate looks for the missing files there.
 		void chooseMissingFolder(ui::Window& window);
+		// Shows what a pool command did, or why it failed, in the pool, which opens for it.
+		void reportInPool(const std::string& command, const engine::Result& result);
 		// The lower zone's mixer panel, the mixer windows' Visibility tabs and their UI commands, and Edit Channel
 		// Settings.
 		void addMixers();

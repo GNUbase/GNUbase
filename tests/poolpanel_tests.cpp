@@ -590,8 +590,18 @@ TEST_CASE("the pool panel shows what Find Missing Files' job found, and why a jo
 	std::filesystem::create_directories(dir.path() / "found");
 	test::writeWav(dir.path() / "found" / "kick.wav", {std::vector<float>(48000, 0.25f), 1, 48000});
 
-	// The folder dialog can't be answered in a test: media.locate goes the way it sends it, through the UI's binding.
-	app.keys().run("media.locate", {{"folder", (dir.path() / "found").u8string()}}, app.main(), nullptr);
+	// A folder dialog that fails says why, like a command that fails.
+	app.keys().run("pool.findMissing", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+	CHECK(app.shell().fileDialogs().begin()->second.kind == ui::FileDialogKind::Folder);
+	app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {}, "no file dialog on this system");
+	REQUIRE(
+		app.waitUntil([&app] { return message(app) == "Find Missing Files failed: no file dialog on this system"; }));
+	CHECK(has(elements(app, "#pool-message").at(0), "error"));
+
+	app.keys().run("pool.findMissing", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+	app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {dir.path() / "found"});
 	REQUIRE(app.waitUntil([&app] { return message(app) == "Found 1 of 2 missing files."; }, std::chrono::seconds(30)));
 	CHECK(!has(elements(app, "#pool-message").at(0), "error"));
 	CHECK(!offersStop(app));

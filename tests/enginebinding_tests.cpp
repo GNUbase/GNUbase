@@ -440,23 +440,32 @@ TEST_CASE("the UI hears what commands of a name that it sent did, whoever sent t
 {
 	engine::Engine engine;
 	ui::EngineBinding binding(engine);
-	std::vector<engine::Result> results;
-	std::optional<ui::Subscription> subscription =
-		binding.onResult("test.unknown", [&results](const engine::Result& result) { results.push_back(result); });
-	bool done = false;
+	std::vector<std::string> heard; // what ran, in order
+	std::optional<ui::Subscription> subscription = binding.onResult("test.unknown",
+		[&heard](const engine::Result& result)
+		{
+			CHECK_FALSE(result.ok());
+			CHECK_FALSE(result.error.empty());
+			heard.emplace_back("result");
+		});
 	binding.send("test.unknown");
-	binding.send("test.unknown", Json::object(), [&done](const engine::Result&) { done = true; });
+	binding.send("test.unknown", Json::object(), [&heard](const engine::Result&) { heard.emplace_back("done"); });
 	binding.send("engine.version");
-	updateUntil(binding, [&done, &results] { return done && results.size() == 2; });
-	CHECK_FALSE(results.at(0).ok());
-	CHECK_FALSE(results.at(0).error.empty());
+	updateUntil(binding, [&heard] { return heard.size() == 3; });
+	CHECK(heard == std::vector<std::string>{"result", "done", "result"}); // after the sender's done
 
-	// Other clients' commands and ended subscriptions don't count.
+	// Other clients' commands don't count, while the subscription exists.
 	REQUIRE_FALSE(engine::Client(engine).call("test.unknown", Json::object()).ok());
+	bool done = false;
+	binding.send("engine.version", Json::object(), [&done](const engine::Result&) { done = true; });
+	updateUntil(binding, [&done] { return done; });
+	CHECK(heard.size() == 3);
+
+	// Nor do commands after the subscription ended.
 	subscription.reset();
 	binding.send("test.unknown", Json::object(), [&done](const engine::Result&) { done = false; });
 	updateUntil(binding, [&done] { return !done; });
-	CHECK(results.size() == 2);
+	CHECK(heard.size() == 3);
 }
 
 TEST_CASE("watched values reach the UI once an update, and only when they changed", "[unit]")

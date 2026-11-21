@@ -814,14 +814,8 @@ namespace gnubase::app
 		// pool, which opens for it: its window comes to the front if it is in one of its own.
 		for (const char* command :
 			{"pool.removeUnused", "media.locate", "media.removeMissing", "media.conform", "media.prepareArchive"})
-			m_poolResults.push_back(m_binding.onResult(command,
-				[this, command](const engine::Result& result)
-				{
-					if (!m_docking.showing("pool") || m_docking.windowOf("pool") != nullptr)
-						m_docking.open("pool");
-					if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
-						pool->report(command, result);
-				}));
+			m_poolResults.push_back(m_binding.onResult(
+				command, [this, command](const engine::Result& result) { reportInPool(command, result); }));
 
 		m_keys.add({"window.chordPads", "Shows or hides the chord pads in the lower zone.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
@@ -2755,10 +2749,21 @@ namespace gnubase::app
 			[this](const ui::FileDialogResult& result)
 			{
 				if (!result.error.empty())
+				{
 					logging::warning("The folder dialog failed: {}", result.error);
+					reportInPool("media.locate", {0, nullptr, result.error});
+				}
 				if (!result.files.empty())
 					m_binding.send("media.locate", {{"folder", result.files.front().u8string()}});
 			});
+	}
+
+	void AppUi::reportInPool(const std::string& command, const engine::Result& result)
+	{
+		if (!m_docking.showing("pool") || m_docking.windowOf("pool") != nullptr)
+			m_docking.open("pool");
+		if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
+			pool->report(command, result);
 	}
 
 	Rml::ElementDocument& AppUi::openStudioSetup(ui::Window& window)
