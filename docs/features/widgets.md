@@ -210,8 +210,10 @@ rows are in the document's order. Each row has a `value` attribute (without comm
   works on its own row.
 - **Scrolling while dragging.** With the `dragscroll` attribute, a drag of an element in the view (`drag: drag`)
   scrolls the view while the mouse is above or below it, by ten times as far as the mouse is past the edge each second,
-  also while the mouse is held still. The drag's end, the button going up or the view losing the focus stop it. The
-  edit history's separator uses it.
+  also while the mouse is held still. The drag's end, the button going up over the view, the view losing the focus, and
+  the dragged element being removed from the view or no longer held (`:active`) stop it: RmlUi drops a drag without a
+  dragend when its element is removed, and a focusable element passes the focus to its parent in the view then, so
+  the view doesn't blur. The edit history's separator uses it.
 - **Trees.** Rows with a `level` attribute (0 at the top) make a tree: the rows that follow a row with a higher level
   are its children, shown while it has the `expanded` attribute. The view gives tree rows a `.tree-indent`, sized from
   the level (16 dp a level), and a `.tree-toggle`, which the theme draws as an arrow; parents get the state classes
@@ -278,7 +280,7 @@ Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` desel
 a row that isn't selected, Shift+Up goes on from the keys' row and the anchor; rows that keep their elements but get
 other values are selected by value; and in a collapsed parent, Down and Shift+Down go from the nearest shown row above
 a selected row, also one that was clicked before the collapse, and the range deselects the hidden row. A drag held past
-a view's edge scrolls it with `dragscroll` only; splitters move the boundary in a row and in a column, never below
+a view's edge scrolls it with `dragscroll` only, and it stops when the view loses the focus, when the dragged element is removed (also a focusable one, which passes the focus to the view) and when that element is no longer `:active` without a dragend; splitters move the boundary in a row and in a column, never below
 nothing. The color picker picks from its field, its hue strip
 and its numbers, draws the old and the new color, and follows its data.
 `widgets::fill` drops a fill of a drop-down list from the change that its own fill sends, also with a fill of another
