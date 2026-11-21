@@ -151,6 +151,60 @@
 	min-height: 0;
 }
 
+.se-scroll-controls
+{
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	height: 24dp;
+}
+
+#se-scroll
+{
+	flex: 1 1 0;
+}
+
+#se-horizontal-zoom
+{
+	width: 120dp;
+}
+
+.se-zoom-spacer
+{
+	width: 24dp;
+	flex-shrink: 0;
+}
+
+#se-vertical-zoom
+{
+	width: 24dp;
+	height: auto;
+	flex-shrink: 0;
+}
+
+.se-half-axes
+{
+	pointer-events: none;
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.se-half-axis
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 1dp;
+}
+
+.sample-editor[tool=draw] .se-display
+{
+	cursor: tool-draw;
+}
+
 #se-level-menu, .se-level
 {
 	width: 44dp;

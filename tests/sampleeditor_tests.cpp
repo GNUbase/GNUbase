@@ -534,7 +534,7 @@ TEST_CASE("sample editor Process failures preserve the clipboard and clean their
 	CHECK_THAT(f.fails("sampleEditor.applyProcess", completion), ContainsSubstring("only a Process job"));
 }
 
-TEST_CASE("sample editor Process preserves interleaved channels and rejects incompatible paste", "[integration]")
+TEST_CASE("sample editor Process preserves interleaved channels", "[integration]")
 {
 	const test::TempDir dir;
 	const auto path = dir.path() / "stereo.wav";
@@ -556,19 +556,67 @@ TEST_CASE("sample editor Process preserves interleaved channels and rejects inco
 	CHECK(result.samples.at(4000) == stereo.samples.at(200));
 	CHECK(result.samples.at(4001) == stereo.samples.at(201));
 	CHECK(result.samples.at(4200) == stereo.samples.at(6000));
-	for (const bool rate : {true, false})
+}
+
+TEST_CASE("sample editor Paste converts clipboard rate and channels before replacing the range", "[integration]")
+{
+	for (const int mode : {0, 1, 2, 3, 4, 5})
 	{
-		const Json media = f.call("media.add",
-								{{"path", path.u8string()}, {"sampleRate", rate ? 44100 : 48000},
-									{"channels", rate ? 2 : 1}, {"length", 9600}})
-							   .at("media")
-							   .at("id");
+		CAPTURE(mode);
+		const bool monoSource = mode % 2 == 0;
+		const test::TempDir dir;
+		test::Audio target;
+		target.channels = monoSource ? 2 : 1;
+		target.samples.resize(9600 * static_cast<size_t>(target.channels), 0.1F);
+		const auto path = dir.path() / "target.wav";
+		test::writeWav(path, target);
+		Fixture f(path.u8string(), target.channels);
+		f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+		test::Audio source;
+		source.channels = monoSource ? 1 : 2;
+		if (mode == 2 || mode == 3)
+			source.channels = target.channels;
+		source.sampleRate = monoSource ? 24000 : 96000;
+		if (mode >= 4)
+			source.sampleRate = 48000;
+		for (int i = 0; i < 9600; ++i)
+		{
+			source.samples.push_back(0.25F);
+			if (source.channels == 2)
+				source.samples.push_back(0.5F);
+		}
+		const auto copyPath = dir.path() / "clipboard.wav";
+		test::writeWav(copyPath, source);
+		const Json media = f.call("media.add", {{"path", copyPath.u8string()}}).at("media").at("id");
 		const Json clip = f.call("clip.add", {{"media", media}}).at("clip").at("id");
 		const Json event =
 			f.call("audioEvent.add", {{"track", f.track}, {"clip", clip}, {"position", 96000}}).at("event").at("id");
-		CHECK_THAT(
-			f.fails("sampleEditor.process", {{"event", event}, {"operation", "paste"}, {"start", 1000}, {"end", 2000}}),
-			ContainsSubstring("must match"));
+		const Json copy =
+			f.call("sampleEditor.process", {{"event", event}, {"operation", "copy"}, {"start", 0}, {"end", 9600}})
+				.at("job");
+		REQUIRE(test::waitForJob(f.client, copy.at("id").get<uint64_t>()).at("state") == "done");
+		const auto inserted = 9600 * 48000 / source.sampleRate;
+		process(f, "paste", 2000, 3000);
+		const test::Audio result = eventAudio(f);
+		CHECK(result.frames() == 8600 + inserted);
+		CHECK(result.sampleRate == 48000);
+		CHECK(result.channels == target.channels);
+		for (int channel = 0; channel < target.channels; ++channel)
+		{
+			const size_t middle = 2000U + (static_cast<size_t>(inserted) / 2);
+			const size_t index = (middle * static_cast<size_t>(target.channels)) + static_cast<size_t>(channel);
+			double expected = monoSource ? 0.25 : 0.75 * std::sqrt(0.5);
+			if (source.channels == target.channels)
+				expected = channel == 0 ? 0.25 : 0.5;
+			CHECK(std::abs(result.samples.at(index) - expected) < 0.0001);
+		}
+		CHECK(result.samples.at(0) == target.samples.at(0));
+		CHECK(result.samples.back() == target.samples.back());
+		f.call("history.undo");
+		CHECK(eventAudio(f).samples == target.samples);
+		f.call("history.redo");
+		CHECK(eventAudio(f).samples == result.samples);
+		CHECK(test::readWav(copyPath).samples == source.samples);
 	}
 }
 
@@ -628,4 +676,38 @@ TEST_CASE("sample editor Process requires a choice for clips also used by sample
 	const Json after = f.call("project.get");
 	CHECK(objectWithId(after.at("clips"), f.clip) == objectWithId(before.at("clips"), f.clip));
 	CHECK(after.at("channels") == before.at("channels"));
+}
+
+TEST_CASE("sample editor Draw replaces one channel without moving clip metadata", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "draw.wav";
+	test::Audio audio = processAudio();
+	audio.channels = 2;
+	audio.samples.resize(19200, 0.25F);
+	test::writeWav(path, audio);
+	Fixture f(path.u8string(), 2);
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	f.call("clip.addRegion", {{"clip", f.clip}, {"start", 2001}, {"end", 2003}});
+	const Json before = f.call("project.get");
+	Json parameters = {{"event", f.event}, {"operation", "draw"}, {"start", 2000}, {"end", 2005}, {"channel", 1},
+		{"samples", {0.5, 0.25, 0.0, -0.25, -0.5}}};
+	const Json job = f.call("sampleEditor.process", parameters).at("job");
+	REQUIRE(test::waitForJob(f.client, job.at("id").get<uint64_t>()).at("state") == "done");
+	test::Audio expected = audio;
+	for (size_t i = 0; i < 5; ++i)
+		expected.samples.at(((2000 + i) * 2) + 1) = parameters.at("samples").at(i).get<float>();
+	CHECK(test::compareAudio(eventAudio(f), expected, 0.0F).equal);
+	CHECK(f.regions() == objectWithId(before.at("clips"), f.clip).at("regions"));
+	CHECK(f.call("project.get").at("audioEvents") == before.at("audioEvents"));
+	CHECK(test::readWav(path).samples == audio.samples);
+	f.call("history.undo");
+	CHECK(eventAudio(f).samples == audio.samples);
+	f.call("history.redo");
+	CHECK(eventAudio(f).samples == expected.samples);
+	parameters["channel"] = 2;
+	CHECK_THAT(f.fails("sampleEditor.process", parameters), ContainsSubstring("channel"));
+	parameters["channel"] = 0;
+	parameters["samples"] = {0.0};
+	CHECK_THAT(f.fails("sampleEditor.process", parameters), ContainsSubstring("sample count"));
 }

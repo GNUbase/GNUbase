@@ -1065,6 +1065,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".se-overview-selection, .se-selection", {"background-color": c["text"] + "33"}),
         (".se-overview-view", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent"]}),
         (".se-overview-snap, .se-snap-point", {"background-color": c["accent2"]}),
+        (".se-half-axis", {"background-color": c["textMuted"] + "66"}),
         (".se-outside", {"background-color": c["background"] + "99"}),
         (".se-region-shown", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent2"],
                               "background-color": c["accent2"] + "1a"}),
