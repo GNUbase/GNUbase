@@ -991,6 +991,86 @@ TEST_CASE("the other views of a channel follow a control dragged while the engin
 	}
 }
 
+TEST_CASE("the display line's menu moves a channel between link groups, unlinks them and lists their channels; a "
+		  "double click renames the group",
+	"[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added bass = addTrack(app, "audio", "Bass");
+	const Added keys = addTrack(app, "audio", "Keys");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 5; }));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	const auto groups = [&] { return app.call("project.get").at("linkGroups"); };
+	const auto showsLines = [&] { return has(element(app, window, ".mixer-channels"), "link-groups"); };
+	const auto line = [&](const Added& added) { return strip(added.channel) + " .mixer-link"; };
+	const auto lineText = [&](const Added& added)
+	{ return element(app, window, line(added)).at("attributes").value("value", ""); };
+	// Opens the display line's menu and, if given, the submenu of its item at that index.
+	const auto openMenu = [&](const Added& added, std::optional<int> submenu = std::nullopt)
+	{
+		clock->advance(1.0); // no double click with the click before, which would type the group's name
+		click(app, window, line(added));
+		REQUIRE(app.waitUntil([&] { return has(element(app, window, "#mixer-link-menu"), "open"); }));
+		if (submenu)
+		{
+			app.ui().move(window, {"#mixer-link-menu > menuitem", *submenu, std::nullopt});
+			app.shell().step(std::chrono::milliseconds(0));
+		}
+	};
+	CHECK(!showsLines()); // no display line without a link group (reference manual p. 458)
+	app.call("linkGroup.add", {{"channels", {guitar.channel, bass.channel}}, {"name", "Rhythm"}});
+	const uint64_t solo = app.call("linkGroup.add", {{"channels", {keys.channel}}, {"name", "Solo"}})
+							  .at("group")
+							  .at("id")
+							  .get<uint64_t>();
+	REQUIRE(app.waitUntil(showsLines));
+	REQUIRE(app.waitUntil([&] { return lineText(bass) == "1 Rhythm"; }));
+
+	// Linked Channels shows the group's channels (p. 459).
+	openMenu(bass);
+	const Json linked = elements(app, window, "#mixer-link-menu menuitem[disabled]");
+	REQUIRE(linked.size() == 2);
+	CHECK(linked[0].at("text") == "Guitar");
+	CHECK(linked[1].at("text") == "Bass");
+	app.ui().key(window, "Escape");
+
+	// Included in Link Group moves the channel into another group (p. 460).
+	openMenu(bass, 1);
+	click(app, window, "#mixer-link-menu menuitem[link=\"" + std::to_string(solo) + "\"]");
+	REQUIRE(app.waitUntil([&] { return groups().at(1).at("channels") == Json::array({keys.channel, bass.channel}); }));
+	CHECK(groups().at(0).at("channels") == Json::array({guitar.channel}));
+	REQUIRE(app.waitUntil([&] { return lineText(bass) == "2 Solo"; }));
+	// None takes it out of its group (p. 461), which goes with its last channel.
+	openMenu(guitar, 1);
+	click(app, window, "#mixer-link-menu menuitem[link=\"0\"]");
+	REQUIRE(app.waitUntil([&] { return groups().size() == 1; }));
+	REQUIRE(app.waitUntil([&] { return lineText(guitar).empty() && lineText(bass) == "1 Solo"; }));
+	// And into a group again.
+	openMenu(guitar, 0); // without a group, Included in Link Group is the first item
+	click(app, window, "#mixer-link-menu menuitem[link=\"" + std::to_string(solo) + "\"]");
+	REQUIRE(app.waitUntil([&] { return groups().at(0).at("channels").size() == 3; }));
+
+	// A double click on the display line types the group's name (p. 459).
+	clock->advance(1.0);
+	app.ui().click(window, {line(keys), 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().key(window, "Mod+A");
+	app.ui().text(window, "Band");
+	app.ui().key(window, "Enter");
+	REQUIRE(app.waitUntil([&] { return groups().at(0).at("name") == "Band"; }));
+	REQUIRE(app.waitUntil([&] { return lineText(guitar) == "1 Band"; }));
+
+	// Unlink Selected Channels unlinks the line's group.
+	openMenu(keys);
+	click(app, window, "#mixer-link-menu menuitem[link=unlink]");
+	REQUIRE(app.waitUntil([&] { return groups().empty(); }));
+	REQUIRE(app.waitUntil([&] { return !showsLines(); }));
+}
+
 TEST_CASE("a VCA strip has a fader and buttons and picks the link group it controls; strips show their group", "[ui]")
 {
 	test::UiApp app({1200, 700});
@@ -1007,9 +1087,10 @@ TEST_CASE("a VCA strip has a fader and buttons and picks the link group it contr
 	CHECK(element(app, window, strip(vca.channel)).at("attributes").at("type") == "vca");
 
 	// The display line shows the number and the name of the link group (reference manual p. 458).
-	REQUIRE(app.waitUntil(
-		[&] { return element(app, window, strip(guitar.channel) + " .mixer-link").at("text") == "1 Rhythm"; }));
-	CHECK(element(app, window, strip(vca.channel) + " .mixer-link").value("text", std::string()).empty());
+	const auto line = [&](const Added& added)
+	{ return element(app, window, strip(added.channel) + " .mixer-link").at("attributes").value("value", ""); };
+	REQUIRE(app.waitUntil([&] { return line(guitar) == "1 Rhythm"; }));
+	CHECK(line(vca).empty());
 
 	// A VCA fader has a fader, M, S and L, and no panner (p. 515).
 	CHECK(elements(app, window, strip(vca.channel) + " fader").size() == 1);

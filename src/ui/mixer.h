@@ -157,6 +157,10 @@ namespace gnubase::ui
 		void showSettingsToolbar();
 		void goTo(uint64_t track);
 		const MixerChannel* channelOf(Rml::Element* element) const;
+		// The display line's pop-up menu (reference manual p. 459), filled for the channel as it opens; link does what
+		// its item says.
+		void showLinkMenu(uint64_t channel);
+		void link(const std::string& item);
 
 		EngineBinding& m_binding;
 		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
@@ -182,9 +186,10 @@ namespace gnubase::ui
 		std::map<uint64_t, Rml::Element*> m_stripOf; // by channel id, while m_strips lives
 		bool m_loading = false;
 		bool m_stale = false;
-		uint64_t m_dragged = 0;  // the channel whose name a mouse button went down on
-		bool m_updating = false; // while the strips show the project's values
-		bool m_dropping = false; // while another project drops the notes being typed
+		uint64_t m_dragged = 0;     // the channel whose name a mouse button went down on
+		uint64_t m_linkChannel = 0; // the channel whose display line's menu opened last
+		bool m_updating = false;    // while the strips show the project's values
+		bool m_dropping = false;    // while another project drops the notes being typed
 		SoloHold m_soloHold;
 		double m_defaultSendLevel = 0.0; // the user setting audio.defaultSendLevel
 
