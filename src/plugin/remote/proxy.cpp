@@ -581,7 +581,7 @@ namespace gnubase::plugin::remote
 	{
 		if (!has(id))
 			return nullptr;
-		return provide<AudioPorts, Params, State, Latency, Tail>(this, id);
+		return provide<AudioPorts, Params, State, Latency, Tail, KeySwitches>(this, id);
 	}
 
 	void RemotePlugin::fail(Failure failure) noexcept
@@ -1124,6 +1124,26 @@ namespace gnubase::plugin::remote
 			return false;
 		text = reader.string();
 		return reader.ok();
+	}
+
+	std::vector<KeySwitch> RemotePlugin::keySwitches()
+	{
+		const HostConnection::Reply reply = call(*binding(), Message::KeySwitches, {}, m_deadlines.query);
+		std::vector<KeySwitch> list;
+		if (!reply.ok)
+			return list;
+		Reader reader(reply.body);
+		const uint32_t count = reader.count(sizeof(uint32_t) + sizeof(uint16_t));
+		for (uint32_t i = 0; i < count && reader.ok(); ++i)
+		{
+			KeySwitch each;
+			each.name = reader.string();
+			each.key = static_cast<int16_t>(reader.u16());
+			list.push_back(std::move(each));
+		}
+		if (!reader.ok())
+			list.clear();
+		return list;
 	}
 
 	bool RemotePlugin::paramTextToValue(uint32_t param, std::string_view text, double& value) const

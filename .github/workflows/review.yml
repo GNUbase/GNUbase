@@ -17,6 +17,7 @@ on:
     types: [opened, reopened, ready_for_review, synchronize]
 
 permissions:
+  actions: write # cancels the job's own run when the API account is out of credits
   issues: read
   pull-requests: read
 
@@ -80,5 +81,15 @@ jobs:
             -H "anthropic-version: 2026-10-21" \
             -H "anthropic-beta: managed-agents-2026-04-01" \
             -H "content-type: application/json" \
-            -d @session.json > response.json || { cat response.json; exit 1; } # a refused session fails the job, with the reason
+            -d @session.json > response.json || {
+            cat response.json
+            # Out of credits is no fault of the pull request: the run ends as cancelled, not failed. Any other refusal
+            # fails the job, with the reason.
+            if jq -e '.error.message | test("credit balance is too low")' response.json > /dev/null; then
+              echo "::warning::No review: the API account is out of credits"
+              gh run cancel "$GITHUB_RUN_ID" -R "$REPO"
+              sleep 60 # the cancel ends the job; exiting before it lands would mark the job failed
+            fi
+            exit 1
+          }
           jq -r '"Review session \(.id): \(.status)"' response.json

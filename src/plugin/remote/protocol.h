@@ -42,6 +42,7 @@ namespace gnubase::plugin::remote
 		FlushParams = 10,    // events; Reply: the output events. Refused while the instance processes
 		Describe = 11,       // Reply: PluginInfo as it is now, e.g. after the plugin asked for a rescan
 		SetProcessMode = 12, // ProcessMode; Reply: nothing. Only while inactive
+		KeySwitches = 13,    // Reply: a count, then each key switch's name and key (KeySwitches::keySwitches)
 
 		// Host to engine.
 		Reply = 100,  // ok, error message, then what the request returns

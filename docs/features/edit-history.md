@@ -23,7 +23,7 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
 - **Jumping.** Dragging the separator up undoes and dragging it down redoes. While it is dragged it moves to the row
   boundary nearest the mouse, measured from where the rows were when the drag started, and the rows show Done or Undone
   as they will be; one `history.undo` or `history.redo` with `steps` goes to the engine when the drag ends, and none if
-  it ends where it started or if the steps changed under it (another client added one, so the rows were made again). The
+  it ends where it started or if the steps changed under it: another client added one, so the rows were made again, or, at the maximum number of steps, dropped the oldest one, so that there are as many rows as before (the panel compares the steps' ids), and the rows show the steps as they are. The
   rows' places are measured in the list's content, so the separator follows them when the wheel scrolls the list during
   a drag. Held above or below the list, the mouse scrolls it (the list view's `dragscroll`, [widgets.md](widgets.md)),
   faster the further it is past the edge, so the separator reaches rows that a long history has outside the panel:
@@ -41,11 +41,11 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
   step went past the maximum number of steps, so that the step is a row higher; when the step itself is gone (a new
   action drops the undone steps, or the step was the oldest; a gesture that ends where it started removes its step),
   what was typed goes with it and the list gets the focus. A gesture that joins the last step (below) keeps that step.
-  Nothing is sent before Enter or the user moving the focus. `history.get` has no step ids, so the panel recognizes a
-  step by its action and time and by where it is: steps only go at the end (the undone ones) and, at the maximum, at the
-  start. At the maximum, a run of steps of the same action within one second can't be told apart, and Enter racing
-  another client's action sends the note by the step's index; step ids in `history.get` and `history.describe` would
-  settle both.
+  Nothing is sent before Enter or the user moving the focus. The panel follows a step by its id from `history.get`
+  (which stays with the step while the oldest steps and the undone ones go, and whatever other clients do), also among
+  steps of one action within one second at the maximum number of steps, and sends the note by that id
+  (`history.describe` takes `id` or `step`, exactly one of them): a step that went meanwhile gets no note, and the panel
+  shows the steps as they are.
 - **Gestures.** A `history.transaction` with a `merge` key joins the last step instead of adding one when that step is a
   transaction with the same key and nothing was undone since; a gesture that ends where it started leaves no step. The
   UI makes each gesture on a value widget one step this way (`EngineBinding::sendStep`, with the gesture number of the
@@ -88,5 +88,5 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
   another client undoes and redoes keeps the focus and sends the whole text once; at position 1 of 3, a note for step 2
   isn't sent when another client's new step takes that step's place, a note for a step that stays goes on in its field
   when the rows are made again, at the maximum number of steps it moves up a row with its step, and a note for the
-  oldest step goes with it when a new step drops it. `tests/uithemes_tests.cpp` checks that every theme dims the undone
+  oldest step goes with it when a new step drops it, also among steps of one action within a second, where it stays with its step by id. Enter racing another client's lower maximum, before the panel has seen it, sends the note to the step it was typed for, and a note for the step that maximum drops goes to no step. At the maximum, a drag ends when another client's new step drops the oldest one. The caret inside a note and a selection stay where they were when the rows are made again. A note for the last step goes when another client's gesture that ends where it started removes it, and when a new project clears the history. `tests/history_tests.cpp` also checks `history.describe` by id after the oldest steps went, and its refusals. `tests/uithemes_tests.cpp` checks that every theme dims the undone
   rows and their details and draws the separator.

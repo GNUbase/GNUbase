@@ -20,10 +20,14 @@ so every document in the app and in UI tests has them.
 
 - `<button>` is clicked with the mouse, or with Space or Enter while it has the focus. With the `disabled` attribute it
   gets `:disabled`, takes no focus, and clicks pass through it. `button.primary`, `button.icon-only` and the small
-  track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme. Buttons in a
-  `.toolbar` (the project window's, the mixer's, the pool's) and in the transport controls (`.transport`) are for the
-  mouse, as in the reference (reference manual pp. 295-311): a click focuses them, but Tab skips them and Space and
-  Enter go on to the key commands, so Space still starts and stops playback after a click on Cycle or Snap (#456).
+  track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme. Buttons outside
+  dialogs are for the mouse, as in the reference (reference manual pp. 295-311): those in a `.toolbar` (the project
+  window's, the mixer's, the pool's, the markers window's and the panel windows'), in the transport controls
+  (`.transport`), in the track list, the inspector's track buttons, the mixer's channels, a zone's Close button and the
+  ruler's format button. A click focuses them, but Tab skips them and Space, Enter and NumEnter go on to the key
+  commands, so Space still starts and stops playback after a click on Cycle, Snap or a track's Mute or Solo (#456,
+  #653). Setup panes (`.setup-pane`), also those of a toolbar or the transport controls, keep Tab, Space and Enter for
+  their buttons.
 - `<button type="toggle">` is a toggle button: a click turns it on or off. Its state is the `checked` attribute, as
   for check boxes, shown by the state class `.checked`; it sends `change` with the new state as a bool, so
   `data-checked="muted"` binds it.
@@ -49,7 +53,8 @@ Widgets with a number share their behaviour (reference manual p. 1598, "Editing 
   data binding sets meanwhile, such as the engine's answer to an earlier step of the drag, doesn't move it, and the
   drag goes on from where the mouse put it; when the drag ends, the widget shows the last value set during it, unless
   the drag changed the value after that (#716, [ui-engine-binding.md](ui-engine-binding.md)). A value set while
-  `change` is handled, such as the change rounded, is the drag's.
+  `change` is handled, such as the change rounded, is the drag's. The drag goes on from its unrounded value, so a
+  document that rounds each change to a step doesn't hold back mouse moves smaller than half a step (#691).
 - `disabled` gives `:disabled` and ignores the user.
 
 The widgets:
@@ -98,8 +103,9 @@ attributes, through a data model or directly.
   `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
   Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has the attribute,
   as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens
-  inside the window, moved left or up where it would stick out. Put menus straight into the body, so that no container
-  clips them.
+  inside the window, moved left or up where it would stick out. Code opens one at a point with `ui::openMenu`
+  (`src/ui/widgets.h`), as the Alt-click that opens the Choose Track Color pane does ([colors.md](colors.md)). Put
+  menus straight into the body, so that no container clips them.
 - An open menu whose items come or go moves inside the window again (#1580, #1665). Until the next press, release or
   key, it is placed from where it opened, as if the items had been there then: those that the opening click fills in,
   as the Articulations lane's context menu and the list editor's pop-up menus do, so that a menu that shrinks goes back
@@ -210,8 +216,10 @@ rows are in the document's order. Each row has a `value` attribute (without comm
   works on its own row.
 - **Scrolling while dragging.** With the `dragscroll` attribute, a drag of an element in the view (`drag: drag`)
   scrolls the view while the mouse is above or below it, by ten times as far as the mouse is past the edge each second,
-  also while the mouse is held still. The drag's end, the button going up or the view losing the focus stop it. The
-  edit history's separator uses it.
+  also while the mouse is held still. The drag's end, the button going up over the view, the view losing the focus, and
+  the dragged element being removed from the view or no longer held (`:active`) stop it: RmlUi drops a drag without a
+  dragend when its element is removed, and a focusable element passes the focus to its parent in the view then, so
+  the view doesn't blur. The edit history's separator uses it.
 - **Trees.** Rows with a `level` attribute (0 at the top) make a tree: the rows that follow a row with a higher level
   are its children, shown while it has the `expanded` attribute. The view gives tree rows a `.tree-indent`, sized from
   the level (16 dp a level), and a `.tree-toggle`, which the theme draws as an arrow; parents get the state classes
@@ -278,9 +286,10 @@ Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` desel
 a row that isn't selected, Shift+Up goes on from the keys' row and the anchor; rows that keep their elements but get
 other values are selected by value; and in a collapsed parent, Down and Shift+Down go from the nearest shown row above
 a selected row, also one that was clicked before the collapse, and the range deselects the hidden row. A drag held past
-a view's edge scrolls it with `dragscroll` only; splitters move the boundary in a row and in a column, never below
-nothing. The color picker picks from its field, its hue strip
-and its numbers, draws the old and the new color, and follows its data.
+a view's edge scrolls it with `dragscroll` only, and it stops when the view loses the focus, when the dragged element
+is removed (also a focusable one, which passes the focus to the view) and when that element is no longer `:active`
+without a dragend; splitters move the boundary in a row and in a column, never below nothing. The color picker picks
+from its field, its hue strip and its numbers, draws the old and the new color, and follows its data.
 `widgets::fill` drops a fill of a drop-down list from the change that its own fill sends, also with a fill of another
 list in between, so the list keeps the options of the fill that sent it (#1719), and also from the change of another
 list that its change fills, at any depth (#1748).

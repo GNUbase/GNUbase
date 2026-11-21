@@ -70,14 +70,15 @@ namespace gnubase::plugin::remote
 	// request goes to the engine's plugin::Host at once, everything else waits for refresh(), which fetches what
 	// changed and passes it on to the engine's host extensions.
 	//
-	// Extensions: AudioPorts, Params, State, Latency and Tail, for the ids the remote plugin has. The others come with
-	// their tickets (#69 editors, #70 parameters, #72 presets).
+	// Extensions: AudioPorts, Params, State, Latency, Tail and KeySwitches, for the ids the remote plugin has. The
+	// others come with their tickets (#69 editors, #70 parameters, #72 presets).
 	class RemotePlugin final : public Plugin,
 							   public AudioPorts,
 							   public Params,
 							   public State,
 							   public Latency,
-							   public Tail
+							   public Tail,
+							   public KeySwitches
 	{
 	public:
 		// The plugin `id` in the file `path`, to create in `host` on init(). `engineHost` is what the plugin asks of
@@ -121,6 +122,10 @@ namespace gnubase::plugin::remote
 		// Latency, Tail
 		uint32_t latency() const override;
 		uint32_t tail() const noexcept override { return m_tail.load(std::memory_order_relaxed); }
+
+		// KeySwitches: asks the instance each time, so they are those of the preset it has now; none if the host
+		// doesn't answer.
+		std::vector<KeySwitch> keySwitches() override;
 
 		// [main] The host process the instance runs in.
 		std::shared_ptr<HostConnection> host() const;

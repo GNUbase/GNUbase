@@ -15,6 +15,7 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Property.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -414,6 +415,98 @@ TEST_CASE("the color menu colors the selected events, or else the selected track
 	CHECK(window.project().at("tracks")[0].at("color") == "#2040e0");
 }
 
+TEST_CASE("Alt-click on a track's color strip or the inspector's Basics header colors that one track", "[ui]")
+{
+	ProjectWindow window;
+	window.app.appUi().docking().open("inspector");
+	window.app.appUi().docking().setSectionHidden("project", "toolbar", "quantize", true); // room for #select-color
+	window.app.call("project.set",
+		{{"colors", {{{"name", "Warm"}, {"color", "#e04020"}}, {{"name", "Cold"}, {"color", "#2040e0"}}}}});
+	const auto audio = window.app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	const auto midi = window.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const auto part = window.app.call("midiPart.add", {{"track", midi}, {"position", 0}, {"length", 3840}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.elements("#track-list listitem").size() == 2; }));
+	const auto altClick = [&window](const std::string& selector)
+	{
+		window.app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {"alt"});
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto open = [&window]
+	{
+		const Rml::Element* menu = window.find("#color-menu");
+		return menu != nullptr && menu->IsClassSet("open");
+	};
+
+	// The Choose Track Color pane on the strip of a track that isn't selected, with an event selected elsewhere: its
+	// color goes to that track alone, not to the selected track or event (reference manual p. 113).
+	window.app.appUi().trackList()->select({audio});
+	window.display.select({part});
+	altClick("#track-list listitem[value=\"" + std::to_string(midi) + "\"] .track-color");
+	REQUIRE(open());
+	const Json items = window.elements("#color-menu menuitem");
+	REQUIRE(items.size() == 3);
+	CHECK(items[0].value("text", "") == "Set Track Color to Default");
+	window.click("#color-menu menuitem[color=\"#2040e0\"]");
+	REQUIRE(window.app.waitUntil([&] { return window.project().at("tracks")[1].at("color") == "#2040e0"; }));
+	CHECK(window.project().at("tracks")[0].at("color").is_null());
+	CHECK(window.project().at("midiParts")[0].at("color").is_null());
+	CHECK(window.app.call("history.get").at("steps").back().at("action") == "Colorize Tracks");
+
+	// The toolbar's menu colors the selection again afterwards.
+	window.display.select({});
+	window.app.appUi().trackList()->select({audio});
+	window.click("#select-color");
+	window.click("#color-menu menuitem[color=\"#e04020\"]");
+	REQUIRE(window.app.waitUntil([&] { return window.project().at("tracks")[0].at("color") == "#e04020"; }));
+	CHECK(window.project().at("tracks")[1].at("color") == "#2040e0");
+
+	// The row left of the track's name opens the pane as well; Set Track Color to Default.
+	Rml::Element* name = window.find("#track-list listitem[value=\"" + std::to_string(midi) + "\"] .track-name");
+	REQUIRE(name != nullptr);
+	window.app.ui().click(std::nullopt,
+		{"", 0,
+			ui::Point{static_cast<int>(name->GetAbsoluteLeft()) - 2,
+				static_cast<int>(name->GetAbsoluteTop() + (name->GetBox().GetSize().y / 2))}},
+		ui::MouseButton::Left, 1, {"alt"});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(open());
+	window.click("#color-menu menuitem[color=\"\"]");
+	REQUIRE(window.app.waitUntil([&] { return window.project().at("tracks")[1].at("color").is_null(); }));
+	CHECK(window.project().at("tracks")[0].at("color") == "#e04020");
+
+	// The inspector's Basics header colors the track the inspector shows, and Alt-click doesn't close the section.
+	window.app.appUi().trackList()->select({midi});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	altClick(".inspector [section=basics] .section-header");
+	REQUIRE(open());
+	CHECK_FALSE(window.find(".inspector [section=basics]")->IsClassSet("collapsed"));
+	window.click("#color-menu menuitem[color=\"#2040e0\"]");
+	REQUIRE(window.app.waitUntil([&] { return window.project().at("tracks")[1].at("color") == "#2040e0"; }));
+	CHECK(window.project().at("tracks")[0].at("color") == "#e04020");
+
+	// The theme stretches a selected, colored track's strip across its row: right of the name it opens no pane.
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE_FALSE(open());
+	const std::string row = "#track-list listitem[value=\"" + std::to_string(midi) + "\"]";
+	Rml::Element* strip = window.find(row + " .track-color");
+	name = window.find(row + " .track-name");
+	REQUIRE(strip != nullptr);
+	REQUIRE(name != nullptr);
+	const float y = strip->GetAbsoluteTop() + (strip->GetBox().GetSize().y / 2);
+	int x = -1; // the first point right of the name where the strip is on top
+	for (int at = static_cast<int>(name->GetAbsoluteLeft() + name->GetBox().GetSize().x);
+		at < static_cast<int>(strip->GetAbsoluteLeft() + strip->GetBox().GetSize().x) && x < 0; ++at)
+		if (strip->GetContext()->GetElementAtPoint(Rml::Vector2f(static_cast<float>(at), y)) == strip)
+			x = at;
+	REQUIRE(x >= 0);
+	window.app.ui().click(std::nullopt, {"", 0, ui::Point{x, static_cast<int>(y)}}, ui::MouseButton::Left, 1, {"alt"});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(open());
+}
+
 TEST_CASE("the project colors setup dialog edits the project's color set", "[ui]")
 {
 	ProjectWindow window;
@@ -497,4 +590,90 @@ TEST_CASE("the project colors setup dialog renames colors and resets one to its 
 	CHECK(colors[1] == factory[1]);
 	CHECK(colors[2].at("name") == "Kick");
 	CHECK(colors[2].at("color") == factory[2].at("color"));
+}
+
+TEST_CASE("the project colors setup dialog's presets make sets of 8 to 32 basic colors in tints", "[ui]")
+{
+	ProjectWindow window;
+	const auto open = [&window] { return !window.elements("#project-colors-dialog").empty(); };
+	window.app.keys().run("project.colorsSetup", Json::object(), window.app.main(), nullptr);
+	REQUIRE(window.app.waitUntil(open));
+	window.click("#colors-presets-tab");
+	const auto choose = [&window](const char* id, const char* value)
+	{
+		auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(window.find(std::string("#") + id));
+		REQUIRE(select != nullptr);
+		select->SetValue(value);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto names = [&window]
+	{
+		std::vector<std::string> list;
+		for (const Json& item : window.elements("#project-colors > listitem"))
+			list.push_back(item.value("text", ""));
+		return list;
+	};
+	const Json factory = window.app.call("project.factoryColors").at("colors");
+
+	// 8 basic colors around the factory set's hues, its grey last; the new set shows on the tab too (p. 117).
+	choose("preset-basic", "8");
+	REQUIRE(names().size() == 8);
+	CHECK(window.elements("#preset-colors .color-swatch").size() == 8);
+	CHECK(names().front() == factory[0].at("name").get<std::string>());
+	CHECK(names().back() == factory[15].at("name").get<std::string>());
+	const std::vector<std::string> eight = names();
+	CHECK(std::set<std::string>(eight.begin(), eight.end()).size() == 8); // no name twice
+
+	// A color changed in the picker changes on the tab as well.
+	auto* picker = window.find("#color-picker");
+	REQUIRE(picker != nullptr);
+	picker->SetAttribute("value", "#123456");
+	Rml::Dictionary parameters;
+	parameters["value"] = Rml::String("#123456");
+	picker->DispatchEvent(Rml::EventId::Change, parameters);
+	const Rml::Property* swatch = window.find("#preset-colors .color-swatch")->GetLocalProperty("background-color");
+	REQUIRE(swatch != nullptr);
+	CHECK(swatch->Get<Rml::Colourb>() == Rml::Colourb(0x12, 0x34, 0x56, 255));
+
+	// Reset to Factory Settings sets the tab back to 16 basic colors in one tint, so choosing 8 again makes 8.
+	window.click("#colors-factory");
+	REQUIRE(names().size() == 16);
+	CHECK(window.find("#preset-basic")->GetAttribute<Rml::String>("value", "") == "16");
+	CHECK(window.find("#preset-tints")->GetAttribute<Rml::String>("value", "") == "1");
+	CHECK(window.find("#preset-sort")->GetAttribute<Rml::String>("value", "") == "basic");
+	choose("preset-basic", "8");
+	CHECK(names() == eight);
+
+	// Two tints each, sorted by basic color: each color, then its light tint; by tint: the basic colors first.
+	choose("preset-tints", "2");
+	REQUIRE(names().size() == 16);
+	CHECK(names()[1] == "Light " + names()[0]);
+	choose("preset-sort", "tint");
+	CHECK(names()[8] == "Light " + names()[0]);
+
+	// 16 basic colors in one tint are the factory set; 32 in 4 tints are 128 colors.
+	choose("preset-basic", "32");
+	choose("preset-tints", "4");
+	CHECK(names().size() == 128);
+	choose("preset-basic", "16");
+	choose("preset-tints", "1");
+	window.click("#colors-apply");
+	REQUIRE(window.app.waitUntil([&] { return !open(); }));
+	CHECK(window.project().at("colors") == factory);
+
+	// Apply takes the new set: 24 basic colors, all of them valid and different.
+	window.app.keys().run("project.colorsSetup", Json::object(), window.app.main(), nullptr);
+	REQUIRE(window.app.waitUntil(open));
+	window.click("#colors-presets-tab");
+	choose("preset-basic", "24");
+	window.click("#colors-apply");
+	REQUIRE(window.app.waitUntil([&] { return !open(); }));
+	const Json colors = window.project().at("colors");
+	REQUIRE(colors.size() == 24);
+	std::set<std::string> distinct;
+	for (const Json& color : colors)
+		distinct.insert(color.at("color").get<std::string>());
+	CHECK(distinct.size() == 24);
+	CHECK(colors[0] == factory[0]);
+	CHECK(colors[23] == factory[15]);
 }

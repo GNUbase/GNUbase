@@ -47,6 +47,11 @@ namespace gnubase::ui
 	// All buttons show (reference manual pp. 58, 447).
 	bool anyChannelHas(const engine::Json& project, const std::string& state);
 
+	// Whether the audio of channel from reaches channel to through outputs and sends, as the engine checks for loops
+	// (engine::routingLoops): a channel can't play into one whose audio comes back to it. The mixer's send destination
+	// lists and the inspector's output list leave such channels out.
+	bool routesTo(const engine::Json& project, uint64_t from, uint64_t to);
+
 	// Click and hold on a solo button switches solo defeat, as Alt-click does (p. 466): a view tells it where the mouse
 	// went down, and asks at the click on a solo button (control="solo") whether the press there was that long.
 	class SoloHold
@@ -159,6 +164,10 @@ namespace gnubase::ui
 		// The meters' values, per channel in m_metered: each audio channel's peak and maximum, then the peak level.
 		std::vector<std::vector<std::string>> readMeters() const;
 		void showMeters(const std::vector<std::vector<std::string>>& shown);
+		// The display line's pop-up menu (reference manual p. 459), filled for the channel as it opens; link does what
+		// its item says.
+		void showLinkMenu(uint64_t channel);
+		void link(const std::string& item);
 
 		EngineBinding& m_binding;
 		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
@@ -186,9 +195,10 @@ namespace gnubase::ui
 		std::shared_ptr<std::vector<uint64_t>> m_metered; // the channels whose strips have meters
 		bool m_loading = false;
 		bool m_stale = false;
-		uint64_t m_dragged = 0;  // the channel whose name a mouse button went down on
-		bool m_updating = false; // while the strips show the project's values
-		bool m_dropping = false; // while another project drops the notes being typed
+		uint64_t m_dragged = 0;     // the channel whose name a mouse button went down on
+		uint64_t m_linkChannel = 0; // the channel whose display line's menu opened last
+		bool m_updating = false;    // while the strips show the project's values
+		bool m_dropping = false;    // while another project drops the notes being typed
 		SoloHold m_soloHold;
 		double m_defaultSendLevel = 0.0; // the user setting audio.defaultSendLevel
 

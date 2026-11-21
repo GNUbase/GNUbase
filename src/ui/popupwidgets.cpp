@@ -1079,6 +1079,14 @@ namespace gnubase::ui
 		};
 	}
 
+	bool openMenu(Rml::Element& menu, Rml::Vector2f at)
+	{
+		auto* opened = dynamic_cast<Menu*>(&menu);
+		if (opened != nullptr)
+			opened->open(at);
+		return opened != nullptr;
+	}
+
 	bool closeDialog(Rml::ElementDocument& document, const std::string& result)
 	{
 		auto* dialog = dynamic_cast<Dialog*>(document.QuerySelector("dialog"));

@@ -71,7 +71,9 @@ namespace gnubase::engine
 	// and frozen tracks at their copies with one transaction named action (media.relink, track.relinkFreeze), so that
 	// it is one undo step of project, the project open when it started (ProjectModel::openedRevision). Media and tracks
 	// whose path changed while the job copied, or that were removed, keep their path, and copies that none of them
-	// plays are removed; so are all of them if another project was opened meanwhile. The job's result is {copied:
+	// plays are removed; so are all of them if another project was opened meanwhile. If the project was saved in
+	// another folder meanwhile, the files are copied again into its media folder (project.location), except those
+	// inside that folder, and the earlier copies are removed. The job's result is {copied:
 	// [{media or tracks, from, to}], missing: [{media or tracks, path}], changed: [media], changedTracks: [track]}.
 	// Returns the job.
 	Json startMediaCopy(Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder,

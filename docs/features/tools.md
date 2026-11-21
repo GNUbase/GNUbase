@@ -46,8 +46,10 @@ project or undo.
   pointer there) and scrubs what the event plays at the edge the release gives it, snapped: its clip at that clip
   frame (`audition.scrub` with `clip`, from the drag's `event.previewResize`), also over audio the event hides yet,
   and without moving the cursor (p. 268); the upper half of the edge scrubs the track, as the rest of the event does.
-  A click there without a drag does nothing more: no tool modifier of the object selection tool's clicks. On other
-  tracks it does nothing yet.
+  An event too narrow for edges, as for the object selection tool, scrubs the track everywhere. A click there
+  without a drag does nothing more: no tool modifier of the object selection tool's clicks. What the play tool
+  auditions or scrubs ends with the event display too, as when the project window closes by a key command during
+  the press. On other tracks it does nothing yet.
 - **Cross-hair cursor.** It shows with the tools that use it (object selection, range selection, draw, split, line),
   not with the others (p. 110).
 - **Selection range.** `range()` is the range: start and end in project samples and the tracks it covers by id, also
@@ -185,7 +187,9 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   snapped, by dragging and with a click, and MIDI parts with the object selection tool and Alt, none on audio tracks or with the line tool; auditioning the audio lane's
   track on the dummy device while the mouse is pressed, nothing on a MIDI lane, scrubbing with a drag, and resizing an
   audio event at its lower corners in scrub mode, with its pointer there, while the upper part of the edge scrubs, the dummy device playing the clip's hidden audio
-  that an edge dragged outwards reveals, and Alt and Alt+Shift clicks there neither splitting nor locating; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
+  that an edge dragged outwards reveals, the start edge scrubbing the clip at the event's offset, an event of 18 dp
+  scrubbing the track at its corners, and Alt and Alt+Shift clicks there neither splitting nor locating; an event
+  display that goes away during a press of the play tool, in either mode and during a resize, ending the audition; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
   every track, and the events they select when another tool takes over; range edges at zero crossings with Snap to
   Zero Crossing, for a drag, a click and a double click on an event and on a gap, and an edit right after the release
   waiting for them, also when a press starts another range before the answer (it edits the first range); the

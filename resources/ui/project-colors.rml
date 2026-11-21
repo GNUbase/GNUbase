@@ -4,9 +4,10 @@
      the UI command project.colorsSetup). Its Lua edits a copy of the set from project.get: a click on a color selects
      it, the name field renames it and the color picker changes it; Insert Color, Duplicate Color, Remove Color and
      Reset Color (to the factory color in its place, project.factoryColors) change the list, Reset to Factory
-     Settings takes the whole factory set. Apply sends project.set, one undo step; Cancel drops the changes. The
-     swatches show the colors, which are user data: the one place in Lua that sets background-color
-     (tests/stylerules_tests.cpp). -->
+     Settings takes the whole factory set. The Presets tab makes a new set (p. 117): 8 to 32 basic colors, the factory
+     set's hues and its grey (its last color), in 1, 2 or 4 tints, sorted by basic color or by tint; the Color Set
+     tab then edits it. Apply sends project.set, one undo step; Cancel drops the changes. The swatches show the
+     colors, which are user data: the one place in Lua that sets background-color (tests/stylerules_tests.cpp). -->
 <rml>
 <head>
 	<title>Project Colors Setup</title>
@@ -55,6 +56,23 @@
 		{
 			flex: 1;
 		}
+
+		.row .label
+		{
+			width: 160dp;
+		}
+
+		#preset-colors
+		{
+			display: flex;
+			flex-wrap: wrap;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#preset-colors .color-swatch
+		{
+			margin: 0 4dp 4dp 0;
+		}
 	</style>
 	<script>
 		ProjectColors = {}
@@ -63,6 +81,7 @@
 		local colors = {} -- the set as the dialog edits it: {name, color}
 		local factory = {}
 		local selected = 1
+		local preset = {basic = "16", tints = "1", sort = "basic"} -- what the Presets tab shows
 
 		local function copy(list)
 			local result = {}
@@ -86,8 +105,11 @@
 			end
 			local list = document:GetElementById("project-colors")
 			list.inner_rml = table.concat(rml)
+			local swatches = document:GetElementById("preset-colors")
+			swatches.inner_rml = string.rep('<span class="color-swatch"/>', #colors)
 			for index, item in ipairs(colors) do
 				list.child_nodes[index]:QuerySelector(".color-swatch").style["background-color"] = item.color
+				swatches.child_nodes[index].style["background-color"] = item.color
 			end
 			list:SetAttribute("value", tostring(selected))
 			local current = colors[selected]
@@ -140,6 +162,10 @@
 			if row ~= nil then
 				row:QuerySelector(".color-swatch").style["background-color"] = value
 			end
+			local swatch = document:GetElementById("preset-colors").child_nodes[selected]
+			if swatch ~= nil then
+				swatch.style["background-color"] = value
+			end
 		end
 
 		function dialog.insert(document, duplicate)
@@ -166,8 +192,78 @@
 			end
 		end
 
+		-- The factory set, and the Presets tab back to its settings: 16 basic colors in one tint.
 		function dialog.factory(document)
 			colors = copy(factory)
+			preset = {basic = "16", tints = "1", sort = "basic"}
+			for key, value in pairs(preset) do
+				document:GetElementById("preset-" .. key):SetAttribute("value", value)
+			end
+			dialog.show(document)
+		end
+
+		-- "#rrggbb" between a and b, at t from 0 (a) to 1 (b).
+		local function mix(a, b, t)
+			local result = "#"
+			for i = 2, 6, 2 do
+				local from, to = tonumber(a:sub(i, i + 1), 16), tonumber(b:sub(i, i + 1), 16)
+				result = result .. string.format("%02x", math.floor(from + (to - from) * t + 0.5))
+			end
+			return result
+		end
+
+		-- The tints of each basic color, in order: a name prefix, and the color it's mixed with and how much.
+		local tints = {
+			["1"] = {{"", nil, 0}},
+			["2"] = {{"", nil, 0}, {"Light ", "#ffffff", 0.4}},
+			["4"] = {
+				{"Dark ", "#000000", 0.35}, {"", nil, 0}, {"Light ", "#ffffff", 0.35}, {"Pale ", "#ffffff", 0.65},
+			},
+		}
+
+		-- A setting of the Presets tab changed: the new set replaces the one being edited. 16 basic colors are the
+		-- factory set's; other numbers spread as many around its hues, mixing neighbours, with its grey last.
+		function dialog.preset(document, key, event)
+			local value = tostring(event.parameters.value or "")
+			if preset[key] == value or #factory < 2 then
+				return -- also the change a list sends as it loads
+			end
+			preset[key] = value
+			local count = tonumber(preset.basic) or 16
+			local hues = #factory - 1
+			local basics, seen = {}, {}
+			for i = 1, count - 1 do
+				local at = (i - 1) * hues / (count - 1)
+				local low = math.floor(at)
+				local t = at - low
+				local from, to = factory[low + 1], factory[(low + 1) % hues + 1]
+				local name = t < 0.5 and from.name or to.name
+				seen[name] = (seen[name] or 0) + 1
+				basics[i] = {
+					name = seen[name] > 1 and name .. " " .. seen[name] or name,
+					color = mix(from.color, to.color, t),
+				}
+			end
+			basics[count] = {name = factory[#factory].name, color = factory[#factory].color}
+			local function tinted(basic, tint)
+				local color = tint[2] and mix(basic.color, tint[2], tint[3]) or basic.color
+				return {name = tint[1] .. basic.name, color = color}
+			end
+			colors = {}
+			if preset.sort == "tint" then
+				for _, tint in ipairs(tints[preset.tints] or tints["1"]) do
+					for _, basic in ipairs(basics) do
+						colors[#colors + 1] = tinted(basic, tint)
+					end
+				end
+			else
+				for _, basic in ipairs(basics) do
+					for _, tint in ipairs(tints[preset.tints] or tints["1"]) do
+						colors[#colors + 1] = tinted(basic, tint)
+					end
+				end
+			end
+			selected = 1
 			dialog.show(document)
 		end
 
@@ -180,21 +276,56 @@
 <body onload="ProjectColors.load(document)">
 	<dialog id="project-colors-dialog">
 		<div class="dialog-titlebar">Project Colors Setup</div>
-		<div class="content">
-			<div class="colors">
-				<listview id="project-colors" onchange="ProjectColors.select(document)"/>
-			</div>
-			<div class="editor">
-				<input type="text" id="color-name" class="text" onchange="ProjectColors.rename(document, event)"/>
-				<colorpicker id="color-picker" onchange="ProjectColors.recolor(document, event)"/>
-			</div>
-		</div>
-		<div class="row">
-			<button id="color-insert" onclick="ProjectColors.insert(document, false)">Insert Color</button>
-			<button id="color-duplicate" onclick="ProjectColors.insert(document, true)">Duplicate Color</button>
-			<button id="color-remove" onclick="ProjectColors.remove(document)">Remove Color</button>
-			<button id="color-reset" onclick="ProjectColors.reset(document)">Reset Color</button>
-		</div>
+		<tabset id="project-colors-tabs">
+			<tab id="colors-set-tab">Color Set</tab>
+			<panel>
+				<div class="content">
+					<div class="colors">
+						<listview id="project-colors" onchange="ProjectColors.select(document)"/>
+					</div>
+					<div class="editor">
+						<input type="text" id="color-name" class="text"
+							onchange="ProjectColors.rename(document, event)"/>
+						<colorpicker id="color-picker" onchange="ProjectColors.recolor(document, event)"/>
+					</div>
+				</div>
+				<div class="row">
+					<button id="color-insert" onclick="ProjectColors.insert(document, false)">Insert Color</button>
+					<button id="color-duplicate" onclick="ProjectColors.insert(document, true)">Duplicate Color</button>
+					<button id="color-remove" onclick="ProjectColors.remove(document)">Remove Color</button>
+					<button id="color-reset" onclick="ProjectColors.reset(document)">Reset Color</button>
+				</div>
+			</panel>
+			<tab id="colors-presets-tab">Presets</tab>
+			<panel>
+				<div class="row">
+					<span class="label">Number of Basic Colors</span>
+					<select id="preset-basic" onchange="ProjectColors.preset(document, 'basic', event)">
+						<option value="8">8</option>
+						<option value="16" selected>16</option>
+						<option value="24">24</option>
+						<option value="32">32</option>
+					</select>
+				</div>
+				<div class="row">
+					<span class="label">Number of Color Tints</span>
+					<select id="preset-tints" onchange="ProjectColors.preset(document, 'tints', event)">
+						<option value="1" selected>1</option>
+						<option value="2">2</option>
+						<option value="4">4</option>
+					</select>
+				</div>
+				<div class="row">
+					<span class="label">Sort Colors by</span>
+					<select id="preset-sort" onchange="ProjectColors.preset(document, 'sort', event)">
+						<option value="basic" selected>Basic Color</option>
+						<option value="tint">Color Tint</option>
+					</select>
+				</div>
+				<div class="row">New Color Set</div>
+				<div id="preset-colors"/>
+			</panel>
+		</tabset>
 		<div class="row">
 			<button id="colors-factory" onclick="ProjectColors.factory(document)">Reset to Factory Settings</button>
 			<div class="spacer"/>
