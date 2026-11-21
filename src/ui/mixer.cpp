@@ -285,14 +285,24 @@ namespace gnubase::ui
 				section("sends", "Sends", sends);
 		}
 
-		// Where a channel's sends can go: no destination, or the group and effect channels other than its own; and with
-		// add, Add Effect Track to Send (reference manual p. 554).
-		widgets::Options sendDestinations(const std::vector<MixerChannel>& channels, uint64_t own, bool add)
+		// Where a channel plays: its output and its sends' destinations.
+		std::vector<Json> routing(const Json& channel)
+		{
+			std::vector<Json> to{channel.value("output", Json())};
+			for (const Json& send : channel.value("sends", Json::array()))
+				to.push_back(send.value("destination", Json()));
+			return to;
+		}
+
+		// Where a channel's sends can go: no destination, or the group and effect channels other than its own whose
+		// audio doesn't come back to it; and with add, Add Effect Track to Send (reference manual p. 554).
+		widgets::Options sendDestinations(
+			const Json& project, const std::vector<MixerChannel>& channels, uint64_t own, bool add)
 		{
 			widgets::Options options{{"0", "No Destination"}};
 			for (const MixerChannel& channel : channels)
 				if (channel.id != own && channel.channel != nullptr &&
-					(channel.type == "group" || channel.type == "effect"))
+					(channel.type == "group" || channel.type == "effect") && !routesTo(project, channel.id, own))
 					options.emplace_back(std::to_string(channel.id), channel.name);
 			if (add)
 				options.emplace_back(g_addEffect, "Add Effect Track to Send");
@@ -345,6 +355,31 @@ namespace gnubase::ui
 		const Json channels = project.value("channels", Json::array());
 		return std::any_of(channels.begin(), channels.end(), [&state](const Json& channel)
 			{ return channel.value(state, false) || (state == "solo" && channel.value("soloDefeat", false)); });
+	}
+
+	bool routesTo(const Json& project, uint64_t from, uint64_t to)
+	{
+		const auto channels = project.find("channels");
+		if (channels == project.end())
+			return false;
+		std::vector<uint64_t> pending{from};
+		std::set<uint64_t> seen;
+		while (!pending.empty())
+		{
+			const uint64_t next = pending.back();
+			pending.pop_back();
+			if (next == to)
+				return true;
+			if (!seen.insert(next).second)
+				continue;
+			const auto channel = std::find_if(
+				channels->begin(), channels->end(), [next](const Json& each) { return each.at("id") == next; });
+			if (channel != channels->end())
+				for (const Json& id : routing(*channel))
+					if (id.is_number_integer())
+						pending.push_back(id.get<uint64_t>());
+		}
+		return false;
 	}
 
 	void SoloHold::pressed(Rml::Element* target)
@@ -460,6 +495,7 @@ namespace gnubase::ui
 				R"(<menuitem function="paste">Paste Channel Settings</menuitem>)"
 				R"(<menuitem type="toggle" function="follow" checked="">)"
 				R"(Follow Edit Buttons or Selection Changes</menuitem>)"}};
+		menus.emplace_back(R"(<menu id="mixer-link-menu">)", ""); // showLinkMenu fills it
 		menus.emplace_back(R"(<menu id="mixer-layout-pane" class="setup-pane">)", layout);
 		for (const auto& [open, items] : menus)
 		{
@@ -484,9 +520,19 @@ namespace gnubase::ui
 					const std::vector<engine::Event> channels = m_channelSteps.settle(changed);
 					if (changedOnly(changed, {"channel.changed"}))
 					{
+						// New routing changes which destinations the other strips' sends can take.
+						bool rerouted = false;
 						for (const engine::Event& each : channels)
-							if (const Json* channel = takeChannel(m_project, each))
+						{
+							Json before;
+							if (const Json* channel = takeChannel(m_project, each, &before))
+							{
+								rerouted = rerouted || routing(before) != routing(*channel);
 								showChannel(channel->at("id").get<uint64_t>());
+							}
+						}
+						if (rerouted)
+							show();
 						return;
 					}
 					requestProject();
@@ -675,6 +721,8 @@ namespace gnubase::ui
 		if (settings)
 			showSettingsToolbar();
 
+		// Every strip has the display line while the project has a link group (reference manual p. 458).
+		m_strips->SetClass("link-groups", !m_project.value("linkGroups", Json::array()).empty());
 		if (Rml::Element* filter = m_filter.get())
 			filter->SetClass("checked", !m_hiddenTypes.empty()); // the button shows that a type is hidden
 		showStates();
@@ -728,8 +776,10 @@ namespace gnubase::ui
 		{
 			const bool audio = channel->channel != nullptr && channel->channel->at("format") != "none";
 			const bool vca = channel->type == "vca"; // a fader and buttons (reference manual p. 515)
-			std::string rml = R"(<div class="mixer-channel-name"/><div class="mixer-link"/>)"
-							  R"(<div class="mixer-picture" section="picture" label="Pictures" default="hidden"/>)";
+			// The display line opens its menu, and a double click types its group's name (p. 459).
+			std::string rml = R"(<div class="mixer-channel-name"/><textdisplay class="mixer-link")" +
+				std::string(channel->channel != nullptr ? R"( menu="mixer-link-menu" title="Link Settings")" : "") +
+				R"(/><div class="mixer-picture" section="picture" label="Pictures" default="hidden"/>)";
 			rml += sectionsRml(audio, m_kind == MixerKind::ChannelSettings);
 			rml += R"(<div class="mixer-notes" section="notes" label="Notepad" default="hidden">)";
 			if (channel->channel != nullptr)
@@ -804,10 +854,13 @@ namespace gnubase::ui
 			return;
 		const Json& json = *channel.channel;
 		// The display line (reference manual p. 458): the number and the name of the channel's link group.
-		if (Rml::Element* link = strip.QuerySelector(".mixer-link"))
+		if (Rml::Element* link = strip.QuerySelector(".mixer-link"); link != nullptr && !link->IsClassSet("editing"))
 		{
 			const auto [group, number] = linkGroup(m_project, channel.id, "channels");
-			setText(*link, group != nullptr ? std::to_string(number) + " " + group->at("name").get<std::string>() : "");
+			const std::string text =
+				group != nullptr ? std::to_string(number) + " " + group->at("name").get<std::string>() : "";
+			if (attribute(*link, "value") != text)
+				link->SetAttribute("value", text);
 			strip.SetClass("linked", group != nullptr);
 		}
 		if (Rml::Element* select = strip.QuerySelector(".mixer-vca-group"))
@@ -844,6 +897,8 @@ namespace gnubase::ui
 		const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
 		const std::string lowest = widgets::format(static_cast<float>(std::min(m_defaultSendLevel, g_sendKnobMin)));
 		const std::string highest = widgets::format(m_project.value("maxVolume", 6.0F));
+		const widgets::Options destinations =
+			sendDestinations(m_project, m_channels, channel.id, channel.track != 0 && m_actions.addEffectTrack);
 		for (Rml::Element* control : controls)
 		{
 			const std::string param = attribute(*control, "param");
@@ -858,9 +913,7 @@ namespace gnubase::ui
 			if (control->GetTagName() == "select")
 			{
 				if (value.is_number())
-					widgets::fill(*control,
-						sendDestinations(m_channels, channel.id, channel.track != 0 && m_actions.addEffectTrack),
-						std::to_string(value.get<uint64_t>()));
+					widgets::fill(*control, destinations, std::to_string(value.get<uint64_t>()));
 			}
 			else if (value.is_boolean())
 			{
@@ -943,6 +996,20 @@ namespace gnubase::ui
 			setText(*button, output != nullptr ? output->name : std::string());
 			point(button, output != nullptr && output->track != 0 ? output : nullptr);
 		}
+		// MIDI and VCA channels have no settings to copy or paste, which the engine refuses.
+		const bool settings = shown != nullptr && shown->channel != nullptr && shown->channel->at("format") != "none" &&
+			shown->type != "vca";
+		Rml::Element* functions = m_menus.front().get();
+		for (const char* function : {"copy", "paste"})
+			if (Rml::Element* item = functions != nullptr
+					? functions->QuerySelector(std::string("menuitem[function=") + function + "]")
+					: nullptr)
+			{
+				if (settings)
+					item->RemoveAttribute("disabled");
+				else
+					item->SetAttribute("disabled", "");
+			}
 	}
 
 	void Mixer::goTo(uint64_t track)
@@ -1038,6 +1105,69 @@ namespace gnubase::ui
 		m_binding.send("track.move", {{"track", from->track}, {"parent", parent}, {"index", index}});
 	}
 
+	void Mixer::showLinkMenu(uint64_t channel)
+	{
+		const auto menu = std::find_if(m_menus.begin(), m_menus.end(),
+			[](const Rml::ObserverPtr<Rml::Element>& each) { return each && each->GetId() == "mixer-link-menu"; });
+		if (menu == m_menus.end())
+			return;
+		m_linkChannel = channel;
+		const Json* group = linkGroup(m_project, channel, "channels").first;
+		const auto item = [](const std::string& link, const std::string& label, bool checked)
+		{
+			return R"(<menuitem type="toggle" link=")" + link + '"' + (checked ? R"( checked="")" : "") + ">" +
+				encode(label) + "</menuitem>";
+		};
+		// Edit Link Group Settings waits for the Link Group Settings dialog; Unlink Selected Channels unlinks the
+		// line's group, as the mixer has no channel selection yet.
+		std::string rml = group != nullptr ? R"(<menuitem link="unlink">Unlink Selected Channels</menuitem>)" : "";
+		rml += "<menuitem>Included in Link Group: " +
+			encode(group != nullptr ? group->at("name").get<std::string>() : "<None>") + "<menu>" +
+			item("0", "None", group == nullptr);
+		size_t number = 0;
+		for (const Json& each : m_project.value("linkGroups", Json::array()))
+			if (++number; each.at("vca") != channel) // a VCA fader can't be in the group it controls
+				rml += item(each.at("id").dump(), std::to_string(number) + " " + each.at("name").get<std::string>(),
+					group != nullptr && each.at("id") == group->at("id"));
+		rml += "</menu></menuitem>";
+		if (group != nullptr)
+		{
+			const Json& channels = group->at("channels");
+			rml += "<menuitem>Linked Channels<menu>";
+			for (const MixerChannel& linked : m_channels)
+				if (std::find(channels.begin(), channels.end(), Json(linked.id)) != channels.end())
+					rml += R"(<menuitem disabled="">)" + encode(linked.name) + "</menuitem>";
+			rml += "</menu></menuitem>";
+		}
+		(*menu)->SetInnerRML(rml);
+	}
+
+	// Included in Link Group (pp. 460-461) moves the channel into the group chosen, or with None out of its group,
+	// which goes with its last channel; Unlink Selected Channels removes the group.
+	void Mixer::link(const std::string& item)
+	{
+		const Json* group = linkGroup(m_project, m_linkChannel, "channels").first;
+		if (item == "unlink" || item == "0")
+		{
+			if (group == nullptr)
+				return;
+			std::vector<uint64_t> channels = group->at("channels").get<std::vector<uint64_t>>();
+			channels.erase(std::remove(channels.begin(), channels.end(), m_linkChannel), channels.end());
+			if (item == "unlink" || channels.empty())
+				m_binding.send("linkGroup.remove", {{"group", group->at("id")}});
+			else
+				m_binding.send("linkGroup.set", {{"group", group->at("id")}, {"channels", channels}});
+			return;
+		}
+		for (const Json& each : m_project.value("linkGroups", Json::array()))
+			if (each.at("id").dump() == item && (group == nullptr || each.at("id") != group->at("id")))
+			{
+				std::vector<uint64_t> channels = each.at("channels").get<std::vector<uint64_t>>();
+				channels.push_back(m_linkChannel);
+				m_binding.send("linkGroup.set", {{"group", each.at("id")}, {"channels", channels}});
+			}
+	}
+
 	void Mixer::ProcessEvent(Rml::Event& event)
 	{
 		Rml::Element* target = event.GetTargetElement();
@@ -1057,6 +1187,18 @@ namespace gnubase::ui
 			else if (attribute(*target, "function") == "follow")
 			{
 				m_follows = event.GetParameter("value", true);
+			}
+			else if (target->IsClassSet("mixer-link"))
+			{
+				// The name typed into the display line (p. 459), which starts with the group's number and the name.
+				const MixerChannel* channel = channelOf(target);
+				const auto [group, number] = channel != nullptr ? linkGroup(m_project, channel->id, "channels")
+																: std::pair<const Json*, size_t>{nullptr, 0};
+				auto name = event.GetParameter<Rml::String>("value", "");
+				if (const std::string prefix = std::to_string(number) + " "; name.rfind(prefix, 0) == 0)
+					name.erase(0, prefix.size());
+				if (group != nullptr && !name.empty() && name != group->at("name"))
+					m_binding.send("linkGroup.set", {{"group", group->at("id")}, {"name", name}});
 			}
 			else if (target->IsClassSet("mixer-vca-group") && !m_updating)
 			{
@@ -1135,12 +1277,16 @@ namespace gnubase::ui
 			{
 				sendView({{"hidden", Json::array()}});
 			}
-			else if (attribute(*target, "function") == "copy")
+			else if (target->HasAttribute("link"))
+			{
+				link(attribute(*target, "link"));
+			}
+			else if (attribute(*target, "function") == "copy" && !target->HasAttribute("disabled"))
 			{
 				if (const MixerChannel* channel = channelOf(m_stripOf.empty() ? nullptr : m_stripOf.begin()->second))
 					m_binding.send("channel.copySettings", {{"channel", channel->id}});
 			}
-			else if (attribute(*target, "function") == "paste")
+			else if (attribute(*target, "function") == "paste" && !target->HasAttribute("disabled"))
 			{
 				if (const MixerChannel* channel = channelOf(m_stripOf.empty() ? nullptr : m_stripOf.begin()->second))
 					m_binding.send("channel.pasteSettings", {{"channels", {channel->id}}});
@@ -1186,6 +1332,12 @@ namespace gnubase::ui
 				closest(target, "mixer-channel-name", m_root.get()) != nullptr ? channelOf(target) : nullptr;
 			m_dragged = channel != nullptr ? channel->id : 0;
 			m_soloHold.pressed(target);
+			// The press fills the display line's menu, which the popup behavior opens on the click, as the list
+			// editor's menus do.
+			if (Rml::Element* line = closest(target, "mixer-link", m_root.get());
+				line != nullptr && event.GetParameter("button", 0) == 0)
+				if (const MixerChannel* pressed = channelOf(line); pressed != nullptr && pressed->channel != nullptr)
+					showLinkMenu(pressed->id);
 			break;
 		}
 		case Rml::EventId::Mouseup:
