@@ -55,8 +55,15 @@ namespace gnubase::ui
 			return list;
 		}
 
-		// The markers of the waveform display and the parameters they set (p. 717).
-		constexpr std::array<const char*, 4> g_markers = {"Start", "End", "Loop start", "Loop end"};
+		// The markers of the waveform display and the parameters they set (p. 717): the fades' and the loop
+		// crossfade's mark the lengths' ends, from Start, End and the loop's end.
+		constexpr std::array<const char*, 7> g_markers = {
+			"Start", "End", "Loop start", "Loop end", "Fade in", "Fade out", "Loop crossfade"};
+
+		bool isLength(const std::string& marker)
+		{
+			return marker == "Fade in" || marker == "Fade out" || marker == "Loop crossfade";
+		}
 
 		// The bars between two markers that a drag moves together, keeping their distance (p. 717).
 		struct Bar
@@ -174,7 +181,8 @@ namespace gnubase::ui
 				R"(" bar=")" + bar.id + R"(" title="Move )" + bar.from + " and " + bar.to + R"("/>)";
 		for (const char* marker : g_markers)
 			markers += std::string(R"(<div class="sampler-marker)") +
-				(std::string(marker).rfind("Loop", 0) == 0 ? " loop" : "") + R"(" marker=")" + marker +
+				(std::string(marker).rfind("Loop", 0) == 0 ? " loop" : "") + (isLength(marker) ? " length" : "") +
+				R"(" marker=")" + marker + R"(" title=")" + marker +
 				R"("><div class="sampler-marker-line"/><div class="sampler-marker-flag"/></div>)";
 		element.SetInnerRML(
 			R"(<div class="sampler-panel empty" id="sampler-panel">)"
@@ -462,9 +470,9 @@ namespace gnubase::ui
 		if (display == nullptr)
 			return;
 		const bool reverse = value("Reverse") >= 0.5;
-		const auto at = [&](const char* name)
+		const auto at = [&](const std::string& name)
 		{
-			const double share = std::clamp(value(name), 0.0, 1.0);
+			const double share = std::clamp(markerShare(name), 0.0, 1.0);
 			return reverse ? 1.0 - share : share;
 		};
 		Rml::ElementList markers;
@@ -473,7 +481,7 @@ namespace gnubase::ui
 		for (Rml::Element* marker : markers)
 		{
 			const auto name = marker->GetAttribute<Rml::String>("marker", "");
-			marker->SetProperty(Rml::PropertyId::Left, percent(at(name.c_str())));
+			marker->SetProperty(Rml::PropertyId::Left, percent(at(name)));
 			setClass(marker, "dragged", name == m_dragged);
 			setClass(marker, "off", !looping && name.rfind("Loop", 0) == 0);
 		}
@@ -571,7 +579,23 @@ namespace gnubase::ui
 			Json::array({step}), {}, value);
 	}
 
-	// Moves the marker dragged to the mouse: Start stays before End, and the loop's start before its end.
+	// Where a marker lies, a share of the sample: a fade's or the crossfade's at the end of its length, which is no
+	// longer than the range or the loop.
+	double SamplerPanel::markerShare(const std::string& marker) const
+	{
+		const double range = std::max(value("End") - value("Start"), 0.0);
+		if (marker == "Fade in")
+			return value("Start") + std::clamp(value("Fade in"), 0.0, range);
+		if (marker == "Fade out")
+			return value("End") - std::clamp(value("Fade out"), 0.0, range);
+		if (marker == "Loop crossfade")
+			return value("Loop end") -
+				std::clamp(value("Loop crossfade"), 0.0, std::max(value("Loop end") - value("Loop start"), 0.0));
+		return value(marker);
+	}
+
+	// Moves the marker dragged to the mouse: Start stays before End, and the loop's start before its end; the fades
+	// and the crossfade take the length from their marker's own end, no longer than the range or the loop.
 	void SamplerPanel::drag(const Rml::Event& event)
 	{
 		Rml::Element* display = find("sampler-display");
@@ -583,7 +607,14 @@ namespace gnubase::ui
 			(event.GetParameter<float>("mouse_x", 0.0F) - display->GetAbsoluteLeft()) / static_cast<double>(width), 0.0,
 			1.0);
 		double share = value("Reverse") >= 0.5 ? 1.0 - x : x;
-		if (m_dragged == "Start")
+		const double range = std::max(value("End") - value("Start"), 0.0);
+		if (m_dragged == "Fade in")
+			share = std::clamp(share - value("Start"), 0.0, range);
+		else if (m_dragged == "Fade out")
+			share = std::clamp(value("End") - share, 0.0, range);
+		else if (m_dragged == "Loop crossfade")
+			share = std::clamp(value("Loop end") - share, 0.0, std::max(value("Loop end") - value("Loop start"), 0.0));
+		else if (m_dragged == "Start")
 			share = std::min(share, value("End"));
 		else if (m_dragged == "End")
 			share = std::max(share, value("Start"));

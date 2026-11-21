@@ -89,13 +89,12 @@ How it plays:
   command thread, or waits there for the loader's read of it.
 
 Not yet: warped (time-stretched) playback with sync to the tempo, the quality modes, transient, grid and manual slicing
-with fades and the slices' MIDI phrase, the pitch and filter envelopes and a multi-node amp envelope, the LFOs, the
-display's markers for the fades and the loop crossfade (they have value fields), Trim Sample, MIDI Reset, Hot Swap
-Preview Sample, the sampler panel's own undo history and A/B settings, loading by dragging an event or a MIDI part onto
-the panel, a pool folder of the sampler's samples (p. 710), and transferring the sample to another instrument, which
-needs a plugin wrapper extension for samples. The display's ruler and zoom, the toolbar's Read/Write Automation, event
-received indicator, Snap to Zero Crossing and preset section, and the Add Track dialog's Input Routing and Event Type,
-which no page of it has yet ([add-track.md](add-track.md)), are open too (#1122).
+with fades and the slices' MIDI phrase, the pitch and filter envelopes and a multi-node amp envelope, the LFOs, Trim
+Sample, MIDI Reset, Hot Swap Preview Sample, the sampler panel's own undo history and A/B settings, loading by dragging
+an event or a MIDI part onto the panel, a pool folder of the sampler's samples (p. 710), and transferring the sample to
+another instrument, which needs a plugin wrapper extension for samples. The display's ruler and zoom, the toolbar's
+Read/Write Automation, event received indicator, Snap to Zero Crossing and preset section, and the Add Track dialog's
+Input Routing and Event Type, which no page of it has yet ([add-track.md](add-track.md)), are open too (#1122).
 
 ## In the UI
 
@@ -121,14 +120,18 @@ root `.sampler-panel` has the class `.empty`):
   comes after that save's answer, when none of the panel's own is on its way. Why a load (a file that isn't audio) or
   Normalize Sample (a silent or missing sample) failed shows in the toolbar's message (`#sampler-message`, `.error`)
   until the next one succeeds or another track is shown.
-- **Waveform display** (`#sampler-display`): the sample's waveform from `media.peaks`, its parts before Start and
-  after End shaded (`.sampler-outside`), the loop (`.sampler-loop`) and the markers (`.sampler-marker`, attribute
-  `marker`: Start, End, Loop start, Loop end), placed in percent of the sample and mirrored when Reverse is on. Without
-  a loop mode the loop and its markers have `.off`. Dragging a marker sets its parameter, one undo step per drag; Start
-  stays before End and the loop's start before its end. Between Start and End at the flags' height, and between the
-  loop's markers at the bottom, lies a bar (`.sampler-bar`, attribute `bar`: range, loop; the loop's has `.off` with
-  the loop) that the themes show on hover: dragging it moves both markers by as far as the mouse went, keeping their
-  distance, and stops at the sample's ends, both parameters in one step and one undo step per drag (p. 717).
+- **Waveform display** (`#sampler-display`): the sample's waveform from `media.peaks`, its parts before Start and after
+  End shaded (`.sampler-outside`), the loop (`.sampler-loop`) and the markers (`.sampler-marker`, attribute `marker`:
+  Start, End, Loop start, Loop end, Fade in, Fade out, Loop crossfade), placed in percent of the sample and mirrored
+  when Reverse is on. Without a loop mode the loop and its markers have `.off`. Dragging a marker sets its parameter,
+  one undo step per drag; Start stays before End and the loop's start before its end. The fades' and the loop
+  crossfade's markers (`.length`, p. 717) mark the end of their lengths: Fade in's lies that far after Start, Fade out's
+  before End, Loop crossfade's before the loop's end; dragging one sets the length, no longer than the range from Start
+  to End or than the loop. They lie below the flags of Start and End and above the loop's, so that those can still be
+  dragged where a length of 0 puts a marker on them. Between Start and End at the flags' height, and between the loop's
+  markers at the bottom, lies a bar (`.sampler-bar`, attribute `bar`: range, loop; the loop's has `.off` with the loop)
+  that the themes show on hover: dragging it moves both markers by as far as the mouse went, keeping their distance, and
+  stops at the sample's ends, both parameters in one step and one undo step per drag (p. 717).
 - **Sections** (`.sampler-section`): Playback, Pitch, Filter, Amp and Keyboard, a control per parameter of
   `processor.list`'s sampler (`[parameter]`, `#sampler-parameter-<id>`): a toggle for those that are on or off, a
   drop-down list for those with options, a value field for the others, each gesture one undo step (`parameter.set`
@@ -175,6 +178,7 @@ keyboard, and a change of the panel's setting from elsewhere right after the pan
 and without Fingered, the fades from the sample's start and from Start, and the loop crossfade and its limit to
 `tests/sampler_tests.cpp`, the new parameters to the real-time test and the fades to the settings that `keepSettings`
 doesn't keep.
+#1122 added the markers of the fades and the loop crossfade to `tests/sampler_ui_tests.cpp`.
 #1343 added the warnings at every round of an offline render's wait for a sample and the error after the last of its
 20 rounds, tested with rounds of 20 ms instead of 30 s (`Engine::setOfflineSampleWait`), and checks that starting
 playback and recording from stop answer only after the held read is released.
