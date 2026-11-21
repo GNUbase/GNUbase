@@ -462,7 +462,9 @@ namespace gnubase::engine
 				element.length =
 					(static_cast<double>(project.tempo.toTicks(span.end, project.sampleRate)) / g_logicalTick) -
 					element.position;
-				element.locked = event.lock;
+				// A locked audio part keeps its events as they are, as a locked event keeps its part (holdingLocked).
+				const auto holder = project.audioParts.find(event.part);
+				element.locked = event.lock || (holder != project.audioParts.end() && holder->second.lock);
 				if (event.mute)
 					element.properties.insert("isMuted");
 				onTrack(std::move(element), event.track, event.color);
@@ -689,21 +691,29 @@ namespace gnubase::engine
 			return type == TrackType::Audio || type == TrackType::Instrument || type == TrackType::Midi;
 		}
 
+		// The audio parts that hold a locked event, which the rules neither delete, move nor shorten: a part goes and
+		// moves with all its events, locked ones too, and plays only what lies inside it, so the event's lock keeps the
+		// part where it is and at least as long. Its other changes apply.
+		std::set<ObjectId> holdingLocked(const Project& project)
+		{
+			std::set<ObjectId> parts;
+			for (const auto& [id, event] : project.audioEvents)
+				if (event.lock && event.part != 0)
+					parts.insert(event.part);
+			return parts;
+		}
+
 		// The commands that delete what was found: events and markers on tracks that stay, then the tracks that no
 		// folder found takes with it.
 		Commands deleting(const Project& project, const Found& found)
 		{
-			// An audio part goes with all its events, so one that holds a locked event stays.
-			std::set<ObjectId> holdingLocked;
-			for (const auto& [id, event] : project.audioEvents)
-				if (event.lock)
-					holdingLocked.insert(event.part);
+			const std::set<ObjectId> held = holdingLocked(project);
 			std::set<ObjectId> tracks;
 			std::set<ObjectId> parts;
 			for (const Element* element : found.elements)
 				if (element->kind == Kind::Track)
 					tracks.insert(element->id);
-				else if (element->kind == Kind::AudioPart && !element->locked && holdingLocked.count(element->id) == 0)
+				else if (element->kind == Kind::AudioPart && !element->locked && held.count(element->id) == 0)
 					parts.insert(element->id);
 			const auto removed = [&](ObjectId track)
 			{
@@ -762,9 +772,10 @@ namespace gnubase::engine
 			for (const ProjectActionLine& action : rules.actions)
 				counters.push_back(std::llround(action.parameter2));
 			// An audio event in a part that moves too goes with it (place in eventedits.cpp) and keeps its place in it.
+			const std::set<ObjectId> held = holdingLocked(project);
 			std::set<ObjectId> parts;
 			for (const Element* element : found.elements)
-				if (element->kind == Kind::AudioPart && !element->locked)
+				if (element->kind == Kind::AudioPart && !element->locked && held.count(element->id) == 0)
 					parts.insert(element->id);
 			// Each action's result stops at the longest project, so that values stay finite and fit the ticks they
 			// become. They may go below the project's start between two actions.
@@ -881,8 +892,12 @@ namespace gnubase::engine
 					{ return std::llround(std::max(logical, 0.0) * g_logicalTick); };
 					const bool withPart =
 						element->kind == Kind::AudioEvent && parts.count(project.audioEvents.at(element->id).part) != 0;
-					if (const int64_t delta = ticks(position) - ticks(element->position); delta != 0 && !withPart)
+					const bool stays = element->kind == Kind::AudioPart && held.count(element->id) != 0;
+					if (const int64_t delta = ticks(position) - ticks(element->position);
+						delta != 0 && !withPart && !stays)
 						commands.emplace_back("event.move", Json{{"events", events}, {"ticks", delta}});
+					if (stays)
+						length = std::max(length, element->length);
 					if (const int64_t delta = ticks(std::max(length, 1.0)) - ticks(element->length); delta != 0)
 						commands.emplace_back(
 							"event.resize", Json{{"events", events}, {"edge", "end"}, {"ticks", delta}});
@@ -1144,8 +1159,9 @@ namespace gnubase::engine
 				"undo step: delete removes what the filters find (a found folder takes its tracks with it), transform "
 				"changes it by the actions through the commands that make such changes (event.move, event.resize, "
 				"event.set, track.set, channel.set, marker.set). Locked parts and events stay as they are on tracks "
-				"that stay, except that a locked event moves with an audio part that moves; delete keeps an audio "
-				"part that holds a locked event. Audio events keep their clip's name, track operations change tracks "
+				"that stay, and so do the events in a locked audio part; an audio part that holds a locked event "
+				"neither goes, moves nor gets shorter, while its other changes apply and the unlocked events found "
+				"in it go or move alone. Audio events keep their clip's name, track operations change tracks "
 				"only. Positions and lengths stop at the longest project. seed makes the random operations "
 				"repeatable; without it each call gives new random values." +
 					rulesText + " Use project.findByRules for select and deselect. Returns what the filters found.",
