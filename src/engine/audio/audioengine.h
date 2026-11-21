@@ -125,6 +125,8 @@ namespace gnubase::engine
 		// anything else it does (Engine::setCueStartHook). The thread gets a copy: a new hook applies from the next
 		// start on.
 		void setCueStartHook(std::function<void()> hook);
+		// Any thread: calls hook in transport.locate between its exact cue and sending it (Engine::setLocateCuedHook).
+		void setLocateCuedHook(std::function<void()> hook);
 
 		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or
 		// midi.portSettings (midiPorts): emits the audio ports as audio.portsChanged, and the MIDI ports follow their
@@ -328,6 +330,11 @@ namespace gnubase::engine
 		// from then on, until the audio thread has applied that request, the cue thread cues there too, as for a
 		// playing transport that starts there, and not where the cursor is.
 		void cueStart(time::Samples start, time::Samples enter);
+		// Command thread, before a locate cues its position exactly, and with -1 if that cue fails: until the locate is
+		// sent (sent()), the cue thread cues as the locate does, at its position and keeping the voices that the
+		// transport plays on from, rather than for the old position, which could take the voices the locate cued
+		// (#1136).
+		void cueLocate(time::Samples position);
 		void startCueing();
 		void stopCueing();
 		// What the chord pads' remote keys did since the last call, as chordPads.remoteInput takes it; null for
@@ -562,9 +569,11 @@ namespace gnubase::engine
 			time::Samples start = -1;
 			time::Samples enter = -1;
 			uint64_t startRequests = 0;
+			// Where a locate goes that the command thread cues exactly and hasn't sent yet (-1 for none, cueLocate).
+			time::Samples locate = -1;
 		};
 		std::mutex m_cueMutex;             // guards m_cueState, held only to read or change it
-		std::mutex m_cueOrderMutex;        // the cue thread holds it while it cues, cueStart before m_cueMutex
+		std::mutex m_cueOrderMutex;        // held while the cue thread cues; cueStart and cueLocate before m_cueMutex
 		ArrangerState m_announcedArranger; // as transport.changed last announced it
 		CueState m_cueState;
 		// Command thread, under m_cueMutex, at every rebuild: hands the newest plan over for the cue thread and the
@@ -581,6 +590,8 @@ namespace gnubase::engine
 		std::thread m_cueThread;
 		std::mutex m_cueStartHookMutex; // guards m_cueStartHook, which startCueing copies for the cue thread
 		std::function<void()> m_cueStartHook;
+		std::mutex m_locateCuedHookMutex; // guards m_locateCuedHook
+		std::function<void()> m_locateCuedHook;
 
 		// The dummy device's input generator, if any; runs on the audio thread.
 		std::shared_ptr<graph::Processor> m_generator;

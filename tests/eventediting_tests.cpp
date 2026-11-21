@@ -45,6 +45,7 @@ using std::chrono::milliseconds;
 namespace
 {
 	constexpr int64_t g_quarter = time::g_ticksPerQuarter;
+	constexpr int64_t g_bar = 4 * g_quarter;
 
 	ui::Target point(double x, double y)
 	{
@@ -1979,6 +1980,124 @@ TEST_CASE("the play tool's resize in scrub mode plays the clip at the dragged ed
 	CHECK(f.call("transport.get").at("position") == 0);
 }
 
+TEST_CASE("the play tool in scrub mode resizes at an audio event's lower left corner, not on a narrow event", "[unit]")
+{
+	Fixture f;
+	f.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	f.call("audio.start");
+	const auto audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	const Json clip = f.audioEvents()[0].at("clip");
+	f.call("audioEvent.set", {{"event", f.event}, {"offset", 4800}});
+	std::vector<Json> auditions;
+	const ui::Subscription subscription =
+		f.binding.on("audition.changed", [&auditions](const engine::Event& event) { auditions.push_back(event.data); });
+	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	const auto pointer = [area] { return area->GetAttribute<std::string>("pointer", ""); };
+	const auto moveTo = [&f](double x, double y)
+	{
+		f.automation.move(std::nullopt, f.at(x, y));
+		f.step();
+	};
+	const auto scrubs = [&f]
+	{
+		Json found = Json::array();
+		const Json log = f.call("engine.commandLog").at("commands");
+		for (const Json& each : log)
+			if (each.at("command") == "audition.scrub")
+				found.push_back(each.at("parameters"));
+		return found;
+	};
+	f.display.setTool(ui::Tool::Play);
+	f.display.setPlayMode(ui::PlayMode::Scrub);
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioEvents")[0].at("offset") == 4800; }));
+
+	// The lower left corner shows the resize pointer, the upper part of the left edge the play tool's.
+	moveTo(202, 30);
+	CHECK(pointer() == "resize");
+	moveTo(202, 10);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+
+	// A drag from the lower left corner 20 dp to the right starts the event a fifth of a second later, and scrubs the
+	// event's clip at its start, not the track: the first scrub is at the clip frame the event started at, its
+	// offset, and the cursor stays.
+	f.drag(202, 30, 222, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 96000 + 9600; }));
+	CHECK(f.audioEvents()[0].at("offset") == 4800 + 9600);
+	CHECK(f.audioEvents()[0].at("length") == 24000 - 9600);
+	REQUIRE(f.waitUntil([&auditions] { return auditions.size() >= 2 && auditions.back().at("mode") == "off"; }));
+	CHECK(auditions[0].at("mode") == "scrub");
+	CHECK(auditions[0].at("track") == 0);
+	CHECK(auditions[0].at("clip") == clip);
+	const Json first = scrubs();
+	REQUIRE(first.size() == 1); // the log keeps the first of a run of scrubs
+	CHECK(first[0].at("clip") == clip);
+	CHECK(first[0].at("position") == 4800);
+	CHECK(f.call("transport.get").at("position") == 0);
+
+	// An event of 18 dp has no edges: its lower corners scrub the track, and move the cursor, as anywhere else.
+	const auto narrow =
+		f.call("audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 288000}, {"length", 8640}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 2; }));
+	moveTo(601, 30);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+	moveTo(617, 30);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+	auditions.clear();
+	f.drag(617, 30, 627, 30);
+	REQUIRE(f.waitUntil([&auditions] { return auditions.size() >= 2 && auditions.back().at("mode") == "off"; }));
+	CHECK(auditions[0].at("mode") == "scrub");
+	CHECK(auditions[0].at("track") == audio);
+	CHECK(f.call("transport.get").at("position") == 627 * 480);
+	for (const Json& shown : f.audioEvents())
+		if (shown.at("id") == narrow)
+			CHECK(shown.at("length") == 8640);
+}
+
+TEST_CASE("an event display that goes away while the play tool auditions ends the audition", "[unit]")
+{
+	// As when the project window closes during a press of the play tool, by a key command (#1136): the track mustn't
+	// play on, neither what the play tool plays nor the scrub of a resize at an audio event's lower corner.
+	Fixture f;
+	f.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	f.call("audio.start");
+	std::vector<std::string> modes;
+	const ui::Subscription subscription = f.binding.on("audition.changed",
+		[&modes](const engine::Event& event) { modes.push_back(event.data.at("mode").get<std::string>()); });
+	const auto goesAway = [&f, &modes](ui::PlayMode mode, double x, double y, double toX)
+	{
+		// A display of its own, in front of the fixture's, in the same place.
+		Rml::ElementDocument& document = f.load();
+		document.PullToFront();
+		auto display = std::make_unique<ui::EventDisplay>(f.engine, f.binding, *document.GetElementById("display"));
+		REQUIRE(f.waitUntil(
+			[&document]
+			{
+				const auto* lanes = dynamic_cast<ui::EventLanes*>(document.QuerySelector("event-lanes.events"));
+				return lanes != nullptr && lanes->lanes().size() == 2 && !lanes->lanes()[0].events.empty();
+			}));
+		display->setTool(ui::Tool::Play);
+		display->setPlayMode(mode);
+		modes.clear();
+		f.automation.press(std::nullopt, f.at(x, y), ui::MouseButton::Left);
+		f.step();
+		f.automation.move(std::nullopt, f.at(toX, y));
+		f.step();
+		REQUIRE(f.waitUntil([&modes] { return !modes.empty(); }));
+		CHECK(modes.back() != "off");
+		display.reset();
+		CHECK(f.waitUntil([&modes] { return modes.back() == "off"; }));
+		document.Close();
+		f.automation.release(std::nullopt, f.at(toX, y), ui::MouseButton::Left);
+		f.step();
+	};
+	goesAway(ui::PlayMode::Play, 300, 10, 300);
+	goesAway(ui::PlayMode::Scrub, 220, 10, 240);
+	goesAway(ui::PlayMode::Scrub, 248, 30, 268); // the resize at the event's lower right corner
+}
+
 TEST_CASE("the range selection tool selects ranges, snapped, by dragging and double clicking", "[unit]")
 {
 	Fixture f;
@@ -2587,6 +2706,114 @@ TEST_CASE(
 	f.run("edit.duplicate");
 	REQUIRE(f.waitUntil([&] { return positions().size() == 3; }));
 	CHECK(positions()[2] == 10 * g_quarter);
+}
+
+TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar on that bar's own tick", "[unit]")
+{
+	// At tempos whose bars lie between samples a bar's tick can lie up to half a sample from the sample the range
+	// shows, and a part on a bar moved to that sample can land off the bar's tick. Snapped to the bar, the drag moves
+	// it to the bar's tick (range.move's positionTicks, #1785).
+	Fixture f;
+	const auto midi = f.call("project.get").at("tracks")[1].at("id").get<uint64_t>();
+	f.call("event.remove", {{"events", {f.part}}});
+	f.call("project.set", {{"tempoTrackActive", true}});
+	const auto startOf = [&f](uint64_t id)
+	{ return f.call("event.get", {{"events", {id}}}).at("events").at(0).at("start").get<int64_t>(); };
+	const auto positionOf = [&f](uint64_t id)
+	{
+		for (const Json& part : f.parts())
+			if (part.at("id") == id)
+				return part.at("position").get<int64_t>();
+		return int64_t{-1};
+	};
+	const auto add = [&f, midi](int64_t position, int64_t length)
+	{
+		return f.call("midiPart.add", {{"track", midi}, {"position", position}, {"length", length}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	};
+	// A tempo and a bar where moving the part on it by a range from its start sample to the next bar's sample puts it
+	// off the next bar's tick, and where Grid Relative's tick for the drag by a bar, which keeps the range start's
+	// distance from its bar line, isn't where the move to that tick's sample puts the part either.
+	double bpm = 0.0;
+	int64_t bar = 0;
+	uint64_t part = 0;
+	const Json relative = {{"on", true}, {"type", "gridRelative"}};
+	for (const double candidate : {97.3, 133.7, 101.3, 89.9, 111.1, 93.7, 127.9, 104.9, 117.3, 86.3})
+	{
+		f.call("tempo.add", {{"position", 0}, {"bpm", candidate}, {"ramp", false}});
+		for (int64_t each = 1; each <= 2 && bar == 0; ++each)
+		{
+			const uint64_t id = add(each * g_bar, g_bar);
+			const uint64_t probe = add((each + 1) * g_bar, g_quarter);
+			const int64_t at = startOf(probe);
+			f.call("event.remove", {{"events", {probe}}});
+			const int64_t start = startOf(id);
+			const Json range = {{"start", start}, {"end", start + 48000}, {"tracks", {midi}}};
+			Json move = range;
+			move["position"] = at;
+			f.call("range.move", move);
+			const bool off = positionOf(id) != (each + 1) * g_bar;
+			f.call("history.undo");
+			const Json snapped =
+				f.call("snap.position", {{"position", at}, {"from", start}, {"settings", relative}, {"range", 0}});
+			move["position"] = snapped.at("position");
+			f.call("range.move", move);
+			const bool apart = snapped.at("musical") == true && positionOf(id) != snapped.at("ticks").get<int64_t>();
+			f.call("history.undo");
+			if (off && apart)
+			{
+				bpm = candidate;
+				bar = each;
+				part = id;
+			}
+			else
+			{
+				f.call("event.remove", {{"events", {id}}});
+			}
+		}
+		if (bar != 0)
+			break;
+	}
+	REQUIRE(bar != 0);
+	INFO(bpm << " BPM, bar " << bar);
+
+	f.call("snap.set", {{"on", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().on; }));
+	const int64_t start = startOf(part);
+	const double seconds = static_cast<double>(start) / 48000.0;
+	REQUIRE(f.waitUntil(
+		[&f, seconds]
+		{
+			const std::vector<ui::TimeSpan>& events = f.lanes("events")[1].events;
+			return events.size() == 1 && std::abs(events[0].start - seconds) < 1.0 / 48000.0;
+		}));
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{start, start + 48000, {midi}});
+	// 100 dp a second: pressed in the range and dragged by a bar.
+	const double x = (seconds * 100.0) + 20.0;
+	f.drag(x, 60, x + (4.0 * 60.0 / bpm * 100.0), 60);
+	REQUIRE(f.waitUntil([&] { return positionOf(part) == (bar + 1) * g_bar; }));
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return positionOf(part) == bar * g_bar; }));
+
+	// Grid Relative keeps the range start's distance from its bar line, the rounding of its sample to ticks, so its
+	// tick lies off the next bar's line: the drag by a bar sends the range's new start in samples, and the part lands
+	// where range.move puts it there, not on that tick.
+	f.call("snap.set", {{"type", "gridRelative"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().type == engine::SnapType::GridRelative; }));
+	f.click(900, 20);
+	f.display.setRange(ui::RangeSelection{start, start + 48000, {midi}});
+	f.drag(x, 60, x + (4.0 * 60.0 / bpm * 100.0), 60);
+	REQUIRE(f.waitUntil([&] { return positionOf(part) != bar * g_bar; }));
+	const int64_t dragged = positionOf(part);
+	const int64_t at = f.display.range().value_or(ui::RangeSelection{-1, -1, {}}).start;
+	REQUIRE(at > start);
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return positionOf(part) == bar * g_bar; }));
+	f.call("range.move", {{"start", start}, {"end", start + 48000}, {"tracks", {midi}}, {"position", at}});
+	CHECK(positionOf(part) == dragged);
 }
 
 TEST_CASE("a drag in the selection range takes its contents onto other tracks too, Alt a copy of them", "[unit]")

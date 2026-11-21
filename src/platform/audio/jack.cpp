@@ -144,6 +144,7 @@ namespace gnubase::audio
 				// and not again after another client set another size over it, which would only make that client ask
 				// again, and so on (#433). It processes in blocks of at most its block size at any buffer size.
 				m_requestedBufferSize = m_previousBufferSize;
+				m_openedLatency = JackDevice::latency(); // not virtually, as in the destructor
 				if (blockSize != 0 && blockSize != m_previousBufferSize &&
 					m_yielded->load() != yieldKey(blockSize, m_previousBufferSize))
 				{
@@ -152,7 +153,8 @@ namespace gnubase::audio
 						logging::warning("The JACK server doesn't take a buffer size of {} frames", blockSize);
 				}
 				m_openedBufferSize = jack.getBufferSize(handle);
-				m_openedLatency = JackDevice::latency(); // not virtually, as in the destructor
+				if (m_openedBufferSize == m_requestedBufferSize && m_requestedBufferSize != m_previousBufferSize)
+					followOwnBufferSize();
 				m_watcher = std::thread([this] { watch(); });
 				++g_jackAudioDevicesOpen;
 			}
@@ -389,9 +391,9 @@ namespace gnubase::audio
 							m_yielded->store(yieldKey(m_blockSize, size));
 						return "the buffer size changed";
 					}
-					// The device's own request took effect late (PipeWire), and the latency may follow the buffer.
+					// The device's own request took effect late (PipeWire).
 					m_openedBufferSize = size;
-					m_openedLatency = latency();
+					followOwnBufferSize();
 				}
 				if (!m_graphChanged.exchange(false))
 					return nullptr;
@@ -400,9 +402,29 @@ namespace gnubase::audio
 						if (m_jack.portByName(m_client->get(), name.c_str()) == nullptr)
 							return "a physical port went away";
 				const DeviceLatency now = latency();
-				if (now.input != m_openedLatency.input || now.output != m_openedLatency.output)
+				const bool input = now.input != m_openedLatency.input;
+				const bool output = now.output != m_openedLatency.output;
+				if ((input && !m_inputLatencyFollows) || (output && !m_outputLatencyFollows))
 					return "the latency changed";
+				// The latency that follows the device's own buffer size, late.
+				m_inputLatencyFollows = m_inputLatencyFollows && !input;
+				m_outputLatencyFollows = m_outputLatencyFollows && !output;
+				m_openedLatency = now;
 				return nullptr;
+			}
+
+			// Once the server runs at the size the device asked for, the latency at that size is the device's
+			// baseline. The latency may follow the size late, jackd's on a loaded machine: a direction whose latency
+			// hasn't changed yet takes its next change as the baseline too, instead of resetting the device for a
+			// change it made itself (#1991).
+			// ponytail: a direction whose latency doesn't depend on the buffer size takes its next real change as
+			// the baseline as well; time the exception out if such hardware turns up.
+			void followOwnBufferSize()
+			{
+				const DeviceLatency now = JackDevice::latency(); // not virtually: the constructor calls this too
+				m_inputLatencyFollows = now.input == m_openedLatency.input;
+				m_outputLatencyFollows = now.output == m_openedLatency.output;
+				m_openedLatency = now;
 			}
 
 			const JackLibrary& m_jack;
@@ -417,6 +439,8 @@ namespace gnubase::audio
 			uint32_t m_requestedBufferSize = 0; // what the device asked the server for
 			uint32_t m_openedBufferSize = 0;    // the server's once it had
 			DeviceLatency m_openedLatency;
+			bool m_inputLatencyFollows = false; // its next change is the device's own buffer size's, late
+			bool m_outputLatencyFollows = false;
 			bool m_running = false;
 
 			// Audio thread memory, allocated when opened.

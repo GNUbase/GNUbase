@@ -26,6 +26,7 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
     textdisplay[field=releaseVelocity], [field=channel]     a note's off velocity, 0-127, and channel, 1-16
     span[field=rootKeyTranspose]                            what the project root key adds, "(+2)", empty for 0
     select[field=rootKey], button[field=globalTranspose]    of MIDI parts, audio events and audio parts' events
+    textdisplay[field=value], button[field=terminator]      an automation point's value and Terminator (Yes/No)
 ```
 
 - **Editing** (p. 72). A double click edits a display or the volume as text, Enter takes it; mute and lock are toggles.
@@ -65,6 +66,13 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   marker's length; end and length change the cycle markers. The project window selects events or markers:
   selecting an event deselects the markers (`AppUi`, `MarkerLines::deselect`), a marker clicked deselects the events.
   A selection that names only markers the project no longer has shows `.empty`, until the marker lines drop them.
+- **Automation points** (p. 881, [virgin-territory.md](virgin-territory.md)). When the event display's selected
+  automation points changed last (`EventDisplay::selectedPoints`), the info line has the class `points` and shows the
+  first one in time: its position (`field=start`, labelled Position), its value in the parameter's unit and Terminator,
+  Yes or No; its other fields are `.unavailable`. Edits go to every selected point as one `history.transaction` of
+  `automationPoint.set`s, one per lane: position and value relative to the first one's, or with Ctrl+Enter the value
+  typed for all, values kept in each parameter's range (`automationLane.targets`); Terminator goes to all, which ends
+  the curve at each point up to the next one, a gap. Selecting events deselects the points, and the other way round.
 - **An in-place editor's notes** (p. 1259, [in-place-editor.md](in-place-editor.md)). When an in-place editor's
   selection changed last, the info line has the class `notes` and shows its first selected note as that editor's own
   info line shows it ([key-editor.md](key-editor.md)): start, end and length in bars and beats, the pitch as a name such
@@ -213,22 +221,25 @@ instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the
   own position with a part shown before, a selection naming removed markers, and an untouched Ctrl+Enter on the position
   of three markers giving them the first one's in one undo step; a note selected in an in-place editor with its fields
   shown and edited, pitch relative and with Ctrl+Enter, velocity, channel and start, a part selected after it, its
-  editor deselecting and closing; the inspector's buttons, volume and pan both ways, the output from another client and
-  from the drop-down list, an output list without the channels that would close a loop, the inserts overview with a
-  bypassed slot, the notepad, renaming, notes and a name being typed when another track is selected and when another
-  client loads a project, arrow keys in the notepad and the name, closing a section, hiding one in Set up Sections and
-  opening it only from an empty area, and what a group and a marker track don't have; the info line's and the toolbar's
-  setup panes, a hidden field staying hidden when the selection shows again and Show All leaving an unavailable one out;
-  the MIDI Modifiers section's bypass, values, a fraction's denominator, a generator's target with positions in ticks, a
-  range the engine refuses, changes from another client with undo, and an audio track without it; the MIDI Inserts and
-  MIDI Sends sections' effect, a parameter from a drop-down list and from a value field, on, bypass, the divider from
-  the list and dragged in one step, a drag dropped when the inspector shows another instrument track or a marker track,
-  the control panel opened and closed, a send's output and Pre, changes from another client with undo, and an audio
-  track without them. A drag of the inspector's volume up to the project's maximum, wheel turns on the pan and a drag of
-  the info line's volume are one undo step each, and a MIDI modifier and a part's transpose dragged back to where they
-  started while the engine answers late end there. The info line's volume step that the engine refuses, one of the two
-  selected events being gone, shows in the command log, leaves no undo step and shows the engine's value again. While a
-  dragged note's last velocity step is out, another note selected in an in-place editor shows its own velocity and the
-  dragged one the drag's; wheel turns on the velocity of one note, then of the next with the mouse still over the field,
-  are two undo steps.
+  editor deselecting and closing; two automation points selected with their position, value and Terminator shown,
+  position and value relative and value with Ctrl+Enter kept in range, Terminator set on one point in one undo step and
+  cleared again, and an event and a marker selected after them showing their Name field; the inspector's buttons, volume
+  and pan both ways, the output from another client and from the drop-down list, a refused output, an output list
+  without the channels that would close a loop, the inserts overview with a bypassed slot, the notepad, renaming, notes
+  and a name being typed when another track is selected and when another client loads a project, arrow keys in the
+  notepad and the name, closing a section, hiding one in Set up Sections and opening it only from an empty area, and
+  what a group and a marker track don't have; the info line's and the toolbar's setup panes, a hidden field staying
+  hidden when the selection shows again and Show All leaving an unavailable one out; the MIDI Modifiers section's
+  bypass, values, a fraction's denominator, a generator's target with positions in ticks, a range the engine refuses,
+  changes from another client with undo, and an audio track without it; the MIDI Inserts and MIDI Sends sections'
+  effect, a parameter from a drop-down list and from a value field, on, bypass, the divider from the list and dragged in
+  one step, a drag dropped when the inspector shows another instrument track or a marker track, the control panel opened
+  and closed, a send's output and Pre, changes from another client with undo, and an audio track without them. A drag of
+  the inspector's volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are
+  one undo step each, and a MIDI modifier and a part's transpose dragged back to where they started while the engine
+  answers late end there. The info line's volume step that the engine refuses, one of the two selected events being
+  gone, shows in the command log, leaves no undo step and shows the engine's value again. While a dragged note's last
+  velocity step is out, another note selected in an in-place editor shows its own velocity and the dragged one the
+  drag's; wheel turns on the velocity of one note, then of the next with the mouse still over the field, are two undo
+  steps.
 - `tests/mixerwindow_tests.cpp`: a drag of a mixer fader is one undo step.

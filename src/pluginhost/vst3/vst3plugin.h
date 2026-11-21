@@ -12,6 +12,7 @@
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/ivstmessage.h"
+#include "pluginterfaces/vst/ivstnoteexpression.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
 #include "pluginterfaces/vst/ivstunits.h"
 #include "public.sdk/source/vst/hosting/module.h"
@@ -60,6 +61,7 @@ namespace gnubase::pluginhost::vst3
 							 public plugin::Latency,
 							 public plugin::Tail,
 							 public plugin::NoteNames,
+							 public plugin::KeySwitches,
 							 private ComponentHandlerListener
 	{
 	public:
@@ -118,6 +120,9 @@ namespace gnubase::pluginhost::vst3
 		uint32_t tail() const noexcept override;
 		// NoteNames
 		std::vector<plugin::NoteName> noteNames() override;
+		// KeySwitches: the controller's IKeyswitchController on the first event input's first channel, each key
+		// switch's title and keyswitchMin, those with a key 0-127.
+		std::vector<plugin::KeySwitch> keySwitches() override;
 
 	private:
 		struct Bus
@@ -302,6 +307,7 @@ namespace gnubase::pluginhost::vst3
 		vst::IPtr<vst::Vst::IConnectionPoint> m_controllerConnection;
 		vst::IPtr<vst::Vst::IUnitInfo> m_units;
 		vst::IPtr<vst::Vst::IMidiMapping> m_midiMapping;
+		vst::IPtr<vst::Vst::IKeyswitchController> m_keySwitches;
 		bool m_separateController = false;
 		bool m_initialized = false;
 		plugin::ProcessMode m_mode = plugin::ProcessMode::Realtime;

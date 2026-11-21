@@ -16,6 +16,7 @@
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
 #include "ui/timeformat.h"
+#include "ui/tracklist.h"
 #include "ui/transport.h"
 #include "ui/transportpanelfit.h"
 
@@ -70,6 +71,42 @@ namespace
 	{
 		const Json names = element(app, selector, window).value("classes", Json::array());
 		return std::find(names.begin(), names.end(), "checked") != names.end();
+	}
+
+	// Clicks the button beside its icon, which focuses the button itself, then checks that Space starts and stops
+	// playback and NumEnter starts it (transport.play, reference manual p. 1572), rather than clicking the button again
+	// (#456, #653). on says whether the button is on.
+	void keysAfterClick(test::UiApp& app, const std::string& button, std::optional<ui::WindowId> window,
+		const std::function<bool()>& on)
+	{
+		INFO(button);
+		const bool wasOn = on();
+		const Json box = element(app, button, window).at("box");
+		const ui::Point edge{box.at("x").get<int>() + 2, box.at("y").get<int>() + (box.at("height").get<int>() / 2)};
+		app.ui().click(window, {"", 0, edge}, ui::MouseButton::Left, 1, {});
+		REQUIRE(app.waitUntil([&on, wasOn] { return on() != wasOn; }));
+		const auto playing = [&app](bool playing)
+		{
+			return app.waitUntil(
+				[&app, playing] { return app.call("transport.get").at("playing").get<bool>() == playing; });
+		};
+		// The focus is the button: buttons without an id are told apart by their classes, attributes and box.
+		const Json focus = app.ui().key(window, "Space").at("focus");
+		const Json clicked = element(app, button, window);
+		REQUIRE(focus.is_object());
+		for (const char* key : {"tag", "id", "classes", "attributes", "box"})
+		{
+			INFO(key);
+			CHECK(focus.value(key, Json()) == clicked.value(key, Json()));
+		}
+		REQUIRE(playing(true));
+		app.ui().key(window, "Space");
+		REQUIRE(playing(false));
+		app.ui().key(window, "NumEnter");
+		REQUIRE(playing(true));
+		app.ui().key(window, "Space");
+		REQUIRE(playing(false));
+		CHECK(on() != wasOn);
 	}
 
 	// What a display shows: a text display's value, another element's text.
@@ -184,26 +221,48 @@ TEST_CASE("Space starts and stops playback after a click on a toolbar or transpo
 	ui::Window* panel = app.appUi().transportPanel();
 	REQUIRE(panel != nullptr);
 
-	// A click beside the button's icon focuses the button itself, but Space runs its key command rather than clicking
-	// the button again.
 	const auto spaceToggles = [&app](const std::string& button, std::optional<ui::WindowId> window)
-	{
-		INFO(button);
-		const bool on = !checked(app, button, window);
-		const Json box = element(app, button, window).at("box");
-		const ui::Point edge{box.at("x").get<int>() + 2, box.at("y").get<int>() + (box.at("height").get<int>() / 2)};
-		app.ui().click(window, {"", 0, edge}, ui::MouseButton::Left, 1, {});
-		REQUIRE(app.waitUntil([&app, &button, window, on] { return checked(app, button, window) == on; }));
-		const Json focus = app.ui().key(window, "Space").at("focus");
-		CHECK(focus.value("id", std::string()) == button.substr(1));
-		REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == true; }));
-		app.ui().key(window, "Space");
-		REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == false; }));
-		CHECK(checked(app, button, window) == on);
-	};
+	{ keysAfterClick(app, button, window, [&app, &button, window] { return checked(app, button, window); }); };
 	spaceToggles("#cycle", std::nullopt);
 	spaceToggles("#metronome", panel->id());
 	spaceToggles("#snap", std::nullopt);
+}
+
+TEST_CASE("Space and NumEnter run their key commands after a click on a track's, the inspector's or a mixer channel's "
+		  "buttons (#653)",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	const Json added = app.call("track.add", {{"type", "audio"}});
+	const auto channel = added.at("channel").at("id").get<uint64_t>();
+	const auto channelIs = [&app, channel](const char* state)
+	{
+		const Json project = app.call("project.get");
+		for (const Json& each : project.at("channels"))
+			if (each.at("id") == channel)
+				return each.value(state, false);
+		return false;
+	};
+	const std::string mute = ".track-list button.mute"; // the only track's
+	REQUIRE(app.waitUntil([&app, &mute] { return app.ui().dom(std::nullopt, mute, 0).at("elements").size() == 1; }));
+	keysAfterClick(app, mute, std::nullopt, [&channelIs] { return channelIs("mute"); });
+
+	// The inspector's buttons are the track list's in another place.
+	app.appUi().docking().open("inspector");
+	app.appUi().trackList()->select({added.at("track").at("id").get<uint64_t>()});
+	const std::string inspectorMute = ".inspector-buttons button.mute";
+	REQUIRE(app.waitUntil(
+		[&app, &inspectorMute] { return app.ui().dom(std::nullopt, inspectorMute, 0).at("elements").size() == 1; }));
+	REQUIRE(app.waitUntil([&app, &inspectorMute] { return element(app, inspectorMute).at("visible").get<bool>(); }));
+	keysAfterClick(app, inspectorMute, std::nullopt, [&channelIs] { return channelIs("mute"); });
+
+	app.keys().run("window.mixer", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.appUi().mixer(1) != nullptr; }));
+	const ui::WindowId mixer = app.appUi().mixerWindow(1);
+	const std::string solo = ".mixer-channel[channel=" + std::to_string(channel) + "] button.solo";
+	REQUIRE(app.waitUntil([&app, mixer, &solo] { return app.ui().dom(mixer, solo, 0).at("elements").size() == 1; }));
+	keysAfterClick(app, solo, mixer, [&channelIs] { return channelIs("solo"); });
 }
 
 TEST_CASE(
@@ -1850,6 +1909,25 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 	REQUIRE(app.waitUntil([&app, again] { return shows(app, "#time-display", again) == "1"; }));
 	REQUIRE(app.waitUntil([&app, again] { return hasClass(app, "#time-display", "size-0", again); }));
 	CHECK(app.shell().bounds(again).size().width < normal.width);
+}
+
+TEST_CASE("a setup pane's buttons keep Space, also in the transport bar (#653)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.ui().click(std::nullopt, at("#transport-bar [section=click]"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#transport-setup"));
+	click(app, "#transport-setup [setup-section=locators]");
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(!visible(app, "#transport-bar [section=locators]"));
+	// Space clicks the focused section button again rather than starting playback.
+	const Json focus = app.ui().key(std::nullopt, "Space").at("focus");
+	REQUIRE(focus.is_object());
+	CHECK(focus.value("attributes", Json::object()).value("setup-section", std::string()) == "locators");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(visible(app, "#transport-bar [section=locators]"));
+	app.shell().step(std::chrono::milliseconds(50));
+	CHECK(transport(app).at("playing") == false);
 }
 
 TEST_CASE("setup panes show and hide the transport bar's and the transport panel's sections", "[ui]")

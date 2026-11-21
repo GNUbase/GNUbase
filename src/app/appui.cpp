@@ -532,7 +532,8 @@ namespace gnubase::app
 		m_shell.onUnusedKey(
 			[this](ui::Window& window, const ui::KeyPress& keys)
 			{
-				if (ui::OnScreenKeyboard* keyboard = this->keyboard(); keyboard == nullptr || !keyboard->press(keys))
+				if (ui::OnScreenKeyboard* keyboard = this->keyboard();
+					keyboard == nullptr || !keyboard->press(keys, m_keys.bound(window, keys)))
 					m_keys.press(window, keys);
 			});
 		m_shell.onKeyReleased(
@@ -1018,7 +1019,7 @@ namespace gnubase::app
 							dialog.location = std::string(kind.name) + "." + kind.extension;
 						dialog.parent = window.id();
 						m_shell.showFileDialog(dialog,
-							[this, kind, exporting](const ui::FileDialogResult& chosen)
+							[this, kind, exporting, id = window.id()](const ui::FileDialogResult& chosen)
 							{
 								if (!chosen.error.empty())
 									logging::warning("The file dialog failed: {}", chosen.error);
@@ -1027,8 +1028,15 @@ namespace gnubase::app
 								std::filesystem::path file = chosen.files.front();
 								if (exporting && file.extension().empty())
 									file += std::string(".") + kind.extension;
+								// A file that can't be read or written, or one the project refuses, such as a tempo
+								// track whose time signatures the locked signature track can't take, says why (#1976).
 								m_binding.send(std::string(kind.engine) + (exporting ? ".export" : ".import"),
-									{{"path", file.u8string()}});
+									{{"path", file.u8string()}},
+									[this, id](const engine::Result& result)
+									{
+										if (!result.ok())
+											m_files.showError(id, result.error);
+									});
 							});
 					}});
 			}
@@ -1761,6 +1769,8 @@ namespace gnubase::app
 		m_infoLine.reset();
 		m_toolbarQuantize.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		// Imports into the project window that the engine refuses say why, as the project file commands do (#1976).
+		m_eventDisplay->onImportFailed([this](const std::string& error) { m_files.showError(m_main.id(), error); });
 		// The quantize panel lists the tracks of the selected audio events with hitpoints (#1344).
 		m_eventDisplay->onSelectionShown(
 			[this]
@@ -2321,8 +2331,13 @@ namespace gnubase::app
 		std::vector<uint64_t> found;
 		if (!m_eventDisplay || !m_eventDisplay->project().is_object())
 			return found;
+		// By reference, not through Json::value's copy: the main menu asks for it in every frame (#1901).
+		const engine::Json& project = m_eventDisplay->project();
+		const auto items = project.find(kind);
+		if (items == project.end())
+			return found;
 		const std::vector<uint64_t>& selection = m_eventDisplay->selection();
-		for (const engine::Json& item : m_eventDisplay->project().value(kind, engine::Json::array()))
+		for (const engine::Json& item : *items)
 		{
 			const auto id = item.at("id").get<uint64_t>();
 			if (std::find(selection.begin(), selection.end(), id) != selection.end())

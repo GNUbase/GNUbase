@@ -310,6 +310,7 @@ namespace gnubase::pluginhost::vst3
 		m_controllerConnection = nullptr;
 		m_units = nullptr;
 		m_midiMapping = nullptr;
+		m_keySwitches = nullptr;
 		if (m_controller != nullptr)
 		{
 			m_controller->setComponentHandler(nullptr);
@@ -388,6 +389,7 @@ namespace gnubase::pluginhost::vst3
 			}
 			m_units = vst::U::cast<vst::Vst::IUnitInfo>(m_controller);
 			m_midiMapping = vst::U::cast<vst::Vst::IMidiMapping>(m_controller);
+			m_keySwitches = vst::U::cast<vst::Vst::IKeyswitchController>(m_controller);
 		}
 		readBuses();
 		readParams();
@@ -683,9 +685,11 @@ namespace gnubase::pluginhost::vst3
 			return nullptr;
 		if ((id == plugin::Presets::extensionId() || id == plugin::NoteNames::extensionId()) && m_units == nullptr)
 			return nullptr;
+		if (id == plugin::KeySwitches::extensionId() && (m_keySwitches == nullptr || m_eventInputs.empty()))
+			return nullptr;
 		return plugin::provide<plugin::AudioPorts, plugin::ConfigurableAudioPorts, plugin::AudioPortsActivation,
 			plugin::NotePorts, plugin::Params, plugin::State, plugin::Presets, plugin::Latency, plugin::Tail,
-			plugin::NoteNames>(this, id);
+			plugin::NoteNames, plugin::KeySwitches>(this, id);
 	}
 
 	void Vst3Plugin::onMainThread()
@@ -2022,6 +2026,22 @@ namespace gnubase::pluginhost::vst3
 				names.push_back(plugin::NoteName{toUtf8(name), -1, -1, key});
 		}
 		return names;
+	}
+
+	std::vector<plugin::KeySwitch> Vst3Plugin::keySwitches()
+	{
+		std::vector<plugin::KeySwitch> result;
+		if (m_keySwitches == nullptr || m_eventInputs.empty())
+			return result;
+		const vst::int32 count = m_keySwitches->getKeyswitchCount(0, 0);
+		for (vst::int32 i = 0; i < count; ++i)
+		{
+			vst::Vst::KeyswitchInfo info{};
+			if (succeeded(m_keySwitches->getKeyswitchInfo(0, 0, i, info)) && info.keyswitchMin >= 0 &&
+				info.keyswitchMin <= 127)
+				result.push_back(plugin::KeySwitch{toUtf8(info.title), static_cast<int16_t>(info.keyswitchMin)});
+		}
+		return result;
 	}
 
 	// ---- Latency and tail ----

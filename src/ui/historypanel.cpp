@@ -100,34 +100,21 @@ namespace gnubase::ui
 			return row == nullptr ? -1 : row->GetAttribute<int>("value", 0) - 1;
 		}
 
-		// history.get has no step ids, but a step keeps its action and time.
-		bool sameStep(const Json& a, const Json& b)
+		// Where the step with the id is among the steps (history.get), or -1 if it went. A step keeps its id while
+		// the oldest steps and the undone ones go, and whatever other clients do.
+		int indexOfId(const Json& steps, const Json& id)
 		{
-			return a.at("action") == b.at("action") && a.at("time") == b.at("time");
+			const auto found =
+				std::find_if(steps.begin(), steps.end(), [&id](const Json& step) { return step.at("id") == id; });
+			return found == steps.end() ? -1 : static_cast<int>(found - steps.begin());
 		}
 
-		// Where the step at the index of the steps before is among those after, or -1 if it went. Steps only go at
-		// the end (the undone ones, which a new action drops) and, once there are as many as the maximum, at the
-		// start (the oldest); new ones come at the end. So the steps that stay are the first ones after. Two steps
-		// of the same action within the same second can only be told apart by where they are.
-		int stepAfter(const Json& before, const Json& after, int maxSteps, int index)
+		// The steps are the same ones, in the same order, whatever their details.
+		bool sameSteps(const Json& a, const Json& b)
 		{
-			if (index < 0 || index >= static_cast<int>(before.size()))
-				return -1;
-			const bool full = maxSteps > 0 && static_cast<int>(after.size()) >= maxSteps;
-			for (int dropped = 0; dropped <= (full ? index : 0); ++dropped)
-			{
-				const int moved = index - dropped;
-				if (moved >= static_cast<int>(after.size()))
-					continue;
-				bool same = true;
-				for (int i = 0; i <= moved && same; ++i)
-					same = sameStep(
-						before[static_cast<size_t>(dropped) + static_cast<size_t>(i)], after[static_cast<size_t>(i)]);
-				if (same)
-					return moved;
-			}
-			return -1;
+			return a.size() == b.size() &&
+				std::equal(a.begin(), a.end(), b.begin(),
+					[](const Json& x, const Json& y) { return x.at("id") == y.at("id"); });
 		}
 	}
 
@@ -218,19 +205,24 @@ namespace gnubase::ui
 			input->GetSelection(&selectionStart, &selectionEnd, nullptr);
 
 		Json steps = history.at("steps");
-		const int stays = typing ? stepAfter(m_steps, steps, history.value("maxSteps", 0), typed) : -1;
+		const int stays = typed >= 0 && typed < static_cast<int>(m_steps.size())
+			? indexOfId(steps, m_steps[static_cast<size_t>(typed)].at("id"))
+			: -1;
+		if (m_dragging && !sameSteps(m_steps, steps))
+			m_dragging = false; // the steps it would undo or redo changed, also when there are as many rows as before
 		m_steps = std::move(steps);
 		m_position = history.at("position").get<int>();
 		const auto count = static_cast<int>(m_steps.size());
-		// What is typed goes on in the field of its step, wherever that is now, and goes with its step if another
-		// client's action dropped that (the oldest steps past the maximum, or the undone steps), rather than becoming
-		// the step's that took its row. Nothing sends what the field had when it loses the focus here.
+		// What is typed goes on in the field of its step (found by its id), wherever that is now, and goes with its
+		// step if another client's action dropped that (the oldest steps past the maximum, or the undone steps),
+		// rather than becoming the step's that took its row. Nothing sends what the field had when it loses the focus
+		// here.
 		m_placing = true;
 		if (body->rows() != count + 1)
 		{
 			body->undone->SetInnerRML("");
 			body->done->SetInnerRML(rows(m_steps.size()));
-			m_dragging = false; // the rows it measured are gone, and the steps it would undo or redo may be too
+			m_dragging = false; // the rows it measured are gone
 		}
 		Rml::Element* kept = stays < 0 ? nullptr : body->field(stays);
 		if (typed >= 0 && (!typing || kept != typing.get())) // the field went with its row, or its step moved
@@ -376,6 +368,12 @@ namespace gnubase::ui
 		if (details == m_steps[static_cast<size_t>(step)].at("details").get<std::string>())
 			return;
 		m_steps[static_cast<size_t>(step)]["details"] = details;
-		m_binding.send("history.describe", {{"step", step}, {"details", details}});
+		// By the step's id, which stays with it whatever another client did since the panel last showed the steps.
+		m_binding.send("history.describe", {{"id", m_steps[static_cast<size_t>(step)].at("id")}, {"details", details}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && !result.ok())
+					request(); // the step went meanwhile: show the steps as they are
+			});
 	}
 }

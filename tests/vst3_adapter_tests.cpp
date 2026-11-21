@@ -18,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -25,6 +26,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // CMake passes the full paths; the fallbacks only serve tools that compile this file on its own.
@@ -1004,6 +1006,62 @@ TEST_CASE("a VST3 plugin's program list gives presets and note names", "[integra
 	CHECK(names[0].name == "Kick");
 	CHECK(names[1].key == 38);
 	CHECK(names[1].name == "Snare");
+}
+
+namespace
+{
+	std::vector<std::pair<std::string, int16_t>> keySwitchesOf(plugin::Plugin& plugin)
+	{
+		std::vector<std::pair<std::string, int16_t>> result;
+		for (const plugin::KeySwitch& each : ext<plugin::KeySwitches>(plugin).keySwitches())
+			result.emplace_back(each.name, each.key);
+		return result;
+	}
+
+	// The adapter test plugin's key switches with a program: Init has 1, Loud 2 and Quiet 3. The plugin also reports
+	// Unplayable at key 128 with every program, which the adapter leaves out, as it is no MIDI key.
+	std::vector<std::pair<std::string, int16_t>> keySwitchesWith(size_t count)
+	{
+		const std::vector<std::pair<std::string, int16_t>> all{{"Sustain", 24}, {"Staccato", 25}, {"Pizzicato", 26}};
+		return {all.begin(), all.begin() + static_cast<std::ptrdiff_t>(count)};
+	}
+}
+
+TEST_CASE("a VST3 plugin's key switch controller gives the key switches of the program it has loaded", "[integration]")
+{
+	Vst3Fixture fixture;
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	CHECK(keySwitchesOf(*plugin) == keySwitchesWith(1)); // the component's state starts with Init
+	auto& presets = ext<plugin::Presets>(*plugin);
+	const std::vector<plugin::PresetInfo> list = presets.presets();
+	REQUIRE(list.size() == 3);
+	REQUIRE(presets.loadPreset(list[2]));
+	CHECK(keySwitchesOf(*plugin) == keySwitchesWith(3));
+	REQUIRE(presets.loadPreset(list[1]));
+	CHECK(keySwitchesOf(*plugin) == keySwitchesWith(2));
+}
+
+TEST_CASE("a VST3 plugin in a plugin host process gives the key switches of the program it has now", "[integration]")
+{
+	engine::plugins::HostManager manager(hostOptions());
+	std::unique_ptr<plugin::remote::RemotePlugin> remote =
+		manager.create({pluginId(), GNUBASE_VST3_ADAPTERTEST, "GNUbase"});
+	REQUIRE(remote->init());
+	CHECK(keySwitchesOf(*remote) == keySwitchesWith(1));
+
+	// A program change after it loaded: the host process asks the instance again.
+	plugin::EventList in(8);
+	plugin::EventList out(64);
+	REQUIRE(in.push(paramEvent(0, Program, 1.0)));
+	ext<plugin::Params>(*remote).flushParams(in, out);
+	CHECK(keySwitchesOf(*remote) == keySwitchesWith(3));
+
+	// A plugin without a key switch controller has no such extension through the host process either.
+	const Vst3Fixture gain(testPlugin("gain"));
+	std::unique_ptr<plugin::remote::RemotePlugin> other =
+		manager.create({gain.factory().descriptor(0).id, testPlugin("gain"), "GNUbase"});
+	REQUIRE(other->init());
+	CHECK(plugin::extension<plugin::KeySwitches>(*other) == nullptr);
 }
 
 TEST_CASE("a VST3 plugin's buses take other layouts and the side-chain can be activated", "[integration]")

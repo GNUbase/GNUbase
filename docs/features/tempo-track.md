@@ -91,7 +91,9 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   the Tap Tempo Mode pop-up menu (p. 1458), `menuitem[tap-mode]`, which sets `transport.tapTempoMode` and is checked by
   it.
 - **File > Export > Tempo Track...** (`file.exportTempo`) and **File > Import > Tempo Track...** (`file.importTempo`)
-  choose the file in the OS's file dialog; an exported file without an extension gets `.xml`.
+  choose the file in the OS's file dialog; an exported file without an extension gets `.xml`. A file that can't be read
+  or written, or an import that the project refuses (`tempo.import` with the signature track locked and other time
+  signatures in the file), shows its error in the project error dialog (#1976), as do the marker files' commands.
 - The track list's Duplicate Tracks, Move Selected Tracks to New Folder and drags into folders leave the tempo track
   out: the project has one, at the top level. Remove Empty Tracks, the engine command `track.removeEmpty`, never
   removes it.
