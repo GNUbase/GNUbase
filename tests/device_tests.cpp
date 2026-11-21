@@ -1129,7 +1129,10 @@ namespace
 	class TestClient
 	{
 	public:
-		TestClient(const std::string& library, const char* name, bool physical, bool cable = false)
+		// With a latency, its ports report that many frames each way, through a latency callback (setLatency).
+		TestClient(
+			const std::string& library, const char* name, bool physical, bool cable = false, uint32_t latency = 0)
+			: m_latency(latency)
 		{
 			m_library = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
 			REQUIRE(m_library != nullptr);
@@ -1155,6 +1158,14 @@ namespace
 			if (cable)
 				REQUIRE(function<decltype(&jack_set_process_callback)>("jack_set_process_callback")(
 							m_client, &TestClient::loop, this) == 0);
+			if (latency != 0)
+			{
+				m_setLatencyRange = function<decltype(&jack_port_set_latency_range)>("jack_port_set_latency_range");
+				m_recomputeLatencies =
+					function<decltype(&jack_recompute_total_latencies)>("jack_recompute_total_latencies");
+				REQUIRE(function<decltype(&jack_set_latency_callback)>("jack_set_latency_callback")(
+							m_client, &TestClient::reportLatency, this) == 0);
+			}
 			REQUIRE(function<decltype(&jack_activate)>("jack_activate")(m_client) == 0);
 		}
 
@@ -1168,6 +1179,14 @@ namespace
 
 		// Asks the server for a buffer size, as another application would. 0 if it takes it.
 		int setBufferSize(uint32_t frames) const { return m_setBufferSize(m_client, frames); }
+
+		// Changes the latency its ports report, as a sound card's driver does when its buffers change: the server
+		// asks every client for its latencies again. Only for a client made with a latency.
+		void setLatency(uint32_t frames)
+		{
+			m_latency = frames;
+			REQUIRE(m_recomputeLatencies(m_client) == 0);
+		}
 
 		// The start of the server's current cycle on the host clock, or 0 if the server doesn't tell. A cycle is every
 		// client's, so this works on another client's process thread too (jackd).
@@ -1201,8 +1220,17 @@ namespace
 			return 0;
 		}
 
+		static void reportLatency(jack_latency_callback_mode_t mode, void* data)
+		{
+			auto& self = *static_cast<TestClient*>(data);
+			jack_latency_range_t range{self.m_latency, self.m_latency};
+			for (size_t c = 0; c < 2; ++c) // the capture ports in capture mode, the playback ports in playback mode
+				self.m_setLatencyRange(self.m_ports.at(mode == JackCaptureLatency ? c : c + 2), mode, &range);
+		}
+
 		void* m_library = nullptr;
 		jack_client_t* m_client = nullptr;
+		std::atomic<uint32_t> m_latency{0};
 		std::array<jack_port_t*, 4> m_ports{}; // capture, then playback
 		decltype(&jack_client_close) m_close = nullptr;
 		decltype(&jack_get_buffer_size) m_bufferSize = nullptr;
@@ -1210,6 +1238,8 @@ namespace
 		decltype(&jack_port_get_buffer) m_buffer = nullptr;
 		decltype(&jack_get_cycle_times) m_cycleTimes = nullptr;
 		decltype(&jack_get_time) m_time = nullptr;
+		decltype(&jack_port_set_latency_range) m_setLatencyRange = nullptr;
+		decltype(&jack_recompute_total_latencies) m_recomputeLatencies = nullptr;
 	};
 
 	// Counts the blocks, a cycle long, that start within 20 µs of the start of the server's cycle: the two clocks are
@@ -1332,6 +1362,38 @@ namespace
 			CHECK(waitUntil([] { return forcedQuantum() == 0; }));
 	}
 
+	// Under jackd on a loaded machine, the physical ports' latency may follow the device's own buffer size request
+	// late: such a change is the device's new baseline, not a reset, which would give jackd its old size back and ask
+	// again. A change after that resets it (#1991). The sound card's latency is the largest, so the device's.
+	void checkJackLateLatency(Backend& backend, const std::string& library)
+	{
+		constexpr uint32_t latency = 20000;
+		TestClient card(library, "gnubase-test-hardware", true, false, latency);
+		card.setLatency(latency); // in place before the device opens
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		const uint32_t found = card.bufferSize();
+		const uint32_t own = found != 512 ? 512 : 1024;
+		{
+			const std::unique_ptr<Device> device = backend.open(config("default", 0.0, own));
+			std::atomic<int> resets{0};
+			device->onReset([&resets] { ++resets; });
+			ContractCallback callback(device->format());
+			device->start(callback);
+			REQUIRE(callback.waitFor(8));
+			REQUIRE(waitUntil([&card, own] { return card.bufferSize() == own; }));
+			std::this_thread::sleep_for(std::chrono::milliseconds(200)); // the device's watcher sees its size
+			REQUIRE(device->latency().output == latency);                // the card's, which hasn't followed yet
+			card.setLatency(latency + own);
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+			CHECK(resets == 0);
+			CHECK(device->latency().output == latency + own);
+			card.setLatency(latency + (2 * own)); // not the device's doing
+			CHECK(waitUntil([&resets] { return resets > 0; }));
+			device->stop();
+		}
+		CHECK(waitUntil([&card, found] { return card.bufferSize() == found; }));
+	}
+
 	// Closing gives the server its buffer size back only while it still runs at the size the device asked for: a size
 	// another client set meanwhile stays (#371).
 	void checkJackOtherClientsBufferSize(Backend& backend, const std::string& library)
@@ -1367,14 +1429,11 @@ namespace
 					first.poll();
 					return other.bufferSize() == firstSize;
 				}));
-			// jackd's latencies may follow the device's own request late, which resets it once: it opens again at
-			// the size it set then, and only the resets after that count.
-			reopenFor({&first}, std::chrono::milliseconds(300));
-			const int settled = first.resets();
+			// jackd's latencies may follow a device's own request late, which doesn't reset it (#1991).
 			Reopening second(makeJackBackend(library), config("default", 0.0, secondSize));
 			reopenFor({&first, &second}, std::chrono::seconds(1));
-			INFO("resets: " << first.resets() - settled << " and " << second.resets());
-			CHECK(first.resets() - settled <= 1);
+			INFO("resets: " << first.resets() << " and " << second.resets());
+			CHECK(first.resets() <= 1);
 			CHECK(second.resets() <= 1);
 			CHECK(other.bufferSize() == secondSize);
 			CHECK(first.device().format().blockSize == firstSize); // in blocks of at most that size
@@ -1512,6 +1571,7 @@ TEST_CASE(
 	checkDeviceContract(*backend);
 	checkJackResets(*backend, true);
 	checkJackOwnBufferSize(*backend, "libjack.so.0", false);
+	checkJackLateLatency(*backend, "libjack.so.0");
 	checkJackOtherClientsBufferSize(*backend, "libjack.so.0");
 	checkJackTwoBlockSizes("libjack.so.0");
 	checkJackXruns(*backend);
