@@ -9,6 +9,8 @@
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,12 +42,14 @@ namespace gnubase::ui
 
 		// Disables the items whose command can't run now and enables the others, and shows their keys. The app calls
 		// it in every step of the shell and after each input of ui::Automation (Shell::onInputHandled), so the DOM
-		// that MCP's UI tools read is up to date right after a click or a key, whatever changed (#1173). The menu
-		// calls it too when a click reaches its document, before it looks for the clicked item, for what the click's
-		// listeners changed (#1120). That update sees the listeners that ran before the menu's own on the document:
-		// those of the elements below the document, the document's capture phase listeners and its listeners added
-		// before the menu's. A bubble phase click listener added to the document after the menu runs after the
-		// lookup, and what it changes shows only in the update after the input.
+		// that MCP's UI tools read is up to date right after a click or a key, whatever changed (#1173). It asks each
+		// command once whether it can run in an item's zone, and works out the keys only when the bindings changed
+		// (KeyCommands::bindingsRevision), writing only those that differ from what it wrote (#1901). When a click
+		// reaches its document, the menu asks the clicked item's command again before it runs it, for what the click's
+		// listeners changed (#1120). That sees the listeners that ran before the menu's own on the document: those of
+		// the elements below the document, the document's capture phase listeners and its listeners added before the
+		// menu's. A bubble phase click listener added to the document after the menu runs after that, and what it
+		// changes shows only in the update after the input.
 		void update();
 
 	private:
@@ -55,7 +59,11 @@ namespace gnubase::ui
 			Rml::ObserverPtr<Rml::Element> keys; // its .menu-keys
 			std::string command;
 			engine::Json parameters;
+			std::string shownKeys; // the RML last written into keys
 		};
+
+		// Enables or disables the item's element, if it changed.
+		static void enable(Rml::Element& element, bool enabled);
 
 		void ProcessEvent(Rml::Event& event) override;
 
@@ -63,5 +71,6 @@ namespace gnubase::ui
 		Window& m_window;
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::vector<Item> m_items;
+		std::optional<uint64_t> m_keysRevision; // of the bindings the items show the keys of
 	};
 }

@@ -345,6 +345,7 @@ namespace gnubase::ui
 			return std::any_of(m_custom.begin(), m_custom.end(),
 				[&](const Customized& custom) { return custom.command == command && custom.parameters == parameters; });
 		};
+		++m_revision;
 		m_effective.clear();
 		for (const Bound& bound : m_bindings)
 			if (!customized(bound.command, bound.parameters))
@@ -440,15 +441,16 @@ namespace gnubase::ui
 		return names;
 	}
 
-	bool KeyCommands::press(Window& window, const KeyPress& keys)
+	std::optional<std::pair<KeyCommands::Bound, Rml::Element*>> KeyCommands::find(
+		Window& window, const KeyPress& keys) const
 	{
 		const KeyPress pressed{keys.key, keys.modifiers & g_modifiers};
 		Rml::Element* focus = window.context().GetFocusElement();
 		if (focus != nullptr && focus->GetOwnerDocument() != nullptr && focus->GetOwnerDocument()->IsModal())
-			return false;
+			return std::nullopt;
 		if (focus != nullptr && pressed.modifiers == 0 && isTextField(*focus) &&
 			(pressed.key == KI_UP || pressed.key == KI_DOWN || pressed.key == KI_LEFT || pressed.key == KI_RIGHT))
-			return false;
+			return std::nullopt;
 
 		// A copy of the binding, since a UI command may bind keys.
 		const auto bound = [this, &pressed](const std::string& zone) -> std::optional<Bound>
@@ -466,19 +468,32 @@ namespace gnubase::ui
 				continue;
 			if (innermost == nullptr)
 				innermost = element;
-			if (const std::optional<Bound> found = bound(zone))
-			{
-				hold(pressed.key, found->command);
-				run(found->command, found->parameters, window, element);
-				return true;
-			}
+			if (std::optional<Bound> found = bound(zone))
+				return std::make_pair(std::move(*found), element);
 		}
-		const std::optional<Bound> everywhere = bound({});
-		if (!everywhere)
+		if (std::optional<Bound> everywhere = bound({}))
+			return std::make_pair(std::move(*everywhere), innermost);
+		return std::nullopt;
+	}
+
+	bool KeyCommands::press(Window& window, const KeyPress& keys)
+	{
+		const std::optional<std::pair<Bound, Rml::Element*>> found = find(window, keys);
+		if (!found)
 			return false;
-		hold(pressed.key, everywhere->command);
-		run(everywhere->command, everywhere->parameters, window, innermost);
+		const auto& [binding, zone] = *found;
+		hold(binding.keys.key, binding.command);
+		run(binding.command, binding.parameters, window, zone);
 		return true;
+	}
+
+	std::optional<KeyBinding> KeyCommands::bound(Window& window, const KeyPress& keys) const
+	{
+		const std::optional<std::pair<Bound, Rml::Element*>> found = find(window, keys);
+		if (!found)
+			return std::nullopt;
+		const Bound& binding = found->first;
+		return KeyBinding(keySetting(binding.keys, m_platform), binding.command, binding.parameters, binding.zone);
 	}
 
 	void KeyCommands::hold(int key, const std::string& command)

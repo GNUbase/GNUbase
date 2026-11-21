@@ -5,8 +5,10 @@
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
+#include <map>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace gnubase::ui
@@ -40,7 +42,7 @@ namespace gnubase::ui
 				throw std::invalid_argument(message);
 			}
 			m_keys.check(command, parameters);
-			m_items.push_back({element->GetObserverPtr(), {}, std::move(command), std::move(parameters)});
+			m_items.push_back({element->GetObserverPtr(), {}, std::move(command), std::move(parameters), {}});
 		}
 		for (Item& item : m_items)
 		{
@@ -69,19 +71,45 @@ namespace gnubase::ui
 		}
 	}
 
+	void MainMenu::enable(Rml::Element& element, bool enabled)
+	{
+		if (enabled && element.HasAttribute("disabled"))
+			element.RemoveAttribute("disabled");
+		else if (!enabled && !element.HasAttribute("disabled"))
+			element.SetAttribute("disabled", "");
+	}
+
 	void MainMenu::update()
 	{
-		for (const Item& item : m_items)
+		const uint64_t revision = m_keys.bindingsRevision();
+		const bool keysChanged = m_keysRevision != revision;
+		m_keysRevision = revision;
+		// The items of a menu come one after the other: they share their parent's zone. Items of one command in one
+		// zone get the same answer for the whole update, wherever they are, as the enabled callbacks get the window
+		// and the zone, not the parameters.
+		const Rml::Element* parent = nullptr;
+		Rml::Element* parentZone = nullptr;
+		std::map<std::pair<std::string_view, const Rml::Element*>, bool> answers;
+		for (Item& item : m_items)
 		{
 			Rml::Element* element = item.element.get();
 			Rml::Element* shown = item.keys.get();
 			if (element == nullptr || shown == nullptr)
 				continue;
-			const bool enabled = m_keys.canRun(item.command, m_window, closestWith(element, "focuszone"));
-			if (enabled && element->HasAttribute("disabled"))
-				element->RemoveAttribute("disabled");
-			else if (!enabled && !element->HasAttribute("disabled"))
-				element->SetAttribute("disabled", "");
+			Rml::Element* zone = element;
+			if (!element->HasAttribute("focuszone"))
+			{
+				if (element->GetParentNode() != parent)
+				{
+					parent = element->GetParentNode();
+					parentZone = closestWith(element->GetParentNode(), "focuszone");
+				}
+				zone = parentZone;
+			}
+			const auto [answer, isNew] = answers.try_emplace({item.command, zone}, false);
+			if (isNew)
+				answer->second = m_keys.canRun(item.command, m_window, zone);
+			enable(*element, answer->second);
 			// Only where checkWhen says: the window menu's panel items are the docking's (ui/docking.h).
 			if (const std::optional<bool> checked = m_keys.checked(item.command, item.parameters))
 			{
@@ -90,25 +118,33 @@ namespace gnubase::ui
 				else if (!*checked && element->HasAttribute("checked"))
 					element->RemoveAttribute("checked");
 			}
+			if (!keysChanged)
+				continue;
 			const std::vector<std::string> keys = m_keys.keysFor(item.command, item.parameters);
-			const std::string text = keys.empty() ? std::string() : Rml::StringUtilities::EncodeRml(keys.front());
-			if (shown->GetInnerRML() != text)
+			std::string text = keys.empty() ? std::string() : Rml::StringUtilities::EncodeRml(keys.front());
+			if (text != item.shownKeys)
+			{
 				shown->SetInnerRML(text);
+				item.shownKeys = std::move(text);
+			}
 		}
 	}
 
 	void MainMenu::ProcessEvent(Rml::Event& event)
 	{
-		// The items follow what the click's listeners changed before it looks for its item (#1120). What the click's
-		// default actions and the item's own command change follows after the input (update).
-		update();
+		// The clicked item follows what the click's listeners changed before it runs (#1120). The other items, and
+		// what the click's default actions and the item's own command change, follow after the input (update).
 		Rml::Element* element = closestWith(event.GetTargetElement(), "command");
-		if (element == nullptr || element->HasAttribute("disabled"))
+		if (element == nullptr)
 			return;
 		for (const Item& item : m_items)
 			if (item.element.get() == element)
 			{
-				m_keys.run(item.command, item.parameters, m_window, closestWith(element, "focuszone"));
+				Rml::Element* zone = closestWith(element, "focuszone");
+				const bool enabled = m_keys.canRun(item.command, m_window, zone);
+				enable(*element, enabled);
+				if (enabled)
+					m_keys.run(item.command, item.parameters, m_window, zone);
 				return;
 			}
 	}
