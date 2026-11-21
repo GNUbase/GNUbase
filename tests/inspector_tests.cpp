@@ -568,12 +568,13 @@ TEST_CASE("an untouched Ctrl+Enter on a marker's start gives every selected mark
 	window.addTrack({{"type", "marker"}});
 	const auto add = [&window](const Json& parameters)
 	{ return window.call("marker.add", parameters).at("marker").at("id").get<uint64_t>(); };
-	const uint64_t intro = add({{"position", 2 * g_quarter}, {"name", "Intro"}});
 	const uint64_t verse =
 		add({{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 8 * g_quarter}, {"name", "Verse"}});
 	// Every label in view: CI's screens make the window 1024 pixels wide, where the timeline beside the inspector shows
 	// less than 10 quarters.
 	const uint64_t outro = add({{"position", 6 * g_quarter}, {"name", "Outro"}});
+	// The first marker in time added last: the info line shows the first one in timeline order, not by id (#684).
+	const uint64_t intro = add({{"position", 2 * g_quarter}, {"name", "Intro"}});
 	const auto marker = [&window](uint64_t id) { return window.find("markers", id); };
 	REQUIRE(window.app.waitUntil([&] { return elements(window.app, ".marker-label").size() == 3; }));
 	const auto clickMarker = [&window](int index, const std::vector<std::string>& modifiers = {})
@@ -610,6 +611,112 @@ TEST_CASE("an untouched Ctrl+Enter on a marker's start gives every selected mark
 	CHECK(marker(verse).at("position") == 4 * g_quarter);
 	CHECK(marker(verse).at("end") == 8 * g_quarter);
 	CHECK(marker(intro).at("position") == 2 * g_quarter);
+}
+
+TEST_CASE("the info line shows the selected automation points, and its Terminator field makes a gap", "[ui]")
+{
+	Window window;
+	const uint64_t track = window.addTrack({{"type", "audio"}});
+	window.call("track.set", {{"track", track}, {"timeBase", "musical"}});
+	const auto lane = window.call("automationLane.add", {{"track", track}, {"target", {{"type", "volume"}}}})
+						  .at("lane")
+						  .at("id")
+						  .get<uint64_t>();
+	// The first point in time added last: the one that starts first shows.
+	window.call("automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 2 * g_quarter}, {"value", -6.0}}, {{"position", 4 * g_quarter}, {"value", 0.0}},
+					{{"position", g_quarter}, {"value", -12.0}}}}});
+	const auto points = [&window, track]
+	{
+		const Json all = window.call("automationLane.list", {{"track", track}}).at("lanes").at(0).at("points");
+		return std::vector<Json>(all.begin(), all.end()); // by position
+	};
+	const uint64_t first = points().at(0).at("id").get<uint64_t>();
+	const uint64_t second = points().at(1).at("id").get<uint64_t>();
+	window.display.showAutomation(track, true);
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return window.display.automationTargets(track) != nullptr &&
+				!window.display.project().at("automation").empty();
+		}));
+
+	// Two selected: the first one's position and value, the other fields unavailable.
+	window.display.selectPoints({{lane, {second, first}}});
+	REQUIRE(window.shows("#info-line textdisplay[field=start]", "1.2.1.0"));
+	CHECK(hasClass(window.app, "#info-line", "points"));
+	CHECK(hasClass(window.app, "#info-line", "multiple"));
+	CHECK(attribute(window.app, "#info-line textdisplay[field=value]", "value") == "-12");
+	CHECK(element(window.app, "#info-line [info-field=start] .info-label").at("text") == "Position");
+	CHECK(hasClass(window.app, "#info-line [info-field=name]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=volume]", "unavailable"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=terminator]", "unavailable"));
+	CHECK(element(window.app, "#info-line button[field=terminator]").at("text") == "No");
+
+	// Relative to the first one's position and value, each one an undo step.
+	const int64_t position = window.historyPosition();
+	window.type("#info-line textdisplay[field=start]", "1.3.1.0");
+	REQUIRE(window.app.waitUntil([&] { return points().at(0).at("position") == 2 * g_quarter; }));
+	CHECK(points().at(1).at("position") == 3 * g_quarter);
+	window.type("#info-line textdisplay[field=value]", "-9");
+	REQUIRE(window.app.waitUntil([&] { return points().at(0).at("value") == Catch::Approx(-9.0); }));
+	CHECK(points().at(1).at("value") == Catch::Approx(-3.0));
+	CHECK(window.historyPosition() == position + 2);
+	// With Ctrl+Enter the value typed for all, kept in the parameter's range.
+	window.type("#info-line textdisplay[field=value]", "100", "Ctrl+Enter");
+	REQUIRE(window.app.waitUntil([&] { return points().at(0).at("value") == Catch::Approx(6.0); }));
+	CHECK(points().at(1).at("value") == Catch::Approx(6.0));
+	CHECK(points().at(2).at("value") == Catch::Approx(0.0));
+
+	// One point selected, Terminator set to Yes: the gap up to the next point (p. 881), one undo step.
+	window.display.selectPoints({{lane, {second}}});
+	REQUIRE(window.shows("#info-line textdisplay[field=start]", "1.4.1.0"));
+	CHECK_FALSE(hasClass(window.app, "#info-line", "multiple"));
+	const int64_t before = window.historyPosition();
+	window.click("#info-line button[field=terminator]");
+	REQUIRE(window.app.waitUntil([&] { return points().at(1).value("terminator", false); }));
+	CHECK_FALSE(points().at(0).value("terminator", false));
+	CHECK(window.historyPosition() == before + 1);
+	REQUIRE(window.app.waitUntil(
+		[&] { return element(window.app, "#info-line button[field=terminator]").at("text") == "Yes"; }));
+	// Clicked again, it clears Terminator.
+	window.click("#info-line button[field=terminator]");
+	REQUIRE(window.app.waitUntil([&] { return !points().at(1).value("terminator", false); }));
+	REQUIRE(window.app.waitUntil(
+		[&] { return element(window.app, "#info-line button[field=terminator]").at("text") == "No"; }));
+	CHECK(window.historyPosition() == before + 2);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return points().at(1).value("terminator", false); }));
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return !points().at(1).value("terminator", false); }));
+
+	// An event selected gives the info line back to the events.
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 0, 4 * g_quarter, "Part");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Part"));
+	CHECK_FALSE(hasClass(window.app, "#info-line", "points"));
+	CHECK(window.display.selectedPoints().empty());
+	CHECK(hasClass(window.app, "#info-line [info-field=terminator]", "unavailable"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=name]", "unavailable"));
+
+	// A marker selected after the points shows its description.
+	window.addTrack({{"type", "marker"}});
+	const uint64_t marker = window.call("marker.add", {{"position", 2 * g_quarter}, {"name", "Intro"}})
+								.at("marker")
+								.at("id")
+								.get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("markers").size() == 1; }));
+	window.display.selectPoints({{lane, {first}}});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "points"); }));
+	window.app.appUi().markerLines()->setSelection({marker});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+	CHECK(hasClass(window.app, "#info-line", "markers"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=name]", "unavailable"));
+	CHECK(element(window.app, "#info-line [info-field=name] .info-label").at("text") == "Description");
 }
 
 TEST_CASE("the inspector shows the selected track, and its controls change the track's channel", "[ui]")
@@ -793,7 +900,7 @@ TEST_CASE("the info line's setup pane shows, hides and orders its fields, with p
 	const std::vector<std::string> defaults = docking.sections("project", "infoLine");
 	CHECK(defaults ==
 		std::vector<std::string>{"name", "start", "end", "length", "pitch", "volume", "mute", "lock", "transpose",
-			"velocity", "releaseVelocity", "channel", "rootKey", "globalTranspose"});
+			"velocity", "releaseVelocity", "channel", "rootKey", "globalTranspose", "value", "terminator"});
 	const auto openPane = [&window]
 	{
 		if (!hasClass(window.app, "#info-line-setup", "open"))
