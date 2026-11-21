@@ -363,8 +363,8 @@ TEST_CASE("the main menu follows what a click's listeners changed before it runs
 	document->Close();
 }
 
-// The menu's update runs in every frame (#1901): it asks each item's command once whether it can run, a click asks only
-// the clicked item's, and the keys are worked out and written again only when the bindings change.
+// The menu's update runs in every frame (#1901): it asks each command once per zone whether it can run, a click asks
+// only the clicked item's, and the keys are worked out and written again only when the bindings change.
 TEST_CASE("the main menu asks each command once per update and writes keys only when the bindings change", "[unit]")
 {
 	engine::Engine engine;
@@ -389,7 +389,7 @@ TEST_CASE("the main menu asks each command once per update and writes keys only 
 	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(
 		R"(<rml><head><style>body { width: 100%; height: 100%; } menuitem { display: block; height: 20dp; }</style>)"
 		R"(</head><body><menuitem id="first" command="test.first"/><menuitem id="second" command="test.second"/>)"
-		R"(</body></rml>)");
+		R"(<menuitem id="again" command="test.first"/></body></rml>)");
 	REQUIRE(document != nullptr);
 	document->Show();
 	{
@@ -401,6 +401,7 @@ TEST_CASE("the main menu asks each command once per update and writes keys only 
 		CHECK(first->GetInnerRML() == keyName("Mod+1"));
 		CHECK(second->GetInnerRML() == keyName("Mod+2"));
 
+		// The third item, apart from the first, has the first's command in the same zone: it adds no ask.
 		asked = 0;
 		menu.update();
 		CHECK(asked == 2);

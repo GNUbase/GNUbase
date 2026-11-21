@@ -16,6 +16,7 @@
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
 #include "ui/timeformat.h"
+#include "ui/tracklist.h"
 #include "ui/transport.h"
 #include "ui/transportpanelfit.h"
 
@@ -89,8 +90,15 @@ namespace
 			return app.waitUntil(
 				[&app, playing] { return app.call("transport.get").at("playing").get<bool>() == playing; });
 		};
+		// The focus is the button: buttons without an id are told apart by their classes, attributes and box.
 		const Json focus = app.ui().key(window, "Space").at("focus");
-		CHECK(focus.value("id", std::string()) == element(app, button, window).value("id", std::string()));
+		const Json clicked = element(app, button, window);
+		REQUIRE(focus.is_object());
+		for (const char* key : {"tag", "id", "classes", "attributes", "box"})
+		{
+			INFO(key);
+			CHECK(focus.value(key, Json()) == clicked.value(key, Json()));
+		}
 		REQUIRE(playing(true));
 		app.ui().key(window, "Space");
 		REQUIRE(playing(false));
@@ -220,8 +228,9 @@ TEST_CASE("Space starts and stops playback after a click on a toolbar or transpo
 	spaceToggles("#snap", std::nullopt);
 }
 
-TEST_CASE(
-	"Space and NumEnter run their key commands after a click on a track's or a mixer channel's buttons (#653)", "[ui]")
+TEST_CASE("Space and NumEnter run their key commands after a click on a track's, the inspector's or a mixer channel's "
+		  "buttons (#653)",
+	"[ui]")
 {
 	test::UiApp app({1024, 700});
 	app.appUi().showProject();
@@ -238,6 +247,15 @@ TEST_CASE(
 	const std::string mute = ".track-list button.mute"; // the only track's
 	REQUIRE(app.waitUntil([&app, &mute] { return app.ui().dom(std::nullopt, mute, 0).at("elements").size() == 1; }));
 	keysAfterClick(app, mute, std::nullopt, [&channelIs] { return channelIs("mute"); });
+
+	// The inspector's buttons are the track list's in another place.
+	app.appUi().docking().open("inspector");
+	app.appUi().trackList()->select({added.at("track").at("id").get<uint64_t>()});
+	const std::string inspectorMute = ".inspector-buttons button.mute";
+	REQUIRE(app.waitUntil(
+		[&app, &inspectorMute] { return app.ui().dom(std::nullopt, inspectorMute, 0).at("elements").size() == 1; }));
+	REQUIRE(app.waitUntil([&app, &inspectorMute] { return element(app, inspectorMute).at("visible").get<bool>(); }));
+	keysAfterClick(app, inspectorMute, std::nullopt, [&channelIs] { return channelIs("mute"); });
 
 	app.keys().run("window.mixer", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&app] { return app.appUi().mixer(1) != nullptr; }));
@@ -1891,6 +1909,25 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 	REQUIRE(app.waitUntil([&app, again] { return shows(app, "#time-display", again) == "1"; }));
 	REQUIRE(app.waitUntil([&app, again] { return hasClass(app, "#time-display", "size-0", again); }));
 	CHECK(app.shell().bounds(again).size().width < normal.width);
+}
+
+TEST_CASE("a setup pane's buttons keep Space, also in the transport bar (#653)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.ui().click(std::nullopt, at("#transport-bar [section=click]"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#transport-setup"));
+	click(app, "#transport-setup [setup-section=locators]");
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(!visible(app, "#transport-bar [section=locators]"));
+	// Space clicks the focused section button again rather than starting playback.
+	const Json focus = app.ui().key(std::nullopt, "Space").at("focus");
+	REQUIRE(focus.is_object());
+	CHECK(focus.value("attributes", Json::object()).value("setup-section", std::string()) == "locators");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(visible(app, "#transport-bar [section=locators]"));
+	app.shell().step(std::chrono::milliseconds(50));
+	CHECK(transport(app).at("playing") == false);
 }
 
 TEST_CASE("setup panes show and hide the transport bar's and the transport panel's sections", "[ui]")

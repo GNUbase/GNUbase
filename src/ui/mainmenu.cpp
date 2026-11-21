@@ -5,8 +5,10 @@
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
+#include <map>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace gnubase::ui
@@ -83,12 +85,11 @@ namespace gnubase::ui
 		const bool keysChanged = m_keysRevision != revision;
 		m_keysRevision = revision;
 		// The items of a menu come one after the other: they share their parent's zone. Items of one command in one
-		// zone get the same answer, as the enabled callbacks get the window and the zone, not the parameters.
+		// zone get the same answer for the whole update, wherever they are, as the enabled callbacks get the window
+		// and the zone, not the parameters.
 		const Rml::Element* parent = nullptr;
 		Rml::Element* parentZone = nullptr;
-		const std::string* asked = nullptr;
-		const Rml::Element* askedZone = nullptr;
-		bool enabled = false;
+		std::map<std::pair<std::string_view, const Rml::Element*>, bool> answers;
 		for (Item& item : m_items)
 		{
 			Rml::Element* element = item.element.get();
@@ -105,13 +106,10 @@ namespace gnubase::ui
 				}
 				zone = parentZone;
 			}
-			if (asked == nullptr || *asked != item.command || askedZone != zone)
-			{
-				enabled = m_keys.canRun(item.command, m_window, zone);
-				asked = &item.command;
-				askedZone = zone;
-			}
-			enable(*element, enabled);
+			const auto [answer, isNew] = answers.try_emplace({item.command, zone}, false);
+			if (isNew)
+				answer->second = m_keys.canRun(item.command, m_window, zone);
+			enable(*element, answer->second);
 			// Only where checkWhen says: the window menu's panel items are the docking's (ui/docking.h).
 			if (const std::optional<bool> checked = m_keys.checked(item.command, item.parameters))
 			{

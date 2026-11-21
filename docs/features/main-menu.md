@@ -43,8 +43,11 @@ project window.
   callbacks get the window and the zone, not an item's parameters, and a click asks only the clicked item's. The keys
   are worked out again only when the bindings changed (`KeyCommands::bindingsRevision`: a key bound, a UI command
   removed, the user's key commands or macros set), and an item's keys are written only when they differ from what the
-  menu wrote last, without reading the DOM back. The `[slow]` test "the main menu's update reports its time per frame"
-  reports the time of an update with the default key commands and with a key command of the user's for every command.
+  menu wrote last, without reading the DOM back. The test "the main menu asks each command once per update and writes
+  keys only when the bindings change" checks that two items of one command apart in a zone are asked once, that a click
+  asks only its item, and what is written when, and the `[slow]` test "the main menu's update reports its time per
+  frame" reports the time of an update with the default key commands and with a key command of the user's for every
+  command.
 - **The menu bar** is a docking strip, `strip="menuBar"` ([docking.md](docking.md)): Menu Bar in the Set up Window
   Layout menu and the UI command `window.menuBar` show and hide it, and `ui.layout` keeps it per window. It is a
   `<menubar>`, whose titles are buttons that open the menus ([widgets.md](widgets.md), "Menus and context menus"), and
