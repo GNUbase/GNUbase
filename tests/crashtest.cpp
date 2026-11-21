@@ -87,12 +87,22 @@ namespace
 	// 0 if the log session starts one gnubase-crashdump and ends it with the session.
 	int startAndEndHelper(const std::filesystem::path& log)
 	{
+		// Checked through a handle, not the process list: an ended process stays in that list while anyone, such as
+		// a virus scanner, still holds a reference to it. And the session's end waits only 1 s for the killed helper
+		// (ChildProcess::g_killTimeout), so on a busy machine it may still be ending: give it up to 10 s.
+		HANDLE helper = nullptr;
 		{
 			const gnubase::logging::Session session(log);
-			if (crashDumpHelpers().size() != 1)
+			const std::vector<DWORD> helpers = crashDumpHelpers();
+			if (helpers.size() != 1)
+				return 5;
+			helper = OpenProcess(SYNCHRONIZE, FALSE, helpers.front());
+			if (helper == nullptr)
 				return 5;
 		}
-		return crashDumpHelpers().empty() ? 0 : 6;
+		const bool ended = WaitForSingleObject(helper, 10000) == WAIT_OBJECT_0;
+		CloseHandle(helper);
+		return ended ? 0 : 6;
 	}
 
 	// Ends the session's gnubase-crashdump, then crashes.
