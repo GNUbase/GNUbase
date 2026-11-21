@@ -229,6 +229,13 @@ namespace gnubase::audio
 				handler();
 		}
 
+		// For backends: whether a reset they ask for now runs at once, rather than waiting for onReset.
+		bool resetsAtOnce() const
+		{
+			const std::scoped_lock lock(m_handlerMutex);
+			return static_cast<bool>(m_reset);
+		}
+
 		// For backends, when the latency or silence reason they report changes. Not on the audio thread; the same as
 		// requestReset.
 		void reportLatencyChange() const { call(m_latencyChange); }

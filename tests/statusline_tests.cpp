@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The project window's status line (#407, docs/features/status-line.md) on the dummy device: the record format with a
-// sample rate mismatch, and a lost audio device, as they follow audio.changed; the remaining record time (#104).
+// sample rate mismatch, a silent and a lost audio device, as they follow audio.changed; the remaining record time
+// (#104).
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "platform/audio/dummydevice.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 
@@ -15,9 +17,11 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <regex>
 #include <string>
@@ -46,6 +50,50 @@ namespace
 	{
 		return element(app, selector).value("text", std::string());
 	}
+
+	// A driver whose clock another client may hold, so that its device runs but plays silence, as PipeWire's does
+	// (#422).
+	struct HeldDriver
+	{
+		std::atomic<bool> silent{false};
+		std::atomic<audio::DummyDevice*> device{nullptr}; // the device opened last
+	};
+
+	class HeldDevice : public audio::DummyDevice
+	{
+	public:
+		HeldDevice(const audio::DeviceFormat& format, const HeldDriver& driver)
+			: DummyDevice(format, 0), m_driver(driver)
+		{
+		}
+
+		std::string silenceReason() const override
+		{
+			return m_driver.silent ? "another client holds the clock at 44100 Hz" : "";
+		}
+
+	private:
+		const HeldDriver& m_driver;
+	};
+
+	// The dummy device, as backend "held".
+	class HeldBackend : public audio::DummyBackend
+	{
+	public:
+		explicit HeldBackend(std::shared_ptr<HeldDriver> driver) : m_driver(std::move(driver)) {}
+
+		std::string name() const override { return "held"; }
+
+		std::unique_ptr<audio::Device> open(const audio::DeviceConfig& config) override
+		{
+			auto device = std::make_unique<HeldDevice>(DummyBackend::open(config)->format(), *m_driver);
+			m_driver->device = device.get();
+			return device;
+		}
+
+	private:
+		std::shared_ptr<HeldDriver> m_driver;
+	};
 }
 
 TEST_CASE("the status line highlights a sample rate mismatch and shows a lost audio device", "[ui]")
@@ -73,6 +121,31 @@ TEST_CASE("the status line highlights a sample rate mismatch and shows a lost au
 	CHECK_THAT(title, ContainsSubstring("(dummy)"));
 	app.call("audio.simulateDeviceLoss", {{"connected", true}});
 	CHECK(app.waitUntil([&] { return has(app, "#lost-device", "hidden"); }, std::chrono::seconds(10)));
+}
+
+TEST_CASE("the status line says why a running audio device plays silence", "[ui]")
+{
+	const auto driver = std::make_shared<HeldDriver>();
+	std::vector<std::unique_ptr<audio::Backend>> backends;
+	backends.push_back(std::make_unique<HeldBackend>(driver));
+	backends.push_back(std::make_unique<audio::DummyBackend>());
+	test::UiApp app({1000, 700}, midi::makeBackends(), std::move(backends));
+	app.appUi().showProject();
+	app.call("audio.setDevice", {{"backend", "held"}, {"start", true}});
+	CHECK(app.waitUntil([&] { return text(app, "#record-format") == "Record: 48 kHz - 24 bit"; }));
+	CHECK(has(app, "#silent-device", "hidden"));
+
+	// The device reports the silence and its end as a latency change, on which the engine sends audio.changed.
+	driver->silent = true;
+	driver->device.load()->reportLatencyChange();
+	CHECK(app.waitUntil([&] { return !has(app, "#silent-device", "hidden"); }));
+	CHECK(text(app, "#silent-device") == "Audio Device Silent: Dummy device");
+	CHECK(element(app, "#silent-device").at("attributes").at("title") == "another client holds the clock at 44100 Hz");
+	CHECK(has(app, "#lost-device", "hidden"));
+	driver->silent = false;
+	driver->device.load()->reportLatencyChange();
+	CHECK(app.waitUntil([&] { return has(app, "#silent-device", "hidden"); }));
+	app.call("audio.stop");
 }
 
 TEST_CASE(

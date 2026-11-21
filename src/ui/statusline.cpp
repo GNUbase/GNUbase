@@ -23,7 +23,7 @@ namespace gnubase::ui
 
 	StatusLine::StatusLine(EngineBinding& binding, Rml::Element& root)
 		: m_binding(binding), m_recordFormat(field(root, "record-format")), m_lostDevice(field(root, "lost-device")),
-		  m_recordTime(field(root, "record-time")),
+		  m_silentDevice(field(root, "silent-device")), m_recordTime(field(root, "record-time")),
 		  m_changed(binding.on("audio.changed", [this](const engine::Event& event) { show(event.data); }))
 	{
 		binding.send("audio.get", engine::Json::object(),
@@ -98,6 +98,21 @@ namespace gnubase::ui
 				if (lost.at("name") != lost.at("device"))
 					title += " (" + lost.at("device").get<std::string>() + ")";
 				m_lostDevice->SetAttribute("title", title);
+			}
+		}
+		if (m_silentDevice)
+		{
+			// A device that runs, but plays silence, e.g. as another client holds its driver at another rate (#422).
+			const engine::Json& device = status.at("device");
+			const bool silent = !device.is_null() && device.at("silenceReason").is_string();
+			m_silentDevice->SetClass("hidden", !silent);
+			if (silent)
+			{
+				std::string name = device.value("name", std::string());
+				if (name.empty())
+					name = device.value("id", std::string());
+				m_silentDevice->SetInnerRML(Rml::StringUtilities::EncodeRml("Audio Device Silent: " + name));
+				m_silentDevice->SetAttribute("title", device.at("silenceReason").get<std::string>());
 			}
 		}
 	}

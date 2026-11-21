@@ -1479,7 +1479,7 @@
 		color: #c8c8c8;
 		font-size: 11dp;
 	}
-	.status-line .mismatch
+	.status-line .mismatch, #silent-device
 	{
 		color: #ffb000;
 	}
