@@ -461,6 +461,26 @@ TEST_CASE("the channel settings window copies and pastes channel settings and ad
 			return element(app, window, "[param=\"sends.1.destination\"]").at("attributes").at("value") ==
 				std::to_string(effect.at("channel").get<uint64_t>());
 		}));
+
+	// With the add track dialog open in the project window, the entry brings that one to the front as it is, one at a
+	// time (openOnce): no second dialog, its page and the name typed stay, and the send keeps its destination.
+	app.keys().run("project.addTrack", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, "#add-track-dialog").size() == 1; }));
+	click(app, std::nullopt, "#track-name");
+	app.ui().text(std::nullopt, "Hall");
+	click(app, window, "[param=\"sends.2.destination\"]");
+	app.ui().key(window, "Down"); // the effect track, which the send then goes to
+	app.ui().key(window, "Down"); // Add Effect Track to Send
+	click(app, window, "[param=\"sends.2.destination\"]");
+	app.shell().step(std::chrono::milliseconds(0)); // the request, posted later in the step
+	CHECK(elements(app, window, "#add-track-dialog").empty());
+	CHECK(elements(app, std::nullopt, "#add-track-dialog").size() == 1);
+	CHECK(element(app, std::nullopt, "#track-types").at("attributes").at("value") == "audio");
+	CHECK(element(app, std::nullopt, "#track-name").at("attributes").at("value") == "Hall");
+	click(app, std::nullopt, "#add-track-cancel");
+	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, "#add-track-dialog").empty(); }));
+	CHECK(app.call("project.get").at("tracks").size() == 4);
+	CHECK(channelJson(app, bass.channel).at("sends")[1].at("destination") == effect.at("channel"));
 }
 
 TEST_CASE("the inspector's Edit Channel Settings opens the channel settings window for its track", "[ui]")
