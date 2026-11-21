@@ -810,7 +810,7 @@ namespace gnubase::ui
 		std::string levels;
 		for (int channel = 0; channel < channels; ++channel)
 		{
-			levels += R"(<div class="se-level-channel">)";
+			levels += R"(<div class="se-level-channel text-small">)";
 			for (int mark = 0; mark < 5; ++mark)
 			{
 				const double value = (1.0 - (0.5 * mark)) / m_gain;

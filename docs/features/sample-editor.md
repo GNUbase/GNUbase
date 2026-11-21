@@ -60,7 +60,9 @@ first implementation. A tempo value alone does not warp playback and is preserve
 The Process section's Basic Commands menu and the sample editor's Cut, Copy, Paste, Delete and Insert Silence key
 commands send these operations for the selected range. Without a selection they are disabled. The keys are Mod+X, Mod+C,
 Mod+V, Delete or Backspace, and Mod+Shift+E; the project window keeps its own commands. Engine refusals and job errors
-appear in the Process section. Process controls stay disabled while a command or its job is pending.
+appear in the Process section. Process controls stay disabled while a command or its job is pending. These UI key
+commands use `sampleEditor.cut`, `sampleEditor.copy`, `sampleEditor.paste`, `sampleEditor.delete` and
+`sampleEditor.insertSilence`, so their assignments are separate from the project window's edit commands.
 
 When the engine requires a shared-copy choice, a modal question offers New Version, Continue (all copies), and Cancel.
 Copy never asks. The question keeps the event and range that requested it, and closes without editing if the project or
@@ -121,8 +123,9 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 - **Process section** (pp. 619-620): Basic Commands (Cut, Copy, Paste, Delete, Insert Silence), Event or Range as Region.
 - **Layout and axes** (pp. 621-622): the ruler stays above the waveform and follows its horizontal zoom and scroll,
   using the project's time format, tempo, sample rate and the event's clip-to-project mapping. The level scale beside
-  each channel shows percentages or dB, chosen from its Level menu, and follows vertical waveform zoom. The regions list
-  occupies the zone to the right of the waveform.
+  each channel shows percentages or dB, chosen from its Level menu, and follows vertical waveform zoom. Its labels use
+  the design system's `text-small` class, whose font size belongs to the theme. The regions list occupies the zone to the
+  right of the waveform.
 - **Zoom menu** (p. 623): Zoom In/Out, Full, Selection, Selection (Horiz.), Event, vertical zoom and waveform vertical
   zoom, Undo/Redo Zoom. Zoom In and Out center the display on the project cursor, mapped to clip frames and clamped to
   the clip. Full and Selection show the whole clip, as clip-based zoom does without pitch analysis; Selection (Horiz.)
@@ -156,6 +159,9 @@ from the pool; Process editing of warped clips and clipboard format conversion (
 processing (#141) and making a sampler track of the range; what warping doesn't have yet is in [warp.md](warp.md).
 
 ## Checks
+
+- `tests/uiapp_tests.cpp`: project and sample-editor Delete/Backspace assignments stay separate;
+  `tests/theme_tests.cpp`: all shared style sheets leave new font sizes to the themes.
 
 - `tests/sampleeditor_ui_tests.cpp`: each Basic Commands operation from its menu and keys, the clip's resulting length
   and undo/redo; Copy without undo, unshared edits preserving the clip, the shared-copy question's New Version and

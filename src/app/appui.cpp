@@ -1192,11 +1192,26 @@ namespace gnubase::app
 			{
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
 				if (ui::SampleEditor::isProcessCommand(command.id))
-					m_keys.bind({command.keys, command.id, engine::Json::object(), "sampleEditor"});
+				{
+					const std::string sampleCommand = "sampleEditor." + std::string(command.id).substr(5);
+					m_keys.add({sampleCommand, "Processes the selected clip range in the sample editor.",
+						[this, operation = std::string(command.id).substr(5)](ui::Window& window, Rml::Element*)
+						{
+							if (window.id() == m_sampleEditor.window && m_sampleEditor.editor)
+								m_sampleEditor.editor->process(operation);
+						}});
+					m_keys.enableWhen(sampleCommand,
+						[this](ui::Window& window, Rml::Element*)
+						{
+							return window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
+								m_sampleEditor.editor->canProcess();
+						});
+					m_keys.bind({command.keys, sampleCommand, engine::Json::object(), "sampleEditor"});
+				}
 			}
 		}
 		m_keys.bind({"Backspace", "edit.delete", engine::Json::object(), "project"});
-		m_keys.bind({"Backspace", "edit.delete", engine::Json::object(), "sampleEditor"});
+		m_keys.bind({"Backspace", "sampleEditor.delete", engine::Json::object(), "sampleEditor"});
 		for (const ProjectCommand& command : g_trackCommands)
 		{
 			const std::string id = command.id;
