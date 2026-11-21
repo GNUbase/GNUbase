@@ -67,8 +67,8 @@ namespace gnubase::ui
 			element.SetInnerRML(
 				R"(<div class="meter-display">)"
 				R"(<div class="meter-page meter-master"><div class="meter-bars"/><div class="meter-values">)"
-				R"(<div>RMS Max.<span class="rms-max"/></div>)"
-				R"(<div>Peak Max.<span class="peak-max"/></div></div>)"
+				R"(<div reset="mainRmsMax">RMS Max.<span class="rms-max"/></div>)"
+				R"(<div reset="mainTruePeakHold">Peak Max.<span class="peak-max"/></div></div>)"
 				R"(<button class="meter-reset" value="main">Reset RMS Max. and Peak Max.</button></div>)"
 				R"(<div class="meter-page meter-loudness"><div class="meter-bars">)"
 				R"(<meter class="momentary" min="-41" max="-14"/><meter class="short-term" min="-41" max="-14"/>)"
@@ -105,7 +105,12 @@ namespace gnubase::ui
 		const Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr || !m_root)
 			return;
-		if (target->IsClassSet("meter-reset"))
+		// Ctrl-click (Cmd on macOS) on RMS Max. or Peak Max. resets it alone (p. 535).
+		const Rml::Element* value = target->HasAttribute("reset") ? target : target->Closest("[reset]");
+		if (value != nullptr &&
+			(event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0))
+			m_binding.send("meter.reset", {{"meters", value->GetAttribute<Rml::String>("reset", "")}});
+		else if (target->IsClassSet("meter-reset"))
 		{
 			// Each page resets only its own values (pp. 535 and 538).
 			m_binding.send("meter.reset", {{"meters", target->GetAttribute<Rml::String>("value", "")}});

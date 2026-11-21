@@ -454,7 +454,7 @@ TEST_CASE("meter.get reads a channel, the main mix and its loudness through the 
 	CHECK(meters.at("main").at("truePeakMax").at(0).is_null());
 	CHECK(meters.at("main").at("peakMax").at(0).get<double>() == Approx(-6.02).margin(0.1));
 	CHECK_FALSE(meters.at("channels").at(0).at("rmsMax").at(0).is_null());
-	CHECK_THAT(reject(client, "meter.reset", {{"meters", "channels"}}), ContainsSubstring("meters"));
+	CHECK_THAT(reject(client, "meter.reset", {{"meters", "master"}}), ContainsSubstring("meters"));
 
 	// A reset starts over; with meter.resetOnStart every start does.
 	run(client, "meter.reset");
@@ -472,6 +472,39 @@ TEST_CASE("meter.get reads a channel, the main mix and its loudness through the 
 	CHECK(run(client, "meter.get").at("loudness").at("seconds").get<double>() == Approx(0.5).margin(0.1));
 
 	CHECK_THAT(reject(client, "meter.get", {{"channels", {999}}}), ContainsSubstring("999"));
+}
+
+TEST_CASE("meter.reset resets the master meter's RMS Max. or Peak Max. alone", "[integration]")
+{
+	// A 1 kHz sine at -6 dBFS, monitored while the transport stands.
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const auto channel = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", channel}, {"recordEnable", true}});
+	run(client, "audio.render", {{"frames", 48000}});
+
+	// Ctrl-click on RMS Max. (reference manual p. 535): only the main mix's RMS maximum, which counts again from the
+	// next RMS slice.
+	run(client, "meter.reset", {{"meters", "mainRmsMax"}});
+	Json meters = run(client, "meter.get");
+	CHECK(meters.at("main").at("rmsMax").at(0).is_null());
+	CHECK(meters.at("main").at("peakMax").at(0).get<double>() == Approx(-6.02).margin(0.05));
+	CHECK(meters.at("main").at("truePeakHold").at(0).get<double>() == Approx(-6.02).margin(0.1));
+	CHECK_FALSE(meters.at("channels").at(0).at("rmsMax").at(0).is_null());
+	run(client, "audio.render", {{"frames", 4800}});
+	CHECK(run(client, "meter.get").at("main").at("rmsMax").at(1).get<double>() == Approx(-9.03).margin(0.1));
+
+	// Ctrl-click on Peak Max.: only the true peak hold it shows.
+	run(client, "meter.reset", {{"meters", "mainTruePeakHold"}});
+	meters = run(client, "meter.get");
+	CHECK(meters.at("main").at("truePeakHold").at(0).is_null());
+	CHECK(meters.at("main").at("peakMax").at(0).get<double>() == Approx(-6.02).margin(0.05));
+	CHECK(meters.at("main").at("rmsMax").at(0).get<double>() == Approx(-9.03).margin(0.1));
+	run(client, "audio.render", {{"frames", 4800}});
+	CHECK(run(client, "meter.get").at("main").at("truePeakHold").at(1).get<double>() == Approx(-6.02).margin(0.1));
 }
 
 TEST_CASE("the master meter holds the true peak maximum, which only its own reset clears", "[integration]")

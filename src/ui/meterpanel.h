@@ -18,8 +18,9 @@ namespace gnubase::ui
 	// a true peak meter per channel of the main mix with its RMS level, RMS Max. and Peak Max., and the loudness meter,
 	// with the momentary and short-term loudness and their values as the engine measures them; the Master and
 	// Loudness buttons at its bottom switch between them, and each page's reset resets its own values (meter.reset
-	// with meters "main" or "loudness"). It reads the meters once a frame (Engine::readMeters), the UI's one reader of
-	// them. Use it on the UI thread; the engine and the binding must outlive it.
+	// with meters "main" or "loudness"), and a Ctrl-click on RMS Max. or Peak Max. resets that one alone. It reads the
+	// meters once a frame (Engine::readMeters), the UI's one reader of them. Use it on the UI thread; the engine and
+	// the binding must outlive it.
 	class MeterPanel final : private Rml::EventListener
 	{
 	public:

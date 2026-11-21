@@ -6,11 +6,14 @@
 
 #include "engine/engine.h"
 #include "ui/automation.h"
+#include "ui/shell.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <optional>
 #include <string>
+#include <vector>
 
 using namespace gnubase;
 using engine::Json;
@@ -34,9 +37,10 @@ namespace
 		return !found.empty() && found[0].at("visible").get<bool>();
 	}
 
-	void click(test::UiApp& app, const std::string& selector)
+	void click(test::UiApp& app, const std::string& selector, const std::vector<std::string>& modifiers = {})
 	{
-		app.ui().click(std::nullopt, {".meter-display " + selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		app.ui().click(
+			std::nullopt, {".meter-display " + selector, 0, std::nullopt}, ui::MouseButton::Left, 1, modifiers);
 	}
 }
 
@@ -82,7 +86,23 @@ TEST_CASE("the meter display shows the main mix's levels and loudness, and each 
 	CHECK(text(app, ".integrated") == "-6.0 LUFS");
 	CHECK(text(app, ".time") == "0:01");
 	app.call("audio.render", {{"frames", 4800}});
-	REQUIRE(app.waitUntil([&app] { return text(app, ".peak-max") == "-6.0 dB"; }));
+	REQUIRE(
+		app.waitUntil([&app] { return text(app, ".peak-max") == "-6.0 dB" && text(app, ".rms-max") != "-inf dB"; }));
+
+	// Ctrl-click resets RMS Max. or Peak Max. alone (p. 535); a plain click doesn't.
+	click(app, ".rms-max");
+	app.call("meter.get"); // after what the click would have sent
+	for (int step = 0; step < 3; ++step)
+		app.shell().step(std::chrono::milliseconds(0));
+	CHECK(text(app, ".rms-max") != "-inf dB");
+	click(app, ".rms-max", {"ctrl"});
+	REQUIRE(app.waitUntil([&app] { return text(app, ".rms-max") == "-inf dB"; }));
+	CHECK(text(app, ".peak-max") == "-6.0 dB");
+	click(app, ".peak-max", {"ctrl"});
+	REQUIRE(app.waitUntil([&app] { return text(app, ".peak-max") == "-inf dB"; }));
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(
+		app.waitUntil([&app] { return text(app, ".peak-max") == "-6.0 dB" && text(app, ".rms-max") != "-inf dB"; }));
 
 	// The loudness meter's page (pp. 536-538), from the button at the bottom.
 	click(app, ".meter-tab[value=loudness]");
