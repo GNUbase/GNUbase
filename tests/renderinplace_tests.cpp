@@ -10,6 +10,7 @@
 #include "engine/processors/builtinplugin.h"
 #include "plugin/plugin.h"
 #include "testutils/heldjob.h"
+#include "testutils/tempfolder.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -22,6 +23,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <iterator>
 #include <map>
@@ -974,6 +976,29 @@ TEST_CASE(
 	const Json project = run(client, "project.get");
 	CHECK(project.at("tracks").at(0).at("frozen").at("path") == (dir.path() / "Freeze" / freeze.filename()).u8string());
 	CHECK(project.at("media").at(0).at("path") == (dir.path() / "tone.wav").u8string()); // not in Recordings: it stays
+}
+
+TEST_CASE(
+	"freezing and render in place refuse an unsaved project without a folder to write into (#2001)", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const fs::path file = dir.path() / "not a folder";
+	REQUIRE(std::ofstream(file) << "a file");
+	gnubase::test::writeWav(dir.path() / "tone.wav", {std::vector<float>(4800, 0.5f), 1, 48000});
+	const gnubase::test::TempFolderAt temporary(file); // and there is no settings folder
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const auto track =
+		run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id").get<ObjectId>();
+	const Json media = run(client, "media.add", {{"path", (dir.path() / "tone.wav").u8string()}}).at("media");
+	const Json clip = run(client, "clip.add", {{"media", media.at("id")}}).at("clip");
+	run(client, "audioEvent.add", {{"track", track}, {"clip", clip.at("id")}, {"position", 0}});
+	const Json before = run(client, "project.get");
+	CHECK_THAT(reject(client, "track.freeze", {{"tracks", {track}}, {"tail", 0}}), ContainsSubstring("no folder"));
+	CHECK_THAT(reject(client, "track.renderInPlace", {{"tracks", {track}}}), ContainsSubstring("no folder"));
+	CHECK(run(client, "project.get") == before);
+	CHECK(!fs::exists(fs::current_path() / "Freeze"));
 }
 
 TEST_CASE("a cancelled backup leaves no Freeze folder behind (#871)", "[integration]")
