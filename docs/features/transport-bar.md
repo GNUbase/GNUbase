@@ -14,6 +14,7 @@ are by attributes, which `TransportControls` follows:
 
 | Section | Controls | What they run or show |
 |---|---|---|
+| MIDI Auto Quantize | Automatic MIDI Record Quantize (p. 353), hidden by default | `quantize.set` `autoQuantize`, checked while `quantize.get` says it is on; it follows `quantize.changed` and a new project ([quantize.md](quantize.md)) |
 | Locators | Go to Left/Right Locator Position, the left and right locator | `transport.locate` to `leftLocator` and `rightLocator`; `transport.set` `left`, `right` |
 | Locator Range Duration | Locators to Selection, the range's length | `edit.locatorsToSelection` (the event display's selection); `transport.set` `right` |
 | Punch Points | Punch In, Punch Out | `transport.toggle` `punchIn`, `punchOut` |
@@ -95,8 +96,8 @@ display at 150 % (#1450).
 ## Sections and setup panes
 
 The transport bar's sections are the docking system's set of sections `transport` ([docking.md](docking.md)):
-Left Divider, Locators, Locator Range Duration, Punch Points, Transport Controls, Time Displays, Tempo & Time
-Signature, Right Divider and Click; the panel's are the same without the dividers.
+MIDI Auto Quantize (hidden by default), Left Divider, Locators, Locator Range Duration, Punch Points, Transport
+Controls, Time Displays, Tempo & Time Signature, Right Divider and Click; the panel's are the same without the dividers.
 A right click on the transport bar opens its setup pane (the reference's Set up Transport Bar, p. 306), a toggle
 button per section that shows or hides it, Show All, Reset All and presets ([docking.md](docking.md)); on Tap Tempo
 it opens the Tap Tempo Mode menu instead. The transport panel is a docking window of its own, `transportPanel`, with
