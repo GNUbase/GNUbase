@@ -78,6 +78,7 @@ namespace gnubase::ui
 		void show();
 		void showMarkers();
 		double markerShare(const std::string& marker) const;
+		double crossfadeLimit() const;
 		void ask();
 		void set(uint32_t id, double value, int gesture);
 		void drag(const Rml::Event& event);

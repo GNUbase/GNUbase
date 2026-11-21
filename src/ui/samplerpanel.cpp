@@ -579,8 +579,19 @@ namespace gnubase::ui
 			Json::array({step}), {}, value);
 	}
 
+	// The longest crossfade the sampler plays: no longer than the loop and than what lies between Start and the loop's
+	// start, the loop within Start and End (Sampler::loopOf).
+	double SamplerPanel::crossfadeLimit() const
+	{
+		const double start = value("Start");
+		const double end = std::max(value("End"), start);
+		const double loopStart = std::clamp(value("Loop start"), start, end);
+		const double loopEnd = std::clamp(value("Loop end"), start, end);
+		return std::max(std::min(loopEnd - loopStart, loopStart - start), 0.0);
+	}
+
 	// Where a marker lies, a share of the sample: a fade's or the crossfade's at the end of its length, which is no
-	// longer than the range or the loop.
+	// longer than the range or than the crossfade the sampler plays.
 	double SamplerPanel::markerShare(const std::string& marker) const
 	{
 		const double range = std::max(value("End") - value("Start"), 0.0);
@@ -589,13 +600,13 @@ namespace gnubase::ui
 		if (marker == "Fade out")
 			return value("End") - std::clamp(value("Fade out"), 0.0, range);
 		if (marker == "Loop crossfade")
-			return value("Loop end") -
-				std::clamp(value("Loop crossfade"), 0.0, std::max(value("Loop end") - value("Loop start"), 0.0));
+			return value("Loop end") - std::clamp(value("Loop crossfade"), 0.0, crossfadeLimit());
 		return value(marker);
 	}
 
 	// Moves the marker dragged to the mouse: Start stays before End, and the loop's start before its end; the fades
-	// and the crossfade take the length from their marker's own end, no longer than the range or the loop.
+	// and the crossfade take the length from their marker's own end, no longer than the range or than the crossfade
+	// the sampler plays.
 	void SamplerPanel::drag(const Rml::Event& event)
 	{
 		Rml::Element* display = find("sampler-display");
@@ -613,7 +624,7 @@ namespace gnubase::ui
 		else if (m_dragged == "Fade out")
 			share = std::clamp(value("End") - share, 0.0, range);
 		else if (m_dragged == "Loop crossfade")
-			share = std::clamp(value("Loop end") - share, 0.0, std::max(value("Loop end") - value("Loop start"), 0.0));
+			share = std::clamp(value("Loop end") - share, 0.0, crossfadeLimit());
 		else if (m_dragged == "Start")
 			share = std::min(share, value("End"));
 		else if (m_dragged == "End")

@@ -127,11 +127,13 @@ root `.sampler-panel` has the class `.empty`):
   one undo step per drag; Start stays before End and the loop's start before its end. The fades' and the loop
   crossfade's markers (`.length`, p. 717) mark the end of their lengths: Fade in's lies that far after Start, Fade out's
   before End, Loop crossfade's before the loop's end; dragging one sets the length, no longer than the range from Start
-  to End or than the loop. They lie below the flags of Start and End and above the loop's, so that those can still be
-  dragged where a length of 0 puts a marker on them. Between Start and End at the flags' height, and between the loop's
-  markers at the bottom, lies a bar (`.sampler-bar`, attribute `bar`: range, loop; the loop's has `.off` with the loop)
-  that the themes show on hover: dragging it moves both markers by as far as the mouse went, keeping their distance, and
-  stops at the sample's ends, both parameters in one step and one undo step per drag (p. 717).
+  to End, or for the crossfade than the loop and than what lies between Start and the loop's start, the loop within
+  Start and End, as the sampler plays it. They lie below the flags of Start and End and above the loop's, so that those
+  can still be dragged where a length of 0 puts a marker on them. Between Start and End at the flags' height, and
+  between the loop's markers at the bottom, lies a bar (`.sampler-bar`, attribute `bar`: range, loop; the loop's has
+  `.off` with the loop) that the themes show on hover: dragging it moves both markers by as far as the mouse went,
+  keeping their distance, and stops at the sample's ends, both parameters in one step and one undo step
+  per drag (p. 717).
 - **Sections** (`.sampler-section`): Playback, Pitch, Filter, Amp and Keyboard, a control per parameter of
   `processor.list`'s sampler (`[parameter]`, `#sampler-parameter-<id>`): a toggle for those that are on or off, a
   drop-down list for those with options, a value field for the others, each gesture one undo step (`parameter.set`
