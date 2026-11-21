@@ -460,6 +460,12 @@ TEST_CASE("the quantize panel's Apply, Reset and Auto Apply quantize the selecte
 	f.app.shell().step(std::chrono::milliseconds(50));
 	CHECK(f.startsAre({26 * g_unit, 50 * g_unit, 73 * g_unit}));
 
+	// Auto quantize isn't a quantize setting either, so switching it quantizes nothing.
+	f.app.call("quantize.set", {{"autoQuantize", true}});
+	REQUIRE(f.app.call("quantize.get").at("autoQuantize").get<bool>());
+	f.app.shell().step(std::chrono::milliseconds(50));
+	CHECK(f.startsAre({26 * g_unit, 50 * g_unit, 73 * g_unit}));
+
 	f.click("#quantize-auto-apply");
 	f.click("#quantize-grid");
 	f.click("menuitem[grid=\"1/8\"]");

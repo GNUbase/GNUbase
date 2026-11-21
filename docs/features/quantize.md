@@ -62,7 +62,7 @@ Not yet: Move MIDI Controllers (moving controllers with their notes) and draggin
 a groove; and the Edit menu's items always take the project window's selection, since the menu bar is in its zone.
 
 Auto quantize (p. 353) is `quantize.set` with `autoQuantize`, and the transport bar's and the transport panel's MIDI
-Auto Quantize section, hidden by default, switches it ([transport-bar.md](transport-bar.md)). It is no quantize
+Auto Quantize section, hidden by default, switches it ([transport-bar.md](transport-bar.md)). It isn't a quantize
 setting, so Auto Apply doesn't quantize when it changes.
 
 `tests/quantize_ui_tests.cpp` drives all of it in the app's UI with `ui::Automation`, as MCP's UI tools do.
