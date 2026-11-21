@@ -483,6 +483,43 @@ TEST_CASE("the channel settings window copies and pastes channel settings and ad
 	CHECK(channelJson(app, bass.channel).at("sends")[1].at("destination") == effect.at("channel"));
 }
 
+TEST_CASE(
+	"the channel settings window's Copy and Paste Channel Settings are disabled for MIDI and VCA channels", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added keys = addTrack(app, "midi", "Keys");
+	const Added vca = addTrack(app, "vca", "Band");
+	const auto shows = [&](const Added& added)
+	{
+		REQUIRE(app.appUi().openChannelSettings(added.track) != nullptr);
+		REQUIRE(app.waitUntil(
+			[&] { return strips(app, app.appUi().channelSettingsWindow()) == std::vector<uint64_t>{added.channel}; }));
+	};
+	const auto disabled = [&]
+	{
+		const auto item = [&](const char* function)
+		{
+			return element(app, app.appUi().channelSettingsWindow(),
+				std::string("#settings-functions-menu menuitem[function=") + function + "]")
+				.value("attributes", Json::object())
+				.contains("disabled");
+		};
+		return item("copy") && item("paste");
+	};
+
+	// The engine refuses them for channels without settings to copy, so the menu doesn't offer them.
+	shows(guitar);
+	CHECK(!disabled());
+	shows(keys);
+	REQUIRE(app.waitUntil(disabled));
+	shows(guitar);
+	REQUIRE(app.waitUntil([&] { return !disabled(); }));
+	shows(vca);
+	REQUIRE(app.waitUntil(disabled));
+}
+
 TEST_CASE("the inspector's Edit Channel Settings opens the channel settings window for its track", "[ui]")
 {
 	test::UiApp app({1200, 700});

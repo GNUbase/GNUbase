@@ -988,6 +988,20 @@ namespace gnubase::ui
 			setText(*button, output != nullptr ? output->name : std::string());
 			point(button, output != nullptr && output->track != 0 ? output : nullptr);
 		}
+		// MIDI and VCA channels have no settings to copy or paste, which the engine refuses.
+		const bool settings = shown != nullptr && shown->channel != nullptr && shown->channel->at("format") != "none" &&
+			shown->type != "vca";
+		Rml::Element* functions = m_menus.front().get();
+		for (const char* function : {"copy", "paste"})
+			if (Rml::Element* item = functions != nullptr
+					? functions->QuerySelector(std::string("menuitem[function=") + function + "]")
+					: nullptr)
+			{
+				if (settings)
+					item->RemoveAttribute("disabled");
+				else
+					item->SetAttribute("disabled", "");
+			}
 	}
 
 	void Mixer::goTo(uint64_t track)
