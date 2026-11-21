@@ -757,6 +757,16 @@ namespace gnubase::engine::settings
 					"of ui.layout as it was when a workspace last became active while none was, which No Workspace "
 					"brings back. Empty for none.",
 					layoutSchema(), Json::object()},
+				{"ui.poolColumns",
+					"The pool's columns that its View/Attributes menu shows or hides (reference manual pp. 417, 741): "
+					"used, status, key (Root Key), info and path, each whether it shows. What it leaves out has its "
+					"default: the Key column hidden, the others shown.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"used", {{"type", "boolean"}}}, {"status", {{"type", "boolean"}}},
+								{"key", {{"type", "boolean"}}}, {"info", {{"type", "boolean"}}},
+								{"path", {{"type", "boolean"}}}}}},
+					Json::object()},
 				{"ui.removeTracksWarning",
 					"Whether Remove Selected Tracks asks before it removes tracks that aren't empty: that hold events, "
 					"parts, markers or automation, or are folders with such tracks inside (reference manual p. 213).",
