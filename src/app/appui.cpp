@@ -1249,7 +1249,7 @@ namespace gnubase::app
 						paste = id.find("paste") != std::string::npos](ui::Window&, Rml::Element*)
 					{
 						return m_trackList != nullptr && (!paste || m_trackList->automationCopied()) &&
-							!(parameters ? m_trackList->selectedLanes() : m_trackList->selection()).empty();
+							!(parameters ? m_trackList->selectedLanes(paste) : m_trackList->selection()).empty();
 					});
 			else if (id == "track.pasteAutomationAll")
 				m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*)
