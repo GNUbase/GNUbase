@@ -486,6 +486,25 @@ TEST_CASE("Alt-click on a track's color strip or the inspector's Basics header c
 	window.click("#color-menu menuitem[color=\"#2040e0\"]");
 	REQUIRE(window.app.waitUntil([&] { return window.project().at("tracks")[1].at("color") == "#2040e0"; }));
 	CHECK(window.project().at("tracks")[0].at("color") == "#e04020");
+
+	// The theme stretches a selected, colored track's strip across its row: right of the name it opens no pane.
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE_FALSE(open());
+	const std::string row = "#track-list listitem[value=\"" + std::to_string(midi) + "\"]";
+	Rml::Element* strip = window.find(row + " .track-color");
+	name = window.find(row + " .track-name");
+	REQUIRE(strip != nullptr);
+	REQUIRE(name != nullptr);
+	const float y = strip->GetAbsoluteTop() + (strip->GetBox().GetSize().y / 2);
+	int x = -1; // the first point right of the name where the strip is on top
+	for (int at = static_cast<int>(name->GetAbsoluteLeft() + name->GetBox().GetSize().x);
+		at < static_cast<int>(strip->GetAbsoluteLeft() + strip->GetBox().GetSize().x) && x < 0; ++at)
+		if (strip->GetContext()->GetElementAtPoint(Rml::Vector2f(static_cast<float>(at), y)) == strip)
+			x = at;
+	REQUIRE(x >= 0);
+	window.app.ui().click(std::nullopt, {"", 0, ui::Point{x, static_cast<int>(y)}}, ui::MouseButton::Left, 1, {"alt"});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(open());
 }
 
 TEST_CASE("the project colors setup dialog edits the project's color set", "[ui]")
@@ -604,6 +623,26 @@ TEST_CASE("the project colors setup dialog's presets make sets of 8 to 32 basic 
 	CHECK(names().back() == factory[15].at("name").get<std::string>());
 	const std::vector<std::string> eight = names();
 	CHECK(std::set<std::string>(eight.begin(), eight.end()).size() == 8); // no name twice
+
+	// A color changed in the picker changes on the tab as well.
+	auto* picker = window.find("#color-picker");
+	REQUIRE(picker != nullptr);
+	picker->SetAttribute("value", "#123456");
+	Rml::Dictionary parameters;
+	parameters["value"] = Rml::String("#123456");
+	picker->DispatchEvent(Rml::EventId::Change, parameters);
+	const Rml::Property* swatch = window.find("#preset-colors .color-swatch")->GetLocalProperty("background-color");
+	REQUIRE(swatch != nullptr);
+	CHECK(swatch->Get<Rml::Colourb>() == Rml::Colourb(0x12, 0x34, 0x56, 255));
+
+	// Reset to Factory Settings sets the tab back to 16 basic colors in one tint, so choosing 8 again makes 8.
+	window.click("#colors-factory");
+	REQUIRE(names().size() == 16);
+	CHECK(window.find("#preset-basic")->GetAttribute<Rml::String>("value", "") == "16");
+	CHECK(window.find("#preset-tints")->GetAttribute<Rml::String>("value", "") == "1");
+	CHECK(window.find("#preset-sort")->GetAttribute<Rml::String>("value", "") == "basic");
+	choose("preset-basic", "8");
+	CHECK(names() == eight);
 
 	// Two tints each, sorted by basic color: each color, then its light tint; by tint: the basic colors first.
 	choose("preset-tints", "2");

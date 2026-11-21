@@ -162,6 +162,10 @@
 			if row ~= nil then
 				row:QuerySelector(".color-swatch").style["background-color"] = value
 			end
+			local swatch = document:GetElementById("preset-colors").child_nodes[selected]
+			if swatch ~= nil then
+				swatch.style["background-color"] = value
+			end
 		end
 
 		function dialog.insert(document, duplicate)
@@ -188,8 +192,13 @@
 			end
 		end
 
+		-- The factory set, and the Presets tab back to its settings: 16 basic colors in one tint.
 		function dialog.factory(document)
 			colors = copy(factory)
+			preset = {basic = "16", tints = "1", sort = "basic"}
+			for key, value in pairs(preset) do
+				document:GetElementById("preset-" .. key):SetAttribute("value", value)
+			end
 			dialog.show(document)
 		end
 
