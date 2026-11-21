@@ -464,11 +464,11 @@ namespace
 		uint32_t m_notes = 0;
 	};
 
-	// ---- The controller: parameters, units, programs, MIDI mapping, edits ----
+	// ---- The controller: parameters, units, programs, key switches, MIDI mapping, edits ----
 
 	class Controller final
-		: public vst::U::Implements<
-			  vst::U::Directly<sv::IEditController, sv::IUnitInfo, sv::IMidiMapping, sv::IConnectionPoint>,
+		: public vst::U::Implements<vst::U::Directly<sv::IEditController, sv::IUnitInfo, sv::IMidiMapping,
+										sv::IConnectionPoint, sv::IKeyswitchController>,
 			  vst::U::Indirectly<vst::IPluginBase>>
 	{
 	public:
@@ -805,6 +805,29 @@ namespace
 			else
 				return kResultFalse;
 			return kResultTrue;
+		}
+
+		// IKeyswitchController, on every channel of the event input: Sustain (key 24), Staccato (25) and Pizzicato
+		// (26), as many of them as the program's number, from Init's 1 to Quiet's 3.
+		vst::int32 PLUGIN_API getKeyswitchCount(vst::int32 bus, vst::int16 /*channel*/) override
+		{
+			return bus == 0 ? programIndex(m_values[Program]) + 1 : 0;
+		}
+
+		tresult PLUGIN_API getKeyswitchInfo(
+			vst::int32 bus, vst::int16 channel, vst::int32 index, sv::KeyswitchInfo& info) override
+		{
+			static constexpr std::array<const char*, 3> names{"Sustain", "Staccato", "Pizzicato"};
+			if (index < 0 || index >= getKeyswitchCount(bus, channel))
+				return kResultFalse;
+			info = {};
+			info.typeId = sv::kNoteOnKeyswitchTypeID;
+			copy(info.title, names[static_cast<size_t>(index)]);
+			copy(info.shortTitle, names[static_cast<size_t>(index)]);
+			info.keyswitchMin = 24 + index;
+			info.keyswitchMax = 24 + index;
+			info.keyRemapped = -1;
+			return kResultOk;
 		}
 
 		// IConnectionPoint
