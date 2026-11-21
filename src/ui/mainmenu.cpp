@@ -40,7 +40,7 @@ namespace gnubase::ui
 				throw std::invalid_argument(message);
 			}
 			m_keys.check(command, parameters);
-			m_items.push_back({element->GetObserverPtr(), {}, std::move(command), std::move(parameters)});
+			m_items.push_back({element->GetObserverPtr(), {}, std::move(command), std::move(parameters), {}});
 		}
 		for (Item& item : m_items)
 		{
@@ -87,7 +87,7 @@ namespace gnubase::ui
 		const Rml::Element* parent = nullptr;
 		Rml::Element* parentZone = nullptr;
 		const std::string* asked = nullptr;
-		Rml::Element* askedZone = nullptr;
+		const Rml::Element* askedZone = nullptr;
 		bool enabled = false;
 		for (Item& item : m_items)
 		{
