@@ -573,6 +573,17 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	app.ui().wheel(window, {control("pan"), 0, std::nullopt}, 0.0F, -10.0F);
 	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("pan") > 0.0; }));
 	CHECK(elements(app, window, strip(piano.channel) + " .mixer-pan").empty());
+	// The pan bypass button to its left; the combined panner's two controls instead of the pan control.
+	click(app, window, control("panBypass"));
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("panBypass") == true; }));
+	REQUIRE(app.waitUntil([&] { return has(element(app, window, control("panBypass")), "checked"); }));
+	CHECK(!element(app, window, control("panLeft")).at("visible").get<bool>());
+	app.call("channel.set", {{"channel", guitar.channel}, {"panner", "combined"}, {"panBypass", false}});
+	REQUIRE(app.waitUntil([&] { return element(app, window, control("panLeft")).at("visible").get<bool>(); }));
+	CHECK(!element(app, window, control("pan")).at("visible").get<bool>());
+	app.ui().wheel(window, {control("panRight"), 0, std::nullopt}, 0.0F, 10.0F);
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("panRight") < 1.0; }));
+	CHECK(channelJson(app, guitar.channel).at("panLeft") == -1.0);
 
 	// Set up Window Layout shows the sections, which are hidden until then; MIDI channels' are empty.
 	click(app, window, "#mixer-layout");

@@ -149,10 +149,23 @@
 	height: 18dp;
 }
 
-.mixer-pan
+/* Pan bypass and the pan control, or on a .combined strip the combined panner's left and right controls. */
+.mixer-panner
 {
+	display: flex;
 	flex-shrink: 0;
+	align-items: center;
 	margin-bottom: 4dp;
+}
+
+.mixer-pan-side, .mixer-channel.combined .mixer-pan
+{
+	display: none;
+}
+
+.mixer-channel.combined .mixer-pan-side
+{
+	display: inline-block;
 }
 
 .mixer-fader

@@ -757,8 +757,16 @@ namespace gnubase::ui
 			if (channel->channel != nullptr)
 				rml += R"(<textarea class="mixer-notes-field" rows="4"/>)";
 			rml += R"(</div><div class="mixer-fader" section="fader" label="Fader">)";
-			if (audio) // the panner (reference manual p. 465)
-				rml += R"(<knob class="mixer-pan" param="pan" title="Pan" min="-1" max="1" default="0" step="0.01"/>)";
+			// The panner (reference manual p. 465): pan bypass, and the pan control or, while the strip is .combined,
+			// the combined panner's left and right controls.
+			if (audio)
+				rml += R"(<div class="mixer-panner"><button type="toggle" class="toggle" param="panBypass" )"
+					   R"(title="Pan Bypass">B</button>)"
+					   R"(<knob class="mixer-pan" param="pan" title="Pan" min="-1" max="1" default="0" step="0.01"/>)"
+					   R"(<knob class="mixer-pan mixer-pan-side" param="panLeft" title="Pan Left" min="-1" max="1" )"
+					   R"(default="-1" step="0.01"/>)"
+					   R"(<knob class="mixer-pan mixer-pan-side" param="panRight" title="Pan Right" min="-1" max="1" )"
+					   R"(default="1" step="0.01"/></div>)";
 			if (vca) // instead of the panner, the link group it controls
 				rml += R"(<select class="mixer-vca-group" title="VCA Channel Controls Link Group"/>)";
 			if (channel->channel != nullptr)
@@ -916,6 +924,7 @@ namespace gnubase::ui
 				button->SetClass("checked", json.at(control).get<bool>());
 		if (Rml::Element* solo = strip.QuerySelector("button[control=solo]"))
 			solo->SetClass("defeated", json.at("soloDefeat").get<bool>());
+		strip.SetClass("combined", json.value("panner", std::string()) == "combined");
 		Rml::ElementList controls;
 		strip.QuerySelectorAll(controls, "[param]");
 		m_updating = true; // filling a drop-down list sends a change
