@@ -2501,12 +2501,19 @@ namespace gnubase::ui
 		const std::vector<uint64_t> selected = selectedLanes(true);
 		Json lanes = Json::array();
 		Json add = Json::array();
+		uint64_t firstUnadded = 0;
 		for (const uint64_t lane : selected)
 			if (const Json* unadded = m_display.unaddedLane(lane))
+			{
+				if (firstUnadded == 0)
+					firstUnadded = lane;
 				add.push_back({{"command", "automationLane.add"},
 					{"parameters", {{"track", unadded->at("track")}, {"target", unadded->at("target")}}}});
+			}
 			else
+			{
 				lanes.push_back(lane);
+			}
 		if (add.empty())
 		{
 			if (!lanes.empty())
@@ -2516,7 +2523,9 @@ namespace gnubase::ui
 		// The unadded lanes are added in the paste's undo step (#1918), as a tool's first points add theirs: their
 		// transaction, then the paste's with the same merge key, which joins that step once their ids are known.
 		// A paste that fails then leaves that step with the lanes alone, as it can only when the sample rate changed.
-		const std::string merge = "automation-paste-" + std::to_string(selected.front());
+		// The key is the first unadded lane's id, which is never used again, so that the next paste that adds a lane
+		// with the same project lanes selected doesn't join this step.
+		const std::string merge = "automation-paste-" + std::to_string(firstUnadded);
 		m_binding.send("history.transaction",
 			{{"description", "Paste Automation"}, {"merge", merge}, {"commands", std::move(add)}},
 			[this, merge, lanes, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result) mutable

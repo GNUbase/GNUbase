@@ -1167,6 +1167,65 @@ TEST_CASE("pasting onto an unadded automation track adds its lane in the paste's
 	CHECK(f.app.call("history.get").at("position") == history.at("position"));
 }
 
+TEST_CASE("two pastes that add lanes with the same automation track selected are two undo steps", "[ui]")
+{
+	// The paste's merge key is its first unadded lane, never the selected project lane, which repeats (#1918).
+	Automation f;
+	const Json volume = f.show();
+	f.app.call("automationPoint.add",
+		{{"lane", volume}, {"points", {{{"position", 0}, {"value", -6.0}}, {{"position", 48000}, {"value", 0.0}}}}});
+	f.app.call("transport.set", {{"left", 0}, {"right", 48000}});
+	REQUIRE(f.app.call("automation.copy", {{"lanes", {volume}}}).at("lanes") == 1);
+	const auto openUnadded = [&]
+	{
+		const uint64_t track = f.app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+		f.app.call("track.set", {{"track", track}, {"timeBase", "linear"}});
+		REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(track) + " .automation-toggle").size() == 1; }));
+		f.click(row(track) + " .automation-toggle");
+		REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(track) + " .automation-row").size() == 1; }));
+		return track;
+	};
+	const uint64_t second = openUnadded();
+	const uint64_t third = openUnadded();
+	const auto clickLane = [&](uint64_t track, const std::vector<std::string>& modifiers)
+	{
+		const Json box = elements(f.app, row(track) + " .automation-row").at(0).at("box");
+		f.clickAt(box.at("x").get<int>() + 10, box.at("y").get<int>() + (box.at("height").get<int>() / 2), modifiers);
+	};
+	const auto lanes = [&](uint64_t track)
+	{ return f.app.call("automationLane.list", {{"track", track}}).at("lanes").size(); };
+	const auto paste = [&](uint64_t track)
+	{
+		f.app.keys().run("track.pasteAutomationSelectedParameters", Json::object(), f.app.main(), nullptr);
+		REQUIRE(f.app.waitUntil([&] { return lanes(track) == 1; }));
+		// The automation track shows the added lane.
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				const std::vector<uint64_t> selected = f.app.appUi().trackList()->selectedLanes(true);
+				return std::none_of(selected.begin(), selected.end(),
+					[&](uint64_t lane)
+					{
+						const Json* unadded = f.display.unaddedLane(lane);
+						return unadded != nullptr && unadded->at("track") == track;
+					});
+			}));
+	};
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	f.app.call("transport.set", {{"left", 96000}, {"right", 144000}});
+	clickLane(f.track, {});
+	clickLane(second, {"ctrl"});
+	paste(second);
+	// The volume automation track stays selected, the next paste adds the third track's lane.
+	clickLane(third, {"ctrl"});
+	paste(third);
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 2);
+	// One Undo takes back the second paste alone.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return lanes(third) == 0; }));
+	CHECK(lanes(second) == 1);
+}
+
 TEST_CASE("a track's lanes come between its own lane and its automation tracks, under its row", "[ui]")
 {
 	Automation f;
