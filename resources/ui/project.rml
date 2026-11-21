@@ -20,9 +20,10 @@
      display drives too, with the toolbox #toolbox, the context menu #event-display-menu and #tool-notification, and
      #edit-refused, which says why the engine refused an edit of events (docs/features/event-display.md), and
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
-     ui::StatusLine fills #record-format, #record-time and #lost-device (docs/features/status-line.md). ui::InfoLine fills
-     #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md), #toolbar-setup
-     and #info-line-setup are the toolbar's and the info line's setup panes (docs/features/docking.md).
+     ui::StatusLine fills #record-format, #record-time, #lost-device and #silent-device
+     (docs/features/status-line.md). ui::InfoLine fills #info-line; #inspector-setup is the inspector's Set up
+     Sections pane (docs/features/inspector.md), #toolbar-setup and #info-line-setup are the toolbar's and the info
+     line's setup panes (docs/features/docking.md).
      ui::TrackVisibility drives #track-visibility-configurations and its menu, with visibility-configuration.rml
      (docs/features/track-visibility.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
@@ -197,6 +198,7 @@
 		<span id="record-format" class="status-field" title="Record Format" onclick="gnubase.ui.command{command = 'window.projectSetup'}"/>
 		<span id="record-time" class="status-field" title="Max. Record Time"/>
 		<span id="lost-device" class="status-field hidden"/>
+		<span id="silent-device" class="status-field hidden"/>
 	</div>
 	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden" sections="transport" fit="room" contextmenu="transport-setup"/>
 

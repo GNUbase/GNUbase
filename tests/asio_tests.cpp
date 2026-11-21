@@ -2,6 +2,7 @@
 // The ASIO backend against a fake driver, which behaves like a driver loaded through COM: the backend's own code runs,
 // only the hardware is missing.
 #include "devicecontract.h"
+#include "engine/engine.h"
 #include "platform/audio/asiohost.h"
 
 #define NOMINMAX
@@ -24,6 +25,10 @@
 #include <vector>
 
 using namespace gnubase::audio;
+using gnubase::engine::Client;
+using gnubase::engine::Engine;
+using gnubase::engine::Json;
+using gnubase::engine::Result;
 
 namespace
 {
@@ -160,6 +165,9 @@ namespace
 					infos[c].buffers[half] = buffers[(static_cast<size_t>(c) * 2) + half].data();
 			blockSize = size;
 			callbacks = asioCallbacks;
+			++creates;
+			if (resetOnCreate) // like a driver that asks whenever it gets a size other than its control panel's
+				asioCallbacks->asioMessage(kAsioResetRequest, 0, nullptr, nullptr);
 			return ASE_OK;
 		}
 
@@ -228,6 +236,8 @@ namespace
 		long refusedBlockSize = 0;              // allowed, but createBuffers fails
 		int flakyCreates = 0;                   // createBuffers fails this often first, then works
 		bool inputMonitor = false;              // monitors directly
+		bool resetOnCreate = false;             // asks for a reset from every createBuffers
+		std::atomic<int> creates{0};            // createBuffers that worked
 		std::vector<ASIOInputMonitor> monitors; // what it was asked to monitor, on the driver thread
 		double rate = 48000.0;
 		long clock = 0;
@@ -379,6 +389,41 @@ TEST_CASE("the ASIO backend monitors directly where the driver can, and resets w
 	driver.callbacks->asioMessage(kAsioLatenciesChanged, 0, nullptr, nullptr);
 	CHECK(resets == 1);
 	device.reset();
+	CHECK(driver.references == 0);
+}
+
+TEST_CASE("an ASIO driver that asks for a reset in every open is reset once, not without end", "[integration]")
+{
+	FakeDriver driver;
+	driver.resetOnCreate = true;
+	{
+		std::vector<std::unique_ptr<Backend>> backends;
+		backends.push_back(makeAsioBackend(fake(driver)));
+		Engine engine(std::move(backends));
+		Client client(engine);
+		const Result set =
+			client.call("audio.setDevice", {{"backend", "asio"}, {"device", "Fake ASIO"}, {"start", true}});
+		INFO(set.error);
+		REQUIRE(set.ok());
+		// The request of the first open is kept and resets the device once (#432); the open that reset is gives
+		// the same request, which sets off no further one.
+		const auto resets = [&client]
+		{
+			const Json log = client.call("engine.commandLog").value.at("commands");
+			return std::count_if(
+				log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "audio.reset"; });
+		};
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (resets() == 0 && std::chrono::steady_clock::now() < deadline)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		REQUIRE(resets() == 1);
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		CHECK(resets() == 1);
+		CHECK(driver.creates == 2);
+		const Json status = client.call("audio.get").value;
+		CHECK(status.at("device").at("backend") == "asio");
+		CHECK(status.at("running") == true);
+	}
 	CHECK(driver.references == 0);
 }
 

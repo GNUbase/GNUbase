@@ -20,10 +20,15 @@ The project window's status line (#407, reference manual pp. 26, 71, 129), a str
   the reason it can't be opened and the device's id in parentheses as its tooltip (`title`) (#455): the id tells devices
   of one name apart, and is left out for a device without a name, which shows its id already. Otherwise it has the
   class `hidden`. It goes once the device returns or another one is picked.
-- **The engine.** Both follow `audio.changed`, after `audio.get` when the window opens: `projectSampleRate` and
-  `recordBitDepth` (also there without a device), `device.sampleRateMismatch` and `lost`. The engine sends
-  `audio.changed` for every new project sample rate and record bit depth, also when the device stays at its rate and
-  after undo, as the audio engine follows both in the render snapshot, so the status line needs no project events. MCP
-  and Lua read the same with `audio.get`, and the UI tools see the classes and the tooltip (`ui_dom`).
+- **Silent audio device.** While the device plays silence although it runs, e.g. a PipeWire device whose graph another
+  client holds at another sample rate ([audio-devices.md](audio-devices.md), #422), `#silent-device` shows "Audio
+  Device Silent: " and the device's name (its id if it has none), with the reason as its tooltip (#1974). The themes
+  color it as a warning. Otherwise it has the class `hidden`.
+- **The engine.** The fields follow `audio.changed`, after `audio.get` when the window opens: `projectSampleRate` and
+  `recordBitDepth` (also there without a device), `device.sampleRateMismatch`, `device.silenceReason` and `lost`. The
+  engine sends `audio.changed` for every new project sample rate and record bit depth, also when the device stays at
+  its rate and after undo, as the audio engine follows both in the render snapshot, so the status line needs no
+  project events. MCP and Lua read the same with `audio.get`, and the UI tools see the classes and the tooltip
+  (`ui_dom`).
 - Not done yet: the reference's other fields (p. 71), such as the project frame rate, the pan
   law and the buffer size, and hiding fields from the status line's context menu.
