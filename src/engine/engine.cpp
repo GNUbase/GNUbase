@@ -400,6 +400,11 @@ namespace gnubase::engine
 		m_audio->setCueStartHook(std::move(hook));
 	}
 
+	void Engine::setLocateCuedHook(std::function<void()> hook)
+	{
+		m_audio->setLocateCuedHook(std::move(hook));
+	}
+
 	void Engine::readMeters(MeterFrame& frame)
 	{
 		m_audio->readMeters(frame);

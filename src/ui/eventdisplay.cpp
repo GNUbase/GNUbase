@@ -363,6 +363,18 @@ namespace gnubase::ui
 			m_dialog->RemoveEventListener(Rml::EventId::Click, this);
 			m_dialog->GetOwnerDocument()->Close();
 		}
+		// What the play tool auditions, or scrubs while it resizes, ends with the display, as when the project window
+		// closes during the press, by a key command (#1136).
+		if (m_drag == Drag::Play || m_resizeScrubs)
+		{
+			try
+			{
+				m_binding.send("audition.stop", Json::object());
+			}
+			catch (const std::exception&) // NOLINT(bugprone-empty-catch): nothing to do about it while it goes
+			{
+			}
+		}
 		if (!alive())
 			return;
 		for (const Rml::EventId id : g_rootEvents)

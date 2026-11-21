@@ -300,6 +300,11 @@ namespace gnubase::engine
 		// for a hook that holds the thread. The thread gets a copy: a new hook applies from the next start on. Empty
 		// for none. Any thread.
 		void setCueStartHook(std::function<void()> hook);
+		// For tests: calls hook on the command thread in every locate while a device is set (transport.locate,
+		// audition.scrub of a track while the transport plays, an arranger jump), after the locate has cued the
+		// streams at its position and before it sends itself to the audio thread, e.g. to let the cue thread cue
+		// meanwhile, which then cues as the locate does (#1136). Empty for none. Any thread.
+		void setLocateCuedHook(std::function<void()> hook);
 
 	private:
 		friend class Client;
