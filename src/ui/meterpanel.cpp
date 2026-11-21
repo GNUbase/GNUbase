@@ -155,7 +155,9 @@ namespace gnubase::ui
 		const Rml::Element* value = target->HasAttribute("reset") ? target : target->Closest("[reset]");
 		if (value != nullptr &&
 			(event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0))
+		{
 			m_binding.send("meter.reset", {{"meters", value->GetAttribute<Rml::String>("reset", "")}});
+		}
 		else if (target->IsClassSet("meter-reset"))
 		{
 			// Each page resets only its own values (pp. 535 and 538).

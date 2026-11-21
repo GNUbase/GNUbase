@@ -1202,11 +1202,14 @@ namespace gnubase::ui
 					if (given->GetType() == Rml::Variant::BOOL || target->GetTagName() == "select")
 					{
 						// A toggle, an EQ band's type, or a send's destination, a channel id, or a cut's slope.
-						const std::string text = given->Get<Rml::String>("0");
-						Json parameters = paramChange(param,
-							given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>())
-								: endsWith(param, ".type")         ? Json(text)
-																   : Json(std::stoull(text)));
+						Json value;
+						if (given->GetType() == Rml::Variant::BOOL)
+							value = given->Get<bool>();
+						else if (endsWith(param, ".type"))
+							value = given->Get<Rml::String>();
+						else
+							value = std::stoull(given->Get<Rml::String>("0"));
+						Json parameters = paramChange(param, std::move(value));
 						parameters["channel"] = channel->id;
 						m_binding.send("channel.set", std::move(parameters));
 						break;
