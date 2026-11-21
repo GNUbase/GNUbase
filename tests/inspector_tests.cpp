@@ -568,12 +568,13 @@ TEST_CASE("an untouched Ctrl+Enter on a marker's start gives every selected mark
 	window.addTrack({{"type", "marker"}});
 	const auto add = [&window](const Json& parameters)
 	{ return window.call("marker.add", parameters).at("marker").at("id").get<uint64_t>(); };
-	const uint64_t intro = add({{"position", 2 * g_quarter}, {"name", "Intro"}});
 	const uint64_t verse =
 		add({{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 8 * g_quarter}, {"name", "Verse"}});
 	// Every label in view: CI's screens make the window 1024 pixels wide, where the timeline beside the inspector shows
 	// less than 10 quarters.
 	const uint64_t outro = add({{"position", 6 * g_quarter}, {"name", "Outro"}});
+	// The first marker in time added last: the info line shows the first one in timeline order, not by id (#684).
+	const uint64_t intro = add({{"position", 2 * g_quarter}, {"name", "Intro"}});
 	const auto marker = [&window](uint64_t id) { return window.find("markers", id); };
 	REQUIRE(window.app.waitUntil([&] { return elements(window.app, ".marker-label").size() == 3; }));
 	const auto clickMarker = [&window](int index, const std::vector<std::string>& modifiers = {})
