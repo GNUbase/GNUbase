@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <utility>
@@ -862,6 +863,49 @@ TEST_CASE("MIDI files dropped on the event display follow the MIDI import settin
 	CHECK(listPart.at("track") == project.at("tracks")[3].at("id"));
 	CHECK(listPart.at("position") == 4 * time::g_ticksPerQuarter);
 	CHECK(listPart.at("notes").size() == 2);
+}
+
+TEST_CASE("MIDI file and tempo track imports that fail say why in a dialog", "[ui]")
+{
+	// #1976: a refusal reached only the log, so the import did nothing visible.
+	const test::TempDir dir;
+	const std::filesystem::path broken = dir.path() / "broken.mid";
+	REQUIRE(std::ofstream(broken) << "not a MIDI file");
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const auto error = [&app]
+	{
+		const Json found = elements(app, "#project-error-message");
+		return found.empty() ? std::string() : found[0].value("text", std::string());
+	};
+	const auto close = [&app]
+	{
+		click(app, "#project-error-dialog button[result=ok]");
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#project-error-dialog").empty(); }));
+	};
+
+	SECTION("a MIDI file dropped on the event display")
+	{
+		drop(app, {broken.u8string()}, 100.0, 300.0);
+	}
+	SECTION("File > Import > MIDI File")
+	{
+		app.keys().run("file.importMidi", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#import-midi-dialog").size() == 1; }));
+		click(app, "#import-midi-current");
+		REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+		CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {broken}));
+	}
+	SECTION("File > Import > Tempo Track")
+	{
+		app.keys().run("file.importTempo", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+		CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {broken}));
+	}
+	REQUIRE(app.waitUntil([&error] { return !error().empty(); }));
+	CHECK(error().find("broken.mid") != std::string::npos);
+	close();
+	CHECK(app.call("project.get").at("tracks").empty());
 }
 
 TEST_CASE("The preferences' Editing > Audio page sets On Import Audio Files and what Use Settings imports with", "[ui]")

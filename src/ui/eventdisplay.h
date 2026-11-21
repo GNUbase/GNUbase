@@ -222,6 +222,9 @@ namespace gnubase::ui
 		// Called for a double click below the tracks instead of adding a MIDI track, e.g. by the track list, which
 		// adds a track like the selected one (docs/features/add-track.md).
 		void onAddTrack(std::function<void()> listener) { m_addTrack = std::move(listener); }
+		// Called with the error when the engine refuses an import of audio or MIDI files (audioFile.import,
+		// midiFile.import), e.g. by the app, which shows it in a dialog (#1976); otherwise it is only logged.
+		void onImportFailed(std::function<void(const std::string&)> listener) { m_importFailed = std::move(listener); }
 
 		// Auto-scroll (reference manual pp. 316-317). Suspended when editing: a click in the event display while
 		// playing suspends it until playback stops or auto-scroll is switched on again.
@@ -592,6 +595,8 @@ namespace gnubase::ui
 		};
 		void startImport(const std::vector<std::string>& files, Import import);
 		void sendMidiImport(const std::vector<std::string>& files, const Import& import, bool newProject);
+		// The done of an import's command: tells onImportFailed's listener why it failed, or logs it without one.
+		std::function<void(const engine::Result&)> importDone();
 		void dropFiles(Rml::Event& event);
 		void openImportOptions(Import import, const ImportOptions& options, bool saved);
 		void importAudio(Rml::Element& dialog);
@@ -929,9 +934,10 @@ namespace gnubase::ui
 		uint64_t m_read = 0;
 		ChannelSteps m_channelSteps; // channel.changed until their step's history.changed (#1881)
 		std::function<void()> m_layoutListener;
-		std::function<void()> m_addTrack;     // onAddTrack
-		std::vector<std::string> m_laneTypes; // and its type
-		std::vector<bool> m_laneLinear;       // and whether its time base is linear
+		std::function<void()> m_addTrack;                       // onAddTrack
+		std::function<void(const std::string&)> m_importFailed; // onImportFailed
+		std::vector<std::string> m_laneTypes;                   // and its type
+		std::vector<bool> m_laneLinear;                         // and whether its time base is linear
 		std::vector<Shown> m_events;
 		std::vector<std::pair<size_t, TimeSpan>> m_mutedPieces; // by lane: what shows of covered muted events
 		std::vector<uint64_t> m_selection;
