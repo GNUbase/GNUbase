@@ -405,7 +405,7 @@ namespace gnubase::app
 		  m_themes(fontsAndThemes(resources)), m_shell(m_windows, m_renderer), m_settings(engine, m_shell, m_themes),
 		  m_binding(
 			  engine, [this] { m_shell.wake(); }, [this] { m_shell.requestRender(); }),
-		  m_keys(engine, m_binding), m_main(m_shell.open(main)),
+		  m_keys(engine, m_binding), m_meters(engine, m_binding), m_main(m_shell.open(main)),
 		  m_docking(engine, m_binding, m_shell, resources / "ui" / "panel-window.rml", main.hidden), m_engine(engine),
 		  m_resources(resources), m_hidden(main.hidden),
 		  m_history(m_binding.on("history.changed",
@@ -686,7 +686,7 @@ namespace gnubase::app
 			// The meter display (reference manual pp. 533-538, docs/features/metering.md).
 			else if (added.id == "meter")
 				added.create = [this](Rml::Element& element)
-				{ return std::make_shared<ui::MeterPanel>(m_engine, m_binding, element); };
+				{ return std::make_shared<ui::MeterPanel>(m_meters, m_binding, element); };
 			m_docking.add(std::move(added));
 		}
 		addMixers();
@@ -2043,7 +2043,7 @@ namespace gnubase::app
 		m_docking.add({"mixer", "Mixer", "project", "lower", [this](Rml::Element& element)
 			{
 				auto mixer = std::make_shared<ui::Mixer>(
-					m_binding, m_docking, element, "lower", ui::MixerKind::LowerZone, mixerActions());
+					m_binding, m_meters, m_docking, element, "lower", ui::MixerKind::LowerZone, mixerActions());
 				m_lowerMixer = mixer;
 				return mixer;
 			}});
@@ -2139,7 +2139,7 @@ namespace gnubase::app
 			}
 			document->Show();
 			m_channelSettings.mixer = std::make_unique<ui::Mixer>(
-				m_binding, m_docking, *root, std::string(), ui::MixerKind::ChannelSettings, mixerActions());
+				m_binding, m_meters, m_docking, *root, std::string(), ui::MixerKind::ChannelSettings, mixerActions());
 			m_docking.attach("channelSettings", *document);
 		}
 		else if (!m_hidden)
@@ -2549,8 +2549,8 @@ namespace gnubase::app
 			throw std::runtime_error("cannot load the mixer window from " + file.u8string());
 		}
 		document->Show();
-		shown.mixer = std::make_unique<ui::Mixer>(
-			m_binding, m_docking, *root, "window" + std::to_string(number), ui::MixerKind::Window, mixerActions());
+		shown.mixer = std::make_unique<ui::Mixer>(m_binding, m_meters, m_docking, *root,
+			"window" + std::to_string(number), ui::MixerKind::Window, mixerActions());
 		m_docking.attach("mixer" + std::to_string(number), *document);
 		m_docking.saveWindows();
 		return shown.mixer.get();

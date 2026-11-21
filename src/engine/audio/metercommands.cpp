@@ -148,23 +148,28 @@ namespace gnubase::engine
 				"Resets the meters' maxima (peakMax, rmsMax, truePeakMax, momentaryMax, shortTermMax) and starts the "
 				"loudness measurement over (integrated, range, seconds); see meter.get. meters chooses what: \"main\" "
 				"only the main mix's peakMax, rmsMax and truePeakHold (the master meter's reset), \"loudness\" only "
-				"the loudness meter's values, truePeakMax included (its Reset Loudness); left out, everything, every "
-				"channel's maxima included. Announces meter.reset with the meters given.",
+				"the loudness meter's values, truePeakMax included (its Reset Loudness), \"mainRmsMax\" only the main "
+				"mix's rmsMax (a Ctrl-click on RMS Max.), \"mainTruePeakHold\" only its truePeakHold (on Peak Max.), "
+				"\"channels\" only every channel's peakMax and rmsMax (a click on a channel's peak level); left out, "
+				"everything, every channel's maxima included. Announces meter.reset with the meters given.",
 				Json::parse(R"({"type": "object", "additionalProperties": false,
-					"properties": {"meters": {"type": "string", "enum": ["main", "loudness"]}}})"),
+					"properties": {"meters": {"type": "string",
+						"enum": ["main", "loudness", "mainRmsMax", "mainTruePeakHold", "channels"]}}})"),
 				Json::parse(R"({"type": "object"})"), false},
 			[this](CommandContext& context)
 			{
 				const std::string meters = context.parameters().value("meters", std::string());
-				if (meters.empty())
+				const bool all = meters.empty();
+				if (all || meters == "channels")
 					for (const auto& [id, state] : m_channelStates)
 						state->meter.reset();
-				if (meters != "loudness")
-				{
+				if (all || meters == "main")
 					m_mainMeter.reset();
+				if (meters == "mainRmsMax")
+					m_mainMeter.resetRms();
+				if (all || meters == "main" || meters == "mainTruePeakHold")
 					m_loudness.resetTruePeakHold();
-				}
-				if (meters != "main")
+				if (all || meters == "loudness")
 					m_loudness.reset();
 				context.emit("meter.reset", meters.empty() ? Json::object() : Json{{"meters", meters}});
 				return Json::object();

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/mixer.h"
 
+#include "engine/analysis/analysis.h"
 #include "ui/docking.h"
 #include "ui/widgetutils.h"
 
@@ -97,8 +98,8 @@ namespace gnubase::ui
 		// The dB text under a fader: what the fader shows, which is the drag's during a drag.
 		void showVolume(const Rml::Element& fader)
 		{
-			Rml::Element* parent = fader.GetParentNode();
-			if (Rml::Element* text = parent != nullptr ? parent->QuerySelector(".mixer-volume") : nullptr)
+			Rml::Element* strip = fader.Closest(".mixer-fader");
+			if (Rml::Element* text = strip != nullptr ? strip->QuerySelector(".mixer-volume") : nullptr)
 				setText(*text, decibels(widgets::number(fader, "value", 0.0F)));
 		}
 
@@ -238,6 +239,8 @@ namespace gnubase::ui
 			};
 			const auto row = [](const std::string& controls)
 			{ return R"(<div class="mixer-row">)" + controls + "</div>"; };
+			const auto choice = [](const std::string& param, const char* title)
+			{ return R"(<select param=")" + param + R"(" title=")" + title + R"("/>)"; };
 			const auto section = [audio, shown](const char* id, const char* label, const std::string& controls)
 			{
 				return std::string(R"(<div class="mixer-section mixer-)") + id + R"(" section=")" + id +
@@ -253,7 +256,8 @@ namespace gnubase::ui
 				eq += row(toggle(path + "on", "EQ Band on/off", std::to_string(band)) +
 					knob(path + "gain", "Gain", -24.0, 24.0, 0.0) +
 					frequency(path + "frequency", "Frequency", 20.0, frequencies[static_cast<size_t>(band - 1)]) +
-					knob(path + "q", "Q-Factor", 0.1, 12.0, 1.0));
+					knob(path + "q", "Q-Factor", 0.1, 12.0, 1.0) +
+					(band == 1 || band == 4 ? choice(path + "type", "EQ Type") : std::string()));
 			}
 			std::string sends;
 			for (int send = 1; send <= g_sends; ++send)
@@ -268,8 +272,10 @@ namespace gnubase::ui
 			return section("pre", "Pre",
 					   knob("pre.gain", "Pre-Gain", -24.0, 24.0, 0.0) + toggle("pre.phase", "Phase", "Ø") +
 						   row(toggle("pre.lowCut.on", "Low-Cut Filter", "LC") +
+							   choice("pre.lowCut.slope", "Low-Cut Slope") +
 							   frequency("pre.lowCut.frequency", "Low-Cut Frequency", 20.0, 20.0)) +
 						   row(toggle("pre.highCut.on", "High-Cut Filter", "HC") +
+							   choice("pre.highCut.slope", "High-Cut Slope") +
 							   frequency("pre.highCut.frequency", "High-Cut Frequency", 50.0, 20000.0))) +
 				section("eq", "Equalizer", eq) +
 				section("strip", "Strip",
@@ -283,6 +289,17 @@ namespace gnubase::ui
 						row(toggle("strip.limiter.on", "Limiter", "Limit") +
 							knob("strip.limiter.threshold", "Threshold", -30.0, 0.0, 0.0))) +
 				section("sends", "Sends", sends);
+		}
+
+		// The choices of a section's drop-down list (reference manual pp. 474 and 480): a cut filter's slope, or the
+		// type of EQ band 1 or 4.
+		widgets::Options sectionChoices(const std::string& param)
+		{
+			if (endsWith(param, ".slope"))
+				return {{"6", "6 dB"}, {"12", "12 dB"}, {"24", "24 dB"}, {"36", "36 dB"}, {"48", "48 dB"}};
+			if (param == "eq.bands.1.type")
+				return {{"bell", "Parametric"}, {"lowShelf", "Low Shelf"}, {"lowCut", "Low Cut"}};
+			return {{"bell", "Parametric"}, {"highShelf", "High Shelf"}, {"highCut", "High Cut"}};
 		}
 
 		// Where a channel plays: its output and its sends' destinations.
@@ -432,10 +449,11 @@ namespace gnubase::ui
 		return result;
 	}
 
-	Mixer::Mixer(EngineBinding& binding, Docking& docking, Rml::Element& root, std::string view, MixerKind kind,
-		MixerActions actions)
+	Mixer::Mixer(EngineBinding& binding, MeterReader& meters, Docking& docking, Rml::Element& root, std::string view,
+		MixerKind kind, MixerActions actions)
 		: m_binding(binding), m_stepOwner(binding.stepOwner("mixer")), m_docking(docking),
-		  m_root(root.GetObserverPtr()), m_view(std::move(view)), m_kind(kind), m_actions(std::move(actions))
+		  m_root(root.GetObserverPtr()), m_view(std::move(view)), m_kind(kind), m_actions(std::move(actions)),
+		  m_meterReader(meters), m_metered(meters.show())
 	{
 		Rml::ElementDocument* document = root.GetOwnerDocument();
 		const bool settings = m_kind == MixerKind::ChannelSettings;
@@ -597,6 +615,9 @@ namespace gnubase::ui
 					if (!alive.expired() && result.ok())
 						sync(result.value);
 				});
+		m_subscriptions.push_back(m_binding.watch<std::vector<std::vector<std::string>>>(
+			m_root.get(), [this] { return readMeters(); },
+			[this](const std::vector<std::vector<std::string>>& shown) { showMeters(shown); }));
 		if (!settings)
 			requestView();
 		requestProject();
@@ -771,6 +792,7 @@ namespace gnubase::ui
 		while (container.GetNumChildren() > 0)
 			container.RemoveChild(container.GetFirstChild());
 		m_stripOf.clear();
+		m_metered->clear();
 		Rml::ElementDocument* document = container.GetOwnerDocument();
 		for (const MixerChannel* channel : strips)
 		{
@@ -785,8 +807,16 @@ namespace gnubase::ui
 			if (channel->channel != nullptr)
 				rml += R"(<textarea class="mixer-notes-field" rows="4"/>)";
 			rml += R"(</div><div class="mixer-fader" section="fader" label="Fader">)";
-			if (audio) // the panner (reference manual p. 465)
-				rml += R"(<knob class="mixer-pan" param="pan" title="Pan" min="-1" max="1" default="0" step="0.01"/>)";
+			// The panner (reference manual p. 465): pan bypass, and the pan control or, while the strip is .combined,
+			// the combined panner's left and right controls.
+			if (audio)
+				rml += R"(<div class="mixer-panner"><button type="toggle" class="toggle" param="panBypass" )"
+					   R"(title="Pan Bypass">B</button>)"
+					   R"(<knob class="mixer-pan" param="pan" title="Pan" min="-1" max="1" default="0" step="0.01"/>)"
+					   R"(<knob class="mixer-pan mixer-pan-side" param="panLeft" title="Pan Left" min="-1" max="1" )"
+					   R"(default="-1" step="0.01"/>)"
+					   R"(<knob class="mixer-pan mixer-pan-side" param="panRight" title="Pan Right" min="-1" max="1" )"
+					   R"(default="1" step="0.01"/></div>)";
 			if (vca) // instead of the panner, the link group it controls
 				rml += R"(<select class="mixer-vca-group" title="VCA Channel Controls Link Group"/>)";
 			if (channel->channel != nullptr)
@@ -800,8 +830,15 @@ namespace gnubase::ui
 			// Edit Channel Settings (reference manual p. 500).
 			if (channel->channel != nullptr && m_kind != MixerKind::ChannelSettings && m_actions.editChannel)
 				rml += R"(<button class="mixer-edit" edit="" title="Edit Channel Settings">e</button>)";
-			if (audio || vca) // from -60 dB, linear until the channel strip's dB law (#107)
-				rml += R"(<fader min="-60" max="6" default="0" step="0.1"/><span class="mixer-volume"/>)";
+			// The fader, from -60 dB, linear until the channel strip's dB law (#107), and an audio channel's meter,
+			// whose bars come once the engine measured the channel (showMeters).
+			if (audio || vca)
+				rml += std::string(R"(<div class="mixer-level"><fader min="-60" max="6" default="0" step="0.1"/>)") +
+					(vca ? "" : R"(<div class="mixer-meter"/>)") +
+					R"(</div><div class="mixer-readouts"><span class="mixer-volume"/>)" +
+					(vca ? "" : R"(<span class="mixer-peak" title="Meter Peak Level"/>)") + "</div>";
+			if (audio && !vca)
+				m_metered->push_back(channel->id);
 			rml += "</div>";
 			Rml::Element* strip = container.AppendChild(document->CreateElement("div"));
 			strip->SetClass("mixer-channel", true);
@@ -812,6 +849,58 @@ namespace gnubase::ui
 			m_stripOf[channel->id] = strip;
 		}
 		m_docking.arrangeSections(container);
+		showMeters(readMeters()); // the watch shows only what changes
+	}
+
+	std::vector<std::vector<std::string>> Mixer::readMeters() const
+	{
+		std::vector<std::vector<std::string>> shown;
+		for (const uint64_t id : *m_metered)
+		{
+			std::vector<std::string> values;
+			const engine::LevelReading* level = m_meterReader.level(id);
+			float largest = 0.0f;
+			for (size_t c = 0; level != nullptr && c < static_cast<size_t>(level->channels); ++c)
+			{
+				values.push_back(meterValue(level->peak[c]));
+				values.push_back(meterValue(level->peakMax[c]));
+				largest = std::max(largest, level->peakMax[c]);
+			}
+			const std::optional<double> peak = engine::analysis::decibels(largest);
+			values.push_back(peak ? decibels(*peak) : "-inf");
+			shown.push_back(std::move(values));
+		}
+		return shown;
+	}
+
+	void Mixer::showMeters(const std::vector<std::vector<std::string>>& shown)
+	{
+		if (!m_strips)
+			return;
+		for (size_t i = 0; i < shown.size() && i < m_metered->size(); ++i)
+		{
+			const auto strip = m_stripOf.find((*m_metered)[i]);
+			Rml::Element* bars = strip != m_stripOf.end() ? strip->second->QuerySelector(".mixer-meter") : nullptr;
+			Rml::Element* peak = strip != m_stripOf.end() ? strip->second->QuerySelector(".mixer-peak") : nullptr;
+			if (bars == nullptr || peak == nullptr)
+				continue;
+			const std::vector<std::string>& values = shown[i];
+			const auto channels = static_cast<int>(values.size() / 2);
+			if (bars->GetNumChildren() != channels)
+			{
+				std::string rml;
+				for (int c = 0; c < channels; ++c)
+					rml += R"(<meter min="-60" max="6"/>)";
+				bars->SetInnerRML(rml);
+			}
+			for (int c = 0; c < channels; ++c)
+			{
+				Rml::Element* meter = bars->GetChild(c);
+				meter->SetAttribute("value", values[2 * static_cast<size_t>(c)]);
+				meter->SetAttribute("peak", values[(2 * static_cast<size_t>(c)) + 1]);
+			}
+			setText(*peak, values.back());
+		}
 	}
 
 	void Mixer::updateStrip(Rml::Element& strip, const MixerChannel& channel)
@@ -888,6 +977,7 @@ namespace gnubase::ui
 				button->SetClass("checked", json.at(control).get<bool>());
 		if (Rml::Element* solo = strip.QuerySelector("button[control=solo]"))
 			solo->SetClass("defeated", json.at("soloDefeat").get<bool>());
+		strip.SetClass("combined", json.value("panner", std::string()) == "combined");
 		Rml::ElementList controls;
 		strip.QuerySelectorAll(controls, "[param]");
 		m_updating = true; // filling a drop-down list sends a change
@@ -910,7 +1000,13 @@ namespace gnubase::ui
 			if (control->HasAttribute("value") && m_binding.sending(stepKey(m_stepOwner, channel.id, param)))
 				continue; // the control is ahead of the engine
 			const Json value = paramValue(json, param);
-			if (control->GetTagName() == "select")
+			if (control->GetTagName() == "select" && param.rfind("sends.", 0) != 0)
+			{
+				if (!value.is_null())
+					widgets::fill(*control, sectionChoices(param),
+						value.is_string() ? value.get<std::string>() : std::to_string(value.get<int>()));
+			}
+			else if (control->GetTagName() == "select")
 			{
 				if (value.is_number())
 					widgets::fill(*control, destinations, std::to_string(value.get<uint64_t>()));
@@ -1247,10 +1343,15 @@ namespace gnubase::ui
 					}
 					if (given->GetType() == Rml::Variant::BOOL || target->GetTagName() == "select")
 					{
-						// A toggle, or a send's destination, a channel id.
-						Json parameters = paramChange(param,
-							given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>())
-																   : Json(std::stoull(given->Get<Rml::String>("0"))));
+						// A toggle, an EQ band's type, or a send's destination, a channel id, or a cut's slope.
+						Json value;
+						if (given->GetType() == Rml::Variant::BOOL)
+							value = given->Get<bool>();
+						else if (endsWith(param, ".type"))
+							value = given->Get<Rml::String>();
+						else
+							value = std::stoull(given->Get<Rml::String>("0"));
+						Json parameters = paramChange(param, std::move(value));
 						parameters["channel"] = channel->id;
 						m_binding.send("channel.set", std::move(parameters));
 						break;
@@ -1299,6 +1400,10 @@ namespace gnubase::ui
 			{
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && m_actions.editChannel)
 					m_actions.editChannel(channel->track);
+			}
+			else if (target->IsClassSet("mixer-peak"))
+			{
+				m_binding.send("meter.reset", {{"meters", "channels"}}); // the peak level (p. 468)
 			}
 			else if (target->HasAttribute("deactivate"))
 			{

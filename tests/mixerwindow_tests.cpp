@@ -574,6 +574,17 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	app.ui().wheel(window, {control("pan"), 0, std::nullopt}, 0.0F, -10.0F);
 	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("pan") > 0.0; }));
 	CHECK(elements(app, window, strip(piano.channel) + " .mixer-pan").empty());
+	// The pan bypass button to its left; the combined panner's two controls instead of the pan control.
+	click(app, window, control("panBypass"));
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("panBypass") == true; }));
+	REQUIRE(app.waitUntil([&] { return has(element(app, window, control("panBypass")), "checked"); }));
+	CHECK(!element(app, window, control("panLeft")).at("visible").get<bool>());
+	app.call("channel.set", {{"channel", guitar.channel}, {"panner", "combined"}, {"panBypass", false}});
+	REQUIRE(app.waitUntil([&] { return element(app, window, control("panLeft")).at("visible").get<bool>(); }));
+	CHECK(!element(app, window, control("pan")).at("visible").get<bool>());
+	app.ui().wheel(window, {control("panRight"), 0, std::nullopt}, 0.0F, 10.0F);
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("panRight") < 1.0; }));
+	CHECK(channelJson(app, guitar.channel).at("panLeft") == -1.0);
 
 	// Set up Window Layout shows the sections, which are hidden until then; MIDI channels' are empty.
 	click(app, window, "#mixer-layout");
@@ -601,6 +612,21 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	app.ui().wheel(window, {control("eq.bands.3.gain"), 0, std::nullopt}, 0.0F, -5.0F);
 	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("eq").at("bands")[2].at("gain") > 0.0; }));
 
+	// The cut filters' slopes and the types of EQ bands 1 and 4 are drop-down lists (reference manual pp. 474 and 480):
+	// each goes to its next choice, the bands from their shelves to their cuts.
+	for (const char* param : {"pre.lowCut.slope", "pre.highCut.slope", "eq.bands.1.type", "eq.bands.4.type"})
+	{
+		click(app, window, control(param));
+		app.ui().key(window, "Down");
+		click(app, window, control(param));
+	}
+	REQUIRE(app.waitUntil(
+		[&] { return channelJson(app, guitar.channel).at("eq").at("bands")[3].at("type") == "highCut"; }));
+	const Json picked = channelJson(app, guitar.channel);
+	CHECK(picked.at("pre").at("lowCut").at("slope") == 24);
+	CHECK(picked.at("pre").at("highCut").at("slope") == 24);
+	CHECK(picked.at("eq").at("bands")[0].at("type") == "lowCut");
+
 	// And they show what the engine has, whoever changed it.
 	app.call("channel.set",
 		{{"channel", guitar.channel}, {"pre", {{"gain", 6.5}, {"phase", false}}},
@@ -608,6 +634,12 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	REQUIRE(
 		app.waitUntil([&] { return element(app, window, control("pre.gain")).at("attributes").at("value") == "6.5"; }));
 	CHECK(element(app, window, control("eq.bands.1.frequency")).at("attributes").at("value") == "250");
+	app.call("channel.set",
+		{{"channel", guitar.channel}, {"pre", {{"lowCut", {{"slope", 48}}}}},
+			{"eq", {{"bands", {{{"band", 1}, {"type", "bell"}}}}}}});
+	REQUIRE(app.waitUntil(
+		[&] { return element(app, window, control("pre.lowCut.slope")).at("attributes").at("value") == "48"; }));
+	CHECK(element(app, window, control("eq.bands.1.type")).at("attributes").at("value") == "bell");
 	CHECK(!has(element(app, window, control("pre.phase")), "checked"));
 }
 
@@ -1115,6 +1147,12 @@ TEST_CASE("a VCA strip has a fader and buttons and picks the link group it contr
 	// A VCA fader has a fader, M, S and L, and no panner (p. 515).
 	CHECK(elements(app, window, strip(vca.channel) + " fader").size() == 1);
 	CHECK(elements(app, window, strip(vca.channel) + " .mixer-pan").empty());
+	// Its volume, the only readout without a meter's peak level, is centered under the fader.
+	const Json readouts = element(app, window, strip(vca.channel) + " .mixer-readouts").at("box");
+	const Json volume = element(app, window, strip(vca.channel) + " .mixer-volume").at("box");
+	const auto middle = [](const Json& box) { return box.at("x").get<double>() + (box.at("width").get<double>() / 2); };
+	CHECK(volume.at("width").get<double>() < readouts.at("width").get<double>());
+	CHECK(middle(volume) == Catch::Approx(middle(readouts)).margin(1.0));
 	CHECK(elements(app, window, strip(vca.channel) + " button[control=listen]").size() == 1);
 
 	// VCA Channel Controls Link Group: None, then the groups.

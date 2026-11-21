@@ -15,6 +15,7 @@
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
 #include "ui/markers.h"
+#include "ui/meterpanel.h"
 #include "ui/midieditor.h"
 #include "ui/mixer.h"
 #include "ui/onscreenkeyboard.h"
@@ -404,6 +405,7 @@ namespace gnubase::app
 		ui::UiSettings m_settings;
 		ui::EngineBinding m_binding;
 		ui::KeyCommands m_keys;
+		ui::MeterReader m_meters; // before the docking system, whose panels show meters, and the mixers
 		ui::Window& m_main;
 		ui::Docking m_docking;
 		engine::Engine& m_engine;

@@ -9,21 +9,57 @@
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace gnubase::ui
 {
+	// A level as a <meter> shows it: in dB with one decimal, or below every scale for silence.
+	std::string meterValue(float level);
+
+	// The UI's one reader of the meters (Engine::readMeters, docs/features/metering.md), which every view that shows
+	// meters shares, since a second reader would take the first one's peaks: while any view shows meters, it reads
+	// them once a frame, the channels of all views at once. Views read frame() and level() in their own
+	// EngineBinding::watch, which they make after they called show(): watches run in the order they were made, so a
+	// watch made before the reader's reads the previous frame. Use it on the UI thread; the engine and the binding must
+	// outlive it.
+	class MeterReader
+	{
+	public:
+		MeterReader(engine::Engine& engine, EngineBinding& binding);
+
+		// A view shows meters while it keeps what this returns: the channels whose levels it shows, which it may
+		// change; none for only the main mix and the loudness meter.
+		[[nodiscard]] std::shared_ptr<std::vector<uint64_t>> show();
+
+		const engine::MeterFrame& frame() const { return m_frame; }
+		// A channel's level in the last frame, or null if no view showed it then.
+		const engine::LevelReading* level(uint64_t channel) const;
+
+	private:
+		void read();
+
+		engine::Engine& m_engine;
+		EngineBinding& m_binding;
+		engine::MeterFrame m_frame;
+		std::vector<std::weak_ptr<std::vector<uint64_t>>> m_views;
+		std::optional<Subscription> m_reading; // while views show meters
+		uint64_t m_reads = 0;
+	};
+
 	// The right zone's meter display (#590, docs/features/metering.md, reference manual pp. 533-538): the master meter,
 	// a true peak meter per channel of the main mix with its RMS level, RMS Max. and Peak Max., and the loudness meter,
 	// with the momentary and short-term loudness and their values as the engine measures them; the Master and
 	// Loudness buttons at its bottom switch between them, and each page's reset resets its own values (meter.reset
-	// with meters "main" or "loudness"). It reads the meters once a frame (Engine::readMeters), the UI's one reader of
-	// them. Use it on the UI thread; the engine and the binding must outlive it.
+	// with meters "main" or "loudness"), and a Ctrl-click on RMS Max. or Peak Max. resets that one alone. It reads the
+	// meters once a frame through the reader. Use it on the UI thread; the reader and the binding must outlive it.
 	class MeterPanel final : private Rml::EventListener
 	{
 	public:
-		MeterPanel(engine::Engine& engine, EngineBinding& binding, Rml::Element& element);
+		MeterPanel(MeterReader& meters, EngineBinding& binding, Rml::Element& element);
 		~MeterPanel() override;
 		MeterPanel(const MeterPanel&) = delete;
 		MeterPanel& operator=(const MeterPanel&) = delete;
@@ -36,10 +72,10 @@ namespace gnubase::ui
 		std::vector<std::string> read();
 		void show(const std::vector<std::string>& shown);
 
-		engine::Engine& m_engine;
+		MeterReader& m_reader;
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
-		engine::MeterFrame m_frame;
+		std::shared_ptr<std::vector<uint64_t>> m_shows; // before m_meters, so the reader reads first
 		Subscription m_meters;
 	};
 }
