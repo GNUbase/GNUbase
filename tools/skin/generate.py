@@ -1069,6 +1069,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".se-region-shown", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent2"],
                               "background-color": c["accent2"] + "1a"}),
         (".se-region.selected", {"background-color": mix(c["surface"], c["accent"], .4)}),
+        (".se-region-handle", {"border-color": c["accent2"]}),
         # Its hitpoints (docs/features/hitpoints.md): lines with a handle, locked ones' handles lit, disabled ones dim
         (".se-hitpoint-line, .se-hitpoint-handle", {"background-color": c["accent"]}),
         (".se-hitpoint.locked .se-hitpoint-handle", {"background-color": c["accent2"]}),
@@ -1171,6 +1172,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
         (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
         (".history .history-separator", {"background-color": c["accent"]}),
+        # The transport bar's Left and Right Divider (docs/features/transport-bar.md)
+        (".transport-divider", {"background-color": c["border"]}),
         # The quantize panel's grid display (docs/features/quantize.md): the grid positions and the catch range around
         # them
         (".quantize-display", {"background-color": c["surface"]}),
