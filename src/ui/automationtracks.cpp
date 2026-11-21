@@ -182,7 +182,7 @@ namespace gnubase::ui
 		for (const Json& track : project.at("tracks"))
 			linear[track.at("id").get<uint64_t>()] = track.at("timeBase") == "linear";
 		std::map<uint64_t, AutomationView> lanes;
-		for (const Json& json : project.at("automation"))
+		const auto readLane = [&](const Json& json)
 		{
 			AutomationView lane;
 			lane.id = json.at("id").get<uint64_t>();
@@ -205,6 +205,46 @@ namespace gnubase::ui
 					point.value("terminator", false)});
 			}
 			lanes[lane.id] = std::move(lane);
+		};
+		for (const Json& json : project.at("automation"))
+			readLane(json);
+		// A lane that goes while it shows, as when the first points that added it are undone, leaves its automation
+		// track shown without a lane; one that comes for an unadded lane's target, as with those points or their redo,
+		// takes its place (#1918).
+		for (auto& [track, open] : m_openAutomation)
+			for (uint64_t& id : open)
+			{
+				if (lanes.count(id) != 0)
+					continue;
+				if (const auto gone = m_automation.find(id);
+					gone != m_automation.end() && m_unadded.count(id) == 0 && linear.count(track) != 0)
+					id = addUnaddedLane(track, gone->second.target);
+				if (const auto unadded = m_unadded.find(id); unadded != m_unadded.end())
+					for (const auto& [other, lane] : lanes)
+						if (lane.track == track && lane.target == unadded->second.at("target"))
+							id = other;
+			}
+		// The unadded lanes stay while they show, on tracks that are there and have their targets.
+		for (auto unadded = m_unadded.begin(); unadded != m_unadded.end();)
+		{
+			const auto track = unadded->second.at("track").get<uint64_t>();
+			const auto open = m_openAutomation.find(track);
+			const bool shows = open != m_openAutomation.end() &&
+				std::find(open->second.begin(), open->second.end(), unadded->first) != open->second.end();
+			const auto targets = m_targets.find(track);
+			const bool targeted = targets == m_targets.end() ||
+				std::any_of(targets->second.begin(), targets->second.end(),
+					[&](const Json& info) { return info.at("target") == unadded->second.at("target"); });
+			if (!shows || linear.count(track) == 0 || !targeted)
+			{
+				if (open != m_openAutomation.end())
+					open->second.erase(
+						std::remove(open->second.begin(), open->second.end(), unadded->first), open->second.end());
+				unadded = m_unadded.erase(unadded);
+				continue;
+			}
+			readLane(unadded->second);
+			++unadded;
 		}
 		m_automation = std::move(lanes);
 		// Points that went leave the selection.
@@ -294,13 +334,16 @@ namespace gnubase::ui
 		if (used.empty() && !all.empty())
 			used.push_back(all.front());
 		m_openAutomation[track] = used;
-		if (all.empty()) // a lane for its first parameter (reference manual p. 880)
+		if (all.empty()) // its first parameter (reference manual p. 880), unadded
 			requestTargets(track,
 				[this, track]
 				{
 					const Json* targets = automationTargets(track);
 					if (automationShown(track) && openLanes(track).empty() && targets != nullptr && !targets->empty())
-						addLane(track, targets->at(0).at("target"));
+					{
+						m_openAutomation[track].push_back(addUnaddedLane(track, targets->at(0).at("target")));
+						reload();
+					}
 				});
 		else
 			requestTargets(track);
@@ -326,23 +369,27 @@ namespace gnubase::ui
 		reload();
 	}
 
-	void EventDisplay::addLane(uint64_t track, const Json& target, Json before, std::optional<size_t> at)
+	uint64_t EventDisplay::addUnaddedLane(uint64_t track, const Json& target)
 	{
-		before.push_back({{"command", "automationLane.add"},
-			{"parameters", {{"track", track}, {"target", target}, {"read", false}}}});
-		const size_t index = before.size() - 1;
-		m_binding.send("history.transaction",
-			{{"description", "Add Automation Track"}, {"commands", std::move(before)}},
-			[this, track, index, at, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
-			{
-				if (alive.expired() || !result.ok() || !automationShown(track))
-					return;
-				const auto lane = result.value.at("results").at(index).at("lane").at("id").get<uint64_t>();
-				std::vector<uint64_t>& open = m_openAutomation[track];
-				open.insert(
-					at && *at <= open.size() ? open.begin() + static_cast<std::ptrdiff_t>(*at) : open.end(), lane);
-				reload();
-			});
+		const uint64_t id = m_nextUnadded++;
+		m_unadded[id] = {{"id", id}, {"track", track}, {"target", target}, {"read", false}, {"points", Json::array()}};
+		return id;
+	}
+
+	const Json* EventDisplay::unaddedLane(uint64_t lane) const
+	{
+		const auto found = m_unadded.find(lane);
+		return found == m_unadded.end() ? nullptr : &found->second;
+	}
+
+	void EventDisplay::removeAutomationLane(uint64_t lane)
+	{
+		// Its automation track closes first, so that it doesn't stay without the lane.
+		for (auto& [track, open] : m_openAutomation)
+			open.erase(std::remove(open.begin(), open.end(), lane), open.end());
+		if (unaddedLane(lane) == nullptr)
+			m_binding.send("automationLane.remove", {{"lane", lane}});
+		reload();
 	}
 
 	void EventDisplay::appendAutomation(uint64_t track)
@@ -370,8 +417,8 @@ namespace gnubase::ui
 			}
 			else
 			{
-				m_openAutomation.try_emplace(track); // shows while the lane is added
-				addLane(track, target.at("target"));
+				m_openAutomation[track].push_back(addUnaddedLane(track, target.at("target")));
+				reload();
 			}
 			return;
 		}
@@ -398,12 +445,6 @@ namespace gnubase::ui
 			return;
 		const uint64_t track = found->second.track;
 		std::vector<uint64_t>& open = m_openAutomation[track];
-		const auto at = std::find(open.begin(), open.end(), lane);
-		const auto index = static_cast<size_t>(at - open.begin());
-		const bool unused = found->second.points.empty();
-		Json removeOld = Json::array();
-		if (unused)
-			removeOld.push_back({{"command", "automationLane.remove"}, {"parameters", {{"lane", lane}}}});
 		for (const auto& [id, other] : m_automation)
 			if (other.track == track && other.target == target)
 			{
@@ -412,25 +453,32 @@ namespace gnubase::ui
 				std::replace(open.begin(), open.end(), lane, id);
 				if (std::find(open.begin(), open.end(), id) == open.end())
 					open.push_back(id);
-				if (unused)
-					m_binding.send("automationLane.remove", {{"lane", lane}});
 				reload();
 				return;
 			}
-		if (at != open.end())
-			open.erase(at);
-		addLane(track, target, std::move(removeOld), index);
+		// It has none: the automation track shows the target unadded.
+		if (const auto unadded = m_unadded.find(lane); unadded != m_unadded.end())
+			unadded->second["target"] = target;
+		else
+			std::replace(open.begin(), open.end(), lane, addUnaddedLane(track, target));
+		reload();
 	}
 
 	void EventDisplay::removeUnusedAutomation(uint64_t track)
 	{
 		Json commands = Json::array();
+		std::vector<uint64_t>& open = m_openAutomation[track];
 		for (const auto& [id, lane] : m_automation)
 			if (lane.track == track && lane.points.empty())
-				commands.push_back({{"command", "automationLane.remove"}, {"parameters", {{"lane", id}}}});
+			{
+				open.erase(std::remove(open.begin(), open.end(), id), open.end());
+				if (unaddedLane(id) == nullptr)
+					commands.push_back({{"command", "automationLane.remove"}, {"parameters", {{"lane", id}}}});
+			}
 		if (!commands.empty())
 			m_binding.send("history.transaction",
 				{{"description", "Remove Unused Parameters"}, {"commands", std::move(commands)}});
+		reload();
 	}
 
 	void EventDisplay::selectPoints(std::map<uint64_t, std::set<uint64_t>> points)
@@ -818,6 +866,27 @@ namespace gnubase::ui
 
 	void EventDisplay::automationEdit(const std::string& description, const AutomationView& lane, Json commands)
 	{
+		if (unaddedLane(lane.id) != nullptr && !commands.empty())
+		{
+			// The first points add the lane, which reads, in their undo step (#1918): its transaction, then theirs
+			// with the same merge key, which joins that step once the lane's id is known.
+			const std::string merge = "automation-lane-" + std::to_string(lane.id);
+			const Json add = {
+				{"command", "automationLane.add"}, {"parameters", {{"track", lane.track}, {"target", lane.target}}}};
+			m_binding.send("history.transaction",
+				{{"description", description}, {"merge", merge}, {"commands", Json::array({add})}},
+				[this, description, merge, commands, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (alive.expired() || !result.ok())
+						return;
+					Json points = commands;
+					for (Json& command : points)
+						command.at("parameters")["lane"] = result.value.at("results").at(0).at("lane").at("id");
+					m_binding.send("history.transaction",
+						{{"description", description}, {"merge", merge}, {"commands", std::move(points)}});
+				});
+			return;
+		}
 		// A click with a tool turns reading on (reference manual p. 873).
 		if (!lane.read)
 			commands.insert(commands.begin(),

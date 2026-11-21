@@ -204,7 +204,7 @@ namespace gnubase::ui
 
 		// Automation tracks (#121): the rows below a track's own, at its automation lanes' heights.
 		void showAutomationRows(Rml::Element& row, size_t lane, size_t end); // display lanes lane+1 to end
-		const engine::Json* laneOf(uint64_t lane) const;                     // as project.get has it
+		const engine::Json* laneOf(uint64_t lane) const;                     // as project.get has it, or unadded
 		const engine::Json* targetOf(const engine::Json& lane) const;        // its automationLane.targets entry
 		void openParameters(uint64_t lane);                // fills the parameter selector for the automation track
 		uint64_t laneAt(Rml::Element* element) const;      // the lane of the automation row it is in, or 0

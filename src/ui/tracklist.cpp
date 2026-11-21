@@ -1499,7 +1499,7 @@ namespace gnubase::ui
 		for (const Json& json : project.at("automation"))
 			if (json.at("id") == lane)
 				return &json;
-		return nullptr;
+		return m_display.unaddedLane(lane);
 	}
 
 	const Json* TrackList::targetOf(const Json& lane) const
@@ -1761,7 +1761,7 @@ namespace gnubase::ui
 			return;
 		const auto function = target->GetAttribute<Rml::String>("automation-function", "");
 		if (function == "remove") // with its points, and the automation track closes (reference manual p. 878)
-			m_binding.send("automationLane.remove", {{"lane", m_parameterLane}});
+			m_display.removeAutomationLane(m_parameterLane);
 		else if (function == "removeUnused")
 			m_display.removeUnusedAutomation(track);
 		else if (function == "onlyPlugin")
@@ -1861,8 +1861,9 @@ namespace gnubase::ui
 			}
 			if (Rml::Element* button = closest(target, "automation-read"))
 			{
-				// From what the button shows, which shows it at once (#1852).
-				if (const Json* lane = laneOf(automationLane(button)))
+				// From what the button shows, which shows it at once (#1852); an unadded lane has nothing to read.
+				if (const Json* lane = laneOf(automationLane(button));
+					lane != nullptr && m_display.unaddedLane(automationLane(button)) == nullptr)
 				{
 					const bool read = !button->IsClassSet("checked");
 					const auto id = lane->at("id").get<uint64_t>();
@@ -2486,7 +2487,7 @@ namespace gnubase::ui
 	{
 		std::vector<uint64_t> lanes;
 		for (const uint64_t lane : m_selectedLanes)
-			if (laneOf(lane) != nullptr)
+			if (laneOf(lane) != nullptr && m_display.unaddedLane(lane) == nullptr) // with automation to copy
 				lanes.push_back(lane);
 		return lanes;
 	}

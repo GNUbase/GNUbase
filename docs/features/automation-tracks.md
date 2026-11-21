@@ -48,17 +48,23 @@ the project or its undo history.
   Automation for the selected tracks, Show All Used Automation, Hide All Automation; `track.toggleAutomationSelected`,
   `track.showUsedAutomation`, `track.hideAllAutomation`; Show All Used Automation adds to the automation tracks that
   show, unused ones too). Showing a track's automation shows its lanes with points, or else its first lane, or else
-  adds a lane for its first parameter (volume on tracks with audio). Append Automation Track shows the next parameter
-  in `automationLane.targets`' order that no automation track shows, adding its lane if the track has none. New lanes
-  don't read until a tool draws on them. Selecting a track with the keys scrolls it into view with its automation
+  its first parameter (volume on tracks with audio) without a lane. Append Automation Track shows the next parameter
+  in `automationLane.targets`' order that no automation track shows, with its lane or without one.
+- **Unadded lanes** (#1918): an automation track whose parameter has no lane on the track shows an unadded lane
+  (`EventDisplay::unaddedLane`, shaped like `project.get`'s lanes, with read off and no points, its id above the
+  project's), so that opening automation tracks changes neither the project nor its undo history. The first points a
+  tool draws on it add the lane, which reads, in their undo step: the lane's `history.transaction` and then the
+  points' with the same merge key. A lane that goes while its automation track shows, as when that step is undone,
+  leaves the track showing its parameter unadded, and a lane that comes for an unadded lane's parameter, as on redo,
+  takes its place. Read does nothing on an unadded lane, and copying selected automation tracks leaves them out. Selecting a track with the keys scrolls it into view with its automation
   tracks, as far as they fit (`TrackList::reveal`). A new or loaded project (`project.reset`) starts with none open and
   no points selected, since its tracks, lanes and points get the old project's ids again.
 - **Parameter selector** (p. 880): the parameter's name opens a menu with a search field, which narrows the track's
   parameters to those whose name (not its RML, where `&`, `<` and `>` are entities) has the text in any case; Remove
   Parameter (`automationLane.remove`, p. 878), Remove Unused Parameters (the track's lanes without points, p. 880), and
   on a plugin's lane Show Only Automation Tracks of the plugin. Picking a parameter shows its lane in that automation
-  track, adding it if the track has none; a lane without points that the track showed is removed in the same undo
-  step.
+  track, or the parameter unadded if the track has none; it is no undo step, and a lane the track showed stays in the
+  project. Remove Parameter and Remove Unused Parameters close the automation tracks they take, unadded ones too.
 - **Curves** (p. 870): ramps for continuous parameters, steps for on/off and stepped ones, as the engine plays them.
   A lane's values fill its height from its parameter's minimum to its maximum; volume from -60 dB to the project's
   maximum, like the mixer's fader, with silence at the bottom. A lane that doesn't read is grayed out (`.off`).

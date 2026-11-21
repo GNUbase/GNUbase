@@ -391,7 +391,8 @@ namespace gnubase::ui
 		// points, or the static value line while it has no points or doesn't read. Which ones show is view state, like
 		// folding. laneAutomation() has the automation lane of each display lane, 0 for a track's own lane; a track's
 		// automation lanes have its id in laneTracks() too. Showing a track's automation shows its used lanes (with
-		// points), or else its first lane, adding one for its first parameter (automationLane.targets) if it has none.
+		// points), or else its first lane, or else its first parameter (automationLane.targets) without a lane: an
+		// unadded lane, which the project gets with the first points a tool draws, in their undo step (#1918).
 		const std::vector<uint64_t>& laneAutomation() const { return m_laneAutomation; }
 		// Lanes (#99, docs/features/comping.md): a track whose lanes show has a display lane per lane of its events
 		// and parts below its own, before its automation tracks, each as high as the track. The track's own lane shows
@@ -406,14 +407,18 @@ namespace gnubase::ui
 		void showUsedAutomation(); // every track's lanes with points
 		void hideAllAutomation();
 		// Shows one more automation track below the track's last one: the next parameter in automationLane.targets'
-		// order that none shows, with its lane, which is added if the track has none for it.
+		// order that none shows, with its lane, or unadded if the track has none for it.
 		void appendAutomation(uint64_t track);
 		// Shows the plugin's lanes on its track and hides the track's others (the lane automates the plugin).
 		void showOnlyPlugin(uint64_t lane);
-		// The parameter selector: the automation track that shows the lane shows the target's lane instead, which is
-		// added if the track has none; an unused lane it showed is removed in the same undo step.
+		// The parameter selector: the automation track that shows the lane shows the target's lane instead, or the
+		// target unadded if the track has none. No undo step: a lane it showed stays in the project.
 		void setAutomationTarget(uint64_t lane, const engine::Json& target);
-		void removeUnusedAutomation(uint64_t track); // the track's lanes without points
+		void removeUnusedAutomation(uint64_t track); // the track's lanes without points, and its automation tracks
+		void removeAutomationLane(uint64_t lane);    // Remove Parameter: the lane goes and its automation track closes
+		// An unadded lane, as project.get has lanes (with no points and read off), or null for any other id. Their ids
+		// come after the project's, so the automation tracks' lane attributes tell them apart.
+		const engine::Json* unaddedLane(uint64_t lane) const;
 		// automationLane.targets for a track whose automation shows, or null until it is in.
 		const engine::Json* automationTargets(uint64_t track) const;
 		// The selected automation points, by lane, also in the root's attribute automation-selection ("lane:point"
@@ -811,10 +816,8 @@ namespace gnubase::ui
 		void requestChangedTargets();
 		// Asks for the track's automationLane.targets again; then runs when they are in.
 		void requestTargets(uint64_t track, std::function<void()> then = {});
-		// Adds a lane for the target to the track and shows it below the track's others, with the commands before it
-		// in the same undo step.
-		void addLane(uint64_t track, const engine::Json& target, engine::Json before = engine::Json::array(),
-			std::optional<size_t> at = std::nullopt);
+		// A lane for an automation track that shows the target on the track without a lane yet, its id.
+		uint64_t addUnaddedLane(uint64_t track, const engine::Json& target);
 		void reload();                // the lanes again, from the project as it was last read
 		void showAutomationLanes();   // the curves, after the lanes changed
 		void placeAutomation();       // where they are, after the view changed
@@ -1087,7 +1090,9 @@ namespace gnubase::ui
 		bool m_importSaved = false;    // the project had a file then
 
 		std::map<uint64_t, std::vector<uint64_t>> m_openAutomation; // the lanes each track shows, in order
-		std::map<uint64_t, AutomationView> m_automation;            // every lane of the project
+		std::map<uint64_t, AutomationView> m_automation;            // every lane of the project, and the unadded ones
+		std::map<uint64_t, engine::Json> m_unadded;                 // the unadded lanes that show, by id
+		uint64_t m_nextUnadded = uint64_t{1} << 52;                 // above the project's ids, exact as a double
 		std::map<uint64_t, engine::Json> m_targets;                 // automationLane.targets, by track
 		std::map<uint64_t, std::string> m_targetsKeys; // by track, what its targets depended on when last asked
 		std::vector<uint64_t> m_laneAutomation;        // each display lane's automation lane, or 0
