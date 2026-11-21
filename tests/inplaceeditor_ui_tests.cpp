@@ -77,6 +77,12 @@ namespace
 
 		std::string editor() const { return ".in-place-editor[track=\"" + std::to_string(track) + "\"]"; }
 
+		// The toolbar's triangle at the upper right of the track's row in the track list (reference manual p. 1259).
+		std::string triangle() const
+		{
+			return ".track-list listitem[value=\"" + std::to_string(track) + "\"] .in-place-toolbar-toggle";
+		}
+
 		std::string note(uint64_t id) const { return editor() + " .key-note[note=\"" + std::to_string(id) + "\"]"; }
 
 		Json view() { return app.call("editor.get", {{"editor", "inPlace:" + std::to_string(track)}}); }
@@ -99,10 +105,10 @@ namespace
 			click(ui::Target{selector, 0, std::nullopt});
 		}
 
-		// The x of a time on the event display's timeline, in the window's pixels: at 120 BPM, project ticks.
+		// The x of a time on the event display's timeline, in the window's pixels: project ticks, on its tempo map.
 		double timelineX(int64_t ticks)
 		{
-			const double seconds = static_cast<double>(ticks) / g_quarter * 0.5;
+			const double seconds = display.time().tempo.toSecondsExact(static_cast<double>(ticks));
 			const ui::TimelineView& shown = display.view();
 			return box(".event-area").at("x").get<double>() + ((seconds - shown.start) / shown.scale);
 		}
@@ -195,7 +201,7 @@ TEST_CASE("the in-place editor opens over its track's lane with the notes on the
 
 	// The toolbar and the info line show with the toggle.
 	CHECK_FALSE(f.elements(f.editor() + " .key-editor-toolbar").at(0).at("visible").get<bool>());
-	f.click(f.editor() + " .in-place-toolbar-toggle");
+	f.click(f.triangle());
 	CHECK(f.has(f.editor(), "toolbar-shown"));
 	CHECK(f.elements(f.editor() + " .key-editor-toolbar").at(0).at("visible").get<bool>());
 	f.settle(2); // the grid's height changed, not its time axis
@@ -237,7 +243,7 @@ TEST_CASE("the in-place editor edits notes as the key editor does, and the event
 		[](const Json& each) { return each.at("pitch") == 62 && each.at("position") == 2 * g_quarter; }));
 
 	// With the toolbar shown, the draw tool draws a note at the snapped time.
-	f.click(f.editor() + " .in-place-toolbar-toggle");
+	f.click(f.triangle());
 	f.click(f.editor() + " .key-tool[key-tool=draw]");
 	REQUIRE(f.has(f.editor() + " .key-tool[key-tool=draw]", "checked"));
 	f.scroll(62);
@@ -436,7 +442,7 @@ TEST_CASE("two in-place editors and the lower zone's key editor have menus and s
 			.at("id")
 			.get<uint64_t>();
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("parts").size() == 2; }));
-	f.click(f.editor() + " .in-place-toolbar-toggle");
+	f.click(f.triangle());
 	const std::string suffix = "-inPlace-" + std::to_string(f.track);
 	f.click(f.editor() + " .in-place-editing-mode");
 	CHECK(f.elements("#in-place-editing-mode-menu" + suffix + " menuitem").size() == 2); // All Parts, Active Part
@@ -883,6 +889,180 @@ TEST_CASE("a time-linear track's in-place editor has its notes at their times on
 	f.settle(2);
 }
 
+TEST_CASE("the track list's Edit In-Place opens and closes the in-place editor, whose triangle in the row shows its "
+		  "toolbar",
+	"[ui]")
+{
+	Fixture f;
+	// Edit In-Place among the MIDI track's controls (reference manual pp. 194, 1261); audio tracks have none.
+	Json controls = f.app.call("settings.get", {{"key", "ui.trackControls"}}).at("value");
+	controls["midi"].push_back("editInPlace");
+	controls["audio"].push_back("editInPlace");
+	f.app.call("settings.set", {{"key", "ui.trackControls"}, {"value", controls}});
+	const auto row = [](uint64_t track) { return ".track-list listitem[value=\"" + std::to_string(track) + "\"]"; };
+	const std::string button = row(f.track) + " button[control=editInPlace]";
+	const std::string triangle = f.triangle();
+	REQUIRE(f.app.waitUntil([&] { return f.elements(button).size() == 1; }));
+	CHECK(f.elements(row(f.audio) + " [control=editInPlace]").empty());
+	CHECK_FALSE(f.elements(triangle).at(0).at("visible").get<bool>());
+
+	// A click opens the editor: the button is checked, and the triangle shows at the upper right of the row.
+	f.click(button);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(button, "checked"); }));
+	CHECK(f.has(row(f.track), "in-place"));
+	CHECK(f.app.appUi().trackList()->selection() == std::vector<uint64_t>{f.track});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(triangle).at(0).at("visible").get<bool>(); }));
+	const Json shown = f.box(triangle);
+	const Json rowBox = f.box(row(f.track));
+	CHECK(std::abs(shown.at("y").get<double>() - rowBox.at("y").get<double>()) <= 1);
+	CHECK(std::abs(shown.at("x").get<double>() + shown.at("width").get<double>() - rowBox.at("x").get<double>() -
+			  rowBox.at("width").get<double>()) <= 1);
+	CHECK(f.elements(f.editor() + " .in-place-toolbar-toggle").empty()); // not over the editor
+
+	// The triangle shows the toolbar and the info line, and hides them again.
+	CHECK_FALSE(f.elements(f.editor() + " .key-editor-toolbar").at(0).at("visible").get<bool>());
+	f.click(triangle);
+	REQUIRE(f.app.waitUntil([&] { return f.has(f.editor(), "toolbar-shown"); }));
+	CHECK(f.has(triangle, "checked"));
+	CHECK(f.display.inPlaceToolbarShown(f.track));
+	f.click(triangle);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(f.editor(), "toolbar-shown"); }));
+	CHECK_FALSE(f.has(triangle, "checked"));
+
+	// Shown when the editor closes, the toolbar is hidden when it opens again; another click closes it.
+	f.click(triangle);
+	REQUIRE(f.app.waitUntil([&] { return f.has(f.editor(), "toolbar-shown"); }));
+	f.click(button);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor()).empty(); }));
+	CHECK_FALSE(f.view().at("open").get<bool>());
+	REQUIRE(f.app.waitUntil([&] { return !f.has(button, "checked"); }));
+	CHECK_FALSE(f.has(row(f.track), "in-place"));
+	CHECK_FALSE(f.display.inPlaceToolbarShown(f.track));
+	f.click(button);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	CHECK_FALSE(f.has(f.editor(), "toolbar-shown"));
+
+	// A press on the triangle dragged down past the audio track's middle doesn't move the track in the list.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(triangle).at(0).at("visible").get<bool>(); }));
+	const auto order = [&f]
+	{
+		std::vector<uint64_t> ids;
+		const Json project = f.app.call("project.get");
+		for (const Json& track : project.at("tracks"))
+			ids.push_back(track.at("id").get<uint64_t>());
+		return ids;
+	};
+	const std::vector<uint64_t> before = order();
+	const Json from = f.box(triangle);
+	const Json below = f.box(row(f.audio));
+	const int x = static_cast<int>(from.at("x").get<double>() + (from.at("width").get<double>() / 2));
+	const int y = static_cast<int>(from.at("y").get<double>() + (from.at("height").get<double>() / 2));
+	const int lower = static_cast<int>(below.at("y").get<double>() + below.at("height").get<double>() - 2);
+	f.app.ui().drag(std::nullopt, {"", 0, ui::Point{x, y}}, {"", 0, ui::Point{x, lower}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(order() == before);
+}
+
+TEST_CASE("an in-place editor's notes stay under the ruler across a tempo change in the view", "[ui]")
+{
+	Fixture f;
+	// From the middle of the first note on, a quarter of the tempo: a time axis linear in ticks puts the notes off.
+	f.app.call("track.add", {{"type", "tempo"}});
+	f.app.call("project.set", {{"tempoTrackActive", true}});
+	f.app.call("tempo.add", {{"position", g_bar + (g_quarter / 2)}, {"bpm", 30.0}, {"ramp", false}});
+	REQUIRE(f.app.waitUntil([&] { return f.display.time().tempo.points().size() == 2; }));
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	f.settle(2);
+	f.display.zoomIn();
+	f.settle(2);
+	f.display.scrollTo(1.0);
+	f.settle(2);
+	// The part's box and the velocity lane's bars lie on the tempo map too.
+	const Json partBox = f.box(f.editor() + " .editor-part[part=\"" + std::to_string(f.part) + "\"]");
+	CHECK(std::abs(partBox.at("x").get<double>() + partBox.at("width").get<double>() - f.timelineX(2 * g_bar)) <= 1.5);
+	const Json bar = f.box(f.editor() + " .controller-bar[note=\"" + std::to_string(f.notes[1]) + "\"]");
+	CHECK(std::abs(bar.at("x").get<double>() - f.timelineX(g_bar + g_quarter)) <= 1.5);
+	// A click lands where the ruler has its time: on the second note, after the tempo change.
+	f.scroll(64);
+	f.click(f.at(g_bar + g_quarter + (g_quarter / 2), 64));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 1; }));
+	CHECK(f.view().at("selection").at(0).at("note") == f.notes[1]);
+}
+
+TEST_CASE("with Acoustic Feedback an in-place editor plays the notes it moves and draws", "[ui]")
+{
+	// Acoustic Feedback in the toolbar (reference manual p. 1259): a note sounds while it is moved, at the pitch
+	// it is dragged to, and a note being drawn sounds, until the mouse is released.
+	Fixture f;
+	const uint64_t strings = f.app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t part =
+		f.app.call("midiPart.add", {{"track", strings}, {"position", g_bar}, {"length", g_bar}, {"name", "Strings"}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
+	test::NoteProbe sound(f.app, strings);
+	f.track = strings; // the fixture's selectors for this track's editor
+	f.app.call("editor.inPlace", {{"tracks", {strings}}, {"open", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 1; }));
+	const std::vector<uint64_t>& lanes = f.display.laneTracks();
+	const auto found = std::find(lanes.begin(), lanes.end(), strings);
+	REQUIRE(found != lanes.end());
+	f.display.scrollVertically(f.display.laneTops().at(static_cast<size_t>(found - lanes.begin())));
+	f.scroll(61);
+
+	// The toolbar's button turns it on.
+	f.click(f.triangle());
+	f.click(f.editor() + " .key-input[setting=acousticFeedback]");
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("acousticFeedback") == true; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(f.editor() + " .key-input[setting=acousticFeedback]", "checked"); }));
+	f.scroll(61); // the toolbar took room from the rows
+
+	// A press on the note plays it, a drag a row up plays the pitch there instead, the release ends it.
+	f.app.ui().press(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 60, 100}}));
+	f.app.ui().move(std::nullopt, f.at(g_bar + (g_quarter / 2), 61));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 60, 100}, {0x80, 60, 0}, {0x90, 61, 100}}));
+	f.app.ui().release(std::nullopt, f.at(g_bar + (g_quarter / 2), 61), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 60, 100}, {0x80, 60, 0}, {0x90, 61, 100}, {0x80, 61, 0}}));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 1; }));
+
+	// The draw tool's new note sounds while it is drawn.
+	sound.clear();
+	f.click(f.editor() + " .key-tool[key-tool=draw]");
+	f.scroll(62);
+	f.app.ui().press(std::nullopt, f.at(g_bar + (2 * g_quarter) + (g_sixteenth / 2), 62), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 62, 100}}));
+	f.app.ui().release(std::nullopt, f.at(g_bar + (2 * g_quarter) + (g_sixteenth / 2), 62), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 62, 100}, {0x80, 62, 0}}));
+
+	// Off, a press on a note plays nothing.
+	f.app.call("editor.set", {{"editor", "inPlace:" + std::to_string(strings)}, {"acousticFeedback", false}});
+	REQUIRE(f.app.waitUntil([&] { return !f.has(f.editor() + " .key-input[setting=acousticFeedback]", "checked"); }));
+	f.click(f.editor() + " .key-tool[key-tool=objectSelection]");
+	f.scroll(61);
+	sound.clear();
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 61), f.at(g_bar + (g_quarter / 2), 63));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json notes = f.app.call("project.get").at("midiParts").at(1).at("notes");
+			return std::any_of(notes.begin(), notes.end(), [](const Json& note) { return note.at("pitch") == 63; });
+		}));
+	CHECK(sound.plays({}));
+}
+
 TEST_CASE("quantizing in an in-place editor quantizes its notes, not the project window's selected parts", "[ui]")
 {
 	Fixture f;
@@ -1022,7 +1202,7 @@ TEST_CASE(
 	f.display.zoomIn(); // once: after a second step the note lies outside the 1024 pixels wide window of Linux CI
 	f.settle(2);
 	f.display.select({otherPart});
-	f.click(f.editor() + " .in-place-toolbar-toggle");
+	f.click(f.triangle());
 	f.settle(2);
 	f.scroll(60);
 	f.app.call("editor.set", {{"editor", "inPlace:" + std::to_string(f.track)}, {"expressionDoubleClick", true}});

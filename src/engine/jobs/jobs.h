@@ -79,6 +79,9 @@ namespace gnubase::engine
 		// Whether a running job writes into folder, a folder inside it or a folder around it.
 		bool writesInto(const std::filesystem::path& folder) const;
 
+		// Whether a job of the kind, e.g. "project.save", is running.
+		bool runs(const std::string& kind) const;
+
 		// The JSON schema of a job as job.get shows it, for the results of commands that start one.
 		static Json schema();
 		bool cancelled(JobId job) const;

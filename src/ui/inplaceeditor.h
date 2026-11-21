@@ -27,12 +27,12 @@ namespace gnubase::ui
 	// Shows the project window's in-place editors: for each MIDI or instrument track whose editor inPlace:<track> is
 	// open (editor.inPlace), whichever client opened it, a key editor (ui/keyeditor.h) over the track's lane in the
 	// event display, which makes the lane at least g_inPlaceHeight high. The key editor's notes lie on the display's
-	// timeline, under its ruler; its toolbar and info line show while the editor's toggle button
-	// .in-place-toolbar-toggle has them shown. The toolbar starts with the multiple part controls, Part Editing Mode
-	// and Activate Part for Editing (reference manual p. 1260). A click on a part in its row of parts activates it.
-	// Presses in an in-place editor stay there: the event display doesn't select or edit what is under it. Each
-	// editor is the focus zone "inPlace" with its track in the attribute track, so that key commands such as Quantize
-	// know it. Use it on the UI thread; the display and the binding must outlive it.
+	// timeline, under its ruler; its toolbar and info line show while the triangle in the track's row of the track
+	// list has them shown (EventDisplay::inPlaceToolbarShown). The toolbar starts with the multiple part controls, Part
+	// Editing Mode and Activate Part for Editing (reference manual p. 1260). A click on a part in its row of parts
+	// activates it. Presses in an in-place editor stay there: the event display doesn't select or edit what is under
+	// it. Each editor is the focus zone "inPlace" with its track in the attribute track, so that key commands such as
+	// Quantize know it. Use it on the UI thread; the display and the binding must outlive it.
 	class InPlaceEditors final : private Rml::EventListener
 	{
 	public:

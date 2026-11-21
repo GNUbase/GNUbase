@@ -503,11 +503,21 @@ namespace gnubase::engine
 		std::vector<std::string> made;
 		try
 		{
-			std::error_code error;
-			fs::create_directories(folder, error);
-			if (error)
-				throw std::runtime_error("can't create " + folder.u8string() + ": " + error.message());
-			std::set<std::string> taken = takenNames(folder);
+			// Media files go into folder, freeze files into Freeze next to it; each folder is listed once.
+			std::map<fs::path, std::set<std::string>> taken;
+			const auto folderOf = [&folder, &taken](const MediaCopy& file)
+			{
+				fs::path target = file.tracks.empty() ? folder : folder.parent_path() / "Freeze";
+				if (taken.count(target) == 0)
+				{
+					std::error_code error;
+					fs::create_directories(target, error);
+					if (error)
+						throw std::runtime_error("can't create " + target.u8string() + ": " + error.message());
+					taken[target] = takenNames(target);
+				}
+				return target;
+			};
 			std::uintmax_t finished = 0; // bytes of the files done
 			for (size_t i = 0; i < files.size(); ++i)
 			{
@@ -518,7 +528,8 @@ namespace gnubase::engine
 					const fs::path source = pathOf(file.from);
 					const std::string detail = source.filename().u8string();
 					job.progress(static_cast<double>(finished) / static_cast<double>(total), detail);
-					const fs::path target = createFreeFile(folder, source.filename(), taken);
+					const fs::path into = folderOf(file);
+					const fs::path target = createFreeFile(into, source.filename(), taken[into]);
 					made.push_back(target.u8string());
 					std::uintmax_t done = finished;
 					copyFile(source, target,
@@ -548,37 +559,61 @@ namespace gnubase::engine
 				JobContext& job) mutable
 			{
 				copyMedia(files, folder, job);
+				// Media files are relinked with media.relink, frozen tracks with track.relinkFreeze, in one step.
 				Json relink = Json::array();
+				Json relinkFreezes = Json::array();
 				Json missing = Json::array();
 				std::vector<std::string> made;
+				// An entry of the result for file: its media file, or the frozen tracks that play it.
+				const auto resultEntry = [](const MediaCopy& file, Json fields)
+				{
+					if (file.tracks.empty())
+						fields["media"] = file.media;
+					else
+						fields["tracks"] = file.tracks;
+					return fields;
+				};
 				for (const MediaCopy& file : files)
 				{
 					if (file.to.empty())
 					{
-						missing.push_back({{"media", file.media}, {"path", file.from}});
+						missing.push_back(resultEntry(file, {{"path", file.from}}));
 						continue;
 					}
-					relink.push_back({{"media", file.media}, {"from", file.from}, {"path", file.to}});
+					if (file.tracks.empty())
+						relink.push_back({{"media", file.media}, {"from", file.from}, {"path", file.to}});
+					for (const ObjectId track : file.tracks)
+						relinkFreezes.push_back({{"track", track}, {"from", file.from}, {"path", file.to}});
 					made.push_back(file.to);
 				}
 
-				std::set<ObjectId> skipped;
+				std::set<ObjectId> skipped;       // media
+				std::set<ObjectId> skippedTracks; // frozen tracks
 				try
 				{
 					job.checkCancelled();
-					if (!relink.empty() && !projectStillOpen(job, project))
+					Json commands = Json::array();
+					if (!relink.empty())
+						commands.push_back(
+							{{"command", "media.relink"}, {"parameters", {{"files", relink}, {"project", project}}}});
+					if (!relinkFreezes.empty())
+						commands.push_back({{"command", "track.relinkFreeze"},
+							{"parameters", {{"files", relinkFreezes}, {"project", project}}}});
+					if (!commands.empty() && !projectStillOpen(job, project))
 					{
 						for (const Json& entry : relink)
 							skipped.insert(entry.at("media").get<ObjectId>());
+						for (const Json& entry : relinkFreezes)
+							skippedTracks.insert(entry.at("track").get<ObjectId>());
 					}
-					else if (!relink.empty())
+					else if (!commands.empty())
 					{
-						const Json command = {
-							{"command", "media.relink"}, {"parameters", {{"files", relink}, {"project", project}}}};
-						const Json result = job.command(
-							"history.transaction", {{"description", action}, {"commands", Json::array({command})}});
-						for (const Json& media : result.at("results").at(0).at("skipped"))
-							skipped.insert(media.get<ObjectId>());
+						const Json result =
+							job.command("history.transaction", {{"description", action}, {"commands", commands}});
+						for (size_t i = 0; i < commands.size(); ++i)
+							for (const Json& id : result.at("results").at(i).at("skipped"))
+								(commands.at(i).at("command") == "media.relink" ? skipped : skippedTracks)
+									.insert(id.get<ObjectId>());
 					}
 				}
 				catch (...)
@@ -587,25 +622,49 @@ namespace gnubase::engine
 					throw;
 				}
 
+				// A freeze file's copy is used if one of its tracks plays it.
 				Json copied = Json::array();
 				Json changed = Json::array();
+				Json changedTracks = Json::array();
 				std::vector<std::string> unused;
 				for (const MediaCopy& file : files)
 				{
 					if (file.to.empty())
 						continue;
-					if (skipped.count(file.media) != 0)
+					// The tracks that play the copy now.
+					MediaCopy relinked = file;
+					relinked.tracks.clear();
+					for (const ObjectId track : file.tracks)
 					{
-						changed.push_back(file.media);
+						if (skippedTracks.count(track) != 0)
+							changedTracks.push_back(track);
+						else
+							relinked.tracks.push_back(track);
+					}
+					const bool used = file.tracks.empty() ? skipped.count(file.media) == 0 : !relinked.tracks.empty();
+					if (!used)
+					{
+						if (file.tracks.empty())
+							changed.push_back(file.media);
 						unused.push_back(file.to);
 						continue;
 					}
-					copied.push_back({{"media", file.media}, {"from", file.from}, {"to", file.to}});
+					copied.push_back(resultEntry(relinked, {{"from", file.from}, {"to", file.to}}));
 				}
 				removeFiles(unused);
-				return Json{
-					{"copied", std::move(copied)}, {"missing", std::move(missing)}, {"changed", std::move(changed)}};
+				return Json{{"copied", std::move(copied)}, {"missing", std::move(missing)},
+					{"changed", std::move(changed)}, {"changedTracks", std::move(changedTracks)}};
 			});
+	}
+
+	void addFreezeCopies(const Project& project, const fs::path& folder, bool inside, std::vector<MediaCopy>& files)
+	{
+		std::map<std::string, std::vector<ObjectId>> tracks; // freeze file -> the tracks that play it, by id
+		for (const auto& [id, track] : project.trackById)
+			if (track.frozen && isInside(track.frozen->path, folder) == inside)
+				tracks[track.frozen->path].push_back(id);
+		for (auto& [path, ids] : tracks)
+			files.push_back({0, path, {}, std::move(ids)});
 	}
 
 	bool projectStillOpen(JobContext& job, uint64_t project)

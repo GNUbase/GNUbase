@@ -198,7 +198,7 @@
 		<span id="record-time" class="status-field" title="Max. Record Time"/>
 		<span id="lost-device" class="status-field hidden"/>
 	</div>
-	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden" sections="transport" contextmenu="transport-setup"/>
+	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden" sections="transport" fit="room" contextmenu="transport-setup"/>
 
 	<menu id="file-menu">
 		<menuitem command="file.new">New Project</menuitem>

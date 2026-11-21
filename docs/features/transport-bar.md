@@ -22,10 +22,15 @@ are by attributes, which `TransportControls` follows:
 | Tempo & Time Signature | Activate Tempo Track, tempo, Tap Tempo, Tap Tempo Mode, time signature | `project.set` `tempoTrackActive`, `tempo`, `signature`; `tempo.set`; `tempo.tap`, `transport.tapTempoMode` ([tempo-track.md](tempo-track.md)) |
 | Click | Activate Metronome Click | `transport.toggle` `metronome` |
 
-The sections keep the width of their controls. A window too narrow for all of them, such as the transport bar of a
-project window under about 1240 dp wide, cuts off the last sections at its right edge instead of drawing sections over
-each other. The locator buttons L, R and Sel take their letters' width rather than a text button's 64 dp, so all
-sections fit 1280 dp, a 1920-pixel display at 150 % (#1450).
+The sections keep the width of their controls. The transport bar shows the sections it has room for, as the toolbar
+does (`fit="room"`, [docking.md](docking.md)): in a project window under about 1240 dp wide the last sections go, the
+last of the order first, and come back in a wider one. The Left and Right Divider (pp. 307, 310, 65), hidden by
+default, keep the sections outside them shown: those before the left divider and those after the right one, which
+stands before Click; the sections between them go instead. The setup pane shows, hides and moves them as sections, and
+they show as a line. The transport panel takes the width of its sections and has no dividers; one sized too narrow for
+them cuts off the last sections at its right edge instead of drawing sections over each other. The locator buttons L,
+R and Sel take their letters' width rather than a text button's 64 dp, so all sections fit 1280 dp, a 1920-pixel
+display at 150 % (#1450).
 
 - **Buttons** have a `command` with `parameters` (JSON), which run as a key would (`KeyCommands::run`): engine
   commands through the UI's engine client, the UI's own commands in `AppUi`. Buttons with `state` are checked, the
@@ -90,7 +95,8 @@ sections fit 1280 dp, a 1920-pixel display at 150 % (#1450).
 ## Sections and setup panes
 
 The transport bar's sections are the docking system's set of sections `transport` ([docking.md](docking.md)):
-Locators, Locator Range Duration, Punch Points, Transport Controls, Time Displays, Tempo & Time Signature and Click.
+Left Divider, Locators, Locator Range Duration, Punch Points, Transport Controls, Time Displays, Tempo & Time
+Signature, Right Divider and Click; the panel's are the same without the dividers.
 A right click on the transport bar opens its setup pane (the reference's Set up Transport Bar, p. 306), a toggle
 button per section that shows or hides it, Show All, Reset All and presets ([docking.md](docking.md)); on Tap Tempo
 it opens the Tap Tempo Mode menu instead. The transport panel is a docking window of its own, `transportPanel`, with
@@ -171,8 +177,7 @@ The sections that come with their features: the record modes (#96, #97), retrosp
 post-roll section with the punch positions and the Transport menu's Pre-roll & Post-roll items (#583, p. 318; the
 engine has the settings in `transport.set`), the click behaviour itself (#101), external sync, count-in and the click
 pattern (#101), the markers section (#91), input and output activity and the audio performance meter. Also: Start from
-selection; the left and right dividers, which keep the sections outside them shown in a window too narrow for all (pp.
-307, 310); the time display window's transparency (a studio setup page, p. 313).
+selection; the time display window's transparency (a studio setup page, p. 313).
 
 ## Checks
 
@@ -186,7 +191,8 @@ and from the largest position, and `project.set` `tempo` and `signature` with un
 text, timecode hours past 2147483647, lengths in bars and beats across a tempo change, and the time context from
 `project.get`. `tests/transportbar_tests.cpp` drives the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)): every
 button of the transport bar, all its controls inside a 1024-pixel window at a dp ratio of 0.8, a new transport panel as
-wide as its sections, a window too narrow for the transport bar cutting off its last sections, the switches following
+wide as its sections, a window too narrow for the transport bar hiding its last sections whole, the Left and Right
+Divider keeping the sections outside them, and the panel without dividers, the switches following
 another client's changes, the marker buttons with and without markers, Locators to Selection by button and key, the time
 format menus, Exchange Time Formats by button and key, `ui.timeFormats` and the project's time format from the engine,
 also by undo and redo; in every theme and every format, at dp ratios of 1 and 0.85, each theme applied before it is

@@ -19,12 +19,14 @@ a 32-bit float WAV file at its own sample rate into the media folder, and the me
 file, while the clip and track keep the name of the file imported. FLAC files stay as they are. A project without a
 file has no media folder yet, so its MP3 and Ogg Vorbis files go where its recordings go: `Recordings` in the settings
 folder, or the temporary folder without one (`unsavedMediaFolder` in `src/engine/media/backup.h`,
-[recording.md](recording.md)), and are referenced from there. Saving the project doesn't move them, as it doesn't move
-recordings; once it is saved, `media.prepareArchive` copies them into the project, like every media file from outside
-its folder. They stay in `Recordings` when the project is closed without saving, as recordings do. That keeps one
-place and one rule for the files an unsaved project makes. Converting only once the project is saved would play the
-compressed file until then and make saving a long conversion; a temporary folder of their own that saving moves into
-the project would be a second such place, with recordings left out.
+[recording.md](recording.md)), and are referenced from there; without either folder the import refuses them. Saving the
+project copies them into its media folder, as it does its recordings, so that they end up in the project's `Audio`
+folder (reference manual p. 360): `project.save` starts the job `media.prepareArchive` uses for the media files in that
+folder and returns it, and once the copies are done the media are pointed at them as an undo step of its own, which the
+next save keeps (#611). They stay in `Recordings` when the project is closed without saving, as recordings do. That
+keeps one place and one rule for the files an unsaved project makes. Converting only once the project is saved would
+play the compressed file until then and make saving a long conversion; a temporary folder of their own would be a second
+such place, with recordings left out.
 
 The options of the reference's Import Options dialog:
 
@@ -194,12 +196,14 @@ the files an unsaved project made (recordings and converted imports) when it is 
 `tests/audioimport_tests.cpp` imports files of every supported format (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis and
 MP3) onto new tracks at a position and undoes it in one step, lays files out one after another with `oneTrack` and
 `track`, converts MP3 and Ogg Vorbis files without `convert` to WAV files with the signal they decode to (into the media
-folder, also with `copy` and `clipsOnly`, and in an unsaved project into `Recordings`, where they stay after saving
-until `media.prepareArchive` copies them, and removed again when a later file fails) and leaves FLAC files as they are,
-converts a 44.1 kHz WAV file and an MP3 file into the media folder and leaves a 48 kHz file where it is, splits stereo
-and 5.1 files into mono files per speaker, names split files as each `nameFormat` says, copies with one job, puts the
-first file on a given track and the others on new tracks (one undo step), places only the files that aren't split with
-`track`, and rejects what it can't do, removing converted files when a later file fails.
+folder, also with `copy` and `clipsOnly`, and in an unsaved project into `Recordings`, which the first save copies into
+the media folder as an undo step of its own, and removed again when a later file fails, refused without a folder to
+convert into) and leaves FLAC files as they are, converts a 44.1 kHz WAV file and an MP3 file into the media folder and
+leaves a 48 kHz file where it is, splits stereo and 5.1 files into mono files per speaker, splits and converts a 44.1
+kHz stereo file in one pass, which leaves only its two mono files in the media folder, names split files as each
+`nameFormat` says, copies with one job, puts the first file on a given track and the others on new tracks (one undo
+step), places only the files that aren't split with `track`, and rejects what it can't do, removing converted files when
+a later file fails.
 `tests/fileimport_tests.cpp` drives the app's UI through the automation API: the File > Import items, the Import Options
 dialog with its disabled options, Cancel and Import Files on One Track at the project cursor; File > Import > Audio File
 with the file dialog answered as the user would, onto the selected musical audio track (the first file, all of them with

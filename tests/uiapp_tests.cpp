@@ -1337,6 +1337,11 @@ TEST_CASE("keys edit the selected events in the project window", "[ui]")
 	app.ui().key(std::nullopt, "Backspace");
 	REQUIRE(app.waitUntil([&parts] { return parts().size() == 1; }));
 	CHECK(app.keys().keysFor("edit.delete") == std::vector<std::string>{"Delete", "Backspace"});
+	CHECK(app.keys().keysFor("sampleEditor.delete") == std::vector<std::string>{"Delete", "Backspace"});
+	// An editor-specific command invoked from the project window leaves the project selection alone.
+	display.select({parts()[0].at("id").get<uint64_t>()});
+	app.keys().run("sampleEditor.delete", Json::object(), app.main(), nullptr);
+	CHECK(parts().size() == 1);
 }
 
 TEST_CASE("the arrow keys select events along a track, and Up and Down step the tracks and their first events", "[ui]")

@@ -2316,9 +2316,10 @@ TEST_CASE("the editor window's key editor and the in-place editor keep their con
 	const std::string editor = ".in-place-editor[track=\"" + std::to_string(f.track) + "\"]";
 	f.app.call("editor.set", {{"editor", "inPlace:" + std::to_string(f.track)}, {"lanes", {{{"type", "velocity"}}}}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(editor + " .controller-lane").size() == 1; }));
-	REQUIRE(
-		f.app.waitUntil([&] { return f.elements(editor + " .in-place-toolbar-toggle").at(0).at("visible") == true; }));
-	f.click(of(editor + " .in-place-toolbar-toggle"));
+	const std::string triangle =
+		".track-list listitem[value=\"" + std::to_string(f.track) + "\"] .in-place-toolbar-toggle";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(triangle).at(0).at("visible") == true; }));
+	f.click(of(triangle));
 	REQUIRE(f.app.waitUntil([&] { return f.has(editor, "toolbar-shown"); }));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	f.app.shell().step(std::chrono::milliseconds(0));

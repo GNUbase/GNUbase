@@ -205,7 +205,7 @@ namespace gnubase::engine
 					const auto mediaId = added.at("id").get<ObjectId>();
 					media.push_back(mediaId);
 					if (copy && file == path && !isInside(file, mediaFolder.parent_path()))
-						copies.push_back({mediaId, file, {}});
+						copies.push_back({mediaId, file, {}, {}});
 					Json clipParameters = {{"media", mediaId}};
 					if (!splits)
 						clipParameters["name"] = fs::u8path(path).stem().u8string(); // not a converted copy's name
