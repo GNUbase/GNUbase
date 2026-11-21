@@ -27,10 +27,13 @@ when no MIDI keyboard is at hand.
   ends at the pitch it started at, also when the octave changes while it sounds. Both stay while the window is closed,
   until GNUbase quits.
 - **Keys taken.** While the window is open, it takes the keys that no element used before the key commands, in every
-  window: the keys of the two rows play, and the other keys run nothing, except those of the reference's exceptions,
-  which keep their key commands: Mod+S (Save), Num* (Record), Space (Start/Stop), Num1 (to the left locator), Delete
-  and Backspace (Delete), Num/ (Cycle), F2 (the transport panel) and Alt+K (closing the keyboard). Text fields keep
-  the keys typed into them. Closing the window gives the key commands their keys back.
+  window: the keys of the two rows play, and the other keys run nothing, except the keys of the reference's exceptions,
+  commands that keep their keys (#691): Save (Mod+S by default), Start/Stop Record (Num*), Start/Stop Playback
+  (Space), Jump to Left Locator (Num1), Delete (Delete, and Backspace in the project window and the sample editor),
+  Cycle on/off (Num/), Show/Hide Transport Panel (F2) and Show/Hide On-Screen Keyboard (Alt+K). The window asks the
+  key commands what a key would run (`KeyCommands::bound`), so a command the user gave another key keeps that key,
+  and its old key runs nothing. Text fields keep the keys typed into them. Closing the window gives the key commands
+  their keys back.
 - **Notes end.** Notes that sound end when their key or button goes up, when GNUbase loses the keyboard focus, and
   when the window closes.
 
@@ -47,5 +50,8 @@ record-enabled and set to all MIDI inputs, a record-enabled track records it, an
 messages. In the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)), Alt+K opens the window; with the transport
 recording onto a record-enabled instrument track, Z held down and released and a mouse button held on a key after
 the octave and velocity changed record two notes at those pitches and velocities, and a key held with the mouse ends
-when the button goes up out of the window; Num/ keeps its key command, Num0
-runs none; and Alt+K closes the window, which keeps its octave for the next time.
+when the button goes up out of the window; Num/ keeps its key command, and with Cycle on Alt+Y in the user's key
+commands Alt+Y runs it and Num/ runs nothing; Num0 runs none; and Alt+K closes the window, which keeps its octave for
+the next time. Dragging the octave and velocity sliders through `ui::Automation` sets them, a value between two
+steps rounds to one, and a drag of less than half a step per mouse move still moves the octave: sliders, knobs and
+faders drag from their unrounded value, so a document that rounds each change doesn't hold the drag back (#691).

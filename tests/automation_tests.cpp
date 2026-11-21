@@ -8,6 +8,7 @@
 #include "engine/graph/graph.h"
 #include "engine/midi/midivalues.h"
 #include "engine/processors/testsynth.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -16,7 +17,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -27,7 +27,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -999,18 +998,6 @@ namespace
 		return run(client, "plugin.insert", {{"channel", channel}, {"plugin", plugin}}).at("slot").at("id");
 	}
 
-	// Waits until a slot's plugin is active, then builds the graph with it, as the engine does on its own then.
-	void waitUntilActive(Client& client, const Json& slot)
-	{
-		const auto status = [&]()
-		{ return run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status").get<std::string>(); };
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-		while (status() != "active" && std::chrono::steady_clock::now() < deadline)
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		REQUIRE(status() == "active");
-		run(client, "audio.updatePlugins");
-	}
-
 	Json pluginTarget(const Json& slot, uint32_t parameter)
 	{
 		return {{"type", "plugin"}, {"slot", slot}, {"parameter", parameter}};
@@ -1212,7 +1199,7 @@ TEST_CASE("plugin parameter automation plays sample-accurately in its slot", "[i
 	INFO("block size " << blockSize);
 	Mixer mixer(blockSize);
 	const Json slot = insertPlugin(mixer.client, mixer.channel, "builtin:gainPan");
-	waitUntilActive(mixer.client, slot);
+	gnubase::test::waitForPlugin(mixer.client, slot);
 	const ObjectId lane = idOf(
 		run(mixer.client, "automationLane.add", {{"track", mixer.track}, {"target", pluginTarget(slot, 0)}}), "lane");
 	// Steps at their samples; a ramp as the value of every 64th frame from its start, since gainPan doesn't glide.

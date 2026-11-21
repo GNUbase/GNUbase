@@ -40,7 +40,10 @@ cuts and pastes it shares; the track list's commands are in `src/ui/tracklist.cp
 
 - **Selecting automation tracks.** A click on an automation track's row (not on its buttons) selects it, Ctrl or
   Shift adds or removes it; a click on a track's own row deselects them. A right click on an automation track that
-  isn't selected selects it, for the context menu. `TrackList::selectedLanes()` has them.
+  isn't selected selects it, for the context menu. `TrackList::selectedLanes()` has them. An unadded automation track
+  (one whose parameter has no lane yet, #1918, [automation-tracks.md](automation-tracks.md)) has nothing to copy, so
+  the copy leaves it out; the paste adds its lane in the paste's undo step: a `history.transaction` that adds the
+  lanes, then one with `automation.paste` and the same merge key.
 - **Commands** in the track list's context menu and as key commands (without keys of their own, as in the reference
   manual): `track.copyAutomationAll`, `track.copyAutomationSelected` and `track.copyAutomationSelectedParameters`
   (Copy Automation of All Tracks, of Selected Tracks, of Selected Parameters (Locator Range)), and
@@ -65,4 +68,5 @@ Automation Functions menu (p. 889).
   `automation.copied`; the checks.
 - `tests/automationtracks_tests.cpp`: selecting automation tracks with clicks and Ctrl, the track list's copy and
   paste commands for selected parameters and selected tracks, when they are enabled, and a new project that has
-  nothing copied and no selected automation tracks.
+  nothing copied and no selected automation tracks; pasting onto an unadded automation track, which adds its lane in
+  the paste's one undo step, whose undo leaves the automation track unadded.

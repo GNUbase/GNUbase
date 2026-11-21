@@ -112,6 +112,7 @@ namespace gnubase::ui
 					break;
 				case Rml::EventId::Dragstart:
 					m_last = position(event);
+					m_unrounded = value();
 					m_dragging = true;
 					m_dragged = format(value());
 					break;
@@ -119,7 +120,12 @@ namespace gnubase::ui
 				{
 					const float at = position(event);
 					const float pixels = std::max(travel(), 1.0F);
-					change(value() + ((at - m_last) / pixels * (maximum() - minimum()) * fineness(event)));
+					// From where the drag would be without rounding: a document that rounds each change to a step
+					// would otherwise hold back moves smaller than half a step (#691).
+					m_unrounded =
+						std::clamp(m_unrounded + ((at - m_last) / pixels * (maximum() - minimum()) * fineness(event)),
+							std::min(minimum(), maximum()), std::max(minimum(), maximum()));
+					change(m_unrounded);
 					m_last = at;
 					break;
 				}
@@ -239,6 +245,7 @@ namespace gnubase::ui
 			}
 
 			float m_last = 0.0F;               // where the mouse was in the drag
+			float m_unrounded = 0.0F;          // the drag's value before the document rounded it
 			bool m_dragging = false;           // from dragstart to dragend
 			std::string m_dragged;             // the value the drag gave it
 			std::optional<std::string> m_held; // a value set during the drag, after its last change

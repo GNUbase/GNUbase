@@ -21,6 +21,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -2122,34 +2123,46 @@ TEST_CASE("the info line's refused volume step shows the engine's value again", 
 	CHECK(window.historyPosition() == position + 2); // the gesture's step and the removal; the refused one left none
 }
 
-TEST_CASE("the inspector shows the channel as it is when a change is refused", "[ui]")
+TEST_CASE("the inspector's output list leaves out the channels whose audio would come back", "[ui]")
 {
 	Window window;
 	const uint64_t drums = window.addTrack({{"type", "group"}, {"name", "Drums"}});
 	const uint64_t bus = window.addTrack({{"type", "group"}, {"name", "Bus"}});
-	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
-	// Drums play into Bus, so Bus into Drums would be a loop.
-	const uint64_t busChannel = window.channel(bus).at("id").get<uint64_t>();
-	window.call("channel.set", {{"channel", window.channel(drums).at("id")}, {"output", busChannel}});
-	const std::string output = std::to_string(window.channel(bus).at("output").get<uint64_t>());
+	const uint64_t reverb = window.addTrack({{"type", "effect"}, {"name", "Reverb"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 3; }));
+	const auto id = [&](uint64_t track) { return std::to_string(window.channel(track).at("id").get<uint64_t>()); };
+	// The values of the output list's options.
+	const auto options = [&]
+	{
+		std::vector<std::string> values;
+		Rml::Context& context = window.app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(
+					context.GetDocument(i)->QuerySelector(".inspector select[control=output]")))
+				for (int option = 0; option < select->GetNumOptions(); ++option)
+					values.push_back(select->GetOption(option)->GetAttribute<Rml::String>("value", ""));
+		return values;
+	};
+	const auto lists = [&](const std::string& value)
+	{
+		const std::vector<std::string> values = options();
+		return std::find(values.begin(), values.end(), value) != values.end();
+	};
+
+	// Drums play into Bus and send to Reverb, so neither Bus nor Reverb can play into Drums (the engine refuses
+	// it); Reverb can still play into Bus.
+	window.call("channel.set",
+		{{"channel", window.channel(drums).at("id")}, {"output", window.channel(bus).at("id")},
+			{"sends", {{{"send", 1}, {"destination", window.channel(reverb).at("id")}}}}});
 	window.list.select({bus});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bus"));
-	REQUIRE(window.shows(".inspector select[control=output]", output));
-
-	// Drums is the choice after the output bus.
-	window.click(".inspector select[control=output]");
-	window.app.ui().key(std::nullopt, "Down");
-	window.click(".inspector select[control=output]");
-	// Anywhere in the log, not just last: the project window's editor.inPlace after each project answer can follow it.
-	REQUIRE(window.app.waitUntil(
-		[&]
-		{
-			const Json commands = window.call("engine.commandLog").at("commands");
-			return std::any_of(commands.begin(), commands.end(), [](const Json& command)
-				{ return command.at("command") == "channel.set" && command.contains("error"); });
-		}));
-	CHECK(window.shows(".inspector select[control=output]", output));
-	CHECK(std::to_string(window.channel(bus).at("output").get<uint64_t>()) == output);
+	CHECK(window.app.waitUntil([&] { return !lists(id(drums)) && lists(id(reverb)); }));
+	window.list.select({reverb});
+	REQUIRE(window.app.waitUntil([&] { return lists(id(bus)); }));
+	CHECK(!lists(id(drums)));
+	window.list.select({drums});
+	REQUIRE(window.app.waitUntil([&] { return lists(id(reverb)); }));
+	CHECK(lists(id(bus)));
 }
 
 TEST_CASE("the info line asks for the selection only while it shows", "[ui]")

@@ -187,7 +187,7 @@ TEST_CASE("a crash whose filter finds the handler removed ends the process witho
 TEST_CASE("a log session starts gnubase-crashdump and ends it with the session", "[integration]")
 {
 	const gnubase::test::TempDir dir;
-	CHECK(crash(dir.path(), "helper") == 0); // 5: no helper while the session runs, 6: one left after it
+	CHECK(crash(dir.path(), "helper") == 0); // 5: no helper while the session runs, 6: it still runs 10 s after it
 }
 
 TEST_CASE("if gnubase-crashdump is gone, a crashed process writes its minidump itself", "[integration]")

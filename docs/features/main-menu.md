@@ -34,11 +34,20 @@ project window.
   list view that selects its row in the click's default action (#1120), the event display that selects on the
   release, and an item's own command, such as Edit > Select > All or None (#1173). For this update the order in which
   listeners were added doesn't matter, and the menu doesn't update on every change event, such as each step of a value
-  drag (#1176). A click on an item updates the menu once more before it looks for the item, so a listener of the click
+  drag (#1176). A click on an item asks the item's command once more before it runs it, so a listener of the click
   that changes what the item's command can do counts (#1120), if it ran before the menu's own click listener on the
   document: a listener of an element below the document, a capture phase listener of the document, or a listener of
   the document that was added before the menu's. A bubble phase click listener added to the document after the menu
-  runs after the lookup: what it changes shows after the input, too late for that click (#1233).
+  runs after that: what it changes shows after the input, too late for that click (#1233).
+- **Cost per frame** (#1901). An update asks each command once per zone whether it can run, since the enabled
+  callbacks get the window and the zone, not an item's parameters, and a click asks only the clicked item's. The keys
+  are worked out again only when the bindings changed (`KeyCommands::bindingsRevision`: a key bound, a UI command
+  removed, the user's key commands or macros set), and an item's keys are written only when they differ from what the
+  menu wrote last, without reading the DOM back. The test "the main menu asks each command once per update and writes
+  keys only when the bindings change" checks that two items of one command apart in a zone are asked once, that a click
+  asks only its item, and what is written when, and the `[slow]` test "the main menu's update reports its time per
+  frame" reports the time of an update with the default key commands and with a key command of the user's for every
+  command.
 - **The menu bar** is a docking strip, `strip="menuBar"` ([docking.md](docking.md)): Menu Bar in the Set up Window
   Layout menu and the UI command `window.menuBar` show and hide it, and `ui.layout` keeps it per window. It is a
   `<menubar>`, whose titles are buttons that open the menus ([widgets.md](widgets.md), "Menus and context menus"), and

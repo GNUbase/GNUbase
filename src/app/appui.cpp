@@ -532,7 +532,8 @@ namespace gnubase::app
 		m_shell.onUnusedKey(
 			[this](ui::Window& window, const ui::KeyPress& keys)
 			{
-				if (ui::OnScreenKeyboard* keyboard = this->keyboard(); keyboard == nullptr || !keyboard->press(keys))
+				if (ui::OnScreenKeyboard* keyboard = this->keyboard();
+					keyboard == nullptr || !keyboard->press(keys, m_keys.bound(window, keys)))
 					m_keys.press(window, keys);
 			});
 		m_shell.onKeyReleased(
@@ -1242,7 +1243,7 @@ namespace gnubase::app
 						paste = id.find("paste") != std::string::npos](ui::Window&, Rml::Element*)
 					{
 						return m_trackList != nullptr && (!paste || m_trackList->automationCopied()) &&
-							!(parameters ? m_trackList->selectedLanes() : m_trackList->selection()).empty();
+							!(parameters ? m_trackList->selectedLanes(paste) : m_trackList->selection()).empty();
 					});
 			else if (id == "track.pasteAutomationAll")
 				m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*)
@@ -2324,8 +2325,13 @@ namespace gnubase::app
 		std::vector<uint64_t> found;
 		if (!m_eventDisplay || !m_eventDisplay->project().is_object())
 			return found;
+		// By reference, not through Json::value's copy: the main menu asks for it in every frame (#1901).
+		const engine::Json& project = m_eventDisplay->project();
+		const auto items = project.find(kind);
+		if (items == project.end())
+			return found;
 		const std::vector<uint64_t>& selection = m_eventDisplay->selection();
-		for (const engine::Json& item : m_eventDisplay->project().value(kind, engine::Json::array()))
+		for (const engine::Json& item : *items)
 		{
 			const auto id = item.at("id").get<uint64_t>();
 			if (std::find(selection.begin(), selection.end(), id) != selection.end())

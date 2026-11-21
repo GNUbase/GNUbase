@@ -49,6 +49,18 @@ namespace gnubase::ui
 
 		constexpr const char* g_columns[] = {"used", "status", "info", "path"};
 
+		// The View/Attributes menu's columns (reference manual pp. 417, 741) and whether each shows by default: as in
+		// the reference, the Key column only once Root Key turns it on.
+		struct Attribute
+		{
+			const char* column;
+			const char* label;
+			bool shown;
+		};
+
+		constexpr Attribute g_attributes[] = {{"used", "Used", true}, {"status", "Status", true},
+			{"key", "Root Key", false}, {"info", "Info", true}, {"path", "Path", true}};
+
 		std::string encode(const std::string& text)
 		{
 			return Rml::StringUtilities::EncodeRml(text);
@@ -151,6 +163,13 @@ namespace gnubase::ui
 		  m_channelChanged(
 			  binding.on("channel.changed", [this](const engine::Event& event) { m_levelSteps.keep(event); })),
 		  m_saved(binding.on("project.saved", [this](const engine::Event&) { poolChanged(); })),
+		  m_settings(binding.on("settings.changed",
+			  [this](const engine::Event& event)
+			  {
+				  const Json& values = event.data.at("values");
+				  if (const auto columns = values.find("ui.poolColumns"); columns != values.end())
+					  showColumns(*columns);
+			  })),
 		  m_jobProgress(binding.on("job.progress",
 			  [this](const engine::Event& event)
 			  {
@@ -166,7 +185,8 @@ namespace gnubase::ui
 		  m_jobFinished(
 			  binding.on("job.finished", [this](const engine::Event& event) { jobEnded(event.data.at("job")); }))
 	{
-		std::string rml = R"(<div class="pool"><div class="toolbar pool-toolbar">)";
+		std::string rml = R"(<div class="pool"><div class="toolbar pool-toolbar">)"
+						  R"(<button id="pool-attributes" menu="pool-attributes-menu">View/Attributes</button>)";
 		for (const Button& button : g_buttons)
 			rml += std::string(R"(<button id=")") + button.id + R"(">)" + button.label + "</button>";
 		rml += R"(</div><div class="pool-status"><div id="pool-message" class="pool-message"/>)"
@@ -185,6 +205,26 @@ namespace gnubase::ui
 		root->AddEventListener(Rml::EventId::Blur, this, true); // blur and focus don't bubble
 		root->AddEventListener(Rml::EventId::Focus, this, true);
 		root->AddEventListener(g_treeToggleEvent, this);
+		// The View/Attributes menu goes into the document's body, as menus must (docs/features/widgets.md).
+		if (Rml::ElementDocument* document = element.GetOwnerDocument())
+		{
+			std::string items;
+			for (const Attribute& attribute : g_attributes)
+				items += std::string(R"(<menuitem type="toggle" pool-column=")") + attribute.column + R"(">)" +
+					attribute.label + "</menuitem>";
+			const Rml::ElementPtr holder = document->CreateElement("div");
+			holder->SetInnerRML(R"(<menu id="pool-attributes-menu">)" + items + "</menu>");
+			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
+			menu->AddEventListener(Rml::EventId::Change, this);
+			m_attributes = menu->GetObserverPtr();
+		}
+		showColumns(Json::object());
+		m_binding.send("settings.get", {{"key", "ui.poolColumns"}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					showColumns(result.value.at("value"));
+			});
 		update();
 	}
 
@@ -192,6 +232,12 @@ namespace gnubase::ui
 	{
 		if (m_question)
 			m_question->RemoveEventListener(g_dialogCloseEvent, this);
+		if (Rml::Element* menu = m_attributes.get())
+		{
+			menu->RemoveEventListener(Rml::EventId::Change, this);
+			if (Rml::Element* parent = menu->GetParentNode())
+				parent->RemoveChild(menu);
+		}
 		if (!m_root)
 			return;
 		for (const Rml::EventId id :
@@ -289,6 +335,10 @@ namespace gnubase::ui
 					else
 						m_binding.send(button.command);
 				}
+		}
+		else if (event == Rml::EventId::Change && target->HasAttribute("pool-column"))
+		{
+			setColumn(target->GetAttribute<Rml::String>("pool-column", ""), event.GetParameter("value", true));
 		}
 		else if (event == Rml::EventId::Change && target->GetAttribute<Rml::String>("field", "") == "rootKey")
 		{
@@ -684,6 +734,39 @@ namespace gnubase::ui
 				widgets::fill(list,
 					keyOptions(clip.value("rootKey", std::string()), clip.value("rootKeysDiffer", false), true),
 					keyValue(clip));
+	}
+
+	void PoolPanel::showColumns(const Json& columns)
+	{
+		m_columns = Json::object();
+		for (const Attribute& attribute : g_attributes)
+		{
+			const bool shown = columns.is_object() ? columns.value(attribute.column, attribute.shown) : attribute.shown;
+			m_columns[attribute.column] = shown;
+			if (m_root)
+				m_root->SetClass(std::string("hide-") + attribute.column, !shown);
+			Rml::Element* item = m_attributes
+				? m_attributes->QuerySelector(std::string("[pool-column=") + attribute.column + "]")
+				: nullptr;
+			if (item != nullptr && item->HasAttribute("checked") != shown)
+			{
+				if (shown)
+					item->SetAttribute("checked", "");
+				else
+					item->RemoveAttribute("checked");
+			}
+		}
+		// Changes from other clients arrive outside input handling: ask the window to update and draw.
+		if (Rml::Context* context = m_root ? m_root->GetContext() : nullptr)
+			context->RequestNextUpdate(0);
+	}
+
+	void PoolPanel::setColumn(const std::string& column, bool shown)
+	{
+		Json columns = m_columns;
+		columns[column] = shown;
+		showColumns(columns);
+		m_binding.send("settings.set", {{"key", "ui.poolColumns"}, {"value", m_columns}});
 	}
 
 	void PoolPanel::drop(const std::string& folder)

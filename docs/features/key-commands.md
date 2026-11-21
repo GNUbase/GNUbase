@@ -146,8 +146,9 @@ UI (`test::UiApp`, [ui-tests.md](ui-tests.md)), keys pressed through `ui::Automa
 transport and undo through the UI's client; the same keys run different commands in a project zone, an editor zone
 inside a lower zone, an element of the lower zone and outside any zone; lock keys don't count; a key from SDL's own
 event queue runs its command; and text fields, also their arrow keys at the ends, a focused button, a focused knob and
-a modal dialog keep their keys, while Space after a click on a toolbar or transport button starts and stops playback
-(`tests/transportbar_tests.cpp`).
+a modal dialog keep their keys, while Space and NumEnter after a click on a button of a toolbar, the transport
+controls, the track list, the inspector or a mixer channel run their key commands and a setup pane's button keeps
+Space (`tests/transportbar_tests.cpp`).
 
 `tests/keycommandsdialog_tests.cpp` checks the user's key commands and macros, their presets and files (including an
 import whose `format` or `version` has the wrong type), and the dialog below: its confirmations before Remove Key

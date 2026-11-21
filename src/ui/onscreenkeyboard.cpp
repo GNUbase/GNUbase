@@ -35,11 +35,16 @@ namespace gnubase::ui
 			"H", "N", "J", "M", "Q", "2", "W", "3", "E", "R", "5", "T", "6", "Y", "7", "U", "I", "9", "O", "0", "P"};
 		constexpr int g_c = 12; // the key that comma plays too
 
-		// The keys that keep their key commands while the window is open (reference manual p. 332).
-		constexpr std::array<const char*, 9> g_kept = {
-			"Mod+S", "Num*", "Space", "Num1", "Delete", "Backspace", "Num/", "F2", "Alt+K"};
-
-		constexpr int g_modifiers = KM_CTRL | KM_ALT | KM_SHIFT | KM_META;
+		// The commands that keep their keys while the window is open (reference manual p. 332), with their parameters.
+		struct Kept
+		{
+			const char* command;
+			const char* parameters;
+		};
+		constexpr std::array<Kept, 9> g_kept = {{{"file.save", "{}"}, {"transport.toggle", R"({"setting": "record"})"},
+			{"transport.toggle", "{}"}, {"transport.locate", R"({"target": "leftLocator"})"}, {"edit.delete", "{}"},
+			{"sampleEditor.delete", "{}"}, {"transport.toggle", R"({"setting": "cycle"})"},
+			{"window.transportPanel", "{}"}, {"window.onScreenKeyboard", "{}"}}};
 
 		bool black(int key)
 		{
@@ -113,16 +118,19 @@ namespace gnubase::ui
 			m_document->RemoveEventListener(id, this);
 	}
 
-	bool OnScreenKeyboard::press(const KeyPress& keys)
+	bool OnScreenKeyboard::press(const KeyPress& keys, const std::optional<KeyBinding>& bound)
 	{
 		if (const int key = keyFor(keys); key >= 0)
 		{
 			noteOn(keys.key, key);
 			return true;
 		}
-		const KeyPress pressed{keys.key, keys.modifiers & g_modifiers};
-		return std::none_of(
-			g_kept.begin(), g_kept.end(), [&pressed](const char* kept) { return parseKeys(kept) == pressed; });
+		return !bound ||
+			std::none_of(g_kept.begin(), g_kept.end(),
+				[&bound](const Kept& kept)
+				{
+					return bound->command == kept.command && bound->parameters == engine::Json::parse(kept.parameters);
+				});
 	}
 
 	void OnScreenKeyboard::release(const KeyPress& keys)
