@@ -407,11 +407,19 @@ TEST_CASE("an ASIO driver that asks for a reset in every open is reset once, not
 		REQUIRE(set.ok());
 		// The request of the first open is kept and resets the device once (#432); the open that reset is gives
 		// the same request, which sets off no further one.
+		const auto resets = [&client]
+		{
+			const Json log = client.call("engine.commandLog").value.at("commands");
+			return std::count_if(
+				log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "audio.reset"; });
+		};
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (resets() == 0 && std::chrono::steady_clock::now() < deadline)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		REQUIRE(resets() == 1);
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
-		const Json log = client.call("engine.commandLog").value.at("commands");
-		CHECK(std::count_if(
-				  log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "audio.reset"; }) <= 1);
-		CHECK(driver.creates <= 2);
+		CHECK(resets() == 1);
+		CHECK(driver.creates == 2);
 		const Json status = client.call("audio.get").value;
 		CHECK(status.at("device").at("backend") == "asio");
 		CHECK(status.at("running") == true);
