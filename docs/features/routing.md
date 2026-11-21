@@ -73,14 +73,16 @@ in [busses.md](busses.md) and [folder-tracks.md](folder-tracks.md), the fader in
 
 The mixer's strips have a Sends section (`.mixer-sends`, docking set `channel`, hidden by default and shown with Set
 up Window Layout), with a row per send: its on switch, its destination (a drop-down list of No Destination and the
-other group and effect channels), Pre for a pre-fader send and a knob for its level, whose drag is one undo step
+other group and effect channels, without those whose audio comes back to the channel, which the engine would refuse as
+a loop: `ui::routesTo`), Pre for a pre-fader send and a knob for its level, whose drag is one undo step
 (#716). They send `channel.set` and show the engine's values after every undo step, as the strip's other sections do
 ([channel-strip.md](channel-strip.md)). Ctrl-click on a send's knob sets the default send level. The knob goes from
 -60 dB, or the default send level if that is lower, to the project's maximum volume, as the fader does, so Ctrl-click
 gives a send the level `track.add` gives it. The destination list
 ends with Add Effect Track to Send (p. 554), which opens the add track dialog's effect page for that send, as in the
 channel settings window ([channel-settings.md](channel-settings.md)). Output lists in the inspector and the add track
-dialog offer effect channels too.
+dialog offer effect channels too; the inspector's leaves out the channels that would close a loop, as the destination
+lists do.
 
 The track list's context menu has Group Track to Selected Tracks and Effect Track to Selected Tracks
 (`track.addGroupToSelected`, `track.addEffectToSelected`): they open the add track dialog on the group or effect page,
@@ -108,6 +110,8 @@ context menu, where the reference has it.
   `project.xml` alone.
 - `tests/mixerwindow_tests.cpp`: the Sends section picks a destination, switches a send on and before the fader,
   turns its level with the wheel, gives it the default send level with Ctrl-click, above +6 dB and below -60 dB too,
-  and shows another client's change.
+  and shows another client's change; the destination lists leave out the channels whose audio comes back, through
+  sends and outputs, also after another client's change to another strip's channel.
+- `tests/inspector_tests.cpp`: the output list leaves out the channels whose audio comes back.
 - `tests/addtrack_tests.cpp`: Group and Effect Track to Selected Tracks through the dialog, and Group Track to
   Selected Tracks with a Count of 2 and Keep Dialog Open.

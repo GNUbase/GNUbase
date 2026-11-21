@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -47,8 +48,10 @@ namespace gnubase::ui
 	// which marker.set edits the same way. When the selection of an in-place editor changed last (class notes), it
 	// shows the first of its selected notes as that editor's own info line does (p. 1259): start, end and length in
 	// bars and beats, the pitch as a name, the velocities 0-127 and the channel 1-16, which note.set edits the same
-	// way, relative to the first note or with Ctrl (Cmd)+Enter the same value for all, the channel set for all. Use
-	// it on the UI thread; the display and the binding must outlive it.
+	// way, relative to the first note or with Ctrl (Cmd)+Enter the same value for all, the channel set for all. When
+	// the display's selected automation points changed last (class points), it shows the first one in time: its
+	// position, value and Terminator (p. 881), which automationPoint.set edits the same way. Use it on the UI thread;
+	// the display and the binding must outlive it.
 
 	class InfoLine final : private Rml::EventListener
 	{
@@ -79,6 +82,20 @@ namespace gnubase::ui
 			int channel = 0;
 		};
 
+		// A selected automation point, from the display's project.
+		struct Point
+		{
+			uint64_t lane = 0;
+			uint64_t id = 0;
+			int64_t position = 0; // in its track's time base
+			double seconds = 0.0;
+			double value = 0.0;
+			bool terminator = false;
+			bool linear = false;       // its track's time base
+			double minimum = -1.0e300; // its parameter's range, from automationLane.targets
+			double maximum = 1.0e300;
+		};
+
 		void ProcessEvent(Rml::Event& event) override;
 		// An editor.changed of an in-place editor: when its selection changed, the info line shows its notes.
 		void followEditor(const engine::Json& view);
@@ -89,6 +106,12 @@ namespace gnubase::ui
 		void edit(const std::string& field, const std::string& text, float number, int gesture = 0);
 		void showMarkers();
 		void editMarkers(const std::string& field, const std::string& text);
+		void showPoints();
+		// Edits the selected automation points: position and value relative to the first one's, or with Ctrl+Enter the
+		// same for all; Terminator for all.
+		void editPoints(const std::string& field, const std::string& text);
+		// The selected automation points, by position.
+		std::vector<Point> pointsOf() const;
 		void showNotes();
 		// Edits the in-place editor's selected notes as the key editor's info line does (pp. 1140, 1259).
 		void editNotes(const std::string& field, const std::string& text, float number, int gesture);
@@ -97,6 +120,10 @@ namespace gnubase::ui
 			if (m_showsNotes)
 			{
 				return !m_notes.empty();
+			}
+			if (m_showsPoints)
+			{
+				return !m_points.empty();
 			}
 			return m_showsMarkers ? !m_markers.empty() : !m_events.empty();
 		}
@@ -143,12 +170,15 @@ namespace gnubase::ui
 		bool m_showsMarkers = false;             // the markers' selection changed last
 		std::vector<MarkerItem> m_markers;       // the selected ones in timeline order, the first one first
 		Subscription m_editors;                  // editor.changed
-		std::map<std::string, engine::Json> m_viewSelections; // each open in-place editor's selection seen
-		std::string m_noteView;                               // the editor whose notes show
-		engine::Json m_noteSelection = engine::Json::array(); // its selection shown, or to show
-		std::vector<Note> m_notes;                            // the selected ones, the first one first
-		bool m_showsNotes = false;                            // an in-place editor's selection changed last
-		bool m_notesDirty = false;                            // the notes wait to be read again
+		std::map<std::string, engine::Json> m_viewSelections;    // each open in-place editor's selection seen
+		std::string m_noteView;                                  // the editor whose notes show
+		engine::Json m_noteSelection = engine::Json::array();    // its selection shown, or to show
+		std::vector<Note> m_notes;                               // the selected ones, the first one first
+		bool m_showsNotes = false;                               // an in-place editor's selection changed last
+		bool m_notesDirty = false;                               // the notes wait to be read again
+		std::map<uint64_t, std::set<uint64_t>> m_pointSelection; // the display's selected automation points, shown
+		std::vector<Point> m_points;                             // the selected ones, the first one first
+		bool m_showsPoints = false;                              // the points' selection changed last
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }

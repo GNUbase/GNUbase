@@ -47,11 +47,12 @@ plugin's parameter as the user sets it. The lanes and their playback are in [aut
 ## In the UI
 
 The automation tracks leave gaps empty: no line from a terminator to the next point, and with virgin territory none
-before the first point and after the last one ([automation-tracks.md](automation-tracks.md)).
+before the first point and after the last one ([automation-tracks.md](automation-tracks.md)). The project window's
+info line shows the selected automation points with their Terminator field (p. 881, [inspector.md](inspector.md)):
+Yes sets `terminator` on every selected point, one undo step, and makes the gap up to the next point.
 
 ## Not yet
 
-- The info line's Terminator field (p. 881, #1917): the info line doesn't show automation points yet.
 - Write modes (#122): with virgin territory a pass that ends inside a gap ends with a terminator, so that automation
   data is found only where a pass wrote it (p. 881).
 - The automation panel's settings page.
@@ -71,3 +72,4 @@ before the first point and after the last one ([automation-tracks.md](automation
   `range.cut`, in both modes, and ranges in a gap, before the first and after the last point that change nothing;
   Delete Time, Insert Silence in a gap, and a copy with a gap pasted.
 - `tests/automationtracks_tests.cpp` and `tests/canvas_tests.cpp`: the gaps on the automation tracks.
+- `tests/inspector_tests.cpp`: the info line's Terminator field on a selected point, with undo.

@@ -100,16 +100,27 @@ namespace
 			return *found;
 		}
 
-		// Shows the track's automation and waits for its first automation track, a volume lane.
-		Json show()
+		// Shows the track's automation and waits for its first automation track, volume; returns the lane it shows.
+		Json showVolume()
 		{
 			click(row(track) + " .automation-toggle");
 			REQUIRE(app.waitUntil([&] { return elements(app, ".automation-row .automation-parameter").size() == 1; }));
 			REQUIRE(app.waitUntil(
 				[&] { return elements(app, ".automation-parameter").at(0).value("text", "") == "Volume"; }));
-			const Json all = lanes();
-			REQUIRE(all.size() == 1);
-			return all[0].at("id");
+			REQUIRE(display.laneAutomation().size() == 2);
+			return display.laneAutomation()[1];
+		}
+
+		// The same with a volume lane without points that is already in the project and doesn't read (#1918).
+		Json show()
+		{
+			const Json id =
+				app.call("automationLane.add", {{"track", track}, {"target", {{"type", "volume"}}}, {"read", false}})
+					.at("lane")
+					.at("id");
+			REQUIRE(app.waitUntil([&] { return display.project().at("automation").size() == 1; }));
+			REQUIRE(showVolume() == id);
+			return id;
 		}
 
 		// The automation lane's box in the event display, in the window's pixels.
@@ -166,13 +177,14 @@ namespace
 TEST_CASE("automation tracks show and hide below their track, and the parameter selector picks their parameter", "[ui]")
 {
 	Automation f;
-	// Show/Hide Automation opens an automation track for the first parameter (reference manual p. 880).
-	const Json volume = f.show();
-	CHECK(f.lane(volume).at("target").at("type") == "volume");
-	CHECK(f.lane(volume).at("read") == false);
+	// Show/Hide Automation opens an automation track for the first parameter (reference manual p. 880), without a
+	// lane in the project until a tool draws on it, and so without an undo step (#1918).
+	const Json history = f.app.call("history.get");
+	const Json volume = f.showVolume();
+	CHECK(f.lanes().empty());
+	REQUIRE(f.display.unaddedLane(volume.get<uint64_t>()) != nullptr);
+	CHECK(f.display.unaddedLane(volume.get<uint64_t>())->at("target").at("type") == "volume");
 	CHECK(hasClass(elements(f.app, row(f.track) + " .automation-toggle").at(0), "checked"));
-	REQUIRE(f.display.laneAutomation().size() == 2);
-	CHECK(f.display.laneAutomation()[1] == volume.get<uint64_t>());
 	// The track's row reaches over its automation track's lane, which is level with the automation row.
 	const Json trackRow = elements(f.app, row(f.track)).at(0).at("box");
 	CHECK(trackRow.at("height").get<int>() == static_cast<int>(2 * ui::g_trackHeight));
@@ -186,8 +198,7 @@ TEST_CASE("automation tracks show and hide below their track, and the parameter 
 	REQUIRE(f.app.waitUntil([&] { return elements(f.app, ".automation-row").size() == 2; }));
 	REQUIRE(f.app.waitUntil([&] { return elements(f.app, ".automation-parameter").at(1).value("text", "") == "Pan"; }));
 
-	// The parameter selector lists the track's parameters, which the search narrows; picking one shows it instead,
-	// and the unused lane it showed goes.
+	// The parameter selector lists the track's parameters, which the search narrows; picking one shows it instead.
 	f.app.ui().click(std::nullopt, {".automation-parameter", 1, std::nullopt}, ui::MouseButton::Left, 1, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(hasClass(elements(f.app, "#automation-parameter-menu").at(0), "open"));
@@ -238,26 +249,23 @@ TEST_CASE("automation tracks show and hide below their track, and the parameter 
 			return elements(f.app, ".automation-parameter").size() == 2 &&
 				elements(f.app, ".automation-parameter").at(1).value("text", "") == "Pan left";
 		}));
-	REQUIRE(f.lanes().size() == 2);
-	CHECK(f.lanes()[1].at("target").at("type") == "panLeft");
-	// One undo step brings the pan lane back.
-	f.app.call("history.undo");
-	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 2 && f.lanes()[1].at("target").at("type") == "pan"; }));
-	f.app.call("history.redo");
-	REQUIRE(f.app.waitUntil([&] { return f.lanes()[1].at("target").at("type") == "panLeft"; }));
+	CHECK(f.lanes().empty());
 
-	// Remove Parameter removes the lane with its points and closes its automation track.
-	REQUIRE(f.app.waitUntil([&] { return elements(f.app, ".automation-row").size() == 2; }));
+	// Remove Parameter closes its automation track.
 	f.app.ui().click(std::nullopt, {".automation-parameter", 1, std::nullopt}, ui::MouseButton::Left, 1, {});
 	f.click("#automation-parameter-menu menuitem[automation-function=\"remove\"]");
 	REQUIRE(f.app.waitUntil([&] { return elements(f.app, ".automation-row").size() == 1; }));
-	CHECK(f.lanes().size() == 1);
 
-	// Hiding closes the automation tracks; Show All Used Automation opens those with points, on every track.
+	// Hiding closes the automation tracks; Show All Used Automation opens those with points, on every track. None of
+	// this changed the project.
 	f.click(row(f.track) + " .automation-toggle");
 	REQUIRE(f.app.waitUntil([&] { return elements(f.app, ".automation-row").empty(); }));
 	CHECK(f.display.laneAutomation() == std::vector<uint64_t>{0});
-	f.app.call("automationPoint.add", {{"lane", volume}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
+	CHECK(f.lanes().empty());
+	CHECK(f.app.call("history.get") == history);
+	const Json used =
+		f.app.call("automationLane.add", {{"track", f.track}, {"target", {{"type", "volume"}}}}).at("lane").at("id");
+	f.app.call("automationPoint.add", {{"lane", used}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
 	const uint64_t other = f.app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
 	f.app.call("automationLane.add", {{"track", other}, {"target", {{"type", "pan"}}}}); // unused
 	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("automation").size() == 2; }));
@@ -271,11 +279,72 @@ TEST_CASE("automation tracks show and hide below their track, and the parameter 
 	f.app.appUi().trackList()->select({other});
 	f.app.keys().run("track.toggleAutomationSelected", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(other) + " .automation-row").size() == 1; }));
-	// Remove Unused Parameters removes the track's lanes without points.
+	// Remove Unused Parameters removes the track's lanes without points and closes their automation tracks.
 	f.app.ui().click(
 		std::nullopt, {row(other) + " .automation-parameter", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	f.click("#automation-parameter-menu menuitem[automation-function=\"removeUnused\"]");
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("automationLane.list", {{"track", other}}).at("lanes").empty(); }));
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(other) + " .automation-row").empty(); }));
+
+	// Remove Parameter on a lane in the project with points removes it, and its automation track closes and stays
+	// closed after the project is read again.
+	f.app.keys().run("track.showUsedAutomation", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(f.track) + " .automation-row").size() == 1; }));
+	f.app.ui().click(
+		std::nullopt, {row(f.track) + " .automation-parameter", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	f.click("#automation-parameter-menu menuitem[automation-function=\"remove\"]");
+	REQUIRE(f.app.waitUntil([&] { return f.lanes().empty(); }));
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(f.track) + " .automation-row").empty(); }));
+	f.app.call("track.add", {{"type", "audio"}});
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("tracks").size() == 3; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(elements(f.app, ".automation-row").empty());
+}
+
+TEST_CASE("showing automation records no undo step, and the first points add their lane in their undo step", "[ui]")
+{
+	Automation f;
+	const Json history = f.app.call("history.get");
+	const Json shown = f.showVolume();
+	CHECK(f.app.call("history.get") == history);
+
+	// The draw tool's first click adds the lane, which reads, with its point: one undo step (#1918).
+	f.display.setTool(ui::Tool::Draw);
+	f.clickAt(f.x(1.0), f.y(shown, 0.5));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json all = f.lanes();
+			return all.size() == 1 && all[0].at("points").size() == 1;
+		}));
+	const Json volume = f.lanes()[0].at("id");
+	CHECK(f.lane(volume).at("target").at("type") == "volume");
+	CHECK(f.lane(volume).at("read") == true);
+	const Json steps = f.app.call("history.get").at("steps");
+	REQUIRE(steps.size() == history.at("steps").size() + 1);
+	CHECK(steps.back().at("action") == "Draw Automation");
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.display.laneAutomation() == std::vector<uint64_t>{0, volume.get<uint64_t>()}; }));
+
+	// Undo takes the lane with its point and leaves the automation track shown and empty; redo brings them back.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const std::vector<uint64_t>& lanes = f.display.laneAutomation();
+			return f.lanes().empty() && lanes.size() == 2 && f.display.unaddedLane(lanes[1]) != nullptr;
+		}));
+	CHECK(f.display.automationShown(f.track));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json parameters = elements(f.app, ".automation-parameter");
+			return parameters.size() == 1 && parameters.at(0).value("text", "") == "Volume";
+		}));
+	f.app.call("history.redo");
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.display.laneAutomation() == std::vector<uint64_t>{0, volume.get<uint64_t>()}; }));
+	CHECK(f.lane(volume).at("points").size() == 1);
 }
 
 TEST_CASE("a volume lane's static value line follows the channel without a project read", "[ui]")
@@ -1031,6 +1100,130 @@ TEST_CASE("automation tracks are selected, and the track list copies their autom
 	CHECK(!f.display.automationShown(f.track));
 	CHECK(!f.display.automationShown(other));
 	CHECK(f.display.automationTargets(f.track) == nullptr);
+}
+
+TEST_CASE("pasting onto an unadded automation track adds its lane in the paste's undo step", "[ui]")
+{
+	// The workflow of the reference manual, pp. 878-879: open the target track's automation, select it, paste (#1918).
+	Automation f;
+	const Json volume = f.show();
+	f.app.call("automationPoint.add",
+		{{"lane", volume}, {"points", {{{"position", 0}, {"value", -6.0}}, {{"position", 48000}, {"value", 0.0}}}}});
+	f.app.call("transport.set", {{"left", 0}, {"right", 48000}});
+	REQUIRE(f.app.call("automation.copy", {{"lanes", {volume}}}).at("lanes") == 1);
+	const uint64_t other = f.app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	f.app.call("track.set", {{"track", other}, {"timeBase", "linear"}});
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(other) + " .automation-toggle").size() == 1; }));
+	f.click(row(other) + " .automation-toggle");
+	const std::string automationRow = row(other) + " .automation-row";
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, automationRow).size() == 1; }));
+	const auto unadded = [&]
+	{
+		const std::vector<uint64_t>& lanes = f.display.laneAutomation();
+		return lanes.size() == 4 && f.display.unaddedLane(lanes[3]) != nullptr &&
+			f.app.call("automationLane.list", {{"track", other}}).at("lanes").empty();
+	};
+	REQUIRE(f.app.waitUntil(unadded));
+
+	// Selecting the unadded automation track enables the paste, not the copy: it has no automation.
+	const Json box = elements(f.app, automationRow).at(0).at("box");
+	f.clickAt(box.at("x").get<int>() + 10, box.at("y").get<int>() + (box.at("height").get<int>() / 2));
+	const auto canRun = [&f](const char* command) { return f.app.keys().canRun(command, f.app.main(), nullptr); };
+	REQUIRE(f.app.waitUntil([&] { return canRun("track.pasteAutomationSelectedParameters"); }));
+	CHECK(!canRun("track.copyAutomationSelectedParameters"));
+
+	const Json history = f.app.call("history.get");
+	f.app.call("transport.set", {{"left", 96000}, {"right", 144000}});
+	f.app.keys().run("track.pasteAutomationSelectedParameters", Json::object(), f.app.main(), nullptr);
+	const auto pasted = [&]
+	{
+		const Json lanes = f.app.call("automationLane.list", {{"track", other}}).at("lanes");
+		return lanes.size() == 1 && lanes[0].at("target").at("type") == "volume" && !lanes[0].at("points").empty();
+	};
+	REQUIRE(f.app.waitUntil(pasted));
+	// The copy's points land between the locators, as onto a lane that was there (the curve before keeps its value).
+	std::set<int64_t> positions;
+	const Json added = f.app.call("automationLane.list", {{"track", other}}).at("lanes").at(0);
+	for (const Json& point : added.at("points"))
+		positions.insert(point.at("position").get<int64_t>());
+	CHECK(positions.count(96000) == 1);
+	CHECK(positions.count(144000) == 1);
+	CHECK(*positions.rbegin() == 144000);
+	// One undo step, after which the lane shows in the automation track.
+	const Json steps = f.app.call("history.get").at("steps");
+	REQUIRE(steps.size() == history.at("steps").size() + 1);
+	CHECK(steps.back().at("action") == "Paste Automation");
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const std::vector<uint64_t>& lanes = f.display.laneAutomation();
+			return lanes.size() == 4 && f.display.unaddedLane(lanes[3]) == nullptr;
+		}));
+
+	// Undo leaves the automation track shown and unadded.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil(unadded));
+	CHECK(f.display.automationShown(other));
+	CHECK(f.app.call("history.get").at("position") == history.at("position"));
+}
+
+TEST_CASE("two pastes that add lanes with the same automation track selected are two undo steps", "[ui]")
+{
+	// The paste's merge key is its first unadded lane, never the selected project lane, which repeats (#1918).
+	Automation f;
+	const Json volume = f.show();
+	f.app.call("automationPoint.add",
+		{{"lane", volume}, {"points", {{{"position", 0}, {"value", -6.0}}, {{"position", 48000}, {"value", 0.0}}}}});
+	f.app.call("transport.set", {{"left", 0}, {"right", 48000}});
+	REQUIRE(f.app.call("automation.copy", {{"lanes", {volume}}}).at("lanes") == 1);
+	const auto openUnadded = [&]
+	{
+		const uint64_t track = f.app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+		f.app.call("track.set", {{"track", track}, {"timeBase", "linear"}});
+		REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(track) + " .automation-toggle").size() == 1; }));
+		f.click(row(track) + " .automation-toggle");
+		REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(track) + " .automation-row").size() == 1; }));
+		return track;
+	};
+	const uint64_t second = openUnadded();
+	const uint64_t third = openUnadded();
+	const auto clickLane = [&](uint64_t track, const std::vector<std::string>& modifiers)
+	{
+		const Json box = elements(f.app, row(track) + " .automation-row").at(0).at("box");
+		f.clickAt(box.at("x").get<int>() + 10, box.at("y").get<int>() + (box.at("height").get<int>() / 2), modifiers);
+	};
+	const auto lanes = [&](uint64_t track)
+	{ return f.app.call("automationLane.list", {{"track", track}}).at("lanes").size(); };
+	const auto paste = [&](uint64_t track)
+	{
+		f.app.keys().run("track.pasteAutomationSelectedParameters", Json::object(), f.app.main(), nullptr);
+		REQUIRE(f.app.waitUntil([&] { return lanes(track) == 1; }));
+		// The automation track shows the added lane.
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				const std::vector<uint64_t> selected = f.app.appUi().trackList()->selectedLanes(true);
+				return std::none_of(selected.begin(), selected.end(),
+					[&](uint64_t lane)
+					{
+						const Json* unadded = f.display.unaddedLane(lane);
+						return unadded != nullptr && unadded->at("track") == track;
+					});
+			}));
+	};
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	f.app.call("transport.set", {{"left", 96000}, {"right", 144000}});
+	clickLane(f.track, {});
+	clickLane(second, {"ctrl"});
+	paste(second);
+	// The volume automation track stays selected, the next paste adds the third track's lane.
+	clickLane(third, {"ctrl"});
+	paste(third);
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 2);
+	// One Undo takes back the second paste alone.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return lanes(third) == 0; }));
+	CHECK(lanes(second) == 1);
 }
 
 TEST_CASE("a track's lanes come between its own lane and its automation tracks, under its row", "[ui]")

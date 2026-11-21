@@ -174,10 +174,22 @@ TEST_CASE("notes played on the on-screen keyboard with the computer keyboard and
 	CHECK(keyElement(app, 28).IsClassSet("white-key"));
 	CHECK(keyElement(app, 27).IsClassSet("black-key"));
 
-	// A few keys keep their key commands: Num/ turns cycle on.
+	// A few commands keep their keys: Num/ turns cycle on.
 	app.ui().key(std::nullopt, "Num/");
 	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("cycle").get<bool>(); }));
 	app.call("transport.set", {{"cycle", false}});
+	// The commands keep their keys, not the keys their commands (#691): with Cycle on Alt+Y, Num/ does nothing, and
+	// Alt+Y turns cycle on.
+	app.keys().customize(
+		Json::array({{{"command", "transport.toggle"}, {"parameters", {{"setting", "cycle"}}}, {"keys", {"Alt+Y"}}}}),
+		Json::array());
+	app.ui().key(std::nullopt, "Num/");
+	render(app);
+	CHECK(!app.call("transport.get").at("cycle").get<bool>());
+	app.ui().key(std::nullopt, "Alt+Y");
+	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("cycle").get<bool>(); }));
+	app.call("transport.set", {{"cycle", false}});
+	app.keys().customize(Json::array(), Json::array());
 
 	app.call("transport.record");
 	// Z plays the lowest key while it is held, lit. A key that would run another key command plays nothing and runs
@@ -248,4 +260,22 @@ TEST_CASE("notes played on the on-screen keyboard with the computer keyboard and
 	app.ui().key(std::nullopt, "Alt+K");
 	REQUIRE(app.waitUntil([&app] { return app.appUi().keyboard() != nullptr; }));
 	CHECK(app.appUi().keyboard()->note(0) == 72);
+
+	// The sliders dragged with the mouse (#691): the thumb follows it, and a value between two steps rounds to one.
+	const ui::WindowId window = app.appUi().keyboardWindow();
+	const auto dragTo = [&app, window](const std::string& slider, float share)
+	{
+		const Json box = app.ui().dom(window, slider, 0).at("elements").at(0).at("box");
+		const ui::Point to{box.at("x").get<int>() + static_cast<int>(box.at("width").get<float>() * share),
+			box.at("y").get<int>() + (box.at("height").get<int>() / 2)};
+		app.ui().drag(window, {slider, 0, std::nullopt}, {"", 0, to});
+		app.shell().step(std::chrono::milliseconds(0));
+		return app.ui().dom(window, slider + "-value", 0).at("elements").at(0).value("text", std::string());
+	};
+	CHECK(dragTo("#octave", 1.0F) == "6");
+	CHECK(app.appUi().keyboard()->note(0) == 96);
+	const std::string octave = dragTo("#octave", 0.7F);
+	REQUIRE(octave.size() == 1);
+	CHECK(app.appUi().keyboard()->note(0) == 12 * (std::stoi(octave) + 2));
+	CHECK(dragTo("#velocity", 0.0F) == "1");
 }

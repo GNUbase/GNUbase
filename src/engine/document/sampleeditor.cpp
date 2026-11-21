@@ -457,7 +457,8 @@ namespace gnubase::engine
 					"warped clips first; edited definition grids are not supported. Paste needs "
 					"matching channels and sample rate. Writes new "
 					"float WAV files in the media "
-					"folder as a cancellable job; returns job (its result: clip, media, length or "
+					"folder (for a project without a file, the folder its recordings go to, refused without that "
+					"folder) as a cancellable job; returns job (its result: clip, media, length or "
 					"copied frames). One undo step "
 					"per edit; original files stay intact. Fails if the project changes during an "
 					"edit. Clipboard survives undo "
@@ -514,6 +515,7 @@ namespace gnubase::engine
 					parameters["revision"] = context.call("project.revision").at("revision");
 					const auto folder = model.file().empty() ? unsavedMediaFolder(engine.settingsDirectory())
 															 : mediaFolderFor(std::filesystem::u8path(model.file()));
+					require(!folder.empty(), "there is no folder for the processed audio: save the project first");
 					return engine.startJob("sampleEditor.process",
 						[source = source, range, paste, operation = operation, folder = folder,
 							parameters = std::move(parameters)](JobContext& job) mutable

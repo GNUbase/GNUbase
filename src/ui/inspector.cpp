@@ -401,8 +401,9 @@ namespace gnubase::ui
 			return type == "audio" || type == "instrument" || type == "midi";
 		}
 
-		// Where the channel of a track of the type can play: output busses, group and effect channels, or for MIDI
-		// tracks the instrument channels, as in the add track dialog; and where an audio track records from.
+		// Where the channel of a track of the type can play: output busses, group and effect channels whose audio
+		// doesn't come back to it (routesTo), or for MIDI tracks the instrument channels, as in the add track dialog;
+		// and where an audio track records from.
 		Options outputs(const Json& project, const std::string& type, uint64_t channel)
 		{
 			Options options;
@@ -420,7 +421,8 @@ namespace gnubase::ui
 					options.emplace_back(std::to_string(bus.at("id").get<uint64_t>()), bus.at("name"));
 			for (const Json& track : project.at("tracks"))
 				if ((track.at("type") == "group" || track.at("type") == "effect" || track.at("type") == "folder") &&
-					track.at("channel") != 0 && track.at("channel") != channel)
+					track.at("channel") != 0 && track.at("channel") != channel &&
+					!routesTo(project, track.at("channel").get<uint64_t>(), channel))
 					options.emplace_back(std::to_string(track.at("channel").get<uint64_t>()), track.at("name"));
 			return options;
 		}
@@ -1367,12 +1369,15 @@ namespace gnubase::ui
 				Rml::Element& slot = *target->GetParentNode()->GetParentNode();
 				slot.SetClass("open", !slot.IsClassSet("open"));
 			}
-			// A section's header opens and closes it.
+			// A section's header opens and closes it; an Alt-click on the Basics header opens the Choose Track Color
+			// pane instead (ui::ColorMenu, reference manual p. 113).
 			for (const Rml::Element* up = target; up != nullptr && up != m_root.get(); up = up->GetParentNode())
 				if (up->IsClassSet("section-header"))
 				{
 					// The closest section, as a header can sit in a title row (the Arranger Track section's).
-					if (Rml::Element* section = up->Closest(".inspector-section"); section != nullptr)
+					if (Rml::Element* section = up->Closest(".inspector-section"); section != nullptr &&
+						(event.GetParameter<int>("alt_key", 0) == 0 ||
+							section->GetAttribute<Rml::String>("section", "") != "basics"))
 						section->SetClass("collapsed", !section->IsClassSet("collapsed"));
 					break;
 				}

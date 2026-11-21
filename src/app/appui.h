@@ -257,6 +257,8 @@ namespace gnubase::app
 		ui::RmlUi& rmlui() { return m_rmlui; }
 		scripting::Runtime& lua() { return m_lua; }
 		ui::KeyCommands& keyCommands() { return m_keys; }
+		// The project window's main menu, or null before the project window shows.
+		ui::MainMenu* mainMenu() { return m_menu.get(); }
 		ui::Docking& docking() { return m_docking; }
 		const ui::GpuRenderer& renderer() const { return m_renderer; }
 

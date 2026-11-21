@@ -950,3 +950,117 @@ TEST_CASE("another button pressed and released during a move doesn't end it", "[
 	CHECK(f.event("notes", f.high).at("position") == g_quarter);
 	CHECK(f.steps() == before + 1);
 }
+
+TEST_CASE("Delete and Backspace delete the selected events, but not while a value is typed", "[ui]")
+{
+	Fixture f;
+	// Delete removes the selected note and controller event in one undo step (pp. 1255, 1258).
+	f.click(of(row("note", f.low) + " .list-type"));
+	f.click(of(row("controller", f.events[0]) + " .list-type"), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("controllerSelection").size() == 1; }));
+	REQUIRE(f.view().at("selection").size() == 1);
+	const size_t before = f.steps();
+	f.app.ui().key(f.window, "Delete");
+	REQUIRE(f.app.waitUntil([&] { return f.types().size() == 6; }));
+	CHECK(f.event("notes", f.low).is_null());
+	CHECK(f.event("controllers", f.events[0]).is_null());
+	CHECK(f.event("notes", f.high) != nullptr);
+	CHECK(f.steps() == before + 1);
+
+	// Backspace while a value is typed edits the text; once the SysEx message is selected, it deletes the message.
+	const std::string sysEx = row("controller", f.events[5]);
+	f.click(of(sysEx + " textdisplay[field=start]"), 2);
+	f.app.ui().key(f.window, "Backspace");
+	f.app.ui().key(f.window, "Escape");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click(of(sysEx + " .list-type"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("controllerSelection").size() == 1; }));
+	CHECK(f.event("controllers", f.events[5]) != nullptr);
+	f.app.ui().key(f.window, "Backspace");
+	REQUIRE(f.app.waitUntil([&] { return f.event("controllers", f.events[5]).is_null(); }));
+	CHECK(f.app.waitUntil([&] { return f.types().size() == 5; }));
+}
+
+TEST_CASE("Alt and a drag in the event display copy the selected events", "[ui]")
+{
+	Fixture f;
+	// The low note and the volume event, half a bar later, with all their values, in one undo step (p. 1255).
+	f.click(of(row("note", f.low) + " .list-type"));
+	f.click(of(row("controller", f.events[0]) + " .list-type"), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("controllerSelection").size() == 1; }));
+	const size_t before = f.steps();
+	const ui::Point grip = f.grip(f.low);
+	f.app.ui().drag(f.window, Fixture::point(grip.x, grip.y), Fixture::point(f.halfway(f.low), grip.y), {"alt"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.types().size() == 10; }));
+	CHECK(f.event("notes", f.low).at("position") == 0);
+	CHECK(f.event("controllers", f.events[0]).at("position") == 0);
+	const Json part = f.app.call("project.get").at("midiParts").at(0);
+	const Json note = part.at("notes").back();
+	CHECK(note.at("position") == 2 * g_quarter);
+	CHECK(note.at("pitch") == 60);
+	CHECK(std::abs(note.at("velocity").get<double>() - (64.0 / 127.0)) < 1e-4);
+	const Json volume = part.at("controllers").back();
+	CHECK(volume.at("position") == 2 * g_quarter);
+	CHECK(volume.at("number") == 7);
+	CHECK(std::abs(volume.at("value").get<double>() - controller(100)) < 1e-9);
+	CHECK(f.steps() == before + 1);
+}
+
+TEST_CASE("a drag at a note's end in the event display resizes the selected notes", "[ui]")
+{
+	Fixture f;
+	// Both notes a quarter longer, snapped, in one undo step; the controller event selected too stays (p. 1255).
+	f.click(of(row("note", f.low) + " .list-type"));
+	f.click(of(row("note", f.high) + " .list-type"), 1, {"shift"});
+	f.click(of(row("controller", f.events[0]) + " .list-type"), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("controllerSelection").size() == 1; }));
+	const size_t before = f.steps();
+	const Json shown = f.box(row("note", f.low) + " .list-event");
+	const int x = static_cast<int>(std::lround(shown.at("x").get<double>() + shown.at("width").get<double>() - 2));
+	const int y = f.middle(row("note", f.low) + " .list-event");
+	const auto quarter =
+		static_cast<int>(std::lround(f.box(row("note", f.low) + " .list-event-lane").at("width").get<double>() / 4));
+	f.app.ui().drag(f.window, Fixture::point(x, y), Fixture::point(x + quarter, y));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.event("notes", f.high).at("length") == 2 * g_quarter; }));
+	CHECK(f.event("notes", f.low).at("length") == 2 * g_quarter);
+	CHECK(f.event("notes", f.low).at("position") == 0);
+	CHECK(f.event("notes", f.high).at("position") == g_quarter);
+	CHECK(f.event("controllers", f.events[0]).at("position") == 0);
+	CHECK(f.steps() == before + 1);
+}
+
+TEST_CASE("a click in the event display without a drag changes no event, off the quantize grid too", "[ui]")
+{
+	Fixture f;
+	// The low note ends a tenth of a quarter after the first one, off the grid; the SysEx message is a tick after
+	// three.
+	const std::string low = row("note", f.low);
+	const double width = f.box(low + " .list-event").at("width").get<double>();
+	f.app.call("note.set",
+		{{"part", f.part}, {"notes", Json::array({{{"id", f.low}, {"length", g_quarter + (g_quarter / 10)}}})}});
+	REQUIRE(f.event("notes", f.low).at("length") == g_quarter + (g_quarter / 10));
+	REQUIRE(f.app.waitUntil([&] { return f.box(low + " .list-event").at("width").get<double>() > width; }));
+	const size_t before = f.steps();
+
+	// A press and release at the note's end selects it, and its length stays.
+	const Json shown = f.box(low + " .list-event");
+	f.click(
+		Fixture::point(static_cast<int>(std::lround(shown.at("x").get<double>() + shown.at("width").get<double>() - 2)),
+			f.middle(low + " .list-event")));
+	f.settle(f.high);
+	CHECK(f.event("notes", f.low).at("length") == g_quarter + (g_quarter / 10));
+
+	// An Alt-click on the SysEx message copies nothing, a click moves it nowhere.
+	const Json sysEx = f.box(row("controller", f.events[5]) + " .list-event");
+	const ui::Target middle = Fixture::point(
+		static_cast<int>(std::lround(sysEx.at("x").get<double>() + (sysEx.at("width").get<double>() / 2))),
+		static_cast<int>(std::lround(sysEx.at("y").get<double>() + (sysEx.at("height").get<double>() / 2))));
+	f.click(middle, 1, {"alt"});
+	f.click(middle);
+	f.settle(f.high);
+	CHECK(f.event("controllers", f.events[5]).at("position") == (3 * g_quarter) + 1);
+	CHECK(f.types().size() == 8);
+	CHECK(f.steps() == before);
+}

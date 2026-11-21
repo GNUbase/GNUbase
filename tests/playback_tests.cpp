@@ -1237,13 +1237,20 @@ namespace
 	class RacingAudition : public Audition
 	{
 	public:
-		std::function<void()> whileCueing; // runs once, in the next cue
+		std::function<void()> whileCueing;   // runs once, in the next cue
+		std::function<void()> whileStarting; // runs once, in the next play, before its state is out
 
 	protected:
 		void playedRead() override
 		{
 			if (whileCueing)
 				std::exchange(whileCueing, nullptr)();
+		}
+
+		void startCued() override
+		{
+			if (whileStarting)
+				std::exchange(whileStarting, nullptr)();
 		}
 	};
 }
@@ -1281,6 +1288,55 @@ TEST_CASE("an audition whose first block plays while the cue thread cues it play
 	while (i < output.size() && output[i] == ramp(static_cast<int64_t>(i), 0))
 		++i;
 	INFO("the ramp stops at frame " << i);
+	CHECK(i == output.size());
+}
+
+TEST_CASE("an audition that starts while another plays keeps the cue thread away from its streams until it is out",
+	"[integration]")
+{
+	// The first audition plays from the start of an event, with a voice waiting at the next event's start, 1.5
+	// seconds on. The second, from 0.5 seconds, takes that voice: the first doesn't need it in the next half second.
+	// The cue thread cues once more before the second is out, as it can at any time: had it cued for the first, the
+	// next event's start would have taken the voice back, and the second would start silent (#1136).
+	const gnubase::test::TempDir dir;
+	PlaylistEntry first;
+	first.end = 48000;
+	first.media = 1;
+	PlaylistEntry next = first;
+	next.start = 72000;
+	next.end = 96000;
+	next.frame = 72000;
+	Playlist sections;
+	sections.layers.push_back({first, next});
+	const Playback::Track track{2, std::make_shared<const Playlist>(std::move(sections))};
+	const std::map<ObjectId, std::string> paths{{1, writeRamp(dir, "mono", 1, 96000)}};
+	constexpr uint32_t frames = 256;
+	constexpr gnubase::time::Samples window = 96000; // the cue thread's two seconds
+	std::vector<float> output(size_t{frames} * 2, 0.0f);
+	RacingAudition audition;
+	const auto playBlock = [&audition, &output](size_t block)
+	{
+		const std::vector<int> ports{0};
+		const std::array<float*, 1> out{output.data() + (block * frames)};
+		audition.process(out.data(), 1, ports, frames);
+	};
+	audition.play({3, 0, 0}, track, paths, 48000.0, 0, 96000, 1, frames);
+	REQUIRE(audition.waitUntilBuffered(std::chrono::seconds(5)));
+	playBlock(0);
+	audition.cue(window, true);
+	REQUIRE(audition.voices() == 2);
+
+	audition.whileStarting = [&audition] { audition.cue(window, true); };
+	audition.play({3, 0, 0}, track, paths, 48000.0, 24000, 96000, 1, frames);
+	CHECK(!audition.whileStarting); // the cue came before the second audition was out
+	REQUIRE(audition.waitUntilBuffered(std::chrono::seconds(5)));
+	std::fill(output.begin(), output.end(), 0.0f);
+	playBlock(0);
+	playBlock(1);
+	size_t i = 0;
+	while (i < output.size() && output[i] == ramp(24000 + static_cast<int64_t>(i), 0))
+		++i;
+	INFO("the ramp from frame 24000 stops after " << i << " frames");
 	CHECK(i == output.size());
 }
 
@@ -1344,6 +1400,30 @@ TEST_CASE("a locate while the transport plays leaves the playback without dropou
 		run(song.client, "transport.locate", {{"position", 24000 + (i * 480)}});
 		playUntil(song, played(song) + 480);
 	}
+	run(song.client, "audio.stop");
+	CHECK(run(song.client, "audio.get").at("playbackDropouts") == 0);
+}
+
+TEST_CASE("a locate while the transport plays keeps its voice from the cue thread until it is sent",
+	"[integration][realtime]")
+{
+	// Playback plays the first event, with a voice waiting at the next one's start, 1.5 seconds on. A locate within
+	// the first event takes that voice: the old position doesn't need it in the next half second. The cue thread runs
+	// on until the locate is sent, several times here: had it cued for the old position, the next event's start would
+	// have taken the voice back, and the locate would start silent (#1136).
+	const gnubase::test::TempDir dir;
+	Song song(256);
+	const TestTrack track = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "stereo", 2, 96000));
+	song.add({track.id, 0, 0, 48000, 2}, clip);
+	song.add({track.id, 72000, 72000, 24000, 2}, clip);
+	run(song.client, "transport.play");
+	run(song.client, "audio.start");
+	playUntil(song, 2400);
+	song.engine.setLocateCuedHook([] { std::this_thread::sleep_for(std::chrono::milliseconds(50)); });
+	run(song.client, "transport.locate", {{"position", 36000}});
+	song.engine.setLocateCuedHook({});
+	playUntil(song, played(song) + 4800);
 	run(song.client, "audio.stop");
 	CHECK(run(song.client, "audio.get").at("playbackDropouts") == 0);
 }

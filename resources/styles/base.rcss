@@ -45,11 +45,19 @@ button
 	nav: auto;
 }
 
-/* Toolbar and transport buttons are for the mouse: a click focuses them, but Tab skips them and Space and Enter go to
-   the key commands, so Space still starts and stops playback (#456, docs/features/widgets.md). */
-.toolbar button, .transport button
+/* Buttons outside dialogs are for the mouse: those of toolbars, the transport controls, the track list, the
+   inspector's track buttons, the mixer's channels, the zones and the ruler. A click focuses them, but Tab skips them and Space and Enter go to the key
+   commands, so Space still starts and stops playback (#456, #653, docs/features/widgets.md). Setup panes keep Tab,
+   Space and Enter for their buttons, also those of a toolbar's or the transport controls' setup pane. */
+.toolbar button, .transport button, .track-list button, .inspector-buttons button, .mixer-channels button,
+button.zone-close, button.ruler-format
 {
 	tab-index: none;
+}
+
+.setup-pane button
+{
+	tab-index: auto;
 }
 
 /* A disabled button lets clicks pass and takes no focus (ui/widgets.h). */
@@ -2730,7 +2738,8 @@ listview.history
 /* The pool (ui/poolpanel.h): a toolbar, the message line, the info line, the column headers and a tree of folders and
    clips that fills the rest of its panel. The Media column takes the room the others leave. Rows have the state
    classes .folder or .clip, and clips .missing and .unused; the message line has .error for a failure, and its row
-   .running while a job of a pool command runs, which shows Stop. */
+   .running while a job of a pool command runs, which shows Stop. The View/Attributes menu hides a column with the
+   state class .hide-used, .hide-status, .hide-key, .hide-info or .hide-path on .pool. */
 .pool
 {
 	position: absolute;
@@ -2848,6 +2857,12 @@ listview.pool-list
 .pool-header span.path, .pool-list span.path
 {
 	width: 260dp;
+}
+
+.pool.hide-used span.used, .pool.hide-status span.status, .pool.hide-key span.key, .pool.hide-info span.info,
+.pool.hide-path span.path
+{
+	display: none;
 }
 
 /* The color picker: the saturation and value field, the hue strip, the old and new colors' swatches, and the value

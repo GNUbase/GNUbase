@@ -300,6 +300,36 @@ TEST_CASE("SnapshotPublisher frees a snapshot once the reader has moved on", "[u
 	CHECK(g_liveSnapshots == 0);
 }
 
+TEST_CASE("SnapshotPublisher counts the old snapshots it can't free yet", "[unit]")
+{
+	g_liveSnapshots = 0;
+	{
+		SnapshotPublisher<Snapshot> publisher(std::make_unique<Snapshot>(1));
+		CHECK(publisher.retired() == 0);
+		CHECK(publisher.acquire().value == 1);
+		// 1 is in use, so it stays; 2 was never read, so the next publish frees it.
+		publisher.publish(std::make_unique<Snapshot>(2));
+		CHECK(publisher.retired() == 1);
+		publisher.publish(std::make_unique<Snapshot>(3));
+		CHECK(publisher.retired() == 1);
+		CHECK(g_liveSnapshots == 2);
+
+		// The reader moved on to 3: the next collect frees 1, and 3, in use when 4 comes, stays until it is released.
+		CHECK(publisher.acquire().value == 3);
+		CHECK(publisher.retired() == 1); // only a collect frees
+		publisher.collect();
+		CHECK(publisher.retired() == 0);
+		publisher.publish(std::make_unique<Snapshot>(4));
+		CHECK(publisher.retired() == 1);
+		publisher.release();
+		CHECK(publisher.retired() == 1);
+		publisher.collect();
+		CHECK(publisher.retired() == 0);
+		CHECK(g_liveSnapshots == 1);
+	}
+	CHECK(g_liveSnapshots == 0);
+}
+
 TEST_CASE("SnapshotPublisher keeps the reader's snapshot alive while publishing continues", "[unit]")
 {
 	constexpr int count = 20000;

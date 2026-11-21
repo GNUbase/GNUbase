@@ -210,7 +210,10 @@ namespace gnubase::app
 			return target;
 		};
 		const auto ofEditor = [this, &ofView](const std::string& editor, bool selected)
-		{ return ofView(m_editorViews.value(editor, Json::object()), selected); };
+		{
+			const auto view = m_editorViews.find(editor);
+			return view != m_editorViews.end() ? ofView(*view, selected) : QuantizeTarget{};
+		};
 		// From an in-place editor (#131): its notes, never the project window's selected parts under it.
 		if (zone != nullptr && zone->GetAttribute<Rml::String>("focuszone", "") == "inPlace")
 		{
