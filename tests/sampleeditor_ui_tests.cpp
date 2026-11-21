@@ -846,12 +846,12 @@ TEST_CASE("sample editor half axes and sliders follow waveform zoom and scroll",
 	CHECK(f.elements(".se-half-axis").size() == 2);
 	const Json area = f.box(".se-display");
 	CHECK(f.near(f.box(".se-half-axis").at("y").get<double>(),
-		area.at("y").get<double>() + area.at("height").get<double>() * 0.25));
+		area.at("y").get<double>() + (area.at("height").get<double>() * 0.25)));
 	const auto slide = [&](const char* id, double fraction, bool vertical = false)
 	{
 		const Json box = f.box(id);
-		const double x = box.at("x").get<double>() + box.at("width").get<double>() * 0.5;
-		const double y = box.at("y").get<double>() + box.at("height").get<double>() * 0.5;
+		const double x = box.at("x").get<double>() + (box.at("width").get<double>() * 0.5);
+		const double y = box.at("y").get<double>() + (box.at("height").get<double>() * 0.5);
 		f.drag({"", 0, ui::Point{static_cast<int>(x), static_cast<int>(y)}},
 			{"", 0,
 				ui::Point{static_cast<int>(x + (vertical ? 0 : box.at("width").get<double>() * fraction)),
@@ -867,7 +867,7 @@ TEST_CASE("sample editor half axes and sliders follow waveform zoom and scroll",
 	slide("#se-vertical-zoom", 0.15, true);
 	CHECK(value("#se-vertical-zoom") < 0);
 	CHECK(f.near(f.box(".se-half-axis").at("y").get<double>(),
-		area.at("y").get<double>() + area.at("height").get<double>() * 0.25));
+		area.at("y").get<double>() + (area.at("height").get<double>() * 0.25)));
 	f.click(of("#se-level-menu"));
 	f.click(of("#se-half-axis"));
 	CHECK(f.elements(".se-half-axis").empty());

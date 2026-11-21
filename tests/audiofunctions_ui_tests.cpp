@@ -34,7 +34,7 @@ namespace
 
 	ui::WindowId audioWindow(test::UiApp& app)
 	{
-		for (ui::Window* window : app.shell().windows())
+		for (const ui::Window* window : app.shell().windows())
 			if (window->id() != app.main().id())
 				for (int index = 0; index < window->context().GetNumDocuments(); ++index)
 					if (window->context().GetDocument(index)->QuerySelector(
@@ -520,7 +520,7 @@ TEST_CASE("audio functions open independent windows and close with the project",
 	{
 		app.keys().run(command, Json::object(), app.main(), nullptr);
 		REQUIRE(app.waitUntil([&] { return app.shell().windows().size() == windows.size() + 2; }));
-		ui::Window* window = app.shell().windows().back();
+		const ui::Window* window = app.shell().windows().back();
 		windows.push_back(window->id());
 		CHECK(window->id() != app.main().id());
 		REQUIRE(window->context().GetNumDocuments() == 1);

@@ -202,7 +202,7 @@ namespace gnubase::engine
 				require(read != 0, "file ends before the requested range");
 				if (!draw.empty())
 					for (size_t frame = 0; frame < read; ++frame)
-						buffer[frame * static_cast<size_t>(media.channels) + draw.at("channel").get<size_t>()] =
+						buffer[(frame * static_cast<size_t>(media.channels)) + draw.at("channel").get<size_t>()] =
 							draw.at("samples").at(static_cast<size_t>(at - start) + frame).get<float>();
 				writer.write(buffer.data(), read);
 				at += static_cast<time::Samples>(read);
@@ -234,7 +234,7 @@ namespace gnubase::engine
 			{
 				gains.resize(from * to, 0.0F);
 				for (size_t channel = 0; channel < std::min(from, to); ++channel)
-					gains[channel * from + channel] = 1.0F;
+					gains[(channel * from) + channel] = 1.0F;
 			}
 			Resampler resampler(media.sampleRate, target.sampleRate, media.channels, block);
 			std::vector<float> input(block * from);
@@ -247,9 +247,9 @@ namespace gnubase::engine
 				mixed.assign(frames * to, 0.0F);
 				for (size_t out = 0; out < to; ++out)
 					for (size_t in = 0; in < from; ++in)
-						if (const float gain = gains[out * from + in]; gain != 0.0F)
+						if (const float gain = gains[(out * from) + in]; gain != 0.0F)
 							for (size_t frame = 0; frame < frames; ++frame)
-								mixed[frame * to + out] += converted[frame * from + in] * gain;
+								mixed[(frame * to) + out] += converted[(frame * from) + in] * gain;
 				if (frames != 0)
 					writer.write(mixed.data(), frames);
 				progress.done += static_cast<time::Samples>(frames);
@@ -569,8 +569,10 @@ namespace gnubase::engine
 						range.inserted = range.end - range.start;
 					}
 					else
+					{
 						require(!parameters.contains("samples") && !parameters.contains("channel"),
 							"samples and channel require draw");
+					}
 					if (!copy)
 					{
 						size_t copies = 0;

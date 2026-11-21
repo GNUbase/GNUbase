@@ -573,8 +573,12 @@ TEST_CASE("sample editor Paste converts clipboard rate and channels before repla
 		Fixture f(path.u8string(), target.channels);
 		f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
 		test::Audio source;
-		source.channels = mode == 2 || mode == 3 ? target.channels : monoSource ? 1 : 2;
-		source.sampleRate = mode >= 4 ? 48000 : monoSource ? 24000 : 96000;
+		source.channels = monoSource ? 1 : 2;
+		if (mode == 2 || mode == 3)
+			source.channels = target.channels;
+		source.sampleRate = monoSource ? 24000 : 96000;
+		if (mode >= 4)
+			source.sampleRate = 48000;
 		for (int i = 0; i < 9600; ++i)
 		{
 			source.samples.push_back(0.25F);
@@ -599,10 +603,11 @@ TEST_CASE("sample editor Paste converts clipboard rate and channels before repla
 		CHECK(result.channels == target.channels);
 		for (int channel = 0; channel < target.channels; ++channel)
 		{
-			const auto index = static_cast<size_t>((2000 + inserted / 2) * target.channels + channel);
-			const double expected = source.channels == target.channels ? (channel == 0 ? 0.25 : 0.5)
-				: monoSource                                           ? 0.25
-																	   : 0.75 * std::sqrt(0.5);
+			const size_t middle = 2000U + (static_cast<size_t>(inserted) / 2);
+			const size_t index = (middle * static_cast<size_t>(target.channels)) + static_cast<size_t>(channel);
+			double expected = monoSource ? 0.25 : 0.75 * std::sqrt(0.5);
+			if (source.channels == target.channels)
+				expected = channel == 0 ? 0.25 : 0.5;
 			CHECK(std::abs(result.samples.at(index) - expected) < 0.0001);
 		}
 		CHECK(result.samples.at(0) == target.samples.at(0));
@@ -691,7 +696,7 @@ TEST_CASE("sample editor Draw replaces one channel without moving clip metadata"
 	REQUIRE(test::waitForJob(f.client, job.at("id").get<uint64_t>()).at("state") == "done");
 	test::Audio expected = audio;
 	for (size_t i = 0; i < 5; ++i)
-		expected.samples.at((2000 + i) * 2 + 1) = parameters.at("samples").at(i).get<float>();
+		expected.samples.at(((2000 + i) * 2) + 1) = parameters.at("samples").at(i).get<float>();
 	CHECK(test::compareAudio(eventAudio(f), expected, 0.0F).equal);
 	CHECK(f.regions() == objectWithId(before.at("clips"), f.clip).at("regions"));
 	CHECK(f.call("project.get").at("audioEvents") == before.at("audioEvents"));

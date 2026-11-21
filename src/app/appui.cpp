@@ -457,7 +457,9 @@ namespace gnubase::app
 						it = m_audioFunctions.erase(it);
 					}
 					else
+					{
 						++it;
+					}
 				}
 				if (m_menu)
 					m_menu->update();
@@ -1174,10 +1176,13 @@ namespace gnubase::app
 			m_keys.add({command.id, command.description,
 				[this, id = std::string(command.id)](ui::Window& window, Rml::Element*)
 				{
-					const char* audioFunction = id == "audio.detectSilence" ? "detect-silence.rml"
-						: id == "audio.spectrumAnalyzer"                    ? "spectrum-analyzer.rml"
-						: id == "audio.statistics"                          ? "statistics.rml"
-																			: nullptr;
+					const char* audioFunction = nullptr;
+					if (id == "audio.detectSilence")
+						audioFunction = "detect-silence.rml";
+					else if (id == "audio.spectrumAnalyzer")
+						audioFunction = "spectrum-analyzer.rml";
+					else if (id == "audio.statistics")
+						audioFunction = "statistics.rml";
 					if (audioFunction != nullptr)
 					{
 						openAudioFunction(audioFunction);
@@ -2862,9 +2867,11 @@ namespace gnubase::app
 		if (events.empty())
 			return;
 		ui::WindowSpec spec;
-		spec.title = file == "detect-silence.rml" ? "Detect Silence"
-			: file == "spectrum-analyzer.rml"     ? "Spectrum Analyzer"
-												  : "Statistics";
+		spec.title = "Statistics";
+		if (file == "detect-silence.rml")
+			spec.title = "Detect Silence";
+		else if (file == "spectrum-analyzer.rml")
+			spec.title = "Spectrum Analyzer";
 		spec.size = {760, 720};
 		spec.hidden = m_hidden;
 		const ui::Window& window = m_shell.open(spec);

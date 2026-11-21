@@ -684,7 +684,7 @@ namespace gnubase::ui
 			return;
 		setClass(editor, "empty", !hasEvent());
 		const double full = std::max(g_minScale, static_cast<double>(m_length) / std::max(1.0, displayWidth()));
-		const double scrollRoom = std::max(0.0, static_cast<double>(m_length) - displayWidth() * m_scale);
+		const double scrollRoom = std::max(0.0, static_cast<double>(m_length) - (displayWidth() * m_scale));
 		setValue(root->QuerySelector("#se-scroll"), scrollRoom > 0.0 ? m_start / scrollRoom : 0.0);
 		setValue(root->QuerySelector("#se-horizontal-zoom"),
 			full > g_minScale && m_scale > 0.0 ? std::log(full / m_scale) / std::log(full / g_minScale) : 0.0);
@@ -1443,13 +1443,15 @@ namespace gnubase::ui
 			const bool remember = gesture == 0 || gesture != m_zoomGesture;
 			m_zoomGesture = gesture;
 			if (id == "se-vertical-zoom")
+			{
 				setZoom({m_start, m_scale, std::exp2(-value)}, remember);
+			}
 			else
 			{
 				const double width = std::max(1.0, displayWidth());
 				const double full = std::max(g_minScale, static_cast<double>(m_length) / width);
 				const double scale = id == "se-horizontal-zoom" ? full * std::pow(g_minScale / full, value) : m_scale;
-				const double room = std::max(0.0, static_cast<double>(m_length) - width * scale);
+				const double room = std::max(0.0, static_cast<double>(m_length) - (width * scale));
 				setZoom({id == "se-scroll" ? room * value : std::min(m_start, room), scale, m_gain}, remember);
 			}
 			return;
@@ -1621,9 +1623,11 @@ namespace gnubase::ui
 				static_cast<int>(std::clamp(y / height, 0.0, static_cast<double>(wave->channels().size() - 1)));
 		const auto frame = std::clamp<int64_t>(std::llround(frameAt(event)), 0, m_length - 1);
 		const auto value =
-			static_cast<float>(std::clamp((1.0 - 2.0 * (y / height - m_drawChannel)) / m_gain, -1.0, 1.0));
+			static_cast<float>(std::clamp((1.0 - (2.0 * ((y / height) - m_drawChannel))) / m_gain, -1.0, 1.0));
 		if (m_drawSamples.empty())
+		{
 			m_drawSamples[frame] = value;
+		}
 		else
 		{
 			const int64_t first = std::min(frame, m_drawSamples.begin()->first);
@@ -1636,7 +1640,7 @@ namespace gnubase::ui
 				const double fraction = frame == m_drawLast
 					? 1.0
 					: static_cast<double>(at - m_drawLast) / static_cast<double>(frame - m_drawLast);
-				m_drawSamples[at] = static_cast<float>(previous + (value - previous) * fraction);
+				m_drawSamples[at] = static_cast<float>(previous + ((value - previous) * fraction));
 			}
 		}
 		m_drawLast = frame;
@@ -1662,7 +1666,9 @@ namespace gnubase::ui
 		}
 		m_dragged = frameAt(event);
 		if (m_drag == Drag::Draw)
+		{
 			drawSamples(event);
+		}
 		else if (m_drag == Drag::Scrub)
 		{
 			scrub(m_dragged);
