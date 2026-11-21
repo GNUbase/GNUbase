@@ -110,8 +110,9 @@ the pool and conforming files to the project's sample rate. The engine commands 
   (`Docking::showing`, [docking.md](docking.md)): behind another tab or in a hidden zone it notes that the pool
   changed, and `AppUi`'s step reads it once the panel shows again.
 - **Messages.** `#pool-message` says what the last pool command did: how many missing files Find Missing Files found,
-  what Remove Unused Media and Remove Missing Files removed, how many files Conform Files converted, or why one
-  failed, with the state class `.error`, which the themes color as danger. The app hears the results of
+  what Remove Unused Media and Remove Missing Files removed, how many files Conform Files converted, how many files
+  Prepare Archive copied and which media files and frozen tracks it left alone because they changed meanwhile
+  (`changed`, `changedTracks`, #2001), or why one failed, with the state class `.error`, which the themes color as danger. The app hears the results of
   `pool.removeUnused`, `media.locate`, `media.removeMissing`, `media.conform` and `media.prepareArchive` (Media >
   Prepare Archive, [backup.md](backup.md)) from the toolbar, the Media menu and
   the folder dialog alike (`EngineBinding::onResult`, [ui-engine-binding.md](ui-engine-binding.md)) and opens the

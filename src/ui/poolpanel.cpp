@@ -397,14 +397,15 @@ namespace gnubase::ui
 		else if (command == "media.prepareArchive")
 		{
 			const size_t missing = value.at("missing").size();
-			const size_t changed = value.at("changed").size();
 			text = "Copied " + counted(value.at("copied").size(), "file") + " into the project folder";
 			if (missing > 0)
 				text += "; " + counted(missing, "missing file") + (missing == 1 ? " wasn't" : " weren't") + " copied";
-			if (changed > 0)
-				text += "; " + counted(changed, "file") +
-					(changed == 1 ? " changed meanwhile and was left as it is"
-								  : " changed meanwhile and were left as they are");
+			// The media files, and the frozen tracks whose freeze file, changed meanwhile keep what they have now.
+			for (const auto& [key, noun] : {std::pair{"changed", "file"}, std::pair{"changedTracks", "frozen track"}})
+				if (const size_t changed = value.at(key).size(); changed > 0)
+					text += "; " + counted(changed, noun) +
+						(changed == 1 ? " changed meanwhile and was left as it is"
+									  : " changed meanwhile and were left as they are");
 			text += ".";
 		}
 		showMessage(text, false);
