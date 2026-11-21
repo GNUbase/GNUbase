@@ -659,19 +659,19 @@ namespace gnubase::ui
 		{
 			const std::string id = std::to_string(event.at("id").get<uint64_t>());
 			const std::string& name = names[id] = Rml::StringUtilities::EncodeRml(event.at("name").get<std::string>());
-			events += R"(<div class="arranger-row" event=")" + id +
-				R"("><button class="arranger-trigger" title="Trigger")" + off + R"(>&gt;</button><span class="name">)" +
-				name + "</span></div>";
+			events.append(R"(<div class="arranger-row" event=")").append(id);
+			events.append(R"("><button class="arranger-trigger" title="Trigger")").append(off);
+			events.append(R"(>&gt;</button><span class="name">)").append(name).append("</span></div>");
 		}
 		std::string chain;
 		for (size_t index = 0; index < steps.size(); ++index)
 		{
 			const std::string id = std::to_string(steps[index].at("event").get<uint64_t>());
-			chain += R"(<div class="arranger-row" step=")" + std::to_string(index) +
-				R"("><button class="arranger-locate" title="Go to Step")" + off +
-				R"(>&gt;</button><textdisplay class="name" control="arrangerEventName" event=")" + id + R"(" value=")" +
-				names[id] + R"(" disabled=""/><span class="repeats">)" +
-				std::to_string(steps[index].at("repeats").get<int>()) + "</span></div>";
+			chain.append(R"(<div class="arranger-row" step=")").append(std::to_string(index));
+			chain.append(R"("><button class="arranger-locate" title="Go to Step")").append(off);
+			chain.append(R"(>&gt;</button><textdisplay class="name" control="arrangerEventName" event=")").append(id);
+			chain.append(R"(" value=")").append(names[id]).append(R"(" disabled=""/><span class="repeats">)");
+			chain.append(std::to_string(steps[index].at("repeats").get<int>())).append("</span></div>");
 		}
 		// A list is built again only when it changed, so that a name being typed stays; the row playing is .current.
 		const auto list = [this](
