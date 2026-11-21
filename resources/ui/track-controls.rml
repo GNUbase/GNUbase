@@ -85,8 +85,10 @@
 		-- The controls each type can show (ui/tracklist.h applies the same), and how the dialog names them.
 		local available = {
 			audio = {"mute", "solo", "record", "monitor", "read", "timeBase"},
-			instrument = {"mute", "solo", "record", "monitor", "read", "timeBase"},
-			midi = {"mute", "solo", "record", "monitor", "read", "timeBase", "midiChannel"}, -- reference manual p. 349
+			-- Edit In-Place: reference manual p. 194
+			instrument = {"mute", "solo", "record", "monitor", "read", "timeBase", "editInPlace"},
+			-- MIDI Channel: reference manual p. 349
+			midi = {"mute", "solo", "record", "monitor", "read", "timeBase", "midiChannel", "editInPlace"},
 			group = {"mute", "solo", "read", "timeBase"},
 			effect = {"mute", "solo", "read", "timeBase"},
 			folder = {"mute", "solo", "read", "groupEditing"}, -- reference manual p. 196
@@ -102,7 +104,8 @@
 			timeOffsetOn = "Time Offset On/Off", timeOffset = "Time Offset",
 			setTimeOffset = "Set Time Offset to Project Cursor Position", addPositionMarker = "Add Position Marker",
 			addCycleMarker = "Add Cycle Marker", activateMarkerTrack = "Activate Track", markerLocate = "Locate",
-			markerCycle = "Cycle", markerZoom = "Zoom", midiChannel = "MIDI Channel", groupEditing = "Group Editing"}
+			markerCycle = "Cycle", markerZoom = "Zoom", midiChannel = "MIDI Channel", groupEditing = "Group Editing",
+			editInPlace = "Edit In-Place"}
 		local always = {mute = true, solo = true} -- reference manual p. 190
 
 		local settings = {} -- the setting as the dialog edits it, by type

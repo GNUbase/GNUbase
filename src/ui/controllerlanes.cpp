@@ -548,8 +548,9 @@ namespace gnubase::ui
 			context->RequestNextUpdate(0);
 	}
 
-	void ControllerLanes::setRange(int64_t from, int64_t to)
+	void ControllerLanes::setRange(int64_t from, int64_t to, const time::TempoMap* tempo)
 	{
+		m_tempo = tempo;
 		m_from = from;
 		m_to = std::max(to, from + 1);
 		placeItems();
@@ -558,7 +559,8 @@ namespace gnubase::ui
 	void ControllerLanes::placeItems()
 	{
 		Rml::Element* list = m_root.get() != nullptr ? m_root.get()->QuerySelector(".controller-lane-list") : nullptr;
-		const auto range = static_cast<double>(m_to - m_from);
+		const auto at = [this](int64_t ticks)
+		{ return axisFraction(static_cast<double>(ticks), m_from, m_to, m_tempo); };
 		for (size_t i = 0; list != nullptr && i < m_items.size(); ++i)
 		{
 			const Rml::Element* area = list->QuerySelector(".controller-lane-area[lane=\"" + std::to_string(i) + "\"]");
@@ -572,8 +574,8 @@ namespace gnubase::ui
 					{
 						const Item& item = m_items[i][next];
 						Rml::Element* element = area->GetChild(row)->GetChild(child);
-						const double left = static_cast<double>(item.start - m_from) / range * 100.0;
-						const double width = static_cast<double>(item.end - item.start) / range * 100.0;
+						const double left = at(item.start) * 100.0;
+						const double width = (at(item.end) - at(item.start)) * 100.0;
 						element->SetProperty(Rml::PropertyId::Left, percent(left));
 						// Kept elements (render) lose a width they no longer have (#1498). A slot that loses its color
 						// loses its class .light or .dark too: the RML changes and its elements are new.
@@ -592,8 +594,8 @@ namespace gnubase::ui
 			{
 				const Item& item = m_items[i][static_cast<size_t>(child)];
 				Rml::Element* element = area->GetChild(child);
-				const double left = static_cast<double>(item.start - m_from) / range * 100.0;
-				const double width = static_cast<double>(item.end - item.start) / range * 100.0;
+				const double left = at(item.start) * 100.0;
+				const double width = (at(item.end) - at(item.start)) * 100.0;
 				element->SetProperty(Rml::PropertyId::Left, percent(left));
 				if (item.end > item.start)
 					element->SetProperty(Rml::PropertyId::Width, percent(width));
@@ -624,7 +626,7 @@ namespace gnubase::ui
 		const float x = (event.GetParameter("mouse_x", 0.0F) - origin.x) / std::max(size.x, 1.0F);
 		// The bottom row of pixels is 0, the top one 1.
 		const float y = (event.GetParameter("mouse_y", 0.0F) - origin.y) / std::max(size.y - 1.0F, 1.0F);
-		return {static_cast<double>(m_from) + (x * static_cast<double>(m_to - m_from)),
+		return {axisTicks(static_cast<double>(x), m_from, m_to, m_tempo),
 			std::clamp(1.0 - static_cast<double>(y), 0.0, 1.0)};
 	}
 

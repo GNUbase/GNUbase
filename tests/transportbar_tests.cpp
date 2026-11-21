@@ -93,7 +93,7 @@ namespace
 	}
 
 	// The project window with its transport bar shown. The shell fits windows into their monitor, 1024 pixels wide on
-	// CI, where a dp ratio of 1 cuts off the transport bar's last sections: at 0.75, about 1365 dp, they all fit.
+	// CI, where a dp ratio of 1 hides the transport bar's last sections: at 0.75, about 1365 dp, they all fit.
 	ui::EventDisplay& showBar(test::UiApp& app, float dpRatio = 0.75F)
 	{
 		app.setDpRatio(dpRatio);
@@ -206,7 +206,8 @@ TEST_CASE("Space starts and stops playback after a click on a toolbar or transpo
 	spaceToggles("#snap", std::nullopt);
 }
 
-TEST_CASE("a narrow window cuts off the transport bar's last sections instead of drawing them over each other", "[ui]")
+TEST_CASE(
+	"a narrow window hides the transport bar's last sections, and its dividers keep the sections outside them", "[ui]")
 {
 	test::UiApp app({1024, 700});
 	showBar(app, 1.0F); // about 1240 dp of sections in 1024 dp
@@ -217,41 +218,119 @@ TEST_CASE("a narrow window cuts off the transport bar's last sections instead of
 			bar = found;
 	REQUIRE(bar != nullptr);
 	const float right = bar->GetAbsoluteLeft() + bar->GetOffsetWidth();
+	const std::vector<std::string> order = app.appUi().docking().sections("project", "transport");
+	REQUIRE(order.size() == 9);
+	CHECK(order.front() == "leftDivider");
+	CHECK(order.at(order.size() - 2) == "rightDivider");
+	const auto shown = [&app] { return app.shownSections("transport-bar"); };
+	const auto has = [](const std::vector<std::string>& list, const std::string& id)
+	{ return std::find(list.begin(), list.end(), id) != list.end(); };
 
-	// The sections keep their controls' width, one after the other, and the last ones go past the bar's right edge.
-	Rml::ElementList sections;
-	bar->QuerySelectorAll(sections, ".transport-section");
-	REQUIRE(sections.size() == 7);
-	float end = bar->GetAbsoluteLeft();
-	for (Rml::Element* section : sections)
+	// The shown sections keep their controls' width, one after the other, all inside the bar, and those it has no room
+	// for go, the last first. What shows is what a click reaches.
+	const auto checkShown = [&]
 	{
-		INFO(section->GetAttribute<Rml::String>("title", ""));
-		CHECK(section->GetAbsoluteLeft() >= end);
-		end = section->GetAbsoluteLeft() + section->GetOffsetWidth();
-		Rml::ElementList controls;
-		section->QuerySelectorAll(controls, "*");
-		for (Rml::Element* control : controls)
-			CHECK(control->GetAbsoluteLeft() + control->GetOffsetWidth() <= end + 0.5F);
-	}
-	CHECK(end > right);
-
-	// What shows is what a click reaches: the element in the middle of each control in the bar is the control or in it.
-	Rml::ElementList controls;
-	bar->QuerySelectorAll(controls, ".transport-section > *");
-	for (Rml::Element* control : controls)
-	{
-		const Rml::Vector2f middle(control->GetAbsoluteLeft() + (control->GetOffsetWidth() / 2.0F),
-			control->GetAbsoluteTop() + (control->GetOffsetHeight() / 2.0F));
-		if (middle.x >= right)
-			continue; // cut off
-		INFO(control->GetId());
-		const Rml::Element* hit = context.GetElementAtPoint(middle);
-		while (hit != nullptr && hit != control)
-			hit = hit->GetParentNode();
-		CHECK(hit == control);
-	}
+		app.shell().step(std::chrono::milliseconds(0));
+		float end = bar->GetAbsoluteLeft();
+		for (const std::string& id : shown())
+		{
+			INFO(id);
+			Rml::Element* section = bar->QuerySelector("[section=" + id + "]");
+			REQUIRE(section != nullptr);
+			CHECK(section->GetAbsoluteLeft() >= end);
+			end = section->GetAbsoluteLeft() + section->GetOffsetWidth();
+			CHECK(end <= right + 0.5F);
+			Rml::ElementList controls;
+			section->QuerySelectorAll(controls, "*");
+			for (Rml::Element* control : controls)
+				CHECK(control->GetAbsoluteLeft() + control->GetOffsetWidth() <= end + 0.5F);
+			for (int i = 0; i < section->GetNumChildren(); ++i)
+			{
+				Rml::Element* control = section->GetChild(i);
+				INFO(control->GetId());
+				const Rml::Vector2f middle(control->GetAbsoluteLeft() + (control->GetOffsetWidth() / 2.0F),
+					control->GetAbsoluteTop() + (control->GetOffsetHeight() / 2.0F));
+				const Rml::Element* hit = context.GetElementAtPoint(middle);
+				while (hit != nullptr && hit != control)
+					hit = hit->GetParentNode();
+				CHECK(hit == control);
+			}
+		}
+	};
+	checkShown();
+	std::vector<std::string> now = shown();
+	CHECK(!has(now, "leftDivider")); // hidden by default
+	CHECK(!has(now, "click"));
+	CHECK(has(now, "transportControls"));
 	click(app, "#punch-in");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("punchIn") == true; }));
+
+	// The right divider keeps Click, after it, shown; the sections before it go instead.
+	app.appUi().docking().setSectionHidden("project", "transport", "rightDivider", false);
+	checkShown();
+	now = shown();
+	CHECK(has(now, "rightDivider"));
+	CHECK(has(now, "click"));
+	CHECK(!has(now, "tempoSignature"));
+
+	// The left divider after the transport controls keeps them and the sections before them shown; the time
+	// displays and the tempo, between the dividers, go first, also in a window too narrow for those outside.
+	app.appUi().docking().moveSection("project", "transport", "leftDivider", "transportControls"); // after them
+	app.appUi().docking().setSectionHidden("project", "transport", "leftDivider", false);
+	REQUIRE(app.appUi().docking().sections("project", "transport").at(4) == "leftDivider");
+	app.setDpRatio(2.0F);
+	app.shell().step(std::chrono::milliseconds(0));
+	now = app.shownSections("transport-bar");
+	CHECK(now ==
+		std::vector<std::string>{
+			"locators", "locatorRange", "punchPoints", "transportControls", "leftDivider", "rightDivider", "click"});
+
+	// Hidden again, the left divider keeps nothing.
+	app.appUi().docking().setSectionHidden("project", "transport", "leftDivider", true);
+	app.shell().step(std::chrono::milliseconds(0));
+	now = app.shownSections("transport-bar");
+	CHECK(!has(now, "transportControls"));
+	CHECK(has(now, "click"));
+
+	// The transport panel takes its sections' width and has no dividers, nor buttons for them in its setup pane.
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.appUi().transportPanel() != nullptr);
+	const ui::WindowId panel = app.appUi().transportPanel()->id();
+	CHECK(app.ui().dom(panel, "[divider]", 0).at("elements").empty());
+	CHECK(app.ui().dom(panel, "[setup-section=leftDivider]", 0).at("elements").empty());
+	CHECK(app.appUi().docking().sections("transportPanel", "transport").size() == 7);
+}
+
+TEST_CASE("a transport set saved before the dividers keeps them hidden in their places, and the bar still hides its "
+		  "last sections",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app, 1.0F); // about 1240 dp of sections in 1024 dp
+	const Json before = Json::array(
+		{"locators", "locatorRange", "punchPoints", "transportControls", "timeDisplays", "tempoSignature", "click"});
+	// An older workspace or preset with the order and hidden list, and a layout with only a hidden list.
+	const std::array<Json, 2> saved{
+		Json{{"order", before}, {"hidden", Json::array()}}, Json{{"hidden", Json::array()}}};
+	for (const Json& set : saved)
+	{
+		INFO(set.dump());
+		Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
+		layout["windows"]["project"]["sections"]["transport"] = set;
+		app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+		REQUIRE(app.waitUntil([&app, &layout] { return app.appUi().docking().layout() == layout; }));
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(app.appUi().docking().sections("project", "transport") ==
+			std::vector<std::string>{"leftDivider", "locators", "locatorRange", "punchPoints", "transportControls",
+				"timeDisplays", "tempoSignature", "rightDivider", "click"});
+		const std::vector<std::string> shown = app.shownSections("transport-bar");
+		const auto has = [&shown](const std::string& id)
+		{ return std::find(shown.begin(), shown.end(), id) != shown.end(); };
+		CHECK(!has("leftDivider"));
+		CHECK(!has("rightDivider"));
+		CHECK(!has("click"));
+		CHECK(has("transportControls"));
+	}
 }
 
 TEST_CASE("every control of the default transport bar fits a 1024-pixel window at a dp ratio of 0.8", "[ui]")
@@ -1778,10 +1857,15 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	test::UiApp app({1024, 700});
 	showBar(app);
 	CHECK(visible(app, "#transport-bar [section=locators]"));
+	const std::vector<std::string> before = app.shownSections("transport-bar");
 
-	// A right click on the bar opens its setup pane, which stays open while its buttons hide sections.
+	// A right click on the bar opens its setup pane, which stays open while its buttons hide sections. The pane, in
+	// the bar and wider than the room it has left, takes no room from its sections.
 	app.ui().click(std::nullopt, at("#transport-bar [section=click]"), ui::MouseButton::Right, 1, {});
 	REQUIRE(visible(app, "#transport-setup"));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.shownSections("transport-bar") == before);
+	CHECK(visible(app, "#transport-bar [section=click]"));
 	click(app, "#transport-setup [setup-section=locators]");
 	click(app, "#transport-setup [setup-section=punchPoints]");
 	app.shell().step(std::chrono::milliseconds(0));
@@ -1790,7 +1874,7 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	CHECK(visible(app, "#transport-bar [section=transportControls]"));
 	const Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
 	CHECK(layout.at("windows").at("project").at("sections").at("transport").at("hidden") ==
-		Json::array({"locators", "punchPoints"}));
+		Json::array({"leftDivider", "locators", "punchPoints", "rightDivider"}));
 
 	// The transport panel has sections of its own.
 	app.ui().key(std::nullopt, "F2");
@@ -1853,8 +1937,8 @@ TEST_CASE("setup panes save and recall presets and reset their sections to the d
 	const Json saved = presets().at("transport");
 	REQUIRE(saved.size() == 1);
 	CHECK(saved.at(0).at("name") == "Compact");
-	CHECK(saved.at(0).at("hidden") == Json::array({"locators"}));
-	CHECK(saved.at(0).at("order").at(0) == "locators");
+	CHECK(saved.at(0).at("hidden") == Json::array({"leftDivider", "locators", "rightDivider"}));
+	CHECK(saved.at(0).at("order").at(1) == "locators");
 	REQUIRE(app.waitUntil([&exists] { return exists("#transport-setup [setup-preset=Compact]"); }));
 
 	// Reset All: the default order and sections, also after the sections were reordered.

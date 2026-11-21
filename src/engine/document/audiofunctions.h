@@ -9,6 +9,6 @@ namespace gnubase::engine
 	class Jobs;
 	class ProjectModel;
 
-	// clip.detectSilence, event.stripSilence, clip.spectrum and clip.statistics.
+	// clip.detectSilence, event.stripSilence, clip.spectrum, clip.statistics and clip.estimatePitch.
 	void registerAudioFunctionCommands(ProjectModel& model, Engine& engine, Jobs& jobs);
 }

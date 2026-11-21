@@ -9,6 +9,8 @@
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
+#include "engine/processors/builtinplugin.h"
+#include "plugin/extensions.h"
 
 #include <algorithm>
 #include <array>
@@ -21,6 +23,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -31,6 +34,16 @@ namespace gnubase::engine::midi
 	{
 		constexpr const char* g_fileFormat = "gnubase.articulationMap";
 		constexpr std::array<const char*, 3> g_statusNames = {"note", "controller", "program"};
+
+		// The host of an instrument asked for its key switches only.
+		class NoHost final : public plugin::Host
+		{
+		public:
+			void requestRestart() override {}
+			void requestProcess() override {}
+			void requestCallback() override {}
+			void* extension(std::string_view /*id*/) override { return nullptr; }
+		};
 
 		void require(bool condition, const std::string& message)
 		{
@@ -232,6 +245,48 @@ namespace gnubase::engine::midi
 			return result;
 		}
 
+		// Import Key Switches (p. 1284): a direction and a sound slot for each key switch that the instrument of a
+		// MIDI or instrument track reports through the plugin wrapper, triggered by its key and sending it. A MIDI
+		// track's instrument is that of the instrument track it plays.
+		void importKeySwitches(const Project& project, ObjectId trackId, ArticulationMap& map)
+		{
+			const auto track = project.trackById.find(trackId);
+			require(track != project.trackById.end() &&
+					(track->second.type == TrackType::Instrument || track->second.type == TrackType::Midi),
+				"no MIDI or instrument track " + std::to_string(trackId));
+			const Channel* channel = &project.channels.at(track->second.channel);
+			if (track->second.type == TrackType::Midi)
+			{
+				const auto output = project.channels.find(channel->output);
+				channel = output != project.channels.end() ? &output->second : nullptr;
+			}
+			const processors::BuiltinInfo* info =
+				channel != nullptr ? processors::findBuiltin(channel->instrument) : nullptr;
+			std::vector<plugin::KeySwitch> keySwitches;
+			if (info != nullptr)
+			{
+				NoHost host;
+				processors::BuiltinPlugin instrument(*info, host, 2);
+				auto* extension = instrument.init() ? plugin::extension<plugin::KeySwitches>(instrument) : nullptr;
+				if (extension != nullptr)
+					keySwitches = extension->keySwitches();
+			}
+			require(
+				!keySwitches.empty(), "the instrument of track " + std::to_string(trackId) + " has no key switches");
+			for (const plugin::KeySwitch& each : keySwitches)
+			{
+				require(each.key >= 0 && each.key <= 127, "key switch " + each.name + " has no key 0-127");
+				if (findArticulation(map, each.name) == nullptr)
+					map.articulations.push_back({each.name, ArticulationType::Direction, 0});
+				SoundSlot slot;
+				slot.name = each.name;
+				slot.articulations = {each.name};
+				slot.trigger = each.key;
+				slot.outputs = {{OutputStatus::Note, static_cast<uint8_t>(each.key), 100, false}};
+				map.slots.push_back(slot);
+			}
+		}
+
 		Json addMap(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -241,8 +296,11 @@ namespace gnubase::engine::midi
 				map = findMap(project, Json{{"map", parameters.at("copy")}});
 				map.name += " Copy";
 			}
+			if (parameters.contains("keySwitches"))
+				importKeySwitches(project, parameters.at("keySwitches").get<ObjectId>(), map);
 			Json changes = parameters;
 			changes.erase("copy");
+			changes.erase("keySwitches");
 			changes.erase("id");
 			change(map, changes);
 			map.id = project.newId();
@@ -908,11 +966,16 @@ namespace gnubase::engine::midi
 
 		Json addProperties = settings;
 		addProperties["copy"] = idSchema;
+		addProperties["keySwitches"] = idSchema;
 		model.addEdit(engine,
 			{"articulationMap.add", 1,
 				"Adds an articulation map to the project: Add Map (p. 1280), named New Map with one group, Group 1, "
 				"and neither articulations nor slots, or Duplicate Map of the map copy (named after it, with Copy) "
-				"(p. 1267), then changed by what is given. " +
+				"(p. 1267). With keySwitches, a MIDI or instrument track, Import Key Switches (p. 1284) adds a "
+				"direction of the first group and a sound slot for each key switch its instrument reports (a MIDI "
+				"track's: the instrument track's it plays), named after it, with the key as its remote trigger and "
+				"a note on it at velocity 100 as its output mapping; refused if the instrument reports none. Then "
+				"changed by what is given. " +
 					mapText + " Emits articulationMap.added and returns the map.",
 				object(addProperties, {}), mapResult, false},
 			"Add articulation map", addMap);

@@ -6,12 +6,20 @@ there are, where they sit, what is shown by default and how they behave stay as 
 element that a mockup shows and the manual doesn't is not added because of the mockup. The dark, light and high
 contrast themes keep their own look.
 
-| File | Shows |
-|---|---|
-| `main-window.webp` | The project window in the gnubase theme: toolbar with transport and time display, info line, inspector in the left zone, track list and event display with marker, folder, MIDI and audio tracks, media rack in the right zone, mixer in the lower zone, status line |
+| File | Shows | Made how, under which license |
+|---|---|---|
+| `main-window.webp` | The project window in the gnubase theme: toolbar with transport and time display, info line, inspector in the left zone, track list and event display with marker, folder, MIDI and audio tracks, media rack in the right zone, mixer in the lower zone, status line | Generated for GNUbase on 2026-10-28 with an AI image tool (Codex), from a text prompt asking for a polished overview of a freshly opened editor in the GNUbase look, with the program icon and the loading banner (`art/icon`, `art/splash`) as style references; no other picture was supplied. Saved as WebP, 1672 x 941. Added in #1311, so under the project's license (`CONTRIBUTING.md`) |
+
+Origin and license: a mockup is made for GNUbase and holds no third-party material: no screenshots, icons, fonts or
+artwork of other applications, and nothing copied from the reference manual. Where it uses free material from elsewhere,
+that material's source and license are named in the table. Unless its row names another free license, a mockup is
+under the project's license, like everything in the repository (GPL-3.0-or-later, see `README.md` and
+`CONTRIBUTING.md`); a contributor who adds one agrees to that, as with code.
 
 Adding a mockup:
 - One file per window or panel, named after it in lowercase with hyphens (`mixer-window.webp`, `key-editor.webp`).
 - PNG or WebP, stored in Git LFS like all images (`.gitattributes`).
-- Add a row to the table above.
+- Add a row to the table above, with how the picture was made (the tool, and whether by hand or generated) and under
+  which license it is.
+- Make sure it holds no third-party material (see above); if it does, name the material's source and license in the row.
 - Use generic feature names in file names and in this list, as everywhere in the repository.

@@ -52,7 +52,8 @@ namespace gnubase::engine::processors
 								public plugin::Params,
 								public plugin::State,
 								public plugin::Latency,
-								public plugin::Tail
+								public plugin::Tail,
+								public plugin::KeySwitches
 	{
 	public:
 		// The transport segments of a block it takes: as many as a plugin slot or a track's sequencer gives
@@ -102,6 +103,10 @@ namespace gnubase::engine::processors
 		// Latency and Tail, from activate on.
 		uint32_t latency() const override;
 		uint32_t tail() const noexcept override;
+
+		// KeySwitches: the test synth's only, Sustain (C-2) and Staccato (C#-2), for tests of Import Key Switches;
+		// they play like any other note. The others have no such extension.
+		std::vector<plugin::KeySwitch> keySwitches() override;
 
 	private:
 		int indexOf(uint32_t param) const;

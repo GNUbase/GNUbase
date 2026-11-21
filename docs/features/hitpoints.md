@@ -59,6 +59,12 @@ make such things as part of it (`ProjectModel::runEdit`), so that it is one undo
   clip: Convert Hitpoints to MIDI Notes' `velocityMode` (`dynamic`: the loudest hitpoint velocity 1, the others less as
   their peaks are quieter; `fixed`: `velocity`), `pitch` (default 36) and `length` (ticks, default a sixteenth).
 
+`event.deleteOverlaps` (reference manual p. 643) trims each selected audio event's end to the next selected start in the
+same track, part and lane. It preserves clip offsets and delegates trimming to `event.resize`, including its fade and
+warp handling. Equal starts keep the highest id and remove the others. The last event and unselected events stay as they
+are; locked events or parts fail the whole edit. It returns trimmed `events` and `removed` ids in one undo step.
+Automatic track fades still apply; this command creates no crossfades. It is available through the engine, MCP and Lua.
+
 ## In the UI
 
 The sample editor's inspector has the Hitpoints section, and its display shows the hitpoints that count and the
@@ -93,23 +99,24 @@ display's gestures edit hitpoints instead of the tool's (pp. 636, 639-640):
 ## Not yet
 
 Automatic detection when audio is imported or recorded (the Editing - Audio preference, which can start the same job)
-and the hitpoints of the selected event in the project window; the Beats filter and warp markers, which need the
-clip's musical definition and warping (#144); Tab to the next slice; Alt+N and Alt+B to locate to hitpoints; Divide
-Audio Events at Hitpoints for folder tracks; the MIDI notes' destinations First Selected Track in the UI (the engine
-takes `track`), which replaces the parts of earlier conversions, and Project Clipboard; Close Gaps and Delete Overlaps
-for slices. The detection is checked on synthesized loops only; recorded drum loops with hand-annotated onsets (room
+and the hitpoints of the selected event in the project window; the Beats filter and warp markers, which need the clip's
+musical definition and warping (#144); Tab to the next slice; Alt+N and Alt+B to locate to hitpoints; Divide Audio
+Events at Hitpoints for folder tracks; the MIDI notes' destinations First Selected Track in the UI (the engine takes
+`track`), which replaces the parts of earlier conversions, and Project Clipboard; Close Gaps and a UI entry for Delete
+Overlaps. The detection is checked on synthesized loops only; recorded drum loops with hand-annotated onsets (room
 sound, bleed, flams) are yet to come.
 
 ## Checks
 
 - `tests/hitpoints_tests.cpp`: detection accuracy on two synthesized drum loops whose hits are known (straight eighths
   with a ghost note and an open hi-hat at 48 kHz; swung sixteenths with soft attacks under a noise floor, in stereo at
-  44.1 kHz): every hit found within 5 ms and nothing else, and none in silence or steady tones; measuring at each
-  onset gives what the detection found; detecting as a job, cancelled, with another project opened or the clip removed
+  44.1 kHz): every hit found within 5 ms and nothing else, and none in silence or steady tones; measuring at each onset
+  gives what the detection found; detecting as a job, cancelled, with another project opened or the clip removed
   meanwhile, while `test::whileHeld` holds the job at its first `job.progress`, and without its file; filtering,
   locking, disabling, resetting, inserting and moving hitpoints with their errors, undo and the project file, inserted
   and moved ones measured where they go; `clip.setHitpoints` and its errors; slices, events, regions, markers, the
-  groove and MIDI notes.
+  groove and MIDI notes; Delete Overlaps within a part, unchanged offsets, equal starts, part boundaries, selection
+  validation, locked events and undo/redo.
 - `tests/playback_tests.cpp`: auditioning a clip, and up to an end, as Play back Slice does.
 - `tests/hitpoints_ui_tests.cpp` drives the sample editor with `ui::Automation`: Edit Hitpoints showing the detected
   hitpoints at their frames, the threshold slider's drag as one undo step, Remove All; the handle, Shift, Ctrl and

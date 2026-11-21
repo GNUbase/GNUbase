@@ -4152,6 +4152,8 @@ namespace gnubase::engine
 				"processed in. object is the bus, channel or slot id.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
+		Json saveJob = Jobs::schema();
+		saveJob["type"] = {"object", "null"};
 		addControl(engine,
 			{"project.save", 1,
 				"Saves the project as a DAWproject file: as path, which is then the project's file (save as), or "
@@ -4159,10 +4161,17 @@ namespace gnubase::engine
 				"into it unless embedMedia is false; then the file refers to them where they are, relative to itself "
 				"if they are in its folder. One that is missing is referred to by its absolute path, so that the file "
 				"has no copy of it: the result lists them (missing). The file becomes the first of the recent "
-				"projects (project.recent).",
+				"projects (project.recent). The files a project records, converts on import, renders, flattens and "
+				"freezes while it has no file go into one folder outside any project; the save after that copies "
+				"those still in it into the project's media and Freeze folders as a job, returned as job (null "
+				"without one, and while an earlier save's copies still run) with the result media.prepareArchive's "
+				"job has, and points the media and frozen tracks at the copies as an undo step of its own, which "
+				"the next save keeps.",
 				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}),
-				objectSchema({{"missing", {{"type", "array"}, {"items", stringSchema}}}}, {"missing"}), false},
-			[this](CommandContext& context)
+				objectSchema(
+					{{"missing", {{"type", "array"}, {"items", stringSchema}}}, {"job", saveJob}}, {"missing", "job"}),
+				false},
+			[this, &jobs](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				DawProjectSaveOptions options;
@@ -4180,7 +4189,24 @@ namespace gnubase::engine
 					throw CommandError(error.what());
 				}
 				saved(std::filesystem::absolute(std::filesystem::u8path(path)).u8string(), context);
-				return Json{{"missing", missing}};
+				// What the project recorded and converted while it had no file goes into its media folder (reference
+				// manual p. 360), as media.prepareArchive does it: once, so a save while the copies run starts none
+				// (the next one copies what is left), and not from a project folder inside that folder.
+				std::vector<MediaCopy> recordings;
+				if (const std::filesystem::path unsaved = unsavedMediaFolder(m_settingsDirectory);
+					!unsaved.empty() && !jobs.runs("project.save") && !isInside(m_file, unsaved))
+				{
+					for (const auto& [id, media] : m_project.media)
+						if (isInside(media.path, unsaved))
+							recordings.push_back({id, media.path, {}, {}});
+					addFreezeCopies(m_project, unsaved, true, recordings);
+				}
+				Json job = nullptr;
+				if (!recordings.empty())
+					job = startMediaCopy(jobs, "project.save", std::move(recordings),
+						mediaFolderFor(std::filesystem::u8path(m_file)), "Copy recordings into the project",
+						m_openedRevision);
+				return Json{{"missing", missing}, {"job", std::move(job)}};
 			});
 		addControl(engine,
 			{"project.load", 1,
@@ -4733,7 +4759,7 @@ namespace gnubase::engine
 				result["job"] = nullptr;
 				const MediaFile& media = project.media.at(result.at("media").at("id").get<ObjectId>());
 				if (context.parameters().value("copy", false) && !isInside(media.path, mediaFolder.parent_path()))
-					result["job"] = startMediaCopy(jobs, "media.add", {MediaCopy{media.id, media.path, {}}},
+					result["job"] = startMediaCopy(jobs, "media.add", {MediaCopy{media.id, media.path, {}, {}}},
 						mediaFolder, "Copy media file into the project", m_openedRevision);
 				return result;
 			});
@@ -5168,14 +5194,17 @@ namespace gnubase::engine
 		addControl(engine,
 			{"media.prepareArchive", 1,
 				"Makes the project self-contained, so that its folder can be archived or moved: copies every media "
-				"file from outside the project folder into its media folder and points the media at the copies. The "
+				"file from outside the project folder into its media folder and every freeze file of a frozen track "
+				"from outside it into its Freeze folder, and points the media and tracks at the copies. The "
 				"copies run as a job: this returns at once, job.progress and job.finished events follow, and "
-				"job.cancel stops it and removes the copies. Once they are done, the media are pointed at them as one "
-				"undo step. The job's result lists the copies as copied, media files that couldn't be read as "
-				"missing (they keep their paths), and media whose path changed while the job ran as changed (they "
-				"keep the new path). The project must have been saved; save it again without embedding media to keep "
-				"the new paths. media limits it to those media files, such as the ones track.import added (Copy to "
-				"Active Project Folder, reference manual p. 205).",
+				"job.cancel stops it and removes the copies. Once they are done, the media and tracks are pointed at "
+				"them as one undo step (media.relink, track.relinkFreeze). The job's result lists the copies as "
+				"copied ({media or tracks, from, to}), files that couldn't be read as missing ({media or tracks, "
+				"path}; they keep their paths), and media and tracks whose path changed while the job ran as changed "
+				"and changedTracks (they keep the new path). The project must have been saved; save it again without "
+				"embedding media to keep "
+				"the new paths. media limits it to those media files, without freeze files, such as the ones "
+				"track.import added (Copy to Active Project Folder, reference manual p. 205).",
 				objectSchema({{"media", {{"type", "array"}, {"items", integerSchema}}}}),
 				objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
 			[this, &jobs](CommandContext& context)
@@ -5196,7 +5225,9 @@ namespace gnubase::engine
 				std::vector<MediaCopy> files;
 				for (const auto& [id, media] : m_project.media)
 					if (chosen(id) && !isInside(media.path, file.parent_path()))
-						files.push_back({id, media.path, {}});
+						files.push_back({id, media.path, {}, {}});
+				if (!parameters.contains("media"))
+					addFreezeCopies(m_project, file.parent_path(), false, files);
 				return Json{{"job",
 					startMediaCopy(jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file),
 						"Prepare archive", m_openedRevision)}};

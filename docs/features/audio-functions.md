@@ -6,11 +6,12 @@ Statistics.
 ## In the engine
 
 The measurements are in `src/engine/analysis` ([analysis.md](analysis.md)), the commands in
-`src/engine/document/audiofunctions.cpp`. The four analysis commands return a job immediately (version 2): the source
-media and range are copied on the command thread, and the job reads and measures the file in blocks. `job.progress`
-reports progress, `job.cancel` cancels between blocks, and `job.finished` and `job.get` contain the measurements in
-`job.result`. File errors fail the job. Positions are clip sample frames; `start` and `end` default to the whole clip.
-Read-only analysis results describe the captured source even if the document changes meanwhile.
+`src/engine/document/audiofunctions.cpp`. The analysis commands return a job immediately (version 2 for the original
+four commands, version 1 for `clip.estimatePitch`): the source media and range are copied on the command thread, and the
+job reads and measures the file in blocks. `job.progress` reports progress, `job.cancel` cancels between blocks, and
+`job.finished` and `job.get` contain the measurements in `job.result`. File errors fail the job. Positions are clip
+sample frames; `start` and `end` default to the whole clip. Read-only analysis results describe the captured source even
+if the document changes meanwhile.
 
 | Command | What it does | Reference |
 |---|---|---|
@@ -19,6 +20,7 @@ Read-only analysis results describe the captured source even if the document cha
 | `event.applySilenceSections` | Applies measured `sections`, one array per event, only at the given project `revision`; no file I/O | |
 | `clip.spectrum` | The average spectrum from `start` to `end`, per channel | pp. 607-608 |
 | `clip.statistics` | The statistics from `start` to `end`, per channel, and its loudness | p. 609 |
+| `clip.estimatePitch` | A monophonic fundamental in Hz per channel, or null without a reliable period | p. 609 |
 
 - **Detect Silence** (`analysis::SilenceDetector`). A section opens at the first frame where a sample of any channel
   reaches the open threshold and closes after the last frame that reaches the close threshold (at most the open one),
@@ -43,11 +45,21 @@ Read-only analysis results describe the captured source even if the document cha
   less between bins.
 - **Statistics** (`analysis::StatisticsMeter`): per channel the lowest and highest sample, the peak, the DC offset (the
   mean, also in percent), the bit depth (the fewest bits b for which every sample times 2^(b-1) is whole, 32 for
-  floating point beyond 24), the estimated pitch (the strongest frequency of the spectrum), the RMS of every sample
-  and the highest RMS of 50 ms windows 10 ms apart, both as AES17 has them (a full-scale sine is 0 dB). Loudness and
-  true peak come from the loudness meter ([metering.md](metering.md)), which the audio is fed through offline:
-  maximum momentary and short-term loudness, integrated loudness, loudness range and the true peak per channel, 4
-  times oversampled, of up to 8 channels; channels beyond have their sample peak as true peak.
+  floating point beyond 24), the estimated fundamental pitch, the RMS of every sample and the highest RMS of 50 ms
+  windows 10 ms apart, both as AES17 has them (a full-scale sine is 0 dB). Loudness and true peak come from the loudness
+  meter ([metering.md](metering.md)), which the audio is fed through offline: maximum momentary and short-term loudness,
+  integrated loudness, loudness range and the true peak per channel, 4 times oversampled, of up to 8 channels; channels
+  beyond have their sample peak as true peak. Loudness uses the default [channel format](channel-formats.md) for the
+  file's channel count: front speakers weigh 1, surrounds 1.41 and LFE 0. LFE still contributes to true peak and its
+  channel statistics. Unknown channel counts keep unit weights for the first eight channels; files do not yet report a
+  speaker mask.
+- **Pitch** (`analysis::PitchEstimator`, also used by Statistics): scans each channel in fixed memory, averaging samples
+  down to about 12 kHz and keeping the loudest 2048-sample window by its energy without DC. Cumulative mean normalized
+  squared differences identify the first periodic minimum; interpolation estimates its frequency, from 40 to 2000 Hz.
+  Louder overtones can therefore retain their fundamental. Silence, DC, nonperiodic audio and windows shorter than 50 ms
+  return null. This estimates a single note, not polyphonic transcription. The job reports `clip`, `frames` and
+  `channels`, each with its zero-based `channel` and nullable `pitch`; it supports the usual clip range and
+  cancellation.
 
 ## In the UI
 
@@ -69,7 +81,8 @@ selected events successively, showing each table as it finishes.
   event), #ds-apply-fades with #ds-fade-length (ms)
   #ds-analyze, #ds-auto (Auto: every change analyzes), #ds-cancel, #ds-process, #ds-message (why it failed)
 #spectrum-analyzer-dialog       spectrum-analyzer.rml
-  select#sa-channel             the channel shown
+  select#sa-channel             the channel shown, or All Channels (separate curves in theme palette colors)
+  slider#sa-zoom                horizontal zoom from 1 to 8; #sa-view scrolls the enlarged graph
   #sa-value                     channel, frequency, note and level under the mouse, and D, the difference to the
                                 reference; clip.spectrum's error for a clip whose file can't be read, as #ds-message
                                 and the Statistics tables show theirs
@@ -90,10 +103,9 @@ The themes color the sections, the graph and its bars (`tools/skin/generate.py`)
 
 ## Not yet
 
-The Detect Silence dialog's waveform with its threshold handles, preview playback with Mute Gaps, and the zoom; the
-Spectrum Analyzer's zoom slider and showing every channel at once; clips in the pool and the sample editor's selection
-range as what they analyze (the engine takes a clip and a range already); a pitch that is the fundamental of sounds
-whose overtone is louder, not their strongest frequency.
+Separate audio-function windows; the Detect Silence dialog's waveform with its threshold handles, preview playback with
+Mute Gaps, and zoom; clips in the pool and the sample editor's selection range as what they analyze (the engine takes a
+clip and a range already).
 
 ## Checks
 
@@ -102,12 +114,14 @@ whose overtone is louder, not their strongest frequency.
   regions, fades, one undo step, regions alone and its errors; the statistics of reference signals (a sine's levels, RMS
   and pitch, the true peak of a sine at a quarter of the sample rate, DC offset, 16 and 8 bit samples, the highest RMS,
   EBU Tech 3341 and 3342's loudness signals, silence and a range); the spectrum of sines in two channels and of silence;
-  all four jobs held at their first progress to check command responsiveness, cancellation, progress and completion;
+  all five jobs held at their first progress to check command responsiveness, cancellation, progress and completion;
   Strip Silence refusing results after an edit, undo, event removal or project replacement; missing files and invalid
-  measured sections.
+  measured sections; surround speaker weights and LFE loudness exclusion with true peak retained; fundamental pitch
+  beneath louder harmonics, independent stereo pitches, range selection, silence, DC, noise and short audio.
 - `tests/audiofunctions_ui_tests.cpp` drives the dialogs with `ui::Automation`: Analyze and its sections along the
   event, Add as Regions and Process for the first event, Auto, Linked and the open threshold for the second; Cancel, and
   Process All Selected Events with Apply Fades; the Statistics window's values; the Spectrum Analyzer's bars, the values
   under the mouse, the reference of a right click and D, a click dropping it, the error of a clip whose file can't be
   read, and the channel of a stereo clip that its selector chooses; all three dialogs remaining responsive during held
-  analysis jobs and cancelling pending analysis or processing when closed.
+  analysis jobs and cancelling pending analysis or processing when closed; All Channels with a reference across two
+  curves, and zoom preserving that reference.
