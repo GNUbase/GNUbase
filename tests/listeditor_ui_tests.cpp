@@ -980,3 +980,29 @@ TEST_CASE("Delete and Backspace delete the selected events, but not while a valu
 	REQUIRE(f.app.waitUntil([&] { return f.event("controllers", f.events[5]).is_null(); }));
 	CHECK(f.app.waitUntil([&] { return f.types().size() == 5; }));
 }
+
+TEST_CASE("Alt and a drag in the event display copy the selected events", "[ui]")
+{
+	Fixture f;
+	// The low note and the volume event, half a bar later, with all their values, in one undo step (p. 1255).
+	f.click(of(row("note", f.low) + " .list-type"));
+	f.click(of(row("controller", f.events[0]) + " .list-type"), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("controllerSelection").size() == 1; }));
+	const size_t before = f.steps();
+	const ui::Point grip = f.grip(f.low);
+	f.app.ui().drag(f.window, Fixture::point(grip.x, grip.y), Fixture::point(f.halfway(f.low), grip.y), {"alt"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.types().size() == 10; }));
+	CHECK(f.event("notes", f.low).at("position") == 0);
+	CHECK(f.event("controllers", f.events[0]).at("position") == 0);
+	const Json part = f.app.call("project.get").at("midiParts").at(0);
+	const Json note = part.at("notes").back();
+	CHECK(note.at("position") == 2 * g_quarter);
+	CHECK(note.at("pitch") == 60);
+	CHECK(std::abs(note.at("velocity").get<double>() - (64.0 / 127.0)) < 1e-4);
+	const Json volume = part.at("controllers").back();
+	CHECK(volume.at("position") == 2 * g_quarter);
+	CHECK(volume.at("number") == 7);
+	CHECK(std::abs(volume.at("value").get<double>() - controller(100)) < 1e-9);
+	CHECK(f.steps() == before + 1);
+}

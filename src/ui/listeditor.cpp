@@ -840,6 +840,16 @@ namespace gnubase::ui
 			m_binding.send("controller.remove", {{"part", row.part}, {"controllers", Json::array({row.id})}});
 	}
 
+	Json ListEditor::eventJson(const Row& row) const
+	{
+		for (const Json& part : m_project.at("midiParts"))
+			if (part.at("id") == row.part)
+				for (const Json& event : part.at(row.isNote() ? "notes" : "controllers"))
+					if (event.at("id") == row.id)
+						return event;
+		return Json::object();
+	}
+
 	void ListEditor::eraseSelected()
 	{
 		std::map<std::pair<uint64_t, std::string>, Json> changes;
@@ -1129,6 +1139,7 @@ namespace gnubase::ui
 		if (lane != nullptr && closest(target, "list-event", root) != nullptr)
 		{
 			m_gesture = Gesture::Move;
+			m_copy = event.GetParameter("alt_key", 0) != 0;
 			m_laneLeft = lane->GetAbsoluteOffset(Rml::BoxArea::Border).x;
 			m_laneWidth = std::max(lane->GetBox().GetSize(Rml::BoxArea::Border).x, 1.0F);
 			m_pressedAt = ticksAt(event, m_laneLeft, m_laneWidth);
@@ -1196,7 +1207,8 @@ namespace gnubase::ui
 		}
 		else if (gesture == Gesture::Move && m_pressed)
 		{
-			// Moves the selected events by as far as the pressed one went, snapped (p. 1255).
+			// Moves the selected events by as far as the pressed one went, snapped, or with Alt (Opt) held at the
+			// press copies them there, each with every field but its id (p. 1255).
 			const int64_t delta =
 				snap(static_cast<double>(m_pressed->start) + ticksAt(event, m_laneLeft, m_laneWidth) - m_pressedAt) -
 				m_pressed->start;
@@ -1209,10 +1221,20 @@ namespace gnubase::ui
 					continue;
 				if (row->start + delta < row->partStart)
 					return; // nothing moves before its part
-				changes[{row->part, row->isNote() ? "note.set" : "controller.set"}].push_back(
-					{{"id", row->id}, {"position", row->start + delta - row->partStart}});
+				const int64_t position = row->start + delta - row->partStart;
+				if (!m_copy)
+				{
+					changes[{row->part, row->isNote() ? "note.set" : "controller.set"}].push_back(
+						{{"id", row->id}, {"position", position}});
+					continue;
+				}
+				Json copied = eventJson(*row);
+				copied.erase("id");
+				copied.erase("origin");
+				copied["position"] = position;
+				changes[{row->part, row->isNote() ? "note.add" : "controller.add"}].push_back(std::move(copied));
 			}
-			edit("Move", std::move(changes));
+			edit(m_copy ? "Copy" : "Move", std::move(changes));
 		}
 	}
 }
