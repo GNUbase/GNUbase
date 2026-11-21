@@ -141,8 +141,8 @@
 	margin: 1dp;
 }
 
-/* A send's destination takes what its row leaves. */
-.mixer-sends select
+/* A send's destination, a cut's slope and an EQ band's type take what their row leaves. */
+.mixer-section select
 {
 	flex: 1;
 	min-width: 0;

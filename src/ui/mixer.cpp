@@ -239,6 +239,8 @@ namespace gnubase::ui
 			};
 			const auto row = [](const std::string& controls)
 			{ return R"(<div class="mixer-row">)" + controls + "</div>"; };
+			const auto choice = [](const std::string& param, const char* title)
+			{ return R"(<select param=")" + param + R"(" title=")" + title + R"("/>)"; };
 			const auto section = [audio, shown](const char* id, const char* label, const std::string& controls)
 			{
 				return std::string(R"(<div class="mixer-section mixer-)") + id + R"(" section=")" + id +
@@ -254,7 +256,8 @@ namespace gnubase::ui
 				eq += row(toggle(path + "on", "EQ Band on/off", std::to_string(band)) +
 					knob(path + "gain", "Gain", -24.0, 24.0, 0.0) +
 					frequency(path + "frequency", "Frequency", 20.0, frequencies[static_cast<size_t>(band - 1)]) +
-					knob(path + "q", "Q-Factor", 0.1, 12.0, 1.0));
+					knob(path + "q", "Q-Factor", 0.1, 12.0, 1.0) +
+					(band == 1 || band == 4 ? choice(path + "type", "EQ Type") : std::string()));
 			}
 			std::string sends;
 			for (int send = 1; send <= g_sends; ++send)
@@ -269,8 +272,10 @@ namespace gnubase::ui
 			return section("pre", "Pre",
 					   knob("pre.gain", "Pre-Gain", -24.0, 24.0, 0.0) + toggle("pre.phase", "Phase", "Ø") +
 						   row(toggle("pre.lowCut.on", "Low-Cut Filter", "LC") +
+							   choice("pre.lowCut.slope", "Low-Cut Slope") +
 							   frequency("pre.lowCut.frequency", "Low-Cut Frequency", 20.0, 20.0)) +
 						   row(toggle("pre.highCut.on", "High-Cut Filter", "HC") +
+							   choice("pre.highCut.slope", "High-Cut Slope") +
 							   frequency("pre.highCut.frequency", "High-Cut Frequency", 50.0, 20000.0))) +
 				section("eq", "Equalizer", eq) +
 				section("strip", "Strip",
@@ -284,6 +289,17 @@ namespace gnubase::ui
 						row(toggle("strip.limiter.on", "Limiter", "Limit") +
 							knob("strip.limiter.threshold", "Threshold", -30.0, 0.0, 0.0))) +
 				section("sends", "Sends", sends);
+		}
+
+		// The choices of a section's drop-down list (reference manual pp. 475-478): a cut filter's slope, or the type
+		// of EQ band 1 or 4.
+		widgets::Options sectionChoices(const std::string& param)
+		{
+			if (endsWith(param, ".slope"))
+				return {{"6", "6 dB"}, {"12", "12 dB"}, {"24", "24 dB"}, {"36", "36 dB"}, {"48", "48 dB"}};
+			if (param == "eq.bands.1.type")
+				return {{"bell", "Parametric"}, {"lowShelf", "Low Shelf"}, {"lowCut", "Low Cut"}};
+			return {{"bell", "Parametric"}, {"highShelf", "High Shelf"}, {"highCut", "High Cut"}};
 		}
 
 		// Where a channel's sends can go: no destination, or the group and effect channels other than its own; and with
@@ -920,7 +936,13 @@ namespace gnubase::ui
 			if (control->HasAttribute("value") && m_binding.sending(stepKey(m_stepOwner, channel.id, param)))
 				continue; // the control is ahead of the engine
 			const Json value = paramValue(json, param);
-			if (control->GetTagName() == "select")
+			if (control->GetTagName() == "select" && param.rfind("sends.", 0) != 0)
+			{
+				if (!value.is_null())
+					widgets::fill(*control, sectionChoices(param),
+						value.is_string() ? value.get<std::string>() : std::to_string(value.get<int>()));
+			}
+			else if (control->GetTagName() == "select")
 			{
 				if (value.is_number())
 					widgets::fill(*control,
@@ -1170,10 +1192,12 @@ namespace gnubase::ui
 					}
 					if (given->GetType() == Rml::Variant::BOOL || target->GetTagName() == "select")
 					{
-						// A toggle, or a send's destination, a channel id.
+						// A toggle, an EQ band's type, or a send's destination, a channel id, or a cut's slope.
+						const std::string text = given->Get<Rml::String>("0");
 						Json parameters = paramChange(param,
 							given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>())
-																   : Json(std::stoull(given->Get<Rml::String>("0"))));
+								: endsWith(param, ".type")         ? Json(text)
+																   : Json(std::stoull(text)));
 						parameters["channel"] = channel->id;
 						m_binding.send("channel.set", std::move(parameters));
 						break;

@@ -600,6 +600,21 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	app.ui().wheel(window, {control("eq.bands.3.gain"), 0, std::nullopt}, 0.0F, -5.0F);
 	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("eq").at("bands")[2].at("gain") > 0.0; }));
 
+	// The cut filters' slopes and the types of EQ bands 1 and 4 are drop-down lists (reference manual pp. 475-478):
+	// each goes to its next choice, the bands from their shelves to their cuts.
+	for (const char* param : {"pre.lowCut.slope", "pre.highCut.slope", "eq.bands.1.type", "eq.bands.4.type"})
+	{
+		click(app, window, control(param));
+		app.ui().key(window, "Down");
+		click(app, window, control(param));
+	}
+	REQUIRE(app.waitUntil(
+		[&] { return channelJson(app, guitar.channel).at("eq").at("bands")[3].at("type") == "highCut"; }));
+	const Json picked = channelJson(app, guitar.channel);
+	CHECK(picked.at("pre").at("lowCut").at("slope") == 24);
+	CHECK(picked.at("pre").at("highCut").at("slope") == 24);
+	CHECK(picked.at("eq").at("bands")[0].at("type") == "lowCut");
+
 	// And they show what the engine has, whoever changed it.
 	app.call("channel.set",
 		{{"channel", guitar.channel}, {"pre", {{"gain", 6.5}, {"phase", false}}},
@@ -607,6 +622,12 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	REQUIRE(
 		app.waitUntil([&] { return element(app, window, control("pre.gain")).at("attributes").at("value") == "6.5"; }));
 	CHECK(element(app, window, control("eq.bands.1.frequency")).at("attributes").at("value") == "250");
+	app.call("channel.set",
+		{{"channel", guitar.channel}, {"pre", {{"lowCut", {{"slope", 48}}}}},
+			{"eq", {{"bands", {{{"band", 1}, {"type", "bell"}}}}}}});
+	REQUIRE(app.waitUntil(
+		[&] { return element(app, window, control("pre.lowCut.slope")).at("attributes").at("value") == "48"; }));
+	CHECK(element(app, window, control("eq.bands.1.type")).at("attributes").at("value") == "bell");
 	CHECK(!has(element(app, window, control("pre.phase")), "checked"));
 }
 
