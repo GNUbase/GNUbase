@@ -1369,8 +1369,14 @@ namespace
 	{
 		constexpr uint32_t latency = 20000;
 		TestClient card(library, "gnubase-test-hardware", true, false, latency);
-		card.setLatency(latency); // in place before the device opens
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		{
+			// jackd asks the card for its latency once a client activates.
+			const std::unique_ptr<Device> device = backend.open(config("default"));
+			ContractCallback callback(device->format());
+			device->start(callback);
+			REQUIRE(waitUntil([&device] { return device->latency().output == latency; }));
+			device->stop();
+		}
 		const uint32_t found = card.bufferSize();
 		const uint32_t own = found != 512 ? 512 : 1024;
 		{
