@@ -72,8 +72,8 @@ the Abs button's absolute instead of relative changes (p. 460): without it the e
 levels' changes should go on by as much as they moved, as the fader and the pan do, but they go on as the values given;
 Add VCA Track to Selected Tracks and the project's VCA folder (pp. 154, 517); the VCA fader's meter of its channels'
 levels (p. 516); Combine Automation of VCA and Linked Channels, and the channels' automation tracks showing the combined
-curve (pp. 516, 519); VCA mute automation; the display line menu's Edit Link Group Settings and a double click with a modifier key, which open
-that dialog (p. 459).
+curve (pp. 516, 519); VCA mute automation; the display line menu's Edit Link Group Settings and a double click with a
+modifier key, which open that dialog (p. 459).
 
 ## Checks
 
@@ -86,7 +86,8 @@ that dialog (p. 459).
   reference manual's nested example (-3, -10 and +4 dB play at -9 dB), a VCA ramp over a static channel fader exactly,
   and a VCA ramp over the channel's own ramp within 0.001.
 - `tests/mixerwindow_tests.cpp`: a VCA strip's fader and buttons, its group drop-down list and the display line;
-  the display line's menu moving a channel into another group, out of its group and into one again, Linked Channels
-  and Unlink Selected Channels, renaming a group by a double click, and no display line without a group.
+  the display line's menu moving a channel into another group, out of its group and into one again, its own group
+  checked and picking it again sending nothing, Linked Channels and Unlink Selected Channels, renaming a group by a
+  double click, and no display line without a group.
 - `tests/dawproject_tests.cpp`: VCA fader loops in a file are left out, and another application's VCA channel loses its
   pan, sends and destination.

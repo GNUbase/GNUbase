@@ -1128,7 +1128,7 @@ namespace gnubase::ui
 		for (const Json& each : m_project.value("linkGroups", Json::array()))
 			if (++number; each.at("vca") != channel) // a VCA fader can't be in the group it controls
 				rml += item(each.at("id").dump(), std::to_string(number) + " " + each.at("name").get<std::string>(),
-					&each == group);
+					group != nullptr && each.at("id") == group->at("id"));
 		rml += "</menu></menuitem>";
 		if (group != nullptr)
 		{
@@ -1160,7 +1160,7 @@ namespace gnubase::ui
 			return;
 		}
 		for (const Json& each : m_project.value("linkGroups", Json::array()))
-			if (each.at("id").dump() == item && &each != group)
+			if (each.at("id").dump() == item && (group == nullptr || each.at("id") != group->at("id")))
 			{
 				std::vector<uint64_t> channels = each.at("channels").get<std::vector<uint64_t>>();
 				channels.push_back(m_linkChannel);
@@ -1281,12 +1281,12 @@ namespace gnubase::ui
 			{
 				link(attribute(*target, "link"));
 			}
-			else if (attribute(*target, "function") == "copy")
+			else if (attribute(*target, "function") == "copy" && !target->HasAttribute("disabled"))
 			{
 				if (const MixerChannel* channel = channelOf(m_stripOf.empty() ? nullptr : m_stripOf.begin()->second))
 					m_binding.send("channel.copySettings", {{"channel", channel->id}});
 			}
-			else if (attribute(*target, "function") == "paste")
+			else if (attribute(*target, "function") == "paste" && !target->HasAttribute("disabled"))
 			{
 				if (const MixerChannel* channel = channelOf(m_stripOf.empty() ? nullptr : m_stripOf.begin()->second))
 					m_binding.send("channel.pasteSettings", {{"channels", {channel->id}}});

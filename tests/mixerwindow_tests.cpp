@@ -1044,6 +1044,26 @@ TEST_CASE("the display line's menu moves a channel between link groups, unlinks 
 	REQUIRE(app.waitUntil([&] { return groups().at(1).at("channels") == Json::array({keys.channel, bass.channel}); }));
 	CHECK(groups().at(0).at("channels") == Json::array({guitar.channel}));
 	REQUIRE(app.waitUntil([&] { return lineText(bass) == "2 Solo"; }));
+	// The submenu checks the channel's own group (p. 459), and picking that group again sends nothing.
+	const auto sets = [&]
+	{
+		const Json commands = app.call("engine.commandLog").at("commands");
+		return std::count_if(commands.begin(), commands.end(),
+			[](const Json& command) { return command.at("command") == "linkGroup.set"; });
+	};
+	const auto checked = [&](const std::string& link)
+	{
+		return element(app, window, "#mixer-link-menu menuitem[link=\"" + link + "\"]")
+			.value("attributes", Json::object())
+			.contains("checked");
+	};
+	openMenu(bass, 1);
+	CHECK(checked(std::to_string(solo)));
+	CHECK(!checked("0"));
+	const auto before = sets();
+	click(app, window, "#mixer-link-menu menuitem[link=\"" + std::to_string(solo) + "\"]");
+	REQUIRE(app.appUi().binding().settle(std::chrono::seconds(5)));
+	CHECK(sets() == before);
 	// None takes it out of its group (p. 461), which goes with its last channel.
 	openMenu(guitar, 1);
 	click(app, window, "#mixer-link-menu menuitem[link=\"0\"]");

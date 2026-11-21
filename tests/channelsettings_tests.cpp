@@ -4,6 +4,7 @@
 // drive it.
 #include "engine/engine.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
 #include "uiapp.h"
 
 #include <catch2/catch_approx.hpp>
@@ -518,6 +519,12 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&] { return !disabled(); }));
 	shows(vca);
 	REQUIRE(app.waitUntil(disabled));
+	// A click on a disabled item sends nothing.
+	function(app, app.appUi().channelSettingsWindow(), "copy");
+	REQUIRE(app.appUi().binding().settle(std::chrono::seconds(5)));
+	const Json commands = app.call("engine.commandLog").at("commands");
+	CHECK(std::none_of(commands.begin(), commands.end(),
+		[](const Json& command) { return command.at("command") == "channel.copySettings"; }));
 }
 
 TEST_CASE("the inspector's Edit Channel Settings opens the channel settings window for its track", "[ui]")
