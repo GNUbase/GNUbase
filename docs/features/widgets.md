@@ -103,8 +103,9 @@ attributes, through a data model or directly.
   `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
   Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has the attribute,
   as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens
-  inside the window, moved left or up where it would stick out. Put menus straight into the body, so that no container
-  clips them.
+  inside the window, moved left or up where it would stick out. Code opens one at a point with `ui::openMenu`
+  (`src/ui/widgets.h`), as the Alt-click that opens the Choose Track Color pane does ([colors.md](colors.md)). Put
+  menus straight into the body, so that no container clips them.
 - An open menu whose items come or go moves inside the window again (#1580, #1665). Until the next press, release or
   key, it is placed from where it opened, as if the items had been there then: those that the opening click fills in,
   as the Articulations lane's context menu and the list editor's pop-up menus do, so that a menu that shrinks goes back

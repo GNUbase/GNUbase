@@ -1245,11 +1245,15 @@ namespace gnubase::ui
 				Rml::Element& slot = *target->GetParentNode()->GetParentNode();
 				slot.SetClass("open", !slot.IsClassSet("open"));
 			}
-			// A section's header opens and closes it.
+			// A section's header opens and closes it; an Alt-click on the Basics header opens the Choose Track Color
+			// pane instead (ui::ColorMenu, reference manual p. 113).
 			for (const Rml::Element* up = target; up != nullptr && up != m_root.get(); up = up->GetParentNode())
 				if (up->IsClassSet("section-header") && up->GetParentNode() != nullptr)
 				{
 					Rml::Element& section = *up->GetParentNode();
+					if (event.GetParameter<int>("alt_key", 0) != 0 &&
+						section.GetAttribute<Rml::String>("section", "") == "basics")
+						break;
 					section.SetClass("collapsed", !section.IsClassSet("collapsed"));
 					break;
 				}

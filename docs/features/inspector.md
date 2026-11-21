@@ -123,7 +123,8 @@ one it has the class `empty` and says "No Track Selected".
 ```
 
 - **Sections** (pp. 79, 168–170). Each section has a `.section-header`; a click on it closes or opens the section
-  (`.collapsed`, view state). What a track doesn't have gets the class `unavailable` and doesn't show: the sections of
+  (`.collapsed`, view state), except an Alt-click on the Basics header, which opens the Choose Track Color pane
+  ([colors.md](colors.md)). What a track doesn't have gets the class `unavailable` and doesn't show: the sections of
   tracks without a channel (marker and ruler tracks, folders without a group channel), record, monitor and input on
   tracks other than audio tracks, inserts, volume and pan on MIDI tracks, which have no audio.
 - **Basics** (pp. 170–182): the channel's switches, fader and panner, sent with `channel.set` (`mute`, `solo`,

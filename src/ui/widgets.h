@@ -7,6 +7,7 @@
 
 namespace Rml
 {
+	class Element;
 	class ElementDocument;
 }
 
@@ -22,6 +23,10 @@ namespace gnubase::ui
 	// then the document closes. Returns false, and does nothing, if the document has no <dialog> or it is closing
 	// already, so that a dialog never closes twice, e.g. when the app cancels it while the user's Escape closes it.
 	bool closeDialog(Rml::ElementDocument& document, const std::string& result);
+
+	// Opens the <menu> at a point in its window's pixels, as a right click opens a context menu there, e.g. for a menu
+	// that a click with a modifier key opens. Returns false, and does nothing, if the element isn't a <menu>.
+	bool openMenu(Rml::Element& menu, Rml::Vector2f at);
 
 	// The event a <listview> sends when the user expands or collapses a tree row, with the parameters "value" (the
 	// row's value) and "expanded".
