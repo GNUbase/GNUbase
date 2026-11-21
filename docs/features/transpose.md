@@ -112,7 +112,8 @@ holds, are #1735.
   transpose differently, in its notification `#edit-refused` (#1367, [event-display.md](event-display.md)).
 - **The pool's Key column** (`select[field=rootKey]` in each clip's row, [pool.md](pool.md)) shows and sets the root
   key of the clip's audio events (`clip.set` `rootKey`): empty when they differ, where "-" clears them, and disabled
-  for a clip that no audio event plays (#1644). Each list holds only the key it shows until it gets the focus.
+  for a clip that no audio event plays (#1644). Each list holds only the key it shows until it gets the focus. As in
+  the reference, the column shows once Root Key in the pool's View/Attributes menu turns it on (p. 417, #1735).
 - **The track list's context menu** has Set Root Key for Unassigned Events (`transpose.assignRootKey`, p. 416),
   enabled while the transpose track is selected, as a right click on it selects it.
 
@@ -148,11 +149,11 @@ Root Key and Global Transpose, empty when they differ (the button's title too), 
 Independent; a MIDI part and an audio event in different keys selected together keeping their keys, also when the
 key shown changes and after its undo.
 `tests/poolpanel_tests.cpp`: the pool's Key column, its options filled once it is used, differing keys cleared with
-"-", and disabled for a clip without audio events.
+"-", and disabled for a clip without audio events; View/Attributes' Root Key showing it.
 
 ## Not yet
 
 Ready-made events tagged as drums or effects set to Independent (p. 421), which waits for media files to have tags (the
-media browser, #196), and the pool's View/Attributes menu that switches the Key column on (p. 417): both #1735; live
+media browser, #196, then #1735); live
 MIDI input through the transpose track; Indicate Transpositions in the key editor; the transpose track's controls in the
 track controls dialog; selecting several transpose events and the Delete key.

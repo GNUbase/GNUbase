@@ -264,6 +264,8 @@ TEST_CASE("the pool panel's Key column shows and sets the root key of a clip's a
 				return each.at("rootKey").get<std::string>();
 		return std::string("no event");
 	};
+	// The View/Attributes menu's Root Key switches the column on (see the test below).
+	app.call("settings.set", {{"key", "ui.poolColumns"}, {"value", {{"key", true}}}});
 	openPool(app, 2);
 	// The Key column (reference manual p. 417): no key yet; the next one after none is C.
 	const std::string key = "#pool listitem select[field=rootKey]";
@@ -294,6 +296,55 @@ TEST_CASE("the pool panel's Key column shows and sets the root key of a clip's a
 	app.call("audioEvent.remove", {{"event", event}});
 	app.call("audioEvent.remove", {{"event", second}});
 	REQUIRE(app.waitUntil([&] { return elements(app, key).at(0).at("attributes").contains("disabled"); }));
+}
+
+TEST_CASE("the pool panel's View/Attributes menu switches its columns, the Key column off at first", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	addClip(app, writeAudio(dir.path() / "loop.wav", 4800));
+	openPool(app, 2);
+	const auto visible = [&app](const std::string& selector)
+	{
+		const Json found = elements(app, selector);
+		return !found.empty() && found.at(0).at("visible") == true;
+	};
+	const auto checked = [&app](const std::string& column)
+	{ return has(elements(app, "#pool-attributes-menu menuitem[pool-column=" + column + "]").at(0), "checked"); };
+	const auto setting = [&app] { return app.call("settings.get", {{"key", "ui.poolColumns"}}).at("value"); };
+
+	// As in the reference (manual p. 417), the Key column shows once the menu's Root Key turns it on.
+	CHECK(!visible(".pool-header span.key"));
+	CHECK(!visible("#pool listitem span.key"));
+	CHECK(visible(".pool-header span.used"));
+	CHECK(visible("#pool listitem span.path"));
+	CHECK(!checked("key"));
+	CHECK(checked("used"));
+	click(app, "#pool-attributes");
+	REQUIRE(visible("#pool-attributes-menu"));
+	click(app, "#pool-attributes-menu menuitem[pool-column=key]");
+	REQUIRE(app.waitUntil([&] { return setting().value("key", false); }));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(visible(".pool-header span.key"));
+	CHECK(visible("#pool listitem select[field=rootKey]"));
+	CHECK(checked("key"));
+
+	// The other columns go the same way, and the setting's changes from another client show at once.
+	click(app, "#pool-attributes");
+	click(app, "#pool-attributes-menu menuitem[pool-column=path]");
+	REQUIRE(app.waitUntil([&] { return !setting().value("path", true); }));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(!visible(".pool-header span.path"));
+	CHECK(!visible("#pool listitem span.path"));
+	CHECK(visible(".pool-header span.key"));
+	app.call("settings.set", {{"key", "ui.poolColumns"}, {"value", {{"used", false}}}});
+	REQUIRE(app.waitUntil([&] { return !visible(".pool-header span.used"); }));
+	CHECK(!checked("used"));
+	CHECK(!visible(".pool-header span.key")); // left out: its default
+	CHECK(!checked("key"));
+	CHECK(visible(".pool-header span.path"));
+	CHECK(checked("path"));
 }
 
 TEST_CASE("the pool panel's Import puts files into the pool through the Import Options dialog", "[ui]")
