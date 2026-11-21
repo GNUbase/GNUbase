@@ -1369,10 +1369,11 @@ namespace gnubase::ui
 			}
 			// A section's header opens and closes it.
 			for (const Rml::Element* up = target; up != nullptr && up != m_root.get(); up = up->GetParentNode())
-				if (up->IsClassSet("section-header") && up->GetParentNode() != nullptr)
+				if (up->IsClassSet("section-header"))
 				{
-					Rml::Element& section = *up->GetParentNode();
-					section.SetClass("collapsed", !section.IsClassSet("collapsed"));
+					// The closest section, as a header can sit in a title row (the Arranger Track section's).
+					if (Rml::Element* section = up->Closest(".inspector-section"); section != nullptr)
+						section->SetClass("collapsed", !section->IsClassSet("collapsed"));
 					break;
 				}
 			break;

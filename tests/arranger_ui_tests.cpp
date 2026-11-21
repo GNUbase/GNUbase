@@ -461,6 +461,12 @@ TEST_CASE(
 	CHECK(window.app.waitUntil(open));
 	CHECK_FALSE(window.hasClass(".inspector [section=arranger]", "collapsed"));
 	appUi.toggleArranger();
+	// The header itself closes and opens the section.
+	click(".inspector [section=arranger] button.section-header");
+	CHECK(window.hasClass(".inspector [section=arranger]", "collapsed"));
+	CHECK_FALSE(window.hasClass(".inspector [section=arranger] .inspector-section-title", "collapsed"));
+	click(".inspector [section=arranger] button.section-header");
+	CHECK_FALSE(window.hasClass(".inspector [section=arranger]", "collapsed"));
 }
 
 TEST_CASE(
@@ -533,6 +539,18 @@ TEST_CASE(
 		std::nullopt, {steps + "[step=\"1\"] .name", 0, std::nullopt}, ui::MouseButton::Left, 2, {"alt"});
 	window.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(window.app.waitUntil([&] { return window.hasClass(steps + "[step=\"1\"] .name", "editing"); }));
+	// A refresh that changes nothing the lists show doesn't build them again, so the name being typed stays.
+	window.app.call("arranger.setMode", {{"jumpMode", "1bar"}});
+	window.app.call("transport.locate", {{"position", g_quarter}});
+	CHECK(window.app.waitUntil(
+		[&]
+		{
+			return window.element(".inspector select[control=arrangerJumpMode]").value("value", std::string()) ==
+				"1bar";
+		}));
+	for (int i = 0; i < 5; ++i)
+		window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.hasClass(steps + "[step=\"1\"] .name", "editing"));
 	window.app.ui().key(std::nullopt, "Mod+A");
 	window.app.ui().text(std::nullopt, "Intro");
 	window.app.ui().key(std::nullopt, "Enter");

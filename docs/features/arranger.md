@@ -160,8 +160,9 @@ as wide as the event, an empty name keeping the old one, and the erase tool remo
 engine refused a draw within one bar; the track list's arranger controls switching arranger mode and the active chain
 and showing the event and repeat playing; Open Arranger Editor in the track list and on the inspector's section
 opening the editor and leaving it open; the inspector's section listing the steps and events, its arrows disabled
-outside arranger mode, playing a step and triggering an event with their rows `.current`, Jump Mode both ways, and
-renaming a step's event with Alt and a double click, not with a plain one.
+outside arranger mode, playing a step and triggering an event with their rows `.current`, Jump Mode both ways, its
+header closing and opening it, and renaming a step's event with Alt and a double click, not with a plain one, across a
+refresh that changes nothing the lists show.
 
 Both real-time comparisons in `tests/arranger_tests.cpp` retry runs that report playback dropouts, with at most five
 attempts and a fresh song and audio file per attempt. Each retry emits a warning. The chain-edit comparison makes its
@@ -171,6 +172,6 @@ because a busy machine held up the test, is retried like one with dropouts. It c
 made in time and without dropouts; exhausting the attempts fails the test (#1893, #1900).
 
 Not yet: resizing arranger events by their edges and selecting them, renaming them on the info line, editing repeats
-and modes in the inspector's chain list, drag and drop in the chain lists, the other flatten options (Checked and All
-Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, key commands for triggering events,
-and arranging to an external timecode.
+and modes and removing steps in the inspector's chain list, drag and drop in the chain lists, the other flatten options
+(Checked and All Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, key commands for
+triggering events, and arranging to an external timecode.
