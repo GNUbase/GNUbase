@@ -117,6 +117,9 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Left, Right | `edit.selectPrevious`, `edit.selectNext` | Navigate Left, Right |
 | Up, Down | `track.selectPrevious`, `track.selectNext`, and the first event on the track while an event is selected, unless `ui.upDownSelectsTracksOnly` ([track-list.md](track-list.md)) | Navigate Up, Down |
 | Alt+F2 | `track.rename` | Rename Track |
+| Mod+E, Return | `editor.openClose` | Open/Close Editor ([midi-editors.md](midi-editors.md)) |
+| Mod+G | `editor.openList` | Open List Editor ([list-editor.md](list-editor.md)) |
+| Mod+Shift+I | `editor.editInPlace` | Edit In-Place ([in-place-editor.md](in-place-editor.md)) |
 | Mod+X, Mod+C, Mod+V | `edit.cut`, `edit.copy`, `edit.paste` | Cut, Copy, Paste ([range-editing.md](range-editing.md)) |
 | Mod+Shift+X, Shift+Backspace, Mod+Shift+V | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Cut Time, Delete Time, Paste Time |
 | Mod+Shift+E | `edit.insertSilence` | Insert Silence |

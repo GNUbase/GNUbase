@@ -966,6 +966,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".editor-visibility-check", {"decorator": skin("checkbox-off")}),
         (".editor-visibility-check.checked", {"decorator": skin("checkbox-on")}),
         (".editor-visibility-check.partial", {"decorator": skin("checkbox-mixed")}),
+        # Tracks that can't show in the editor, hidden in the project window or holding locked events, dimmed
+        (".editor-visibility-track.unavailable", {"color": c["textMuted"]}),
         # The key editor (docs/features/key-editor.md): the keyboard's white and black keys, the keys of selected
         # notes lit, the grid's rows of black keys darker, the notes, selected ones in the second accent, those
         # outside the part editing mode dimmed, the note being drawn with its velocity, and the step input cursor

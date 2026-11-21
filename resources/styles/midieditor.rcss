@@ -75,6 +75,24 @@
 	overflow: hidden;
 }
 
+/* Every row has the tree views' .tree-toggle and .tree-indent parts (ui/viewwidgets.cpp, styled in base.rcss), so the
+   rows line up; the triangle shows on folders, pointing right while the folder is collapsed, and the indent is sized
+   from the row's level by code. The rows inside a collapsed folder are .hidden. */
+.editor-visibility-track.hidden
+{
+	display: none;
+}
+
+.editor-visibility-track.parent > .tree-toggle
+{
+	visibility: visible;
+}
+
+.editor-visibility-track.expanded > .tree-toggle
+{
+	transform: none;
+}
+
 .editor-global-toggle
 {
 	display: block;

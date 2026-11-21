@@ -938,6 +938,10 @@
 	{
 		decorator: svg(checkbox-mixed.svg);
 	}
+	.editor-visibility-track.unavailable
+	{
+		color: #566273;
+	}
 	.key-editor-key
 	{
 		background-color: #f0f3f6;
