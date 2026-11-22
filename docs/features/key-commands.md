@@ -124,6 +124,7 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Mod+Shift+X, Shift+Backspace, Mod+Shift+V | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Cut Time, Delete Time, Paste Time |
 | Mod+Shift+E | `edit.insertSilence` | Insert Silence |
 | Shift+X | `edit.splitRange` | Split (range) |
+| X | `audio.crossfade` | Crossfade ([fades.md](fades.md)) |
 | J | `edit.snap` | Snap On/Off ([snap.md](snap.md)) |
 | 1 to 9 | `tool.objectSelection`, `tool.rangeSelection`, `tool.split`, `tool.glue`, `tool.erase`, `tool.zoom`, `tool.mute`, `tool.draw`, `tool.play` | Object Selection Tool to Play Tool ([tools.md](tools.md)) |
 | F9, F10 | `tool.previous`, `tool.next` | Select Previous/Next Tool |

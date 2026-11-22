@@ -462,7 +462,7 @@ namespace gnubase::ui
 			Click,         // splits, glues or erases where it is released, unless it moved
 			FadeIn,        // the fade in handle of the pressed audio event
 			FadeOut,       // its fade out handle
-			Volume,        // its event volume handle
+			Volume,        // its event volume control
 			VolumePoint,   // a point of its volume curve, with the draw tool
 			Automation,    // on an automation track (automationtracks.cpp)
 			TimeWarp,      // the time warp tool's, on release (eventtimewarp.cpp)
@@ -752,8 +752,9 @@ namespace gnubase::ui
 		// to g_volumeLineTop at its top; volumeFraction is how far up the event's lane y dp in the event lanes is.
 		void addVolumeActions();
 		double volumeFraction(const Shown& shown, double y) const;
-		// The event volume handle at the top middle of the pressed audio event: dragging it gives every selected
-		// audio event the volume in dB that draggedVolume says.
+		// The event volume control at the bottom left of a selected audio event, at faderOf seconds on events wide
+		// enough for one: dragging it gives every selected audio event the volume in dB that draggedVolume says.
+		std::optional<double> faderOf(const Shown& shown) const;
 		bool volumeDown(const Shown& shown, double x, double y);
 		void volumeUp();
 		double draggedVolume(uint64_t event) const;
@@ -763,7 +764,7 @@ namespace gnubase::ui
 		std::vector<engine::VolumePoint> draggedCurve(uint64_t event) const;
 		std::optional<size_t> curvePointAt(const Shown& shown, double x, double y) const;
 		bool eraseCurvePoint(const Shown& shown, double x, double y);     // the erase tool, on a point
-		void showVolume(FadeLines::Lane& lane, const Shown& shown) const; // its line and volume handle
+		void showVolume(FadeLines::Lane& lane, const Shown& shown) const; // its line and volume control
 
 		// The time warp tool, Process Tempo, Process Bars, Set Definition from Tempo and copying warp markers
 		// (eventtimewarp.cpp, #159).

@@ -929,7 +929,7 @@ namespace gnubase::ui
 		const bool clickModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent");
 		const bool toolModifier = clickModifier || copyKeys(m_pressed) || copyKeys(withoutCtrl(m_pressed)) ||
 			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
-		// A fade handle (reference manual p. 383), or the event volume handle (p. 401).
+		// A fade handle (reference manual p. 383), or the event volume control (p. 401).
 		if (!add && !toolModifier && (fadeDown(*shown, x, y) || volumeDown(*shown, x, y)))
 			return;
 		if (add && !toolModifier)

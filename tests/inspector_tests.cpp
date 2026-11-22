@@ -206,6 +206,36 @@ TEST_CASE("the info line shows the first selected part, and its edits change eve
 	CHECK(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "empty"); }));
 }
 
+TEST_CASE("the info line renames audio parts, with the MIDI parts selected with them", "[ui]")
+{
+	Window window;
+	const test::TempDir dir;
+	test::Audio audio;
+	audio.samples.assign(48000, 0.0F);
+	const auto file = dir.path() / "silence.wav";
+	test::writeWav(file, audio);
+	const uint64_t track = window.addTrack({{"type", "audio"}, {"channels", 1}});
+	const auto media = window.call("media.add", {{"path", file.u8string()}}).at("media").at("id");
+	const auto clip = window.call("clip.add", {{"media", media}}).at("clip").at("id");
+	const auto event =
+		window.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}, {"length", 24000}})
+			.at("event")
+			.at("id");
+	const auto part = window.call("event.toPart", {{"events", {event}}}).at("events")[0].get<uint64_t>();
+	const uint64_t midi = window.addPart(window.addTrack({{"type", "midi"}}), 0, 4 * g_quarter, "Keys");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioParts").size() == 1; }));
+
+	window.display.select({part, midi});
+	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, "#info-line", "empty"); }));
+	window.type("#info-line textdisplay[field=name]", "Verse");
+	REQUIRE(window.app.waitUntil([&] { return window.find("audioParts", part).at("name") == "Verse"; }));
+	CHECK(window.part(midi).at("name") == "Verse");
+	// One undo step for both.
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return window.part(midi).at("name") == "Keys"; }));
+	CHECK(window.find("audioParts", part).at("name") != "Verse");
+}
+
 TEST_CASE("the info line shows the note an in-place editor has selected, and edits it", "[ui]")
 {
 	// Reference manual p. 1259: the same information the key editor's info line shows, and its value editing

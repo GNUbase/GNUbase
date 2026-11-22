@@ -33,7 +33,7 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   The edit goes to every selected event or part, relative to its own value: a new start moves them all by as much
   as the first one moves, a new end or length resizes them all by as much (`event.move`, `event.resize` at the end).
   With Ctrl (Cmd) held when Enter takes the value, every one gets the value typed: the same start, end, length or
-  volume, also when it is the first one's own value. Names go to every selected part (`midiPart.set`), the volume to every selected audio event
+  volume, also when it is the first one's own value. Names go to every selected part, audio and MIDI alike (`event.set`), the volume to every selected audio event
   (`audioEvent.set`, -144 to 6 dB), mute and lock to all (`event.set`). Each edit is one `history.transaction`, so one
   undo restores every event; a drag, wheel turns or a held arrow key on the volume are one undo step too
   ([edit-history.md](edit-history.md), gestures).

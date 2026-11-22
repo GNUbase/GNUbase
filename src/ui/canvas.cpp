@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -950,15 +951,18 @@ namespace gnubase::ui
 							static_cast<float>(at + (handleSize / 2.0)), handle);
 					}
 				}
+			// Fade handles at the top of the lane, event volume controls at its bottom.
 			if (handle.alpha != 0)
-				for (const double at : lane.handles)
-					if (at >= from - (handleSize * frame.unitsPerPixel) &&
-						at <= to + (handleSize * frame.unitsPerPixel))
-					{
-						const double x = std::round(at / frame.unitsPerPixel) - frame.left;
-						quad(mesh, static_cast<float>(x - (handleSize / 2.0)), frame.y(y0),
-							static_cast<float>(x + (handleSize / 2.0)), frame.y(y0 + handleSize), handle);
-					}
+				for (const auto& [places, squareTop] :
+					{std::pair{&lane.handles, y0}, std::pair{&lane.faders, y1 - handleSize}})
+					for (const double at : *places)
+						if (at >= from - (handleSize * frame.unitsPerPixel) &&
+							at <= to + (handleSize * frame.unitsPerPixel))
+						{
+							const double x = std::round(at / frame.unitsPerPixel) - frame.left;
+							quad(mesh, static_cast<float>(x - (handleSize / 2.0)), frame.y(squareTop),
+								static_cast<float>(x + (handleSize / 2.0)), frame.y(squareTop + handleSize), handle);
+						}
 		}
 		meshes.push_back({std::move(mesh), {}});
 	}

@@ -366,8 +366,8 @@ namespace gnubase::ui
 	inline constexpr double g_volumeLineTop = 1.9952623149688795; // +6 dB, the most an event's volume can be
 
 	// <fade-lines>: the fades and volume lines of the event lanes' events in stroke-color, and handles filled with
-	// color: fade and event volume handles, squares at the top of a lane at the positions given, and a volume line's
-	// points.
+	// color: fade handles, squares at the top of a lane at the positions given, event volume controls, squares at its
+	// bottom, and a volume line's points.
 	class FadeLines final : public Canvas
 	{
 	public:
@@ -377,6 +377,7 @@ namespace gnubase::ui
 			std::vector<FadeLine> fades;
 			std::vector<double> handles;
 			std::vector<VolumeLine> volumes;
+			std::vector<double> faders; // the event volume controls' middles
 		};
 
 		using Canvas::Canvas;

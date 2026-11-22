@@ -1059,17 +1059,29 @@ namespace gnubase::app
 		}
 		// Track import and export and track presets (docs/features/track-presets.md).
 		addTrackFileCommands();
-		// Auto fades (docs/features/fades.md): the project's, or the first selected track's.
+		// Auto fades (docs/features/fades.md): the project's, or the first selected audio track's.
 		m_keys.add({"project.autoFades", "Opens the auto fades dialog for the whole project.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openAutoFades(window, 0); }});
+		// Only audio tracks have auto fades: other selected tracks don't count.
+		const auto firstAudioTrack = [this]() -> uint64_t
+		{
+			if (!m_trackList || !m_eventDisplay || !m_eventDisplay->project().is_object())
+				return 0;
+			const engine::Json& tracks = m_eventDisplay->project().at("tracks");
+			for (const uint64_t id : m_trackList->selection())
+				for (const engine::Json& track : tracks)
+					if (track.at("id") == id && track.at("type") == "audio")
+						return id;
+			return 0;
+		};
 		m_keys.add({"track.autoFades", "Opens the auto fades dialog for the first selected audio track.",
-			[this](ui::Window& window, Rml::Element* /*zone*/)
+			[this, firstAudioTrack](ui::Window& window, Rml::Element* /*zone*/)
 			{
-				if (m_trackList && !m_trackList->selection().empty())
-					openAutoFades(window, m_trackList->selection().front());
+				if (const uint64_t track = firstAudioTrack(); track != 0)
+					openAutoFades(window, track);
 			}});
-		m_keys.enableWhen("track.autoFades",
-			[this](ui::Window&, Rml::Element*) { return m_trackList != nullptr && !m_trackList->selection().empty(); });
+		m_keys.enableWhen(
+			"track.autoFades", [firstAudioTrack](ui::Window&, Rml::Element*) { return firstAudioTrack() != 0; });
 		// New tracks go below the lowest selected track (reference manual p. 198).
 		const auto below = [this]
 		{
