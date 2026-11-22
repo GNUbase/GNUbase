@@ -30,12 +30,13 @@ modes, solo defeat, the Deactivate All buttons and listen.
   (`AudioEngine::output`) turns the main mix's device ports down to the user setting `audio.listenDim` (dB, default
   -144: only the listening channels are heard) and adds the listen bus there at `audio.listenLevel` (dB, default 0).
   The dim glides over one block as listening starts and ends, and so does each channel on the listen bus: its listen
-  node (`ListenStrip`) glides it in when it starts to listen and out when it stops, so with the default dim a channel
-  keeps its level, also when others listen already. A channel that stopped listening keeps its listen node until it
-  has glided out: the audio thread keeps its gain in the channel's state, and the next graph keeps the channel there
-  while that is above 0. A new dim or listen level glides over a block too. Other output busses are left alone. Offline rendering (`audio.render`) plays what the device would, and the main mix's
-  meter and loudness ([metering.md](metering.md)) measure it too: what is heard, with the dim and the listen bus. The
-  audio mixdown ([mixdown.md](mixdown.md)) exports the main mix without them.
+  node (`ListenStrip`) glides it in when it starts to listen and out when it stops. So with the default dim the first
+  channel that starts to listen keeps its level, while a later one glides in from the dim the mix is already at (silence
+  by default). A channel that stopped listening keeps its listen node until it has glided out: the audio thread keeps
+  its gain in the channel's state, and the next graph keeps the channel there while that is above 0. A new dim or listen
+  level glides over a block too. Other output busses are left alone. Offline rendering (`audio.render`) plays what the
+  device would, and the main mix's meter and loudness ([metering.md](metering.md)) measure it too: what is heard, with
+  the dim and the listen bus. The audio mixdown ([mixdown.md](mixdown.md)) exports the main mix without them.
 
 ## In the mixer
 
@@ -54,9 +55,9 @@ modes, solo defeat, the Deactivate All buttons and listen.
 
 ## Not yet
 
-The control room (#191), and with it PFL, listen on input and output channels, and the listen level and dim in its
-panel rather than in user settings; the toolbar's Activate/Deactivate Read for All Tracks (p. 58); the preferences Group Channels: Mute Sources as
-well and Mute Pre-Send when Mute (p. 1622); solo on directly monitored inputs with dimming.
+The control room (#191), and with it PFL, listen on input and output channels, and the listen level and dim in its panel
+rather than in user settings; the toolbar's Activate/Deactivate Read for All Tracks (p. 58); the preferences Group
+Channels: Mute Sources as well and Mute Pre-Send when Mute (p. 1622); solo on directly monitored inputs with dimming.
 
 ## Checks
 
