@@ -104,8 +104,9 @@ first click chooses the tool and the next opens its modes (p. 265): `#object-sel
 `#line-menu` with the line modes, `#play-menu` with the play modes and `#time-warp-toolbar-menu` with the time warp modes,
 each with the mode checked. The toolbox and the context menu's Tools choose the time warp tool too, and the
 Tools' Time Warp Mode chooses it with a mode. The toolbar hides sections that do not fit in a narrow window: with the
-time warp button, a 1024-pixel window at a dp ratio of 1 has no room for the color section and those after it, and
-none for the Quantize section either once the snap and grid types show their longest names.
+color tool's button, a 1024-pixel window at a dp ratio of 1 has no room for the Quantize section and those after it
+with the default labels, until the zoom presets are hidden, and a 1000-pixel window shows fewer sections once the
+snap and grid types show their longest names.
 
 The commands are in `EventDisplay::actions()`, and `app::AppUi` binds the reference's keys (p. 1569) in the project
 window: `tool.objectSelection` 1, `tool.rangeSelection` 2, `tool.split` 3, `tool.glue` 4, `tool.erase` 5, `tool.zoom`
@@ -183,8 +184,8 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   previous around the ends, the root's attribute and the cross-hair cursor; the object selection tool's rectangle,
   with Ctrl, and setting the cursor; splitting, snapped, into equal pieces, and with a tool modifier changed through
   `settings.set`; gluing to the next and to all following events; erasing one and all later events; muting and
-  unmuting with clicks and a rectangle; coloring an event and the selection with the color tool, taking a track's
-  color with Alt, the wheel's steps around the color set and Ctrl asking for the pane; zooming in, out, to a rectangle, back with a double click and forward again
+  unmuting with clicks and a rectangle; coloring an event and the selection with the color tool, taking an event's or
+  a track's color with Alt, the wheel's steps around the color set and Ctrl asking for the pane; zooming in, out, to a rectangle, back with a double click and forward again
   with Alt, neither leaving the double click's first click to redo; the rectangle zooming the track heights with `ui.zoomToolHorizontalOnly` off; drawing parts,
   snapped, by dragging and with a click, and MIDI parts with the object selection tool and Alt, none on audio tracks or with the line tool; auditioning the audio lane's
   track on the dummy device while the mouse is pressed, nothing on a MIDI lane, scrubbing with a drag, and resizing an

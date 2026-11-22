@@ -97,8 +97,8 @@ projects, selecting colors by name; p. 118), colorizing track controls and mixer
   remove, duplicate, recolor, insert, rename, reset color, apply, reset to factory settings and cancel, and its
   presets: 8 basic colors with unique names, tints in both sort orders, 128 colors, 16 in one tint as the factory
   set and 24 applied.
-- `tests/eventediting_tests.cpp`: the color tool coloring an event and the selection, Alt taking a track's color,
-  the wheel's steps and Ctrl asking for the pane.
+- `tests/eventediting_tests.cpp`: the color tool coloring an event and the selection, Alt taking an event's own
+  color, its track's, or none from a track with the default color, the wheel's steps and Ctrl asking for the pane.
 - `tests/canvas_tests.cpp`: an event with a color of its own is filled with it, outlined by `stroke-color`, or by
   the tinted color in `stroke-width` with `own-color-tint`, also without a `stroke-color`; a waveform in the tinted
   color, `event-inset` inside its padding.

@@ -1712,11 +1712,24 @@ TEST_CASE("the color tool colors events, takes a color with Alt and steps throug
 
 	// At first the color set's first color; a click gives it to the event (reference manual pp. 114-115).
 	CHECK(f.display.toolColor() == "#e04020");
+
+	// Alt on an event without a color of its own, on a track with the default color, has no color to take.
+	f.display.stepToolColor(1);
+	f.click(150, 60, {"alt"});
+	CHECK(f.display.toolColor() == "#2040e0");
+	CHECK(f.parts()[0].at("color").is_null());
+	f.display.stepToolColor(-1);
+
 	f.click(150, 60);
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("color") == "#e04020"; }));
 	CHECK(f.audioEvents()[0].at("color").is_null());
 
-	// Alt takes an event's color: the audio event's track's, as it has none of its own.
+	// Alt takes an event's own color (p. 114).
+	f.display.stepToolColor(1);
+	f.click(150, 60, {"alt"});
+	CHECK(f.display.toolColor() == "#e04020");
+
+	// Alt takes the track's color from an event that has none of its own.
 	f.click(225, 20, {"alt"});
 	CHECK(f.display.toolColor() == "#30a060");
 	CHECK(root->GetAttribute<std::string>("tool-color", "") == "#30a060");

@@ -97,7 +97,7 @@ places a point and where a moved point lands ([snap.md](snap.md)); Ctrl with Alt
   their automation, or that of tracks, between the locators: [copy-automation.md](copy-automation.md).
 - **Other tools.** The zoom and play tools work on automation tracks as on the track's own lane: the play tool
   auditions and scrubs an audio track from its automation tracks too. A press with the range selection, split, glue,
-  mute, comp or time warp tool does nothing there.
+  mute, comp, time warp or color tool does nothing there.
 - **Delete** (`edit.delete`, Backspace) removes the selected points (p. 878). Selecting events or a range deselects
   the points, and the other way round for events. The selection is the display's (`EventDisplay::selectedPoints()`),
   also in the display's attribute `automation-selection` as `lane:point` pairs.
