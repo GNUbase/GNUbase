@@ -107,6 +107,9 @@ namespace gnubase::engine
 		std::vector<AudioPart> audioParts;
 		std::vector<MidiPart> midiParts;
 		std::vector<AutomationLane> automation; // the points in the range, with the curve's values at its edges
+		// Each copied track's lane, counted from the first of the copied lanes, and its place in it, 0 for the lane's
+		// own track and from 1 the tracks of a folded folder's lane (#1978).
+		std::vector<std::pair<size_t, size_t>> lanes;
 	};
 
 	// What automation.copy keeps for automation.paste (eventedits.cpp, reference manual pp. 878-879): the automation

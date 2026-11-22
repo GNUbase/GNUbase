@@ -44,7 +44,7 @@ the project start. The sample grids count from the project start, as the samples
 | Snap type | A position goes to | Reference |
 |---|---|---|
 | `grid` | the nearest grid line | p. 105 |
-| `gridRelative` | grid steps from where it was, keeping its distance to the grid: from 3.4.1 a bar on is 4.4.1; without where it was (new events), like `grid` | p. 106 |
+| `gridRelative` | grid steps from where it was, keeping its distance to the grid: from 3.4.1 a bar on is 4.4.1; from a musical line's own sample, whose tick can lie less than a sample off the line, the other line's tick (#2005); without where it was (new events), like `grid` | p. 106 |
 | `events` | the start or end of another event, an audio event's snap point or a marker, when near | p. 106 |
 | `shuffle` | nowhere: moved events trade places with their neighbours (`event.shuffle`) | p. 106 |
 | `cursor` | the project cursor, when near | p. 106 |
@@ -143,14 +143,15 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
 - `tests/snap_tests.cpp`: bar and beat lines across tempo and signature changes, the quantize grid with triplets across
   a tempo change, adapt to zoom, every linear grid and the user's frame rate, grid steps; every snap type and their
   combinations, magnets and the cursor only within range, grid relative in bars across a tempo change, in beats and on a
-  linear grid; `snap.get` and `snap.set` saved with the project and not undone; `snap.position` with event edges,
-  markers (also of a marker track that isn't active), snap points, the cursor, the zoom's note value, the frame rate and
-  grid relative; a grid type per time format, switching formats, grid types of another format refused or choosing their
-  format, and settings from before #413; each format's grid types (`gridTypes`) exactly those `hasGrid` accepts; a newer
-  build's grids entries kept, written back when saved and replaced by another grid type chosen here, not by `snap.set`
-  with what `snap.get` returned, and a `grid` read when the format's entry is unusable; damaged entries left out; the
-  frame grids at the project's frame rate, with pull-down, and user frames at 30 fps; a new project time format
-  switching the snap format, also on undo and redo, and a format set after it staying; snap points set and refused;
+  linear grid, and from a bar's own sample at a tempo whose bars lie between samples; `snap.get` and `snap.set` saved
+  with the project and not undone; `snap.position` with event edges, markers (also of a marker track that isn't active),
+  snap points, the cursor, the zoom's note value, the frame rate and grid relative; a grid type per time format,
+  switching formats, grid types of another format refused or choosing their format, and settings from before #413; each
+  format's grid types (`gridTypes`) exactly those `hasGrid` accepts; a newer build's grids entries kept, written back
+  when saved and replaced by another grid type chosen here, not by `snap.set` with what `snap.get` returned, and a
+  `grid` read when the format's entry is unusable; damaged entries left out; the frame grids at the project's frame
+  rate, with pull-down, and user frames at 30 fps; a new project time format switching the snap format, also on undo and
+  redo, and a format set after it staying; snap points set and refused;
 shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour, audio events on a musical
   track across a tempo change, the middle decision at the length where an event goes, and a row of an audio part and
   audio events whose end moves across a tempo change, overlapping a locked event; splitting and resizing at zero

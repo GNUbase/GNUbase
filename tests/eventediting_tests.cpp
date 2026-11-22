@@ -2734,12 +2734,10 @@ TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar 
 			.get<uint64_t>();
 	};
 	// A tempo and a bar where moving the part on it by a range from its start sample to the next bar's sample puts it
-	// off the next bar's tick, and where Grid Relative's tick for the drag by a bar, which keeps the range start's
-	// distance from its bar line, isn't where the move to that tick's sample puts the part either.
+	// off the next bar's tick.
 	double bpm = 0.0;
 	int64_t bar = 0;
 	uint64_t part = 0;
-	const Json relative = {{"on", true}, {"type", "gridRelative"}};
 	for (const double candidate : {97.3, 133.7, 101.3, 89.9, 111.1, 93.7, 127.9, 104.9, 117.3, 86.3})
 	{
 		f.call("tempo.add", {{"position", 0}, {"bpm", candidate}, {"ramp", false}});
@@ -2756,13 +2754,7 @@ TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar 
 			f.call("range.move", move);
 			const bool off = positionOf(id) != (each + 1) * g_bar;
 			f.call("history.undo");
-			const Json snapped =
-				f.call("snap.position", {{"position", at}, {"from", start}, {"settings", relative}, {"range", 0}});
-			move["position"] = snapped.at("position");
-			f.call("range.move", move);
-			const bool apart = snapped.at("musical") == true && positionOf(id) != snapped.at("ticks").get<int64_t>();
-			f.call("history.undo");
-			if (off && apart)
+			if (off)
 			{
 				bpm = candidate;
 				bar = each;
@@ -2798,22 +2790,17 @@ TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar 
 	f.call("history.undo");
 	REQUIRE(f.waitUntil([&] { return positionOf(part) == bar * g_bar; }));
 
-	// Grid Relative keeps the range start's distance from its bar line, the rounding of its sample to ticks, so its
-	// tick lies off the next bar's line: the drag by a bar sends the range's new start in samples, and the part lands
-	// where range.move puts it there, not on that tick.
+	// Grid Relative keeps the range start's distance from its bar line, but from the bar's own sample there is none:
+	// the distance in ticks, less than a sample, is the rounding of that sample to ticks (#2005). The drag by a bar
+	// lands the part on the next bar's tick too, and the range on that bar's sample.
 	f.call("snap.set", {{"type", "gridRelative"}});
 	REQUIRE(f.waitUntil([&f] { return f.display.snap().type == engine::SnapType::GridRelative; }));
 	f.click(900, 20);
 	f.display.setRange(ui::RangeSelection{start, start + 48000, {midi}});
 	f.drag(x, 60, x + (4.0 * 60.0 / bpm * 100.0), 60);
 	REQUIRE(f.waitUntil([&] { return positionOf(part) != bar * g_bar; }));
-	const int64_t dragged = positionOf(part);
-	const int64_t at = f.display.range().value_or(ui::RangeSelection{-1, -1, {}}).start;
-	REQUIRE(at > start);
-	f.call("history.undo");
-	REQUIRE(f.waitUntil([&] { return positionOf(part) == bar * g_bar; }));
-	f.call("range.move", {{"start", start}, {"end", start + 48000}, {"tracks", {midi}}, {"position", at}});
-	CHECK(positionOf(part) == dragged);
+	CHECK(positionOf(part) == (bar + 1) * g_bar);
+	CHECK(f.display.range().value_or(ui::RangeSelection{-1, -1, {}}).start == startOf(part));
 }
 
 TEST_CASE("a drag in the selection range takes its contents onto other tracks too, Alt a copy of them", "[unit]")
@@ -2879,6 +2866,64 @@ TEST_CASE("a drag in the selection range takes its contents onto other tracks to
 	CHECK(f.audioEvents()[0].at("track") == audio);
 	CHECK(f.audioEvents()[0].at("position") == 96000);
 	CHECK(f.call("history.get").at("steps").size() == steps);
+}
+
+TEST_CASE(
+	"a drag in the selection range and paste count a folded folder's lane once, as the display shows it", "[unit]")
+{
+	// The range's top track dragged onto a folded folder's lane: its second track's contents land on the lane after
+	// the folder's, where the range shows them, not on the first track inside the folder (#1978).
+	Fixture f;
+	const Json tracks = f.call("project.get").at("tracks");
+	const auto audio = tracks[0].at("id").get<uint64_t>();
+	const auto midi = tracks[1].at("id").get<uint64_t>();
+	const auto add = [&f](const char* type)
+	{ return f.call("track.add", {{"type", type}}).at("track").at("id").get<uint64_t>(); };
+	const uint64_t folder = add("folder");
+	const uint64_t inside = add("midi");
+	f.call("track.move", {{"track", inside}, {"parent", folder}, {"index", 0}});
+	const uint64_t below = add("midi");
+	// Folded, as the track list folds it: the engine keeps it in the track layout, the display hides the folder's
+	// tracks.
+	f.call("trackLayout.set", {{"folded", {folder}}});
+	f.display.setHiddenTracks({inside});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").size() == 4; }));
+	const auto onBelow = [&f, below]
+	{
+		for (const Json& part : f.parts())
+			if (part.at("track") == below)
+				return part.at("position").get<int64_t>() == 2 * g_quarter;
+		return false;
+	};
+	const auto inFolder = [&f, inside]
+	{
+		const Json parts = f.parts();
+		return std::any_of(
+			parts.begin(), parts.end(), [inside](const Json& part) { return part.at("track") == inside; });
+	};
+	f.display.setTool(ui::Tool::RangeSelection);
+	// From 1 to 1.875 seconds, where the audio track has nothing and the part starts.
+	const ui::RangeSelection range{48000, 90000, {audio, midi}};
+	const std::vector<double> tops = f.display.laneTops();
+
+	// Down two lanes: the audio track onto the folder's lane, the MIDI track onto the one after it.
+	f.display.setRange(range);
+	f.drag(160, tops[1] + 10.0, 160, tops[3] + 10.0);
+	REQUIRE(f.waitUntil(onBelow));
+	CHECK(!inFolder());
+	CHECK(f.display.range().value_or(ui::RangeSelection{-1, -1, {}}).tracks == std::vector<uint64_t>{folder, below});
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return !onBelow(); }));
+
+	// Copied and pasted at a range on the folder's lane, it lands there too.
+	f.click(900, 20);
+	f.display.setRange(range);
+	f.run("edit.copy");
+	REQUIRE(f.waitUntil([&f] { return f.display.canRun("edit.paste"); }));
+	f.display.setRange(ui::RangeSelection{48000, 90000, {folder}});
+	f.run("edit.paste");
+	REQUIRE(f.waitUntil(onBelow));
+	CHECK(!inFolder());
 }
 
 TEST_CASE("the selection range's edges drag across and up or down, snapped, and show the resize pointers", "[unit]")
