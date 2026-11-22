@@ -309,7 +309,9 @@ namespace gnubase::engine
 	const HistoryStep& History::undo()
 	{
 		GNUBASE_ASSERT(m_position > 0);
-		return m_steps[--m_position];
+		HistoryStep& step = m_steps[--m_position];
+		step.merge.clear(); // an undone gesture is over: after a redo, no transaction joins it again
+		return step;
 	}
 
 	const HistoryStep& History::redo()

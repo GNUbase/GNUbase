@@ -131,7 +131,7 @@ namespace gnubase::engine
 		// Adds a done step. Steps that could be redone are discarded, the oldest ones beyond the limit dropped.
 		void record(HistoryStep step);
 
-		// Moves the position back and returns the step to undo. Requires position() > 0.
+		// Moves the position back and returns the step to undo, whose merge key it clears. Requires position() > 0.
 		const HistoryStep& undo();
 
 		// Moves the position forward and returns the step to redo. Requires position() < steps().size().
