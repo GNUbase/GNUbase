@@ -2881,6 +2881,64 @@ TEST_CASE("a drag in the selection range takes its contents onto other tracks to
 	CHECK(f.call("history.get").at("steps").size() == steps);
 }
 
+TEST_CASE(
+	"a drag in the selection range and paste count a folded folder's lane once, as the display shows it", "[unit]")
+{
+	// The range's top track dragged onto a folded folder's lane: its second track's contents land on the lane after
+	// the folder's, where the range shows them, not on the first track inside the folder (#1978).
+	Fixture f;
+	const Json tracks = f.call("project.get").at("tracks");
+	const auto audio = tracks[0].at("id").get<uint64_t>();
+	const auto midi = tracks[1].at("id").get<uint64_t>();
+	const auto add = [&f](const char* type)
+	{ return f.call("track.add", {{"type", type}}).at("track").at("id").get<uint64_t>(); };
+	const uint64_t folder = add("folder");
+	const uint64_t inside = add("midi");
+	f.call("track.move", {{"track", inside}, {"parent", folder}, {"index", 0}});
+	const uint64_t below = add("midi");
+	// Folded, as the track list folds it: the engine keeps it in the track layout, the display hides the folder's
+	// tracks.
+	f.call("trackLayout.set", {{"folded", {folder}}});
+	f.display.setHiddenTracks({inside});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").size() == 4; }));
+	const auto onBelow = [&f, below]
+	{
+		for (const Json& part : f.parts())
+			if (part.at("track") == below)
+				return part.at("position").get<int64_t>() == 2 * g_quarter;
+		return false;
+	};
+	const auto inFolder = [&f, inside]
+	{
+		const Json parts = f.parts();
+		return std::any_of(
+			parts.begin(), parts.end(), [inside](const Json& part) { return part.at("track") == inside; });
+	};
+	f.display.setTool(ui::Tool::RangeSelection);
+	// From 1 to 1.875 seconds, where the audio track has nothing and the part starts.
+	const ui::RangeSelection range{48000, 90000, {audio, midi}};
+	const std::vector<double> tops = f.display.laneTops();
+
+	// Down two lanes: the audio track onto the folder's lane, the MIDI track onto the one after it.
+	f.display.setRange(range);
+	f.drag(160, tops[1] + 10.0, 160, tops[3] + 10.0);
+	REQUIRE(f.waitUntil(onBelow));
+	CHECK(!inFolder());
+	CHECK(f.display.range().value_or(ui::RangeSelection{-1, -1, {}}).tracks == std::vector<uint64_t>{folder, below});
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return !onBelow(); }));
+
+	// Copied and pasted at a range on the folder's lane, it lands there too.
+	f.click(900, 20);
+	f.display.setRange(range);
+	f.run("edit.copy");
+	REQUIRE(f.waitUntil([&f] { return f.display.canRun("edit.paste"); }));
+	f.display.setRange(ui::RangeSelection{48000, 90000, {folder}});
+	f.run("edit.paste");
+	REQUIRE(f.waitUntil(onBelow));
+	CHECK(!inFolder());
+}
+
 TEST_CASE("the selection range's edges drag across and up or down, snapped, and show the resize pointers", "[unit]")
 {
 	Fixture f;
