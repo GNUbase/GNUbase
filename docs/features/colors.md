@@ -55,6 +55,14 @@ its track's.
   the Choose Track Color pane. Its color goes to that one track, also with events selected ("Colorize Tracks"); the
   inspector's is the track it shows, the first selected one, and the Alt-click doesn't close the section. An
   inspector in a window of its own has the pane too: its window's document gets a `#color-menu` of its own (#2026).
+- **The color tool** (pp. 114-115, [tools.md](tools.md)): `button[tool=color]` in the toolbar's tools, the toolbox
+  and the context menu's Tools (`tool.color`, no key). Its color is the display's, not the project's
+  (`EventDisplay::toolColor`, the root's attribute `tool-color`): at first the color set's first, shown in the
+  button's `.tool-color` strip, which `ui::ColorMenu` colors. A click on an event or part gives it that color
+  (`event.set`), or the selection if the event is in it; Alt and a click takes the event's color, its own or else
+  its track's (none for the default color); Ctrl/Cmd and a click selects the event and opens the menu there as the
+  Choose Event Color pane. The mouse wheel over the button steps the color through the color set, around at its
+  ends; a color outside the set steps to its first.
 - **Project Colors Setup** (Project menu, the UI command `project.colorsSetup`, pp. 115–119):
   `resources/ui/project-colors.rml`, the color set as a list with swatches, a name field and the color picker
   ([widgets.md](widgets.md)) for the selected color, Insert Color, Duplicate Color, Remove Color (not the last one),
@@ -71,10 +79,9 @@ its track's.
 
 ## Not yet
 
-The color tool and its wheel and Alt-click (p. 114), the Presets tab's Missing Current Project Colors (p. 118), the
-Options tab (saving a set as the default for new projects, selecting colors by name; p. 118), colorizing track
-controls and mixer channels with their track's color (p. 1621, with the mixer, #106, and the inspector, #89), and the
-MIDI editors' event colors menu (p. 1133).
+The Presets tab's Missing Current Project Colors (p. 118), the Options tab (saving a set as the default for new
+projects, selecting colors by name; p. 118), colorizing track controls and mixer channels with their track's color
+(p. 1621, with the mixer, #106, and the inspector, #89), and the MIDI editors' event colors menu (p. 1133).
 
 ## Checks
 
@@ -86,9 +93,12 @@ MIDI editors' event colors menu (p. 1133).
   window: the track list's strip and the event lanes' colors following track and event colors; the color menu on
   selected tracks and events, both reset items and the undo step; the Choose Track Color pane from the strip, the row
   left of the name and the inspector's Basics header, for that one track, also of an inspector in a window of its
-  own; the setup dialog's remove, duplicate, recolor, insert, rename, reset color, apply, reset to factory settings
-  and cancel, and its presets: 8 basic colors with unique names, tints in both sort orders, 128 colors, 16 in one
-  tint as the factory set and 24 applied.
+  own; the color tool's button, its strip and wheel, and its Ctrl-click pane coloring a part; the setup dialog's
+  remove, duplicate, recolor, insert, rename, reset color, apply, reset to factory settings and cancel, and its
+  presets: 8 basic colors with unique names, tints in both sort orders, 128 colors, 16 in one tint as the factory
+  set and 24 applied.
+- `tests/eventediting_tests.cpp`: the color tool coloring an event and the selection, Alt taking a track's color,
+  the wheel's steps and Ctrl asking for the pane.
 - `tests/canvas_tests.cpp`: an event with a color of its own is filled with it, outlined by `stroke-color`, or by
   the tinted color in `stroke-width` with `own-color-tint`, also without a `stroke-color`; a waveform in the tinted
   color, `event-inset` inside its padding.

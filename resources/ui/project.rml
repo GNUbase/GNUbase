@@ -116,6 +116,7 @@
 			<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
 			<button tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
 			<button tool="timeWarp" tool-menu="time-warp-toolbar-menu" class="icon-only" title="Time Warp"><svg class="icon" src="../icons/tool-timewarp.svg"/></button>
+			<button tool="color" class="icon-only" title="Color"><svg class="icon" src="../icons/tool-color.svg"/><span class="tool-color"/></button>
 		</div>
 		<div class="toolbar-section" section="autoScroll" label="Auto-Scroll">
 			<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
@@ -787,6 +788,7 @@
 		<menuitem tool="line" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></menuitem>
 		<menuitem tool="play" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></menuitem>
 		<menuitem tool="timeWarp" title="Time Warp"><svg class="icon" src="../icons/tool-timewarp.svg"/></menuitem>
+		<menuitem tool="color" title="Color"><svg class="icon" src="../icons/tool-color.svg"/></menuitem>
 	</menu>
 	<menu id="event-display-menu">
 		<menuitem id="tools-submenu">Tools
@@ -803,6 +805,7 @@
 				<menuitem tool="line">Line</menuitem>
 				<menuitem tool="play">Play</menuitem>
 				<menuitem tool="timeWarp">Time Warp</menuitem>
+				<menuitem tool="color">Color</menuitem>
 				<!-- The time warp tool's modes, also behind its toolbar button (reference manual p. 1465). -->
 				<menuitem id="time-warp-submenu">Time Warp Mode
 					<menu id="time-warp-menu">

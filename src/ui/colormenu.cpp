@@ -45,7 +45,13 @@ namespace gnubase::ui
 			m_menu = menu->GetObserverPtr();
 			menu->AddEventListener(Rml::EventId::Click, this);
 		}
+		if (Rml::Element* tool = document.QuerySelector("button[tool=color]"))
+		{
+			m_tool = tool->GetObserverPtr();
+			tool->AddEventListener(Rml::EventId::Mousescroll, this);
+		}
 		fill();
+		showToolColor();
 	}
 
 	ColorMenu::~ColorMenu()
@@ -59,6 +65,30 @@ namespace gnubase::ui
 		}
 		if (m_menu)
 			m_menu->RemoveEventListener(Rml::EventId::Click, this);
+		if (m_tool)
+			m_tool->RemoveEventListener(Rml::EventId::Mousescroll, this);
+	}
+
+	void ColorMenu::openAt(float x, float y)
+	{
+		if (!m_menu)
+			return;
+		m_track = 0;
+		fill();
+		openMenu(*m_menu.get(), Rml::Vector2f(x, y));
+	}
+
+	void ColorMenu::showToolColor()
+	{
+		const EventDisplay* display = m_display();
+		Rml::Element* strip = m_tool ? m_tool->QuerySelector(".tool-color") : nullptr;
+		if (display == nullptr || strip == nullptr)
+			return;
+		// The color is user data (CLAUDE.md, UI conventions).
+		if (const std::string color = display->toolColor(); color.empty())
+			strip->RemoveProperty("background-color");
+		else
+			strip->SetProperty("background-color", color);
 	}
 
 	void ColorMenu::fill()
@@ -139,6 +169,15 @@ namespace gnubase::ui
 	void ColorMenu::ProcessEvent(Rml::Event& event)
 	{
 		const Rml::Element* target = event.GetTargetElement();
+		if (event.GetCurrentElement() == m_tool.get())
+		{
+			// Down steps on through the color set, up back (reference manual p. 115).
+			const float delta = event.GetParameter<float>("wheel_delta_y", 0.0F);
+			if (EventDisplay* display = m_display(); display != nullptr && delta != 0.0F)
+				display->stepToolColor(delta > 0.0F ? 1 : -1);
+			event.StopPropagation();
+			return;
+		}
 		if (event.GetCurrentElement() == m_button.get())
 		{
 			m_track = 0;

@@ -2063,6 +2063,21 @@ menuitem .track-version-id
 	vertical-align: middle;
 }
 
+/* The color tool's color, a strip under its icon (docs/features/tools.md); code gives it the color. */
+button[tool=color]
+{
+	position: relative;
+}
+
+button .tool-color
+{
+	position: absolute;
+	left: 5dp;
+	right: 5dp;
+	bottom: 2dp;
+	height: 3dp;
+}
+
 /* Every document's tooltip, under the mouse; it lets the mouse through. */
 tooltip
 {

@@ -74,6 +74,7 @@ namespace gnubase::ui
 		Line,
 		Play,
 		TimeWarp, // #159
+		Color,    // gives events the tool's color (reference manual pp. 114-115)
 	};
 	// The tool's name, as the display's attribute tool and the toolbar's buttons name it: objectSelection, split, ...
 	const char* toolName(Tool tool);
@@ -311,6 +312,20 @@ namespace gnubase::ui
 		// Event.
 		void setTool(Tool tool);
 		Tool tool() const { return m_tool; }
+		// The color tool's color, "#rrggbb", also in the root's attribute tool-color: the one chosen last, at first
+		// the color set's first. A click of the color tool gives it to the event, or to the selection if the event is
+		// in it; with Alt the tool takes the event's color, its own or else its track's; with Ctrl/Cmd the event is
+		// selected and onChooseColor called (reference manual pp. 114-115).
+		void setToolColor(std::string color);
+		std::string toolColor() const;
+		// Steps the tool's color through the color set, around at its ends, as the mouse wheel over the tool's button
+		// does; a color outside the set steps to its first.
+		void stepToolColor(int steps);
+		// Called when the tool's color may have changed: chosen, or the project read again.
+		void onToolColor(std::function<void()> listener) { m_toolColorListener = std::move(listener); }
+		// Called for a Ctrl/Cmd-click of the color tool on an event with where it is in the window (pixels): the app
+		// opens the Choose Event Color pane there (ui::ColorMenu).
+		void onChooseColor(std::function<void(float x, float y)> listener) { m_chooseColor = std::move(listener); }
 		// Whether the modifier keys of a mouse event are those the user setting ui.toolModifiers gives the action, e.g.
 		// erase.deleteLaterEvents.
 		bool toolModifier(const char* action, Rml::Event& event) const;
@@ -762,6 +777,10 @@ namespace gnubase::ui
 		// The tools (eventtools.cpp).
 		void addToolActions();
 		void showTools();
+		// The color tool's color in the root's attribute, and onToolColor.
+		void showToolColor();
+		// A click of the color tool on that event, with the modifier keys pressed.
+		void colorClick(uint64_t event);
 		// The tool a press y dp down the event lanes uses: the range selection tool in a lane's upper half when the
 		// selection tools are combined, else the tool.
 		Tool toolAt(double y) const;
@@ -939,6 +958,9 @@ namespace gnubase::ui
 		std::function<void()> m_layoutListener;
 		std::function<void()> m_addTrack;                       // onAddTrack
 		std::function<void(const std::string&)> m_importFailed; // onImportFailed
+		std::function<void()> m_toolColorListener;              // onToolColor
+		std::function<void(float, float)> m_chooseColor;        // onChooseColor
+		std::string m_toolColor;                                // empty: the color set's first
 		std::vector<std::string> m_laneTypes;                   // and its type
 		std::vector<bool> m_laneLinear;                         // and whether its time base is linear
 		std::vector<Shown> m_events;

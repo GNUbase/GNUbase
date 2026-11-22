@@ -27,6 +27,7 @@ project or undo.
 | Line (`line`) | | | | p. 873 |
 | Play (`play`) | Auditions the audio track from there until the mouse is released | Scrub mode: scrubs the track along | | pp. 252-253 |
 | Time Warp (`timeWarp`) | Free Warp: a warp marker on the audio event there | Warp Grid: the musical position pressed plays where it is released; Free Warp: a warp marker moved there ([time-warp.md](time-warp.md)) | | pp. 1465-1467 |
+| Color (`color`) | Gives the event the tool's color, or the selection if the event is in it; Alt takes the event's color; Ctrl/Cmd opens the Choose Event Color pane for it ([colors.md](colors.md)) | | | pp. 114-115 |
 
 - **Modes.** The object selection tool sizes normally or with sizing moves contents (`setSizingMovesContents`);
   sizing applies time stretch waits for time stretching (M11). The line tool has the modes line, parabola, sine,
@@ -108,7 +109,7 @@ none for the Quantize section either once the snap and grid types show their lon
 
 The commands are in `EventDisplay::actions()`, and `app::AppUi` binds the reference's keys (p. 1569) in the project
 window: `tool.objectSelection` 1, `tool.rangeSelection` 2, `tool.split` 3, `tool.glue` 4, `tool.erase` 5, `tool.zoom`
-6, `tool.mute` 7, `tool.draw` 8, `tool.play` 9, `tool.line`, `tool.comp` and `tool.timeWarp` (no key), `tool.previous` F9, `tool.next` F10 (along the
+6, `tool.mute` 7, `tool.draw` 8, `tool.play` 9, `tool.line`, `tool.comp`, `tool.timeWarp` and `tool.color` (no key), `tool.previous` F9, `tool.next` F10 (along the
 toolbar, around at the ends) and `tool.combineSelectionTools` Alt+Shift+1.
 
 A tool chosen with one of these commands, by its key or from Lua's `gnubase.ui.command`, shows its name for a
@@ -150,7 +151,7 @@ RmlUi's `cursor` property; the pointers are SVG files in `resources/cursors` ([s
 
 | `pointer` | Where | Pointer |
 |---|---|---|
-| `objectSelection`, `comp` | The object selection and comp tools | The OS's arrow |
+| `objectSelection`, `comp`, `color` | The object selection, comp and color tools | The OS's arrow |
 | `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp), except on a fade handle ([fades.md](fades.md)), and except with Ctrl or Shift held unless they are a tool modifier (they add to the selection then) | `resize` |
 | `split` | The object selection tool on an event with the tool modifier Split Event held (Alt), where a click splits it (p. 268) | `tool-split` |
 | `draw` | The object selection tool on an empty spot of an audio, MIDI or instrument lane with Split Event held, where a drag draws a part (p. 250) | `tool-draw` |
@@ -170,7 +171,7 @@ with, also where it leaves the lanes: the event area has RCSS `drag: drag`, and 
 until the button is up. MCP's `ui_windows` reports the pointer shown, as `cursor`: empty for the OS's arrow, also where
 a pointer's picture didn't load or RmlUi names one the OS doesn't have, such as its autoscroll pointers.
 
-Not yet: the time warp and color tools, the drumstick tool, and pointers of their own for the sizing modes; the rest of the reference's context
+Not yet: the drumstick tool, and pointers of their own for the sizing modes and the color tool; the rest of the reference's context
 menu, with the Audio and MIDI menus' functions, follows with those menus. Cut and Copy of selected events without a
 range (the event clipboard) wait for a ticket of their own. On X11, SDL shows only a pointer's scale-1 picture. The
 audio editor gets its toolbox when it comes. The Preferences dialog's Editing - Tools page
@@ -182,7 +183,8 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   previous around the ends, the root's attribute and the cross-hair cursor; the object selection tool's rectangle,
   with Ctrl, and setting the cursor; splitting, snapped, into equal pieces, and with a tool modifier changed through
   `settings.set`; gluing to the next and to all following events; erasing one and all later events; muting and
-  unmuting with clicks and a rectangle; zooming in, out, to a rectangle, back with a double click and forward again
+  unmuting with clicks and a rectangle; coloring an event and the selection with the color tool, taking a track's
+  color with Alt, the wheel's steps around the color set and Ctrl asking for the pane; zooming in, out, to a rectangle, back with a double click and forward again
   with Alt, neither leaving the double click's first click to redo; the rectangle zooming the track heights with `ui.zoomToolHorizontalOnly` off; drawing parts,
   snapped, by dragging and with a click, and MIDI parts with the object selection tool and Alt, none on audio tracks or with the line tool; auditioning the audio lane's
   track on the dummy device while the mouse is pressed, nothing on a MIDI lane, scrubbing with a drag, and resizing an
