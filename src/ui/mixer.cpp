@@ -514,6 +514,11 @@ namespace gnubase::ui
 				R"(<menuitem type="toggle" function="follow" checked="">)"
 				R"(Follow Edit Buttons or Selection Changes</menuitem>)"}};
 		menus.emplace_back(R"(<menu id="mixer-link-menu">)", ""); // showLinkMenu fills it
+		// The channel meters' Global Meter Settings (reference manual p. 467).
+		menus.emplace_back(R"(<menu id="mixer-meter-menu">)",
+			R"(<menuitem type="toggle" meter="holdPeaks" checked="">Meter Peak - Hold Peaks</menuitem>)"
+			R"(<menuitem type="toggle" meter="holdForever">Meter Peak - Hold Forever</menuitem>)"
+			R"(<menuseparator/><menuitem meter="reset">Reset Meters</menuitem>)");
 		menus.emplace_back(R"(<menu id="mixer-layout-pane" class="setup-pane">)", layout);
 		for (const auto& [open, items] : menus)
 		{
@@ -523,6 +528,8 @@ namespace gnubase::ui
 			menu->AddEventListener(Rml::EventId::Click, this);
 			menu->AddEventListener(Rml::EventId::Change, this);
 			m_menus.push_back(menu->GetObserverPtr());
+			if (menu->GetId() == "mixer-meter-menu")
+				m_meterMenu = menu->GetObserverPtr();
 		}
 		m_docking.arrangeSections(*m_menus.back().get()); // the setup pane, once the docking window knows the set
 		for (const Rml::EventId id : g_rootEvents)
@@ -581,25 +588,19 @@ namespace gnubase::ui
 				m_hiddenTypes = event.data.at("hiddenTypes").get<std::set<std::string>>();
 				show();
 			}));
-		// Ctrl-click gives a send the default send level (reference manual p. 552).
-		const auto sendLevel = [this](const Json& value)
-		{
-			m_defaultSendLevel = value.get<double>();
-			show();
-		};
 		m_subscriptions.push_back(m_binding.on("settings.changed",
-			[sendLevel](const engine::Event& event)
+			[this](const engine::Event& event)
 			{
-				if (const auto level = event.data.at("values").find("audio.defaultSendLevel");
-					level != event.data.at("values").end())
-					sendLevel(*level);
+				for (const auto& [key, value] : event.data.at("values").items())
+					setting(key, value);
 			}));
-		m_binding.send("settings.get", {{"key", "audio.defaultSendLevel"}},
-			[sendLevel, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
-			{
-				if (!alive.expired() && result.ok())
-					sendLevel(result.value.at("value"));
-			});
+		for (const char* key : {"audio.defaultSendLevel", "meter.holdPeaks", "meter.holdForever", "meter.peakHoldTime"})
+			m_binding.send("settings.get", {{"key", key}},
+				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && result.ok())
+						setting(result.value.at("key").get<std::string>(), result.value.at("value"));
+				});
 		// Whether its channel visibility follows the track visibility (#166).
 		const auto sync = [this](const Json& visibility)
 		{
@@ -834,7 +835,7 @@ namespace gnubase::ui
 			// whose bars come once the engine measured the channel (showMeters).
 			if (audio || vca)
 				rml += std::string(R"(<div class="mixer-level"><fader min="-60" max="6" default="0" step="0.1"/>)") +
-					(vca ? "" : R"(<div class="mixer-meter"/>)") +
+					(vca ? "" : R"(<div class="mixer-meter" contextmenu="mixer-meter-menu"/>)") +
 					R"(</div><div class="mixer-readouts"><span class="mixer-volume"/>)" +
 					(vca ? "" : R"(<span class="mixer-peak" title="Meter Peak Level"/>)") + "</div>";
 			if (audio && !vca)
@@ -852,18 +853,26 @@ namespace gnubase::ui
 		showMeters(readMeters()); // the watch shows only what changes
 	}
 
-	std::vector<std::vector<std::string>> Mixer::readMeters() const
+	std::vector<std::vector<std::string>> Mixer::readMeters()
 	{
+		const auto now = std::chrono::steady_clock::now();
 		std::vector<std::vector<std::string>> shown;
 		for (const uint64_t id : *m_metered)
 		{
 			std::vector<std::string> values;
 			const engine::LevelReading* level = m_meterReader.level(id);
+			std::vector<HeldPeak>& held = m_held[id];
 			float largest = 0.0f;
 			for (size_t c = 0; level != nullptr && c < static_cast<size_t>(level->channels); ++c)
 			{
+				// Without Hold Forever the mark holds a peak for the peak hold time (p. 1614); below the maximum, a
+				// reset cleared, it starts again.
+				held.resize(std::max(held.size(), c + 1));
+				HeldPeak& mark = held[c];
+				if (level->peak[c] >= mark.level || mark.level > level->peakMax[c] || now - mark.at > m_peakHoldTime)
+					mark = {level->peak[c], now};
 				values.push_back(meterValue(level->peak[c]));
-				values.push_back(meterValue(level->peakMax[c]));
+				values.push_back(m_holdPeaks ? meterValue(m_holdForever ? level->peakMax[c] : mark.level) : "");
 				largest = std::max(largest, level->peakMax[c]);
 			}
 			const std::optional<double> peak = engine::analysis::decibels(largest);
@@ -897,10 +906,35 @@ namespace gnubase::ui
 			{
 				Rml::Element* meter = bars->GetChild(c);
 				meter->SetAttribute("value", values[2 * static_cast<size_t>(c)]);
-				meter->SetAttribute("peak", values[(2 * static_cast<size_t>(c)) + 1]);
+				if (const std::string& mark = values[(2 * static_cast<size_t>(c)) + 1]; mark.empty())
+					meter->RemoveAttribute("peak");
+				else
+					meter->SetAttribute("peak", mark);
 			}
 			setText(*peak, values.back());
 		}
+	}
+
+	void Mixer::setting(const std::string& key, const Json& value)
+	{
+		if (key == "audio.defaultSendLevel") // what a Ctrl-click gives a send (reference manual p. 552)
+		{
+			m_defaultSendLevel = value.get<double>();
+			show();
+			return;
+		}
+		if (key == "meter.holdPeaks")
+			m_holdPeaks = value.get<bool>();
+		else if (key == "meter.holdForever")
+			m_holdForever = value.get<bool>();
+		else if (key == "meter.peakHoldTime")
+			m_peakHoldTime = std::chrono::milliseconds(value.get<int64_t>());
+		else
+			return;
+		for (const auto& [item, on] : {std::pair{"holdPeaks", m_holdPeaks}, std::pair{"holdForever", m_holdForever}})
+			if (Rml::Element* toggle =
+					m_meterMenu ? m_meterMenu->QuerySelector(std::string("[meter=") + item + "]") : nullptr)
+				setChecked(*toggle, on);
 	}
 
 	void Mixer::updateStrip(Rml::Element& strip, const MixerChannel& channel)
@@ -1284,6 +1318,11 @@ namespace gnubase::ui
 			{
 				m_follows = event.GetParameter("value", true);
 			}
+			else if (target->HasAttribute("meter") && attribute(*target, "meter") != "reset")
+			{
+				m_binding.send("settings.set",
+					{{"key", "meter." + attribute(*target, "meter")}, {"value", event.GetParameter("value", true)}});
+			}
 			else if (target->IsClassSet("mixer-link"))
 			{
 				// The name typed into the display line (p. 459), which starts with the group's number and the name.
@@ -1401,7 +1440,7 @@ namespace gnubase::ui
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && m_actions.editChannel)
 					m_actions.editChannel(channel->track);
 			}
-			else if (target->IsClassSet("mixer-peak"))
+			else if (target->IsClassSet("mixer-peak") || attribute(*target, "meter") == "reset")
 			{
 				m_binding.send("meter.reset", {{"meters", "channels"}}); // the peak level (p. 468)
 			}

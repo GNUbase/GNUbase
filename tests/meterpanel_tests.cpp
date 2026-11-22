@@ -203,6 +203,72 @@ TEST_CASE("the mixer's channel meters and the meter display read the same frames
 	CHECK(text(app, ".peak-max") == "-6.0 dB");
 }
 
+TEST_CASE("a channel meter's Global Meter Settings menu holds its peaks for a time, forever or not at all, and resets "
+		  "the meters",
+	"[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const auto channel = app.call("track.add", {{"type", "audio"}}).at("channel").at("id").get<uint64_t>();
+	app.call("channel.set", {{"channel", channel}, {"monitor", true}});
+	app.call("settings.set", {{"key", "meter.peakHoldTime"}, {"value", 30000}});
+	app.appUi().docking().open("mixer");
+	const std::string strip = ".mixer-channel[channel=" + std::to_string(channel) + "] ";
+	const auto bar = [&app, &strip]
+	{
+		const Json bars = app.ui().dom(std::nullopt, strip + ".mixer-meter meter", 0).at("elements");
+		return bars.empty() ? Json::object() : bars[0].at("attributes");
+	};
+	const auto menu = [&app, &strip](const std::string& item)
+	{
+		app.ui().click(std::nullopt, {strip + ".mixer-meter", 0, std::nullopt}, ui::MouseButton::Right, 1, {});
+		app.ui().click(std::nullopt, {"#mixer-meter-menu menuitem[meter=" + item + "]", 0, std::nullopt},
+			ui::MouseButton::Left, 1, {});
+	};
+	const auto setting = [&app](const std::string& key)
+	{ return app.call("settings.get", {{"key", key}}).at("value"); };
+
+	// The mark holds the peak for the peak hold time (p. 1614) while the level falls, then falls with it.
+	app.call("transport.play");
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil([&bar] { return bar().value("peak", std::string()) == "-6.0"; }));
+	app.call("channel.set", {{"channel", channel}, {"volume", -20.0}});
+	app.call("audio.render", {{"frames", 4800}}); // the fader glides there: frames after these show only -26 dB
+	app.waitUntil([] { return false; }, std::chrono::milliseconds(100));
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil([&bar] { return bar().value("value", std::string()) == "-26.0"; }));
+	CHECK(bar().value("peak", std::string()) == "-6.0");
+	app.call("settings.set", {{"key", "meter.peakHoldTime"}, {"value", 500}});
+	REQUIRE(app.waitUntil([&bar] { return bar().value("peak", std::string()) == "-200"; }));
+
+	// Hold Forever: the mark is the maximum until a reset (p. 467), past the peak hold time.
+	menu("holdForever");
+	CHECK(setting("meter.holdForever") == true);
+	REQUIRE(app.waitUntil([&bar] { return bar().value("peak", std::string()) == "-6.0"; }));
+	app.waitUntil([] { return false; }, std::chrono::milliseconds(700));
+	CHECK(bar().value("peak", std::string()) == "-6.0");
+
+	// Reset Meters resets the channels' maxima, as a click on the peak level does.
+	menu("reset");
+	REQUIRE(app.waitUntil([&bar] { return bar().value("peak", std::string()) == "-200"; }));
+	CHECK(app.ui().dom(std::nullopt, strip + ".mixer-peak", 0).at("elements").at(0).value("text", std::string()) ==
+		"-inf");
+
+	// Hold Peaks off: no mark at all.
+	menu("holdPeaks");
+	CHECK(setting("meter.holdPeaks") == false);
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil([&bar] { return bar().value("value", std::string()) == "-26.0"; }));
+	CHECK_FALSE(bar().contains("peak"));
+	// The menu's items show the settings.
+	const Json items = app.ui().dom(std::nullopt, "#mixer-meter-menu menuitem[checked]", 0).at("elements");
+	REQUIRE(items.size() == 1);
+	CHECK(items[0].at("attributes").at("meter") == "holdForever");
+}
+
 TEST_CASE("the meter reader reads only while a view shows meters", "[unit]")
 {
 	engine::Engine engine;

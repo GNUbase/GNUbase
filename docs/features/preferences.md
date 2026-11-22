@@ -56,6 +56,7 @@ presets to preferences and clients can tell them from the settings that have a p
     Boundaries (`midi.chase*`). MIDI Filter: the Record section's message types, the channels and the controllers
     (`midi.recordFilter`); the Thru section waits for MIDI thru filtering. MIDI File: the Import Options
     (`midi.import*`, [file-import.md](file-import.md)); its Export Options wait for the export preferences.
+  - Metering: Meters' Peak Hold Time (`meter.peakHoldTime`, [mixer-window.md](mixer-window.md)).
   - Record: Stop after Automatic Punch Out (`audio.stopAfterPunchOut`; switched off during the post-roll, playback
     goes on; `tests/recording_tests.cpp`). Audio: Audio Pre-Record Seconds (`audio.preRecordSeconds`). MIDI: Snap MIDI
     Parts to Bars, MIDI Record Catch Range in ms, Retrospective Record Buffer Size in Events (`midi.snapPartsToBars`,
