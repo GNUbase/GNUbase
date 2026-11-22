@@ -768,8 +768,10 @@ namespace gnubase::ui
 	void InfoLine::showRange()
 	{
 		Rml::Element& root = *m_root.get();
-		setClass(root, "empty", false);
+		setClass(root, "empty", !m_range);
 		setClass(root, "multiple", false);
+		if (!m_range)
+			return;
 		const RangeSelection& range = *m_range;
 		const TimeContext context = projectTime(m_display.project());
 		const double start = static_cast<double>(range.start) / context.sampleRate;
@@ -811,7 +813,10 @@ namespace gnubase::ui
 
 	void InfoLine::editRange(const std::string& field, const std::string& text)
 	{
-		RangeSelection range = *m_range;
+		if (!m_range)
+			return;
+		const RangeSelection shown = *m_range;
+		RangeSelection range = shown;
 		const TimeContext context = projectTime(m_display.project());
 		const double rate = context.sampleRate;
 		bool changed = false;
@@ -868,7 +873,7 @@ namespace gnubase::ui
 				{
 					range.tracks.insert(range.tracks.end(), order.begin() + edge + 1, order.begin() + at + 1);
 				}
-				changed = range.tracks != m_range->tracks;
+				changed = range.tracks != shown.tracks;
 			}
 		}
 		if (!changed)
