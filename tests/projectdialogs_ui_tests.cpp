@@ -160,10 +160,9 @@ TEST_CASE("dialogs for the project's tracks, parts or notes close when a new pro
 	test::UiApp app{{1200, 800}};
 	ui::EventDisplay& display = app.appUi().showProject();
 	const std::pair<const char*, const char*> dialogs[] = {{"project.addTrack", "#add-track-dialog"},
-		{"track.addEffectToSelected", "#add-track-dialog"},
-		{"track.saveTrackPreset", "#track-preset-dialog"}, {"midi.transposeSetup", "#midi-function"},
-		{"midi.ruleEditor", "#rule-editor"}, {"midi.mergeInLoop", "#midi-function"},
-		{"track.removeSelected", "#remove-tracks-dialog"},
+		{"track.addEffectToSelected", "#add-track-dialog"}, {"track.saveTrackPreset", "#track-preset-dialog"},
+		{"midi.transposeSetup", "#midi-function"}, {"midi.ruleEditor", "#rule-editor"},
+		{"midi.mergeInLoop", "#midi-function"}, {"track.removeSelected", "#remove-tracks-dialog"},
 		{"track.createChordEventsSelected", "#create-chord-events-dialog"},
 		{"track.mapToChordTrackSelected", "#map-to-chord-track-dialog"},
 		{"midi.calculateTempo", "#calculate-tempo-dialog"}, {"edit.repeat", "#repeat-events-dialog"},
@@ -200,9 +199,9 @@ TEST_CASE("the event display's dialogs for audio events close when a new project
 	audio.samples.resize(48000);
 	test::writeWav(file, audio);
 	const std::pair<const char*, const char*> dialogs[] = {{"track.autoFades", "#auto-fades"},
-		{"audio.fadeEditor", "#fade-editor"},
-		{"audio.detectSilence", "#detect-silence-dialog"}, {"audio.spectrumAnalyzer", "#spectrum-analyzer-dialog"},
-		{"audio.statistics", "#statistics-dialog"}, {"audio.setDefinitionFromTempo", "#definition-from-tempo-dialog"}};
+		{"audio.fadeEditor", "#fade-editor"}, {"audio.detectSilence", "#detect-silence-dialog"},
+		{"audio.spectrumAnalyzer", "#spectrum-analyzer-dialog"}, {"audio.statistics", "#statistics-dialog"},
+		{"audio.setDefinitionFromTempo", "#definition-from-tempo-dialog"}};
 	for (const auto& [command, dialog] : dialogs)
 	{
 		INFO(command);
