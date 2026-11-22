@@ -111,6 +111,22 @@ namespace gnubase::ui
 			return result;
 		}
 
+		// A set's order or hidden list to save, with the names in the saved one that aren't known, such as a section
+		// only some of the set's containers have, while none of those is there: each after the name before it there.
+		template <typename Known>
+		std::vector<std::string> keepUnknown(std::vector<std::string> list, const Json* saved, const Known& known)
+		{
+			auto at = list.begin();
+			for (const std::string& name : strings(saved))
+			{
+				if (const auto it = std::find(list.begin(), list.end(), name); it != list.end())
+					at = it + 1;
+				else if (!known(name))
+					at = list.insert(at, name) + 1;
+			}
+			return list;
+		}
+
 		// Puts the container's children whose attribute the order names into that order, in the places they take, so
 		// that the other children, such as a toolbar's spacer, stay where they are.
 		void arrange(Rml::Element& container, const char* name, const std::vector<std::string>& order)
@@ -333,7 +349,9 @@ namespace gnubase::ui
 		return result;
 	}
 
-	// The first container of a set says which sections it has, before the user's order changes it.
+	// The first container of a set says which sections it has, before the user's order changes it. Not every container
+	// has them all, e.g. only audio channels have an EQ (reference manual p. 479): a section that a later one brings
+	// goes after the section before it there.
 	bool Docking::learnSections(Attached& attached, Rml::Element& root)
 	{
 		auto* document = dynamic_cast<Rml::ElementDocument*>(attached.document.get());
@@ -343,13 +361,25 @@ namespace gnubase::ui
 		for (const Rml::Element* container : elementsWith(root, "sections", {}))
 		{
 			std::vector<Section>& known = attached.sections[attribute(*container, "sections")];
-			if (!known.empty())
-				continue;
+			std::size_t at = 0; // where a new one goes
 			for (int i = 0; i < container->GetNumChildren(); ++i)
 				if (const Rml::Element* child = container->GetChild(i); child->HasAttribute("section"))
-					known.push_back({attribute(*child, "section"), attribute(*child, "label"),
-						attribute(*child, "default") == "hidden"});
-			learned = learned || !known.empty();
+				{
+					const std::string id = attribute(*child, "section");
+					const auto it = std::find_if(
+						known.begin(), known.end(), [&id](const Section& section) { return section.id == id; });
+					if (it == known.end())
+					{
+						known.insert(known.begin() + static_cast<std::ptrdiff_t>(at),
+							{id, attribute(*child, "label"), attribute(*child, "default") == "hidden"});
+						learned = true;
+					}
+					else
+					{
+						at = static_cast<std::size_t>(it - known.begin());
+					}
+					++at;
+				}
 		}
 		for (Rml::Element* pane : elements(*document, "[setup]"))
 			for (const Section& known : attached.sections[attribute(*pane, "setup")])
@@ -365,12 +395,10 @@ namespace gnubase::ui
 
 	void Docking::arrangeSections(Rml::Element& element)
 	{
+		// An element made for the document, or taken out of it, has none (Element::SetParent).
 		Rml::ElementDocument* document = element.GetOwnerDocument();
-		const Rml::Element* up = &element; // in the document, not just made for it
-		while (up != nullptr && up != document)
-			up = up->GetParentNode();
 		const auto attached = m_windows.find(windowOf(element));
-		if (document == nullptr || up == nullptr || attached == m_windows.end())
+		if (document == nullptr || attached == m_windows.end())
 			return;
 		if (learnSections(attached->second, element))
 			applySections(attached->first, attached->second, *document); // the set's panes and every container of it
@@ -845,7 +873,9 @@ namespace gnubase::ui
 		const auto index = to - order.begin();
 		order.erase(from);
 		order.insert(order.begin() + index, id); // where before was, as for tabs
-		sectionsJson(window, set)["order"] = order;
+		const auto known = [&](const std::string& name) { return section(window, set, name) != nullptr; };
+		Json& json = sectionsJson(window, set);
+		json["order"] = keepUnknown(order, find(json, {"order"}), known);
 		save();
 		apply();
 	}
@@ -856,15 +886,16 @@ namespace gnubase::ui
 		if (section(window, set, id) == nullptr)
 			return;
 		// Every hidden one, so that the defaults no longer count, and the order, so that a later set can tell which
-		// sections this one had.
+		// sections this one had; with those the window doesn't know.
 		const std::vector<std::string> order = sections(window, set);
 		std::vector<std::string> list;
 		for (const std::string& name : order)
 			if (name == id ? hidden : sectionHidden(window, set, name))
 				list.push_back(name);
+		const auto known = [&](const std::string& name) { return section(window, set, name) != nullptr; };
 		Json& json = sectionsJson(window, set);
-		json["order"] = order;
-		json["hidden"] = list;
+		json["order"] = keepUnknown(order, find(json, {"order"}), known);
+		json["hidden"] = keepUnknown(list, find(json, {"hidden"}), known);
 		save();
 		apply();
 	}
