@@ -3885,3 +3885,46 @@ TEST_CASE("locked events and shared copies show an icon in their upper right cor
 	CHECK((right(mark(copy, "locked")) <= mark(copy, "shared")->GetAbsoluteLeft() ||
 		right(mark(copy, "shared")) <= mark(copy, "locked")->GetAbsoluteLeft()));
 }
+
+TEST_CASE("grid lines show the grid behind the events, and a line an audio event's snap point inside it", "[unit]")
+{
+	Fixture f;
+	const auto has = [&f](double seconds)
+	{
+		const std::vector<ui::EventLanes::Lane>& grid = f.lanes("grid-lines");
+		return !grid.empty() &&
+			std::any_of(grid[0].events.begin(), grid[0].events.end(),
+				[seconds](const ui::TimeSpan& line) { return std::abs(line.start - seconds) < 1e-6; });
+	};
+	// Bars at 120 BPM in 4/4, every 2 seconds, with snap off too (reference manual p. 109), behind everything.
+	REQUIRE(f.waitUntil([&] { return has(0.0) && has(2.0) && has(4.0); }));
+	CHECK_FALSE(has(1.0));
+	CHECK(
+		f.document.QuerySelector(".event-area")->GetFirstChild() == f.document.QuerySelector("event-lanes.grid-lines"));
+	f.call("snap.set", {{"grid", "beat"}});
+	REQUIRE(f.waitUntil([&] { return has(0.5) && has(1.5); }));
+	// They follow tempo changes: at 60 BPM from 2 seconds, a beat a second.
+	f.call("project.set", {{"tempoTrackActive", true}});
+	f.call("tempo.add", {{"position", 4 * g_quarter}, {"bpm", 60.0}});
+	REQUIRE(f.waitUntil([&] { return has(3.0) && !has(2.5); }));
+	CHECK(has(1.5));
+	// A linear grid, and none where its lines would be too close to see apart.
+	f.call("snap.set", {{"format", "seconds"}, {"grid", "100ms"}});
+	REQUIRE(f.waitUntil([&] { return has(0.1) && has(2.3); }));
+	f.call("snap.set", {{"format", "samples"}, {"grid", "1sample"}});
+	REQUIRE(f.waitUntil([&] { return !has(0.0); }));
+	CHECK(f.lanes("grid-lines").at(0).events.empty());
+
+	// The snap point (p. 105) shows as a line on the event's lane while it is inside the event, 2 to 2.5 seconds.
+	const auto points = [&f]
+	{
+		const std::vector<ui::EventLanes::Lane>& lanes = f.lanes("snap-points");
+		return lanes.empty() ? std::vector<ui::TimeSpan>() : lanes[0].events;
+	};
+	CHECK(points().empty());
+	f.call("event.setSnapPoint", {{"events", {f.event}}, {"position", 108000}});
+	REQUIRE(f.waitUntil([&] { return points().size() == 1; }));
+	CHECK(std::abs(points()[0].start - 2.25) < 1e-6);
+	f.call("event.resize", {{"events", {f.event}}, {"edge", "start"}, {"delta", 18000}});
+	REQUIRE(f.waitUntil([&] { return points().empty(); }));
+}

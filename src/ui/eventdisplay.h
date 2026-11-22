@@ -823,10 +823,12 @@ namespace gnubase::ui
 		void requestTargets(uint64_t track, std::function<void()> then = {});
 		// A lane for an automation track that shows the target on the track without a lane yet, its id.
 		uint64_t addUnaddedLane(uint64_t track, const engine::Json& target);
-		void reload();                // the lanes again, from the project as it was last read
-		void showAutomationLanes();   // the curves, after the lanes changed
-		void placeAutomation();       // where they are, after the view changed
-		void placePartMarks();        // the marks of parts excluded from global transpose, after the view changed
+		void reload();              // the lanes again, from the project as it was last read
+		void showAutomationLanes(); // the curves, after the lanes changed
+		void placeAutomation();     // where they are, after the view changed
+		void placePartMarks();      // the marks of parts excluded from global transpose, after the view changed
+		// The grid lines (#412, reference manual p. 109): the grid in use near the view, whether snap is on or not.
+		void showGrid();
 		void placeCuttingPositions(); // setCuttingPositions' lines, after the view changed
 		// The automation lane of a display lane, or null for a track's own lane.
 		const AutomationView* automationAt(size_t lane) const;
@@ -886,6 +888,8 @@ namespace gnubase::ui
 		Ruler* m_ruler = nullptr;
 		Rml::Element* m_area = nullptr;
 		EventLanes* m_lanes = nullptr;
+		EventLanes* m_gridLines = nullptr;  // behind everything, one lane across the area
+		EventLanes* m_snapPoints = nullptr; // a line at each audio event's snap point (p. 105), over the waveforms
 		std::unique_ptr<EventWaveforms> m_waveforms; // over the lanes
 		PartContents* m_contents = nullptr;          // MIDI parts' notes and controllers, over the lanes (#1313)
 		EventNames* m_names = nullptr;               // the names of events and parts, over what they hold (#1313)

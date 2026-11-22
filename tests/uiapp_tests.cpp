@@ -340,6 +340,50 @@ TEST_CASE("the project window shows events' names and MIDI parts' notes and cont
 	test::UiApp::checkGolden("event-names-contents", app.screenshot("event-names-contents", {800, 300}));
 }
 
+TEST_CASE("the project window draws a musical and a linear grid behind the events, and a snap point line", "[ui]")
+{
+	// #412 (reference manual pp. 105, 109): an audio event from 1 to 3 seconds with its snap point at 2 seconds.
+	test::UiApp app({800, 300});
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("project.set", {{"length", 60.0}});
+	const test::TempDir dir;
+	test::Audio take;
+	take.sampleRate = 48000;
+	take.samples.assign(96000, 0.0F);
+	const std::filesystem::path file = dir.path() / "Silence.wav";
+	test::writeWav(file, take);
+	const Json track = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+	const Json media = app.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json event =
+		app.call("audioEvent.add",
+			   {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 48000}, {"length", 96000}})
+			.at("event")
+			.at("id");
+	app.call("event.setSnapPoint", {{"events", {event}}, {"position", 96000}});
+	app.call("snap.set", {{"grid", "beat"}});
+	Rml::ElementDocument& document = *app.main().context().GetDocument(0);
+	const auto lines = [&document](const char* kind)
+	{
+		auto* lanes = dynamic_cast<ui::EventLanes*>(document.QuerySelector(std::string("event-lanes.") + kind));
+		return lanes == nullptr || lanes->lanes().empty() ? std::vector<ui::TimeSpan>() : lanes->lanes()[0].events;
+	};
+	const auto has = [&lines](double seconds)
+	{
+		const std::vector<ui::TimeSpan> grid = lines("grid-lines");
+		return std::any_of(grid.begin(), grid.end(),
+			[seconds](const ui::TimeSpan& line) { return std::abs(line.start - seconds) < 1e-6; });
+	};
+	REQUIRE(app.waitUntil([&] { return lines("snap-points").size() == 1 && has(0.5); }));
+	app.shell().step(std::chrono::milliseconds(0));
+	test::UiApp::checkGolden("event-grid-beats", app.screenshot("event-grid-beats", {800, 300}));
+	app.call("snap.set", {{"format", "seconds"}, {"grid", "100ms"}});
+	REQUIRE(app.waitUntil([&] { return has(0.1); }));
+	app.shell().step(std::chrono::milliseconds(0));
+	test::UiApp::checkGolden("event-grid-seconds", app.screenshot("event-grid-seconds", {800, 300}));
+}
+
 TEST_CASE(
 	"the project window shows events in their colors, and colored ones selected and muted, as the theme says", "[ui]")
 {

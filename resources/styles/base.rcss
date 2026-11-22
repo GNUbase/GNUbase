@@ -927,7 +927,8 @@ meter .meter-peak
 
 /* Markers (docs/features/markers.md): the marker lines and marker events are event lanes like the events; code
    places the labels where their markers are. */
-.event-display .marker-lines, .event-display .marker-events
+.event-display .marker-lines, .event-display .marker-events, .event-display event-lanes.grid-lines,
+.event-display event-lanes.snap-points
 {
 	pointer-events: none;
 }

@@ -555,6 +555,16 @@
 	{
 		background-color: #ffff00;
 	}
+	.event-display event-lanes.grid-lines
+	{
+		color: #323232;
+		stroke-color: transparent;
+	}
+	.event-display event-lanes.snap-points
+	{
+		color: #00ffff;
+		stroke-color: transparent;
+	}
 	.event-display .marker-lines
 	{
 		stroke-color: #008080;
