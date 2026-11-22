@@ -246,8 +246,8 @@ namespace gnubase::engine
 		void setDevice(const Json& parameters, bool keepMeasurement = false);
 		void openDummy(const Json& parameters);
 		void closeDevice();
-		// audio.reset; a device that can't be opened is lost. While one is, opens the lost device instead of the
-		// fallback that plays. True if the status changed.
+		// audio.reset; a device that can't be opened is lost, and so is one that ran and doesn't start again. While
+		// one is, opens the lost device instead of the fallback that plays. True if the status changed.
 		bool reset();
 		// audio.reconnect: while a fallback plays, only once the lost device is listed as available again, so that
 		// tries don't interrupt the fallback, or every g_uncertainReconnectInterval while it is listed as unavailable

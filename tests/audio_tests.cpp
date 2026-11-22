@@ -704,34 +704,44 @@ TEST_CASE("the device commands announce the slots whose status they changed, als
 	CHECK(announced(0) == noDevice);
 }
 
-TEST_CASE("a reset or a returning device that opens but fails to start still announces the device", "[integration]")
+TEST_CASE(
+	"a running device that opens again but fails to start is lost, and plays again once it starts", "[integration]")
 {
 	const auto driver = std::make_shared<FakeDriver>();
 	Engine engine(fakeBackends(driver));
 	Client client(engine);
 	run(client, "audio.setDevice", {{"backend", "fake"}});
 	run(client, "audio.start");
-	while (client.wait(std::chrono::milliseconds(0))) // the commands' own audio.changed
-		;
-	const auto openAndStopped = [](const Json& data)
-	{ return data.at("device").is_object() && data.at("running") == false && data.at("lost").is_null(); };
+	const auto lostToRestart = [](const Json& data)
+	{ return !data.at("lost").is_null() && data.at("lost").at("restart") == true; };
+	const auto backRunning = [](const Json& data)
+	{ return data.at("lost").is_null() && data.at("device").is_object() && data.at("running") == true; };
 
-	// audio.reset opens the device again, then starting it fails.
+	// audio.reset opens the device again, then starting it fails, as with an ASIO driver opened without its
+	// hardware: the device is lost and the engine keeps trying.
 	driver->failStart = true;
-	reject(client, "audio.reset");
-	CHECK(waitForEvent(client, "audio.changed", openAndStopped));
+	Json status = run(client, "audio.reset");
+	CHECK(status.at("device").is_null());
+	CHECK(lostToRestart(status));
+	CHECK_THAT(status.at("lost").at("reason").get<std::string>(), ContainsSubstring("doesn't process audio"));
+	CHECK(waitForEvent(client, "audio.changed", lostToRestart));
 	driver->failStart = false;
-	run(client, "audio.start");
+	CHECK(waitForEvent(client, "audio.changed", backRunning));
 
-	// The running device goes away and returns, then starting it fails: the automatic try still announces it.
-	driver->connected = false;
-	driver->device.load()->requestReset();
-	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
-	CHECK(run(client, "audio.get").at("lost").at("restart") == true);
+	// The driver asks for the reset itself while the fallback is set: the fallback plays until the device starts.
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "dummy"}});
 	driver->failStart = true;
-	driver->connected = true;
-	CHECK(waitForEvent(client, "audio.changed", openAndStopped));
-	CHECK(openAndStopped(run(client, "audio.get")));
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed",
+		[&lostToRestart](const Json& data) { return lostToRestart(data) && data.at("device").is_object(); }));
+	status = run(client, "audio.get");
+	CHECK(status.at("device").at("backend") == "dummy");
+	CHECK(status.at("running") == true);
+	CHECK(status.at("lost").at("device") == "fake-1");
+	driver->failStart = false;
+	CHECK(waitForEvent(client, "audio.changed", backRunning, std::chrono::seconds(10)));
+	CHECK(run(client, "audio.get").at("device").at("backend") == "fake");
+	run(client, "audio.stop");
 }
 
 TEST_CASE("audio.setPort renames and hides the device's ports, per device", "[unit]")

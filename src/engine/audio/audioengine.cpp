@@ -1760,6 +1760,9 @@ namespace gnubase::engine
 				m_deviceOverloadsKept = dropouts;
 				publishPerformance(m_meter.data());
 			}
+			// Some ASIO drivers open without their hardware and only fail to start: that is lost too (#472).
+			if (running)
+				startDevice();
 		}
 		catch (const std::exception& error)
 		{
@@ -1775,8 +1778,6 @@ namespace gnubase::engine
 		}
 		if (lost)
 			logging::info("The audio device ({} {}) is back", backend, id);
-		if (running)
-			startDevice();
 		return true;
 	}
 
@@ -2558,9 +2559,10 @@ namespace gnubase::engine
 			{"audio.reset", 1,
 				"Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this "
 				"when their settings change, e.g. in their control panel, or when their device goes away; the engine "
-				"then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost "
-				"in audio.get): the engine goes on without it and tries again about every half second until it "
-				"opens (audio.reconnect), then restarts it if it ran, so playback goes on where it stopped; "
+				"then resets on its own. A device that can't be opened, e.g. because it was unplugged, or that ran "
+				"and opens but doesn't start again, is lost (lost in audio.get): the engine goes on without it and "
+				"tries again about every half second until it opens (audio.reconnect), then restarts it if it ran, "
+				"so playback goes on where it stopped; "
 				"audio.start and audio.stop meanwhile decide whether it does. With the user setting "
 				"audio.fallbackDevice, a fallback device plays meanwhile and the engine switches back once the lost "
 				"device opens; a reset while one plays tries the lost device and opens the fallback again if that "
