@@ -314,6 +314,12 @@ TEST_CASE("every command describes itself", "[unit]")
 	CHECK(setValue->at("description") == "Stores a value.");
 	CHECK(setValue->at("parameters") == valueParameters());
 	CHECK(setValue->at("query") == false);
+	CHECK(setValue->at("consumes") == false);
+	const auto capture = std::find_if(
+		commands.begin(), commands.end(), [](const Json& command) { return command.at("name") == "midi.capture"; });
+	REQUIRE(capture != commands.end());
+	CHECK(capture->at("query") == true);
+	CHECK(capture->at("consumes") == true); // takes what it returns from a queue all clients share (#350)
 
 	std::vector<std::string> names;
 	for (const CommandInfo& info : engine.commands())

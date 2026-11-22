@@ -85,7 +85,8 @@ namespace gnubase::engine
 		Json toJson(const CommandInfo& info)
 		{
 			return {{"name", info.name}, {"version", info.version}, {"description", info.description},
-				{"parameters", info.parameters}, {"result", info.result}, {"query", info.query}};
+				{"parameters", info.parameters}, {"result", info.result}, {"query", info.query},
+				{"consumes", info.consumes}};
 		}
 	}
 

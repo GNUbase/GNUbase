@@ -758,7 +758,7 @@ namespace gnubase::engine
 					"properties": {"start": {"type": "boolean"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"received": {"type": "array"},
 					"dropped": {"type": "integer"}}, "required": ["received", "dropped"]})"),
-				true},
+				true, true},
 			[this](CommandContext& context)
 			{
 				listOnce();

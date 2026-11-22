@@ -6,7 +6,7 @@ GNUbase has a built-in [Model Context Protocol](https://modelcontextprotocol.io)
 - **`script_run`** runs Lua code with the same API (the [Lua API reference](https://gnubase.github.io/GNUbase/lua.html), [api-reference.md](api-reference.md)) in a sandbox, for work that takes many steps or for test cases written with `gnubase.test`.
 - **UI tools:** with its UI, GNUbase also lets agents read the UI back and use it: windows, the DOM, screenshots, mouse and keyboard (`ui_dom`, `ui_click`, ...). See [UI tools](#ui-tools).
 - **Events:** `events_take` returns what changed in the engine since the last call, such as `track.added` or `history.changed`, whoever changed it: this client, other MCP clients, Lua scripts or the UI. See [Events](#events).
-- **Resources:** queries without required parameters can also be read as resources, `gnubase://<command>`, e.g. `gnubase://project.get`.
+- **Resources:** queries without required parameters can also be read as resources, `gnubase://<command>`, e.g. `gnubase://project.get`. Queries whose calls take what they return from a queue all clients share, `midi.capture` and `midi.monitor`, are tools only, marked neither read-only nor idempotent, so reading resources for context takes nobody's messages.
 - **Errors:** a command that fails is a tool result with `isError: true` and the reason, such as `parameters.type must be one of [...]`, so the agent can correct itself. Malformed messages get JSON-RPC errors.
 - The server speaks MCP revision 2025-06-18; HTTP clients may also send `MCP-Protocol-Version: 2025-03-26`.
 

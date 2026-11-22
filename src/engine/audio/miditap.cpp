@@ -414,7 +414,7 @@ namespace gnubase::engine
 					"properties": {"start": {"type": "boolean"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"captured": {"type": "array"},
 					"dropped": {"type": "integer"}}, "required": ["captured", "dropped"]})"),
-				true},
+				true, true},
 			[this](CommandContext& context)
 			{
 				size_t dropped = 0;
