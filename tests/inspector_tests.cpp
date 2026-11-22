@@ -1363,7 +1363,7 @@ TEST_CASE("Warp Quantize On/Off goes from the toolbar before any section does", 
 
 TEST_CASE("the toolbar makes room for its sections with the widest labels, and for those the user hides", "[ui]")
 {
-	for (const int width : {1024, 840})
+	for (const int width : {1000, 840})
 	{
 		INFO("window width " << width);
 		Window window(width);
@@ -1382,7 +1382,7 @@ TEST_CASE("the toolbar makes room for its sections with the widest labels, and f
 		CHECK(wide.size() < before.size());
 
 		// The sections the user hides in the setup pane make room for the next one, which comes after them: the tools,
-		// the widest, make room for any one section, such as the Quantize section at 1024 pixels.
+		// the widest, make room for any one section, such as the Quantize section at 1000 pixels.
 		REQUIRE(wide.size() >= 4);
 		const std::string& next = defaults.at(wide.size() - 1); // the first one without room
 		docking.setSectionHidden("project", "toolbar", "zoomPresets", true);
