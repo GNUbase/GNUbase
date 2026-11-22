@@ -684,6 +684,25 @@ TEST_CASE("a menu taller than the window scrolls, and a submenu opens on the sid
 	CHECK(element(app, "#track-menu").at("box").at("height") == windowSize(app).height);
 	CHECK(insideWindow(app, "#track-menu"));
 
+	// The keys scroll the item they focus into view: Up after the menu opens focuses its last item, below the part
+	// shown, and Down back round to the first. Within a pixel, as RmlUi scrolls by whole pixels and the boxes are
+	// rounded.
+	const auto shown = [&app](const std::string& selector)
+	{
+		const Json menu = element(app, "#track-menu").at("box");
+		const Json item = element(app, selector).at("box");
+		return item.at("y").get<int>() + 1 >= menu.at("y").get<int>() &&
+			item.at("y").get<int>() + item.at("height").get<int>() <=
+			menu.at("y").get<int>() + menu.at("height").get<int>() + 1;
+	};
+	REQUIRE_FALSE(shown("#lock"));
+	app.ui().key(std::nullopt, "Up");
+	CHECK(has(element(app, "#lock"), "pseudoClasses", "focus"));
+	CHECK(shown("#lock"));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(has(element(app, "#rename"), "pseudoClasses", "focus"));
+	CHECK(shown("#rename"));
+
 	// At the window's right edge the submenu opens left of its item, inside the window, and the menu that scrolls
 	// doesn't clip it.
 	app.ui().move(std::nullopt, at("#lock"));
@@ -1835,6 +1854,40 @@ TEST_CASE(
 	CHECK(app.waitUntil([&app] { return !countDialogOpen(app); }));
 	CHECK(closes.results == std::vector<std::string>{"ok", "cancel", "ok"});
 	CHECK(closes.counts == std::vector<std::string>{"7", "1", "1"});
+}
+
+TEST_CASE("a dialog under a window that gets shorter scrolls and stays inside the window (#1933)", "[ui]")
+{
+	CountCloses closes;
+	test::UiApp app;
+	app.show("popups.rml");
+	openCountDialog(app, closes);
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE_FALSE(has(element(app, "#count-dialog"), "classes", "scrolls"));
+	const int height = element(app, "#count-dialog").at("box").at("height").get<int>();
+
+	// The window shorter than the dialog and narrower than where it stands: it scrolls, as tall as the window, and
+	// moves inside it.
+	Rml::Context& context = app.main().context();
+	const Json box = element(app, "#count-dialog").at("box");
+	context.SetDimensions({box.at("x").get<int>() + box.at("width").get<int>() - 20, height / 2});
+	app.shell().step(std::chrono::milliseconds(0));
+	app.shell().step(std::chrono::milliseconds(0));
+	const Json shrunk = element(app, "#count-dialog").at("box");
+	CHECK(has(element(app, "#count-dialog"), "classes", "scrolls"));
+	CHECK(shrunk.at("height").get<int>() == context.GetDimensions().y);
+	CHECK(shrunk.at("x").get<int>() >= 0);
+	CHECK(shrunk.at("y").get<int>() >= 0);
+	CHECK(shrunk.at("x").get<int>() + shrunk.at("width").get<int>() <= context.GetDimensions().x);
+	CHECK(shrunk.at("y").get<int>() + shrunk.at("height").get<int>() <= context.GetDimensions().y);
+
+	// Tall enough again, it doesn't scroll.
+	context.SetDimensions({context.GetDimensions().x, height * 2});
+	app.shell().step(std::chrono::milliseconds(0));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(has(element(app, "#count-dialog"), "classes", "scrolls"));
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(app.waitUntil([&app] { return !countDialogOpen(app); }));
 }
 
 TEST_CASE("the wheel and Up and Down step a value field with autofocus while it is edited (#548)", "[ui]")
