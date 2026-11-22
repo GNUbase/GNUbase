@@ -1814,6 +1814,42 @@ TEST_CASE(
 	CHECK(closes.counts == std::vector<std::string>{"7", "1", "1"});
 }
 
+TEST_CASE("the wheel and Up and Down step a value field with autofocus while it is edited (#548)", "[ui]")
+{
+	CountCloses closes;
+	test::UiApp app;
+	app.show("popups.rml");
+	openCountDialog(app, closes);
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(has(element(app, "#count"), "classes", "editing"));
+	const auto count = [&app] { return element(app, "#count").at("attributes").at("value").get<std::string>(); };
+
+	// Up and Down step the value rather than moving the caret, and the field stays edited with the new number.
+	app.ui().key(std::nullopt, "Up");
+	app.ui().key(std::nullopt, "Up");
+	app.ui().key(std::nullopt, "Down");
+	CHECK(count() == "2");
+	CHECK(has(element(app, "#count"), "classes", "editing"));
+	// A number typed counts from it.
+	app.ui().text(std::nullopt, "5");
+	app.ui().key(std::nullopt, "Up");
+	CHECK(count() == "6");
+	// The wheel steps it too, up for more.
+	app.ui().wheel(std::nullopt, at("#count"), 0.0F, -2.0F, {});
+	CHECK(count() == "8");
+	CHECK(has(element(app, "#count"), "classes", "editing"));
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(app.waitUntil([&app] { return !countDialogOpen(app); }));
+	CHECK(closes.counts == std::vector<std::string>{"8"});
+
+	// A value field without autofocus still moves the caret.
+	openCountDialog(app, closes);
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().click(std::nullopt, at("#other"), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Up");
+	CHECK(element(app, "#other").at("attributes").at("value") == "1");
+}
+
 namespace
 {
 	// The page of views at dp ratio 1, with its data model.

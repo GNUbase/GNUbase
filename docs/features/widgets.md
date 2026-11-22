@@ -68,7 +68,9 @@ The widgets:
   typed, clamped to the range; Escape, text that isn't a number, or nothing typed keeps the value, so that a value with
   more decimals than the field shows isn't rounded to them. Typing the number shown takes it. With `autofocus`, it is
   edited, all of it selected, whenever it gets a visible focus: when its document shows it focused, or Tab moves to it,
-  but not on a click. When its document shows it, keys typed before the next update go into it too; after Tab, a key
+  but not on a click. While it is edited, the wheel and Up and Down still step it, from the number typed if there is
+  one, and it stays edited with the new number selected (#548); without `autofocus`, an edited field ignores the wheel
+  and the arrows move the caret. When its document shows it, keys typed before the next update go into it too; after Tab, a key
   before the next update starts editing, but only text that comes after that key goes into it. In a dialog it is then
   the main field, which works like a text field: Enter takes the number typed and clicks OK, Escape cancels. While the
   user types, the field's text field sends RmlUi's own `change` events with the text; the field's `change`, with the
