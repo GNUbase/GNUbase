@@ -1386,6 +1386,25 @@ TEST_CASE("the device follows the project's sample rate where it can and reports
 	CHECK(run(client, "audio.get").at("device").at("sampleRate") == 96000.0);
 }
 
+TEST_CASE("a device that opens at the project's new sample rate but fails to start leaves the project changed",
+	"[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	driver->failStart = true;
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	CHECK(run(client, "project.get").at("sampleRate") == 44100.0);
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data)
+		{
+			return data.at("device").is_object() && data.at("device").at("sampleRate") == 44100.0 &&
+				data.at("running") == false && data.at("lost").is_null();
+		}));
+}
+
 TEST_CASE("audio.changed announces every new project sample rate, for the status line's record format", "[unit]")
 {
 	Engine engine(fakeBackends(std::make_shared<FakeDriver>()));

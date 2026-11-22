@@ -571,7 +571,17 @@ namespace gnubase::engine
 			{
 				if (!m_lost)
 					m_parameters["sampleRate"] = rate;
-				reset(); // retry the lost device, or reopen the fallback at the new rate
+				try
+				{
+					// Retries the lost device, or reopens the fallback at the new rate. A device that was there and
+					// doesn't start at it stays open and stopped: the project has changed all the same (#439).
+					reset(m_lost.has_value());
+				}
+				catch (const std::exception& error)
+				{
+					logging::warning(
+						"The audio device doesn't start at the project's new sample rate: {}", error.what());
+				}
 				reopened = true;
 			}
 			else if (m_lost)
@@ -1724,7 +1734,7 @@ namespace gnubase::engine
 		rebuild();
 	}
 
-	bool AudioEngine::reset()
+	bool AudioEngine::reset(bool loseIfStartFails)
 	{
 		require(m_device != nullptr || m_lost, "there is no audio device; set one with audio.setDevice");
 		// While a device is lost, it is the one to open: a fallback that plays gives way to it.
@@ -1761,7 +1771,7 @@ namespace gnubase::engine
 				publishPerformance(m_meter.data());
 			}
 			// Some ASIO drivers open without their hardware and only fail to start: that is lost too (#472).
-			if (running)
+			if (running && loseIfStartFails)
 				startDevice();
 		}
 		catch (const std::exception& error)
@@ -1778,6 +1788,8 @@ namespace gnubase::engine
 		}
 		if (lost)
 			logging::info("The audio device ({} {}) is back", backend, id);
+		if (running && !loseIfStartFails)
+			startDevice();
 		return true;
 	}
 
