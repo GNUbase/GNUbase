@@ -169,6 +169,7 @@ add_executable(gnubase-tests
 	projectsetup_tests.cpp
 	quantize_tests.cpp
 	quantize_ui_tests.cpp
+	rangeinfoline_ui_tests.cpp
 	recording_tests.cpp
 	renderinplace_tests.cpp
 	rmlui_tests.cpp

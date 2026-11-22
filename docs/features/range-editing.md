@@ -166,9 +166,12 @@ Time, Split, Crop and Insert Silence. Menus and keys disable the commands that o
 none, the top and bottom nudges too, and Paste and Paste Time until something is copied (`rangeClipboard.changed`,
 since the project opened).
 
+The info line shows the range with the range selection tool: Range Start, Range End, Range Length, Top Track and
+Bottom Track, which set it (pp. 287-288, [inspector.md](inspector.md)).
+
 Not yet (#1910): copying and pasting selected events without a range, Paste at Origin and Paste Relative to Cursor,
-Range Tool Splits Partly Selected Events, the info line's range fields, the range in the editors (they come with their
-tickets), and the controller events at the edges of a range inside a part.
+Range Tool Splits Partly Selected Events, the range in the editors (they come with their tickets), and the controller
+events at the edges of a range inside a part.
 
 ## Checks
 

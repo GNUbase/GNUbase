@@ -330,6 +330,8 @@ namespace gnubase::ui
 		// p. 291); a drag just inside one of its edges moves that edge (p. 288); a click there without a drag selects
 		// a range of no length, as anywhere.
 		void setRange(std::optional<RangeSelection> range);
+		// The lanes' tracks, each once: a track's automation tracks' lanes have its id too (#121).
+		std::vector<uint64_t> shownTracks() const;
 		// Importing files (#92, fileimport.cpp, docs/features/file-import.md). MIDI files (.mid, .midi, .smf) are
 		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the
 		// document), or with the user setting editing.onImportAudio at useSettings are imported at once with the
@@ -793,8 +795,6 @@ namespace gnubase::ui
 			Bottom,
 		};
 		RangeEdge rangeEdgeAt(double x, double y) const;
-		// The lanes' tracks, each once: a track's automation tracks' lanes have its id too (#121).
-		std::vector<uint64_t> shownTracks() const;
 		// Where a RangeMove drag to x and y dp has the range from, and a RangeEdge drag.
 		RangeSelection movedRange(const RangeSelection& from, double x, double y) const;
 		RangeSelection resizedRange(const RangeSelection& from, double x, double y) const;

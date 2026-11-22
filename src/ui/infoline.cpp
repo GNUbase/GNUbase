@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <exception>
 #include <functional>
 #include <map>
@@ -52,6 +53,13 @@ namespace gnubase::ui
 			R"(<div class="info-field" info-field="length" section="length" label="Length">)"
 			R"(<span class="info-label">Length</span>)"
 			R"(<textdisplay class="display" field="length"/></div>)"
+			// A selection range's top and bottom track (p. 288).
+			R"(<div class="info-field" info-field="topTrack" section="topTrack" label="Top Track">)"
+			R"(<span class="info-label">Top Track</span>)"
+			R"(<select field="topTrack" title="Top Track"/></div>)"
+			R"(<div class="info-field" info-field="bottomTrack" section="bottomTrack" label="Bottom Track">)"
+			R"(<span class="info-label">Bottom Track</span>)"
+			R"(<select field="bottomTrack" title="Bottom Track"/></div>)"
 			// A note's pitch, off velocity and channel, which the info line shows while an in-place editor's
 			// selection changed last (p. 1259), as that editor's own info line does (p. 1199).
 			R"(<div class="info-field" info-field="pitch" section="pitch" label="Pitch">)"
@@ -226,6 +234,7 @@ namespace gnubase::ui
 		m_showsNotes = true;
 		m_showsMarkers = false;
 		m_showsPoints = false;
+		m_showsRange = false;
 		m_noteView = name;
 		m_noteSelection = selection;
 		m_notesDirty = true;
@@ -246,7 +255,9 @@ namespace gnubase::ui
 			if (shows() && (!numeric || number))
 			{
 				m_absolute = true;
-				if (m_showsNotes)
+				if (m_showsRange)
+					editRange(field, text);
+				else if (m_showsNotes)
 					editNotes(field, text, number.value_or(0.0F), 0);
 				else if (m_showsMarkers)
 					editMarkers(field, text);
@@ -263,8 +274,12 @@ namespace gnubase::ui
 		const bool markersChanged = markers != m_markerSelection;
 		const std::map<uint64_t, std::set<uint64_t>>& points = m_display.selectedPoints();
 		const bool pointsChanged = points != m_pointSelection;
+		const std::optional<RangeSelection>& range = m_display.range();
+		const bool rangeChanged = range.has_value() != m_range.has_value() ||
+			(range && m_range &&
+				(range->start != m_range->start || range->end != m_range->end || range->tracks != m_range->tracks));
 		if ((selection == m_selection && m_display.answers() == m_loads && format == m_format && !markersChanged &&
-				!pointsChanged && !m_notesDirty) ||
+				!pointsChanged && !rangeChanged && !m_notesDirty) ||
 			!m_root->IsVisible(true)) // hidden: it asks once it shows
 			return;
 		// Whichever selection changed last shows; a marker clicked on the marker track wins.
@@ -273,6 +288,7 @@ namespace gnubase::ui
 			m_showsMarkers = false;
 			m_showsNotes = false;
 			m_showsPoints = false;
+			m_showsRange = false;
 		}
 		if (markersChanged)
 		{
@@ -281,6 +297,7 @@ namespace gnubase::ui
 			{
 				m_showsNotes = false;
 				m_showsPoints = false;
+				m_showsRange = false;
 			}
 		}
 		if (pointsChanged)
@@ -290,8 +307,20 @@ namespace gnubase::ui
 			{
 				m_showsMarkers = false;
 				m_showsNotes = false;
+				m_showsRange = false;
 			}
 		}
+		if (rangeChanged)
+		{
+			m_showsRange = range.has_value();
+			if (m_showsRange)
+			{
+				m_showsMarkers = false;
+				m_showsNotes = false;
+				m_showsPoints = false;
+			}
+		}
+		m_range = range;
 		m_pointSelection = points;
 		m_markerSelection = std::move(markers);
 		m_markers.clear();
@@ -299,6 +328,12 @@ namespace gnubase::ui
 		m_loads = m_display.answers();
 		m_format = format;
 		m_notesDirty = false;
+		if (m_showsRange)
+		{
+			m_events = Json::array(); // asked for again when the events show
+			show();
+			return;
+		}
 		if (m_showsNotes)
 		{
 			m_events = Json::array(); // asked for again when the events show
@@ -451,6 +486,19 @@ namespace gnubase::ui
 		setClass(root, "markers", m_showsMarkers);
 		setClass(root, "notes", m_showsNotes);
 		setClass(root, "points", m_showsPoints);
+		setClass(root, "range", m_showsRange);
+		if (m_showsRange)
+		{
+			showRange();
+			return;
+		}
+		// The range's fields and labels (showRange) only for a selection range.
+		for (const char* field : {"topTrack", "bottomTrack"})
+			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
+				setClass(*shown, "unavailable", true);
+		setLabel(root, "start", "Start");
+		setLabel(root, "end", "End");
+		setLabel(root, "length", "Length");
 		if (m_showsPoints)
 		{
 			showPoints();
@@ -590,7 +638,9 @@ namespace gnubase::ui
 		const auto field = target->GetAttribute<Rml::String>("field", "");
 		m_absolute = m_absoluteTake && m_absoluteTake->first == field;
 		m_absoluteTake.reset();
-		if (m_showsNotes)
+		if (m_showsRange)
+			editRange(field, event.GetParameter<Rml::String>("value", ""));
+		else if (m_showsNotes)
 			editNotes(field, event.GetParameter<Rml::String>("value", ""), event.GetParameter<float>("value", 0.0F),
 				event.GetParameter<int>("gesture", 0));
 		else if (m_showsMarkers)
@@ -712,6 +762,121 @@ namespace gnubase::ui
 			{"name", "Description"}, {"start", "Position"}, {"end", "End"}, {"length", "Length"}};
 		const std::string description = std::string("Change Marker ") + labels.at(field);
 		m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
+	}
+
+	// The selection range: its start, end and length, and its top and bottom track among the display's tracks.
+	void InfoLine::showRange()
+	{
+		Rml::Element& root = *m_root.get();
+		setClass(root, "empty", false);
+		setClass(root, "multiple", false);
+		const RangeSelection& range = *m_range;
+		const TimeContext context = projectTime(m_display.project());
+		const double start = static_cast<double>(range.start) / context.sampleRate;
+		const double end = static_cast<double>(range.end) / context.sampleRate;
+		const std::map<std::string, std::string> texts = {{"start", formatTime(m_format, start, context)},
+			{"end", formatTime(m_format, end, context)}, {"length", formatLength(m_format, start, end, context)}};
+		for (const auto& [field, text] : texts)
+			if (Rml::Element* display = root.QuerySelector("textdisplay[field=" + field + "]"))
+				setValue(*display, text);
+		setLabel(root, "start", "Range Start");
+		setLabel(root, "end", "Range End");
+		setLabel(root, "length", "Range Length");
+		Rml::ElementList fields;
+		root.QuerySelectorAll(fields, "[info-field]");
+		for (Rml::Element* field : fields)
+		{
+			const auto name = field->GetAttribute<Rml::String>("info-field", "");
+			setClass(*field, "unavailable",
+				name != "start" && name != "end" && name != "length" && name != "topTrack" && name != "bottomTrack");
+		}
+		// The display's tracks by name; the range's top and bottom are the first and last of its tracks among them,
+		// as a folded folder's lane stands for the tracks inside it.
+		const std::vector<uint64_t> order = m_display.shownTracks();
+		const Json& projectTracks = m_display.project().value("tracks", Json::array());
+		widgets::Options tracks;
+		for (const uint64_t id : order)
+			for (const Json& track : projectTracks)
+				if (track.value("id", uint64_t{0}) == id)
+					tracks.emplace_back(std::to_string(id), track.value("name", std::string()));
+		const auto shown = [&order](uint64_t track)
+		{ return std::find(order.begin(), order.end(), track) != order.end(); };
+		const auto top = std::find_if(range.tracks.begin(), range.tracks.end(), shown);
+		const auto bottom = std::find_if(range.tracks.rbegin(), range.tracks.rend(), shown);
+		if (Rml::Element* list = root.QuerySelector("select[field=topTrack]"))
+			widgets::fill(*list, tracks, top != range.tracks.end() ? std::to_string(*top) : std::string());
+		if (Rml::Element* list = root.QuerySelector("select[field=bottomTrack]"))
+			widgets::fill(*list, tracks, bottom != range.tracks.rend() ? std::to_string(*bottom) : std::string());
+	}
+
+	void InfoLine::editRange(const std::string& field, const std::string& text)
+	{
+		RangeSelection range = *m_range;
+		const TimeContext context = projectTime(m_display.project());
+		const double rate = context.sampleRate;
+		bool changed = false;
+		if (field == "start" || field == "end")
+		{
+			if (const std::optional<double> typed = parseTime(m_format, text, context))
+			{
+				const int64_t to = positionSamples(*typed, rate);
+				const bool start = field == "start";
+				if (start ? to <= range.end : to >= range.start)
+				{
+					(start ? range.start : range.end) = to;
+					changed = true;
+				}
+			}
+		}
+		else if (field == "length")
+		{
+			const double start = static_cast<double>(range.start) / rate;
+			if (const std::optional<double> length = parseLength(m_format, text, start, context))
+			{
+				range.end = std::max(range.start, positionSamples(start + *length, rate));
+				changed = true;
+			}
+		}
+		else if ((field == "topTrack" || field == "bottomTrack") && !range.tracks.empty())
+		{
+			// The chosen track becomes the edge: the tracks between it and the edge are taken in or out, as the top
+			// and bottom nudges take them one by one (p. 289), never past the other edge.
+			const bool top = field == "topTrack";
+			const uint64_t chosen = std::strtoull(text.c_str(), nullptr, 10); // 0, no track, for no number
+			const std::vector<uint64_t> order = m_display.shownTracks();
+			const auto index = [&order](uint64_t track)
+			{ return std::find(order.begin(), order.end(), track) - order.begin(); };
+			const auto size = static_cast<std::ptrdiff_t>(order.size());
+			const auto at = index(chosen);
+			const auto edge = index(top ? range.tracks.front() : range.tracks.back());
+			const auto other = index(top ? range.tracks.back() : range.tracks.front());
+			if (at < size && edge < size && other < size && (top ? at <= other : at >= other))
+			{
+				const auto inside = std::find(range.tracks.begin(), range.tracks.end(), chosen);
+				if (inside != range.tracks.end())
+				{
+					if (top)
+						range.tracks.erase(range.tracks.begin(), inside);
+					else
+						range.tracks.erase(std::next(inside), range.tracks.end());
+				}
+				else if (top && at < edge)
+				{
+					range.tracks.insert(range.tracks.begin(), order.begin() + at, order.begin() + edge);
+				}
+				else if (!top && at > edge)
+				{
+					range.tracks.insert(range.tracks.end(), order.begin() + edge + 1, order.begin() + at + 1);
+				}
+				changed = range.tracks != m_range->tracks;
+			}
+		}
+		if (!changed)
+		{
+			show(); // the range as it is
+			return;
+		}
+		m_display.setRange(std::move(range));
 	}
 
 	std::vector<InfoLine::Point> InfoLine::pointsOf() const

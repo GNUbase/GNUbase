@@ -18,6 +18,7 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   .info-field[info-field=…]   a label and its control, a section of the set infoLine (section=…)
     textdisplay[field=name]   a MIDI part's name; an audio event's clip name, disabled
     textdisplay[field=start], [field=end], [field=length]   in the ruler's time format
+    select[field=topTrack], [field=bottomTrack]             a selection range's top and bottom track
     textdisplay[field=pitch]  a note's pitch as a name (an in-place editor's notes, below)
     valuefield[field=volume]  audio events, in dB; .unavailable for parts
     button[field=mute], button[field=lock]                  toggle buttons
@@ -85,6 +86,15 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   dragged note the drag's, and wheel turns over the field on two selections are an undo step for each (#1550,
   [ui-engine-binding.md](ui-engine-binding.md)). An event or part selected in the project window, an empty selection in
   the editor or the editor closing gives the info line back to what was selected before.
+- **The selection range** (pp. 287-288, #1910, [range-editing.md](range-editing.md)). When the event display's
+  selection range changed last (`EventDisplay::range`, only with the range selection tool), the info line has the class
+  `range` and shows the range: its start, end and length in the ruler's time format, labelled Range Start, Range End
+  and Range Length, and its top and bottom track, drop-down lists of the display's tracks; its other fields are
+  `.unavailable`. Edits set the range (`EventDisplay::setRange`), not the project, so they are no undo step: Range Start
+  moves the start and Range End the end, each at most up to the other, and Range Length moves the end. Top Track and
+  Bottom Track take the tracks between the chosen one and the range's edge in or out, as the top and bottom nudges take
+  them one by one, but not past the other edge. Another tool takes the range away and gives the info line back to the
+  selected events.
 
 ## Inspector
 
@@ -246,4 +256,8 @@ instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the
   velocity step is out, another note selected in an in-place editor shows its own velocity and the dragged one the
   drag's; wheel turns on the velocity of one note, then of the next with the mouse still over the field, are two undo
   steps.
+- `tests/rangeinfoline_ui_tests.cpp`: the info line of a selection range, its labels and fields and the others
+  unavailable; Range Start, Range Length and Range End setting the range with no undo step, a start past the end and an
+  end before the start changing nothing; Top Track and Bottom Track taking tracks in and out, not past the other edge;
+  and another tool giving the info line back to the selected part with its own labels.
 - `tests/mixerwindow_tests.cpp`: a drag of a mixer fader is one undo step.
