@@ -255,7 +255,6 @@
 		<menuitem command="edit.cut">Cut</menuitem>
 		<menuitem command="edit.copy">Copy</menuitem>
 		<menuitem command="edit.paste">Paste</menuitem>
-		<menuitem command="edit.pasteAtOrigin">Paste at Origin</menuitem>
 		<menuitem command="edit.delete">Delete</menuitem>
 		<menuseparator/>
 		<menuitem id="range-submenu">Range
@@ -279,6 +278,7 @@
 				<menuitem command="edit.duplicate">Duplicate</menuitem>
 				<menuitem command="edit.repeat">Repeat...</menuitem>
 				<menuitem command="edit.fillLoop">Fill Loop</menuitem>
+				<menuitem command="edit.pasteAtOrigin">Paste at Origin</menuitem>
 				<menuseparator/>
 				<menuitem command="edit.toRealCopy">Convert to Real Copy</menuitem>
 			</menu>

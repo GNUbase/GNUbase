@@ -86,15 +86,15 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   dragged note the drag's, and wheel turns over the field on two selections are an undo step for each (#1550,
   [ui-engine-binding.md](ui-engine-binding.md)). An event or part selected in the project window, an empty selection in
   the editor or the editor closing gives the info line back to what was selected before.
-- **The selection range** (pp. 287-288, #1910, [range-editing.md](range-editing.md)). When the event display's
-  selection range changed last (`EventDisplay::range`, only with the range selection tool), the info line has the class
-  `range` and shows the range: its start, end and length in the ruler's time format, labelled Range Start, Range End
-  and Range Length, and its top and bottom track, drop-down lists of the display's tracks; its other fields are
-  `.unavailable`. Edits set the range (`EventDisplay::setRange`), not the project, so they are no undo step: Range Start
-  moves the start and Range End the end, each at most up to the other, and Range Length moves the end. Top Track and
-  Bottom Track take the tracks between the chosen one and the range's edge in or out, as the top and bottom nudges take
-  them one by one, but not past the other edge. Another tool takes the range away and gives the info line back to the
-  selected events.
+- **The selection range** (pp. 287-288, #1910, [range-editing.md](range-editing.md)). When the event display's selection
+  range changed last (`EventDisplay::range`, made with the range selection tool or, with the selection tools combined,
+  the object selection tool), the info line has the class `range` and shows the range: its start, end and length in the
+  ruler's time format, labelled Range Start, Range End and Range Length, and its top and bottom track, drop-down lists
+  of the display's tracks; its other fields are `.unavailable`. Edits set the range (`EventDisplay::setRange`), not the
+  project, so they are no undo step: Range Start moves the start and Range End the end, each at most up to the other,
+  and Range Length moves the end. Top Track and Bottom Track take the tracks between the chosen one and the range's edge
+  in or out, as the top and bottom nudges take them one by one, but not past the other edge. Another tool takes the
+  range away and gives the info line back to the selected events.
 
 ## Inspector
 

@@ -173,3 +173,14 @@ TEST_CASE("the info line shows the selection range and its edits set the range's
 	CHECK(window.element("#info-line [info-field=length] .info-label").at("text") == "Length");
 	CHECK(window.hasClass("#info-line [info-field=bottomTrack]", "unavailable"));
 }
+
+TEST_CASE("Paste at Origin is in the Edit menu's Functions submenu", "[ui]")
+{
+	// The reference manual, p. 270: Edit > Functions > Paste at Origin.
+	Window window;
+	window.element("#functions-submenu menuitem[command=\"edit.pasteAtOrigin\"]");
+	CHECK(window.app.ui()
+			  .dom(std::nullopt, "#edit-menu menuitem[command=\"edit.pasteAtOrigin\"]", 0)
+			  .at("elements")
+			  .size() == 1);
+}
