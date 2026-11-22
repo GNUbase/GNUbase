@@ -471,6 +471,7 @@ namespace gnubase::engine
 				time::Samples start = -1;
 				int64_t stopped = -1;      // the device frame of the first input in stop mode
 				time::Samples played = -1; // where the last input during playback played
+				int64_t playedFrame = 0;   // and its device frame
 				for (const RetrospectiveEvent& kept : events)
 				{
 					time::Samples at = kept.position;
@@ -483,10 +484,14 @@ namespace gnubase::engine
 					}
 					else
 					{
-						// Playback jumped back, at a cycle lap: the notes held across it end where the lap ended.
-						if (at < played)
+						// Playback jumped back, at a cycle lap: the notes held across it end where the lap ended. The
+						// position advances one sample per device frame, so it jumped back also when it advanced less
+						// than the device frames since the input before, as with a note held past the lap's end.
+						const auto frame = static_cast<int64_t>(kept.deviceFrame);
+						if (played >= 0 && at - played < frame - playedFrame)
 							builder.endNotes(locators.cycle && locators.right > played ? locators.right : played);
 						played = at;
+						playedFrame = frame;
 					}
 					if (!filter.records(kept.event))
 						continue;

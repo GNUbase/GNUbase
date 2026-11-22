@@ -11,8 +11,9 @@ undo step.
   on-screen keyboard, [onscreen-keyboard.md](onscreen-keyboard.md)) or `none`.
   While a track monitors or is record-enabled, it plays what comes from its MIDI input (MIDI thru), after what
   `midi.inject` played into it ([midi-injection.md](midi-injection.md)); injected MIDI always reaches it, as if it came
-  from its input. When its MIDI thru goes off (record enable and monitor off, or `midiInput` set to `none`), the keys
-  and pedals held through it are released (`MidiSequencer::thru`), so that no note hangs until the next stop.
+  from its input. When its MIDI thru goes off (record enable and monitor off, or `midiInput` set to `none` or
+  `chordPads`), the keys and pedals held through it are released (`MidiSequencer::thru`), so that no note hangs until
+  the next stop.
 - **What records.** A MIDI or instrument track records while the transport records if it is record-enabled and enabled:
   everything its MIDI input plays, injected or from the ports. The tracks are those armed when recording starts. With
   the chord track record-enabled, the tracks that only monitor record too, but only into chord events

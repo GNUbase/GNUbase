@@ -1114,7 +1114,11 @@ TEST_CASE("a block with more MIDI input than a chunk holds records all of it", "
 	REQUIRE(setup.stop().is_object());
 	const std::vector<Json> parts = setup.parts();
 	REQUIRE(parts.size() == 1);
-	CHECK(parts[0].at("notes").size() == 300);
+	// Every note ends where its note-off came, at frame 2000: none was lost to end with the recording.
+	const std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
+	REQUIRE(notes.size() == 300);
+	for (const std::vector<int64_t>& each : notes)
+		CHECK(each[0] + each[1] == notes[0][0] + notes[0][1]);
 }
 
 TEST_CASE("the catch range records with midi.retrospectiveEvents 0, which inserts nothing", "[integration]")
@@ -1169,10 +1173,12 @@ TEST_CASE("retrospective input from cycle playback ends a note held across a lap
 	run(client, "audio.render", {{"frames", 64}});
 	const auto now = run(client, "audio.get").at("position").get<int64_t>();
 	run(client, "transport.play");
-	// Beat 2 to 3, then a note from beat 4 held into the next lap's beat 2.
+	// Beat 2 to 3, then a note from beat 4 held into the next lap's beat 2, and one from that lap's beat 4 held into
+	// the next lap's beat 4.5, with no input in between: it ends later in its lap than it began.
 	setup.inject({message(now + g_beat, {0x90, 60, 100}), message(now + (2 * g_beat), {0x80, 60, 0}),
-		message(now + (3 * g_beat), {0x90, 62, 100}), message(now + (5 * g_beat), {0x80, 62, 0})});
-	run(client, "audio.render", {{"frames", 6 * g_beat}});
+		message(now + (3 * g_beat), {0x90, 62, 100}), message(now + (5 * g_beat), {0x80, 62, 0}),
+		message(now + (7 * g_beat), {0x90, 64, 100}), message(now + (11 * g_beat) + (g_beat / 2), {0x80, 64, 0})});
+	run(client, "audio.render", {{"frames", 12 * g_beat}});
 	run(client, "transport.stop");
 	run(client, "audio.render", {{"frames", 64}});
 	run(client, "midi.insertRetrospective", {{"track", setup.track}});
@@ -1182,6 +1188,7 @@ TEST_CASE("retrospective input from cycle playback ends a note held across a lap
 	std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
 	for (std::vector<int64_t>& each : notes)
 		each[0] += start;
-	CHECK(
-		notes == std::vector<std::vector<int64_t>>{{g_beatTicks, g_beatTicks, 60}, {3 * g_beatTicks, g_beatTicks, 62}});
+	CHECK(notes ==
+		std::vector<std::vector<int64_t>>{
+			{g_beatTicks, g_beatTicks, 60}, {3 * g_beatTicks, g_beatTicks, 62}, {3 * g_beatTicks, g_beatTicks, 64}});
 }
