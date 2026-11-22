@@ -148,7 +148,9 @@ nothing moves before the project start. With the range tool, a press in the rang
 drags its contents (p. 291): the range follows the mouse across, its start snapped, and down or up by as many tracks as
 the mouse, as far as there are tracks for all of its own, and the release moves what is in it there (`range.move`, with
 `track` when the tracks changed, and at `positionTicks` when its start snapped to a musical grid line, so that a part on
-a bar lands on another bar's own tick; not with Grid Relative, which keeps the start's distance from its line), or with
+a bar lands on another bar's own tick; with Grid Relative a range that starts in a line's own sample snaps to the other
+line, as the distance in ticks of less than a sample is the rounding of that sample, not one to keep (#2005), and one
+that starts off the grid at its distance from it), or with
 the tool modifier Copy (`dragDrop.copy`, Alt by default) a copy of it; the range stays where it went, and a drag that
 came back to the press leaves it where it was, one that came back across only its position. A press within 6 dp inside
 one of its edges, without Shift, drags that edge instead (p. 288), with the pointers `resize` at the start and the end
@@ -238,15 +240,14 @@ tickets), and the controller events at the edges of a range inside a part.
   commands can't run, and Paste can't until a cut, nor after `project.new`; split, Delete Time, cut and paste on a
   selection range, which stays; paste at the cursor without a range, selecting what it pasted; a drag in the range
   moving its contents on a MIDI track in one undo step with the range, snapped to a bar at a tempo whose bars lie
-  between samples landing on the bar's tick and with Grid Relative by a bar where `range.move` at the range's new start
-  in samples puts it, Alt and a drag copying them, a click in it selecting a range of no length, and Duplicate copying
-  them to the range's end twice in a row; a drag down a lane and across, straight down and with Alt taking the part or a
-  copy onto the track below, and one below the last lane stopping at the last track; a drag and a paste of two tracks
-  past a folded folder's lane landing where the range shows them; the edges' pointers, and dragging the start and the
-  end across, snapped and past the other edge, and the bottom and top down and up, taking tracks in and out and stopping
-  at the other edge, while the project stays as it was; the nudges moving the range and its edges by a beat, not before
-  the project start nor the start past the end, and the top and bottom nudges taking tracks in and out, never the last,
-  while the project stays as it was.
+  between samples landing on the bar's tick, also with Grid Relative, and the range on the bar's sample, Alt and a drag
+  copying them, a click in it selecting a range of no length, and Duplicate copying them to the range's end twice in a
+  row; a drag down a lane and across, straight down and with Alt taking the part or a copy onto the track below, and one
+  below the last lane stopping at the last track; a drag and a paste of two tracks past a folded folder's lane landing
+  where the range shows them; the edges' pointers, and dragging the start and the end across, snapped and past the other
+  edge, and the bottom and top down and up, taking tracks in and out and stopping at the other edge, while the project
+  stays as it was; the nudges moving the range and its edges by a beat, not before the project start nor the start past
+  the end, and the top and bottom nudges taking tracks in and out, never the last, while the project stays as it was.
 - `tests/markertrack_ui_tests.cpp`: the same drag on the marker track, also released outside the window.
 - `tests/uiapp_tests.cpp`: the context menu disables the range commands without a range and Paste until something is
   cut.
