@@ -29,6 +29,9 @@ namespace gnubase::engine::settings
 	inline constexpr Key<double> g_audioListenDim{"audio.listenDim"};
 	inline constexpr Key<double> g_audioListenLevel{"audio.listenLevel"};
 	inline constexpr Key<bool> g_audioStopAfterPunchOut{"audio.stopAfterPunchOut"};
+	inline constexpr Key<std::string> g_audioBroadcastDescription{"audio.broadcastDescription"};
+	inline constexpr Key<std::string> g_audioBroadcastAuthor{"audio.broadcastAuthor"};
+	inline constexpr Key<std::string> g_audioBroadcastReference{"audio.broadcastReference"};
 	inline constexpr Key<bool> g_audioMutePreSends{"audio.mutePreSends"};
 	// An editing preference the audio engine reads to build the playlists (makePlaylist).
 	inline constexpr Key<bool> g_editingTreatMutedAudioLikeDeleted{"editing.treatMutedAudioLikeDeleted"};

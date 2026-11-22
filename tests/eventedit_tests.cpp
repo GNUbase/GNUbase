@@ -1152,6 +1152,75 @@ TEST_CASE("range.move onto other tracks moves each of the range's tracks by as m
 	CHECK_THAT(f.fails("range.move", f.range({{"position", 0}, {"track", audio2}})), ContainsSubstring("MIDI parts"));
 }
 
+TEST_CASE("range.move and range.paste onto other tracks count a folded folder's lane once, as the event display does",
+	"[unit]")
+{
+	// A folded folder's lane shows the events of the tracks inside it (#1978): a range's tracks land as many lanes on
+	// as its top one, past such a lane, and the tracks of a range in that lane land in the lane it goes to.
+	Fixture f;
+	const int64_t top = f.track("midi");
+	const int64_t second = f.track("midi");
+	const int64_t folder = f.track("folder");
+	const int64_t inside = f.track("midi");
+	f.call("track.move", {{"track", inside}, {"parent", folder}, {"index", 0}});
+	const int64_t below = f.track("midi");
+	const int64_t other = f.track("folder");
+	const int64_t otherInside = f.track("midi");
+	f.call("track.move", {{"track", otherInside}, {"parent", other}, {"index", 0}});
+	f.call("trackLayout.set", {{"folded", {folder, other}}});
+	const int64_t part = f.part(second);
+	// The part, from 2 to 4 seconds.
+	const Json range = {{"start", 2 * g_second}, {"end", 4 * g_second}, {"tracks", {top, second}}};
+	const auto onto = [&range](int64_t track)
+	{
+		Json parameters = range;
+		parameters["position"] = 2 * g_second;
+		parameters["track"] = track;
+		return parameters;
+	};
+
+	// The range's top track onto the folder's lane: its second track onto the track after it, not into the folder.
+	f.call("range.move", onto(folder));
+	CHECK(f.midi(part).at("track") == below);
+	f.call("history.undo");
+	f.call("range.copy", range);
+	const Json pasted = f.call("range.paste", {{"position", 2 * g_second}, {"track", folder}}).at("events");
+	REQUIRE(pasted.size() == 1);
+	CHECK(f.midi(pasted[0]).at("track") == below);
+	f.call("history.undo");
+
+	// Unfolded, the folder's track is the one after it.
+	f.call("trackLayout.set", {{"folded", {other}}});
+	f.call("range.move", onto(folder));
+	CHECK(f.midi(part).at("track") == inside);
+	f.call("history.undo");
+	f.call("trackLayout.set", {{"folded", {folder, other}}});
+
+	// Onto a track inside a folded folder, the top track goes there. A range in the folder's lane goes into the
+	// tracks of the lane it lands on, in their order, and a lane without as many refuses it.
+	f.call("range.move",
+		{{"start", 2 * g_second}, {"end", 4 * g_second}, {"tracks", {second}}, {"position", 2 * g_second},
+			{"track", inside}});
+	REQUIRE(f.midi(part).at("track") == inside);
+	const Json folded = {{"start", 2 * g_second}, {"end", 4 * g_second}, {"tracks", {folder}}};
+	Json move = folded;
+	move["position"] = 2 * g_second;
+	move["track"] = other;
+	f.call("range.move", move);
+	CHECK(f.midi(part).at("track") == otherInside);
+	f.call("history.undo");
+	f.call("range.copy", folded);
+	const Json copied = f.call("range.paste", {{"position", 2 * g_second}, {"track", other}}).at("events");
+	REQUIRE(copied.size() == 1);
+	CHECK(f.midi(copied[0]).at("track") == otherInside);
+	f.call("history.undo");
+	move["track"] = below;
+	CHECK_THAT(f.fails("range.move", move), ContainsSubstring("enough tracks"));
+	CHECK_THAT(
+		f.fails("range.paste", {{"position", 2 * g_second}, {"track", below}}), ContainsSubstring("enough tracks"));
+	CHECK(f.midi(part).at("track") == inside);
+}
+
 TEST_CASE("range.move onto its own range takes the automation out before it puts it back", "[unit]")
 {
 	RangeFixture f;

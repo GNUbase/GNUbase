@@ -2505,47 +2505,17 @@ namespace gnubase::ui
 
 	void TrackList::pasteSelectedParameters()
 	{
-		const std::vector<uint64_t> selected = selectedLanes(true);
+		// An unadded automation track (#1918) is pasted onto as its track and target: automation.paste adds its lane
+		// only if it pastes into it, in the paste's one undo step (#2018).
 		Json lanes = Json::array();
-		Json add = Json::array();
-		uint64_t firstUnadded = 0;
-		for (const uint64_t lane : selected)
+		Json targets = Json::array();
+		for (const uint64_t lane : selectedLanes(true))
 			if (const Json* unadded = m_display.unaddedLane(lane))
-			{
-				if (firstUnadded == 0)
-					firstUnadded = lane;
-				add.push_back({{"command", "automationLane.add"},
-					{"parameters", {{"track", unadded->at("track")}, {"target", unadded->at("target")}}}});
-			}
+				targets.push_back({{"track", unadded->at("track")}, {"target", unadded->at("target")}});
 			else
-			{
 				lanes.push_back(lane);
-			}
-		if (add.empty())
-		{
-			if (!lanes.empty())
-				m_binding.send("automation.paste", {{"lanes", std::move(lanes)}});
-			return;
-		}
-		// The unadded lanes are added in the paste's undo step (#1918), as a tool's first points add theirs: their
-		// transaction, then the paste's with the same merge key, which joins that step once their ids are known.
-		// A paste that fails then leaves that step with the lanes alone, as it can only when the sample rate changed.
-		// The key is the first unadded lane's id, which is never used again, so that the next paste that adds a lane
-		// with the same project lanes selected doesn't join this step.
-		const std::string merge = "automation-paste-" + std::to_string(firstUnadded);
-		m_binding.send("history.transaction",
-			{{"description", "Paste Automation"}, {"merge", merge}, {"commands", std::move(add)}},
-			[this, merge, lanes, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result) mutable
-			{
-				if (alive.expired() || !result.ok())
-					return;
-				for (const Json& added : result.value.at("results"))
-					lanes.push_back(added.at("lane").at("id"));
-				m_binding.send("history.transaction",
-					{{"description", "Paste Automation"}, {"merge", merge},
-						{"commands",
-							Json::array({{{"command", "automation.paste"}, {"parameters", {{"lanes", lanes}}}}})}});
-			});
+		if (!lanes.empty() || !targets.empty())
+			m_binding.send("automation.paste", {{"lanes", std::move(lanes)}, {"targets", std::move(targets)}});
 	}
 
 	void TrackList::selectLane(Rml::Event& event, uint64_t lane)

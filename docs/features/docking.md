@@ -73,7 +73,9 @@ again.
 - **Windows of their own.** A panel in a window of its own leaves its zone; the window (`resources/ui/panel-window.rml`)
   has its title and a Dock button. Dock, or closing the window, puts it back. The window opens where it was last,
   moved onto a connected monitor if its monitor is gone, and renders at its monitor's scale like every window
-  (architecture.md, "UI shell"). Its bounds are read twice a second and kept when they changed.
+  (architecture.md, "UI shell"). Its bounds are read twice a second and kept when they changed. A panel of an app
+  window that `addWindow` opens and closes, such as a mixer window's Visibility tab, shows in its window of its own
+  only while that app window is open.
 - **Contents.** Rebuilding a tab group, e.g. after a tab moved, keeps what the panels that stay in it show. A panel
   that moves to a window, or whose tab is hidden, gets its element made again where it shows next.
 - **Live reload.** When live reload (Debug builds, `ui/livereload.h`) loads a docking window's or a panel window's
@@ -114,6 +116,12 @@ every Reset All, also of a set that had its defaults, so the app can fit the win
   section is the same for every section (`.toolbar-section` in `base.rcss`; the last one has none, the toolbar's
   padding follows it), so it doesn't depend on the order and no section's controls bring a gap of their own. A
   section hidden in the setup pane or by a narrow window takes no gap.
+- **Keys.** The pane has no menu items, so Up and Down move the focus through its buttons, as Tab does: the zone and
+  strip toggles, the presets, Save Preset once it is enabled, Show All, Reset All and the section buttons, round the
+  ends. Space or Enter toggles the focused button, and the pane stays open. Alt+Up and Alt+Down move the focused section
+  button, and with it the section, one place up or down, as a drag does, and the button keeps the focus. The reference
+  reorders by dragging only (p. 1576); Alt with the arrow keys is GNUbase's, and the open pane keeps those keys, so no
+  key command bound to them runs.
 - **Room.** A toolbar with `fit="room"` shows the sections it has room for, as the reference's toolbar hides its
   items one after another in a narrower window and shows them again in a wider one (pp. 57, 65). Sections keep the
   width they need (`flex-shrink: 0`); whenever the shell lays a window out to draw it, the docking system gives the
@@ -133,7 +141,12 @@ every Reset All, also of a set that had its defaults, so the app can fit the win
   no frame with sections over each other, and fitting costs no layout of its own: it reads the widths of the layout
   the draw makes anyway, and windows that don't draw aren't fitted.
 - **Defaults.** The set's first container in the document says which sections there are, their default order and which
-  are hidden by default; the other containers are expected to have the same sections.
+  are hidden by default. Not every container has every section: only audio channels have the mixer's EQ section
+  (p. 479), so on a project whose first track is a MIDI track the first channel has none. A section that a later
+  container brings joins the set after the section before it in that container, with its default, and gets its button
+  in the set's setup panes. While no container in the window has it, the set doesn't know it, but `ui.layout` keeps
+  it: showing, hiding or moving another section keeps its place in the saved order and its entry in the hidden list,
+  so it comes back as the user left it.
 - **Containers that come later.** Containers added or rebuilt after `attach`, such as the mixer's channels as tracks
   come and go, go through `Docking::arrangeSections(element)` once they are in the document: the element and the
   containers and setup panes in it get the user's order and hidden sections at once. A set that has no container yet,
@@ -233,9 +246,9 @@ else to the zone's main control (its `maincontrol` attribute: the track list's l
 the zone's element. In a text field or a select box Tab moves between controls as RmlUi does (#60), an open menu keeps
 it, and so do dialogs, which are modal documents of their own, and a panel in a window of its own, whose document has no
 zones. `Docking::focus(window, zone)` does the same for a zone by name: showing the lower zone with its key command
-(Mod+Alt+E) and opening the lower zone's editor with `window.lowerZoneEditor` give the zone the keyboard focus, as the
-reference's editor in the lower zone gets it after a key command (p. 100). A double click on an event or part and Return
-open the editor window, not the lower zone's, until a setting for that exists, so they don't move the focus.
+(Mod+Alt+E) and opening the lower zone's editor with `window.lowerZoneEditor`, Return or a double click on a part give
+the zone the keyboard focus, as the reference's editor in the lower zone gets it (p. 100); with the preference
+Double-click opens Editor in a Window the last two open the editor window instead ([midi-editors.md](midi-editors.md)).
 
 ## Not yet
 
@@ -244,10 +257,9 @@ drum, list, audio part and in-place editors), which have no sections yet; the to
 sections with `divider` as the transport bar has. Sections in a panel that shows in a window of its own keep the
 document's order; the Channel zone's contents (p. 73) with the channel strip (#107), shown as its zone's one tab until
 then; a theme look for tabs at the bottom, whose active tab has its marker on the side away from the panels; dragging a
-tab out of its zone to open it in a window; a double click on an event or part and Return opening the editor in the
-lower zone, which then takes the focus (p. 100, #1934); and after live reload, what the app fills outside panels (the
-transport bar and its sections, the event display, the mixer, editor and transport panel windows) stays empty until
-GNUbase opens again.
+tab out of its zone to open it in a window; and after live reload, what the app fills outside panels (the transport
+bar and its sections, the event display, the mixer, editor and transport panel windows) stays empty until GNUbase opens
+again.
 
 ## Checks
 

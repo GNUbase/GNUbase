@@ -929,7 +929,8 @@ meter .meter-peak
 
 /* Markers (docs/features/markers.md): the marker lines and marker events are event lanes like the events; code
    places the labels where their markers are. */
-.event-display .marker-lines, .event-display .marker-events
+.event-display .marker-lines, .event-display .marker-events, .event-display event-lanes.grid-lines,
+.event-display event-lanes.snap-points
 {
 	pointer-events: none;
 }
@@ -1141,6 +1142,26 @@ meter .meter-peak
 	padding: 2dp 3dp;
 	white-space: nowrap;
 	overflow: hidden;
+}
+
+/* An arranger event's edges, which a drag resizes it by. */
+.arranger-lane-row .arranger-lane-edge
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 4dp;
+	cursor: resize;
+}
+
+.arranger-lane-row .arranger-lane-edge[edge=start]
+{
+	left: 0;
+}
+
+.arranger-lane-row .arranger-lane-edge[edge=end]
+{
+	right: 0;
 }
 
 /* The chord pads zone (docs/features/chord-pads.md): its toolbars above the pads, which wrap, and the chord
@@ -1394,8 +1415,9 @@ meter .meter-peak
 	padding: 2dp;
 }
 
-/* MIDI parts excluded from global transpose (reference manual p. 421): code puts a .part-mark.independent at the
-   upper right corner of each, its left at the part's end, with the icon inside the part. */
+/* Marks at the upper right corner of events and parts: .independent if excluded from global transpose (reference manual
+   p. 421), .locked (p. 276), .shared for shared copies (p. 272). Code puts each event's marks in a .part-marks-of and
+   sets its right to the event's end, so the icons line up leftwards inside the event. */
 .event-display .part-marks
 {
 	position: absolute;
@@ -1426,11 +1448,19 @@ meter .meter-peak
 	width: 1px;
 }
 
-.event-display .part-mark
+.event-display .part-marks-of
 {
 	position: absolute;
-	margin-left: -14dp;
 	margin-top: 2dp;
+	margin-right: 2dp;
+	height: 12dp;
+	white-space: nowrap;
+}
+
+.event-display .part-mark
+{
+	display: inline-block;
+	margin-left: 2dp;
 	width: 12dp;
 	height: 12dp;
 }
@@ -1518,6 +1548,12 @@ meter .meter-peak
 .event-display .event-area[pointer=resizeVertical]
 {
 	cursor: ns-resize;
+}
+
+/* The repeat handle (docs/features/parts-and-events.md): the OS's pointing hand. */
+.event-display .event-area[pointer=repeat]
+{
+	cursor: pointer;
 }
 
 /* The name of a tool chosen with a key command, for a moment, at the top of the event lanes; the document gives it
@@ -2587,8 +2623,25 @@ splitter.column .splitter-grip-horizontal
 
 .inspector .arranger-row .repeats
 {
-	width: 24dp;
+	flex-shrink: 0;
+	min-width: 0;
+	width: 28dp;
+	height: 20dp;
+	padding: 2dp;
 	text-align: right;
+}
+
+.inspector .arranger-row textdisplay.repeats input.text
+{
+	text-align: right;
+}
+
+/* A step's repeat mode, narrow: its drop-down list shows the modes' full names. */
+.inspector .arranger-row .mode
+{
+	flex-shrink: 0;
+	width: 56dp;
+	margin-left: 4dp;
 }
 
 /* The MIDI Inserts and MIDI Sends sections: a slot's control panel shows while its edit button opened it. */

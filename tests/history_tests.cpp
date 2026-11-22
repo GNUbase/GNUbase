@@ -545,6 +545,15 @@ TEST_CASE("transactions with the same merge key join one undo step, like a fader
 	volume(-7.0, "");
 	volume(-8.0, "");
 	CHECK(position(client) == start + 6);
+
+	// Nor does the same key after an undo and a redo of its step: something was undone since.
+	volume(-9.0, "fader:4");
+	run(client, "history.undo");
+	run(client, "history.redo");
+	volume(-10.0, "fader:4");
+	CHECK(position(client) == start + 8);
+	run(client, "history.undo");
+	CHECK(volumeNow() == -9.0);
 }
 
 TEST_CASE("merged and joined tempo edits leave display format choices outside undo", "[unit]")

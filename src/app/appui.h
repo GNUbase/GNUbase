@@ -171,8 +171,9 @@ namespace gnubase::app
 		// The mixers (#106, docs/features/mixer-window.md): mixer window number 1 to 4 opens in a window of its own
 		// (resources/ui/mixer.rml), hidden like the main window, or closes if it is open: the UI commands window.mixer
 		// (F3), window.mixer2, window.mixer3 and window.mixer4. Returns it, or null when it closed it. Throws
-		// std::runtime_error if the document can't be loaded. mixer is the mixer of an open window, or null;
-		// lowerZoneMixer the project window's, while the docking system shows its panel somewhere.
+		// std::runtime_error if the document can't be loaded. mixer is a window's mixer, or null: it goes in the step
+		// after the user closed the window. lowerZoneMixer the project window's, while the docking system shows its
+		// panel somewhere.
 		ui::Mixer* toggleMixer(int number);
 		ui::Mixer* mixer(int number);
 		ui::WindowId mixerWindow(int number) const { return m_mixers.at(static_cast<size_t>(number - 1)).window; }
@@ -302,6 +303,12 @@ namespace gnubase::app
 		void addEditors();
 		// Shows or closes the editor window or the lower zone's editor as the engine's view says.
 		void followEditor(const engine::Json& view);
+		// Opens parts in the editor (window or lower); the lower zone's brings its Editor tab forward and takes the
+		// keyboard focus (p. 100).
+		void openEditor(const std::string& editor, const std::vector<uint64_t>& parts);
+		// Where a double click on a part and Open/Close Editor open it: window or lower, by the preference
+		// editing.doubleClickOpensEditorIn (p. 1603).
+		std::string doubleClickEditor();
 		// Closes the editor (window or lower) that the user closed, Keep Editor Contents with it (p. 1153).
 		void closeEditor(const std::string& editor);
 		// The selected MIDI parts, or else audio parts, open in the editors that follow the project window's
@@ -355,8 +362,8 @@ namespace gnubase::app
 		// The OS's file dialog for objects of the project: chosen gets the file unless a project.reset came while it
 		// was open, as the ids it acts on are the old project's then (#1586, #1648).
 		void chooseProjectFile(const ui::FileDialog& dialog, std::function<void(const std::filesystem::path&)> chosen);
-		// The OS's file dialog for a track's picture in the mixer, then track.set.
-		void choosePicture(uint64_t track);
+		// The OS's file dialog for a track's picture in the mixer, in the window of the element, then track.set.
+		void choosePicture(const Rml::Element& from, uint64_t track);
 		// The drum map of the active track of an editor (window, else lower), then the OS's file dialog to save it in
 		// and drumMap.export.
 		void saveDrumMap(ui::WindowId parent, const std::string& editor = "window");

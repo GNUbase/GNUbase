@@ -147,6 +147,31 @@ TEST_CASE("queries without required parameters are readable resources", "[unit]"
 	CHECK(respond(server, request(4, "resources/templates/list")).at("result").at("resourceTemplates").empty());
 }
 
+TEST_CASE("reads that take from a queue all clients share are tools, not resources", "[unit]")
+{
+	// A client that reads resources for context would take the MIDI another client waits for (#350).
+	Engine engine;
+	Server server(engine);
+	const Json resources = respond(server, request(1, "resources/list")).at("result").at("resources");
+	const Json tools = respond(server, request(2, "tools/list")).at("result").at("tools");
+	for (const char* name : {"midi.capture", "midi.monitor"})
+	{
+		INFO(name);
+		const std::string uri = std::string("gnubase://") + name;
+		CHECK(std::none_of(
+			resources.begin(), resources.end(), [&uri](const Json& resource) { return resource.at("uri") == uri; }));
+		CHECK(respond(server, request(3, "resources/read", {{"uri", uri}})).at("error").at("code") == -32002);
+
+		std::string tool = name;
+		std::replace(tool.begin(), tool.end(), '.', '_');
+		const Json* found = findTool(tools, tool);
+		REQUIRE(found != nullptr);
+		CHECK(found->at("annotations").at("readOnlyHint") == false);
+		CHECK(found->at("annotations").at("idempotentHint") == false);
+		CHECK(respond(server, request(4, "tools/call", {{"name", tool}})).at("result").at("isError") == false);
+	}
+}
+
 TEST_CASE("malformed messages get JSON-RPC errors", "[unit]")
 {
 	Engine engine;

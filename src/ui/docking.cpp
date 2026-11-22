@@ -111,6 +111,22 @@ namespace gnubase::ui
 			return result;
 		}
 
+		// A set's order or hidden list to save, with the names in the saved one that aren't known, such as a section
+		// only some of the set's containers have, while none of those is there: each after the name before it there.
+		template <typename Known>
+		std::vector<std::string> keepUnknown(std::vector<std::string> list, const Json* saved, const Known& known)
+		{
+			auto at = list.begin();
+			for (const std::string& name : strings(saved))
+			{
+				if (const auto it = std::find(list.begin(), list.end(), name); it != list.end())
+					at = it + 1;
+				else if (!known(name))
+					at = list.insert(at, name) + 1;
+			}
+			return list;
+		}
+
 		// Puts the container's children whose attribute the order names into that order, in the places they take, so
 		// that the other children, such as a toolbar's spacer, stay where they are.
 		void arrange(Rml::Element& container, const char* name, const std::vector<std::string>& order)
@@ -333,7 +349,9 @@ namespace gnubase::ui
 		return result;
 	}
 
-	// The first container of a set says which sections it has, before the user's order changes it.
+	// The first container of a set says which sections it has, before the user's order changes it. Not every container
+	// has them all, e.g. only audio channels have an EQ (reference manual p. 479): a section that a later one brings
+	// goes after the section before it there.
 	bool Docking::learnSections(Attached& attached, Rml::Element& root)
 	{
 		auto* document = dynamic_cast<Rml::ElementDocument*>(attached.document.get());
@@ -343,13 +361,25 @@ namespace gnubase::ui
 		for (const Rml::Element* container : elementsWith(root, "sections", {}))
 		{
 			std::vector<Section>& known = attached.sections[attribute(*container, "sections")];
-			if (!known.empty())
-				continue;
+			std::size_t at = 0; // where a new one goes
 			for (int i = 0; i < container->GetNumChildren(); ++i)
 				if (const Rml::Element* child = container->GetChild(i); child->HasAttribute("section"))
-					known.push_back({attribute(*child, "section"), attribute(*child, "label"),
-						attribute(*child, "default") == "hidden"});
-			learned = learned || !known.empty();
+				{
+					const std::string id = attribute(*child, "section");
+					const auto it = std::find_if(
+						known.begin(), known.end(), [&id](const Section& section) { return section.id == id; });
+					if (it == known.end())
+					{
+						known.insert(known.begin() + static_cast<std::ptrdiff_t>(at),
+							{id, attribute(*child, "label"), attribute(*child, "default") == "hidden"});
+						learned = true;
+					}
+					else
+					{
+						at = static_cast<std::size_t>(it - known.begin());
+					}
+					++at;
+				}
 		}
 		for (Rml::Element* pane : elements(*document, "[setup]"))
 			for (const Section& known : attached.sections[attribute(*pane, "setup")])
@@ -365,12 +395,10 @@ namespace gnubase::ui
 
 	void Docking::arrangeSections(Rml::Element& element)
 	{
+		// An element made for the document, or taken out of it, has none (Element::SetParent).
 		Rml::ElementDocument* document = element.GetOwnerDocument();
-		const Rml::Element* up = &element; // in the document, not just made for it
-		while (up != nullptr && up != document)
-			up = up->GetParentNode();
 		const auto attached = m_windows.find(windowOf(element));
-		if (document == nullptr || up == nullptr || attached == m_windows.end())
+		if (document == nullptr || attached == m_windows.end())
 			return;
 		if (learnSections(attached->second, element))
 			applySections(attached->first, attached->second, *document); // the set's panes and every container of it
@@ -845,7 +873,9 @@ namespace gnubase::ui
 		const auto index = to - order.begin();
 		order.erase(from);
 		order.insert(order.begin() + index, id); // where before was, as for tabs
-		sectionsJson(window, set)["order"] = order;
+		const auto known = [&](const std::string& name) { return section(window, set, name) != nullptr; };
+		Json& json = sectionsJson(window, set);
+		json["order"] = keepUnknown(order, find(json, {"order"}), known);
 		save();
 		apply();
 	}
@@ -856,15 +886,20 @@ namespace gnubase::ui
 		if (section(window, set, id) == nullptr)
 			return;
 		// Every hidden one, so that the defaults no longer count, and the order, so that a later set can tell which
-		// sections this one had.
+		// sections this one had; with those the window doesn't know. Without a saved hidden list those still have
+		// their defaults, which the window doesn't know either: they leave the order, so that they keep them.
 		const std::vector<std::string> order = sections(window, set);
 		std::vector<std::string> list;
 		for (const std::string& name : order)
 			if (name == id ? hidden : sectionHidden(window, set, name))
 				list.push_back(name);
+		const auto known = [&](const std::string& name) { return section(window, set, name) != nullptr; };
 		Json& json = sectionsJson(window, set);
-		json["order"] = order;
-		json["hidden"] = list;
+		const Json* savedHidden = find(json, {"hidden"});
+		json["order"] = savedHidden != nullptr && savedHidden->is_array()
+			? keepUnknown(order, find(json, {"order"}), known)
+			: order;
+		json["hidden"] = keepUnknown(list, find(json, {"hidden"}), known);
 		save();
 		apply();
 	}
@@ -1000,6 +1035,7 @@ namespace gnubase::ui
 	{
 		const std::vector<Display> displays = m_shell.displays();
 		bool changed = m_unsaved;
+		bool reopened = false; // a window opened or closed, and with it its panels in windows of their own
 		for (const auto& [id, shown] : m_shown)
 			if (shown.window != 0 && m_shell.find(shown.window) != nullptr)
 				changed = keepBounds(m_layout["panels"][id], m_shell.bounds(shown.window), displays) || changed;
@@ -1008,6 +1044,7 @@ namespace gnubase::ui
 			const WindowId id = window.current();
 			const bool open = id != 0 && m_shell.find(id) != nullptr;
 			const bool opened = open != window.open;
+			reopened = reopened || opened;
 			bool maximized = open && m_shell.maximized(id);
 			// A maximized window keeps its normal bounds, unless it opened maximized.
 			const Rect bounds =
@@ -1048,6 +1085,11 @@ namespace gnubase::ui
 		}
 		if (changed)
 			save();
+		if (reopened)
+		{
+			applyFloating(false);
+			applyFloating(true);
+		}
 	}
 
 	void Docking::addWindow(
@@ -1079,6 +1121,7 @@ namespace gnubase::ui
 				save();
 			}
 		m_appWindows.push_back(std::move(window));
+		applyFloating(false); // its panels in windows of their own, while it is closed
 	}
 
 	std::optional<Rect> Docking::bounds(const std::string& name) const
@@ -1360,7 +1403,10 @@ namespace gnubase::ui
 		for (const Panel& panel : m_panels)
 		{
 			const Json* floating = find(m_layout, {"panels", panel.id, "floating"});
-			const bool alone = floating != nullptr && floating->is_boolean() && floating->get<bool>();
+			// A panel of an app window that is closed, such as a mixer window's Visibility tab, waits for it.
+			const bool closed = std::any_of(m_appWindows.begin(), m_appWindows.end(), [&panel](const AppWindow& window)
+				{ return window.name == panel.window && window.setOpen && !window.open; });
+			const bool alone = floating != nullptr && floating->is_boolean() && floating->get<bool>() && !closed;
 			Shown& shown = m_shown[panel.id];
 			if (!open && !alone && shown.window != 0)
 			{
@@ -1663,13 +1709,38 @@ namespace gnubase::ui
 			break;
 		}
 		case Rml::EventId::Keydown:
+		{
 			// Tab runs its key command (Focus Next and Previous: the next and previous zone, unless the user bound the
 			// key to another command) before the document moves between its controls. Only in a docking window: a
 			// panel in a window of its own has no zones, and Tab moves between its controls there.
-			if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_TAB &&
-				!window.empty() && !keepsTab(*target) && pressTab(*target, event))
+			const int key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+			if (key == Rml::Input::KI_TAB && !window.empty() && !keepsTab(*target) && pressTab(*target, event))
 				event.StopPropagation();
+			// Alt+Up and Alt+Down move the focused section button of a setup pane, and its section, one place, as a
+			// drag does. The button keeps the focus, which moving it in the document takes.
+			Rml::Element* pane = closestWith(target, "setup");
+			if ((key == Rml::Input::KI_UP || key == Rml::Input::KI_DOWN) && event.GetParameter("alt_key", false) &&
+				pane != nullptr && target->HasAttribute("setup-section") && !window.empty())
+			{
+				event.StopPropagation(); // the menu's Up and Down would move the focus
+				const std::string set = attribute(*pane, "setup");
+				const std::string id = attribute(*target, "setup-section");
+				const std::vector<std::string> order = sections(window, set);
+				const auto at = std::find(order.begin(), order.end(), id);
+				if (at == order.end() || (key == Rml::Input::KI_UP ? at == order.begin() : at + 1 == order.end()))
+					break;
+				later(
+					[this, window = std::move(window), set, id,
+						before = key == Rml::Input::KI_UP ? *(at - 1) : *(at + 1), pane = pane->GetObserverPtr()]
+					{
+						moveSection(window, set, id, before);
+						if (Rml::Element* list = pane.get())
+							if (Rml::Element* item = list->QuerySelector("[setup-section=" + id + "]"))
+								item->Focus(true);
+					});
+			}
 			break;
+		}
 		case Rml::EventId::Tabchange:
 		{
 			const Rml::Element* area = closestWith(target, "zone");

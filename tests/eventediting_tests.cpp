@@ -920,12 +920,13 @@ TEST_CASE("a Ctrl or Shift press that is also a drag's tool modifier leaves the 
 	}
 }
 
-TEST_CASE("a double click on an audio event opens it in the sample editor, on an audio part in its editor", "[unit]")
+TEST_CASE("a double click on an audio event opens it in the sample editor, on a part in its editor", "[unit]")
 {
 	Fixture f;
-	// On the MIDI part it doesn't (the MIDI editors open with Open/Close Editor).
+	// A MIDI part opens in the editor window: without onOpenEditor's listener, which the app has (p. 87), there.
 	f.click(150, 60, {}, 2);
-	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.call("editor.get", {{"editor", "window"}}).at("open") == true; }));
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("parts") == Json::array({f.part}));
 	CHECK(f.call("sampleEditor.get").at("open") == false);
 	f.click(220, 20, {}, 2);
 	REQUIRE(f.waitUntil([&f] { return f.call("sampleEditor.get").at("open") == true; }));
@@ -935,8 +936,9 @@ TEST_CASE("a double click on an audio event opens it in the sample editor, on an
 	const Json part = f.call("event.toPart", {{"events", {f.event}}}).at("events").at(0);
 	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioParts").size() == 1; }));
 	f.click(240, 20, {}, 2); // away from the last double click, so the clicks don't count with it
-	REQUIRE(f.waitUntil([&f] { return f.call("editor.get", {{"editor", "window"}}).at("open") == true; }));
-	CHECK(f.call("editor.get", {{"editor", "window"}}).at("parts") == Json::array({part}));
+	// The window is still open for the MIDI part, so this waits for the audio part to show.
+	REQUIRE(f.waitUntil(
+		[&f, &part] { return f.call("editor.get", {{"editor", "window"}}).at("parts") == Json::array({part}); }));
 	CHECK(f.call("editor.get", {{"editor", "window"}}).at("content") == "audioPart");
 }
 
@@ -2734,12 +2736,10 @@ TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar 
 			.get<uint64_t>();
 	};
 	// A tempo and a bar where moving the part on it by a range from its start sample to the next bar's sample puts it
-	// off the next bar's tick, and where Grid Relative's tick for the drag by a bar, which keeps the range start's
-	// distance from its bar line, isn't where the move to that tick's sample puts the part either.
+	// off the next bar's tick.
 	double bpm = 0.0;
 	int64_t bar = 0;
 	uint64_t part = 0;
-	const Json relative = {{"on", true}, {"type", "gridRelative"}};
 	for (const double candidate : {97.3, 133.7, 101.3, 89.9, 111.1, 93.7, 127.9, 104.9, 117.3, 86.3})
 	{
 		f.call("tempo.add", {{"position", 0}, {"bpm", candidate}, {"ramp", false}});
@@ -2756,13 +2756,7 @@ TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar 
 			f.call("range.move", move);
 			const bool off = positionOf(id) != (each + 1) * g_bar;
 			f.call("history.undo");
-			const Json snapped =
-				f.call("snap.position", {{"position", at}, {"from", start}, {"settings", relative}, {"range", 0}});
-			move["position"] = snapped.at("position");
-			f.call("range.move", move);
-			const bool apart = snapped.at("musical") == true && positionOf(id) != snapped.at("ticks").get<int64_t>();
-			f.call("history.undo");
-			if (off && apart)
+			if (off)
 			{
 				bpm = candidate;
 				bar = each;
@@ -2798,22 +2792,17 @@ TEST_CASE("a drag in the selection range snapped to a bar lands a part on a bar 
 	f.call("history.undo");
 	REQUIRE(f.waitUntil([&] { return positionOf(part) == bar * g_bar; }));
 
-	// Grid Relative keeps the range start's distance from its bar line, the rounding of its sample to ticks, so its
-	// tick lies off the next bar's line: the drag by a bar sends the range's new start in samples, and the part lands
-	// where range.move puts it there, not on that tick.
+	// Grid Relative keeps the range start's distance from its bar line, but from the bar's own sample there is none:
+	// the distance in ticks, less than a sample, is the rounding of that sample to ticks (#2005). The drag by a bar
+	// lands the part on the next bar's tick too, and the range on that bar's sample.
 	f.call("snap.set", {{"type", "gridRelative"}});
 	REQUIRE(f.waitUntil([&f] { return f.display.snap().type == engine::SnapType::GridRelative; }));
 	f.click(900, 20);
 	f.display.setRange(ui::RangeSelection{start, start + 48000, {midi}});
 	f.drag(x, 60, x + (4.0 * 60.0 / bpm * 100.0), 60);
 	REQUIRE(f.waitUntil([&] { return positionOf(part) != bar * g_bar; }));
-	const int64_t dragged = positionOf(part);
-	const int64_t at = f.display.range().value_or(ui::RangeSelection{-1, -1, {}}).start;
-	REQUIRE(at > start);
-	f.call("history.undo");
-	REQUIRE(f.waitUntil([&] { return positionOf(part) == bar * g_bar; }));
-	f.call("range.move", {{"start", start}, {"end", start + 48000}, {"tracks", {midi}}, {"position", at}});
-	CHECK(positionOf(part) == dragged);
+	CHECK(positionOf(part) == (bar + 1) * g_bar);
+	CHECK(f.display.range().value_or(ui::RangeSelection{-1, -1, {}}).start == startOf(part));
 }
 
 TEST_CASE("a drag in the selection range takes its contents onto other tracks too, Alt a copy of them", "[unit]")
@@ -2879,6 +2868,64 @@ TEST_CASE("a drag in the selection range takes its contents onto other tracks to
 	CHECK(f.audioEvents()[0].at("track") == audio);
 	CHECK(f.audioEvents()[0].at("position") == 96000);
 	CHECK(f.call("history.get").at("steps").size() == steps);
+}
+
+TEST_CASE(
+	"a drag in the selection range and paste count a folded folder's lane once, as the display shows it", "[unit]")
+{
+	// The range's top track dragged onto a folded folder's lane: its second track's contents land on the lane after
+	// the folder's, where the range shows them, not on the first track inside the folder (#1978).
+	Fixture f;
+	const Json tracks = f.call("project.get").at("tracks");
+	const auto audio = tracks[0].at("id").get<uint64_t>();
+	const auto midi = tracks[1].at("id").get<uint64_t>();
+	const auto add = [&f](const char* type)
+	{ return f.call("track.add", {{"type", type}}).at("track").at("id").get<uint64_t>(); };
+	const uint64_t folder = add("folder");
+	const uint64_t inside = add("midi");
+	f.call("track.move", {{"track", inside}, {"parent", folder}, {"index", 0}});
+	const uint64_t below = add("midi");
+	// Folded, as the track list folds it: the engine keeps it in the track layout, the display hides the folder's
+	// tracks.
+	f.call("trackLayout.set", {{"folded", {folder}}});
+	f.display.setHiddenTracks({inside});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").size() == 4; }));
+	const auto onBelow = [&f, below]
+	{
+		for (const Json& part : f.parts())
+			if (part.at("track") == below)
+				return part.at("position").get<int64_t>() == 2 * g_quarter;
+		return false;
+	};
+	const auto inFolder = [&f, inside]
+	{
+		const Json parts = f.parts();
+		return std::any_of(
+			parts.begin(), parts.end(), [inside](const Json& part) { return part.at("track") == inside; });
+	};
+	f.display.setTool(ui::Tool::RangeSelection);
+	// From 1 to 1.875 seconds, where the audio track has nothing and the part starts.
+	const ui::RangeSelection range{48000, 90000, {audio, midi}};
+	const std::vector<double> tops = f.display.laneTops();
+
+	// Down two lanes: the audio track onto the folder's lane, the MIDI track onto the one after it.
+	f.display.setRange(range);
+	f.drag(160, tops[1] + 10.0, 160, tops[3] + 10.0);
+	REQUIRE(f.waitUntil(onBelow));
+	CHECK(!inFolder());
+	CHECK(f.display.range().value_or(ui::RangeSelection{-1, -1, {}}).tracks == std::vector<uint64_t>{folder, below});
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return !onBelow(); }));
+
+	// Copied and pasted at a range on the folder's lane, it lands there too.
+	f.click(900, 20);
+	f.display.setRange(range);
+	f.run("edit.copy");
+	REQUIRE(f.waitUntil([&f] { return f.display.canRun("edit.paste"); }));
+	f.display.setRange(ui::RangeSelection{48000, 90000, {folder}});
+	f.run("edit.paste");
+	REQUIRE(f.waitUntil(onBelow));
+	CHECK(!inFolder());
 }
 
 TEST_CASE("the selection range's edges drag across and up or down, snapped, and show the resize pointers", "[unit]")
@@ -3093,9 +3140,10 @@ TEST_CASE("fade handles at the top corners of audio events drag the selected eve
 	CHECK(line.start == 2.0);
 	CHECK(std::abs(line.length - 0.1) < 1e-9);
 	// The selected event shows its handles, where its fade in ends and its fade out starts, and its event volume
-	// handle in the middle (#139).
-	REQUIRE(fadeLines(f).lanes()[0].handles.size() == 3);
-	CHECK(fadeLines(f).lanes()[0].handles[2] == 2.25);
+	// control at the bottom left, 16 dp in (#139, reference manual p. 401).
+	REQUIRE(fadeLines(f).lanes()[0].handles.size() == 2);
+	REQUIRE(fadeLines(f).lanes()[0].faders.size() == 1);
+	CHECK(std::abs(fadeLines(f).lanes()[0].faders[0] - 2.16) < 1e-9);
 
 	// The fade out handle at the top right corner, 20 dp left: a fifth of a second.
 	f.drag(249, 3, 229, 3);
@@ -3252,30 +3300,62 @@ namespace
 	}
 }
 
-TEST_CASE("the event volume handle at the top middle of an audio event drags the selected events' volume", "[unit]")
+TEST_CASE(
+	"the event volume control at the bottom left of a selected audio event drags the selected events' volume", "[unit]")
 {
+	// Reference manual p. 401: a fader at the bottom left of the event, here 16 dp in from its start.
 	Fixture f;
-	// 10 dp down a 40 dp lane, from 0 dB half way up (+6 dB at the top): -6 dB.
-	f.drag(225, 3, 225, 13);
+	// An unselected event shows no volume control: a drag from there moves the event, as with the fade handles, and
+	// selects it. From 2 to 3 seconds.
+	f.drag(216, 36, 316, 36);
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioEvents")[0].at("position") == 144000; }));
+	CHECK(eventVolume(f.audioEvents()[0]) == 0.0);
+	// Selected, 10 dp down a 40 dp lane, from 0 dB half way up (+6 dB at the top): -6 dB.
+	f.drag(316, 36, 316, 46);
 	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
-	// The event shows its volume as a line, and the selected one its fade handles and its volume handle.
+	// The event shows its volume as a line, and the selected one its fade handles and its volume control.
 	REQUIRE(f.waitUntil([&f] { return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].volumes.size() == 1; }));
-	CHECK(fadeLines(f).lanes()[0].handles.size() == 3);
+	CHECK(fadeLines(f).lanes()[0].handles.size() == 2);
+	CHECK(fadeLines(f).lanes()[0].faders.size() == 1);
 	CHECK(std::abs(fadeLines(f).lanes()[0].volumes[0].gain - 0.5) < 0.01);
 	f.call("history.undo");
 	REQUIRE(f.waitUntil([&f] { return eventVolume(f.audioEvents()[0]) == 0.0; }));
-	// Lower down, a drag still moves the event.
-	f.drag(225, 30, 325, 30);
-	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 144000; }));
+	// Elsewhere, at the top middle too, a drag moves the event.
+	f.drag(325, 3, 425, 3);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 192000; }));
+	CHECK(eventVolume(f.audioEvents()[0]) == 0.0);
 }
 
-TEST_CASE("the event volume handle works with the draw tool too, instead of adding a curve point", "[unit]")
+TEST_CASE("a selected audio event too narrow for its volume control shows none", "[unit]")
+{
+	// The control sits 16 dp in from the start, so an event under 32 dp has no room for it beside its edges: 30 dp
+	// here, 2 to 2.3 seconds.
+	Fixture f;
+	f.call("event.resize", {{"events", {f.event}}, {"edge", "end"}, {"delta", -9600}});
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 14400; }));
+	f.display.select({f.event});
+	// Its fade handles show at its edges, once the display has the shorter event.
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].handles.size() == 2 &&
+				std::abs(fadeLines(f).lanes()[0].handles[1] - 2.3) < 1e-6;
+		}));
+	CHECK(fadeLines(f).lanes()[0].faders.empty());
+	// A drag from its bottom left, where the control would be, moves the event and leaves its volume alone.
+	f.drag(216, 36, 316, 39);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 144000; }));
+	CHECK(eventVolume(f.audioEvents()[0]) == 0.0);
+}
+
+TEST_CASE("the event volume control works with the draw tool too, instead of adding a curve point", "[unit]")
 {
 	// Reference manual p. 401: the object selection and the draw tool both drag the event volume.
 	Fixture f;
 	f.display.setTool(ui::Tool::Draw);
-	f.drag(225, 3, 225, 13);
+	f.display.select({f.event});
+	f.drag(216, 36, 216, 46);
 	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
 	CHECK(f.audioEvents()[0].at("volumeCurve").empty());
 }
@@ -3842,4 +3922,178 @@ TEST_CASE("Group Editing selects parts too, on the same lane only, by the outerm
 	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioParts").size() == 2; }));
 	f.display.select({parts[0]});
 	CHECK(f.display.selection() == sorted(parts));
+}
+
+TEST_CASE("locked events and shared copies show an icon in their upper right corner", "[unit]")
+{
+	Fixture f;
+	const auto mark = [&f](uint64_t id, const std::string& kind)
+	{ return f.document.QuerySelector(".part-mark." + kind + "[part=" + std::to_string(id) + "]"); };
+	CHECK(mark(f.event, "locked") == nullptr);
+
+	// A lock icon on a locked event (reference manual p. 276), inside it at its right end: 2 to 2.5 seconds.
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") != nullptr; }));
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	Rml::Element* lock = mark(f.event, "locked");
+	CHECK(lock->GetAbsoluteLeft() >= lanes->GetAbsoluteLeft() + 200.0F);
+	CHECK(lock->GetAbsoluteLeft() + lock->GetOffsetWidth() <= lanes->GetAbsoluteLeft() + 250.0F);
+	CHECK(lock->GetAbsoluteTop() >= lanes->GetAbsoluteTop());
+	CHECK(lock->GetAbsoluteTop() + lock->GetOffsetHeight() <= lanes->GetAbsoluteTop() + 40.0F);
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") == nullptr; }));
+	f.call("history.redo");
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") != nullptr; }));
+	f.call("event.set", {{"events", {f.event}}, {"lock", false}});
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") == nullptr; }));
+
+	// Shared copies show the shared icon (p. 272), both of them, until one is a real copy again.
+	const auto copy = f.call("event.copy", {{"events", {f.part}}, {"ticks", 2 * g_bar}, {"shared", true}})
+						  .at("events")[0]
+						  .get<uint64_t>();
+	REQUIRE(f.waitUntil([&] { return mark(f.part, "shared") != nullptr && mark(copy, "shared") != nullptr; }));
+	f.call("event.toRealCopy", {{"events", {copy}}});
+	REQUIRE(f.waitUntil([&] { return mark(f.part, "shared") == nullptr && mark(copy, "shared") == nullptr; }));
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return mark(f.part, "shared") != nullptr && mark(copy, "shared") != nullptr; }));
+
+	// A locked shared copy shows both.
+	f.call("event.set", {{"events", {copy}}, {"lock", true}});
+	REQUIRE(f.waitUntil([&] { return mark(copy, "locked") != nullptr; }));
+	REQUIRE(mark(copy, "shared") != nullptr);
+	const auto right = [](Rml::Element* element) { return element->GetAbsoluteLeft() + element->GetOffsetWidth(); };
+	CHECK((right(mark(copy, "locked")) <= mark(copy, "shared")->GetAbsoluteLeft() ||
+		right(mark(copy, "shared")) <= mark(copy, "locked")->GetAbsoluteLeft()));
+}
+
+TEST_CASE("grid lines show the grid behind the events, and a line at an audio event's snap point while it is inside it",
+	"[unit]")
+{
+	Fixture f;
+	const auto has = [&f](double seconds)
+	{
+		const std::vector<ui::EventLanes::Lane>& grid = f.lanes("grid-lines");
+		return !grid.empty() &&
+			std::any_of(grid[0].events.begin(), grid[0].events.end(),
+				[seconds](const ui::TimeSpan& line) { return std::abs(line.start - seconds) < 1e-6; });
+	};
+	// Bars at 120 BPM in 4/4, every 2 seconds, with snap off too (reference manual p. 109), behind everything.
+	REQUIRE(f.waitUntil([&] { return has(0.0) && has(2.0) && has(4.0); }));
+	CHECK_FALSE(has(1.0));
+	CHECK(
+		f.document.QuerySelector(".event-area")->GetFirstChild() == f.document.QuerySelector("event-lanes.grid-lines"));
+	f.call("snap.set", {{"grid", "beat"}});
+	REQUIRE(f.waitUntil([&] { return has(0.5) && has(1.5); }));
+	// The quantize grid, and its lines move with quantize's settings.
+	f.call("quantize.set", {{"preset", "1/8"}});
+	f.call("snap.set", {{"grid", "quantize"}});
+	REQUIRE(f.waitUntil([&] { return has(0.25) && has(1.75); }));
+	f.call("quantize.set", {{"preset", "1/2"}});
+	REQUIRE(f.waitUntil([&] { return has(1.0) && !has(0.25); }));
+	// Bars follow signature changes: in 3/4 from bar 2, bars at 2, 3.5 and 5 seconds.
+	f.call("snap.set", {{"grid", "bar"}});
+	REQUIRE(f.waitUntil([&] { return has(2.0) && has(4.0) && !has(3.5); }));
+	f.call("signature.add", {{"bar", 1}, {"numerator", 3}, {"denominator", 4}});
+	REQUIRE(f.waitUntil([&] { return has(3.5) && has(5.0) && !has(4.0); }));
+	f.call("snap.set", {{"grid", "beat"}});
+	REQUIRE(f.waitUntil([&] { return has(0.5) && has(1.5); }));
+	// They follow tempo changes: at 60 BPM from 2 seconds, a beat a second.
+	f.call("project.set", {{"tempoTrackActive", true}});
+	f.call("tempo.add", {{"position", 4 * g_quarter}, {"bpm", 60.0}});
+	REQUIRE(f.waitUntil([&] { return has(3.0) && !has(2.5); }));
+	CHECK(has(1.5));
+	// A linear grid, and none where its lines would be too close to see apart.
+	f.call("snap.set", {{"format", "seconds"}, {"grid", "100ms"}});
+	REQUIRE(f.waitUntil([&] { return has(0.1) && has(2.3); }));
+	f.call("snap.set", {{"format", "samples"}, {"grid", "1sample"}});
+	REQUIRE(f.waitUntil([&] { return !has(0.0); }));
+	CHECK(f.lanes("grid-lines").at(0).events.empty());
+
+	// The snap point (p. 105) shows as a line on the event's lane while it is inside the event, 2 to 2.5 seconds.
+	const auto points = [&f]
+	{
+		const std::vector<ui::EventLanes::Lane>& lanes = f.lanes("snap-points");
+		return lanes.empty() ? std::vector<ui::TimeSpan>() : lanes[0].events;
+	};
+	CHECK(points().empty());
+	f.call("event.setSnapPoint", {{"events", {f.event}}, {"position", 108000}});
+	REQUIRE(f.waitUntil([&] { return points().size() == 1; }));
+	CHECK(std::abs(points()[0].start - 2.25) < 1e-6);
+	f.call("event.resize", {{"events", {f.event}}, {"edge", "start"}, {"delta", 18000}});
+	REQUIRE(f.waitUntil([&] { return points().empty(); }));
+}
+
+TEST_CASE("a drag of the handle in the middle of an event's right border repeats it, Alt at its lower right corner too",
+	"[unit]")
+{
+	// #2009 (reference manual p. 271): the part from 1 to 3 seconds, 100 to 300 dp across, on the MIDI track two rows
+	// high, its lane from 40 to 120 dp down: the handle from 60 to 80 dp, the lower corner from 80 dp.
+	Fixture f;
+	const auto track = f.parts()[0].at("track").get<uint64_t>();
+	f.display.setTrackHeights({track}, 80.0);
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").at(1).height == 80.0F; }));
+	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	const auto pointerAt = [&f, area](double x, double y)
+	{
+		f.automation.move(std::nullopt, f.at(x, y));
+		f.step();
+		return area->GetAttribute<std::string>("pointer", "");
+	};
+	CHECK(pointerAt(297, 70) == "repeat");
+	CHECK(pointerAt(297, 100) == "resize");
+	const size_t steps = f.call("history.get").at("steps").size();
+
+	SECTION("a drag over two lengths shows and makes two real copies after it, in one undo step")
+	{
+		f.automation.press(std::nullopt, f.at(297, 70), ui::MouseButton::Left);
+		f.automation.move(std::nullopt, f.at(697, 70));
+		f.step();
+		const auto& preview = f.lanes("selected-events")[1].events;
+		REQUIRE(preview.size() == 3);
+		CHECK(preview[1].start == 3.0);
+		CHECK(preview[2].start == 5.0);
+		CHECK(preview[2].length == 2.0);
+		f.automation.release(std::nullopt, f.at(697, 70), ui::MouseButton::Left);
+		REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+		CHECK(f.parts()[1].at("position") == 6 * g_quarter);
+		CHECK(f.parts()[2].at("position") == 10 * g_quarter);
+		CHECK(f.parts()[1].at("shared") == 0);
+		CHECK(f.call("history.get").at("steps").size() == steps + 1);
+	}
+	SECTION("with Shift, shared copies")
+	{
+		f.drag(297, 70, 697, 70, {"shift"});
+		REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+		CHECK(f.parts()[1].at("shared") != 0);
+		CHECK(f.parts()[2].at("shared") == f.parts()[1].at("shared"));
+	}
+	SECTION("a drag less than half a length makes none")
+	{
+		f.drag(297, 70, 380, 70);
+		f.call("history.get"); // the engine has what a release would have sent by now
+		f.step();
+		CHECK(f.parts().size() == 1);
+		CHECK(f.parts()[0].at("length") == 4 * g_quarter);
+	}
+	SECTION("with Alt, the lower right corner of the last selected event repeats instead of resizing or splitting")
+	{
+		f.display.select({f.part});
+		CHECK(pointerAt(297, 100) == "resize");
+		f.automation.move(std::nullopt, f.at(296, 100), {"alt"}); // RmlUi sends a move only where the mouse moves
+		f.step();
+		CHECK(area->GetAttribute<std::string>("pointer", "") == "repeat");
+		f.drag(297, 100, 497, 100, {"alt"});
+		REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+		CHECK(f.parts()[1].at("position") == 6 * g_quarter);
+		CHECK(f.parts()[0].at("length") == 4 * g_quarter);
+	}
+	SECTION("a track lower than two rows has no handle: the border resizes")
+	{
+		f.display.setTrackHeights({track}, 40.0);
+		REQUIRE(f.waitUntil([&f] { return f.lanes("events").at(1).height == 40.0F; }));
+		CHECK(pointerAt(297, 50) == "resize");
+		f.drag(297, 50, 397, 50);
+		REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") != 4 * g_quarter; }));
+		CHECK(f.parts().size() == 1);
+	}
 }

@@ -47,11 +47,12 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
   (`history.describe` takes `id` or `step`, exactly one of them): a step that went meanwhile gets no note, and the panel
   shows the steps as they are.
 - **Gestures.** A `history.transaction` with a `merge` key joins the last step instead of adding one when that step is a
-  transaction with the same key and nothing was undone since; a gesture that ends where it started leaves no step. The
-  UI makes each gesture on a value widget one step this way (`EngineBinding::sendStep`, with the gesture number of the
-  widget's `change`, [widgets.md](widgets.md)): a drag of the mixer's faders, of the inspector's volume and pan and of
-  the info line's volume ([inspector.md](inspector.md)), wheel turns until the mouse leaves, an arrow key until it is
-  released. The steps of a gesture still go to the engine one by one, so that it is heard while it lasts.
+  transaction with the same key and nothing was undone since (an undo clears the key of the step it undoes, so after a
+  redo of that step it stays a step of its own); a gesture that ends where it started leaves no step. The UI makes each
+  gesture on a value widget one step this way (`EngineBinding::sendStep`, with the gesture number of the widget's
+  `change`, [widgets.md](widgets.md)): a drag of the mixer's faders, of the inspector's volume and pan and of the info
+  line's volume ([inspector.md](inspector.md)), wheel turns until the mouse leaves, an arrow key until it is released.
+  The steps of a gesture still go to the engine one by one, so that it is heard while it lasts.
 - **What a step changed** (#1881). `history.changed` has `position`, `steps`, `undo` and `redo`, and for a step that a
   command made or joined, `events`: the names of the events that the command announced before it, each once, which
   tell the whole change. A client that follows those events itself needn't read the project again: the UI's views

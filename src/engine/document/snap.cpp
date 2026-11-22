@@ -437,7 +437,10 @@ namespace gnubase::engine
 		if (musical(settings.grid()))
 		{
 			const time::Ticks from = grid.tempo.toTicks(*target.from, grid.sampleRate);
-			const time::Ticks offset = from - nearestTick(settings.grid(), grid, from);
+			const time::Ticks line = nearestTick(settings.grid(), grid, from);
+			// From the line's own sample there is no distance to keep: the one in ticks, less than a sample, is the
+			// rounding of that sample to ticks, so what starts on a bar moves from bar to bar (#2005).
+			const time::Ticks offset = grid.tempo.toSamples(line, grid.sampleRate) == *target.from ? 0 : from - line;
 			const time::Ticks to = grid.tempo.toTicks(target.position, grid.sampleRate) - offset;
 			return {time::TimeBase::Musical, nearestTick(settings.grid(), grid, to) + offset};
 		}
@@ -563,7 +566,8 @@ namespace gnubase::engine
 			std::vector<std::string>(std::begin(g_gridFormatNames), std::end(g_gridFormatNames));
 		const std::string settingsText =
 			"on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping "
-			"the distance to the grid), events (the starts and ends of other events, audio events' snap points and "
+			"the distance to the grid, none from a musical line's own sample), events (the starts and ends of other "
+			"events, audio events' snap points and "
 			"markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor "
 			"(the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. "
 			"format: the time format the grid follows, the project window's ruler: barsBeats, seconds, timecode, "

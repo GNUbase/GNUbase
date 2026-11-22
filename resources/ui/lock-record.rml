@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- Asks before a locked recording stops (Lock Record, docs/features/recording.md): app::AppUi opens it when the engine
-     refused to stop or punch out a recording because it is locked. Stop stops it with transport.stop confirmed;
-     Cancel goes on recording. -->
+<!-- Asks before a locked recording stops or punches out (Lock Record, docs/features/recording.md): app::AppUi opens it
+     when the engine refused to because the recording is locked, with the attribute action: stop or punchOut, what was
+     refused. Stop stops it with transport.stop confirmed, Punch Out punches out with transport.record confirmed and
+     playback goes on; Cancel goes on recording. -->
 <rml>
 <head>
 	<title>Lock Record</title>
@@ -27,14 +28,34 @@
 			margin-left: 6dp;
 		}
 	</style>
+	<script>
+		LockRecord = {}
+
+		function LockRecord.open(document)
+			LockRecord.punchOut = document:GetAttribute("action") == "punchOut"
+			if LockRecord.punchOut then
+				document:GetElementById("lock-record-question").inner_rml = "Recording is locked. Punch out anyway?"
+				document:GetElementById("lock-record-confirm").inner_rml = "Punch Out"
+			end
+		end
+
+		function LockRecord.confirm(document)
+			if LockRecord.punchOut then
+				gnubase.transport.record{record = false, confirmed = true}
+			else
+				gnubase.transport.stop{confirmed = true}
+			end
+			document:Close()
+		end
+	</script>
 </head>
-<body>
+<body onshow="LockRecord.open(document)">
 	<dialog id="lock-record-dialog">
 		<div class="dialog-titlebar">Lock Record</div>
-		<div class="row">Recording is locked. Stop it anyway?</div>
+		<div class="row" id="lock-record-question">Recording is locked. Stop it anyway?</div>
 		<div class="row buttons">
 			<button result="cancel">Cancel</button>
-			<button id="lock-record-stop" class="primary" onclick="gnubase.transport.stop{confirmed = true}; document:Close()">Stop</button>
+			<button id="lock-record-confirm" class="primary" onclick="LockRecord.confirm(document)">Stop</button>
 		</div>
 	</dialog>
 </body>

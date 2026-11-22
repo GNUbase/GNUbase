@@ -134,7 +134,8 @@ namespace gnubase::engine
 		options.sampleRate = project.sampleRate;
 		if (type == "broadcastWav")
 		{
-			// The recorder adds the description, the origination time and the first sample's project position.
+			// The recorder adds the origination time and the first sample's project position, and the track name as the
+			// description if it has none.
 			BroadcastInfo broadcast;
 			broadcast.originator = "GNUbase";
 			broadcast.timeReference = static_cast<uint64_t>(std::llround(project.setup.startTime * project.sampleRate));
@@ -715,7 +716,13 @@ namespace gnubase::engine
 					WriteOptions options = m_current.format;
 					options.channels = static_cast<int>(track.ports.size());
 					if (options.broadcast)
-						options.broadcast->description = cut(track.name, 256);
+					{
+						BroadcastInfo& broadcast = *options.broadcast;
+						broadcast.description =
+							cut(broadcast.description.empty() ? track.name : broadcast.description, 256);
+						broadcast.originator = cut(broadcast.originator, 32);
+						broadcast.originatorReference = cut(broadcast.originatorReference, 32);
+					}
 					m_files.push_back({track, path, AudioFileWriter::create(path, options)});
 				}
 				catch (const std::exception& error)

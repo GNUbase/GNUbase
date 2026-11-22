@@ -73,6 +73,8 @@ namespace gnubase::ui
 		// each with its arrow, the one playing .current, and the jump mode. A step's name is a disabled textdisplay
 		// that Alt and a double click open (p. 405).
 		void showArranger();
+		// Sends a step's repeats or repeat mode typed or chosen in the Current Arranger Chain list (arranger.setChain).
+		void changeStep(Rml::Element& control, const std::string& name, const std::string& value);
 		void followArranger(const engine::Json& status); // transport.get's or transport.changed's arranger
 		void readArrangerPlaying();                      // transport.get, into followArranger
 		// The Track Versions section (pp. 231-232): the active version's name and ID, and the list of them all.
@@ -136,6 +138,9 @@ namespace gnubase::ui
 		uint64_t m_arrangerHanded = 0; // when it was handed on (EngineBinding::handed)
 		engine::Json m_arrangerPlaying = engine::Json::object(); // transport.changed's arranger
 		Subscription m_arrangerChanged;
+		engine::Json m_arrangerChain = engine::Json::object(); // the active chain's id and steps, as the list shows
+		Rml::ObserverPtr<Rml::Element> m_stepMenu;             // the chain list's context menu
+		int m_touchedStep = -1;                                // the step right-clicked, for Remove Touched
 		Subscription m_transportChanged;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};

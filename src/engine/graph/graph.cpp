@@ -41,6 +41,8 @@ namespace gnubase::engine::graph
 			return "pluginSlot";
 		case NodeKind::ListenBus:
 			return "listenBus";
+		case NodeKind::Listen:
+			return "listen";
 		case NodeKind::Send:
 			return "send";
 		case NodeKind::MidiSend:
@@ -49,7 +51,7 @@ namespace gnubase::engine::graph
 		return "unknown";
 	}
 
-	GraphDesc describe(const RenderSnapshot& snapshot)
+	GraphDesc describe(const RenderSnapshot& snapshot, const std::vector<ObjectId>& fading)
 	{
 		GraphDesc graph;
 		for (const RenderBus& bus : snapshot.busses)
@@ -150,16 +152,30 @@ namespace gnubase::engine::graph
 
 		const auto mainMix = std::find_if(
 			snapshot.busses.begin(), snapshot.busses.end(), [](const RenderBus& bus) { return bus.mainMix; });
-		const auto listens = [](const RenderChannel& channel)
-		{ return channel.listen && channel.format != ChannelFormat::None; };
+		const auto listens = [&fading](const RenderChannel& channel)
+		{
+			return channel.format != ChannelFormat::None &&
+				(channel.listen || std::find(fading.begin(), fading.end(), channel.id) != fading.end());
+		};
 		if (mainMix != snapshot.busses.end() &&
 			std::any_of(snapshot.channels.begin(), snapshot.channels.end(), listens))
 		{
+			std::vector<int> nodes;
+			for (size_t i = 0; i < snapshot.channels.size(); ++i)
+			{
+				const RenderChannel& channel = snapshot.channels[i];
+				if (!listens(channel))
+					continue;
+				const ChannelFormat output = pannerOutput(channel.panner);
+				nodes.push_back(static_cast<int>(graph.nodes.size()));
+				graph.nodes.push_back(
+					{NodeKind::Listen, channel.id, output == ChannelFormat::None ? channel.format : output, nullptr});
+				graph.audio.push_back({firstChannel + static_cast<int>(i), nodes.back()});
+			}
 			const int listen = static_cast<int>(graph.nodes.size());
 			graph.nodes.push_back({NodeKind::ListenBus, 0, mainMix->format, nullptr});
-			for (size_t i = 0; i < snapshot.channels.size(); ++i)
-				if (listens(snapshot.channels[i]))
-					graph.audio.push_back({firstChannel + static_cast<int>(i), listen});
+			for (const int node : nodes)
+				graph.audio.push_back({node, listen});
 		}
 		return graph;
 	}

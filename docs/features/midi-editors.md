@@ -75,7 +75,9 @@ sends `editor.*` commands.
 - **Visibility tab**: a click on the check shows or hides the track's parts, with Shift exclusively; on a rectangle it
   shows them all (p. 1151). The tracks in a folder are indented under it, and a click on the folder's name or its
   triangle collapses or expands it, in this tab only, without rebuilding the rows, so a double click on its name still
-  shows it exclusively. A folder counts the parts of a track hidden in the project window only while they show, as
+  shows it exclusively. An `editor.changed` updates the rows in place too while they list the same tracks with the
+  same names, so a double click on a shown track's name, whose first click activated the track, still reaches the row
+  it started on and shows the track exclusively (#2031). A folder counts the parts of a track hidden in the project window only while they show, as
   `showTracks` leaves them out, and isn't listed once none of its parts can show. A track that can't show
   (`editor.set`'s `showTracks` refuses it: hidden in the project window, or it or a track in the folder holds locked
   events or parts) is `.unavailable`: its check only hides what it still shows, and Shift or a double click do nothing.
@@ -93,10 +95,16 @@ sends `editor.*` commands.
 - **Following the selection** (p. 1153): when the project window's selection changes, its MIDI parts, or else its
   audio parts, open in every open editor that doesn't keep its contents.
 - **Commands**: `editor.openClose` (Mod+E and Return in the project window, Edit > Open/Close Editor, p. 1189) opens
-  the selected MIDI parts in the editor window, or else the selected audio parts in the audio part editor, or closes
-  it when none is selected; with audio events but no parts selected it opens the first in the sample editor
-  ([sample-editor.md](sample-editor.md)), and without either it closes that too. `window.lowerZoneEditor` (Edit > Open
-  Editor in Lower Zone) does the same for parts in the lower zone.
+  the selected MIDI parts, or else the selected audio parts in the audio part editor, where a double click opens them,
+  or closes that editor when none is selected; with audio events but no parts selected it opens the first in the
+  sample editor window ([sample-editor.md](sample-editor.md)), and without either it closes that too.
+  `window.lowerZoneEditor` (Edit > Open Editor in Lower Zone) does the same for parts in the lower zone.
+- **Where a double click opens them** (pp. 87, 1603): a double click on a MIDI part or an audio part in the project
+  window and `editor.openClose` open it in the lower zone's editor, or in the editor window with the preference
+  Double-click opens Editor in a Window (`editing.doubleClickOpensEditorIn`, Editors page,
+  [preferences.md](preferences.md)). Opened in the lower zone, the editor brings its tab forward and takes the keyboard
+  focus (p. 100), as with `window.lowerZoneEditor` ([docking.md](docking.md)). A double click on an audio event opens
+  the sample editor window, which the lower zone doesn't have yet.
   `editor.openList` (Mod+G, Edit > Open List Editor, p. 1243) opens them in the editor window's list editor.
 
 `resources/styles/midieditor.rcss` lays the editors out; the themes color the states (`tools/skin/generate.py`), the
@@ -109,8 +117,8 @@ The setup panes of the toolbar and the info line (p. 1575), which only the proje
 selection rectangle and Show Part Borders, Independent Track Loop, the global tracks' events and editing them, Find
 Tracks, track visibility configurations and agents, the Track Display and its settings, selecting tracks in the
 Visibility tab, the preference Editor Content Follows
-Event Selection and where editors open by default, double-clicking a part to open it, and saving the global track
-setup with the project. The lower zone's Editor tab without an open view (after Open in Separate Window, or when the
+Event Selection, Open Editor Commands open Editors in a Window/in Lower Zone (p. 1603: the Audio and MIDI menus' open
+commands, such as Mod+E, which here is Open/Close Editor), and saving the global track setup with the project. The lower zone's Editor tab without an open view (after Open in Separate Window, or when the
 user picks it from the tab bar) shows an empty editor until Edit > Open Editor in Lower Zone, and the engine sends no
 `editor.changed` when a new project closes the editors or removed parts leave a view (#625).
 
@@ -125,7 +133,8 @@ user picks it from the tab bar) shows an empty editor until Edit > Open Editor i
 - `tests/midieditor_tests.cpp` drives the app with `ui::Automation`: Open/Close Editor for three parts on two tracks
   opens the editor window with them in order, the Activate Part for Editing menu lists them under their tracks and
   activates one, the part editing mode marks the editable parts, a click activates a part; the Visibility tab's checks
-  hide and show tracks, a double click shows one exclusively, a rectangle for a track not all of whose parts show; the
+  hide and show tracks, a double click shows one exclusively, also when its first click's `editor.changed` (the
+  track activated) reaches the tab before the second click, a rectangle for a track not all of whose parts show; the
   Global Tracks section shows a marker track above the events; Open/Close Editor without a selection, closing the
   window, an engine client and a new project open and close it, and an `editor.changed` on its way after the user closed
   the window doesn't open it again. The Visibility tab indents a folder's tracks, folds them with a click on its name
@@ -133,4 +142,6 @@ user picks it from the tab bar) shows an empty editor until Edit > Open Editor i
   hidden in the project window, whose checks only hide what shows, counts a hidden track's parts in its folder only
   while they show, and is closed in the project window while the lower zone's editor isn't open. The lower zone's editor
   opens for selected parts, follows the selection, stops following with Keep Editor Contents, moves to the window and
-  back, and closes when the lower zone hides.
+  back, and closes when the lower zone hides. Return and a double click on a part open it in the lower zone's editor,
+  which takes the keyboard focus, Return an audio part too, and in the editor window with Double-click opens Editor in a
+  Window, which leaves the focus in the main zone.

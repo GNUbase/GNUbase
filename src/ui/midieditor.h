@@ -81,7 +81,22 @@ namespace gnubase::ui
 		bool showsAudio() const;
 		// The project's parts of the kind the editor shows: audio parts or MIDI parts.
 		engine::Json projectParts() const;
-		std::string visibilityRml() const;
+		// A row of the Visibility tab: a track, or a folder with tracks in it.
+		struct VisibilityRow
+		{
+			uint64_t track = 0;
+			int level = 0; // how deep in folders
+			bool folder = false;
+			std::string name;
+			std::string state; // of its check: checked, partial or empty
+			bool active = false;
+			bool unavailable = false;
+			bool disabled = false;
+		};
+		std::vector<VisibilityRow> visibilityRows() const;
+		// Puts the rows into the Visibility tab: in place while it shows the same tracks with the same names, so that
+		// a double click whose first click changed the view still reaches the row it started on.
+		static void showVisibility(Rml::Element& list, const std::vector<VisibilityRow>& rows);
 		std::string chordName() const;
 		void voice(const std::string& key, const std::string& value);
 		std::string globalTracksRml() const;

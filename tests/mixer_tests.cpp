@@ -350,6 +350,17 @@ TEST_CASE("muted channels and channels silenced by another's solo are silent, gl
 	run(muted.client, "audio.render", {{"frames", 1000}});
 	checkGain(muted.output(0, 1000), 1.0);
 
+	// A mono channel's panner makes it stereo: muted, both sides are silent, not only the left.
+	Mixer mono("mono");
+	run(mono.client, "audio.render", {{"frames", 1000}});
+	checkGain(mono.output(1, 1000), gain(-3.0));
+	mono.set({{"mute", true}});
+	run(mono.client, "audio.render", {{"frames", 1000}});
+	const std::vector<float> left = mono.output(0, 2000);
+	const std::vector<float> right = mono.output(1, 2000);
+	CHECK(std::all_of(left.begin() + 1300, left.end(), [](float sample) { return sample == 0.0f; }));
+	CHECK(std::all_of(right.begin() + 1300, right.end(), [](float sample) { return sample == 0.0f; }));
+
 	Mixer soloed;
 	const ObjectId other = twoTracks(soloed);
 	run(soloed.client, "channel.set", {{"channel", other}, {"solo", true}});
@@ -396,25 +407,37 @@ TEST_CASE("listening channels play on the main mix after their fader, the rest o
 	run(mixer.client, "channel.set", {{"channel", other}, {"volume", -20.0}, {"listen", true}});
 	const double listened = gain(-20.0);
 	const double mix = 1.0 + listened; // both tracks
-	// The dim is silence by default: the mix glides out over the first block of 64 frames.
+	// The dim is silence by default: over the first block of 64 frames the mix glides out and the listening channel
+	// glides in, so it stays as loud as it was.
 	run(mixer.client, "audio.render", {{"frames", 128}});
 	// Another dim and listen level glide in the next block.
 	run(mixer.client, "settings.set", {{"key", "audio.listenDim"}, {"value", -6.0}});
 	run(mixer.client, "settings.set", {{"key", "audio.listenLevel"}, {"value", 6.0}});
 	run(mixer.client, "audio.render", {{"frames", 128}});
-	// Once no channel listens, the mix glides back.
+	// Once no channel listens, the mix glides back and the listening channel out.
 	CHECK(run(mixer.client, "channel.deactivateAll", {{"state", "listen"}}).at("channels") == Json::array({other}));
 	run(mixer.client, "audio.render", {{"frames", 128}});
+	// It glides in again, and a second channel that starts to listen glides in beside it.
+	run(mixer.client, "channel.set", {{"channel", other}, {"listen", true}});
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	mixer.set({{"listen", true}});
+	run(mixer.client, "audio.render", {{"frames", 128}});
 	const double dim = gain(-6.0);
-	checkGain(mixer.output(0, 384),
+	const double level = gain(6.0);
+	checkGain(mixer.output(0, 640),
 		[&](size_t i)
 		{
-			const double x = static_cast<double>((i % 128) + 1) / 64.0; // through a block's glide
+			const double in = std::min(1.0, static_cast<double>((i % 128) + 1) / 64.0); // through a block's glide
+			const double out = 1.0 - in;
 			if (i < 128)
-				return (mix * std::max(0.0, 1.0 - x)) + listened;
+				return (mix * out) + (listened * in);
 			if (i < 256)
-				return (mix * dim * std::min(1.0, x)) + (listened * gain(6.0));
-			return mix * (dim + ((1.0 - dim) * std::min(1.0, x)));
+				return (mix * dim * in) + (listened * (1.0 + ((level - 1.0) * in)));
+			if (i < 384)
+				return (mix * (dim + ((1.0 - dim) * in))) + (listened * level * out);
+			if (i < 512)
+				return (mix * (1.0 + ((dim - 1.0) * in))) + (listened * level * in);
+			return (mix * dim) + (listened * level) + (level * in);
 		});
 }
 

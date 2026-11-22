@@ -557,6 +557,16 @@
 	{
 		background-color: #10dff2;
 	}
+	.event-display event-lanes.grid-lines
+	{
+		color: #323646;
+		stroke-color: transparent;
+	}
+	.event-display event-lanes.snap-points
+	{
+		color: #e12ad8;
+		stroke-color: transparent;
+	}
 	.event-display .marker-lines
 	{
 		stroke-color: #751a78;
@@ -672,6 +682,11 @@
 	.arranger-lane-row .arranger-lane-event.drawing
 	{
 		background-color: transparent;
+	}
+	.arranger-lane-row .arranger-lane-event.selected
+	{
+		background-color: #e12ad880;
+		border-color: #f1f4ff;
 	}
 	.chord-pad
 	{

@@ -35,6 +35,7 @@ namespace gnubase::engine::graph
 		Builtin,       // one of GNUbase's own processors
 		PluginSlot,    // a plugin, built in or in a plugin host process (plugins::PluginSlot)
 		ListenBus,     // what the listening channels play on the monitoring bus; read after processing
+		Listen,        // a channel's way to the listen bus, which glides it in and out
 		Send,          // a channel's send to a group or effect channel: its share of the channel's audio
 		MidiSend,      // a MIDI send's way to another instrument track: what the send's effect plays there
 	};
@@ -88,9 +89,10 @@ namespace gnubase::engine::graph
 	// output in that format; a pre-fader send, in the channel's format, only follows its channel, whose strip hands it
 	// the audio before the fader (ChannelStrip). Each sends to its destination's first node. Then a node per MIDI
 	// send that plays to another instrument track, by channel and slot, which follows the node its channel's sequencer
-	// runs in and sends events to that instrument's first node. While channels listen, a
-	// listen bus in the main mix's format comes last and receives them after their faders.
-	GraphDesc describe(const RenderSnapshot& snapshot);
+	// runs in and sends events to that instrument's first node. While channels listen, a listen node per listening
+	// channel receives its output after the fader, and a listen bus in the main mix's format comes last and receives
+	// the listen nodes. fading: channels that stopped listening and still glide out, which keep their listen node.
+	GraphDesc describe(const RenderSnapshot& snapshot, const std::vector<ObjectId>& fading = {});
 
 	// The order in which nodes are processed: every node after the nodes it receives audio or events from, and
 	// otherwise by index, so the order depends only on the graph and not on the order of its connections. Throws

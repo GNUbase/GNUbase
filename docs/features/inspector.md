@@ -33,7 +33,7 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   The edit goes to every selected event or part, relative to its own value: a new start moves them all by as much
   as the first one moves, a new end or length resizes them all by as much (`event.move`, `event.resize` at the end).
   With Ctrl (Cmd) held when Enter takes the value, every one gets the value typed: the same start, end, length or
-  volume, also when it is the first one's own value. Names go to every selected part (`midiPart.set`), the volume to every selected audio event
+  volume, also when it is the first one's own value. Names go to every selected part, audio and MIDI alike (`event.set`), the volume to every selected audio event
   (`audioEvent.set`, -144 to 6 dB), mute and lock to all (`event.set`). Each edit is one `history.transaction`, so one
   undo restores every event; a drag, wheel turns or a held arrow key on the volume are one undo step too
   ([edit-history.md](edit-history.md), gestures).
@@ -170,9 +170,10 @@ one it has the class `empty` and says "No Track Selected".
 - **Chord Track** (pp. 1329, 1333-1335): the chord track's Adaptive Voicings, Automatic Scales, Acoustic Feedback,
   voicing library and subset, Octave Offset, the piano's Custom Voicing options and range, and Shift Chords
   (`chord.setTrack`).
-- **Arranger Track** (pp. 405, 410-411, [arranger.md](arranger.md)): the arranger track's Open Arranger Editor beside
+- **Arranger Track** (pp. 405, 409-411, [arranger.md](arranger.md)): the arranger track's Open Arranger Editor beside
   the header, the Current Arranger Chain and Arranger Events lists, whose arrows play a step and trigger an event, with
-  the one playing highlighted, Jump Mode, and renaming a step's event with Alt and a double click on its name.
+  the one playing highlighted, Jump Mode, renaming a step's event with Alt and a double click on its name, a step's
+  repeats (a double click types them) and repeat mode, and Remove Touched on a step's context menu.
 - **Articulation Map** (pp. 1263, 1286, [articulation-maps.md](articulation-maps.md)): MIDI and instrument tracks'
   map, or No Map (`track.set` `articulationMap`), and Setup..., which opens the articulation map setup for the track.
 - **Track Versions** (pp. 231-232, [track-versions.md](track-versions.md)): the first selected track's active

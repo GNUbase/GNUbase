@@ -222,6 +222,7 @@ namespace gnubase::engine
 			std::vector<int> mainPorts;       // the main mix's device channels, for auditioning and listening
 			int mainOutput = -1;              // the main mix's index in outputs, or -1
 			int listenNode = -1;              // the listen bus (graph::NodeKind::ListenBus), or -1
+			bool listening = false;           // a channel listens; the listen bus may also have channels gliding out
 			ListenGains listen;
 		};
 
@@ -246,12 +247,15 @@ namespace gnubase::engine
 		void setDevice(const Json& parameters, bool keepMeasurement = false);
 		void openDummy(const Json& parameters);
 		void closeDevice();
-		// audio.reset; a device that can't be opened is lost. While one is, opens the lost device instead of the
-		// fallback that plays. True if the status changed.
-		bool reset();
+		// audio.reset; a device that can't be opened is lost, and so is one that ran and doesn't start again, unless
+		// loseIfStartFails is false: then it stays open and stopped and the start's DeviceError is thrown. While a
+		// device is lost, opens it instead of the fallback that plays. True if the status changed.
+		bool reset(bool loseIfStartFails = true);
 		// audio.reconnect: while a fallback plays, only once the lost device is listed as available again, so that
 		// tries don't interrupt the fallback, or every g_uncertainReconnectInterval while it is listed as unavailable
-		// by a backend that doesn't know whether it is there. True if the status changed.
+		// by a backend that doesn't know whether it is there. A listed device that still fails is tried less often,
+		// up to every g_uncertainReconnectInterval, until the backend's list changes (#467). True if the status
+		// changed.
 		bool reconnect();
 		// Whether the lost device is available again, as far as its backend's device list says: Maybe if it is listed
 		// as unavailable by a backend whose list doesn't say whether it is there (Backend::listsPresence).
@@ -261,7 +265,8 @@ namespace gnubase::engine
 			Yes,
 			Maybe,
 		};
-		Listed lostDeviceListed() const;
+		// listing: what the list says, to notice when it changes.
+		Listed lostDeviceListed(Json& listing) const;
 		// Opens the fallback device for the lost device (audio.fallbackDevice) and starts it if the lost one ran.
 		void failOver();
 		// Starts trying to open the lost device again, every g_reconnectInterval, with audio.reconnect: one try at a
@@ -373,7 +378,7 @@ namespace gnubase::engine
 		AutoMonitoring autoMonitoring() const; // the user setting
 		ListenGains listenGains() const;       // the user settings
 		// Audio thread: adds the outputs to the device, the main mix turned down while channels listen, and the
-		// listening channels to the main mix's ports.
+		// listen bus to the main mix's ports; both glide over the block to new gains.
 		void output(const audio::DeviceBlock& block, const Program& program) noexcept;
 		// Direct monitoring: audio tracks that play into an output bus hear their input bus through the device
 		// instead of the graph. ports: the device channels of each bus (devicePorts).
@@ -398,6 +403,7 @@ namespace gnubase::engine
 		bool m_mutePreSends = false;                                   // the graph's audio.mutePreSends
 		bool m_treatMutedAudioLikeDeleted = true; // the playlists' editing.treatMutedAudioLikeDeleted
 		float m_dim = 1.0f;                       // audio thread: the main mix's gain at the end of the last block
+		float m_listenLevel = 1.0f;               // audio thread: the listen bus's gain at the end of the last block
 
 		Engine* m_engine = nullptr;
 		std::vector<std::unique_ptr<audio::Backend>> m_backends;
@@ -430,8 +436,11 @@ namespace gnubase::engine
 		std::optional<Lost> m_lost;
 		bool m_dummyUnplugged = false; // audio.simulateDeviceLoss
 		bool m_failingOver = false;    // the fallback dummy device can't be unplugged
-		// When reconnect next tries a Listed::Maybe device while a fallback plays.
-		std::chrono::steady_clock::time_point m_nextUncertainTry;
+		// When reconnect next tries the lost device while a fallback plays, the wait after a listed device's failed
+		// try, and the listing that the wait is for.
+		std::chrono::steady_clock::time_point m_nextTry;
+		std::chrono::steady_clock::duration m_backoff{};
+		Json m_lostListing;
 		// The thread that tries to open a lost device again, started with the first loss.
 		std::mutex m_reconnectMutex; // guards m_stopReconnecting
 		bool m_stopReconnecting = false;

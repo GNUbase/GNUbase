@@ -351,6 +351,32 @@ TEST_CASE("Broadcast Wave recordings describe the track and where the file start
 	CHECK(info.timeReference == 3601ULL * 48000); // the project start shows 1:00:00, and the file starts 1 s later
 }
 
+TEST_CASE(
+	"Broadcast Wave recordings take the description, author and reference of the user settings (#580)", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "track.set", {{"track", setup.track}, {"name", "Lead vocals"}});
+	// The author and the reference are cut to their fields' 32 bytes.
+	const std::string author(40, 'a');
+	run(client, "settings.set",
+		{{"values",
+			{{"audio.broadcastDescription", "Session one"}, {"audio.broadcastAuthor", author},
+				{"audio.broadcastReference", "REF-0042"}}}});
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	const auto reader = AudioFileReader::open(pathOf(client, events[0]));
+	const gnubase::engine::BroadcastInfo info = reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{});
+	CHECK(info.description == "Session one");
+	CHECK(info.originator == author.substr(0, 32));
+	CHECK(info.originatorReference == "REF-0042");
+}
+
 TEST_CASE("a Broadcast Wave recording's time reference includes the pre-recorded input", "[integration]")
 {
 	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});

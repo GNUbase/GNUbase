@@ -7,18 +7,21 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControlTextArea.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -29,6 +32,13 @@ namespace gnubase::ui
 	namespace
 	{
 		using engine::Json;
+
+		// An arranger step's repeat modes (reference manual p. 407), as arranger.setChain takes them.
+		constexpr std::array<std::pair<const char*, const char*>, 3> g_arrangerModes = {{
+			{"normal", "Normal"},
+			{"repeatForever", "Repeat Forever"},
+			{"pauseAfterRepeats", "Pause After Repeats"},
+		}};
 
 		// The track's name above the sections, which the docking system shows, hides and orders (sections="inspector").
 		const char* const g_rml =
@@ -130,7 +140,7 @@ namespace gnubase::ui
 			R"(<div class="inspector-section-title"><button class="section-header">Arranger Track</button>)"
 			R"(<button class="inspector-arranger-editor" title="Open Arranger Editor">E</button></div>)"
 			R"(<div class="section-body"><div class="inspector-list-title">Current Arranger Chain</div>)"
-			R"(<div class="inspector-arranger-steps" contextmenu=""/>)"
+			R"(<div class="inspector-arranger-steps" contextmenu="inspector-arranger-step-menu"/>)"
 			R"(<div class="inspector-list-title">Arranger Events</div>)"
 			R"(<div class="inspector-arranger-events" contextmenu=""/>)"
 			R"(<div class="inspector-row" row="arrangerJumpMode"><span class="inspector-label">Jump Mode</span>)"
@@ -566,6 +576,16 @@ namespace gnubase::ui
 		root.QuerySelectorAll(controls, "[control], textarea, .inserts");
 		for (Rml::Element* control : controls)
 			control->SetAttribute("contextmenu", "");
+		// The Current Arranger Chain list's context menu (p. 409), in the body, so that no container clips it.
+		if (Rml::ElementDocument* document = root.GetOwnerDocument())
+		{
+			const Rml::ElementPtr holder = document->CreateElement("div");
+			holder->SetInnerRML(R"(<menu id="inspector-arranger-step-menu">)"
+								R"(<menuitem class="arranger-remove-touched">Remove Touched</menuitem></menu>)");
+			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
+			menu->AddEventListener(Rml::EventId::Click, this);
+			m_stepMenu = menu->GetObserverPtr();
+		}
 		root.AddEventListener(Rml::EventId::Click, this);
 		root.AddEventListener(Rml::EventId::Mousedown, this); // for click and hold on S
 		root.AddEventListener(Rml::EventId::Change, this);
@@ -600,6 +620,12 @@ namespace gnubase::ui
 
 	Inspector::~Inspector()
 	{
+		if (Rml::Element* menu = m_stepMenu.get())
+		{
+			menu->RemoveEventListener(Rml::EventId::Click, this);
+			if (Rml::Element* parent = menu->GetParentNode())
+				parent->RemoveChild(menu);
+		}
 		if (!m_root)
 			return;
 		m_root->RemoveEventListener(Rml::EventId::Click, this);
@@ -672,9 +698,20 @@ namespace gnubase::ui
 			chain.append(R"(<div class="arranger-row" step=")").append(std::to_string(index));
 			chain.append(R"("><button class="arranger-locate" title="Go to Step")").append(off);
 			chain.append(R"(>&gt;</button><textdisplay class="name" control="arrangerEventName" event=")").append(id);
-			chain.append(R"(" value=")").append(names[id]).append(R"(" disabled=""/><span class="repeats">)");
-			chain.append(std::to_string(steps[index].at("repeats").get<int>())).append("</span></div>");
+			chain.append(R"(" value=")").append(names[id]).append(R"(" disabled=""/>)");
+			// Its repeats, which a double click types (p. 409), and its repeat mode (p. 407).
+			chain.append(R"(<textdisplay class="repeats" control="arrangerRepeats" title="Repeats" value=")");
+			chain.append(std::to_string(steps[index].at("repeats").get<int>()));
+			chain.append(R"("/><select class="mode" control="arrangerMode" title="Repeat Mode">)");
+			for (const auto& [mode, label] : g_arrangerModes)
+				chain.append(R"(<option value=")")
+					.append(mode)
+					.append(steps[index].at("mode") == mode ? R"(" selected="">)" : R"(">)")
+					.append(label)
+					.append("</option>");
+			chain.append("</select></div>");
 		}
+		m_arrangerChain = {{"chain", arranger.value("chain", Json())}, {"steps", steps}};
 		// A list is built again only when it changed, so that a name being typed stays; the row playing is .current.
 		const auto list = [this](
 							  const char* selector, const std::string& rml, const char* key, const std::string& playing)
@@ -701,6 +738,51 @@ namespace gnubase::ui
 				{{"none", "None"}, {"4bars", "4 Bars"}, {"2bars", "2 Bars"}, {"1bar", "1 Bar"}, {"1beat", "1 Beat"},
 					{"end", "End"}},
 				arranger.value("jumpMode", std::string("none")));
+	}
+
+	void Inspector::changeStep(Rml::Element& control, const std::string& name, const std::string& value)
+	{
+		// Repeats (1 to 999) and the repeat mode of a step of the active chain, as the list shows it (p. 409).
+		const Rml::Element* row = control.GetParentNode();
+		Json steps = m_arrangerChain.value("steps", Json::array());
+		const int index = row != nullptr ? row->GetAttribute<int>("step", -1) : -1;
+		if (index < 0 || static_cast<size_t>(index) >= steps.size())
+			return;
+		Json& step = steps[static_cast<size_t>(index)];
+		if (name == "arrangerMode")
+		{
+			// A select built with the step's own mode sends it once on its next update: nothing to show again then,
+			// or the list would be built again every frame.
+			if (step.value("mode", std::string()) == value)
+				return;
+			step["mode"] = value;
+		}
+		else
+		{
+			const std::optional<float> number = widgets::parse(value);
+			if (number)
+				step["repeats"] = std::clamp(static_cast<int>(std::lround(*number)), 1, 999);
+		}
+		// What it is already, or text that isn't a number: the row shows the step as it is again.
+		const auto again = [this, alive = std::weak_ptr<bool>(m_alive)]
+		{
+			if (alive.expired() || !m_root)
+				return;
+			if (Rml::Element* list = m_root->QuerySelector(".inspector-arranger-steps"))
+				list->SetAttribute("rows", "");
+			m_stale = true;
+		};
+		if (step == m_arrangerChain.at("steps").at(static_cast<size_t>(index)))
+		{
+			again();
+			return;
+		}
+		m_binding.send("arranger.setChain", {{"chain", m_arrangerChain.value("chain", Json())}, {"steps", steps}},
+			[again](const engine::Result& result)
+			{
+				if (!result.ok())
+					again();
+			});
 	}
 
 	void Inspector::followArranger(const Json& status)
@@ -1318,6 +1400,20 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Mousedown:
 			m_soloHold.pressed(target);
+			// A right click in the Current Arranger Chain list touches the step it is on, for Remove Touched.
+			if (event.GetParameter<int>("button", 0) == 1)
+			{
+				const Rml::Element* row = target->Closest(".inspector-arranger-steps .arranger-row");
+				m_touchedStep = row != nullptr ? row->GetAttribute<int>("step", -1) : -1;
+				if (Rml::Element* menu = m_stepMenu.get())
+					if (Rml::Element* item = menu->QuerySelector(".arranger-remove-touched"))
+					{
+						if (m_touchedStep < 0)
+							item->SetAttribute("disabled", "");
+						else
+							item->RemoveAttribute("disabled");
+					}
+			}
 			break;
 		case Rml::EventId::Click:
 			// S: Ctrl-click (Cmd on macOS) solos exclusively, Alt-click and click and hold switch solo defeat
@@ -1346,6 +1442,12 @@ namespace gnubase::ui
 				row != nullptr && !target->HasAttribute("disabled") && target->IsClassSet("arranger-trigger"))
 				m_binding.send("arranger.trigger",
 					{{"event", std::strtoull(row->GetAttribute<Rml::String>("event", "0").c_str(), nullptr, 10)}},
+					whenRefused());
+			// Remove Touched removes the step right-clicked (p. 409).
+			if (target->IsClassSet("arranger-remove-touched") && !target->HasAttribute("disabled") &&
+				m_touchedStep >= 0)
+				m_binding.send("arranger.setChain",
+					{{"chain", m_arrangerChain.value("chain", Json())}, {"removeSteps", {m_touchedStep}}},
 					whenRefused());
 			// The Track Versions section's buttons, and the version list, in which a click activates a version.
 			if (target->IsClassSet("inspector-version-add"))
@@ -1498,6 +1600,11 @@ namespace gnubase::ui
 					{{"event", std::strtoull(control.GetAttribute<Rml::String>("event", "0").c_str(), nullptr, 10)},
 						{"name", value}},
 					whenRefused());
+			return;
+		}
+		if (name == "arrangerRepeats" || name == "arrangerMode")
+		{
+			changeStep(control, name, event.GetParameter<Rml::String>("value", ""));
 			return;
 		}
 		if (name == "editInPlace")
