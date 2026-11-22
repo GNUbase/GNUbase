@@ -233,9 +233,9 @@ else to the zone's main control (its `maincontrol` attribute: the track list's l
 the zone's element. In a text field or a select box Tab moves between controls as RmlUi does (#60), an open menu keeps
 it, and so do dialogs, which are modal documents of their own, and a panel in a window of its own, whose document has no
 zones. `Docking::focus(window, zone)` does the same for a zone by name: showing the lower zone with its key command
-(Mod+Alt+E) and opening the lower zone's editor with `window.lowerZoneEditor` give the zone the keyboard focus, as the
-reference's editor in the lower zone gets it after a key command (p. 100). A double click on an event or part and Return
-open the editor window, not the lower zone's, until a setting for that exists, so they don't move the focus.
+(Mod+Alt+E) and opening the lower zone's editor with `window.lowerZoneEditor`, Return or a double click on a part give
+the zone the keyboard focus, as the reference's editor in the lower zone gets it (p. 100); with the preference
+Double-click opens Editor in a Window the last two open the editor window instead ([midi-editors.md](midi-editors.md)).
 
 ## Not yet
 

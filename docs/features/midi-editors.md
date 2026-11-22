@@ -93,10 +93,16 @@ sends `editor.*` commands.
 - **Following the selection** (p. 1153): when the project window's selection changes, its MIDI parts, or else its
   audio parts, open in every open editor that doesn't keep its contents.
 - **Commands**: `editor.openClose` (Mod+E and Return in the project window, Edit > Open/Close Editor, p. 1189) opens
-  the selected MIDI parts in the editor window, or else the selected audio parts in the audio part editor, or closes
-  it when none is selected; with audio events but no parts selected it opens the first in the sample editor
-  ([sample-editor.md](sample-editor.md)), and without either it closes that too. `window.lowerZoneEditor` (Edit > Open
-  Editor in Lower Zone) does the same for parts in the lower zone.
+  the selected MIDI parts, or else the selected audio parts in the audio part editor, where a double click opens them,
+  or closes that editor when none is selected; with audio events but no parts selected it opens the first in the
+  sample editor window ([sample-editor.md](sample-editor.md)), and without either it closes that too.
+  `window.lowerZoneEditor` (Edit > Open Editor in Lower Zone) does the same for parts in the lower zone.
+- **Where a double click opens them** (pp. 87, 1603): a double click on a MIDI part or an audio part in the project
+  window and `editor.openClose` open it in the lower zone's editor, or in the editor window with the preference
+  Double-click opens Editor in a Window (`editing.doubleClickOpensEditorIn`, Editors page,
+  [preferences.md](preferences.md)). Opened in the lower zone, the editor brings its tab forward and takes the keyboard
+  focus (p. 100), as with `window.lowerZoneEditor` ([docking.md](docking.md)). A double click on an audio event opens
+  the sample editor window, which the lower zone doesn't have yet.
   `editor.openList` (Mod+G, Edit > Open List Editor, p. 1243) opens them in the editor window's list editor.
 
 `resources/styles/midieditor.rcss` lays the editors out; the themes color the states (`tools/skin/generate.py`), the
@@ -109,8 +115,8 @@ The setup panes of the toolbar and the info line (p. 1575), which only the proje
 selection rectangle and Show Part Borders, Independent Track Loop, the global tracks' events and editing them, Find
 Tracks, track visibility configurations and agents, the Track Display and its settings, selecting tracks in the
 Visibility tab, the preference Editor Content Follows
-Event Selection and where editors open by default, double-clicking a part to open it, and saving the global track
-setup with the project. The lower zone's Editor tab without an open view (after Open in Separate Window, or when the
+Event Selection, Open Editor Commands open Editors in a Window/in Lower Zone (p. 1603: the Audio and MIDI menus' open
+commands, such as Mod+E, which here is Open/Close Editor), and saving the global track setup with the project. The lower zone's Editor tab without an open view (after Open in Separate Window, or when the
 user picks it from the tab bar) shows an empty editor until Edit > Open Editor in Lower Zone, and the engine sends no
 `editor.changed` when a new project closes the editors or removed parts leave a view (#625).
 
@@ -133,4 +139,5 @@ user picks it from the tab bar) shows an empty editor until Edit > Open Editor i
   hidden in the project window, whose checks only hide what shows, counts a hidden track's parts in its folder only
   while they show, and is closed in the project window while the lower zone's editor isn't open. The lower zone's editor
   opens for selected parts, follows the selection, stops following with Keep Editor Contents, moves to the window and
-  back, and closes when the lower zone hides.
+  back, and closes when the lower zone hides. Return and a double click on a part open it in the lower zone's editor,
+  which takes the keyboard focus, and in the editor window with Double-click opens Editor in a Window.

@@ -99,11 +99,11 @@ namespace
 			settle();
 		}
 
-		// Open/Close Editor with the parts selected (p. 692).
+		// The Audio menu's Open Audio Part Editor with the parts selected (p. 692).
 		void openParts(const std::vector<uint64_t>& parts)
 		{
 			display.select(parts);
-			app.keys().run("editor.openClose", Json::object(), app.main(), nullptr);
+			app.keys().run("audio.openPartEditor", Json::object(), app.main(), nullptr);
 			// Opening a window takes several seconds in a Debug build on a busy machine.
 			REQUIRE(app.waitUntil([&]
 				{ return app.appUi().editorWindow() != nullptr && app.appUi().editorWindow()->audioPartEditor(); },

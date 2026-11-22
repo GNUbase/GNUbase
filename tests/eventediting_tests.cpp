@@ -920,12 +920,13 @@ TEST_CASE("a Ctrl or Shift press that is also a drag's tool modifier leaves the 
 	}
 }
 
-TEST_CASE("a double click on an audio event opens it in the sample editor, on an audio part in its editor", "[unit]")
+TEST_CASE("a double click on an audio event opens it in the sample editor, on a part in its editor", "[unit]")
 {
 	Fixture f;
-	// On the MIDI part it doesn't (the MIDI editors open with Open/Close Editor).
+	// A MIDI part opens in the editor window: without onOpenEditor's listener, which the app has (p. 87), there.
 	f.click(150, 60, {}, 2);
-	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.call("editor.get", {{"editor", "window"}}).at("open") == true; }));
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("parts") == Json::array({f.part}));
 	CHECK(f.call("sampleEditor.get").at("open") == false);
 	f.click(220, 20, {}, 2);
 	REQUIRE(f.waitUntil([&f] { return f.call("sampleEditor.get").at("open") == true; }));

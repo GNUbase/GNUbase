@@ -1791,6 +1791,8 @@ namespace gnubase::app
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
 		// Imports into the project window that the engine refuses say why, as the project file commands do (#1976).
 		m_eventDisplay->onImportFailed([this](const std::string& error) { m_files.showError(m_main.id(), error); });
+		// A double click on a part opens it where the preference says (p. 1603).
+		m_eventDisplay->onOpenEditor([this](uint64_t part) { openEditor(doubleClickEditor(), {part}); });
 		// The quantize panel lists the tracks of the selected audio events with hitpoints (#1344).
 		m_eventDisplay->onSelectionShown(
 			[this]
@@ -2208,42 +2210,35 @@ namespace gnubase::app
 		};
 		m_editorSubscriptions.push_back(m_binding.on("project.reset", [request](const engine::Event&) { request(); }));
 		request();
-		// Open/Close Editor (Mod+E and Return, p. 1189) opens the selected MIDI parts in the editor window, or else the
-		// selected audio parts in the audio part editor (p. 692), or closes it without any; the other one does the
-		// same in the lower zone. Without parts, the editor window's command opens the first selected audio event in
-		// the sample editor (p. 613), or closes that too.
+		// Open/Close Editor (Mod+E and Return, p. 1189) opens the selected MIDI parts, or else the selected audio parts
+		// (p. 692), where a double click opens them, by default in the lower zone (pp. 87, 1603), or closes that editor
+		// without any; Open Editor in Lower Zone does the same in the lower zone. Without parts, Open/Close Editor
+		// opens the first selected audio event in the sample editor window (p. 613), or closes that too.
 		for (const bool lower : {false, true})
 		{
-			const std::string editor = lower ? "lower" : "window";
 			m_keys.add({lower ? "window.lowerZoneEditor" : "editor.openClose",
 				lower
 					? "Opens the selected MIDI parts or audio parts in the editor in the project window's lower zone, "
 					  "or closes it."
-					: "Opens the selected MIDI parts or audio parts in the editor window, or else the first selected "
-					  "audio event in the sample editor, or closes them.",
-				[this, editor](ui::Window&, Rml::Element*)
+					: "Opens the selected MIDI parts or audio parts in the editor where a double click opens them "
+					  "(the preference editing.doubleClickOpensEditorIn: the lower zone or the editor window), or else "
+					  "the first selected audio event in the sample editor, or closes them.",
+				[this, lower](ui::Window&, Rml::Element*)
 				{
+					const std::string editor = lower ? "lower" : doubleClickEditor();
 					const std::vector<uint64_t> parts = selectedParts();
 					if (!parts.empty())
 					{
-						m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
-						// Opening it explicitly brings the Editor tab forward, even from behind the Mixer.
-						if (editor == "lower")
-						{
-							m_docking.open("editor");
-							// The lower zone's editor gets the keyboard focus (p. 100).
-							m_docking.focus("project", "lower");
-						}
+						openEditor(editor, parts);
 					}
-					else if (const std::vector<uint64_t> events = selected("audioEvents");
-						!events.empty() && editor == "window")
+					else if (const std::vector<uint64_t> events = selected("audioEvents"); !events.empty() && !lower)
 					{
 						m_binding.send("sampleEditor.open", {{"event", events.front()}});
 					}
 					else
 					{
 						m_binding.send("editor.close", {{"editor", editor}});
-						if (editor == "window")
+						if (!lower)
 							m_binding.send("sampleEditor.close");
 					}
 				}});
@@ -2374,6 +2369,24 @@ namespace gnubase::app
 				found.push_back(id);
 		}
 		return found;
+	}
+
+	void AppUi::openEditor(const std::string& editor, const std::vector<uint64_t>& parts)
+	{
+		m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
+		if (editor != "lower")
+			return;
+		// Opening it explicitly brings the Editor tab forward, even from behind the Mixer, and the lower zone's editor
+		// gets the keyboard focus (p. 100).
+		m_docking.open("editor");
+		m_docking.focus("project", "lower");
+	}
+
+	std::string AppUi::doubleClickEditor()
+	{
+		const engine::Result result =
+			engine::Client(m_engine).call("settings.get", {{"key", "editing.doubleClickOpensEditorIn"}});
+		return result.ok() && result.value.at("value") == "window" ? "window" : "lower";
 	}
 
 	std::vector<uint64_t> AppUi::selectedParts() const

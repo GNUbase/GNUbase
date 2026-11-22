@@ -3,6 +3,7 @@
 // MCP's UI tools drive it: the editor window and the lower zone's editor opened for several parts on several tracks,
 // the active part, the part editing mode, the Visibility tab, the global tracks and Keep Editor Contents.
 // tests/editors_tests.cpp checks the engine's editor views.
+#include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "uiapp.h"
 
@@ -106,7 +107,9 @@ TEST_CASE("the editor window opens for several parts on several tracks and edits
 	test::UiApp app({1200, 700});
 	Fixture f(app);
 
-	// Open/Close Editor (Mod+E, Return, p. 1189) with parts of two tracks selected.
+	// Open/Close Editor (Mod+E, Return, p. 1189) with parts of two tracks selected, in the window with Double-click
+	// opens Editor in a Window (p. 1603).
+	app.call("settings.set", {{"key", "editing.doubleClickOpensEditorIn"}, {"value", "window"}});
 	CHECK(app.keys().keysFor("editor.openClose").size() == 2);
 	CHECK(elements(app, std::nullopt, "#edit-menu menuitem[command=\"editor.openClose\"]").size() == 1);
 	f.select({f.bass1, f.keys2, f.keys1});
@@ -271,7 +274,7 @@ TEST_CASE("the lower zone's editor follows the project window's selection unless
 	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editor"); }));
 	// ... and the editor window's Open in Lower Zone (p. 1198).
 	app.appUi().docking().open("mixer");
-	app.keys().run("editor.openClose", Json::object(), app.main(), nullptr);
+	app.call("editor.open", {{"editor", "window"}, {"parts", {f.keys1}}});
 	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
 	CHECK_FALSE(app.appUi().docking().showing("editor"));
 	REQUIRE(windowShows(f.keys1));
@@ -280,6 +283,72 @@ TEST_CASE("the lower zone's editor follows the project window's selection unless
 	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editor"); }));
 	app.appUi().docking().setVisible("project", "lower", false);
 	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+}
+
+TEST_CASE(
+	"Return and a double click on a part open it in the lower zone's editor, which takes the keyboard focus", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	Fixture f(app);
+	app.setDpRatio(1.0F);
+	// A part from 4 to 6 seconds (two bars at 120 BPM) on the Bass track, and two points on it.
+	const uint64_t part = app.call("midiPart.add",
+								 {{"track", f.bass}, {"position", 8 * time::g_ticksPerQuarter},
+									 {"length", 4 * time::g_ticksPerQuarter}, {"name", "Bass B"}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+	REQUIRE(app.waitUntil([&] { return f.display.project().at("midiParts").size() == 4; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	const std::vector<uint64_t>& lanes = f.display.laneTracks();
+	const auto lane = static_cast<size_t>(std::find(lanes.begin(), lanes.end(), f.bass) - lanes.begin());
+	REQUIRE(lane < lanes.size());
+	const auto at = [&](double seconds)
+	{
+		Rml::Element& area = f.display.eventArea();
+		const double x = area.GetAbsoluteLeft() + ((seconds - f.display.view().start) / f.display.view().scale);
+		const double y = area.GetAbsoluteTop() + ((f.display.laneTops()[lane] + f.display.laneTops()[lane + 1]) / 2.0) -
+			f.display.view().top;
+		return ui::Target{"", 0, ui::Point{static_cast<int>(x), static_cast<int>(y)}};
+	};
+	const auto focused = [&app](const char* zone) { return has(elements(app, std::nullopt, zone).at(0), "focused"); };
+
+	// Return (Open/Close Editor) opens the selected part in the lower zone's editor by default (reference manual pp.
+	// 87, 1603), which shows the zone and takes the keyboard focus (p. 100).
+	app.ui().click(std::nullopt, at(4.5), ui::MouseButton::Left, 1, {});
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.display.selection() == std::vector<uint64_t>{part});
+	REQUIRE(focused("#main-zone"));
+	app.ui().key(std::nullopt, "Return");
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{part}; }));
+	CHECK(app.appUi().docking().showing("editor"));
+	CHECK(app.waitUntil([&] { return focused("#lower-zone"); }));
+	CHECK(app.appUi().editorWindow() == nullptr);
+
+	// A double click on the part does the same.
+	app.call("editor.close", {{"editor", "lower"}});
+	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+	REQUIRE(app.appUi().docking().focus("project", "main"));
+	app.ui().click(std::nullopt, at(5.0), ui::MouseButton::Left, 2, {});
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{part}; }));
+	CHECK(app.appUi().docking().showing("editor"));
+	CHECK(app.waitUntil([&] { return focused("#lower-zone"); }));
+	CHECK(app.appUi().editorWindow() == nullptr);
+
+	// With Double-click opens Editor in a Window (p. 1603), both open the editor window and leave the focus alone.
+	app.call("settings.set", {{"key", "editing.doubleClickOpensEditorIn"}, {"value", "window"}});
+	app.call("editor.close", {{"editor", "lower"}});
+	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+	REQUIRE(app.appUi().docking().focus("project", "main"));
+	app.ui().key(std::nullopt, "Return");
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	CHECK(parts(view(app, "window")) == std::vector<uint64_t>{part});
+	CHECK(view(app, "lower").at("open") == false);
+	app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() == nullptr; }));
+	app.ui().click(std::nullopt, at(5.5), ui::MouseButton::Left, 2, {});
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	CHECK(view(app, "lower").at("open") == false);
 }
 
 TEST_CASE("the Visibility tab indents and folds folders and marks the tracks that can't show", "[ui]")

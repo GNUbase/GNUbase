@@ -510,6 +510,12 @@ namespace gnubase::engine::settings
 					"event keeps its place in the stack and silences what lies behind it, which p. 228 advises when "
 					"assembling stacked takes.",
 					Json{{"type", "boolean"}}, true, true},
+				{"editing.doubleClickOpensEditorIn",
+					"Double-click opens Editor in a Window/in Lower Zone (reference manual p. 1603): where a double "
+					"click on a MIDI part or an audio part in the project window and Open/Close Editor "
+					"(editor.openClose, Return) open the editor, the editor window or the project window's lower "
+					"zone, whose editor then takes the keyboard focus (p. 100).",
+					Json{{"type", "string"}, {"enum", {"window", "lowerZone"}}}, "lowerZone", true},
 				{"editing.useDrumEditor",
 					"Use Drum Editor when Drum Map is assigned (reference manual p. 1603): a closed editor opens the "
 					"parts of a track with a drum map in the drum editor (editor.open).",
