@@ -122,7 +122,8 @@ attributes, through a data model or directly.
   the state class `.keys` until the mouse moves or goes over another item, and then a submenu that the mouse rests on
   stays hidden unless Right opened it, so that two submenus never show at once.
 - Keys: Down and Up move the focus between the items that are shown and not disabled, round the ends, skipping items
-  hidden with `display: none` such as those a search leaves out. Tab and Shift+Tab (with Ctrl, Alt or Cmd too) do the
+  hidden with `display: none` such as those a search leaves out; in a menu without items, such as a setup pane of
+  toggle buttons ([docking.md](docking.md)), between its controls as Tab does. Tab and Shift+Tab (with Ctrl, Alt or Cmd too) do the
   same and also reach the menu's other controls, such as a search field, so that the focus doesn't leave an open menu
   for a control outside it while the menu stays open (#524). Enter clicks the focused item. Right opens the focused
   item's submenu (with the state class `.open`) and focuses its first item, unless all its items are disabled; Left

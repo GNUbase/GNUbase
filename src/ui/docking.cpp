@@ -1694,13 +1694,38 @@ namespace gnubase::ui
 			break;
 		}
 		case Rml::EventId::Keydown:
+		{
 			// Tab runs its key command (Focus Next and Previous: the next and previous zone, unless the user bound the
 			// key to another command) before the document moves between its controls. Only in a docking window: a
 			// panel in a window of its own has no zones, and Tab moves between its controls there.
-			if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_TAB &&
-				!window.empty() && !keepsTab(*target) && pressTab(*target, event))
+			const int key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+			if (key == Rml::Input::KI_TAB && !window.empty() && !keepsTab(*target) && pressTab(*target, event))
 				event.StopPropagation();
+			// Alt+Up and Alt+Down move the focused section button of a setup pane, and its section, one place, as a
+			// drag does. The button keeps the focus, which moving it in the document takes.
+			Rml::Element* pane = closestWith(target, "setup");
+			if ((key == Rml::Input::KI_UP || key == Rml::Input::KI_DOWN) && event.GetParameter("alt_key", false) &&
+				pane != nullptr && target->HasAttribute("setup-section") && !window.empty())
+			{
+				event.StopPropagation(); // the menu's Up and Down would move the focus
+				const std::string set = attribute(*pane, "setup");
+				const std::string id = attribute(*target, "setup-section");
+				const std::vector<std::string> order = sections(window, set);
+				const auto at = std::find(order.begin(), order.end(), id);
+				if (at == order.end() || (key == Rml::Input::KI_UP ? at == order.begin() : at + 1 == order.end()))
+					break;
+				later(
+					[this, window = std::move(window), set, id,
+						before = key == Rml::Input::KI_UP ? *(at - 1) : *(at + 1), pane = pane->GetObserverPtr()]
+					{
+						moveSection(window, set, id, before);
+						if (Rml::Element* list = pane.get())
+							if (Rml::Element* item = list->QuerySelector("[setup-section=" + id + "]"))
+								item->Focus(true);
+					});
+			}
 			break;
+		}
 		case Rml::EventId::Tabchange:
 		{
 			const Rml::Element* area = closestWith(target, "zone");

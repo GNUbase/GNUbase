@@ -1063,6 +1063,62 @@ TEST_CASE("a setup pane shows, hides and reorders a window's sections, as ui.lay
 	CHECK(paneItems(app) == Names{"routing*", "inserts*", "eq", "sends*", "fader*"});
 }
 
+TEST_CASE("keys go through a setup pane's buttons, show and hide sections and move them", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	showSections(app);
+	app.ui().click(std::nullopt, at("#window-layout"), ui::MouseButton::Left, 1, {});
+	REQUIRE(has(element(app, "#layout-pane"), "open"));
+	// The zone, strip or section of the button that has the focus.
+	const auto focused = [&app]
+	{
+		const Rml::Element* focus = app.main().context().GetFocusElement();
+		REQUIRE(focus != nullptr);
+		return focus->GetAttribute<Rml::String>("toggle", focus->GetAttribute<Rml::String>("setup-section", ""));
+	};
+	const auto press = [&app, &focused](const char* keys)
+	{
+		app.ui().key(std::nullopt, keys);
+		app.shell().step(std::chrono::milliseconds(0));
+		return focused();
+	};
+
+	// Down and Up go through the zone and strip toggles and the section buttons, round the ends.
+	Names stops;
+	for (int i = 0; i < 8; ++i)
+		stops.push_back(press("Down"));
+	CHECK(stops == Names{"meterBridge", "left", "routing", "inserts", "eq", "sends", "fader", "meterBridge"});
+	CHECK(press("Up") == "fader");
+	CHECK(press("Up") == "sends");
+	CHECK(press("Up") == "eq");
+
+	// Space and Enter show and hide the focused button's section, and the pane stays open.
+	CHECK(press("Space") == "eq");
+	REQUIRE(app.waitUntil(
+		[&app] { return sections(app, "#channel-1") == Names{"routing", "inserts", "eq", "sends", "fader"}; }));
+	CHECK(press("Up") == "inserts");
+	CHECK(press("Enter") == "inserts");
+	REQUIRE(app.waitUntil([&app] { return sections(app, "#channel-1") == Names{"routing", "eq", "sends", "fader"}; }));
+	CHECK(paneItems(app) == Names{"routing*", "inserts", "eq*", "sends*", "fader*"});
+	CHECK(has(element(app, "#layout-pane"), "open"));
+
+	// Alt+Down and Alt+Up move the focused button's section one place, in the pane and in every channel, and the
+	// button keeps the focus; at an end they do nothing.
+	CHECK(press("Alt+Down") == "inserts");
+	CHECK(paneItems(app) == Names{"routing*", "eq*", "inserts", "sends*", "fader*"});
+	CHECK(sections(app, "#channel-2", true) == Names{"routing", "eq", "inserts", "sends", "fader"});
+	CHECK(press("Alt+Up") == "inserts");
+	CHECK(press("Alt+Up") == "inserts");
+	CHECK(paneItems(app) == Names{"inserts", "routing*", "eq*", "sends*", "fader*"});
+	CHECK(press("Alt+Up") == "inserts");
+	CHECK(paneItems(app) == Names{"inserts", "routing*", "eq*", "sends*", "fader*"});
+	CHECK(press("Down") == "routing"); // Up and Down follow the new order
+	CHECK(has(element(app, "#layout-pane"), "open"));
+	waitUntilSaved(app);
+	CHECK(savedLayout(app).at("windows").at("test").at("sections").at("channel") ==
+		Json{{"order", {"inserts", "routing", "eq", "sends", "fader"}}, {"hidden", {"inserts"}}});
+}
+
 TEST_CASE("the order and visibility of sections come back after a restart", "[ui]")
 {
 	test::UiApp app({1000, 700});
