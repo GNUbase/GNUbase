@@ -660,7 +660,8 @@ TEST_CASE("a MIDI input's notes on the remote keys trigger the pads while the re
 	CHECK(send(0x90, 36, 80).empty());
 	CHECK(send(0x80, 36, 0).empty());
 	run(client, "channel.set", {{"channel", rig.channel}, {"midiInput", "chordPads"}});
-	run(client, "audio.render", {{"frames", 64}});
+	// Its MIDI thru goes off: the keys still held through it are released (#641).
+	CHECK(sorted(rig.played()) == sorted({{0x80, 47, 0}, {0x80, 60, 0}}));
 	CHECK(send(0x90, 36, 80).size() == 4);
 	CHECK(send(0x80, 36, 0).size() == 4);
 	CHECK(send(0x90, 60, 100).empty()); // the other keys don't reach it
