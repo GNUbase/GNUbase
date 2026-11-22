@@ -67,24 +67,28 @@ control's last step answered, its strip shows the engine's value; a refused one 
 - **Visibility and filter** (pp. 442, 454–456). The channel type filter's menu has a check item per type; the agents'
   menu has Show All Channels, which shows every hidden channel again. In a window, the left zone's Visibility tab
   (`Mixer::showVisibility`) has a toggle button per channel (`button.mixer-visibility-item[visibility=<id>]`), checked
-  while the mixer shows it. Each sends `mixer.set` for its own mixer. The lower zone's mixer follows the project
-  window's track visibility, and a window does with Sync Visibility of Project and Mixer
-  ([track-visibility.md](track-visibility.md)).
+  while the mixer shows it. Each sends `mixer.set` for its own mixer, and the mixer keeps the change at once, so that
+  changes made before the engine answers all count; it reads its view again once the last is answered. The lower
+  zone's mixer follows the project window's track visibility, and a window does with Sync Visibility of Project and
+  Mixer ([track-visibility.md](track-visibility.md)).
 - **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the left zone (in a
   window) and the strips' sections Pictures, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them, with
   Show All, Reset All and presets ([docking.md](docking.md)); the layout is the user setting
   `ui.layout`, per window (`mixer1` to `mixer4`, and `project` for the lower zone's).
 - **Order** (p. 496). A channel's name dragged onto another channel takes its place: its track moves into that
   track's folder with `track.move`, after it when it came from the left, before it otherwise, so the track list
-  follows. Busses keep their places, and a folder doesn't move into itself.
+  follows. Busses keep their places, and a folder doesn't move into itself. Any mouse button release in the window
+  ends the drag, also one outside the mixer.
 - **Track colors** (p. 1621). A strip's name shows its track's color, which is user data: code sets it as the name's
   `background-color` (and the `color` attribute), and marks the name `.colored`, and `.bright` where dark text has
   more contrast over the color than light text (WCAG 2's relative luminance). Every theme gives the text over it
   ([themes.md](themes.md)). Busses and tracks without a color show the theme's.
 - **Notes and pictures** (p. 497). The notepad shows the channel's notes; what is typed is sent with `channel.set`
-  when the field loses the focus, unless another project came in the meantime (`project.reset`), which drops it, as
-  the inspector does. The picture section shows the track's picture (an `<img>`, or an `<svg>` for SVG files); a
-  double click opens the OS's file dialog for a picture, then `track.set`.
+  when the field loses the focus: also on Escape (p. 498), before its strip is made again or the mixer goes (its
+  window closing), and before File > Save, Save As and Save New Version, which leave the text fields of every window
+  (`ui::ProjectFiles`). Another project that came in the meantime (`project.reset`) drops it, as the inspector does.
+  The picture section shows the track's picture (an `<img>`, or an `<svg>` for SVG files); a double click opens the
+  OS's file dialog for a picture, in the mixer's window, then `track.set`.
 
 ## Windows and the lower zone
 
@@ -93,7 +97,8 @@ control's last step answered, its strip shows the engine's value; a refused one 
   `window.mixer2` to `window.mixer4` (Studio > Mixer 2 to 4) the others, each with its own view and layout. Like every
   window, each opens on any monitor and renders at its monitor's scale (architecture.md, "UI shell"). The left zone
   has the Visibility tab, a panel (`mixer1Visibility` to `mixer4Visibility`) of the docking system; Tab moves the
-  focus between the zones (focus zones `left` and `mixer`). A window the user closes lets go of its mixer.
+  focus between the zones (focus zones `left` and `mixer`); in a window of its own, it opens and closes with its mixer
+  window. A window the user closes lets go of its mixer.
 - **The lower zone's mixer** (pp. 434–436): the project window's Mixer panel, with the view `lower`.
   `window.lowerZoneMixer` (Alt+F3, Studio > Mixer in Project Window) shows it as the lower zone's tab, or hides the
   lower zone while it shows it; while the panel is in a window of its own, it brings that window to the front with the
@@ -128,7 +133,10 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
   filter hiding channels in one window only, Show All Channels, and `mixer.set` from the engine; Alt+F3 showing the
   lower zone's mixer with its own view and hiding the zone again; a closed window letting go of its mixer; the setup
   pane's Pictures, Notepad and Fader, notes from the engine and typed in the notepad, and dropped when another
-  project loads, a picture shown and removed, and channel names dragged onto others reordering the tracks, while
+  project loads, kept on Escape, a save from the project window, a strip made again and the window closing, a picture
+  shown and removed, chosen with a double click in the mixer window's file dialog, two visibility changes within one
+  step, a name drag ended outside the mixer moving nothing, the Visibility tab in a window of its own opening and
+  closing with its mixer window, and channel names dragged onto others reordering the tracks, while
   busses stay. A strip's name shows its track's color as `track.set` changes it, marked bright or not, and the theme's once the color is gone. A fader and a send's level
   dragged and the panner turned while the engine answers late follow the mouse, never back, end where the engine is, and
   are one undo step; values set through MCP show at once, and during a drag when it ends. A fader step the engine

@@ -85,9 +85,10 @@ namespace gnubase::ui
 	// Zones get the state class .hidden when hidden and .focused while the keyboard focus is in them; strips get
 	// .hidden. A tab is dragged onto another to move it there; a right click on the tabs opens the zone's tab menu,
 	// with Open in Separate Window and an item to show or hide each tab. A panel in a window of its own has a Dock
-	// button (#dock), and closing the window docks it too. A docking window's or a panel window's document that live
-	// reload loads again (ui/livereload.h) is attached in its place: what the panels' create returned for the old one
-	// goes first, then they fill the new one. Use it on the UI thread; the engine, the binding and the shell must
+	// button (#dock), and closing the window docks it too; a panel of an app window that addWindow opens and closes
+	// shows in a window of its own only while that one is open. A docking window's or a panel window's document that
+	// live reload loads again (ui/livereload.h) is attached in its place: what the panels' create returned for the old
+	// one goes first, then they fill the new one. Use it on the UI thread; the engine, the binding and the shell must
 	// outlive it.
 	class Docking final : private Rml::EventListener
 	{

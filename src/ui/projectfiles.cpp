@@ -31,6 +31,16 @@ namespace gnubase::ui
 		// The result with which a backup's progress dialog closes once the backup ended.
 		constexpr const char* g_backupDone = "done";
 
+		// Leaves the text fields being typed in, in every window, so that what they send as they lose the focus, such
+		// as a mixer channel's notes (#542), goes before a save.
+		void endTyping(Shell& shell)
+		{
+			for (const Window* window : shell.windows())
+				if (Rml::Element* focus = window->context().GetFocusElement();
+					dynamic_cast<Rml::ElementFormControl*>(focus) != nullptr)
+					focus->Blur();
+		}
+
 		const std::vector<FileFilter>& projectFilters()
 		{
 			static const std::vector<FileFilter> filters{{"DAWproject", "dawproject"}, {"All files", "*"}};
@@ -166,6 +176,7 @@ namespace gnubase::ui
 		keys.add({"file.save", "Saves the project to its file, or asks for one if it has none.",
 			[this](Window& window, Rml::Element*)
 			{
+				endTyping(m_shell);
 				if (m_file.empty())
 					saveAs(window);
 				else
@@ -176,6 +187,7 @@ namespace gnubase::ui
 		keys.add({"file.saveNewVersion", "Saves the project as the next numbered version of its file.",
 			[this](Window& window, Rml::Element*)
 			{
+				endTyping(m_shell);
 				if (m_file.empty())
 					saveAs(window);
 				else
@@ -917,6 +929,7 @@ namespace gnubase::ui
 
 	void ProjectFiles::saveAs(Window& window)
 	{
+		endTyping(m_shell);
 		FileDialog dialog;
 		dialog.kind = FileDialogKind::Save;
 		dialog.title = "Save Project As";

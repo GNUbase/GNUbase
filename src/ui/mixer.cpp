@@ -11,6 +11,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 #include <RmlUi/Core/SystemInterface.h>
 
@@ -355,8 +356,8 @@ namespace gnubase::ui
 			return event.GetParameter<int>(key, 0) != 0;
 		}
 
-		constexpr std::array<Rml::EventId, 6> g_rootEvents = {Rml::EventId::Click, Rml::EventId::Dblclick,
-			Rml::EventId::Change, Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Dragend};
+		constexpr std::array<Rml::EventId, 5> g_rootEvents = {Rml::EventId::Click, Rml::EventId::Dblclick,
+			Rml::EventId::Change, Rml::EventId::Mousedown, Rml::EventId::Dragend};
 	}
 
 	Json soloClick(const Json& channel, bool exclusive, bool defeat)
@@ -527,7 +528,14 @@ namespace gnubase::ui
 		m_docking.arrangeSections(*m_menus.back().get()); // the setup pane, once the docking window knows the set
 		for (const Rml::EventId id : g_rootEvents)
 			root.AddEventListener(id, this);
-		root.AddEventListener(Rml::EventId::Blur, this, true); // the notepad's, which doesn't bubble
+		root.AddEventListener(Rml::EventId::Blur, this, true);    // the notepad's, which doesn't bubble
+		root.AddEventListener(Rml::EventId::Keydown, this, true); // before the notepad takes Escape
+		// Every mouseup ends a channel name's drag, also one outside the mixer.
+		if (Rml::Context* context = root.GetContext())
+		{
+			m_window = context->GetRootElement()->GetObserverPtr();
+			m_window->AddEventListener(Rml::EventId::Mouseup, this);
+		}
 
 		// Every change to the project is an undo step or a new project. A step that changed only channels, such as each
 		// step of a fader drag, needs no read: their channel.changed brings them (#1881).
@@ -558,14 +566,9 @@ namespace gnubase::ui
 						return;
 					// A note being typed belongs to the project that went, as the inspector's edits do
 					// (Inspector::dropEdits).
-					Rml::Context* context = m_root ? m_root->GetContext() : nullptr;
-					if (Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
-						focus != nullptr && focus->IsClassSet("mixer-notes-field") && m_root->Contains(focus))
-					{
-						m_dropping = true;
-						focus->Blur();
-						m_dropping = false;
-					}
+					m_dropping = true;
+					leaveNotes();
+					m_dropping = false;
 					requestView();
 				}));
 		m_subscriptions.push_back(
@@ -573,7 +576,7 @@ namespace gnubase::ui
 		m_subscriptions.push_back(m_binding.on("mixer.changed",
 			[this](const engine::Event& event)
 			{
-				if (event.data.at("mixer") != m_view)
+				if (event.data.at("mixer") != m_view || m_viewSends > 0)
 					return;
 				m_hidden.clear();
 				for (const Json& id : event.data.at("hidden"))
@@ -625,11 +628,15 @@ namespace gnubase::ui
 
 	Mixer::~Mixer()
 	{
+		leaveNotes(); // e.g. its window closing with F3
+		if (Rml::Element* window = m_window.get())
+			window->RemoveEventListener(Rml::EventId::Mouseup, this);
 		if (Rml::Element* root = m_root.get())
 		{
 			for (const Rml::EventId id : g_rootEvents)
 				root->RemoveEventListener(id, this);
 			root->RemoveEventListener(Rml::EventId::Blur, this, true);
+			root->RemoveEventListener(Rml::EventId::Keydown, this, true);
 		}
 		if (Rml::Element* visibility = m_visibility.get())
 		{
@@ -788,6 +795,7 @@ namespace gnubase::ui
 
 	void Mixer::buildStrips(const std::vector<const MixerChannel*>& strips)
 	{
+		leaveNotes();
 		Rml::Element& container = *m_strips.get();
 		while (container.GetNumChildren() > 0)
 			container.RemoveChild(container.GetFirstChild());
@@ -1134,28 +1142,43 @@ namespace gnubase::ui
 
 	void Mixer::setHidden(uint64_t id, bool hidden)
 	{
-		std::set<uint64_t> changed = m_hidden;
 		if (hidden)
-			changed.insert(id);
+			m_hidden.insert(id);
 		else
-			changed.erase(id);
-		sendView({{"hidden", changed}});
+			m_hidden.erase(id);
+		sendView({{"hidden", m_hidden}});
 	}
 
 	void Mixer::setTypeHidden(const std::string& type, bool hidden)
 	{
-		std::set<std::string> changed = m_hiddenTypes;
 		if (hidden)
-			changed.insert(type);
+			m_hiddenTypes.insert(type);
 		else
-			changed.erase(type);
-		sendView({{"hiddenTypes", changed}});
+			m_hiddenTypes.erase(type);
+		sendView({{"hiddenTypes", m_hiddenTypes}});
+	}
+
+	void Mixer::leaveNotes()
+	{
+		Rml::Context* context = m_root ? m_root->GetContext() : nullptr;
+		if (Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
+			focus != nullptr && focus->IsClassSet("mixer-notes-field") && m_root->Contains(focus))
+			focus->Blur();
 	}
 
 	void Mixer::sendView(Json parameters)
 	{
 		parameters["mixer"] = m_view;
-		m_binding.send("mixer.set", std::move(parameters)); // mixer.changed shows it
+		// The sets changed at once, so that the next change made before the answer keeps this one; their mixer.changed
+		// would bring them back as they were for a moment, so once the last is answered the mixer reads the view and
+		// shows it (not at once: a visibility check box's change would remake the list it is in).
+		++m_viewSends;
+		m_binding.send("mixer.set", std::move(parameters),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result&)
+			{
+				if (!alive.expired() && --m_viewSends == 0)
+					requestView();
+			});
 	}
 
 	const MixerChannel* Mixer::channelOf(Rml::Element* element) const
@@ -1376,6 +1399,7 @@ namespace gnubase::ui
 			}
 			else if (attribute(*target, "agent") == "showAll")
 			{
+				m_hidden.clear();
 				sendView({{"hidden", Json::array()}});
 			}
 			else if (target->HasAttribute("link"))
@@ -1429,7 +1453,7 @@ namespace gnubase::ui
 			if (closest(target, "mixer-picture", m_root.get()) != nullptr)
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->track != 0)
 					if (m_actions.choosePicture)
-						m_actions.choosePicture(channel->track);
+						m_actions.choosePicture(*target, channel->track);
 			break;
 		case Rml::EventId::Mousedown:
 		{
@@ -1445,10 +1469,20 @@ namespace gnubase::ui
 					showLinkMenu(pressed->id);
 			break;
 		}
-		case Rml::EventId::Mouseup:
-			if (const MixerChannel* channel = channelOf(target); channel != nullptr && m_dragged != 0)
+		case Rml::EventId::Mouseup: // anywhere in the window
+			if (const MixerChannel* channel = m_root && m_root->Contains(target) ? channelOf(target) : nullptr;
+				channel != nullptr && m_dragged != 0)
 				drop(channel->id);
 			m_dragged = 0;
+			break;
+		case Rml::EventId::Keydown:
+			// Escape closes the notepad (reference manual p. 498), keeping what was typed.
+			if (target->IsClassSet("mixer-notes-field") &&
+				event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_ESCAPE)
+			{
+				target->Blur();
+				event.StopPropagation();
+			}
 			break;
 		case Rml::EventId::Dragend:
 			// The fader may show a value that came during the drag now.

@@ -38,7 +38,8 @@ namespace gnubase::app
 		for (int number = 1; number <= 4; ++number)
 			m_docking.addWindow(
 				"mixer" + std::to_string(number), [this, number] { return mixerWindow(number); },
-				opener([this, number] { return mixer(number) != nullptr; }, [this, number] { toggleMixer(number); }));
+				opener([this, number] { return m_shell.find(mixerWindow(number)) != nullptr; },
+					[this, number] { toggleMixer(number); }));
 		m_docking.addWindow(
 			"markers", [this] { return m_markersWindow; },
 			opener([this] { return markers() != nullptr; }, [this] { toggleMarkers(); }));

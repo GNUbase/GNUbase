@@ -1000,6 +1000,7 @@ namespace gnubase::ui
 	{
 		const std::vector<Display> displays = m_shell.displays();
 		bool changed = m_unsaved;
+		bool reopened = false; // a window opened or closed, and with it its panels in windows of their own
 		for (const auto& [id, shown] : m_shown)
 			if (shown.window != 0 && m_shell.find(shown.window) != nullptr)
 				changed = keepBounds(m_layout["panels"][id], m_shell.bounds(shown.window), displays) || changed;
@@ -1008,6 +1009,7 @@ namespace gnubase::ui
 			const WindowId id = window.current();
 			const bool open = id != 0 && m_shell.find(id) != nullptr;
 			const bool opened = open != window.open;
+			reopened = reopened || opened;
 			bool maximized = open && m_shell.maximized(id);
 			// A maximized window keeps its normal bounds, unless it opened maximized.
 			const Rect bounds =
@@ -1048,6 +1050,11 @@ namespace gnubase::ui
 		}
 		if (changed)
 			save();
+		if (reopened)
+		{
+			applyFloating(false);
+			applyFloating(true);
+		}
 	}
 
 	void Docking::addWindow(
@@ -1079,6 +1086,7 @@ namespace gnubase::ui
 				save();
 			}
 		m_appWindows.push_back(std::move(window));
+		applyFloating(false); // its panels in windows of their own, while it is closed
 	}
 
 	std::optional<Rect> Docking::bounds(const std::string& name) const
@@ -1360,7 +1368,10 @@ namespace gnubase::ui
 		for (const Panel& panel : m_panels)
 		{
 			const Json* floating = find(m_layout, {"panels", panel.id, "floating"});
-			const bool alone = floating != nullptr && floating->is_boolean() && floating->get<bool>();
+			// A panel of an app window that is closed, such as a mixer window's Visibility tab, waits for it.
+			const bool closed = std::any_of(m_appWindows.begin(), m_appWindows.end(), [&panel](const AppWindow& window)
+				{ return window.name == panel.window && window.setOpen && !window.open; });
+			const bool alone = floating != nullptr && floating->is_boolean() && floating->get<bool>() && !closed;
 			Shown& shown = m_shown[panel.id];
 			if (!open && !alone && shown.window != 0)
 			{
