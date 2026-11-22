@@ -46,11 +46,13 @@ button
 }
 
 /* Buttons outside dialogs are for the mouse: those of toolbars, the transport controls, the track list, the
-   inspector's track buttons, the mixer's channels, the zones and the ruler. A click focuses them, but Tab skips them and Space and Enter go to the key
-   commands, so Space still starts and stops playback (#456, #653, docs/features/widgets.md). Setup panes keep Tab,
-   Space and Enter for their buttons, also those of a toolbar's or the transport controls' setup pane. */
+   inspector's track buttons, the mixer's channels, the zones, the ruler, the info line, the chord pads, the drum sound
+   list and the pattern lanes. A click focuses them, but Tab skips them and Space and Enter go to the key commands, so
+   Space still starts and stops playback (#456, #653, #2016, docs/features/widgets.md). Setup panes keep Tab, Space and
+   Enter for their buttons, also those of a toolbar's or the transport controls' setup pane. */
 .toolbar button, .transport button, .track-list button, .inspector-buttons button, .mixer-channels button,
-button.zone-close, button.ruler-format
+button.zone-close, button.ruler-format, .info-field button, .chord-pads-toolbar button, button.drum-sound-mute,
+.pattern-lane-controls button
 {
 	tab-index: none;
 }

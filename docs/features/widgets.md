@@ -23,10 +23,11 @@ so every document in the app and in UI tests has them.
   track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme. Buttons outside
   dialogs are for the mouse, as in the reference (reference manual pp. 295-311): those in a `.toolbar` (the project
   window's, the mixer's, the pool's, the markers window's and the panel windows'), in the transport controls
-  (`.transport`), in the track list, the inspector's track buttons, the mixer's channels, a zone's Close button and the
-  ruler's format button. A click focuses them, but Tab skips them and Space, Enter and NumEnter go on to the key
-  commands, so Space still starts and stops playback after a click on Cycle, Snap or a track's Mute or Solo (#456,
-  #653). Setup panes (`.setup-pane`), also those of a toolbar or the transport controls, keep Tab, Space and Enter for
+  (`.transport`), in the track list, the inspector's track buttons, the mixer's channels, a zone's Close button, the
+  ruler's format button, the info line's buttons (Mute, Lock), the chord pads' toolbars and panes (Mute Section, Latch
+  Pads), the drum sound list's Mute and the pattern lanes' Mute and Solo. A click focuses them, but Tab skips them and
+  Space, Enter and NumEnter go on to the key commands, so Space still starts and stops playback after a click on Cycle,
+  Snap or a track's Mute or Solo (#456, #653, #2016). Setup panes (`.setup-pane`), also those of a toolbar or the transport controls, keep Tab, Space and Enter for
   their buttons.
 - `<button type="toggle">` is a toggle button: a click turns it on or off. Its state is the `checked` attribute, as
   for check boxes, shown by the state class `.checked`; it sends `change` with the new state as a bool, so
