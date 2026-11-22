@@ -157,8 +157,8 @@ namespace gnubase::ui
 		void setHidden(uint64_t id, bool hidden);
 		void setTypeHidden(const std::string& type, bool hidden);
 		void sendView(engine::Json parameters);
-		// Leaves the notepad being typed in, whose blur sends its text: on Escape, and before its strip or the mixer
-		// goes.
+		// Leaves the notepad being typed in, whose blur sends its text: before its strip or the mixer goes, and on
+		// project.reset, which drops it.
 		void leaveNotes();
 		void drop(uint64_t onto);
 		void showSettingsToolbar();

@@ -714,7 +714,8 @@ namespace gnubase::ui
 		m_binding.send("mixer.get", {{"mixer", m_view}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				if (alive.expired() || !result.ok())
+				// A newer mixer.set still out would be undone; its answer reads the view again.
+				if (alive.expired() || !result.ok() || m_viewSends > 0)
 					return;
 				m_hidden.clear();
 				for (const Json& id : result.value.at("hidden"))

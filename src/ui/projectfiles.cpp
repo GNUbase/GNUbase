@@ -796,6 +796,7 @@ namespace gnubase::ui
 	void ProjectFiles::unlessUnsaved(
 		Window& window, std::function<void()> action, std::function<void(Rml::ElementDocument*)> asked)
 	{
+		endTyping(m_shell); // a note being typed is a change too
 		const uint64_t question = ++m_questions;
 		m_binding.send("project.revision", Json::object(),
 			[this, question, id = window.id(), action = std::move(action), asked = std::move(asked)](

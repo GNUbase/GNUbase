@@ -542,6 +542,18 @@ TEST_CASE("the notepad's text reaches the engine on Escape, when its strip or wi
 	REQUIRE(app.waitUntil([&] { return !app.call("project.revision").at("modified").get<bool>(); }));
 	CHECK(channelJson(app, b.channel).value("notes", "") == "Room mic");
 
+	// A note being typed is an unsaved change when Revert, Open, New or Quit asks first.
+	type(a, " 2");
+	app.keys().run("file.revert", Json::object(), app.main(), nullptr);
+	const auto asked = [&]
+	{
+		const Json found = elements(app, app.main().id(), "#discard-changes-dialog");
+		return found.size() == 1 && found[0].at("visible").get<bool>();
+	};
+	REQUIRE(app.waitUntil(asked));
+	click(app, app.main().id(), "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&] { return !asked(); }));
+
 	// A strip made again, here for a new track, and a window closed with F3 keep them too.
 	type(c, "Overheads");
 	const Added d = addTrack(app, "audio", "D");
