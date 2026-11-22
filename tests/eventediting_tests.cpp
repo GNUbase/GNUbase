@@ -1703,7 +1703,17 @@ TEST_CASE("the color tool colors events, takes a color with Alt and steps throug
 	f.call("project.set",
 		{{"colors", {{{"name", "Warm"}, {"color", "#e04020"}}, {{"name", "Cold"}, {"color", "#2040e0"}}}}});
 	f.call("track.set", {{"track", f.audioEvents()[0].at("track")}, {"color", "#30a060"}});
-	REQUIRE(f.waitUntil([&f] { return f.display.project().at("colors").size() == 2; }));
+	// Alt takes colors from the display's project, which follows the engine's a step later: the waits below are for it.
+	const auto shownColor = [&f](const char* list) { return f.display.project().at(list)[0].at("color"); };
+	const Json audioTrack = f.audioEvents()[0].at("track");
+	REQUIRE(f.waitUntil(
+		[&f, &audioTrack]
+		{
+			const Json& tracks = f.display.project().at("tracks");
+			return f.display.project().at("colors").size() == 2 &&
+				std::any_of(tracks.begin(), tracks.end(), [&audioTrack](const Json& track)
+					{ return track.at("id") == audioTrack && track.at("color") == "#30a060"; });
+		}));
 	int toolColors = 0;
 	f.display.onToolColor([&toolColors] { ++toolColors; });
 	std::vector<std::pair<float, float>> panes;
@@ -1723,7 +1733,8 @@ TEST_CASE("the color tool colors events, takes a color with Alt and steps throug
 	f.display.stepToolColor(-1);
 
 	f.click(150, 60);
-	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("color") == "#e04020"; }));
+	REQUIRE(f.waitUntil([&shownColor] { return shownColor("midiParts") == "#e04020"; }));
+	CHECK(f.parts()[0].at("color") == "#e04020");
 	CHECK(f.audioEvents()[0].at("color").is_null());
 
 	// Alt takes an event's own color (p. 114).
