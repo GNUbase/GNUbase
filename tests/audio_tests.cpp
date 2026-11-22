@@ -137,6 +137,7 @@ namespace
 		std::atomic<DummyDevice*> device{nullptr}; // the device opened last
 		std::atomic<bool> connected{true};         // fake-1's hardware; opening fails without it
 		std::atomic<bool> failStart{false};        // starting fails, as with a driver that doesn't process audio
+		std::atomic<bool> busy{false}; // fake-1 is listed but doesn't open, as an endpoint held exclusively elsewhere
 		// Like an ASIO driver: fake-1 is listed as unavailable from a failed open until an open succeeds, whether it
 		// is connected or not, and the backend doesn't list presence.
 		std::atomic<bool> asioLike{false};
@@ -224,6 +225,8 @@ namespace
 				m_driver->failedOpen = true;
 				throw DeviceError("fake-1 is not connected");
 			}
+			if (m_driver->busy)
+				throw DeviceError("fake-1 is in use by another application");
 			DeviceFormat format;
 			format.sampleRate = config.sampleRate == 0.0 ? 48000.0 : config.sampleRate;
 			format.blockSize = config.blockSize == 0 ? m_driver->preferredBlockSize.load() : config.blockSize;
@@ -1098,6 +1101,40 @@ TEST_CASE("a fallback gives way to a lost device whose backend learns only by op
 	CHECK(status.at("device").at("backend") == "fake");
 	CHECK(status.at("device").at("blockSize") == 128);
 	CHECK(status.at("running") == true);
+	run(client, "audio.stop");
+}
+
+TEST_CASE("a lost device that is listed but doesn't open is tried less often while the fallback plays", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "dummy"}});
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	driver->busy = true; // listed as available all along
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return !data.at("lost").is_null() && data.at("device").is_object(); }));
+
+	// Every try closes the fallback, which starts over at 0: tries back off, so it counts for over a second.
+	int64_t longest = 0;
+	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+	while (std::chrono::steady_clock::now() < until)
+	{
+		longest = std::max(longest, run(client, "audio.get").at("position").get<int64_t>());
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	}
+	CHECK(longest > 48000);
+	// The failed tries change nothing and stay out of the log.
+	const Json log = run(client, "engine.commandLog").at("commands");
+	CHECK(std::count_if(
+			  log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "audio.reconnect"; }) == 0);
+
+	driver->busy = false;
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && data.at("device").is_object(); }));
+	CHECK(run(client, "audio.get").at("device").at("backend") == "fake");
 	run(client, "audio.stop");
 }
 

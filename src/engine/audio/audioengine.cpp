@@ -1761,6 +1761,7 @@ namespace gnubase::engine
 			measured = m_meter.data();
 			dropouts = m_deviceOverloadsKept + (m_device->overloads() - m_deviceOverloadsBefore);
 		}
+		const std::string fallbackBefore = fellBack ? m_backend + " " + m_device->info().id : std::string();
 		try
 		{
 			setDevice(parameters, true); // the loudness measurement goes on too
@@ -1779,12 +1780,17 @@ namespace gnubase::engine
 			// E.g. unplugged: the engine goes on without it, or on the fallback, and tries again until it returns.
 			closeDevice();
 			if (!lost)
+			{
 				logging::warning(
 					"The audio device ({} {}) is lost, trying again until it returns: {}", backend, id, error.what());
+				m_lostListing = Json();
+			}
 			m_lost = Lost{backend, parameters, id, name, error.what(), running};
 			failOver();
 			waitForDevice();
-			return !lost || fellBack || m_device != nullptr;
+			// A try that fails as before and opens the same fallback again changes nothing (#467).
+			const std::string fallbackAfter = m_device ? m_backend + " " + m_device->info().id : std::string();
+			return !lost || fallbackAfter != fallbackBefore || !m_lost || lost->reason != m_lost->reason;
 		}
 		if (lost)
 			logging::info("The audio device ({} {}) is back", backend, id);
@@ -1797,20 +1803,36 @@ namespace gnubase::engine
 	{
 		if (!m_lost)
 			return false;
-		if (m_device) // a fallback plays, which every try closes first
+		if (!m_device)
+			return reset();
+		// A fallback plays, which every try closes first.
+		Json listing;
+		const Listed listed = lostDeviceListed(listing);
+		if (listed == Listed::No)
+			return false;
+		const auto now = std::chrono::steady_clock::now();
+		if (listed == Listed::Yes && listing != m_lostListing) // listed anew, or the list changed: try now
 		{
-			const Listed listed = lostDeviceListed();
-			if (listed == Listed::No ||
-				(listed == Listed::Maybe && std::chrono::steady_clock::now() < m_nextUncertainTry))
-				return false;
+			m_lostListing = std::move(listing);
+			m_backoff = g_reconnectInterval;
+			m_nextTry = now;
 		}
-		return reset();
+		if (now < m_nextTry)
+			return false;
+		const bool changed = reset();
+		if (m_lost && m_device) // it failed again: a listed device's tries back off (#467)
+		{
+			m_backoff = std::min<std::chrono::steady_clock::duration>(2 * m_backoff, g_uncertainReconnectInterval);
+			m_nextTry = now + (listed == Listed::Yes ? m_backoff : g_uncertainReconnectInterval);
+		}
+		return changed;
 	}
 
-	AudioEngine::Listed AudioEngine::lostDeviceListed() const
+	AudioEngine::Listed AudioEngine::lostDeviceListed(Json& listing) const
 	{
 		if (!m_lost)
 			return Listed::No;
+		listing = m_dummyUnplugged;
 		if (m_lost->backend == "dummy")
 			return m_dummyUnplugged ? Listed::No : Listed::Yes;
 		for (const std::unique_ptr<audio::Backend>& backend : m_backends)
@@ -1820,6 +1842,9 @@ namespace gnubase::engine
 			try
 			{
 				const std::vector<audio::DeviceInfo> devices = backend->devices();
+				listing = Json::array();
+				for (const audio::DeviceInfo& info : devices)
+					listing.push_back(toJson(info));
 				const auto found = std::find_if(devices.begin(), devices.end(),
 					[this](const audio::DeviceInfo& info) { return info.id == m_lost->device; });
 				if (found == devices.end())
@@ -1855,7 +1880,7 @@ namespace gnubase::engine
 				setDevice(parameters); // which ends the loss
 				m_failingOver = false;
 				m_lost = lost;
-				m_nextUncertainTry = std::chrono::steady_clock::now() + g_uncertainReconnectInterval;
+				m_nextTry = std::chrono::steady_clock::now() + g_uncertainReconnectInterval;
 				if (lost.restart)
 					startDevice();
 				logging::info("Playing on {} {} until the audio device returns", m_backend, m_device->info().id);
@@ -2602,8 +2627,10 @@ namespace gnubase::engine
 				"unless a device is lost. While one is, the engine runs it on its own about every half second, one "
 				"try at a time. While a fallback device plays, it tries only once the backend lists the lost device "
 				"as available again, so that the fallback isn't interrupted, or every few seconds if the backend "
-				"learns only by opening it whether it is there (ASIO). Tries that find the device still gone "
-				"change nothing and are left out of engine.commandLog. Sends audio.changed when the device opens, and "
+				"learns only by opening it whether it is there (ASIO). A listed device that still doesn't open is "
+				"tried less often, up to every few seconds, until the backend's device list changes. Tries that "
+				"find the device still gone change nothing and are left out of engine.commandLog. Sends audio.changed "
+				"when the device opens, and "
 				"plugin.changed for the slots whose plugin's status changed.",
 				noParameters(), statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
@@ -2612,14 +2639,10 @@ namespace gnubase::engine
 				announcingFailure([this, &changed] { changed = reconnect(); });
 				Json result = status();
 				if (changed)
-				{
 					context.emit("audio.changed", result);
-					announceSlots(&context);
-				}
 				else
-				{
 					context.leaveOutOfLog();
-				}
+				announceSlots(&context); // also after a try that opened the fallback again
 				return result;
 			});
 		engine.registerCommand(

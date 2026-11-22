@@ -252,7 +252,9 @@ namespace gnubase::engine
 		bool reset(bool loseIfStartFails = true);
 		// audio.reconnect: while a fallback plays, only once the lost device is listed as available again, so that
 		// tries don't interrupt the fallback, or every g_uncertainReconnectInterval while it is listed as unavailable
-		// by a backend that doesn't know whether it is there. True if the status changed.
+		// by a backend that doesn't know whether it is there. A listed device that still fails is tried less often,
+		// up to every g_uncertainReconnectInterval, until the backend's list changes (#467). True if the status
+		// changed.
 		bool reconnect();
 		// Whether the lost device is available again, as far as its backend's device list says: Maybe if it is listed
 		// as unavailable by a backend whose list doesn't say whether it is there (Backend::listsPresence).
@@ -262,7 +264,8 @@ namespace gnubase::engine
 			Yes,
 			Maybe,
 		};
-		Listed lostDeviceListed() const;
+		// listing: what the list says, to notice when it changes.
+		Listed lostDeviceListed(Json& listing) const;
 		// Opens the fallback device for the lost device (audio.fallbackDevice) and starts it if the lost one ran.
 		void failOver();
 		// Starts trying to open the lost device again, every g_reconnectInterval, with audio.reconnect: one try at a
@@ -431,8 +434,11 @@ namespace gnubase::engine
 		std::optional<Lost> m_lost;
 		bool m_dummyUnplugged = false; // audio.simulateDeviceLoss
 		bool m_failingOver = false;    // the fallback dummy device can't be unplugged
-		// When reconnect next tries a Listed::Maybe device while a fallback plays.
-		std::chrono::steady_clock::time_point m_nextUncertainTry;
+		// When reconnect next tries the lost device while a fallback plays, the wait after a listed device's failed
+		// try, and the listing that the wait is for.
+		std::chrono::steady_clock::time_point m_nextTry;
+		std::chrono::steady_clock::duration m_backoff{};
+		Json m_lostListing;
 		// The thread that tries to open a lost device again, started with the first loss.
 		std::mutex m_reconnectMutex; // guards m_stopReconnecting
 		bool m_stopReconnecting = false;
