@@ -73,7 +73,9 @@ again.
 - **Windows of their own.** A panel in a window of its own leaves its zone; the window (`resources/ui/panel-window.rml`)
   has its title and a Dock button. Dock, or closing the window, puts it back. The window opens where it was last,
   moved onto a connected monitor if its monitor is gone, and renders at its monitor's scale like every window
-  (architecture.md, "UI shell"). Its bounds are read twice a second and kept when they changed.
+  (architecture.md, "UI shell"). Its bounds are read twice a second and kept when they changed. A panel of an app
+  window that `addWindow` opens and closes, such as a mixer window's Visibility tab, shows in its window of its own
+  only while that app window is open.
 - **Contents.** Rebuilding a tab group, e.g. after a tab moved, keeps what the panels that stay in it show. A panel
   that moves to a window, or whose tab is hidden, gets its element made again where it shows next.
 - **Live reload.** When live reload (Debug builds, `ui/livereload.h`) loads a docking window's or a panel window's

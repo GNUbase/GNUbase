@@ -84,8 +84,8 @@ namespace gnubase::ui
 	// What a mixer asks the app to do; each may be empty.
 	struct MixerActions
 	{
-		// A double click on a channel's picture section: choose its track's picture.
-		std::function<void(uint64_t track)> choosePicture;
+		// A double click on a channel's picture section: choose its track's picture, in the window of the element.
+		std::function<void(const Rml::Element& from, uint64_t track)> choosePicture;
 		// Edit Channel Settings (reference manual p. 500): open the channel settings window for the track's channel.
 		std::function<void(uint64_t track)> editChannel;
 		// Add Effect Track to Send (p. 554): the add track dialog for an effect track that the send goes to, in the
@@ -158,6 +158,9 @@ namespace gnubase::ui
 		void setHidden(uint64_t id, bool hidden);
 		void setTypeHidden(const std::string& type, bool hidden);
 		void sendView(engine::Json parameters);
+		// Leaves the notepad being typed in, whose blur sends its text: before its strip or the mixer goes, and on
+		// project.reset, which drops it.
+		void leaveNotes();
 		void drop(uint64_t onto);
 		void showSettingsToolbar();
 		void goTo(uint64_t track);
@@ -180,6 +183,7 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_strips;             // the fader section
 		Rml::ObserverPtr<Rml::Element> m_filter;             // the channel type filter's button
 		Rml::ObserverPtr<Rml::Element> m_visibility;         // the Visibility tab's element
+		Rml::ObserverPtr<Rml::Element> m_window;             // its context's root, which every mouseup reaches
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // in the document's body
 		std::string m_view;
 		MixerKind m_kind = MixerKind::LowerZone;
@@ -200,6 +204,7 @@ namespace gnubase::ui
 		bool m_loading = false;
 		bool m_stale = false;
 		uint64_t m_dragged = 0;     // the channel whose name a mouse button went down on
+		int m_viewSends = 0;        // its mixer.set commands not answered yet
 		uint64_t m_linkChannel = 0; // the channel whose display line's menu opened last
 		bool m_updating = false;    // while the strips show the project's values
 		bool m_dropping = false;    // while another project drops the notes being typed

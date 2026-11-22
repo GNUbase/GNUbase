@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -121,6 +122,9 @@ TEST_CASE("channels have notes and tracks a picture, as undo steps saved with th
 	// A copy of the track has them too.
 	const Json copy = f.call("track.duplicate", {{"track", track}}).at("track");
 	CHECK(copy.at("picture") == "pictures/guitar.png");
+	const Json channels = f.call("project.get").at("channels");
+	CHECK(std::count_if(channels.begin(), channels.end(),
+			  [](const Json& item) { return item.value("notes", "") == "Take 3 is the one"; }) == 2);
 
 	const test::TempDir dir;
 	const std::string file = (dir.path() / "notes.dawproject").u8string();

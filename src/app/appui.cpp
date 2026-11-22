@@ -2151,7 +2151,7 @@ namespace gnubase::app
 	ui::MixerActions AppUi::mixerActions()
 	{
 		ui::MixerActions actions;
-		actions.choosePicture = [this](uint64_t track) { choosePicture(track); };
+		actions.choosePicture = [this](const Rml::Element& from, uint64_t track) { choosePicture(from, track); };
 		// Later in the step: the click may be in the channel settings window, which opening it would rebuild.
 		actions.editChannel = [this](uint64_t track) { m_shell.post([this, track] { openChannelSettings(track); }); };
 		// Add Effect Track to Send (p. 554): the add track dialog's effect page, in the mixer's window, later in the
@@ -2631,8 +2631,7 @@ namespace gnubase::app
 
 	ui::Mixer* AppUi::mixer(int number)
 	{
-		const MixerWindow& shown = m_mixers.at(static_cast<size_t>(number - 1));
-		return shown.window != 0 && m_shell.find(shown.window) != nullptr ? shown.mixer.get() : nullptr;
+		return m_mixers.at(static_cast<size_t>(number - 1)).mixer.get(); // the step lets go of it once its window goes
 	}
 
 	void AppUi::chooseProjectFile(
@@ -2648,12 +2647,15 @@ namespace gnubase::app
 			});
 	}
 
-	void AppUi::choosePicture(uint64_t track)
+	void AppUi::choosePicture(const Rml::Element& from, uint64_t track)
 	{
 		ui::FileDialog dialog;
 		dialog.title = "Choose Track Picture";
 		dialog.filters = {{"Images", "png;jpg;jpeg;svg"}, {"All files", "*"}};
 		dialog.parent = m_main.id();
+		for (const ui::Window* window : m_shell.windows())
+			if (&window->context() == from.GetContext())
+				dialog.parent = window->id(); // the mixer's, e.g. on another monitor
 		chooseProjectFile(dialog, [this, track](const std::filesystem::path& file)
 			{ m_binding.send("track.set", {{"track", track}, {"picture", file.u8string()}}); });
 	}
