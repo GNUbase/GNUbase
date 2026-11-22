@@ -1264,6 +1264,20 @@ TEST_CASE("toggling record during the pre-roll cancels the recording that waits 
 
 	// Toggled again, it records at once, as while playing.
 	CHECK(run(client, "transport.toggle", {{"setting", "record"}}).at("recording") == true);
+	run(client, "transport.stop");
+
+	// With punchIn on, the toggle cancels the waiting start, but playback still punches in at the left locator.
+	run(client, "transport.set", {{"left", 10000}, {"right", 20000}, {"punchIn", true}});
+	run(client, "transport.locate", {{"position", 10000}});
+	CHECK(run(client, "transport.record").at("recording") == false); // pre-roll from 5200
+	run(client, "audio.render", {{"frames", 640}});
+	CHECK(run(client, "transport.toggle", {{"setting", "record"}}).at("recording") == false);
+	run(client, "audio.render", {{"frames", 4160}}); // up to the left locator
+	CHECK(run(client, "transport.get").at("recording") == false);
+	run(client, "audio.render", {{"frames", 64}});
+	state = run(client, "transport.get");
+	CHECK(state.at("playing") == true);
+	CHECK(state.at("recording") == true);
 }
 
 TEST_CASE("locate by moves the cursor by seconds, not before the project start", "[integration]")

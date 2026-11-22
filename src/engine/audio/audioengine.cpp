@@ -3385,9 +3385,9 @@ namespace gnubase::engine
 		command("transport.toggle",
 			"Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, "
 			"punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, "
-			"off punches out, or cancels a recording that waits for the end of the pre-roll or the punch in). While "
-			"lockRecord is on, it neither stops nor punches out a recording unless it gets "
-			"confirmed.",
+			"off punches out, or cancels a recording that waits for its own start; with punchIn on, playback still "
+			"punches in at the left locator). While lockRecord is on, it neither stops nor punches out a recording "
+			"unless it gets confirmed.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"setting": {"type": "string",
 				"enum": ["cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome", "record"]},
 				"confirmed": {"type": "boolean"}}})",
