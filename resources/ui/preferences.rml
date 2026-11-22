@@ -274,7 +274,9 @@
 			{id = "editing-zoom", parent = "Editing", name = "Zoom", items = {
 				{key = "ui.zoomToolHorizontalOnly", label = "Zoom Tool Standard Mode: Horizontal Zooming Only"}}},
 			{id = "editors", name = "Editors", items = {
-				{key = "editing.useDrumEditor", label = "Use Drum Editor when Drum Map is assigned"}}},
+				{key = "editing.useDrumEditor", label = "Use Drum Editor when Drum Map is assigned"},
+				{key = "editing.doubleClickOpensEditorIn", label = "Double-click opens Editor", choices = {
+					{"window", "in a Window"}, {"lowerZone", "in Lower Zone"}}}}},
 			-- The event display's look (pp. 1603-1604, 1607; #1313).
 			{id = "event-display", name = "Event Display", items = {
 				{key = "ui.showEventNames", label = "Show Event Names"},

@@ -302,6 +302,12 @@ namespace gnubase::app
 		void addEditors();
 		// Shows or closes the editor window or the lower zone's editor as the engine's view says.
 		void followEditor(const engine::Json& view);
+		// Opens parts in the editor (window or lower); the lower zone's brings its Editor tab forward and takes the
+		// keyboard focus (p. 100).
+		void openEditor(const std::string& editor, const std::vector<uint64_t>& parts);
+		// Where a double click on a part and Open/Close Editor open it: window or lower, by the preference
+		// editing.doubleClickOpensEditorIn (p. 1603).
+		std::string doubleClickEditor();
 		// Closes the editor (window or lower) that the user closed, Keep Editor Contents with it (p. 1153).
 		void closeEditor(const std::string& editor);
 		// The selected MIDI parts, or else audio parts, open in the editors that follow the project window's

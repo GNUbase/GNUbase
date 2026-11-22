@@ -222,6 +222,9 @@ namespace gnubase::ui
 		// Called for a double click below the tracks instead of adding a MIDI track, e.g. by the track list, which
 		// adds a track like the selected one (docs/features/add-track.md).
 		void onAddTrack(std::function<void()> listener) { m_addTrack = std::move(listener); }
+		// Called with the part for a double click on a MIDI part or an audio part instead of opening it in the editor
+		// window, e.g. by the app, which opens it where the preference editing.doubleClickOpensEditorIn says.
+		void onOpenEditor(std::function<void(uint64_t)> listener) { m_openEditor = std::move(listener); }
 		// Called with the error when the engine refuses an import of audio or MIDI files (audioFile.import,
 		// midiFile.import), e.g. by the app, which shows it in a dialog (#1976); otherwise it is only logged.
 		void onImportFailed(std::function<void(const std::string&)> listener) { m_importFailed = std::move(listener); }
@@ -938,6 +941,7 @@ namespace gnubase::ui
 		ChannelSteps m_channelSteps; // channel.changed until their step's history.changed (#1881)
 		std::function<void()> m_layoutListener;
 		std::function<void()> m_addTrack;                       // onAddTrack
+		std::function<void(uint64_t)> m_openEditor;             // onOpenEditor
 		std::function<void(const std::string&)> m_importFailed; // onImportFailed
 		std::vector<std::string> m_laneTypes;                   // and its type
 		std::vector<bool> m_laneLinear;                         // and whether its time base is linear

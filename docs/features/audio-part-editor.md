@@ -102,10 +102,11 @@ than it, leaves that selection as it is.
 - **Info line** (p. 698): start, end and length in bars and beats, and the volume in dB. A start typed moves every
   selected event by as much as the first one's changes, an end or length resizes their ends, a volume changes theirs
   by as much.
-- **Opening it** (p. 692): a double click on an audio part in the project window, Open/Close Editor (Mod+E, Return)
-  with audio parts but no MIDI parts selected, the Audio menu's Open Audio Part Editor (`audio.openPartEditor`), or
-  Open Editor in Lower Zone. Open editors that follow the project window's selection take its MIDI parts, or else its
-  audio parts.
+- **Opening it** (p. 692): a double click on an audio part in the project window and Open/Close Editor (Mod+E,
+  Return) with audio parts but no MIDI parts selected open it in the lower zone, or in the editor window with the
+  preference Double-click opens Editor in a Window (p. 1603, [midi-editors.md](midi-editors.md)); the Audio menu's Open
+  Audio Part Editor (`audio.openPartEditor`) opens it in the editor window, Open Editor in Lower Zone in the lower zone.
+  Open editors that follow the project window's selection take its MIDI parts, or else its audio parts.
 
 `resources/styles/audioparteditor.rcss` lays it out; the themes color it (`tools/skin/generate.py`).
 
@@ -117,9 +118,8 @@ Cursors; the Combine Selection, Range Selection, Draw (volume curves), Zoom, Com
 rectangle and resizing events with the mouse; Show Part Borders, Activate Next Part and Previous Part and the search
 field of the Activate Part for Editing menu; nudging, a Snap switch of its own, the snap and grid types and Snap to Zero
 Crossing; quantizing, event colors and the independent track loop; the ruler and its time format, Show/Hide Info and the
-toolbar's context menu; horizontal zoom and scrolling; the preference for where the editor opens; the toolbox on a right
-click; shared copies of audio parts (audio parts have none yet). The waveforms follow a change of the window's size, not
-yet one of the lower zone's.
+toolbar's context menu; horizontal zoom and scrolling; the toolbox on a right click; shared copies of audio parts
+(audio parts have none yet). The waveforms follow a change of the window's size, not yet one of the lower zone's.
 
 ## Checks
 
@@ -129,9 +129,9 @@ yet one of the lower zone's.
   them, leaving with the part editing mode and with removed events, no undo step, cleared by closing; notes and
   controller events of audio parts refused, and `showTracks` showing the parts of a `content` given with it; Events
   to Part and Dissolve Part keeping the events' lanes.
-- `tests/audioparteditor_ui_tests.cpp` drives the app with `ui::Automation`: Open/Close Editor with an audio part
+- `tests/audioparteditor_ui_tests.cpp` drives the app with `ui::Automation`: Open Audio Part Editor with an audio part
   selected, the events at their time and lane, the extra lane, a waveform each, the part row and the Visibility tab's
-  audio track; Open Audio Part Editor and the lower zone showing the editor; following the project window's selection,
+  audio track; opening it again and the lower zone showing the editor; following the project window's selection,
   and not with Keep Editor Contents; the object selection tool selecting (the info line's start, end and length),
   deselecting, moving on the grid, onto another lane (which adds no lane to the track in the project window), across
   lanes only with Ctrl, Ctrl and a click, and a double click opening the sample editor; a Ctrl drag of an event that

@@ -920,12 +920,13 @@ TEST_CASE("a Ctrl or Shift press that is also a drag's tool modifier leaves the 
 	}
 }
 
-TEST_CASE("a double click on an audio event opens it in the sample editor, on an audio part in its editor", "[unit]")
+TEST_CASE("a double click on an audio event opens it in the sample editor, on a part in its editor", "[unit]")
 {
 	Fixture f;
-	// On the MIDI part it doesn't (the MIDI editors open with Open/Close Editor).
+	// A MIDI part opens in the editor window: without onOpenEditor's listener, which the app has (p. 87), there.
 	f.click(150, 60, {}, 2);
-	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.call("editor.get", {{"editor", "window"}}).at("open") == true; }));
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("parts") == Json::array({f.part}));
 	CHECK(f.call("sampleEditor.get").at("open") == false);
 	f.click(220, 20, {}, 2);
 	REQUIRE(f.waitUntil([&f] { return f.call("sampleEditor.get").at("open") == true; }));
@@ -935,8 +936,9 @@ TEST_CASE("a double click on an audio event opens it in the sample editor, on an
 	const Json part = f.call("event.toPart", {{"events", {f.event}}}).at("events").at(0);
 	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioParts").size() == 1; }));
 	f.click(240, 20, {}, 2); // away from the last double click, so the clicks don't count with it
-	REQUIRE(f.waitUntil([&f] { return f.call("editor.get", {{"editor", "window"}}).at("open") == true; }));
-	CHECK(f.call("editor.get", {{"editor", "window"}}).at("parts") == Json::array({part}));
+	// The window is still open for the MIDI part, so this waits for the audio part to show.
+	REQUIRE(f.waitUntil(
+		[&f, &part] { return f.call("editor.get", {{"editor", "window"}}).at("parts") == Json::array({part}); }));
 	CHECK(f.call("editor.get", {{"editor", "window"}}).at("content") == "audioPart");
 }
 

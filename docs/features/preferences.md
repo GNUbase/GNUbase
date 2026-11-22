@@ -44,6 +44,9 @@ presets to preferences and clients can tell them from the settings that have a p
     (`ui.toolboxOnRightClick`), Show Notification when Switching Tool Mode with Key Command
     (`ui.toolSwitchNotification`). Zoom: Zoom Tool Standard Mode: Horizontal Zooming Only (`ui.zoomToolHorizontalOnly`,
     [tools.md](tools.md)).
+  - Editors: Use Drum Editor when Drum Map is assigned (`editing.useDrumEditor`, [drum-editor.md](drum-editor.md)),
+    Double-click opens Editor in a Window/in Lower Zone (`editing.doubleClickOpensEditorIn`,
+    [midi-editors.md](midi-editors.md)).
   - Event Display: Show Event Names (`ui.showEventNames`), Hide Truncated Event Names (`ui.hideTruncatedEventNames`),
     Highlight Borders of Selected Events (`ui.highlightSelectedEventBorders`), Event Opacity (`ui.eventOpacity`),
     Smallest Track Height to Show Data and to Show Name (`ui.smallestTrackHeightForData`,
