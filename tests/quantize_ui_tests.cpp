@@ -36,6 +36,8 @@ namespace
 	{
 		Fixture() : display(app.appUi().showProject())
 		{
+			// Room for the toolbar's Quantize section at 1024 pixels, as the tool buttons take more room.
+			app.appUi().docking().setSectionHidden("project", "toolbar", "zoomPresets", true);
 			track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
 			part = app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}, {"name", "Keys"}})
 					   .at("part")

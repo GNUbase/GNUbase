@@ -101,7 +101,7 @@ namespace gnubase::ui
 
 	void EventDisplay::addToolActions()
 	{
-		constexpr int count = static_cast<int>(Tool::TimeWarp) + 1;
+		constexpr int count = static_cast<int>(Tool::Color) + 1;
 		for (int i = 0; i < count; ++i)
 		{
 			const auto tool = static_cast<Tool>(i);
@@ -141,6 +141,76 @@ namespace gnubase::ui
 		m_tool = tool;
 		showTools();
 		showPointer();
+	}
+
+	std::string EventDisplay::toolColor() const
+	{
+		if (!m_toolColor.empty() || !m_project.is_object() || m_project.value("colors", Json::array()).empty())
+			return m_toolColor;
+		return m_project.at("colors").front().at("color").get<std::string>();
+	}
+
+	void EventDisplay::setToolColor(std::string color)
+	{
+		m_toolColor = std::move(color);
+		showToolColor();
+	}
+
+	void EventDisplay::stepToolColor(int steps)
+	{
+		const Json colors = m_project.is_object() ? m_project.value("colors", Json::array()) : Json::array();
+		if (colors.empty())
+			return;
+		const auto count = static_cast<int>(colors.size());
+		const auto found = std::find_if(colors.begin(), colors.end(),
+			[current = toolColor()](const Json& color) { return color.at("color") == current; });
+		const int index =
+			found == colors.end() ? 0 : (((static_cast<int>(found - colors.begin()) + steps) % count) + count) % count;
+		setToolColor(colors[static_cast<size_t>(index)].at("color").get<std::string>());
+	}
+
+	void EventDisplay::showToolColor()
+	{
+		if (alive())
+			m_root->SetAttribute("tool-color", toolColor());
+		if (m_toolColorListener)
+			m_toolColorListener();
+	}
+
+	void EventDisplay::colorClick(uint64_t event)
+	{
+		const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), event);
+		if (m_pressed == "alt" && m_project.is_object())
+		{
+			// The event's own color, or else its track's; a track with the default color has none to take.
+			const auto byId = [](const Json& list, const Json& id)
+			{
+				const auto found =
+					std::find_if(list.begin(), list.end(), [&id](const Json& object) { return object.at("id") == id; });
+				return found == list.end() ? Json() : *found;
+			};
+			Json color;
+			for (const char* list : {"audioEvents", "midiParts", "audioParts"})
+				if (const Json found = byId(m_project.value(list, Json::array()), event); found.is_object())
+				{
+					const Json track = byId(m_project.at("tracks"), found.at("track"));
+					color = found.at("color").is_string() || !track.is_object() ? found.at("color") : track.at("color");
+				}
+			if (color.is_string())
+				setToolColor(color.get<std::string>());
+		}
+		else if (m_pressed == "ctrl")
+		{
+			if (!selected)
+				select({event});
+			if (m_chooseColor)
+				m_chooseColor(m_lanes->GetAbsoluteLeft() + static_cast<float>(m_pressX * dpRatio()),
+					m_lanes->GetAbsoluteTop() + static_cast<float>(m_pressY * dpRatio()));
+		}
+		else if (const std::string color = toolColor(); !color.empty() && m_pressed.empty())
+		{
+			edit("event.set", {{"events", selected ? m_selection : std::vector<uint64_t>{event}}, {"color", color}});
+		}
 	}
 
 	void EventDisplay::setCombineSelectionTools(bool on)
@@ -330,6 +400,7 @@ namespace gnubase::ui
 		case Tool::Split:
 		case Tool::Glue:
 		case Tool::Erase:
+		case Tool::Color:
 			if (shown != nullptr)
 				m_drag = Drag::Click;
 			return true;
@@ -638,6 +709,11 @@ namespace gnubase::ui
 			if (moved || !onEvent)
 				break;
 			const Shown& event = *pressed;
+			if (m_pressTool == Tool::Color)
+			{
+				colorClick(event.id);
+				break;
+			}
 			// The events after it on its track, in order.
 			std::vector<const Shown*> later;
 			for (const Shown& shown : m_events)

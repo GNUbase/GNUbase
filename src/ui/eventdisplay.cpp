@@ -475,6 +475,7 @@ namespace gnubase::ui
 					m_quantize = engine::midi::quantizeSettingsFromJson(m_project.at("quantize"));
 					resizeProjectChanged();
 					showProject();
+					showToolColor(); // the color set's first may be another now
 				}
 				if (std::exchange(m_stale, false))
 					requestProject();

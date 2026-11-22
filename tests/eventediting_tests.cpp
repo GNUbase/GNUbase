@@ -1320,10 +1320,10 @@ TEST_CASE("the tools are chosen by command, and the display names the one chosen
 	CHECK(f.display.tool() == ui::Tool::Erase);
 	f.run("tool.objectSelection");
 	f.run("tool.previous"); // around to the last
-	CHECK(f.display.tool() == ui::Tool::TimeWarp);
+	CHECK(f.display.tool() == ui::Tool::Color);
 	for (const char* id : {"tool.objectSelection", "tool.rangeSelection", "tool.split", "tool.glue", "tool.erase",
-			 "tool.zoom", "tool.mute", "tool.draw", "tool.line", "tool.play", "tool.timeWarp", "tool.next",
-			 "tool.previous", "tool.combineSelectionTools"})
+			 "tool.zoom", "tool.mute", "tool.draw", "tool.line", "tool.play", "tool.timeWarp", "tool.color",
+			 "tool.next", "tool.previous", "tool.combineSelectionTools"})
 		CHECK(f.display.actions().count(id) == 1);
 	f.run("tool.combineSelectionTools");
 	CHECK(f.display.combineSelectionTools());
@@ -1695,6 +1695,76 @@ TEST_CASE("the mute tool mutes and unmutes with a click and mutes with a rectang
 	REQUIRE(f.waitUntil([&f] { return f.lanes("muted-events")[1].events.empty(); }));
 	f.drag(50, 5, 400, 75);
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("mute") == true && f.audioEvents()[0].at("mute") == true; }));
+}
+
+TEST_CASE("the color tool colors events, takes a color with Alt and steps through the color set", "[unit]")
+{
+	Fixture f;
+	f.call("project.set",
+		{{"colors", {{{"name", "Warm"}, {"color", "#e04020"}}, {{"name", "Cold"}, {"color", "#2040e0"}}}}});
+	f.call("track.set", {{"track", f.audioEvents()[0].at("track")}, {"color", "#30a060"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("colors").size() == 2; }));
+	int toolColors = 0;
+	f.display.onToolColor([&toolColors] { ++toolColors; });
+	std::vector<std::pair<float, float>> panes;
+	f.display.onChooseColor([&panes](float x, float y) { panes.emplace_back(x, y); });
+	const Rml::Element* root = f.document.GetElementById("display");
+	f.run("tool.color");
+	CHECK(f.display.tool() == ui::Tool::Color);
+
+	// At first the color set's first color; a click gives it to the event (reference manual pp. 114-115).
+	CHECK(f.display.toolColor() == "#e04020");
+
+	// Alt on an event without a color of its own, on a track with the default color, has no color to take.
+	f.display.stepToolColor(1);
+	f.click(150, 60, {"alt"});
+	CHECK(f.display.toolColor() == "#2040e0");
+	CHECK(f.parts()[0].at("color").is_null());
+	f.display.stepToolColor(-1);
+
+	f.click(150, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("color") == "#e04020"; }));
+	CHECK(f.audioEvents()[0].at("color").is_null());
+
+	// Alt takes an event's own color (p. 114).
+	f.display.stepToolColor(1);
+	f.click(150, 60, {"alt"});
+	CHECK(f.display.toolColor() == "#e04020");
+
+	// Alt takes the track's color from an event that has none of its own.
+	f.click(225, 20, {"alt"});
+	CHECK(f.display.toolColor() == "#30a060");
+	CHECK(root->GetAttribute<std::string>("tool-color", "") == "#30a060");
+	CHECK(toolColors > 0);
+	CHECK(f.audioEvents()[0].at("color").is_null());
+
+	// A click on a selected event colors the selection.
+	f.display.select({f.event, f.part});
+	f.click(225, 20);
+	REQUIRE(f.waitUntil(
+		[&f] { return f.parts()[0].at("color") == "#30a060" && f.audioEvents()[0].at("color") == "#30a060"; }));
+
+	// The wheel's steps: from a color outside the set to its first, then on through it and around its ends.
+	f.display.stepToolColor(1);
+	CHECK(f.display.toolColor() == "#e04020");
+	f.display.stepToolColor(1);
+	CHECK(f.display.toolColor() == "#2040e0");
+	f.display.stepToolColor(1);
+	CHECK(f.display.toolColor() == "#e04020");
+	f.display.stepToolColor(-1);
+	CHECK(f.display.toolColor() == "#2040e0");
+
+	// Ctrl selects the event and asks for the Choose Event Color pane where it was clicked; nothing elsewhere.
+	f.display.select({});
+	f.click(150, 60, {"ctrl"});
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	REQUIRE(panes.size() == 1);
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	CHECK(std::abs(panes[0].first - (lanes->GetAbsoluteLeft() + 150)) < 1.0F);
+	CHECK(std::abs(panes[0].second - (lanes->GetAbsoluteTop() + 60)) < 1.0F);
+	f.click(700, 60, {"ctrl"});
+	CHECK(panes.size() == 1);
+	CHECK(f.parts()[0].at("color") == "#30a060");
 }
 
 TEST_CASE(

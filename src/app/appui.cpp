@@ -275,6 +275,7 @@ namespace gnubase::app
 			{"tool.line", "Chooses the line tool in the project window.", nullptr},
 			{"tool.comp", "Chooses the comp tool in the project window.", nullptr},
 			{"tool.timeWarp", "Chooses the time warp tool in the project window.", nullptr},
+			{"tool.color", "Chooses the color tool in the project window.", nullptr},
 			{"tool.previous", "Chooses the project window's previous tool.", "F9"},
 			{"tool.next", "Chooses the project window's next tool.", "F10"},
 			{"tool.combineSelectionTools", "Switches combining the selection tools on or off.", "Alt+Shift+1"},
@@ -690,7 +691,15 @@ namespace gnubase::app
 						},
 						[this] { m_shell.post([this] { openArranger(); }); });
 					m_inspector = inspector;
-					return std::shared_ptr<void>(inspector);
+					// In a window of its own, the Choose Track Color pane needs a menu in its document (#2026).
+					Rml::ElementDocument* document = element.GetOwnerDocument();
+					if (document == nullptr || !document->HasAttribute("panel"))
+						return std::shared_ptr<void>(inspector);
+					auto colors = std::make_shared<ui::ColorMenu>([this] { return m_eventDisplay.get(); },
+						[this] { return m_trackList.get(); }, m_binding, *document);
+					return std::shared_ptr<void>(
+						std::make_shared<std::pair<std::shared_ptr<ui::Inspector>, std::shared_ptr<ui::ColorMenu>>>(
+							std::move(inspector), std::move(colors)));
 				};
 			// The lower zone's editor (reference manual pp. 1132-1156) and, on the Visibility tab's Editor page, its
 			// visibility; the Track page has the track visibility (#166).
@@ -1836,7 +1845,21 @@ namespace gnubase::app
 		if (Rml::Element* tracks = document->GetElementById("track-list"))
 			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);
 		if (m_trackList)
-			m_colorMenu = std::make_unique<ui::ColorMenu>(*m_eventDisplay, *m_trackList, m_binding, *document);
+			m_colorMenu = std::make_unique<ui::ColorMenu>(
+				[this] { return m_eventDisplay.get(); }, [this] { return m_trackList.get(); }, m_binding, *document);
+		// The color tool's color on its button and its Choose Event Color pane (reference manual pp. 114-115).
+		m_eventDisplay->onToolColor(
+			[this]
+			{
+				if (m_colorMenu)
+					m_colorMenu->showToolColor();
+			});
+		m_eventDisplay->onChooseColor(
+			[this](float x, float y)
+			{
+				if (m_colorMenu)
+					m_colorMenu->openAt(x, y);
+			});
 		m_menuDocument = document->GetObserverPtr();
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		applyKeySettings(); // Edit > Macros

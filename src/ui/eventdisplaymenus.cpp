@@ -83,7 +83,7 @@ namespace gnubase::ui
 			bool crossHair; // whether the tool uses the cross-hair cursor (reference manual p. 110)
 		};
 
-		constexpr std::array<ToolInfo, 12> g_tools{{
+		constexpr std::array<ToolInfo, 13> g_tools{{
 			{Tool::ObjectSelection, "objectSelection", "Object Selection", true},
 			{Tool::RangeSelection, "rangeSelection", "Range Selection", true},
 			{Tool::Comp, "comp", "Comp", false},
@@ -96,6 +96,7 @@ namespace gnubase::ui
 			{Tool::Line, "line", "Line", true},
 			{Tool::Play, "play", "Play", false},
 			{Tool::TimeWarp, "timeWarp", "Time Warp", false},
+			{Tool::Color, "color", "Color", false},
 		}};
 
 		constexpr std::array<const char*, 5> g_lineModes = {"line", "parabola", "sine", "triangle", "square"};

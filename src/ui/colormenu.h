@@ -7,6 +7,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace Rml
@@ -27,12 +28,17 @@ namespace gnubase::ui
 	// attribute color, the color it gives ("#rrggbb", or empty for the reset). An Alt-click on the left area of a track
 	// in the track list (its color strip, or the row left of its name) or on the header of the inspector's Basics
 	// section opens it at the mouse as the Choose Track Color pane (p. 113): its color goes to that one track, the
-	// inspector's the first selected one. Use it on the UI thread; the display, the track list and the binding must
-	// outlive it.
+	// inspector's the first selected one. A document without #color-menu, such as that of an inspector in a window of
+	// its own (#2026), gets one. It also shows the color tool's color in the toolbar's button[tool=color], in its
+	// .tool-color, and the mouse wheel over that button steps it through the color set (pp. 114-115). Use it on the
+	// UI thread; the binding must outlive it.
 	class ColorMenu final : private Rml::EventListener
 	{
 	public:
-		ColorMenu(EventDisplay& display, TrackList& tracks, EngineBinding& binding, Rml::Element& document);
+		// display and tracks give the project window's event display and track list, or null while there are none: a
+		// panel window's menu can outlive them when the project window loads again.
+		ColorMenu(std::function<EventDisplay*()> display, std::function<TrackList*()> tracks, EngineBinding& binding,
+			Rml::Element& document);
 		~ColorMenu() override;
 		ColorMenu(const ColorMenu&) = delete;
 		ColorMenu& operator=(const ColorMenu&) = delete;
@@ -46,18 +52,26 @@ namespace gnubase::ui
 		// Fills the menu: the reset item, then the project's colors with their names.
 		void fill();
 
+		// Opens the menu for the selected events at a point of the window (pixels), as the Choose Event Color pane of
+		// the color tool's Ctrl/Cmd-click (EventDisplay::onChooseColor).
+		void openAt(float x, float y);
+
+		// Shows the color tool's color on its button (EventDisplay::onToolColor).
+		void showToolColor();
+
 	private:
 		void ProcessEvent(Rml::Event& event) override;
 
 		// The track whose Choose Track Color pane an Alt-click on that element opens, or 0.
 		uint64_t trackAt(Rml::Event& event) const;
 
-		EventDisplay& m_display;
-		TrackList& m_tracks;
+		std::function<EventDisplay*()> m_display;
+		std::function<TrackList*()> m_tracks;
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_document;
 		Rml::ObserverPtr<Rml::Element> m_button;
 		Rml::ObserverPtr<Rml::Element> m_menu;
-		uint64_t m_track = 0; // the one track the menu is open for, or 0 for the selection
+		Rml::ObserverPtr<Rml::Element> m_tool; // the color tool's button
+		uint64_t m_track = 0;                  // the one track the menu is open for, or 0 for the selection
 	};
 }

@@ -6,6 +6,7 @@
 
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
 #include "ui/docking.h"
@@ -507,6 +508,91 @@ TEST_CASE("Alt-click on a track's color strip or the inspector's Basics header c
 	window.app.ui().click(std::nullopt, {"", 0, ui::Point{x, static_cast<int>(y)}}, ui::MouseButton::Left, 1, {"alt"});
 	window.app.shell().step(std::chrono::milliseconds(0));
 	CHECK_FALSE(open());
+}
+
+TEST_CASE("Alt-click on the Basics header of an inspector in a window of its own colors its track", "[ui]")
+{
+	ProjectWindow window;
+	ui::Docking& docking = window.app.appUi().docking();
+	docking.open("inspector");
+	docking.setFloating("inspector", true);
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(docking.windowOf("inspector") != nullptr);
+	const ui::WindowId panel = docking.windowOf("inspector")->id();
+	window.app.call("project.set",
+		{{"colors", {{{"name", "Warm"}, {"color", "#e04020"}}, {{"name", "Cold"}, {"color", "#2040e0"}}}}});
+	window.app.call("track.add", {{"type", "audio"}});
+	const auto midi = window.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.elements("#track-list listitem").size() == 2; }));
+	window.app.appUi().trackList()->select({midi});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	const auto click = [&window, panel](const std::string& selector, const std::vector<std::string>& modifiers)
+	{
+		window.app.ui().click(panel, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto elements = [&window, panel](const std::string& selector)
+	{ return window.app.ui().dom(panel, selector, 0).at("elements"); };
+
+	// The Choose Track Color pane opens in the inspector's window, for the track it shows, and the section stays open
+	// (reference manual p. 113).
+	click(".inspector [section=basics] .section-header", {"alt"});
+	REQUIRE(elements("#color-menu.open").size() == 1);
+	CHECK(elements("#color-menu menuitem").size() == 3);
+	click("#color-menu menuitem[color=\"#2040e0\"]", {});
+	REQUIRE(window.app.waitUntil([&] { return window.project().at("tracks")[1].at("color") == "#2040e0"; }));
+	CHECK(window.project().at("tracks")[0].at("color").is_null());
+	CHECK(elements(".inspector [section=basics].collapsed").empty());
+}
+
+TEST_CASE("the color tool's button shows its color, the wheel steps it, and Ctrl-click opens the pane", "[ui]")
+{
+	ProjectWindow window;
+	window.app.call("project.set",
+		{{"colors", {{{"name", "Warm"}, {"color", "#e04020"}}, {{"name", "Cold"}, {"color", "#2040e0"}}}}});
+	const auto midi = window.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	// A bar: two seconds at 120 BPM, 200 dp.
+	window.app.call("midiPart.add", {{"track", midi}, {"position", 0}, {"length", 4 * time::g_ticksPerQuarter}});
+	REQUIRE(window.app.waitUntil([&] { return !window.laneColors().empty() && !window.laneColors()[0].empty(); }));
+	const auto strip = [&window]() -> std::optional<Rml::Colourb>
+	{
+		Rml::Element* found = window.find("button[tool=color] .tool-color");
+		const Rml::Property* color = found != nullptr ? found->GetLocalProperty("background-color") : nullptr;
+		return color != nullptr ? std::optional<Rml::Colourb>(color->Get<Rml::Colourb>()) : std::nullopt;
+	};
+
+	// The toolbar's button chooses the tool and shows its color, the color set's first (reference manual p. 114).
+	window.click("button[tool=color]");
+	CHECK(window.display.tool() == ui::Tool::Color);
+	REQUIRE(window.app.waitUntil([&] { return strip() == Rml::Colourb(0xe0, 0x40, 0x20, 255); }));
+	// The wheel over it steps through the set.
+	window.app.ui().wheel(std::nullopt, {"button[tool=color]", 0, std::nullopt}, 0.0F, 1.0F, {});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.display.toolColor() == "#2040e0");
+	CHECK(strip() == Rml::Colourb(0x20, 0x40, 0xe0, 255));
+
+	// Ctrl/Cmd and a click on the part opens the Choose Event Color pane for it, and a click colors it with the tool.
+	const auto clickPart = [&window](const std::vector<std::string>& modifiers)
+	{
+		// A second in, the middle of the part's bar.
+		Rml::Element* lanes = window.find("event-lanes.events");
+		const double x = (1.0 - window.display.view().start) / window.display.view().scale;
+		window.app.ui().click(std::nullopt,
+			{"", 0,
+				ui::Point{
+					static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop()) + 10}},
+			ui::MouseButton::Left, 1, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	clickPart({"ctrl"});
+	REQUIRE(window.find("#color-menu")->IsClassSet("open"));
+	CHECK(window.elements("#color-menu menuitem").at(0).value("text", "") == "Set Event Color to Track");
+	window.click("#color-menu menuitem[color=\"#e04020\"]");
+	REQUIRE(window.app.waitUntil([&] { return window.project().at("midiParts")[0].at("color") == "#e04020"; }));
+	window.display.select({});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	clickPart({});
+	REQUIRE(window.app.waitUntil([&] { return window.project().at("midiParts")[0].at("color") == "#2040e0"; }));
 }
 
 TEST_CASE("the project colors setup dialog edits the project's color set", "[ui]")
