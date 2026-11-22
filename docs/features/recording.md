@@ -50,8 +50,10 @@ transport's record state and the record mode setting.
   as text (an invalid UTF-16 name on Windows) doesn't count. The format comes from one function, `recordFormat`: the
   project setup's record file type and bit depth ([project-setup.md](project-setup.md), p. 342) at the project's sample
   rate, read when a recording starts. Wave and Broadcast Wave files end in `.wav`, AIFF in `.aif`, FLAC in `.flac`. A
-  Broadcast Wave file has a bext chunk with the track name as its description (cut to the field's 256 bytes between two
-  UTF-8 characters), GNUbase as its originator, the local date and time the recording started, and as its time reference
+  Broadcast Wave file has a bext chunk with the Broadcast Wave strings of the preferences (p. 1615): the description
+  `audio.broadcastDescription`, or the track name while it is empty, the author `audio.broadcastAuthor` (GNUbase by
+  default) as its originator and the reference `audio.broadcastReference` as its originator reference, each cut to its
+  field's 256 or 32 bytes between two UTF-8 characters; then the local date and time the recording started, and as its time reference
   the position of the file's first frame (pre-recorded input included) plus the project's start time, in samples since
   midnight. The time reference doesn't wrap at midnight: a file that starts past 24 h counts on, as the 64-bit field
   allows, and a pre-record that reaches back before 0:00:00 gives 0. File names are cut to 200 bytes in the same way, so
@@ -111,8 +113,8 @@ transport's record state and the record mode setting.
 ## Not yet
 
 Record folders per track (p. 343); the common record modes (Punch In/Out, Re-Record, starting at the left locator or
-the selection, p. 339); punch points apart from the locators (p. 319); drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); setting up the Broadcast Wave chunk's
-description, author and reference (#580); recording the output of a bus or channel (p. 345);
+the selection, p. 339); punch points apart from the locators (p. 319); drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); the Broadcast Wave strings in Wave and
+AIFF files and as the defaults of an export's Broadcast Wave chunk (p. 1615); recording the output of a bus or channel (p. 345);
 adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash; the Max. Record
 Time window of its own (Studio > More Options, p. 356), which the status line field stands for, and with record
 folders per track the time of the fullest disk.

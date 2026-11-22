@@ -350,9 +350,12 @@ TEST_CASE("the preferences dialog shows each preference and changes it through t
 					choose(app, selector, -1); // it was the last choice
 				CHECK(element(app, selector).at("value") != was);
 			}
+			else if (const Json schema = entryOf(before, key).at("schema"); schema.at("type") == "string")
+			{
+				type(app, selector, "Changed <&\">"); // the field's value attribute keeps what RML would read
+			}
 			else
 			{
-				const Json schema = entryOf(before, key).at("schema");
 				const std::string minimum = schema.at("minimum").dump();
 				const std::string value =
 					control.at("value") == minimum ? schema.at("maximum").dump() : schema.at("minimum").dump();
@@ -373,6 +376,7 @@ TEST_CASE("the preferences dialog shows each preference and changes it through t
 	openDialog(app);
 	CHECK_FALSE(checked(app, "#pref-ui-removeTracksWarning"));
 	CHECK(element(app, "#pref-project-autoSaveInterval").at("value") == "1");
+	CHECK(element(app, "#pref-audio-broadcastDescription").at("value") == "Changed <&\">"); // #580
 }
 
 TEST_CASE("the preferences dialog's Apply, Cancel and Defaults", "[ui]")

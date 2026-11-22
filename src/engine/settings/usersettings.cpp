@@ -439,6 +439,18 @@ namespace gnubase::engine::settings
 					"Stop after automatic punch out: playback stops when recording punches out at the right locator, "
 					"after the post-roll if it's on (see transport.set), unless it cycles.",
 					Json{{"type", "boolean"}}, false, true},
+				{"audio.broadcastDescription",
+					"The description in the Broadcast Wave chunk of recorded Broadcast Wave files, cut to 256 bytes; "
+					"empty for the track's name.",
+					Json{{"type", "string"}}, "", true},
+				{"audio.broadcastAuthor",
+					"The author (originator) in the Broadcast Wave chunk of recorded Broadcast Wave files, cut to 32 "
+					"bytes.",
+					Json{{"type", "string"}}, "GNUbase", true},
+				{"audio.broadcastReference",
+					"The reference (originator reference) in the Broadcast Wave chunk of recorded Broadcast Wave "
+					"files, cut to 32 bytes.",
+					Json{{"type", "string"}}, "", true},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", g_lowestSampleRate}, {"maximum", g_highestSampleRate}},
 					48000.0},
