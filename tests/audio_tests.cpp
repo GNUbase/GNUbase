@@ -1138,6 +1138,80 @@ TEST_CASE("a lost device that is listed but doesn't open is tried less often whi
 	run(client, "audio.stop");
 }
 
+TEST_CASE(
+	"a lost device that is listed but doesn't open is tried at once when the device list changes", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "dummy"}});
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	driver->busy = true; // listed as available all along
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return !data.at("lost").is_null() && data.at("device").is_object(); }));
+
+	// Every try closes the fallback, which starts over at 0: true once its position drops within the time given.
+	const auto triedWithin = [&client](std::chrono::milliseconds time)
+	{
+		int64_t last = run(client, "audio.get").at("position").get<int64_t>();
+		const auto until = std::chrono::steady_clock::now() + time;
+		while (std::chrono::steady_clock::now() < until)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+			const int64_t position = run(client, "audio.get").at("position").get<int64_t>();
+			if (position < last)
+				return true;
+			last = position;
+		}
+		return false;
+	};
+	// Tries at once, then after 1, 2 and 3 seconds: from the try after 4 seconds on, the next comes 3 seconds later.
+	std::this_thread::sleep_for(std::chrono::milliseconds(4200));
+	REQUIRE(triedWithin(std::chrono::seconds(4)));
+
+	// The device drops out of the list and returns as it was: that is a change, so it is tried at once.
+	driver->connected = false;
+	std::this_thread::sleep_for(std::chrono::milliseconds(700));
+	driver->connected = true;
+	CHECK(triedWithin(std::chrono::milliseconds(1000)));
+
+	// Its entry changes while it stays listed: tried at once too.
+	driver->unnamed = true;
+	CHECK(triedWithin(std::chrono::milliseconds(1000)));
+
+	driver->busy = false;
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && data.at("device").is_object(); }));
+	run(client, "audio.stop");
+}
+
+TEST_CASE("a try of a lost device that fails for another reason is announced and logged once", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	driver->failStart = true;
+	CHECK_THAT(run(client, "audio.reset").at("lost").at("reason").get<std::string>(),
+		ContainsSubstring("doesn't process audio"));
+
+	// Unplugged now: the next try fails with another reason, which is announced; the tries after it aren't.
+	driver->connected = false;
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data)
+		{
+			return !data.at("lost").is_null() &&
+				data.at("lost").at("reason").get<std::string>().find("not connected") != std::string::npos;
+		}));
+	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+	const Json log = run(client, "engine.commandLog").at("commands");
+	CHECK(std::count_if(
+			  log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "audio.reconnect"; }) == 1);
+}
+
 TEST_CASE("a device lost while the project's sample rate changes returns at the new rate", "[integration]")
 {
 	const auto driver = std::make_shared<FakeDriver>();

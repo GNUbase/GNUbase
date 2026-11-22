@@ -1790,7 +1790,8 @@ namespace gnubase::engine
 			waitForDevice();
 			// A try that fails as before and opens the same fallback again changes nothing (#467).
 			const std::string fallbackAfter = m_device ? m_backend + " " + m_device->info().id : std::string();
-			return !lost || fallbackAfter != fallbackBefore || !m_lost || lost->reason != m_lost->reason;
+			// One that fails for another reason is announced and logged once, as lost.reason changes.
+			return !lost || fallbackAfter != fallbackBefore || lost->reason != m_lost->reason;
 		}
 		if (lost)
 			logging::info("The audio device ({} {}) is back", backend, id);
@@ -1806,14 +1807,16 @@ namespace gnubase::engine
 		if (!m_device)
 			return reset();
 		// A fallback plays, which every try closes first.
+		// The listing is kept on every call, so a device that drops out and returns as before counts as a change.
 		Json listing;
 		const Listed listed = lostDeviceListed(listing);
+		const bool listChanged = listing != m_lostListing;
+		m_lostListing = std::move(listing);
 		if (listed == Listed::No)
 			return false;
 		const auto now = std::chrono::steady_clock::now();
-		if (listed == Listed::Yes && listing != m_lostListing) // listed anew, or the list changed: try now
+		if (listed == Listed::Yes && listChanged) // listed anew, or the list changed: try now
 		{
-			m_lostListing = std::move(listing);
 			m_backoff = g_reconnectInterval;
 			m_nextTry = now;
 		}
@@ -2606,10 +2609,9 @@ namespace gnubase::engine
 				"fails. audio.setDevice ends the wait. The "
 				"performance measurement goes on across a reset, which itself counts nothing: a driver that resets "
 				"because of a dropout reports the dropout (see audio.performance). A reset that loses the device ends "
-				"the measurement. Sends audio.changed when the device closes, opens or is lost, and plugin.changed for "
-				"the "
-				"slots whose plugin's status changed, also when it fails "
-				"after the device opened again.",
+				"the measurement. Sends audio.changed when the device closes, opens or is lost, except for a reset "
+				"while a fallback plays that fails as the last try did and opens the same fallback again, which "
+				"changes nothing; and plugin.changed for the slots whose plugin's status changed.",
 				noParameters(), statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
 			{
@@ -2630,7 +2632,7 @@ namespace gnubase::engine
 				"learns only by opening it whether it is there (ASIO). A listed device that still doesn't open is "
 				"tried less often, up to every few seconds, until the backend's device list changes. Tries that "
 				"find the device still gone change nothing and are left out of engine.commandLog. Sends audio.changed "
-				"when the device opens, and "
+				"when the device opens or a try fails for another reason than the last one (lost.reason), and "
 				"plugin.changed for the slots whose plugin's status changed.",
 				noParameters(), statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
