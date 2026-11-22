@@ -751,6 +751,10 @@ namespace gnubase::ui
 		Json& step = steps[static_cast<size_t>(index)];
 		if (name == "arrangerMode")
 		{
+			// A select built with the step's own mode sends it once on its next update: nothing to show again then,
+			// or the list would be built again every frame.
+			if (step.value("mode", std::string()) == value)
+				return;
 			step["mode"] = value;
 		}
 		else

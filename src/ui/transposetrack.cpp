@@ -403,9 +403,10 @@ namespace gnubase::ui
 			m_lastPress = std::make_pair(*on, now);
 			if (m_kind == LaneKind::Arranger)
 			{
-				// A click selects the event, with Ctrl (Cmd) adds or removes it; an edge resizes it.
+				// A click selects the event, with Ctrl (Cmd) or Shift adds or removes it; an edge resizes it.
 				const auto selected = std::find(m_selection.begin(), m_selection.end(), *on);
-				if (event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0)
+				if (event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0 ||
+					event.GetParameter<int>("shift_key", 0) != 0)
 				{
 					if (selected == m_selection.end())
 						m_selection.push_back(*on);

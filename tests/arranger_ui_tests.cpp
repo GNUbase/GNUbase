@@ -588,7 +588,18 @@ TEST_CASE("arranger events on the lane are selected with clicks and resized by t
 	click(window.at(1.0), {"ctrl"});
 	CHECK_FALSE(window.hasClass(eventA, "selected"));
 	CHECK(window.hasClass(eventB, "selected"));
+	// Shift removes or adds one as Ctrl does (clicking another each time: two on one are a double click).
+	click(window.at(5.0), {"shift"});
+	CHECK_FALSE(window.hasClass(eventA, "selected"));
+	CHECK_FALSE(window.hasClass(eventB, "selected"));
+	click(window.at(1.0), {"shift"});
+	CHECK(window.hasClass(eventA, "selected"));
+	CHECK_FALSE(window.hasClass(eventB, "selected"));
+	click(window.at(5.0), {"shift"});
+	CHECK(window.hasClass(eventA, "selected"));
+	CHECK(window.hasClass(eventB, "selected"));
 	click(window.at(7.0), {});
+	CHECK_FALSE(window.hasClass(eventA, "selected"));
 	CHECK_FALSE(window.hasClass(eventB, "selected"));
 
 	// A drag of an edge resizes the event, snapped to bars: the end of A, then the start of B.
@@ -644,6 +655,10 @@ TEST_CASE("the inspector's Current Arranger Chain list edits repeats and modes a
 	{
 		click(steps + "[step=\"0\"] .repeats", ui::MouseButton::Left, 2);
 		REQUIRE(window.app.waitUntil([&] { return window.hasClass(steps + "[step=\"0\"] .repeats", "editing"); }));
+		// The list isn't built again on later frames, which would replace the field being typed.
+		for (int frame = 0; frame < 5; ++frame)
+			window.app.shell().step(std::chrono::milliseconds(16));
+		REQUIRE(window.hasClass(steps + "[step=\"0\"] .repeats", "editing"));
 		window.app.ui().key(std::nullopt, "Mod+A");
 		window.app.ui().text(std::nullopt, text);
 		window.app.ui().key(std::nullopt, "Enter");
