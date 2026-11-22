@@ -53,8 +53,8 @@ its track's.
 - **Colorizing single tracks** (p. 113): an Alt-click on the left area of a track in the track list, its color strip
   or its row left of its name, or on the header of the inspector's Basics section opens the same menu at the mouse as
   the Choose Track Color pane. Its color goes to that one track, also with events selected ("Colorize Tracks"); the
-  inspector's is the track it shows, the first selected one, and the Alt-click doesn't close the section. The pane
-  opens only while the inspector is docked in the project window, whose document has the menu.
+  inspector's is the track it shows, the first selected one, and the Alt-click doesn't close the section. An
+  inspector in a window of its own has the pane too: its window's document gets a `#color-menu` of its own (#2026).
 - **Project Colors Setup** (Project menu, the UI command `project.colorsSetup`, pp. 115–119):
   `resources/ui/project-colors.rml`, the color set as a list with swatches, a name field and the color picker
   ([widgets.md](widgets.md)) for the selected color, Insert Color, Duplicate Color, Remove Color (not the last one),
@@ -85,9 +85,10 @@ MIDI editors' event colors menu (p. 1133).
   part colors, and the tracks Dissolve Part and Merge MIDI in Loop add colored as new tracks. In the app's project
   window: the track list's strip and the event lanes' colors following track and event colors; the color menu on
   selected tracks and events, both reset items and the undo step; the Choose Track Color pane from the strip, the row
-  left of the name and the inspector's Basics header, for that one track; the setup dialog's remove, duplicate,
-  recolor, insert, rename, reset color, apply, reset to factory settings and cancel, and its presets: 8 basic colors
-  with unique names, tints in both sort orders, 128 colors, 16 in one tint as the factory set and 24 applied.
+  left of the name and the inspector's Basics header, for that one track, also of an inspector in a window of its
+  own; the setup dialog's remove, duplicate, recolor, insert, rename, reset color, apply, reset to factory settings
+  and cancel, and its presets: 8 basic colors with unique names, tints in both sort orders, 128 colors, 16 in one
+  tint as the factory set and 24 applied.
 - `tests/canvas_tests.cpp`: an event with a color of its own is filled with it, outlined by `stroke-color`, or by
   the tinted color in `stroke-width` with `own-color-tint`, also without a `stroke-color`; a waveform in the tinted
   color, `event-inset` inside its padding.

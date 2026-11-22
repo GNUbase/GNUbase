@@ -509,6 +509,41 @@ TEST_CASE("Alt-click on a track's color strip or the inspector's Basics header c
 	CHECK_FALSE(open());
 }
 
+TEST_CASE("Alt-click on the Basics header of an inspector in a window of its own colors its track", "[ui]")
+{
+	ProjectWindow window;
+	ui::Docking& docking = window.app.appUi().docking();
+	docking.open("inspector");
+	docking.setFloating("inspector", true);
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(docking.windowOf("inspector") != nullptr);
+	const ui::WindowId panel = docking.windowOf("inspector")->id();
+	window.app.call("project.set",
+		{{"colors", {{{"name", "Warm"}, {"color", "#e04020"}}, {{"name", "Cold"}, {"color", "#2040e0"}}}}});
+	window.app.call("track.add", {{"type", "audio"}});
+	const auto midi = window.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.elements("#track-list listitem").size() == 2; }));
+	window.app.appUi().trackList()->select({midi});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	const auto click = [&window, panel](const std::string& selector, std::vector<std::string> modifiers)
+	{
+		window.app.ui().click(panel, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, std::move(modifiers));
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto elements = [&window, panel](const std::string& selector)
+	{ return window.app.ui().dom(panel, selector, 0).at("elements"); };
+
+	// The Choose Track Color pane opens in the inspector's window, for the track it shows, and the section stays open
+	// (reference manual p. 113).
+	click(".inspector [section=basics] .section-header", {"alt"});
+	REQUIRE(elements("#color-menu.open").size() == 1);
+	CHECK(elements("#color-menu menuitem").size() == 3);
+	click("#color-menu menuitem[color=\"#2040e0\"]", {});
+	REQUIRE(window.app.waitUntil([&] { return window.project().at("tracks")[1].at("color") == "#2040e0"; }));
+	CHECK(window.project().at("tracks")[0].at("color").is_null());
+	CHECK(elements(".inspector [section=basics].collapsed").empty());
+}
+
 TEST_CASE("the project colors setup dialog edits the project's color set", "[ui]")
 {
 	ProjectWindow window;

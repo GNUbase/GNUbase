@@ -681,7 +681,15 @@ namespace gnubase::app
 						},
 						[this] { m_shell.post([this] { openArranger(); }); });
 					m_inspector = inspector;
-					return std::shared_ptr<void>(inspector);
+					// In a window of its own, the Choose Track Color pane needs a menu in its document (#2026).
+					Rml::ElementDocument* document = element.GetOwnerDocument();
+					if (document == nullptr || !document->HasAttribute("panel"))
+						return std::shared_ptr<void>(inspector);
+					auto colors = std::make_shared<ui::ColorMenu>([this] { return m_eventDisplay.get(); },
+						[this] { return m_trackList.get(); }, m_binding, *document);
+					return std::shared_ptr<void>(
+						std::make_shared<std::pair<std::shared_ptr<ui::Inspector>, std::shared_ptr<ui::ColorMenu>>>(
+							std::move(inspector), std::move(colors)));
 				};
 			// The lower zone's editor (reference manual pp. 1132-1156) and, on the Visibility tab's Editor page, its
 			// visibility; the Track page has the track visibility (#166).
@@ -1811,7 +1819,8 @@ namespace gnubase::app
 		if (Rml::Element* tracks = document->GetElementById("track-list"))
 			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);
 		if (m_trackList)
-			m_colorMenu = std::make_unique<ui::ColorMenu>(*m_eventDisplay, *m_trackList, m_binding, *document);
+			m_colorMenu = std::make_unique<ui::ColorMenu>(
+				[this] { return m_eventDisplay.get(); }, [this] { return m_trackList.get(); }, m_binding, *document);
 		m_menuDocument = document->GetObserverPtr();
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		applyKeySettings(); // Edit > Macros

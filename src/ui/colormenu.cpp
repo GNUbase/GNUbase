@@ -7,19 +7,23 @@
 #include "ui/widgets.h"
 
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::ui
 {
 	using engine::Json;
 
-	ColorMenu::ColorMenu(EventDisplay& display, TrackList& tracks, EngineBinding& binding, Rml::Element& document)
-		: m_display(display), m_tracks(tracks), m_binding(binding), m_document(document.GetObserverPtr())
+	ColorMenu::ColorMenu(std::function<EventDisplay*()> display, std::function<TrackList*()> tracks,
+		EngineBinding& binding, Rml::Element& document)
+		: m_display(std::move(display)), m_tracks(std::move(tracks)), m_binding(binding),
+		  m_document(document.GetObserverPtr())
 	{
 		// Alt-clicks on the track list and the inspector, after the press that closes open menus.
 		document.AddEventListener(Rml::EventId::Click, this);
@@ -30,7 +34,13 @@ namespace gnubase::ui
 			button->AddEventListener(Rml::EventId::Mousedown, this);
 			button->AddEventListener(Rml::EventId::Click, this);
 		}
-		if (Rml::Element* menu = document.GetElementById("color-menu"))
+		Rml::Element* menu = document.GetElementById("color-menu");
+		if (menu == nullptr && document.GetOwnerDocument() != nullptr)
+		{
+			menu = document.AppendChild(document.GetOwnerDocument()->CreateElement("menu"));
+			menu->SetId("color-menu");
+		}
+		if (menu != nullptr)
 		{
 			m_menu = menu->GetObserverPtr();
 			menu->AddEventListener(Rml::EventId::Click, this);
@@ -53,12 +63,13 @@ namespace gnubase::ui
 
 	void ColorMenu::fill()
 	{
-		if (!m_menu)
+		const EventDisplay* display = m_display();
+		if (!m_menu || display == nullptr)
 			return;
-		const bool events = m_track == 0 && !m_display.selection().empty();
+		const bool events = m_track == 0 && !display->selection().empty();
 		std::string rml = std::string(R"(<menuitem color="">)") +
 			(events ? "Set Event Color to Track" : "Set Track Color to Default") + "</menuitem><menuseparator/>";
-		const Json& project = m_display.project();
+		const Json& project = display->project();
 		std::vector<std::string> colors;
 		if (project.is_object())
 			for (const Json& color : project.value("colors", Json::array()))
@@ -81,14 +92,18 @@ namespace gnubase::ui
 
 	void ColorMenu::apply(const std::string& color)
 	{
+		const EventDisplay* display = m_display();
+		const TrackList* tracks = m_tracks();
+		if (display == nullptr || tracks == nullptr)
+			return;
 		const Json value = color.empty() ? Json(nullptr) : Json(color);
-		if (const std::vector<uint64_t>& events = m_display.selection(); m_track == 0 && !events.empty())
+		if (const std::vector<uint64_t>& events = display->selection(); m_track == 0 && !events.empty())
 		{
 			m_binding.send("event.set", {{"events", events}, {"color", value}});
 			return;
 		}
 		Json commands = Json::array();
-		for (const uint64_t track : m_track != 0 ? std::vector<uint64_t>{m_track} : m_tracks.selection())
+		for (const uint64_t track : m_track != 0 ? std::vector<uint64_t>{m_track} : tracks->selection())
 			commands.push_back({{"command", "track.set"}, {"parameters", {{"track", track}, {"color", value}}}});
 		if (!commands.empty())
 			m_binding.send(
@@ -106,7 +121,8 @@ namespace gnubase::ui
 		// The inspector's Basics header: the track the inspector shows, the first selected one.
 		if (target->IsClassSet("section-header") && parent->GetAttribute<Rml::String>("section", "") == "basics")
 		{
-			const std::vector<uint64_t> tracks = m_tracks.selection();
+			const TrackList* list = m_tracks();
+			const std::vector<uint64_t> tracks = list != nullptr ? list->selection() : std::vector<uint64_t>{};
 			return tracks.empty() ? 0 : tracks.front();
 		}
 		// The left area of a track in the track list: its row, or its color strip, which a theme may stretch across
