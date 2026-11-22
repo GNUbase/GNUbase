@@ -143,4 +143,5 @@ user picks it from the tab bar) shows an empty editor until Edit > Open Editor i
   while they show, and is closed in the project window while the lower zone's editor isn't open. The lower zone's editor
   opens for selected parts, follows the selection, stops following with Keep Editor Contents, moves to the window and
   back, and closes when the lower zone hides. Return and a double click on a part open it in the lower zone's editor,
-  which takes the keyboard focus, and in the editor window with Double-click opens Editor in a Window.
+  which takes the keyboard focus, Return an audio part too, and in the editor window with Double-click opens Editor in a
+  Window, which leaves the focus in the main zone.

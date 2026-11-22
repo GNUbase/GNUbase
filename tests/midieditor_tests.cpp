@@ -337,20 +337,44 @@ TEST_CASE(
 	CHECK(app.waitUntil([&] { return focused("#lower-zone"); }));
 	CHECK(app.appUi().editorWindow() == nullptr);
 
-	// With Double-click opens Editor in a Window (p. 1603), both open the editor window and leave the focus alone.
+	// Return with only an audio part selected opens it in the lower zone's audio part editor (p. 692).
+	const uint64_t audio = app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t audioPart =
+		app.call("audioPart.add", {{"track", audio}, {"position", 0}, {"length", 4 * time::g_ticksPerQuarter}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(app.waitUntil([&] { return f.display.project().at("audioParts").size() == 1; }));
+	app.call("editor.close", {{"editor", "lower"}});
+	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+	REQUIRE(app.appUi().docking().focus("project", "main"));
+	f.select({audioPart});
+	app.ui().key(std::nullopt, "Return");
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{audioPart}; }));
+	CHECK(view(app, "lower").at("content") == "audioPart");
+	CHECK(app.waitUntil([&] { return focused("#lower-zone"); }));
+	CHECK(app.appUi().editorWindow() == nullptr);
+
+	// With Double-click opens Editor in a Window (p. 1603), both open the editor window and leave the focus in the
+	// main zone.
 	app.call("settings.set", {{"key", "editing.doubleClickOpensEditorIn"}, {"value", "window"}});
 	app.call("editor.close", {{"editor", "lower"}});
 	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
 	REQUIRE(app.appUi().docking().focus("project", "main"));
+	f.select({part});
 	app.ui().key(std::nullopt, "Return");
 	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
 	CHECK(parts(view(app, "window")) == std::vector<uint64_t>{part});
 	CHECK(view(app, "lower").at("open") == false);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(focused("#main-zone"));
 	app.call("editor.close", {{"editor", "window"}});
 	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() == nullptr; }));
 	app.ui().click(std::nullopt, at(5.5), ui::MouseButton::Left, 2, {});
 	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
 	CHECK(view(app, "lower").at("open") == false);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(focused("#main-zone"));
 }
 
 TEST_CASE("the Visibility tab indents and folds folders and marks the tracks that can't show", "[ui]")

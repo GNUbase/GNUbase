@@ -422,7 +422,7 @@ namespace
 	};
 }
 
-TEST_CASE("Open/Close Editor opens selected audio parts in the audio part editor", "[ui]")
+TEST_CASE("Open Audio Part Editor opens selected audio parts in the audio part editor", "[ui]")
 {
 	Fixture f;
 	const auto keys = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
