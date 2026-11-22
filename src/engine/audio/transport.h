@@ -140,6 +140,9 @@ namespace gnubase::engine
 		// While counting in, playing is true, and recording is whether recording starts where playback starts.
 		bool recording() const { return m_requestedRecording; }
 		bool countingIn() const { return m_requestedCountingIn; }
+		// Command thread: whether recording runs, not counting in, as sync() would take it over: also after a punch
+		// in that the audio thread made on its own since the last sync.
+		bool recordingNow() const;
 		// Command thread: where play(from) starts playback.
 		time::Samples startPosition(time::Samples from = -1) const;
 		time::Samples playStart(time::Samples from = -1) const; // the same without the pre-roll

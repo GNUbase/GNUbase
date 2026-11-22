@@ -905,6 +905,19 @@ TEST_CASE("lock record keeps a recording from stopping or punching out unless th
 	CHECK(state.at("playing") == true);
 	CHECK(state.at("recording") == true);
 	CHECK(run(client, "transport.toggle", {{"setting", "cycle"}}).at("recording") == true); // other switches work
+	// The reasons say what was refused, so the UI can ask to confirm just that (#645).
+	CHECK_THAT(reject(client, "transport.stop"), ContainsSubstring("stop it"));
+	CHECK_THAT(reject(client, "transport.toggle", {{"setting", "record"}}), ContainsSubstring("punch out"));
+
+	// A confirmed punch out ends the recording, and playback goes on (#645).
+	state = run(client, "transport.record", {{"record", false}, {"confirmed", true}});
+	CHECK(state.at("playing") == true);
+	CHECK(state.at("recording") == false);
+	run(client, "transport.record");
+	state = run(client, "transport.toggle", {{"setting", "record"}, {"confirmed", true}});
+	CHECK(state.at("playing") == true);
+	CHECK(state.at("recording") == false);
+	run(client, "transport.record");
 
 	// A confirmed stop ends it; the lock stays for the next recording.
 	state = run(client, "transport.stop", {{"confirmed", true}});
@@ -916,6 +929,33 @@ TEST_CASE("lock record keeps a recording from stopping or punching out unless th
 	run(client, "transport.record");
 	run(client, "transport.set", {{"lockRecord", false}});
 	CHECK(run(client, "transport.stop").at("playing") == false);
+}
+
+TEST_CASE("lock record refuses a stop just after the audio thread punched in on its own (#645)", "[integration]")
+{
+	// The cue thread, held, doesn't have the command thread take the punch in over: the stop sees only what the audio
+	// thread did.
+	Engine engine;
+	Client client(engine);
+	constexpr Samples block = 64;
+	constexpr Samples left = 4800;
+	run(client, "audio.setDevice", {{"blockSize", block}});
+	run(client, "transport.set", {{"left", left}, {"right", 960000}, {"punchIn", true}, {"lockRecord", true}});
+	gnubase::test::HeldCueThread held(engine);
+	run(client, "audio.start");
+	REQUIRE(held.waitUntilHeld());
+	run(client, "transport.play");
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (run(client, "transport.get").at("position").get<Samples>() < left + (2 * block) &&
+		std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	REQUIRE(std::chrono::steady_clock::now() < deadline);
+	CHECK(run(client, "transport.get").at("recording") == false); // not taken over yet
+	CHECK_THAT(reject(client, "transport.stop"), ContainsSubstring("locked"));
+	CHECK_THAT(reject(client, "transport.toggle"), ContainsSubstring("locked"));
+	CHECK(held.release());
+	run(client, "transport.stop", {{"confirmed", true}});
+	run(client, "audio.stop");
 }
 
 TEST_CASE("transport commands set the pre-roll and post-roll", "[integration]")

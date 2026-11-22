@@ -3332,13 +3332,14 @@ namespace gnubase::engine
 			"Repeat Forever loop: playback then goes on with the next chain step, or past the chain if the looping "
 			"step is the last one.",
 			nullptr, [this](const Json&) { play(); });
-		// Lock Record: a recording doesn't stop or punch out by these commands, only by a confirmed stop.
-		const auto unlocked = [this]
+		// Lock Record: a recording doesn't stop or punch out by these commands unless that is confirmed. Also one that
+		// the audio thread punched in on its own and the command thread hasn't taken over yet (recordingNow).
+		const auto unlocked = [this](const Json& parameters, bool punchOut)
 		{
-			// A count-in hasn't recorded anything yet.
-			require(!m_transport.settings().lockRecord || !m_transport.recording() || m_transport.countingIn(),
-				"recording is locked: stop it with transport.stop confirmed, or unlock it with transport.set "
-				"lockRecord false first");
+			require(parameters.value("confirmed", false) || !m_transport.settings().lockRecord ||
+					!m_transport.recordingNow(),
+				std::string("recording is locked: ") + (punchOut ? "punch out" : "stop it") +
+					" with confirmed, or unlock it with transport.set lockRecord false first");
 		};
 		command("transport.stop",
 			"Stops playback and recording. With returnToStart the cursor goes back to where playback started or was "
@@ -3353,8 +3354,7 @@ namespace gnubase::engine
 			R"({"type": "object", "additionalProperties": false, "properties": {"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
-				if (!parameters.value("confirmed", false))
-					unlocked();
+				unlocked(parameters, false);
 				sent(m_transport.stop());
 			});
 		command("transport.record",
@@ -3363,23 +3363,27 @@ namespace gnubase::engine
 			"punchIn before the left locator, recording starts at the left locator instead. From stop, with the "
 			"metronome's count-in on (metronome.set countIn), the metronome counts in first and playback starts at "
 			"the exact sample where the count-in ends; transport.stop ends a count-in. record false punches out "
-			"and playback goes on, refused while lockRecord is on; the takes come later, with recording.added, as "
+			"and playback goes on, while lockRecord is on only with confirmed; the takes come later, with "
+			"recording.added, as "
 			"for transport.stop. Record-enabled tracks may monitor their input "
 			"meanwhile, by the user setting audio.autoMonitoring (see channel.set).",
-			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"}}})",
+			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"},
+				"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
 				const bool on = parameters.value("record", true);
 				if (!on)
-					unlocked();
+					unlocked(parameters, true);
 				record(on);
 			});
 		command("transport.toggle",
 			"Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, "
 			"punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, "
-			"off punches out). While lockRecord is on, it neither stops nor punches out a recording.",
+			"off punches out). While lockRecord is on, it neither stops nor punches out a recording unless it gets "
+			"confirmed.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"setting": {"type": "string",
-				"enum": ["cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome", "record"]}}})",
+				"enum": ["cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome", "record"]},
+				"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
 				const std::string setting = parameters.value("setting", "");
@@ -3387,7 +3391,7 @@ namespace gnubase::engine
 				{
 					const bool on = m_transport.recording() || m_transport.countingIn();
 					if (on)
-						unlocked();
+						unlocked(parameters, true);
 					record(!on);
 					return;
 				}
@@ -3411,7 +3415,7 @@ namespace gnubase::engine
 				}
 				if (m_transport.playing())
 				{
-					unlocked();
+					unlocked(parameters, false);
 					sent(m_transport.stop());
 				}
 				else
@@ -3446,8 +3450,8 @@ namespace gnubase::engine
 			"recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or "
 			"replace. midiCycleRecordMode: what a MIDI cycle recording makes of its laps (see recording.add): mix "
 			"(the default), overwrite, keepLast, stacked or mixStacked. lockRecord: Lock Record, which "
-			"keeps a recording from stopping or punching out by accident: transport.stop stops it only with "
-			"confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at "
+			"keeps a recording from stopping or punching out by accident: transport.stop, transport.record and "
+			"transport.toggle stop it or punch out only with confirmed, and recording ignores the punch out at "
 			"the right locator; it stays on until it is set off.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
 				"left": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},

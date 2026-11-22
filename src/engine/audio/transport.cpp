@@ -81,6 +81,13 @@ namespace gnubase::engine
 		return true;
 	}
 
+	bool Transport::recordingNow() const
+	{
+		if (m_appliedRequests.load(std::memory_order_acquire) != m_sentRequests)
+			return m_requestedRecording && !m_requestedCountingIn;   // what was asked last comes first, as in sync()
+		return (m_state.load(std::memory_order_acquire) & 6U) == 2U; // recording, not counting in
+	}
+
 	time::Samples Transport::position() const
 	{
 		// The audio thread may apply a locate before its count is stored, so a count it has reached or passed is no

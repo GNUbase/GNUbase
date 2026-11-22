@@ -96,14 +96,17 @@ transport's record state and the record mode setting.
 - **Lock Record** (#104, p. 356) keeps a recording from ending by accident. `transport.set` with `lockRecord`, which
   the Transport menu's Lock Record and Unlock Record set (the reference has key commands without default keys for
   them; the key commands editor will bind them), turns it on and off; it stays on for later recordings until it is
-  turned off. While it is on and the transport records, `transport.stop` refuses unless it gets `confirmed`, and
-  `transport.toggle` and `transport.record` refuse to stop or punch out; playback that doesn't record stops as
-  usual. The audio thread ignores the automatic punch out at the right locator, so with `audio.stopAfterPunchOut`
-  playback doesn't stop there either. In the UI, a stop, Start/Stop or Record that the engine refused this way opens
+  turned off. While it is on and the transport records, `transport.stop`, `transport.toggle` and `transport.record`
+  refuse to stop or punch out unless they get `confirmed`, and their reason says which they refused; playback that
+  doesn't record stops as usual. The check reads the audio thread's state (`Transport::recordingNow`), so a stop just
+  after the punch in at the left locator, before the command thread has taken it over, is refused too. The audio
+  thread ignores the automatic punch out at the right locator, so with `audio.stopAfterPunchOut` playback doesn't stop
+  there either. In the UI, a stop, Start/Stop or Record that the engine refused this way opens
   `resources/ui/lock-record.rml` (`app::AppUi` hears the refusal with `EngineBinding::onResult` and checks
-  `transport.get`): Stop sends `transport.stop` with `confirmed`, Cancel goes on recording. Tests:
-  `tests/transport_tests.cpp` (the punch out ignored for any block size, the commands) and
-  `tests/lockrecord_tests.cpp` (the menu and the dialog in the app's UI).
+  `transport.get`), which asks to confirm what was refused: Stop sends `transport.stop` with `confirmed`, Punch Out
+  `transport.record` with `record` false and `confirmed`, so playback goes on; Cancel goes on recording. Tests:
+  `tests/transport_tests.cpp` (the punch out ignored for any block size, the commands, a stop right after the punch
+  in) and `tests/lockrecord_tests.cpp` (the menu and the dialog in the app's UI).
 - **Remaining record time** (#104, p. 356). `recording.remainingTime` divides the space available on the disk of the
   record folder (the nearest folder above it that exists, while it doesn't yet) by what the tracks that would record
   write a second: the project's sample rate times the record bit depth's bytes times their channels, uncompressed,

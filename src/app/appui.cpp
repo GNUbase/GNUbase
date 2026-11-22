@@ -1337,19 +1337,21 @@ namespace gnubase::app
 			});
 
 		// Lock Record (docs/features/recording.md): a stop or punch out that the engine refused because recording is
-		// locked asks whether to stop anyway (lock-record.rml).
+		// locked asks whether to do it anyway (lock-record.rml); the engine's reason says which it was.
 		for (const char* command : {"transport.stop", "transport.toggle", "transport.record"})
 			m_lockRecord.push_back(m_binding.onResult(command,
 				[this](const engine::Result& result)
 				{
 					if (result.ok())
 						return;
+					const bool punchOut = result.error.find("punch out") != std::string::npos;
 					m_binding.send("transport.get", engine::Json::object(),
-						[this](const engine::Result& status)
+						[this, punchOut](const engine::Result& status)
 						{
 							if (status.ok() && status.value.at("lockRecord").get<bool>() &&
 								status.value.at("recording").get<bool>())
-								openOnce(m_main, "lock-record.rml", m_lockRecordDialog);
+								openOnce(m_main, "lock-record.rml", m_lockRecordDialog,
+									{{"action", punchOut ? "punchOut" : "stop"}});
 						});
 				}));
 		// The status line's remaining record time changes as the disk fills up, also by other programs.
