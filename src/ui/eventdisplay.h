@@ -463,6 +463,7 @@ namespace gnubase::ui
 			VolumePoint,   // a point of its volume curve, with the draw tool
 			Automation,    // on an automation track (automationtracks.cpp)
 			TimeWarp,      // the time warp tool's, on release (eventtimewarp.cpp)
+			Repeat,        // repeats the selection to the right, m_repeatCount times (#2009)
 		};
 
 		// An automation lane of the project as the display shows it: points in seconds, values from 0 (bottom) to 1.
@@ -683,6 +684,14 @@ namespace gnubase::ui
 		bool inLowerHalf(size_t lane, double y) const;
 		// The edge of the event at x dp across the lanes that a press there resizes: -1 its start, 1 its end, 0 none.
 		int edgeAt(const Shown& shown, double x) const;
+		// Whether a press with the keys at x, y dp on the event repeats the selection by dragging (#2009, reference
+		// manual p. 271), on lanes at least two rows high: the middle of its right border, above the lower corner,
+		// without keys or with Shift; or the lower right corner of the last selected event with Alt, or Alt and Shift.
+		bool repeatHandleAt(const Shown& shown, double x, double y, const std::string& keys) const;
+		// The selection from its first start to its last end, in seconds; nothing if none of it shows.
+		std::optional<TimeSpan> selectionBlock() const;
+		// How many copies a repeat drag dx dp to the right makes: the snapped distance in the selection's lengths.
+		int repeatCount(double dx) const;
 		// The edge of the audio event at x, y dp that a press of the play tool in scrub mode resizes, scrubbing along:
 		// as edgeAt, but only at the event's lower left or right corner, the lower half of its lane, so that the rest
 		// of the edge scrubs the track (reference manual p. 268); 0 for none.
@@ -971,6 +980,8 @@ namespace gnubase::ui
 		int64_t m_right = 0;
 		bool m_sizingMovesContents = false;
 		double m_resizeFrom = 0.0;      // the pressed event's edge when a drag of edges started, in seconds
+		int m_repeatCount = 0;          // copies a Drag::Repeat makes, which the selected events show
+		bool m_repeatShared = false;    // and whether they are shared copies
 		engine::Json m_resizeWanted;    // event.previewResize's parameters for where the edge is now, null for none
 		engine::Json m_resizeAsked;     // those of the last one sent
 		bool m_resizeAsking = false;    // its answer is on its way

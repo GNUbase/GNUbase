@@ -1528,6 +1528,12 @@ meter .meter-peak
 	cursor: ns-resize;
 }
 
+/* The repeat handle (docs/features/parts-and-events.md): the OS's pointing hand. */
+.event-display .event-area[pointer=repeat]
+{
+	cursor: pointer;
+}
+
 /* The name of a tool chosen with a key command, for a moment, at the top of the event lanes; the document gives it
    the tooltip's look. */
 .event-display .tool-notification

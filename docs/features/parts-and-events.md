@@ -104,6 +104,8 @@ modifiers, which change the keys below):
 | Left, Right | Selects the event before or after the selected one on its track | p. 253 |
 | Up, Down | Selects the track above or below, and its first event; an empty track keeps the selected events | pp. 218, 253 |
 | Drag within 6 dp of an event's left or right edge | Resizes the selection: normal sizing, or sizing moves contents (`setSizingMovesContents`); Escape cancels the drag | p. 265 |
+| Drag of the repeat handle to the right; with Shift | Repeats the selection: real copies, shared ones with Shift (see below) | p. 271 |
+| Alt and a drag of the last selected event's lower right corner to the right; with Shift too | The same: real copies, shared ones with Alt and Shift | p. 271 |
 | Alt and a click | Splits the event there | p. 268 |
 | Double click on an empty MIDI or instrument lane | Adds a one-bar part at the bar, or one between the locators when the click is between them | p. 251 |
 | Double click on an empty audio lane between the locators | Adds an audio part from one locator to the other | p. 250 |
@@ -127,6 +129,16 @@ submenu `edit.selectAll`, `edit.selectNone`, `edit.invertSelection`, `edit.selec
 on the track list's selected tracks). `edit.repeat` opens the Repeat Events dialog (`resources/ui/repeat-events.rml`,
 reference manual pp. 271–272): a count from 1 to 1000 and Shared Copies, which OK passes to `repeat(count, shared)`.
 The count is edited as the dialog opens, so Mod+K, a number and Enter repeat the selection.
+Events also repeat by dragging (#2009, p. 271), on lanes at least two rows high: 80 dp, twice the default track
+height, as GNUbase sets track heights in dp (`trackLayout.set`), not in rows. The repeat handle is an event's right
+border (its 6 dp edge) from a quarter of the lane's height down to the middle, between the fade handle at the top and
+the lower corner; over it the pointer is the pointing hand (`pointer` attribute `repeat`). A drag of it to the right
+repeats the selection, or the pressed event if it isn't selected, and with Shift held at the press makes shared copies.
+With Alt held, and Shift too for shared copies, the lower right corner of the last selected event (the lower half of
+its 6 dp edge) repeats instead of resizing or splitting. The copies follow the drag back to back after the selection,
+as many as the snapped distance covers in steps of the selection's length (from its first start to its last end),
+rounded to the nearest; the selected events show them while the button is held, and the release makes them with
+`repeat(count, shared)`, the dialog's `event.duplicate`, one undo step. Elsewhere the border still resizes, as before.
 Copies, duplicates and new parts become the selection. `app::AppUi` binds the reference's keys for them in the project
 window ([key-commands.md](key-commands.md)): Delete and Backspace delete, Mod+D duplicates, Mod+K repeats, Alt+X splits
 at the cursor, Mod and the arrows nudge, and so on.
@@ -191,7 +203,9 @@ Not yet: the info line (#89, which `event.get` feeds), and scrolling an event th
   to the cursor, splitting at the cursor and the locators, gluing, filling the locators with the last copy cut,
   converting a shared copy to a real one), the select submenu, muted events shown greyed out and locked ones kept; the
   lock and shared icons inside the event's upper right corner, side by side, following `event.set`, a shared
-  `event.copy`, `event.toRealCopy` and undo; a
+  `event.copy`, `event.toRealCopy` and undo; repeating by dragging: the handle's pointer, a drag over two lengths
+  showing and making two real copies in one undo step, with Shift shared ones, less than half a length none, Alt at the
+  last selected event's lower right corner, and a lane lower than two rows resizing there instead; a
   drag of an audio event's end and start showing, at every step, the box, waveform, fades and volume line the release
   leaves: both edges in both sizing modes, snapped and with Disable Snapping pressed and released mid-drag, while
   another client moves the event; an audio event and a MIDI part selected together, and a second drag pressed before the

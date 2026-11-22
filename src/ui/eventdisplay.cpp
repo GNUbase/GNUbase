@@ -898,6 +898,7 @@ namespace gnubase::ui
 			if (lane < muted.size())
 				muted[lane].events.push_back({piece.start, piece.length});
 		const double shift = m_drag == Drag::Events && m_dragMoved ? m_dragDx * m_view.scale : 0.0;
+		const std::optional<TimeSpan> repeated = m_drag == Drag::Repeat ? selectionBlock() : std::nullopt;
 		for (const Shown& shown : m_events)
 		{
 			if (shown.mute && !shown.onTrackLane)
@@ -918,6 +919,9 @@ namespace gnubase::ui
 						length = m_time.tempo.toSeconds(m_time.tempo.toTicks(shown.end) + *m_dragTicks) - start;
 				}
 				selected[static_cast<size_t>(lane)].events.push_back({start, length});
+				// A repeat drag shows its copies after the selection, back to back.
+				for (int copy = 1; repeated && copy <= m_repeatCount; ++copy)
+					selected[static_cast<size_t>(lane)].events.push_back({start + (copy * repeated->length), length});
 			}
 		}
 		for (std::vector<EventLanes::Lane>* overlay : {&muted, &selected, &snapPoints})
@@ -1803,6 +1807,7 @@ namespace gnubase::ui
 		case Drag::Volume:
 		case Drag::VolumePoint:
 		case Drag::TimeWarp:
+		case Drag::Repeat:
 			areaMove(event, dx, dy);
 			return;
 		case Drag::None:

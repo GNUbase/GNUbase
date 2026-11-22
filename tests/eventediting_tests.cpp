@@ -3928,3 +3928,78 @@ TEST_CASE("grid lines show the grid behind the events, and a line an audio event
 	f.call("event.resize", {{"events", {f.event}}, {"edge", "start"}, {"delta", 18000}});
 	REQUIRE(f.waitUntil([&] { return points().empty(); }));
 }
+
+TEST_CASE("a drag of the handle in the middle of an event's right border repeats it, Alt at its lower right corner too",
+	"[unit]")
+{
+	// #2009 (reference manual p. 271): the part from 1 to 3 seconds, 100 to 300 dp across, on the MIDI track two rows
+	// high, its lane from 40 to 120 dp down: the handle from 60 to 80 dp, the lower corner from 80 dp.
+	Fixture f;
+	const auto track = f.parts()[0].at("track").get<uint64_t>();
+	f.display.setTrackHeights({track}, 80.0);
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").at(1).height == 80.0F; }));
+	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	const auto pointerAt = [&f, area](double x, double y)
+	{
+		f.automation.move(std::nullopt, f.at(x, y));
+		f.step();
+		return area->GetAttribute<std::string>("pointer", "");
+	};
+	CHECK(pointerAt(297, 70) == "repeat");
+	CHECK(pointerAt(297, 100) == "resize");
+	const size_t steps = f.call("history.get").at("steps").size();
+
+	SECTION("a drag over two lengths shows and makes two real copies after it, in one undo step")
+	{
+		f.automation.press(std::nullopt, f.at(297, 70), ui::MouseButton::Left);
+		f.automation.move(std::nullopt, f.at(697, 70));
+		f.step();
+		const auto& preview = f.lanes("selected-events")[1].events;
+		REQUIRE(preview.size() == 3);
+		CHECK(preview[1].start == 3.0);
+		CHECK(preview[2].start == 5.0);
+		CHECK(preview[2].length == 2.0);
+		f.automation.release(std::nullopt, f.at(697, 70), ui::MouseButton::Left);
+		REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+		CHECK(f.parts()[1].at("position") == 6 * g_quarter);
+		CHECK(f.parts()[2].at("position") == 10 * g_quarter);
+		CHECK(f.parts()[1].at("shared") == 0);
+		CHECK(f.call("history.get").at("steps").size() == steps + 1);
+	}
+	SECTION("with Shift, shared copies")
+	{
+		f.drag(297, 70, 697, 70, {"shift"});
+		REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+		CHECK(f.parts()[1].at("shared") != 0);
+		CHECK(f.parts()[2].at("shared") == f.parts()[1].at("shared"));
+	}
+	SECTION("a drag less than half a length makes none")
+	{
+		f.drag(297, 70, 380, 70);
+		f.call("history.get"); // the engine has what a release would have sent by now
+		f.step();
+		CHECK(f.parts().size() == 1);
+		CHECK(f.parts()[0].at("length") == 4 * g_quarter);
+	}
+	SECTION("with Alt, the lower right corner of the last selected event repeats instead of resizing or splitting")
+	{
+		f.display.select({f.part});
+		CHECK(pointerAt(297, 100) == "resize");
+		f.automation.move(std::nullopt, f.at(296, 100), {"alt"}); // RmlUi sends a move only where the mouse moves
+		f.step();
+		CHECK(area->GetAttribute<std::string>("pointer", "") == "repeat");
+		f.drag(297, 100, 497, 100, {"alt"});
+		REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+		CHECK(f.parts()[1].at("position") == 6 * g_quarter);
+		CHECK(f.parts()[0].at("length") == 4 * g_quarter);
+	}
+	SECTION("a track lower than two rows has no handle: the border resizes")
+	{
+		f.display.setTrackHeights({track}, 40.0);
+		REQUIRE(f.waitUntil([&f] { return f.lanes("events").at(1).height == 40.0F; }));
+		CHECK(pointerAt(297, 50) == "resize");
+		f.drag(297, 50, 397, 50);
+		REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") != 4 * g_quarter; }));
+		CHECK(f.parts().size() == 1);
+	}
+}
