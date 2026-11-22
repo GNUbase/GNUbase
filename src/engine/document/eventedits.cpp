@@ -2773,9 +2773,13 @@ namespace gnubase::engine
 				"the project's sample rate changed since the range was copied: copy it again");
 			const Json& parameters = context.parameters();
 			const bool given = parameters.contains("position") || parameters.contains("positionTicks");
+			// Paste at Origin (reference manual p. 270): where the range was copied from.
+			const bool origin = parameters.value("origin", false);
+			require(!(origin && given), "give origin or a position, not both");
 			const Destination to = destinationFrom(project, parameters,
 				given ? std::nullopt
-					  : std::optional(context.call("transport.get").at("position").get<time::Samples>()));
+					  : std::optional(origin ? clipboard.start
+											 : context.call("transport.get").at("position").get<time::Samples>()));
 			const time::Samples at = to.at;
 			// Onto the tracks it came from, or from track on down.
 			std::vector<ObjectId> tracks = clipboard.tracks;
@@ -3520,7 +3524,8 @@ namespace gnubase::engine
 		addEdit(engine,
 			{"range.paste", 1,
 				"Pastes the range clipboard (range.copy, range.cut) at position (project samples, default the project "
-				"cursor), or at positionTicks, a tick of the tempo map: onto the tracks it was copied from, or onto "
+				"cursor), or at positionTicks, a tick of the tempo map, or with origin (Paste at Origin) where it was "
+				"copied from: onto the tracks it was copied from, or onto "
 				"track and the tracks below it in the project's order that aren't hidden (trackVisibility.set), one "
 				"for each copied track, which must take the copied events; a folded folder (trackLayout.set) counts "
 				"as one track there, and the tracks inside one that were copied go into the tracks inside the one "
@@ -3531,8 +3536,8 @@ namespace gnubase::engine
 				"lands, on a lane of the same parameter. time (Paste Time) first makes room as long as the copied "
 				"range, as range.insertSilence does. A clipboard copied at another sample rate than the project's is "
 				"refused. Returns the new events.",
-				schema(
-					{{"position", integer()}, {"positionTicks", integer()}, {"track", integer()}, {"time", boolean()}},
+				schema({{"position", integer()}, {"positionTicks", integer()}, {"origin", boolean()},
+						   {"track", integer()}, {"time", boolean()}},
 					{}),
 				eventsResult(), false},
 			"Paste", [this](Project& project, CommandContext& context)

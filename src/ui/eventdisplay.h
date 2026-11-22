@@ -375,7 +375,8 @@ namespace gnubase::ui
 		// With the range selection tool,
 		// edit.delete deletes the range; edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence,
 		// edit.splitRange and edit.cropRange edit it, edit.paste and edit.pasteTime paste at its start (without a
-		// range at the project cursor) and edit.globalCopy copies the locator range on every track; edit.duplicate
+		// range at the project cursor), edit.pasteAtOrigin where it was copied from (range.paste origin) and
+		// edit.globalCopy copies the locator range on every track; edit.duplicate
 		// copies its contents to its end, where the range goes; edit.nudgeLeft and edit.nudgeRight move the range by
 		// a grid step without its contents, the start and end nudges its edges, and edit.nudgeTopUp,
 		// edit.nudgeTopDown, edit.nudgeBottomUp and edit.nudgeBottomDown take a track in or out at its top or bottom
@@ -387,7 +388,8 @@ namespace gnubase::ui
 		// Whether the action can do something now, for menus and keys to disable it: the actions that only edit the
 		// selection range (edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence, edit.cropRange,
 		// edit.splitRange and the top and bottom nudges) need a range, all but edit.splitRange and the nudges one with
-		// a length; edit.paste and edit.pasteTime need something copied, a rangeClipboard.changed since the project
+		// a length; edit.paste, edit.pasteTime and edit.pasteAtOrigin need something copied, a rangeClipboard.changed
+		// since the project
 		// opened. The others always can.
 		bool canRun(const std::string& action) const;
 

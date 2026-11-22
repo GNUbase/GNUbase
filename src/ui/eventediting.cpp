@@ -563,6 +563,8 @@ namespace gnubase::ui
 			rangeAction("edit.cutTime", "range.cut", {{"time", true}}),
 			rangeAction("edit.deleteTime", "range.delete", {{"time", true}}),
 			{"edit.pasteTime", paste(true)},
+			// Paste at Origin (reference manual p. 270): where it was copied from, onto the tracks it came from.
+			{"edit.pasteAtOrigin", [this] { edit("range.paste", {{"origin", true}}, !m_range); }},
 			rangeAction("edit.insertSilence", "range.insertSilence", Json::object()),
 			rangeAction("edit.splitRange", "range.split", Json::object(), false),
 			rangeAction("edit.cropRange", "range.crop", Json::object()),
@@ -726,7 +728,7 @@ namespace gnubase::ui
 
 	bool EventDisplay::canRun(const std::string& action) const
 	{
-		if (action == "edit.paste" || action == "edit.pasteTime")
+		if (action == "edit.paste" || action == "edit.pasteTime" || action == "edit.pasteAtOrigin")
 			return m_copied;
 		const auto found = m_rangeActions.find(action);
 		return found == m_rangeActions.end() || (m_range && (!found->second || m_range->end > m_range->start));

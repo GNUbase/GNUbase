@@ -122,6 +122,7 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Mod+Shift+I | `editor.editInPlace` | Edit In-Place ([in-place-editor.md](in-place-editor.md)) |
 | Mod+X, Mod+C, Mod+V | `edit.cut`, `edit.copy`, `edit.paste` | Cut, Copy, Paste ([range-editing.md](range-editing.md)) |
 | Mod+Shift+X, Shift+Backspace, Mod+Shift+V | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Cut Time, Delete Time, Paste Time |
+| Mod+Shift+Down | `edit.pasteAtOrigin` | Paste at Origin |
 | Mod+Shift+E | `edit.insertSilence` | Insert Silence |
 | Shift+X | `edit.splitRange` | Split (range) |
 | J | `edit.snap` | Snap On/Off ([snap.md](snap.md)) |

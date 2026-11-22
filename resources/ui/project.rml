@@ -255,6 +255,7 @@
 		<menuitem command="edit.cut">Cut</menuitem>
 		<menuitem command="edit.copy">Copy</menuitem>
 		<menuitem command="edit.paste">Paste</menuitem>
+		<menuitem command="edit.pasteAtOrigin">Paste at Origin</menuitem>
 		<menuitem command="edit.delete">Delete</menuitem>
 		<menuseparator/>
 		<menuitem id="range-submenu">Range
