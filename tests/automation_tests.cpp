@@ -1751,6 +1751,33 @@ TEST_CASE("automation.paste onto parameters of tracks adds a lane only where it 
 	run(client, "history.undo");
 	CHECK(run(client, "project.get") == before);
 
+	// A controller or pitch bend target without a channel is channel 0, as automationLane.add takes it.
+	const ObjectId controller =
+		idOf(run(client, "automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 7}}}}),
+			"lane");
+	const ObjectId bend =
+		idOf(run(client, "automationLane.add", {{"track", midi}, {"target", {{"type", "pitchBend"}, {"channel", 0}}}}),
+			"lane");
+	for (const ObjectId id : {controller, bend})
+		run(client, "automationPoint.add", {{"lane", id}, {"points", {{{"position", 0}, {"value", 0.25}}}}});
+	REQUIRE(run(client, "automation.copy", {{"lanes", {controller, bend}}}).at("lanes") == 2);
+	const ObjectId midiOther = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	CHECK(run(client, "automation.paste",
+			  {{"targets",
+				  {{{"track", midiOther}, {"target", {{"type", "controller"}, {"number", 7}}}},
+					  {{"track", midiOther}, {"target", {{"type", "pitchBend"}}}}}}})
+			  .at("lanes")
+			  .size() == 2);
+	CHECK(run(client, "automationLane.list", {{"track", midiOther}}).at("lanes").size() == 2);
+
+	// A misspelled target is refused, as automationLane.add refuses it.
+	CHECK_THAT(
+		reject(client, "automation.paste", {{"targets", {{{"track", midiOther}, {"target", {{"type", "cc"}}}}}}}),
+		ContainsSubstring("must be one of"));
+	CHECK_THAT(reject(client, "automation.paste",
+				   {{"targets", {{{"track", midiOther}, {"target", {{"type", "controller"}, {"cc", 7}}}}}}}),
+		ContainsSubstring("is not allowed"));
+
 	CHECK_THAT(reject(client, "automation.paste", {{"tracks", {other}}, {"targets", Json::array()}}),
 		ContainsSubstring("not both"));
 	CHECK_THAT(

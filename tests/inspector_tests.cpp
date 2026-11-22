@@ -713,7 +713,7 @@ TEST_CASE("the info line shows the selected automation points, and its Terminato
 	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("markers").size() == 1; }));
 	window.display.selectPoints({{lane, {first}}});
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "points"); }));
-	window.app.appUi().markerLines()->setSelection({marker});
+	window.app.appUi().markerLines()->pick({marker}); // as a click does, which deselects the points (#2011)
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
 	CHECK(hasClass(window.app, "#info-line", "markers"));
 	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=name]", "unavailable"));

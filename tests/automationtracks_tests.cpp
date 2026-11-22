@@ -1364,4 +1364,18 @@ TEST_CASE(
 	f.app.keys().run("edit.delete", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("signatures").size() == 2; }));
 	CHECK(points() == 1);
+
+	// Points, then a marker in the markers window, whose Sync Selection selects it in the project window: it stays
+	// selected there and the points go.
+	f.clickAt(f.x(1.0), f.y(volume, 0.5));
+	REQUIRE(f.display.selectedPoints().size() == 1);
+	f.app.ui().key(std::nullopt, "Mod+M");
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.app.appUi().markers() != nullptr && f.app.appUi().markers()->markers().size() == 1; }));
+	f.app.ui().click(
+		f.app.appUi().markersWindow(), {"#marker-rows .type", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(f.app.waitUntil([&] { return markers.selection() == std::vector<uint64_t>{marker}; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.display.selectedPoints().empty());
+	CHECK(markers.selection() == std::vector<uint64_t>{marker});
 }

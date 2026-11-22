@@ -3598,7 +3598,7 @@ namespace gnubase::engine
 						   {"targets",
 							   {{"type", "array"},
 								   {"items",
-									   schema({{"track", integer()}, {"target", {{"type", "object"}}}},
+									   schema({{"track", integer()}, {"target", automationTargetSchema()}},
 										   {"track", "target"})}}}},
 					{}),
 				schema({{"lanes", events()}}, {"lanes"}), false},
