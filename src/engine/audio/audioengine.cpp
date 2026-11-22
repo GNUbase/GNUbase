@@ -35,7 +35,7 @@ namespace gnubase::engine
 		constexpr auto g_cueInterval = std::chrono::milliseconds(5);
 		constexpr auto g_activityInterval = std::chrono::milliseconds(100); // between two midi.activity runs
 		// The longest pre-roll and post-roll: an hour at 768 kHz.
-		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000;
+		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000; // in transport.set's schema too
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
 		// Rounds of the offline wait for the samplers' samples (10 minutes of 30 s) before a render gives up (#1343).
@@ -2757,8 +2757,11 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"audio.stop", 1,
-				"Stops the audio device. Does nothing if it isn't running. While the device is lost (see audio.reset), "
-				"it stays stopped once it returns (restart in lost), and audio.changed announces that.",
+				"Stops the audio device. Does nothing if it isn't running. What the transport did on its own until "
+				"then, "
+				"such as a punch in, is taken over and announced with transport.changed (see transport.update). While "
+				"the device is lost (see audio.reset), it stays stopped once it returns (restart in lost), and "
+				"audio.changed announces that.",
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
@@ -2766,6 +2769,9 @@ namespace gnubase::engine
 				if (m_device && m_device->running())
 				{
 					stopDevice();
+					// What the audio thread changed since the cue thread last looked: it ends without a last look.
+					if (syncTransport())
+						context.emit("transport.changed", transportStatus());
 					if (m_lost)
 						m_lost->restart = false;
 					context.emit("audio.changed", status());
@@ -3332,13 +3338,14 @@ namespace gnubase::engine
 			"Repeat Forever loop: playback then goes on with the next chain step, or past the chain if the looping "
 			"step is the last one.",
 			nullptr, [this](const Json&) { play(); });
-		// Lock Record: a recording doesn't stop or punch out by these commands, only by a confirmed stop.
-		const auto unlocked = [this]
+		// Lock Record: a recording doesn't stop or punch out by these commands unless that is confirmed. Also one that
+		// the audio thread punched in on its own and the command thread hasn't taken over yet (recordingNow).
+		const auto unlocked = [this](const Json& parameters, bool punchOut)
 		{
-			// A count-in hasn't recorded anything yet.
-			require(!m_transport.settings().lockRecord || !m_transport.recording() || m_transport.countingIn(),
-				"recording is locked: stop it with transport.stop confirmed, or unlock it with transport.set "
-				"lockRecord false first");
+			require(parameters.value("confirmed", false) || !m_transport.settings().lockRecord ||
+					!m_transport.recordingNow(),
+				std::string("recording is locked: ") + (punchOut ? "punch out" : "stop it") +
+					" with confirmed, or unlock it with transport.set lockRecord false first");
 		};
 		command("transport.stop",
 			"Stops playback and recording. With returnToStart the cursor goes back to where playback started or was "
@@ -3353,8 +3360,7 @@ namespace gnubase::engine
 			R"({"type": "object", "additionalProperties": false, "properties": {"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
-				if (!parameters.value("confirmed", false))
-					unlocked();
+				unlocked(parameters, false);
 				sent(m_transport.stop());
 			});
 		command("transport.record",
@@ -3363,31 +3369,37 @@ namespace gnubase::engine
 			"punchIn before the left locator, recording starts at the left locator instead. From stop, with the "
 			"metronome's count-in on (metronome.set countIn), the metronome counts in first and playback starts at "
 			"the exact sample where the count-in ends; transport.stop ends a count-in. record false punches out "
-			"and playback goes on, refused while lockRecord is on; the takes come later, with recording.added, as "
+			"and playback goes on, while lockRecord is on only with confirmed; the takes come later, with "
+			"recording.added, as "
 			"for transport.stop. Record-enabled tracks may monitor their input "
 			"meanwhile, by the user setting audio.autoMonitoring (see channel.set).",
-			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"}}})",
+			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"},
+				"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
 				const bool on = parameters.value("record", true);
 				if (!on)
-					unlocked();
+					unlocked(parameters, true);
 				record(on);
 			});
 		command("transport.toggle",
 			"Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, "
 			"punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, "
-			"off punches out). While lockRecord is on, it neither stops nor punches out a recording.",
+			"off punches out, or cancels a recording that waits for its own start; with punchIn on, playback still "
+			"punches in at the left locator). While lockRecord is on, it neither stops nor punches out a recording "
+			"unless it gets confirmed.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"setting": {"type": "string",
-				"enum": ["cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome", "record"]}}})",
+				"enum": ["cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome", "record"]},
+				"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
 				const std::string setting = parameters.value("setting", "");
 				if (setting == "record")
 				{
-					const bool on = m_transport.recording() || m_transport.countingIn();
+					// Also while it waits for where it starts, during the pre-roll: off cancels it (#583).
+					const bool on = m_transport.recording() || m_transport.countingIn() || m_transport.recordWaits();
 					if (on)
-						unlocked();
+						unlocked(parameters, true);
 					record(!on);
 					return;
 				}
@@ -3411,7 +3423,7 @@ namespace gnubase::engine
 				}
 				if (m_transport.playing())
 				{
-					unlocked();
+					unlocked(parameters, false);
 					sent(m_transport.stop());
 				}
 				else
@@ -3446,16 +3458,17 @@ namespace gnubase::engine
 			"recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or "
 			"replace. midiCycleRecordMode: what a MIDI cycle recording makes of its laps (see recording.add): mix "
 			"(the default), overwrite, keepLast, stacked or mixStacked. lockRecord: Lock Record, which "
-			"keeps a recording from stopping or punching out by accident: transport.stop stops it only with "
-			"confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at "
+			"keeps a recording from stopping or punching out by accident: transport.stop, transport.record and "
+			"transport.toggle stop it or punch out only with confirmed, and recording ignores the punch out at "
 			"the right locator; it stays on until it is set off.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
 				"left": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},
 				"right": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},
 				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"},
 				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"},
-				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},
-				"postRollAmount": {"type": "integer"}, "metronome": {"type": "boolean"},
+				"preRollAmount": {"type": "integer", "minimum": 0, "maximum": 2764800000}, "postRoll": {"type": "boolean"},
+				"postRollAmount": {"type": "integer", "minimum": 0, "maximum": 2764800000},
+				"metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string"}, "midiRecordMode": {"type": "string"},
 				"midiCycleRecordMode": {"type": "string"},
 				"lockRecord": {"type": "boolean"}}})",

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Lock Record (#104, reference manual p. 356, docs/features/recording.md) in the app's UI: the Transport menu locks
-// and unlocks recording, and stopping a locked recording asks first.
+// and unlocks recording, and stopping or punching out a locked recording asks first.
 #include "uiapp.h"
 
 #include "ui/automation.h"
@@ -56,9 +56,20 @@ TEST_CASE("stopping a locked recording asks first, and Unlock Record stops it at
 	REQUIRE(app.waitUntil([&] { return !shown(app, "#lock-record-dialog"); }));
 	CHECK(transport(app).at("recording") == true);
 
-	// Start/Stop asks too; Stop stops, and the lock stays.
+	// Record asks to punch out; Punch Out ends the recording, and playback goes on (#645).
+	app.ui().key(std::nullopt, "Num*");
+	REQUIRE(app.waitUntil([&] { return shown(app, "#lock-record-dialog"); }));
+	CHECK(app.ui().dom(std::nullopt, "#lock-record-confirm", 0).at("elements")[0].value("text", "") == "Punch Out");
+	click(app, "#lock-record-confirm");
+	REQUIRE(app.waitUntil([&] { return !transport(app).at("recording").get<bool>(); }));
+	CHECK(transport(app).at("playing") == true);
+	app.call("transport.record");
+
+	// Start/Stop asks to stop; Stop stops, and the lock stays.
 	app.ui().key(std::nullopt, "Space");
-	click(app, "#lock-record-stop");
+	REQUIRE(app.waitUntil([&] { return shown(app, "#lock-record-dialog"); }));
+	CHECK(app.ui().dom(std::nullopt, "#lock-record-confirm", 0).at("elements")[0].value("text", "") == "Stop");
+	click(app, "#lock-record-confirm");
 	REQUIRE(app.waitUntil([&] { return !transport(app).at("playing").get<bool>(); }));
 	CHECK(!shown(app, "#lock-record-dialog"));
 	CHECK(transport(app).at("lockRecord") == true);
