@@ -3890,3 +3890,177 @@ TEST_CASE("Group Editing selects parts too, on the same lane only, by the outerm
 	f.display.select({parts[0]});
 	CHECK(f.display.selection() == sorted(parts));
 }
+
+TEST_CASE("locked events and shared copies show an icon in their upper right corner", "[unit]")
+{
+	Fixture f;
+	const auto mark = [&f](uint64_t id, const std::string& kind)
+	{ return f.document.QuerySelector(".part-mark." + kind + "[part=" + std::to_string(id) + "]"); };
+	CHECK(mark(f.event, "locked") == nullptr);
+
+	// A lock icon on a locked event (reference manual p. 276), inside it at its right end: 2 to 2.5 seconds.
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") != nullptr; }));
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	Rml::Element* lock = mark(f.event, "locked");
+	CHECK(lock->GetAbsoluteLeft() >= lanes->GetAbsoluteLeft() + 200.0F);
+	CHECK(lock->GetAbsoluteLeft() + lock->GetOffsetWidth() <= lanes->GetAbsoluteLeft() + 250.0F);
+	CHECK(lock->GetAbsoluteTop() >= lanes->GetAbsoluteTop());
+	CHECK(lock->GetAbsoluteTop() + lock->GetOffsetHeight() <= lanes->GetAbsoluteTop() + 40.0F);
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") == nullptr; }));
+	f.call("history.redo");
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") != nullptr; }));
+	f.call("event.set", {{"events", {f.event}}, {"lock", false}});
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") == nullptr; }));
+
+	// Shared copies show the shared icon (p. 272), both of them, until one is a real copy again.
+	const auto copy = f.call("event.copy", {{"events", {f.part}}, {"ticks", 2 * g_bar}, {"shared", true}})
+						  .at("events")[0]
+						  .get<uint64_t>();
+	REQUIRE(f.waitUntil([&] { return mark(f.part, "shared") != nullptr && mark(copy, "shared") != nullptr; }));
+	f.call("event.toRealCopy", {{"events", {copy}}});
+	REQUIRE(f.waitUntil([&] { return mark(f.part, "shared") == nullptr && mark(copy, "shared") == nullptr; }));
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return mark(f.part, "shared") != nullptr && mark(copy, "shared") != nullptr; }));
+
+	// A locked shared copy shows both.
+	f.call("event.set", {{"events", {copy}}, {"lock", true}});
+	REQUIRE(f.waitUntil([&] { return mark(copy, "locked") != nullptr; }));
+	REQUIRE(mark(copy, "shared") != nullptr);
+	const auto right = [](Rml::Element* element) { return element->GetAbsoluteLeft() + element->GetOffsetWidth(); };
+	CHECK((right(mark(copy, "locked")) <= mark(copy, "shared")->GetAbsoluteLeft() ||
+		right(mark(copy, "shared")) <= mark(copy, "locked")->GetAbsoluteLeft()));
+}
+
+TEST_CASE("grid lines show the grid behind the events, and a line at an audio event's snap point while it is inside it",
+	"[unit]")
+{
+	Fixture f;
+	const auto has = [&f](double seconds)
+	{
+		const std::vector<ui::EventLanes::Lane>& grid = f.lanes("grid-lines");
+		return !grid.empty() &&
+			std::any_of(grid[0].events.begin(), grid[0].events.end(),
+				[seconds](const ui::TimeSpan& line) { return std::abs(line.start - seconds) < 1e-6; });
+	};
+	// Bars at 120 BPM in 4/4, every 2 seconds, with snap off too (reference manual p. 109), behind everything.
+	REQUIRE(f.waitUntil([&] { return has(0.0) && has(2.0) && has(4.0); }));
+	CHECK_FALSE(has(1.0));
+	CHECK(
+		f.document.QuerySelector(".event-area")->GetFirstChild() == f.document.QuerySelector("event-lanes.grid-lines"));
+	f.call("snap.set", {{"grid", "beat"}});
+	REQUIRE(f.waitUntil([&] { return has(0.5) && has(1.5); }));
+	// The quantize grid, and its lines move with quantize's settings.
+	f.call("quantize.set", {{"preset", "1/8"}});
+	f.call("snap.set", {{"grid", "quantize"}});
+	REQUIRE(f.waitUntil([&] { return has(0.25) && has(1.75); }));
+	f.call("quantize.set", {{"preset", "1/2"}});
+	REQUIRE(f.waitUntil([&] { return has(1.0) && !has(0.25); }));
+	// Bars follow signature changes: in 3/4 from bar 2, bars at 2, 3.5 and 5 seconds.
+	f.call("snap.set", {{"grid", "bar"}});
+	REQUIRE(f.waitUntil([&] { return has(2.0) && has(4.0) && !has(3.5); }));
+	f.call("signature.add", {{"bar", 1}, {"numerator", 3}, {"denominator", 4}});
+	REQUIRE(f.waitUntil([&] { return has(3.5) && has(5.0) && !has(4.0); }));
+	f.call("snap.set", {{"grid", "beat"}});
+	REQUIRE(f.waitUntil([&] { return has(0.5) && has(1.5); }));
+	// They follow tempo changes: at 60 BPM from 2 seconds, a beat a second.
+	f.call("project.set", {{"tempoTrackActive", true}});
+	f.call("tempo.add", {{"position", 4 * g_quarter}, {"bpm", 60.0}});
+	REQUIRE(f.waitUntil([&] { return has(3.0) && !has(2.5); }));
+	CHECK(has(1.5));
+	// A linear grid, and none where its lines would be too close to see apart.
+	f.call("snap.set", {{"format", "seconds"}, {"grid", "100ms"}});
+	REQUIRE(f.waitUntil([&] { return has(0.1) && has(2.3); }));
+	f.call("snap.set", {{"format", "samples"}, {"grid", "1sample"}});
+	REQUIRE(f.waitUntil([&] { return !has(0.0); }));
+	CHECK(f.lanes("grid-lines").at(0).events.empty());
+
+	// The snap point (p. 105) shows as a line on the event's lane while it is inside the event, 2 to 2.5 seconds.
+	const auto points = [&f]
+	{
+		const std::vector<ui::EventLanes::Lane>& lanes = f.lanes("snap-points");
+		return lanes.empty() ? std::vector<ui::TimeSpan>() : lanes[0].events;
+	};
+	CHECK(points().empty());
+	f.call("event.setSnapPoint", {{"events", {f.event}}, {"position", 108000}});
+	REQUIRE(f.waitUntil([&] { return points().size() == 1; }));
+	CHECK(std::abs(points()[0].start - 2.25) < 1e-6);
+	f.call("event.resize", {{"events", {f.event}}, {"edge", "start"}, {"delta", 18000}});
+	REQUIRE(f.waitUntil([&] { return points().empty(); }));
+}
+
+TEST_CASE("a drag of the handle in the middle of an event's right border repeats it, Alt at its lower right corner too",
+	"[unit]")
+{
+	// #2009 (reference manual p. 271): the part from 1 to 3 seconds, 100 to 300 dp across, on the MIDI track two rows
+	// high, its lane from 40 to 120 dp down: the handle from 60 to 80 dp, the lower corner from 80 dp.
+	Fixture f;
+	const auto track = f.parts()[0].at("track").get<uint64_t>();
+	f.display.setTrackHeights({track}, 80.0);
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").at(1).height == 80.0F; }));
+	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	const auto pointerAt = [&f, area](double x, double y)
+	{
+		f.automation.move(std::nullopt, f.at(x, y));
+		f.step();
+		return area->GetAttribute<std::string>("pointer", "");
+	};
+	CHECK(pointerAt(297, 70) == "repeat");
+	CHECK(pointerAt(297, 100) == "resize");
+	const size_t steps = f.call("history.get").at("steps").size();
+
+	SECTION("a drag over two lengths shows and makes two real copies after it, in one undo step")
+	{
+		f.automation.press(std::nullopt, f.at(297, 70), ui::MouseButton::Left);
+		f.automation.move(std::nullopt, f.at(697, 70));
+		f.step();
+		const auto& preview = f.lanes("selected-events")[1].events;
+		REQUIRE(preview.size() == 3);
+		CHECK(preview[1].start == 3.0);
+		CHECK(preview[2].start == 5.0);
+		CHECK(preview[2].length == 2.0);
+		f.automation.release(std::nullopt, f.at(697, 70), ui::MouseButton::Left);
+		REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+		CHECK(f.parts()[1].at("position") == 6 * g_quarter);
+		CHECK(f.parts()[2].at("position") == 10 * g_quarter);
+		CHECK(f.parts()[1].at("shared") == 0);
+		CHECK(f.call("history.get").at("steps").size() == steps + 1);
+	}
+	SECTION("with Shift, shared copies")
+	{
+		f.drag(297, 70, 697, 70, {"shift"});
+		REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+		CHECK(f.parts()[1].at("shared") != 0);
+		CHECK(f.parts()[2].at("shared") == f.parts()[1].at("shared"));
+	}
+	SECTION("a drag less than half a length makes none")
+	{
+		f.drag(297, 70, 380, 70);
+		f.call("history.get"); // the engine has what a release would have sent by now
+		f.step();
+		CHECK(f.parts().size() == 1);
+		CHECK(f.parts()[0].at("length") == 4 * g_quarter);
+	}
+	SECTION("with Alt, the lower right corner of the last selected event repeats instead of resizing or splitting")
+	{
+		f.display.select({f.part});
+		CHECK(pointerAt(297, 100) == "resize");
+		f.automation.move(std::nullopt, f.at(296, 100), {"alt"}); // RmlUi sends a move only where the mouse moves
+		f.step();
+		CHECK(area->GetAttribute<std::string>("pointer", "") == "repeat");
+		f.drag(297, 100, 497, 100, {"alt"});
+		REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+		CHECK(f.parts()[1].at("position") == 6 * g_quarter);
+		CHECK(f.parts()[0].at("length") == 4 * g_quarter);
+	}
+	SECTION("a track lower than two rows has no handle: the border resizes")
+	{
+		f.display.setTrackHeights({track}, 40.0);
+		REQUIRE(f.waitUntil([&f] { return f.lanes("events").at(1).height == 40.0F; }));
+		CHECK(pointerAt(297, 50) == "resize");
+		f.drag(297, 50, 397, 50);
+		REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") != 4 * g_quarter; }));
+		CHECK(f.parts().size() == 1);
+	}
+}

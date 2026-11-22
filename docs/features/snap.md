@@ -133,10 +133,19 @@ the project start. The sample grids count from the project start, as the samples
 - **Commands:** `edit.snap` switches snap on or off (J, the reference's key), `edit.snapPointToCursor` sets the snap
   point of the selected audio events that the cursor is in.
 
+- **Grid lines** (#412, p. 109): `event-lanes.grid-lines`, the first child of the event area so behind everything,
+  draws a line at each line of the grid in use, snap on or off: bars and beats where the tempo and signature maps put
+  them, the quantize grid, adapt to zoom's note value, and the linear grids. `EventDisplay::showGrid` steps from line
+  to line with `engine::nearestGridLine` and `engine::gridStep`, over the view and a view's width each side, in blocks
+  of the view's width so that scrolling builds them again once a block. Where two lines would be less than 4 dp apart,
+  as with the sample grids zoomed out, it draws none. The themes color them; the reference's Grid Overlay Intensity
+  comes with the preferences.
+- **Snap point lines** (p. 105): `event-lanes.snap-points`, over the waveforms, a line at each audio event's snap point
+  on its lane while the snap point is inside the event. A drag doesn't move it with the event yet.
+
 The tools snap too: selection ranges, drawn parts and the split tool ([tools.md](tools.md)).
 
-Not yet: grid lines and snap point lines in the event display, the editors' own grids, and a user frame rate setting
-(fps (User) is 30 until then).
+Not yet: the editors' own grids, and a user frame rate setting (fps (User) is 30 until then).
 
 ## Checks
 
@@ -169,11 +178,14 @@ shuffling forwards, backwards, to the end and to the front, its errors and a loc
   at the cursor snaps to a bar, grid relative moves a beat, nudges move a beat and a bar, and with snap off a drag
   doesn't snap; with the ruler in seconds a drag snaps to 100 ms, back in bars and beats to a bar, and the ruler follows
   the format of `snap.set`; a new ruler format kept at every step while a `snap.changed` or a `project.get` answer from
-  before it comes in, and after several switches in a row.
+  before it comes in, and after several switches in a row; grid lines for bars, beats across a tempo change, 100 ms
+  and none for single samples zoomed out, behind the events, and a snap point line that goes when a resize puts the
+  snap point outside the event.
 - `tests/uiapp_tests.cpp`: the toolbar's snap and zero crossing buttons and J, the snap type menu checked and shown on
   its button, the grid type menu with the grid types of each ruler format, and back in a format the grid type chosen
   there shown and checked; the menu's items the engine's `gridTypes` for every format, and a grid type picked while
   the engine switches to another format going to the format shown; the project window's golden image shows the
-  toolbar.
+  toolbar; the golden images `event-grid-beats` and `event-grid-seconds` show the beat and 100 ms grid lines behind
+  an audio event and its snap point line.
 - `tests/dawproject_tests.cpp`: an extension entry with the snap settings as #87 saved them loads with the grid
   type's format; a newer build's grid types saved again; damaged snap settings loading with the rest of the entry.

@@ -44,6 +44,10 @@ namespace gnubase::ui
 		constexpr double g_dragDelay = 0.2;
 		constexpr double g_magnet = 8.0;        // dp from which events, markers and the cursor attract
 		constexpr double g_minGridWidth = 12.0; // dp: adapt to zoom's finest note value is at least this wide
+		// Lanes this high repeat events by dragging (reference manual p. 271: at least two rows): twice a track's
+		// height, as GNUbase has track heights in dp, not rows.
+		constexpr double g_repeatHeight = 2.0 * g_trackHeight;
+		constexpr int g_maxRepeats = 1000; // as the Repeat Events dialog
 
 		bool held(Rml::Event& event, const char* key)
 		{
@@ -812,6 +816,44 @@ namespace gnubase::ui
 		return right - x <= g_edge ? 1 : 0;
 	}
 
+	bool EventDisplay::repeatHandleAt(const Shown& shown, double x, double y, const std::string& keys) const
+	{
+		const double top = m_laneTops[shown.lane];
+		const double height = m_laneTops[shown.lane + 1] - top;
+		if (height < g_repeatHeight || edgeAt(shown, x) <= 0)
+			return false;
+		const double into = y + m_view.top - top;
+		if (keys.empty() || keys == "shift") // between the fade handle at the top and the lower corner
+			return into >= height / 4.0 && into < height / 2.0;
+		if ((keys != "alt" && keys != "alt+shift") || into < height / 2.0 ||
+			!std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+			return false;
+		return std::none_of(m_events.begin(), m_events.end(), [this, &shown](const Shown& other)
+			{ return other.end > shown.end && std::binary_search(m_selection.begin(), m_selection.end(), other.id); });
+	}
+
+	std::optional<TimeSpan> EventDisplay::selectionBlock() const
+	{
+		std::optional<TimeSpan> block;
+		for (const Shown& shown : m_events)
+			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+			{
+				const double start = block ? std::min(block->start, shown.start) : shown.start;
+				const double end = block ? std::max(block->end(), shown.end) : shown.end;
+				block = TimeSpan{start, end - start};
+			}
+		return block;
+	}
+
+	int EventDisplay::repeatCount(double dx) const
+	{
+		const std::optional<TimeSpan> block = selectionBlock();
+		if (!block || block->length <= 0.0)
+			return 0;
+		const double to = snapped(block->end() + (dx * m_view.scale), block->end());
+		return std::clamp(static_cast<int>(std::floor(((to - block->end()) / block->length) + 0.5)), 0, g_maxRepeats);
+	}
+
 	void EventDisplay::areaRightDown(Rml::Event& event, double x, double y)
 	{
 		const bool modified =
@@ -869,6 +911,15 @@ namespace gnubase::ui
 		}
 		m_dragEvent = shown->id;
 		const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), shown->id);
+		if (repeatHandleAt(*shown, x, y, m_pressed))
+		{
+			if (!selected)
+				select({shown->id});
+			m_repeatCount = 0;
+			m_repeatShared = m_pressed.find("shift") != std::string::npos;
+			m_drag = Drag::Repeat;
+			return;
+		}
 		const int edge = edgeAt(*shown, x);
 		const bool atStart = edge < 0;
 		const bool atEnd = edge > 0;
@@ -936,6 +987,8 @@ namespace gnubase::ui
 		const Shown* shown = eventAt(x, y);
 		if (shown == nullptr) // with the tool modifier Split Event, draws a part (reference manual p. 250)
 			return split && lane && takesParts(*lane) ? toolName(Tool::Draw) : toolName(tool);
+		if (repeatHandleAt(*shown, x, y, keys)) // a pointing hand, as in the reference (p. 271)
+			return "repeat";
 		const int edge = edgeAt(*shown, x);
 		const bool add = keys.find("ctrl") != std::string::npos || keys.find("shift") != std::string::npos;
 		const bool toolModifier = modifiers("select.setCursorPosition", keys) || split || copyKeys(keys) ||
@@ -1000,6 +1053,15 @@ namespace gnubase::ui
 			m_resizeDx = dx;
 			narrowToPressed();
 			previewResize(resizeParameters(dx, m_drag));
+			return;
+		}
+		if (m_drag == Drag::Repeat)
+		{
+			if (const int count = repeatCount(dx); count != m_repeatCount)
+			{
+				m_repeatCount = count;
+				setLanes();
+			}
 			return;
 		}
 		if (m_drag != Drag::Events)
@@ -1120,6 +1182,16 @@ namespace gnubase::ui
 					fadeUp();
 			}
 			m_drag = Drag::None;
+			return;
+		}
+		if (drag == Drag::Repeat) // one undo step, as the Repeat Events dialog's
+		{
+			const int count = std::exchange(m_repeatCount, 0);
+			m_dragMoved = false;
+			m_drag = Drag::None;
+			setLanes();
+			if (count > 0)
+				repeat(count, m_repeatShared);
 			return;
 		}
 		if (drag != Drag::Events && drag != Drag::ResizeStart && drag != Drag::ResizeEnd)
