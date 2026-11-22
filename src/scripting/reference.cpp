@@ -125,7 +125,8 @@ test cases with the MCP tool `script_run`, whose output has the report.
 			}
 			out << "\n#### `gnubase." << info.name << "`\n\n" << info.description << '\n';
 			if (info.consumes)
-				out << "\nOnly reads the project, but each call takes what it returns, for every client.\n";
+				out << "\nOnly reads the project, but each call takes what it returns from a queue all clients "
+					   "share.\n";
 			else if (info.query)
 				out << "\nOnly reads; changes nothing.\n";
 			engine::writeProperties(out, info.parameters, "Parameters");
