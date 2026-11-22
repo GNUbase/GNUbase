@@ -126,8 +126,9 @@ TEST_CASE("the info line shows the selection range and its edits set the range's
 	CHECK(window.shows("length", "0:00:02.000"));
 	CHECK(window.element("#info-line [info-field=start] .info-label").at("text") == "Range Start");
 	CHECK(window.element("#info-line [info-field=length] .info-label").at("text") == "Range Length");
+	// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
 	for (const char* field : {"start", "end", "length", "topTrack", "bottomTrack"})
-		CHECK_FALSE(window.hasClass("#info-line [info-field=" + std::string(field) + "]", "unavailable"));
+		CHECK(!window.hasClass("#info-line [info-field=" + std::string(field) + "]", "unavailable"));
 	for (const char* field : {"name", "mute", "lock", "transpose"})
 		CHECK(window.hasClass("#info-line [info-field=" + std::string(field) + "]", "unavailable"));
 
