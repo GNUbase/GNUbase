@@ -3253,8 +3253,8 @@ namespace
 	}
 }
 
-TEST_CASE("the event volume control at the bottom left of a selected audio event drags the selected events' volume",
-	"[unit]")
+TEST_CASE(
+	"the event volume control at the bottom left of a selected audio event drags the selected events' volume", "[unit]")
 {
 	// Reference manual p. 401: a fader at the bottom left of the event, here 16 dp in from its start.
 	Fixture f;

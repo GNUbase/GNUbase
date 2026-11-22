@@ -22,7 +22,7 @@ namespace gnubase::ui
 		constexpr double g_handleSize =
 			8.0; // dp at the bottom of a lane, and around the event volume control, that grab it
 		constexpr double g_faderInset = 16.0; // dp from an event's start to its volume control's middle, past its edge
-		constexpr double g_pointReach = 6.0; // dp around a curve point that grab it
+		constexpr double g_pointReach = 6.0;  // dp around a curve point that grab it
 
 		double gain(double db)
 		{
