@@ -636,7 +636,9 @@ namespace gnubase::engine::settings
 					Json::object(), true},
 				{"midi.retrospectiveEvents",
 					"How many MIDI events each MIDI or instrument track's retrospective buffer keeps of what came "
-					"from its MIDI input while it didn't record (midi.insertRetrospective); 0 keeps none.",
+					"from its MIDI input while it didn't record (midi.insertRetrospective); 0 keeps none, only the "
+					"catch "
+					"range's input (midi.recordCatchRange).",
 					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 100000}}, 10000, true},
 				{"midi.snapPartsToBars", "Recorded MIDI parts start and end at whole bars.", Json{{"type", "boolean"}},
 					true, true},

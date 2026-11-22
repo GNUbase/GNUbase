@@ -253,11 +253,8 @@ namespace gnubase::engine
 	void MidiTap::thru(
 		const graph::EventBuffer& input, const Sequencers& sequencers, const std::vector<uint8_t>& thru) noexcept
 	{
-		if (input.empty())
-			return;
-		for (size_t i = 0; i < sequencers.size() && i < thru.size(); ++i)
-			if (thru[i] != 0)
-				sequencers[i].second->input().merge(input);
+		for (size_t i = 0; i < sequencers.size(); ++i)
+			sequencers[i].second->thru(input, i < thru.size() && thru[i] != 0);
 	}
 
 	void MidiTap::capture(uint64_t position, const Instruments& instruments) noexcept
@@ -449,7 +446,8 @@ namespace gnubase::engine
 				"setting midi.retrospectiveEvents, by default 10000 events), as one MIDI part, through recording.add "
 				"with the new parts mode and the user settings midi.snapPartsToBars and midi.recordFilter. What "
 				"came during playback goes where it played; what came in stop mode goes at the project cursor, with "
-				"its timing. Input after an insert starts the buffer afresh, and so does input in stop mode while "
+				"its timing; a note held across a cycle lap ends at the right locator. Input after an insert starts "
+				"the buffer afresh (a failed insert keeps it), and so does input in stop mode while "
 				"the buffer holds input in stop mode, when it comes over 30 s after the last input, from playback or "
 				"not. On the next audio device, input in stop mode leaves out the earlier devices' input in stop "
 				"mode, whose timing can't be placed against it, and keeps the input during playback. It is no "
@@ -463,13 +461,16 @@ namespace gnubase::engine
 			{
 				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
 				const Json& track = context.parameters().at("track");
-				const std::vector<RetrospectiveEvent> events = m_recorder.retrospective(midiChannel(track));
+				const ObjectId channel = midiChannel(track);
+				const std::vector<RetrospectiveEvent> events = m_recorder.retrospective(channel);
 				const MidiRecordFilter filter = MidiRecordFilter::fromJson(m_settings.value("midi.recordFilter"));
 				const double ratio = m_snapshots.latest().sampleRate / m_device->format().sampleRate;
 				const time::Samples cursor = m_transport.position();
+				const TransportSettings& locators = m_transport.settings();
 				MidiTakeBuilder builder;
 				time::Samples start = -1;
-				int64_t stopped = -1; // the device frame of the first input in stop mode
+				int64_t stopped = -1;      // the device frame of the first input in stop mode
+				time::Samples played = -1; // where the last input during playback played
 				for (const RetrospectiveEvent& kept : events)
 				{
 					time::Samples at = kept.position;
@@ -480,6 +481,13 @@ namespace gnubase::engine
 						at = cursor +
 							std::llround(static_cast<double>(static_cast<int64_t>(kept.deviceFrame) - stopped) * ratio);
 					}
+					else
+					{
+						// Playback jumped back, at a cycle lap: the notes held across it end where the lap ended.
+						if (at < played)
+							builder.endNotes(locators.cycle && locators.right > played ? locators.right : played);
+						played = at;
+					}
 					if (!filter.records(kept.event))
 						continue;
 					start = start < 0 ? at : std::min(start, at);
@@ -488,12 +496,14 @@ namespace gnubase::engine
 				require(!builder.empty(), "the track's retrospective buffer holds nothing to insert");
 				builder.endNotes(builder.last() + 1);
 				const Json take = {{"position", start}, {"length", builder.last() - start + 1}};
-				return context.call("recording.add",
+				Json added = context.call("recording.add",
 					{{"midiMode", "newParts"}, {"snapToBars", m_settings.get(settings::g_midiSnapPartsToBars)},
 						{"chordEvents", false},
 						{"tracks",
 							Json::array({{{"track", track}, {"takes", Json::array({take})}, {"notes", builder.notes()},
 								{"controllers", builder.controllers()}}})}});
+				m_recorder.inserted(channel, events.back().deviceFrame); // only now: a failed insert keeps the buffer
+				return added;
 			});
 		engine.registerCommand(
 			{"midi.clearRetrospective", 1,
