@@ -91,10 +91,13 @@ each section's event has a number after its name, how often its event came so fa
   `arranger.changed`, as turning arranger mode off announces no `transport.changed`. The arranger track's controls area
   is 160 dp wide by default, which shows them on two lines, Current Item and Current Repeat narrow beside each other
   and Open Arranger Editor.
-- **The inspector's Arranger Track section** (pp. 405, 410-411, [inspector.md](inspector.md)), for the arranger track:
+- **The inspector's Arranger Track section** (pp. 405, 409-411, [inspector.md](inspector.md)), for the arranger track:
   Open Arranger Editor (`.inspector-arranger-editor`) beside its header, which doesn't close the section; the Current
-  Arranger Chain list, a row per step of the active chain with its arrow (`arranger.goToStep`), its event's name and
-  its repeats; the Arranger Events list, a row per event with its arrow (`arranger.trigger`) and name; and Jump Mode
+  Arranger Chain list, a row per step of the active chain with its arrow (`arranger.goToStep`), its event's name, its
+  repeats, a `textdisplay` that a double click types (capped to 1 to 999; text that isn't a number keeps them), and its
+  repeat mode, a drop-down list, both sent as the chain's new steps (`arranger.setChain`); a right click on a step
+  opens `#inspector-arranger-step-menu`, whose Remove Touched removes that step (`removeSteps`) and is disabled beside
+  the steps; the Arranger Events list, a row per event with its arrow (`arranger.trigger`) and name; and Jump Mode
   (`arranger.setMode` `jumpMode`). The arrows are disabled while they can't work (arranger mode off or an empty chain),
   and the row of the step or event playing is `.current`. Like the track list's controls it follows
   `arranger.changed` and `transport.changed`, and reads `transport.get` on `arranger.changed`. A list is built again
@@ -114,12 +117,15 @@ each section's event has a number after its name, how often its event came so fa
   its start snapped back over a bar line to another event's edge. With the other tools a drag moves an event, keeping
   its length (`arranger.set`), and the event follows the mouse while the button is down; a double click opens its name
   in the `.arranger-lane-field` over it, as wide as the event and at least wide enough for a name, where Enter renames
-  it (an empty name keeps the old one); the erase tool removes the event clicked (`arranger.remove`). Drawing and moving
-  snap as the event display's drags do ([snap.md](snap.md), `EventDisplay::snapped`), with the other arranger events'
-  edges as magnets too, so with Snap on and the snap type Events, as p. 404 asks, a new event starts and ends at other
-  arranger events', parts' and markers' edges. What the drag shows stays until the lane shows the event as the engine
-  has it. When the engine refuses an edit, such as a drawn event shorter than a sample, the display's `#edit-refused`
-  says why ([event-display.md](event-display.md)).
+  it (an empty name keeps the old one); the erase tool removes the event clicked (`arranger.remove`). A click selects an
+  event (`.selected`, which the themes fill with the selection's color), with Ctrl (Cmd) adds or removes it, and a press
+  beside the events selects none; a drag of an event's edge, an `.arranger-lane-edge` (4 dp wide, with the resize
+  cursor), resizes it (`arranger.set` with `position` and `end`), snapped as a move is, the edge not past the other one.
+  Drawing and moving snap as the event display's drags do ([snap.md](snap.md), `EventDisplay::snapped`), with the other
+  arranger events' edges as magnets too, so with Snap on and the snap type Events, as p. 404 asks, a new event starts
+  and ends at other arranger events', parts' and markers' edges. What the drag shows stays until the lane shows the
+  event as the engine has it. When the engine refuses an edit, such as a drawn event shorter than a sample, the
+  display's `#edit-refused` says why ([event-display.md](event-display.md)).
 - **The arranger editor** (`resources/ui/arranger-editor.rml`, the UI command `window.arranger`, in a window of its own)
   is driven by its own Lua script through the engine API: the toolbar switches arranger mode and picks the active chain
   and the jump mode, with the active chain's name in `#chain-name` (Rename Arranger Chain, p. 406: Enter renames it,
@@ -150,19 +156,22 @@ linearly against the chain's audio, with undo, and its notes cut at the sections
 it, with `renameEvents` numbering the events.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
 mode, a locate arrow on every row, renaming the active chain, and renaming a step's event with Alt and a double click,
-across a refresh while it is typed. `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide
-as its section with its name, the draw tool drawing one over the stretch dragged and, with a click, from the bar line at
-or before it to the next one, both snapped to bars; with the snap type Events, drawing from and to other arranger
-events' edges, the event drawn showing while the button is down, a click just after a bar line whose start snaps back
-to an edge before it drawing up to the next bar line, and a drag that starts on an event drawing over it;
-a drag moving an event by bars, the event following the mouse until the release, a double click renaming it in a field
-as wide as the event, an empty name keeping the old one, and the erase tool removing it; `#edit-refused` saying why the
-engine refused a draw within one bar; the track list's arranger controls switching arranger mode and the active chain
-and showing the event and repeat playing; Open Arranger Editor in the track list and on the inspector's section
-opening the editor and leaving it open; the inspector's section listing the steps and events, its arrows disabled
-outside arranger mode, playing a step and triggering an event with their rows `.current`, Jump Mode both ways, its
-header closing and opening it, and renaming a step's event with Alt and a double click, not with a plain one, across a
-refresh that changes nothing the lists show.
+across a refresh while it is typed. `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide as
+its section with its name, the draw tool drawing one over the stretch dragged and, with a click, from the bar line at or
+before it to the next one, both snapped to bars; with the snap type Events, drawing from and to other arranger events'
+edges, the event drawn showing while the button is down, a click just after a bar line whose start snaps back to an edge
+before it drawing up to the next bar line, and a drag that starts on an event drawing over it; a drag moving an event by
+bars, the event following the mouse until the release, a double click renaming it in a field as wide as the event, an
+empty name keeping the old one, and the erase tool removing it; a click selecting an event, Ctrl adding and removing
+one, a press beside them selecting none, and drags of an end and of a start edge resizing events by bars;
+`#edit-refused` saying why the engine refused a draw within one bar; the track list's arranger controls switching
+arranger mode and the active chain and showing the event and repeat playing; Open Arranger Editor in the track list and
+on the inspector's section opening the editor and leaving it open; the inspector's section listing the steps and events,
+its arrows disabled outside arranger mode, playing a step and triggering an event with their rows `.current`, Jump Mode
+both ways, its header closing and opening it, and renaming a step's event with Alt and a double click, not with a plain
+one, across a refresh that changes nothing the lists show; typing a step's repeats, capped to 999 and kept for text that
+isn't a number, picking its repeat mode and removing it with Remove Touched. `tests/theme_tests.cpp`: every theme fills
+a selected arranger event.
 
 Both real-time comparisons in `tests/arranger_tests.cpp` retry runs that report playback dropouts, with at most five
 attempts and a fresh song and audio file per attempt. Each retry emits a warning. The chain-edit comparison makes its
@@ -171,7 +180,7 @@ adopts it while B plays; an attempt that misses that stretch, or is still making
 because a busy machine held up the test, is retried like one with dropouts. It compares only a capture with the edit
 made in time and without dropouts; exhausting the attempts fails the test (#1893, #1900).
 
-Not yet: resizing arranger events by their edges and selecting them, renaming them on the info line, editing repeats
-and modes and removing steps in the inspector's chain list, drag and drop in the chain lists, the other flatten options
-(Checked and All Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, key commands for
-triggering events, and arranging to an external timecode.
+Not yet: renaming arranger events on the info line, selecting steps in the chain lists (Remove Selected) and drag and
+drop in them, moving or erasing all selected arranger events at once, the other flatten options (Checked and All Chains,
+New Project, Make Real Event Copies) and a dialog for them in the editor, key commands for triggering events, and
+arranging to an external timecode.

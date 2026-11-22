@@ -19,7 +19,6 @@
 #include <optional>
 #include <string>
 #include <tuple>
-#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -558,6 +557,56 @@ TEST_CASE(
 	window.app.ui().key(std::nullopt, "Enter");
 	REQUIRE(window.app.waitUntil([&] { return window.events()[0].at("name") == "Intro"; }));
 	CHECK(window.app.waitUntil([&] { return text(events + "[event=\"" + a.dump() + "\"] .name") == "Intro"; }));
+}
+
+TEST_CASE("arranger events on the lane are selected with clicks and resized by their edges", "[ui]")
+{
+	// Reference manual p. 404: arranger events are selected and resized as events are.
+	Window window;
+	const Json a = window.app.call("arranger.add", {{"position", 0}, {"end", 8 * g_quarter}}).at("event").at("id");
+	const Json b =
+		window.app.call("arranger.add", {{"position", 8 * g_quarter}, {"end", 12 * g_quarter}}).at("event").at("id");
+	const std::string eventA = ".arranger-lane-event[event=\"" + a.dump() + "\"]";
+	const std::string eventB = ".arranger-lane-event[event=\"" + b.dump() + "\"]";
+	REQUIRE(window.app.waitUntil([&] { return window.shown(".arranger-lane-event") == 2; }));
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".arranger-lane-row", "hidden"); }));
+	window.display.setTool(ui::Tool::ObjectSelection);
+	const auto click = [&window](ui::Point at, const std::vector<std::string>& modifiers)
+	{
+		window.app.ui().click(std::nullopt, {"", 0, at}, ui::MouseButton::Left, 1, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// A click selects one, Ctrl adds another, and a press beside them selects none.
+	click(window.at(1.0), {});
+	CHECK(window.hasClass(eventA, "selected"));
+	CHECK_FALSE(window.hasClass(eventB, "selected"));
+	click(window.at(5.0), {"ctrl"});
+	CHECK(window.hasClass(eventA, "selected"));
+	CHECK(window.hasClass(eventB, "selected"));
+	// Ctrl on a selected one removes it.
+	click(window.at(1.0), {"ctrl"});
+	CHECK_FALSE(window.hasClass(eventA, "selected"));
+	CHECK(window.hasClass(eventB, "selected"));
+	click(window.at(7.0), {});
+	CHECK_FALSE(window.hasClass(eventB, "selected"));
+
+	// A drag of an edge resizes the event, snapped to bars: the end of A, then the start of B.
+	const auto edge = [&window](const std::string& event, const char* which)
+	{
+		const Json box = window.box(event + " .arranger-lane-edge[edge=" + which + "]");
+		return ui::Point{static_cast<int>(std::lround(box.at("x").get<double>() + (box.at("width").get<double>() / 2))),
+			static_cast<int>(std::lround(box.at("y").get<double>() + (box.at("height").get<double>() / 2)))};
+	};
+	window.app.ui().drag(std::nullopt, {"", 0, edge(eventA, "end")}, {"", 0, window.at(2.3)});
+	REQUIRE(window.app.waitUntil([&] { return window.events()[0].at("end") == 4 * g_quarter; }));
+	CHECK(window.events()[0].at("position") == 0);
+	window.app.ui().drag(std::nullopt, {"", 0, edge(eventB, "start")}, {"", 0, window.at(2.2)});
+	REQUIRE(window.app.waitUntil([&] { return window.events()[1].at("position") == 4 * g_quarter; }));
+	CHECK(window.events()[1].at("end") == 12 * g_quarter);
+	// The lane shows B from its new start.
+	CHECK(window.app.waitUntil(
+		[&] { return std::abs(window.box(eventB).at("x").get<double>() - window.at(2.0).x) < 2.0; }));
 }
 
 TEST_CASE("the inspector's Current Arranger Chain list edits repeats and modes and removes steps", "[ui]")

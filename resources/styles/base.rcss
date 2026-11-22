@@ -1141,6 +1141,26 @@ meter .meter-peak
 	overflow: hidden;
 }
 
+/* An arranger event's edges, which a drag resizes it by. */
+.arranger-lane-row .arranger-lane-edge
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 4dp;
+	cursor: resize;
+}
+
+.arranger-lane-row .arranger-lane-edge[edge=start]
+{
+	left: 0;
+}
+
+.arranger-lane-row .arranger-lane-edge[edge=end]
+{
+	right: 0;
+}
+
 /* The chord pads zone (docs/features/chord-pads.md): its toolbars above the pads, which wrap, and the chord
    assistant to their right while it shows; the chord field shows while a pad's chord is typed. */
 .chord-pads

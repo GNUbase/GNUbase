@@ -671,6 +671,11 @@
 	{
 		background-color: transparent;
 	}
+	.arranger-lane-row .arranger-lane-event.selected
+	{
+		background-color: #00ffff80;
+		border-color: #ffffff;
+	}
 	.chord-pad
 	{
 		color: #ffffff;
