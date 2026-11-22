@@ -1051,7 +1051,7 @@ namespace gnubase::app
 		}
 		// Track import and export and track presets (docs/features/track-presets.md).
 		addTrackFileCommands();
-		// Auto fades (docs/features/fades.md): the project's, or the first selected track's.
+		// Auto fades (docs/features/fades.md): the project's, or the first selected audio track's.
 		m_keys.add({"project.autoFades", "Opens the auto fades dialog for the whole project.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openAutoFades(window, 0); }});
 		// Only audio tracks have auto fades: other selected tracks don't count.

@@ -3280,6 +3280,28 @@ TEST_CASE(
 	CHECK(eventVolume(f.audioEvents()[0]) == 0.0);
 }
 
+TEST_CASE("a selected audio event too narrow for its volume control shows none", "[unit]")
+{
+	// The control sits 16 dp in from the start, so an event under 32 dp has no room for it beside its edges: 30 dp
+	// here, 2 to 2.3 seconds.
+	Fixture f;
+	f.call("event.resize", {{"events", {f.event}}, {"edge", "end"}, {"delta", -9600}});
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 14400; }));
+	f.display.select({f.event});
+	// Its fade handles show at its edges, once the display has the shorter event.
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].handles.size() == 2 &&
+				std::abs(fadeLines(f).lanes()[0].handles[1] - 2.3) < 1e-6;
+		}));
+	CHECK(fadeLines(f).lanes()[0].faders.empty());
+	// A drag from its bottom left, where the control would be, moves the event and leaves its volume alone.
+	f.drag(216, 36, 316, 39);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 144000; }));
+	CHECK(eventVolume(f.audioEvents()[0]) == 0.0);
+}
+
 TEST_CASE("the event volume control works with the draw tool too, instead of adding a curve point", "[unit]")
 {
 	// Reference manual p. 401: the object selection and the draw tool both drag the event volume.
