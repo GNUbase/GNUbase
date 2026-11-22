@@ -165,7 +165,7 @@ namespace gnubase::ui
 		const auto found = std::find_if(colors.begin(), colors.end(),
 			[current = toolColor()](const Json& color) { return color.at("color") == current; });
 		const int index =
-			found == colors.end() ? 0 : ((static_cast<int>(found - colors.begin()) + steps) % count + count) % count;
+			found == colors.end() ? 0 : (((static_cast<int>(found - colors.begin()) + steps) % count) + count) % count;
 		setToolColor(colors[static_cast<size_t>(index)].at("color").get<std::string>());
 	}
 

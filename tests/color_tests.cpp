@@ -526,9 +526,9 @@ TEST_CASE("Alt-click on the Basics header of an inspector in a window of its own
 	REQUIRE(window.app.waitUntil([&] { return window.elements("#track-list listitem").size() == 2; }));
 	window.app.appUi().trackList()->select({midi});
 	window.app.shell().step(std::chrono::milliseconds(0));
-	const auto click = [&window, panel](const std::string& selector, std::vector<std::string> modifiers)
+	const auto click = [&window, panel](const std::string& selector, const std::vector<std::string>& modifiers)
 	{
-		window.app.ui().click(panel, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, std::move(modifiers));
+		window.app.ui().click(panel, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, modifiers);
 		window.app.shell().step(std::chrono::milliseconds(0));
 	};
 	const auto elements = [&window, panel](const std::string& selector)
@@ -572,7 +572,7 @@ TEST_CASE("the color tool's button shows its color, the wheel steps it, and Ctrl
 	CHECK(strip() == Rml::Colourb(0x20, 0x40, 0xe0, 255));
 
 	// Ctrl/Cmd and a click on the part opens the Choose Event Color pane for it, and a click colors it with the tool.
-	const auto clickPart = [&window](std::vector<std::string> modifiers)
+	const auto clickPart = [&window](const std::vector<std::string>& modifiers)
 	{
 		// A second in, the middle of the part's bar.
 		Rml::Element* lanes = window.find("event-lanes.events");
@@ -581,7 +581,7 @@ TEST_CASE("the color tool's button shows its color, the wheel steps it, and Ctrl
 			{"", 0,
 				ui::Point{
 					static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop()) + 10}},
-			ui::MouseButton::Left, 1, std::move(modifiers));
+			ui::MouseButton::Left, 1, modifiers);
 		window.app.shell().step(std::chrono::milliseconds(0));
 	};
 	clickPart({"ctrl"});

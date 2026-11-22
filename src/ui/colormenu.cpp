@@ -172,7 +172,7 @@ namespace gnubase::ui
 		if (event.GetCurrentElement() == m_tool.get())
 		{
 			// Down steps on through the color set, up back (reference manual p. 115).
-			const float delta = event.GetParameter<float>("wheel_delta_y", 0.0F);
+			const auto delta = event.GetParameter<float>("wheel_delta_y", 0.0F);
 			if (EventDisplay* display = m_display(); display != nullptr && delta != 0.0F)
 				display->stepToolColor(delta > 0.0F ? 1 : -1);
 			event.StopPropagation();
