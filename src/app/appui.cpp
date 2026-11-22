@@ -149,7 +149,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 96> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 97> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -253,6 +253,7 @@ namespace gnubase::app
 			{"edit.cutTime", "Cuts the selection range and closes the gap.", "Mod+Shift+X"},
 			{"edit.deleteTime", "Deletes the selection range and closes the gap.", "Shift+Backspace"},
 			{"edit.pasteTime", "Pastes the clipboard and moves what comes after it to make room.", "Mod+Shift+V"},
+			{"edit.pasteAtOrigin", "Pastes the clipboard where it was copied from.", "Mod+Shift+Down"},
 			{"edit.insertSilence", "Inserts silence as long as the selection range at its start.", "Mod+Shift+E"},
 			{"edit.splitRange", "Splits the events at the selection range's edges.", "Shift+X"},
 			{"edit.cropRange", "Crops the events that cross the selection range's edges to it.", nullptr},

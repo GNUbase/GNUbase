@@ -1777,6 +1777,31 @@ TEST_CASE("range.paste doesn't paste what was copied in another project", "[unit
 	CHECK_THAT(f.fails("range.paste", {{"position", 0}}), ContainsSubstring("nothing to paste"));
 }
 
+TEST_CASE("range.paste with origin pastes where the range was copied, onto the tracks it came from", "[unit]")
+{
+	// Paste at Origin (reference manual p. 270): as at the range's start, not at the project cursor.
+	RangeFixture f;
+	const auto points = [&f]
+	{
+		Points all;
+		const Json lanes = f.call("automationLane.list");
+		for (const Json& lane : lanes.at("lanes"))
+			for (const Json& point : lane.at("points"))
+				all.emplace_back(point.at("position").get<int64_t>(), point.at("value").get<double>());
+		return all;
+	};
+	f.call("range.cut", f.range());
+	f.call("range.paste", {{"position", g_start}});
+	const Points there = points();
+	f.call("history.undo");
+	f.call("transport.locate", {{"position", 5 * g_second}});
+	CHECK(f.call("range.paste", {{"origin", true}}).at("events").size() == 2);
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}, {g_start, 3 * g_second}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_start, g_end}, {g_end, 4 * g_second}});
+	CHECK(points() == there);
+	CHECK_THAT(f.fails("range.paste", {{"origin", true}, {"position", 0}}), ContainsSubstring("not both"));
+}
+
 TEST_CASE(
 	"range.cut leaves out the locked events, which stay, so that pasting the cut doesn't add them again", "[unit]")
 {

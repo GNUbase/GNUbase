@@ -333,6 +333,8 @@ namespace gnubase::ui
 		// p. 291); a drag just inside one of its edges moves that edge (p. 288); a click there without a drag selects
 		// a range of no length, as anywhere.
 		void setRange(std::optional<RangeSelection> range);
+		// The lanes' tracks, each once: a track's automation tracks' lanes have its id too (#121).
+		std::vector<uint64_t> shownTracks() const;
 		// Importing files (#92, fileimport.cpp, docs/features/file-import.md). MIDI files (.mid, .midi, .smf) are
 		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the
 		// document), or with the user setting editing.onImportAudio at useSettings are imported at once with the
@@ -375,12 +377,12 @@ namespace gnubase::ui
 		// range, else removes the selected audio events'.
 		// With the range selection tool,
 		// edit.delete deletes the range; edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence,
-		// edit.splitRange and edit.cropRange edit it, edit.paste and edit.pasteTime paste at its start (without a
-		// range at the project cursor) and edit.globalCopy copies the locator range on every track; edit.duplicate
-		// copies its contents to its end, where the range goes; edit.nudgeLeft and edit.nudgeRight move the range by
-		// a grid step without its contents, the start and end nudges its edges, and edit.nudgeTopUp,
-		// edit.nudgeTopDown, edit.nudgeBottomUp and edit.nudgeBottomDown take a track in or out at its top or bottom
-		// (reference manual pp. 288-291).
+		// edit.splitRange and edit.cropRange edit it, edit.paste and edit.pasteTime paste at its start (without a range
+		// at the project cursor), edit.pasteAtOrigin where it was copied from (range.paste origin) and edit.globalCopy
+		// copies the locator range on every track; edit.duplicate copies its contents to its end, where the range goes;
+		// edit.nudgeLeft and edit.nudgeRight move the range by a grid step without its contents, the start and end
+		// nudges its edges, and edit.nudgeTopUp, edit.nudgeTopDown, edit.nudgeBottomUp and edit.nudgeBottomDown take a
+		// track in or out at its top or bottom (reference manual pp. 288-291).
 		// edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points); and the
 		// tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue, tool.mute,
 		// tool.zoom, tool.line, tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or off).
@@ -388,8 +390,8 @@ namespace gnubase::ui
 		// Whether the action can do something now, for menus and keys to disable it: the actions that only edit the
 		// selection range (edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence, edit.cropRange,
 		// edit.splitRange and the top and bottom nudges) need a range, all but edit.splitRange and the nudges one with
-		// a length; edit.paste and edit.pasteTime need something copied, a rangeClipboard.changed since the project
-		// opened. The others always can.
+		// a length; edit.paste, edit.pasteTime and edit.pasteAtOrigin need something copied, a rangeClipboard.changed
+		// since the project opened. The others always can.
 		bool canRun(const std::string& action) const;
 
 		// Automation tracks (#121, automationtracks.cpp, docs/features/automation-tracks.md): lanes of their own below
@@ -806,8 +808,6 @@ namespace gnubase::ui
 			Bottom,
 		};
 		RangeEdge rangeEdgeAt(double x, double y) const;
-		// The lanes' tracks, each once: a track's automation tracks' lanes have its id too (#121).
-		std::vector<uint64_t> shownTracks() const;
 		// Where a RangeMove drag to x and y dp has the range from, and a RangeEdge drag.
 		RangeSelection movedRange(const RangeSelection& from, double x, double y) const;
 		RangeSelection resizedRange(const RangeSelection& from, double x, double y) const;

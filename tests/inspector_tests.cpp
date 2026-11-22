@@ -930,8 +930,9 @@ TEST_CASE("the info line's setup pane shows, hides and orders its fields, with p
 	ui::Docking& docking = window.app.appUi().docking();
 	const std::vector<std::string> defaults = docking.sections("project", "infoLine");
 	CHECK(defaults ==
-		std::vector<std::string>{"name", "start", "end", "length", "pitch", "volume", "mute", "lock", "transpose",
-			"velocity", "releaseVelocity", "channel", "rootKey", "globalTranspose", "value", "terminator"});
+		std::vector<std::string>{"name", "start", "end", "length", "topTrack", "bottomTrack", "pitch", "volume", "mute",
+			"lock", "transpose", "velocity", "releaseVelocity", "channel", "rootKey", "globalTranspose", "value",
+			"terminator"});
 	const auto openPane = [&window]
 	{
 		if (!hasClass(window.app, "#info-line-setup", "open"))

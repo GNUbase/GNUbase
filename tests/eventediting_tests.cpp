@@ -2570,7 +2570,7 @@ TEST_CASE("the edit commands edit the selection range, and paste pastes at its s
 
 	// Without a range the range commands can't run, and paste can't before something is copied.
 	for (const char* id : {"edit.cut", "edit.copy", "edit.cutTime", "edit.deleteTime", "edit.insertSilence",
-			 "edit.splitRange", "edit.cropRange", "edit.paste", "edit.pasteTime"})
+			 "edit.splitRange", "edit.cropRange", "edit.paste", "edit.pasteTime", "edit.pasteAtOrigin"})
 	{
 		INFO(id);
 		CHECK(!f.display.canRun(id));
@@ -2613,6 +2613,15 @@ TEST_CASE("the edit commands edit the selection range, and paste pastes at its s
 	f.run("edit.paste");
 	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 4; }));
 	CHECK(f.parts()[3].at("position") == 10 * g_quarter);
+	REQUIRE(f.waitUntil([&f] { return f.display.selection().size() == 2; }));
+	// Paste at Origin goes where the range was copied from, not to the cursor, and selects what it pasted too.
+	f.call("history.undo");
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.display.canRun("edit.pasteAtOrigin"));
+	f.run("edit.pasteAtOrigin");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(f.parts()[2].at("position") == 3 * g_quarter);
 	REQUIRE(f.waitUntil([&f] { return f.display.selection().size() == 2; }));
 
 	// A new project empties the clipboard: nothing to paste.

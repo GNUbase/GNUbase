@@ -50,8 +50,10 @@ namespace gnubase::ui
 	// bars and beats, the pitch as a name, the velocities 0-127 and the channel 1-16, which note.set edits the same
 	// way, relative to the first note or with Ctrl (Cmd)+Enter the same value for all, the channel set for all. When
 	// the display's selected automation points changed last (class points), it shows the first one in time: its
-	// position, value and Terminator (p. 881), which automationPoint.set edits the same way. Use it on the UI thread;
-	// the display and the binding must outlive it.
+	// position, value and Terminator (p. 881), which automationPoint.set edits the same way. When the display's
+	// selection range changed last (class range), it shows the range (pp. 287-288): Range Start, Range End and Range
+	// Length in the ruler's time format and its Top Track and Bottom Track (<select field="topTrack">), which set the
+	// range (EventDisplay::setRange). Use it on the UI thread; the display and the binding must outlive it.
 
 	class InfoLine final : private Rml::EventListener
 	{
@@ -112,11 +114,19 @@ namespace gnubase::ui
 		void editPoints(const std::string& field, const std::string& text);
 		// The selected automation points, by position.
 		std::vector<Point> pointsOf() const;
+		void showRange();
+		// Sets the display's range: its start, end or length, or its top or bottom track; a start past the end, an
+		// end before the start or a top below the bottom track changes nothing.
+		void editRange(const std::string& field, const std::string& text);
 		void showNotes();
 		// Edits the in-place editor's selected notes as the key editor's info line does (pp. 1140, 1259).
 		void editNotes(const std::string& field, const std::string& text, float number, int gesture);
 		bool shows() const
 		{
+			if (m_showsRange)
+			{
+				return m_range.has_value();
+			}
 			if (m_showsNotes)
 			{
 				return !m_notes.empty();
@@ -179,6 +189,8 @@ namespace gnubase::ui
 		std::map<uint64_t, std::set<uint64_t>> m_pointSelection; // the display's selected automation points, shown
 		std::vector<Point> m_points;                             // the selected ones, the first one first
 		bool m_showsPoints = false;                              // the points' selection changed last
+		std::optional<RangeSelection> m_range;                   // the display's selection range, shown
+		bool m_showsRange = false;                               // the range changed last
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }
