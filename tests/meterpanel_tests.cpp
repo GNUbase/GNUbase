@@ -180,8 +180,8 @@ TEST_CASE("the mixer's channel meters and the meter display read the same frames
 			.at("elements")
 			.empty());
 
-	// The strip's meter, a bar per side with its peak since the last frame and its maximum as the bar's mark, shows
-	// the frame that the master meter shows: one reader takes the peaks for both.
+	// The strip's meter, a bar per side with its peak since the last frame and its peak mark, shows the frame
+	// that the master meter shows: one reader takes the peaks for both.
 	app.call("transport.play");
 	app.call("audio.render", {{"frames", 48000}});
 	REQUIRE(app.waitUntil(
@@ -267,6 +267,18 @@ TEST_CASE("a channel meter's Global Meter Settings menu holds its peaks for a ti
 	const Json items = app.ui().dom(std::nullopt, "#mixer-meter-menu menuitem[checked]", 0).at("elements");
 	REQUIRE(items.size() == 1);
 	CHECK(items[0].at("attributes").at("meter") == "holdForever");
+
+	// The menu follows the settings that MCP, Lua or another mixer's menu change.
+	app.call("settings.set", {{"key", "meter.holdForever"}, {"value", false}});
+	app.call("settings.set", {{"key", "meter.holdPeaks"}, {"value", true}});
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json checked = app.ui().dom(std::nullopt, "#mixer-meter-menu menuitem[checked]", 0).at("elements");
+			return checked.size() == 1 && checked[0].at("attributes").at("meter") == "holdPeaks";
+		}));
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil([&bar] { return bar().value("peak", std::string()) == "-26.0"; }));
 }
 
 TEST_CASE("the meter reader reads only while a view shows meters", "[unit]")

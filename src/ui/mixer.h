@@ -105,8 +105,8 @@ namespace gnubase::ui
 	// channel moves its track there with track.move; busses keep their places. Each strip of a track's channel has
 	// Edit Channel Settings (button.mixer-edit), and its sends' destination lists Add Effect Track to Send. An audio
 	// channel's strip has its meter next to the fader (.mixer-meter, a <meter> per audio channel with the peak since
-	// the last frame and the maximum as its mark, read once a frame through the meter reader) and its peak level
-	// under it (.mixer-peak, reference manual p. 468), which a click resets, every channel's (meter.reset channels).
+	// the last frame and its peak mark, read once a frame through the meter reader) and its peak level under it
+	// (.mixer-peak, reference manual p. 468), which a click resets, every channel's (meter.reset channels).
 	//
 	// As the channel settings window's (MixerKind::ChannelSettings, view unused) it shows one track's channel, with the
 	// pre section, the equalizer, the strip, the sends and the fader shown by default, and a toolbar of its own: Go to

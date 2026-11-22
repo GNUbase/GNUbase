@@ -145,7 +145,7 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
   engine's volume at once, not the widget's default. The lower zone's mixer in the default theme, with colored and plain
   names, is compared with the golden image `lower-zone-mixer.png`.
 - `tests/meterpanel_tests.cpp`: an audio channel's strip meter shows no bars and `-inf` before it played, then a bar
-  per side at the sine's level with its maximum as the mark, in the frame that the master meter shows the same peak;
+  per side at the sine's level with its peak mark, in the frame that the master meter shows the same peak;
   a MIDI channel has none, and a click on the peak level resets the channels' maxima, not the master meter's. The
   Global Meter Settings menu: a mark that holds the peak for the peak hold time while the level falls and then falls,
   Hold Forever's mark at the maximum past that time, Reset Meters, and Hold Peaks off without marks.
