@@ -75,7 +75,9 @@ sends `editor.*` commands.
 - **Visibility tab**: a click on the check shows or hides the track's parts, with Shift exclusively; on a rectangle it
   shows them all (p. 1151). The tracks in a folder are indented under it, and a click on the folder's name or its
   triangle collapses or expands it, in this tab only, without rebuilding the rows, so a double click on its name still
-  shows it exclusively. A folder counts the parts of a track hidden in the project window only while they show, as
+  shows it exclusively. An `editor.changed` updates the rows in place too while they list the same tracks with the
+  same names, so a double click on a shown track's name, whose first click activated the track, still reaches the row
+  it started on and shows the track exclusively (#2031). A folder counts the parts of a track hidden in the project window only while they show, as
   `showTracks` leaves them out, and isn't listed once none of its parts can show. A track that can't show
   (`editor.set`'s `showTracks` refuses it: hidden in the project window, or it or a track in the folder holds locked
   events or parts) is `.unavailable`: its check only hides what it still shows, and Shift or a double click do nothing.
@@ -131,7 +133,8 @@ user picks it from the tab bar) shows an empty editor until Edit > Open Editor i
 - `tests/midieditor_tests.cpp` drives the app with `ui::Automation`: Open/Close Editor for three parts on two tracks
   opens the editor window with them in order, the Activate Part for Editing menu lists them under their tracks and
   activates one, the part editing mode marks the editable parts, a click activates a part; the Visibility tab's checks
-  hide and show tracks, a double click shows one exclusively, a rectangle for a track not all of whose parts show; the
+  hide and show tracks, a double click shows one exclusively, also when its first click's `editor.changed` (the
+  track activated) reaches the tab before the second click, a rectangle for a track not all of whose parts show; the
   Global Tracks section shows a marker track above the events; Open/Close Editor without a selection, closing the
   window, an engine client and a new project open and close it, and an `editor.changed` on its way after the user closed
   the window doesn't open it again. The Visibility tab indents a folder's tracks, folds them with a click on its name

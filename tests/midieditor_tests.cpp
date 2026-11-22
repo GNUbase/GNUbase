@@ -5,12 +5,14 @@
 // tests/editors_tests.cpp checks the engine's editor views.
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/rmlui.h"
 #include "uiapp.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -443,6 +445,32 @@ TEST_CASE("the Visibility tab indents and folds folders and marks the tracks tha
 	REQUIRE(!checks.empty());
 	for (const Json& check : checks)
 		CHECK(check.at("attributes").contains("disabled"));
+}
+
+TEST_CASE("a double click on a shown track's name shows it exclusively after the first click's editor.changed", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	Fixture f(app);
+	app.call("editor.open", {{"editor", "window"}, {"parts", {f.keys1, f.keys2, f.bass1}}});
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	const Window window = app.appUi().editorWindowId();
+	const std::string bassRow = ".editor-visibility-track[track=\"" + std::to_string(f.bass) + "\"]";
+	REQUIRE(app.waitUntil([&] { return elements(app, window, ".editor-visibility-track").size() == 2; }));
+	REQUIRE(!has(elements(app, window, bassRow).at(0), "active"));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true); // the two presses are within the double click time however long the wait takes
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	// The first click activates the track (p. 1149), and its editor.changed reaches the tab before the second click,
+	// as it does for a user; the row stays, so the second click makes the double click that shows the track
+	// exclusively (p. 1151).
+	click(app, window, bassRow + " .editor-visibility-name");
+	REQUIRE(app.waitUntil([&] { return has(elements(app, window, bassRow).at(0), "active"); }));
+	click(app, window, bassRow + " .editor-visibility-name");
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "window")) == std::vector<uint64_t>{f.bass1}; }));
+	REQUIRE(app.waitUntil([&]
+		{ return !has(elements(app, window, ".editor-visibility-track .editor-visibility-check").at(0), "checked"); }));
+	CHECK(has(elements(app, window, bassRow + " .editor-visibility-check").at(0), "checked"));
 }
 
 TEST_CASE("an editor the user closed doesn't open again for an editor.changed still on its way", "[ui]")

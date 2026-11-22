@@ -340,15 +340,7 @@ namespace gnubase::ui
 			if (Rml::Element* list = root->QuerySelector(".editor-visibility"))
 			{
 				list->SetClass("closed", !m_view.at("open").get<bool>());
-				setInner(list, visibilityRml());
-				// The indents, sized from the levels: folders nest without a limit, which no rule per level covers.
-				for (int i = 0; i < list->GetNumChildren(); ++i)
-				{
-					Rml::Element* row = list->GetChild(i);
-					const int width = row->GetAttribute<int>("level", 0) * g_indent;
-					if (Rml::Element* indent = row->QuerySelector(".tree-indent"))
-						indent->SetProperty("width", std::to_string(width) + "dp");
-				}
+				showVisibility(*list, visibilityRows());
 				fold(*list);
 			}
 		}
@@ -479,9 +471,9 @@ namespace gnubase::ui
 	// audio tracks, and folders with such tracks in them, the tracks in a folder indented under it unless it's
 	// collapsed. A check while all their parts show, a rectangle (.partial) while some do (p. 1151); disabled while a
 	// click would change nothing or ask editor.set for what it refuses.
-	std::string MidiEditor::visibilityRml() const
+	std::vector<MidiEditor::VisibilityRow> MidiEditor::visibilityRows() const
 	{
-		std::string rml;
+		std::vector<VisibilityRow> rows;
 		std::map<uint64_t, int> levels;
 		const bool open = m_view.at("open").get<bool>();
 		for (const Json& track : m_project.at("tracks"))
@@ -497,24 +489,82 @@ namespace gnubase::ui
 			const auto [parts, shown] = partsShown(trackId);
 			if (folder && parts == 0)
 				continue;
-			std::string state;
+			VisibilityRow row;
+			row.track = trackId;
+			row.level = level;
+			row.folder = folder;
+			row.name = track.at("name").get<std::string>();
 			if (parts > 0 && shown == parts)
-				state = " checked";
+				row.state = "checked";
 			else if (shown > 0)
-				state = " partial";
+				row.state = "partial";
 			const bool shows = showable(trackId);
-			const bool disabled = !open || parts == 0 || (!shows && shown == 0);
-			std::string classes = m_view.at("activeTrack") == trackId ? " active" : "";
-			classes += shows ? "" : " unavailable";
-			classes += folder ? " parent" : "";
-			rml += R"(<div class="editor-visibility-track)" + classes + R"(" track=")" + idText(trackId) +
-				R"(" level=")" + std::to_string(level) + R"(">)";
-			rml += R"(<span class="tree-indent"/><span class="tree-toggle"/>)";
-			rml += R"(<button class="editor-visibility-check)" + state + '"' + (disabled ? R"( disabled="")" : "") +
-				R"(/><span class="editor-visibility-name">)" + encode(track.at("name").get<std::string>()) +
-				"</span></div>";
+			row.active = m_view.at("activeTrack") == trackId;
+			row.unavailable = !shows;
+			row.disabled = !open || parts == 0 || (!shows && shown == 0);
+			rows.push_back(std::move(row));
 		}
-		return rml;
+		return rows;
+	}
+
+	void MidiEditor::showVisibility(Rml::Element& list, const std::vector<VisibilityRow>& rows)
+	{
+		const auto same = [&list, &rows]
+		{
+			if (list.GetNumChildren() != static_cast<int>(rows.size()))
+				return false;
+			for (size_t i = 0; i < rows.size(); ++i)
+			{
+				Rml::Element* shown = list.GetChild(static_cast<int>(i));
+				const Rml::Element* name = shown->QuerySelector(".editor-visibility-name");
+				if (shown->GetAttribute<Rml::String>("track", "") != idText(rows[i].track) ||
+					shown->GetAttribute<int>("level", -1) != rows[i].level ||
+					shown->IsClassSet("parent") != rows[i].folder || name == nullptr ||
+					name->GetInnerRML() != encode(rows[i].name) ||
+					shown->QuerySelector(".editor-visibility-check") == nullptr)
+					return false;
+			}
+			return true;
+		};
+		if (same())
+		{
+			for (size_t i = 0; i < rows.size(); ++i)
+			{
+				Rml::Element* shown = list.GetChild(static_cast<int>(i));
+				shown->SetClass("active", rows[i].active);
+				shown->SetClass("unavailable", rows[i].unavailable);
+				Rml::Element* check = shown->QuerySelector(".editor-visibility-check");
+				check->SetClass("checked", rows[i].state == "checked");
+				check->SetClass("partial", rows[i].state == "partial");
+				if (rows[i].disabled)
+					check->SetAttribute("disabled", "");
+				else
+					check->RemoveAttribute("disabled");
+			}
+			return;
+		}
+		std::string rml;
+		for (const VisibilityRow& row : rows)
+		{
+			std::string classes = row.active ? " active" : "";
+			classes += row.unavailable ? " unavailable" : "";
+			classes += row.folder ? " parent" : "";
+			rml += R"(<div class="editor-visibility-track)" + classes + R"(" track=")" + idText(row.track) +
+				R"(" level=")" + std::to_string(row.level) + R"(">)";
+			rml += R"(<span class="tree-indent"/><span class="tree-toggle"/>)";
+			rml += R"(<button class="editor-visibility-check)" + (row.state.empty() ? "" : " " + row.state) + '"' +
+				(row.disabled ? R"( disabled="")" : "") + R"(/><span class="editor-visibility-name">)" +
+				encode(row.name) + "</span></div>";
+		}
+		list.SetInnerRML(rml);
+		// The indents, sized from the levels: folders nest without a limit, which no rule per level covers.
+		for (int i = 0; i < list.GetNumChildren(); ++i)
+		{
+			Rml::Element* row = list.GetChild(i);
+			const int width = row->GetAttribute<int>("level", 0) * g_indent;
+			if (Rml::Element* indent = row->QuerySelector(".tree-indent"))
+				indent->SetProperty("width", std::to_string(width) + "dp");
+		}
 	}
 
 	void MidiEditor::fillMenus()
