@@ -19,15 +19,16 @@ so every document in the app and in UI tests has them.
 ## Buttons and toggles
 
 - `<button>` is clicked with the mouse, or with Space or Enter while it has the focus. With the `disabled` attribute it
-  gets `:disabled`, takes no focus, and clicks pass through it. `button.primary`, `button.icon-only` and the small
-  track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme. Buttons outside
-  dialogs are for the mouse, as in the reference (reference manual pp. 295-311): those in a `.toolbar` (the project
-  window's, the mixer's, the pool's, the markers window's and the panel windows'), in the transport controls
-  (`.transport`), in the track list, the inspector's track buttons, the mixer's channels, a zone's Close button and the
-  ruler's format button. A click focuses them, but Tab skips them and Space, Enter and NumEnter go on to the key
-  commands, so Space still starts and stops playback after a click on Cycle, Snap or a track's Mute or Solo (#456,
-  #653). Setup panes (`.setup-pane`), also those of a toolbar or the transport controls, keep Tab, Space and Enter for
-  their buttons.
+  gets `:disabled`, takes no focus, and clicks pass through it. `button.primary`, `button.icon-only` and the small track
+  buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme. Buttons outside dialogs
+  are for the mouse, as in the reference (reference manual pp. 295-311): those in a `.toolbar` (the project window's,
+  the mixer's, the pool's, the markers window's and the panel windows'), in the transport controls (`.transport`), in
+  the track list, the inspector's track buttons, the mixer's channels, a zone's Close button, the ruler's format button,
+  the info line's buttons (Mute, Lock), the chord pads' toolbars and panes (Mute Section, Latch Pads), the drum sound
+  list's Mute and the pattern lanes' Mute and Solo. A click focuses them, but Tab skips them and Space, Enter and
+  NumEnter go on to the key commands, so Space still starts and stops playback after a click on Cycle, Snap or a track's
+  Mute or Solo (#456, #653, #2016). Setup panes (`.setup-pane`), also those of a toolbar or the transport controls, keep
+  Tab, Space and Enter for their buttons.
 - `<button type="toggle">` is a toggle button: a click turns it on or off. Its state is the `checked` attribute, as
   for check boxes, shown by the state class `.checked`; it sends `change` with the new state as a bool, so
   `data-checked="muted"` binds it.
@@ -67,11 +68,13 @@ The widgets:
   typed, clamped to the range; Escape, text that isn't a number, or nothing typed keeps the value, so that a value with
   more decimals than the field shows isn't rounded to them. Typing the number shown takes it. With `autofocus`, it is
   edited, all of it selected, whenever it gets a visible focus: when its document shows it focused, or Tab moves to it,
-  but not on a click. When its document shows it, keys typed before the next update go into it too; after Tab, a key
-  before the next update starts editing, but only text that comes after that key goes into it. In a dialog it is then
-  the main field, which works like a text field: Enter takes the number typed and clicks OK, Escape cancels. While the
-  user types, the field's text field sends RmlUi's own `change` events with the text; the field's `change`, with the
-  field as its target, has the number.
+  but not on a click. While it is edited, the wheel and Up and Down still step it, from the number typed if there is
+  one, and it stays edited with the new number selected (#548); without `autofocus`, an edited field ignores the wheel
+  and the arrows move the caret. When its document shows it, keys typed before the next update go into it too; after
+  Tab, a key before the next update starts editing, but only text that comes after that key goes into it. In a dialog it
+  is then the main field, which works like a text field: Enter takes the number typed and clicks OK, Escape cancels.
+  While the user types, the field's text field sends RmlUi's own `change` events with the text; the field's `change`,
+  with the field as its target, has the number.
 
 `<textdisplay>` shows text, its `value` attribute, such as a position in a time format; documents give it the look of
 a display with the class `.display`. A double click edits it as text (`.editing`): Enter, or leaving the field, sends
@@ -98,14 +101,15 @@ attributes, through a data model or directly.
 - `<menu>` holds `<menuitem>`s and `<menuseparator>`s and stays hidden until it opens, with the state class `.open`:
   under a button whose `menu` attribute names it by id (a second click on the button closes it; a click on another
   button with the same menu, such as another row's cell of the list editor, opens it under that one, and a text field
-  being edited, `.editing`, doesn't open it, #1688), or at the mouse on
-  a right click on an element whose `contextmenu` attribute names it: the nearest one with the attribute, so an empty
-  `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
-  Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has the attribute,
-  as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens
-  inside the window, moved left or up where it would stick out. Code opens one at a point with `ui::openMenu`
-  (`src/ui/widgets.h`), as the Alt-click that opens the Choose Track Color pane does ([colors.md](colors.md)). Put
-  menus straight into the body, so that no container clips them.
+  being edited, `.editing`, doesn't open it, #1688), or at the mouse on a right click on an element whose `contextmenu`
+  attribute names it: the nearest one with the attribute, so an empty `contextmenu` keeps the menu of an element around
+  it from opening on a control. With a modifier key held (Ctrl, Alt, Shift or Cmd), the menu that its
+  `modifiercontextmenu` attribute names opens instead, if it has the attribute, as the event display's and the key
+  editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens inside the window, moved left or up
+  where it would stick out. A menu taller than the window gets the state class `.scrolls`: as tall as the window, it
+  scrolls its items, until they fit again (#1933). Code opens one at a point with `ui::openMenu` (`src/ui/widgets.h`),
+  as the Alt-click that opens the Choose Track Color pane does ([colors.md](colors.md)). Put menus straight into the
+  body, so that no container clips them.
 - An open menu whose items come or go moves inside the window again (#1580, #1665). Until the next press, release or
   key, it is placed from where it opened, as if the items had been there then: those that the opening click fills in,
   as the Articulations lane's context menu and the list editor's pop-up menus do, so that a menu that shrinks goes back
@@ -116,7 +120,9 @@ attributes, through a data model or directly.
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.
 - A `<menu>` inside an item is its submenu, shown beside the item while the mouse is over it (pure RCSS:
-  `menuitem:hover > menu`); a click on that item keeps the menu open. Such an item gets a `.menu-arrow` part when its
+  `menuitem:hover > menu`); a click on that item keeps the menu open. Once laid out, a submenu moves right of its
+  item, its first item level with it, or left of the item where only that side has room, and then inside the window
+  as far as it must; a menu that scrolls doesn't clip it (#1933). Such an item gets a `.menu-arrow` part when its
   document loads, and again when its menu opens for those that came later, first in the item so that it floats right;
   the themes draw it with their dropdown arrow, turned to point right. Once a key moved the focus in a menu it has
   the state class `.keys` until the mouse moves or goes over another item, and then a submenu that the mouse rests on
@@ -132,7 +138,7 @@ attributes, through a data model or directly.
   open, every open menu. A menu that closes with the focus in it gives the focus to its item, if it is a submenu, or
   else back to the element that had it when the menu opened (a text field or list that keeps its keys and its focus
   zone), or to its document if that is gone, hidden, disabled, or the title that opened the menu, whose Space and Enter
-  would open it again.
+  would open it again. In a menu that scrolls, the keys scroll the item they focus into view (#1933).
 - `<menubar>` holds the titles of menus: elements with a `menu` attribute, usually buttons. While one title's menu is
   open, the mouse over another title opens that one's menu instead; in a title's menu (and its submenus) Right and
   Left open the next and previous title's menu where they don't go into or out of a submenu, with its first item
@@ -171,15 +177,17 @@ class such as `.tooltip` gives it the theme's look.
 
 `<dialog>` is a dialog in a document of its own, which the app loads and shows, usually modal
 (`ElementDocument::Show(Rml::ModalFlag::Modal)`). It opens in the middle of the window, and dragging its
-`.dialog-titlebar` moves it. A dialog that grows later (rows that show, a longer message) and
-would pass the window's edge moves back inside it. Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
-its `button.primary`, also from a text field and a value field with `autofocus`, but not from a multi-line text field
-or another value field being edited, and not when the focused control takes Enter itself: a button clicks itself, a
-drop-down list opens and closes, another value field starts editing. A click on an element with a `result` attribute
-closes it with that result. Tab and Shift+Tab move the focus between its controls, around the ends
-([accessibility.md](accessibility.md)). Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
-`result`, then closes the document, once: a dialog that is closing doesn't close again. The app closes a dialog the
-same way with `ui::closeDialog`, e.g. to cancel the open project dialog when the user quits.
+`.dialog-titlebar` moves it. A dialog that grows later (rows that show, a longer message) and would pass the window's
+edge moves back inside it. A dialog taller than the window, also once the window gets shorter under it, gets `.scrolls`,
+as menus do: as tall as the window, it scrolls what it holds (#1933). Escape closes it with the result `cancel`, or
+first an open drop-down list; Enter clicks its `button.primary`, also from a text field and a value field with
+`autofocus`, but not from a multi-line text field or another value field being edited, and not when the focused control
+takes Enter itself: a button clicks itself, a drop-down list opens and closes, another value field starts editing. A
+click on an element with a `result` attribute closes it with that result. Tab and Shift+Tab move the focus between its
+controls, around the ends ([accessibility.md](accessibility.md)). Closing sends the event `close`
+(`ui::g_dialogCloseEvent`) with the parameter `result`, then closes the document, once: a dialog that is closing doesn't
+close again. The app closes a dialog the same way with `ui::closeDialog`, e.g. to cancel the open project dialog when
+the user quits.
 
 How it works: an RmlUi plugin (`RmlUi::registerPlugin`) gives every document a tooltip and listens to it in the capture
 phase, before its elements: for `contextmenu` and `menu` attributes, titles, clicks outside open menus, Escape, the

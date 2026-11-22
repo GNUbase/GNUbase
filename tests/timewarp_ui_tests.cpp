@@ -133,8 +133,8 @@ TEST_CASE("the time warp tool warps the grid by its modes, and Free Warp puts wa
 	CHECK(std::abs(bpm - 90.0) < 1.0);
 	CHECK(f.app.call("history.get").at("steps").back().at("action") == "Time Warp");
 
-	// Open near the left so the nested Tools > Time Warp Mode menu fits in the window.
-	f.app.ui().click(std::nullopt, {"", 0, ui::Point{f.x(0.25), f.y()}}, ui::MouseButton::Right, 1, {});
+	// The context menu's Tools has the modes, checked as chosen.
+	f.app.ui().click(std::nullopt, {"", 0, ui::Point{f.x(3.0), f.y()}}, ui::MouseButton::Right, 1, {});
 	step(f.app);
 	click(f.app, "#tools-submenu");
 	click(f.app, "#time-warp-submenu");

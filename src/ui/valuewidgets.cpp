@@ -150,6 +150,11 @@ namespace gnubase::ui
 			float minimum() const { return number(*this, "min", 0.0F); }
 			float maximum() const { return number(*this, "max", 1.0F); }
 			float step() const { return number(*this, "step", (maximum() - minimum()) / 100.0F); }
+			// Shift makes a change finer.
+			static float fineness(const Rml::Event& event)
+			{
+				return event.GetParameter("shift_key", false) ? g_fine : 1.0F;
+			}
 			float value() const
 			{
 				return std::clamp(number(*this, "value", number(*this, "default", minimum())),
@@ -237,11 +242,6 @@ namespace gnubase::ui
 			float position(const Rml::Event& event) const
 			{
 				return horizontal() ? event.GetParameter("mouse_x", 0.0F) : -event.GetParameter("mouse_y", 0.0F);
-			}
-
-			static float fineness(const Rml::Event& event)
-			{
-				return event.GetParameter("shift_key", false) ? g_fine : 1.0F;
 			}
 
 			float m_last = 0.0F;               // where the mouse was in the drag
@@ -392,6 +392,8 @@ namespace gnubase::ui
 
 			void listen(Rml::Event& event) override
 			{
+				if (m_editing && HasAttribute("autofocus") && stepEdited(event))
+					return;
 				if (event.GetTargetElement() != m_input)
 				{
 					ValueControl::listen(event);
@@ -485,6 +487,31 @@ namespace gnubase::ui
 				m_focused = false;
 				if (GetContext() != nullptr && GetContext()->GetFocusElement() == this && active())
 					startEditing();
+			}
+
+			// While it is edited with autofocus, as it opens, the wheel and Up and Down still step it, from the number
+			// typed if there is one, and the text field shows the new number, all of it selected (#548). A released key
+			// ends the gesture.
+			bool stepEdited(Rml::Event& event)
+			{
+				if (event == Rml::EventId::Keyup)
+					endGesture();
+				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+				const bool arrow =
+					event == Rml::EventId::Keydown && (key == Rml::Input::KI_UP || key == Rml::Input::KI_DOWN);
+				if (!arrow && event.GetId() != Rml::EventId::Mousescroll)
+					return false;
+				float steps = -event.GetParameter("wheel_delta_y", 0.0F);
+				if (arrow)
+					steps = key == Rml::Input::KI_UP ? 1.0F : -1.0F;
+				const std::optional<float> typed = m_typed ? parse(m_input->GetValue()) : std::nullopt;
+				change(typed.value_or(value()) + (steps * step() * fineness(event)));
+				m_input->SetValue(format(value(), decimals()));
+				m_typed = false; // after SetValue, as in startEditing
+				m_input->Select();
+				// The field used it: the text field's own listener doesn't move the caret, nothing around it scrolls.
+				event.StopImmediatePropagation();
+				return true;
 			}
 
 			void startEditing()

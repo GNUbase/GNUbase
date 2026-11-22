@@ -75,9 +75,9 @@ namespace
 
 	// Clicks the button beside its icon, which focuses the button itself, then checks that Space starts and stops
 	// playback and NumEnter starts it (transport.play, reference manual p. 1572), rather than clicking the button again
-	// (#456, #653). on says whether the button is on.
+	// (#456, #653). on says whether the button is on; focuses whether the click leaves the focus on the button.
 	void keysAfterClick(test::UiApp& app, const std::string& button, std::optional<ui::WindowId> window,
-		const std::function<bool()>& on)
+		const std::function<bool()>& on, bool focuses = true)
 	{
 		INFO(button);
 		const bool wasOn = on();
@@ -97,7 +97,7 @@ namespace
 		for (const char* key : {"tag", "id", "classes", "attributes", "box"})
 		{
 			INFO(key);
-			CHECK(focus.value(key, Json()) == clicked.value(key, Json()));
+			CHECK((!focuses || focus.value(key, Json()) == clicked.value(key, Json())));
 		}
 		REQUIRE(playing(true));
 		app.ui().key(window, "Space");
@@ -263,6 +263,92 @@ TEST_CASE("Space and NumEnter run their key commands after a click on a track's,
 	const std::string solo = ".mixer-channel[channel=" + std::to_string(channel) + "] button.solo";
 	REQUIRE(app.waitUntil([&app, mixer, &solo] { return app.ui().dom(mixer, solo, 0).at("elements").size() == 1; }));
 	keysAfterClick(app, solo, mixer, [&channelIs] { return channelIs("solo"); });
+}
+
+TEST_CASE("Space and NumEnter run their key commands after a click on the info line's, the chord pads', a drum sound's "
+		  "or a pattern lane's buttons (#2016)",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const auto addPart = [&app](const char* type, const Json& extra)
+	{
+		const auto track = app.call("track.add", {{"type", type}}).at("track").at("id").get<uint64_t>();
+		Json parameters = {{"track", track}, {"position", 0}, {"length", 4 * g_quarter}};
+		parameters.update(extra);
+		return std::make_pair(track, app.call("midiPart.add", parameters).at("part").at("id").get<uint64_t>());
+	};
+	const auto shown = [&app](const std::string& selector, std::optional<ui::WindowId> window)
+	{
+		return app.waitUntil(
+			[&app, &selector, window]
+			{
+				const Json found = app.ui().dom(window, selector, 0).at("elements");
+				return found.size() == 1 && found[0].value("visible", false);
+			});
+	};
+	const auto editor = [&app](uint64_t part)
+	{
+		app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part})}});
+		REQUIRE(app.waitUntil([&app] { return app.appUi().editorWindow() != nullptr; }));
+		return app.appUi().editorWindowId();
+	};
+
+	SECTION("the info line's Mute and Lock")
+	{
+		app.setDpRatio(0.75F); // the whole info line
+		app.appUi().docking().setVisible("project", "infoLine", true);
+		display.select({addPart("midi", Json::object()).second});
+		for (const std::string button : {"#info-line button[field=mute]", "#info-line button[field=lock]"})
+		{
+			REQUIRE(shown(button, std::nullopt));
+			keysAfterClick(app, button, std::nullopt, [&app, &button] { return checked(app, button); });
+		}
+	}
+	SECTION("the chord pads' Mute Section and Latch Pads")
+	{
+		app.setDpRatio(0.5F); // the whole toolbar
+		app.keys().run("window.chordPads", Json::object(), app.main(), nullptr);
+		REQUIRE(shown("#chord-pads-pane-playerRemote-button", std::nullopt));
+		click(app, "#chord-pads-pane-playerRemote-button");
+		REQUIRE(shown("#chord-pads-mute-2", std::nullopt));
+		const auto pads = [&app] { return app.call("chordPads.get"); };
+		keysAfterClick(
+			app, "#chord-pads-mute-2", std::nullopt, [&pads] { return pads().at("mutedSections")[2].get<bool>(); });
+		keysAfterClick(
+			app, "#chord-pads-latchPads", std::nullopt, [&pads] { return pads().at("latchPads").get<bool>(); });
+	}
+	SECTION("a drum sound's Mute")
+	{
+		const auto [track, part] = addPart("midi", Json::object());
+		const Json gm = app.call("project.get").at("drumMaps").at(0).at("id");
+		const Json map = app.call("drumMap.add", {{"copy", gm}, {"name", "Kit"}}).at("map").at("id");
+		app.call("track.set", {{"track", track}, {"drumMap", map}});
+		const ui::WindowId window = editor(part);
+		const std::string mute = ".drum-sound[pitch=\"38\"] .drum-sound-mute";
+		REQUIRE(shown(mute, window));
+		REQUIRE(app.waitUntil([&app] { return app.appUi().editorWindow()->keyEditor()->scrollToPitch(37); }));
+		app.shell().step(std::chrono::milliseconds(0));
+		// The drum sound list hands the focus on to the keys, as a click on the keys does.
+		keysAfterClick(app, mute, window, [&app, &mute, window] { return checked(app, mute, window); }, false);
+	}
+	SECTION("a pattern lane's Mute and Solo")
+	{
+		const auto track = app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+		const Json pattern = app.call("pattern.add", {{"track", track}}).at("pattern").at("id");
+		const auto part = app.call("midiPart.add",
+								 {{"track", track}, {"position", 0}, {"length", 4 * g_quarter}, {"pattern", pattern}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+		const ui::WindowId window = editor(part);
+		for (const char* which : {"mute", "solo"})
+		{
+			const std::string button = std::string(".pattern-lane[pitch=\"38\"] .pattern-lane-") + which;
+			REQUIRE(shown(button, window));
+			keysAfterClick(app, button, window, [&app, &button, window] { return checked(app, button, window); });
+		}
+	}
 }
 
 TEST_CASE(
@@ -1876,11 +1962,7 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 
 	// Show Beat Count Only: the beat in its bar.
 	app.ui().click(window, at("#time-display"), ui::MouseButton::Right, 1, {});
-	// This small window cannot show the whole menu: choose its items with the keyboard.
-	app.ui().key(window, "Up");
-	app.ui().key(window, "Up");
-	CHECK(app.ui().key(window, "Up").at("focus").at("id") == "beat-count-only");
-	app.ui().key(window, "Enter");
+	click(app, "#beat-count-only", window);
 	REQUIRE(app.waitUntil([&app, window] { return shows(app, "#time-display", window) == "4"; }));
 	CHECK(element(app, "#beat-count-only", window).at("attributes").contains("checked"));
 	CHECK(app.call("settings.get", {{"key", "ui.timeDisplay"}}).at("value").at("beatCountOnly") == true);
@@ -1889,9 +1971,7 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 
 	// Increase and Decrease Window Size: the window and its digits, whose sizes the theme has.
 	app.ui().click(window, at("#time-display"), ui::MouseButton::Right, 1, {});
-	app.ui().key(window, "Up");
-	CHECK(app.ui().key(window, "Up").at("focus").at("id") == "increase-size");
-	app.ui().key(window, "Enter");
+	click(app, "#increase-size", window);
 	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-2", window); }));
 	const ui::Size larger = app.shell().bounds(window).size();
 	CHECK(larger.width > normal.width);
@@ -1961,10 +2041,6 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	app.ui().key(std::nullopt, "F2");
 	REQUIRE(app.appUi().transportPanel() != nullptr);
 	const ui::WindowId panel = app.appUi().transportPanel()->id();
-	ui::Rect bounds = app.shell().bounds(panel);
-	bounds.height = 300; // the setup pane is taller than the single-row panel
-	app.shell().setBounds(panel, bounds);
-	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(visible(app, "[section=locators]", panel));
 	app.ui().click(panel, at("[section=click]"), ui::MouseButton::Right, 1, {});
 	click(app, "#transport-setup [setup-section=click]", panel);
