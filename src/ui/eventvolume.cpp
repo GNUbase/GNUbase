@@ -55,13 +55,13 @@ namespace gnubase::ui
 
 	bool EventDisplay::volumeDown(const Shown& shown, double x, double y)
 	{
+		// Only selected events show their volume handle (showFades), so only theirs can be grabbed, as the fade handles.
 		const auto fades = m_fades.find(shown.id);
 		if (fades == m_fades.end() || !(fades->second.rate > 0.0) ||
+			!std::binary_search(m_selection.begin(), m_selection.end(), shown.id) ||
 			y + m_view.top - m_laneTops[shown.lane] > g_handleSize ||
 			std::abs(x - ((((shown.start + shown.end) / 2.0) - m_view.start) / m_view.scale)) > g_handleSize)
 			return false;
-		if (!std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
-			select({shown.id});
 		m_dragEvent = shown.id;
 		m_drag = Drag::Volume;
 		return true;

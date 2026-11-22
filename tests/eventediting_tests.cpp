@@ -3255,8 +3255,13 @@ namespace
 TEST_CASE("the event volume handle at the top middle of an audio event drags the selected events' volume", "[unit]")
 {
 	Fixture f;
-	// 10 dp down a 40 dp lane, from 0 dB half way up (+6 dB at the top): -6 dB.
-	f.drag(225, 3, 225, 13);
+	// An unselected event shows no volume handle: a drag from its top middle moves it, as with the fade handles, and
+	// selects it. From 2 to 3 seconds.
+	f.drag(225, 3, 325, 3);
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioEvents")[0].at("position") == 144000; }));
+	CHECK(eventVolume(f.audioEvents()[0]) == 0.0);
+	// Selected, 10 dp down a 40 dp lane, from 0 dB half way up (+6 dB at the top): -6 dB.
+	f.drag(325, 3, 325, 13);
 	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
 	// The event shows its volume as a line, and the selected one its fade handles and its volume handle.
@@ -3266,8 +3271,8 @@ TEST_CASE("the event volume handle at the top middle of an audio event drags the
 	f.call("history.undo");
 	REQUIRE(f.waitUntil([&f] { return eventVolume(f.audioEvents()[0]) == 0.0; }));
 	// Lower down, a drag still moves the event.
-	f.drag(225, 30, 325, 30);
-	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 144000; }));
+	f.drag(325, 30, 425, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 192000; }));
 }
 
 TEST_CASE("the event volume handle works with the draw tool too, instead of adding a curve point", "[unit]")
@@ -3275,6 +3280,7 @@ TEST_CASE("the event volume handle works with the draw tool too, instead of addi
 	// Reference manual p. 401: the object selection and the draw tool both drag the event volume.
 	Fixture f;
 	f.display.setTool(ui::Tool::Draw);
+	f.display.select({f.event});
 	f.drag(225, 3, 225, 13);
 	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
 	CHECK(f.audioEvents()[0].at("volumeCurve").empty());

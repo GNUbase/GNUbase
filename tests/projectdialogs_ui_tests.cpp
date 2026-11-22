@@ -87,7 +87,7 @@ namespace
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 
-	// An audio track with an event of a second of silence, the event selected in the project window.
+	// An audio track with an event of a second of silence, the track and the event selected in the project window.
 	void selectEvent(test::UiApp& app, ui::EventDisplay& display, const std::filesystem::path& file)
 	{
 		const auto track = app.call("track.add", {{"type", "audio"}}).at("track").at("id");
@@ -103,6 +103,13 @@ namespace
 				.get<uint64_t>();
 		REQUIRE(app.waitUntil(
 			[&display] { return display.project().is_object() && display.project().at("audioEvents").size() == 1; }));
+		const std::vector<uint64_t> tracks = {track.get<uint64_t>()};
+		REQUIRE(app.waitUntil(
+			[&app, &tracks]
+			{
+				app.appUi().trackList()->select(tracks);
+				return app.appUi().trackList()->selection() == tracks;
+			}));
 		display.select({event});
 		app.shell().step(std::chrono::milliseconds(0));
 	}
@@ -152,8 +159,8 @@ TEST_CASE("dialogs for the project's tracks, parts or notes close when a new pro
 {
 	test::UiApp app{{1200, 800}};
 	ui::EventDisplay& display = app.appUi().showProject();
-	const std::pair<const char*, const char*> dialogs[] = {{"track.autoFades", "#auto-fades"},
-		{"project.addTrack", "#add-track-dialog"}, {"track.addEffectToSelected", "#add-track-dialog"},
+	const std::pair<const char*, const char*> dialogs[] = {{"project.addTrack", "#add-track-dialog"},
+		{"track.addEffectToSelected", "#add-track-dialog"},
 		{"track.saveTrackPreset", "#track-preset-dialog"}, {"midi.transposeSetup", "#midi-function"},
 		{"midi.ruleEditor", "#rule-editor"}, {"midi.mergeInLoop", "#midi-function"},
 		{"track.removeSelected", "#remove-tracks-dialog"},
@@ -192,7 +199,8 @@ TEST_CASE("the event display's dialogs for audio events close when a new project
 	audio.sampleRate = 48000;
 	audio.samples.resize(48000);
 	test::writeWav(file, audio);
-	const std::pair<const char*, const char*> dialogs[] = {{"audio.fadeEditor", "#fade-editor"},
+	const std::pair<const char*, const char*> dialogs[] = {{"track.autoFades", "#auto-fades"},
+		{"audio.fadeEditor", "#fade-editor"},
 		{"audio.detectSilence", "#detect-silence-dialog"}, {"audio.spectrumAnalyzer", "#spectrum-analyzer-dialog"},
 		{"audio.statistics", "#statistics-dialog"}, {"audio.setDefinitionFromTempo", "#definition-from-tempo-dialog"}};
 	for (const auto& [command, dialog] : dialogs)
