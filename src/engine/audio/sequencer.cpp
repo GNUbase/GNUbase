@@ -1656,7 +1656,7 @@ namespace gnubase::engine
 				if (event.type == Type::NoteOn || event.type == Type::NoteOff)
 					m_thruDown[((event.channel % 16) * 128) + (event.key % 128)] = event.type == Type::NoteOn;
 				else if (event.type == Type::Controller && graph::holdsNotes(event.key))
-					m_thruPedals[((event.channel % 16) * 3) +
+					m_thruPedals[(size_t{event.channel % 16U} * 3) +
 						static_cast<size_t>(std::find(pedals.begin(), pedals.end(), event.key) - pedals.begin())] =
 						!graph::endsNotes(event);
 			m_thruHolds = m_thruHolds || !events.empty();

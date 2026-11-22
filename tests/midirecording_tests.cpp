@@ -1104,6 +1104,7 @@ TEST_CASE("a block with more MIDI input than a chunk holds records all of it", "
 	Client& client = setup.client;
 	run(client, "transport.record");
 	std::vector<Json> messages;
+	messages.reserve(600);
 	for (int i = 0; i < 300; ++i)
 		messages.push_back(message(1000 + (i % 64), {0x90 + (i / 128), i % 128, 100}));
 	for (int i = 0; i < 300; ++i)
