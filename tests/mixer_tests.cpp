@@ -350,6 +350,17 @@ TEST_CASE("muted channels and channels silenced by another's solo are silent, gl
 	run(muted.client, "audio.render", {{"frames", 1000}});
 	checkGain(muted.output(0, 1000), 1.0);
 
+	// A mono channel's panner makes it stereo: muted, both sides are silent, not only the left.
+	Mixer mono("mono");
+	run(mono.client, "audio.render", {{"frames", 1000}});
+	checkGain(mono.output(1, 1000), gain(-3.0));
+	mono.set({{"mute", true}});
+	run(mono.client, "audio.render", {{"frames", 1000}});
+	const std::vector<float> left = mono.output(0, 2000);
+	const std::vector<float> right = mono.output(1, 2000);
+	CHECK(std::all_of(left.begin() + 1300, left.end(), [](float sample) { return sample == 0.0f; }));
+	CHECK(std::all_of(right.begin() + 1300, right.end(), [](float sample) { return sample == 0.0f; }));
+
 	Mixer soloed;
 	const ObjectId other = twoTracks(soloed);
 	run(soloed.client, "channel.set", {{"channel", other}, {"solo", true}});

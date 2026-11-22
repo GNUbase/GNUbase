@@ -8,6 +8,7 @@
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -104,8 +105,8 @@ namespace gnubase::ui
 	// channel moves its track there with track.move; busses keep their places. Each strip of a track's channel has
 	// Edit Channel Settings (button.mixer-edit), and its sends' destination lists Add Effect Track to Send. An audio
 	// channel's strip has its meter next to the fader (.mixer-meter, a <meter> per audio channel with the peak since
-	// the last frame and the maximum as its mark, read once a frame through the meter reader) and its peak level
-	// under it (.mixer-peak, reference manual p. 468), which a click resets, every channel's (meter.reset channels).
+	// the last frame and its peak mark, read once a frame through the meter reader) and its peak level under it
+	// (.mixer-peak, reference manual p. 468), which a click resets, every channel's (meter.reset channels).
 	//
 	// As the channel settings window's (MixerKind::ChannelSettings, view unused) it shows one track's channel, with the
 	// pre section, the equalizer, the strip, the sends and the fader shown by default, and a toolbar of its own: Go to
@@ -161,8 +162,11 @@ namespace gnubase::ui
 		void showSettingsToolbar();
 		void goTo(uint64_t track);
 		const MixerChannel* channelOf(Rml::Element* element) const;
-		// The meters' values, per channel in m_metered: each audio channel's peak and maximum, then the peak level.
-		std::vector<std::vector<std::string>> readMeters() const;
+		// The meters' values, per channel in m_metered: each audio channel's peak and its peak mark, held as the
+		// Global Meter Settings say (empty without Hold Peaks), then the peak level.
+		std::vector<std::vector<std::string>> readMeters();
+		// A user setting the mixer shows: audio.defaultSendLevel, or a Global Meter Setting.
+		void setting(const std::string& key, const engine::Json& value);
 		void showMeters(const std::vector<std::vector<std::string>>& shown);
 		// The display line's pop-up menu (reference manual p. 459), filled for the channel as it opens; link does what
 		// its item says.
@@ -201,6 +205,17 @@ namespace gnubase::ui
 		bool m_dropping = false;    // while another project drops the notes being typed
 		SoloHold m_soloHold;
 		double m_defaultSendLevel = 0.0; // the user setting audio.defaultSendLevel
+		// The Global Meter Settings (reference manual p. 467): meter.holdPeaks, meter.holdForever, meter.peakHoldTime.
+		bool m_holdPeaks = true;
+		bool m_holdForever = false;
+		std::chrono::milliseconds m_peakHoldTime{2000};
+		struct HeldPeak
+		{
+			float level = 0.0f;
+			std::chrono::steady_clock::time_point at;
+		};
+		std::map<uint64_t, std::vector<HeldPeak>> m_held; // each metered channel's peak marks, per side
+		Rml::ObserverPtr<Rml::Element> m_meterMenu;
 
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went

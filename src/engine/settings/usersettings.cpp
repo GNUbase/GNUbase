@@ -532,6 +532,18 @@ namespace gnubase::engine::settings
 					"Use Drum Editor when Drum Map is assigned (reference manual p. 1603): a closed editor opens the "
 					"parts of a track with a drum map in the drum editor (editor.open).",
 					Json{{"type", "boolean"}}, true, true},
+				{"meter.holdForever",
+					"Meter Peak - Hold Forever (reference manual p. 467): the channel meters' peak marks hold the "
+					"highest level until the meters are reset (meter.reset); off, for meter.peakHoldTime.",
+					Json{{"type", "boolean"}}, false},
+				{"meter.holdPeaks",
+					"Meter Peak - Hold Peaks (reference manual p. 467): the channel meters show the highest levels "
+					"as peak marks.",
+					Json{{"type", "boolean"}}, true},
+				{"meter.peakHoldTime",
+					"Meters' Peak Hold Time (reference manual p. 1614): how long the channel meters' peak marks hold "
+					"a peak, 500 to 30000 ms, unless meter.holdForever is on.",
+					Json{{"type", "integer"}, {"minimum", 500}, {"maximum", 30000}}, 2000, true},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",

@@ -103,18 +103,26 @@ control's last step answered, its strip shows the engine's value; a refused one 
 
 An audio channel's strip has its meter next to the fader (`.mixer-meter`, reference manual p. 468): a `<meter>` per
 audio channel of the channel's meter (both sides of a mono channel on a stereo destination), -60 to +6 dB, with the
-peak since the last frame and the peak maximum as its mark, and under it, beside the fader's volume, the Meter Peak
+peak since the last frame and its peak mark, and under it, beside the fader's volume, the Meter Peak
 Level (`.mixer-peak`), the highest of those maxima, which a click resets: every channel's (`meter.reset` with
 `meters` `channels`), not the master meter's. The bars come once the engine measured the channel, after it first
 played. The mixers read them through `ui::MeterReader`, the UI's one reader of the meters, which the right zone's meter
 display shares ([metering.md](metering.md)); MIDI channels, VCA faders and busses have no meter yet.
+
+A right click on a meter opens its Global Meter Settings (`#mixer-meter-menu`, p. 467), the user settings that every
+mixer's meters follow: Meter Peak - Hold Peaks (`meter.holdPeaks`, on by default) shows the peak marks; Meter Peak -
+Hold Forever (`meter.holdForever`) makes a mark the peak maximum, until a reset; without it a mark holds a peak for the
+Meters' Peak Hold Time (`meter.peakHoldTime`, 500 to 30000 ms, 2000 by default, on the preferences' Metering page,
+p. 1614) and then falls to the level, and a reset starts it again. The UI holds the marks, from the peaks of each frame.
+Reset Meters resets the channels' maxima, as a click on the Meter Peak Level does. Meter Position (Input, Post-Fader,
+Post-Panner) is not there yet: the engine meters after the fader, the panner and muting.
 
 ## Not yet
 
 Channel selection and the agents and Move Selected Channels commands that work on it, dragging several channels at
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
 the right zone; the channel overview, the meter bridge, Channel Latency, the routing and inserts sections (#113) and the
-channel meters' Global Meter Settings menu, meter colors and clipping indicators (pp. 467-468, [metering.md](metering.md)); Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
+channel meters' Meter Position and Meters' Fallback, meter colors and clipping indicators (pp. 467-468, [metering.md](metering.md)); Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
 windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspaces.md)).
 
 ## Checks
@@ -137,5 +145,7 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
   engine's volume at once, not the widget's default. The lower zone's mixer in the default theme, with colored and plain
   names, is compared with the golden image `lower-zone-mixer.png`.
 - `tests/meterpanel_tests.cpp`: an audio channel's strip meter shows no bars and `-inf` before it played, then a bar
-  per side at the sine's level with its maximum as the mark, in the frame that the master meter shows the same peak;
-  a MIDI channel has none, and a click on the peak level resets the channels' maxima, not the master meter's.
+  per side at the sine's level with its peak mark, in the frame that the master meter shows the same peak;
+  a MIDI channel has none, and a click on the peak level resets the channels' maxima, not the master meter's. The
+  Global Meter Settings menu: a mark that holds the peak for the peak hold time while the level falls and then falls,
+  Hold Forever's mark at the maximum past that time, Reset Meters, and Hold Peaks off without marks.

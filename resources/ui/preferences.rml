@@ -324,6 +324,8 @@
 					{"midi", "MIDI Tracks"}, {"instrument", "Instrument Tracks"}}}}},
 			{id = "midi-filter", parent = "MIDI", name = "MIDI Filter", custom = "midiFilter",
 				keys = {"midi.recordFilter"}},
+			{id = "metering", name = "Metering", items = {
+				{key = "meter.peakHoldTime", label = "Meters' Peak Hold Time", unit = "ms"}}},
 			{id = "record", name = "Record", items = {
 				{key = "audio.stopAfterPunchOut", label = "Stop after Automatic Punch Out"}}},
 			{id = "record-audio", parent = "Record", name = "Audio", items = {
