@@ -1195,8 +1195,8 @@ TEST_CASE("listening channels feed the listen bus; MIDI channels can't listen", 
 	const ObjectId midi = addTrack(client, {{"type", "midi"}});
 	const auto channel = [&client](ObjectId trackId) { return channelOf(client, trackId).at("id"); };
 	REQUIRE(client.call("plugin.insert", {{"channel", channel(audio)}, {"plugin", "builtin:eq"}}).ok());
-	// The listen bus nodes, each with the channels whose nodes it receives: their faders' nodes, also behind plugin
-	// slots.
+	// The listen bus nodes, each with the channels it receives through their listen nodes: their faders' nodes, also
+	// behind plugin slots.
 	const auto listenBusses = [&client]
 	{
 		std::vector<std::vector<Json>> busses;
@@ -1208,7 +1208,10 @@ TEST_CASE("listening channels feed the listen bus; MIDI channels can't listen", 
 				std::vector<Json>& received = busses.emplace_back();
 				for (const Json& input : node.at("audioInputs"))
 				{
-					const Json& from = nodes.at(input.get<size_t>());
+					const Json& listen = nodes.at(input.get<size_t>());
+					CHECK(listen.at("kind") == "listen");
+					REQUIRE(listen.at("audioInputs").size() == 1);
+					const Json& from = nodes.at(listen.at("audioInputs")[0].get<size_t>());
 					CHECK(from.at("kind") == "channel");
 					received.push_back(from.at("object"));
 				}

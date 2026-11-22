@@ -360,6 +360,9 @@ namespace gnubase::engine
 		// (MidiSequencer), so that what the mute dropped before it doesn't reach the instrument after it.
 		int64_t midiNext = -1;
 		int64_t midiCursor = -1;
+		// The gain on its way to the listen bus after the last block (ListenStrip), written by the audio thread: the
+		// command thread keeps a channel that stopped listening on the listen bus while it is above 0.
+		std::atomic<float> listenGain{0.0f};
 		// Audio thread: each send's gain after the last block (SendStrip), -1 before the first.
 		std::array<float, g_maxSends> sendGains = []
 		{
@@ -557,6 +560,22 @@ namespace gnubase::engine
 		size_t m_number = 0; // the send's index
 		float m_gain = 0.0f;
 		std::shared_ptr<PreFaderTap> m_tap;
+	};
+
+	// The processor of a channel's listen node (graph::NodeKind::Listen): it glides the channel's output over a block
+	// from the gain of the last block to 1 while the channel listens, to 0 once it stopped.
+	class ListenStrip : public graph::Processor
+	{
+	public:
+		ListenStrip(std::shared_ptr<ChannelState> state, bool listens) : m_state(std::move(state)), m_listens(listens)
+		{
+		}
+
+		void process(const graph::ProcessContext& context) noexcept override;
+
+	private:
+		std::shared_ptr<ChannelState> m_state;
+		bool m_listens = false;
 	};
 
 	// The processor of a plugin slot node on a channel (graph::NodeKind::PluginSlot): the slot's plugin, with the
