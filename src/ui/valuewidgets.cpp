@@ -494,18 +494,16 @@ namespace gnubase::ui
 			// ends the gesture.
 			bool stepEdited(Rml::Event& event)
 			{
+				if (event == Rml::EventId::Keyup)
+					endGesture();
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
-				float steps = 0.0F;
-				if (event == Rml::EventId::Mousescroll)
-					steps = -event.GetParameter("wheel_delta_y", 0.0F);
-				else if (event == Rml::EventId::Keydown && (key == Rml::Input::KI_UP || key == Rml::Input::KI_DOWN))
-					steps = key == Rml::Input::KI_UP ? 1.0F : -1.0F;
-				else
-				{
-					if (event == Rml::EventId::Keyup)
-						endGesture();
+				const bool arrow =
+					event == Rml::EventId::Keydown && (key == Rml::Input::KI_UP || key == Rml::Input::KI_DOWN);
+				if (!arrow && event.GetId() != Rml::EventId::Mousescroll)
 					return false;
-				}
+				float steps = -event.GetParameter("wheel_delta_y", 0.0F);
+				if (arrow)
+					steps = key == Rml::Input::KI_UP ? 1.0F : -1.0F;
 				const std::optional<float> typed = m_typed ? parse(m_input->GetValue()) : std::nullopt;
 				change(typed.value_or(value()) + (steps * step() * fineness(event)));
 				m_input->SetValue(format(value(), decimals()));
