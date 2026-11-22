@@ -14,10 +14,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 using namespace gnubase;
 using engine::Json;
@@ -172,6 +174,31 @@ TEST_CASE("the auto fades dialog sets the project's auto fades, and a track's ow
 	click(app, "#auto-fades-ok");
 	closes(app, "#auto-fades");
 	CHECK(app.call("project.get").at("tracks")[0].at("autoFades").is_null());
+
+	// Only audio tracks have auto fades: a MIDI track selected above the audio track doesn't count, and with only the
+	// MIDI track selected the command can't run.
+	const auto midi = app.call("track.add", {{"type", "midi"}, {"index", 0}}).at("track").at("id").get<uint64_t>();
+	const auto selects = [&app](const std::vector<uint64_t>& tracks)
+	{
+		return app.waitUntil(
+			[&app, &tracks]
+			{
+				app.appUi().trackList()->select(tracks);
+				return app.appUi().trackList()->selection() == tracks;
+			});
+	};
+	REQUIRE(selects({midi, events.track}));
+	run(app, "track.autoFades", "#auto-fades");
+	const Json tracks = app.call("project.get").at("tracks");
+	const auto audio = std::find_if(
+		tracks.begin(), tracks.end(), [&events](const Json& track) { return track.at("id") == events.track; });
+	REQUIRE(audio != tracks.end());
+	CHECK(element(app, "#auto-fades-title").value("text", std::string()) ==
+		"Auto Fades: " + audio->at("name").get<std::string>());
+	click(app, "#auto-fades-cancel");
+	closes(app, "#auto-fades");
+	REQUIRE(selects({midi}));
+	CHECK_FALSE(app.keys().canRun("track.autoFades", app.main(), nullptr));
 }
 
 TEST_CASE("Crossfade crossfades the selected events, then opens the crossfade editor for them", "[ui]")

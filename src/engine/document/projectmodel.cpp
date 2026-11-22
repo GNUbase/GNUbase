@@ -3369,6 +3369,17 @@ namespace gnubase::engine
 		followEvent(project, track, from, end, to, context);
 	}
 
+	Json automationTargetSchema()
+	{
+		const Json idSchema = {{"type", "integer"}};
+		return objectSchema(
+			{{"type",
+				 enumSchema({"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin", "strip",
+					 "controller", "pitchBend", "channelPressure", "midiEffect"})},
+				{"parameter", idSchema}, {"slot", idSchema}, {"number", idSchema}, {"channel", idSchema}},
+			{"type"});
+	}
+
 	bool hasStepCurve(const Project& project, const AutomationLane& lane)
 	{
 		return stepCurve(project, lane);
@@ -5049,12 +5060,7 @@ namespace gnubase::engine
 		const Json numberSchema = {{"type", "number"}};
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
-		const Json target =
-			objectSchema({{"type",
-							  enumSchema({"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin",
-								  "strip", "controller", "pitchBend", "channelPressure", "midiEffect"})},
-							 {"parameter", idSchema}, {"slot", idSchema}, {"number", idSchema}, {"channel", idSchema}},
-				{"type"});
+		const Json target = automationTargetSchema();
 		const Json shape = enumSchema({"step", "linear", "curve"});
 		const Json pointsResult = {
 			{"type", "object"}, {"properties", {{"points", {{"type", "array"}}}}}, {"required", {"points"}}};

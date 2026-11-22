@@ -818,6 +818,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
          {"background-color": mix(c["background"], c["textMuted"], .5)}),
         # The quantize panel's cutting positions (reference manual p. 378): where Slice would cut
         (".event-display .cutting-position", {"background-color": c["accent"]}),
+        # Grid lines behind the events (docs/features/snap.md, reference manual p. 109), and audio events' snap points
+        # (p. 105)
+        (".event-display event-lanes.grid-lines", {"color": mix(c["background"], c["textMuted"], .25),
+                                                   "stroke-color": "transparent"}),
+        (".event-display event-lanes.snap-points", {"color": c["accent2"], "stroke-color": "transparent"}),
         # Markers (docs/features/markers.md): lines behind the events, marker events and labels on marker tracks
         (".event-display .marker-lines", {"stroke-color": mix(c["background"], c["accent2"], .5),
                                           "stroke-width": f"{widths['hairline']}dp"}),

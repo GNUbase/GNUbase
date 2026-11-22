@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Event volume and volume curves in the event display (#139, reference manual pp. 398-402): the volume lines of audio
-// events, the event volume handle, the draw tool's curve points, the erase tool on them and Remove Volume Curve.
+// events, the event volume control, the draw tool's curve points, the erase tool on them and Remove Volume Curve.
 // docs/features/volume-curves.md describes them.
 #include "engine/audio/fades.h"
 #include "engine/document/serialize.h"
@@ -20,8 +20,9 @@ namespace gnubase::ui
 		using engine::Json;
 
 		constexpr double g_handleSize =
-			8.0; // dp at the top of a lane, and around the event volume handle, that grab it
-		constexpr double g_pointReach = 6.0; // dp around a curve point that grab it
+			8.0; // dp at the bottom of a lane, and around the event volume control, that grab it
+		constexpr double g_faderInset = 16.0; // dp from an event's start to its volume control's middle, past its edge
+		constexpr double g_pointReach = 6.0;  // dp around a curve point that grab it
 
 		double gain(double db)
 		{
@@ -53,15 +54,24 @@ namespace gnubase::ui
 		return engine::volumeDb(fraction * g_volumeLineTop);
 	}
 
+	std::optional<double> EventDisplay::faderOf(const Shown& shown) const
+	{
+		// At the bottom left (reference manual p. 401), on events wide enough for it beside their edges.
+		const double inset = g_faderInset * m_view.scale;
+		return shown.end - shown.start >= 2.0 * inset ? std::optional<double>(shown.start + inset) : std::nullopt;
+	}
+
 	bool EventDisplay::volumeDown(const Shown& shown, double x, double y)
 	{
+		// Only selected events show their volume control (showVolume), so only theirs can be grabbed, as the fade
+		// handles.
 		const auto fades = m_fades.find(shown.id);
-		if (fades == m_fades.end() || !(fades->second.rate > 0.0) ||
-			y + m_view.top - m_laneTops[shown.lane] > g_handleSize ||
-			std::abs(x - ((((shown.start + shown.end) / 2.0) - m_view.start) / m_view.scale)) > g_handleSize)
+		const std::optional<double> fader = faderOf(shown);
+		if (fades == m_fades.end() || !(fades->second.rate > 0.0) || !fader ||
+			!std::binary_search(m_selection.begin(), m_selection.end(), shown.id) ||
+			m_laneTops[shown.lane + 1] - (y + m_view.top) > g_handleSize ||
+			std::abs(x - ((*fader - m_view.start) / m_view.scale)) > g_handleSize)
 			return false;
-		if (!std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
-			select({shown.id});
 		m_dragEvent = shown.id;
 		m_drag = Drag::Volume;
 		return true;
@@ -203,8 +213,8 @@ namespace gnubase::ui
 	{
 		const AudioFades& fades = m_fades.at(shown.id);
 		const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), shown.id);
-		if (selected)
-			lane.handles.push_back((shown.start + shown.end) / 2.0); // the event volume handle
+		if (const std::optional<double> fader = faderOf(shown); selected && fader)
+			lane.faders.push_back(*fader);
 		const double volume = draggedVolume(shown.id);
 		const std::vector<engine::VolumePoint> curve = draggedCurve(shown.id);
 		// Events at 0 dB without a curve show no line, unless the volume is being dragged.

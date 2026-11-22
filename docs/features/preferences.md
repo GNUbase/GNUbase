@@ -44,6 +44,9 @@ presets to preferences and clients can tell them from the settings that have a p
     (`ui.toolboxOnRightClick`), Show Notification when Switching Tool Mode with Key Command
     (`ui.toolSwitchNotification`). Zoom: Zoom Tool Standard Mode: Horizontal Zooming Only (`ui.zoomToolHorizontalOnly`,
     [tools.md](tools.md)).
+  - Editors: Use Drum Editor when Drum Map is assigned (`editing.useDrumEditor`, [drum-editor.md](drum-editor.md)),
+    Double-click opens Editor in a Window/in Lower Zone (`editing.doubleClickOpensEditorIn`,
+    [midi-editors.md](midi-editors.md)).
   - Event Display: Show Event Names (`ui.showEventNames`), Hide Truncated Event Names (`ui.hideTruncatedEventNames`),
     Highlight Borders of Selected Events (`ui.highlightSelectedEventBorders`), Event Opacity (`ui.eventOpacity`),
     Smallest Track Height to Show Data and to Show Name (`ui.smallestTrackHeightForData`,
@@ -56,8 +59,10 @@ presets to preferences and clients can tell them from the settings that have a p
     Boundaries (`midi.chase*`). MIDI Filter: the Record section's message types, the channels and the controllers
     (`midi.recordFilter`); the Thru section waits for MIDI thru filtering. MIDI File: the Import Options
     (`midi.import*`, [file-import.md](file-import.md)); its Export Options wait for the export preferences.
+  - Metering: Meters' Peak Hold Time (`meter.peakHoldTime`, [mixer-window.md](mixer-window.md)).
   - Record: Stop after Automatic Punch Out (`audio.stopAfterPunchOut`; switched off during the post-roll, playback
-    goes on; `tests/recording_tests.cpp`). Audio: Audio Pre-Record Seconds (`audio.preRecordSeconds`). MIDI: Snap MIDI
+    goes on; `tests/recording_tests.cpp`). Audio: Audio Pre-Record Seconds (`audio.preRecordSeconds`), and the
+    Broadcast Wave strings, Description, Author and Reference (`audio.broadcast*`, p. 1615, text fields). MIDI: Snap MIDI
     Parts to Bars, MIDI Record Catch Range in ms, Retrospective Record Buffer Size in Events (`midi.snapPartsToBars`,
     `midi.recordCatchRange`, `midi.retrospectiveEvents`).
   - User Interface: Application Scaling (`ui.scale`) and the theme (`ui.theme`), which lists the themes there are with

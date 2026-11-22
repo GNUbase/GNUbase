@@ -69,10 +69,13 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
   holds as `rangeClipboard.changed`; a `range.cut` in a `history.transaction` that fails leaves it as it was, as it
   leaves the project. `range.paste` goes onto the tracks the range was copied from, or with `track` onto that track and
   the ones below it in the project's order that aren't hidden, as the event display shows them, one for each copied
-  track; a folded folder's lane stands for the tracks in it. Their types must take the copied events. Its linear
-  positions are samples at the project's sample rate when it was copied: after `project.set` changes the rate,
-  `range.paste` refuses it until the rate is back, and so does `automation.paste` its own clipboard. Pasted events are
-  unlocked real copies; a copied audio event whose clip was removed from the pool can't be pasted.
+  track. A folded folder's lane counts once there, as the display shows it: the tracks inside it don't count, and the
+  copied tracks of a folded folder's lane go into the tracks of the folded folder's lane they land on, in their order
+  (#1978). The folded folders are the track layout's (`trackLayout.set`), not part of undo, so where a paste lands
+  follows the view. Their types must take the copied events. Its linear positions are samples at the project's sample
+  rate when it was copied: after `project.set` changes the rate, `range.paste` refuses it until the rate is back, and so
+  does `automation.paste` its own clipboard. Pasted events are unlocked real copies; a copied audio event whose clip was
+  removed from the pool can't be pasted.
 - **Cycle markers.** Without `time`, `range.delete` and `range.cut` take the range out of a cycle marker on a marker
   track in the range that it lies in (p. 425): shortened, or split in two ([markers.md](markers.md)). Other markers
   stay.
@@ -89,9 +92,10 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
   the order it was stacked, so that the events of an audio part keep their places among the others. Locked events stay
   where they are and aren't copied. With `track` it goes onto other tracks: the range's top track onto `track` and each
   of the others as many tracks further on in the project's order of tracks that aren't hidden, so that the range keeps
-  its shape, as `range.paste` skips hidden tracks; the tracks there must take the events (audio onto audio tracks, MIDI
-  parts onto MIDI and instrument tracks), and the automation lands on their lanes of the same parameter. The event
-  display does it when the range is dragged, and Duplicate does it with `copy` at the range's end (pp. 291, 432).
+  its shape, as `range.paste` skips hidden tracks and counts a folded folder's lane once; the tracks there must take the
+  events (audio onto audio tracks, MIDI parts onto MIDI and instrument tracks), and the automation lands on their lanes
+  of the same parameter. The event display does it when the range is dragged, and Duplicate does it with `copy` at the
+  range's end (pp. 291, 432).
 - **Where it lands.** On musical tracks what lies in the range moves by the gap between `start` and `position` in
   ticks, so that it keeps its distance from the range's start in beats. What starts where the range starts lands at
   `position` exactly, a piece cut there and an event that starts there alike: an event's start in ticks can lie up to
@@ -144,7 +148,9 @@ nothing moves before the project start. With the range tool, a press in the rang
 drags its contents (p. 291): the range follows the mouse across, its start snapped, and down or up by as many tracks as
 the mouse, as far as there are tracks for all of its own, and the release moves what is in it there (`range.move`, with
 `track` when the tracks changed, and at `positionTicks` when its start snapped to a musical grid line, so that a part on
-a bar lands on another bar's own tick; not with Grid Relative, which keeps the start's distance from its line), or with
+a bar lands on another bar's own tick; with Grid Relative a range that starts in a line's own sample snaps to the other
+line, as the distance in ticks of less than a sample is the rounding of that sample, not one to keep (#2005), and one
+that starts off the grid at its distance from it), or with
 the tool modifier Copy (`dragDrop.copy`, Alt by default) a copy of it; the range stays where it went, and a drag that
 came back to the press leaves it where it was, one that came back across only its position. A press within 6 dp inside
 one of its edges, without Shift, drags that edge instead (p. 288), with the pointers `resize` at the start and the end
@@ -163,9 +169,6 @@ since the project opened).
 Not yet (#1910): copying and pasting selected events without a range, Paste at Origin and Paste Relative to Cursor,
 Range Tool Splits Partly Selected Events, the info line's range fields, the range in the editors (they come with their
 tickets), and the controller events at the edges of a range inside a part.
-
-Not yet (#1978): a range of several tracks dragged past a folded folder. The display counts the folder's lane once,
-`range.move` the tracks inside it too, so the range's other tracks can land further off than its top one.
 
 ## Checks
 
@@ -228,21 +231,23 @@ Not yet (#1978): a range of several tracks dragged past a folded folder. The dis
   track editing the tracks inside it, and `range.paste` onto a track skipping a hidden one; `range.move` onto the two
   tracks below, past a hidden one, as `range.cut` and `range.paste` onto them would put it, with the automation and in
   one undo step, a copy there, and moves refused onto a track of the wrong type, past the last track and onto no track,
-  changing nothing; `range.paste` and
+  changing nothing; `range.move` and `range.paste` of two tracks onto a folded folder's lane landing the second on
+  the track after it, onto the folder's own track when it is unfolded, onto a track inside it, and a range on a folded
+  folder going into the tracks of another folded folder or refused by a track; `range.paste` and
   `automation.paste` refused after a sample rate change and pasting again after its undo; an end of the largest integer
   deleting up to the end and a start past 2^48 refused.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; without a range the range
   commands can't run, and Paste can't until a cut, nor after `project.new`; split, Delete Time, cut and paste on a
   selection range, which stays; paste at the cursor without a range, selecting what it pasted; a drag in the range
   moving its contents on a MIDI track in one undo step with the range, snapped to a bar at a tempo whose bars lie
-  between samples landing on the bar's tick and with Grid Relative by a bar where `range.move` at the range's new start
-  in samples puts it, Alt and a drag copying them, a click in it selecting a range of no length, and Duplicate copying
-  them to the range's end twice in a row; a drag down a lane and across, straight down and with Alt taking the part or a
-  copy onto the track below, and one below the last lane stopping at the last track; the edges' pointers, and dragging
-  the start and the end across, snapped and past the other edge, and the bottom and top down and up, taking tracks in
-  and out and stopping at the other edge, while the project stays as it was; the nudges moving the range and its edges
-  by a beat, not before the project start nor the start past the end, and the top and bottom nudges taking tracks in and
-  out, never the last, while the project stays as it was.
+  between samples landing on the bar's tick, also with Grid Relative, and the range on the bar's sample, Alt and a drag
+  copying them, a click in it selecting a range of no length, and Duplicate copying them to the range's end twice in a
+  row; a drag down a lane and across, straight down and with Alt taking the part or a copy onto the track below, and one
+  below the last lane stopping at the last track; a drag and a paste of two tracks past a folded folder's lane landing
+  where the range shows them; the edges' pointers, and dragging the start and the end across, snapped and past the other
+  edge, and the bottom and top down and up, taking tracks in and out and stopping at the other edge, while the project
+  stays as it was; the nudges moving the range and its edges by a beat, not before the project start nor the start past
+  the end, and the top and bottom nudges taking tracks in and out, never the last, while the project stays as it was.
 - `tests/markertrack_ui_tests.cpp`: the same drag on the marker track, also released outside the window.
 - `tests/uiapp_tests.cpp`: the context menu disables the range commands without a range and Paste until something is
   cut.

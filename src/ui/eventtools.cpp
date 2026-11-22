@@ -354,7 +354,7 @@ namespace gnubase::ui
 			m_drag = Drag::Comp;
 			return true;
 		case Tool::Draw:
-			// Volume curve points on audio events (reference manual p. 399); off a point, the event volume handle
+			// Volume curve points on audio events (reference manual p. 399); off a point, the event volume control
 			// (p. 401) as with the object selection tool.
 			if (shown != nullptr &&
 				((!curvePointAt(*shown, x, y) && volumeDown(*shown, x, y)) || curveDown(*shown, x, y)))
@@ -595,10 +595,9 @@ namespace gnubase::ui
 			Json parameters = {{"start", from.start}, {"end", from.end}, {"tracks", from.tracks},
 				{"position", to.start}, {"copy", modifiers("dragDrop.copy")}};
 			// Snapped to a musical grid line, it goes to the line's tick: a part on a bar lands on another bar's own
-			// tick, which can lie up to half a sample from the sample the range shows (#1785). Not with Grid Relative,
-			// whose tick keeps the range start's distance from its line, less than a sample, so it would land off the
-			// line and, at the project start, off tick 0.
-			if (to.start != from.start && m_snap.type != engine::SnapType::GridRelative)
+			// tick, which can lie up to half a sample from the sample the range shows (#1785). Grid Relative from a
+			// line's own sample snaps to the other line, and from off the grid to its distance from it (#2005).
+			if (to.start != from.start)
 			{
 				const double start = static_cast<double>(from.start) / m_time.sampleRate;
 				const time::Position snapped = snapAt(start + ((x - m_pressX) * m_view.scale), start);

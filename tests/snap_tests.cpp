@@ -267,6 +267,21 @@ TEST_CASE("every snap type", "[unit]")
 	// Without where it was (new events), like the grid.
 	target.from.reset();
 	CHECK(engine::snap(settings(SnapType::GridRelative, GridType::Ms100), grid, target) == samples(28800));
+	// From a bar's own sample, at a tempo where the sample's tick is off the bar's, a bar later is the next bar's tick:
+	// the distance of less than a sample is the rounding of the sample to ticks, none to keep (#2005).
+	engine::SnapGrid slow = grid;
+	slow.tempo = time::TempoMap({{0, 97.3, false}});
+	int64_t bar = 1;
+	while (bar < 100 &&
+		slow.tempo.toTicks(slow.tempo.toSamples(bar * g_bar, slow.sampleRate), slow.sampleRate) == bar * g_bar)
+		++bar;
+	REQUIRE(bar < 100);
+	target.from = slow.tempo.toSamples(bar * g_bar, slow.sampleRate);
+	target.position = slow.tempo.toSamples((bar + 1) * g_bar, slow.sampleRate) + 500;
+	CHECK(engine::snap(settings(SnapType::GridRelative), slow, target) == ticks((bar + 1) * g_bar));
+	// A sample past it, it keeps that distance.
+	target.from = *target.from + 1;
+	CHECK(engine::snap(settings(SnapType::GridRelative), slow, target) != ticks((bar + 1) * g_bar));
 }
 
 TEST_CASE("snap.get and snap.set keep the project's settings, saved with it but not undo steps", "[unit]")

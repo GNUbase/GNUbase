@@ -274,7 +274,9 @@
 			{id = "editing-zoom", parent = "Editing", name = "Zoom", items = {
 				{key = "ui.zoomToolHorizontalOnly", label = "Zoom Tool Standard Mode: Horizontal Zooming Only"}}},
 			{id = "editors", name = "Editors", items = {
-				{key = "editing.useDrumEditor", label = "Use Drum Editor when Drum Map is assigned"}}},
+				{key = "editing.useDrumEditor", label = "Use Drum Editor when Drum Map is assigned"},
+				{key = "editing.doubleClickOpensEditorIn", label = "Double-click opens Editor", choices = {
+					{"window", "in a Window"}, {"lowerZone", "in Lower Zone"}}}}},
 			-- The event display's look (pp. 1603-1604, 1607; #1313).
 			{id = "event-display", name = "Event Display", items = {
 				{key = "ui.showEventNames", label = "Show Event Names"},
@@ -322,10 +324,16 @@
 					{"midi", "MIDI Tracks"}, {"instrument", "Instrument Tracks"}}}}},
 			{id = "midi-filter", parent = "MIDI", name = "MIDI Filter", custom = "midiFilter",
 				keys = {"midi.recordFilter"}},
+			{id = "metering", name = "Metering", items = {
+				{key = "meter.peakHoldTime", label = "Meters' Peak Hold Time", unit = "ms"}}},
 			{id = "record", name = "Record", items = {
 				{key = "audio.stopAfterPunchOut", label = "Stop after Automatic Punch Out"}}},
 			{id = "record-audio", parent = "Record", name = "Audio", items = {
-				{key = "audio.preRecordSeconds", label = "Audio Pre-Record Seconds"}}},
+				{key = "audio.preRecordSeconds", label = "Audio Pre-Record Seconds"},
+				{section = "Broadcast Wave"},
+				{key = "audio.broadcastDescription", label = "Description"},
+				{key = "audio.broadcastAuthor", label = "Author"},
+				{key = "audio.broadcastReference", label = "Reference"}}},
 			{id = "record-midi", parent = "Record", name = "MIDI", items = {
 				{key = "midi.snapPartsToBars", label = "Snap MIDI Parts to Bars"},
 				{key = "midi.recordCatchRange", label = "MIDI Record Catch Range in ms"},
@@ -421,8 +429,8 @@
 			elseif schema.type == "boolean" then
 				return field(item.label, checkbox(attrs, value), item.unit)
 			end
-			return field(item.label, '<input type="text" ' .. attrs .. ' value="' .. numberText(value) .. '"/>',
-				item.unit)
+			local text = schema.type == "string" and escape(value) or numberText(value)
+			return field(item.label, '<input type="text" ' .. attrs .. ' value="' .. text .. '"/>', item.unit)
 		end
 
 		local custom = {}
@@ -779,6 +787,8 @@
 							values[item.key] = item.number and tonumber(value(control)) or value(control)
 						elseif schema.type == "boolean" then
 							values[item.key] = checked(control)
+						elseif schema.type == "string" then
+							values[item.key] = value(control)
 						else
 							local number = tonumber(value(control))
 							if schema.type == "integer" then

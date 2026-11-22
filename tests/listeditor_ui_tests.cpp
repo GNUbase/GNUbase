@@ -331,9 +331,11 @@ TEST_CASE("Open List Editor lists every event of the selected parts in playback 
 			  (values.at("width").get<double>() * 64 / 127)) <= 1.5);
 	CHECK(f.elements(row("controller", f.events[5]) + " .list-value").empty());
 
-	// Once it is closed, Open/Close Editor opens the key editor.
+	// Once it is closed, Open/Close Editor opens the key editor, in the window with Double-click opens Editor in a
+	// Window (p. 1603).
 	f.app.call("editor.close", {{"editor", "window"}});
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.call("settings.set", {{"key", "editing.doubleClickOpensEditorIn"}, {"value", "window"}});
 	f.app.keys().run("editor.openClose", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() != nullptr; }));
 	f.window = f.app.appUi().editorWindowId();

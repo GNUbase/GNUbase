@@ -587,6 +587,7 @@ namespace gnubase::ui
 	{
 		if (!alive())
 			return;
+		showGrid();
 		if (m_snapButton != nullptr)
 			check(*m_snapButton, m_snap.on);
 		if (m_zeroCrossingButton != nullptr)

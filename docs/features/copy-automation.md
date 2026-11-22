@@ -16,12 +16,14 @@ cuts and pastes it shares; the track list's commands are in `src/ui/tracklist.cp
   copied; so does its event `automation.copied` `{lanes}`. With tracks it keeps every one of them in their order, also
   those without automation, for the paste onto tracks. A new or loaded project clears this clipboard
   (`project.reset`).
-- **`automation.paste`** `{start, end, tracks | lanes}` pastes it between start and end, one undo step (Paste
-  Automation), and returns the lanes it pasted into:
+- **`automation.paste`** `{start, end, tracks | lanes and targets}` pastes it between start and end, one undo step
+  (Paste Automation), and returns the lanes it pasted into:
   - without tracks and lanes each lane goes onto its own track (Paste Automation of All Tracks), in the new range;
   - onto tracks, the copied tracks go onto them from the top, the first onto the first; a single copied track goes
     onto each of them; a copied track without automation leaves its target as it is;
-  - onto lanes, each gets the copied lane of its parameter, if there is one.
+  - onto lanes, each gets the copied lane of its parameter, if there is one; and so does each of the targets,
+    parameters of tracks as `{track, target}` (the target as `automationLane.add` takes it), whose lane is added only
+    then (#2018). A paste that pastes nothing changes nothing and leaves no undo step.
 - **Other parameters.** A track takes the copied parameters it has and leaves out the others: volume, pan and mute on
   tracks with audio channels, a VCA fader's volume on VCA tracks, MIDI controllers, pitch bend and channel pressure
   on MIDI and instrument tracks, an instrument's parameters on a track with the same instrument, and a plugin's
@@ -42,8 +44,8 @@ cuts and pastes it shares; the track list's commands are in `src/ui/tracklist.cp
   Shift adds or removes it; a click on a track's own row deselects them. A right click on an automation track that
   isn't selected selects it, for the context menu. `TrackList::selectedLanes()` has them. An unadded automation track
   (one whose parameter has no lane yet, #1918, [automation-tracks.md](automation-tracks.md)) has nothing to copy, so
-  the copy leaves it out; the paste adds its lane in the paste's undo step: a `history.transaction` that adds the
-  lanes, then one with `automation.paste` and the same merge key.
+  the copy leaves it out; the paste sends it as its track and target in `automation.paste`'s targets, so that its
+  lane comes in the paste's undo step, and only if the copy has its parameter and the paste succeeds (#2018).
 - **Commands** in the track list's context menu and as key commands (without keys of their own, as in the reference
   manual): `track.copyAutomationAll`, `track.copyAutomationSelected` and `track.copyAutomationSelectedParameters`
   (Copy Automation of All Tracks, of Selected Tracks, of Selected Parameters (Locator Range)), and
@@ -65,8 +67,10 @@ Automation Functions menu (p. 889).
   the automation in the range, one undo step; a shorter and a longer range; one parameter onto the lanes of the same
   parameter, one copied track onto several tracks; all tracks onto all tracks; pasting a VCA fader's volume and
   finding nothing to paste after a new project; selected tracks without automation that keep the paste's order, and
-  `automation.copied`; the checks.
+  `automation.copied`; pasting onto targets, which adds a lane only for a parameter the copy has, beside lanes in one
+  undo step, and changes nothing otherwise; the checks.
 - `tests/automationtracks_tests.cpp`: selecting automation tracks with clicks and Ctrl, the track list's copy and
   paste commands for selected parameters and selected tracks, when they are enabled, and a new project that has
   nothing copied and no selected automation tracks; pasting onto an unadded automation track, which adds its lane in
-  the paste's one undo step, whose undo leaves the automation track unadded.
+  the paste's one undo step, whose undo leaves the automation track unadded, and a paste onto one that pastes nothing,
+  as the copy lacks its parameter or the locator range is empty, which leaves it unadded without an undo step.

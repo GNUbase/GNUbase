@@ -500,6 +500,14 @@ namespace gnubase::app
 							m_signatureLane->row().setSelection({});
 					}
 				}
+				// So do automation points (#2011). Whatever selects markers or time signature events deselects the
+				// points (onSelect, Sync Selection), so points selected beside them were selected later.
+				if (m_eventDisplay && m_markerLines && !m_eventDisplay->selectedPoints().empty())
+				{
+					m_markerLines->deselect();
+					if (m_signatureLane && !m_signatureLane->row().selection().empty())
+						m_signatureLane->row().setSelection({});
+				}
 				// So does a range selected, e.g. between markers with the range tool: Delete deletes what was selected
 				// last.
 				if (m_eventDisplay && m_markerLines)
@@ -1060,17 +1068,29 @@ namespace gnubase::app
 		}
 		// Track import and export and track presets (docs/features/track-presets.md).
 		addTrackFileCommands();
-		// Auto fades (docs/features/fades.md): the project's, or the first selected track's.
+		// Auto fades (docs/features/fades.md): the project's, or the first selected audio track's.
 		m_keys.add({"project.autoFades", "Opens the auto fades dialog for the whole project.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openAutoFades(window, 0); }});
+		// Only audio tracks have auto fades: other selected tracks don't count.
+		const auto firstAudioTrack = [this]() -> uint64_t
+		{
+			if (!m_trackList || !m_eventDisplay || !m_eventDisplay->project().is_object())
+				return 0;
+			const engine::Json& tracks = m_eventDisplay->project().at("tracks");
+			for (const uint64_t id : m_trackList->selection())
+				for (const engine::Json& track : tracks)
+					if (track.at("id") == id && track.at("type") == "audio")
+						return id;
+			return 0;
+		};
 		m_keys.add({"track.autoFades", "Opens the auto fades dialog for the first selected audio track.",
-			[this](ui::Window& window, Rml::Element* /*zone*/)
+			[this, firstAudioTrack](ui::Window& window, Rml::Element* /*zone*/)
 			{
-				if (m_trackList && !m_trackList->selection().empty())
-					openAutoFades(window, m_trackList->selection().front());
+				if (const uint64_t track = firstAudioTrack(); track != 0)
+					openAutoFades(window, track);
 			}});
-		m_keys.enableWhen("track.autoFades",
-			[this](ui::Window&, Rml::Element*) { return m_trackList != nullptr && !m_trackList->selection().empty(); });
+		m_keys.enableWhen(
+			"track.autoFades", [firstAudioTrack](ui::Window&, Rml::Element*) { return firstAudioTrack() != 0; });
 		// New tracks go below the lowest selected track (reference manual p. 198).
 		const auto below = [this]
 		{
@@ -1346,19 +1366,21 @@ namespace gnubase::app
 			});
 
 		// Lock Record (docs/features/recording.md): a stop or punch out that the engine refused because recording is
-		// locked asks whether to stop anyway (lock-record.rml).
+		// locked asks whether to do it anyway (lock-record.rml); the engine's reason says which it was.
 		for (const char* command : {"transport.stop", "transport.toggle", "transport.record"})
 			m_lockRecord.push_back(m_binding.onResult(command,
 				[this](const engine::Result& result)
 				{
 					if (result.ok())
 						return;
+					const bool punchOut = result.error.find("punch out") != std::string::npos;
 					m_binding.send("transport.get", engine::Json::object(),
-						[this](const engine::Result& status)
+						[this, punchOut](const engine::Result& status)
 						{
 							if (status.ok() && status.value.at("lockRecord").get<bool>() &&
 								status.value.at("recording").get<bool>())
-								openOnce(m_main, "lock-record.rml", m_lockRecordDialog);
+								openOnce(m_main, "lock-record.rml", m_lockRecordDialog,
+									{{"action", punchOut ? "punchOut" : "stop"}});
 						});
 				}));
 		// The status line's remaining record time changes as the disk fills up, also by other programs.
@@ -1800,6 +1822,8 @@ namespace gnubase::app
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
 		// Imports into the project window that the engine refuses say why, as the project file commands do (#1976).
 		m_eventDisplay->onImportFailed([this](const std::string& error) { m_files.showError(m_main.id(), error); });
+		// A double click on a part opens it where the preference says (p. 1603).
+		m_eventDisplay->onOpenEditor([this](uint64_t part) { openEditor(doubleClickEditor(), {part}); });
 		// The quantize panel lists the tracks of the selected audio events with hitpoints (#1344).
 		m_eventDisplay->onSelectionShown(
 			[this]
@@ -1853,21 +1877,31 @@ namespace gnubase::app
 		if (m_infoLine)
 			m_infoLine->followMarkers(
 				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
+		const auto deselectPoints = [this]
+		{
+			if (m_eventDisplay && !m_eventDisplay->selectedPoints().empty())
+				m_eventDisplay->selectPoints({});
+		};
 		m_markerLines->onSelect(
-			[this](const std::vector<uint64_t>& selection)
+			[this, deselectPoints](const std::vector<uint64_t>& selection)
 			{
 				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
 					window->setSelection(selection);
-				// Markers selected deselect the time signature events: Delete deletes what was selected last.
-				if (!selection.empty() && m_signatureLane)
+				// Markers selected deselect the time signature events and the automation points: Delete deletes what
+				// was selected last.
+				if (selection.empty())
+					return;
+				if (m_signatureLane)
 					m_signatureLane->row().setSelection({});
+				deselectPoints();
 			});
-		// So do time signature events selected: the markers and the selection range go.
+		// So do time signature events selected: the markers, the automation points and the selection range go.
 		m_signatureLane->onSelect(
-			[this]
+			[this, deselectPoints]
 			{
 				if (m_markerLines)
 					m_markerLines->deselect();
+				deselectPoints();
 				if (m_eventDisplay && m_eventDisplay->range())
 					m_eventDisplay->setRange(std::nullopt);
 			});
@@ -1925,8 +1959,11 @@ namespace gnubase::app
 		m_markers->onSelect(
 			[this](const std::vector<uint64_t>& selection)
 			{
-				if (m_markerLines != nullptr && m_markers != nullptr && m_markers->syncsSelection())
-					m_markerLines->setSelection(selection);
+				if (m_markerLines == nullptr || m_markers == nullptr || !m_markers->syncsSelection())
+					return;
+				m_markerLines->setSelection(selection);
+				if (!selection.empty() && m_eventDisplay && !m_eventDisplay->selectedPoints().empty())
+					m_eventDisplay->selectPoints({}); // as the markers' onSelect does (#2011)
 			});
 		m_markers->syncFrom(
 			[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
@@ -2231,42 +2268,35 @@ namespace gnubase::app
 		};
 		m_editorSubscriptions.push_back(m_binding.on("project.reset", [request](const engine::Event&) { request(); }));
 		request();
-		// Open/Close Editor (Mod+E and Return, p. 1189) opens the selected MIDI parts in the editor window, or else the
-		// selected audio parts in the audio part editor (p. 692), or closes it without any; the other one does the
-		// same in the lower zone. Without parts, the editor window's command opens the first selected audio event in
-		// the sample editor (p. 613), or closes that too.
+		// Open/Close Editor (Mod+E and Return, p. 1189) opens the selected MIDI parts, or else the selected audio parts
+		// (p. 692), where a double click opens them, by default in the lower zone (pp. 87, 1603), or closes that editor
+		// without any; Open Editor in Lower Zone does the same in the lower zone. Without parts, Open/Close Editor
+		// opens the first selected audio event in the sample editor window (p. 613), or closes that too.
 		for (const bool lower : {false, true})
 		{
-			const std::string editor = lower ? "lower" : "window";
 			m_keys.add({lower ? "window.lowerZoneEditor" : "editor.openClose",
 				lower
 					? "Opens the selected MIDI parts or audio parts in the editor in the project window's lower zone, "
 					  "or closes it."
-					: "Opens the selected MIDI parts or audio parts in the editor window, or else the first selected "
-					  "audio event in the sample editor, or closes them.",
-				[this, editor](ui::Window&, Rml::Element*)
+					: "Opens the selected MIDI parts or audio parts in the editor where a double click opens them "
+					  "(the preference editing.doubleClickOpensEditorIn: the lower zone or the editor window), or else "
+					  "the first selected audio event in the sample editor, or closes them.",
+				[this, lower](ui::Window&, Rml::Element*)
 				{
+					const std::string editor = lower ? "lower" : doubleClickEditor();
 					const std::vector<uint64_t> parts = selectedParts();
 					if (!parts.empty())
 					{
-						m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
-						// Opening it explicitly brings the Editor tab forward, even from behind the Mixer.
-						if (editor == "lower")
-						{
-							m_docking.open("editor");
-							// The lower zone's editor gets the keyboard focus (p. 100).
-							m_docking.focus("project", "lower");
-						}
+						openEditor(editor, parts);
 					}
-					else if (const std::vector<uint64_t> events = selected("audioEvents");
-						!events.empty() && editor == "window")
+					else if (const std::vector<uint64_t> events = selected("audioEvents"); !events.empty() && !lower)
 					{
 						m_binding.send("sampleEditor.open", {{"event", events.front()}});
 					}
 					else
 					{
 						m_binding.send("editor.close", {{"editor", editor}});
-						if (editor == "window")
+						if (!lower)
 							m_binding.send("sampleEditor.close");
 					}
 				}});
@@ -2397,6 +2427,24 @@ namespace gnubase::app
 				found.push_back(id);
 		}
 		return found;
+	}
+
+	void AppUi::openEditor(const std::string& editor, const std::vector<uint64_t>& parts)
+	{
+		m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
+		if (editor != "lower")
+			return;
+		// Opening it explicitly brings the Editor tab forward, even from behind the Mixer, and the lower zone's editor
+		// gets the keyboard focus (p. 100).
+		m_docking.open("editor");
+		m_docking.focus("project", "lower");
+	}
+
+	std::string AppUi::doubleClickEditor()
+	{
+		const engine::Result result =
+			engine::Client(m_engine).call("settings.get", {{"key", "editing.doubleClickOpensEditorIn"}});
+		return result.ok() && result.value.at("value") == "window" ? "window" : "lower";
 	}
 
 	std::vector<uint64_t> AppUi::selectedParts() const

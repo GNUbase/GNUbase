@@ -223,6 +223,9 @@ namespace gnubase::ui
 		// Called for a double click below the tracks instead of adding a MIDI track, e.g. by the track list, which
 		// adds a track like the selected one (docs/features/add-track.md).
 		void onAddTrack(std::function<void()> listener) { m_addTrack = std::move(listener); }
+		// Called with the part for a double click on a MIDI part or an audio part instead of opening it in the editor
+		// window, e.g. by the app, which opens it where the preference editing.doubleClickOpensEditorIn says.
+		void onOpenEditor(std::function<void(uint64_t)> listener) { m_openEditor = std::move(listener); }
 		// Called with the error when the engine refuses an import of audio or MIDI files (audioFile.import,
 		// midiFile.import), e.g. by the app, which shows it in a dialog (#1976); otherwise it is only logged.
 		void onImportFailed(std::function<void(const std::string&)> listener) { m_importFailed = std::move(listener); }
@@ -474,10 +477,11 @@ namespace gnubase::ui
 			Click,         // splits, glues or erases where it is released, unless it moved
 			FadeIn,        // the fade in handle of the pressed audio event
 			FadeOut,       // its fade out handle
-			Volume,        // its event volume handle
+			Volume,        // its event volume control
 			VolumePoint,   // a point of its volume curve, with the draw tool
 			Automation,    // on an automation track (automationtracks.cpp)
 			TimeWarp,      // the time warp tool's, on release (eventtimewarp.cpp)
+			Repeat,        // repeats the selection to the right, m_repeatCount times (#2009)
 		};
 
 		// An automation lane of the project as the display shows it: points in seconds, values from 0 (bottom) to 1.
@@ -698,6 +702,14 @@ namespace gnubase::ui
 		bool inLowerHalf(size_t lane, double y) const;
 		// The edge of the event at x dp across the lanes that a press there resizes: -1 its start, 1 its end, 0 none.
 		int edgeAt(const Shown& shown, double x) const;
+		// Whether a press with the keys at x, y dp on the event repeats the selection by dragging (#2009, reference
+		// manual p. 271), on lanes at least two rows high: the middle of its right border, above the lower corner,
+		// without keys or with Shift; or the lower right corner of the last selected event with Alt, or Alt and Shift.
+		bool repeatHandleAt(const Shown& shown, double x, double y, const std::string& keys) const;
+		// The selection from its first start to its last end, in seconds; nothing if none of it shows.
+		std::optional<TimeSpan> selectionBlock() const;
+		// How many copies a repeat drag dx dp to the right makes: the snapped distance in the selection's lengths.
+		int repeatCount(double dx) const;
 		// The edge of the audio event at x, y dp that a press of the play tool in scrub mode resizes, scrubbing along:
 		// as edgeAt, but only at the event's lower left or right corner, the lower half of its lane, so that the rest
 		// of the edge scrubs the track (reference manual p. 268); 0 for none.
@@ -755,8 +767,9 @@ namespace gnubase::ui
 		// to g_volumeLineTop at its top; volumeFraction is how far up the event's lane y dp in the event lanes is.
 		void addVolumeActions();
 		double volumeFraction(const Shown& shown, double y) const;
-		// The event volume handle at the top middle of the pressed audio event: dragging it gives every selected
-		// audio event the volume in dB that draggedVolume says.
+		// The event volume control at the bottom left of a selected audio event, at faderOf seconds on events wide
+		// enough for one: dragging it gives every selected audio event the volume in dB that draggedVolume says.
+		std::optional<double> faderOf(const Shown& shown) const;
 		bool volumeDown(const Shown& shown, double x, double y);
 		void volumeUp();
 		double draggedVolume(uint64_t event) const;
@@ -766,7 +779,7 @@ namespace gnubase::ui
 		std::vector<engine::VolumePoint> draggedCurve(uint64_t event) const;
 		std::optional<size_t> curvePointAt(const Shown& shown, double x, double y) const;
 		bool eraseCurvePoint(const Shown& shown, double x, double y);     // the erase tool, on a point
-		void showVolume(FadeLines::Lane& lane, const Shown& shown) const; // its line and volume handle
+		void showVolume(FadeLines::Lane& lane, const Shown& shown) const; // its line and volume control
 
 		// The time warp tool, Process Tempo, Process Bars, Set Definition from Tempo and copying warp markers
 		// (eventtimewarp.cpp, #159).
@@ -842,10 +855,12 @@ namespace gnubase::ui
 		void requestTargets(uint64_t track, std::function<void()> then = {});
 		// A lane for an automation track that shows the target on the track without a lane yet, its id.
 		uint64_t addUnaddedLane(uint64_t track, const engine::Json& target);
-		void reload();                // the lanes again, from the project as it was last read
-		void showAutomationLanes();   // the curves, after the lanes changed
-		void placeAutomation();       // where they are, after the view changed
-		void placePartMarks();        // the marks of parts excluded from global transpose, after the view changed
+		void reload();              // the lanes again, from the project as it was last read
+		void showAutomationLanes(); // the curves, after the lanes changed
+		void placeAutomation();     // where they are, after the view changed
+		void placePartMarks(); // the events' marks: locked, shared copy, no global transpose; after the view changed
+		// The grid lines (#412, reference manual p. 109): the grid in use near the view, whether snap is on or not.
+		void showGrid();
 		void placeCuttingPositions(); // setCuttingPositions' lines, after the view changed
 		// The automation lane of a display lane, or null for a track's own lane.
 		const AutomationView* automationAt(size_t lane) const;
@@ -905,6 +920,8 @@ namespace gnubase::ui
 		Ruler* m_ruler = nullptr;
 		Rml::Element* m_area = nullptr;
 		EventLanes* m_lanes = nullptr;
+		EventLanes* m_gridLines = nullptr;  // behind everything, one lane across the area
+		EventLanes* m_snapPoints = nullptr; // a line at each audio event's snap point (p. 105), over the waveforms
 		std::unique_ptr<EventWaveforms> m_waveforms; // over the lanes
 		PartContents* m_contents = nullptr;          // MIDI parts' notes and controllers, over the lanes (#1313)
 		EventNames* m_names = nullptr;               // the names of events and parts, over what they hold (#1313)
@@ -957,6 +974,7 @@ namespace gnubase::ui
 		ChannelSteps m_channelSteps; // channel.changed until their step's history.changed (#1881)
 		std::function<void()> m_layoutListener;
 		std::function<void()> m_addTrack;                       // onAddTrack
+		std::function<void(uint64_t)> m_openEditor;             // onOpenEditor
 		std::function<void(const std::string&)> m_importFailed; // onImportFailed
 		std::function<void()> m_toolColorListener;              // onToolColor
 		std::function<void(float, float)> m_chooseColor;        // onChooseColor
@@ -970,10 +988,13 @@ namespace gnubase::ui
 		EventLanes* m_selectedLanes = nullptr; // selected events over those
 		EventLanes* m_folderLanes = nullptr;   // folders' data blocks, under the events
 		FadeLines* m_fadeLines = nullptr;      // over the waveforms
-		// A .part-mark.independent (attribute part, its id) at the upper right corner of each MIDI part and audio event
-		// shown that is excluded from global transpose (#168, #1368, reference manual p. 421).
+		// The .part-mark icons (attribute part, its id) in a .part-marks-of at the upper right corner of each MIDI part
+		// and audio event shown: .independent if it is excluded from global transpose (#168, #1368, reference manual
+		// p. 421), .locked if it is locked (#384, p. 276), .shared if it is a shared copy (p. 272).
 		Rml::Element* m_partMarks = nullptr;
 		std::set<uint64_t> m_independent;
+		std::set<uint64_t> m_locked;
+		std::set<uint64_t> m_shared;
 		std::map<uint64_t, AudioEventSpan> m_audioSpans;
 		std::string m_partMarksRml;     // what m_partMarks holds
 		Rml::Element* m_cuts = nullptr; // the .cutting-position lines
@@ -986,6 +1007,8 @@ namespace gnubase::ui
 		int64_t m_right = 0;
 		bool m_sizingMovesContents = false;
 		double m_resizeFrom = 0.0;      // the pressed event's edge when a drag of edges started, in seconds
+		int m_repeatCount = 0;          // copies a Drag::Repeat makes, which the selected events show
+		bool m_repeatShared = false;    // and whether they are shared copies
 		engine::Json m_resizeWanted;    // event.previewResize's parameters for where the edge is now, null for none
 		engine::Json m_resizeAsked;     // those of the last one sent
 		bool m_resizeAsking = false;    // its answer is on its way

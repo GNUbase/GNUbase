@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -24,6 +25,7 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace gnubase::ui
 {
@@ -37,12 +39,15 @@ namespace gnubase::ui
 		constexpr double g_cutDistance = 4.0; // dp between the cutting positions for them to show
 		constexpr double g_minTrackZoom = 0.25;
 		constexpr double g_maxTrackZoom = 8.0;
-		constexpr double g_zoomStep = 2.0;          // zoom in and out
-		constexpr double g_verticalZoomStep = 1.25; // track heights
-		constexpr double g_wheelZoomStep = 1.25;    // per line of the mouse wheel
-		constexpr double g_wheelScroll = 0.1;       // of the view's width per line, scrolling across
-		constexpr double g_dragZoomDistance = 40.0; // dp dragged in the ruler to zoom by a factor of 2
-		constexpr double g_overviewEdge = 4.0;      // dp either side of the overview rectangle's edges
+		constexpr double g_zoomStep = 2.0;            // zoom in and out
+		constexpr double g_minGridLineDistance = 4.0; // dp between grid lines, or none show
+		constexpr size_t g_maxGridLines = 4096;
+		constexpr float g_gridLinesHeight = 100000.0F; // dp: one lane down the whole area
+		constexpr double g_verticalZoomStep = 1.25;    // track heights
+		constexpr double g_wheelZoomStep = 1.25;       // per line of the mouse wheel
+		constexpr double g_wheelScroll = 0.1;          // of the view's width per line, scrolling across
+		constexpr double g_dragZoomDistance = 40.0;    // dp dragged in the ruler to zoom by a factor of 2
+		constexpr double g_overviewEdge = 4.0;         // dp either side of the overview rectangle's edges
 
 		// The event display's preferences (reference manual pp. 1603-1604, 1607; #1313).
 		constexpr std::array<const char*, 10> g_displayKeys = {"ui.showEventNames", "ui.hideTruncatedEventNames",
@@ -104,11 +109,13 @@ namespace gnubase::ui
 		Rml::Element& timeline = add(root, "div", "timeline");
 		m_ruler = &addCanvas<Ruler>(timeline, "ruler", "timeline-ruler");
 		m_area = &add(timeline, "div", "event-area");
+		m_gridLines = &addCanvas<EventLanes>(*m_area, "event-lanes", "grid-lines");
 		m_folderLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "folder-data");
 		m_lanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "events");
 		m_mutedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "muted-events");
 		m_selectedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "selected-events");
 		m_waveforms = std::make_unique<EventWaveforms>(binding, add(*m_area, "div", "waveforms"));
+		m_snapPoints = &addCanvas<EventLanes>(*m_area, "event-lanes", "snap-points");
 		m_contents = &addCanvas<PartContents>(*m_area, "part-contents", "part-contents");
 		m_names = &addCanvas<EventNames>(*m_area, "event-names", "event-names");
 		m_fadeLines = &addCanvas<FadeLines>(*m_area, "fade-lines", "fades");
@@ -226,8 +233,12 @@ namespace gnubase::ui
 				takeSnap(event.data);
 				showSnap();
 			}));
-		m_subscriptions.push_back(m_binding.on("quantize.changed", [this](const engine::Event& event)
-			{ m_quantize = engine::midi::quantizeSettingsFromJson(event.data.at("settings")); }));
+		m_subscriptions.push_back(m_binding.on("quantize.changed",
+			[this](const engine::Event& event)
+			{
+				m_quantize = engine::midi::quantizeSettingsFromJson(event.data.at("settings"));
+				showGrid(); // the quantize grid's lines
+			}));
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
 			{
@@ -523,6 +534,8 @@ namespace gnubase::ui
 		m_laneTakes.clear();
 		m_events.clear();
 		m_independent.clear();
+		m_locked.clear();
+		m_shared.clear();
 		m_audioSpans.clear();
 		m_mutedPieces.clear();
 		m_fades.clear();
@@ -632,6 +645,10 @@ namespace gnubase::ui
 					m_folderData[lane->second].events.push_back(span);
 			if (lanes.count(track) == 0)
 				return;
+			if (event.value("lock", false))
+				m_locked.insert(event.at("id").get<uint64_t>());
+			if (event.value("shared", uint64_t{0}) != 0)
+				m_shared.insert(event.at("id").get<uint64_t>());
 			if (onTrackLane)
 			{
 				m_tracks[lanes[track]].events.push_back(span);
@@ -874,6 +891,7 @@ namespace gnubase::ui
 			all.insert(all.end(), lanes[i].events.begin(), lanes[i].events.end());
 		}
 		std::vector<EventLanes::Lane> selected = muted;
+		std::vector<EventLanes::Lane> snapPoints = muted;
 		std::vector<EventLanes::Lane> folders = m_folderData;
 		for (size_t i = 0; i < folders.size() && i < lanes.size(); ++i)
 			folders[i].height = lanes[i].height;
@@ -881,10 +899,14 @@ namespace gnubase::ui
 			if (lane < muted.size())
 				muted[lane].events.push_back({piece.start, piece.length});
 		const double shift = m_drag == Drag::Events && m_dragMoved ? m_dragDx * m_view.scale : 0.0;
+		const std::optional<TimeSpan> repeated = m_drag == Drag::Repeat ? selectionBlock() : std::nullopt;
 		for (const Shown& shown : m_events)
 		{
 			if (shown.mute && !shown.onTrackLane)
 				muted[shown.lane].events.push_back({shown.start, shown.end - shown.start});
+			// ponytail: where the event is, not where a drag shows it.
+			if (shown.snapPoint)
+				snapPoints[shown.lane].events.push_back({*shown.snapPoint, 0.0});
 			const auto lane = static_cast<int64_t>(shown.lane) + (m_drag == Drag::Events ? m_dragLanes : 0);
 			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id) && lane >= 0 &&
 				lane < static_cast<int64_t>(selected.size()))
@@ -898,14 +920,18 @@ namespace gnubase::ui
 						length = m_time.tempo.toSeconds(m_time.tempo.toTicks(shown.end) + *m_dragTicks) - start;
 				}
 				selected[static_cast<size_t>(lane)].events.push_back({start, length});
+				// A repeat drag shows its copies after the selection, back to back.
+				for (int copy = 1; repeated && copy <= m_repeatCount; ++copy)
+					selected[static_cast<size_t>(lane)].events.push_back({start + (copy * repeated->length), length});
 			}
 		}
-		for (std::vector<EventLanes::Lane>* overlay : {&muted, &selected})
+		for (std::vector<EventLanes::Lane>* overlay : {&muted, &selected, &snapPoints})
 			for (EventLanes::Lane& lane : *overlay)
 				std::sort(lane.events.begin(), lane.events.end(),
 					[](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
 		m_mutedLanes->setLanes(std::move(muted));
 		m_selectedLanes->setLanes(std::move(selected));
+		m_snapPoints->setLanes(std::move(snapPoints));
 		m_folderLanes->setLanes(std::move(folders));
 		showNamesAndContents(lanes);
 		m_lanes->setLanes(std::move(lanes));
@@ -1114,14 +1140,16 @@ namespace gnubase::ui
 		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_ruler), static_cast<Rml::Element*>(m_lanes),
 				 static_cast<Rml::Element*>(m_mutedLanes), static_cast<Rml::Element*>(m_selectedLanes),
 				 static_cast<Rml::Element*>(m_fadeLines), static_cast<Rml::Element*>(m_contents),
-				 static_cast<Rml::Element*>(m_names)})
+				 static_cast<Rml::Element*>(m_names), static_cast<Rml::Element*>(m_gridLines),
+				 static_cast<Rml::Element*>(m_snapPoints)})
 		{
 			canvas->SetAttribute("start", m_view.start);
 			canvas->SetAttribute("scale", m_view.scale);
 		}
 		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_lanes), static_cast<Rml::Element*>(m_mutedLanes),
 				 static_cast<Rml::Element*>(m_selectedLanes), static_cast<Rml::Element*>(m_fadeLines),
-				 static_cast<Rml::Element*>(m_contents), static_cast<Rml::Element*>(m_names)})
+				 static_cast<Rml::Element*>(m_contents), static_cast<Rml::Element*>(m_names),
+				 static_cast<Rml::Element*>(m_snapPoints)})
 			canvas->SetAttribute("scroll-top", m_view.top);
 		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio(),
 			static_cast<double>(m_display.dataHeight), m_display.waveformBrightness / 100.0});
@@ -1131,6 +1159,7 @@ namespace gnubase::ui
 		placeAutomation();
 		placePartMarks();
 		placeCuttingPositions();
+		showGrid();
 
 		// The overview line shows the whole project, and the view as a rectangle.
 		const double across = m_overview->GetClientWidth() / dpRatio();
@@ -1152,24 +1181,80 @@ namespace gnubase::ui
 		std::vector<const Shown*> marked;
 		std::string rml;
 		for (const Shown& shown : m_events)
-			if (m_independent.count(shown.id) != 0 && shown.lane + 1 < m_laneTops.size())
-			{
-				marked.push_back(&shown);
-				rml += R"(<div class="part-mark independent" part=")" + std::to_string(shown.id) +
-					R"("><svg class="icon" src="../icons/part-independent.svg"/></div>)";
-			}
+		{
+			if (shown.lane + 1 >= m_laneTops.size())
+				continue;
+			std::string marks;
+			for (const auto& [ids, kind, icon] : {std::tuple{&m_independent, "independent", "part-independent"},
+					 std::tuple{&m_locked, "locked", "general-lock"}, std::tuple{&m_shared, "shared", "general-link"}})
+				if (ids->count(shown.id) != 0)
+					marks += std::string(R"(<div class="part-mark )") + kind + R"(" part=")" +
+						std::to_string(shown.id) + R"("><svg class="icon" src="../icons/)" + icon + R"(.svg"/></div>)";
+			if (marks.empty())
+				continue;
+			marked.push_back(&shown);
+			rml += R"(<div class="part-marks-of">)" + marks + "</div>";
+		}
 		if (rml != m_partMarksRml)
 		{
 			m_partMarksRml = rml;
 			m_partMarks->SetInnerRML(rml);
 		}
+		// Each event's marks end at its right end.
 		const double scale = m_view.scale > 0.0 ? m_view.scale : g_minScale;
 		for (size_t i = 0; i < marked.size(); ++i)
-			if (Rml::Element* mark = m_partMarks->GetChild(static_cast<int>(i)))
+			if (Rml::Element* marks = m_partMarks->GetChild(static_cast<int>(i)))
 			{
-				mark->SetProperty(Rml::PropertyId::Left, dp((marked[i]->end - m_view.start) / scale));
-				mark->SetProperty(Rml::PropertyId::Top, dp(m_laneTops[marked[i]->lane] - m_view.top));
+				marks->SetProperty(Rml::PropertyId::Right, dp(width() - ((marked[i]->end - m_view.start) / scale)));
+				marks->SetProperty(Rml::PropertyId::Top, dp(m_laneTops[marked[i]->lane] - m_view.top));
 			}
+	}
+
+	void EventDisplay::showGrid()
+	{
+		if (!alive())
+			return;
+		// Lines over the view and a view's width each side of it, in blocks of the view's width, so that scrolling
+		// builds them again only once a block.
+		std::vector<TimeSpan> lines;
+		const double visible = visibleLength();
+		if (visible > 0.0)
+		{
+			const double block = std::floor(m_view.start / visible) * visible;
+			const double from = std::max(0.0, block - visible);
+			const double to = block + (3.0 * visible);
+			const engine::GridType type = m_snap.grid();
+			const engine::SnapGrid grid = snapGrid();
+			const auto seconds = [this](const time::Position& line)
+			{ return static_cast<double>(time::toSamples(line, m_time.tempo, m_time.sampleRate)) / m_time.sampleRate; };
+			time::Position line = engine::nearestGridLine(type, grid, samples(from));
+			for (double at = seconds(line); at <= to && lines.size() < g_maxGridLines;)
+			{
+				if (at >= from)
+					lines.push_back({at, 0.0});
+				// The line nearest a step on, so that swing and bars of other lengths stay on the grid.
+				time::Position step = line;
+				step.value += engine::gridStep(type, grid, samples(at)).value;
+				time::Position next =
+					engine::nearestGridLine(type, grid, time::toSamples(step, m_time.tempo, m_time.sampleRate));
+				if (seconds(next) <= at)
+					next = step;
+				const double nextAt = seconds(next);
+				if ((nextAt - at) / m_view.scale < g_minGridLineDistance) // too close to see apart: none
+				{
+					lines.clear();
+					break;
+				}
+				line = next;
+				at = nextAt;
+			}
+		}
+		const std::vector<EventLanes::Lane>& shown = m_gridLines->lanes();
+		const bool same = !shown.empty() && shown[0].events.size() == lines.size() &&
+			std::equal(lines.begin(), lines.end(), shown[0].events.begin(),
+				[](const TimeSpan& a, const TimeSpan& b) { return a.start == b.start; });
+		if (!same)
+			m_gridLines->setLanes({{g_gridLinesHeight, std::move(lines)}});
 	}
 
 	void EventDisplay::setCuttingPositions(std::vector<int64_t> positions)
@@ -1723,6 +1808,7 @@ namespace gnubase::ui
 		case Drag::Volume:
 		case Drag::VolumePoint:
 		case Drag::TimeWarp:
+		case Drag::Repeat:
 			areaMove(event, dx, dy);
 			return;
 		case Drag::None:

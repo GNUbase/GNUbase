@@ -169,7 +169,7 @@ namespace gnubase::ui
 			lanes.push_back(
 				{static_cast<float>(i + 1 < m_laneTops.size() ? m_laneTops[i + 1] - m_laneTops[i]
 															  : trackHeight(m_laneTracks[i]) * m_view.trackZoom),
-					{}, {}, {}});
+					{}, {}, {}, {}});
 		// The selected events where a drag moves them, as setLanes shows them.
 		std::vector<Shown> events = m_events;
 		if (m_drag == Drag::Events && m_dragMoved)

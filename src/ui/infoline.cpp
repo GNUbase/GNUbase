@@ -1150,10 +1150,13 @@ namespace gnubase::ui
 		}
 		else if (field == "name")
 		{
+			// MIDI and audio parts have names of their own; audio events show their clip's.
+			Json parts = Json::array();
 			for (const Json& event : m_events)
-				if (event.at("kind") == "midi")
-					commands.push_back(
-						{{"command", "midiPart.set"}, {"parameters", {{"part", event.at("id")}, {"name", text}}}});
+				if (event.at("kind") != "audio")
+					parts.push_back(event.at("id"));
+			if (!parts.empty())
+				commands.push_back({{"command", "event.set"}, {"parameters", {{"events", parts}, {"name", text}}}});
 		}
 		else if (field == "volume")
 		{

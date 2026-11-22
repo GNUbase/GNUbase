@@ -153,7 +153,8 @@ RmlUi's `cursor` property; the pointers are SVG files in `resources/cursors` ([s
 | `pointer` | Where | Pointer |
 |---|---|---|
 | `objectSelection`, `comp`, `color` | The object selection, comp and color tools | The OS's arrow |
-| `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp), except on a fade handle ([fades.md](fades.md)), and except with Ctrl or Shift held unless they are a tool modifier (they add to the selection then) | `resize` |
+| `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp), except on a fade handle ([fades.md](fades.md)) or the repeat handle, and except with Ctrl or Shift held unless they are a tool modifier (they add to the selection then) | `resize` |
+| `repeat` | The object selection tool over the repeat handle in the middle of an event's right border, on lanes at least 80 dp high, or with Alt at the last selected event's lower right corner, where a drag repeats the selection ([parts-and-events.md](parts-and-events.md), p. 271) | The OS's pointing hand |
 | `split` | The object selection tool on an event with the tool modifier Split Event held (Alt), where a click splits it (p. 268) | `tool-split` |
 | `draw` | The object selection tool on an empty spot of an audio, MIDI or instrument lane with Split Event held, where a drag draws a part (p. 250) | `tool-draw` |
 | `resize`, `resizeVertical` | The range selection tool just inside the selection range's start or end, or its top or bottom, where a drag moves that edge, without Shift ([range-editing.md](range-editing.md)) | `resize`, the OS's `ns-resize` |
