@@ -3000,30 +3000,47 @@ namespace gnubase::engine
 			require(clipboard.sampleRate == project.sampleRate,
 				"the project's sample rate changed since the automation was copied: copy it again");
 			const Json& parameters = context.parameters();
-			require(!(parameters.contains("tracks") && parameters.contains("lanes")), "give tracks or lanes, not both");
+			require(
+				!(parameters.contains("tracks") && (parameters.contains("lanes") || parameters.contains("targets"))),
+				"give tracks or lanes and targets, not both");
 			const auto [start, end] = startAndEnd(context);
 			require(start >= 0 && end >= start, "the range must start at or after 0 and not end before its start");
 			require(end > start, "the range is empty");
 			// Which copied lanes go onto which tracks: onto their own tracks; onto the tracks, from the top, one
-			// copied track onto each, or the one copied track onto all; or onto the lanes of the same parameter.
+			// copied track onto each, or the one copied track onto all; or onto the lanes of the same parameter and
+			// onto parameters of tracks without their lanes, as unadded automation tracks show them (#2018), each
+			// getting the copied lane of its parameter, if there is one, so that a lane comes only where it pastes.
 			std::vector<std::pair<const AutomationClipboard::Lane*, ObjectId>> pastes;
-			if (parameters.contains("lanes"))
+			std::vector<std::pair<ObjectId, Json>> onto; // the tracks and targets of lanes and targets
+			for (const ObjectId id : parameters.value("lanes", std::set<ObjectId>()))
 			{
-				for (const ObjectId id : parameters.at("lanes").get<std::set<ObjectId>>())
-				{
-					require(project.automation.count(id) != 0, "no automation lane " + std::to_string(id));
-					const AutomationLane& lane = project.automation.at(id);
-					const auto same = std::find_if(clipboard.lanes.begin(), clipboard.lanes.end(),
-						[&project, &lane](const AutomationClipboard::Lane& copied)
-						{
-							const std::optional<AutomationTarget> target = parameterOn(project, copied, lane.track);
-							return target && *target == lane.target;
-						});
-					if (same != clipboard.lanes.end())
-						pastes.emplace_back(&*same, lane.track);
-				}
+				require(project.automation.count(id) != 0, "no automation lane " + std::to_string(id));
+				const AutomationLane& lane = project.automation.at(id);
+				onto.emplace_back(lane.track, toJson(lane.target));
 			}
-			else if (parameters.contains("tracks"))
+			for (const Json& given : parameters.value("targets", Json::array()))
+			{
+				const auto track = given.at("track").get<ObjectId>();
+				require(project.trackById.count(track) != 0, "no track " + std::to_string(track));
+				onto.emplace_back(track, given.at("target"));
+			}
+			for (const auto& [track, target] : onto)
+			{
+				const auto same = std::find_if(clipboard.lanes.begin(), clipboard.lanes.end(),
+					[&project, track = track, &target = target](const AutomationClipboard::Lane& copied)
+					{
+						const std::optional<AutomationTarget> has = parameterOn(project, copied, track);
+						if (!has)
+							return false;
+						Json json = toJson(*has);
+						if (!target.contains("channel") && has->channel == 0)
+							json.erase("channel"); // automationLane.add's default
+						return json == target;
+					});
+				if (same != clipboard.lanes.end())
+					pastes.emplace_back(&*same, track);
+			}
+			if (parameters.contains("tracks"))
 			{
 				const auto named = parameters.at("tracks").get<std::set<ObjectId>>();
 				for (const ObjectId id : named)
@@ -3041,7 +3058,7 @@ namespace gnubase::engine
 							pastes.emplace_back(&copied, tracks[i]);
 				}
 			}
-			else
+			else if (!parameters.contains("lanes") && !parameters.contains("targets"))
 			{
 				for (const AutomationClipboard::Lane& copied : clipboard.lanes)
 					if (project.trackById.count(copied.lane.track) != 0)
@@ -3567,15 +3584,23 @@ namespace gnubase::engine
 		addEdit(engine,
 			{"automation.paste", 1,
 				"Pastes what automation.copy copied " + between +
-					", where it replaces the automation: without tracks and lanes each lane onto its own track (Paste "
-					"Automation of All Tracks); onto tracks (ids), the copied tracks from the top one onto each, or "
-					"one copied track onto all of them; or onto lanes (ids), each getting the copied lane of its "
-					"parameter. A track takes the parameters it has, adding their lanes: a plugin's needs the same "
-					"plugin in the slot at the same place, an instrument's the same instrument; the others are left "
-					"out. A shorter range cuts the copy at the curve's value there, in a longer one its last value "
+					", where it replaces the automation: without tracks, lanes and targets each lane onto its own "
+					"track (Paste Automation of All Tracks); onto tracks (ids), the copied tracks from the top one "
+					"onto each, or one copied track onto all of them; or onto lanes (ids) and targets (parameters of "
+					"tracks, {track, target} as automationLane.add takes them), each getting the copied lane of its "
+					"parameter if there is one, a target adding its lane only then. A track takes the parameters it "
+					"has, adding their lanes: a plugin's needs the same plugin in the slot at the same place, an "
+					"instrument's the same instrument; the others are left out. A shorter range cuts the copy at the "
+					"curve's value there, in a longer one its last value "
 					"holds up to the end. A copy made at another sample rate than the project's is refused. Returns "
 					"the lanes it pasted into.",
-				schema({{"start", integer()}, {"end", integer()}, {"tracks", events()}, {"lanes", events()}}, {}),
+				schema({{"start", integer()}, {"end", integer()}, {"tracks", events()}, {"lanes", events()},
+						   {"targets",
+							   {{"type", "array"},
+								   {"items",
+									   schema({{"track", integer()}, {"target", {{"type", "object"}}}},
+										   {"track", "target"})}}}},
+					{}),
 				schema({{"lanes", events()}}, {"lanes"}), false},
 			"Paste Automation", [this](Project& project, CommandContext& context)
 			{ return pasteCopiedAutomation(project, context, m_automationClipboard); });

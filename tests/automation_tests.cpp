@@ -1711,6 +1711,53 @@ TEST_CASE("automation.copy and automation.paste copy automation between tracks w
 	CHECK_THAT(reject(client, "automation.paste", {{"tracks", {12345}}}), ContainsSubstring("no track 12345"));
 }
 
+TEST_CASE("automation.paste onto parameters of tracks adds a lane only where it pastes", "[unit]")
+{
+	// The track list's Paste Automation of Selected Parameters onto automation tracks without lanes (#2018).
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
+	const ObjectId lane =
+		idOf(run(client, "automationLane.add", {{"track", audio}, {"target", {{"type", "volume"}}}}), "lane");
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
+	const ObjectId midi = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	const ObjectId other = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
+	const ObjectId pan =
+		idOf(run(client, "automationLane.add", {{"track", other}, {"target", {{"type", "pan"}}}}), "lane");
+	run(client, "transport.set", {{"left", 0}, {"right", 48000}});
+	REQUIRE(run(client, "automation.copy", {{"lanes", {lane}}}).at("lanes") == 1);
+
+	// A parameter the copy doesn't have, or a track without it, takes nothing: no lane, no undo step.
+	const Json before = run(client, "project.get");
+	const Json history = run(client, "history.get");
+	const Json nothing = run(client, "automation.paste",
+		{{"targets",
+			{{{"track", other}, {"target", {{"type", "mute"}}}},
+				{{"track", midi}, {"target", {{"type", "volume"}}}}}}});
+	CHECK(nothing.at("lanes").empty());
+	CHECK(run(client, "project.get") == before);
+	CHECK(run(client, "history.get") == history);
+
+	// One the copy has gets its lane, with lanes beside it, in one undo step.
+	const Json pasted = run(client, "automation.paste",
+		{{"targets", {{{"track", other}, {"target", {{"type", "volume"}}}}}}, {"lanes", {pan}}, {"start", 96000},
+			{"end", 144000}});
+	const Json lanes = run(client, "automationLane.list", {{"track", other}}).at("lanes");
+	REQUIRE(lanes.size() == 2);
+	CHECK(lanes[1].at("target").at("type") == "volume");
+	CHECK(!lanes[1].at("points").empty());
+	CHECK(pasted.at("lanes") == Json::array({lanes[1].at("id")}));
+	CHECK(run(client, "history.get").at("steps").size() == history.at("steps").size() + 1);
+	run(client, "history.undo");
+	CHECK(run(client, "project.get") == before);
+
+	CHECK_THAT(reject(client, "automation.paste", {{"tracks", {other}}, {"targets", Json::array()}}),
+		ContainsSubstring("not both"));
+	CHECK_THAT(
+		reject(client, "automation.paste", {{"targets", {{{"track", 12345}, {"target", {{"type", "volume"}}}}}}}),
+		ContainsSubstring("no track 12345"));
+}
+
 TEST_CASE("automation.copy keeps the given tracks without automation in their order, and says what it copied", "[unit]")
 {
 	Engine engine;
