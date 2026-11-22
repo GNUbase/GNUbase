@@ -184,6 +184,35 @@ TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI record mode", 
 	REQUIRE(app.waitUntil([&app] { return checked(app, "#midi-record-mode-merge"); }));
 }
 
+TEST_CASE("Transport > MIDI Retrospective Recording > Empty All Buffers empties every track's buffer", "[ui]")
+{
+	// Reference manual p. 356.
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const Json added = app.call("track.add", {{"type", "instrument"}});
+	const Json channel = added.at("channel").at("id");
+	app.call("channel.set", {{"channel", channel}, {"recordEnable", false}});
+	app.call("midi.inject",
+		{{"channel", channel},
+			{"messages",
+				{{{"position", 100}, {"bytes", {0x90, 60, 100}}}, {{"position", 200}, {"bytes", {0x80, 60, 0}}}}}});
+	app.call("audio.render", {{"frames", 640}});
+	app.call("midi.insertRetrospective", {{"track", added.at("track").at("id")}}); // the buffer holds the note
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#menu-bar button[menu=transport-menu]");
+	app.ui().move(std::nullopt, {"#midi-retrospective-submenu", 0, std::nullopt});
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#midi-retrospective-empty");
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			const engine::Result inserted =
+				engine::Client(app.engine()).call("midi.insertRetrospective", {{"track", added.at("track").at("id")}});
+			return !inserted.ok() && inserted.error.find("nothing") != std::string::npos;
+		}));
+}
+
 TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI cycle record mode", "[ui]")
 {
 	test::UiApp app({900, 640});

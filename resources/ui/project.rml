@@ -628,6 +628,11 @@
 				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "mixStacked"}'>Mix-Stacked (No Mute)</menuitem>
 			</menu>
 		</menuitem>
+		<menuitem id="midi-retrospective-submenu">MIDI Retrospective Recording
+			<menu>
+				<menuitem id="midi-retrospective-empty" command="midi.clearRetrospective">Empty All Buffers</menuitem>
+			</menu>
+		</menuitem>
 		<menuseparator/>
 		<menuitem command="transport.locate" parameters='{"target": "projectStart"}'>Go to Project Start</menuitem>
 		<menuseparator/>
