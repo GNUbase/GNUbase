@@ -52,7 +52,8 @@ namespace gnubase::mcp
 				engine::writeProperties(out, *output, "Result");
 		}
 
-		out << "\n### Resources\n\nQueries without required arguments can also be read as resources:\n\n";
+		out << "\n### Resources\n\nQueries without required arguments can also be read as resources, except those "
+			   "that take what they return from a queue all clients share:\n\n";
 		for (const Json& resource : list(server, "resources/list", "resources", "uri"))
 			out << "- `" << resource.at("uri").get<std::string>()
 				<< "`: " << resource.at("description").get<std::string>() << '\n';

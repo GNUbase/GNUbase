@@ -68,6 +68,9 @@ namespace gnubase::engine
 		Json parameters = Json{{"type", "object"}, {"additionalProperties", false}}; // JSON schema
 		Json result = Json::object();                                                // JSON schema
 		bool query = false; // only reads, never changes the project
+		// A query whose calls take what they return from a queue all clients share (midi.capture), so a second
+		// read gets other data. MCP lists it as a tool only, not as a resource.
+		bool consumes = false;
 	};
 
 	// A change announced by a command. Every client receives it.
