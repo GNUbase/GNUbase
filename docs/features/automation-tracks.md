@@ -99,7 +99,8 @@ places a point and where a moved point lands ([snap.md](snap.md)); Ctrl with Alt
   auditions and scrubs an audio track from its automation tracks too. A press with the range selection, split, glue,
   mute, comp or time warp tool does nothing there.
 - **Delete** (`edit.delete`, Backspace) removes the selected points (p. 878). Selecting events or a range deselects
-  the points, and the other way round for events. The selection is the display's (`EventDisplay::selectedPoints()`),
+  the points, and the other way round for events; so do selected markers and time signature events, which the points
+  selected deselect too (`AppUi`, #2011), so that Delete deletes what was selected last. The selection is the display's (`EventDisplay::selectedPoints()`),
   also in the display's attribute `automation-selection` as `lane:point` pairs.
 
 ## Not yet
@@ -124,7 +125,8 @@ automation of the channel strip's sections (#658).
   and the selected tracks' command; the draw tool's click and curve, the line tool's line, square, sine, triangle and
   parabola, nothing on a step curve, the erase tool, and reading off with the static value line; selecting points with
   clicks, Ctrl and a rectangle, the event editor's vertical scaling and moving, moving points by a drag, Delete, and
-  selecting events deselecting points; a Ctrl-drag of selected points in one direction, a Ctrl-click that deselects one,
+  selecting events deselecting points, points and markers or time signature events deselecting each other, with
+  Delete deleting what was selected last; a Ctrl-drag of selected points in one direction, a Ctrl-click that deselects one,
   the editor's tilt left, tilt right and stretch; a move that snaps the pressed point, and Ctrl with Shift or Alt that
   turns snapping off; a moved selection that replaces the point where it lands, in its preview and in one undo step, a
   click on one of the selected points, a click on an empty spot that ends the selection, a Ctrl-restricted move released

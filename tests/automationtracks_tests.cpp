@@ -9,6 +9,8 @@
 #include "ui/canvas.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/markers.h"
+#include "ui/signaturetrack.h"
 #include "ui/tracklist.h"
 
 #include <RmlUi/Core/Element.h>
@@ -1302,4 +1304,64 @@ TEST_CASE("a track's lanes come between its own lane and its automation tracks, 
 	// The command again hides them.
 	f.app.keys().run("track.toggleLanesSelected", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return f.display.laneTakes() == std::vector<int>{-1, -1}; }));
+}
+
+TEST_CASE(
+	"automation points and markers or time signature events deselect each other, and Delete deletes the last", "[ui]")
+{
+	// The project window selects events, automation points, markers or time signature events (#2011).
+	Automation f;
+	const Json volume = f.show();
+	f.app.call("track.add", {{"type", "signature"}});
+	for (const int bar : {2, 3})
+		f.app.call("signature.add", {{"bar", bar}, {"numerator", 3}, {"denominator", 4}});
+	const uint64_t marker = f.app.call("marker.add", {{"position", "cursor"}}).at("marker").at("id").get<uint64_t>();
+	ui::MarkerLines& markers = *f.app.appUi().markerLines();
+	ui::SignatureRow& signatures = f.app.appUi().signatureLane()->row();
+	REQUIRE(f.app.waitUntil([&] { return !markers.loading() && elements(f.app, ".signature-event").size() == 3; }));
+	// Clicks on a time signature event, on another one each time, as two soon after each other open it.
+	const auto selectSignature = [&](int event)
+	{
+		f.app.ui().click(std::nullopt, {".signature-event", event, std::nullopt}, ui::MouseButton::Left, 1, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(signatures.selection().size() == 1);
+	};
+	const auto selectPoint = [&]
+	{
+		f.app.call("automationPoint.add", {{"lane", volume}, {"points", {{{"position", 48000}, {"value", -27.0}}}}});
+		f.settle(volume);
+		f.clickAt(f.x(1.0), f.y(volume, 0.5));
+		REQUIRE(f.display.selectedPoints().size() == 1);
+	};
+	const auto points = [&] { return f.lane(volume).at("points").size(); };
+
+	// A marker, then points: Delete removes the points, which were selected last.
+	markers.pick({marker});
+	selectPoint();
+	CHECK(f.app.waitUntil([&] { return markers.selection().empty(); }));
+	f.app.keys().run("edit.delete", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return points() == 0; }));
+	CHECK(f.app.call("project.get").at("markers").size() == 1);
+	// A time signature event, then points: the same.
+	selectSignature(1);
+	selectPoint();
+	CHECK(f.app.waitUntil([&] { return signatures.selection().empty(); }));
+	f.app.keys().run("edit.delete", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return points() == 0; }));
+	CHECK(f.app.call("project.get").at("signatures").size() == 3);
+
+	// Points, then a marker or a time signature event: the points go.
+	selectPoint();
+	markers.pick({marker});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.display.selectedPoints().empty());
+	CHECK(markers.selection() == std::vector<uint64_t>{marker});
+	f.settle(volume);
+	f.clickAt(f.x(1.0), f.y(volume, 0.5));
+	REQUIRE(f.display.selectedPoints().size() == 1);
+	selectSignature(2);
+	CHECK(f.display.selectedPoints().empty());
+	f.app.keys().run("edit.delete", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("signatures").size() == 2; }));
+	CHECK(points() == 1);
 }

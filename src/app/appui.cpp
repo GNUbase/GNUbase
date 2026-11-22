@@ -499,6 +499,14 @@ namespace gnubase::app
 							m_signatureLane->row().setSelection({});
 					}
 				}
+				// So do automation points (#2011). Whatever selects markers or time signature events deselects the
+				// points (onSelect, Sync Selection), so points selected beside them were selected later.
+				if (m_eventDisplay && m_markerLines && !m_eventDisplay->selectedPoints().empty())
+				{
+					m_markerLines->deselect();
+					if (m_signatureLane && !m_signatureLane->row().selection().empty())
+						m_signatureLane->row().setSelection({});
+				}
 				// So does a range selected, e.g. between markers with the range tool: Delete deletes what was selected
 				// last.
 				if (m_eventDisplay && m_markerLines)
@@ -1830,21 +1838,31 @@ namespace gnubase::app
 		if (m_infoLine)
 			m_infoLine->followMarkers(
 				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
+		const auto deselectPoints = [this]
+		{
+			if (m_eventDisplay && !m_eventDisplay->selectedPoints().empty())
+				m_eventDisplay->selectPoints({});
+		};
 		m_markerLines->onSelect(
-			[this](const std::vector<uint64_t>& selection)
+			[this, deselectPoints](const std::vector<uint64_t>& selection)
 			{
 				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
 					window->setSelection(selection);
-				// Markers selected deselect the time signature events: Delete deletes what was selected last.
-				if (!selection.empty() && m_signatureLane)
+				// Markers selected deselect the time signature events and the automation points: Delete deletes what
+				// was selected last.
+				if (selection.empty())
+					return;
+				if (m_signatureLane)
 					m_signatureLane->row().setSelection({});
+				deselectPoints();
 			});
-		// So do time signature events selected: the markers and the selection range go.
+		// So do time signature events selected: the markers, the automation points and the selection range go.
 		m_signatureLane->onSelect(
-			[this]
+			[this, deselectPoints]
 			{
 				if (m_markerLines)
 					m_markerLines->deselect();
+				deselectPoints();
 				if (m_eventDisplay && m_eventDisplay->range())
 					m_eventDisplay->setRange(std::nullopt);
 			});
@@ -1902,8 +1920,11 @@ namespace gnubase::app
 		m_markers->onSelect(
 			[this](const std::vector<uint64_t>& selection)
 			{
-				if (m_markerLines != nullptr && m_markers != nullptr && m_markers->syncsSelection())
-					m_markerLines->setSelection(selection);
+				if (m_markerLines == nullptr || m_markers == nullptr || !m_markers->syncsSelection())
+					return;
+				m_markerLines->setSelection(selection);
+				if (!selection.empty() && m_eventDisplay && !m_eventDisplay->selectedPoints().empty())
+					m_eventDisplay->selectPoints({}); // as the markers' onSelect does (#2011)
 			});
 		m_markers->syncFrom(
 			[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
