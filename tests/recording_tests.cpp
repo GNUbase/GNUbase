@@ -2,6 +2,7 @@
 // Audio recording (#96, reference manual pp. 335-346): record-enabled tracks record their input bus into files
 // written off the audio thread, cycle laps become takes, the audio record modes, and audio pre-record.
 #include "engine/audio/recorder.h"
+#include "engine/audio/sequencer.h"
 #include "engine/audiofile/audiofile.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
@@ -193,15 +194,14 @@ namespace
 	// recorded at its own position or not recorded.
 	constexpr uint32_t g_blockFrames = 64;
 
-	void processBlock(
-		gnubase::engine::Recorder& recorder, gnubase::engine::PlayedPositions& played, uint64_t index, bool recording)
+	void processBlock(gnubase::engine::Recorder& recorder, gnubase::engine::PlayedPositions& played, uint64_t index,
+		bool recording, const gnubase::engine::MidiTap::Sequencers& sequencers = {})
 	{
 		namespace engine = gnubase::engine;
 		std::vector<float> input(g_blockFrames, 0.25f);
 		const float* const inputs[] = {input.data()};
 		const gnubase::audio::MidiBuffer midiIn;
 		gnubase::audio::MidiBuffer midiOut;
-		const engine::MidiTap::Sequencers sequencers;
 		const uint64_t position = index * g_blockFrames;
 		const engine::graph::TransportSegment segment{0, g_blockFrames, static_cast<int64_t>(position), recording};
 		engine::graph::TransportBlock transport;
@@ -1076,6 +1076,55 @@ TEST_CASE("the retrospective buffer leaves a recording's start to the disk threa
 		}
 	}
 	CHECK_FALSE(startedOnCommandThread);
+}
+
+TEST_CASE("MIDI input that finds no free MIDI chunk is counted (#641)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	bool finishing = false;
+	bool released = false;
+	{
+		// The disk thread waits in the report of a recording while the audio thread hands it MIDI input.
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json&)
+			{
+				if (name != "recording.finished")
+					return;
+				std::unique_lock lock(mutex);
+				finishing = true;
+				changed.notify_all();
+				changed.wait_for(lock, 5s, [&] { return released; });
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(dir.path()));
+		engine::PlayedPositions played(size_t{4} * g_blockFrames);
+		processBlock(recorder, played, 0, true);
+		processBlock(recorder, played, 1, false);
+		{
+			std::unique_lock lock(mutex);
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return finishing; }));
+		}
+		// The pool's 256 MIDI chunks take the first 256 blocks' input, two events each.
+		const auto sequencer = std::make_shared<engine::MidiSequencer>();
+		const engine::MidiTap::Sequencers sequencers = {{1, sequencer}};
+		for (uint64_t index = 2; index < 2 + 300; ++index)
+		{
+			sequencer->input().clear();
+			sequencer->input().add({});
+			sequencer->input().add({});
+			processBlock(recorder, played, index, false, sequencers);
+		}
+		CHECK(recorder.droppedMidi() == uint64_t{2} * 44);
+		{
+			const std::scoped_lock lock(mutex);
+			released = true;
+		}
+		changed.notify_all();
+	}
 }
 
 TEST_CASE("audio pre-record keeps only the armed tracks' input channels (#531)", "[unit]")

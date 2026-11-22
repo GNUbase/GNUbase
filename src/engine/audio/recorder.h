@@ -207,12 +207,16 @@ namespace gnubase::engine
 
 		// Input frames lost because the disk thread fell behind.
 		uint64_t dropped() const { return m_dropped.load(std::memory_order_relaxed); }
+		// MIDI input events lost because the disk thread fell behind: a block found no free MIDI chunk.
+		uint64_t droppedMidi() const { return m_droppedMidi.load(std::memory_order_relaxed); }
 
-		// Command thread: what the retrospective buffer of the channel holds, oldest first. The next input to it
-		// starts the buffer afresh. Doesn't wait while the disk thread lists the record folder and creates a
-		// recording's files, and leaves a recording's start to it: the input sent after the chunk that starts the
-		// recording isn't in it yet then.
+		// Command thread: what the retrospective buffer of the channel holds, oldest first. Doesn't wait while the disk
+		// thread lists the record folder and creates a recording's files, and leaves a recording's start to it: the
+		// input sent after the chunk that starts the recording isn't in it yet then.
 		std::vector<RetrospectiveEvent> retrospective(ObjectId channel);
+		// Command thread: the channel's buffer was inserted up to the event at this device frame
+		// (RetrospectiveEvent::deviceFrame): the next input to it starts it afresh after that event.
+		void inserted(ObjectId channel, uint64_t deviceFrame);
 		// Command thread: empties the channel's retrospective buffer, or every one for 0. Like retrospective, input
 		// still behind a recording's start comes in afterwards.
 		void clearRetrospective(ObjectId channel);
@@ -258,7 +262,8 @@ namespace gnubase::engine
 		struct Retrospective
 		{
 			std::deque<RetrospectiveEvent> events;
-			bool taken = false; // retrospective() returned it: the next input starts afresh
+			// inserted() up to this device frame: the next input leaves out the events up to it and starts afresh.
+			std::optional<uint64_t> inserted;
 			// How many of its events came in stop mode through an earlier audio device: the next input in stop mode
 			// leaves out just those events.
 			size_t stoppedBefore = 0;
@@ -331,6 +336,7 @@ namespace gnubase::engine
 		std::atomic<bool> m_armed{false};
 		std::atomic<bool> m_midiArmed{false};
 		std::atomic<uint64_t> m_dropped{0};
+		std::atomic<uint64_t> m_droppedMidi{0};
 		std::atomic<size_t> m_inFlight{0};      // chunks sent that the disk thread hasn't handled yet
 		std::atomic<uint64_t> m_latestSetup{0}; // the number of the latest setup, which the chunks get
 
