@@ -11,25 +11,28 @@ undo step.
   on-screen keyboard, [onscreen-keyboard.md](onscreen-keyboard.md)) or `none`.
   While a track monitors or is record-enabled, it plays what comes from its MIDI input (MIDI thru), after what
   `midi.inject` played into it ([midi-injection.md](midi-injection.md)); injected MIDI always reaches it, as if it came
-  from its input.
-- **What records.** A MIDI or instrument track records while the transport records if it is record-enabled and
-  enabled: everything its MIDI input plays, injected or from the ports. The tracks are those armed when recording
-  starts. With the chord track record-enabled, the tracks that only monitor record too, but only into chord events
-  ([chord-track.md](chord-track.md), reference manual p. 1345). Input belongs where the transport plays the frame it comes at, without the record offset that audio input
-  has: the instrument plays it there, and the recording puts it there (`PlayedPositions::recordedAt` at its frame).
-  The acceptance test injects notes through `midi.inject`, records them, and plays them back to find each note at the
-  frame it was played at, for several block sizes (`tests/midirecording_tests.cpp`).
+  from its input. When its MIDI thru goes off (record enable and monitor off, or `midiInput` set to `none`), the keys
+  and pedals held through it are released (`MidiSequencer::thru`), so that no note hangs until the next stop.
+- **What records.** A MIDI or instrument track records while the transport records if it is record-enabled and enabled:
+  everything its MIDI input plays, injected or from the ports. The tracks are those armed when recording starts. With
+  the chord track record-enabled, the tracks that only monitor record too, but only into chord events
+  ([chord-track.md](chord-track.md), reference manual p. 1345). Input belongs where the transport plays the frame it
+  comes at, without the record offset that audio input has: the instrument plays it there, and the recording puts it
+  there (`PlayedPositions::recordedAt` at its frame). The acceptance test injects notes through `midi.inject`, records
+  them, and plays them back to find each note at the frame it was played at, for several block sizes
+  (`tests/midirecording_tests.cpp`).
 - **Off the audio thread.** After `midi.inject`'s messages and the MIDI thru are in the sequencers' inputs, the audio
-  thread hands them to the recorder's disk thread in MIDI chunks (`Recorder` in `src/engine/audio/recorder.h`), one
-  per run of consecutive positions, through the same lock-free queue as the audio chunks, so the disk thread sees
-  MIDI and audio in the order they happened. Chunks come from a pool of 256 allocated when the device opens, each
-  with room for 256 events. A chunk goes only where input comes, where a recording starts or ends and where its
-  positions jump (a cycle lap); the disk thread counts the device frames in between, so even an offline render, which
-  runs far ahead of the disk thread, doesn't run out of chunks. The disk thread pairs
-  each note-on with the next note-off of its pitch and channel into a note (`MidiTakeBuilder`); a note-on of a pitch
-  that sounds ends it first, and notes that still sound when a cycle lap or the recording ends end there. Other
-  channel messages become controller events; with MPE input, those of the notes' channels become their per-note
-  expression ([note-expression.md](note-expression.md)). SysEx doesn't come from the inputs yet.
+  thread hands them to the recorder's disk thread in MIDI chunks (`Recorder` in `src/engine/audio/recorder.h`), one per
+  run of consecutive positions, through the same lock-free queue as the audio chunks, so the disk thread sees MIDI and
+  audio in the order they happened. Chunks come from a pool of 256 allocated when the device opens, each with room for
+  256 events; a block with more input for a run goes on in further chunks with the same frames. Input that finds no free
+  chunk is lost and counted (`Recorder::droppedMidi`). A chunk goes only where input comes, where a recording starts or
+  ends and where its positions jump (a cycle lap); the disk thread counts the device frames in between, so even an
+  offline render, which runs far ahead of the disk thread, doesn't run out of chunks. The disk thread pairs each note-on
+  with the next note-off of its pitch and channel into a note (`MidiTakeBuilder`); a note-on of a pitch that sounds ends
+  it first, and notes that still sound when a cycle lap or the recording ends end there. Other channel messages become
+  controller events; with MPE input, those of the notes' channels become their per-note expression
+  ([note-expression.md](note-expression.md)). SysEx doesn't come from the inputs yet.
 - **Takes and parts.** Each run of consecutive positions is a take, as for audio. When the recording ends, the
   recorder hands each track that recorded anything to `recording.add` with its takes, notes and controller events in
   project samples. A recording of MIDI tracks only runs `recording.add` at once; with audio tracks, the MIDI tracks
@@ -55,19 +58,22 @@ undo step.
 - **Retrospective recording** (pp. 353-356). MIDI input that a track doesn't record, in stop mode or during playback,
   also that of a track that only monitors while the chord track records (it makes chord events, no part), goes into its
   retrospective buffer on the disk thread, which keeps the last `midi.retrospectiveEvents` events (10000 by default; 0
-  keeps none). `midi.insertRetrospective` inserts a track's buffer as one part through `recording.add` in the new parts
-  mode, without chord events (`chordEvents` false): input from playback where it played, input from stop mode at the
-  project cursor with its timing. Input after an insert starts the buffer afresh, and so does input in stop mode while
-  the buffer holds input in stop mode, when it comes over 30 seconds after the last input, from playback or not (p.
-  354). On the next audio device, the first input in stop mode leaves out only the earlier devices' input in stop
-  mode, which the insert can't place against the new device's: the recorder counts the buffers' frames on across
+  keeps none; then only the catch range's input is kept, for the next recording's start). `midi.insertRetrospective`
+  inserts a track's buffer as one part through `recording.add` in the new parts mode, without chord events
+  (`chordEvents` false): input from playback where it played, input from stop mode at the project cursor with its
+  timing. Playback that jumps back, at a cycle lap, ends the notes held across it at the right locator. Input after an
+  insert (one that succeeded: a failed one keeps the buffer as it was) starts the buffer afresh, and so does input in
+  stop mode while the buffer holds input in stop mode, when it comes over 30 seconds after the last input, from playback
+  or not (p. 354). On the next audio device, the first input in stop mode leaves out only the earlier devices' input in
+  stop mode, which the insert can't place against the new device's: the recorder counts the buffers' frames on across
   devices, as each device counts its own from 0, which leaves out how long the old device ran. Input during playback
   stays, before or after the device change, as the insert places it where it played (`tests/midirecording_tests.cpp`).
   `midi.clearRetrospective` empties one track's buffer or all of them.
 
 ## Not yet
 
-Choosing a single MIDI input port for a track; Record in Editor (p. 349); Length Adjustment, Insert Reset Events
-after Record and the latency compensation for live playing (p. 350, p. 1616); the MIDI thru filter and the
-reference's Record-Enable allows MIDI Thru switch; retrospective recording from all MIDI inputs (p. 354) and its menu
-items; SysEx from the inputs.
+Choosing a single MIDI input port for a track (p. 348); the inspector's Retrospective Recording menu, Insert as Cycle
+Recording and the Transport menu's MIDI Retrospective Recording items (pp. 354-356); Record in Editor (p. 349); Length
+Adjustment, Insert Reset Events after Record and the latency compensation for live playing (p. 350, p. 1616); the MIDI
+thru filter and the reference's Record-Enable allows MIDI Thru switch; retrospective recording from all MIDI inputs (p.
+354); SysEx from the inputs.

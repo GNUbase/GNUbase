@@ -1026,6 +1026,33 @@ namespace
 	}
 }
 
+TEST_CASE("the inspector's record and monitor buttons switch those of MIDI and instrument tracks", "[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}, {"name", "Keys"}});
+	const uint64_t instrument = window.addTrack({{"type", "instrument"}, {"name", "Synth"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
+	for (const std::pair<uint64_t, const char*>& each : {std::pair{midi, "Keys"}, std::pair{instrument, "Synth"}})
+	{
+		const uint64_t track = each.first;
+		const std::string name = each.second;
+		window.list.select({track});
+		REQUIRE(window.shows(".inspector textdisplay.inspector-name", name));
+		for (const char* control : {"record", "monitor"})
+		{
+			INFO(name << " " << control);
+			const std::string key = std::string(control) == "record" ? "recordEnable" : control;
+			const std::string button = ".inspector button[control=" + std::string(control) + "]";
+			const bool before = window.channel(track).at(key).get<bool>();
+			window.click(button);
+			REQUIRE(window.app.waitUntil([&] { return window.channel(track).at(key) == !before; }));
+			REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, button, "checked") != before; }));
+			window.call("channel.set", {{"channel", window.channel(track).at("id")}, {key, before}});
+			REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, button, "checked") == before; }));
+		}
+	}
+}
+
 TEST_CASE("the inspector's S solos exclusively and switches solo defeat, and its L listens", "[ui]")
 {
 	Window window;
