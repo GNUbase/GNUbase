@@ -674,6 +674,29 @@ TEST_CASE("context menus open at the mouse on a right click, inside the window, 
 	CHECK_FALSE(visible(app, "#track-menu"));
 }
 
+TEST_CASE("a menu taller than the window scrolls, and a submenu opens on the side where it fits (#1933)", "[ui]")
+{
+	test::UiApp app({640, 60});
+	const Events events(app.show("popups.rml"));
+	app.ui().click(std::nullopt, at("#corner"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	CHECK(has(element(app, "#track-menu"), "classes", "scrolls"));
+	CHECK(element(app, "#track-menu").at("box").at("height") == windowSize(app).height);
+	CHECK(insideWindow(app, "#track-menu"));
+
+	// At the window's right edge the submenu opens left of its item, inside the window, and the menu that scrolls
+	// doesn't clip it.
+	app.ui().move(std::nullopt, at("#lock"));
+	app.ui().move(std::nullopt, at("#color"));
+	REQUIRE(visible(app, "#colors"));
+	CHECK(insideWindow(app, "#colors"));
+	const Json menu = element(app, "#track-menu").at("box");
+	const Json colors = element(app, "#colors").at("box");
+	CHECK(colors.at("x").get<int>() + colors.at("width").get<int>() <= menu.at("x").get<int>());
+	click(app, "#blue");
+	CHECK(events.clicks.at("blue") == 1);
+}
+
 TEST_CASE("an open menu whose items change moves inside the window, from where it opened until input came", "[ui]")
 {
 	// #1665: the items that the opening press changes, as a lane's context menu's for the lane's type, place the menu

@@ -1986,6 +1986,15 @@ menuitem > menu
 {
 	left: 100%;
 	top: -4dp;
+	clip: none; /* also beside a menu that scrolls */
+}
+
+/* A menu or a dialog taller than the window is as tall as the window and scrolls what it holds (#1933). */
+menu.scrolls, dialog.scrolls
+{
+	box-sizing: border-box;
+	max-height: 100vh;
+	overflow-y: auto;
 }
 
 menuseparator

@@ -90,7 +90,6 @@ TEST_CASE(
 	"a script run from Edit > Scripts that writes a script and finds the scripts again keeps its undo step", "[ui]")
 {
 	test::UiApp app;
-	app.setDpRatio(0.5F); // the whole Edit menu fits in this window
 	app.appUi().showProject();
 	const std::filesystem::path folder = app.engine().settingsDirectory() / "scripts";
 	const std::filesystem::path written = folder / "written.lua";

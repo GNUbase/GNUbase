@@ -56,7 +56,6 @@ namespace
 TEST_CASE("the Profile Manager adds, duplicates, renames, deletes and activates profiles", "[ui]")
 {
 	test::UiApp app({1000, 700});
-	app.setDpRatio(0.75F); // Profile Manager is near the bottom of the Edit menu
 	app.appUi().showProject();
 	// Edit > Profile Manager
 	click(app, "#menu-bar button[menu=edit-menu]");

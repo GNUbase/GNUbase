@@ -1962,11 +1962,7 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 
 	// Show Beat Count Only: the beat in its bar.
 	app.ui().click(window, at("#time-display"), ui::MouseButton::Right, 1, {});
-	// This small window cannot show the whole menu: choose its items with the keyboard.
-	app.ui().key(window, "Up");
-	app.ui().key(window, "Up");
-	CHECK(app.ui().key(window, "Up").at("focus").at("id") == "beat-count-only");
-	app.ui().key(window, "Enter");
+	click(app, "#beat-count-only", window);
 	REQUIRE(app.waitUntil([&app, window] { return shows(app, "#time-display", window) == "4"; }));
 	CHECK(element(app, "#beat-count-only", window).at("attributes").contains("checked"));
 	CHECK(app.call("settings.get", {{"key", "ui.timeDisplay"}}).at("value").at("beatCountOnly") == true);
@@ -1975,9 +1971,7 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 
 	// Increase and Decrease Window Size: the window and its digits, whose sizes the theme has.
 	app.ui().click(window, at("#time-display"), ui::MouseButton::Right, 1, {});
-	app.ui().key(window, "Up");
-	CHECK(app.ui().key(window, "Up").at("focus").at("id") == "increase-size");
-	app.ui().key(window, "Enter");
+	click(app, "#increase-size", window);
 	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-2", window); }));
 	const ui::Size larger = app.shell().bounds(window).size();
 	CHECK(larger.width > normal.width);
@@ -2047,10 +2041,6 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	app.ui().key(std::nullopt, "F2");
 	REQUIRE(app.appUi().transportPanel() != nullptr);
 	const ui::WindowId panel = app.appUi().transportPanel()->id();
-	ui::Rect bounds = app.shell().bounds(panel);
-	bounds.height = 300; // the setup pane is taller than the single-row panel
-	app.shell().setBounds(panel, bounds);
-	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(visible(app, "[section=locators]", panel));
 	app.ui().click(panel, at("[section=click]"), ui::MouseButton::Right, 1, {});
 	click(app, "#transport-setup [setup-section=click]", panel);

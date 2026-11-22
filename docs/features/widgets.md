@@ -106,7 +106,8 @@ attributes, through a data model or directly.
   `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
   Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has the attribute,
   as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens
-  inside the window, moved left or up where it would stick out. Code opens one at a point with `ui::openMenu`
+  inside the window, moved left or up where it would stick out. A menu taller than the window gets the state class
+  `.scrolls`: as tall as the window, it scrolls its items, until they fit again (#1933). Code opens one at a point with `ui::openMenu`
   (`src/ui/widgets.h`), as the Alt-click that opens the Choose Track Color pane does ([colors.md](colors.md)). Put
   menus straight into the body, so that no container clips them.
 - An open menu whose items come or go moves inside the window again (#1580, #1665). Until the next press, release or
@@ -119,7 +120,9 @@ attributes, through a data model or directly.
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.
 - A `<menu>` inside an item is its submenu, shown beside the item while the mouse is over it (pure RCSS:
-  `menuitem:hover > menu`); a click on that item keeps the menu open. Such an item gets a `.menu-arrow` part when its
+  `menuitem:hover > menu`); a click on that item keeps the menu open. Once laid out, a submenu moves right of its
+  item, its first item level with it, or left of the item where only that side has room, and then inside the window
+  as far as it must; a menu that scrolls doesn't clip it (#1933). Such an item gets a `.menu-arrow` part when its
   document loads, and again when its menu opens for those that came later, first in the item so that it floats right;
   the themes draw it with their dropdown arrow, turned to point right. Once a key moved the focus in a menu it has
   the state class `.keys` until the mouse moves or goes over another item, and then a submenu that the mouse rests on
@@ -174,7 +177,8 @@ class such as `.tooltip` gives it the theme's look.
 `<dialog>` is a dialog in a document of its own, which the app loads and shows, usually modal
 (`ElementDocument::Show(Rml::ModalFlag::Modal)`). It opens in the middle of the window, and dragging its
 `.dialog-titlebar` moves it. A dialog that grows later (rows that show, a longer message) and
-would pass the window's edge moves back inside it. Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
+would pass the window's edge moves back inside it. A dialog taller than the window gets `.scrolls`, as menus do: as
+tall as the window, it scrolls what it holds (#1933). Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
 its `button.primary`, also from a text field and a value field with `autofocus`, but not from a multi-line text field
 or another value field being edited, and not when the focused control takes Enter itself: a button clicks itself, a
 drop-down list opens and closes, another value field starts editing. A click on an element with a `result` attribute

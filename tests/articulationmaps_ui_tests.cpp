@@ -102,7 +102,7 @@ namespace
 			return 0;
 		}
 
-		test::UiApp app{{1200, 800}};
+		test::UiApp app{{1024, 768}}; // the setup, with a map in it, is taller: it scrolls (#1933)
 		ui::EventDisplay& display;
 		uint64_t track = 0;
 	};
@@ -111,7 +111,6 @@ namespace
 TEST_CASE("the articulation map setup adds and edits maps, and the inspector assigns them", "[ui]")
 {
 	Fixture f;
-	f.app.setDpRatio(0.5F); // the populated map and its actions fit on the monitor
 	// The inspector's section opens the setup for the track; the sections above it closed, so that it is in view.
 	for (const char* section : {"basics", "routing", "modifiers"})
 		f.click(".inspector [section=" + std::string(section) + "] .section-header");
@@ -400,7 +399,6 @@ TEST_CASE("Add Map with Import Key Switches makes the track's instrument's key s
 {
 	// The test synth reports the key switches Sustain and Staccato (p. 1284).
 	Fixture f;
-	f.app.setDpRatio(0.5F); // the populated map and its actions fit on the monitor
 	const Json project = f.app.call("project.get");
 	f.app.call("channel.set", {{"channel", project.at("tracks").at(0).at("channel")}, {"instrument", "testSynth"}});
 	f.app.keys().run("midi.articulationMapSetup", Json::object(), f.app.main(), nullptr);
@@ -924,7 +922,6 @@ TEST_CASE("the articulation map setup opened right after a new project has no tr
 TEST_CASE("the articulation map setup filters its maps, combines articulations and has the sound slot actions", "[ui]")
 {
 	Fixture f;
-	f.app.setDpRatio(0.5F); // the populated map and its actions fit on the monitor
 	const Json strings =
 		f.app
 			.call("articulationMap.add",
@@ -1032,7 +1029,6 @@ TEST_CASE("the articulation map setup filters its maps, combines articulations a
 TEST_CASE("the articulation map setup's slot actions send what they say, and its rows follow the changes", "[ui]")
 {
 	Fixture f;
-	f.app.setDpRatio(0.5F); // the populated map and its actions fit on the monitor
 	const Json strings =
 		f.app
 			.call("articulationMap.add",

@@ -1884,7 +1884,6 @@ TEST_CASE("missing track widths use each type's default and keep tempo controls 
 TEST_CASE("folder tracks: new folders for the selected tracks, group channels and data blocks", "[ui]")
 {
 	Tracks tracks;
-	tracks.app.setDpRatio(0.5F); // the group-channel actions fit in the context menu
 	const uint64_t audio = tracks.add({{"type", "audio"}});
 	const uint64_t other = tracks.add({{"type", "audio"}});
 	const uint64_t marker = tracks.add({{"type", "marker"}});
