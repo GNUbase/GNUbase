@@ -886,7 +886,8 @@ namespace gnubase::ui
 		if (section(window, set, id) == nullptr)
 			return;
 		// Every hidden one, so that the defaults no longer count, and the order, so that a later set can tell which
-		// sections this one had; with those the window doesn't know.
+		// sections this one had; with those the window doesn't know. Without a saved hidden list those still have
+		// their defaults, which the window doesn't know either: they leave the order, so that they keep them.
 		const std::vector<std::string> order = sections(window, set);
 		std::vector<std::string> list;
 		for (const std::string& name : order)
@@ -894,7 +895,10 @@ namespace gnubase::ui
 				list.push_back(name);
 		const auto known = [&](const std::string& name) { return section(window, set, name) != nullptr; };
 		Json& json = sectionsJson(window, set);
-		json["order"] = keepUnknown(order, find(json, {"order"}), known);
+		const Json* savedHidden = find(json, {"hidden"});
+		json["order"] = savedHidden != nullptr && savedHidden->is_array()
+			? keepUnknown(order, find(json, {"order"}), known)
+			: order;
 		json["hidden"] = keepUnknown(list, find(json, {"hidden"}), known);
 		save();
 		apply();

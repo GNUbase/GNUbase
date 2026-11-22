@@ -1294,6 +1294,27 @@ TEST_CASE("a set learns the sections that later containers bring, and keeps save
 			Json{{"order", {"eq", "fader", "routing", "inserts", "sends"}},
 				{"hidden", {"routing", "inserts", "sends"}}});
 	}
+
+	SECTION("with a saved order and no hidden list")
+	{
+		// After a drag: EQ, which the first channel doesn't have, still has its default, hidden.
+		Json layout = Json::object();
+		layout["windows"]["test"]["sections"]["channel"] = {{"order", {"routing", "sends", "inserts", "eq", "fader"}}};
+		app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+		REQUIRE(app.waitUntil([&docking, &layout] { return docking.layout() == layout; }));
+		Rml::ElementDocument& document = app.show("sections-later.rml");
+		docking.attach("test", document);
+		addChannel(app, document, "midi", false);
+		app.shell().step(std::chrono::milliseconds(0));
+		docking.setSectionHidden("test", "channel", "fader", true);
+		CHECK(saved() == Json{{"order", {"routing", "sends", "inserts", "fader"}}, {"hidden", {"fader"}}});
+
+		// A channel with EQ brings it hidden.
+		addChannel(app, document, "audio");
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(paneItems(app) == Names{"routing*", "sends*", "inserts*", "eq", "fader"});
+		CHECK(sections(app, "#audio") == Names{"routing", "sends", "inserts"});
+	}
 }
 
 TEST_CASE("a window learns a set from containers in a docked panel's content", "[ui]")

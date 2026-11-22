@@ -74,7 +74,8 @@ namespace gnubase::ui
 	//                                 without it, and its style keeps its width the same way
 	//   setup="channel"               a setup pane's list of the set's sections, which the docking system fills with a
 	//                                 toggle button per section (setup-section="eq"); a button dragged onto another
-	//                                 moves its section there, and Alt+Up and Alt+Down move the focused one's a place
+	//                                 moves its section there, and Alt+Up and Alt+Down move the focused one, and its
+	//                                 section, one place
 	//   setup-all="channel"           a button that shows every section of the set (Show All)
 	//   setup-reset="channel"         a button that gives the set its default order and hidden sections (Reset All)
 	//   setup-presets="channel"       the set's presets from the user setting ui.setupPresets, which the docking system
