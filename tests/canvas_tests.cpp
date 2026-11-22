@@ -158,7 +158,7 @@ TEST_CASE("fade lines draw their handles in color, as large as handle-size", "[u
 	fixture.show("fade-lines { display: block; width: 400dp; height: 100dp; color: #ff0000; }",
 		R"(<fade-lines id="fades" scale="10"/>)");
 	auto& fades = fixture.element<ui::FadeLines>("fades");
-	fades.setLanes({{40.0F, {}, {1000.0}, {}}});
+	fades.setLanes({{40.0F, {}, {1000.0}, {}, {}}});
 	// 6 dp by default, centered on the handle's place.
 	const std::vector<float> small = extent(fixture.draw(), red());
 	CHECK(small[2] - small[0] == 6.0F);
@@ -169,6 +169,11 @@ TEST_CASE("fade lines draw their handles in color, as large as handle-size", "[u
 	CHECK(large[3] - large[1] == 10.0F);
 	CHECK(large[0] + large[2] == small[0] + small[2]);
 	CHECK(large[1] == small[1]); // at the top of the lane
+	// An event volume control at the bottom of the lane, the same size.
+	fades.setLanes({{40.0F, {}, {}, {}, {1000.0}}});
+	const std::vector<float> fader = extent(fixture.draw(), red());
+	CHECK(fader[2] - fader[0] == 10.0F);
+	CHECK(fader[3] - large[1] == 40.0F);
 }
 
 TEST_CASE("event lanes fill events with color, outlined by stroke-color, in their lanes", "[unit]")

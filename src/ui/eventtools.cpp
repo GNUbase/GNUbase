@@ -284,7 +284,7 @@ namespace gnubase::ui
 			m_drag = Drag::Comp;
 			return true;
 		case Tool::Draw:
-			// Volume curve points on audio events (reference manual p. 399); off a point, the event volume handle
+			// Volume curve points on audio events (reference manual p. 399); off a point, the event volume control
 			// (p. 401) as with the object selection tool.
 			if (shown != nullptr &&
 				((!curvePointAt(*shown, x, y) && volumeDown(*shown, x, y)) || curveDown(*shown, x, y)))

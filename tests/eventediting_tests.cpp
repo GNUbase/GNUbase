@@ -3093,9 +3093,10 @@ TEST_CASE("fade handles at the top corners of audio events drag the selected eve
 	CHECK(line.start == 2.0);
 	CHECK(std::abs(line.length - 0.1) < 1e-9);
 	// The selected event shows its handles, where its fade in ends and its fade out starts, and its event volume
-	// handle in the middle (#139).
-	REQUIRE(fadeLines(f).lanes()[0].handles.size() == 3);
-	CHECK(fadeLines(f).lanes()[0].handles[2] == 2.25);
+	// control at the bottom left, 16 dp in (#139, reference manual p. 401).
+	REQUIRE(fadeLines(f).lanes()[0].handles.size() == 2);
+	REQUIRE(fadeLines(f).lanes()[0].faders.size() == 1);
+	CHECK(std::abs(fadeLines(f).lanes()[0].faders[0] - 2.16) < 1e-9);
 
 	// The fade out handle at the top right corner, 20 dp left: a fifth of a second.
 	f.drag(249, 3, 229, 3);
@@ -3252,36 +3253,40 @@ namespace
 	}
 }
 
-TEST_CASE("the event volume handle at the top middle of an audio event drags the selected events' volume", "[unit]")
+TEST_CASE("the event volume control at the bottom left of a selected audio event drags the selected events' volume",
+	"[unit]")
 {
+	// Reference manual p. 401: a fader at the bottom left of the event, here 16 dp in from its start.
 	Fixture f;
-	// An unselected event shows no volume handle: a drag from its top middle moves it, as with the fade handles, and
+	// An unselected event shows no volume control: a drag from there moves the event, as with the fade handles, and
 	// selects it. From 2 to 3 seconds.
-	f.drag(225, 3, 325, 3);
+	f.drag(216, 36, 316, 36);
 	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioEvents")[0].at("position") == 144000; }));
 	CHECK(eventVolume(f.audioEvents()[0]) == 0.0);
 	// Selected, 10 dp down a 40 dp lane, from 0 dB half way up (+6 dB at the top): -6 dB.
-	f.drag(325, 3, 325, 13);
+	f.drag(316, 36, 316, 46);
 	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
-	// The event shows its volume as a line, and the selected one its fade handles and its volume handle.
+	// The event shows its volume as a line, and the selected one its fade handles and its volume control.
 	REQUIRE(f.waitUntil([&f] { return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].volumes.size() == 1; }));
-	CHECK(fadeLines(f).lanes()[0].handles.size() == 3);
+	CHECK(fadeLines(f).lanes()[0].handles.size() == 2);
+	CHECK(fadeLines(f).lanes()[0].faders.size() == 1);
 	CHECK(std::abs(fadeLines(f).lanes()[0].volumes[0].gain - 0.5) < 0.01);
 	f.call("history.undo");
 	REQUIRE(f.waitUntil([&f] { return eventVolume(f.audioEvents()[0]) == 0.0; }));
-	// Lower down, a drag still moves the event.
-	f.drag(325, 30, 425, 30);
+	// Elsewhere, at the top middle too, a drag moves the event.
+	f.drag(325, 3, 425, 3);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 192000; }));
+	CHECK(eventVolume(f.audioEvents()[0]) == 0.0);
 }
 
-TEST_CASE("the event volume handle works with the draw tool too, instead of adding a curve point", "[unit]")
+TEST_CASE("the event volume control works with the draw tool too, instead of adding a curve point", "[unit]")
 {
 	// Reference manual p. 401: the object selection and the draw tool both drag the event volume.
 	Fixture f;
 	f.display.setTool(ui::Tool::Draw);
 	f.display.select({f.event});
-	f.drag(225, 3, 225, 13);
+	f.drag(216, 36, 216, 46);
 	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
 	CHECK(f.audioEvents()[0].at("volumeCurve").empty());
 }
