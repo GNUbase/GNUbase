@@ -3886,7 +3886,8 @@ TEST_CASE("locked events and shared copies show an icon in their upper right cor
 		right(mark(copy, "shared")) <= mark(copy, "locked")->GetAbsoluteLeft()));
 }
 
-TEST_CASE("grid lines show the grid behind the events, and a line an audio event's snap point inside it", "[unit]")
+TEST_CASE("grid lines show the grid behind the events, and a line at an audio event's snap point while it is inside it",
+	"[unit]")
 {
 	Fixture f;
 	const auto has = [&f](double seconds)
@@ -3901,6 +3902,19 @@ TEST_CASE("grid lines show the grid behind the events, and a line an audio event
 	CHECK_FALSE(has(1.0));
 	CHECK(
 		f.document.QuerySelector(".event-area")->GetFirstChild() == f.document.QuerySelector("event-lanes.grid-lines"));
+	f.call("snap.set", {{"grid", "beat"}});
+	REQUIRE(f.waitUntil([&] { return has(0.5) && has(1.5); }));
+	// The quantize grid, and its lines move with quantize's settings.
+	f.call("quantize.set", {{"preset", "1/8"}});
+	f.call("snap.set", {{"grid", "quantize"}});
+	REQUIRE(f.waitUntil([&] { return has(0.25) && has(1.75); }));
+	f.call("quantize.set", {{"preset", "1/2"}});
+	REQUIRE(f.waitUntil([&] { return has(1.0) && !has(0.25); }));
+	// Bars follow signature changes: in 3/4 from bar 2, bars at 2, 3.5 and 5 seconds.
+	f.call("snap.set", {{"grid", "bar"}});
+	REQUIRE(f.waitUntil([&] { return has(2.0) && has(4.0) && !has(3.5); }));
+	f.call("signature.add", {{"bar", 1}, {"numerator", 3}, {"denominator", 4}});
+	REQUIRE(f.waitUntil([&] { return has(3.5) && has(5.0) && !has(4.0); }));
 	f.call("snap.set", {{"grid", "beat"}});
 	REQUIRE(f.waitUntil([&] { return has(0.5) && has(1.5); }));
 	// They follow tempo changes: at 60 BPM from 2 seconds, a beat a second.

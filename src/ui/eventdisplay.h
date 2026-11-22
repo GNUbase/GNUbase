@@ -835,7 +835,7 @@ namespace gnubase::ui
 		void reload();              // the lanes again, from the project as it was last read
 		void showAutomationLanes(); // the curves, after the lanes changed
 		void placeAutomation();     // where they are, after the view changed
-		void placePartMarks();      // the marks of parts excluded from global transpose, after the view changed
+		void placePartMarks(); // the events' marks: locked, shared copy, no global transpose; after the view changed
 		// The grid lines (#412, reference manual p. 109): the grid in use near the view, whether snap is on or not.
 		void showGrid();
 		void placeCuttingPositions(); // setCuttingPositions' lines, after the view changed

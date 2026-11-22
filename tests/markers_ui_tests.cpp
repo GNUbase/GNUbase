@@ -164,10 +164,11 @@ TEST_CASE("marker lines show the active marker track's markers, every track's or
 	Fixture fixture;
 	fixture.addMarkers();
 
-	// Behind the grid lines, the events of every track and the folder tracks' data, on the event display's timeline.
+	// Over the grid lines, behind the events of every track and the folder tracks' data, on the event display's
+	// timeline.
 	const Rml::Element& area = fixture.element(".event-area");
-	CHECK(area.GetChild(0)->IsClassSet("marker-lines"));
-	CHECK(area.GetChild(1)->IsClassSet("grid-lines"));
+	CHECK(area.GetChild(0)->IsClassSet("grid-lines"));
+	CHECK(area.GetChild(1)->IsClassSet("marker-lines"));
 	CHECK(area.GetChild(2)->IsClassSet("folder-data"));
 	CHECK(area.GetChild(3)->IsClassSet("events"));
 	const Rml::Element& lines = fixture.element("event-lanes.marker-lines");
