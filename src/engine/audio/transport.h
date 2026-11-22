@@ -96,8 +96,8 @@ namespace gnubase::engine
 	// from the right locator or after it plays on.
 	//
 	// Punching in and out at the locators (reference manual pp. 318-319, 336-338) happens on the audio thread at the
-	// exact sample, and so does stopping after an automatic punch out, at the first block that starts at or after
-	// the right locator plus the post-roll. The command thread takes such changes over with sync().
+	// exact sample, and so does stopping after an automatic punch out, at the right locator plus the post-roll: the
+	// rest of that block is silent. The command thread takes such changes over with sync().
 	//
 	// Arranger mode (#167): with a plan that plays, playback follows the active chain instead of the cycle, jumping
 	// at the exact sample where a step's event ends (arrangerNext), and stops there after a step that pauses.
@@ -140,6 +140,8 @@ namespace gnubase::engine
 		// While counting in, playing is true, and recording is whether recording starts where playback starts.
 		bool recording() const { return m_requestedRecording; }
 		bool countingIn() const { return m_requestedCountingIn; }
+		// Whether a recording waits for where it starts: the end of the pre-roll, or the punch in at the left locator.
+		bool recordWaits() const { return m_requestedRecordWaits; }
 		// Command thread: whether recording runs, not counting in, as sync() would take it over: also after a punch
 		// in that the audio thread made on its own since the last sync.
 		bool recordingNow() const;
@@ -218,6 +220,7 @@ namespace gnubase::engine
 		bool m_requestedPlaying = false;
 		bool m_requestedRecording = false;
 		bool m_requestedCountingIn = false;
+		bool m_requestedRecordWaits = false;
 		uint64_t m_locates = 0;      // how many locates were sent
 		uint64_t m_sentRequests = 0; // how many requests were sent
 		time::Samples m_playbackStart = 0;
@@ -252,8 +255,8 @@ namespace gnubase::engine
 		// Written by the audio thread: m_locate and m_position after each block. Each pair is read whole, so the cursor
 		// never mixes one locate's count with another's target, or one block's position with another's locate.
 		rt::SeqLockPair<uint64_t, time::Samples> m_applied;
-		// Written by the audio thread: how many requests it applied, whether it plays (1), records (2) and counts in
-		// (4), changes(), and countInStart().
+		// Written by the audio thread: how many requests it applied, whether it plays (1), records (2), counts in (4)
+		// and waits to record (8), changes(), and countInStart().
 		std::atomic<uint64_t> m_appliedRequests{0};
 		std::atomic<time::Samples> m_countInStart{-1};
 		std::atomic<uint8_t> m_state{0};

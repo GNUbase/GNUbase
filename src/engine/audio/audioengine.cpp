@@ -35,7 +35,7 @@ namespace gnubase::engine
 		constexpr auto g_cueInterval = std::chrono::milliseconds(5);
 		constexpr auto g_activityInterval = std::chrono::milliseconds(100); // between two midi.activity runs
 		// The longest pre-roll and post-roll: an hour at 768 kHz.
-		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000;
+		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000; // in transport.set's schema too
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
 		// Rounds of the offline wait for the samplers' samples (10 minutes of 30 s) before a render gives up (#1343).
@@ -2757,8 +2757,11 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"audio.stop", 1,
-				"Stops the audio device. Does nothing if it isn't running. While the device is lost (see audio.reset), "
-				"it stays stopped once it returns (restart in lost), and audio.changed announces that.",
+				"Stops the audio device. Does nothing if it isn't running. What the transport did on its own until "
+				"then, "
+				"such as a punch in, is taken over and announced with transport.changed (see transport.update). While "
+				"the device is lost (see audio.reset), it stays stopped once it returns (restart in lost), and "
+				"audio.changed announces that.",
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
@@ -2766,6 +2769,9 @@ namespace gnubase::engine
 				if (m_device && m_device->running())
 				{
 					stopDevice();
+					// What the audio thread changed since the cue thread last looked: it ends without a last look.
+					if (syncTransport())
+						context.emit("transport.changed", transportStatus());
 					if (m_lost)
 						m_lost->restart = false;
 					context.emit("audio.changed", status());
@@ -3379,7 +3385,8 @@ namespace gnubase::engine
 		command("transport.toggle",
 			"Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, "
 			"punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, "
-			"off punches out). While lockRecord is on, it neither stops nor punches out a recording unless it gets "
+			"off punches out, or cancels a recording that waits for the end of the pre-roll or the punch in). While "
+			"lockRecord is on, it neither stops nor punches out a recording unless it gets "
 			"confirmed.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"setting": {"type": "string",
 				"enum": ["cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome", "record"]},
@@ -3389,7 +3396,8 @@ namespace gnubase::engine
 				const std::string setting = parameters.value("setting", "");
 				if (setting == "record")
 				{
-					const bool on = m_transport.recording() || m_transport.countingIn();
+					// Also while it waits for where it starts, during the pre-roll: off cancels it (#583).
+					const bool on = m_transport.recording() || m_transport.countingIn() || m_transport.recordWaits();
 					if (on)
 						unlocked(parameters, true);
 					record(!on);
@@ -3458,8 +3466,9 @@ namespace gnubase::engine
 				"right": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},
 				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"},
 				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"},
-				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},
-				"postRollAmount": {"type": "integer"}, "metronome": {"type": "boolean"},
+				"preRollAmount": {"type": "integer", "minimum": 0, "maximum": 2764800000}, "postRoll": {"type": "boolean"},
+				"postRollAmount": {"type": "integer", "minimum": 0, "maximum": 2764800000},
+				"metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string"}, "midiRecordMode": {"type": "string"},
 				"midiCycleRecordMode": {"type": "string"},
 				"lockRecord": {"type": "boolean"}}})",

@@ -493,8 +493,7 @@ TEST_CASE("stop after punch out stops playback at the right locator plus the pos
 		}
 	}
 	CHECK(recorded == range(1000, 2000));
-	CHECK(last >= stop - 1);
-	CHECK(last < stop + blockSize); // it stops at the next block
+	CHECK(last == stop - 1); // at the exact sample (#583)
 	CHECK(transport.position() == stop);
 	CHECK(transport.sync());
 	CHECK(!transport.playing());
@@ -841,7 +840,7 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK_THAT(reject(client, "transport.set", {{"postRollAmount", -1}}), ContainsSubstring("postRollAmount"));
 }
 
-TEST_CASE("the transport's position schemas give the positions' bounds", "[unit]")
+TEST_CASE("the transport's position and amount schemas give their bounds", "[unit]")
 {
 	// For MCP clients and Lua, and the same bound as the handlers' (#592).
 	const Engine engine;
@@ -858,6 +857,19 @@ TEST_CASE("the transport's position schemas give the positions' bounds", "[unit]
 				++found;
 			}
 	CHECK(found == 3);
+
+	// The pre-roll and post-roll amounts: up to an hour at 768 kHz (#583).
+	for (const CommandInfo& info : engine.commands())
+		if (info.name == "transport.set")
+			for (const char* property : {"preRollAmount", "postRollAmount"})
+			{
+				INFO(property);
+				const Json& schema = info.parameters.at("properties").at(property);
+				CHECK(schema.at("minimum") == 0);
+				CHECK(schema.at("maximum") == Samples{3600} * 768000);
+				++found;
+			}
+	CHECK(found == 5);
 }
 
 TEST_CASE("record starts playback and recording, punches in and out, and stop ends both", "[integration]")
@@ -1012,7 +1024,7 @@ TEST_CASE("the transport announces punching in and out and stopping after the po
 	states(); // what the commands announced
 	run(client, "audio.render", {{"frames", 1500}});
 	CHECK(run(client, "transport.get").at("recording") == true);
-	run(client, "audio.render", {{"frames", 1000}});
+	run(client, "audio.render", {{"frames", 900}});
 	CHECK(run(client, "transport.get").at("recording") == false);
 	CHECK(run(client, "transport.get").at("playing") == true); // the post-roll
 	run(client, "audio.render", {{"frames", 128}});
@@ -1113,6 +1125,37 @@ TEST_CASE("a punch in that the audio thread plays before the cue thread first ru
 	run(client, "audio.stop");
 }
 
+TEST_CASE("audio.stop takes over and announces a punch in the cue thread never got to (#583)", "[integration]")
+{
+	// Held until its hold lapses, which is after audio.stop has ended it, the cue thread never syncs the punch in.
+	Engine engine;
+	Client client(engine);
+	Client listener(engine);
+	constexpr Samples block = 64;
+	constexpr Samples left = 4800;
+	run(client, "audio.setDevice", {{"blockSize", block}});
+	run(client, "transport.set", {{"left", left}, {"right", 960000}, {"punchIn", true}});
+	gnubase::test::HeldCueThread held(engine, std::chrono::seconds(2));
+	run(client, "audio.start");
+	REQUIRE(held.waitUntilHeld());
+	run(client, "transport.play");
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (run(client, "transport.get").at("position").get<Samples>() < left + (2 * block) &&
+		std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	REQUIRE(std::chrono::steady_clock::now() < deadline);
+	while (listener.poll())
+	{
+	}
+	run(client, "audio.stop");
+	CHECK(run(client, "transport.get").at("recording") == true);
+	bool announced = false;
+	while (const auto message = listener.poll())
+		if (const auto* event = std::get_if<Event>(&*message); event != nullptr && event->name == "transport.changed")
+			announced = announced || event->data.at("recording") == true;
+	CHECK(announced);
+}
+
 TEST_CASE("a held cue thread is the first device start's, held once, and goes on after its hold", "[integration]")
 {
 	Engine engine;
@@ -1200,6 +1243,27 @@ TEST_CASE("toggle switches cycle, punch in and out, the metronome and recording"
 	CHECK(state.at("recording") == false);
 	run(client, "transport.stop");
 	CHECK_THAT(reject(client, "transport.toggle", {{"setting", "tempo"}}), ContainsSubstring("setting"));
+}
+
+TEST_CASE("toggling record during the pre-roll cancels the recording that waits (#583)", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}});
+	run(client, "transport.set", {{"preRoll", true}, {"preRollAmount", 4800}});
+	run(client, "transport.locate", {{"position", 10000}});
+	CHECK(run(client, "transport.record").at("recording") == false); // the pre-roll first
+	run(client, "audio.render", {{"frames", 640}});
+	Json state = run(client, "transport.toggle", {{"setting", "record"}});
+	CHECK(state.at("playing") == true);
+	CHECK(state.at("recording") == false);
+	run(client, "audio.render", {{"frames", 9600}}); // past where recording would have started
+	state = run(client, "transport.get");
+	CHECK(state.at("playing") == true);
+	CHECK(state.at("recording") == false);
+
+	// Toggled again, it records at once, as while playing.
+	CHECK(run(client, "transport.toggle", {{"setting", "record"}}).at("recording") == true);
 }
 
 TEST_CASE("locate by moves the cursor by seconds, not before the project start", "[integration]")
