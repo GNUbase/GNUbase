@@ -1427,7 +1427,9 @@ TEST_CASE("an edit in the inspector goes to the track it started on when another
 	CHECK(window.find("tracks", vox).at("name") == "Vox");
 }
 
-TEST_CASE("a drag or wheel turns on a volume or pan field is one undo step, up to the project's maximum", "[ui]")
+TEST_CASE("a drag, wheel turns or a held arrow key on a volume or pan field is one undo step, up to the project's "
+		  "maximum, and a typed value one of its own",
+	"[ui]")
 {
 	Window window;
 	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}, {"timeBase", "linear"}});
@@ -1457,6 +1459,23 @@ TEST_CASE("a drag or wheel turns on a volume or pan field is one undo step, up t
 	window.app.ui().wheel(std::nullopt, {".inspector valuefield[control=pan]", 0, std::nullopt}, 0.0F, -1.0F);
 	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("pan") == 0.04; }));
 	CHECK(window.historyPosition() == position + 2);
+
+	// Up held on the focused volume, its key down repeating until it is released: one step. A typed value is one of
+	// its own.
+	window.click(".inspector valuefield[control=volume]");
+	position = window.historyPosition();
+	for (int repeat = 0; repeat < 3; ++repeat)
+		window.app.ui().key(std::nullopt, "Up", ui::KeyAction::Down);
+	window.app.ui().key(std::nullopt, "Up", ui::KeyAction::Up);
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == 1.5; }));
+	CHECK(window.historyPosition() == position + 1);
+	window.type(".inspector valuefield[control=volume]", "-6");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == -6.0; }));
+	CHECK(window.historyPosition() == position + 2);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == 1.5; }));
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == 0.0; }));
 
 	// The info line's volume of an audio event, dragged down.
 	const Json media =
@@ -2235,6 +2254,34 @@ TEST_CASE("another project drops the inspector's edits in progress, and text fie
 	CHECK_FALSE(window.app.waitUntil(
 		[&] { return window.find("tracks", bass).at("name") != "Bass"; }, std::chrono::milliseconds(300)));
 	CHECK(window.find("tracks", vox).at("name") == "Vox");
+}
+
+TEST_CASE("another project drops the info line's edit in progress", "[ui]")
+{
+	Window window;
+	const test::TempDir folder;
+	const std::string file = (folder.path() / "song.dawproject").string();
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 4 * g_quarter, 4 * g_quarter, "Intro");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	window.call("project.save", {{"path", file}});
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+
+	// A name typed, not yet entered, when another client loads the project, whose part has the same id: the name is
+	// dropped, not given to the loaded project's part when the field is left.
+	window.click("#info-line textdisplay[field=name]", ui::MouseButton::Left, 2);
+	window.app.ui().key(std::nullopt, "Mod+A");
+	window.app.ui().text(std::nullopt, "Verse");
+	window.app.shell().step(std::chrono::milliseconds(0));
+	const uint64_t loads = window.display.loads();
+	window.call("project.load", {{"path", file}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.loads() > loads; }));
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+	window.click("#info-line textdisplay[field=start]");
+	CHECK_FALSE(
+		window.app.waitUntil([&] { return window.part(part).at("name") != "Intro"; }, std::chrono::milliseconds(300)));
 }
 
 TEST_CASE("the info line bounds typed start, end and length to the largest project position", "[ui]")
