@@ -116,6 +116,12 @@ every Reset All, also of a set that had its defaults, so the app can fit the win
   section is the same for every section (`.toolbar-section` in `base.rcss`; the last one has none, the toolbar's
   padding follows it), so it doesn't depend on the order and no section's controls bring a gap of their own. A
   section hidden in the setup pane or by a narrow window takes no gap.
+- **Keys.** The pane has no menu items, so Up and Down move the focus through its buttons, as Tab does: the zone and
+  strip toggles, the presets, Save Preset once it is enabled, Show All, Reset All and the section buttons, round the
+  ends. Space or Enter toggles the focused button, and the pane stays open. Alt+Up and Alt+Down move the focused section
+  button, and with it the section, one place up or down, as a drag does, and the button keeps the focus. The reference
+  reorders by dragging only (p. 1576); Alt with the arrow keys is GNUbase's, and the open pane keeps those keys, so no
+  key command bound to them runs.
 - **Room.** A toolbar with `fit="room"` shows the sections it has room for, as the reference's toolbar hides its
   items one after another in a narrower window and shows them again in a wider one (pp. 57, 65). Sections keep the
   width they need (`flex-shrink: 0`); whenever the shell lays a window out to draw it, the docking system gives the
@@ -135,7 +141,12 @@ every Reset All, also of a set that had its defaults, so the app can fit the win
   no frame with sections over each other, and fitting costs no layout of its own: it reads the widths of the layout
   the draw makes anyway, and windows that don't draw aren't fitted.
 - **Defaults.** The set's first container in the document says which sections there are, their default order and which
-  are hidden by default; the other containers are expected to have the same sections.
+  are hidden by default. Not every container has every section: only audio channels have the mixer's EQ section
+  (p. 479), so on a project whose first track is a MIDI track the first channel has none. A section that a later
+  container brings joins the set after the section before it in that container, with its default, and gets its button
+  in the set's setup panes. While no container in the window has it, the set doesn't know it, but `ui.layout` keeps
+  it: showing, hiding or moving another section keeps its place in the saved order and its entry in the hidden list,
+  so it comes back as the user left it.
 - **Containers that come later.** Containers added or rebuilt after `attach`, such as the mixer's channels as tracks
   come and go, go through `Docking::arrangeSections(element)` once they are in the document: the element and the
   containers and setup panes in it get the user's order and hidden sections at once. A set that has no container yet,

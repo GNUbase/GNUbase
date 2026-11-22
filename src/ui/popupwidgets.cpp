@@ -123,8 +123,9 @@ namespace gnubase::ui
 		// whose contextmenu attribute names the menu by id, or under a button whose menu attribute names it. A menu
 		// inside an item is its submenu, shown while the mouse is over the item or once Right opened it; its item
 		// shows a .menu-arrow part. A click on an item without a submenu closes the menu, as do Escape and a click
-		// outside it. Up and Down move the focus between the shown items, and Tab and Shift+Tab also to its other
-		// controls, such as a search field, round the ends without leaving the menu; Enter clicks the focused item,
+		// outside it. Up and Down move the focus between the shown items, in a menu without any, such as a setup pane
+		// of toggle buttons, between its controls; Tab and Shift+Tab also to its other controls, such as a search
+		// field, round the ends without leaving the menu; Enter clicks the focused item,
 		// Right opens the focused item's submenu and Left closes a submenu; in a menu of a <menubar>'s title, Right and
 		// Left otherwise open the next and previous title's menu. An open menu has the state class .open.
 		class Menu final : public Rml::Element
@@ -438,12 +439,14 @@ namespace gnubase::ui
 			}
 
 			// Focuses the next or previous item that is shown and not disabled, or with controls (for Tab) the next or
-			// previous of those and the menu's other controls; false if there is none. Hidden items, e.g. those a
-			// search leaves out, are skipped.
+			// previous of those and the menu's other controls, as also in a menu without items; false if there is none.
+			// Hidden items, e.g. those a search leaves out, are skipped.
 			bool moveFocus(int direction, bool controls = false)
 			{
 				std::vector<Rml::Element*> items;
 				addStops(*this, controls, items);
+				if (items.empty() && !controls)
+					addStops(*this, true, items); // a menu without items, such as a setup pane of toggle buttons
 				if (items.empty())
 					return false;
 				const auto focused = std::find(items.begin(), items.end(), GetContext()->GetFocusElement());
