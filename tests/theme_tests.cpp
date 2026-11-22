@@ -686,6 +686,34 @@ TEST_CASE("every theme draws the arranger event being drawn as an outline", "[un
 	}
 }
 
+TEST_CASE("every theme marks a selected arranger event", "[unit]")
+{
+	// A click selects an arranger event on the arranger track's lane (docs/features/arranger.md): .selected has a fill
+	// of its own, unlike the events that aren't selected.
+	for (const std::string& theme : themes())
+	{
+		INFO("theme " << theme);
+		std::string plain;
+		std::string selected;
+		for (const auto& [selector, declarations] : rules(gnubase::test::readText(themesDir() / theme / "theme.rcss")))
+		{
+			const size_t first = selector.find_first_not_of(" \t");
+			const std::string name = selector.substr(first, selector.find_last_not_of(" \t\r") + 1 - first);
+			if (name == ".arranger-lane-row .arranger-lane-event")
+				plain = declarations;
+			if (name == ".arranger-lane-row .arranger-lane-event.selected")
+				selected = declarations;
+		}
+		const auto fill = [](const std::string& declarations)
+		{
+			const size_t at = declarations.find("background-color:");
+			return at == std::string::npos ? std::string() : declarations.substr(at, declarations.find(';', at) - at);
+		};
+		CHECK_FALSE(fill(selected).empty());
+		CHECK(fill(selected) != fill(plain));
+	}
+}
+
 TEST_CASE(
 	"only the default theme tints events and keeps them off their lanes' edges; no theme pads waveforms", "[unit]")
 {

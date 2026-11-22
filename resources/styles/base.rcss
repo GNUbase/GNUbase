@@ -1142,6 +1142,26 @@ meter .meter-peak
 	overflow: hidden;
 }
 
+/* An arranger event's edges, which a drag resizes it by. */
+.arranger-lane-row .arranger-lane-edge
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 4dp;
+	cursor: resize;
+}
+
+.arranger-lane-row .arranger-lane-edge[edge=start]
+{
+	left: 0;
+}
+
+.arranger-lane-row .arranger-lane-edge[edge=end]
+{
+	right: 0;
+}
+
 /* The chord pads zone (docs/features/chord-pads.md): its toolbars above the pads, which wrap, and the chord
    assistant to their right while it shows; the chord field shows while a pad's chord is typed. */
 .chord-pads
@@ -2592,8 +2612,25 @@ splitter.column .splitter-grip-horizontal
 
 .inspector .arranger-row .repeats
 {
-	width: 24dp;
+	flex-shrink: 0;
+	min-width: 0;
+	width: 28dp;
+	height: 20dp;
+	padding: 2dp;
 	text-align: right;
+}
+
+.inspector .arranger-row textdisplay.repeats input.text
+{
+	text-align: right;
+}
+
+/* A step's repeat mode, narrow: its drop-down list shows the modes' full names. */
+.inspector .arranger-row .mode
+{
+	flex-shrink: 0;
+	width: 56dp;
+	margin-left: 4dp;
 }
 
 /* The MIDI Inserts and MIDI Sends sections: a slot's control panel shows while its edit button opened it. */
