@@ -669,7 +669,13 @@ namespace gnubase::engine
 		m_mutePreSends = m_settings.get(settings::g_audioMutePreSends);
 		m_treatMutedAudioLikeDeleted = m_settings.get(settings::g_editingTreatMutedAudioLikeDeleted);
 		const audio::DeviceFormat& format = m_device->format();
-		graph::GraphDesc desc = graph::describe(snapshot);
+		// Channels that stopped listening stay on the listen bus until their listen node glided them out.
+		std::vector<ObjectId> fading;
+		for (const RenderChannel& channel : snapshot.channels)
+			if (const auto state = m_channelStates.find(channel.id); !channel.listen &&
+				state != m_channelStates.end() && state->second->listenGain.load(std::memory_order_relaxed) > 0.0f)
+				fading.push_back(channel.id);
+		graph::GraphDesc desc = graph::describe(snapshot, fading);
 		m_sourceNodes.clear();
 		for (size_t n = 0; n < desc.nodes.size(); ++n)
 		{
@@ -765,6 +771,9 @@ namespace gnubase::engine
 		for (size_t n = 0; n < desc.nodes.size(); ++n)
 			if (desc.nodes[n].kind == graph::NodeKind::ListenBus)
 				program->listenNode = static_cast<int>(n);
+		program->listening = program->listenNode >= 0 &&
+			std::any_of(snapshot.channels.begin(), snapshot.channels.end(),
+				[](const RenderChannel& channel) { return channel.listen && channel.format != ChannelFormat::None; });
 		program->listen = m_listenGains;
 		m_revision = snapshot.revision;
 		if (m_programs)
@@ -1187,6 +1196,14 @@ namespace gnubase::engine
 					std::make_shared<SendStrip>(state, send.number, gain, send.preFader ? tap : nullptr);
 			}
 		}
+		for (graph::NodeDesc& node : desc.nodes)
+			if (node.kind == graph::NodeKind::Listen)
+			{
+				const auto channel = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
+					[&node](const RenderChannel& candidate) { return candidate.id == node.object; });
+				node.processor = std::make_shared<ListenStrip>(
+					states.at(node.object), channel != snapshot.channels.end() && channel->listen);
+			}
 		const std::scoped_lock lock(m_channelStatesMutex); // readMeters; the old states go after it unlocks
 		m_channelStates.swap(states);
 	}
@@ -1449,11 +1466,15 @@ namespace gnubase::engine
 	void AudioEngine::output(const audio::DeviceBlock& block, const Program& program) noexcept
 	{
 		// Outputs start silent; busses that share a port add up there, in bus order. While channels listen, the main
-		// mix glides to the listen dim over the block, and back once none does.
+		// mix glides to the listen dim over the block, and back once none does; the listen nodes glide the channels
+		// in and out of the listen bus at the same time (ListenStrip).
 		const int outputChannels = m_device->format().outputChannels;
 		const float dimFrom = m_dim;
-		const float dimTo = program.listenNode >= 0 ? program.listen.dim : 1.0f;
+		const float dimTo = program.listening ? program.listen.dim : 1.0f;
 		m_dim = dimTo;
+		const float levelFrom = m_listenLevel;
+		const float levelTo = program.listen.level;
+		m_listenLevel = levelTo;
 		for (size_t l = 0; l < program.outputs.size(); ++l)
 		{
 			const BusLink& link = program.outputs[l];
@@ -1479,7 +1500,7 @@ namespace gnubase::engine
 		}
 		if (program.listenNode < 0)
 			return;
-		// ponytail: the listening channels come in and go at once; a glide needs the listen bus in every graph.
+		const float step = (levelTo - levelFrom) / static_cast<float>(block.frames);
 		float* const* listen = program.graph.audio(program.listenNode);
 		for (size_t c = 0; c < program.mainPorts.size(); ++c)
 		{
@@ -1489,7 +1510,7 @@ namespace gnubase::engine
 			float* out = block.outputs[port];
 			const float* in = listen[c];
 			for (uint32_t i = 0; i < block.frames; ++i)
-				out[i] += in[i] * program.listen.level;
+				out[i] += in[i] * (levelFrom + (step * static_cast<float>(i + 1)));
 		}
 	}
 

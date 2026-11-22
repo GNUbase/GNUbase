@@ -222,6 +222,7 @@ namespace gnubase::engine
 			std::vector<int> mainPorts;       // the main mix's device channels, for auditioning and listening
 			int mainOutput = -1;              // the main mix's index in outputs, or -1
 			int listenNode = -1;              // the listen bus (graph::NodeKind::ListenBus), or -1
+			bool listening = false;           // a channel listens; the listen bus may also have channels gliding out
 			ListenGains listen;
 		};
 
@@ -373,7 +374,7 @@ namespace gnubase::engine
 		AutoMonitoring autoMonitoring() const; // the user setting
 		ListenGains listenGains() const;       // the user settings
 		// Audio thread: adds the outputs to the device, the main mix turned down while channels listen, and the
-		// listening channels to the main mix's ports.
+		// listen bus to the main mix's ports; both glide over the block to new gains.
 		void output(const audio::DeviceBlock& block, const Program& program) noexcept;
 		// Direct monitoring: audio tracks that play into an output bus hear their input bus through the device
 		// instead of the graph. ports: the device channels of each bus (devicePorts).
@@ -398,6 +399,7 @@ namespace gnubase::engine
 		bool m_mutePreSends = false;                                   // the graph's audio.mutePreSends
 		bool m_treatMutedAudioLikeDeleted = true; // the playlists' editing.treatMutedAudioLikeDeleted
 		float m_dim = 1.0f;                       // audio thread: the main mix's gain at the end of the last block
+		float m_listenLevel = 1.0f;               // audio thread: the listen bus's gain at the end of the last block
 
 		Engine* m_engine = nullptr;
 		std::vector<std::unique_ptr<audio::Backend>> m_backends;
