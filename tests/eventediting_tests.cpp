@@ -3843,3 +3843,45 @@ TEST_CASE("Group Editing selects parts too, on the same lane only, by the outerm
 	f.display.select({parts[0]});
 	CHECK(f.display.selection() == sorted(parts));
 }
+
+TEST_CASE("locked events and shared copies show an icon in their upper right corner", "[unit]")
+{
+	Fixture f;
+	const auto mark = [&f](uint64_t id, const std::string& kind)
+	{ return f.document.QuerySelector(".part-mark." + kind + "[part=" + std::to_string(id) + "]"); };
+	CHECK(mark(f.event, "locked") == nullptr);
+
+	// A lock icon on a locked event (reference manual p. 276), inside it at its right end: 2 to 2.5 seconds.
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") != nullptr; }));
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	Rml::Element* lock = mark(f.event, "locked");
+	CHECK(lock->GetAbsoluteLeft() >= lanes->GetAbsoluteLeft() + 200.0F);
+	CHECK(lock->GetAbsoluteLeft() + lock->GetOffsetWidth() <= lanes->GetAbsoluteLeft() + 250.0F);
+	CHECK(lock->GetAbsoluteTop() >= lanes->GetAbsoluteTop());
+	CHECK(lock->GetAbsoluteTop() + lock->GetOffsetHeight() <= lanes->GetAbsoluteTop() + 40.0F);
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") == nullptr; }));
+	f.call("history.redo");
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") != nullptr; }));
+	f.call("event.set", {{"events", {f.event}}, {"lock", false}});
+	REQUIRE(f.waitUntil([&] { return mark(f.event, "locked") == nullptr; }));
+
+	// Shared copies show the shared icon (p. 272), both of them, until one is a real copy again.
+	const auto copy = f.call("event.copy", {{"events", {f.part}}, {"ticks", 2 * g_bar}, {"shared", true}})
+						  .at("events")[0]
+						  .get<uint64_t>();
+	REQUIRE(f.waitUntil([&] { return mark(f.part, "shared") != nullptr && mark(copy, "shared") != nullptr; }));
+	f.call("event.toRealCopy", {{"events", {copy}}});
+	REQUIRE(f.waitUntil([&] { return mark(f.part, "shared") == nullptr && mark(copy, "shared") == nullptr; }));
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&] { return mark(f.part, "shared") != nullptr && mark(copy, "shared") != nullptr; }));
+
+	// A locked shared copy shows both.
+	f.call("event.set", {{"events", {copy}}, {"lock", true}});
+	REQUIRE(f.waitUntil([&] { return mark(copy, "locked") != nullptr; }));
+	REQUIRE(mark(copy, "shared") != nullptr);
+	const auto right = [](Rml::Element* element) { return element->GetAbsoluteLeft() + element->GetOffsetWidth(); };
+	CHECK((right(mark(copy, "locked")) <= mark(copy, "shared")->GetAbsoluteLeft() ||
+		right(mark(copy, "shared")) <= mark(copy, "locked")->GetAbsoluteLeft()));
+}

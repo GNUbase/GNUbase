@@ -1392,8 +1392,9 @@ meter .meter-peak
 	padding: 2dp;
 }
 
-/* MIDI parts excluded from global transpose (reference manual p. 421): code puts a .part-mark.independent at the
-   upper right corner of each, its left at the part's end, with the icon inside the part. */
+/* Marks at the upper right corner of events and parts: .independent if excluded from global transpose (reference manual
+   p. 421), .locked (p. 276), .shared for shared copies (p. 272). Code puts each event's marks in a .part-marks-of and
+   sets its right to the event's end, so the icons line up leftwards inside the event. */
 .event-display .part-marks
 {
 	position: absolute;
@@ -1424,11 +1425,19 @@ meter .meter-peak
 	width: 1px;
 }
 
-.event-display .part-mark
+.event-display .part-marks-of
 {
 	position: absolute;
-	margin-left: -14dp;
 	margin-top: 2dp;
+	margin-right: 2dp;
+	height: 12dp;
+	white-space: nowrap;
+}
+
+.event-display .part-mark
+{
+	display: inline-block;
+	margin-left: 2dp;
 	width: 12dp;
 	height: 12dp;
 }

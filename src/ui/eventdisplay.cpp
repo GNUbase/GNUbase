@@ -522,6 +522,8 @@ namespace gnubase::ui
 		m_laneTakes.clear();
 		m_events.clear();
 		m_independent.clear();
+		m_locked.clear();
+		m_shared.clear();
 		m_audioSpans.clear();
 		m_mutedPieces.clear();
 		m_fades.clear();
@@ -631,6 +633,10 @@ namespace gnubase::ui
 					m_folderData[lane->second].events.push_back(span);
 			if (lanes.count(track) == 0)
 				return;
+			if (event.value("lock", false))
+				m_locked.insert(event.at("id").get<uint64_t>());
+			if (event.value("shared", uint64_t{0}) != 0)
+				m_shared.insert(event.at("id").get<uint64_t>());
 			if (onTrackLane)
 			{
 				m_tracks[lanes[track]].events.push_back(span);
@@ -1151,23 +1157,32 @@ namespace gnubase::ui
 		std::vector<const Shown*> marked;
 		std::string rml;
 		for (const Shown& shown : m_events)
-			if (m_independent.count(shown.id) != 0 && shown.lane + 1 < m_laneTops.size())
-			{
-				marked.push_back(&shown);
-				rml += R"(<div class="part-mark independent" part=")" + std::to_string(shown.id) +
-					R"("><svg class="icon" src="../icons/part-independent.svg"/></div>)";
-			}
+		{
+			if (shown.lane + 1 >= m_laneTops.size())
+				continue;
+			std::string marks;
+			for (const auto& [ids, kind, icon] : {std::tuple{&m_independent, "independent", "part-independent"},
+					 std::tuple{&m_locked, "locked", "general-lock"}, std::tuple{&m_shared, "shared", "general-link"}})
+				if (ids->count(shown.id) != 0)
+					marks += std::string(R"(<div class="part-mark )") + kind + R"(" part=")" +
+						std::to_string(shown.id) + R"("><svg class="icon" src="../icons/)" + icon + R"(.svg"/></div>)";
+			if (marks.empty())
+				continue;
+			marked.push_back(&shown);
+			rml += R"(<div class="part-marks-of">)" + marks + "</div>";
+		}
 		if (rml != m_partMarksRml)
 		{
 			m_partMarksRml = rml;
 			m_partMarks->SetInnerRML(rml);
 		}
+		// Each event's marks end at its right end.
 		const double scale = m_view.scale > 0.0 ? m_view.scale : g_minScale;
 		for (size_t i = 0; i < marked.size(); ++i)
-			if (Rml::Element* mark = m_partMarks->GetChild(static_cast<int>(i)))
+			if (Rml::Element* marks = m_partMarks->GetChild(static_cast<int>(i)))
 			{
-				mark->SetProperty(Rml::PropertyId::Left, dp((marked[i]->end - m_view.start) / scale));
-				mark->SetProperty(Rml::PropertyId::Top, dp(m_laneTops[marked[i]->lane] - m_view.top));
+				marks->SetProperty(Rml::PropertyId::Right, dp(width() - ((marked[i]->end - m_view.start) / scale)));
+				marks->SetProperty(Rml::PropertyId::Top, dp(m_laneTops[marked[i]->lane] - m_view.top));
 			}
 	}
 

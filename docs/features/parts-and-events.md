@@ -86,6 +86,10 @@ lock stay each part's own. Shared copies are saved in `gnubase.json`; `project.x
 The display keeps a selection (`EventDisplay::selection`, ascending ids, also in the root's attribute `selection`
 for MCP's `ui_dom`); it isn't part of the project or of undo. Selected events show again over the others in
 `event-lanes.selected-events`, muted ones in `event-lanes.muted-events`, which the themes color (lit and greyed out).
+Locked events show a lock icon (p. 276) and shared copies of MIDI parts a link icon (p. 272) in their upper right
+corner (#384): a `.part-mark.locked` and a `.part-mark.shared`, attribute `part` the event's id, in the event's
+`.part-marks-of` in the display's `.part-marks`, next to the mark of events excluded from global transpose
+([transpose.md](transpose.md)).
 
 The object selection tool's gestures ([tools.md](tools.md) has the other tools, the selection rectangle and the tool
 modifiers, which change the keys below):
@@ -159,8 +163,7 @@ at the cursor, Mod and the arrows nudge, and so on.
   on the newly selected track. On a track without events the selected events stay selected, so the next Up or Down
   goes on selecting events. With the user setting `ui.upDownSelectsTracksOnly` they only select tracks.
 
-Not yet: the info line (#89, which `event.get` feeds), a lock and a shared copy icon on events, and scrolling an event
-that the arrow keys select into view.
+Not yet: the info line (#89, which `event.get` feeds), and scrolling an event that the arrow keys select into view.
 
 ## Checks
 
@@ -186,7 +189,9 @@ that the arrow keys select into view.
   commands along a track and at its ends; resizing at the edges, splitting with Alt, adding parts with a double click at
   a bar and between the locators; the edit commands on the selection (delete, mute, lock, nudging, duplicating, moving
   to the cursor, splitting at the cursor and the locators, gluing, filling the locators with the last copy cut,
-  converting a shared copy to a real one), the select submenu, muted events shown greyed out and locked ones kept; a
+  converting a shared copy to a real one), the select submenu, muted events shown greyed out and locked ones kept; the
+  lock and shared icons inside the event's upper right corner, side by side, following `event.set`, a shared
+  `event.copy`, `event.toRealCopy` and undo; a
   drag of an audio event's end and start showing, at every step, the box, waveform, fades and volume line the release
   leaves: both edges in both sizing modes, snapped and with Disable Snapping pressed and released mid-drag, while
   another client moves the event; an audio event and a MIDI part selected together, and a second drag pressed before the
