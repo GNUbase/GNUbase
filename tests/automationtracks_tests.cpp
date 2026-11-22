@@ -9,6 +9,8 @@
 #include "ui/canvas.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/markers.h"
+#include "ui/signaturetrack.h"
 #include "ui/tracklist.h"
 
 #include <RmlUi/Core/Element.h>
@@ -1167,9 +1169,61 @@ TEST_CASE("pasting onto an unadded automation track adds its lane in the paste's
 	CHECK(f.app.call("history.get").at("position") == history.at("position"));
 }
 
+TEST_CASE(
+	"a paste that pastes nothing onto an unadded automation track leaves it unadded, without an undo step", "[ui]")
+{
+	// automation.paste adds the lane of an unadded automation track only where it pastes (#2018).
+	Automation f;
+	const Json volume = f.show();
+	const Json pan =
+		f.app.call("automationLane.add", {{"track", f.track}, {"target", {{"type", "pan"}}}}).at("lane").at("id");
+	for (const Json& lane : {volume, pan})
+		f.app.call("automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 0.0}}}}});
+	f.app.call("transport.set", {{"left", 0}, {"right", 48000}});
+	const uint64_t other = f.app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	f.app.call("track.set", {{"track", other}, {"timeBase", "linear"}});
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(other) + " .automation-toggle").size() == 1; }));
+	f.click(row(other) + " .automation-toggle"); // its volume, unadded
+	const std::string automationRow = row(other) + " .automation-row";
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, automationRow).size() == 1; }));
+	const auto unadded = [&]
+	{
+		const std::vector<uint64_t>& lanes = f.display.laneAutomation();
+		return !lanes.empty() && f.display.unaddedLane(lanes.back()) != nullptr &&
+			f.app.call("automationLane.list", {{"track", other}}).at("lanes").empty();
+	};
+	REQUIRE(f.app.waitUntil(unadded));
+	const Json box = elements(f.app, automationRow).at(0).at("box");
+	f.clickAt(box.at("x").get<int>() + 10, box.at("y").get<int>() + (box.at("height").get<int>() / 2));
+	const auto canRun = [&f](const char* command) { return f.app.keys().canRun(command, f.app.main(), nullptr); };
+	const ui::EngineBinding& binding = f.app.appUi().binding();
+	const auto paste = [&]
+	{
+		REQUIRE(f.app.waitUntil([&] { return canRun("track.pasteAutomationSelectedParameters"); }));
+		const Json history = f.app.call("history.get");
+		const Json project = f.app.call("project.get");
+		f.app.keys().run("track.pasteAutomationSelectedParameters", Json::object(), f.app.main(), nullptr);
+		REQUIRE(f.app.waitUntil([&] { return binding.waiting("automation.paste") == 0; }));
+		f.app.shell().step(std::chrono::milliseconds(0));
+		CHECK(f.app.call("history.get") == history);
+		CHECK(f.app.call("project.get") == project);
+		CHECK(unadded());
+		CHECK(f.display.automationShown(other));
+	};
+
+	// The copy has no lane of the parameter: a pan lane onto the volume automation track.
+	REQUIRE(f.app.call("automation.copy", {{"lanes", {pan}}}).at("lanes") == 1);
+	paste();
+	// The paste fails, here for an empty locator range.
+	REQUIRE(f.app.call("automation.copy", {{"lanes", {volume}}}).at("lanes") == 1);
+	f.app.call("transport.set", {{"left", 96000}, {"right", 96000}});
+	paste();
+}
+
 TEST_CASE("two pastes that add lanes with the same automation track selected are two undo steps", "[ui]")
 {
-	// The paste's merge key is its first unadded lane, never the selected project lane, which repeats (#1918).
+	// Each paste is one automation.paste, so one undo step of its own, also with a project lane selected that repeats
+	// (#1918, #2018).
 	Automation f;
 	const Json volume = f.show();
 	f.app.call("automationPoint.add",
@@ -1250,4 +1304,78 @@ TEST_CASE("a track's lanes come between its own lane and its automation tracks, 
 	// The command again hides them.
 	f.app.keys().run("track.toggleLanesSelected", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return f.display.laneTakes() == std::vector<int>{-1, -1}; }));
+}
+
+TEST_CASE(
+	"automation points and markers or time signature events deselect each other, and Delete deletes the last", "[ui]")
+{
+	// The project window selects events, automation points, markers or time signature events (#2011).
+	Automation f;
+	const Json volume = f.show();
+	f.app.call("track.add", {{"type", "signature"}});
+	for (const int bar : {2, 3})
+		f.app.call("signature.add", {{"bar", bar}, {"numerator", 3}, {"denominator", 4}});
+	const uint64_t marker = f.app.call("marker.add", {{"position", "cursor"}}).at("marker").at("id").get<uint64_t>();
+	ui::MarkerLines& markers = *f.app.appUi().markerLines();
+	ui::SignatureRow& signatures = f.app.appUi().signatureLane()->row();
+	REQUIRE(f.app.waitUntil([&] { return !markers.loading() && elements(f.app, ".signature-event").size() == 3; }));
+	// Clicks on a time signature event, on another one each time, as two soon after each other open it.
+	const auto selectSignature = [&](int event)
+	{
+		f.app.ui().click(std::nullopt, {".signature-event", event, std::nullopt}, ui::MouseButton::Left, 1, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(signatures.selection().size() == 1);
+	};
+	const auto selectPoint = [&]
+	{
+		f.app.call("automationPoint.add", {{"lane", volume}, {"points", {{{"position", 48000}, {"value", -27.0}}}}});
+		f.settle(volume);
+		f.clickAt(f.x(1.0), f.y(volume, 0.5));
+		REQUIRE(f.display.selectedPoints().size() == 1);
+	};
+	const auto points = [&] { return f.lane(volume).at("points").size(); };
+
+	// A marker, then points: Delete removes the points, which were selected last.
+	markers.pick({marker});
+	selectPoint();
+	CHECK(f.app.waitUntil([&] { return markers.selection().empty(); }));
+	f.app.keys().run("edit.delete", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return points() == 0; }));
+	CHECK(f.app.call("project.get").at("markers").size() == 1);
+	// A time signature event, then points: the same.
+	selectSignature(1);
+	selectPoint();
+	CHECK(f.app.waitUntil([&] { return signatures.selection().empty(); }));
+	f.app.keys().run("edit.delete", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return points() == 0; }));
+	CHECK(f.app.call("project.get").at("signatures").size() == 3);
+
+	// Points, then a marker or a time signature event: the points go.
+	selectPoint();
+	markers.pick({marker});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.display.selectedPoints().empty());
+	CHECK(markers.selection() == std::vector<uint64_t>{marker});
+	f.settle(volume);
+	f.clickAt(f.x(1.0), f.y(volume, 0.5));
+	REQUIRE(f.display.selectedPoints().size() == 1);
+	selectSignature(2);
+	CHECK(f.display.selectedPoints().empty());
+	f.app.keys().run("edit.delete", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("signatures").size() == 2; }));
+	CHECK(points() == 1);
+
+	// Points, then a marker in the markers window, whose Sync Selection selects it in the project window: it stays
+	// selected there and the points go.
+	f.clickAt(f.x(1.0), f.y(volume, 0.5));
+	REQUIRE(f.display.selectedPoints().size() == 1);
+	f.app.ui().key(std::nullopt, "Mod+M");
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.app.appUi().markers() != nullptr && f.app.appUi().markers()->markers().size() == 1; }));
+	f.app.ui().click(
+		f.app.appUi().markersWindow(), {"#marker-rows .type", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(f.app.waitUntil([&] { return markers.selection() == std::vector<uint64_t>{marker}; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.display.selectedPoints().empty());
+	CHECK(markers.selection() == std::vector<uint64_t>{marker});
 }

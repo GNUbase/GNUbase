@@ -44,6 +44,10 @@ namespace gnubase::engine
 	// instruments, plugins and the channel strip, whose points are steps with whole values (projectmodel.cpp).
 	bool hasStepCurve(const Project& project, const AutomationLane& lane);
 
+	// The schema of an automation target as automationLane.add and automation.paste's targets take it
+	// (projectmodel.cpp).
+	Json automationTargetSchema();
+
 	// Changes the project's sample rate (projectmodel.cpp). Linear positions are in samples, so they are rescaled to
 	// keep their time, bounded to plus or minus time::g_maxPosition. Without context no events are emitted, for
 	// repairing a loaded project. The old rate must be finite and positive.
