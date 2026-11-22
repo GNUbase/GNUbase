@@ -68,12 +68,13 @@ undo step.
   stop mode, which the insert can't place against the new device's: the recorder counts the buffers' frames on across
   devices, as each device counts its own from 0, which leaves out how long the old device ran. Input during playback
   stays, before or after the device change, as the insert places it where it played (`tests/midirecording_tests.cpp`).
-  `midi.clearRetrospective` empties one track's buffer or all of them.
+  `midi.clearRetrospective` empties one track's buffer or all of them; the Transport menu's MIDI Retrospective
+  Recording > Empty All Buffers runs it for all (p. 356).
 
 ## Not yet
 
-Choosing a single MIDI input port for a track (p. 348); the inspector's Retrospective Recording menu, Insert as Cycle
-Recording and the Transport menu's MIDI Retrospective Recording items (pp. 354-356); Record in Editor (p. 349); Length
-Adjustment, Insert Reset Events after Record and the latency compensation for live playing (p. 350, p. 1616); the MIDI
-thru filter and the reference's Record-Enable allows MIDI Thru switch; retrospective recording from all MIDI inputs (p.
-354); SysEx from the inputs.
+Choosing a single MIDI input port for a track (p. 348); the inspector's Retrospective Recording menu and Insert as
+Cycle Recording (pp. 354-356); Record in Editor (p. 349); Length Adjustment, Insert Reset Events after Record and the
+latency compensation for live playing (p. 350, p. 1616); the MIDI thru filter and the reference's Record-Enable allows
+MIDI Thru switch; retrospective recording from all MIDI inputs and its Insert from All MIDI Inputs (p. 354); SysEx from
+the inputs.
