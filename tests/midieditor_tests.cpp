@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -596,4 +597,22 @@ TEST_CASE("the MIDI editors share one project read for each change (#625)", "[ui
 	app.appUi().docking().open("editorInspector");
 	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editorInspector"); }));
 	CHECK(reads(240) == before);
+}
+
+TEST_CASE("the MIDI menu opens the selected MIDI parts in the editor window's key, drum or list editor (#719)", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	Fixture f(app);
+	f.select({f.keys1, f.bass1});
+	for (const auto& [command, content] : {std::pair{"editor.openDrum", "drum"}, std::pair{"editor.openList", "list"},
+			 std::pair{"editor.openKey", "key"}})
+	{
+		INFO(command);
+		const std::string wanted = content;
+		click(app, std::nullopt, "#menu-bar button[menu=midi-menu]");
+		click(app, std::nullopt, std::string("#midi-menu menuitem[command=\"") + command + "\"]");
+		REQUIRE(app.waitUntil([&] { return view(app, "window").value("content", "") == wanted; }));
+		CHECK(parts(view(app, "window")) == std::vector<uint64_t>{f.keys1, f.bass1});
+		CHECK(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	}
 }

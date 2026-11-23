@@ -327,13 +327,13 @@ TEST_CASE("Open Drum Editor opens the selected MIDI parts in the drum editor win
 	REQUIRE(app.waitUntil([&] { return display.project().at("midiParts").size() == 1; }));
 	display.select({part});
 	app.shell().step(std::chrono::milliseconds(0));
-	for (const char* command : {"editor.openDrum", "drumMap.load", "drumMap.save"})
+	for (const char* command : {"drumMap.load", "drumMap.save"})
 		CHECK(app.ui()
 				  .dom(std::nullopt, std::string("#edit-menu menuitem[command=\"") + command + "\"]", 0)
 				  .at("elements")
 				  .size() == 1);
-	// The MIDI menu's Drum Map Setup and O-Note Conversion (pp. 1235, 1240).
-	for (const char* command : {"drumMap.setup", "midi.convertONotes"})
+	// The MIDI menu's Open Drum Editor, Drum Map Setup and O-Note Conversion (pp. 1221, 1235, 1240).
+	for (const char* command : {"editor.openDrum", "drumMap.setup", "midi.convertONotes"})
 		CHECK(app.ui()
 				  .dom(std::nullopt, std::string("#midi-menu menuitem[command=\"") + command + "\"]", 0)
 				  .at("elements")

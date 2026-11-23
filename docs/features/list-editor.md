@@ -104,7 +104,7 @@ doesn't have (#1580).
   never comes at all ends without its effect at the next left press anywhere in that document, which the editor hears
   in the capture phase, before anything else; the value display shows the events' values again at once. Other
   buttons don't end a gesture.
-- **Open List Editor** (`editor.openList`, Mod+G in the project window and Edit > Open List Editor, p. 1243) opens the
+- **Open List Editor** (`editor.openList`, Mod+G in the project window and MIDI > Open List Editor, p. 1243) opens the
   selected MIDI parts in the editor window's list editor. Open in Lower Zone and Open in Separate Window keep the
   content.
 
@@ -116,8 +116,7 @@ Delete, importing and exporting .syx files); the auditioning column and the proj
 presets and Setup (the transform editor); text, lyrics and SMF events, which the project has no type for; muting events
 and the mute tool (notes have no mute yet); the selection rectangle in the event display; key commands other than Delete
 and Backspace; the ruler, zooming and scrolling the event display; Set up Window Layout, the status line, nudging, snap
-and quantize on the toolbar; editing a program change's bank; a MIDI menu of its own (Open List Editor is in the Edit
-menu for now) and windows of their own for the key and list editors.
+and quantize on the toolbar; editing a program change's bank; and windows of their own for the key and list editors, which share the editor window.
 
 ## Checks
 

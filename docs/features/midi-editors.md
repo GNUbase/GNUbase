@@ -112,7 +112,9 @@ sends `editor.*` commands.
   [preferences.md](preferences.md)). Opened in the lower zone, the editor brings its tab forward and takes the keyboard
   focus (p. 100), as with `window.lowerZoneEditor` ([docking.md](docking.md)). A double click on an audio event opens
   the sample editor window, which the lower zone doesn't have yet.
-  `editor.openList` (Mod+G, Edit > Open List Editor, p. 1243) opens them in the editor window's list editor.
+  The MIDI menu's `editor.openKey` (Open Key Editor, p. 1189), `editor.openDrum` (Open Drum Editor, p. 1221) and
+  `editor.openList` (Open List Editor, Mod+G, p. 1243) open the selected MIDI parts in the editor window's key, drum or
+  list editor (#719).
 
 `resources/styles/midieditor.rcss` lays the editors out; the themes color the states (`tools/skin/generate.py`), the
 Visibility tab's checks with the check box skins.

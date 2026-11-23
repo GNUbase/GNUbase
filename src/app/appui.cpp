@@ -2310,23 +2310,19 @@ namespace gnubase::app
 		}
 		m_keys.bind({"Mod+E", "editor.openClose", engine::Json::object(), "project"});
 		m_keys.bind({"Return", "editor.openClose", engine::Json::object(), "project"});
-		// Open List Editor (Mod+G, reference manual p. 1243): the selected MIDI parts in the editor window's list
-		// editor.
-		m_keys.add({"editor.openList", "Opens the selected MIDI parts in the list editor window.",
-			[this](ui::Window&, Rml::Element*)
-			{
-				const std::vector<uint64_t> parts = selected("midiParts");
-				if (!parts.empty())
-					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "list"}});
-			}});
-		// Open Drum Editor (reference manual p. 1221): the selected MIDI parts in the editor window's drum editor.
-		m_keys.add({"editor.openDrum", "Opens the selected MIDI parts in the drum editor window.",
-			[this](ui::Window&, Rml::Element*)
-			{
-				const std::vector<uint64_t> parts = selected("midiParts");
-				if (!parts.empty())
-					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "drum"}});
-			}});
+		// The MIDI menu's Open Key Editor (reference manual p. 1189), Open Drum Editor (p. 1221) and Open List Editor
+		// (Mod+G, p. 1243): the selected MIDI parts in the editor window, with that editor.
+		for (const auto& [command, content, description] : {
+				 std::tuple{"editor.openKey", "key", "Opens the selected MIDI parts in the key editor window."},
+				 std::tuple{"editor.openDrum", "drum", "Opens the selected MIDI parts in the drum editor window."},
+				 std::tuple{"editor.openList", "list", "Opens the selected MIDI parts in the list editor window."},
+			 })
+			m_keys.add({command, description, [this, content = std::string(content)](ui::Window&, Rml::Element*)
+				{
+					const std::vector<uint64_t> parts = selected("midiParts");
+					if (!parts.empty())
+						m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", content}});
+				}});
 		// Edit In-Place (Mod+Shift+I, reference manual p. 1261) opens or closes the in-place editors of the selected
 		// MIDI and instrument tracks, MIDI > Open In-Place Editor opens them (p. 1259). Both wait for such a track to
 		// be selected.
