@@ -59,6 +59,10 @@ make such things as part of it (`ProjectModel::runEdit`), so that it is one undo
   clip: Convert Hitpoints to MIDI Notes' `velocityMode` (`dynamic`: the loudest hitpoint velocity 1, the others less as
   their peaks are quieter; `fixed`: `velocity`), `pitch` (default 36) and `length` (ticks, default a sixteenth).
 
+`runEdit` validates the nested command's parameters and result against its registered schemas and refuses commands that
+are not document edits. It synchronizes shared MIDI parts before returning, so another nested edit sees the updated
+copies. The outer command keeps the combined events and undo step and rolls back the project on failure.
+
 `event.deleteOverlaps` (reference manual p. 643) trims each selected audio event's end to the next selected start in the
 same track, part and lane. It preserves clip offsets and delegates trimming to `event.resize`, including its fade and
 warp handling. Equal starts keep the highest id and remove the others. The last event and unselected events stay as they
@@ -107,6 +111,9 @@ Overlaps. The detection is checked on synthesized loops only; recorded drum loop
 sound, bleed, flams) are yet to come.
 
 ## Checks
+
+- `tests/hitpoints_tests.cpp`: `runEdit` refusing unknown edits, invalid parameters and malformed results, and shared
+  parts synchronized before the caller continues.
 
 - `tests/hitpoints_tests.cpp`: detection accuracy on two synthesized drum loops whose hits are known (straight eighths
   with a ghost note and an open hi-hat at 48 kHz; swung sixteenths with soft attacks under a noise floor, in stereo at

@@ -21,7 +21,6 @@
 		#ds-display
 		{
 			position: relative;
-			height: 48dp;
 		}
 
 		.ds-section
@@ -117,7 +116,10 @@
 				text = text .. " (" .. dialog.index .. " of " .. #dialog.events .. ")"
 			end
 			document:GetElementById("ds-event").inner_rml = escape(text)
-			document:GetElementById("ds-display").inner_rml = ""
+			dialog.sections = nil
+			document:GetElementById("ds-sections-display").inner_rml = ""
+			dialog.peaks(document)
+			dialog.handles(document)
 			document:GetElementById("ds-sections").inner_rml = "-"
 			document:GetElementById("ds-region-name"):SetAttribute("value", event.name)
 			if checked(document, "ds-auto") then
@@ -131,15 +133,22 @@
 				wanted[tonumber(id)] = true
 			end
 			local project = gnubase.project.get()
-			local names = {}
+			local names, media = {}, {}
 			for _, clip in ipairs(project.clips) do
 				names[clip.id] = clip.name
+				media[clip.id] = clip.media
 			end
 			dialog.events = {}
 			for _, event in ipairs(project.audioEvents) do
 				if wanted[event.id] then
+					local start = tonumber(document:GetAttribute("start"))
+					local finish = tonumber(document:GetAttribute("end"))
 					dialog.events[#dialog.events + 1] = {id = event.id, clip = event.clip, offset = event.offset,
-						length = event.length, name = names[event.clip] or "Region"}
+						length = event.length, media = media[event.clip], name = names[event.clip] or "Region"}
+					if start and finish then
+						local captured = dialog.events[#dialog.events]
+						captured.offset, captured.length = start, finish - start
+					end
 				end
 			end
 			if #dialog.events == 0 then
@@ -148,6 +157,10 @@
 			end
 			dialog.job = createAnalysisJob(function(text) message(document, text) end)
 			dialog.index = 1
+			dialog.peaksReady = function(event)
+				if event.data.media == dialog.events[dialog.index].media then dialog.peaks(document) end
+			end
+			gnubase.on("media.peaksReady", dialog.peaksReady)
 			local all = document:GetElementById("ds-process-all")
 			if #dialog.events < 2 then
 				all:SetAttribute("disabled", "")
@@ -175,7 +188,8 @@
 					sections[#sections + 1] = string.format('<div class="ds-section" style="left: %.4f%%; width: %.4f%%"/>',
 						left, width)
 				end
-				document:GetElementById("ds-display").inner_rml = table.concat(sections)
+				dialog.sections = result.sections
+				document:GetElementById("ds-sections-display").inner_rml = table.concat(sections)
 				document:GetElementById("ds-sections").inner_rml = tostring(#result.sections)
 			end)
 		end
@@ -183,6 +197,11 @@
 		-- A change of a setting: Linked keeps the thresholds the same, the close threshold stays at most the open
 		-- one, and Auto analyzes again.
 		function dialog.changed(document, element)
+			dialog.job.cancel()
+			dialog.sections = nil
+			document:GetElementById("ds-sections-display").inner_rml = ""
+			document:GetElementById("ds-sections").inner_rml = "-"
+			dialog.stopPreview()
 			local open = numberOf(document, "ds-open-threshold")
 			local close = numberOf(document, "ds-close-threshold")
 			if checked(document, "ds-linked") or close > open then
@@ -192,6 +211,7 @@
 					document:GetElementById("ds-close-threshold"):SetAttribute("value", tostring(open))
 				end
 			end
+			dialog.handles(document)
 			if checked(document, "ds-auto") then
 				dialog.analyze(document)
 			end
@@ -200,6 +220,8 @@
 		-- Process: this event, or all that are left, then the next one or close.
 		function dialog.process(document)
 			local parameters = settings(document)
+			parameters.start = tonumber(document:GetAttribute("start"))
+			parameters["end"] = tonumber(document:GetAttribute("end"))
 			local all = checked(document, "ds-process-all") and #dialog.events > 1
 			parameters.events = {}
 			for i = dialog.index, all and #dialog.events or dialog.index do
@@ -226,12 +248,23 @@
 			end)
 		end
 	</script>
+	<script src="silence-preview.lua"/>
 </head>
-<body onshow="DetectSilence.load(document)" onunload="if DetectSilence.job then DetectSilence.job.close() end">
+<body onshow="DetectSilence.load(document)" onunload="DetectSilence.close()"
+	onmousemove="DetectSilence.move(document, event)" onmouseup="DetectSilence.release()">
 	<dialog id="detect-silence-dialog">
 		<div class="dialog-titlebar">Detect Silence</div>
 		<div id="ds-event"/>
-		<div id="ds-display" class="ds-display"/>
+		<div id="ds-display" class="ds-display" onmousedown="DetectSilence.press(document, event)">
+			<div id="ds-sections-display"/>
+			<div id="ds-wave"/>
+			<div id="ds-open-handle" class="ds-handle" threshold="open" title="Open Threshold"/>
+			<div id="ds-close-handle" class="ds-handle" threshold="close" title="Close Threshold"/>
+		</div>
+		<div class="row ds-preview">
+			<span>Preview</span><slider id="ds-preview-level" min="0" max="1" value="1" step="0.01"/>
+			<input type="checkbox" id="ds-mute-gaps"/><span>Mute Gaps</span>
+		</div>
 		<div class="content" onchange="DetectSilence.changed(document, event.target_element)">
 			<div class="column">
 				<div>Detection</div>

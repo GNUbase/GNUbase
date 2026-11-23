@@ -156,10 +156,8 @@ namespace gnubase::engine
 		// is one undo step named action, like the commands here, and transactions can run it.
 		void addEdit(Engine& engine, CommandInfo info, std::string action, Handler handler);
 		// Runs a command registered with addEdit as part of the command running: on its project, with its events
-		// going out with that command's and its changes in that command's undo step. Unlike a transaction it doesn't
-		// check the parameters against the command's schema, so the caller passes valid ones, and doesn't sync shared
-		// parts between commands (syncSharedParts): the copies of a shared part it edits catch up only when the
-		// command running ends, so its caller must not read them before.
+		// going out with that command's and its changes in that command's undo step. Checks parameter and result
+		// schemas and synchronizes shared parts before returning, so the next edit sees their current contents.
 		Json runEdit(const std::string& command, Project& project, const Json& parameters, CommandContext& context);
 
 		// The project, for commands defined in other files that read it. Only on the command thread.

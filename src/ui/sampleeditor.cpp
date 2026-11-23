@@ -235,6 +235,12 @@ namespace gnubase::ui
 			R"(<button id="se-create-sampler">Create Sampler Track</button>)"
 			R"(<div class="section-header">Process</div>)"
 			R"(<button id="se-basic-commands" menu="se-process-menu">Basic Commands</button>)"
+			R"(<button audio-function="audio.detectSilence")"
+			R"( onclick="gnubase.ui.command{command='audio.detectSilence'}">Detect Silence</button>)"
+			R"(<button audio-function="audio.spectrumAnalyzer")"
+			R"( onclick="gnubase.ui.command{command='audio.spectrumAnalyzer'}">Spectrum Analyzer</button>)"
+			R"(<button audio-function="audio.statistics")"
+			R"( onclick="gnubase.ui.command{command='audio.statistics'}">Statistics</button>)"
 			R"(<div id="se-process-message"/>)"
 			R"(<button id="se-range-region">Event or Range as Region</button><button id="se-flatten">Flatten</button>)" +
 			hitpoints + warpSection +

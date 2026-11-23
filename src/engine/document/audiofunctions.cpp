@@ -262,13 +262,15 @@ namespace gnubase::engine
 
 		Json stripProperties = settingsProperties;
 		stripProperties.update({{"events", ids}, {"strip", boolean}, {"regions", boolean}, {"regionName", string},
-			{"autoNumberStart", integer}, {"fades", number}});
+			{"autoNumberStart", integer}, {"fades", number}, {"start", integer}, {"end", integer}});
 		engine.registerCommand(
 			{"event.stripSilence", 2,
 				"Detects silence in events as a cancellable job with job.progress, then runs "
 				"event.applySilenceSections "
 				"on the command thread, one undo step. Uses clip.detectSilence's settings and "
 				"event.applySilenceSections' strip, regions, regionName, autoNumberStart and fades options. "
+				"Optional start/end clip frames limit processing to that range within each event, preserving audio "
+				"outside it. Both must be supplied together. "
 				"Returns a job; its result is the edit's result. Fails if the project changed meanwhile. " +
 					std::string(g_settingsText),
 				objectSchema(stripProperties, {"events"}), objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
@@ -290,8 +292,13 @@ namespace gnubase::engine
 					const AudioEvent& event = found->second;
 					require(!parameters.value("strip", true) || !event.lock,
 						"audio event " + std::to_string(id) + " is locked");
-					sources.push_back({project.media.at(project.clips.at(event.clip).media),
-						{event.offset, event.offset + event.length}});
+					require(parameters.contains("start") == parameters.contains("end"), "give both start and end");
+					const Range range{
+						parameters.value("start", event.offset), parameters.value("end", event.offset + event.length)};
+					require(range.start >= event.offset && range.start < range.end &&
+							range.end <= event.offset + event.length,
+						"start and end must be within the event");
+					sources.emplace_back(project.media.at(project.clips.at(event.clip).media), range);
 				}
 				require(!sources.empty(), "events must not be empty");
 				parameters["revision"] = context.call("project.revision").at("revision");
@@ -314,8 +321,8 @@ namespace gnubase::engine
 						})}};
 			});
 		const Json applyProperties = {{"events", ids}, {"strip", boolean}, {"regions", boolean}, {"regionName", string},
-			{"autoNumberStart", integer}, {"fades", number}, {"revision", integer},
-			{"sections", {{"type", "array"}, {"items", sectionsSchema}}}};
+			{"autoNumberStart", integer}, {"fades", number}, {"revision", integer}, {"start", integer},
+			{"end", integer}, {"sections", {{"type", "array"}, {"items", sectionsSchema}}}};
 		model.addEdit(engine,
 			{"event.applySilenceSections", 1,
 				"Processes the sections of audio events that aren't silent (the Detect Silence dialog's Process, "
@@ -328,7 +335,11 @@ namespace gnubase::engine
 				"events; fades (Apply Fades, ms) gives the events that remain a fade in and a fade out of that "
 				"length, at most half of what each plays for in frames at the clip's sample rate (its length, "
 				"unless it plays warped). An event that strip would remove completely, or that is locked, is an "
-				"error. Returns the events that remain and the regions, and the number of sections.",
+				"error. New fades apply at edges inside the processed range, including its boundaries; edges outside "
+				"it keep their existing fades. "
+				"Optional start/end clip frames bound processing within each event, as in event.stripSilence; "
+				"sections must lie within that range. Returns the events that remain and the regions, and the number "
+				"of sections.",
 				objectSchema(applyProperties, {"events", "sections", "revision"}),
 				objectSchema(
 					{{"events", ids}, {"regions", ids}, {"sections", integer}}, {"events", "regions", "sections"}),
@@ -361,14 +372,19 @@ namespace gnubase::engine
 					require(found != project.audioEvents.end(), "no audio event " + std::to_string(id));
 					const AudioEvent event = found->second;
 					const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
+					require(parameters.contains("start") == parameters.contains("end"), "give both start and end");
+					const Range range{
+						parameters.value("start", event.offset), parameters.value("end", event.offset + event.length)};
+					require(range.start >= event.offset && range.start < range.end &&
+							range.end <= event.offset + event.length,
+						"start and end must be within the event");
 					std::vector<analysis::Section> sections;
-					time::Samples previous = event.offset;
+					time::Samples previous = range.start;
 					for (const Json& given : parameters.at("sections").at(index++))
 					{
 						const analysis::Section section{
 							given.at("start").get<time::Samples>(), given.at("end").get<time::Samples>()};
-						require(section.start >= previous && section.start < section.end &&
-								section.end <= event.offset + event.length,
+						require(section.start >= previous && section.start < section.end && section.end <= range.end,
 							"sections must be ordered within the event");
 						previous = section.end;
 						sections.push_back(section);
@@ -386,7 +402,21 @@ namespace gnubase::engine
 					if (strip)
 					{
 						require(!event.lock, "audio event " + std::to_string(id) + " is locked");
+						if (range.start > event.offset)
+							sections.insert(sections.begin(), {event.offset, range.start});
+						if (range.end < event.offset + event.length)
+							sections.push_back({range.end, event.offset + event.length});
 						require(!sections.empty(), "audio event " + std::to_string(id) + " is silent");
+						// A range edge within sound is not a cut: keep it joined to the untouched outside audio.
+						std::vector<analysis::Section> joined;
+						for (const analysis::Section& section : sections)
+						{
+							if (!joined.empty() && joined.back().end == section.start)
+								joined.back().end = section.end;
+							else
+								joined.push_back(section);
+						}
+						sections = std::move(joined);
 						Json positions = Json::array();
 						for (const analysis::Section& section : sections)
 							for (const time::Samples edge : {section.start, section.end})
@@ -418,14 +448,24 @@ namespace gnubase::engine
 					}
 					for (const ObjectId piece : pieces)
 					{
-						if (fades > 0.0)
+						const AudioEvent& part = project.audioEvents.at(piece);
+						const bool fadeIn = part.offset >= range.start;
+						const bool fadeOut = part.offset + part.length <= range.end;
+						if (fades > 0.0 && (fadeIn || fadeOut))
 						{
-							const AudioEvent& part = project.audioEvents.at(piece);
-							const time::Samples length = std::min<time::Samples>(
-								std::llround(fades / 1000.0 * media.sampleRate), fadeRoom(project, part) / 2);
-							run("audioEvent.setFades",
-								{{"event", piece}, {"fadeIn", {{"length", length}}},
-									{"fadeOut", {{"length", length}}}});
+							const time::Samples room = fadeRoom(project, part);
+							const time::Samples length =
+								std::min<time::Samples>(std::llround(fades / 1000.0 * media.sampleRate), room / 2);
+							Json change = {{"event", piece}};
+							if (fadeIn)
+								change["fadeIn"] = {{"length",
+									std::min(length,
+										std::max<time::Samples>(0, room - (fadeOut ? 0 : part.fadeOut.length)))}};
+							if (fadeOut)
+								change["fadeOut"] = {{"length",
+									std::min(
+										length, std::max<time::Samples>(0, room - (fadeIn ? 0 : part.fadeIn.length)))}};
+							run("audioEvent.setFades", change);
 						}
 						kept.push_back(piece);
 					}

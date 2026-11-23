@@ -14,6 +14,53 @@ body
 	padding: 0;
 }
 
+/* Detect Silence's waveform and threshold handles (reference manual p. 604). */
+#ds-display
+{
+	height: 100dp;
+	cursor: tool-play;
+}
+
+#ds-wave, #ds-sections-display
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+}
+
+.ds-peak
+{
+	position: absolute;
+	min-height: 1dp;
+	pointer-events: none;
+}
+
+.ds-handle
+{
+	position: absolute;
+	width: 8dp;
+	height: 8dp;
+	cursor: ns-resize;
+}
+
+#ds-open-handle
+{
+	left: 0;
+}
+
+#ds-close-handle
+{
+	right: 0;
+}
+
+#ds-preview-level
+{
+	width: 120dp;
+	margin: 0 12dp;
+}
+
 p, h1, h2, h3, h4
 {
 	margin: 0 0 6dp 0;
