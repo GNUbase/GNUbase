@@ -4,8 +4,8 @@
    side by side. Code places the markers, the loop and the shades in percent of the sample. The root gets .empty without
    a sampler track, the loop and its markers .off without a loop mode, the loop's markers .loop, the marker or bar being
    dragged .dragged, the loop's bar .loop and .off, keys .black, .root and .outside (the key range), the keyboard's
-   handles .root (the root key's, the others the key range's) and .dragged, and the toolbar's message .error; the themes
-   color them. Code places the handles on their keys in percent of the keyboard. */
+   handles .root (the root key's, the others the key range's) and .dragged, the toolbar's message .error and its event
+   received indicator .lit; the themes color them. Code places the handles on their keys in percent of the keyboard. */
 .sampler-panel
 {
 	display: flex;
@@ -58,6 +58,13 @@
 .sampler-level
 {
 	width: 64dp;
+}
+
+.sampler-received
+{
+	flex-shrink: 0;
+	width: 8dp;
+	height: 8dp;
 }
 
 .sampler-display

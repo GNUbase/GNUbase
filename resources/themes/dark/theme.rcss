@@ -1327,6 +1327,15 @@
 	{
 		color: #d76a73;
 	}
+	.sampler-received
+	{
+		background-color: #b7bbc0;
+		border-radius: 999dp;
+	}
+	.sampler-received.lit
+	{
+		background-color: #5ea7b3;
+	}
 	.drum-pad
 	{
 		color: #b7bbc0;
