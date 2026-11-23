@@ -659,6 +659,28 @@ TEST_CASE("work posted from any thread runs on the UI thread in the shell's next
 	CHECK(window.frames() == frames + 1);
 }
 
+TEST_CASE("work posted quietly draws only the windows it asks for, as automation's does (#745)", "[unit]")
+{
+	Ui ui{{primary()}};
+	ui::Window& first = ui.shell.open(at({100, 100, 800, 600}));
+	const ui::Window& second = ui.shell.open(at({200, 200, 400, 300}));
+	ui.shell.step(milliseconds(0));
+	const uint64_t firstFrames = first.frames();
+	const uint64_t secondFrames = second.frames();
+
+	int runs = 0;
+	ui.shell.postQuietly([&runs] { ++runs; }); // reads, as ui_dom does
+	ui.shell.step(milliseconds(0));
+	CHECK(runs == 1);
+	CHECK(first.frames() == firstFrames);
+	CHECK(second.frames() == secondFrames);
+
+	ui.shell.postQuietly([&first] { first.requestRender(); }); // input into the first window
+	ui.shell.step(milliseconds(0));
+	CHECK(first.frames() == firstFrames + 1);
+	CHECK(second.frames() == secondFrames);
+}
+
 TEST_CASE("the shell doesn't step inside one of its steps, e.g. for a script that waits in an event handler", "[unit]")
 {
 	Ui ui{{primary()}};
