@@ -3488,6 +3488,53 @@ TEST_CASE("dragging the event volume shows the volume and its change, and Shift 
 	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(shown(f)) + 4.42) < 0.05; }));
 }
 
+TEST_CASE("with editing.wheelEventVolumeAndFades, the mouse wheel over an audio event changes its volume, with Shift "
+		  "its fades",
+	"[unit]")
+{
+	// Reference manual pp. 382, 1597. The event goes from 200 to 250 dp, at 0.01 seconds per dp.
+	Fixture f;
+	const auto wheel = [&f](double x, float lines, const std::vector<std::string>& modifiers = {})
+	{
+		f.automation.wheel(std::nullopt, f.at(x, 20), 0.0F, lines, modifiers);
+		f.step();
+	};
+	const auto steps = [&f] { return f.call("history.get").at("steps").size(); };
+	// Off by default: the wheel scrolls, as without an event under it.
+	const size_t before = steps();
+	wheel(210, -1.0F);
+	wheel(210, -1.0F, {"shift"});
+	CHECK(steps() == before);
+	f.call("settings.set", {{"key", "editing.wheelEventVolumeAndFades"}, {"value", true}});
+	f.step();
+	// Up is 1 dB louder a line, down quieter, each line an undo step.
+	wheel(210, -2.0F);
+	REQUIRE(f.waitUntil([&f] { return eventVolume(shown(f)) == 2.0; }));
+	wheel(240, 3.0F);
+	REQUIRE(f.waitUntil([&f] { return eventVolume(shown(f)) == -1.0; }));
+	CHECK(steps() == before + 2);
+	// No louder than +6 dB.
+	wheel(225, -20.0F);
+	REQUIRE(f.waitUntil([&f] { return eventVolume(shown(f)) == 6.0; }));
+	// With Shift, the left half moves the end of the fade in, the right half the start of the fade out: up lengthens
+	// them by 10 dp a line, here 0.1 seconds.
+	wheel(210, -1.0F, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeIn").at("length") == 4800; }));
+	wheel(240, -2.0F, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeOut").at("length") == 9600; }));
+	// Down shortens them, to none at the least; and they don't cross.
+	wheel(240, 5.0F, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeOut").at("length") == 0; }));
+	wheel(210, -10.0F, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeIn").at("length") == 24000; }));
+	// Over no event, the wheel scrolls.
+	const size_t now = steps();
+	wheel(500, -1.0F);
+	wheel(500, -1.0F, {"shift"});
+	CHECK(steps() == now);
+	CHECK(eventVolume(shown(f)) == 6.0);
+}
+
 TEST_CASE("the draw tool adds and drags volume curve points, the erase tool removes them", "[unit]")
 {
 	Fixture f;

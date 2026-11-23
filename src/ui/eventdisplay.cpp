@@ -273,6 +273,11 @@ namespace gnubase::ui
 					m_zoomHorizontalOnly = zoom->get<bool>();
 					m_zoomHorizontalOnlyKnown = true;
 				}
+				if (const auto wheel = values.find("editing.wheelEventVolumeAndFades"); wheel != values.end())
+				{
+					m_wheelVolume = wheel->get<bool>();
+					m_wheelVolumeKnown = true;
+				}
 				if (const auto muted = values.find("editing.treatMutedAudioLikeDeleted"); muted != values.end())
 				{
 					m_treatMutedKnown = true;
@@ -353,6 +358,12 @@ namespace gnubase::ui
 			{
 				if (!alive.expired() && result.ok() && !m_zoomHorizontalOnlyKnown)
 					m_zoomHorizontalOnly = result.value.at("value").get<bool>();
+			});
+		m_binding.send("settings.get", {{"key", "editing.wheelEventVolumeAndFades"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_wheelVolumeKnown)
+					m_wheelVolume = result.value.at("value").get<bool>();
 			});
 		m_binding.send("settings.get", {{"key", "editing.treatMutedAudioLikeDeleted"}},
 			[this, alive](const engine::Result& result)
@@ -1824,6 +1835,15 @@ namespace gnubase::ui
 		const auto across = event.GetParameter<float>("wheel_delta_x", 0.0F);
 		const bool control = event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0;
 		const bool shift = event.GetParameter<int>("shift_key", 0) != 0;
+		// Some systems turn the wheel with Shift into one across.
+		if (const float turned = lines != 0.0F || !shift ? lines : across; !control && m_wheelVolume &&
+			inside(event.GetTargetElement(), m_area) &&
+			wheelVolume(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio(), turned, shift))
+		{
+			event.StopPropagation();
+			return;
+		}
 		if (control && shift)
 		{
 			remember();

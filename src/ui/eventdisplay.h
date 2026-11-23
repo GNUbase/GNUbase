@@ -778,6 +778,9 @@ namespace gnubase::ui
 		void volumeUp();
 		// .volume-readout beside the dragged control: the pressed event's volume and its change since the press.
 		void showVolumeReadout();
+		// The mouse wheel lines over x and y dp in the event lanes, with editing.wheelEventVolumeAndFades: the volume
+		// of the audio event there, with Shift its fades (p. 382). Whether there was one.
+		bool wheelVolume(double x, double y, double lines, bool fades);
 		double draggedVolume(uint64_t event) const;
 		// The draw tool on an audio event: drags the curve point at x and y dp, or a new one there.
 		bool curveDown(const Shown& shown, double x, double y);
@@ -1114,6 +1117,8 @@ namespace gnubase::ui
 		bool m_zoomHorizontalOnlyKnown = false;
 		bool m_treatMutedAudioLikeDeleted = true; // editing.treatMutedAudioLikeDeleted
 		bool m_treatMutedKnown = false;
+		bool m_wheelVolume = false; // editing.wheelEventVolumeAndFades
+		bool m_wheelVolumeKnown = false;
 		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, while the mouse is there
 		std::string m_held;           // the modifier keys held, as modifiersOf joins them, for the pointer
 		std::set<int> m_modifierKeys; // the modifier keys seen going down and not up (Rml::Input::KeyIdentifier)

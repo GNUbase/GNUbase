@@ -3,6 +3,7 @@
 // events, the event volume control, the draw tool's curve points, the erase tool on them and Remove Volume Curve.
 // docs/features/volume-curves.md describes them.
 #include "engine/audio/fades.h"
+#include "engine/document/document.h"
 #include "engine/document/serialize.h"
 #include "ui/eventdisplay.h"
 
@@ -28,6 +29,8 @@ namespace gnubase::ui
 		constexpr double g_faderInset = 16.0; // dp from an event's start to its volume control's middle, past its edge
 		constexpr double g_pointReach = 6.0;  // dp around a curve point that grab it
 		constexpr double g_fineVolume = 0.1;  // of the mouse's movement that moves the control with Shift
+		constexpr double g_wheelVolume = 1.0; // dB a line of the mouse wheel
+		constexpr double g_wheelFade = 10.0;  // dp of the display a line of the mouse wheel moves a fade's end
 
 		double gain(double db)
 		{
@@ -108,6 +111,34 @@ namespace gnubase::ui
 			Rml::Property(static_cast<float>(((*fader - m_view.start) / m_view.scale) + g_handleSize), Rml::Unit::DP));
 		m_volumeReadout->SetProperty(Rml::PropertyId::Top,
 			Rml::Property(static_cast<float>(m_laneTops[shown->lane] - m_view.top), Rml::Unit::DP));
+	}
+
+	bool EventDisplay::wheelVolume(double x, double y, double lines, bool fades)
+	{
+		const Shown* shown = eventAt(x, y);
+		const auto found = shown != nullptr ? m_fades.find(shown->id) : m_fades.end();
+		if (found == m_fades.end() || !(found->second.rate > 0.0) || lines == 0.0)
+			return false;
+		const AudioFades& audio = found->second;
+		if (!fades)
+		{
+			// Up, which turns the wheel by negative lines, is louder.
+			const double volume =
+				std::clamp(audio.volume - (lines * g_wheelVolume), engine::g_minEventVolume, engine::g_maxEventVolume);
+			if (volume != audio.volume)
+				edit("audioEvent.set", {{"event", shown->id}, {"volume", volume}});
+			return true;
+		}
+		// The fade in's end in the event's left half, the fade out's start in its right half (p. 382): up lengthens.
+		const bool in = m_view.start + (x * m_view.scale) < (shown->start + shown->end) / 2.0;
+		const engine::Fade& own = in ? audio.in : audio.out;
+		const engine::Fade& other = in ? audio.out : audio.in;
+		const int64_t length =
+			std::clamp<int64_t>(own.length - std::llround(lines * g_wheelFade * m_view.scale * audio.rate), 0,
+				std::max<int64_t>(0, audio.fadeRoom - other.length));
+		if (length != own.length)
+			edit("audioEvent.setFades", {{"event", shown->id}, {in ? "fadeIn" : "fadeOut", {{"length", length}}}});
+		return true;
 	}
 
 	void EventDisplay::volumeUp()

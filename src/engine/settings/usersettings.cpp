@@ -522,6 +522,11 @@ namespace gnubase::engine::settings
 					"event keeps its place in the stack and silences what lies behind it, which p. 228 advises when "
 					"assembling stacked takes.",
 					Json{{"type", "boolean"}}, true, true},
+				{"editing.wheelEventVolumeAndFades",
+					"Use Mouse Wheel for Event Volume and Fades (reference manual p. 1597): the mouse wheel over an "
+					"audio event in the project window changes its volume, and with Shift its fade in (in the "
+					"event's left half) or fade out (in its right half), instead of scrolling.",
+					Json{{"type", "boolean"}}, false, true},
 				{"editing.doubleClickOpensEditorIn",
 					"Double-click opens Editor in a Window/in Lower Zone (reference manual p. 1603): where a double "
 					"click on a MIDI part or an audio part in the project window and Open/Close Editor "
