@@ -44,7 +44,10 @@ env:
 
 jobs:
   build:
-    timeout-minutes: 60
+    # On a pull request that changes a widely included header (#2068, Nov 2026), windows-x64 missed 334 of 1259 compiles
+    # and built for 46 min, so its tests hit the old 60 min limit twice. A pull request's run saves no cache, so a rerun
+    # starts as cold and is cancelled again.
+    timeout-minutes: 120
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     permissions:
