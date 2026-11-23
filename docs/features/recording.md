@@ -114,7 +114,11 @@ transport's record state and the record mode setting.
   record folder (the nearest folder above it that exists, while it doesn't yet) by what the tracks that would record
   write a second: the project's sample rate times the record bit depth's bytes times their channels, uncompressed,
   so a FLAC recording lasts longer. It is null while no track would record (record-enabled, enabled, with an input
-  bus). The status line shows it ([status-line.md](status-line.md)).
+  bus). The disk is measured on a thread of its own (`DiskSpace`, #645), so a slow or unreachable record folder, such
+  as one on a network drive, doesn't hold up the engine's commands: the command waits a quarter of a second for the
+  measurement it starts, and otherwise answers with the folder's last one, or null `seconds` and `availableBytes`
+  while there is none; it starts no second measurement while one runs. Tests: `tests/statusline_tests.cpp`. The
+  status line shows it ([status-line.md](status-line.md)).
 
 ## Not yet
 

@@ -7,6 +7,7 @@
 #include "engine/document/serialize.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
+#include "engine/media/diskspace.h"
 #include "engine/midi/devices.h"
 #include "engine/peaks/peakcache.h"
 #include "engine/plugins/hostmanager.h"
@@ -20,7 +21,8 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
-#include <system_error>
+#include <memory>
+#include <optional>
 #include <utility>
 
 namespace gnubase::engine
@@ -199,34 +201,30 @@ namespace gnubase::engine
 							"audio tracks can record before the disk with the record folder is full, at the project's "
 							"sample rate and record bit depth; null while no track would record. With the space "
 							"available there in bytes, the channels that would record and the record folder: the "
-							"project's media folder Audio, or for an unsaved project a folder of the user's.",
+							"project's media folder Audio, or for an unsaved project a folder of the user's. The disk "
+							"is measured off the command thread: if that takes longer than a quarter of a second, it "
+							"answers with the folder's last measurement, and both are null while there is none.",
 							CommandInfo{}.parameters,
 							Json::parse(R"({"type": "object", "properties": {"seconds": {"type": ["number", "null"]},
-								"availableBytes": {"type": "integer"}, "channels": {"type": "integer"},
+								"availableBytes": {"type": ["integer", "null"]}, "channels": {"type": "integer"},
 								"folder": {"type": "string"}},
 								"required": ["seconds", "availableBytes", "channels", "folder"]})"),
 							true},
-			[this, recordSetup](CommandContext&)
+			[this, recordSetup, disk = std::make_shared<DiskSpace>()](CommandContext&)
 			{
 				const RecordSetup setup = recordSetup();
 				const Project& project = m_project->project();
 				int channels = 0;
 				for (const RecordTrack& track : setup.tracks)
 					channels += channelCount(project.channels.at(project.trackById.at(track.track).channel).format);
-				// The folder may not be there yet: the nearest folder above it that is lies on the same disk.
-				std::filesystem::path existing = setup.folder;
-				std::error_code error;
-				while (!existing.empty() && !std::filesystem::exists(existing, error) && existing.has_parent_path() &&
-					existing.parent_path() != existing)
-					existing = existing.parent_path();
-				const std::filesystem::space_info space = std::filesystem::space(existing, error);
-				const uintmax_t available = error ? 0 : space.available;
+				// A slow or unreachable folder, such as one on a network drive, doesn't hold up the commands (#645).
+				const std::optional<uintmax_t> available = disk->measure(setup.folder, std::chrono::milliseconds(250));
 				Json seconds = nullptr;
-				if (channels > 0)
-					seconds = static_cast<double>(available) /
+				if (channels > 0 && available)
+					seconds = static_cast<double>(*available) /
 						(setup.format.sampleRate * (bitsOf(setup.format.sampleFormat) / 8.0) * channels);
-				return Json{{"seconds", seconds}, {"availableBytes", available}, {"channels", channels},
-					{"folder", setup.folder.u8string()}};
+				return Json{{"seconds", seconds}, {"availableBytes", available ? Json(*available) : Json()},
+					{"channels", channels}, {"folder", setup.folder.u8string()}};
 			});
 		m_peaks = std::make_unique<peaks::PeakCache>(
 			[this](const std::string& name, const Json& data) { broadcast(name, data); });

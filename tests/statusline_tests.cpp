@@ -5,6 +5,7 @@
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "engine/media/diskspace.h"
 #include "platform/audio/dummydevice.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
@@ -19,12 +20,15 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <regex>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace gnubase;
@@ -186,11 +190,55 @@ TEST_CASE(
 	CHECK(time.at("seconds").get<double>() == Catch::Approx(time.at("availableBytes").get<double>() / (48000.0 * 24)));
 }
 
+TEST_CASE(
+	"the disk space is measured off the caller's thread, so a disk that hangs doesn't hold it up (#645)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	// A disk that hangs until it is let go. Shared, since a measurement's thread may outlive the test.
+	struct Disk
+	{
+		std::mutex mutex;
+		std::condition_variable changed;
+		bool hangs = true;
+		int measured = 0;
+	};
+	const auto disk = std::make_shared<Disk>();
+	engine::DiskSpace space(
+		[disk](const std::filesystem::path& folder)
+		{
+			std::unique_lock lock(disk->mutex);
+			++disk->measured;
+			disk->changed.wait(lock, [&disk] { return !disk->hangs; });
+			return static_cast<uintmax_t>(folder == "a" ? 1000 : 2000);
+		});
+	const auto start = std::chrono::steady_clock::now();
+	CHECK(!space.measure("a", 20ms).has_value()); // none yet
+	CHECK(!space.measure("a", 20ms).has_value()); // nor a second measurement while the first one hangs
+	CHECK(std::chrono::steady_clock::now() - start < 5s);
+	{
+		const std::scoped_lock lock(disk->mutex);
+		CHECK(disk->measured == 1);
+		disk->hangs = false;
+	}
+	disk->changed.notify_all();
+	// The hanging one ends; meanwhile a question doesn't wait.
+	std::optional<uintmax_t> available;
+	const auto until = std::chrono::steady_clock::now() + 10s;
+	while (!available && std::chrono::steady_clock::now() < until)
+	{
+		available = space.measure("a", 100ms);
+		std::this_thread::sleep_for(10ms);
+	}
+	CHECK(available == uintmax_t{1000});
+	// Another folder waits for a measurement of its own.
+	CHECK(space.measure("b", 5s) == uintmax_t{2000});
+}
+
 TEST_CASE("the status line shows the remaining record time of the record-enabled tracks", "[ui]")
 {
 	test::UiApp app({1000, 700});
 	app.appUi().showProject();
-	// Hidden, as by default, the status line doesn't ask: the engine measures the disk on its command thread (#645).
+	// Hidden, as by default, the status line doesn't ask: each question measures the disk (#645).
 	const auto hiddenUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
 	while (std::chrono::steady_clock::now() < hiddenUntil)
 		app.shell().step(std::chrono::milliseconds(20));
