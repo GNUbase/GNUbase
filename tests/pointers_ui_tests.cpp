@@ -9,10 +9,12 @@
 #include "ui/automation.h"
 #include "ui/docking.h"
 #include "ui/midieditor.h"
+#include "ui/tracklist.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -80,6 +82,35 @@ TEST_CASE("splitters show the OS's double arrow in the direction they move, also
 	CHECK(pointer(app) == "ew-resize");
 	app.ui().release(std::nullopt, point(40, from.y), ui::MouseButton::Left);
 	CHECK(pointerOver(app, point(41, from.y)) != "ew-resize");
+}
+
+TEST_CASE("the MIDI inserts' divider and the edit history's separator show the up-down double arrow", "[ui]")
+{
+	test::UiApp app({1200, 900});
+	app.setDpRatio(1.0F);
+	app.appUi().showProject();
+	app.appUi().docking().open("inspector");
+	app.appUi().trackList()->select({app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>()});
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json found =
+				app.ui().dom(std::nullopt, ".inspector [section=modifiers] .section-header", 0).at("elements");
+			return found.size() == 1 && found[0].at("visible").get<bool>();
+		}));
+	// The sections above the MIDI inserts closed, so that their divider is in view.
+	for (const char* section : {"basics", "routing", "modifiers"})
+		app.ui().click(std::nullopt, at(".inspector [section=" + std::string(section) + "] .section-header"),
+			ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&app] { return !app.ui().dom(std::nullopt, ".inspector .midi-divider[gap=0]", 0).at("elements").empty(); }));
+	CHECK(pointerOver(app, middle(app, ".inspector .midi-divider[gap=0]")) == "ns-resize");
+
+	app.keys().run("window.history", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil(
+		[&app] { return app.ui().dom(std::nullopt, "#history .history-separator", 0).at("elements").size() == 1; }));
+	CHECK(pointerOver(app, middle(app, "#history .history-separator")) == "ns-resize");
+	CHECK(pointerOver(app, point(5, 5)).empty());
 }
 
 TEST_CASE("text fields show the text I-beam", "[ui]")
