@@ -1,0 +1,166 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// UI tests of the mouse pointer by context (#469, #1857, docs/features/pointers.md): hovering an element through
+// ui::Automation shows the pointer that says what a drag or click there does, as MCP's ui_windows reports the one the
+// window system was asked for. The event lanes' other tool pointers are in uiapp_tests.cpp and eventediting_tests.cpp,
+// the sample and audio part editors' in their own tests.
+#include "uiapp.h"
+
+#include "engine/time/tempomap.h"
+#include "ui/automation.h"
+#include "ui/docking.h"
+#include "ui/midieditor.h"
+#include "ui/tracklist.h"
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <chrono>
+#include <cstdint>
+#include <optional>
+#include <string>
+
+using namespace gnubase;
+using engine::Json;
+
+namespace
+{
+	ui::Target at(const std::string& selector)
+	{
+		return {selector, 0, std::nullopt};
+	}
+
+	ui::Target point(int x, int y)
+	{
+		return {"", 0, ui::Point{x, y}};
+	}
+
+	// The middle of the one element the selector matches, in the window's pixels.
+	ui::Target middle(test::UiApp& app, const std::string& selector)
+	{
+		const Json found = app.ui().dom(std::nullopt, selector, 0).at("elements");
+		REQUIRE(found.size() == 1);
+		const Json& box = found[0].at("box");
+		return point(box.at("x").get<int>() + (box.at("width").get<int>() / 2),
+			box.at("y").get<int>() + (box.at("height").get<int>() / 2));
+	}
+
+	// The pointer that shows, by the name the style sheets give it: empty for the OS's arrow.
+	std::string pointer(test::UiApp& app)
+	{
+		app.shell().step(std::chrono::milliseconds(0));
+		return app.ui().windows().at("cursor").get<std::string>();
+	}
+
+	std::string pointerOver(test::UiApp& app, const ui::Target& target)
+	{
+		app.ui().move(std::nullopt, target);
+		return pointer(app);
+	}
+}
+
+TEST_CASE("splitters show the OS's double arrow in the direction they move, also while a drag leaves them", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.setDpRatio(1.0F);
+	app.appUi().showProject();
+	app.appUi().docking().setVisible("project", "left", true);
+	app.appUi().docking().setVisible("project", "lower", true);
+	app.shell().step(std::chrono::milliseconds(0));
+
+	// Left-right between the zones of a row and beside the track list, up-down above the lower zone.
+	CHECK(pointerOver(app, middle(app, "splitter[for=left]")) == "ew-resize");
+	CHECK(pointerOver(app, middle(app, "splitter[for=trackList]")) == "ew-resize");
+	CHECK(pointerOver(app, middle(app, "splitter[for=lower]")) == "ns-resize");
+	CHECK(pointerOver(app, point(5, 5)).empty());
+
+	// The left zone stops at its minimum of 120 dp, so the mouse leaves the splitter over the zone; the pointer stays
+	// the splitter's until the button goes up.
+	const ui::Target left = middle(app, "splitter[for=left]");
+	const ui::Point from = left.point.value_or(ui::Point{});
+	app.ui().press(std::nullopt, left, ui::MouseButton::Left);
+	app.ui().move(std::nullopt, point(from.x - 100, from.y));
+	app.ui().move(std::nullopt, point(40, from.y));
+	CHECK(pointer(app) == "ew-resize");
+	app.ui().release(std::nullopt, point(40, from.y), ui::MouseButton::Left);
+	CHECK(pointerOver(app, point(41, from.y)) != "ew-resize");
+}
+
+TEST_CASE("the MIDI inserts' divider and the edit history's separator show the up-down double arrow", "[ui]")
+{
+	test::UiApp app({1200, 900});
+	app.setDpRatio(1.0F);
+	app.appUi().showProject();
+	app.appUi().docking().open("inspector");
+	app.appUi().trackList()->select({app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>()});
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json found =
+				app.ui().dom(std::nullopt, ".inspector [section=modifiers] .section-header", 0).at("elements");
+			return found.size() == 1 && found[0].at("visible").get<bool>();
+		}));
+	// The sections above the MIDI inserts closed, so that their divider is in view.
+	for (const char* section : {"basics", "routing", "modifiers"})
+		app.ui().click(std::nullopt, at(".inspector [section=" + std::string(section) + "] .section-header"),
+			ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&app] { return !app.ui().dom(std::nullopt, ".inspector .midi-divider[gap=0]", 0).at("elements").empty(); }));
+	CHECK(pointerOver(app, middle(app, ".inspector .midi-divider[gap=0]")) == "ns-resize");
+
+	app.keys().run("window.history", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil(
+		[&app] { return app.ui().dom(std::nullopt, "#history .history-separator", 0).at("elements").size() == 1; }));
+	CHECK(pointerOver(app, middle(app, "#history .history-separator")) == "ns-resize");
+	CHECK(pointerOver(app, point(5, 5)).empty());
+}
+
+TEST_CASE("text fields show the text I-beam", "[ui]")
+{
+	test::UiApp app({1024, 500});
+	app.appUi().showProject();
+	app.keys().run("tempo.insertAtCursor", Json::object(), app.main(), nullptr);
+	REQUIRE(
+		app.waitUntil([&app] { return !app.ui().dom(std::nullopt, "#insert-tempo-value", 0).at("elements").empty(); }));
+	CHECK(pointerOver(app, at("#insert-tempo-value")) == "text");
+	CHECK(pointerOver(app, at("#insert-tempo-ok")).empty());
+}
+
+TEST_CASE("the time warp tool shows a clock with arrows over the event lanes", "[ui]")
+{
+	test::UiApp app({800, 300});
+	app.setDpRatio(1.0F);
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "midi"}});
+	app.shell().step(std::chrono::milliseconds(0));
+	const ui::Target lanes = middle(app, "event-lanes.events");
+	app.keys().run("tool.timeWarp", Json::object(), app.main(), nullptr);
+	CHECK(pointerOver(app, lanes) == "tool-timewarp");
+}
+
+TEST_CASE("the key editor's tools show their pointers over the note display, the trim tool a knife", "[ui]")
+{
+	test::UiApp app({1200, 800});
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	const Json part =
+		app.call("midiPart.add", {{"track", track.at("id")}, {"position", 0}, {"length", 4 * time::g_ticksPerQuarter}})
+			.at("part");
+	app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part.at("id")})}});
+	REQUIRE(app.waitUntil([&app] { return app.appUi().editorWindow() != nullptr; }));
+	const ui::WindowId window = app.appUi().editorWindowId();
+	REQUIRE(app.waitUntil([&] { return app.ui().dom(window, ".editor-part", 0).at("elements").size() == 1; }));
+	const auto over = [&app, window](const std::string& tool)
+	{
+		if (!tool.empty())
+			app.ui().click(window, at(".key-tool[key-tool=" + tool + "]"), ui::MouseButton::Left, 1, {});
+		app.ui().move(window, at(".key-editor-grid"));
+		return pointer(app);
+	};
+	CHECK(over("").empty()); // the object selection tool
+	CHECK(over("draw") == "tool-draw");
+	CHECK(over("line") == "tool-line");
+	CHECK(over("erase") == "tool-erase");
+	CHECK(over("trim") == "tool-split");
+	CHECK(over("split") == "tool-split");
+	CHECK(over("glue") == "tool-glue");
+	CHECK(over("mute") == "tool-mute");
+	CHECK(over("objectSelection").empty());
+}

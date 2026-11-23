@@ -12,7 +12,8 @@ library PlutoVG that comes with it.
   that an SVG can't make it read other files either: an image inside an SVG must be a `data:` URI.
 - **Mouse pointers.** GNUbase's own pointers (#469) are in `resources/cursors`, whose README lists them: 24 × 24 pixels at 100 %,
   black lines on a white outline so that they show on any background. Style sheets name them with RmlUi's `cursor`
-  property (`cursor: tool-draw;`), as the event display's tools do ([tools.md](tools.md)). `ui::Cursors`
+  property (`cursor: tool-draw;`), as the event display's tools do ([tools.md](tools.md)); which element shows
+  which pointer is in [pointers.md](pointers.md). `ui::Cursors`
   (`src/ui/cursors.h`) reads `cursors.json`, which gives each pointer its hotspot, the point it points with, and
   rasterizes a pointer through LunaSVG the first time it is asked for, at the display scales 1, 1.5, 2 and 3; the
   window system makes an OS pointer of them once, each scale with its own hotspot. They follow the monitor's scale, not
@@ -53,7 +54,8 @@ library PlutoVG that comes with it.
     and a transparent corner, its hotspot inside it, once; a broken picture or manifest, or a missing hotspot, leaves
     the OS's arrow; RmlUi's system interface reports the pointer that shows, none for a broken one, RmlUi's
     autoscroll pointers and other names the OS doesn't have, and every one of the OS's pointers by its name, which
-    SDL makes into a pointer of its own.
+    SDL makes into a pointer of its own; every `cursor` name in the style sheets and
+    documents is one of the OS's pointers or one of GNUbase's that loads.
 
   `tests/window_tests.cpp` draws icons in several sizes and colors and theme graphics through SDL_GPU at 100 %, 150 %
   and 200 % UI scale, compares them with golden images on every platform, and checks that a solid icon shows exactly

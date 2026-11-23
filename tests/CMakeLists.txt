@@ -156,6 +156,7 @@ add_executable(gnubase-tests
 	performance_tests.cpp
 	playback_tests.cpp
 	plugin_api_tests.cpp
+	pointers_ui_tests.cpp
 	pool_tests.cpp
 	poolpanel_tests.cpp
 	preferences_tests.cpp

@@ -174,6 +174,37 @@
 	cursor: move;
 }
 
+/* The tools' pointers over the note display (#1857); the trim tool's is the knife (reference manual p. 1215). */
+.key-editor[tool=draw] .key-editor-grid
+{
+	cursor: tool-draw;
+}
+
+.key-editor[tool=line] .key-editor-grid
+{
+	cursor: tool-line;
+}
+
+.key-editor[tool=erase] .key-editor-grid
+{
+	cursor: tool-erase;
+}
+
+.key-editor[tool=trim] .key-editor-grid, .key-editor[tool=split] .key-editor-grid
+{
+	cursor: tool-split;
+}
+
+.key-editor[tool=glue] .key-editor-grid
+{
+	cursor: tool-glue;
+}
+
+.key-editor[tool=mute] .key-editor-grid
+{
+	cursor: tool-mute;
+}
+
 /* While a gesture goes on, the grid and the keyboard's left part are RmlUi drag elements: their drag events come
    wherever the mouse is, also outside the window, and their dragend comes when the button goes up, also out there,
    where the document gets no mouseup. Only then: RmlUi doesn't scroll on a touch move during a drag. */
