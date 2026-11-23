@@ -765,3 +765,62 @@ TEST_CASE("the project colors setup dialog's presets make sets of 8 to 32 basic 
 	CHECK(colors[0] == factory[0]);
 	CHECK(colors[23] == factory[15]);
 }
+
+TEST_CASE("the project colors setup dialog shows the missing project colors and Apply replaces them", "[ui]")
+{
+	ProjectWindow window;
+	const Json factory = window.app.call("project.factoryColors").at("colors");
+	const std::string kept = "#010203"; // not in the set: no color replaces it
+	const auto colored = [&window](const std::string& color)
+	{ return window.app.call("track.add", {{"type", "midi"}, {"color", color}}).at("track").at("id"); };
+	colored(factory[1].at("color").get<std::string>());
+	colored(kept);
+	const auto plain = window.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const auto part =
+		window.app.call("midiPart.add", {{"track", plain}, {"position", 0}, {"length", 1920}}).at("part").at("id");
+	window.app.call("event.set", {{"events", Json::array({part})}, {"color", factory[2].at("color")}});
+
+	const auto open = [&window] { return !window.elements("#project-colors-dialog").empty(); };
+	window.app.keys().run("project.colorsSetup", Json::object(), window.app.main(), nullptr);
+	REQUIRE(window.app.waitUntil(open));
+	window.click("#colors-presets-tab");
+	CHECK(window.elements("#missing-colors .color-swatch").empty()); // the project's own set
+
+	// 8 basic colors keep the factory set's first and last; the others are missing, each with the color of the new
+	// set nearest to it to replace it (reference manual p. 118).
+	auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(window.find("#preset-basic"));
+	REQUIRE(select != nullptr);
+	select->SetValue("8");
+	window.app.shell().step(std::chrono::milliseconds(0));
+	const Json missing = window.elements("#missing-colors .color-swatch");
+	REQUIRE(missing.size() == 14);
+	CHECK(missing[0].at("attributes").at("color") == factory[1].at("color"));
+	const auto replacement = [&missing](size_t index)
+	{ return std::stoi(missing[index].at("attributes").at("replacement").get<std::string>()); };
+
+	// The mouse over a missing color highlights the color replacing it.
+	window.app.ui().move(std::nullopt, {"#missing-colors .color-swatch", 0, std::nullopt});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.elements("#preset-colors .color-swatch.replacement").size() == 1);
+	CHECK(window.find("#preset-colors .color-swatch.replacement") ==
+		window.find("#preset-colors")->GetChild(replacement(0) - 1));
+	window.app.ui().move(std::nullopt, {"#colors-presets-tab", 0, std::nullopt});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.elements("#preset-colors .color-swatch.replacement").empty());
+
+	// Apply gives the tracks and parts in a missing color the color replacing it, in the same undo step.
+	window.click("#colors-apply");
+	REQUIRE(window.app.waitUntil([&] { return !open(); }));
+	const Json project = window.project();
+	const Json& colors = project.at("colors");
+	REQUIRE(colors.size() == 8);
+	CHECK(project.at("tracks")[0].at("color") == colors[static_cast<size_t>(replacement(0) - 1)].at("color"));
+	CHECK(project.at("tracks")[1].at("color") == kept);
+	CHECK(project.at("tracks")[2].at("color").is_null());
+	CHECK(project.at("midiParts")[0].at("color") == colors[static_cast<size_t>(replacement(1) - 1)].at("color"));
+	CHECK(window.app.call("history.get").at("steps").back().at("action") == "Change project");
+	window.app.call("history.undo");
+	CHECK(window.project().at("colors") == factory);
+	CHECK(window.project().at("tracks")[0].at("color") == factory[1].at("color"));
+	CHECK(window.project().at("midiParts")[0].at("color") == factory[2].at("color"));
+}

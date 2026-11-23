@@ -431,6 +431,11 @@
 	{
 		decorator: svg(slider-thumb.svg);
 	}
+	.color-swatch.replacement
+	{
+		border-width: 3dp;
+		border-color: #ffffff;
+	}
 	.splitter-grip-vertical
 	{
 		decorator: svg(splitter-grip-vertical.svg);

@@ -769,6 +769,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("colorpicker .color-hue",
          {"decorator": "linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)"}),
         ("colorpicker .color-field-thumb, colorpicker .color-hue-thumb", {"decorator": skin("slider-thumb")}),
+        # The color of a new color set replacing a missing one, under the mouse (docs/features/colors.md)
+        (".color-swatch.replacement", {"border-width": f"{widths['focus']}dp", "border-color": c["text"]}),
         (".splitter-grip-vertical", {"decorator": skin("splitter-grip-vertical")}),
         (".splitter-grip-horizontal", {"decorator": skin("splitter-grip-horizontal")}),
         # Canvas elements (docs/features/canvas.md): events and notes, waveforms, automation curves and rulers
