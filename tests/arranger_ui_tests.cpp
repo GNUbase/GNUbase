@@ -779,3 +779,73 @@ TEST_CASE("the info line shows the arranger events selected on the lane and rena
 	CHECK(label("name") == "Name");
 	CHECK(window.shown(".arranger-lane-event.selected") == 0);
 }
+
+TEST_CASE("the inspector's Current Arranger Chain list selects steps and removes the selected ones", "[ui]")
+{
+	// Reference manual p. 410: Ctrl (Cmd) or Shift and a click select several steps, Remove Selected removes them.
+	Window window;
+	const Json a = window.app.call("arranger.add", {{"position", 0}, {"end", 8 * g_quarter}}).at("event").at("id");
+	const Json b =
+		window.app.call("arranger.add", {{"position", 8 * g_quarter}, {"end", 16 * g_quarter}}).at("event").at("id");
+	window.app.call("arranger.setChain", {{"steps", {{{"event", a}}, {{"event", b}}, {{"event", a}}, {{"event", b}}}}});
+	window.app.call("arranger.setMode", {{"mode", true}});
+	const auto chain = [&window]
+	{
+		const Json arranger = window.app.call("arranger.get");
+		for (const Json& each : arranger.at("chains"))
+			if (each.at("id") == arranger.at("chain"))
+				return each.at("steps");
+		return Json::array();
+	};
+	const auto click =
+		[&window](const std::string& selector, ui::MouseButton button, const std::vector<std::string>& modifiers = {})
+	{
+		window.app.ui().click(std::nullopt, {selector, 0, std::nullopt}, button, 1, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const std::string row = "listitem[type=arranger]";
+	REQUIRE(window.app.waitUntil([&] { return window.shown(row + " .track-name") == 1; }));
+	window.app.appUi().docking().open("inspector");
+	window.display.setTool(ui::Tool::ObjectSelection);
+	click(row + " .track-name", ui::MouseButton::Left);
+	const std::string steps = ".inspector .inspector-arranger-steps ";
+	REQUIRE(window.app.waitUntil([&] { return window.shown(steps + ".arranger-row") == 4; }));
+	const auto selected = [&]
+	{
+		window.app.shell().step(std::chrono::milliseconds(0));
+		std::string rows;
+		for (int step = 0; step < 4; ++step)
+			rows += window.hasClass(steps + "[step=\"" + std::to_string(step) + "\"]", "selected") ? "x" : "-";
+		return rows;
+	};
+	const auto step = [&steps](int index) { return steps + "[step=\"" + std::to_string(index) + "\"] .name"; };
+
+	// A click selects a step, Shift up to another one, Ctrl (Cmd) adds or removes one.
+	click(step(1), ui::MouseButton::Left);
+	CHECK(selected() == "-x--");
+	click(step(3), ui::MouseButton::Left, {"shift"});
+	CHECK(selected() == "-xxx");
+	click(step(2), ui::MouseButton::Left, {"ctrl"});
+	CHECK(selected() == "-x-x");
+	click(step(0), ui::MouseButton::Left, {"ctrl"});
+	CHECK(selected() == "xx-x");
+	// The arrow plays from its step and leaves the selection as it is.
+	click(steps + "[step=\"2\"] .arranger-locate", ui::MouseButton::Left);
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(steps + "[step=\"2\"]", "current"); }));
+	CHECK(selected() == "xx-x");
+
+	// Remove Selected removes them, and the steps left are selected none.
+	const auto removeSelected = std::string("#inspector-arranger-step-menu .arranger-remove-selected");
+	click(step(2), ui::MouseButton::Right);
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#inspector-arranger-step-menu", "open"); }));
+	CHECK_FALSE(window.element(removeSelected).value("attributes", Json::object()).contains("disabled"));
+	click(removeSelected, ui::MouseButton::Left);
+	REQUIRE(window.app.waitUntil([&] { return chain().size() == 1; }));
+	CHECK(chain()[0].at("event") == a);
+	REQUIRE(window.app.waitUntil([&] { return window.shown(steps + ".arranger-row") == 1; }));
+	CHECK_FALSE(window.hasClass(steps + "[step=\"0\"]", "selected"));
+	// Without a selection Remove Selected is disabled.
+	click(step(0), ui::MouseButton::Right);
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#inspector-arranger-step-menu", "open"); }));
+	CHECK(window.element(removeSelected).value("attributes", Json::object()).contains("disabled"));
+}

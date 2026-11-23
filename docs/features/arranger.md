@@ -102,6 +102,12 @@ each section's event has a number after its name, how often its event came so fa
   and the row of the step or event playing is `.current`. Like the track list's controls it follows
   `arranger.changed` and `transport.changed`, and reads `transport.get` on `arranger.changed`. A list is built again
   only when what it shows changed, so a name being typed stays.
+- **Selecting steps in a chain list** (p. 410): in the inspector's and the arranger editor's Current Arranger Chain
+  list a click on a step, not on its arrow, buttons or repeat mode, selects it (`.selected`, which the themes fill
+  lighter), with Shift the steps from the one clicked last, with Ctrl (Cmd) adds or removes it. Remove Selected on the
+  list's context menu (`.arranger-remove-selected` in the inspector's, `#chain-step-menu .remove-selected` in the
+  editor's) removes them (`removeSteps`), disabled in the inspector without a selection. The steps are selected by
+  index, so a chain edit selects none. The editor selects on the press, as a button's click builds its list again.
 - **Renaming arranger events in a chain list** (p. 405): in the inspector's and the arranger editor's Current Arranger
   Chain list a step's name is a disabled `textdisplay` that Alt and a double click open, and a plain double click
   doesn't; Enter renames the step's event (`arranger.set`), an empty name keeps the old one. The editor doesn't build
@@ -165,7 +171,8 @@ linearly against the chain's audio, with undo, and its notes cut at the sections
 it, with `renameEvents` numbering the events.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
 mode, a locate arrow on every row, renaming the active chain, and renaming a step's event with Alt and a double click,
-across a refresh while it is typed. `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide as
+across a refresh while it is typed, and selecting steps and removing the selected ones, a chain edit selecting none.
+`tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide as
 its section with its name, the draw tool drawing one over the stretch dragged and, with a click, from the bar line at or
 before it to the next one, both snapped to bars; with the snap type Events, drawing from and to other arranger events'
 edges, the event drawn showing while the button is down, a click just after a bar line whose start snaps back to an edge
@@ -180,7 +187,9 @@ its arrows disabled outside arranger mode, playing a step and triggering an even
 both ways, its header closing and opening it, and renaming a step's event with Alt and a double click, not with a plain
 one, across a refresh that changes nothing the lists show; typing a step's repeats, capped to 999 and kept for text that
 isn't a number, picking its repeat mode and removing it with Remove Touched; the info line showing the arranger events
-selected on the lane, renaming, moving and resizing them, the first or both, and a part selected deselecting them.
+selected on the lane, renaming, moving and resizing them, the first or both, and a part selected deselecting them;
+selecting steps with clicks, Shift and Ctrl, the arrow leaving the selection, and Remove Selected, disabled without a
+selection.
 `tests/theme_tests.cpp`: every theme fills a selected arranger event.
 
 Both real-time comparisons in `tests/arranger_tests.cpp` retry runs that report playback dropouts, with at most five
@@ -190,6 +199,6 @@ adopts it while B plays; an attempt that misses that stretch, or is still making
 because a busy machine held up the test, is retried like one with dropouts. It compares only a capture with the edit
 made in time and without dropouts; exhausting the attempts fails the test (#1893, #1900).
 
-Not yet: selecting steps in the chain lists (Remove Selected) and drag and drop in them, moving or erasing all selected
-arranger events at once, the other flatten options (Checked and All Chains, New Project, Make Real Event Copies) and a
-dialog for them in the editor, and arranging to an external timecode.
+Not yet: drag and drop in the chain lists, moving or erasing all selected arranger events at once, the other flatten
+options (Checked and All Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, and arranging
+to an external timecode.
