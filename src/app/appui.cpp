@@ -149,7 +149,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 98> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 100> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -201,6 +201,8 @@ namespace gnubase::app
 			{"audio.removeFadeOut", "Removes the fade out of the selected audio events.", nullptr},
 			{"audio.removeFades", "Removes the fades and crossfades of the selected audio events.", nullptr},
 			{"audio.fadeEditor", "Opens the fade dialog for the selected audio events.", nullptr},
+			{"audio.applyStandardFadeIn", "Gives the selected audio events the default fade in.", nullptr},
+			{"audio.applyStandardFadeOut", "Gives the selected audio events the default fade out.", nullptr},
 			// The audio functions (docs/features/audio-functions.md).
 			{"audio.detectSilence", "Opens the Detect Silence dialog for the selected audio events.", nullptr},
 			{"audio.spectrumAnalyzer", "Opens the Spectrum Analyzer for the selected audio event.", nullptr},
@@ -316,7 +318,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 32> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 34> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected (unless "
 				"ui.upDownSelectsTracksOnly).",
@@ -332,8 +334,23 @@ namespace gnubase::app
 			{"track.enableSelected", "Enables the selected tracks again.", nullptr},
 			// Render in place and freeze (docs/features/render-in-place.md).
 			{"track.freezeSelected",
-				"Freezes the selected audio and instrument tracks, or unfreezes them if every one is frozen.", nullptr},
-			{"track.renderSelected", "Renders the selected audio and instrument tracks in place.", nullptr},
+				"Freezes the selected audio and instrument tracks with the Tail Size of render.freezeTail, or "
+				"unfreezes them if every one is frozen.",
+				nullptr},
+			{"track.freezeSelectedSettings",
+				"Opens Freeze Channel Options for the selected audio and instrument tracks that aren't frozen, and "
+				"freezes them with its Tail Size (render.freezeTail); unfreezes them if every one is frozen.",
+				nullptr},
+			{"track.renderSelected",
+				"Renders in place with the options of the user setting render.options: the selected audio events, "
+				"audio parts and MIDI parts, else the selection range, else the selected tracks, on audio and "
+				"instrument tracks.",
+				nullptr},
+			{"track.renderSettings",
+				"Opens Render Selection for the selected events and parts or the selection range, else Render Tracks "
+				"for the selected tracks, and renders them in place with its options, which it saves in "
+				"render.options.",
+				nullptr},
 			// The chord track (docs/features/chord-track.md).
 			{"track.chordsToMidiSelected",
 				"Chords to MIDI: a MIDI part of the chord events on the first selected MIDI or instrument track, which "
@@ -1301,6 +1318,16 @@ namespace gnubase::app
 						return m_trackList != nullptr && (!paste || m_trackList->automationCopied()) &&
 							!(parameters ? m_trackList->selectedLanes(paste) : m_trackList->selection()).empty();
 					});
+			else if (id == "track.renderSelected" || id == "track.renderSettings")
+				// Also for selected events and parts or a selection range (reference manual pp. 1474-1477).
+				m_keys.enableWhen(command.id,
+					[this](ui::Window&, Rml::Element*)
+					{
+						return m_trackList != nullptr &&
+							(!m_trackList->selection().empty() ||
+								(m_eventDisplay &&
+									(!m_eventDisplay->selection().empty() || m_eventDisplay->range().has_value())));
+					});
 			else if (id == "track.pasteAutomationAll")
 				m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*)
 					{ return m_trackList != nullptr && m_trackList->automationCopied(); });
@@ -1351,6 +1378,15 @@ namespace gnubase::app
 				const std::string key = parameters.begin().key();
 				return (key == "audioRecordMode" || key == "midiRecordMode" || key == "midiCycleRecordMode") &&
 					m_transport.value(key, engine::Json()) == parameters.begin().value();
+			});
+
+		// Use Pre-roll and Use Post-roll show whether they are on (#583).
+		m_keys.checkWhen("transport.toggle",
+			[this](const engine::Json& parameters)
+			{
+				const std::string setting = parameters.value("setting", "");
+				return (setting == "preRoll" || setting == "postRoll") && m_transport.is_object() &&
+					m_transport.value(setting, false);
 			});
 
 		// Undo and Redo in the menus while the history has a step to undo or redo.

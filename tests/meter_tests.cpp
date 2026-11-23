@@ -5,6 +5,7 @@
 #include "engine/audio/meters.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "testutils/heldjob.h"
 #include "testutils/stopandjoin.h"
 
 #include <catch2/catch_approx.hpp>
@@ -581,6 +582,82 @@ TEST_CASE("a mono channel's meter reads both sides of its panner, and muting sil
 	CHECK(strip.at("peak").at(0).is_null());
 	CHECK(strip.at("peak").at(1).is_null());
 	CHECK(run(client, "meter.get").at("main").at("peak").at(1).is_null());
+}
+
+TEST_CASE(
+	"meter.position measures the channels after the input gain, after the fader or after the panner", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const Json added = run(client, "track.add", {{"type", "audio"}, {"channels", 1}});
+	const auto channel = added.at("channel").at("id").get<ObjectId>();
+	// The mono track's input, the stereo sine's two -6 dBFS sides at -3 dB each: -3 dBFS, 6 dB up in the pre section,
+	// 10 dB down at the fader, and at the center 3 dB down on each side with the -3 dB pan law.
+	run(client, "channel.set",
+		{{"channel", channel}, {"recordEnable", true}, {"pre", {{"gain", 6.0}}}, {"volume", -10.0}});
+	// A plugin slot splits the strip in two nodes (StripPart): the one before the slot measures the input.
+	if (GENERATE(false, true))
+		gnubase::test::waitForPlugin(
+			client, run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:eq"}}).at("slot").at("id"));
+	const auto peaks = [&client, channel](const std::string& position)
+	{
+		run(client, "settings.set", {{"key", "meter.position"}, {"value", position}});
+		run(client, "audio.render", {{"frames", 9600}});
+		return run(client, "meter.get", {{"channels", {channel}}}).at("channels").at(0).at("peak");
+	};
+
+	Json peak = peaks("postPanner"); // the default: both sides of the panner
+	REQUIRE(peak.size() == 2);
+	CHECK(peak.at(0).get<double>() == Approx(-10.02).margin(0.05));
+	CHECK(peak.at(1).get<double>() == Approx(-10.02).margin(0.05));
+	peak = peaks("postFader"); // the fader's gain without the panner: the channel's one side
+	REQUIRE(peak.size() == 1);
+	CHECK(peak.at(0).get<double>() == Approx(-7.01).margin(0.05));
+	peak = peaks("input");
+	REQUIRE(peak.size() == 1);
+	CHECK(peak.at(0).get<double>() == Approx(2.99).margin(0.05));
+
+	// Muting silences the channel after the fader, not its input.
+	run(client, "channel.set", {{"channel", channel}, {"mute", true}});
+	CHECK(peaks("input").at(0).get<double>() == Approx(2.99).margin(0.05));
+	CHECK(peaks("postFader").at(0).is_null());
+}
+
+TEST_CASE("a MIDI channel's meter shows the velocity of the loudest note that sounds", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const auto channel = run(client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", channel}, {"monitor", true}});
+	// Plays a MIDI message into the track for 200 ms: the meter's peak is then that of the notes that sound.
+	const auto play = [&client, channel](const std::vector<int>& bytes)
+	{
+		run(client, "midi.inject", {{"channel", channel}, {"messages", {{{"position", 0}, {"bytes", bytes}}}}});
+		run(client, "audio.render", {{"frames", 9600}});
+		return run(client, "meter.get", {{"channels", {channel}}}).at("channels").at(0);
+	};
+
+	Json meter = play({0x90, 60, 127}); // full velocity: 0 dBFS
+	REQUIRE(meter.at("peak").size() == 1);
+	CHECK(meter.at("peak").at(0).get<double>() == Approx(0.0).margin(0.01));
+	meter = play({0x90, 64, 64}); // the louder note still sounds
+	CHECK(meter.at("peak").at(0).get<double>() == Approx(0.0).margin(0.01));
+	meter = play({0x80, 60, 0});
+	CHECK(meter.at("peak").at(0).get<double>() == Approx(20.0 * std::log10(64.0 / 127.0)).margin(0.01));
+	meter = play({0x80, 64, 0});
+	CHECK(meter.at("peak").at(0).is_null());
+	CHECK(meter.at("peakMax").at(0).get<double>() == Approx(0.0).margin(0.01));
+
+	// Muting ends the notes that sound.
+	CHECK(
+		play({0x90, 60, 100}).at("peak").at(0).get<double>() == Approx(20.0 * std::log10(100.0 / 127.0)).margin(0.01));
+	run(client, "channel.set", {{"channel", channel}, {"mute", true}});
+	run(client, "audio.render", {{"frames", 9600}});
+	CHECK(run(client, "meter.get", {{"channels", {channel}}}).at("channels").at(0).at("peak").at(0).is_null());
 }
 
 TEST_CASE("a level meter channel that comes back starts without what it measured before", "[unit]")

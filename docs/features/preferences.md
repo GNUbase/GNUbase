@@ -32,8 +32,9 @@ presets to preferences and clients can tell them from the settings that have a p
   - Editing: Display Warning before Deleting Non-Empty Tracks (`ui.removeTracksWarning`), Default Track Time Type
     (`editing.defaultTimeBase`), Use Up/Down Navigation Commands for Selecting Tracks only
     (`ui.upDownSelectsTracksOnly`). Audio: Treat Muted Audio Events like Deleted (`editing.treatMutedAudioLikeDeleted`,
-    [comping.md](comping.md)), On Import Audio Files (`editing.onImportAudio`) and its settings, Copy Files to Project
-    Folder, Convert to Project Sample Rate, Split Channels and Name Format (`editing.importAudio*`,
+    [comping.md](comping.md)), Use Mouse Wheel for Event Volume and Fades (`editing.wheelEventVolumeAndFades`,
+    [volume-curves.md](volume-curves.md)), On Import Audio Files (`editing.onImportAudio`) and its settings, Copy Files
+    to Project Folder, Convert to Project Sample Rate, Split Channels and Name Format (`editing.importAudio*`,
     [file-import.md](file-import.md)). MIDI: Legato Overlap (`editing.legatoOverlap`), Legato Mode: Between Selected
     Notes Only (`editing.legatoBetweenSelected`). Tool Modifiers: each action's modifier keys (`ui.toolModifiers`, over
     the defaults that `ui::EventDisplay::defaultToolModifiers` has; the dialog keeps only those that differ), chosen
@@ -59,7 +60,8 @@ presets to preferences and clients can tell them from the settings that have a p
     Boundaries (`midi.chase*`). MIDI Filter: the Record section's message types, the channels and the controllers
     (`midi.recordFilter`); the Thru section waits for MIDI thru filtering. MIDI File: the Import Options
     (`midi.import*`, [file-import.md](file-import.md)); its Export Options wait for the export preferences.
-  - Metering: Meters' Peak Hold Time (`meter.peakHoldTime`, [mixer-window.md](mixer-window.md)).
+  - Metering: Meters' Peak Hold Time (`meter.peakHoldTime`) and Meters' Fallback (`meter.fallback`),
+    [mixer-window.md](mixer-window.md).
   - Record: Stop after Automatic Punch Out (`audio.stopAfterPunchOut`; switched off during the post-roll, playback
     goes on; `tests/recording_tests.cpp`). Audio: Audio Pre-Record Seconds (`audio.preRecordSeconds`), and the
     Broadcast Wave strings, Description, Author and Reference (`audio.broadcast*`, p. 1615, text fields). MIDI: Snap MIDI

@@ -1192,3 +1192,52 @@ TEST_CASE("retrospective input from cycle playback ends a note held across a lap
 		std::vector<std::vector<int64_t>>{
 			{g_beatTicks, g_beatTicks, 60}, {3 * g_beatTicks, g_beatTicks, 62}, {3 * g_beatTicks, g_beatTicks, 64}});
 }
+
+TEST_CASE("Insert as Cycle Recording stacks what each cycle lap played as a part of its own", "[integration]")
+{
+	// The inspector's Retrospective Recording menu (reference manual p. 355): input from cycle playback inserted as
+	// stacked parts, one per lap.
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	// Without a lap there is nothing to stack.
+	setup.inject({message(1000, {0x90, 59, 100}), message(1000 + g_beat, {0x80, 59, 0})});
+	run(client, "audio.render", {{"frames", 1000 + (2 * g_beat)}});
+	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}}),
+		ContainsSubstring("lap"));
+
+	run(client, "transport.set", {{"left", 0}, {"right", 4 * g_beat}, {"cycle", true}});
+	const auto now = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "transport.play");
+	// A note in each of three laps, the second one held into the third lap.
+	setup.inject({message(now + g_beat, {0x90, 60, 100}), message(now + (2 * g_beat), {0x80, 60, 0}),
+		message(now + (7 * g_beat), {0x90, 62, 100}), message(now + (9 * g_beat), {0x80, 62, 0}),
+		message(now + (10 * g_beat), {0x90, 64, 100}), message(now + (11 * g_beat), {0x80, 64, 0})});
+	run(client, "audio.render", {{"frames", 12 * g_beat}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 64}});
+	const Json added = run(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}});
+	CHECK(added.at("parts").size() == 3);
+	std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 3);
+	std::sort(parts.begin(), parts.end(), [](const Json& a, const Json& b) { return a.at("lane") < b.at("lane"); });
+	const std::vector<std::vector<int64_t>> expected = {
+		{g_beatTicks, g_beatTicks, 60}, {3 * g_beatTicks, g_beatTicks, 62}, {2 * g_beatTicks, g_beatTicks, 64}};
+	for (size_t lap = 0; lap < 3; ++lap)
+	{
+		INFO("lap " << lap);
+		const Json& part = parts[lap];
+		CHECK(part.at("lane") == lap);
+		CHECK(part.at("mute") == (lap < 2));
+		const auto start = part.at("position").get<int64_t>();
+		std::vector<std::vector<int64_t>> notes = notesOf(part);
+		for (std::vector<int64_t>& each : notes)
+			each[0] += start;
+		CHECK(notes == std::vector<std::vector<int64_t>>{expected[lap]});
+	}
+	// A lap that playback left ends at the right locator.
+	CHECK(parts[1].at("position").get<int64_t>() + parts[1].at("length").get<int64_t>() == 4 * g_beatTicks);
+	run(client, "history.undo"); // one undo step
+	CHECK(setup.parts().empty());
+}

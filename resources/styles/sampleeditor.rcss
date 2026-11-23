@@ -357,9 +357,10 @@
 	height: 7dp;
 }
 
+/* Free Warp: a press inserts a warp marker or moves one, under a clock with arrows (reference manual p. 655). */
 .sample-editor.free-warp .se-display
 {
-	cursor: resize;
+	cursor: tool-timewarp;
 }
 
 .sample-editor.edit-hitpoints .se-display
@@ -391,7 +392,7 @@
 	flex: 1 1 0;
 }
 
-/* The snap point's handle: a line across the display that is easy to grab. */
+/* The snap point's handle: a line across the display that is easy to grab, under a hand (reference manual p. 628). */
 .se-snap-point
 {
 	position: absolute;
@@ -399,7 +400,7 @@
 	bottom: 0;
 	width: 3dp;
 	margin-left: -1dp;
-	cursor: resize;
+	cursor: pointer;
 }
 
 .se-regions

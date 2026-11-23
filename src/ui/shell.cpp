@@ -196,7 +196,16 @@ namespace gnubase::ui
 	{
 		{
 			const std::scoped_lock lock(m_postedMutex);
-			m_posted.push_back(std::move(task));
+			m_posted.push_back({std::move(task), true});
+		}
+		m_windows.wake();
+	}
+
+	void Shell::postQuietly(std::function<void()> task)
+	{
+		{
+			const std::scoped_lock lock(m_postedMutex);
+			m_posted.push_back({std::move(task), false});
 		}
 		m_windows.wake();
 	}
@@ -208,7 +217,7 @@ namespace gnubase::ui
 			close(std::prev(m_open.end())->first);
 		m_running = false;
 		// Nothing runs posted work any more: drop it, so that threads waiting for it learn so at once.
-		std::vector<std::function<void()>> posted;
+		std::vector<Posted> posted;
 		{
 			const std::scoped_lock lock(m_postedMutex);
 			posted.swap(m_posted);
@@ -337,6 +346,7 @@ namespace gnubase::ui
 				keyReleased(*window, *event.keyUp);
 			break;
 		case WindowEventKind::FilesDropped:
+			window->m_renderRequested = true;
 			dropFiles(*window, event.position, event.files);
 			break;
 		default:
@@ -389,14 +399,26 @@ namespace gnubase::ui
 			event = m_windows.nextEvent(std::chrono::milliseconds(0));
 		}
 
-		std::vector<std::function<void()>> posted;
+		std::vector<Posted> posted;
 		{
 			const std::scoped_lock lock(m_postedMutex);
 			posted.swap(m_posted);
 		}
-		for (const std::function<void()>& task : posted)
-			task();
 		if (!posted.empty())
+		{
+			// A read's Rml::Context::Update() clears the context's request for its next update: keep a due one.
+			const Clock::time_point due = Clock::now();
+			for (auto& [id, window] : m_open)
+				if (nextUpdate(*window, due) <= due)
+					window->m_renderRequested = true;
+		}
+		bool drawAll = false;
+		for (const Posted& task : posted)
+		{
+			task.run();
+			drawAll = drawAll || task.drawsAll;
+		}
+		if (drawAll)
 			requestRender(); // posted work comes from outside input, and may change any window
 
 		Clock::time_point now = Clock::now();

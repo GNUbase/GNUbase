@@ -430,6 +430,12 @@ namespace gnubase::ui
 		return positionSamples(seconds, m_time.sampleRate);
 	}
 
+	double TransportControls::amountStart(const std::string& time) const
+	{
+		const char* locator = time == "preRollAmount" ? "left" : "right";
+		return static_cast<double>(m_status.value(locator, int64_t{0})) / m_time.sampleRate;
+	}
+
 	void TransportControls::ProcessEvent(Rml::Event& event)
 	{
 		const Rml::Element* root = m_root.get();
@@ -583,13 +589,15 @@ namespace gnubase::ui
 		const std::string time = attribute(element, "time");
 		const TimeFormat format = this->format(attribute(element, "format", "primary"));
 		const double left = static_cast<double>(m_status.value("left", int64_t{0})) / m_time.sampleRate;
-		const std::optional<double> seconds =
-			time == "length" ? parseLength(format, text, left, m_time) : parseTime(format, text, m_time);
+		const bool amount = isAmount(time);
+		const std::optional<double> seconds = time == "length" || amount
+			? parseLength(format, text, amount ? amountStart(time) : left, m_time)
+			: parseTime(format, text, m_time);
 		if (!seconds)
 			show(); // the text typed goes
 		else if (time == "position")
 			m_binding.send("transport.locate", {{"position", samples(*seconds)}});
-		else if (time == "left" || time == "right")
+		else if (time == "left" || time == "right" || amount)
 			m_binding.send("transport.set", {{time, samples(*seconds)}});
 		else if (time == "length")
 			m_binding.send("transport.set", {{"right", samples(left + *seconds)}});
@@ -614,6 +622,8 @@ namespace gnubase::ui
 			from = static_cast<double>(m_position) / rate;
 		else if (time == "left")
 			from = left;
+		else if (isAmount(time)) // where the amount ends
+			from = amountStart(time) + (static_cast<double>(m_status.value(time, int64_t{0})) / rate);
 		double to = from + static_cast<double>(steps); // by seconds in seconds and samples
 		switch (format(attribute(element, "format", "primary")))
 		{
@@ -642,6 +652,11 @@ namespace gnubase::ui
 		{
 			m_position = samples(to);
 			m_binding.send("transport.locate", {{"position", m_position}});
+		}
+		else if (isAmount(time))
+		{
+			m_status[time] = samples(std::max(to - amountStart(time), 0.0));
+			m_binding.send("transport.set", {{time, m_status[time]}});
 		}
 		else
 		{
@@ -745,11 +760,15 @@ namespace gnubase::ui
 	{
 		if (!alive())
 			return;
-		for (Rml::Element* element : all("[state]"))
+		const auto on = [this](const std::string& key)
 		{
-			const auto value = m_status.find(attribute(*element, "state"));
-			setChecked(*element, value != m_status.end() && value->is_boolean() && value->get<bool>());
-		}
+			const auto value = m_status.find(key);
+			return value != m_status.end() && value->is_boolean() && value->get<bool>();
+		};
+		for (Rml::Element* element : all("[state]"))
+			setChecked(*element, on(attribute(*element, "state")));
+		for (Rml::Element* element : all("[waiting]"))
+			element->SetClass("waiting", on(attribute(*element, "waiting")));
 		showTempo();
 		for (Rml::Element* element : all("[field=tempoTrack]"))
 			setChecked(*element, m_tempoTrackActive);
@@ -839,6 +858,12 @@ namespace gnubase::ui
 			else if (time == "length")
 			{
 				changed = setText(*element, formatLength(format, left, std::max(left, right), m_time)) || changed;
+			}
+			else if (isAmount(time))
+			{
+				const double start = amountStart(time);
+				const double amount = static_cast<double>(m_status.value(time, int64_t{0})) / rate;
+				changed = setText(*element, formatLength(format, start, start + amount, m_time)) || changed;
 			}
 		}
 		return changed;

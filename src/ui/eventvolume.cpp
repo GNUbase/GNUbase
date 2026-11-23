@@ -3,14 +3,20 @@
 // events, the event volume control, the draw tool's curve points, the erase tool on them and Remove Volume Curve.
 // docs/features/volume-curves.md describes them.
 #include "engine/audio/fades.h"
+#include "engine/document/document.h"
 #include "engine/document/serialize.h"
 #include "ui/eventdisplay.h"
 
+#include <RmlUi/Core/Element.h>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace gnubase::ui
@@ -23,6 +29,9 @@ namespace gnubase::ui
 			8.0; // dp at the bottom of a lane, and around the event volume control, that grab it
 		constexpr double g_faderInset = 16.0; // dp from an event's start to its volume control's middle, past its edge
 		constexpr double g_pointReach = 6.0;  // dp around a curve point that grab it
+		constexpr double g_fineVolume = 0.1;  // of the mouse's movement that moves the control with Shift
+		constexpr double g_wheelVolume = 1.0; // dB a line of the mouse wheel
+		constexpr double g_wheelFade = 10.0;  // dp of the display a line of the mouse wheel moves a fade's end
 
 		double gain(double db)
 		{
@@ -74,6 +83,83 @@ namespace gnubase::ui
 			return false;
 		m_dragEvent = shown.id;
 		m_drag = Drag::Volume;
+		m_volumeDy = 0.0;
+		return true;
+	}
+
+	void EventDisplay::volumeMove(double dy, bool fine)
+	{
+		// From where the control is, so that pressing or letting go of Shift doesn't make it jump.
+		m_dragDy += (dy - m_volumeDy) * (fine ? g_fineVolume : 1.0);
+		m_volumeDy = dy;
+		showFades();
+	}
+
+	void EventDisplay::showVolumeReadout()
+	{
+		const auto shown = std::find_if(
+			m_events.begin(), m_events.end(), [this](const Shown& each) { return each.id == m_dragEvent; });
+		const std::optional<double> fader = shown != m_events.end() ? faderOf(*shown) : std::nullopt;
+		const bool dragging = m_drag == Drag::Volume && m_dragMoved && fader && m_fades.count(m_dragEvent) != 0;
+		m_volumeReadout->SetClass("shown", dragging);
+		if (!dragging)
+			return;
+		const double volume = draggedVolume(m_dragEvent);
+		std::array<char, 48> text{};
+		std::snprintf(text.data(), text.size(), "%.1f dB (%+.1f)", volume, volume - m_fades.at(m_dragEvent).volume);
+		m_volumeReadout->SetInnerRML(text.data());
+		m_volumeReadout->SetProperty(Rml::PropertyId::Left,
+			Rml::Property(static_cast<float>(((*fader - m_view.start) / m_view.scale) + g_handleSize), Rml::Unit::DP));
+		m_volumeReadout->SetProperty(Rml::PropertyId::Top,
+			Rml::Property(static_cast<float>(m_laneTops[shown->lane] - m_view.top), Rml::Unit::DP));
+	}
+
+	bool EventDisplay::wheelVolume(double x, double y, double lines, bool fades)
+	{
+		const Shown* shown = eventAt(x, y);
+		if (shown == nullptr || lines == 0.0)
+			return false;
+		const auto found = m_fades.find(shown->id);
+		if (found == m_fades.end() || !(found->second.rate > 0.0))
+			return false;
+		const AudioFades& audio = found->second;
+		// Lines faster than the project reads after them, several in a frame on a quick turn, go on from what the
+		// wheel sent last, which the record keeps until the project has it.
+		const std::string key = std::to_string(shown->id);
+		const Json* record = m_binding.shown(m_wheelSteps, m_read);
+		const Json sent = record != nullptr && record->contains(key) ? record->at(key) : Json::object();
+		const auto send = [this, &key](const char* description, const char* command, Json parameters, Json value)
+		{
+			m_binding.sendStep(0, m_wheelSteps, description,
+				Json::array({{{"command", command}, {"parameters", std::move(parameters)}}}),
+				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && !result.ok())
+						showRefusal(result.error);
+				},
+				{{key, std::move(value)}});
+		};
+		if (!fades)
+		{
+			// Up, which turns the wheel by negative lines, is louder.
+			const double from = sent.value("volume", audio.volume);
+			const double volume =
+				std::clamp(from - (lines * g_wheelVolume), engine::g_minEventVolume, engine::g_maxEventVolume);
+			if (volume != from)
+				send("Change event volume", "audioEvent.set", {{"event", shown->id}, {"volume", volume}},
+					{{"volume", volume}});
+			return true;
+		}
+		// The fade in's end in the event's left half, the fade out's start in its right half (p. 382): up lengthens.
+		const bool in = m_view.start + (x * m_view.scale) < (shown->start + shown->end) / 2.0;
+		const int64_t own = sent.value(in ? "fadeIn" : "fadeOut", (in ? audio.in : audio.out).length);
+		const int64_t other = sent.value(in ? "fadeOut" : "fadeIn", (in ? audio.out : audio.in).length);
+		const int64_t length = std::clamp<int64_t>(own - std::llround(lines * g_wheelFade * m_view.scale * audio.rate),
+			0, std::max<int64_t>(0, audio.fadeRoom - other));
+		if (length != own)
+			send("Change fades", "audioEvent.setFades",
+				{{"event", shown->id}, {in ? "fadeIn" : "fadeOut", {{"length", length}}}},
+				{{in ? "fadeIn" : "fadeOut", length}});
 		return true;
 	}
 
@@ -86,6 +172,7 @@ namespace gnubase::ui
 		m_drag = Drag::None;
 		m_dragMoved = false;
 		m_dragDy = 0.0;
+		m_volumeDy = 0.0;
 		if (!commands.empty())
 			edit("history.transaction", {{"description", "Change event volume"}, {"commands", std::move(commands)}});
 		showFades();

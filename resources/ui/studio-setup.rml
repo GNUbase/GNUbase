@@ -279,6 +279,7 @@
 				field("Output Latency", "<span>" .. milliseconds(device.outputLatency, device.sampleRate) .. "</span>") ..
 				field("Sample Rate", choices("sample-rate", device.sampleRates or {}, device.sampleRate)) ..
 				field("Buffer Size", choices("block-size", device.blockSizes or {}, device.blockSize)) .. clock ..
+				field("Externally Clocked", checkbox('id="externally-clocked"', device.externallyClocked)) ..
 				field("Direct Monitoring",
 					checkbox('id="direct-monitoring"', device.directMonitoring, not device.canMonitorDirectly)) ..
 				portsTitle("audio-ports") ..
@@ -613,6 +614,10 @@
 			local clockSource = valueOf(document:GetElementById("clock-source"))
 			if clockSource ~= nil and clockSource ~= "" and clockSource ~= device.clockSource then
 				changes.clockSource = clockSource
+			end
+			local externallyClocked = checked(document:GetElementById("externally-clocked"))
+			if externallyClocked ~= device.externallyClocked then
+				changes.externallyClocked = externallyClocked
 			end
 			local directMonitoring = checked(document:GetElementById("direct-monitoring"))
 			if directMonitoring ~= device.directMonitoring then

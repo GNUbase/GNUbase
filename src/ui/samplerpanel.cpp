@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/samplerpanel.h"
 
+#include "platform/log.h"
 #include "ui/canvas.h"
 #include "ui/rmlui.h"
 #include "ui/widgetutils.h"
@@ -11,10 +12,12 @@
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Property.h>
 #include <RmlUi/Core/StringUtilities.h>
+#include <RmlUi/Core/SystemInterface.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <exception>
 #include <sstream>
 #include <utility>
 
@@ -100,6 +103,21 @@ namespace gnubase::ui
 		}
 
 		constexpr int g_keys = 128;
+
+		// How long the event received indicator stays lit after the last note-on or controller (p. 713).
+		constexpr double g_receivedSeconds = 0.25;
+
+		// The markers whose positions Snap to Zero Crossing moves to where the sample crosses zero (p. 713).
+		bool snapsToZero(const std::string& marker)
+		{
+			return marker == "Start" || marker == "End" || marker == "Loop start" || marker == "Loop end";
+		}
+
+		double now()
+		{
+			Rml::SystemInterface* system = Rml::GetSystemInterface();
+			return system != nullptr ? system->GetElapsedTime() : 0.0;
+		}
 
 		std::string encode(const std::string& text)
 		{
@@ -188,6 +206,8 @@ namespace gnubase::ui
 			R"(<div class="sampler-panel empty" id="sampler-panel">)"
 			R"(<div class="sampler-hint">Select a sampler track</div>)"
 			R"(<div class="sampler-toolbar">)"
+			R"(<span id="sampler-received" class="sampler-received" title="Event Received Indicator"/>)"
+			R"(<button id="sampler-zero" type="toggle" title="Snap to Zero Crossing">Zero</button>)"
 			R"(<button id="sampler-import" title="Import Audio File">Import</button>)"
 			R"(<span id="sampler-file" class="sampler-file"/>)"
 			R"(<span id="sampler-message" class="sampler-message"/>)"
@@ -195,6 +215,7 @@ namespace gnubase::ui
 			R"( default="0" value="0" decimals="1" unit="dB"/>)"
 			R"(<button id="sampler-normalize" title="Normalize Sample">Normalize</button>)"
 			R"(<button id="sampler-lock" type="toggle" title="Lock Parameter Settings">Lock</button>)"
+			R"(<button id="sampler-midi-reset" title="MIDI Reset">Reset</button>)"
 			R"(</div><div class="sampler-display" id="sampler-display"><waveform class="sampler-wave"/>)"
 			R"(<div class="sampler-outside sampler-before"/><div class="sampler-outside sampler-after"/>)"
 			R"(<div class="sampler-loop"/>)" +
@@ -224,6 +245,11 @@ namespace gnubase::ui
 					applySettings(*settings);
 				}
 			}));
+		// The event received indicator lights up at note-ons and controllers from the track's MIDI input (p. 713).
+		m_subscriptions.push_back(
+			m_binding.on("midi.activity", [this](const engine::Event& event) { received(event.data); }));
+		m_subscriptions.push_back(
+			m_binding.on("midi.changed", [this](const engine::Event& event) { readPorts(event.data); }));
 		m_binding.send("settings.get", {{"key", "ui.samplerPanel"}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
@@ -240,6 +266,15 @@ namespace gnubase::ui
 
 	SamplerPanel::~SamplerPanel()
 	{
+		// The indicator stops listening with the panel. Sending may throw, which a destructor must not pass on.
+		try
+		{
+			listen(false);
+		}
+		catch (const std::exception& error)
+		{
+			logging::warning("The sampler panel cannot stop listening for MIDI input: {}", error.what());
+		}
 		if (Rml::Element* root = m_root.get())
 		{
 			for (const Rml::EventId id : g_events)
@@ -359,6 +394,11 @@ namespace gnubase::ui
 	void SamplerPanel::update(uint64_t track, const Json& project, uint64_t loads, uint64_t read)
 	{
 		m_read = read;
+		if (m_received && now() - m_receivedAt >= g_receivedSeconds)
+		{
+			m_received = false;
+			setClass(find("sampler-received"), "lit", false);
+		}
 		// The waveform's columns follow the display's width once it is laid out, and whenever it changes.
 		if (Rml::Element* wave = m_root ? m_root->QuerySelector(".sampler-wave") : nullptr;
 			wave != nullptr && m_media != 0 && wave->GetClientWidth() != m_askedWidth)
@@ -375,6 +415,7 @@ namespace gnubase::ui
 			showMessage(""); // what failed concerned the track shown before
 		m_track = channel != nullptr ? track : 0;
 		m_channel = channel != nullptr ? *channel : Json();
+		listen(m_track != 0);
 		std::map<uint32_t, double> values;
 		if (channel != nullptr)
 			for (const Json& item : channel->value("instrumentParameters", Json::array()))
@@ -431,6 +472,7 @@ namespace gnubase::ui
 			}
 		}
 		setChecked(find("sampler-lock"), m_lock);
+		setChecked(find("sampler-zero"), m_snapToZero);
 		if (Rml::Element* level = find("sampler-level"); level != nullptr &&
 			std::abs(widgets::number(*level, "value", static_cast<float>(m_level) + 1.0F) - m_level) > 1e-6)
 			level->SetAttribute("value", widgets::format(static_cast<float>(m_level)));
@@ -625,16 +667,108 @@ namespace gnubase::ui
 			share = std::clamp(value("End") - share, 0.0, range);
 		else if (m_dragged == "Loop crossfade")
 			share = std::clamp(value("Loop end") - share, 0.0, crossfadeLimit());
-		else if (m_dragged == "Start")
-			share = std::min(share, value("End"));
-		else if (m_dragged == "End")
-			share = std::max(share, value("Start"));
-		else if (m_dragged == "Loop start")
-			share = std::min(share, value("Loop end"));
 		else
-			share = std::max(share, value("Loop start"));
+			share = ordered(m_dragged, share);
 		set(dragged->id, share, m_gesture);
 		showMarkers();
+	}
+
+	// A position's share kept in order: Start before End, and the loop's start before its end.
+	double SamplerPanel::ordered(const std::string& marker, double share) const
+	{
+		if (marker == "Start")
+			return std::min(share, value("End"));
+		if (marker == "End")
+			return std::max(share, value("Start"));
+		if (marker == "Loop start")
+			return std::min(share, value("Loop end"));
+		return std::max(share, value("Loop start"));
+	}
+
+	// With Snap to Zero Crossing, a marker's drag ends where the sample crosses zero nearest to where it was let go
+	// (sampler.zeroCrossings), in the drag's undo step. Key commands, such as an undo right after the drag, wait for it
+	// (sendAwaited); the panel's own mouse input doesn't.
+	void SamplerPanel::snapToZero(const std::string& marker, int gesture)
+	{
+		const Parameter* found = parameter(marker);
+		if (found == nullptr || m_track == 0)
+			return;
+		m_binding.sendAwaited("sampler.zeroCrossings", {{"track", m_track}, {"positions", {value(marker)}}},
+			[this, alive = std::weak_ptr<bool>(m_alive), marker, gesture, track = m_track, id = found->id](
+				const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok() || track != m_track)
+					return;
+				set(id, ordered(marker, result.value.at("positions").at(0).get<double>()), gesture);
+				showMarkers();
+			});
+	}
+
+	// A bar's drag likewise ends with both its markers where the sample crosses zero, in one query and the drag's step.
+	void SamplerPanel::snapBarToZero(const std::string& id, int gesture)
+	{
+		const Bar* bar = barOf(id);
+		if (bar == nullptr || m_track == 0)
+			return;
+		m_binding.sendAwaited("sampler.zeroCrossings",
+			{{"track", m_track}, {"positions", {value(bar->from), value(bar->to)}}},
+			[this, alive = std::weak_ptr<bool>(m_alive), id, gesture, track = m_track](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok() || track != m_track)
+					return;
+				const Json& positions = result.value.at("positions");
+				setBar(id, positions.at(0).get<double>(), positions.at(1).get<double>(), gesture);
+				showMarkers();
+			});
+	}
+
+	// Turns midi.activity on or off for the indicator, and asks which MIDI inputs aren't among all MIDI inputs, which
+	// it leaves out.
+	void SamplerPanel::listen(bool on)
+	{
+		if (on == m_listening)
+			return;
+		m_listening = on;
+		m_binding.send("midi.activityListen", {{"on", on}, {"listener", m_stepOwner}});
+		if (on)
+			m_binding.send("midi.ports", Json::object(),
+				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && result.ok())
+						readPorts(result.value);
+				});
+	}
+
+	void SamplerPanel::readPorts(const Json& ports)
+	{
+		m_notInAllInputs.clear();
+		for (const Json& port : ports.value("ports", Json::array()))
+			if (port.value("input", false) && !port.value("inAllInputs", true))
+				m_notInAllInputs.insert(port.value("backend", std::string()) + " " + port.value("id", std::string()));
+	}
+
+	// Lights the indicator at a note-on or a controller that the track's MIDI input, all MIDI inputs, receives.
+	void SamplerPanel::received(const Json& activity)
+	{
+		if (m_track == 0 || m_channel.value("midiInput", std::string("all")) != "all")
+			return;
+		for (const Json& message : activity.value("received", Json::array()))
+		{
+			const auto bytes = message.value("bytes", std::vector<int>());
+			const int status = bytes.empty() ? 0 : bytes[0] & 0xF0;
+			const bool lights = status == 0xB0 || (status == 0x90 && bytes.size() > 2 && bytes[2] > 0);
+			const std::string port = message.value("backend", std::string()) + " " + message.value("id", std::string());
+			if (!lights || m_notInAllInputs.count(port) != 0)
+				continue;
+			m_received = true;
+			m_receivedAt = now();
+			Rml::Element* indicator = find("sampler-received");
+			setClass(indicator, "lit", true);
+			// The UI updates again then, and update puts it out.
+			if (Rml::Context* context = indicator != nullptr ? indicator->GetContext() : nullptr)
+				context->RequestNextUpdate(g_receivedSeconds);
+			return;
+		}
 	}
 
 	// Moves the two markers of the bar dragged by as far as the mouse went since the drag began, keeping their
@@ -642,28 +776,34 @@ namespace gnubase::ui
 	void SamplerPanel::dragBar(const Rml::Event& event)
 	{
 		Rml::Element* display = find("sampler-display");
-		const Bar* bar = barOf(m_bar);
-		const Parameter* from = bar == nullptr ? nullptr : parameter(bar->from);
-		const Parameter* to = bar == nullptr ? nullptr : parameter(bar->to);
 		const float width = display == nullptr ? 0.0F : display->GetClientWidth();
-		if (from == nullptr || to == nullptr || !m_channel.is_object() || !(width > 0.0F))
+		if (!(width > 0.0F))
 			return;
 		const double moved = (event.GetParameter<float>("mouse_x", 0.0F) - m_barMouse) / static_cast<double>(width);
 		const double shift = std::clamp(value("Reverse") >= 0.5 ? -moved : moved, -std::min(m_barFrom, m_barTo),
 			1.0 - std::max(m_barFrom, m_barTo));
-		const double first = std::clamp(m_barFrom + shift, 0.0, 1.0);
-		const double second = std::clamp(m_barTo + shift, 0.0, 1.0);
-		const auto command = [this](uint32_t id, double share)
+		setBar(m_bar, std::clamp(m_barFrom + shift, 0.0, 1.0), std::clamp(m_barTo + shift, 0.0, 1.0), m_gesture);
+		showMarkers();
+	}
+
+	// Sets the two markers of a bar in one step.
+	void SamplerPanel::setBar(const std::string& id, double first, double second, int gesture)
+	{
+		const Bar* bar = barOf(id);
+		const Parameter* from = bar == nullptr ? nullptr : parameter(bar->from);
+		const Parameter* to = bar == nullptr ? nullptr : parameter(bar->to);
+		if (from == nullptr || to == nullptr || !m_channel.is_object())
+			return;
+		const auto command = [this](uint32_t parameter, double share)
 		{
 			return Json{{"command", "parameter.set"},
 				{"parameters",
-					{{"channel", m_channel.at("id")}, {"target", {{"type", "instrument"}, {"parameter", id}}},
+					{{"channel", m_channel.at("id")}, {"target", {{"type", "instrument"}, {"parameter", parameter}}},
 						{"value", share}}}};
 		};
-		m_binding.sendStep(m_gesture, barKey(bar->id), std::string("Move ") + bar->from + " and " + bar->to,
+		m_binding.sendStep(gesture, barKey(bar->id), std::string("Move ") + bar->from + " and " + bar->to,
 			Json::array({command(from->id, first), command(to->id, second)}), {},
 			Json{{bar->from, first}, {bar->to, second}});
-		showMarkers();
 	}
 
 	// Moves the keyboard's handle dragged to the key under the mouse: the key range's low key stays at or below its
@@ -712,6 +852,7 @@ namespace gnubase::ui
 	{
 		m_settings = settings.is_object() ? settings : Json::object();
 		m_lock = m_settings.value("lockParameters", false);
+		m_snapToZero = m_settings.value("snapToZero", false);
 		m_level = std::clamp(m_settings.value("normalizeLevel", 0.0), -96.0, 0.0);
 		show();
 	}
@@ -720,6 +861,7 @@ namespace gnubase::ui
 	{
 		m_settingsKnown = true; // what settings.get answers now is older
 		m_settings["lockParameters"] = m_lock;
+		m_settings["snapToZero"] = m_snapToZero;
 		m_settings["normalizeLevel"] = m_level;
 		++m_savesSent;
 		m_binding.send("settings.set", {{"key", "ui.samplerPanel"}, {"value", m_settings}},
@@ -770,6 +912,10 @@ namespace gnubase::ui
 				dragKey(event);
 			return;
 		case Rml::EventId::Dragend:
+			if (m_snapToZero && snapsToZero(m_dragged))
+				snapToZero(m_dragged, m_gesture);
+			else if (m_snapToZero && !m_bar.empty())
+				snapBarToZero(m_bar, m_gesture);
 			if (!m_dragged.empty() || !m_bar.empty())
 			{
 				m_dragged.clear();
@@ -799,6 +945,21 @@ namespace gnubase::ui
 							showMessage(result.ok() ? "" : "Normalize Sample failed: " + result.error);
 					});
 			}
+			else if (target->GetId() == "sampler-midi-reset")
+			{
+				// All Sound Off and Reset All Controllers on every MIDI channel, straight to the sampler (p. 716).
+				Json messages = Json::array();
+				for (int channel = 0; channel < 16; ++channel)
+					for (const int controller : {120, 121})
+						messages.push_back({{"position", 0}, {"bytes", {0xB0 + channel, controller, 0}}});
+				m_binding.send("midi.inject",
+					{{"channel", m_channel.at("id")}, {"direct", true}, {"messages", std::move(messages)}},
+					[this, alive = std::weak_ptr<bool>(m_alive), track = m_track](const engine::Result& result)
+					{
+						if (!alive.expired() && track == m_track)
+							showMessage(result.ok() ? "" : "MIDI Reset failed: " + result.error);
+					});
+			}
 			else if (const Rml::Element* key = withAttribute(target, "key"); key != nullptr)
 			{
 				if (const Parameter* root = parameter("Root key"))
@@ -812,6 +973,12 @@ namespace gnubase::ui
 			if (!m_showing && target != nullptr && target->GetId() == "sampler-lock")
 			{
 				m_lock = event.GetParameter<bool>("value", false);
+				saveSettings();
+				return;
+			}
+			if (!m_showing && target != nullptr && target->GetId() == "sampler-zero")
+			{
+				m_snapToZero = event.GetParameter<bool>("value", false);
 				saveSettings();
 				return;
 			}

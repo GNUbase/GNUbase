@@ -8,10 +8,15 @@ elements, and mouse and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guid
   and elements as JSON and gives input to a window's RmlUi context, the way `SdlWindowSystem` delivers the user's, so
   documents can't tell it from real input. It needs only the shell, so the tests run it on the fake shell
   (`tests/uitools_tests.cpp`) as well as on real windows (`tests/window_tests.cpp`).
-- **Threads.** `ui::onUiThread` runs work from another thread on the UI thread through `Shell::post` and waits for its
-  result, at most 10 seconds for an MCP tool, e.g. while the UI thread loads a project. The work captures what it uses
-  by value, since it may still run after the caller gave up. When the shell quits, work it hasn't run yet is dropped,
-  and whoever waits for it gets an error at once.
+- **Threads.** `ui::onUiThread` runs work from another thread on the UI thread through `Shell::postQuietly` and waits
+  for its result, at most 10 seconds for an MCP tool, e.g. while the UI thread loads a project. The work captures what
+  it uses by value, since it may still run after the caller gave up. When the shell quits, work it hasn't run yet is
+  dropped, and whoever waits for it gets an error at once.
+- **Drawing.** Other posted work draws every window, but automation's draws only what it asks for (#745): reads
+  (`ui_windows`, `ui_dom`, `ui_screenshot`, `ui_wait`) draw no window, since a screenshot draws offscreen, and input
+  draws the window it goes to, as the window system's input does. What the input then changes elsewhere draws as it
+  does for the user's: engine results and events, other posted work and file dialog answers draw every window. So a
+  test can read a window through MCP and check that it stays idle.
 - **MCP tools.** `app::addUiTools` adds `ui_windows`, `ui_dom`, `ui_screenshot`, `ui_wait`, `ui_move`, `ui_click`,
   `ui_drag`, `ui_drop`, `ui_wheel`, `ui_key`, `ui_text`, `ui_close`, which asks to close a window or to quit as the
   OS does, `ui_window`, which activates, minimizes or restores a window as the Windows dialog does
@@ -68,6 +73,9 @@ elements, and mouse and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guid
   a script that closes its own window and then waits runs on without it.
 - **Waiting.** `ui_wait` asks the UI thread every 20 ms whether an element that a selector matches is visible (with a
   given text), or that none is, for at most 60 seconds.
-- **Tests.** `tests/uitools_tests.cpp` checks scrolling targets into view, rejecting hidden centres without sending
-  input, centres on hit-testable boundaries (including a target's child), errors for unshowable drag starts and the
-  scroll position left by a failed drag. `tests/window_tests.cpp` checks automation on real windows.
+- **Tests.** `tests/uiapp_tests.cpp` checks in the app's UI that the reading tools draw neither the main window nor a
+  mixer window, and that a move in the mixer window draws it and not the main window; `tests/shell_tests.cpp` that
+  quietly posted work draws only the windows it asks for. `tests/uitools_tests.cpp` checks scrolling targets into
+  view, rejecting hidden centres without sending input, centres on hit-testable boundaries (including a target's
+  child), errors for unshowable drag starts and the scroll position left by a failed drag. `tests/window_tests.cpp`
+  checks automation on real windows.

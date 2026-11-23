@@ -517,6 +517,10 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (".transport button#record.checked", {"decorator": "none", "background-color": record},
          {"decorator": skin("button-checked")}),
         (".transport #record.checked svg.icon", {"image-color": "#ffffff"}, {"image-color": c["text"]}),
+        # A recording that waits for the end of the pre-roll or the punch in (#2039): Record filled with the record
+        # color at a quarter opacity, pressed in the skinned themes
+        (".transport button#record.waiting", {"decorator": "none", "background-color": record + "40"},
+         {"decorator": skin("button-pressed")}),
         # The primary time display bold and in the titles' size; the position displays' height follows it (#1342)
         (".transport .primary-time", {"color": c["text"], "font-weight": "600",
                                       "font-size": f"{theme['fontSizes']['title']}dp"}, {}),
@@ -769,6 +773,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("colorpicker .color-hue",
          {"decorator": "linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)"}),
         ("colorpicker .color-field-thumb, colorpicker .color-hue-thumb", {"decorator": skin("slider-thumb")}),
+        # The color of a new color set replacing a missing one, under the mouse (docs/features/colors.md)
+        (".color-swatch.replacement", {"border-width": f"{widths['focus']}dp", "border-color": c["text"]}),
         (".splitter-grip-vertical", {"decorator": skin("splitter-grip-vertical")}),
         (".splitter-grip-horizontal", {"decorator": skin("splitter-grip-horizontal")}),
         # Canvas elements (docs/features/canvas.md): events and notes, waveforms, automation curves and rulers
@@ -1116,6 +1122,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".sampler-handle.root", {"background-color": c["accent"]}),
         (".sampler-handle.dragged", {"background-color": c["text"]}),
         (".sampler-message.error", {"color": c["danger"]}),
+        # Its event received indicator, lit in the accent at incoming notes and controllers
+        (".sampler-received", {"background-color": c["textMuted"],
+                               "border-radius": f"{theme['radii']['round']}dp"}),
+        (".sampler-received.lit", {"background-color": c["accent"]}),
         # The drum machine panel (docs/features/drum-track.md): pads raised when they play something, the selected
         # one framed, muted and soloed-out ones dimmed, soloed ones in the second accent; the selected group and page
         # in the accent, and the toolbar's message standing out

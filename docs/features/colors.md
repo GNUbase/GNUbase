@@ -72,16 +72,22 @@ its track's.
   tints; color tint: all colors of a tint, then the next), with the new set's swatches under them. 16 basic colors
   are the factory set; another number spreads as many around the factory set's hues, mixing neighbours, with its grey
   last, and names a color after the nearer hue (" 2" for the second of a name). A change of these settings replaces
-  the set being edited, which the Color Set tab then shows. Apply sends `project.set` `colors`; Cancel drops the
-  changes.
+  the set being edited, which the Color Set tab then shows. Missing Current Project Colors (p. 118), under the new
+  set, shows the colors of the project's set that the set being edited lacks, each with the attribute `color` and in
+  `replacement` the position of the set's color replacing it: the color it was changed to in place on the Color Set
+  tab (picker, Reset Color), else the color nearest to it (a color removed, or the set replaced by a preset; Insert
+  and Duplicate add colors that replace none). The list follows the picker as it changes. The mouse over a missing
+  color highlights its replacement (`.replacement`). Apply sends `project.set` `colors` and gives the tracks, events
+  and parts in a missing color the one replacing it, one undo step (`history.transaction`, "Change project"); Cancel
+  drops the changes.
 - **Styling.** The swatches and the color strip get `background-color` from code because the color is user data
   (CLAUDE.md, UI conventions); `tests/stylerules_tests.cpp` lists those files, and checks the documents' Lua too.
 
 ## Not yet
 
-The Presets tab's Missing Current Project Colors (p. 118), the Options tab (saving a set as the default for new
-projects, selecting colors by name; p. 118), colorizing track controls and mixer channels with their track's color
-(p. 1621, with the mixer, #106, and the inspector, #89), and the MIDI editors' event colors menu (p. 1133).
+The Options tab (saving a set as the default for new projects, selecting colors by name; p. 118), colorizing track
+controls and mixer channels with their track's color (p. 1621, with the mixer, #106, and the inspector, #89), and the
+MIDI editors' event colors menu (p. 1133).
 
 ## Checks
 
@@ -96,7 +102,9 @@ projects, selecting colors by name; p. 118), colorizing track controls and mixer
   own; the color tool's button, its strip and wheel, and its Ctrl-click pane coloring a part; the setup dialog's
   remove, duplicate, recolor, insert, rename, reset color, apply, reset to factory settings and cancel, and its
   presets: 8 basic colors with unique names, tints in both sort orders, 128 colors, 16 in one tint as the factory
-  set and 24 applied.
+  set and 24 applied; the missing project colors of 8 basic colors, the mouse over one highlighting its replacement,
+  and Apply replacing them in tracks and parts but not other colors, undone in one step; a color recolored in the
+  picker listed as missing and replaced in its track by its new color.
 - `tests/eventediting_tests.cpp`: the color tool coloring an event and the selection, Alt taking an event's own
   color, its track's, or none from a track with the default color, the wheel's steps and Ctrl asking for the pane.
 - `tests/canvas_tests.cpp`: an event with a color of its own is filled with it, outlined by `stroke-color`, or by

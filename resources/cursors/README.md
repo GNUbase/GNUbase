@@ -13,4 +13,5 @@ Style sheets name a pointer with RmlUi's `cursor` property, `cursor: tool-draw;`
 - `tool-play.svg` — Play tool (the speaker).
 - `tool-range.svg` — Range selection tool (the middle of the I-beam).
 - `tool-split.svg` — Split tool (where the blades cross).
+- `tool-timewarp.svg` — Time warp tool and Free Warp (the clock's middle).
 - `tool-zoom.svg` — Zoom tool (the lens's middle).

@@ -17,7 +17,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   `<name> media`. A file that is there already with the entry's size and CRC-32 stays as it is, write time included,
   so that opening the project again doesn't write over files that are playing; one with other content stays too, as a
   project may play it, and the entry goes beside it under a numbered name (`2-kick.wav`, `ZipReader::holds` and
-  `Importer::freeTarget` in `engine/dawproject/dawproject.cpp`).
+  `Importer::freeTarget` in `engine/dawproject/dawproject.cpp`). A file that a load of this run extracted or read for
+  its CRC-32 isn't read again while it keeps its size and write time (#1827): the CRC-32s are kept in memory, so the
+  first load after a start reads the files once more. `media.cleanup` lists and removes the numbered files and others
+  that nothing uses any more ([pool.md](pool.md)).
 - **Save, Save As.** `project.save` with `path` saves the project as that file, which is then its file; without `path`
   it saves to the project's file and fails for a project that has none. The engine saves under the path as it is,
   without adding `.dawproject`, so that a script or MCP client gets the file it named; Save As in the UI adds the
@@ -172,11 +175,11 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   ([articulation-maps.md](articulation-maps.md)).
   The event display closes its own dialogs for events or parts in the same way (Fades, Crossfade, Detect Silence,
   Spectrum Analyzer, Statistics, Set Definition from Tempo, Repeat, Tempo Detection, Calculate Tempo, audio Import
-  Options; the zoom presets, Process Tempo and Process Bars stay), and the track list cancels Remove Tracks' question
-  and its two chord dialogs (#1586). An OS file dialog for objects of the project drops its answer when a
-  `project.reset` came while it was open (`AppUi::chooseProjectFile`: track picture, Export Selected Tracks, pattern
-  presets, Save Drum Map, Export Articulation Map, the sampler's Import Audio File and the drum machine's Load Sample,
-  #1648); Import Tracks reads the selected track when the file is chosen.
+  Options; the zoom presets, Process Tempo and Process Bars stay), and the track list cancels Remove Tracks' question,
+  its two chord dialogs (#1586), Render Tracks/Render Selection and Freeze Channel Options. An OS file dialog for
+  objects of the project drops its answer when a `project.reset` came while it was open (`AppUi::chooseProjectFile`:
+  track picture, Export Selected Tracks, pattern presets, Save Drum Map, Export Articulation Map, the sampler's Import
+  Audio File and the drum machine's Load Sample, #1648); Import Tracks reads the selected track when the file is chosen.
 
 ## Not yet
 

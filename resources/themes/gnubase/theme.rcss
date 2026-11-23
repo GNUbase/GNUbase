@@ -431,6 +431,11 @@
 	{
 		decorator: svg(slider-thumb.svg);
 	}
+	.color-swatch.replacement
+	{
+		border-width: 2dp;
+		border-color: #f1f4ff;
+	}
 	.splitter-grip-vertical
 	{
 		decorator: svg(splitter-grip-vertical.svg);
@@ -1324,6 +1329,15 @@
 	{
 		color: #ff5270;
 	}
+	.sampler-received
+	{
+		background-color: #aeb7d0;
+		border-radius: 999dp;
+	}
+	.sampler-received.lit
+	{
+		background-color: #10dff2;
+	}
 	.drum-pad
 	{
 		color: #aeb7d0;
@@ -1870,6 +1884,11 @@
 	{
 		image-color: #ffffff;
 	}
+	.transport button#record.waiting
+	{
+		decorator: none;
+		background-color: #ff527040;
+	}
 	.transport .primary-time
 	{
 		color: #f1f4ff;
@@ -2062,6 +2081,10 @@
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}
 	.transport button#record.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	.transport button#record.waiting:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}

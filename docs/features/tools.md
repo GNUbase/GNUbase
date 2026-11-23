@@ -160,6 +160,7 @@ RmlUi's `cursor` property; the pointers are SVG files in `resources/cursors` ([s
 | `resize`, `resizeVertical` | The range selection tool just inside the selection range's start or end, or its top or bottom, where a drag moves that edge, without Shift ([range-editing.md](range-editing.md)) | `resize`, the OS's `ns-resize` |
 | `rangeSelection` | The range selection tool, and with the selection tools combined the upper half of a lane two rows high (p. 253) | `tool-range` |
 | `draw`, `erase`, `split`, `glue`, `mute`, `zoom`, `line`, `play` | That tool | `tool-<name>`, the play tool's `tool-play` |
+| `timeWarp` | The time warp tool ([time-warp.md](time-warp.md)) | `tool-timewarp`, a clock with arrows (p. 1466) |
 
 On an automation track the pointer is the chosen tool's, also with the selection tools combined, as a press there
 edits points with that tool ([automation-tracks.md](automation-tracks.md)).
@@ -176,8 +177,8 @@ a pointer's picture didn't load or RmlUi names one the OS doesn't have, such as 
 Not yet: the drumstick tool, and pointers of their own for the sizing modes and the color tool; the rest of the reference's context
 menu, with the Audio and MIDI menus' functions, follows with those menus. Cut and Copy of selected events without a
 range (the event clipboard) wait for a ticket of their own. On X11, SDL shows only a pointer's scale-1 picture. The
-audio editor gets its toolbox when it comes. The Preferences dialog's Editing - Tools page
-(#162) will show the two settings, which `settings.get` and `settings.set` reach until then.
+audio editor gets its toolbox when it comes. The Preferences dialog's Editing - Tools page shows the two settings
+([preferences.md](preferences.md)), which `settings.get` and `settings.set` reach too.
 
 ## Checks
 
@@ -211,7 +212,7 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   disabled without a range and cutting with one, after a right click that leaves the event unselected; the
   notification after a key, not after a button or with the setting off, on RmlUi's frozen clock; the pointer as
   `ui_windows` reports it, also right after a tool is chosen in the toolbox. `tests/automationtracks_tests.cpp`: an
-  automation track's pointer with the selection tools combined. `tests/keyeditor_ui_tests.cpp`: the key editor's toolbox by the setting and modifiers. The project window's golden image shows the
+  automation track's pointer with the selection tools combined. `tests/keyeditor_ui_tests.cpp`: the key editor's toolbox by the setting and modifiers. `tests/pointers_ui_tests.cpp`: the time warp tool's pointer. The project window's golden image shows the
   toolbar.
 - `tests/widgets_tests.cpp`: `modifiercontextmenu` with each modifier key, and notifications.
   `tests/svg_tests.cpp`: every pointer rasterizes at each scale with its hotspot inside it, and broken ones fall back

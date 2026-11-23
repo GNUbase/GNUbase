@@ -4,6 +4,7 @@
 // gestures, tests/noteexpression_tests.cpp the engine's note.replaceExpression.
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
 #include "ui/keyeditor.h"
 #include "ui/midieditor.h"
 #include "ui/shell.h"
@@ -154,9 +155,13 @@ TEST_CASE("expression edits made before the project read of the last one arrived
 		CHECK(std::abs(points.at(0).at("position").get<double>() - (0.6 * 2 * g_quarter)) <= g_quarter / 16.0);
 		CHECK(std::abs(points.at(0).at("value").get<double>() - 24.0) <= 2.0);
 	}
-	// The editor shows them once the answers arrive. Each edit is an undo step of its own.
+	// The editor shows them once the answers arrive. Each edit is an undo step of its own, with the same name whether
+	// it changed one part, as the first erase did, or both (#1831).
 	REQUIRE(f.app.waitUntil([&] { return f.lines() == 2; }));
-	CHECK(f.app.call("history.get").at("steps").size() == steps + 4);
+	const Json history = f.app.call("history.get").at("steps");
+	REQUIRE(history.size() == steps + 4);
+	for (size_t i = steps; i < history.size(); ++i)
+		CHECK(history.at(i).at("action") == "Change note expression");
 
 	// Now that the editor has the project with its last edit, an erase where neither note has a point sends nothing:
 	// the project doesn't count as modified, also with notes of two parts, which would go as one history.transaction.
@@ -196,4 +201,72 @@ TEST_CASE(
 	f.app.call("engine.version");
 	CHECK(f.points(0) == Json::array({f.tuning}));
 	CHECK(f.points(1) == Json::array());
+}
+
+TEST_CASE("an expression edit that changed nothing leaves the editor as it was", "[ui]")
+{
+	// #1831: an edit that changes nothing brings no history.changed, so no read of the project after it. Answered
+	// after the read shown, it must not count as missing from it: else every gesture would send each note it reached,
+	// and one over notes of two parts that changes nothing would go as a history.transaction, which counts as a change.
+	Fixture f;
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	// A point drawn on both notes, answered and shown.
+	f.keys().setTool(ui::KeyTool::Draw);
+	f.click(0.6, 0.25);
+	REQUIRE(f.app.waitUntil([&] { return f.lines() == 3; }));
+	const Json project = f.app.call("project.get");
+	const Json view = f.app.call("editor.get", {{"editor", "window"}});
+	const uint64_t read = binding.handed(); // a read after the draw was answered
+	// While the editor shows a read from before the draw, an erase where neither note has a point goes to both
+	// notes, as the draw might have drawn there, and changes nothing. (As a history.transaction it counts as a change
+	// of the project, #1258.)
+	f.keys().show(project, view, 0);
+	f.keys().setTool(ui::KeyTool::Erase);
+	f.click(0.1, 0.5);
+	REQUIRE(binding.waiting("history.transaction") == 1);
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("history.transaction") == 0; }));
+	const Json revision = f.app.call("project.revision");
+	// The read after the draw shows now, as it would have before the erase was answered. With no edit missing from
+	// it, another erase where there is nothing sends nothing.
+	f.keys().show(project, view, read);
+	f.click(0.2, 0.5);
+	CHECK(binding.waiting("history.transaction") == 0);
+	CHECK(binding.waiting("note.replaceExpression") == 0);
+	f.app.call("engine.version");
+	CHECK(f.app.call("project.revision") == revision);
+}
+
+TEST_CASE("an expression edit of one note that changed nothing leaves the editor as it was", "[ui]")
+{
+	// #1831: the same with only the first note selected, where an edit goes as a lone note.replaceExpression, whose
+	// answer lists no notes when it changed nothing.
+	Fixture f;
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	f.app.call("editor.set",
+		{{"editor", "window"}, {"selection", Json::array({{{"part", f.parts[0]}, {"note", f.notes[0]}}})}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.selected").size() == 1; }));
+	REQUIRE(!f.has(".key-expression-editor", "off"));
+	// A point drawn on the first note, answered and shown.
+	f.keys().setTool(ui::KeyTool::Draw);
+	f.click(0.6, 0.25);
+	REQUIRE(f.app.waitUntil([&] { return f.lines() == 2; }));
+	CHECK(f.points(1) == Json::array());
+	const Json project = f.app.call("project.get");
+	const Json view = f.app.call("editor.get", {{"editor", "window"}});
+	const uint64_t read = binding.handed(); // a read after the draw was answered
+	// While the editor shows a read from before the draw, an erase where the note has no point goes out, as the draw
+	// might have drawn there, and changes nothing.
+	f.keys().show(project, view, 0);
+	f.keys().setTool(ui::KeyTool::Erase);
+	f.click(0.1, 0.5);
+	REQUIRE(binding.waiting("note.replaceExpression") == 1);
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("note.replaceExpression") == 0; }));
+	const Json revision = f.app.call("project.revision");
+	// With the read after the draw shown, another erase where there is nothing sends nothing.
+	f.keys().show(project, view, read);
+	f.click(0.2, 0.5);
+	CHECK(binding.waiting("note.replaceExpression") == 0);
+	CHECK(binding.waiting("history.transaction") == 0);
+	f.app.call("engine.version");
+	CHECK(f.app.call("project.revision") == revision);
 }

@@ -63,6 +63,9 @@ The mixer's strips (`ui::Mixer`) have three more sections of the docking set `ch
 Set up Window Layout: Pre (`.mixer-pre`), Equalizer (`.mixer-eq`) and Strip (`.mixer-strip`), on audio channels only;
 the fader section has the panner (p. 465): the pan bypass button (`panBypass`) to the left of a knob (`.mixer-pan`) for
 `pan`, or while the channel has the combined panner (the strip is `.combined`) two knobs for `panLeft` and `panRight`.
+A channel whose routing gives it no panner (`pannerFor`: mono into mono, destinations wider than stereo, no output)
+is `.no-panner`, which hides the panner and keeps its place, so the faders line up. A MIDI channel's panner is a knob
+for MIDI pan (`midiPan`, 0 to 127, 64 by default, none until set; the knob sends whole numbers), without pan bypass.
 Every control has a `param` attribute, the path of its value in the channel's JSON (`pre.lowCut.on`, `eq.bands.3.gain`):
 toggle buttons for the switches, knobs for gains, thresholds, ratios and Q, value fields in Hz for frequencies, and
 drop-down lists for the cut filters' slopes (6 to 48 dB per octave) and the types of EQ bands 1 and 4 (Parametric, and
@@ -75,8 +78,7 @@ step, whichever client changed them.
 The strip's other modules (tools: de-esser and envelope shaper; saturation), the tube and vintage compressors and the
 maximizer and standard limiter, moving modules in the signal flow, side-chains, auto release and auto makeup, gain
 reduction and gate state LEDs, the EQ curve display and note names for frequencies, EQ and strip presets, choosing the
-combined panner in the pan control's context menu (it is `channel.set`'s `panner`), hiding the pan control on channels
-without a panner (mono into mono, destinations wider than stereo), MIDI pan in the mixer, pre-fader and post-fader
+combined panner in the pan control's context menu (it is `channel.set`'s `panner`), pre-fader and post-fader
 insert slots, the sections of input and output channels, the sections in the inspector, and routing. The channel
 settings window shows them for one channel ([channel-settings.md](channel-settings.md)). The sends are in
 [routing.md](routing.md). Mapping the equalizer onto DAWproject's `Equalizer` device comes with DAWproject devices.
@@ -106,5 +108,6 @@ settings window shows them for one channel ([channel-settings.md](channel-settin
   the bypass ends; and that an EQ band given the values it has glides on bit for bit as without them.
   `tests/rtcheck_tests.cpp` plays section automation, the limiter's switch included, under the RT checker.
 - `tests/mixerwindow_tests.cpp`: the setup pane shows the sections, which MIDI channels don't have; the toggles,
-  knobs, the panner, pan bypass, the combined panner's knobs and the slope and EQ type lists send `channel.set`, and
-  the controls show values set from the engine.
+  knobs, the panner, pan bypass, the combined panner's knobs, a MIDI channel's MIDI pan and the slope and EQ type
+  lists send `channel.set`; a mono channel routed into a mono group shows no panner, and shows it again on a stereo
+  bus; and the controls show values set from the engine.

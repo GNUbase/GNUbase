@@ -24,8 +24,10 @@ the points it gives there, and keeps the note's other points as the project has 
 makes before it has seen its last one keeps that one. Its points end up sorted by position, a new one after the old
 ones at its position; it is one undo step, and changes that leave every note's points as they were change nothing,
 so the project doesn't count as modified (run on its own: in a `history.transaction` the transaction counts as a
-change). A project whose file has points out of range loads
-with them clamped, as the notes' other values, and without points of expressions it doesn't know.
+change). The commands refuse a point more than the longest project's end after its note's start (#1831), so that the two
+can't overflow together (#1906); past the note's end is fine, as a note shortened by the trim tool keeps its points
+there. A project whose file has points out of range loads with them clamped, as the notes' other values, their positions
+cut at the longest project's end, and without points of expressions it doesn't know.
 
 **Cutting and resizing.** Splitting a part with `splitNotes` (`event.split`) leaves the first piece of a cut note its
 points before the cut, and the rest gets the points from the cut on, moved back by the cut, with each expression's
@@ -207,16 +209,19 @@ first.
   Shift, tuning goes in semitone steps (Vertical Snap). The erase tool deletes the points of the expression it is
   dragged over, a click those within a few dp: it is GNUbase's own, standing in until points can be selected and deleted
   with Edit > Delete as the reference manual does (pp. 1310-1311). An edit reaches every selected note at the time where
-  it happens, each note's points from its own start, and is one undo step. It sends each note the gesture reached only
-  the range it swept and the points it drew there, not the note's whole list: the editor reads the whole project after
-  every change and shows the reads in order, so an edit made before the read of the one before it arrived starts from
-  the project as it was before that one, and the whole list would send that one's points back (#1795). While the project
-  shown may lack the editor's last edit (it is out, or was answered after the read of the project shown), a note that
-  the gesture reached goes also when the editor's copy has no change there, as the edit before may have drawn a point
-  there. Otherwise an edit that changes nothing stays in the editor, so that it doesn't count as a change of the
-  project, as a `history.transaction` of several parts would. A gesture follows the mouse outside the window and ends
-  where the button goes up, with what it drew. A press elsewhere in the note display closes the editor,
-  and so does a selection without notes. The `.key-expression-step` lines, in the editor and over the notes, take no
+  it happens, each note's points from its own start, and is one undo step, named "Change note expression" as the
+  engine names a lone `note.replaceExpression`, also when it changes notes of several parts (#1831). It sends each note
+  the gesture reached only the range it swept and the points it drew there, not the note's whole list: the editor
+  reads the whole project after every change and shows the reads in order, so an edit made before the read of the one
+  before it arrived starts from the project as it was before that one, and the whole list would send that one's points
+  back (#1795). While the project shown may lack an edit of the editor's (one is out, or the last one that changed
+  points was answered after the read of the project shown), a note that the gesture reached goes also when the
+  editor's copy has no change there, as the edit before may have drawn a point there. Otherwise an edit that changes
+  nothing stays in the editor, so that it doesn't count as a change of the project, as a `history.transaction` of
+  several parts would. An edit that changed nothing brings no read, and the project shown lacks nothing of it, so it
+  doesn't keep the editor behind (#1831). A gesture follows the mouse outside the window and ends where the button
+  goes up, with what it drew. A press elsewhere in the note display closes the editor, and so does a selection without
+  notes. The `.key-expression-step` lines, in the editor and over the notes, take no
   mouse events: a client of the UI tools that clicks one reaches its note or `.key-expression-area`.
 
 The UI tests (`tests/keyeditor_ui_tests.cpp`) check the overlay's lines at their positions and values, volume's range
@@ -228,20 +233,24 @@ of them over their span, centered on the note clicked, an edit reaching each not
 where the value changes, one undo step for both parts, Vertical Snap and the editor closing when the selection empties;
 the editor centered on its note while the pitches zoom; on the top row the editor inside the note display and wider than
 its button, and a draw released outside the window; on a short note right of the note display's middle the editor
-starting at the note; a dense note's lines a pixel each after the window's layout and a
-resize, a resize by less than a quarter keeping them, and lines that first show after the window narrowed by less than
-a quarter, also on the box of the layout before, built for the narrower width. `tests/inplaceeditor_ui_tests.cpp`
-checks the draw tool on a line of the editor in an in-place editor and a dense note's lines a pixel each after its
-layout and as the project window zooms, `tests/drumeditor_ui_tests.cpp` that the drum editor has neither the buttons,
-the overlay nor the editor, and `tests/keyeditor_tests.cpp` the three settings as view state.
-`tests/noteexpression_ui_tests.cpp` makes four edits on notes of two parts before the UI hands on any answer of the
-engine, an erase of a point, two draws and an erase of the last point drawn, and checks that the engine keeps all of
-them, as four undo steps, and that an erase where there is nothing to erase then leaves the project unmodified; and
-that an erase made after a draw was answered, while the editor still shows the project read before it, deletes the
-point drawn (#1795); `tests/noteexpression_tests.cpp` checks `note.replaceExpression`: the span with both ends, the other
-expressions and the points outside it kept, the order, edits made from the same state all kept, a note named twice,
-one undo step, a change of nothing leaving the project unmodified, its refusals changing nothing and the shared copies
-following it.
+starting at the note; a dense note's lines a pixel each after the window's layout and a resize, a resize by less than a
+quarter keeping them, and lines that first show after the window narrowed by less than a quarter, also on the box of the
+layout before, built for the narrower width. `tests/inplaceeditor_ui_tests.cpp` checks the draw tool on a line of the
+editor in an in-place editor, an erase over nothing in two parts of its track leaving the project unmodified after a
+draw (the in-place editor hands its key editor the read it shows, #1831), and a dense note's lines a pixel each after
+its layout, kept as the project window zooms by a tenth once the window has laid them out (the app's update task fits
+the in-place editors' lines, #1782) and built again as it zooms in a step, `tests/drumeditor_ui_tests.cpp` that the drum
+editor has neither the buttons, the overlay nor the editor, and `tests/keyeditor_tests.cpp` the three settings as view
+state. `tests/noteexpression_ui_tests.cpp` makes four edits on notes of two parts before the UI hands on any answer of
+the engine, an erase of a point, two draws and an erase of the last point drawn, and checks that the engine keeps all of
+them, as four undo steps of one name, and that an erase where there is nothing to erase then leaves the project
+unmodified; that an erase made after a draw was answered, while the editor still shows the project read before it,
+deletes the point drawn (#1795); and that an erase that changed nothing, answered after the read shown, doesn't keep the
+editor behind (#1831). `tests/noteexpression_tests.cpp` checks `note.replaceExpression`: the span with both ends, the
+other expressions and the points outside it kept, the order, edits made from the same state all kept, a note named
+twice, one undo step, a change of nothing leaving the project unmodified, its refusals changing nothing and the shared
+copies following it; and the bound of point positions in `note.add`, `note.set` and `note.replaceExpression`, and
+loading cutting them there.
 
 ## Not yet
 
