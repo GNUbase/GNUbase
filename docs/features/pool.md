@@ -32,15 +32,18 @@ the pool and conforming files to the project's sample rate. The engine commands 
 - **`media.cleanup`** lists the files that loads extracted and nothing uses (#1827), as the reference's Cleanup did:
   those in the project's media folder (`<name> media` next to its project file) and in the track presets'
   (`Track Presets/<name> media` in the settings folder) that neither the project, nor a step of its undo history, nor
-  its project file has as a media or freeze file. Such are the numbered files (`2-kick.wav`) that a load puts beside a
-  file with other content ([project-files.md](project-files.md), [track-presets.md](track-presets.md)), and the files
-  of media files removed from the pool once no undo step has them. A peak file goes with its audio file, and the peak
+  its project file, nor a project template (`Project Templates` in the settings folder) has as a media or freeze file.
+  Such are the numbered files (`2-kick.wav`) that a load puts beside a file with other content
+  ([project-files.md](project-files.md), [track-presets.md](track-presets.md)), and the files of media files removed
+  from the pool once no undo step has them. A peak file goes with its audio file, and the peak
   worker's temporary files are left alone. With `files`, it removes those of them that are among these from the disk,
-  which undo can't bring back; the result lists the files removed and those that couldn't be (`failed`), with `size`,
-  their bytes. A project or track preset that loads again extracts what it needs. The project file is read for the
-  files it refers to without embedding them, and one that can't be read refuses the command, so nothing goes that it
-  may need; a file that another project refers to without embedding it, which only `project.save` with `embedMedia`
-  false and `track.export` with `copyMedia` false write, counts as unused.
+  which undo can't bring back; the result lists the files removed and those that couldn't be (`failed`), with `sizes`,
+  the bytes of each, and `size`, their sum. A project or track preset that loads again extracts what it needs. The
+  project file and the templates, which `project.saveTemplate` saves without embedding media, are read for the files
+  they refer to without embedding them, and one that can't be read refuses the command, so nothing goes that it may
+  need; a file that another project refers to without embedding it, which `project.save` with `embedMedia` false, auto
+  saves and `track.export` with `copyMedia` false write, counts as unused. The project's own paths may be relative to
+  the working folder, as `media.add` and loads take them.
 - **`media.locate`** looks for missing media files in a folder and the folders inside it, by file name, matching ASCII
   letters (A to Z) in any case; other letters, such as Ä and ä, must match exactly, since folding them would need
   Unicode's case tables. It takes a file only if it has the media file's sample rate, channel count and length, so a
@@ -175,8 +178,11 @@ a project whose folders point nowhere, loop or sit inside a loop loading with ea
 `pool.removeUnused` and `media.removeMissing` as single undo steps, also with a crossfade from a missing file's event,
 which goes and comes back with undo; `media.cleanup` listing a numbered file of the project's media folder and of a
 track preset's, keeping a removed media file's file while an undo step and then the project file have it, and removing
-only the listed files of those given, with their peak files; `media.conform` scaling events and fades to the new sample frames, crossfades
-between files at different rates in the frames each end is counted in, snap points and event fades, and a media file
+only the listed files of those given, with their peak files; keeping the files of media added by a path relative to the
+working folder, a frozen track's freeze file also while only an undo step has the track, and a track preset's file
+that a template refers to; and refusing, with every file kept, while the project file can't be read; `media.conform`
+scaling events and fades to the new sample frames, crossfades between files at different rates in the frames each end
+is counted in, snap points and event fades, and a media file
 given twice conformed once; and `audioFile.import` with `clipsOnly`. The acceptance test relinks missing files: a
 saved project's files are moved into another folder while it is closed, the loaded project shows them missing,
 `media.locate` finds one in a subfolder under another letter case and skips one whose channel count doesn't fit, the

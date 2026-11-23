@@ -551,12 +551,15 @@ namespace gnubase::engine
 			const std::string& projectFile, const fs::path& settingsDirectory)
 		{
 			std::set<files::FileIdentity> used;
-			const auto use = [&used](const std::string& path)
+			// The project's paths may be relative to the working folder, as media.add and loads take them; a project
+			// file read without extracting keeps its entries' names inside it as relative paths, which aren't files.
+			bool fromFile = false;
+			const auto use = [&used, &fromFile](const std::string& path)
 			{
-				// Only absolute paths: a file's entries that weren't extracted keep their names inside it as paths.
-				if (fs::u8path(path).is_absolute())
-					if (const auto identity = files::fileIdentity(fs::u8path(path)))
-						used.insert(*identity);
+				if (fromFile && fs::u8path(path).is_relative())
+					return;
+				if (const auto identity = files::fileIdentity(fs::u8path(path)))
+					used.insert(*identity);
 			};
 			const auto useTrack = [&use](const Track& track)
 			{
@@ -582,6 +585,20 @@ namespace gnubase::engine
 						if (track->has_value())
 							useTrack(**track);
 			}
+			// The project file and the templates may refer to files they don't embed (project.saveTemplate never
+			// embeds). One that can't be read keeps every file.
+			fromFile = true;
+			const auto useFile = [&useProject](const fs::path& file)
+			{
+				try
+				{
+					useProject(loadDawProject(file.u8string(), {}, false));
+				}
+				catch (const std::exception& failure)
+				{
+					throw CommandError("can't tell which files " + file.u8string() + " uses: " + failure.what());
+				}
+			};
 			const auto endsWith = [](const std::string& name, const std::string& end)
 			{ return name.size() > end.size() && name.compare(name.size() - end.size(), end.size(), end) == 0; };
 			std::vector<fs::path> folders;
@@ -590,26 +607,24 @@ namespace gnubase::engine
 			{
 				const fs::path file = fs::u8path(projectFile);
 				folders.push_back(file.parent_path() / fs::u8path(file.stem().u8string() + " media"));
-				// The file may refer to files it doesn't embed. One that can't be read keeps every file.
 				if (fs::exists(file, error) || error)
-				{
-					try
-					{
-						useProject(loadDawProject(projectFile, {}, false));
-					}
-					catch (const std::exception& failure)
-					{
-						throw CommandError("can't tell which files " + projectFile + " uses: " + failure.what());
-					}
-				}
+					useFile(file);
 			}
 			if (!settingsDirectory.empty())
+			{
+				for (const fs::directory_entry& entry :
+					fs::directory_iterator(settingsDirectory / "Project Templates", error))
+				{
+					if (entry.path().extension() == ".dawproject" && entry.is_regular_file(error))
+						useFile(entry.path());
+				}
 				for (const fs::directory_entry& entry :
 					fs::directory_iterator(settingsDirectory / "Track Presets", error))
 				{
 					if (entry.is_directory(error) && endsWith(entry.path().filename().u8string(), " media"))
 						folders.push_back(entry.path());
 				}
+			}
 			std::vector<std::pair<fs::path, fs::path>> unused;
 			for (const fs::path& folder : folders)
 				for (const fs::directory_entry& entry : fs::recursive_directory_iterator(folder, error))
@@ -895,19 +910,20 @@ namespace gnubase::engine
 
 		addControl(engine,
 			{"media.cleanup", 1,
-				"Lists the files that loads extracted and nothing uses (#1827): the files in the project's media "
-				"folder "
+				"Lists the files that loads extracted and nothing uses: the files in the project's media folder "
 				"(<name> media next to its project file) and in the track presets' (Track Presets/<name> media in the "
-				"settings folder) that neither the project, nor a step of its undo history, nor its project file has "
-				"as a media or freeze file, such as the numbered ones (2-kick.wav) that a load puts beside a file with "
-				"other content. A peak file goes with its audio file. With files, removes those of them that are "
-				"among these from the disk, which undo can't bring back. A project or track preset that loads again "
-				"extracts what it needs. A file that another project refers to without embedding it, which only "
-				"project.save with embedMedia false and track.export with copyMedia false write, counts as unused. "
-				"Returns files, the files unused or, with files, removed; size, their bytes; and failed, the files "
-				"that couldn't be removed.",
+				"settings folder) that neither the project, nor a step of its undo history, nor its project file, nor "
+				"a project template has as a media or freeze file, such as the numbered ones (2-kick.wav) that a load "
+				"puts beside a file with other content. A peak file goes with its audio file. With files, removes "
+				"those of them that are among these from the disk, which undo can't bring back. A project or track "
+				"preset that loads again extracts what it needs. A file that another project refers to without "
+				"embedding it, which project.save with embedMedia false, auto saves and track.export with copyMedia "
+				"false write, counts as unused. Returns files, the files unused or, with files, removed; sizes, the "
+				"bytes of each of them; size, their sum; and failed, the files that couldn't be removed.",
 				objectSchema({{"files", strings}}),
-				objectSchema({{"files", strings}, {"size", integer}, {"failed", strings}}, {"files", "size", "failed"}),
+				objectSchema({{"files", strings}, {"sizes", {{"type", "array"}, {"items", integer}}}, {"size", integer},
+								 {"failed", strings}},
+					{"files", "sizes", "size", "failed"}),
 				false},
 			[this](CommandContext& context)
 			{
@@ -917,6 +933,7 @@ namespace gnubase::engine
 				for (const Json& path : parameters.value("files", Json::array()))
 					chosen.insert(path.get<std::string>());
 				Json listed = Json::array();
+				Json sizes = Json::array();
 				Json failed = Json::array();
 				std::uintmax_t size = 0;
 				for (const auto& [file, audio] : unusedFiles(m_project, m_history, m_file, m_settingsDirectory))
@@ -935,9 +952,11 @@ namespace gnubase::engine
 						}
 					}
 					listed.push_back(file.u8string());
+					sizes.push_back(known);
 					size += known;
 				}
-				return Json{{"files", std::move(listed)}, {"size", size}, {"failed", std::move(failed)}};
+				return Json{{"files", std::move(listed)}, {"sizes", std::move(sizes)}, {"size", size},
+					{"failed", std::move(failed)}};
 			});
 
 		addControl(engine,
