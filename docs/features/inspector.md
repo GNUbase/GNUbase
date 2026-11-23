@@ -106,8 +106,9 @@ one it has the class `empty` and says "No Track Selected".
 .inspector                         contextmenu #inspector-setup
   textdisplay.inspector-name       the track's name: a double click renames it (track.set name)
   .inspector-sections[sections=inspector]
-    [section=basics]               mute, solo, listen, record, monitor, timeBase, editInPlace (button[control]); volume
-                                   (dB), pan (-100 to 100)
+    [section=basics]               mute, solo, listen, record, monitor, timeBase, editInPlace (button[control]),
+                                   button.inspector-retrospective (MIDI and instrument tracks, its pop-up menu
+                                   #inspector-retrospective-menu); volume (dB), pan (-100 to 100)
     [section=routing]              select[control=input] (audio tracks), select[control=output]; MIDI tracks:
                                    select[control=device], textdisplay[control=bank], select[control=program];
                                    MIDI and instrument tracks: select[control=inputTransformer]
@@ -142,7 +143,10 @@ one it has the class `empty` and says "No Track Selected".
   [solo-mute-listen.md](solo-mute-listen.md)), and Switch Time Base (pp. 179–181, 229) on audio, instrument, MIDI,
   group, effect and VCA fader tracks, checked when linear (`track.set` `timeBase`, [time-base.md](time-base.md)).
   Edit In-Place (p. 1259) on MIDI and instrument tracks opens and closes the track's in-place editor, checked while it
-  is open (`editor.inPlace`, [in-place-editor.md](in-place-editor.md)).
+  is open (`editor.inPlace`, [in-place-editor.md](in-place-editor.md)). Retrospective Recording on MIDI and instrument
+  tracks opens a pop-up menu (pp. 354-356): Insert as Linear Recording and Insert as Cycle Recording
+  (`midi.insertRetrospective`, `cycle`) and Empty Retrospective Record Buffer (`midi.clearRetrospective`) for the
+  track ([midi-recording.md](midi-recording.md)).
   The volume goes up to the project's `maxVolume` (`project.set`). A drag, wheel turns or a held arrow key on the
   volume or the pan are one undo step ([edit-history.md](edit-history.md), gestures), sent step by step so that they
   are heard, one at a time; while they are on their way the fields keep their own values rather than the engine's

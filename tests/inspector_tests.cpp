@@ -1084,6 +1084,68 @@ TEST_CASE("the inspector's record and monitor buttons switch those of MIDI and i
 	}
 }
 
+TEST_CASE("the inspector's Retrospective Recording menu inserts the track's buffer linearly or stacked, or empties it",
+	"[ui]")
+{
+	// Reference manual pp. 354-356.
+	Window window;
+	const Json added = window.call("track.add", {{"type", "instrument"}, {"name", "Synth"}});
+	const auto track = added.at("track").at("id").get<uint64_t>();
+	const Json channel = added.at("channel").at("id");
+	window.call("channel.set", {{"channel", channel}, {"instrument", "noteProbe"}});
+	window.list.select({track});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Synth"));
+	const auto play = [&](int pitch, int64_t from, int64_t to, int64_t frames)
+	{
+		const auto now = window.call("audio.get").at("position").get<int64_t>();
+		window.call("midi.inject",
+			{{"channel", channel},
+				{"messages",
+					{{{"position", now + from}, {"bytes", {0x90, pitch, 100}}},
+						{{"position", now + to}, {"bytes", {0x80, pitch, 0}}}}}});
+		window.call("audio.render", {{"frames", frames}});
+	};
+	const auto choose = [&](const std::string& item)
+	{
+		window.click(".inspector .inspector-retrospective");
+		window.click("#inspector-retrospective-menu menuitem." + item);
+	};
+	const auto pitches = [&]
+	{
+		std::vector<std::vector<int64_t>> parts;
+		const Json project = window.call("project.get");
+		for (const Json& part : project.at("midiParts"))
+		{
+			parts.emplace_back();
+			for (const Json& note : part.at("notes"))
+				parts.back().push_back(note.at("pitch").get<int64_t>());
+		}
+		std::sort(parts.begin(), parts.end());
+		return parts;
+	};
+
+	// Empty Retrospective Record Buffer, then Insert as Linear Recording: only what came after.
+	play(60, 100, 1000, 2000);
+	choose("retrospective-empty");
+	play(62, 100, 1000, 2000);
+	choose("retrospective-linear");
+	REQUIRE(window.app.waitUntil([&] { return pitches() == std::vector<std::vector<int64_t>>{{62}}; }));
+
+	// Insert as Cycle Recording: a part per lap.
+	window.call("transport.set", {{"left", 0}, {"right", 20000}, {"cycle", true}});
+	window.call("transport.play");
+	play(64, 5000, 8000, 20000);
+	play(65, 5000, 8000, 10000);
+	window.call("transport.stop");
+	window.call("audio.render", {{"frames", 64}});
+	choose("retrospective-cycle");
+	REQUIRE(window.app.waitUntil([&] { return pitches() == std::vector<std::vector<int64_t>>{{62}, {64}, {65}}; }));
+	CHECK(elements(window.app, ".inspector .inspector-retrospective.unavailable").empty());
+	window.list.select({window.addTrack({{"type", "audio"}})});
+	CHECK(window.app.waitUntil(
+		[&] { return hasClass(window.app, ".inspector .inspector-retrospective", "unavailable"); }));
+}
+
 TEST_CASE("the inspector's S solos exclusively and switches solo defeat, and its L listens", "[ui]")
 {
 	Window window;
