@@ -107,13 +107,13 @@ control's last step answered, its strip shows the engine's value; a refused one 
 
 ## Channel meters
 
-An audio channel's strip has its meter next to the fader (`.mixer-meter`, reference manual p. 468): a `<meter>` per
-audio channel of the channel's meter (both sides of a mono channel on a stereo destination), -60 to +6 dB, with the
-peak since the last frame and its peak mark, and under it, beside the fader's volume, the Meter Peak
+An audio channel's strip has its meter next to the fader (`.mixer-meter`, reference manual p. 468), a MIDI channel's
+strip one without a fader: a `<meter>` per audio channel of the channel's meter (both sides of a mono channel on a
+stereo destination), one for a MIDI channel, its notes' velocity, -60 to +6 dB, with the peak since the last frame and its peak mark, and under it, beside the fader's volume, the Meter Peak
 Level (`.mixer-peak`), the highest of those maxima, which a click resets: every channel's (`meter.reset` with
 `meters` `channels`), not the master meter's. The bars come once the engine measured the channel, after it first
 played. The mixers read them through `ui::MeterReader`, the UI's one reader of the meters, which the right zone's meter
-display shares ([metering.md](metering.md)); MIDI channels, VCA faders and busses have no meter yet.
+display shares ([metering.md](metering.md)); VCA faders and busses have no meter yet.
 
 A right click on a meter opens its Global Meter Settings (`#mixer-meter-menu`, p. 467), the user settings that every
 mixer's meters follow: Meter Peak - Hold Peaks (`meter.holdPeaks`, on by default) shows the peak marks; Meter Peak -

@@ -922,6 +922,8 @@ namespace gnubase::engine
 			m_tap->prepare(maxFrames);
 		if (m_unpanned)
 			m_unpanned->prepare(maxFrames);
+		if (m_sentAgain.capacity() > 0) // a MIDI track's (playsMidiTrack)
+			m_midiLevel.assign(maxFrames, 0.0f);
 		if (m_render)
 			m_render->prepare(maxFrames);
 	}
@@ -992,7 +994,10 @@ namespace gnubase::engine
 			for (const graph::ProcessEvent& event : m_sourceEvents)
 				context.eventsOut.add(event);
 		if (context.channels == 0)
+		{
 			muteMidi(context.eventsOut, context.transport);
+			meterMidi(context);
+		}
 		render(RenderPoint::Source, context);
 		m_state->sections.processPre(m_faderEvents, context.audio, context.channels, context.frames);
 		if (m_meterPosition == MeterPosition::Input && context.channels > 0)
@@ -1006,6 +1011,41 @@ namespace gnubase::engine
 			return;
 		}
 		fade(context, m_faderEvents);
+	}
+
+	void ChannelStrip::meterMidi(const graph::ProcessContext& context) noexcept
+	{
+		if (m_midiLevel.size() < context.frames)
+			return;
+		ChannelState& state = *m_state;
+		const auto loudest = [&state]() noexcept
+		{
+			for (size_t velocity = state.midiVelocities.size() - 1; velocity > 0; --velocity)
+				if (state.midiVelocities[velocity] > 0)
+					return static_cast<float>(velocity) / 127.0f;
+			return 0.0f;
+		};
+		uint32_t at = 0;
+		float level = loudest();
+		for (const graph::ProcessEvent& event : context.eventsOut)
+		{
+			using Type = graph::ProcessEvent::Type;
+			if (event.type != Type::NoteOn && event.type != Type::NoteOff)
+				continue;
+			const uint32_t offset = std::clamp(event.offset, at, context.frames);
+			std::fill(m_midiLevel.begin() + at, m_midiLevel.begin() + offset, level);
+			at = offset;
+			uint8_t& velocity = state.midiVelocity[(size_t{event.channel & 15U} * 128) + (event.key & 127U)];
+			if (velocity > 0)
+				--state.midiVelocities[velocity - 1U];
+			velocity = event.type == Type::NoteOn ? static_cast<uint8_t>(midi::velocityToMidi1(event.velocity) + 1) : 0;
+			if (velocity > 0)
+				++state.midiVelocities[velocity - 1U];
+			level = loudest();
+		}
+		std::fill(m_midiLevel.begin() + at, m_midiLevel.begin() + context.frames, level);
+		const float* levels = m_midiLevel.data();
+		state.meter.process(&levels, 1, context.frames, m_sampleRate);
 	}
 
 	int DroppedMidi::kindOf(const graph::ProcessEvent& event) noexcept

@@ -84,10 +84,14 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"meter.get", 1,
 				"The meters, as the audio thread measured them last while the device ran. channels: each channel's "
-				"output after its fader, panner and muting (all channels, or those given), per audio channel: peak "
-				"(the largest sample of the last 100 ms) and rms (averaged over the last 300 ms) in dBFS, and their "
-				"maxima peakMax and rmsMax since meter.reset, also while the transport stands; null for silence, "
-				"empty lists for MIDI channels and channels that haven't played yet. main: the same for the main "
+				"level where the user setting meter.position says (all channels, or those given): by default its "
+				"output after its fader, panner and muting, per audio channel of the output; postFader after the "
+				"fader and muting without the panner, and input after the pre section's input gain, per audio "
+				"channel of the channel; a MIDI channel's one value is the velocity of the loudest note that sounds, "
+				"127 as 0 dBFS. Each has peak (the largest sample of the last 100 ms) and rms (averaged over the "
+				"last 300 ms) in dBFS, and their maxima peakMax and rmsMax since meter.reset, also while the "
+				"transport stands; null for silence, empty lists for channels that haven't played yet. main: the "
+				"same for the main "
 				"mix's first 8 device outputs, with rms averaged over the user setting meter.rmsResolution and 3 dB "
 				"higher with meter.rmsAes17, plus the master meter's truePeak, truePeakMax and truePeakHold (4x "
 				"oversampled, dBTP): truePeakHold is the largest true peak since meter.reset with \"main\" or without "

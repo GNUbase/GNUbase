@@ -174,11 +174,10 @@ TEST_CASE("the mixer's channel meters and the meter display read the same frames
 	REQUIRE(app.waitUntil([&mixer] { return mixer(".mixer-peak").size() == 1; }));
 	CHECK(mixer(".mixer-meter meter").empty());
 	CHECK(mixer(".mixer-peak").at(0).value("text", std::string()) == "-inf");
-	// MIDI channels have no meter yet.
-	CHECK(app.ui()
-			.dom(std::nullopt, ".mixer-channel[channel=" + std::to_string(midi) + "] .mixer-meter", 0)
-			.at("elements")
-			.empty());
+	// A MIDI channel's meter has no bars until a note played (meter.get's MIDI channels).
+	const std::string midiStrip = ".mixer-channel[channel=" + std::to_string(midi) + "] ";
+	CHECK(app.ui().dom(std::nullopt, midiStrip + ".mixer-meter", 0).at("elements").size() == 1);
+	CHECK(app.ui().dom(std::nullopt, midiStrip + ".mixer-meter meter", 0).at("elements").empty());
 
 	// The strip's meter, a bar per side with its peak since the last frame and its peak mark, shows the frame
 	// that the master meter shows: one reader takes the peaks for both.
@@ -201,6 +200,17 @@ TEST_CASE("the mixer's channel meters and the meter display read the same frames
 	app.ui().click(std::nullopt, {strip + ".mixer-peak", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&mixer] { return mixer(".mixer-peak").at(0).value("text", std::string()) == "-inf"; }));
 	CHECK(text(app, ".peak-max") == "-6.0 dB");
+
+	// The MIDI channel's meter shows the velocity of the note that sounds (p. 468).
+	app.call("channel.set", {{"channel", midi}, {"monitor", true}});
+	app.call("midi.inject", {{"channel", midi}, {"messages", {{{"position", 0}, {"bytes", {0x90, 60, 127}}}}}});
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil(
+		[&app, &midiStrip]
+		{
+			const Json bars = app.ui().dom(std::nullopt, midiStrip + ".mixer-meter meter", 0).at("elements");
+			return bars.size() == 1 && bars[0].at("attributes").value("value", std::string()) == "0.0";
+		}));
 }
 
 TEST_CASE("a channel meter's Global Meter Settings menu holds its peaks for a time, forever or not at all, and resets "

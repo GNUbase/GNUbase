@@ -626,6 +626,40 @@ TEST_CASE(
 	CHECK(peaks("postFader").at(0).is_null());
 }
 
+TEST_CASE("a MIDI channel's meter shows the velocity of the loudest note that sounds", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const auto channel = run(client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", channel}, {"monitor", true}});
+	// Plays a MIDI message into the track for 200 ms: the meter's peak is then that of the notes that sound.
+	const auto play = [&client, channel](const std::vector<int>& bytes)
+	{
+		run(client, "midi.inject", {{"channel", channel}, {"messages", {{{"position", 0}, {"bytes", bytes}}}}});
+		run(client, "audio.render", {{"frames", 9600}});
+		return run(client, "meter.get", {{"channels", {channel}}}).at("channels").at(0);
+	};
+
+	Json meter = play({0x90, 60, 127}); // full velocity: 0 dBFS
+	REQUIRE(meter.at("peak").size() == 1);
+	CHECK(meter.at("peak").at(0).get<double>() == Approx(0.0).margin(0.01));
+	meter = play({0x90, 64, 64}); // the louder note still sounds
+	CHECK(meter.at("peak").at(0).get<double>() == Approx(0.0).margin(0.01));
+	meter = play({0x80, 60, 0});
+	CHECK(meter.at("peak").at(0).get<double>() == Approx(20.0 * std::log10(64.0 / 127.0)).margin(0.01));
+	meter = play({0x80, 64, 0});
+	CHECK(meter.at("peak").at(0).is_null());
+	CHECK(meter.at("peakMax").at(0).get<double>() == Approx(0.0).margin(0.01));
+
+	// Muting ends the notes that sound.
+	CHECK(
+		play({0x90, 60, 100}).at("peak").at(0).get<double>() == Approx(20.0 * std::log10(100.0 / 127.0)).margin(0.01));
+	run(client, "channel.set", {{"channel", channel}, {"mute", true}});
+	run(client, "audio.render", {{"frames", 9600}});
+	CHECK(run(client, "meter.get", {{"channels", {channel}}}).at("channels").at(0).at("peak").at(0).is_null());
+}
+
 TEST_CASE("a level meter channel that comes back starts without what it measured before", "[unit]")
 {
 	// Also without a reset, which clears the published maxima itself.

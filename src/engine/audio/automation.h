@@ -342,7 +342,11 @@ namespace gnubase::engine
 		// Audio thread: the automation events of the block for the plugins in the slots, from the source node to the
 		// slot nodes (SlotStrip), keyed by the slot's index in the program that plays.
 		graph::EventBuffer pluginEvents{graph::g_maxEventsPerBlock};
-		LevelMeter meter; // where the user setting meter.position says (MeterPosition)
+		LevelMeter meter; // where the user setting meter.position says (MeterPosition); MIDI tracks: see meterMidi
+		// Audio thread, MIDI tracks: each sounding note's MIDI 1.0 velocity plus 1, 0 for none, and how many notes
+		// sound at each velocity, for the meter.
+		std::array<uint8_t, g_midiNotes> midiVelocity{};
+		std::array<uint16_t, 128> midiVelocities{};
 		// Audio thread, MIDI tracks: whether mute (automation or the button) mutes the track's events, and the notes it
 		// let through that haven't ended, which a mute ends; the values of the pedals that hold notes (sustain,
 		// sostenuto, hold 2) on each MIDI channel, which a mute releases where it is down (above 0 in MIDI 1.0) and
@@ -532,6 +536,8 @@ namespace gnubase::engine
 		void fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept;
 		// A MIDI track's mute: the block's events in out, muted as the fader's mute events say.
 		void muteMidi(graph::EventBuffer& out, const graph::TransportBlock& transport) noexcept;
+		// A MIDI track's meter: the velocity of the loudest note that sounds, frame by frame, 127 as 1.
+		void meterMidi(const graph::ProcessContext& context) noexcept;
 		std::shared_ptr<ChannelState> m_state;
 		std::shared_ptr<graph::Processor> m_source;
 		Panning m_panning;
@@ -559,8 +565,9 @@ namespace gnubase::engine
 		bool m_keepChase = false;
 		std::vector<graph::ProcessEvent> m_channelKinds; // see chasedWhenHeard
 		std::shared_ptr<const MidiSequencer> m_chaser;
-		uint64_t m_project = 0;    // see playsProject
-		ObjectId m_midiOutput = 0; // this graph's MIDI destination (playsMidiTrack)
+		uint64_t m_project = 0;         // see playsProject
+		ObjectId m_midiOutput = 0;      // this graph's MIDI destination (playsMidiTrack)
+		std::vector<float> m_midiLevel; // a block of meterMidi's levels, on a MIDI track's strip
 	};
 
 	// The processor of a send node (graph::NodeKind::Send): a post-fader send's input is its channel's output, a
