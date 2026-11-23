@@ -41,6 +41,12 @@
 	<button id="secondary-format" class="icon-only" menu="secondary-format-menu" title="Select Secondary Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 	<textdisplay id="secondary-time" class="display" time="position" format="secondary" title="Secondary Time Display"/>
 </div>
+<div class="transport-section" section="prePostRoll" label="Pre-roll &amp; Post-roll" title="Pre-roll &amp; Post-roll" default="hidden">
+	<button id="pre-roll" command="transport.toggle" parameters='{"setting": "preRoll"}' state="preRoll" title="Activate Pre-roll">Pre</button>
+	<textdisplay id="pre-roll-amount" class="display" time="preRollAmount" title="Pre-roll Amount"/>
+	<button id="post-roll" command="transport.toggle" parameters='{"setting": "postRoll"}' state="postRoll" title="Activate Post-roll">Post</button>
+	<textdisplay id="post-roll-amount" class="display" time="postRollAmount" title="Post-roll Amount"/>
+</div>
 <div class="transport-section" section="tempoSignature" label="Tempo &amp; Time Signature" title="Tempo &amp; Time Signature">
 	<button id="tempo-track" class="icon-only" field="tempoTrack" title="Activate Tempo Track"><svg class="icon" src="../icons/transport-tempo-track.svg"/></button>
 	<valuefield id="tempo" field="tempo" min="1" max="999" step="1" decimals="3" title="Tempo"/>

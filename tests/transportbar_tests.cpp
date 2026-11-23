@@ -67,10 +67,16 @@ namespace
 		return found[0];
 	}
 
-	bool checked(test::UiApp& app, const std::string& selector, std::optional<ui::WindowId> window = std::nullopt)
+	bool hasClass(test::UiApp& app, const std::string& selector, const std::string& name,
+		std::optional<ui::WindowId> window = std::nullopt)
 	{
 		const Json names = element(app, selector, window).value("classes", Json::array());
-		return std::find(names.begin(), names.end(), "checked") != names.end();
+		return std::find(names.begin(), names.end(), name) != names.end();
+	}
+
+	bool checked(test::UiApp& app, const std::string& selector, std::optional<ui::WindowId> window = std::nullopt)
+	{
+		return hasClass(app, selector, "checked", window);
 	}
 
 	// Clicks the button beside its icon, which focuses the button itself, then checks that Space starts and stops
@@ -364,7 +370,7 @@ TEST_CASE(
 	REQUIRE(bar != nullptr);
 	const float right = bar->GetAbsoluteLeft() + bar->GetOffsetWidth();
 	const std::vector<std::string> order = app.appUi().docking().sections("project", "transport");
-	REQUIRE(order.size() == 10);
+	REQUIRE(order.size() == 11);
 	CHECK(order.front() == "midiAutoQuantize"); // before the left divider, as in the reference manual, p. 306
 	CHECK(order.at(1) == "leftDivider");
 	CHECK(order.at(order.size() - 2) == "rightDivider");
@@ -445,7 +451,7 @@ TEST_CASE(
 	const ui::WindowId panel = app.appUi().transportPanel()->id();
 	CHECK(app.ui().dom(panel, "[divider]", 0).at("elements").empty());
 	CHECK(app.ui().dom(panel, "[setup-section=leftDivider]", 0).at("elements").empty());
-	CHECK(app.appUi().docking().sections("transportPanel", "transport").size() == 8);
+	CHECK(app.appUi().docking().sections("transportPanel", "transport").size() == 9);
 }
 
 TEST_CASE("a transport set saved before the dividers keeps them hidden in their places, and the bar still hides its "
@@ -469,13 +475,14 @@ TEST_CASE("a transport set saved before the dividers keeps them hidden in their 
 		app.shell().step(std::chrono::milliseconds(0));
 		CHECK(app.appUi().docking().sections("project", "transport") ==
 			std::vector<std::string>{"midiAutoQuantize", "leftDivider", "locators", "locatorRange", "punchPoints",
-				"transportControls", "timeDisplays", "tempoSignature", "rightDivider", "click"});
+				"transportControls", "timeDisplays", "prePostRoll", "tempoSignature", "rightDivider", "click"});
 		const std::vector<std::string> shown = app.shownSections("transport-bar");
 		const auto has = [&shown](const std::string& id)
 		{ return std::find(shown.begin(), shown.end(), id) != shown.end(); };
 		CHECK(!has("midiAutoQuantize"));
 		CHECK(!has("leftDivider"));
 		CHECK(!has("rightDivider"));
+		CHECK(!has("prePostRoll"));
 		CHECK(!has("click"));
 		CHECK(has("transportControls"));
 	}
@@ -545,6 +552,8 @@ namespace
 			transport->QuerySelectorAll(controls, ".transport-section > *");
 			for (Rml::Element* control : controls)
 			{
+				if (!control->IsVisible(true)) // in a hidden section, such as Pre-roll & Post-roll, not laid out
+					continue;
 				const float end = control->GetAbsoluteLeft() + control->GetOffsetWidth();
 				inside = inside && end <= width;
 				last = std::max(last, end);
@@ -1589,13 +1598,6 @@ namespace
 		return app.call("project.get").at("tempo").at(0).at("bpm").get<double>();
 	}
 
-	bool hasClass(test::UiApp& app, const std::string& selector, const std::string& name,
-		std::optional<ui::WindowId> window = std::nullopt)
-	{
-		const Json names = element(app, selector, window).value("classes", Json::array());
-		return std::find(names.begin(), names.end(), name) != names.end();
-	}
-
 	bool visible(test::UiApp& app, const std::string& selector, std::optional<ui::WindowId> window = std::nullopt)
 	{
 		return element(app, selector, window).at("visible").get<bool>();
@@ -2035,7 +2037,7 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	CHECK(visible(app, "#transport-bar [section=transportControls]"));
 	const Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
 	CHECK(layout.at("windows").at("project").at("sections").at("transport").at("hidden") ==
-		Json::array({"midiAutoQuantize", "leftDivider", "locators", "punchPoints", "rightDivider"}));
+		Json::array({"midiAutoQuantize", "leftDivider", "locators", "punchPoints", "prePostRoll", "rightDivider"}));
 
 	// The transport panel has sections of its own.
 	app.ui().key(std::nullopt, "F2");
@@ -2094,7 +2096,8 @@ TEST_CASE("setup panes save and recall presets and reset their sections to the d
 	const Json saved = presets().at("transport");
 	REQUIRE(saved.size() == 1);
 	CHECK(saved.at(0).at("name") == "Compact");
-	CHECK(saved.at(0).at("hidden") == Json::array({"midiAutoQuantize", "leftDivider", "locators", "rightDivider"}));
+	CHECK(saved.at(0).at("hidden") ==
+		Json::array({"midiAutoQuantize", "leftDivider", "locators", "prePostRoll", "rightDivider"}));
 	CHECK(saved.at(0).at("order").at(2) == "locators");
 	REQUIRE(app.waitUntil([&exists] { return exists("#transport-setup [setup-preset=Compact]"); }));
 
@@ -2368,4 +2371,61 @@ TEST_CASE("windows whose documents nothing changed in don't draw, also during pl
 	idle(true);
 	app.call("transport.stop");
 	app.call("audio.stop");
+}
+
+TEST_CASE(
+	"the pre-roll and post-roll section and the Transport menu switch the rolls and set their amounts (#583)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.call("transport.set", {{"left", 48000}, {"right", 96000}, {"preRollAmount", 48000}, {"postRollAmount", 24000}});
+
+	// Hidden until the setup pane shows it (reference manual p. 318).
+	CHECK(!visible(app, "#transport-bar [section=prePostRoll]"));
+	app.appUi().docking().setSectionHidden("project", "transport", "prePostRoll", false);
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(visible(app, "#transport-bar [section=prePostRoll]"));
+
+	// The amounts as lengths in the primary time format: 120 BPM at 48 kHz, so a quarter is 24000 samples.
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#pre-roll-amount") == "0.2.0.0"; }));
+	CHECK(shows(app, "#post-roll-amount") == "0.1.0.0");
+	type(app, "#pre-roll-amount", "0.1.0.0");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("preRollAmount") == 24000; }));
+	app.ui().wheel(std::nullopt, at("#post-roll-amount"), 0, -1); // up: a beat longer
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("postRollAmount") == 48000; }));
+	app.ui().wheel(std::nullopt, at("#post-roll-amount"), 0, 5); // not below 0
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("postRollAmount") == 0; }));
+	CHECK(transport(app).at("right") == 96000); // the locators stay
+	CHECK(transport(app).at("left") == 48000);
+
+	// The buttons switch them and follow them.
+	for (const std::string setting : {"preRoll", "postRoll"})
+	{
+		const std::string button = setting == "preRoll" ? "#pre-roll" : "#post-roll";
+		INFO(button);
+		CHECK(!checked(app, button));
+		click(app, button);
+		REQUIRE(waitFor(app, [&setting](const Json& state) { return state.at(setting) == true; }));
+		REQUIRE(app.waitUntil([&app, &button] { return checked(app, button); }));
+		app.call("transport.set", {{setting, false}});
+		REQUIRE(app.waitUntil([&app, &button] { return !checked(app, button); }));
+	}
+
+	// Transport > Pre-roll & Post-roll > Use Pre-roll and Use Post-roll, checked while on.
+	const auto menu = [&app](const std::string& item)
+	{
+		click(app, "#menu-bar button[menu=transport-menu]");
+		app.ui().move(std::nullopt, {"#pre-post-roll-submenu", 0, std::nullopt});
+		app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(app.waitUntil([&app, &item] { return visible(app, item); }));
+	};
+	menu("#use-post-roll");
+	CHECK(!checked(app, "#use-post-roll"));
+	click(app, "#use-post-roll");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("postRoll") == true; }));
+	menu("#use-pre-roll");
+	CHECK(checked(app, "#use-post-roll"));
+	CHECK(!checked(app, "#use-pre-roll"));
+	click(app, "#use-pre-roll");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("preRoll") == true; }));
 }
