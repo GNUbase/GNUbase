@@ -905,25 +905,12 @@ TEST_CASE("only the left button ends a gesture on a lane", "[ui]")
 		{{"part", f.part}, {"controllers", {{{"position", 4 * g_sixteenth}, {"number", 1}, {"value", 0.25}}}}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 1; }));
 	const auto value = [&] { return f.controllers().at(0).at("value").get<double>(); };
-	ui::Window* window = f.window ? f.app.shell().find(*f.window) : nullptr;
-	REQUIRE(window != nullptr);
-	const auto right = [&](const ui::Target& target, bool down)
-	{
-		const ui::Point at = target.point.value_or(ui::Point{});
-		Rml::Context& context = window->context();
-		context.ProcessMouseMove(at.x, at.y, 0);
-		if (down)
-			context.ProcessMouseButtonDown(1, 0);
-		else
-			context.ProcessMouseButtonUp(1, 0);
-		f.app.shell().step(std::chrono::milliseconds(0));
-	};
 	const size_t before = f.steps();
 	f.app.ui().press(f.window, f.at(0, 4.5, 0.1), ui::MouseButton::Left);
 	f.app.ui().move(f.window, f.at(0, 4.5, 0.3));
 	// A right release over the lanes and a right press over the toolbar on the way: no edit.
-	right(f.at(0, 4.5, 0.6), false);
-	right(f.spare(), true);
+	f.app.ui().release(f.window, f.at(0, 4.5, 0.6), ui::MouseButton::Right);
+	f.app.ui().press(f.window, f.spare(), ui::MouseButton::Right);
 	f.app.call("engine.version");
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(value() == Approx(0.25).margin(1e-6));
