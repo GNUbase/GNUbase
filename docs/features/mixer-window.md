@@ -109,22 +109,23 @@ control's last step answered, its strip shows the engine's value; a refused one 
 
 An audio channel's strip has its meter next to the fader (`.mixer-meter`, reference manual p. 468), a MIDI channel's
 strip one without a fader: a `<meter>` per audio channel of the channel's meter (both sides of a mono channel on a
-stereo destination), one for a MIDI channel, its notes' velocity, -60 to +6 dB, with the peak since the last frame and its peak mark, and under it, beside the fader's volume, the Meter Peak
-Level (`.mixer-peak`), the highest of those maxima, which a click resets: every channel's (`meter.reset` with
-`meters` `channels`), not the master meter's. The bars come once the engine measured the channel, after it first
-played. The mixers read them through `ui::MeterReader`, the UI's one reader of the meters, which the right zone's meter
-display shares ([metering.md](metering.md)); VCA faders and busses have no meter yet.
+stereo destination), one for a MIDI channel, its notes' velocity, -60 to +6 dB, with the peak since the last frame and
+its peak mark, and under it, beside the fader's volume, the Meter Peak Level (`.mixer-peak`), the highest of those
+maxima, which a click resets: every channel's (`meter.reset` with `meters` `channels`), not the master meter's. The bars
+come once the engine measured the channel, after it first played. The mixers read them through `ui::MeterReader`, the
+UI's one reader of the meters, which the right zone's meter display shares ([metering.md](metering.md)); VCA faders and
+busses have no meter yet.
 
 A right click on a meter opens its Global Meter Settings (`#mixer-meter-menu`, p. 467), the user settings that every
 mixer's meters follow: Meter Peak - Hold Peaks (`meter.holdPeaks`, on by default) shows the peak marks; Meter Peak -
 Hold Forever (`meter.holdForever`) makes a mark the peak maximum, until a reset; without it a mark holds a peak for the
-Meters' Peak Hold Time (`meter.peakHoldTime`, 500 to 30000 ms, 2000 by default, on the preferences' Metering page,
-p. 1614) and then falls to the level, and a reset starts it again. The UI holds the marks, from the peaks of each frame.
+Meters' Peak Hold Time (`meter.peakHoldTime`, 500 to 30000 ms, 2000 by default, on the preferences' Metering page, p.
+1614) and then falls to the level, and a reset starts it again. The UI holds the marks, from the peaks of each frame.
 Reset Meters resets the channels' maxima, as a click on the Meter Peak Level does. Meter Position - Input, Post-Fader
-and Post-Panner (`meter.position`, `[meter-position]`, checked as the setting says) choose where the engine measures
-the channels ([metering.md](metering.md)); after the panner by default. The bars fall back from a peak by the Meters'
-Fallback (`meter.fallback`, 1 to 100 dB per second, 20 by default, on the preferences' Metering page, p. 1614), and below their -60 dB end to silence:
-the UI keeps each bar's level and lowers it by the time since its last frame.
+and Post-Panner (`meter.position`, `[meter-position]`, checked as the setting says) choose where the engine measures the
+channels ([metering.md](metering.md)); after the panner by default. The bars fall back from a peak by the Meters'
+Fallback (`meter.fallback`, 1 to 100 dB per second, 20 by default, on the preferences' Metering page, p. 1614), and
+below their -60 dB end to silence: the UI keeps each bar's level and lowers it by the time since its last frame.
 
 ## Not yet
 
