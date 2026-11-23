@@ -405,6 +405,11 @@ namespace gnubase::ui
 				about = ui->second.description;
 			add(binding.command, binding.parameters, about);
 		}
+		// Commands with parameters that no default key runs, for the user to give keys to: Trigger Arranger Event 1 to
+		// 9 in the arranger area (p. 411).
+		if (const auto trigger = m_engineCommands.find("arranger.trigger"); trigger != m_engineCommands.end())
+			for (int number = 1; number <= 9; ++number)
+				add(trigger->first, Json{{"number", number}}, trigger->second.description);
 		std::stable_sort(found.begin(), found.end(), [](const Json& a, const Json& b)
 			{ return a.at("command").get<std::string>() < b.at("command").get<std::string>(); });
 		return found;

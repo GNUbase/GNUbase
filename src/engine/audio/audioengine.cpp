@@ -21,6 +21,7 @@
 #include <exception>
 #include <functional>
 #include <map>
+#include <numeric>
 #include <set>
 #include <string>
 #include <system_error>
@@ -3163,21 +3164,42 @@ namespace gnubase::engine
 				arrange(state);
 			});
 		command("arranger.trigger",
-			"Arranger mode, Jump Mode: plays an arranger event (event, its id) in a loop until another one is "
+			"Arranger mode, Jump Mode: plays an arranger event (event, its id, or number, 1 for the first in timeline "
+			"order, as the key commands Trigger Arranger Event 1 to 9 name them) in a loop until another one is "
 			"triggered or a step is chosen with arranger.goToStep: at once while stopped or with the jump mode none, "
 			"otherwise at the next jump point of the event playing. Returns the transport's state.",
-			R"({"type": "object", "additionalProperties": false, "required": ["event"],
-				"properties": {"event": {"type": "integer"}}})",
+			R"({"type": "object", "additionalProperties": false, "minProperties": 1,
+				"properties": {"event": {"type": "integer"}, "number": {"type": "integer"}}})",
 			[this](const Json& parameters)
 			{
 				const ArrangerPlan& plan = *m_snapshots.latest().arranger;
 				require(plan.plays(), "arranger mode is off or the active chain is empty");
-				const auto id = parameters.at("event").get<uint64_t>();
-				const auto found = std::find_if(plan.sections.begin(), plan.sections.end(),
-					[id](const ArrangerSection& section) { return section.event == id; });
-				require(found != plan.sections.end(), "no arranger event " + std::to_string(id));
+				require(parameters.size() == 1, "give event or number");
 				ArrangerState state;
-				state.section = static_cast<int32_t>(found - plan.sections.begin());
+				if (parameters.contains("number"))
+				{
+					// The sections are in the project's order: the number counts them in timeline order.
+					std::vector<int32_t> order(plan.sections.size());
+					std::iota(order.begin(), order.end(), 0);
+					std::stable_sort(order.begin(), order.end(),
+						[&plan](int32_t a, int32_t b)
+						{
+							return plan.sections[static_cast<size_t>(a)].start <
+								plan.sections[static_cast<size_t>(b)].start;
+						});
+					const auto number = parameters.at("number").get<int64_t>();
+					require(number >= 1 && static_cast<size_t>(number) <= order.size(),
+						"there is no arranger event " + std::to_string(number));
+					state.section = order[static_cast<size_t>(number - 1)];
+				}
+				else
+				{
+					const auto id = parameters.at("event").get<uint64_t>();
+					const auto found = std::find_if(plan.sections.begin(), plan.sections.end(),
+						[id](const ArrangerSection& section) { return section.event == id; });
+					require(found != plan.sections.end(), "no arranger event " + std::to_string(id));
+					state.section = static_cast<int32_t>(found - plan.sections.begin());
+				}
 				arrange(state);
 			});
 	}

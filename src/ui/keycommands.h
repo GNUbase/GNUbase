@@ -142,9 +142,10 @@ namespace gnubase::ui
 		void customize(const engine::Json& keyCommands, const engine::Json& macros);
 
 		// Every command a key can run, for the key commands dialog, by area: the UI's commands, the engine's that
-		// change something and run without parameters, and each command with the parameters of a default binding.
-		// Each is {command, parameters, description, zone, keys}, keys being the default keys as keySetting writes
-		// them; macros aren't in it.
+		// change something and run without parameters, each command with the parameters of a default binding, and
+		// Trigger Arranger Event 1 to 9 (arranger.trigger with number, reference manual p. 411) without keys. Each is
+		// {command, parameters, description, zone, keys}, keys being the default keys as keySetting writes them; macros
+		// aren't in it.
 		engine::Json commands() const;
 
 		// Every key that runs a command now, for the key commands assignments export: the effective bindings (the
