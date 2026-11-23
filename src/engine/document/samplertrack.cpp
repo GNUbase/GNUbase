@@ -268,7 +268,10 @@ namespace gnubase::engine
 					const auto frame = std::llround((reverse ? 1.0 - share : share) * frames);
 					const time::Samples found = zeroCrossingFrame(media, frame, 0, media.length - 1);
 					const double snapped = static_cast<double>(found) / frames;
-					positions.push_back(found == frame ? share : (reverse ? 1.0 - snapped : snapped));
+					if (found == frame)
+						positions.push_back(share);
+					else
+						positions.push_back(reverse ? 1.0 - snapped : snapped);
 				}
 				return Json{{"positions", std::move(positions)}};
 			});

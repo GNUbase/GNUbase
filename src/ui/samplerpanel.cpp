@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/samplerpanel.h"
 
+#include "platform/log.h"
 #include "ui/canvas.h"
 #include "ui/rmlui.h"
 #include "ui/widgetutils.h"
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <exception>
 #include <sstream>
 #include <utility>
 
@@ -264,7 +266,15 @@ namespace gnubase::ui
 
 	SamplerPanel::~SamplerPanel()
 	{
-		listen(false);
+		// The indicator stops listening with the panel. Sending may throw, which a destructor must not pass on.
+		try
+		{
+			listen(false);
+		}
+		catch (const std::exception& error)
+		{
+			logging::warning("The sampler panel cannot stop listening for MIDI input: {}", error.what());
+		}
 		if (Rml::Element* root = m_root.get())
 		{
 			for (const Rml::EventId id : g_events)
