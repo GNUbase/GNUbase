@@ -318,7 +318,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 32> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 34> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected (unless "
 				"ui.upDownSelectsTracksOnly).",
@@ -334,8 +334,23 @@ namespace gnubase::app
 			{"track.enableSelected", "Enables the selected tracks again.", nullptr},
 			// Render in place and freeze (docs/features/render-in-place.md).
 			{"track.freezeSelected",
-				"Freezes the selected audio and instrument tracks, or unfreezes them if every one is frozen.", nullptr},
-			{"track.renderSelected", "Renders the selected audio and instrument tracks in place.", nullptr},
+				"Freezes the selected audio and instrument tracks with the Tail Size of render.freezeTail, or "
+				"unfreezes them if every one is frozen.",
+				nullptr},
+			{"track.freezeSelectedSettings",
+				"Opens Freeze Channel Options for the selected audio and instrument tracks that aren't frozen, and "
+				"freezes them with its Tail Size (render.freezeTail); unfreezes them if every one is frozen.",
+				nullptr},
+			{"track.renderSelected",
+				"Renders in place with the options of the user setting render.options: the selected audio events, "
+				"audio parts and MIDI parts, else the selection range, else the selected tracks, on audio and "
+				"instrument tracks.",
+				nullptr},
+			{"track.renderSettings",
+				"Opens Render Selection for the selected events and parts or the selection range, else Render Tracks "
+				"for the selected tracks, and renders them in place with its options, which it saves in "
+				"render.options.",
+				nullptr},
 			// The chord track (docs/features/chord-track.md).
 			{"track.chordsToMidiSelected",
 				"Chords to MIDI: a MIDI part of the chord events on the first selected MIDI or instrument track, which "
@@ -1302,6 +1317,16 @@ namespace gnubase::app
 					{
 						return m_trackList != nullptr && (!paste || m_trackList->automationCopied()) &&
 							!(parameters ? m_trackList->selectedLanes(paste) : m_trackList->selection()).empty();
+					});
+			else if (id == "track.renderSelected" || id == "track.renderSettings")
+				// Also for selected events and parts or a selection range (reference manual pp. 1474-1477).
+				m_keys.enableWhen(command.id,
+					[this](ui::Window&, Rml::Element*)
+					{
+						return m_trackList != nullptr &&
+							(!m_trackList->selection().empty() ||
+								(m_eventDisplay &&
+									(!m_eventDisplay->selection().empty() || m_eventDisplay->range().has_value())));
 					});
 			else if (id == "track.pasteAutomationAll")
 				m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*)

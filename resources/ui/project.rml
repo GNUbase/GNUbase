@@ -306,10 +306,12 @@
 		<menuitem id="render-in-place-submenu">Render in Place
 			<menu>
 				<menuitem command="track.renderSelected">Render (with Current Settings)</menuitem>
+				<menuitem command="track.renderSettings">Render Settings...</menuitem>
 			</menu>
 		</menuitem>
 		<menuitem id="freeze-submenu">Freeze/Unfreeze
 			<menu>
+				<menuitem command="track.freezeSelectedSettings">Selected Tracks...</menuitem>
 				<menuitem command="track.freezeSelected">Selected Tracks (with Current Settings)</menuitem>
 			</menu>
 		</menuitem>
@@ -557,7 +559,7 @@
 		<menuseparator/>
 		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
 		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
-		<menuitem command="track.freezeSelected">Freeze/Unfreeze Selected Tracks</menuitem>
+		<menuitem command="track.freezeSelectedSettings">Freeze/Unfreeze Selected Tracks</menuitem>
 		<menuseparator/>
 		<!-- The tempo track (reference manual p. 1450) -->
 		<menuitem command="tempo.selectAll">Select All Events</menuitem>
