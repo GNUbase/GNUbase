@@ -252,7 +252,8 @@ namespace gnubase::engine
 			}
 	}
 
-	Recorder::Recorder(Notify notify) : m_notify(std::move(notify))
+	Recorder::Recorder(Notify notify, CreateWriter createWriter)
+		: m_notify(std::move(notify)), m_createWriter(std::move(createWriter))
 	{
 		m_thread = std::thread([this] { run(); });
 	}
@@ -744,7 +745,7 @@ namespace gnubase::engine
 						broadcast.originator = cut(broadcast.originator, 32);
 						broadcast.originatorReference = cut(broadcast.originatorReference, 32);
 					}
-					m_files.push_back({track, path, AudioFileWriter::create(path, options)});
+					m_files.push_back({track, path, m_createWriter(path, options)});
 				}
 				catch (const std::exception& error)
 				{
@@ -775,9 +776,11 @@ namespace gnubase::engine
 	void Recorder::write(const float* samples, uint32_t frames)
 	{
 		const auto channels = static_cast<size_t>(m_channels);
-		for (auto file = m_files.begin(); file != m_files.end();)
+		for (File& file : m_files)
 		{
-			const std::vector<int>& ports = file->track.ports;
+			if (file.end >= 0)
+				continue;
+			const std::vector<int>& ports = file.track.ports;
 			m_trackSamples.assign(static_cast<size_t>(frames) * ports.size(), 0.0f);
 			for (size_t c = 0; c < ports.size(); ++c)
 				if (ports[c] >= 0 && static_cast<size_t>(ports[c]) < channels)
@@ -786,13 +789,13 @@ namespace gnubase::engine
 							samples[(i * channels) + static_cast<size_t>(ports[c])];
 			try
 			{
-				file->writer->write(m_trackSamples.data(), frames);
-				++file;
+				file.writer->write(m_trackSamples.data(), frames);
 			}
 			catch (const std::exception& error)
 			{
-				fail("can't write " + file->path + ": " + error.what());
-				file = m_files.erase(file);
+				// The file ends there, and what it holds still lands (#580); the other tracks record on.
+				fail("can't write " + file.path + ": " + error.what());
+				file.end = m_written;
 			}
 		}
 		m_written += frames;
@@ -815,8 +818,11 @@ namespace gnubase::engine
 			}
 			Json takes = Json::array();
 			for (const Take& take : m_takes)
-				if (take.length > 0)
-					takes.push_back({{"position", take.position}, {"offset", take.offset}, {"length", take.length}});
+			{
+				const time::Samples length = file.end < 0 ? take.length : std::min(take.length, file.end - take.offset);
+				if (length > 0)
+					takes.push_back({{"position", take.position}, {"offset", take.offset}, {"length", length}});
+			}
 			tracks.push_back({{"track", file.track.track}, {"path", file.path}, {"takes", std::move(takes)}});
 		}
 		m_files.clear();

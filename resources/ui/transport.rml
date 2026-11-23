@@ -32,7 +32,7 @@
 	<button id="cycle" class="icon-only" command="transport.toggle" parameters='{"setting": "cycle"}' state="cycle" title="Cycle"><svg class="icon" src="../icons/transport-loop.svg"/></button>
 	<button id="stop" class="icon-only" command="transport.stop" title="Stop"><svg class="icon" src="../icons/transport-stop.svg"/></button>
 	<button id="start" class="icon-only" command="transport.play" state="playing" title="Start"><svg class="icon" src="../icons/transport-play.svg"/></button>
-	<button id="record" class="icon-only" command="transport.toggle" parameters='{"setting": "record"}' state="recording" title="Record"><svg class="icon" src="../icons/transport-record.svg"/></button>
+	<button id="record" class="icon-only" command="transport.toggle" parameters='{"setting": "record"}' state="recording" waiting="recordWaiting" title="Record"><svg class="icon" src="../icons/transport-record.svg"/></button>
 </div>
 <div class="transport-section" section="timeDisplays" label="Time Displays" title="Time Displays">
 	<button id="primary-format" class="icon-only" menu="primary-format-menu" title="Select Primary Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
@@ -40,6 +40,12 @@
 	<button id="exchange-formats" class="icon-only" command="time.exchangeFormats" title="Exchange Time Formats"><svg class="icon" src="../icons/general-redo.svg"/></button>
 	<button id="secondary-format" class="icon-only" menu="secondary-format-menu" title="Select Secondary Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 	<textdisplay id="secondary-time" class="display" time="position" format="secondary" title="Secondary Time Display"/>
+</div>
+<div class="transport-section" section="prePostRoll" label="Pre-roll &amp; Post-roll" title="Pre-roll &amp; Post-roll" default="hidden">
+	<button id="pre-roll" command="transport.toggle" parameters='{"setting": "preRoll"}' state="preRoll" title="Activate Pre-roll">Pre</button>
+	<textdisplay id="pre-roll-amount" class="display" time="preRollAmount" title="Pre-roll Amount"/>
+	<button id="post-roll" command="transport.toggle" parameters='{"setting": "postRoll"}' state="postRoll" title="Activate Post-roll">Post</button>
+	<textdisplay id="post-roll-amount" class="display" time="postRollAmount" title="Post-roll Amount"/>
 </div>
 <div class="transport-section" section="tempoSignature" label="Tempo &amp; Time Signature" title="Tempo &amp; Time Signature">
 	<button id="tempo-track" class="icon-only" field="tempoTrack" title="Activate Tempo Track"><svg class="icon" src="../icons/transport-tempo-track.svg"/></button>

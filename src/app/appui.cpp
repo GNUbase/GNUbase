@@ -1355,6 +1355,15 @@ namespace gnubase::app
 					m_transport.value(key, engine::Json()) == parameters.begin().value();
 			});
 
+		// Use Pre-roll and Use Post-roll show whether they are on (#583).
+		m_keys.checkWhen("transport.toggle",
+			[this](const engine::Json& parameters)
+			{
+				const std::string setting = parameters.value("setting", "");
+				return (setting == "preRoll" || setting == "postRoll") && m_transport.is_object() &&
+					m_transport.value(setting, false);
+			});
+
 		// Undo and Redo in the menus while the history has a step to undo or redo.
 		m_keys.enableWhen("history.undo", [this](ui::Window&, Rml::Element*) { return m_canUndo; });
 		m_keys.enableWhen("history.redo", [this](ui::Window&, Rml::Element*) { return m_canRedo; });

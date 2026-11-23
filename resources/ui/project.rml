@@ -637,6 +637,12 @@
 				<menuitem id="midi-retrospective-empty" command="midi.clearRetrospective">Empty All Buffers</menuitem>
 			</menu>
 		</menuitem>
+		<menuitem id="pre-post-roll-submenu">Pre-roll &amp; Post-roll
+			<menu>
+				<menuitem id="use-pre-roll" command="transport.toggle" parameters='{"setting": "preRoll"}'>Use Pre-roll</menuitem>
+				<menuitem id="use-post-roll" command="transport.toggle" parameters='{"setting": "postRoll"}'>Use Post-roll</menuitem>
+			</menu>
+		</menuitem>
 		<menuseparator/>
 		<menuitem command="transport.locate" parameters='{"target": "projectStart"}'>Go to Project Start</menuitem>
 		<menuseparator/>

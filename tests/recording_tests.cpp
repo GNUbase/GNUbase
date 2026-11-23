@@ -1406,3 +1406,75 @@ TEST_CASE("a recording that adds nothing leaves the project unmodified (#546)", 
 	REQUIRE(waitFor(client, "recording.failed").is_object()); // recording.add runs on the command thread
 	CHECK(!modified());
 }
+
+TEST_CASE("a file that can't take more, as an AIFF file at 4 GB, ends its take there and still lands (#580)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	// Writes the first 100 frames, then refuses more, as AIFF does at 4 GB.
+	class Full final : public engine::AudioFileWriter
+	{
+	public:
+		explicit Full(std::unique_ptr<engine::AudioFileWriter> writer) : m_writer(std::move(writer)) {}
+		void write(const float* buffer, size_t frames) override
+		{
+			if (m_frames + frames > 100)
+				throw engine::AudioFileError("AIFF files can't be larger than 4 GB");
+			m_writer->write(buffer, frames);
+			m_frames += frames;
+		}
+		void close() override { m_writer->close(); }
+
+	private:
+		std::unique_ptr<engine::AudioFileWriter> m_writer;
+		size_t m_frames = 0;
+	};
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::vector<std::string> failures;
+	Json finished;
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				const std::scoped_lock lock(mutex);
+				if (name == "recording.failed")
+					failures.push_back(data.at("reason").get<std::string>());
+				else
+					finished = data;
+				changed.notify_all();
+			},
+			[](const std::string& path, const engine::WriteOptions& options)
+			{
+				std::unique_ptr<engine::AudioFileWriter> writer = engine::AudioFileWriter::create(path, options);
+				if (path.find("Full") != std::string::npos)
+					writer = std::make_unique<Full>(std::move(writer));
+				return writer;
+			});
+		recorder.prepare(1, g_blockFrames);
+		engine::RecordSetup setup = recordInto(dir.path());
+		setup.tracks = {{1, "Full", {0}}, {2, "Audio", {0}}};
+		recorder.setup(setup);
+		engine::PlayedPositions played(size_t{8} * g_blockFrames);
+		for (uint64_t index = 0; index < 4; ++index)
+			processBlock(recorder, played, index, true);
+		processBlock(recorder, played, 4, false);
+		std::unique_lock lock(mutex);
+		REQUIRE(changed.wait_for(lock, 5s, [&] { return finished.is_object(); }));
+	}
+	REQUIRE(failures.size() == 1);
+	CHECK_THAT(failures[0], ContainsSubstring("4 GB"));
+	const Json& tracks = finished.at("tracks");
+	REQUIRE(tracks.size() == 2);
+	for (const Json& track : tracks)
+	{
+		const bool full = track.at("track") == 1;
+		INFO("track " << track.at("track"));
+		const Json& takes = track.at("takes");
+		REQUIRE(takes.size() == 1);
+		CHECK(takes[0].at("position") == 0);
+		CHECK(takes[0].at("length") == (full ? 1 : 4) * g_blockFrames); // the block that didn't fit isn't in it
+		CHECK(channelOf(track.at("path").get<std::string>(), 0).size() == (full ? 1 : 4) * g_blockFrames);
+	}
+}

@@ -181,6 +181,7 @@ add_library(gnubase-engine STATIC
 	graph/processor.h
 	jobs/jobs.cpp jobs/jobs.h
 	media/backup.cpp media/backup.h
+	media/diskspace.cpp media/diskspace.h
 	metronome/clicks.h
 	metronome/metronome.cpp metronome/metronome.h
 	metronome/metronomecommands.cpp metronome/metronomecommands.h
