@@ -1322,6 +1322,14 @@
 	{
 		color: #ff8c8c;
 	}
+	.sampler-received
+	{
+		background-color: #c8c8c8;
+	}
+	.sampler-received.lit
+	{
+		background-color: #ffff00;
+	}
 	.drum-pad
 	{
 		color: #c8c8c8;

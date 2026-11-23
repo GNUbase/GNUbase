@@ -1116,6 +1116,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".sampler-handle.root", {"background-color": c["accent"]}),
         (".sampler-handle.dragged", {"background-color": c["text"]}),
         (".sampler-message.error", {"color": c["danger"]}),
+        # Its event received indicator, lit in the accent at incoming notes and controllers
+        (".sampler-received", {"background-color": c["textMuted"]}),
+        (".sampler-received.lit", {"background-color": c["accent"]}),
         # The drum machine panel (docs/features/drum-track.md): pads raised when they play something, the selected
         # one framed, muted and soloed-out ones dimmed, soloed ones in the second accent; the selected group and page
         # in the accent, and the toolbar's message standing out

@@ -7,11 +7,16 @@
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "platform/hosttime.h"
+#include "platform/midi/dummyport.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
 #include "ui/enginebinding.h"
+#include "ui/rmlui.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
+
+#include <RmlUi/Core/Core.h>
 
 #include <SDL3/SDL.h>
 
@@ -24,6 +29,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -43,7 +49,8 @@ namespace
 	// track, the project window shown.
 	struct Fixture
 	{
-		Fixture()
+		explicit Fixture(std::vector<std::unique_ptr<midi::Backend>> backends = midi::makeBackends())
+			: app({1200, 800}, std::move(backends))
 		{
 			app.appUi().showProject();
 			test::Audio sine;
@@ -147,7 +154,7 @@ namespace
 		test::TempDir folder;
 		std::filesystem::path file = folder.path() / "sine.wav";
 		std::filesystem::path other = folder.path() / "other.wav";
-		test::UiApp app{{1200, 800}};
+		test::UiApp app;
 		uint64_t audio = 0;
 		uint64_t track = 0;
 		uint64_t channel = 0;
@@ -379,6 +386,135 @@ TEST_CASE("the sampler panel loads dropped files and normalizes the sample", "[u
 	// The sine's peak is half the full level: Normalize Sample raises it by 6 dB.
 	f.click("#sampler-normalize");
 	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Sample gain") - 6.02) < 0.1; }));
+}
+
+TEST_CASE("MIDI Reset sends All Sound Off and Reset All Controllers to the sampler on every channel", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	f.app.call("audio.render", {{"frames", 128}}); // the new graph
+	f.app.call("midi.capture", {{"start", true}});
+	f.click("#sampler-midi-reset");
+	std::vector<std::vector<int>> played;
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			f.app.call("audio.render", {{"frames", 128}});
+			const Json captured = f.app.call("midi.capture");
+			for (const Json& message : captured.at("captured"))
+				if (message.at("channel") == f.channel)
+					played.push_back(message.at("bytes").get<std::vector<int>>());
+			return played.size() >= 32;
+		}));
+	std::vector<std::vector<int>> expected;
+	for (int channel = 0; channel < 16; ++channel)
+		for (const int controller : {120, 121})
+			expected.push_back({0xB0 + channel, controller, 0});
+	CHECK(played == expected);
+	CHECK(f.elements("#sampler-message").at(0).value("text", "").empty());
+}
+
+TEST_CASE("Snap to Zero Crossing ends a marker's drag where the sample crosses zero, in the drag's undo step", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const Json display = f.box("#sampler-display");
+	const double x = display.at("x").get<double>();
+	const double width = display.at("width").get<double>();
+	const int y = static_cast<int>(display.at("y").get<double>() + (display.at("height").get<double>() / 2));
+	const auto dragStart = [&](double share)
+	{
+		f.app.ui().drag(std::nullopt, of(".sampler-marker[marker=\"Start\"]"),
+			{"", 0, ui::Point{static_cast<int>(x + (share * width)), y}});
+	};
+	// The fixture's sine, sin(frame * 0.05), crosses zero every 20 pi frames.
+	const auto onCrossing = [](double share)
+	{
+		const double frame = share * 24000.0;
+		const double period = 20.0 * 3.14159265358979323846;
+		return std::abs(frame - (std::round(frame / period) * period)) <= 1.0;
+	};
+	const auto setting = [&] { return f.app.call("settings.get", {{"key", "ui.samplerPanel"}}).at("value"); };
+	dragStart(0.3);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Start") - 0.3) < 0.01; }));
+
+	f.click("#sampler-zero");
+	REQUIRE(f.app.waitUntil([&] { return setting().value("snapToZero", false); }));
+	CHECK(!f.elements("#sampler-zero[checked]").empty());
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	dragStart(0.4);
+	REQUIRE(f.app.waitUntil(
+		[&] { return std::abs(f.parameter("Start") - 0.4) < 0.01 && onCrossing(f.parameter("Start")); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+	// End stays after Start.
+	CHECK(f.parameter("End") >= f.parameter("Start"));
+
+	// Off again, the setting says so.
+	f.click("#sampler-zero");
+	REQUIRE(f.app.waitUntil([&] { return !setting().value("snapToZero", true); }));
+}
+
+TEST_CASE("the event received indicator lights up at notes and controllers from the track's MIDI input", "[ui]")
+{
+	auto backend = std::make_unique<midi::DummyBackend>();
+	backend->addLoopback("Keys");
+	midi::DummyBackend& dummy = *backend;
+	std::vector<std::unique_ptr<midi::Backend>> backends;
+	backends.push_back(std::move(backend));
+	Fixture f(std::move(backends));
+	f.open();
+	// RmlUi's clock stands still, so that the indicator stays lit until the test moves it on.
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	const std::unique_ptr<midi::Output> device = dummy.openOutput("Keys");
+	// The device plays a message, and the panel hears of it (midi.activity, which offline the test runs).
+	const auto play = [&](const std::vector<uint8_t>& bytes)
+	{
+		audio::MidiMessage message;
+		message.size = static_cast<uint8_t>(bytes.size());
+		std::copy(bytes.begin(), bytes.end(), message.bytes.begin());
+		device->send(message, hostTime() - 1000000000);
+		if (!f.app.call("audio.get").at("running").get<bool>())
+		{
+			f.app.call("audio.render", {{"frames", 128}});
+			f.app.call("midi.activity");
+		}
+		for (int i = 0; i < 3; ++i)
+			f.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto lit = [&] { return f.has("#sampler-received", "lit"); };
+	const auto putOut = [&]
+	{
+		clock->advance(1.0);
+		return f.app.waitUntil([&] { return !lit(); });
+	};
+	CHECK(!lit());
+	// A note-off doesn't light it, a note-on and a controller do, until it goes out on its own.
+	play({0x80, 60, 0});
+	CHECK(!lit());
+	play({0x90, 60, 100});
+	CHECK(lit());
+	CHECK(putOut());
+	play({0xB3, 1, 64});
+	CHECK(lit());
+	CHECK(putOut());
+
+	// An input that isn't among all MIDI inputs, which the track takes, doesn't light it.
+	std::string id;
+	const Json ports = f.app.call("midi.ports");
+	for (const Json& port : ports.at("ports"))
+		if (port.at("input") == true && port.at("name") == "Keys")
+			id = port.at("id").get<std::string>();
+	REQUIRE(!id.empty());
+	f.app.call("midi.setPort", {{"id", id}, {"input", true}, {"inAllInputs", false}});
+	for (int i = 0; i < 3; ++i)
+		f.app.shell().step(std::chrono::milliseconds(0));
+	play({0x90, 62, 100});
+	CHECK(!lit());
 }
 
 TEST_CASE("Add Sampler Track opens the add track dialog on its Sampler page", "[ui]")

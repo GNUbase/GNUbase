@@ -14,8 +14,9 @@ sampler is a GNUbase processor and runs inside the engine (architecture rule 3).
 | `sampler.create` | A new sampler track with a pool clip (`clip`), an audio event's clip (`event`) or an audio file (`path`), which goes into the pool as a clip in the same undo step, from `start` to `end` in clip frames (default: the event's section or the whole clip), or empty without any; named `name`, or Sampler 01, Sampler 02 and so on, the first number no track's name has; placed and routed with `parent`, `index` and `output` as `track.add` does | pp. 143-144, 711 |
 | `sampler.load` | Loads another sample, the same way, into a sampler track while it plays (hot swap). Its settings go back to their defaults, or with `keepSettings` (Lock Parameter Settings) only those of the sample: root key, start, end, the fades, loop start, end and crossfade | pp. 710, 715-716 |
 | `sampler.normalize` | Sets the Sample gain so that the highest peak between start and end reaches `level` dBFS (default 0); refused for a silent sample or a missing file | pp. 715, 735 |
+| `sampler.zeroCrossings` | A query for Snap to Zero Crossing: moves `positions`, shares of the sample as Start and End are (counted from its end with Reverse), each to the nearest frame within 50 ms where the sum of its channels changes sign, the frame of the two there that is nearer to zero; a position without one near stays | p. 713 |
 
-Each is one undo step and emits `channel.changed`; `sampler.create` also `track.added`. Another instrument
+Each but the query is one undo step and emits `channel.changed`; `sampler.create` also `track.added`. Another instrument
 (`channel.set`, or a track preset's in `track.loadPreset`) drops the sample. A sampler's clip counts as used in the pool
 (`pool.get`, `pool.removeUnused`, `clip.remove` refuses it, `media.removeMissing` empties the sampler) and in a backup
 (`project.backup`, p. 710: its `removeUnused` keeps it, and `minimize` copies a file that a sampler plays whole, as
@@ -63,6 +64,8 @@ How it plays:
   monophonic note and takes over only the latest.
 - Each voice has its own filter, whose cutoff rises with the key by the key follow share (100 %: exactly with the
   pitch), after Drive's tanh saturation; Drive belongs to the filter section (p. 722) and is off with the filter.
+- All Sound Off (controller 120) silences the voices of its MIDI channel at once, One shot ones too, and Reset All
+  Controllers (121) takes the pitch bend back to none. The panel's MIDI Reset sends both (p. 716).
 - Loading (#1122): when a channel's sample changes, and for every sampler when a project loads, the audio engine's
   sample loader (`SampleLoader`, `src/engine/audio/sampleloader.h`) reads the file on a thread of its own, so a long
   sample holds up no command. Once it is read the engine runs `audio.updateSamples` on its own, which hands it to the
@@ -90,11 +93,11 @@ How it plays:
 
 Not yet: warped (time-stretched) playback with sync to the tempo, the quality modes, transient, grid and manual slicing
 with fades and the slices' MIDI phrase, the pitch and filter envelopes and a multi-node amp envelope, the LFOs, Trim
-Sample, MIDI Reset, Hot Swap Preview Sample, the sampler panel's own undo history and A/B settings, loading by dragging
-an event or a MIDI part onto the panel, a pool folder of the sampler's samples (p. 710), and transferring the sample to
-another instrument, which needs a plugin wrapper extension for samples. The display's ruler and zoom, the toolbar's
-Read/Write Automation, event received indicator, Snap to Zero Crossing and preset section, and the Add Track dialog's
-Input Routing and Event Type, which no page of it has yet ([add-track.md](add-track.md)), are open too (#1122).
+Sample, Hot Swap Preview Sample that restores the sample before, the sampler panel's own undo history and A/B
+settings, loading by dragging an event or a MIDI part onto the panel, a pool folder of the sampler's samples (p. 710),
+and transferring the sample to another instrument, which needs a plugin wrapper extension for samples. The display's
+ruler and zoom, the toolbar's Read/Write Automation and preset section, and the Add Track dialog's Input Routing and
+Event Type, which no page of it has yet ([add-track.md](add-track.md)), are open too (#1122).
 
 ## In the UI
 
@@ -109,17 +112,29 @@ Sampler, that Project > Show Sampler (`window.sampler`) shows; like every panel 
 ([docking.md](docking.md)). It shows the first selected track while that is a sampler track, else only a hint (the
 root `.sampler-panel` has the class `.empty`):
 
-- **Toolbar**: Import Audio File (`#sampler-import`, a file dialog, then `sampler.load` with `path`), the clip's name
-  (`#sampler-file`), the Normalization Level (`#sampler-level`, -96 to 0 dBFS, p. 735), Normalize Sample
-  (`#sampler-normalize`, `sampler.normalize` with that `level`) and Lock Parameter Settings (`#sampler-lock`), which
-  loads keep the settings with (`keepSettings`). The lock and the level are the user setting `ui.samplerPanel`
-  (`lockParameters`, `normalizeLevel`; what later versions add to it is kept), so they stay as they were when the panel
-  is made anew, e.g. in a window of its own. While the panel's own changes of it are on their way, e.g. during a drag of
+- **Toolbar** (pp. 712-716): the event received indicator (`#sampler-received`), Snap to Zero Crossing
+  (`#sampler-zero`), Import Audio File (`#sampler-import`, a file dialog, then `sampler.load` with `path`), the clip's
+  name (`#sampler-file`), the Normalization Level (`#sampler-level`, -96 to 0 dBFS, p. 735), Normalize Sample
+  (`#sampler-normalize`, `sampler.normalize` with that `level`), Lock Parameter Settings (`#sampler-lock`), which
+  loads keep the settings with (`keepSettings`), and MIDI Reset (`#sampler-midi-reset`). The lock, the level and Snap
+  to Zero Crossing are the user setting `ui.samplerPanel` (`lockParameters`, `normalizeLevel`, `snapToZero`; what
+  later versions add to it is kept), so they stay as they were when the panel is made anew, e.g. in a window of its
+  own. While the panel's own changes of it are on their way, e.g. during a drag of
   the level, the older ones that `settings.changed` brings back don't set the field back. A change from elsewhere still
   shows: results and events reach the panel in the engine's order, so one made after the panel's last `settings.set`
   comes after that save's answer, when none of the panel's own is on its way. Why a load (a file that isn't audio) or
   Normalize Sample (a silent or missing sample) failed shows in the toolbar's message (`#sampler-message`, `.error`)
-  until the next one succeeds or another track is shown.
+  until the next one succeeds or another track is shown; so does MIDI Reset's (no audio device).
+  - The event received indicator gets `.lit` for a quarter of a second after a note-on or a controller that the track's
+    MIDI input receives: with `midiInput` all, from an input that is among all MIDI inputs (`midi.ports`
+    `inAllInputs`); with chordPads or none it stays out. While the panel shows a sampler track it turns
+    `midi.activityListen` on for itself and reads the `midi.activity` events.
+  - With Snap to Zero Crossing on, a drag of the marker of Start, End or the loop's start or end ends where the sample
+    crosses zero nearest to where it was let go (`sampler.zeroCrossings`), still in order and in the drag's undo step;
+    what the user does next waits for it (`EngineBinding::sendAwaited`). The bars, the fades' markers and the value
+    fields set what they are given.
+  - MIDI Reset (p. 716) sends All Sound Off and Reset All Controllers on all 16 MIDI channels straight to the sampler
+    (`midi.inject` with `direct`), which stops what it plays, a long One shot sample too, and resets the pitch bend.
 - **Waveform display** (`#sampler-display`): the sample's waveform from `media.peaks`, its parts before Start and after
   End shaded (`.sampler-outside`), the loop (`.sampler-loop`) and the markers (`.sampler-marker`, attribute `marker`:
   Start, End, Loop start, Loop end, Fade in, Fade out, Loop crossfade), placed in percent of the sample and mirrored
@@ -180,7 +195,10 @@ keyboard, and a change of the panel's setting from elsewhere right after the pan
 and without Fingered, the fades from the sample's start and from Start, and the loop crossfade and its limit to
 `tests/sampler_tests.cpp`, the new parameters to the real-time test and the fades to the settings that `keepSettings`
 doesn't keep.
-#1122 added the markers of the fades and the loop crossfade to `tests/sampler_ui_tests.cpp`.
+#1122 added the markers of the fades and the loop crossfade to `tests/sampler_ui_tests.cpp`, then MIDI Reset's
+messages, Snap to Zero Crossing at the end of a marker's drag and the event received indicator, which a note-off and an
+input outside all MIDI inputs don't light; `tests/sampler_tests.cpp` got All Sound Off and Reset All Controllers and
+`sampler.zeroCrossings`, reversed too.
 #1343 added the warnings at every round of an offline render's wait for a sample and the error after the last of its
 20 rounds, tested with rounds of 20 ms instead of 30 s (`Engine::setOfflineSampleWait`), and checks that starting
 playback and recording from stop answer only after the held read is released.

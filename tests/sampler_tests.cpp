@@ -1360,7 +1360,8 @@ TEST_CASE("sampler.zeroCrossings moves positions to where the sample crosses zer
 	const auto track = created.at("track").at("id");
 	// The 220 Hz sine crosses zero every 48000 / 440 frames: frame 5040 (0.105) is nearest to the 46th crossing, at
 	// 5018.2. 0.1 lies on the 44th and 0 on the first; the end goes to the last, the 439th at 47890.9.
-	const auto snapped = [&] {
+	const auto snapped = [&]
+	{
 		return run(client, "sampler.zeroCrossings", {{"track", track}, {"positions", {0.105, 0.1, 0.0, 1.0}}})
 			.at("positions")
 			.get<std::vector<double>>();
@@ -1374,8 +1375,8 @@ TEST_CASE("sampler.zeroCrossings moves positions to where the sample crosses zer
 
 	// Reversed, positions count from the sample's end: 0.105 is frame 42960, nearest to the 394th crossing at 42981.8.
 	run(client, "parameter.set",
-		{{"channel", created.at("channel").at("id")}, {"target", {{"type", "instrument"}, {"parameter", Sampler::Reverse}}},
-			{"value", 1.0}});
+		{{"channel", created.at("channel").at("id")},
+			{"target", {{"type", "instrument"}, {"parameter", Sampler::Reverse}}}, {"value", 1.0}});
 	const size_t steps = run(client, "history.get").at("steps").size();
 	positions = snapped();
 	CHECK_THAT((1.0 - positions[0]) * 48000.0, WithinAbs(42982.0, 1e-6));

@@ -13,6 +13,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -24,20 +25,21 @@ namespace Rml
 namespace gnubase::ui
 {
 	// The sampler panel (#1029, reference manual pp. 710-717, 730, docs/features/sampler-track.md), a panel of the
-	// lower zone that shows the selected sampler track: its toolbar (Import Audio File, the sample's file name,
-	// Normalize Sample and Lock Parameter Settings), the waveform display with the markers of the sample's start and
-	// end, the loop, the fades and the loop crossfade and the bars between start and end and between the loop's ends,
-	// the Playback, Pitch, Filter and Amp sections with a control per sampler parameter (from processor.list) and the
-	// keyboard section with the pitchbend range, the root key and the key range above a keyboard that shows them, with
-	// a handle for each (p. 730). The root gets the class empty while the selected track isn't a sampler track.
+	// lower zone that shows the selected sampler track: its toolbar (the event received indicator, Snap to Zero
+	// Crossing, Import Audio File, the sample's file name, Normalize Sample, Lock Parameter Settings and MIDI Reset),
+	// the waveform display with the markers of the sample's start and end, the loop, the fades and the loop crossfade
+	// and the bars between start and end and between the loop's ends, the Playback, Pitch, Filter and Amp sections with
+	// a control per sampler parameter (from processor.list) and the keyboard section with the pitchbend range, the root
+	// key and the key range above a keyboard that shows them, with a handle for each (p. 730). The root gets the class
+	// empty while the selected track isn't a sampler track.
 	//
 	// Controls, markers, bars and handles set the sampler's parameters (parameter.set), a drag or a widget's gesture
 	// one undo step (EngineBinding::sendStep); a click on a key sets the root key. A file dropped on the panel, or
 	// chosen with Import Audio File, loads into the sampler (sampler.load path), keeping the settings with Lock
 	// Parameter Settings; Normalize Sample runs sampler.normalize with the toolbar's Normalization Level (p. 735). Why
-	// a load or Normalize Sample failed shows in the toolbar (#1122). Lock Parameter Settings and the Normalization
-	// Level are the user setting ui.samplerPanel, so they last when the panel is made anew. Use it on the UI thread;
-	// the binding must outlive it.
+	// a load, Normalize Sample or MIDI Reset failed shows in the toolbar (#1122). Lock Parameter Settings, the
+	// Normalization Level and Snap to Zero Crossing are the user setting ui.samplerPanel, so they last when the panel
+	// is made anew. Use it on the UI thread; the binding must outlive it.
 	class SamplerPanel final : private Rml::EventListener
 	{
 	public:
@@ -79,6 +81,11 @@ namespace gnubase::ui
 		void showMarkers();
 		double markerShare(const std::string& marker) const;
 		double crossfadeLimit() const;
+		double ordered(const std::string& marker, double share) const;
+		void snapToZero(const std::string& marker, int gesture);
+		void listen(bool on);
+		void readPorts(const engine::Json& ports);
+		void received(const engine::Json& activity);
 		void ask();
 		void set(uint32_t id, double value, int gesture);
 		void drag(const Rml::Event& event);
@@ -120,8 +127,13 @@ namespace gnubase::ui
 		bool m_showing = false; // while show sets the controls, whose changes aren't the user's
 		engine::Json m_settings = engine::Json::object(); // ui.samplerPanel, with what later versions add to it
 		bool m_lock = false;                              // Lock Parameter Settings, the user setting ui.samplerPanel's
+		bool m_snapToZero = false;                        // Snap to Zero Crossing, likewise
 		double m_level = 0.0;                             // the Normalization Level, dBFS, likewise
 		bool m_settingsKnown = false;                     // a change came before settings.get answered: it is newer
+		bool m_listening = false; // midi.activityListen is on for the indicator, while it shows a sampler track
+		std::set<std::string> m_notInAllInputs; // "backend id" of the MIDI inputs that aren't among all MIDI inputs
+		bool m_received = false;                // the event received indicator is lit
+		double m_receivedAt = 0.0;              // when it lit up last, by RmlUi's clock
 		int m_savesSent = 0; // settings.set sent and not answered: what settings.changed brings meanwhile is older
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 		std::vector<Subscription> m_subscriptions;
