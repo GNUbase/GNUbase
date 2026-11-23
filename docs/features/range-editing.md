@@ -20,9 +20,9 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
 | `range.crop` | Cuts the events and parts that cross an edge to the range; those inside or outside stay | pp. 293-294 |
 | `range.delete` | Deletes what is in the range, and the part of the cycle markers it lies in; `time` (Delete Time) closes the gap | pp. 292, 425 |
 | `range.insertSilence` | Moves what lies after the range's start, cut there, on by the range's length | pp. 292-293 |
-| `range.copy` | Copies the range to the range clipboard; without a range everything between the locators (Global Copy) | p. 292 |
-| `range.cut` | `range.copy`, then `range.delete`; `time` (Cut Time) closes the gap | pp. 292, 425 |
-| `range.paste` | Pastes the clipboard at `position` (default the cursor) or `positionTicks`, or with `origin` (Paste at Origin) at the copied range's start; `time` (Paste Time) first makes room | pp. 270, 292 |
+| `range.copy` | Copies the range to the range clipboard; without a range everything between the locators (Global Copy); with `events` those events and parts whole | p. 292 |
+| `range.cut` | `range.copy`, then `range.delete`; `time` (Cut Time) closes the gap; with `events` it copies and removes those | pp. 292, 425 |
+| `range.paste` | Pastes the clipboard at `position` (default the cursor) or `positionTicks`, with `origin` (Paste at Origin) at the copied range's start, or with `relative` (Paste Relative to Cursor) as far from the cursor as it was when copied; `time` (Paste Time) first makes room | pp. 270, 292 |
 | `range.move` | Moves what is in the range to `position` or `positionTicks`, on the same tracks or from `track` on, without the clipboard; `copy` leaves it and pastes a copy | pp. 291, 432 |
 
 - **Cuts at the edges.** Events and parts that cross an edge are split there first, as `event.split` splits them, so
@@ -76,6 +76,12 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
   rate when it was copied: after `project.set` changes the rate, `range.paste` refuses it until the rate is back, and so
   does `automation.paste` its own clipboard. Pasted events are unlocked real copies; a copied audio event whose clip was
   removed from the pool can't be pasted.
+- **Events without a range** (#1910). With `events` (ids) instead of `start`, `end` and `tracks`, `range.copy` and
+  `range.cut` take those audio events and parts and MIDI parts whole, as a range from the first one's start to the last
+  one's end on their tracks would, but without the other events there and without automation. `range.cut` removes them
+  as `event.remove` does, and refuses locked ones. The clipboard also keeps where the project cursor was, so that
+  `range.paste` with `relative` (Paste Relative to Cursor, p. 270) pastes at the cursor plus the distance the copied
+  range's start had from it; a paste that would start before the project start is refused.
 - **Cycle markers.** Without `time`, `range.delete` and `range.cut` take the range out of a cycle marker on a marker
   track in the range that it lies in (p. 425): shortened, or split in two ([markers.md](markers.md)). Other markers
   stay.
@@ -131,11 +137,12 @@ With a selection range ([tools.md](tools.md)) the edit commands work on it, and 
 
 | Command | Keys | Does |
 |---|---|---|
-| `edit.cut`, `edit.copy` | Mod+X, Mod+C | Cuts or copies the range |
+| `edit.cut`, `edit.copy` | Mod+X, Mod+C | Cuts or copies the range; without one the selected events (`events`) |
 | `edit.paste` | Mod+V | Pastes at the range's start onto its first track and those below; without a range at the cursor onto the tracks it came from, selecting what it pasted |
 | `edit.delete` | Delete, Backspace | Deletes the range (without one, the selected events) |
 | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Mod+Shift+X, Shift+Backspace, Mod+Shift+V | The same, closing the gap or making room |
 | `edit.pasteAtOrigin` | Mod+Shift+Down | Pastes where it was copied from, onto the tracks it came from (p. 270); without a range selecting what it pasted |
+| `edit.pasteRelative` | none | Pastes as far from the cursor as it was when copied, onto the tracks it came from (p. 270); without a range selecting what it pasted |
 | `edit.insertSilence` | Mod+Shift+E | Inserts silence |
 | `edit.splitRange`, `edit.cropRange` | Shift+X, none | Splits or crops at the range |
 | `edit.globalCopy` | none | Copies everything between the locators |
@@ -162,18 +169,20 @@ there selects a range as anywhere. Shift and a drag in the range selects a new r
 Shift and a drag outside it adds to the range (p. 288). A drag released outside the window puts the range back at the
 next press.
 
-The main menu's Edit menu has Cut, Copy and Paste, its Functions submenu Paste at Origin (p. 270), and the Range submenu
+The main menu's Edit menu has Cut, Copy and Paste, its Functions submenu Paste at Origin and Paste Relative to Cursor
+(p. 270), and the Range submenu
 Global Copy, Cut Time, Delete Time, Paste Time, Split, Crop and Insert Silence. Menus and keys disable the commands that
 only edit the range while there is none, the top and bottom nudges too, and Paste, Paste Time and Paste at Origin until
-something is copied (`rangeClipboard.changed`, since the project opened).
+something is copied (`rangeClipboard.changed`, since the project opened), Paste Relative to Cursor too. Without a
+range, Cut and Copy take the selected events, and can't run while none is selected.
 
 The info line shows the range, made with the range selection tool or, with the selection tools combined, the object
 selection tool: Range Start, Range End, Range Length, Top Track and Bottom Track, which set it (pp. 287-288,
 [inspector.md](inspector.md)).
 
-Not yet (#1910): copying and pasting selected events without a range, Paste Relative to Cursor, which keeps the events'
-distance from the cursor and so needs those events, Range Tool Splits Partly Selected Events, the range in the editors
-(they come with their tickets), and the controller events at the edges of a range inside a part.
+Not yet (#1910): Range Tool Splits Partly Selected Events, the range in the editors (they come with their tickets),
+and the controller events at the edges of a range inside a part. Pasting copied events onto the selected track, as the
+reference does, rather than onto the tracks they came from.
 
 ## Checks
 
@@ -182,7 +191,10 @@ distance from the cursor and so needs those events, Range Tool Splits Partly Sel
   with controller automation, and undo; inserting silence; cropping, with and without splitting notes; copying (no
   undo step), pasting onto the same tracks with the automation replacing the curve, Cut Time and Paste Time, pasting
   onto other tracks and the errors for a wrong type, too few tracks and nothing copied; pasting with `origin` where the
-  range was cut, with the cursor elsewhere, and refused with a position too; global copy and a pasted clip that is gone;
+  range was cut, with the cursor elsewhere, and refused with a position too; copying events whole without the others
+  on their tracks or the automation, cutting one in one undo step, a locked one refused and events with a range
+  refused; pasting with `relative` as far from the cursor as the copy was, refused before the project start and with
+  a position or `origin`; global copy and a pasted clip that is gone;
   moving and copying a range with `range.move`, in one undo step, without the clipboard and leaving a locked event,
   moving the automation as `range.cut` and `range.paste` move it, keeping the ids of what moves, the crossfade between
   two moved events and a shared copy, bringing the moved audio to the front in its order, also an event stacked between
@@ -244,7 +256,8 @@ distance from the cursor and so needs those events, Range Tool Splits Partly Sel
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; without a range the range
   commands can't run, and Paste can't until a cut, nor after `project.new`; split, Delete Time, cut and paste on a
   selection range, which stays; paste at the cursor without a range, selecting what it pasted, and Paste at Origin where
-  the range was cut, selecting it too; a drag in the range moving its contents on a MIDI track in one undo step with the
+  the range was cut, selecting it too; without a range, Cut and Copy of the selected part or audio event, enabled only
+  with a selection, and Paste Relative to Cursor; a drag in the range moving its contents on a MIDI track in one undo step with the
   range, snapped to a bar at a tempo whose bars lie between samples landing on the bar's tick, also with Grid Relative,
   and the range on the bar's sample, Alt and a drag copying them, a click in it selecting a range of no length, and
   Duplicate copying them to the range's end twice in a row; a drag down a lane and across, straight down and with Alt
@@ -255,5 +268,5 @@ distance from the cursor and so needs those events, Range Tool Splits Partly Sel
   by a beat, not before the project start nor the start past the end, and the top and bottom nudges taking tracks in and
   out, never the last, while the project stays as it was.
 - `tests/markertrack_ui_tests.cpp`: the same drag on the marker track, also released outside the window.
-- `tests/uiapp_tests.cpp`: the context menu disables the range commands without a range and Paste until something is
-  cut.
+- `tests/uiapp_tests.cpp`: the context menu disables the range commands without a range, but not Cut and Copy with a
+  selected part, and Paste until something is cut.

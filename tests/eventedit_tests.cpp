@@ -1802,6 +1802,59 @@ TEST_CASE("range.paste with origin pastes where the range was copied, onto the t
 	CHECK_THAT(f.fails("range.paste", {{"origin", true}, {"position", 0}}), ContainsSubstring("not both"));
 }
 
+TEST_CASE("range.copy and range.cut with events copy those events whole, without automation, for range.paste", "[unit]")
+{
+	// Cut, Copy and Paste of selected events without a range (#1910).
+	RangeFixture f;
+	const int64_t otherTrack = f.track("audio", "linear");
+	f.audioEvent(otherTrack); // not copied
+	const Json copied = f.call("range.copy", {{"events", {f.event, f.midiPart}}});
+	CHECK(copied.at("events") == 2);
+	CHECK(copied.at("lanes") == 0);
+	// Whole, what started first at the position, onto the tracks they came from; the automation stays as it was.
+	CHECK(f.call("range.paste", {{"position", 5 * g_second}}).at("events").size() == 2);
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}, {5 * g_second, 7 * g_second}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, 4 * g_second}, {6 * g_second, 8 * g_second}});
+	CHECK(f.spans(otherTrack).size() == 1);
+	f.checkPoints(f.pan, {{0, -1.0}, {3 * g_second, 0.5}, {4 * g_second, 1.0}});
+	f.call("history.undo");
+
+	// Cut removes them in one undo step, and Paste at Origin puts them back.
+	CHECK(f.call("range.cut", {{"events", {f.midiPart}}}).at("events") == 1);
+	CHECK(f.spans(f.midiTrack).empty());
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}});
+	f.call("history.undo");
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, 4 * g_second}});
+	f.call("history.redo");
+	CHECK(f.spans(f.midiTrack).empty());
+	f.call("range.paste", {{"origin", true}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, 4 * g_second}});
+
+	// Locked events can't be cut, and events don't go with a range.
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	CHECK_THAT(f.fails("range.cut", {{"events", {f.event}}}), ContainsSubstring("locked"));
+	CHECK_THAT(f.fails("range.copy", f.range({{"events", {f.event}}})), ContainsSubstring("not both"));
+}
+
+TEST_CASE("range.paste with relative keeps the distance the copy had from the project cursor", "[unit]")
+{
+	// Paste Relative to Cursor (reference manual p. 270): the event starts half a second after the cursor.
+	RangeFixture f;
+	f.call("transport.locate", {{"position", g_second / 2}});
+	f.call("range.copy", {{"events", {f.event}}});
+	f.call("transport.locate", {{"position", 5 * g_second}});
+	CHECK(f.call("range.paste", {{"relative", true}}).at("events").size() == 1);
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}, {11 * g_second / 2, 15 * g_second / 2}});
+
+	// One second before the cursor, which is half a second from the project start: refused.
+	f.call("transport.locate", {{"position", 2 * g_second}});
+	f.call("range.copy", {{"events", {f.event}}});
+	f.call("transport.locate", {{"position", g_second / 2}});
+	CHECK_THAT(f.fails("range.paste", {{"relative", true}}), ContainsSubstring("before the project start"));
+	CHECK_THAT(f.fails("range.paste", {{"relative", true}, {"position", 0}}), ContainsSubstring("not both"));
+	CHECK_THAT(f.fails("range.paste", {{"relative", true}, {"origin", true}}), ContainsSubstring("not both"));
+}
+
 TEST_CASE(
 	"range.cut leaves out the locked events, which stay, so that pasting the cut doesn't add them again", "[unit]")
 {

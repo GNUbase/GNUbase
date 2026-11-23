@@ -149,7 +149,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 98> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 99> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -247,13 +247,15 @@ namespace gnubase::app
 			{"edit.selectNext", "Selects the event after the selected one on its track.", "Right"},
 			{"edit.locatorsToSelection", "Sets the locators around the selected events.", "P"},
 			// Range editing (docs/features/range-editing.md), with the reference's keys (manual pp. 1562-1563).
-			{"edit.cut", "Cuts the selection range to the clipboard.", "Mod+X"},
-			{"edit.copy", "Copies the selection range to the clipboard.", "Mod+C"},
+			{"edit.cut", "Cuts the selection range, or else the selected events, to the clipboard.", "Mod+X"},
+			{"edit.copy", "Copies the selection range, or else the selected events, to the clipboard.", "Mod+C"},
 			{"edit.paste", "Pastes the clipboard at the selection range's start or the project cursor.", "Mod+V"},
 			{"edit.cutTime", "Cuts the selection range and closes the gap.", "Mod+Shift+X"},
 			{"edit.deleteTime", "Deletes the selection range and closes the gap.", "Shift+Backspace"},
 			{"edit.pasteTime", "Pastes the clipboard and moves what comes after it to make room.", "Mod+Shift+V"},
 			{"edit.pasteAtOrigin", "Pastes the clipboard where it was copied from.", "Mod+Shift+Down"},
+			{"edit.pasteRelative", "Pastes the clipboard as far from the project cursor as it was when copied.",
+				nullptr},
 			{"edit.insertSilence", "Inserts silence as long as the selection range at its start.", "Mod+Shift+E"},
 			{"edit.splitRange", "Splits the events at the selection range's edges.", "Shift+X"},
 			{"edit.cropRange", "Crops the events that cross the selection range's edges to it.", nullptr},

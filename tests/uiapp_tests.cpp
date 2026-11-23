@@ -1102,9 +1102,10 @@ TEST_CASE("the context menu's range commands wait for a selection range, which a
 			.at("attributes")
 			.contains("disabled");
 	};
-	const std::vector<const char*> rangeCommands = {"edit.cut", "edit.copy", "edit.splitRange", "edit.cropRange"};
+	const std::vector<const char*> rangeCommands = {"edit.splitRange", "edit.cropRange"};
 
-	// The object selection tool selects the part for the menu, whose range commands have no range to act on.
+	// The object selection tool selects the part for the menu, whose range commands have no range to act on; cut and
+	// copy take the selected part (#1910).
 	rightClick(at(200));
 	CHECK(display.selection().size() == 1);
 	for (const char* command : rangeCommands)
@@ -1113,9 +1114,11 @@ TEST_CASE("the context menu's range commands wait for a selection range, which a
 		CHECK(disabled(command));
 	}
 	CHECK(!disabled("edit.delete"));
+	CHECK(!disabled("edit.cut"));
+	CHECK(!disabled("edit.copy"));
 	CHECK(disabled("edit.paste")); // nothing copied yet
 	// A disabled item does nothing.
-	click(app, selector("#event-display-menu > menuitem[command=edit.cut]"));
+	click(app, selector("#event-display-menu > menuitem[command=edit.cropRange]"));
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(parts() == 1);
 	CHECK(display.selection().size() == 1);

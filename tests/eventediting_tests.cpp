@@ -2710,6 +2710,48 @@ TEST_CASE("the edit commands edit the selection range, and paste pastes at its s
 	REQUIRE(f.waitUntil([&f] { return !f.display.canRun("edit.paste"); }));
 }
 
+TEST_CASE("without a range, cut and copy take the selected events, and Paste Relative to Cursor keeps their distance",
+	"[unit]")
+{
+	// Cut, Copy and Paste of events (#1910), Paste Relative to Cursor (reference manual p. 270).
+	Fixture f;
+	CHECK(f.display.actions().count("edit.pasteRelative") == 1);
+	CHECK(!f.display.canRun("edit.copy"));
+	CHECK(!f.display.canRun("edit.pasteRelative"));
+	f.display.select({f.part});
+	CHECK(f.display.canRun("edit.cut"));
+	CHECK(f.display.canRun("edit.copy"));
+
+	// Copied with the cursor at 5 seconds, 4 seconds after the part; paste puts the part alone at the cursor.
+	f.call("transport.locate", {{"position", 240000}});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 5.0; }));
+	f.run("edit.copy");
+	REQUIRE(f.waitUntil([&f] { return f.display.canRun("edit.pasteRelative"); }));
+	f.run("edit.paste");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.audioEvents().size() == 1);
+	CHECK(f.parts()[1].at("position") == 10 * g_quarter);
+	f.call("history.undo");
+
+	// Relative to the cursor at 6 seconds, 4 seconds before it, and selected.
+	f.call("transport.locate", {{"position", 288000}});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 6.0; }));
+	f.run("edit.pasteRelative");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 4 * g_quarter);
+	const auto pasted = f.parts()[1].at("id").get<uint64_t>();
+	REQUIRE(f.waitUntil([&f, pasted] { return f.display.selection() == std::vector<uint64_t>{pasted}; }));
+
+	// Cut takes the selected audio event away, and paste brings it back at the cursor.
+	f.display.select({f.event});
+	f.run("edit.cut");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().empty(); }));
+	CHECK(f.parts().size() == 2);
+	f.run("edit.paste");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 1; }));
+	CHECK(f.audioEvents()[0].at("position") == 288000);
+}
+
 TEST_CASE(
 	"a drag in the selection range moves its contents on any track, Alt copies them, Duplicate copies them after it",
 	"[unit]")

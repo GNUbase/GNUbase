@@ -123,6 +123,7 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Mod+X, Mod+C, Mod+V | `edit.cut`, `edit.copy`, `edit.paste` | Cut, Copy, Paste ([range-editing.md](range-editing.md)) |
 | Mod+Shift+X, Shift+Backspace, Mod+Shift+V | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Cut Time, Delete Time, Paste Time |
 | Mod+Shift+Down | `edit.pasteAtOrigin` | Paste at Origin |
+| none | `edit.pasteRelative` | Paste Relative to Cursor |
 | Mod+Shift+E | `edit.insertSilence` | Insert Silence |
 | Shift+X | `edit.splitRange` | Split (range) |
 | X | `audio.crossfade` | Crossfade ([fades.md](fades.md)) |

@@ -2241,6 +2241,48 @@ namespace gnubase::engine
 				{"lanes", clipboard.automation.size()}};
 		}
 
+		// The events range.copy and range.cut name instead of a range (#1910), refused together with one.
+		std::vector<Item> namedEvents(Project& project, CommandContext& context, bool editing)
+		{
+			for (const char* ranged : {"start", "end", "tracks", "splitNotes", "time"})
+				require(!context.parameters().contains(ranged), "give events or a range, not both");
+			const std::vector<Item> items = itemsFrom(project, context.parameters(), editing);
+			for (const Item& item : items)
+				require(item.audio == nullptr || item.audio->part == 0,
+					"event " + std::to_string(item.id()) + " is in an audio part: copy the part");
+			return items;
+		}
+
+		// What events hold, for the clipboard: each whole, as a range from the first one's start to the last one's end
+		// on their tracks would, but without the other events there and without automation.
+		RangeClipboard clipboardOf(const Project& project, const std::vector<Item>& items)
+		{
+			Project scratch = project;
+			std::set<ObjectId> kept;
+			std::set<ObjectId> tracks;
+			Range range{time::g_maxPosition, 0, {}, false};
+			for (const Item& item : items)
+			{
+				kept.insert(item.id());
+				tracks.insert(item.track());
+				range.start = std::min(range.start, samples(project, item.position()));
+				range.end = std::max(range.end, samples(project, endOf(project, item)));
+			}
+			const auto erase = [&kept](auto& objects, auto keep)
+			{
+				for (auto it = objects.begin(); it != objects.end();)
+					it = kept.count(it->first) != 0 || keep(it->second) ? std::next(it) : objects.erase(it);
+			};
+			erase(scratch.audioEvents, [&kept](const AudioEvent& event) { return kept.count(event.part) != 0; });
+			erase(scratch.audioParts, [](const AudioPart&) { return false; });
+			erase(scratch.midiParts, [](const MidiPart&) { return false; });
+			scratch.automation.clear();
+			for (const ObjectId id : project.trackOrder())
+				if (tracks.count(id) != 0)
+					range.tracks.push_back(id);
+			return copyRange(scratch, range, true);
+		}
+
 		// The id of the transpose track, 0 for none. Its events are project.transpose, one list for the project.
 		ObjectId transposeTrackId(const Project& project)
 		{
@@ -2776,10 +2818,16 @@ namespace gnubase::engine
 			// Paste at Origin (reference manual p. 270): where the range was copied from.
 			const bool origin = parameters.value("origin", false);
 			require(!(origin && given), "give origin or a position, not both");
-			const Destination to = destinationFrom(project, parameters,
-				given ? std::nullopt
-					  : std::optional(origin ? clipboard.start
-											 : context.call("transport.get").at("position").get<time::Samples>()));
+			// Paste Relative to Cursor (p. 270): as far from the cursor as the range was when it was copied.
+			const bool relative = parameters.value("relative", false);
+			require(!(relative && (origin || given)), "give relative or origin or a position, not both");
+			std::optional<time::Samples> fallback;
+			if (origin)
+				fallback = clipboard.start;
+			else if (!given)
+				fallback = context.call("transport.get").at("position").get<time::Samples>() +
+					(relative ? clipboard.start - clipboard.cursor : 0);
+			const Destination to = destinationFrom(project, parameters, fallback);
 			const time::Samples at = to.at;
 			// Onto the tracks it came from, or from track on down.
 			std::vector<ObjectId> tracks = clipboard.tracks;
@@ -3439,6 +3487,18 @@ namespace gnubase::engine
 		Json withTime = rangeParameters;
 		withTime["time"] = boolean();
 		const Json copiedResult = schema({{"events", integer()}, {"lanes", integer()}}, {"events", "lanes"});
+		// range.copy and range.cut take events instead of a range (#1910).
+		Json copyParameters = rangeParameters;
+		copyParameters["events"] = events();
+		Json cutParameters = withTime;
+		cutParameters["events"] = events();
+		const std::string named =
+			" With events (ids) instead of a range it takes those audio events and parts and MIDI "
+			"parts whole, as a range from the first one's start to the last one's end on their "
+			"tracks would, but without the other events there and without automation.";
+		// The project cursor when the clipboard was copied, for range.paste relative.
+		const auto cursorOf = [](CommandContext& context)
+		{ return context.call("transport.get").at("position").get<time::Samples>(); };
 
 		addEdit(engine,
 			{"range.split", 1,
@@ -3500,13 +3560,17 @@ namespace gnubase::engine
 				"Copies " + range +
 					" to the range clipboard for range.paste: the audio events and MIDI parts in it, cut at its edges "
 					"(splitNotes as in range.split), and the automation in it with the curve's values at the edges. "
-					"Without start, end and tracks it is Global Copy: everything between the locators. Changes "
-					"nothing in the project. Returns how many events and parts and automation lanes it copied, which "
-					"rangeClipboard.changed announces.",
-				schema(rangeParameters, {}), copiedResult, false},
-			[this](CommandContext& context)
+					"Without start, end and tracks it is Global Copy: everything between the locators." +
+					named +
+					" Changes nothing in the project. Returns how many events and parts and automation lanes it "
+					"copied, which rangeClipboard.changed announces.",
+				schema(copyParameters, {}), copiedResult, false},
+			[this, cursorOf](CommandContext& context)
 			{
-				RangeClipboard clipboard = copyRange(m_project, rangeFrom(m_project, context, true), true);
+				RangeClipboard clipboard = context.parameters().contains("events")
+					? clipboardOf(m_project, namedEvents(m_project, context, false))
+					: copyRange(m_project, rangeFrom(m_project, context, true), true);
+				clipboard.cursor = cursorOf(context);
 				Json result = clipboardInfo(clipboard);
 				m_clipboard = std::make_shared<const RangeClipboard>(std::move(clipboard));
 				context.emit("rangeClipboard.changed", result);
@@ -3519,16 +3583,31 @@ namespace gnubase::engine
 					" to the range clipboard as range.copy does, then deletes it as range.delete does; time (Cut Time) "
 					"closes the gap. Without time it cuts the range out of the cycle markers that it lies in as "
 					"range.delete does; markers don't go to the clipboard. Locked events stay where they are and "
-					"aren't copied. Returns how many events and parts and automation lanes it copied, which "
-					"rangeClipboard.changed announces.",
-				schema(withTime, {}), copiedResult, false},
+					"aren't copied." +
+					named +
+					" It removes them as event.remove does, and refuses locked ones. Returns how many events and "
+					"parts and automation lanes it copied, which rangeClipboard.changed announces.",
+				schema(cutParameters, {}), copiedResult, false},
 			"Cut",
-			[this](Project& project, CommandContext& context)
+			[this, cursorOf](Project& project, CommandContext& context)
 			{
+				if (context.parameters().contains("events"))
+				{
+					const std::vector<Item> items = namedEvents(project, context, true);
+					RangeClipboard clipboard = clipboardOf(project, items);
+					clipboard.cursor = cursorOf(context);
+					for (const Item& item : items)
+						removeItem(project, item, 0, context);
+					Json result = clipboardInfo(clipboard);
+					m_clipboard = std::make_shared<const RangeClipboard>(std::move(clipboard));
+					context.emit("rangeClipboard.changed", result);
+					return result;
+				}
 				const Range cut = rangeFrom(project, context, true);
 				const bool closes = context.parameters().value("time", false);
 				// Locked events stay where they are, so they aren't cut: a paste would add them again.
 				RangeClipboard clipboard = copyRange(project, cut, false);
+				clipboard.cursor = cursorOf(context);
 				deleteRange(project, cut, closes, context);
 				if (!closes)
 					cutCycleMarkers(project, cut.start, cut.end, cut.tracks, context);
@@ -3542,7 +3621,9 @@ namespace gnubase::engine
 			{"range.paste", 1,
 				"Pastes the range clipboard (range.copy, range.cut) at position (project samples, default the project "
 				"cursor), or at positionTicks, a tick of the tempo map, or with origin (Paste at Origin) where it was "
-				"copied from: onto the tracks it was copied from, or onto "
+				"copied from, or with relative (Paste Relative to Cursor, reference manual p. 270) at the project "
+				"cursor plus the distance it had from the cursor when it was copied: onto the tracks it was copied "
+				"from, or onto "
 				"track and the tracks below it in the project's order that aren't hidden (trackVisibility.set), one "
 				"for each copied track, which must take the copied events; a folded folder (trackLayout.set) counts "
 				"as one track there, and the tracks inside one that were copied go into the tracks inside the one "
@@ -3554,7 +3635,7 @@ namespace gnubase::engine
 				"range, as range.insertSilence does. A clipboard copied at another sample rate than the project's is "
 				"refused. Returns the new events.",
 				schema({{"position", integer()}, {"positionTicks", integer()}, {"origin", boolean()},
-						   {"track", integer()}, {"time", boolean()}},
+						   {"relative", boolean()}, {"track", integer()}, {"time", boolean()}},
 					{}),
 				eventsResult(), false},
 			"Paste", [this](Project& project, CommandContext& context)

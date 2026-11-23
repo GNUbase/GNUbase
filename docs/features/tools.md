@@ -136,9 +136,10 @@ setting, and the widget library opens the one the keys ask for ([widgets.md](wid
   selected event, or on nothing, the selection stays. On an event it also ends a range, as a press there does with
   the selection tools combined, so the commands act on the event. Where a press selects a range (the range selection
   tool, and a lane's upper half with the selection tools combined) the right click leaves the events alone, and the
-  commands act on the range. Cut, Copy, Split Range and Crop Range only edit the selection range, so they are shown
-  disabled while there is none (all but Split Range also while it has no length), here and in the Edit menu; so
-  are Cut Time, Delete Time and Insert Silence (`EventDisplay::canRun`). Their keys still run them, and without a range
+  commands act on the range. Split Range and Crop Range only edit the selection range, so they are shown disabled
+  while there is none (Crop Range also while it has no length), here and in the Edit menu; so are Cut Time, Delete
+  Time and Insert Silence (`EventDisplay::canRun`). Without a range Cut and Copy take the selected events, disabled
+  while none is selected ([range-editing.md](range-editing.md)). Their keys still run them, and without a range
   they do nothing. The toolbox leaves the selection as it is.
 
 The key editor has a toolbox of its own, `#key-editor-toolbox` with its toolbar's tools, which a right click in its
@@ -174,8 +175,7 @@ until the button is up. MCP's `ui_windows` reports the pointer shown, as `cursor
 a pointer's picture didn't load or RmlUi names one the OS doesn't have, such as its autoscroll pointers.
 
 Not yet: the drumstick tool, and pointers of their own for the sizing modes and the color tool; the rest of the reference's context
-menu, with the Audio and MIDI menus' functions, follows with those menus. Cut and Copy of selected events without a
-range (the event clipboard) wait for a ticket of their own. On X11, SDL shows only a pointer's scale-1 picture. The
+menu, with the Audio and MIDI menus' functions, follows with those menus. On X11, SDL shows only a pointer's scale-1 picture. The
 audio editor gets its toolbox when it comes. The Preferences dialog's Editing - Tools page
 (#162) will show the two settings, which `settings.get` and `settings.set` reach until then.
 
@@ -208,7 +208,7 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   audio track with the mouse, and the dummy device playing it while the button is held; the split tool and the range
   tool driven with the mouse as MCP's UI tools drive it; the toolbox and the context menu on right clicks with and
   without modifiers, with the setting on and off, a tool chosen from each, a right click selecting the event for the context menu; the context menu's range commands
-  disabled without a range and cutting with one, after a right click that leaves the event unselected; the
+  disabled without a range, Cut and Copy not with a selected part, and cutting with one, after a right click that leaves the event unselected; the
   notification after a key, not after a button or with the setting off, on RmlUi's frozen clock; the pointer as
   `ui_windows` reports it, also right after a tool is chosen in the toolbox. `tests/automationtracks_tests.cpp`: an
   automation track's pointer with the selection tools combined. `tests/keyeditor_ui_tests.cpp`: the key editor's toolbox by the setting and modifiers. The project window's golden image shows the
