@@ -2,6 +2,7 @@
 #include "ui/mixer.h"
 
 #include "engine/analysis/analysis.h"
+#include "engine/document/channelformat.h"
 #include "ui/docking.h"
 #include "ui/widgetutils.h"
 
@@ -163,6 +164,21 @@ namespace gnubase::ui
 			for (std::string key; std::getline(text, key, '.');)
 				keys.push_back(key);
 			return keys;
+		}
+
+		// Whether a channel's routing gives it a panner (engine::pannerFor): not mono into mono, nor on destinations
+		// wider than stereo, nor without one.
+		bool hasPanner(const Json& project, const Json& channel)
+		{
+			const Json output = channel.value("output", Json(0));
+			std::optional<engine::ChannelFormat> destination;
+			for (const char* list : {"busses", "channels"})
+				for (const Json& each : project.value(list, Json::array()))
+					if (each.at("id") == output)
+						destination = engine::formatFromName(each.at("format").get<std::string>());
+			const std::optional<engine::ChannelFormat> format =
+				engine::formatFromName(channel.at("format").get<std::string>());
+			return format && destination && engine::pannerFor(*format, *destination) != engine::Panner::None;
 		}
 
 		// A strip control's value in the channel's JSON, or null.
@@ -823,6 +839,9 @@ namespace gnubase::ui
 			rml += R"(</div><div class="mixer-fader" section="fader" label="Fader">)";
 			// The panner (reference manual p. 465): pan bypass, and the pan control or, while the strip is .combined,
 			// the combined panner's left and right controls.
+			if (channel->type == "midi") // MIDI pan, CC 10
+				rml += R"(<div class="mixer-panner"><knob class="mixer-pan" param="midiPan" title="Pan" min="0" )"
+					   R"(max="127" default="64" step="1"/></div>)";
 			if (audio)
 				rml += R"(<div class="mixer-panner"><button type="toggle" class="toggle" param="panBypass" )"
 					   R"(title="Pan Bypass">B</button>)"
@@ -1038,6 +1057,7 @@ namespace gnubase::ui
 		if (Rml::Element* solo = strip.QuerySelector("button[control=solo]"))
 			solo->SetClass("defeated", json.at("soloDefeat").get<bool>());
 		strip.SetClass("combined", json.value("panner", std::string()) == "combined");
+		strip.SetClass("no-panner", json.at("format") != "none" && !hasPanner(m_project, json));
 		Rml::ElementList controls;
 		strip.QuerySelectorAll(controls, "[param]");
 		m_updating = true; // filling a drop-down list sends a change
@@ -1436,8 +1456,10 @@ namespace gnubase::ui
 						m_binding.send("channel.set", std::move(parameters));
 						break;
 					}
-					// A knob's or a value field's drag, wheel turns or held arrow key: one undo step.
-					Json parameters = paramChange(param, given->Get<double>());
+					// A knob's or a value field's drag, wheel turns or held arrow key: one undo step. MIDI pan is a
+					// MIDI value.
+					Json parameters = paramChange(param,
+						param == "midiPan" ? Json(std::lround(given->Get<double>())) : Json(given->Get<double>()));
 					parameters["channel"] = channel->id;
 					const std::string what = stepKey(m_stepOwner, channel->id, param);
 					m_binding.sendStep(event.GetParameter("gesture", 0), what, "Change " + attribute(*target, "title"),
