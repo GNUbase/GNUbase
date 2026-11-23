@@ -6,10 +6,14 @@
 #include "engine/document/serialize.h"
 #include "ui/eventdisplay.h"
 
+#include <RmlUi/Core/Element.h>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <optional>
 #include <vector>
 
@@ -23,6 +27,7 @@ namespace gnubase::ui
 			8.0; // dp at the bottom of a lane, and around the event volume control, that grab it
 		constexpr double g_faderInset = 16.0; // dp from an event's start to its volume control's middle, past its edge
 		constexpr double g_pointReach = 6.0;  // dp around a curve point that grab it
+		constexpr double g_fineVolume = 0.1;  // of the mouse's movement that moves the control with Shift
 
 		double gain(double db)
 		{
@@ -74,7 +79,35 @@ namespace gnubase::ui
 			return false;
 		m_dragEvent = shown.id;
 		m_drag = Drag::Volume;
+		m_volumeDy = 0.0;
 		return true;
+	}
+
+	void EventDisplay::volumeMove(double dy, bool fine)
+	{
+		// From where the control is, so that pressing or letting go of Shift doesn't make it jump.
+		m_dragDy += (dy - m_volumeDy) * (fine ? g_fineVolume : 1.0);
+		m_volumeDy = dy;
+		showFades();
+	}
+
+	void EventDisplay::showVolumeReadout()
+	{
+		const auto shown = std::find_if(
+			m_events.begin(), m_events.end(), [this](const Shown& each) { return each.id == m_dragEvent; });
+		const std::optional<double> fader = shown != m_events.end() ? faderOf(*shown) : std::nullopt;
+		const bool dragging = m_drag == Drag::Volume && m_dragMoved && fader && m_fades.count(m_dragEvent) != 0;
+		m_volumeReadout->SetClass("shown", dragging);
+		if (!dragging)
+			return;
+		const double volume = draggedVolume(m_dragEvent);
+		std::array<char, 48> text{};
+		std::snprintf(text.data(), text.size(), "%.1f dB (%+.1f)", volume, volume - m_fades.at(m_dragEvent).volume);
+		m_volumeReadout->SetInnerRML(text.data());
+		m_volumeReadout->SetProperty(Rml::PropertyId::Left,
+			Rml::Property(static_cast<float>(((*fader - m_view.start) / m_view.scale) + g_handleSize), Rml::Unit::DP));
+		m_volumeReadout->SetProperty(Rml::PropertyId::Top,
+			Rml::Property(static_cast<float>(m_laneTops[shown->lane] - m_view.top), Rml::Unit::DP));
 	}
 
 	void EventDisplay::volumeUp()
@@ -86,6 +119,7 @@ namespace gnubase::ui
 		m_drag = Drag::None;
 		m_dragMoved = false;
 		m_dragDy = 0.0;
+		m_volumeDy = 0.0;
 		if (!commands.empty())
 			edit("history.transaction", {{"description", "Change event volume"}, {"commands", std::move(commands)}});
 		showFades();

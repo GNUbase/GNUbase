@@ -231,6 +231,7 @@ namespace gnubase::ui
 			showVolume(lane, *event);
 		}
 		m_fadeLines->setLanes(std::move(lanes));
+		showVolumeReadout();
 	}
 
 	bool EventDisplay::openSelectedCrossfade()

@@ -773,7 +773,11 @@ namespace gnubase::ui
 		// enough for one: dragging it gives every selected audio event the volume in dB that draggedVolume says.
 		std::optional<double> faderOf(const Shown& shown) const;
 		bool volumeDown(const Shown& shown, double x, double y);
+		// A move of the control dy dp from the press, fine with Shift (reference manual p. 402).
+		void volumeMove(double dy, bool fine);
 		void volumeUp();
+		// .volume-readout beside the dragged control: the pressed event's volume and its change since the press.
+		void showVolumeReadout();
 		double draggedVolume(uint64_t event) const;
 		// The draw tool on an audio event: drags the curve point at x and y dp, or a new one there.
 		bool curveDown(const Shown& shown, double x, double y);
@@ -998,6 +1002,7 @@ namespace gnubase::ui
 		std::map<uint64_t, AudioEventSpan> m_audioSpans;
 		std::string m_partMarksRml;     // what m_partMarks holds
 		Rml::Element* m_cuts = nullptr; // the .cutting-position lines
+		Rml::Element* m_volumeReadout = nullptr;
 		std::vector<int64_t> m_cuttingPositions;
 		size_t m_cutsShown = 0;                 // lines in m_cuts
 		std::map<uint64_t, AudioFades> m_fades; // by audio event
@@ -1020,6 +1025,7 @@ namespace gnubase::ui
 		uint64_t m_dragEvent = 0;       // pressed on
 		bool m_dragMoved = false;
 		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
+		double m_volumeDy = 0.0;           // dp from the press to the mouse, dragging the event volume
 		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
 		// Moving events, after the drag delay; a RangeMove drag, once across or on other tracks.
 		bool m_dragStarted = false;

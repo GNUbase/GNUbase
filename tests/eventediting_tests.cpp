@@ -3388,6 +3388,12 @@ namespace
 	{
 		return event.at("volume").get<double>();
 	}
+
+	// The audio event as the display has it, which a press or the wheel edits from.
+	Json shown(Fixture& f)
+	{
+		return f.display.project().at("audioEvents")[0];
+	}
 }
 
 TEST_CASE(
@@ -3448,6 +3454,38 @@ TEST_CASE("the event volume control works with the draw tool too, instead of add
 	f.drag(216, 36, 216, 46);
 	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
 	CHECK(f.audioEvents()[0].at("volumeCurve").empty());
+}
+
+TEST_CASE("dragging the event volume shows the volume and its change, and Shift drags it in finer steps", "[unit]")
+{
+	// Reference manual p. 402: the change from the volume before the drag shows in brackets.
+	Fixture f;
+	f.display.select({f.event});
+	f.step();
+	Rml::Element* readout = f.document.QuerySelector(".volume-readout");
+	REQUIRE(readout != nullptr);
+	CHECK_FALSE(readout->IsClassSet("shown"));
+	// 10 dp down the 40 dp lane, from 0 dB half way up: -6 dB.
+	f.automation.press(std::nullopt, f.at(216, 36), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(216, 46));
+	f.step();
+	CHECK(readout->IsClassSet("shown"));
+	CHECK(readout->GetInnerRML() == "-6.0 dB (-6.0)");
+	// With Shift, 20 dp further move it as 2 dp would: 12 dp in all, -7.9 dB.
+	f.automation.move(std::nullopt, f.at(216, 66), {"shift"});
+	f.step();
+	CHECK(readout->GetInnerRML() == "-7.9 dB (-7.9)");
+	f.automation.release(std::nullopt, f.at(216, 66), ui::MouseButton::Left, {"shift"});
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(shown(f)) + 7.9) < 0.05; }));
+	CHECK_FALSE(readout->IsClassSet("shown"));
+	// The next drag measures its change from there: 4 dp up, +3.5 dB.
+	f.automation.press(std::nullopt, f.at(216, 36), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(216, 32));
+	f.step();
+	CHECK(readout->GetInnerRML() == "-4.4 dB (+3.5)");
+	f.automation.release(std::nullopt, f.at(216, 32), ui::MouseButton::Left);
+	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(shown(f)) + 4.42) < 0.05; }));
 }
 
 TEST_CASE("the draw tool adds and drags volume curve points, the erase tool removes them", "[unit]")

@@ -121,6 +121,7 @@ namespace gnubase::ui
 		m_fadeLines = &addCanvas<FadeLines>(*m_area, "fade-lines", "fades");
 		m_partMarks = &add(*m_area, "div", "part-marks");
 		m_cuts = &add(*m_area, "div", "cutting-positions");
+		m_volumeReadout = &add(*m_area, "div", "volume-readout tooltip");
 		m_automationArea = &add(*m_area, "div", "automation-lanes");
 		m_editor = &add(*m_area, "div", "automation-editor");
 		m_rangeElement = &add(*m_area, "div", "range-selection");

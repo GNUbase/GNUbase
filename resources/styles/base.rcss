@@ -1569,6 +1569,22 @@ meter .meter-peak
 	text-align: center;
 }
 
+/* The event volume while its control is dragged (docs/features/volume-curves.md), beside it; code places it and the
+   display gives it the tooltip's look. */
+.event-display .volume-readout
+{
+	display: none;
+	position: absolute;
+	z-index: 10;
+	pointer-events: none;
+	white-space: nowrap;
+}
+
+.event-display .volume-readout.shown
+{
+	display: block;
+}
+
 /* Why the engine refused an edit of events (#1367), a little longer and wider than a tool's name. */
 .event-display .edit-refused
 {
