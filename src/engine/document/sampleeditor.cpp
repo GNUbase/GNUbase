@@ -155,13 +155,51 @@ namespace gnubase::engine
 			time::Samples end = 0;
 			time::Samples inserted = 0;
 
+			bool contains(time::Samples frame) const { return frame >= start && frame < end; }
+
 			time::Samples move(time::Samples frame) const
 			{
 				if (frame <= start)
 					return frame;
 				return frame < end ? start : frame - (end - start) + inserted;
 			}
+
+			// An anchor at an insertion belongs to the audio moved right; a range edge stays on the left.
+			time::Samples moveAnchor(time::Samples frame) const
+			{
+				return frame == start ? start + inserted : move(frame);
+			}
 		};
+
+		void processWarp(ClipWarp& warp, const ProcessRange& range, time::Samples length)
+		{
+			warp.gridStart = std::min(range.moveAnchor(warp.gridStart), std::max<time::Samples>(0, length - 1));
+			warp.beats.erase(std::remove_if(warp.beats.begin(), warp.beats.end(),
+								 [&](const BeatEdit& beat) { return range.contains(beat.frame); }),
+				warp.beats.end());
+			for (BeatEdit& beat : warp.beats)
+				beat.frame = range.moveAnchor(beat.frame);
+			warp.beats.erase(std::remove_if(warp.beats.begin(), warp.beats.end(), [&](const BeatEdit& beat)
+								 { return beat.frame <= warp.gridStart || beat.frame >= length; }),
+				warp.beats.end());
+			warp.markers.erase(std::remove_if(warp.markers.begin(), warp.markers.end(), [&](const WarpMarker& marker)
+								   { return range.contains(marker.position) || range.contains(marker.target); }),
+				warp.markers.end());
+			for (WarpMarker& marker : warp.markers)
+			{
+				marker.position = range.moveAnchor(marker.position);
+				marker.target = range.moveAnchor(marker.target);
+			}
+			warp.markers.erase(std::remove_if(warp.markers.begin(), warp.markers.end(),
+								   [&](const WarpMarker& marker)
+								   {
+									   return marker.position <= 0 || marker.target <= 0 || marker.position >= length ||
+										   marker.target >= length;
+								   }),
+				warp.markers.end());
+			warp.quantizeOrigin.reset();
+			warp.created.clear();
+		}
 
 		struct ProcessClipboard
 		{
@@ -349,11 +387,27 @@ namespace gnubase::engine
 				file.at("channels").get<int>(), file.at("length").get<time::Samples>()};
 			if (parameters.at("operation") == "draw")
 				range = {media.length, media.length, 0}; // Sample replacement keeps every frame's position.
+			std::map<ObjectId, std::pair<time::Samples, time::Samples>> fadeEdges;
+			forEveryAudioEvent(project,
+				[&](const AudioEvent& event)
+				{
+					if (event.clip != original || (!all && event.id != selected.id))
+						return;
+					const EventSpan span = eventSpan(project, event);
+					const auto frame = [&](double samples)
+					{
+						return event.offset +
+							std::clamp<time::Samples>(
+								std::llround(eventFrames(project, event, samples)), 0, event.length);
+					};
+					fadeEdges[event.id] = {range.move(frame(static_cast<double>(event.fadeIn.length) * span.ratio)),
+						range.move(frame(static_cast<double>(span.end - span.start) -
+							static_cast<double>(event.fadeOut.length) * span.ratio))};
+				});
 			project.media[media.id] = media;
 			context.emit("media.added", {{"media", toJson(media)}});
 			clip.media = media.id;
-			clip.warp.quantizeOrigin.reset();
-			clip.warp.created.clear();
+			processWarp(clip.warp, range, media.length);
 			if (!all)
 			{
 				clip.id = project.newId();
@@ -389,16 +443,26 @@ namespace gnubase::engine
 				{
 					if (event.clip != clip.id)
 						return;
-					const auto fadeInEnd = range.move(event.offset + event.fadeIn.length);
-					const auto fadeOutStart = range.move(event.offset + event.length - event.fadeOut.length);
 					const auto end = range.move(event.offset + event.length);
 					event.offset = range.move(event.offset);
 					event.length = end - event.offset;
 					if (event.length == 0)
 						removed.push_back(event.id);
-					event.fadeIn.length = fadeInEnd - event.offset;
-					event.fadeOut.length = end - fadeOutStart;
-					event.crossfade.length = std::min(event.crossfade.length, event.length);
+					const auto room = event.length > 0 ? fadeRoom(project, event) : 0;
+					if (parameters.at("operation") != "draw")
+					{
+						const auto [fadeInEnd, fadeOutStart] = fadeEdges.at(event.id);
+						const double ratio = project.sampleRate / media.sampleRate;
+						const auto played = [&](time::Samples frame)
+						{
+							return std::llround(
+								eventSamples(project, event, static_cast<double>(frame - event.offset)) / ratio);
+						};
+						event.fadeIn.length = std::clamp<time::Samples>(played(fadeInEnd), 0, room);
+						event.fadeOut.length =
+							std::clamp<time::Samples>(room - played(fadeOutStart), 0, room - event.fadeIn.length);
+					}
+					event.crossfade.length = std::min(event.crossfade.length, room);
 					for (VolumePoint& point : event.volumeCurve)
 						point.position = std::min(range.move(point.position), media.length);
 					if (event.snapPoint)
@@ -435,7 +499,7 @@ namespace gnubase::engine
 				[&](const AudioEvent& event)
 				{
 					if (event.clip == clip.id)
-						lengths[event.id] = event.length;
+						lengths[event.id] = fadeRoom(project, event);
 				});
 			forEveryEventAndPart(
 				project,
@@ -516,7 +580,7 @@ namespace gnubase::engine
 					return result;
 				});
 			engine.registerCommand(
-				{"sampleEditor.process", 2,
+				{"sampleEditor.process", 3,
 					"Basic Commands on a clip range (reference manual pp. 619-620). event "
 					"identifies the clip; start/end are "
 					"clip frames, start before end. operation: cut copies then closes the gap, copy "
@@ -525,14 +589,16 @@ namespace gnubase::engine
 					"insertSilence inserts the range's "
 					"length at its start. draw replaces start..end with samples in one zero-based channel, "
 					"one sample per frame (at most 65536, -1 to 1), preserving timing and the other channels. "
-					"Drawing corresponds to the Draw tool (reference manual p. 634). sharedCopies is required "
+					"Drawing corresponds to the Draw tool (reference manual p. 634) and requires no active warping "
+					"or edited definition grid. sharedCopies is required "
 					"for shared clips: newVersion "
 					"edits only this event, all edits "
 					"all copies, including inactive track versions. Sampler tracks and drum pads count as users too. "
 					"Without another user, omitting sharedCopies edits the clip in place and keeps its region ids. "
 					"Locked events/parts and frozen "
-					"tracks refuse edits. Flatten "
-					"warped clips first; edited definition grids are not supported. Paste converts to the target's "
+					"tracks refuse edits. Grid points and warp anchors inside replaced audio are removed; surviving "
+					"anchors move with the samples and keep their beat numbers. Event fades follow played time "
+					"through the old and new warp. Paste converts to the target's "
 					"sample rate and default speaker arrangement, using engine downmix gains and unity mono "
 					"duplication. "
 					"Unknown channel counts map by index with silent extra channels. Writes new "
@@ -561,6 +627,10 @@ namespace gnubase::engine
 						"range must lie within the clip, start before end");
 					if (operation == "draw")
 					{
+						require(!clip.warp.musical && clip.warp.markers.empty() && clip.warp.beats.empty() &&
+								clip.warp.gridStart == 0,
+							"Drawing requires no active warping or edited definition grid; flatten active warping "
+							"first");
 						require(
 							parameters.contains("channel") && parameters.at("channel").get<int64_t>() < source.channels,
 							"draw requires a channel in the clip");
@@ -583,10 +653,6 @@ namespace gnubase::engine
 						require(copies <= 1 || parameters.contains("sharedCopies"),
 							"choose sharedCopies: newVersion or all");
 						checkProcess(project, *event, parameters.value("sharedCopies", std::string("all")) == "all");
-						require(!clip.warp.musical && clip.warp.markers.empty() && clip.warp.beats.empty() &&
-								clip.warp.gridStart == 0,
-							"Process edits require no active warping or edited definition grid; flatten active warping "
-							"first");
 					}
 					const std::shared_ptr<ProcessClipboard> paste = operation == "paste" ? *clipboard : nullptr;
 					if (operation == "paste")
