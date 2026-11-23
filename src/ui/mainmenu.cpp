@@ -123,7 +123,9 @@ namespace gnubase::ui
 				continue;
 			Rml::Element* zone = element;
 			if (item.inMenuBar && focusZone != nullptr)
+			{
 				zone = focusZone;
+			}
 			else if (!element->HasAttribute("focuszone"))
 			{
 				if (element->GetParentNode() != parent)

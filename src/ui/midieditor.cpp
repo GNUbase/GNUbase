@@ -88,15 +88,14 @@ namespace gnubase::ui
 
 	void ProjectReads::read(std::function<void(const engine::Result&)> done)
 	{
-		if (!m_loading)
+		if (m_loading && m_binding.handed() != m_sentAt)
 		{
-			m_current.push_back(std::move(done));
-			send();
-		}
-		else if (m_binding.handed() == m_sentAt)
-			m_current.push_back(std::move(done));
-		else
 			m_next.push_back(std::move(done));
+			return;
+		}
+		m_current.push_back(std::move(done));
+		if (!m_loading)
+			send();
 	}
 
 	void ProjectReads::send()
@@ -109,7 +108,7 @@ namespace gnubase::ui
 				if (alive.expired())
 					return;
 				m_loading = false;
-				std::vector<std::function<void(const engine::Result&)>> done = std::exchange(m_current, {});
+				const std::vector<std::function<void(const engine::Result&)>> done = std::exchange(m_current, {});
 				// Before the answer goes on, so that an editor that asks again in it joins the next read.
 				if (!m_next.empty())
 				{
