@@ -171,6 +171,12 @@
 	display: inline-block;
 }
 
+/* A channel whose routing gives it no panner (mono into mono): its place stays, so the faders line up. */
+.mixer-channel.no-panner .mixer-panner
+{
+	visibility: hidden;
+}
+
 .mixer-fader
 {
 	flex: 1 1 0;

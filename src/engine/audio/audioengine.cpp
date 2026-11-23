@@ -602,6 +602,7 @@ namespace gnubase::engine
 		if (m_device &&
 			(m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring ||
 				listenGains() != m_listenGains || m_settings.get(settings::g_audioMutePreSends) != m_mutePreSends ||
+				meterPosition() != m_meterPosition ||
 				m_settings.get(settings::g_editingTreatMutedAudioLikeDeleted) != m_treatMutedAudioLikeDeleted))
 			rebuild();
 		updateRecorder();
@@ -669,6 +670,14 @@ namespace gnubase::engine
 		return AutoMonitoring::TapeMachine;
 	}
 
+	MeterPosition AudioEngine::meterPosition() const
+	{
+		const std::string position = m_settings.get(settings::g_meterPosition);
+		if (position == "input")
+			return MeterPosition::Input;
+		return position == "postFader" ? MeterPosition::PostFader : MeterPosition::PostPanner;
+	}
+
 	AudioEngine::ListenGains AudioEngine::listenGains() const
 	{
 		return {static_cast<float>(volumeGain(m_settings.get(settings::g_audioListenDim))),
@@ -681,6 +690,7 @@ namespace gnubase::engine
 		m_autoMonitoring = autoMonitoring();
 		m_listenGains = listenGains();
 		m_mutePreSends = m_settings.get(settings::g_audioMutePreSends);
+		m_meterPosition = meterPosition();
 		m_treatMutedAudioLikeDeleted = m_settings.get(settings::g_editingTreatMutedAudioLikeDeleted);
 		const audio::DeviceFormat& format = m_device->format();
 		// Channels that stopped listening stay on the listen bus until their listen node glided them out.
@@ -1170,6 +1180,8 @@ namespace gnubase::engine
 					state, nullptr, panning, std::nullopt, silent, StripPart::Fader, lookAhead);
 			}
 			node.processor = fader;
+			for (ChannelStrip* strip : {sourceStrip.get(), fader.get()})
+				strip->meterAt(m_meterPosition, channelCount(channel.format));
 			if (const auto sequencer = m_sequencers.find(channel.id);
 				channel.type == TrackType::Midi && sequencer != m_sequencers.end())
 			{
