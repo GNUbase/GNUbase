@@ -82,10 +82,6 @@ and Lua.
 The sample editor's inspector has the Hitpoints section, and its display shows the hitpoints that count and the
 disabled ones.
 
-Close Gaps (Crossfade) and Delete Overlaps in this section apply `event.closeGaps` and `event.deleteOverlaps` to all
-slices in the current event's audio part (reference manual p. 643). They are disabled without at least two slices in
-that part. Engine errors appear in the Process section. The project menu entries remain deferred.
-
 ```
 .sample-editor.edit-hitpoints          while Edit Hitpoints is on
   .se-inspector                        #se-edit-hitpoints (.checked); slider#se-threshold, #se-intensity and
@@ -94,7 +90,6 @@ that part. Engine errors appear in the Process section. The project menu entries
                                        MIDI Notes): button.se-velocity-mode[velocity-mode] (.checked),
                                        valuefield#se-midi-velocity (1-127), #se-midi-pitch, #se-midi-length
                                        (sixteenths), #se-midi-ok, #se-midi-cancel
-                                       button[slice-edit=closeGaps|deleteOverlaps] for the current audio part's slices
   .se-display .se-hitpoints            .se-hitpoint[hitpoint] per hitpoint (.locked, .disabled) with its
                                        .se-hitpoint-line and .se-hitpoint-handle at the top
 ```
@@ -138,10 +133,9 @@ with hand-annotated onsets (room sound, bleed, flams) are yet to come.
   groove and MIDI notes; Delete Overlaps within a part, unchanged offsets, equal starts, part boundaries, selection
   validation, locked events and undo/redo.
 - `tests/hitpoints_tests.cpp`: Close Gaps (Crossfade) preserving starts and offsets, musical warping, selection part and
-  lane boundaries, duplicate and empty selections, locked events, insufficient source audio, atomic rollback and
-  undo/redo.
+  lane boundaries, duplicate and empty selections, locked events, insufficient source audio, requested crossfade length,
+  its limit to half the next slice's played length, atomic rollback and undo/redo.
 - `tests/playback_tests.cpp`: auditioning a clip, and up to an end, as Play back Slice does.
 - `tests/hitpoints_ui_tests.cpp` drives the sample editor with `ui::Automation`: Edit Hitpoints showing the detected
   hitpoints at their frames, the threshold slider's drag as one undo step, Remove All; the handle, Shift, Ctrl and
-  Alt, Alt and the drag, playing a slice without stopping on release; MIDI Notes with its options and Slices; Close Gaps
-  and Delete Overlaps in the current audio part, disabled without slices, engine errors and undo.
+  Alt, Alt and the drag, playing a slice without stopping on release; MIDI Notes with its options and Slices.

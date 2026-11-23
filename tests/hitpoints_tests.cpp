@@ -645,6 +645,48 @@ TEST_CASE("Close Gaps crossfades selected slices without moving their starts", "
 	CHECK(f.call("project.get") == after);
 }
 
+TEST_CASE("Close Gaps uses the requested length capped at half the next slice's played length", "[integration]")
+{
+	struct Case
+	{
+		bool musical;
+		int64_t nextLength;
+		int64_t overlap;
+		int64_t firstLength;
+	};
+	for (const Case& each : {Case{false, 24000, 1200, 49200}, Case{false, 480, 240, 48240},
+			 Case{true, 24000, 1200, 98400}, Case{true, 480, 120, 96240}})
+	{
+		CAPTURE(each.musical, each.nextLength);
+		Fixture f;
+		if (each.musical)
+			f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 60}, {"musical", true}});
+		f.call("audioEvent.set", {{"event", f.event}, {"length", 24000}});
+		const Json second = f.call("audioEvent.add",
+								 {{"track", f.track}, {"clip", f.clip}, {"position", 144000}, {"offset", 48000},
+									 {"length", each.nextLength}})
+								.at("event")
+								.at("id");
+		f.call("event.closeGaps", {{"events", {second, f.event}}, {"length", 25}});
+		const Json project = f.call("project.get");
+		for (const Json& event : project.at("audioEvents"))
+		{
+			if (event.at("id") == f.event)
+			{
+				CHECK(event.at("length") == each.firstLength);
+				if (each.musical)
+					CHECK(event.at("playedLength") == 48000 + each.overlap);
+			}
+			else
+			{
+				CHECK(event.at("position") == 144000);
+				CHECK(event.at("length") == each.nextLength);
+				CHECK(event.at("crossfade").at("from") == f.event);
+			}
+		}
+	}
+}
+
 TEST_CASE("Close Gaps respects selection boundaries and fails atomically without source audio", "[integration]")
 {
 	Fixture f;

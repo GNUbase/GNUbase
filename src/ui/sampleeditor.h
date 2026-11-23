@@ -123,7 +123,6 @@ namespace gnubase::ui
 		std::pair<int64_t, int64_t> rangeOrEvent() const; // the selection range, or the event's section
 		const engine::Json* region(uint64_t id) const;
 		const engine::Json* clip() const;
-		std::vector<uint64_t> sliceEvents() const; // all slices in the current event's audio part
 		double sampleRate() const;
 
 		EngineBinding& m_binding;
