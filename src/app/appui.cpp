@@ -489,29 +489,7 @@ namespace gnubase::app
 				// The cutting positions show while the quantize panel is open.
 				if (m_eventDisplay && m_quantizePanel.expired())
 					m_eventDisplay->setCuttingPositions({});
-				for (MixerWindow& shown : m_mixers)
-					if (shown.mixer && m_shell.find(shown.window) == nullptr)
-						shown.mixer.reset(); // the user closed its window
-				if (m_channelSettings.mixer && m_shell.find(m_channelSettings.window) == nullptr)
-					m_channelSettings.mixer.reset();
-				for (auto other = m_moreChannelSettings.begin(); other != m_moreChannelSettings.end();)
-					other = m_shell.find(other->second.window) == nullptr ? m_moreChannelSettings.erase(other)
-																		  : std::next(other);
-				// The channel settings windows that follow follow the track selection (reference manual p. 499).
-				std::vector<ui::Mixer*> following;
-				if (channelSettings() != nullptr && channelSettings()->follows())
-					following.push_back(channelSettings());
-				for (auto& [number, other] : m_moreChannelSettings)
-					if (other.mixer->follows())
-						following.push_back(other.mixer.get());
-				if (!following.empty() && m_trackList)
-				{
-					// Each window on its own: another one may have gone to a track and selected it.
-					const std::vector<uint64_t> tracks = m_trackList->selection();
-					for (ui::Mixer* settings : following)
-						if (!tracks.empty() && settings->track() != tracks.front())
-							settings->showTrack(tracks.front());
-				}
+				updateMixerWindows();
 				if (m_keyboard && m_shell.find(m_keyboardWindow) == nullptr)
 					m_keyboard.reset(); // so too: its notes end
 				if (m_markers && m_shell.find(m_markersWindow) == nullptr)
@@ -2253,6 +2231,33 @@ namespace gnubase::app
 				m_trackList->select({track});
 		};
 		return actions;
+	}
+
+	void AppUi::updateMixerWindows()
+	{
+		for (MixerWindow& shown : m_mixers)
+			if (shown.mixer && m_shell.find(shown.window) == nullptr)
+				shown.mixer.reset(); // the user closed its window
+		if (m_channelSettings.mixer && m_shell.find(m_channelSettings.window) == nullptr)
+			m_channelSettings.mixer.reset();
+		for (auto other = m_moreChannelSettings.begin(); other != m_moreChannelSettings.end();)
+			other =
+				m_shell.find(other->second.window) == nullptr ? m_moreChannelSettings.erase(other) : std::next(other);
+		// The channel settings windows that follow follow the track selection (reference manual p. 499).
+		std::vector<ui::Mixer*> following;
+		if (channelSettings() != nullptr && channelSettings()->follows())
+			following.push_back(channelSettings());
+		for (auto& [number, other] : m_moreChannelSettings)
+			if (other.mixer->follows())
+				following.push_back(other.mixer.get());
+		if (!following.empty() && m_trackList)
+		{
+			// Each window on its own: another one may have gone to a track and selected it.
+			const std::vector<uint64_t> tracks = m_trackList->selection();
+			for (ui::Mixer* settings : following)
+				if (!tracks.empty() && settings->track() != tracks.front())
+					settings->showTrack(tracks.front());
+		}
 	}
 
 	ui::Mixer* AppUi::openChannelSettings(uint64_t track)

@@ -299,6 +299,9 @@ namespace gnubase::app
 		// The lower zone's mixer panel, the mixer windows' Visibility tabs and their UI commands, and Edit Channel
 		// Settings.
 		void addMixers();
+		// Once a frame: lets go of the mixer windows the user closed, and the channel settings windows that follow show
+		// the first selected track (reference manual p. 499).
+		void updateMixerWindows();
 		// What the mixers ask of the app: pictures, Edit Channel Settings, Add Effect Track to Send, and the channel
 		// settings window going to another track, which the track list then selects.
 		ui::MixerActions mixerActions();
