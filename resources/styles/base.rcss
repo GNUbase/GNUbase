@@ -89,9 +89,10 @@ button.toggle
 	padding: 2dp 0;
 }
 
-/* Text fields */
+/* Text fields, with the text I-beam pointer */
 input.text, input.password
 {
+	cursor: text;
 	display: inline-block;
 	box-sizing: border-box;
 	width: 160dp;
@@ -102,6 +103,7 @@ input.text, input.password
 
 textarea
 {
+	cursor: text;
 	display: inline-block;
 	box-sizing: border-box;
 	width: 240dp;
@@ -2251,7 +2253,9 @@ td
 	white-space: nowrap;
 }
 
-/* Splitters between the elements of a flex row or column; the grip shows which way they move. */
+/* Splitters between the elements of a flex row or column; the grip shows which way they move, and so does the pointer:
+   the OS's left-right double arrow, or its up-down one in a column. As RmlUi drags, the pointer stays while the drag
+   goes on, also outside the splitter. */
 splitter
 {
 	display: flex;
@@ -2259,6 +2263,12 @@ splitter
 	align-items: center;
 	justify-content: center;
 	drag: drag;
+	cursor: ew-resize;
+}
+
+splitter.column
+{
+	cursor: ns-resize;
 }
 
 splitter .splitter-grip-horizontal, splitter.column .splitter-grip-vertical
@@ -2699,6 +2709,7 @@ splitter.column .splitter-grip-horizontal
 {
 	padding: 2dp 0;
 	drag: drag;
+	cursor: ns-resize;
 	focus: none;
 }
 
@@ -2812,6 +2823,7 @@ listview.history
 	padding: 3dp 0;
 	margin: -3dp 0;
 	drag: drag;
+	cursor: ns-resize;
 	focus: none;
 }
 

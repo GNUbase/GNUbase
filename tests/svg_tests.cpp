@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <regex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -421,6 +422,30 @@ TEST_CASE("GNUbase's mouse pointers rasterize at every scale, pointing at their 
 	CHECK(cursors.get("ew-resize").name == "ew-resize");
 	CHECK(cursors.get("ew-resize").images.empty());
 	CHECK(!cursors.has("ew-resize"));
+}
+
+TEST_CASE("every pointer the style sheets name is one of the OS's or has a picture and a hotspot", "[unit]")
+{
+	// A name that is neither shows the OS's arrow (#1857), as resize-horizontal did in the sampler.
+	ui::Cursors cursors(resources() / "cursors");
+	static const std::regex property(R"re((?:^|[^\w-])cursor\s*:\s*([\w-]+))re");
+	size_t named = 0;
+	for (const auto& entry : std::filesystem::recursive_directory_iterator(resources()))
+	{
+		const std::string extension = entry.path().extension().string();
+		if (extension != ".rcss" && extension != ".rml")
+			continue;
+		const std::string text = test::readText(entry.path());
+		for (auto match = std::sregex_iterator(text.begin(), text.end(), property); match != std::sregex_iterator();
+			++match)
+		{
+			const std::string name = (*match)[1].str();
+			INFO(entry.path().filename().u8string() << ": cursor: " << name);
+			CHECK(cursors.get(name).name == name); // the OS's by its name, or GNUbase's own that loaded
+			++named;
+		}
+	}
+	CHECK(named >= 20);
 }
 
 TEST_CASE("a pointer whose picture or manifest can't be read is the OS's arrow", "[unit]")

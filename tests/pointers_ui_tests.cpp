@@ -5,7 +5,10 @@
 // the sample and audio part editors' in their own tests.
 #include "uiapp.h"
 
+#include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/docking.h"
+#include "ui/midieditor.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -18,6 +21,11 @@ using engine::Json;
 
 namespace
 {
+	ui::Target at(const std::string& selector)
+	{
+		return {selector, 0, std::nullopt};
+	}
+
 	ui::Target point(int x, int y)
 	{
 		return {"", 0, ui::Point{x, y}};
@@ -47,6 +55,44 @@ namespace
 	}
 }
 
+TEST_CASE("splitters show the OS's double arrow in the direction they move, also while a drag leaves them", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.setDpRatio(1.0F);
+	app.appUi().showProject();
+	app.appUi().docking().setVisible("project", "left", true);
+	app.appUi().docking().setVisible("project", "lower", true);
+	app.shell().step(std::chrono::milliseconds(0));
+
+	// Left-right between the zones of a row and beside the track list, up-down above the lower zone.
+	CHECK(pointerOver(app, middle(app, "splitter[for=left]")) == "ew-resize");
+	CHECK(pointerOver(app, middle(app, "splitter[for=trackList]")) == "ew-resize");
+	CHECK(pointerOver(app, middle(app, "splitter[for=lower]")) == "ns-resize");
+	CHECK(pointerOver(app, point(5, 5)).empty());
+
+	// The left zone stops at its minimum of 120 dp, so the mouse leaves the splitter over the zone; the pointer stays
+	// the splitter's until the button goes up.
+	const ui::Target left = middle(app, "splitter[for=left]");
+	const ui::Point from = left.point.value_or(ui::Point{});
+	app.ui().press(std::nullopt, left, ui::MouseButton::Left);
+	app.ui().move(std::nullopt, point(from.x - 100, from.y));
+	app.ui().move(std::nullopt, point(40, from.y));
+	CHECK(pointer(app) == "ew-resize");
+	app.ui().release(std::nullopt, point(40, from.y), ui::MouseButton::Left);
+	CHECK(pointerOver(app, point(41, from.y)) != "ew-resize");
+}
+
+TEST_CASE("text fields show the text I-beam", "[ui]")
+{
+	test::UiApp app({1024, 500});
+	app.appUi().showProject();
+	app.keys().run("tempo.insertAtCursor", Json::object(), app.main(), nullptr);
+	REQUIRE(
+		app.waitUntil([&app] { return !app.ui().dom(std::nullopt, "#insert-tempo-value", 0).at("elements").empty(); }));
+	CHECK(pointerOver(app, at("#insert-tempo-value")) == "text");
+	CHECK(pointerOver(app, at("#insert-tempo-ok")).empty());
+}
+
 TEST_CASE("the time warp tool shows a clock with arrows over the event lanes", "[ui]")
 {
 	test::UiApp app({800, 300});
@@ -57,4 +103,33 @@ TEST_CASE("the time warp tool shows a clock with arrows over the event lanes", "
 	const ui::Target lanes = middle(app, "event-lanes.events");
 	app.keys().run("tool.timeWarp", Json::object(), app.main(), nullptr);
 	CHECK(pointerOver(app, lanes) == "tool-timewarp");
+}
+
+TEST_CASE("the key editor's tools show their pointers over the note display, the trim tool a knife", "[ui]")
+{
+	test::UiApp app({1200, 800});
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	const Json part =
+		app.call("midiPart.add", {{"track", track.at("id")}, {"position", 0}, {"length", 4 * time::g_ticksPerQuarter}})
+			.at("part");
+	app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part.at("id")})}});
+	REQUIRE(app.waitUntil([&app] { return app.appUi().editorWindow() != nullptr; }));
+	const ui::WindowId window = app.appUi().editorWindowId();
+	REQUIRE(app.waitUntil([&] { return app.ui().dom(window, ".editor-part", 0).at("elements").size() == 1; }));
+	const auto over = [&app, window](const std::string& tool)
+	{
+		if (!tool.empty())
+			app.ui().click(window, at(".key-tool[key-tool=" + tool + "]"), ui::MouseButton::Left, 1, {});
+		app.ui().move(window, at(".key-editor-grid"));
+		return pointer(app);
+	};
+	CHECK(over("").empty()); // the object selection tool
+	CHECK(over("draw") == "tool-draw");
+	CHECK(over("line") == "tool-line");
+	CHECK(over("erase") == "tool-erase");
+	CHECK(over("trim") == "tool-split");
+	CHECK(over("split") == "tool-split");
+	CHECK(over("glue") == "tool-glue");
+	CHECK(over("mute") == "tool-mute");
+	CHECK(over("objectSelection").empty());
 }

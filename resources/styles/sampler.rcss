@@ -100,7 +100,7 @@
 	bottom: 0;
 	width: 9dp;
 	margin-left: -4dp;
-	cursor: resize-horizontal;
+	cursor: resize;
 	drag: drag; /* its drag ends wherever the button goes up, outside the window too */
 }
 
@@ -246,7 +246,7 @@
 	height: 6dp;
 	width: 0.78125%;
 	min-width: 4dp;
-	cursor: resize-horizontal;
+	cursor: resize;
 	drag: drag; /* its drag ends wherever the button goes up, outside the window too */
 }
 
