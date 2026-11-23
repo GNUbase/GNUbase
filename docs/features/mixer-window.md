@@ -113,7 +113,8 @@ peak since the last frame and its peak mark, and under it, beside the fader's vo
 Level (`.mixer-peak`), the highest of those maxima, which a click resets: every channel's (`meter.reset` with
 `meters` `channels`), not the master meter's. The bars come once the engine measured the channel, after it first
 played. The mixers read them through `ui::MeterReader`, the UI's one reader of the meters, which the right zone's meter
-display shares ([metering.md](metering.md)); MIDI channels, VCA faders and busses have no meter yet.
+display shares ([metering.md](metering.md)). A VCA fader's meter sums its channels' outputs
+([link-groups.md](link-groups.md)); MIDI channels and busses have no meter yet.
 
 A right click on a meter opens its Global Meter Settings (`#mixer-meter-menu`, p. 467), the user settings that every
 mixer's meters follow: Meter Peak - Hold Peaks (`meter.holdPeaks`, on by default) shows the peak marks; Meter Peak -

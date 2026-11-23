@@ -4,6 +4,7 @@
 #include "engine/engine.h"
 #include "testutils/testutils.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -585,6 +586,33 @@ TEST_CASE("a VCA fader adds its volume to its channels', through nested VCA fade
 	CHECK(channelJson(mixer.client, mixer.track).at("volume") == -3.0); // the channel's own fader stays
 	run(mixer.client, "transport.play");
 	checkGain(mixer.render(2000), [](int64_t) { return gain(-9.0); }, 1e-6);
+}
+
+TEST_CASE("a VCA fader's meter shows the summed level of its group's channels", "[integration]")
+{
+	// Two channels play the same sine; a VCA fader controls both, through a nested one, and another one nothing.
+	Mixer mixer;
+	const ObjectId second = add(mixer.client, "audio");
+	run(mixer.client, "channel.set", {{"channel", second}, {"monitor", true}});
+	const ObjectId nested = add(mixer.client, "vca");
+	const ObjectId vca = add(mixer.client, "vca");
+	const ObjectId alone = add(mixer.client, "vca");
+	run(mixer.client, "linkGroup.add", {{"channels", {mixer.track, second}}, {"vca", nested}});
+	run(mixer.client, "linkGroup.add", {{"channels", {nested}}, {"vca", vca}});
+	run(mixer.client, "channel.set", {{"channel", nested}, {"volume", -6.0}});
+	run(mixer.client, "transport.play");
+	mixer.render(4800);
+	const Json meters =
+		run(mixer.client, "meter.get", {{"channels", {mixer.track, nested, vca, alone}}}).at("channels");
+	REQUIRE(meters.size() == 4);
+	const auto peak = [&meters](size_t meter) { return meters.at(meter).at("peak").at(0).get<double>(); };
+	// After the faders, as the channels' meters: the sum of two equal sines is 6 dB louder.
+	CHECK(peak(1) == Catch::Approx(peak(0) + 6.02).margin(0.05));
+	CHECK(peak(2) == Catch::Approx(peak(1)).margin(1e-6));
+	CHECK(meters.at(3).at("peak").empty());
+	// meter.get lists the VCA channels too.
+	const Json all = run(mixer.client, "meter.get").at("channels");
+	CHECK(std::any_of(all.begin(), all.end(), [alone](const Json& meter) { return meter.at("channel") == alone; }));
 }
 
 TEST_CASE("VCA fader automation combines with the channels' own automation", "[integration]")

@@ -84,20 +84,22 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"meter.get", 1,
 				"The meters, as the audio thread measured them last while the device ran. channels: each channel's "
-				"output after its fader, panner and muting (all channels, or those given), per audio channel: peak "
+				"output after its fader, panner and muting, a VCA channel's the sum of those of the channels it "
+				"controls in the main mix's format (all channels, or those given), per audio channel: peak "
 				"(the largest sample of the last 100 ms) and rms (averaged over the last 300 ms) in dBFS, and their "
 				"maxima peakMax and rmsMax since meter.reset, also while the transport stands; null for silence, "
-				"empty lists for MIDI channels and channels that haven't played yet. main: the same for the main "
-				"mix's first 8 device outputs, with rms averaged over the user setting meter.rmsResolution and 3 dB "
-				"higher with meter.rmsAes17, plus the master meter's truePeak, truePeakMax and truePeakHold (4x "
-				"oversampled, dBTP): truePeakHold is the largest true peak since meter.reset with \"main\" or without "
-				"meters, also while the transport stands, as peakMax; truePeakMax the loudness meter's, which "
-				"meter.reset with \"loudness\" or without meters clears. loudness: the main mix's loudness per EBU R "
-				"128 in LUFS: momentary (400 ms), shortTerm (3 s), their maxima, integrated (gated) and range (LU), "
-				"and seconds measured; they change every 100 ms. truePeakMax, the loudness maxima, integrated, range "
-				"and seconds only count while the transport plays, with blocks from where playback started, and go "
-				"on across audio.reset at the same sample rate; null until there is a value. The user setting "
-				"meter.resetOnStart starts the loudness meter and the main mix's maxima over when playback starts.",
+				"empty lists for MIDI channels, VCA channels without audio channels and channels that haven't "
+				"played yet. main: the same for the main mix's first 8 device outputs, with rms averaged over the "
+				"user setting meter.rmsResolution and 3 dB higher with meter.rmsAes17, plus the master meter's "
+				"truePeak, truePeakMax and truePeakHold (4x oversampled, dBTP): truePeakHold is the largest true "
+				"peak since meter.reset with \"main\" or without meters, also while the transport stands, as "
+				"peakMax; truePeakMax the loudness meter's, which meter.reset with \"loudness\" or without meters "
+				"clears. loudness: the main mix's loudness per EBU R 128 in LUFS: momentary (400 ms), shortTerm (3 "
+				"s), their maxima, integrated (gated) and range (LU), and seconds measured; they change every 100 "
+				"ms. truePeakMax, the loudness maxima, integrated, range and seconds only count while the transport "
+				"plays, with blocks from where playback started, and go on across audio.reset at the same sample "
+				"rate; null until there is a value. The user setting meter.resetOnStart starts the loudness meter "
+				"and the main mix's maxima over when playback starts.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
 					"channels": {"type": "array", "items": {"type": "integer"}}}})"),
 				meterSchema(), true},
@@ -111,15 +113,19 @@ namespace gnubase::engine
 					// The project's channels, not the meters: only a graph build drops a deleted channel's meter,
 					// and while no device runs there is none.
 					const std::vector<RenderChannel>& known = m_snapshots.latest().channels;
+					const std::vector<RenderVca>& vcas = m_snapshots.latest().vcas;
 					for (const ObjectId id : wanted)
 						if (std::none_of(known.begin(), known.end(),
-								[id](const RenderChannel& channel) { return channel.id == id; }))
+								[id](const RenderChannel& channel) { return channel.id == id; }) &&
+							std::none_of(vcas.begin(), vcas.end(), [id](const RenderVca& vca) { return vca.id == id; }))
 							throw CommandError("no channel " + std::to_string(id));
 				}
 				else
 				{
 					for (const RenderChannel& channel : m_snapshots.latest().channels)
 						wanted.push_back(channel.id);
+					for (const RenderVca& vca : m_snapshots.latest().vcas)
+						wanted.push_back(vca.id);
 				}
 				Json channels = Json::array();
 				for (const ObjectId id : wanted)

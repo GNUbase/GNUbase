@@ -1299,6 +1299,15 @@ namespace gnubase::engine
 			state->sendsProject = snapshot.opened;
 		}
 		for (graph::NodeDesc& node : desc.nodes)
+			if (node.kind == graph::NodeKind::VcaMeter)
+			{
+				const auto kept = m_channelStates.find(node.object);
+				const std::shared_ptr<ChannelState> state =
+					kept != m_channelStates.end() ? kept->second : std::make_shared<ChannelState>();
+				states[node.object] = state;
+				node.processor = std::make_shared<VcaMeterStrip>(state);
+			}
+		for (graph::NodeDesc& node : desc.nodes)
 			if (node.kind == graph::NodeKind::Listen)
 			{
 				const auto channel = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),

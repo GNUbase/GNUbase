@@ -574,6 +574,26 @@ namespace gnubase::engine
 		bool m_fromSilence = false; // audio thread: until the first block
 	};
 
+	// The processor of a VCA fader's meter node (graph::NodeKind::VcaMeter): it measures the sum of the outputs of the
+	// channels the VCA fader controls into its channel state's meter.
+	class VcaMeterStrip : public graph::Processor
+	{
+	public:
+		explicit VcaMeterStrip(std::shared_ptr<ChannelState> state) : m_state(std::move(state)) {}
+
+		void process(const graph::ProcessContext& context) noexcept override
+		{
+			m_state->meter.process(context.audio, context.channels, context.frames, m_sampleRate);
+		}
+
+	protected:
+		void prepare(double sampleRate, uint32_t /*maxFrames*/) override { m_sampleRate = sampleRate; }
+
+	private:
+		std::shared_ptr<ChannelState> m_state;
+		double m_sampleRate = 48000.0;
+	};
+
 	// The processor of a channel's listen node (graph::NodeKind::Listen): it glides the channel's output over a block
 	// from the gain of the last block to 1 while the channel listens, to 0 once it stopped.
 	class ListenStrip : public graph::Processor

@@ -840,15 +840,16 @@ namespace gnubase::ui
 			// Edit Channel Settings (reference manual p. 500).
 			if (channel->channel != nullptr && m_kind != MixerKind::ChannelSettings && m_actions.editChannel)
 				rml += R"(<button class="mixer-edit" edit="" title="Edit Channel Settings">e</button>)";
-			// The fader, from -60 dB, linear until the channel strip's dB law (#107), and an audio channel's meter,
-			// whose bars come once the engine measured the channel (showMeters).
+			// The fader, from -60 dB, linear until the channel strip's dB law (#107), and the meter of an audio channel
+			// or of a VCA fader's channels summed (p. 516), whose bars come once the engine measured it (showMeters).
 			if (audio || vca)
-				rml += std::string(R"(<div class="mixer-level"><fader min="-60" max="6" default="0" step="0.1"/>)") +
-					(vca ? "" : R"(<div class="mixer-meter" contextmenu="mixer-meter-menu"/>)") +
-					R"(</div><div class="mixer-readouts"><span class="mixer-volume"/>)" +
-					(vca ? "" : R"(<span class="mixer-peak" title="Meter Peak Level"/>)") + "</div>";
-			if (audio && !vca)
+			{
+				rml += R"(<div class="mixer-level"><fader min="-60" max="6" default="0" step="0.1"/>)"
+					   R"(<div class="mixer-meter" contextmenu="mixer-meter-menu"/></div>)"
+					   R"(<div class="mixer-readouts"><span class="mixer-volume"/>)"
+					   R"(<span class="mixer-peak" title="Meter Peak Level"/></div>)";
 				m_metered->push_back(channel->id);
+			}
 			rml += "</div>";
 			Rml::Element* strip = container.AppendChild(document->CreateElement("div"));
 			strip->SetClass("mixer-channel", true);

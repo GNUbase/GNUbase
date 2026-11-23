@@ -348,6 +348,14 @@ namespace gnubase::engine
 		return hash == 0 ? 1 : hash;
 	}
 
+	// A VCA fader (docs/features/link-groups.md), whose meter shows the sum of the audio channels it controls, also
+	// through nested VCA faders: their indices into RenderSnapshot::channels.
+	struct RenderVca
+	{
+		ObjectId id = 0; // its channel
+		std::vector<int> channels;
+	};
+
 	// What the audio thread needs from the project, compiled by the command thread after every change and handed
 	// over with rt::SnapshotPublisher. Objects refer to each other by index and every position is in the project's
 	// samples, so the audio thread never looks anything up. Immutable once published.
@@ -366,6 +374,7 @@ namespace gnubase::engine
 		std::vector<RenderMedia> media;
 		std::vector<RenderClip> clips;
 		std::vector<RenderChannel> channels; // in track order
+		std::vector<RenderVca> vcas;         // every VCA fader, in track order
 		// What arranger mode plays (#167); shared with the cue thread.
 		std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
 		ChordPadKeys chordPadKeys;

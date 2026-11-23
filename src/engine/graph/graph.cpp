@@ -47,6 +47,8 @@ namespace gnubase::engine::graph
 			return "send";
 		case NodeKind::MidiSend:
 			return "midiSend";
+		case NodeKind::VcaMeter:
+			return "vcaMeter";
 		}
 		return "unknown";
 	}
@@ -158,6 +160,16 @@ namespace gnubase::engine::graph
 
 		const auto mainMix = std::find_if(
 			snapshot.busses.begin(), snapshot.busses.end(), [](const RenderBus& bus) { return bus.mainMix; });
+		for (const RenderVca& vca : snapshot.vcas)
+		{
+			if (vca.channels.empty())
+				continue;
+			const int node = static_cast<int>(graph.nodes.size());
+			graph.nodes.push_back({NodeKind::VcaMeter, vca.id,
+				mainMix != snapshot.busses.end() ? mainMix->format : ChannelFormat::Stereo, nullptr});
+			for (const int channel : vca.channels)
+				graph.audio.push_back({firstChannel + channel, node});
+		}
 		const auto listens = [&fading](const RenderChannel& channel)
 		{
 			return channel.format != ChannelFormat::None &&
