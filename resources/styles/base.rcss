@@ -1540,6 +1540,12 @@ meter .meter-peak
 	cursor: tool-play;
 }
 
+/* A clock with arrows (reference manual p. 1466). */
+.event-display .event-area[pointer=timeWarp]
+{
+	cursor: tool-timewarp;
+}
+
 .event-display .event-area[pointer=resize]
 {
 	cursor: resize;
