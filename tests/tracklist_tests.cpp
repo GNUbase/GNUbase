@@ -237,6 +237,10 @@ TEST_CASE("the track list's buttons show their click at once, also against a pro
 	};
 	REQUIRE(tracks.app.waitUntil(laneReads));
 	tracks.list.select({audio});
+	// Nothing is still out (#1904): neither a step from above nor a read. A view that is still reading when the change
+	// below comes reads it only once its read is in, and that read would queue behind the second hold.
+	tracks.app.shell().step(std::chrono::milliseconds(0)); // the views follow the selection
+	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting() == 0; }));
 	// The channel in the project that the list shows.
 	const auto shown = [&tracks](const Json& channel)
 	{
