@@ -2132,6 +2132,7 @@ menuitem .track-version-id
 	height: 12dp;
 	margin-right: 6dp;
 	vertical-align: middle;
+	box-sizing: border-box; /* a theme's border inside the swatch */
 }
 
 /* The color tool's color, a strip under its icon (docs/features/tools.md); code gives it the color. */
