@@ -360,9 +360,19 @@ namespace gnubase::engine
 		void postSampleUpdate();
 		// The releases for a new program: those pending that the audio thread hasn't done yet.
 		std::vector<Release> releases();
+		// A send's node that glides out of the destination the send left: its gain slot (ChannelState::sends).
+		struct GoingSend
+		{
+			graph::FadingSend node;
+			size_t number = 0;
+			size_t slot = 0;
+		};
+		// The sends that went or moved to another destination since the last graph and are still above 0 there. When
+		// both of a send's gains glide out while it has a new destination, the quieter one stops at once.
+		std::vector<GoingSend> goingSends(const RenderSnapshot& snapshot) const;
 		// Puts every channel's processor into a channel strip with the channel's fader and automation, and the
 		// plugins of its slots into slot strips that get their automation; after attachSlots.
-		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
+		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc, const std::vector<GoingSend>& going);
 		// Adds the metronome's node, always, with its audio and MIDI routing, and compiles what it plays
 		// when that changed.
 		void attachMetronome(const RenderSnapshot& snapshot, graph::GraphDesc& desc);

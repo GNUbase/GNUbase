@@ -51,7 +51,8 @@ namespace gnubase::engine::graph
 		return "unknown";
 	}
 
-	GraphDesc describe(const RenderSnapshot& snapshot, const std::vector<ObjectId>& fading)
+	GraphDesc describe(
+		const RenderSnapshot& snapshot, const std::vector<ObjectId>& fading, const std::vector<FadingSend>& fadingSends)
 	{
 		GraphDesc graph;
 		for (const RenderBus& bus : snapshot.busses)
@@ -129,14 +130,19 @@ namespace gnubase::engine::graph
 			const RenderChannel& channel = snapshot.channels[i];
 			const int from = firstChannel + static_cast<int>(i);
 			const ChannelFormat output = pannerOutput(channel.panner);
-			for (const RenderSend& send : channel.sends)
+			const auto addSend = [&](int destination, bool preFader)
 			{
 				const int node = static_cast<int>(graph.nodes.size());
 				graph.nodes.push_back({NodeKind::Send, channel.id,
-					send.preFader || output == ChannelFormat::None ? channel.format : output, nullptr});
-				(send.preFader ? graph.events : graph.audio).push_back({from, node});
-				graph.audio.push_back({node, entry[static_cast<size_t>(send.destination)]});
-			}
+					preFader || output == ChannelFormat::None ? channel.format : output, nullptr});
+				(preFader ? graph.events : graph.audio).push_back({from, node});
+				graph.audio.push_back({node, entry[static_cast<size_t>(destination)]});
+			};
+			for (const RenderSend& send : channel.sends)
+				addSend(send.destination, send.preFader);
+			for (const FadingSend& send : fadingSends)
+				if (send.channel == static_cast<int>(i))
+					addSend(send.destination, send.preFader);
 		}
 
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)

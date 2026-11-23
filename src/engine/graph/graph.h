@@ -71,6 +71,15 @@ namespace gnubase::engine::graph
 		std::vector<int> channels;
 	};
 
+	// A send node without a send: from the channel at index channel of a render snapshot to the one at index
+	// destination, before the fader or after it.
+	struct FadingSend
+	{
+		int channel = 0;
+		int destination = 0;
+		bool preFader = false;
+	};
+
 	struct GraphDesc
 	{
 		std::vector<NodeDesc> nodes;
@@ -92,7 +101,10 @@ namespace gnubase::engine::graph
 	// runs in and sends events to that instrument's first node. While channels listen, a listen node per listening
 	// channel receives its output after the fader, and a listen bus in the main mix's format comes last and receives
 	// the listen nodes. fading: channels that stopped listening and still glide out, which keep their listen node.
-	GraphDesc describe(const RenderSnapshot& snapshot, const std::vector<ObjectId>& fading = {});
+	// fadingSends: sends that went or moved to another destination and still glide out (AudioEngine), each with a
+	// node after its channel's other send nodes.
+	GraphDesc describe(const RenderSnapshot& snapshot, const std::vector<ObjectId>& fading = {},
+		const std::vector<FadingSend>& fadingSends = {});
 
 	// The order in which nodes are processed: every node after the nodes it receives audio or events from, and
 	// otherwise by index, so the order depends only on the graph and not on the order of its connections. Throws

@@ -336,6 +336,51 @@ TEST_CASE("a send switched on or set to another level glides there over a block"
 		});
 }
 
+TEST_CASE("a send that is on glides out of its old destination and into a new one, and in from silence when it gets "
+		  "one again",
+	"[integration]")
+{
+	// A second effect channel at -6 dB tells the two destinations apart on the output.
+	Sends mixer;
+	const ObjectId other = channelOf(run(mixer.client, "track.add", {{"type", "effect"}}));
+	run(mixer.client, "channel.set", {{"channel", other}, {"volume", -6.0}});
+	mixer.set({{"sends", {{{"send", 1}, {"destination", mixer.effect}, {"on", true}, {"level", 0.0}}}}});
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	mixer.set({{"sends", {{{"send", 1}, {"destination", other}}}}});
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	mixer.set({{"sends", {{{"send", 1}, {"destination", 0}}}}});
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	mixer.set({{"sends", {{{"send", 1}, {"destination", other}}}}});
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	const double half = gain(-6.0);
+	checkGain(mixer.output(512),
+		[half](size_t i)
+		{
+			const double x = std::min(1.0, static_cast<double>((i % 128) + 1) / 64.0); // through a block's glide
+			if (i < 128)
+				return 2.0;
+			if (i < 256)
+				return 1.0 + (1.0 - x) + (half * x);
+			if (i < 384)
+				return 1.0 + (half * (1.0 - x));
+			return 1.0 + (half * x);
+		});
+}
+
+TEST_CASE("a send gliding out of a destination that now plays into its channel stops at once", "[integration]")
+{
+	// No block between the changes: the send to the other effect channel would still glide out of it.
+	Sends mixer;
+	const ObjectId other = channelOf(run(mixer.client, "track.add", {{"type", "effect"}}));
+	run(mixer.client, "channel.set", sends(mixer.effect, {{{"send", 1}, {"destination", other}, {"on", true}}}));
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	run(mixer.client, "channel.set", sends(mixer.effect, {{{"send", 1}, {"destination", 0}}}));
+	run(mixer.client, "channel.set", {{"channel", other}, {"output", mixer.effect}});
+	mixer.set({{"output", other}});
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	checkGain(mixer.output(256), 1.0); // the track alone, then through both effect channels
+}
+
 TEST_CASE("soloing a channel keeps the effect channels it sends to heard", "[integration]")
 {
 	Sends mixer;
