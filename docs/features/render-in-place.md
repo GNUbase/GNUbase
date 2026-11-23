@@ -135,8 +135,7 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 ## In the UI
 
 - Edit > Render in Place > Render (with Current Settings) (`track.renderSelected`) and Edit > Freeze/Unfreeze >
-  Selected Tracks (with Current Settings) (`track.freezeSelected`), which is also Freeze/Unfreeze Selected Tracks in
-  the track list's context menu ([track-list.md](track-list.md)). Both use the options of the dialogs below, the user
+  Selected Tracks (with Current Settings) (`track.freezeSelected`). Both use the options of the dialogs below, the user
   settings `render.options` (empty, the commands' defaults, at first) and `render.freezeTail` (30 s); freezing works
   on the selected audio and instrument tracks and unfreezes them when every one is frozen. A frozen track's row has
   `.frozen`.
@@ -145,9 +144,11 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
   Tail Size in seconds, Bit Depth, Use Custom Name and Name, and in Render Tracks Source Tracks. Render saves them in
   `render.options` and renders. A selection never changes its tracks: Render Selection has no Source Tracks, and
   Render (with Current Settings) leaves out the saved one for a selection.
-- Edit > Freeze/Unfreeze > Selected Tracks... (`track.freezeSelectedSettings`, p. 992) opens Freeze Channel Options
-  (`freeze-options.rml`) with Tail Size for the selected tracks that aren't frozen, saves it in `render.freezeTail`
-  and freezes them; when every one is frozen it unfreezes them, as there are no unfreeze options yet.
+- Edit > Freeze/Unfreeze > Selected Tracks... (`track.freezeSelectedSettings`, p. 992), which is also Freeze/Unfreeze
+  Selected Tracks in the track list's context menu (pp. 219-220, [track-list.md](track-list.md)), opens Freeze Channel
+  Options (`freeze-options.rml`) with Tail Size for the selected tracks that aren't frozen, saves it in
+  `render.freezeTail` and freezes them; when every one is frozen it unfreezes them, as there are no unfreeze options
+  yet.
 - Render renders what the event display selects (pp. 1474-1477): the selected audio events, audio parts and MIDI parts
   on audio and instrument tracks (`events`, each on its own track); without them, the selection range on its audio and
   instrument tracks (`start` and `end`); without that, the selected tracks. It is enabled while any of them is
@@ -157,8 +158,9 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 ## Not yet
 
 - The dialogs' Tail Mode in bars and beats, File Path, Mix down to One Audio File, Hide Source Tracks and Keep/Mute
-  Source Events (pp. 1473, 1476), Include Inserts for Instrument Tracks (p. 992) and the Unfreeze Channel Options
-  dialog; Freeze Channel in the inspector and the mixer, and the lit freeze buttons.
+  Source Events (pp. 1473, 1476), Include Inserts for Instrument Tracks (p. 992), Unload Instruments When Frozen
+  (p. 993) and the Unfreeze Channel Options dialog; Render Tracks for MIDI tracks (pp. 1471, 1474), which Render
+  skips; Freeze Channel in the inspector and the mixer, and the lit freeze buttons.
 - Locking a frozen track's events, parts and controls (p. 220); edits of them play once the track is unfrozen.
 - Complete Signal Path + Master FX, and groups and effect returns in the complete signal path; copying the track's
   automation to the new track.

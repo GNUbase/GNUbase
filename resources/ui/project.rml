@@ -556,7 +556,7 @@
 		<menuseparator/>
 		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
 		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
-		<menuitem command="track.freezeSelected">Freeze/Unfreeze Selected Tracks</menuitem>
+		<menuitem command="track.freezeSelectedSettings">Freeze/Unfreeze Selected Tracks</menuitem>
 		<menuseparator/>
 		<!-- The tempo track (reference manual p. 1450) -->
 		<menuitem command="tempo.selectAll">Select All Events</menuitem>

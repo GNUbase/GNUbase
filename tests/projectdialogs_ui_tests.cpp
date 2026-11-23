@@ -176,6 +176,20 @@ TEST_CASE("dialogs for the project's tracks, parts or notes close when a new pro
 		CHECK(app.waitUntil([&app, dialog = std::string(dialog)] { return !open(app, dialog); }));
 	}
 
+	// Render Tracks and Freeze Channel Options, for a selected audio track: with Source Tracks set to Remove, OK would
+	// remove the new project's track with its id.
+	for (const auto& [command, dialog] : {std::pair{"track.renderSettings", "#render-settings-dialog"},
+			 std::pair{"track.freezeSelectedSettings", "#freeze-options-dialog"}})
+	{
+		INFO(command);
+		const auto track = app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+		display.select({});
+		selectTrack(app, track);
+		run(app, command, dialog);
+		newProject(app, display);
+		CHECK(app.waitUntil([&app, dialog = std::string(dialog)] { return !open(app, dialog); }));
+	}
+
 	// The project's auto fades and the project input transformer aren't for objects of the project: they stay.
 	for (const auto& [command, dialog] :
 		{std::pair{"project.autoFades", "#auto-fades"}, std::pair{"project.inputTransformer", "#rule-editor"}})

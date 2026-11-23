@@ -2045,6 +2045,57 @@ TEST_CASE("Render in Place renders the selected events and parts, else a selecti
 	tracks.display.setRange(std::nullopt);
 	tracks.click(row(synth) + " .track-name");
 	CHECK(render(4) == Events{{0, 14400}});
+
+	// Enabled for a selected part or a selection range without a selected track too, but not for nothing.
+	const auto canRun = [&tracks](const char* command)
+	{ return tracks.app.keys().canRun(command, tracks.app.main(), nullptr); };
+	tracks.list.select({});
+	REQUIRE(tracks.list.selection().empty());
+	for (const char* command : {"track.renderSelected", "track.renderSettings"})
+	{
+		INFO(command);
+		CHECK(!canRun(command));
+		tracks.display.select({second});
+		CHECK(canRun(command));
+		tracks.display.select({});
+		tracks.display.setRange(ui::RangeSelection{2400, 7200, {synth}});
+		CHECK(canRun(command));
+		tracks.display.setRange(std::nullopt);
+	}
+
+	// A part selected only on a MIDI track renders nothing, not the selected instrument track either: a selection
+	// never falls back to whole tracks.
+	const uint64_t midi = tracks.add({{"type", "midi"}});
+	const auto midiPart = tracks.app.call("midiPart.add", {{"track", midi}, {"position", 0}, {"length", 4800}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+	tracks.rows(5);
+	REQUIRE(tracks.app.waitUntil(
+		[&tracks, midiPart]
+		{
+			const Json& shown = tracks.display.project();
+			if (!shown.is_object())
+				return false;
+			const Json& parts = shown.at("midiParts");
+			return std::any_of(
+				parts.begin(), parts.end(), [midiPart](const Json& each) { return each.at("id") == midiPart; });
+		}));
+	tracks.click(row(synth) + " .track-name");
+	tracks.display.select({midiPart});
+	const auto renders = [&tracks]
+	{
+		const Json log = tracks.app.call("engine.commandLog");
+		return std::count_if(log.at("commands").begin(), log.at("commands").end(),
+			[](const Json& each) { return each.at("command") == "track.renderInPlace"; });
+	};
+	const auto before = renders();
+	tracks.app.keys().run("track.renderSelected", Json::object(), tracks.app.main(), nullptr);
+	// What it would send goes after its settings.get, which the engine answers before this one.
+	tracks.app.call("settings.get", {{"key", "render.options"}});
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(renders() == before);
+	CHECK(tracks.order().size() == 5);
 }
 
 TEST_CASE("The render and freeze dialogs render and freeze with their options and keep them for the next time", "[ui]")
