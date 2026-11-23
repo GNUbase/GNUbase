@@ -202,6 +202,76 @@ namespace gnubase::engine
 		{
 			const Json ids = {{"type", "array"}, {"items", {{"type", "integer"}}}};
 			model.addEdit(engine,
+				{"event.closeGaps", 1,
+					"Close Gaps (Crossfade), reference manual p. 643: extends each selected audio slice's end "
+					"through a gap into the next selected slice in the same track, part and lane, then crossfades "
+					"them. Starts and clip offsets stay in place. length is the crossfade in milliseconds (default "
+					"10, from 0.1 to 500), limited to half the next slice's played length. Touching slices are "
+					"crossfaded too; existing overlaps and the last slice stay. Fails atomically for locked events "
+					"or parts, frozen tracks, or insufficient source audio. One undo step; returns changed events. "
+					"Time Stretch mode is not implemented.",
+					objectSchema(
+						{{"events", ids}, {"length", {{"type", "number"}, {"minimum", 0.1}, {"maximum", 500}}}},
+						{"events"}),
+					objectSchema({{"events", ids}}, {"events"}), false},
+				"Close gaps",
+				[&model](Project& project, CommandContext& context)
+				{
+					std::vector<ObjectId> events;
+					std::set<ObjectId> seen;
+					for (const Json& item : context.parameters().at("events"))
+					{
+						const ObjectId id = item.get<ObjectId>();
+						const auto found = project.audioEvents.find(id);
+						require(found != project.audioEvents.end(), "no audio event " + std::to_string(id));
+						require(seen.insert(id).second, "duplicate audio event");
+						const AudioEvent& event = found->second;
+						require(!event.lock && (event.part == 0 || !project.audioParts.at(event.part).lock),
+							"audio event or part is locked");
+						require(!project.trackById.at(event.track).frozen, "audio track is frozen");
+						events.push_back(id);
+					}
+					require(!events.empty(), "events must not be empty");
+					const auto key = [&project](ObjectId id)
+					{
+						const AudioEvent& event = project.audioEvents.at(id);
+						return std::make_tuple(
+							event.track, event.part, event.lane, eventSpan(project, event).start, id);
+					};
+					std::sort(events.begin(), events.end(), [&](ObjectId a, ObjectId b) { return key(a) < key(b); });
+					std::set<ObjectId> changed;
+					const auto length = std::max<time::Samples>(
+						1, std::llround(context.parameters().value("length", 10.0) * project.sampleRate / 1000.0));
+					for (size_t i = 1; i < events.size(); ++i)
+					{
+						const AudioEvent& a = project.audioEvents.at(events[i - 1]);
+						const AudioEvent& b = project.audioEvents.at(events[i]);
+						if (a.track != b.track || a.part != b.part || a.lane != b.lane)
+							continue;
+						const EventSpan first = eventSpan(project, a);
+						const EventSpan next = eventSpan(project, b);
+						if (first.end > next.start || first.start >= next.start)
+							continue;
+						const auto overlap = std::min(length, (next.end - next.start) / 2);
+						require(overlap > 0, "not enough audio for a crossfade");
+						const auto end = next.start + overlap;
+						const auto frames =
+							std::llround(eventFrames(project, a, static_cast<double>(end - first.start)));
+						const Clip& clip = project.clips.at(a.clip);
+						require(frames <= project.media.at(clip.media).length - a.offset,
+							"not enough source audio to close the gap with a crossfade");
+						model.runEdit("event.resize", project,
+							{{"events", {a.id}}, {"edge", "end"}, {"delta", end - first.end}}, context);
+						require(eventSpan(project, a).end > next.start,
+							"not enough audio for a crossfade after frame rounding");
+						model.runEdit("crossfade.set", project,
+							{{"from", a.id}, {"to", b.id}, {"length", 0}, {"outLength", 0}}, context);
+						changed.insert(a.id);
+						changed.insert(b.id);
+					}
+					return Json{{"events", changed}};
+				});
+			model.addEdit(engine,
 				{"event.deleteOverlaps", 1,
 					"Deletes overlaps between selected audio slices (reference manual p. 643). Within each track, "
 					"part and lane, trims each event's end to the next selected event's start, preserving its offset "

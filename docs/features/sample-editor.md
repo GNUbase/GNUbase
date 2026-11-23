@@ -56,10 +56,16 @@ omitting it edits the clip in place and keeps the clip and region ids. `newVersi
 event; `all` edits the existing clip and adjusts its other events, including inactive track versions. Locked events and
 locked audio parts refuse edits. Each edit is one undo step, restoring the original clip, media and events. Clip
 regions, hitpoints, event offsets, lengths, fades, volume points and snap points follow the changed range; empty regions
-and events disappear. Active warping must be flattened before editing; edited definition grids are not supported in this
-first implementation. A tempo value alone does not warp playback and is preserved. The internal completion commands
-`sampleEditor.applyProcess` and `sampleEditor.finishProcess` accept only engine-posted work; clients use
-`sampleEditor.process`.
+and events disappear. Warped clips and edited definition grids are supported by version 3. Musical mode, tempo and
+surviving beat numbers stay. Grid points inside replaced audio are removed; later points move by the inserted length
+minus the removed length. Warp anchors follow the same rule in both source and target coordinates; an anchor is removed
+if either coordinate is inside replaced audio. Insert Silence moves anchors at its start with the audio to the right.
+Surviving segments outside the splice keep their stretch. A removed grid start collapses to the splice, bounded by the
+new clip end; beat edits that collide with it and warp anchors at clip endpoints disappear. Event fades map their
+played-time boundaries back to source frames, through the edit, and into the new warp, within the new fade room. Clip
+fades remain in source frames. Copy keeps the definition and warp intact and copies the source samples. Draw preserves
+timing. The internal completion commands `sampleEditor.applyProcess` and `sampleEditor.finishProcess` accept only
+engine-posted work; clients use `sampleEditor.process`.
 
 The Process section's Basic Commands menu and the sample editor's Cut, Copy, Paste, Delete and Insert Silence key
 commands send these operations for the selected range. Without a selection they are disabled. The keys are Mod+X, Mod+C,
@@ -75,7 +81,8 @@ instruments, before asking for the choice.
 
 The Draw tool uses `draw`, with a zero-based `channel` and `samples`: one value from -1 to 1 for each frame in the
 range, at most 65536. It replaces only that channel, preserving clip timing, regions, fades and the other channels. It
-uses the same shared-copy choice, cancellable job and undo as the other edits.
+uses the same shared-copy choice, cancellable job and undo as the other edits. Warped clips and edited definition grids
+are supported: Draw preserves the definition and warp without moving frames.
 
 ## In the UI
 
@@ -173,12 +180,16 @@ The editor in the lower zone and its inspector in the left zone; Keep Editor Con
 selection; several events at once (Clip Editing Mode, Clip Display Mode, Activate Clip for Editing); the grid and
 snapping to it; Solo Editor, Audition, auto-scroll, the independent track loop and the toolbar's context menu; positions
 in the project's time format on the info line, and typing them; the Draw tool's volume curve; dragging regions into the
-project window; the clip's snap point when opened from the pool; Process editing of warped clips and edited definition
-grids (#1968). Hooks for other tickets: offline processing (#141) and making a sampler track of the range; what warping
-doesn't have yet is in [warp.md](warp.md).
+project window; the clip's snap point when opened from the pool. Hooks for other tickets: offline processing (#141) and
+making a sampler track of the range; what warping doesn't have yet is in [warp.md](warp.md).
 
 ## Checks
 
+- `tests/sampleeditor_tests.cpp`: Process Cut, Copy, Paste, Delete and Insert Silence with definition edits and warp
+  markers, musical mode on and off, surviving beat numbers, moved source and target anchors, insertion boundaries,
+  removed grid starts and empty clips; musical timing and event fades through an edited grid, source-frame clip fades,
+  warped crossfades bounded by played fade room, zero fades across project/clip sample rates (musical and unwarped
+  events), Draw preserving warped clips and edited grids, exact replacement samples and undo/redo.
 - `tests/sampleeditor_tests.cpp`: Draw replacing one stereo channel with exact samples, unchanged clip regions and event
   timing, source preservation, undo/redo and invalid channel or sample count; Paste resampling and mono/stereo
   conversion in both directions, inserted lengths, unchanged surrounding audio and undo/redo.

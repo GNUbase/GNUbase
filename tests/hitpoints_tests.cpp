@@ -607,6 +607,137 @@ TEST_CASE("Delete Overlaps respects part boundaries and rejects invalid or locke
 	CHECK(f.call("project.get") == locked);
 }
 
+TEST_CASE("Close Gaps crossfades selected slices without moving their starts", "[integration]")
+{
+	Fixture f;
+	f.call("audioEvent.set", {{"event", f.event}, {"length", 24000}});
+	const Json second =
+		f.call("audioEvent.add",
+			 {{"track", f.track}, {"clip", f.clip}, {"position", 144000}, {"offset", 48000}, {"length", 24000}})
+			.at("event")
+			.at("id");
+	f.call("event.toPart", {{"events", {f.event, second}}});
+	const Json before = f.call("project.get");
+	const size_t steps = f.call("history.get").at("steps").size();
+	const Json result = f.call("event.closeGaps", {{"events", {second, f.event}}});
+	CHECK(result.at("events").size() == 2);
+	const Json after = f.call("project.get");
+	for (const Json& event : after.at("audioEvents"))
+	{
+		if (event.at("id") == f.event)
+		{
+			CHECK(event.at("position") == 96000);
+			CHECK(event.at("offset") == 0);
+			CHECK(event.at("length") == 48480);
+		}
+		else
+		{
+			CHECK(event.at("position") == 144000);
+			CHECK(event.at("offset") == 48000);
+			CHECK(event.at("length") == 24000);
+			CHECK(event.at("crossfade").at("from") == f.event);
+		}
+	}
+	CHECK(f.call("history.get").at("steps").size() == steps + 1);
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+	f.call("history.redo");
+	CHECK(f.call("project.get") == after);
+}
+
+TEST_CASE("Close Gaps uses the requested length capped at half the next slice's played length", "[integration]")
+{
+	struct Case
+	{
+		bool musical;
+		int64_t nextLength;
+		int64_t overlap;
+		int64_t firstLength;
+	};
+	for (const Case& each : {Case{false, 24000, 1200, 49200}, Case{false, 480, 240, 48240},
+			 Case{true, 24000, 1200, 98400}, Case{true, 480, 120, 96240}})
+	{
+		CAPTURE(each.musical, each.nextLength);
+		Fixture f;
+		if (each.musical)
+			f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 60}, {"musical", true}});
+		f.call("audioEvent.set", {{"event", f.event}, {"length", 24000}});
+		const Json second = f.call("audioEvent.add",
+								 {{"track", f.track}, {"clip", f.clip}, {"position", 144000}, {"offset", 48000},
+									 {"length", each.nextLength}})
+								.at("event")
+								.at("id");
+		f.call("event.closeGaps", {{"events", {second, f.event}}, {"length", 25}});
+		const Json project = f.call("project.get");
+		for (const Json& event : project.at("audioEvents"))
+		{
+			if (event.at("id") == f.event)
+			{
+				CHECK(event.at("length") == each.firstLength);
+				if (each.musical)
+					CHECK(event.at("playedLength") == 48000 + each.overlap);
+			}
+			else
+			{
+				CHECK(event.at("position") == 144000);
+				CHECK(event.at("length") == each.nextLength);
+				CHECK(event.at("crossfade").at("from") == f.event);
+			}
+		}
+	}
+}
+
+TEST_CASE("Close Gaps respects selection boundaries and fails atomically without source audio", "[integration]")
+{
+	Fixture f;
+	f.call("audioEvent.set", {{"event", f.event}, {"offset", 168000}, {"length", 24000}});
+	const Json second =
+		f.call("audioEvent.add", {{"track", f.track}, {"clip", f.clip}, {"position", 144000}, {"length", 24000}})
+			.at("event")
+			.at("id");
+	const Json before = f.call("project.get");
+	CHECK_THAT(f.fails("event.closeGaps", {{"events", {f.event, second}}}), ContainsSubstring("audio"));
+	CHECK(f.call("project.get") == before);
+	f.call("event.toPart", {{"events", {second}}});
+	const Json separate = f.call("project.get");
+	CHECK(f.call("event.closeGaps", {{"events", {f.event, second}}}).at("events").empty());
+	CHECK(f.call("project.get") == separate);
+	CHECK_THAT(f.fails("event.closeGaps", {{"events", {f.event, f.event}}}), ContainsSubstring("duplicate"));
+	CHECK_THAT(f.fails("event.closeGaps", {{"events", Json::array()}}), ContainsSubstring("empty"));
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	CHECK_THAT(f.fails("event.closeGaps", {{"events", {f.event, second}}}), ContainsSubstring("locked"));
+}
+
+TEST_CASE("Close Gaps follows musical warping and rolls back earlier pairs on failure", "[integration]")
+{
+	Fixture f;
+	f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 60}, {"musical", true}});
+	f.call("audioEvent.set", {{"event", f.event}, {"length", 24000}});
+	const Json second =
+		f.call("audioEvent.add",
+			 {{"track", f.track}, {"clip", f.clip}, {"position", 144000}, {"offset", 168000}, {"length", 24000}})
+			.at("event")
+			.at("id");
+	const Json third =
+		f.call("audioEvent.add", {{"track", f.track}, {"clip", f.clip}, {"position", 180000}, {"length", 24000}})
+			.at("event")
+			.at("id");
+	const Json before = f.call("project.get");
+	CHECK_THAT(f.fails("event.closeGaps", {{"events", {f.event, second, third}}}), ContainsSubstring("audio"));
+	CHECK(f.call("project.get") == before);
+	f.call("event.closeGaps", {{"events", {f.event, second}}});
+	const Json after = f.call("project.get");
+	for (const Json& event : after.at("audioEvents"))
+		if (event.at("id") == f.event)
+		{
+			CHECK(event.at("length") == 96960);
+			CHECK(event.at("playedLength") == 48480);
+		}
+	f.call("history.undo");
+	f.call("event.set", {{"events", {second}}, {"lane", 1}});
+	CHECK(f.call("event.closeGaps", {{"events", {f.event, second}}}).at("events").empty());
+}
+
 TEST_CASE("a sound is measured where it starts as the detection measures the onsets it finds", "[unit]")
 {
 	for (const Loop& loop : {rockLoop(), swingLoop()})
