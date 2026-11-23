@@ -33,8 +33,8 @@ presets to preferences and clients can tell them from the settings that have a p
     (`editing.defaultTimeBase`), Use Up/Down Navigation Commands for Selecting Tracks only
     (`ui.upDownSelectsTracksOnly`). Audio: Treat Muted Audio Events like Deleted (`editing.treatMutedAudioLikeDeleted`,
     [comping.md](comping.md)), Use Mouse Wheel for Event Volume and Fades (`editing.wheelEventVolumeAndFades`,
-    [volume-curves.md](volume-curves.md)), On Import Audio Files (`editing.onImportAudio`) and its settings, Copy Files to Project
-    Folder, Convert to Project Sample Rate, Split Channels and Name Format (`editing.importAudio*`,
+    [volume-curves.md](volume-curves.md)), On Import Audio Files (`editing.onImportAudio`) and its settings, Copy Files
+    to Project Folder, Convert to Project Sample Rate, Split Channels and Name Format (`editing.importAudio*`,
     [file-import.md](file-import.md)). MIDI: Legato Overlap (`editing.legatoOverlap`), Legato Mode: Between Selected
     Notes Only (`editing.legatoBetweenSelected`). Tool Modifiers: each action's modifier keys (`ui.toolModifiers`, over
     the defaults that `ui::EventDisplay::defaultToolModifiers` has; the dialog keeps only those that differ), chosen

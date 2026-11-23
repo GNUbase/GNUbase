@@ -101,7 +101,8 @@ namespace gnubase::ui
 	}
 
 	EventDisplay::EventDisplay(engine::Engine& engine, EngineBinding& binding, Rml::Element& root)
-		: m_engine(engine), m_binding(binding), m_root(root.GetObserverPtr()), m_document(root.GetOwnerDocument())
+		: m_engine(engine), m_binding(binding), m_wheelSteps(binding.stepOwner("event display") + "wheel"),
+		  m_root(root.GetObserverPtr()), m_document(root.GetOwnerDocument())
 	{
 		m_overview = &add(root, "div", "overview");
 		m_overviewEvents = &addCanvas<EventLanes>(*m_overview, "event-lanes", "overview-events");

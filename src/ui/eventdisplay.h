@@ -922,6 +922,7 @@ namespace gnubase::ui
 
 		engine::Engine& m_engine;
 		EngineBinding& m_binding;
+		const std::string m_wheelSteps; // what the wheel's steps over events change, for EngineBinding::sendStep
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the binding's answers after it went
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::Element* m_document = nullptr;

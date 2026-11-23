@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace gnubase::ui
@@ -122,24 +123,43 @@ namespace gnubase::ui
 		if (found == m_fades.end() || !(found->second.rate > 0.0))
 			return false;
 		const AudioFades& audio = found->second;
+		// Lines faster than the project reads after them, several in a frame on a quick turn, go on from what the
+		// wheel sent last, which the record keeps until the project has it.
+		const std::string key = std::to_string(shown->id);
+		const Json* record = m_binding.shown(m_wheelSteps, m_read);
+		const Json sent = record != nullptr && record->contains(key) ? record->at(key) : Json::object();
+		const auto send = [this, &key](const char* description, const char* command, Json parameters, Json value)
+		{
+			m_binding.sendStep(0, m_wheelSteps, description,
+				Json::array({{{"command", command}, {"parameters", std::move(parameters)}}}),
+				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && !result.ok())
+						showRefusal(result.error);
+				},
+				{{key, std::move(value)}});
+		};
 		if (!fades)
 		{
 			// Up, which turns the wheel by negative lines, is louder.
+			const double from = sent.value("volume", audio.volume);
 			const double volume =
-				std::clamp(audio.volume - (lines * g_wheelVolume), engine::g_minEventVolume, engine::g_maxEventVolume);
-			if (volume != audio.volume)
-				edit("audioEvent.set", {{"event", shown->id}, {"volume", volume}});
+				std::clamp(from - (lines * g_wheelVolume), engine::g_minEventVolume, engine::g_maxEventVolume);
+			if (volume != from)
+				send("Change event volume", "audioEvent.set", {{"event", shown->id}, {"volume", volume}},
+					{{"volume", volume}});
 			return true;
 		}
 		// The fade in's end in the event's left half, the fade out's start in its right half (p. 382): up lengthens.
 		const bool in = m_view.start + (x * m_view.scale) < (shown->start + shown->end) / 2.0;
-		const engine::Fade& own = in ? audio.in : audio.out;
-		const engine::Fade& other = in ? audio.out : audio.in;
-		const int64_t length =
-			std::clamp<int64_t>(own.length - std::llround(lines * g_wheelFade * m_view.scale * audio.rate), 0,
-				std::max<int64_t>(0, audio.fadeRoom - other.length));
-		if (length != own.length)
-			edit("audioEvent.setFades", {{"event", shown->id}, {in ? "fadeIn" : "fadeOut", {{"length", length}}}});
+		const int64_t own = sent.value(in ? "fadeIn" : "fadeOut", (in ? audio.in : audio.out).length);
+		const int64_t other = sent.value(in ? "fadeOut" : "fadeIn", (in ? audio.out : audio.in).length);
+		const int64_t length = std::clamp<int64_t>(own - std::llround(lines * g_wheelFade * m_view.scale * audio.rate),
+			0, std::max<int64_t>(0, audio.fadeRoom - other));
+		if (length != own)
+			send("Change fades", "audioEvent.setFades",
+				{{"event", shown->id}, {in ? "fadeIn" : "fadeOut", {{"length", length}}}},
+				{{in ? "fadeIn" : "fadeOut", length}});
 		return true;
 	}
 

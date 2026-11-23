@@ -3552,6 +3552,10 @@ TEST_CASE("with editing.wheelEventVolumeAndFades, the mouse wheel over an audio 
 	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeIn").at("length") == 4800; }));
 	wheel(240, -2.0F, {"shift"});
 	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeOut").at("length") == 9600; }));
+	// Some systems turn the wheel with Shift into one across: that moves the fade as the wheel's lines do.
+	f.automation.wheel(std::nullopt, f.at(240, 20), -1.0F, 0.0F, {"shift"});
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeOut").at("length") == 14400; }));
 	// Down shortens them, to none at the least; and they don't cross.
 	wheel(240, 5.0F, {"shift"});
 	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeOut").at("length") == 0; }));
@@ -3563,6 +3567,24 @@ TEST_CASE("with editing.wheelEventVolumeAndFades, the mouse wheel over an audio 
 	wheel(500, -1.0F, {"shift"});
 	CHECK(steps() == now);
 	CHECK(eventVolume(shown(f)) == 6.0);
+}
+
+TEST_CASE("quick mouse wheel lines over an audio event add up before the display has the first", "[unit]")
+{
+	// A quick turn brings several lines in one frame, before the project read after the first is in.
+	Fixture f;
+	f.call("settings.set", {{"key", "editing.wheelEventVolumeAndFades"}, {"value", true}});
+	f.step();
+	const size_t before = f.call("history.get").at("steps").size();
+	f.automation.wheel(std::nullopt, f.at(210, 20), 0.0F, -1.0F);
+	f.automation.wheel(std::nullopt, f.at(210, 20), 0.0F, -1.0F);
+	REQUIRE(f.waitUntil([&f] { return eventVolume(shown(f)) == 2.0; }));
+	CHECK(f.call("history.get").at("steps").size() == before + 2);
+	// With Shift, twice the length of one line for the fade in: 0.2 seconds.
+	f.automation.wheel(std::nullopt, f.at(210, 20), 0.0F, -1.0F, {"shift"});
+	f.automation.wheel(std::nullopt, f.at(210, 20), 0.0F, -1.0F, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeIn").at("length") == 9600; }));
+	CHECK(eventVolume(shown(f)) == 2.0);
 }
 
 TEST_CASE("the draw tool adds and drags volume curve points, the erase tool removes them", "[unit]")
