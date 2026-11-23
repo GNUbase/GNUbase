@@ -292,7 +292,7 @@ TEST_CASE("Open List Editor lists every event of the selected parts in playback 
 	Fixture f;
 	CHECK(f.app.keys().keysFor("editor.openList").size() == 1);
 	CHECK(
-		f.app.ui().dom(std::nullopt, "#edit-menu menuitem[command=\"editor.openList\"]", 0).at("elements").size() == 1);
+		f.app.ui().dom(std::nullopt, "#midi-menu menuitem[command=\"editor.openList\"]", 0).at("elements").size() == 1);
 	CHECK(f.view().at("content") == "list");
 	CHECK(f.elements(".key-editor").empty());
 	CHECK(f.types() ==

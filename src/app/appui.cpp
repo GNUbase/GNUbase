@@ -726,8 +726,8 @@ namespace gnubase::app
 				added.create = [this, editor = added.id == "editor"](Rml::Element& element)
 				{
 					Rml::Element& page = editor || !m_trackVisibility ? element : m_trackVisibility->showPanel(element);
-					auto shown = std::make_shared<ui::MidiEditor>(
-						m_binding, page, "lower", editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
+					auto shown = std::make_shared<ui::MidiEditor>(m_binding, m_editorReads, page, "lower",
+						editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
 					shown->setDrumMapSetup([this] { m_shell.post([this] { openDrumMaps(m_main); }); });
 					if (editor)
 						m_lowerEditor = shown;
@@ -2287,9 +2287,15 @@ namespace gnubase::app
 	{
 		// The editor window's left zone: the Visibility tab and the inspector's Global Tracks section (pp. 1144-1149).
 		m_docking.add({"editorVisibility", "Visibility", "editorWindow", "left", [this](Rml::Element& element)
-			{ return std::make_shared<ui::MidiEditor>(m_binding, element, "window", ui::EditorPart::Visibility); }});
+			{
+				return std::make_shared<ui::MidiEditor>(
+					m_binding, m_editorReads, element, "window", ui::EditorPart::Visibility);
+			}});
 		m_docking.add({"editorInspector", "Inspector", "editorWindow", "left", [this](Rml::Element& element)
-			{ return std::make_shared<ui::MidiEditor>(m_binding, element, "window", ui::EditorPart::GlobalTracks); }});
+			{
+				return std::make_shared<ui::MidiEditor>(
+					m_binding, m_editorReads, element, "window", ui::EditorPart::GlobalTracks);
+			}});
 		m_editorSubscriptions.push_back(
 			m_binding.on("editor.changed", [this](const engine::Event& event) { followEditor(event.data); }));
 		m_editorSubscriptions.push_back(m_binding.on(
@@ -2348,23 +2354,19 @@ namespace gnubase::app
 		}
 		m_keys.bind({"Mod+E", "editor.openClose", engine::Json::object(), "project"});
 		m_keys.bind({"Return", "editor.openClose", engine::Json::object(), "project"});
-		// Open List Editor (Mod+G, reference manual p. 1243): the selected MIDI parts in the editor window's list
-		// editor.
-		m_keys.add({"editor.openList", "Opens the selected MIDI parts in the list editor window.",
-			[this](ui::Window&, Rml::Element*)
-			{
-				const std::vector<uint64_t> parts = selected("midiParts");
-				if (!parts.empty())
-					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "list"}});
-			}});
-		// Open Drum Editor (reference manual p. 1221): the selected MIDI parts in the editor window's drum editor.
-		m_keys.add({"editor.openDrum", "Opens the selected MIDI parts in the drum editor window.",
-			[this](ui::Window&, Rml::Element*)
-			{
-				const std::vector<uint64_t> parts = selected("midiParts");
-				if (!parts.empty())
-					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "drum"}});
-			}});
+		// The MIDI menu's Open Key Editor (reference manual p. 1189), Open Drum Editor (p. 1221) and Open List Editor
+		// (Mod+G, p. 1243): the selected MIDI parts in the editor window, with that editor.
+		for (const auto& [command, content, description] : {
+				 std::tuple{"editor.openKey", "key", "Opens the selected MIDI parts in the key editor window."},
+				 std::tuple{"editor.openDrum", "drum", "Opens the selected MIDI parts in the drum editor window."},
+				 std::tuple{"editor.openList", "list", "Opens the selected MIDI parts in the list editor window."},
+			 })
+			m_keys.add({command, description, [this, content = std::string(content)](ui::Window&, Rml::Element*)
+				{
+					const std::vector<uint64_t> parts = selected("midiParts");
+					if (!parts.empty())
+						m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", content}});
+				}});
 		// Edit In-Place (Mod+Shift+I, reference manual p. 1261) opens or closes the in-place editors of the selected
 		// MIDI and instrument tracks, MIDI > Open In-Place Editor opens them (p. 1259). Both wait for such a track to
 		// be selected.
@@ -2595,7 +2597,7 @@ namespace gnubase::app
 		document->Show();
 		// Open in Lower Zone opens the Editor tab in the lower zone (reference manual, p. 1198).
 		m_editor.editor = std::make_unique<ui::MidiEditor>(
-			m_binding, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
+			m_binding, m_editorReads, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
 		m_editor.editor->setDrumMapSetup(
 			[this]
 			{
@@ -2648,6 +2650,12 @@ namespace gnubase::app
 		{ return m_editorViews.value(editor, engine::Json::object()).value("open", false); };
 		if (open("lower") && m_docking.windowOf("editor") == nullptr && !m_docking.visible("project", "lower"))
 			closeEditor("lower");
+		// The Editor tab coming to the front without an open editor, as when the user picks it from the tab bar or
+		// shows the lower zone with it, opens the editor with the project window's selected parts (p. 1153).
+		const bool editorTab = m_docking.showing("editor");
+		if (editorTab && !m_editorTabShown && !open("lower") && m_closing.count("lower") == 0)
+			openLowerIfClosed();
+		m_editorTabShown = editorTab;
 		if (!m_eventDisplay || m_eventDisplay->selection() == m_followed)
 			return;
 		// Editor Content Follows Event Selection (p. 1153): the MIDI parts, or else the audio parts, selected in the
@@ -2659,6 +2667,21 @@ namespace gnubase::app
 		for (const char* editor : {"window", "lower"})
 			if (open(editor) && !m_editorViews.at(editor).at("keepContents").get<bool>())
 				m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
+	}
+
+	void AppUi::openLowerIfClosed()
+	{
+		// Asks first: an editor.open on its way, such as the editor window's Open in Lower Zone, which brought the tab
+		// forward, comes before the answer, and then the editor keeps its parts.
+		m_binding.send("editor.get", {{"editor", "lower"}},
+			[this](const engine::Result& result)
+			{
+				if (!result.ok() || result.value.value("open", false) || !m_docking.showing("editor") ||
+					m_closing.count("lower") != 0)
+					return;
+				if (const std::vector<uint64_t> parts = selectedParts(); !parts.empty())
+					m_binding.send("editor.open", {{"editor", "lower"}, {"parts", parts}});
+			});
 	}
 
 	ui::Mixer* AppUi::toggleMixer(int number)

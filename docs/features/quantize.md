@@ -37,7 +37,8 @@ and the toolbar's section.
   the editor's length quantize there (Quantize Link: the grid's step). Run from the project window, its selected MIDI
   parts. Run without a zone, as the quantize panel, `gnubase.ui.command` and MCP run them, an open editor's selected
   notes, else the project window's selected parts. The notes of several parts are one undo step
-  (`history.transaction`). Menus disable the items while there is nothing to quantize.
+  (`history.transaction`). Menus disable the items while there is nothing to quantize. The Edit menu runs them in the
+  zone that had the focus before it opened, as Q would (#761, [main-menu.md](main-menu.md)).
 - **Quantize panel.** A panel of the project window's right zone (`quantize`, which can go into a window of its own),
   opened by Edit > Quantize Panel. It shows the project's settings as `quantize.changed` has them, whichever client
   changed them: the Quantize Presets menu, which shows the preset the settings are as the engine reports it (`preset`,
@@ -59,7 +60,7 @@ Audio events and parts, Warp Quantize On/Off and the panel's section for several
 [audio-quantize.md](audio-quantize.md).
 
 Not yet: Move MIDI Controllers (moving controllers with their notes) and dragging a part onto the grid display to make
-a groove; and the Edit menu's items always take the project window's selection, since the menu bar is in its zone.
+a groove.
 
 Auto quantize (p. 353) is `quantize.set` with `autoQuantize`, and the transport bar's and the transport panel's MIDI
 Auto Quantize section, hidden by default, switches it ([transport-bar.md](transport-bar.md)). It isn't a quantize

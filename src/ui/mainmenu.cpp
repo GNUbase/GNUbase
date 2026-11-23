@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/mainmenu.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <map>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -22,12 +24,26 @@ namespace gnubase::ui
 				element = element->GetParentNode();
 			return element;
 		}
+
+		// Whether the element or one of its ancestors is a <menu> or a <menubar>.
+		bool inMenu(const Rml::Element* element)
+		{
+			for (; element != nullptr; element = element->GetParentNode())
+				if (element->GetTagName() == "menu" || element->GetTagName() == "menubar")
+					return true;
+			return false;
+		}
 	}
 
 	MainMenu::MainMenu(KeyCommands& keys, Window& window, Rml::ElementDocument& document)
 		: m_keys(keys), m_window(window), m_document(document.GetObserverPtr())
 	{
 		// Every item is checked before any changes, so that a menu refused leaves the document as it was.
+		Rml::ElementList titles;
+		document.QuerySelectorAll(titles, "menubar [menu]");
+		std::set<Rml::String> barMenus;
+		for (const Rml::Element* title : titles)
+			barMenus.insert(title->GetAttribute<Rml::String>("menu", ""));
 		Rml::ElementList found;
 		document.QuerySelectorAll(found, "menuitem[command]");
 		for (Rml::Element* element : found)
@@ -42,7 +58,11 @@ namespace gnubase::ui
 				throw std::invalid_argument(message);
 			}
 			m_keys.check(command, parameters);
-			m_items.push_back({element->GetObserverPtr(), {}, std::move(command), std::move(parameters), {}});
+			bool inMenuBar = false;
+			for (const Rml::Element* up = element; up != nullptr && !inMenuBar; up = up->GetParentNode())
+				inMenuBar = up->GetTagName() == "menu" && barMenus.count(up->GetId()) != 0;
+			m_items.push_back(
+				{element->GetObserverPtr(), {}, std::move(command), std::move(parameters), {}, inMenuBar});
 		}
 		for (Item& item : m_items)
 		{
@@ -55,13 +75,18 @@ namespace gnubase::ui
 		// In the bubble phase, after the listeners of the elements below the document, and of the document's added
 		// before the menu; the document's bubble phase click listeners added later run after it (see update()).
 		document.AddEventListener(Rml::EventId::Click, this);
+		// In the capture phase, so that it sees the focus going to any element of the document.
+		document.AddEventListener(Rml::EventId::Focus, this, true);
 		update();
 	}
 
 	MainMenu::~MainMenu()
 	{
 		if (Rml::Element* document = m_document.get())
+		{
 			document->RemoveEventListener(Rml::EventId::Click, this);
+			document->RemoveEventListener(Rml::EventId::Focus, this, true);
+		}
 		// A menu built again on the same document adds spans of its own.
 		for (const Item& item : m_items)
 		{
@@ -87,6 +112,7 @@ namespace gnubase::ui
 		// The items of a menu come one after the other: they share their parent's zone. Items of one command in one
 		// zone get the same answer for the whole update, wherever they are, as the enabled callbacks get the window
 		// and the zone, not the parameters.
+		Rml::Element* const focusZone = barZone();
 		const Rml::Element* parent = nullptr;
 		Rml::Element* parentZone = nullptr;
 		std::map<std::pair<std::string_view, const Rml::Element*>, bool> answers;
@@ -97,7 +123,11 @@ namespace gnubase::ui
 			if (element == nullptr || shown == nullptr)
 				continue;
 			Rml::Element* zone = element;
-			if (!element->HasAttribute("focuszone"))
+			if (item.inMenuBar && focusZone != nullptr)
+			{
+				zone = focusZone;
+			}
+			else if (!element->HasAttribute("focuszone"))
 			{
 				if (element->GetParentNode() != parent)
 				{
@@ -130,8 +160,35 @@ namespace gnubase::ui
 		}
 	}
 
+	Rml::Element* MainMenu::barZone() const
+	{
+		// The focus moves to an ancestor without a Focus event, e.g. when the focused element goes away
+		// (Rml::Element::RemoveChild), so it is the context's focus, not the last Focus event's target.
+		const Rml::Element* document = m_document.get();
+		Rml::Context* context = document != nullptr ? document->GetContext() : nullptr;
+		Rml::Element* focused = context != nullptr ? context->GetFocusElement() : nullptr;
+		if (focused != nullptr && !inMenu(focused))
+			return closestWith(focused, "focuszone");
+		return m_focusZone.get();
+	}
+
 	void MainMenu::ProcessEvent(Rml::Event& event)
 	{
+		if (event.GetId() == Rml::EventId::Focus)
+		{
+			// The context sets the new focus after it sent the Focus events, so going into a menu or the menu bar it
+			// still has the element that had the focus (Rml::Context::OnFocusChange). Its zone, not the element, as
+			// an editor may build that element anew while the menu is open (#761).
+			const Rml::Element* target = event.GetTargetElement();
+			Rml::Context* context = target != nullptr ? target->GetContext() : nullptr;
+			Rml::Element* focused = context != nullptr ? context->GetFocusElement() : nullptr;
+			if (inMenu(target) && focused != nullptr && !inMenu(focused))
+			{
+				Rml::Element* zone = closestWith(focused, "focuszone");
+				m_focusZone = zone != nullptr ? zone->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+			}
+			return;
+		}
 		// The clicked item follows what the click's listeners changed before it runs (#1120). The other items, and
 		// what the click's default actions and the item's own command change, follow after the input (update).
 		Rml::Element* element = closestWith(event.GetTargetElement(), "command");
@@ -140,7 +197,9 @@ namespace gnubase::ui
 		for (const Item& item : m_items)
 			if (item.element.get() == element)
 			{
-				Rml::Element* zone = closestWith(element, "focuszone");
+				Rml::Element* zone = item.inMenuBar ? barZone() : nullptr;
+				if (zone == nullptr)
+					zone = closestWith(element, "focuszone");
 				const bool enabled = m_keys.canRun(item.command, m_window, zone);
 				enable(*element, enabled);
 				if (enabled)

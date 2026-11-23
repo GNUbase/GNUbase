@@ -163,11 +163,11 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
   enters there can be any.
 - **Show Note Length** (p. 1227) shows the notes as boxes of their length, which the object selection tool and the
   drumstick resize at their ends as in the key editor (p. 1242); in its middle the drumstick still deletes the note.
-- **Commands** (Edit menu, `app::AppUi`): `editor.openDrum` (Open Drum Editor, p. 1221) opens the selected MIDI parts
-  in the editor window's drum editor; `drumMap.load` (Load Drum Map...) and `drumMap.save` (Save Drum Map...) load a
-  `.drm` file into the project and save the drum map of the editor's active track, through the OS's file dialogs. The
-  MIDI menu has `drumMap.setup` (Drum Map Setup...) and `midi.convertONotes` (O-Note Conversion, p. 1240), which runs
-  `midi.oNoteConversion` on the selected notes or parts.
+- **Commands** (`app::AppUi`): `editor.openDrum` (MIDI > Open Drum Editor, p. 1221) opens the selected MIDI parts
+  in the editor window's drum editor; in the Edit menu, `drumMap.load` (Load Drum Map...) and `drumMap.save` (Save
+  Drum Map...) load a `.drm` file into the project and save the drum map of the editor's active track, through the
+  OS's file dialogs. The MIDI menu also has `drumMap.setup` (Drum Map Setup...) and `midi.convertONotes` (O-Note
+  Conversion, p. 1240), which runs `midi.oNoteConversion` on the selected notes or parts.
 - **Drum Map Setup** (pp. 1235-1237, `resources/ui/drum-maps.rml`): the project's maps in a list, the editor's active
   track's first, with the selected map's name field (renaming it) and its sounds in the map's order, each with its
   pitch, name, snap, mute, I-note, O-note, channel and output, which change with Enter or when a field loses the focus

@@ -338,8 +338,6 @@
 		<!-- The MIDI editors (docs/features/midi-editors.md) -->
 		<menuitem command="editor.openClose">Open/Close Editor</menuitem>
 		<menuitem command="window.lowerZoneEditor">Open Editor in Lower Zone</menuitem>
-		<menuitem command="editor.openList">Open List Editor</menuitem>
-		<menuitem command="editor.openDrum">Open Drum Editor</menuitem>
 		<!-- Drum maps (docs/features/drum-editor.md) -->
 		<menuitem command="drumMap.load">Load Drum Map...</menuitem>
 		<menuitem command="drumMap.save">Save Drum Map...</menuitem>
@@ -501,6 +499,10 @@
 	</menu>
 	<!-- MIDI functions (reference manual pp. 1118-1131, docs/features/midi-functions.md) -->
 	<menu id="midi-menu">
+		<!-- The MIDI editors in the editor window (docs/features/midi-editors.md) -->
+		<menuitem command="editor.openKey">Open Key Editor</menuitem>
+		<menuitem command="editor.openDrum">Open Drum Editor</menuitem>
+		<menuitem command="editor.openList">Open List Editor</menuitem>
 		<menuitem command="editor.openInPlace">Open In-Place Editor</menuitem>
 		<menuseparator/>
 		<menuitem command="midi.transposeSetup">Transpose Setup...</menuitem>
