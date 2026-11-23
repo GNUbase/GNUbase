@@ -9,7 +9,11 @@ project window.
   (`KeyCommands::run`, [key-commands.md](key-commands.md)), with the JSON object in its `parameters` attribute:
   `<menuitem command="transport.locate" parameters='{"target": "leftLocator"}'>`. An engine command goes through the
   UI's engine client, so a menu can do nothing that MCP and Lua can't; a UI command gets the window the menu is in and
-  the focus zone around the item. Adding an entry is one line in the document; a new feature adds its command (engine
+  the focus zone around the item. An item of a menu bar title's menu, or of one of its submenus, runs in the zone that
+  had the focus before the menu opened, as its key would (#761): the menu remembers the last element focused outside
+  menus and menu bars. So Edit > Quantize and the Advanced Quantize items take the lower zone editor's selected notes
+  while the lower zone has the focus, not the project window's selected parts (reference manual p. 368), and every
+  other Edit item works on that zone too. A context menu's items keep the zone around the menu. Adding an entry is one line in the document; a new feature adds its command (engine
   or UI) and its item, e.g. Import with #92.
 - **Checked when attached** (#446). `MainMenu` checks every item before it changes the document: parameters that
   aren't a JSON object, a command that doesn't exist and parameters the command doesn't take (`KeyCommands::check`, as
