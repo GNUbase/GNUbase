@@ -377,6 +377,7 @@ namespace gnubase::engine
 		int sourceNode(ObjectId channel) const;
 		AutoMonitoring autoMonitoring() const; // the user setting
 		ListenGains listenGains() const;       // the user settings
+		MeterPosition meterPosition() const;   // the user setting
 		// Audio thread: adds the outputs to the device, the main mix turned down while channels listen, and the
 		// listen bus to the main mix's ports; both glide over the block to new gains.
 		void output(const audio::DeviceBlock& block, const Program& program) noexcept;
@@ -401,6 +402,7 @@ namespace gnubase::engine
 		AutoMonitoring m_autoMonitoring = AutoMonitoring::TapeMachine; // the graph's
 		ListenGains m_listenGains;                                     // the graph's
 		bool m_mutePreSends = false;                                   // the graph's audio.mutePreSends
+		MeterPosition m_meterPosition = MeterPosition::PostPanner;     // the graph's meter.position
 		bool m_treatMutedAudioLikeDeleted = true; // the playlists' editing.treatMutedAudioLikeDeleted
 		float m_dim = 1.0f;                       // audio thread: the main mix's gain at the end of the last block
 		float m_listenLevel = 1.0f;               // audio thread: the listen bus's gain at the end of the last block
@@ -548,6 +550,8 @@ namespace gnubase::engine
 		bool m_multiProcessing = true;
 		size_t m_threads = defaultThreads(); // processing threads, the audio thread included
 		std::unique_ptr<rt::WorkerPool> m_workers;
+		size_t m_workersWanted = 0; // what m_workers started with
+		double m_workersPeriod = 0.0;
 		Limit m_limitedBy = Limit::None; // why m_workers has fewer than planned
 
 		// Performance data: measured by the audio thread, read by the command thread.

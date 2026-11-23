@@ -21,6 +21,7 @@
 #include <exception>
 #include <functional>
 #include <map>
+#include <numeric>
 #include <set>
 #include <string>
 #include <system_error>
@@ -96,12 +97,13 @@ namespace gnubase::engine
 				"midiRecordMode": {"type": "string", "enum": ["newParts", "merge", "replace"]},
 				"midiCycleRecordMode": {"type": "string",
 					"enum": ["mix", "overwrite", "keepLast", "stacked", "mixStacked"]},
-				"lockRecord": {"type": "boolean"},
+				"lockRecord": {"type": "boolean"}, "recordWaiting": {"type": "boolean"},
 				"arranger": {"type": "object", "properties": {"step": {"type": "integer"},
 					"repeat": {"type": "integer"}, "event": {"type": "integer"}}}},
 			"required": ["playing", "recording", "countingIn", "position", "start", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
-				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord", "arranger"]})");
+				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord", "recordWaiting",
+				"arranger"]})");
 		}
 
 		Json noParameters()
@@ -559,15 +561,18 @@ namespace gnubase::engine
 		bool announce = !m_recordBitDepth.empty() && depth != m_recordBitDepth;
 		bool reopened = false;
 		m_recordBitDepth = depth;
-		// A new project sample rate: the device changes to it if it can, otherwise it plays faster or slower.
+		// A new project sample rate: the device changes to it if it can, otherwise it plays faster or slower, as an
+		// externally clocked one always does: its clock sets its rate (#405).
 		const double rate = m_snapshots.latest().sampleRate;
 		if (rate != m_projectRate)
 		{
 			const bool known = m_projectRate != 0.0; // not the first sync, which only learns the rate
 			m_projectRate = rate;
-			if (m_lost)
+			const Json& device = m_lost ? m_lost->parameters : m_parameters; // null without a device
+			const bool follow = !device.is_object() || !device.value("externallyClocked", false);
+			if (m_lost && follow)
 				m_lost->parameters.erase("sampleRate"); // it returns at the new rate if it supports it
-			if (m_device && m_device->format().sampleRate != rate && supports(m_device->info(), rate))
+			if (follow && m_device && m_device->format().sampleRate != rate && supports(m_device->info(), rate))
 			{
 				if (!m_lost)
 					m_parameters["sampleRate"] = rate;
@@ -584,7 +589,7 @@ namespace gnubase::engine
 				}
 				reopened = true;
 			}
-			else if (m_lost)
+			else if (follow && m_lost)
 			{
 				m_parameters.erase("sampleRate"); // it returns at the new rate if it supports it
 			}
@@ -598,6 +603,7 @@ namespace gnubase::engine
 		if (m_device &&
 			(m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring ||
 				listenGains() != m_listenGains || m_settings.get(settings::g_audioMutePreSends) != m_mutePreSends ||
+				meterPosition() != m_meterPosition ||
 				m_settings.get(settings::g_editingTreatMutedAudioLikeDeleted) != m_treatMutedAudioLikeDeleted))
 			rebuild();
 		updateRecorder();
@@ -665,6 +671,14 @@ namespace gnubase::engine
 		return AutoMonitoring::TapeMachine;
 	}
 
+	MeterPosition AudioEngine::meterPosition() const
+	{
+		const std::string position = m_settings.get(settings::g_meterPosition);
+		if (position == "input")
+			return MeterPosition::Input;
+		return position == "postFader" ? MeterPosition::PostFader : MeterPosition::PostPanner;
+	}
+
 	AudioEngine::ListenGains AudioEngine::listenGains() const
 	{
 		return {static_cast<float>(volumeGain(m_settings.get(settings::g_audioListenDim))),
@@ -677,6 +691,7 @@ namespace gnubase::engine
 		m_autoMonitoring = autoMonitoring();
 		m_listenGains = listenGains();
 		m_mutePreSends = m_settings.get(settings::g_audioMutePreSends);
+		m_meterPosition = meterPosition();
 		m_treatMutedAudioLikeDeleted = m_settings.get(settings::g_editingTreatMutedAudioLikeDeleted);
 		const audio::DeviceFormat& format = m_device->format();
 		// Channels that stopped listening stay on the listen bus until their listen node glided them out.
@@ -1166,6 +1181,8 @@ namespace gnubase::engine
 					state, nullptr, panning, std::nullopt, silent, StripPart::Fader, lookAhead);
 			}
 			node.processor = fader;
+			for (ChannelStrip* strip : {sourceStrip.get(), fader.get()})
+				strip->meterAt(m_meterPosition, channelCount(channel.format));
 			if (const auto sequencer = m_sequencers.find(channel.id);
 				channel.type == TrackType::Midi && sequencer != m_sequencers.end())
 			{
@@ -1574,7 +1591,8 @@ namespace gnubase::engine
 		stopDevice();
 		if (m_device)
 			stopMonitoringDirectly(); // the hardware would go on monitoring
-		m_workers.reset();
+		if (m_device && m_device->workgroup() != nullptr)
+			m_workers.reset(); // the workers are in the device's workgroup, which ends with it
 		m_device.reset();
 		clearPerformance(); // the old device's numbers would stay up until the new one processes a block
 		m_dummy = nullptr;
@@ -1714,10 +1732,11 @@ namespace gnubase::engine
 			closeDevice();
 			throw CommandError("the driver of " + device + " can't monitor directly");
 		}
-		// Without a sample rate asked for, the device runs at the project's if it can.
+		// Without a sample rate asked for, the device runs at the project's if it can, unless an external clock sets
+		// its rate.
 		m_projectRate = m_snapshots.latest().sampleRate;
-		if (!parameters.contains("sampleRate") && m_device->format().sampleRate != m_projectRate &&
-			supports(info, m_projectRate))
+		if (!parameters.contains("sampleRate") && !parameters.value("externallyClocked", false) &&
+			m_device->format().sampleRate != m_projectRate && supports(info, m_projectRate))
 		{
 			Json atProjectRate = parameters;
 			atProjectRate["sampleRate"] = m_projectRate;
@@ -2193,6 +2212,7 @@ namespace gnubase::engine
 		m_multiProcessing = multiProcessing;
 		m_threads = static_cast<size_t>(threads);
 		clearPerformance(); // threads that are dropped and added again would resume their old averages
+		m_workers.reset();  // a new try at real-time priority
 		if (!m_device)
 			return;
 		try
@@ -2211,29 +2231,29 @@ namespace gnubase::engine
 
 	void AudioEngine::startWorkers()
 	{
-		m_workers.reset();
-		m_limitedBy = Limit::None;
 		const size_t wanted = plannedThreads() - 1;
-		if (wanted == 0)
-			return;
 		const audio::DeviceFormat& format = m_device->format();
 		const double period = format.blockSize / format.sampleRate;
-		auto workers = std::make_unique<rt::WorkerPool>(wanted, period, m_device->workgroup());
-		if (!workers->realtime())
+		// A device that restarts with the same period keeps the workers and their priority: on Linux each new worker
+		// asks rtkit again, which grants only so many requests in a burst (#463). Workers that a device's audio
+		// workgroup (macOS) has to take in start anew.
+		if (m_workers && wanted == m_workersWanted && period == m_workersPeriod && m_device->workgroup() == nullptr)
+			return;
+		m_workers.reset();
+		m_limitedBy = Limit::None;
+		if (wanted == 0)
+			return;
+		// The audio thread waits for nodes that workers hold: a worker without real-time priority that the OS
+		// preempts would make it miss its deadline. Only workers that got it help, if any.
+		m_workers = std::make_unique<rt::WorkerPool>(wanted, period, m_device->workgroup(), true);
+		m_workersWanted = wanted;
+		m_workersPeriod = period;
+		if (m_workers->workers() < wanted)
 		{
-			// The audio thread waits for nodes that workers hold: a worker without real-time priority that the OS
-			// preempts would make it miss its deadline. Only workers that got it help, if any.
-			const size_t realtime = workers->realtimeWorkers();
-			workers.reset();
-			if (realtime > 0)
-				workers = std::make_unique<rt::WorkerPool>(realtime, period, m_device->workgroup());
-			if (workers && !workers->realtime())
-				workers.reset();
 			m_limitedBy = Limit::Realtime;
-			logging::warning("{} of {} processing threads got real-time priority; processing with {}", realtime, wanted,
-				workers ? workers->workers() + 1 : 1);
+			logging::warning("{} of {} processing threads got real-time priority; processing with {}",
+				m_workers->workers(), wanted, m_workers->workers() + 1);
 		}
-		m_workers = std::move(workers);
 	}
 
 	void AudioEngine::startWorkersOrFallBack()
@@ -2308,7 +2328,8 @@ namespace gnubase::engine
 			{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels},
 			{"inputLatency", latency.input}, {"outputLatency", latency.output}, {"recordShift", m_recordShift},
 			{"recordOffset", m_recordOffset.load(std::memory_order_relaxed)}, {"directMonitoring", m_directMonitoring},
-			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate},
+			{"externallyClocked", m_parameters.value("externallyClocked", false)}, {"projectSampleRate", projectRate},
+			{"sampleRateMismatch", format.sampleRate != projectRate},
 			{"silenceReason", silenceReason.empty() ? Json(nullptr) : Json(silenceReason)}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
 			{"projectSampleRate", projectRate}, {"recordBitDepth", recordBitDepth},
@@ -2418,6 +2439,7 @@ namespace gnubase::engine
 					"backend": {"type": "string"}, "device": {"type": "string"}, "clockSource": {"type": "string"},
 					"sampleRate": {"type": "number"}, "blockSize": {"type": "integer"},
 					"recordShift": {"type": "integer"}, "directMonitoring": {"type": "boolean"},
+					"externallyClocked": {"type": "boolean"},
 					"inputChannels": {"type": "integer"}, "outputChannels": {"type": "integer"},
 					"captureSeconds": {"type": "number"}, "inputLatency": {"type": "integer"},
 					"outputLatency": {"type": "integer"}, "loopback": {"type": "boolean"},
@@ -2431,7 +2453,10 @@ namespace gnubase::engine
 				"platform's default backend, whose default device the OS plays on (wasapi, coreaudio or pipewire), or "
 				"the preferred one if this build lacks it. device: its id, by default the backend's default device. "
 				"sampleRate: by default the project's if the device supports it, otherwise the driver's current rate; "
-				"when the project's sample rate changes, the device follows it where it can. blockSize: by default "
+				"when the project's sample rate changes, the device follows it where it can. externallyClocked: the "
+				"hardware takes its clock from an external source, which sets its rate: the device neither opens at "
+				"the project's rate nor follows it, and plays faster or slower where they differ (sampleRateMismatch "
+				"in audio.get). blockSize: by default "
 				"the driver's preferred size. clockSource: a name from the device's clockSources. The device starts "
 				"at position 0, running if start says so, by default if the device it replaces ran (or, lost, was to "
 				"start again), or if the last audio.setDevice failed to run one it was to start. Another backend's "
@@ -2605,8 +2630,9 @@ namespace gnubase::engine
 				"of audio track playback were silent because a disk stream "
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
 				"sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as "
-				"it doesn't support the project's or was asked for another, and plays faster or slower, and "
-				"silenceReason why a running device plays silence (e.g. a PipeWire graph that another client holds at "
+				"it doesn't support the project's, was asked for another or is externallyClocked, and plays faster or "
+				"slower, and silenceReason why a running device plays silence (e.g. a PipeWire graph that another "
+				"client holds at "
 				"another rate), or null, which sends audio.changed when it changes; a new project "
 				"sample rate sends audio.changed. recordBitDepth is the project's (see project.set), for the record "
 				"format; a new one also sends audio.changed. lost: the device that went away (its backend, device id, "
@@ -3090,7 +3116,8 @@ namespace gnubase::engine
 			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))},
 			{"midiRecordMode", g_midiRecordModes.at(static_cast<size_t>(settings.midiRecordMode))},
 			{"midiCycleRecordMode", g_midiCycleRecordModes.at(static_cast<size_t>(settings.midiCycleRecordMode))},
-			{"lockRecord", settings.lockRecord}, {"arranger", arrangerStatus()}};
+			{"lockRecord", settings.lockRecord}, {"recordWaiting", m_transport.recordWaits()},
+			{"arranger", arrangerStatus()}};
 	}
 
 	Json AudioEngine::arrangerStatus() const
@@ -3163,21 +3190,42 @@ namespace gnubase::engine
 				arrange(state);
 			});
 		command("arranger.trigger",
-			"Arranger mode, Jump Mode: plays an arranger event (event, its id) in a loop until another one is "
+			"Arranger mode, Jump Mode: plays an arranger event (event, its id, or number, 1 for the first in timeline "
+			"order, as the key commands Trigger Arranger Event 1 to 9 name them) in a loop until another one is "
 			"triggered or a step is chosen with arranger.goToStep: at once while stopped or with the jump mode none, "
 			"otherwise at the next jump point of the event playing. Returns the transport's state.",
-			R"({"type": "object", "additionalProperties": false, "required": ["event"],
-				"properties": {"event": {"type": "integer"}}})",
+			R"({"type": "object", "additionalProperties": false, "minProperties": 1,
+				"properties": {"event": {"type": "integer"}, "number": {"type": "integer"}}})",
 			[this](const Json& parameters)
 			{
 				const ArrangerPlan& plan = *m_snapshots.latest().arranger;
 				require(plan.plays(), "arranger mode is off or the active chain is empty");
-				const auto id = parameters.at("event").get<uint64_t>();
-				const auto found = std::find_if(plan.sections.begin(), plan.sections.end(),
-					[id](const ArrangerSection& section) { return section.event == id; });
-				require(found != plan.sections.end(), "no arranger event " + std::to_string(id));
+				require(parameters.size() == 1, "give event or number");
 				ArrangerState state;
-				state.section = static_cast<int32_t>(found - plan.sections.begin());
+				if (parameters.contains("number"))
+				{
+					// The sections are in the project's order: the number counts them in timeline order.
+					std::vector<int32_t> order(plan.sections.size());
+					std::iota(order.begin(), order.end(), 0);
+					std::stable_sort(order.begin(), order.end(),
+						[&plan](int32_t a, int32_t b)
+						{
+							return plan.sections[static_cast<size_t>(a)].start <
+								plan.sections[static_cast<size_t>(b)].start;
+						});
+					const auto number = parameters.at("number").get<int64_t>();
+					require(number >= 1 && static_cast<size_t>(number) <= order.size(),
+						"there is no arranger event " + std::to_string(number));
+					state.section = order[static_cast<size_t>(number - 1)];
+				}
+				else
+				{
+					const auto id = parameters.at("event").get<uint64_t>();
+					const auto found = std::find_if(plan.sections.begin(), plan.sections.end(),
+						[id](const ArrangerSection& section) { return section.event == id; });
+					require(found != plan.sections.end(), "no arranger event " + std::to_string(id));
+					state.section = static_cast<int32_t>(found - plan.sections.begin());
+				}
 				arrange(state);
 			});
 	}
@@ -3564,7 +3612,9 @@ namespace gnubase::engine
 				"(start, in samples, without the pre-roll), the locators and the modes. "
 				"After a locate the cursor is where it goes, even before the audio thread has applied it. countingIn: "
 				"the metronome counts in before a recording from stop (see transport.record); meanwhile playing is "
-				"true, and recording is whether recording starts where playback starts.",
+				"true, and recording is whether recording starts where playback starts. recordWaiting: a recording "
+				"waits for where it starts, the end of the pre-roll or the punch in at the left locator; meanwhile "
+				"recording is false, and transport.toggle with record cancels it.",
 				noParameters(), transportSchema(), true},
 			[this](CommandContext&) { return transportStatus(); });
 	}

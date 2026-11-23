@@ -3,6 +3,7 @@
 
 #include "engine/midi/modifiers.h"
 #include "engine/time/tempomap.h"
+#include "ui/widgets.h"
 #include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
@@ -59,6 +60,8 @@ namespace gnubase::ui
 			R"(<button type="toggle" class="toggle timeBase" control="timeBase" title="Switch Time Base">L</button>)"
 			R"(<button type="toggle" class="toggle editInPlace" control="editInPlace" title="Edit In-Place">)"
 			R"(<svg class="icon" src="../icons/tool-draw.svg"/></button>)"
+			R"(<button class="inspector-retrospective" title="Retrospective Recording">)"
+			R"(<svg class="icon" src="../icons/general-undo.svg"/></button>)"
 			R"(</div>)"
 			R"(<div class="inspector-row" row="volume"><span class="inspector-label">Volume</span>)"
 			R"(<valuefield control="volume" min="-144" max="6" default="0" step="0.5" decimals="1" unit="dB"/></div>)"
@@ -458,7 +461,15 @@ namespace gnubase::ui
 					options.emplace_back(patchValue(program, bank), std::to_string(program + 1));
 				return options;
 			}
-			const Json& banks = device->at("banks");
+			// The bank that the Bank Assignment (p. 1109) gives the track's MIDI channel, else all of them. A track on
+			// Any uses channel 1's bank: GNUbase's choice, the manual doesn't say.
+			Json banks = device->at("banks");
+			const Json midiChannel = channel.value("midiChannel", Json());
+			const Json assigned =
+				device->value("bankAssignment", Json::object())
+					.value(std::to_string(midiChannel.is_number_integer() ? midiChannel.get<int>() + 1 : 1), Json());
+			if (assigned.is_number_integer() && assigned.get<int64_t>() >= 0 && assigned.get<size_t>() < banks.size())
+				banks = Json::array({banks.at(assigned.get<size_t>())});
 			for (const Json& deviceBank : banks)
 				for (const Json& patch : deviceBank.at("patches"))
 				{
@@ -576,15 +587,25 @@ namespace gnubase::ui
 		root.QuerySelectorAll(controls, "[control], textarea, .inserts");
 		for (Rml::Element* control : controls)
 			control->SetAttribute("contextmenu", "");
-		// The Current Arranger Chain list's context menu (p. 409), in the body, so that no container clips it.
+		// The Current Arranger Chain list's context menu (p. 409) and the Retrospective Recording pop-up menu
+		// (pp. 354-356), in the body, so that no container clips them.
 		if (Rml::ElementDocument* document = root.GetOwnerDocument())
 		{
 			const Rml::ElementPtr holder = document->CreateElement("div");
-			holder->SetInnerRML(R"(<menu id="inspector-arranger-step-menu">)"
-								R"(<menuitem class="arranger-remove-touched">Remove Touched</menuitem></menu>)");
-			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
-			menu->AddEventListener(Rml::EventId::Click, this);
-			m_stepMenu = menu->GetObserverPtr();
+			holder->SetInnerRML(
+				R"(<menu id="inspector-arranger-step-menu">)"
+				R"(<menuitem class="arranger-remove-touched">Remove Touched</menuitem>)"
+				R"(<menuitem class="arranger-remove-selected">Remove Selected</menuitem></menu>)"
+				R"(<menu id="inspector-retrospective-menu">)"
+				R"(<menuitem class="retrospective-linear">Insert as Linear Recording</menuitem>)"
+				R"(<menuitem class="retrospective-cycle">Insert as Cycle Recording</menuitem>)"
+				R"(<menuitem class="retrospective-empty">Empty Retrospective Record Buffer</menuitem></menu>)");
+			for (Rml::ObserverPtr<Rml::Element>* kept : {&m_stepMenu, &m_retrospectiveMenu})
+			{
+				Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
+				menu->AddEventListener(Rml::EventId::Click, this);
+				*kept = menu->GetObserverPtr();
+			}
 		}
 		root.AddEventListener(Rml::EventId::Click, this);
 		root.AddEventListener(Rml::EventId::Mousedown, this); // for click and hold on S
@@ -620,12 +641,13 @@ namespace gnubase::ui
 
 	Inspector::~Inspector()
 	{
-		if (Rml::Element* menu = m_stepMenu.get())
-		{
-			menu->RemoveEventListener(Rml::EventId::Click, this);
-			if (Rml::Element* parent = menu->GetParentNode())
-				parent->RemoveChild(menu);
-		}
+		for (Rml::Element* menu : {m_stepMenu.get(), m_retrospectiveMenu.get()})
+			if (menu != nullptr)
+			{
+				menu->RemoveEventListener(Rml::EventId::Click, this);
+				if (Rml::Element* parent = menu->GetParentNode())
+					parent->RemoveChild(menu);
+			}
 		if (!m_root)
 			return;
 		m_root->RemoveEventListener(Rml::EventId::Click, this);
@@ -711,7 +733,13 @@ namespace gnubase::ui
 					.append("</option>");
 			chain.append("</select></div>");
 		}
-		m_arrangerChain = {{"chain", arranger.value("chain", Json())}, {"steps", steps}};
+		Json shown = {{"chain", arranger.value("chain", Json())}, {"steps", steps}};
+		if (shown != m_arrangerChain)
+		{
+			m_selectedSteps.clear(); // the indices would name other steps now
+			m_stepAnchor = -1;
+		}
+		m_arrangerChain = std::move(shown);
 		// A list is built again only when it changed, so that a name being typed stays; the row playing is .current.
 		const auto list = [this](
 							  const char* selector, const std::string& rml, const char* key, const std::string& playing)
@@ -731,6 +759,14 @@ namespace gnubase::ui
 			}
 		};
 		list(".inspector-arranger-steps", chain, "step", std::to_string(m_arrangerPlaying.value("step", -1)));
+		if (const Rml::Element* element = m_root->QuerySelector(".inspector-arranger-steps"))
+			for (int i = 0; i < element->GetNumChildren(); ++i)
+			{
+				Rml::Element* row = element->GetChild(i);
+				const int index = row->GetAttribute<int>("step", -1);
+				setClass(*row, "selected",
+					std::find(m_selectedSteps.begin(), m_selectedSteps.end(), index) != m_selectedSteps.end());
+			}
 		list(".inspector-arranger-events", events, "event",
 			std::to_string(m_arrangerPlaying.value("event", uint64_t{0})));
 		if (Rml::Element* select = m_root->QuerySelector("select[control=arrangerJumpMode]"))
@@ -968,6 +1004,7 @@ namespace gnubase::ui
 		const bool records = type == "audio" || type == "instrument" || type == "midi" || vca;
 		available("button[control=record]", records);
 		available("button[control=monitor]", records);
+		available(".inspector-retrospective", noteTrack);
 		// Switch Time Base (reference manual pp. 179-181, 229), checked when linear.
 		available("button[control=timeBase]", records || type == "group" || type == "effect");
 		if (Rml::Element* button = element("button[control=timeBase]"))
@@ -1391,6 +1428,16 @@ namespace gnubase::ui
 		sendChannel({{section, std::move(rack)}});
 	}
 
+	namespace
+	{
+		// The Current Arranger Chain row an element is or is in: Closest starts at the parent.
+		Rml::Element* stepRow(Rml::Element& element)
+		{
+			const char* const selector = ".inspector-arranger-steps .arranger-row";
+			return element.Matches(selector) ? &element : element.Closest(selector);
+		}
+	}
+
 	void Inspector::ProcessEvent(Rml::Event& event)
 	{
 		Rml::Element* target = event.GetTargetElement();
@@ -1403,16 +1450,18 @@ namespace gnubase::ui
 			// A right click in the Current Arranger Chain list touches the step it is on, for Remove Touched.
 			if (event.GetParameter<int>("button", 0) == 1)
 			{
-				const Rml::Element* row = target->Closest(".inspector-arranger-steps .arranger-row");
+				const Rml::Element* row = stepRow(*target);
 				m_touchedStep = row != nullptr ? row->GetAttribute<int>("step", -1) : -1;
 				if (Rml::Element* menu = m_stepMenu.get())
-					if (Rml::Element* item = menu->QuerySelector(".arranger-remove-touched"))
-					{
-						if (m_touchedStep < 0)
-							item->SetAttribute("disabled", "");
-						else
-							item->RemoveAttribute("disabled");
-					}
+					for (const auto& [item, off] : {std::make_pair(".arranger-remove-touched", m_touchedStep < 0),
+							 std::make_pair(".arranger-remove-selected", m_selectedSteps.empty())})
+						if (Rml::Element* found = menu->QuerySelector(item))
+						{
+							if (off)
+								found->SetAttribute("disabled", "");
+							else
+								found->RemoveAttribute("disabled");
+						}
 			}
 			break;
 		case Rml::EventId::Click:
@@ -1443,7 +1492,54 @@ namespace gnubase::ui
 				m_binding.send("arranger.trigger",
 					{{"event", std::strtoull(row->GetAttribute<Rml::String>("event", "0").c_str(), nullptr, 10)}},
 					whenRefused());
-			// Remove Touched removes the step right-clicked (p. 409).
+			// A click on a step selects it, with Shift from the step clicked last, with Ctrl (Cmd) adds or removes it
+			// (p. 410); not on its arrow and its repeat mode.
+			if (const Rml::Element* row = stepRow(*target); row != nullptr && !target->IsClassSet("arranger-locate") &&
+				target->GetTagName() != "select" && target->Closest("select") == nullptr)
+			{
+				const int index = row->GetAttribute<int>("step", -1);
+				const auto found = std::find(m_selectedSteps.begin(), m_selectedSteps.end(), index);
+				if (event.GetParameter<int>("shift_key", 0) != 0 && m_stepAnchor >= 0)
+				{
+					m_selectedSteps.clear();
+					for (int each = std::min(index, m_stepAnchor); each <= std::max(index, m_stepAnchor); ++each)
+						m_selectedSteps.push_back(each);
+				}
+				else if (event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0)
+				{
+					if (found == m_selectedSteps.end())
+						m_selectedSteps.push_back(index);
+					else
+						m_selectedSteps.erase(found);
+					m_stepAnchor = index;
+				}
+				else
+				{
+					m_selectedSteps = {index};
+					m_stepAnchor = index;
+				}
+				m_stale = true;
+			}
+			// Retrospective Recording opens its pop-up menu, whose items insert or empty the track's buffer (pp.
+			// 354-356).
+			if (Rml::Element* button = target->IsClassSet("inspector-retrospective")
+					? target
+					: target->Closest(".inspector-retrospective");
+				button != nullptr && m_retrospectiveMenu)
+				openMenu(*m_retrospectiveMenu.get(),
+					{button->GetAbsoluteLeft(), button->GetAbsoluteTop() + button->GetOffsetHeight()});
+			if (m_track != 0 &&
+				(target->IsClassSet("retrospective-linear") || target->IsClassSet("retrospective-cycle")))
+				m_binding.send("midi.insertRetrospective",
+					{{"track", m_track}, {"cycle", target->IsClassSet("retrospective-cycle")}}, whenRefused());
+			if (m_track != 0 && target->IsClassSet("retrospective-empty"))
+				m_binding.send("midi.clearRetrospective", {{"track", m_track}}, whenRefused());
+			// Remove Touched removes the step right-clicked, Remove Selected the steps selected (p. 410).
+			if (target->IsClassSet("arranger-remove-selected") && !target->HasAttribute("disabled") &&
+				!m_selectedSteps.empty())
+				m_binding.send("arranger.setChain",
+					{{"chain", m_arrangerChain.value("chain", Json())}, {"removeSteps", m_selectedSteps}},
+					whenRefused());
 			if (target->IsClassSet("arranger-remove-touched") && !target->HasAttribute("disabled") &&
 				m_touchedStep >= 0)
 				m_binding.send("arranger.setChain",

@@ -232,6 +232,25 @@ namespace gnubase::ui
 		{
 			return std::abs(pixel - built) * 4 > built;
 		}
+
+		// Whether the answer to an edit of the expression editor says it changed points: note.replaceExpression
+		// returns the notes whose points changed, a history.transaction each of its commands' results. A refused edit
+		// changed nothing; an answer of another form counts as a change.
+		bool changedExpression(const engine::Result& result)
+		{
+			if (!result.ok())
+				return false;
+			const auto changed = [](const Json& value)
+			{
+				const auto notes = value.is_object() ? value.find("notes") : value.end();
+				return notes == value.end() || !notes->is_array() || !notes->empty();
+			};
+			const Json& value = result.value;
+			const auto results = value.is_object() ? value.find("results") : value.end();
+			if (results == value.end() || !results->is_array())
+				return changed(value);
+			return std::any_of(results->begin(), results->end(), changed);
+		}
 	}
 
 	const char* keyToolName(KeyTool tool)
@@ -1504,7 +1523,7 @@ namespace gnubase::ui
 
 	bool KeyEditor::expressionBehind() const
 	{
-		return m_expressionEdits > 0 && (m_expressionAnswered == 0 || m_read < m_expressionAnswered);
+		return m_expressionAnswered < m_expressionEdits || m_read < m_expressionChanged;
 	}
 
 	void KeyEditor::addNotes(
@@ -2316,13 +2335,19 @@ namespace gnubase::ui
 				{"parameters", {{"part", part}, {"type", type}, {"notes", items}}}});
 		if (commands.empty())
 			return;
-		const uint64_t sent = ++m_expressionEdits;
-		m_expressionAnswered = 0;
-		edit(m_tool == KeyTool::Erase ? "Delete Note Expression" : "Draw Note Expression", std::move(commands),
-			[this, alive = std::weak_ptr<bool>(m_alive), sent](const engine::Result&)
+		++m_expressionEdits;
+		// The engine's name for the step, so that the same gesture gets the same name whether it changes one part (a
+		// lone note.replaceExpression) or several (a history.transaction).
+		edit("Change note expression", std::move(commands),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				if (!alive.expired() && sent == m_expressionEdits) // not one that another edit went after
-					m_expressionAnswered = m_binding.handed();
+				if (alive.expired())
+					return;
+				// The answers come in order. One that changed nothing brings no history.changed, so no read after it,
+				// and the project shown lacks nothing of it: it doesn't keep the editor behind (#1831).
+				++m_expressionAnswered;
+				if (changedExpression(result))
+					m_expressionChanged = m_binding.handed();
 			});
 	}
 

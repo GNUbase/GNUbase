@@ -1072,7 +1072,12 @@ namespace gnubase::ui
 			automationMove(m_pressX + dx, m_pressY + dy);
 			return;
 		}
-		if (m_drag == Drag::FadeIn || m_drag == Drag::FadeOut || m_drag == Drag::Volume)
+		if (m_drag == Drag::Volume)
+		{
+			volumeMove(dy, event.GetParameter<int>("shift_key", 0) != 0);
+			return;
+		}
+		if (m_drag == Drag::FadeIn || m_drag == Drag::FadeOut)
 		{
 			m_dragDx = dx;
 			m_dragDy = dy;

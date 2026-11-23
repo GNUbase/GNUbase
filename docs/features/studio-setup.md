@@ -15,8 +15,9 @@ MCP and Lua scripts can do all it does.
     device's input and output latency in ms, its sample rate, the record shift in samples and multi-processing
     (`audio.setProcessing`).
   - *the audio device*, named after it: the Control Panel button (`audio.controlPanel`, disabled when the driver has
-    none), the latencies, the sample rate, buffer size and clock source the driver offers, direct monitoring (disabled
-    when the driver can't) and the ports: input or output, system name, Show As, Visible and State. When the driver
+    none), the latencies, the sample rate, buffer size and clock source the driver offers, Externally Clocked
+    (`externallyClocked`, [audio-devices.md](audio-devices.md)), direct monitoring (disabled when the driver can't)
+    and the ports: input or output, system name, Show As, Visible and State. When the driver
     lists clock sources but flags none as current, as some ASIO drivers do, the Clock Source list shows an empty
     entry, which Apply and OK don't send, so they don't reopen the device with a source the user didn't pick (#398).
   - *MIDI Port Setup*: the ports of every MIDI backend (`midi.ports`) with Show As, Visible, State (active, inactive or

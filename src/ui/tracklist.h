@@ -91,9 +91,12 @@ namespace gnubase::ui
 		// track.removeSelected (asks first for tracks that aren't empty, see warnsBeforeRemoving),
 		// track.duplicateSelected, track.disableSelected, track.enableSelected, track.toggleFolding (the selected
 		// folders), track.foldAll, track.unfoldAll and track.flipFolding; track.freezeSelected (freezes the selected
-		// audio and instrument tracks, or unfreezes them if every one is frozen) and track.renderSelected (renders them
-		// in place); and for folder tracks track.enableSelectedGroupChannels, track.disableSelectedGroupChannels,
-		// track.moveSelectedToNewFolder and track.moveSelectedToNewFolderWithGroupChannel; and for automation tracks
+		// audio and instrument tracks, or unfreezes them if every one is frozen), track.freezeSelectedSettings (the
+		// same, asking for the Tail Size first in the document's freeze-options.rml), track.renderSelected (renders
+		// them in place, or the event display's selected events and parts or selection range) and track.renderSettings
+		// (the same, asking for the options first in the document's render-settings.rml); and for folder tracks
+		// track.enableSelectedGroupChannels, track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
+		// track.moveSelectedToNewFolderWithGroupChannel; and for automation tracks
 		// (#121) track.toggleAutomationSelected (shows the selected tracks' automation, or hides it if every one shows
 		// it), track.showUsedAutomation and track.hideAllAutomation; and for copying automation to other tracks between
 		// the locators (#125) track.copyAutomationAll, track.copyAutomationSelected,
@@ -231,6 +234,11 @@ namespace gnubase::ui
 		// Map to Chord Track (map-to-chord-track.rml) for MIDI parts.
 		void openChordDialog(const char* file, std::vector<uint64_t> parts);
 		void closedChordDialog(Rml::Event& event);
+		// Render in place and freeze (docs/features/render-in-place.md): the Render Tracks or Render Selection dialog
+		// (render-settings.rml) for target, track.renderInPlace's tracks and selection, or Freeze Channel Options
+		// (freeze-options.rml) for target's tracks, filled from options, render.options or render.freezeTail.
+		void openRenderDialog(const char* file, engine::Json target, const engine::Json& options);
+		void closedRenderDialog(Rml::Event& event);
 		// Runs the commands as one undo step; done, if any, gets its result.
 		void transaction(const std::string& description, engine::Json commands,
 			std::function<void(const engine::Result&)> done = {});
@@ -290,6 +298,9 @@ namespace gnubase::ui
 		std::vector<uint64_t> m_removing;              // the tracks it asks about
 		Rml::ObserverPtr<Rml::Element> m_chordDialog;  // a chord track dialog while open
 		std::vector<uint64_t> m_chordParts;            // the MIDI parts it is for
+		Rml::ObserverPtr<Rml::Element> m_renderDialog; // a render or freeze dialog while open
+		engine::Json m_renderTarget;                   // what it renders, see openRenderDialog
+		engine::Json m_renderOptions;                  // the options it opened with
 		Rml::ObserverPtr<Rml::Element> m_renameDialog; // rename-version.rml while open
 
 		Drag m_drag = Drag::None;

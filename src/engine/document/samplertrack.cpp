@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Sampler tracks (#180, reference manual pp. 143-144, 710-738): instrument tracks whose channel plays the built-in
 // sampler (processors::Sampler) and names the pool clip it plays (Channel::sample). Its settings are the instrument's
-// parameters (parameter.set); the commands here make sampler tracks and load and normalize their samples. Each is one
-// undo step and changes nothing if it fails (ProjectModel::addEdit).
+// parameters (parameter.set); the commands here make sampler tracks and load and normalize their samples, each one
+// undo step that changes nothing if it fails (ProjectModel::addEdit), and find the sample's zero crossings.
 #include "engine/document/samplertrack.h"
 
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
+#include "engine/document/snap.h"
 #include "engine/engine.h"
 #include "engine/processors/sampler.h"
 
@@ -239,6 +240,40 @@ namespace gnubase::engine
 				channel.instrumentParameters[Sampler::Gain] =
 					std::clamp(level - (20.0 * std::log10(static_cast<double>(peak))), -48.0, 48.0);
 				return result(project, channel, context);
+			});
+
+		const Json numbers = {{"type", "array"}, {"items", number}};
+		model.addEdit(engine,
+			{"sampler.zeroCrossings", 1,
+				"Where Snap to Zero Crossing (reference manual p. 713) moves positions of a sampler track's sample, "
+				"shares of it as Start, End and the loop's start and end are, counted from its end while Reverse is "
+				"on: each to the nearest frame within 50 ms where the sum of the sample's channels changes sign (of "
+				"the two frames there, the one nearer to zero). A position without a zero crossing near stays. Refused "
+				"for a sampler without a sample. Returns positions in the same order.",
+				objectSchema({{"track", integer}, {"positions", numbers}}, {"track", "positions"}),
+				objectSchema({{"positions", numbers}}, {"positions"}), true},
+			{},
+			[](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const Channel& channel = samplerChannel(project, parameters.at("track").get<ObjectId>());
+				require(channel.sample != 0, "the sampler has no sample");
+				const MediaFile& media = project.media.at(project.clips.at(channel.sample).media);
+				const bool reverse = parameter(channel, Sampler::Reverse, 0.0) >= 0.5;
+				const auto frames = static_cast<double>(media.length);
+				Json positions = Json::array();
+				for (const Json& position : parameters.at("positions"))
+				{
+					const double share = std::clamp(position.get<double>(), 0.0, 1.0);
+					const auto frame = std::llround((reverse ? 1.0 - share : share) * frames);
+					const time::Samples found = zeroCrossingFrame(media, frame, 0, media.length - 1);
+					const double snapped = static_cast<double>(found) / frames;
+					if (found == frame)
+						positions.push_back(share);
+					else
+						positions.push_back(reverse ? 1.0 - snapped : snapped);
+				}
+				return Json{{"positions", std::move(positions)}};
 			});
 	}
 }

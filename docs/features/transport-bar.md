@@ -20,6 +20,7 @@ are by attributes, which `TransportControls` follows:
 | Punch Points | Punch In, Punch Out | `transport.toggle` `punchIn`, `punchOut` |
 | Transport Controls | Go to Previous Marker/Zero, Go to Next Marker/Project End, Rewind, Forward, Cycle, Stop, Start, Record | `locate.previousMarker`, `locate.nextMarker`, `wind.rewind`, `wind.forward`, `transport.toggle` `cycle`, `transport.stop`, `transport.play`, `transport.toggle` `record` |
 | Time Displays | primary and secondary time format menus and displays, Exchange Time Formats | the project cursor; `transport.locate`; `time.exchangeFormats` |
+| Pre-roll & Post-roll | Activate Pre-roll, Pre-roll Amount, Activate Post-roll, Post-roll Amount (p. 318), hidden by default | `transport.toggle` `preRoll`, `postRoll`; `transport.set` `preRollAmount`, `postRollAmount` |
 | Tempo & Time Signature | Activate Tempo Track, tempo, Tap Tempo, Tap Tempo Mode, time signature | `project.set` `tempoTrackActive`, `tempo`, `signature`; `tempo.set`; `tempo.tap`, `transport.tapTempoMode` ([tempo-track.md](tempo-track.md)) |
 | Click | Activate Metronome Click | `transport.toggle` `metronome` |
 
@@ -36,6 +37,11 @@ display at 150 % (#1450).
 - **Buttons** have a `command` with `parameters` (JSON), which run as a key would (`KeyCommands::run`): engine
   commands through the UI's engine client, the UI's own commands in `AppUi`. Buttons with `state` are checked, the
   state class `.checked`, while the transport's value is true; they follow `transport.changed`, whoever changed it.
+  Record also has `waiting="recordWaiting"`: the state class `.waiting` while a recording waits for the end of the
+  pre-roll or the punch in (`transport.get` `recordWaiting`), which the flat GNUbase theme shows as Record filled with
+  the record color at a quarter opacity and the dark, light and high-contrast themes as pressed; a click then cancels
+  the wait (#2039). The Transport menu's Pre-roll & Post-roll submenu has Use Pre-roll and Use Post-roll
+  (p. 303), `transport.toggle` with `preRoll` and `postRoll`, checked while they are on (#583).
   Buttons with `hold` run their command when the mouse button goes down and end it, as a key held, when it goes up,
   the mouse leaves the button or the window loses the keyboard focus. `ui::TransportControls` checks every control
   with a `command`, the time display's menu items too, before it attaches (#446): parameters that aren't a JSON object
@@ -49,11 +55,13 @@ display at 150 % (#1450).
   does the window losing the keyboard focus ([key-commands.md](key-commands.md)).
 - **The mouse wheel** changes a display's value: up for later, by a beat in Bars+Beats, a frame in Timecode and fps
   (User), a second in Seconds and Samples, never before the project start or past the largest project position. On
-  the locator range it moves the right locator, not before the left one. A display being edited ignores the wheel,
-  a scroll sideways moves nothing, and a turn moves at most a billion steps (#457).
-- **Displays** (`time`) show the project cursor, a locator or the locator range in the time format of their slot
-  (`format`: `primary`, `secondary`, `timeDisplay`). While playing they read the playback position once a frame, as the
-  event display does. Each has its format's state class, such as `.format-barsBeats`, and in the transport bar and the
+  the locator range it moves the right locator, not before the left one; on the pre-roll and post-roll amounts it
+  changes the amount, not below 0. A display being edited ignores the wheel, a scroll sideways moves nothing, and a
+  turn moves at most a billion steps (#457).
+- **Displays** (`time`) show the project cursor, a locator, the locator range or the pre-roll and post-roll amounts
+  (`preRollAmount`, `postRollAmount`: lengths measured from the left and the right locator) in the time format of
+  their slot (`format`: `primary`, `secondary`, `timeDisplay`). While playing they read the playback position once a
+  frame, as the event display does. Each has its format's state class, such as `.format-barsBeats`, and in the transport bar and the
   panel the cursor's displays take the width of their format's widest text from it (`base.rcss`, in em of the display
   font, whose digits are all as wide, with room for RmlUi cutting the font size to whole pixels and FreeType rounding
   the advances), so the controls beside them stay in place while the transport runs, locates or scrubs; a format change
@@ -174,11 +182,11 @@ transport pop-up window.
 
 ## Not yet
 
-The sections that come with their features: the record modes (#96, #97), retrospective record, the pre-roll and
-post-roll section with the punch positions and the Transport menu's Pre-roll & Post-roll items (#583, p. 318; the
-engine has the settings in `transport.set`), the click behaviour itself (#101), external sync, count-in and the click
-pattern (#101), the markers section (#91), input and output activity and the audio performance meter. Also: Start from
-selection; the time display window's transparency (a studio setup page, p. 313).
+The sections that come with their features: the record modes (#96, #97), retrospective record, the punch positions
+apart from the locators (p. 319) and the Transport menu's Pre-roll & Post-roll items that play around the selection
+(p. 303), the click behaviour itself (#101), external sync, count-in and the click pattern (#101), the markers section
+(#91), input and output activity and the audio performance meter. Also: Start from selection; the time display
+window's transparency (a studio setup page, p. 313).
 
 ## Checks
 

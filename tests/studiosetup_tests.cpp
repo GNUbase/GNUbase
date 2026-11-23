@@ -197,7 +197,9 @@ TEST_CASE("the studio setup dialog shows the audio and MIDI devices and changes 
 	CHECK(element(app, "#block-size").at("value") == "256");
 	CHECK(element(app, "#control-panel").at("attributes").contains("disabled")); // the dummy driver has none
 	CHECK(elements(app, "#audio-ports tr").size() == 6);
+	CHECK(!element(app, "#externally-clocked").at("attributes").contains("checked"));
 	choose(app, "#sample-rate", 1); // 44100, before 48000
+	click(app, "#externally-clocked");
 	type(app, "#audio-ports input.show-as", 0, "Mic");
 	click(app, "#audio-ports input.visible", 5); // hides Output 4
 
@@ -211,6 +213,7 @@ TEST_CASE("the studio setup dialog shows the audio and MIDI devices and changes 
 	CHECK(closed(app));
 	const Json device = app.call("audio.get").at("device");
 	CHECK(device.at("sampleRate") == 44100.0);
+	CHECK(device.at("externallyClocked") == true);
 	CHECK(device.at("outputChannels") == 4); // audio.set keeps the dummy device's own settings
 	const Json ports = app.call("audio.ports");
 	CHECK(ports.at("inputs")[0].at("showAs") == "Mic");
@@ -226,6 +229,7 @@ TEST_CASE("the studio setup dialog shows the audio and MIDI devices and changes 
 	openDialog(app);
 	click(app, "#devices-device");
 	CHECK(element(app, "#sample-rate").at("value") == "44100");
+	CHECK(element(app, "#externally-clocked").at("attributes").contains("checked"));
 	CHECK(elements(app, "#audio-ports input.show-as")[0].at("value") == "Mic");
 
 	// The ports' Reset shows the system names and every port again, and OK sends them.

@@ -131,6 +131,10 @@ namespace gnubase::ui
 		// Runs task on the UI thread in the shell's next step, waking the shell if it waits for events. Safe to call
 		// from any thread, e.g. from an engine listener (ui/uisettings.h).
 		void post(std::function<void()> task);
+		// The same for work that draws only the windows it asks for (Window::requestRender,
+		// Rml::Context::RequestNextUpdate) rather than every window: automation's (ui/automation.h), whose reads change
+		// nothing and whose input asks for the window it goes to, as the window system's does.
+		void postQuietly(std::function<void()> task);
 
 		// Handles the events that arrive within timeout (all that are waiting, without timeout), then updates and
 		// draws every window that needs it. Throws std::logic_error inside a step, e.g. from an event handler.
@@ -225,7 +229,8 @@ namespace gnubase::ui
 
 		// Makes the shell update and draw every window in its next step, or in this one if it hasn't drawn yet: for
 		// changes that may show in any window, such as what the engine's events and results changed
-		// (ui/enginebinding.h). The shell does so itself after it ran posted work or a file dialog answered.
+		// (ui/enginebinding.h). The shell does so itself after it ran posted work (unless posted quietly) or a file
+		// dialog answered.
 		void requestRender();
 
 		// How long run() may wait for events before a window needs drawing or a task is due; empty to wait for the
@@ -266,8 +271,13 @@ namespace gnubase::ui
 		bool m_osFileDialogs = true;
 		uint64_t m_nextDialog = 1;
 		std::vector<Task> m_tasks;
+		struct Posted
+		{
+			std::function<void()> run;
+			bool drawsAll; // every window, as posted work does unless it was posted quietly
+		};
 		std::mutex m_postedMutex; // guards m_posted, which other threads add to
-		std::vector<std::function<void()>> m_posted;
+		std::vector<Posted> m_posted;
 		std::vector<std::function<bool()>> m_stepTasks;
 		std::vector<std::function<bool(Window&)>> m_afterUpdate;
 		std::vector<std::function<void(const std::map<WindowId, Moved>&)>> m_displaysChanged;

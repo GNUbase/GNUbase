@@ -210,3 +210,61 @@ test.case("the editor renames a step's arranger event with Alt and a double clic
 	test.equal(gnubase.arranger.get().events[1].name, "Intro")
 	ui.wait{window = window, selector = "#event-" .. a.id .. " .name", text = "Intro"}
 end)
+
+test.case("the editor selects steps and removes the selected ones", function()
+	test.cleanup(function()
+		if #ui.windows().windows > 1 then ui.command{command = "window.arranger"} end
+	end)
+	gnubase.track.add{type = "arranger", timeBase = "linear"}
+	local a = gnubase.arranger.add{position = 0, ["end"] = 48000}.event
+	local b = gnubase.arranger.add{position = 48000, ["end"] = 96000}.event
+	gnubase.arranger.setChain{steps = {{event = a.id}, {event = b.id}, {event = a.id}, {event = b.id}}}
+	gnubase.arranger.setMode{mode = true}
+	for _ = 1, 50 do
+		if arrangerWindow() == nil then break end
+		pcall(ui.wait, {selector = "#no-such-element", seconds = 0.05})
+	end
+	ui.command{command = "window.arranger"}
+	local window = openedWindow()
+	test.ok(window)
+	ui.wait{window = window, selector = "#step-3 .name"}
+	local function selected()
+		local rows = ""
+		for step = 0, 3 do
+			rows = rows .. (ui.dom{window = window, selector = "#step-" .. step .. ".selected"}.elements[1] and "x" or "-")
+		end
+		return rows
+	end
+
+	-- Reference manual p. 410: a click selects a step, Shift up to another one, Ctrl (Cmd) adds or removes one; the
+	-- arrows and buttons don't select.
+	ui.click{window = window, selector = "#step-1 .repeats"}
+	test.equal(selected(), "-x--")
+	ui.click{window = window, selector = "#step-3 .repeats", modifiers = {"shift"}}
+	test.equal(selected(), "-xxx")
+	ui.click{window = window, selector = "#step-2 .repeats", modifiers = {"ctrl"}}
+	test.equal(selected(), "-x-x")
+	ui.click{window = window, selector = "#step-0 .locate"}
+	ui.wait{window = window, selector = "#step-0.current"}
+	test.equal(selected(), "-x-x")
+	-- A chain edit selects none, as the indices may name other steps now.
+	ui.click{window = window, selector = "#step-0 .more"}
+	ui.wait{window = window, selector = "#step-0 .repeats", text = "2"}
+	test.equal(selected(), "----")
+	ui.click{window = window, selector = "#step-1 .repeats"}
+	ui.click{window = window, selector = "#step-3 .repeats", modifiers = {"ctrl"}}
+	test.equal(selected(), "-x-x")
+
+	-- Remove Selected on the context menu removes them.
+	ui.click{window = window, selector = "#step-0 .repeats", button = "right"}
+	ui.wait{window = window, selector = "#chain-step-menu.open"}
+	ui.click{window = window, selector = "#chain-step-menu .remove-selected"}
+	for _ = 1, 50 do
+		if #steps() == 2 then break end
+		pcall(ui.wait, {window = window, selector = "#no-such-element", seconds = 0.05})
+	end
+	test.equal(#steps(), 2)
+	test.equal(steps()[1].event, a.id)
+	test.equal(steps()[1].repeats, 2)
+	test.equal(steps()[2].event, a.id)
+end)

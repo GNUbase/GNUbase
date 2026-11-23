@@ -84,20 +84,24 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"meter.get", 1,
 				"The meters, as the audio thread measured them last while the device ran. channels: each channel's "
-				"output after its fader, panner and muting (all channels, or those given), per audio channel: peak "
-				"(the largest sample of the last 100 ms) and rms (averaged over the last 300 ms) in dBFS, and their "
-				"maxima peakMax and rmsMax since meter.reset, also while the transport stands; null for silence, "
-				"empty lists for MIDI channels and channels that haven't played yet. main: the same for the main "
-				"mix's first 8 device outputs, with rms averaged over the user setting meter.rmsResolution and 3 dB "
-				"higher with meter.rmsAes17, plus the master meter's truePeak, truePeakMax and truePeakHold (4x "
-				"oversampled, dBTP): truePeakHold is the largest true peak since meter.reset with \"main\" or without "
-				"meters, also while the transport stands, as peakMax; truePeakMax the loudness meter's, which "
-				"meter.reset with \"loudness\" or without meters clears. loudness: the main mix's loudness per EBU R "
-				"128 in LUFS: momentary (400 ms), shortTerm (3 s), their maxima, integrated (gated) and range (LU), "
-				"and seconds measured; they change every 100 ms. truePeakMax, the loudness maxima, integrated, range "
-				"and seconds only count while the transport plays, with blocks from where playback started, and go "
-				"on across audio.reset at the same sample rate; null until there is a value. The user setting "
-				"meter.resetOnStart starts the loudness meter and the main mix's maxima over when playback starts.",
+				"level where the user setting meter.position says (all channels, or those given): by default its "
+				"output after its fader, panner and muting, per audio channel of the output; postFader after the "
+				"fader and muting without the panner, and input after the pre section, its input gain and low and "
+				"high cut, per audio channel of the channel; a MIDI channel's one value is the velocity of the "
+				"loudest note that sounds, 127 as 0 dBFS. Each has peak (the largest sample of the last 100 ms) and "
+				"rms (averaged over the last 300 ms) in dBFS, and their maxima peakMax and rmsMax since meter.reset, "
+				"also while the transport stands; null for silence, empty lists for channels that haven't played "
+				"yet. main: the same for the main mix's first 8 device outputs, with rms averaged over the user "
+				"setting meter.rmsResolution and 3 dB higher with meter.rmsAes17, plus the master meter's truePeak, "
+				"truePeakMax and truePeakHold (4x oversampled, dBTP): truePeakHold is the largest true peak since "
+				"meter.reset with \"main\" or without meters, also while the transport stands, as peakMax; "
+				"truePeakMax the loudness meter's, which meter.reset with \"loudness\" or without meters clears. "
+				"loudness: the main mix's loudness per EBU R 128 in LUFS: momentary (400 ms), shortTerm (3 s), their "
+				"maxima, integrated (gated) and range (LU), and seconds measured; they change every 100 ms. "
+				"truePeakMax, the loudness maxima, integrated, range and seconds only count while the transport "
+				"plays, with blocks from where playback started, and go on across audio.reset at the same sample "
+				"rate; null until there is a value. The user setting meter.resetOnStart starts the loudness meter "
+				"and the main mix's maxima over when playback starts.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
 					"channels": {"type": "array", "items": {"type": "integer"}}}})"),
 				meterSchema(), true},

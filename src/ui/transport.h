@@ -42,10 +42,13 @@ namespace gnubase::ui
 	//   hold                         with command: runs it when the mouse button goes down on it and ends it when the
 	//                                button goes up, as a key held would, e.g. Forward, which winds while held
 	//   state="cycle"                checked while the transport's value is true: cycle, punchIn, punchOut,
-	//                                metronome, playing or recording
-	//   time="position|left|right|length" format="primary|secondary|timeDisplay"
-	//                                the project cursor, a locator or the locator range in the time format of that slot
-	//                                (default primary); a <textdisplay> takes a position or length typed into it,
+	//                                preRoll, postRoll, metronome, playing or recording
+	//   waiting="recordWaiting"      the state class .waiting while the transport's value is true: Record while a
+	//                                recording waits for the end of the pre-roll or the punch in (#2039)
+	//   time="position|left|right|length|preRollAmount|postRollAmount" format="primary|secondary|timeDisplay"
+	//                                the project cursor, a locator, the locator range or the pre-roll and post-roll
+	//                                amounts (lengths from the left and the right locator) in the time format of that
+	//                                slot (default primary); a <textdisplay> takes a position or length typed into it,
 	//                                and the mouse wheel moves it by a beat (bars and beats), a frame (timecode,
 	//                                user frames) or a second. Those in the slot timeDisplay follow ui.timeDisplay:
 	//                                only the beat in its bar with beatCountOnly, and the state class size-0 to
@@ -145,6 +148,9 @@ namespace gnubase::ui
 		bool showTime();  // the displays with times, e.g. once a frame while playing; whether one's text changed
 		bool showTempo(); // the tempo fields, also once a frame while playing; whether one's text changed
 		int64_t samples(double seconds) const;
+		// preRollAmount or postRollAmount, and where the amount is measured from: the left or the right locator.
+		static bool isAmount(const std::string& time) { return time == "preRollAmount" || time == "postRollAmount"; }
+		double amountStart(const std::string& time) const;
 
 		engine::Engine& m_engine;
 		EngineBinding& m_binding;

@@ -5,6 +5,8 @@
 // tests/editors_tests.cpp checks the engine's editor views.
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
+#include "ui/midieditor.h"
 #include "ui/rmlui.h"
 #include "uiapp.h"
 
@@ -12,9 +14,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -511,4 +515,132 @@ TEST_CASE("an editor the user closed doesn't open again for an editor.changed st
 		app.shell().step(std::chrono::milliseconds(0));
 	CHECK(app.appUi().editorWindow() == nullptr);
 	CHECK(view(app, "window").at("open") == false);
+}
+
+TEST_CASE("the lower zone's Editor tab in front without an open editor opens it with the selected parts (#625)", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	Fixture f(app);
+	const auto steps = [&app]
+	{
+		for (int i = 0; i < 5; ++i)
+			app.shell().step(std::chrono::milliseconds(0));
+	};
+	// Picked from the tab bar, the Editor tab shows the project window's selected parts (p. 1153).
+	f.select({f.keys1});
+	app.appUi().docking().open("editor");
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys1}; }));
+
+	// Closed from another client, it stays closed while the tab stays in front, and opens again when the tab comes to
+	// the front again.
+	app.call("editor.close", {{"editor", "lower"}});
+	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+	f.select({f.bass1});
+	steps();
+	CHECK(view(app, "lower").at("open") == false);
+	CHECK(app.appUi().docking().showing("editor"));
+	app.appUi().docking().open("mixer");
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("mixer"); }));
+	steps();
+	app.appUi().docking().open("editor");
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.bass1}; }));
+
+	// Behind the Mixer it stays closed; Open in Lower Zone from the editor window brings the tab forward with the
+	// window's parts, not the project window's selection.
+	app.call("editor.close", {{"editor", "lower"}});
+	app.appUi().docking().open("mixer");
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("mixer"); }));
+	f.select({f.keys1});
+	steps();
+	CHECK(view(app, "lower").at("open") == false);
+	app.call("editor.open", {{"editor", "window"}, {"parts", {f.keys2}}});
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	REQUIRE(app.waitUntil([&]
+		{ return ids(app, app.appUi().editorWindowId(), ".editor-part", "part") == std::vector<uint64_t>{f.keys2}; }));
+	click(app, app.appUi().editorWindowId(), "#editor-move");
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() == nullptr; }));
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editor"); }));
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys2}; }));
+	steps();
+	CHECK(parts(view(app, "lower")) == std::vector<uint64_t>{f.keys2});
+}
+
+TEST_CASE("the MIDI editors share one project read for each change (#625)", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	Fixture f(app);
+	ui::EngineBinding& binding = app.appUi().binding();
+	// How many project.get the UI answers for a note added, until none is out.
+	const auto reads = [&](int64_t position)
+	{
+		REQUIRE(app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+		size_t count = 0;
+		const ui::Subscription counted = binding.onResult("project.get", [&count](const engine::Result&) { ++count; });
+		app.call("note.add",
+			{{"part", f.keys1},
+				{"notes", {{{"position", position}, {"length", 120}, {"pitch", 60}, {"velocity", 0.5}}}}});
+		for (int i = 0; i < 5; ++i)
+			app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+		return count;
+	};
+	reads(0); // the first after the start may count reads of its own
+	// The lower zone's editor and the project window's Visibility tab are there from the start.
+	const size_t before = reads(120);
+
+	// Three more: the editor window, with its Visibility tab and inspector. They read no more.
+	f.select({f.keys1});
+	app.keys().run("window.lowerZoneEditor", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return app.appUi().lowerZoneEditor() != nullptr; }));
+	app.call("editor.open", {{"editor", "window"}, {"parts", {f.keys2}}});
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	app.appUi().docking().open("editorVisibility");
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editorVisibility"); }));
+	app.appUi().docking().open("editorInspector");
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editorInspector"); }));
+	CHECK(reads(240) == before);
+}
+
+TEST_CASE("a project read asked for after the binding handed on something else is a read of its own (#625)", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	ui::EngineBinding& binding = app.appUi().binding();
+	ui::ProjectReads reads(binding);
+	// EngineBinding::handed() when each got its answer.
+	uint64_t first = 0;
+	uint64_t later = 0;
+	uint64_t again = 0;
+	// An answer the binding hands on while the first read is out: the read asked for then goes out once the first is
+	// answered.
+	binding.send("project.get", Json::object(),
+		[&](const engine::Result&) { reads.read([&](const engine::Result&) { later = binding.handed(); }); });
+	reads.read(
+		[&](const engine::Result&)
+		{
+			first = binding.handed();
+			// Asked for again from the answer: joins the read that went out for the later one.
+			reads.read([&](const engine::Result&) { again = binding.handed(); });
+		});
+	REQUIRE(app.waitUntil([&] { return again != 0; }));
+	CHECK(first != 0);
+	CHECK(first < later);
+	CHECK(again == later);
+}
+
+TEST_CASE("the MIDI menu opens the selected MIDI parts in the editor window's key, drum or list editor (#719)", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	Fixture f(app);
+	f.select({f.keys1, f.bass1});
+	for (const auto& [command, content] : {std::pair{"editor.openDrum", "drum"}, std::pair{"editor.openList", "list"},
+			 std::pair{"editor.openKey", "key"}})
+	{
+		INFO(command);
+		const std::string wanted = content;
+		click(app, std::nullopt, "#menu-bar button[menu=midi-menu]");
+		click(app, std::nullopt, std::string("#midi-menu menuitem[command=\"") + command + "\"]");
+		REQUIRE(app.waitUntil([&] { return view(app, "window").value("content", "") == wanted; }));
+		CHECK(parts(view(app, "window")) == std::vector<uint64_t>{f.keys1, f.bass1});
+		CHECK(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	}
 }

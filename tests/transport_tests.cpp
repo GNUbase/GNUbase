@@ -778,7 +778,7 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 			{"punchIn", false}, {"punchOut", false}, {"preRoll", false}, {"preRollAmount", 0}, {"postRoll", false},
 			{"postRollAmount", 0}, {"metronome", false}, {"audioRecordMode", "keepHistory"},
 			{"midiRecordMode", "newParts"}, {"midiCycleRecordMode", "mix"}, {"lockRecord", false},
-			{"arranger", {{"step", -1}, {"repeat", 0}, {"event", 0}}}});
+			{"recordWaiting", false}, {"arranger", {{"step", -1}, {"repeat", 0}, {"event", 0}}}});
 
 	state = run(client, "transport.set", {{"left", 48000}, {"right", 96000}, {"cycle", true}});
 	CHECK(state.at("left") == 48000);
@@ -1278,6 +1278,46 @@ TEST_CASE("toggling record during the pre-roll cancels the recording that waits 
 	state = run(client, "transport.get");
 	CHECK(state.at("playing") == true);
 	CHECK(state.at("recording") == true);
+}
+
+TEST_CASE("the transport reports a recording that waits for the pre-roll or the punch in (#2039)", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}});
+	CHECK(run(client, "transport.get").at("recordWaiting") == false);
+
+	// From stop with the pre-roll on, until the pre-roll has played; the record toggle cancels the wait.
+	run(client, "transport.set", {{"preRoll", true}, {"preRollAmount", 4800}});
+	run(client, "transport.locate", {{"position", 10000}});
+	Json state = run(client, "transport.record");
+	CHECK(state.at("recording") == false);
+	CHECK(state.at("recordWaiting") == true);
+	run(client, "audio.render", {{"frames", 640}});
+	CHECK(run(client, "transport.get").at("recordWaiting") == true);
+	state = run(client, "transport.toggle", {{"setting", "record"}});
+	CHECK(state.at("recordWaiting") == false);
+	CHECK(state.at("playing") == true);
+	run(client, "transport.stop");
+
+	// Recorded again, it waits until the end of the pre-roll, then records.
+	run(client, "transport.locate", {{"position", 10000}});
+	CHECK(run(client, "transport.record").at("recordWaiting") == true);
+	run(client, "audio.render", {{"frames", 4864}});
+	state = run(client, "transport.get");
+	CHECK(state.at("recording") == true);
+	CHECK(state.at("recordWaiting") == false);
+	CHECK(run(client, "transport.stop").at("recordWaiting") == false);
+
+	// While playing before the left locator with punchIn on, until the punch in.
+	run(client, "transport.set", {{"preRoll", false}, {"left", 10000}, {"right", 20000}, {"punchIn", true}});
+	run(client, "transport.locate", {{"position", 0}});
+	run(client, "transport.play");
+	CHECK(run(client, "transport.record").at("recordWaiting") == true);
+	run(client, "audio.render", {{"frames", 10048}});
+	state = run(client, "transport.get");
+	CHECK(state.at("recording") == true);
+	CHECK(state.at("recordWaiting") == false);
 }
 
 TEST_CASE("locate by moves the cursor by seconds, not before the project start", "[integration]")

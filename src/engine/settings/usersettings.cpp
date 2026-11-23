@@ -2,6 +2,7 @@
 #include "engine/settings/usersettings.h"
 
 #include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/devices.h"
@@ -368,6 +369,11 @@ namespace gnubase::engine::settings
 	{
 		static const Format format = []
 		{
+			const Json defaultFade = {{"type", "object"},
+				{"properties",
+					{{"shape", {{"type", "string"}, {"enum", fadeShapeNames()}}},
+						{"length", {{"type", "number"}, {"minimum", 0}}}}},
+				{"required", {"shape", "length"}}, {"additionalProperties", false}};
 			Format result;
 			result.name = "settings";
 			result.version = 1;
@@ -472,6 +478,14 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
 					"default", true},
+				{"editing.defaultFadeIn",
+					"The default fade in (reference manual p. 385): its shape and length in seconds, which Apply "
+					"Standard Fade In gives the selected audio events; the fade dialog's As Default sets it.",
+					defaultFade, Json{{"shape", "linear"}, {"length", 0.01}}},
+				{"editing.defaultFadeOut",
+					"The default fade out (reference manual p. 385): its shape and length in seconds, which Apply "
+					"Standard Fade Out gives the selected audio events; the fade dialog's As Default sets it.",
+					defaultFade, Json{{"shape", "linear"}, {"length", 0.01}}},
 				{"editing.defaultTimeBase",
 					"The time base of new tracks when track.add gives none (Default Track Time Type, reference manual "
 					"pp. 230, 1595): musical (bars and beats, so their events follow tempo changes), linear (time, so "
@@ -522,6 +536,11 @@ namespace gnubase::engine::settings
 					"event keeps its place in the stack and silences what lies behind it, which p. 228 advises when "
 					"assembling stacked takes.",
 					Json{{"type", "boolean"}}, true, true},
+				{"editing.wheelEventVolumeAndFades",
+					"Use Mouse Wheel for Event Volume and Fades (reference manual p. 1597): the mouse wheel over an "
+					"audio event in the project window changes its volume, and with Shift its fade in (in the "
+					"event's left half) or fade out (in its right half), instead of scrolling.",
+					Json{{"type", "boolean"}}, false, true},
 				{"editing.doubleClickOpensEditorIn",
 					"Double-click opens Editor in a Window/in Lower Zone (reference manual p. 1603): where a double "
 					"click on a MIDI part or an audio part in the project window and Open/Close Editor "
@@ -532,6 +551,10 @@ namespace gnubase::engine::settings
 					"Use Drum Editor when Drum Map is assigned (reference manual p. 1603): a closed editor opens the "
 					"parts of a track with a drum map in the drum editor (editor.open).",
 					Json{{"type", "boolean"}}, true, true},
+				{"meter.fallback",
+					"Meters' Fallback (reference manual p. 1614): how fast the channel meters' bars fall after a "
+					"peak, 1 to 100 dB per second.",
+					Json{{"type", "number"}, {"minimum", 1}, {"maximum", 100}}, 20.0, true},
 				{"meter.holdForever",
 					"Meter Peak - Hold Forever (reference manual p. 467): the channel meters' peak marks hold the "
 					"highest level until the meters are reset (meter.reset); off, for meter.peakHoldTime.",
@@ -544,6 +567,12 @@ namespace gnubase::engine::settings
 					"Meters' Peak Hold Time (reference manual p. 1614): how long the channel meters' peak marks hold "
 					"a peak, 500 to 30000 ms, unless meter.holdForever is on.",
 					Json{{"type", "integer"}, {"minimum", 500}, {"maximum", 30000}}, 2000, true},
+				{"meter.position",
+					"Meter Position (reference manual p. 467): where the channel meters measure (see meter.get): "
+					"input, after the pre section (its input gain and low and high cut); postFader, after the fader "
+					"and muting, without the "
+					"panner; postPanner, after the panner too, both sides of a mono channel's panner.",
+					Json{{"type", "string"}, {"enum", {"input", "postFader", "postPanner"}}}, "postPanner"},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",
@@ -579,10 +608,11 @@ namespace gnubase::engine::settings
 					"channel's last program change before that position.",
 					Json{{"type", "boolean"}}, true, true},
 				{"midi.devices",
-					"The installed MIDI devices (midiDevice.install), by name: each has banks, each bank a name and "
-					"patches, each patch a name, a program (0 to 127), an optional bank (0 to 16383, sent as bank "
-					"select MSB and LSB) and an optional folder it is listed in. A MIDI track that names a device "
-					"(channel.set device) chooses its program and bank by patch.",
+					"The installed MIDI devices (midiDevice.install), by name: each has banks and an optional "
+					"bankAssignment. Each bank has a name and patches, each patch a name, a program (0 to 127), an "
+					"optional bank (0 to 16383, sent as bank select MSB and LSB) and an optional folder it is listed "
+					"in. bankAssignment gives MIDI channels \"1\" to \"16\" a bank by its index (midiDevice.set). A "
+					"MIDI track that names a device (channel.set device) chooses its program and bank by patch.",
 					midi::devicesSchema(), Json::object()},
 				{"midi.importAutomation",
 					"Import Controller as Automation Tracks (reference manual p. 365): importing a MIDI file in the "
@@ -685,6 +715,26 @@ namespace gnubase::engine::settings
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}, 5, true},
 				{"project.autoSaveInterval", "Minutes between auto saves.",
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 120}}, 15, true},
+				// Render in place and freeze (docs/features/render-in-place.md).
+				{"render.freezeTail",
+					"The Freeze Channel Options dialog's Tail Size in seconds (reference manual p. 992), which Freeze "
+					"Selected Tracks (with Current Settings) freezes with too: track.freeze's tail.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 60}}, 30},
+				{"render.options",
+					"The Render Tracks and Render Selection dialogs' options (reference manual pp. 1471-1477), which "
+					"Render (with Current Settings) renders with too: track.renderInPlace's mode, processing, tail, "
+					"sampleFormat, sourceTracks and name.",
+					Json{{"type", "object"}, {"additionalProperties", false},
+						{"properties",
+							{{"mode", {{"type", "string"}, {"enum", {"oneEvent", "separateEvents", "blockEvents"}}}},
+								{"processing",
+									{{"type", "string"}, {"enum", {"dry", "channelSettings", "completeSignalPath"}}}},
+								{"tail", {{"type", "number"}, {"minimum", 0}, {"maximum", 60}}},
+								{"sampleFormat",
+									{{"type", "string"}, {"enum", {"int16", "int24", "int32", "float32", "float64"}}}},
+								{"sourceTracks", {{"type", "string"}, {"enum", {"keep", "mute", "disable", "remove"}}}},
+								{"name", {{"type", "string"}, {"minLength", 1}}}}}},
+					Json::object()},
 				{"transport.cycleFollowsMarkers",
 					"Locating to a marker sets the left and right locators to it (marker.locate, marker.locateNext, "
 					"marker.locatePrevious): a cycle marker's range, or from a position marker to the next marker.",
@@ -969,13 +1019,15 @@ namespace gnubase::engine::settings
 				{"ui.samplerPanel",
 					"The sampler panel's toolbar (#1122, reference manual pp. 712, 735): lockParameters, Lock "
 					"Parameter Settings, whether a sample loaded into the sampler keeps its settings, and "
-					"normalizeLevel, the Normalization Level in dBFS that Normalize Sample brings the peak to. Other "
-					"properties, from later versions, are kept.",
+					"normalizeLevel, the Normalization Level in dBFS that Normalize Sample brings the peak to, and "
+					"snapToZero, Snap to Zero Crossing (p. 713), whether a drag of a marker of the sample's start, end "
+					"or loop ends where the sample crosses zero. Other properties, from later versions, are kept.",
 					Json{{"type", "object"},
 						{"properties",
 							{{"lockParameters", {{"type", "boolean"}}},
-								{"normalizeLevel", {{"type", "number"}, {"minimum", -96}, {"maximum", 0}}}}}},
-					Json{{"lockParameters", false}, {"normalizeLevel", 0}}},
+								{"normalizeLevel", {{"type", "number"}, {"minimum", -96}, {"maximum", 0}}},
+								{"snapToZero", {{"type", "boolean"}}}}}},
+					Json{{"lockParameters", false}, {"normalizeLevel", 0}, {"snapToZero", false}}},
 				{"ui.setupPresets",
 					"The setup panes' presets (reference manual p. 1575, docs/features/docking.md), by set of "
 					"sections (transport, inspector, channel): each a name, the order of the set's sections and those "

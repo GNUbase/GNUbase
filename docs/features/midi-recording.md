@@ -69,13 +69,17 @@ undo step.
   stop mode, which the insert can't place against the new device's: the recorder counts the buffers' frames on across
   devices, as each device counts its own from 0, which leaves out how long the old device ran. Input during playback
   stays, before or after the device change, as the insert places it where it played (`tests/midirecording_tests.cpp`).
-  `midi.clearRetrospective` empties one track's buffer or all of them; the Transport menu's MIDI Retrospective
-  Recording > Empty All Buffers runs it for all (p. 356).
+  `midi.insertRetrospective` with `cycle` is Insert as Cycle Recording (p. 355): only the input from playback, one take
+  per cycle lap, inserted as stacked parts on lanes of their own, all but the last muted (`recording.add`'s `cycleMode`
+  stacked). Laps after the first start at the left locator, and those playback left end at the right one; it needs input
+  from at least two laps. `midi.clearRetrospective` empties one track's buffer or all of them; the Transport menu's MIDI
+  Retrospective Recording > Empty All Buffers runs it for all (p. 356). The Retrospective Recording button among the
+  inspector's top buttons of a MIDI or instrument track opens its pop-up menu (pp. 354-356): Insert as Linear Recording,
+  Insert as Cycle Recording and Empty Retrospective Record Buffer, for that track (`tests/inspector_tests.cpp`).
 
 ## Not yet
 
-Choosing a single MIDI input port for a track (p. 348); the inspector's Retrospective Recording menu and Insert as
-Cycle Recording (pp. 354-356); Record in Editor (p. 349); Length Adjustment, Insert Reset Events after Record and the
-latency compensation for live playing (p. 350, p. 1616); the MIDI thru filter and the reference's Record-Enable allows
-MIDI Thru switch; retrospective recording from all MIDI inputs and its Insert from All MIDI Inputs (p. 354); SysEx from
-the inputs.
+Choosing a single MIDI input port for a track (p. 348); Record in Editor (p. 349); Length Adjustment, Insert Reset
+Events after Record and the latency compensation for live playing (p. 350, p. 1616); the MIDI thru filter and the
+reference's Record-Enable allows MIDI Thru switch; retrospective recording from all MIDI inputs and its Insert from All
+MIDI Inputs (p. 354); SysEx from the inputs.

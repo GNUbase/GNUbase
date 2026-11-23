@@ -92,9 +92,10 @@ part, or else channel 0.
 - **A right click below a lane's name** (p. 1261) opens `#controller-lane-context-menu` at the mouse: the lane types,
   named controllers and the Continuous Controllers to add a lane, and Remove This Lane of the lane it opened for.
 - **Bars are thin**: a press on a note lane that misses a bar takes the note starting nearest in the grid cell.
-- **Gestures**: while a drag goes on the lanes hear the mouseup in the whole document, so a drag released outside the
-  lanes ends there, with its effect at that point. A left press anywhere in the document while a drag goes on means its
-  mouseup never came (released outside the window): the drag ends without its effect.
+- **Gestures**: while a drag goes on the lanes hear the mouseup in every document of the window (on its context's root
+  element, #864), so a drag released outside the lanes, also over a floating panel, ends there, with its effect at that
+  point. A left press anywhere in the window while a drag goes on means its mouseup never came (released outside the
+  window): the drag ends without its effect. Only the left button ends or cancels a drag.
 - **Rendering**: `show` keeps the view and the parts it shows, not the whole project, and indexes the parts and the
   selection once, so each lane's items take a pass over the parts' notes or events.
 
@@ -133,6 +134,9 @@ editor's lanes.
   Remove This Lane, play probability drawn, applied and reset, Apply and Reset MIDI Velocity Variance over two parts as
   one undo step, Show/Hide and Show Velocity Lane Only; a right click below a lane's name adding a lane and removing
   that one; the line tool and painting on a lane whose events are on another channel; drags released outside the lanes
-  and never released; Auto Select Controllers with a note moved; a preset saved with Add Preset, loaded and removed with
-  Remove Preset; events drawn on a lane playing back; a step that another event now starts with losing its width
-  (#1580). `tests/uithemes_tests.cpp`: every theme draws play probability and velocity variance bars dashed.
+  and over another document of the window, and never released (#864); a right release and press during a value drag
+  ending nothing; the line tool released left of the part and over the toolbar; a value drag over the selected notes of
+  two parts as one undo step; a poly pressure lane with two selected notes; Auto Select Controllers with a note moved; a
+  preset saved with Add Preset, loaded and removed with Remove Preset; events drawn on a lane playing back; a step that
+  another event now starts with losing its width (#1580). `tests/uithemes_tests.cpp`: every theme draws play probability
+  and velocity variance bars dashed.

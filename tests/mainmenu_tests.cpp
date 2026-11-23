@@ -109,8 +109,8 @@ TEST_CASE("main menu items show their keys and run engine commands with their pa
 	app.shell().step(std::chrono::milliseconds(0));
 
 	CHECK(keysOf(app, "menuitem[command=\"history.undo\"]") == keyName("Mod+Z"));
-	CHECK(keysOf(app, "menuitem[command=\"transport.toggle\"]") == "Space");
-	CHECK(keysOf(app, "menuitem[command=\"edit.delete\"]") == "Delete"); // the first of its keys
+	CHECK(keysOf(app, "#transport-menu > menuitem[command=\"transport.toggle\"]") == "Space"); // Start/Stop
+	CHECK(keysOf(app, "menuitem[command=\"edit.delete\"]") == "Delete");                       // the first of its keys
 	CHECK(keysOf(app, "menuitem[command=\"window.studioSetup\"]").empty());
 
 	// Transport > Locators > Go to Right Locator Position: transport.locate with the item's parameters.
@@ -236,7 +236,7 @@ TEST_CASE("main menu items are disabled while their command can't run", "[ui]")
 	// Nothing to undo or redo in a new project.
 	CHECK(disabled(app, "menuitem[command=\"history.undo\"]"));
 	CHECK(disabled(app, "menuitem[command=\"history.redo\"]"));
-	CHECK(!disabled(app, "menuitem[command=\"transport.toggle\"]"));
+	CHECK(!disabled(app, "#transport-menu > menuitem[command=\"transport.toggle\"]"));
 
 	app.call("track.add", {{"type", "audio"}});
 	REQUIRE(app.waitUntil([&app] { return !disabled(app, "menuitem[command=\"history.undo\"]"); }));

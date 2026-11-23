@@ -49,7 +49,7 @@
 			width: 0dp;
 		}
 
-		.patches .unavailable
+		.patches .unavailable, #bank-assignment.unavailable
 		{
 			display: none;
 		}
@@ -80,6 +80,13 @@
 		.devices .row button
 		{
 			flex: 1;
+		}
+
+		#bank-assignment span
+		{
+			display: flex;
+			flex: 1;
+			margin-left: 6dp;
 		}
 
 		.devices .row button:first-child
@@ -159,6 +166,24 @@
 			document:GetElementById("patch-banks"):SetAttribute("value", "")
 		end
 
+		-- Bank Assignment (p. 1109): with several banks, the bank that the channel chosen uses, or all of them.
+		local function assignment(document)
+			local device = manager.devices[selectedName(document)]
+			local channel = tostring(document:GetElementById("assign-channel"):GetAttribute("value") or "1")
+			return device, channel, device and (device.bankAssignment or {})[channel]
+		end
+		local function showAssignment(document)
+			local device, _, assigned = assignment(document)
+			document:GetElementById("bank-assignment"):SetClass("unavailable", device == nil or #device.banks < 2)
+			local options = {'<option value="">All Banks</option>'}
+			for b, bank in ipairs(device and device.banks or {}) do
+				options[#options + 1] = '<option value="' .. (b - 1) .. '"' .. (assigned == b - 1 and " selected" or "") ..
+					">" .. escape(bank.name) .. "</option>"
+			end
+			document:GetElementById("assign-banks").inner_rml = '<select id="assign-bank" title="Bank Assignment" ' ..
+				'onchange="MidiDevices.assign(document)">' .. table.concat(options) .. "</select>"
+		end
+		manager.showAssignment = showAssignment
 		-- Reads the devices from the engine; selected is the name to select.
 		function manager.load(document, selected, devices)
 			busy = true
@@ -185,6 +210,7 @@
 				document:GetElementById("remove-device"):RemoveAttribute("disabled")
 			end
 			showPatches(document)
+			showAssignment(document)
 			manager.edit(document)
 		end
 
@@ -198,6 +224,12 @@
 
 		function manager.open(document)
 			manager.document = document
+			local channels = {}
+			for channel = 1, 16 do
+				channels[channel] = '<option value="' .. channel .. '">Channel ' .. channel .. "</option>"
+			end
+			document:GetElementById("assign-channels").inner_rml = '<select id="assign-channel" title="MIDI Channel" ' ..
+				'onchange="MidiDevices.showAssignment(document)">' .. table.concat(channels) .. "</select>"
 			manager.load(document)
 			gnubase.on("settings.changed", manager.follow)
 		end
@@ -209,9 +241,27 @@
 
 		function manager.select(document)
 			showPatches(document)
+			showAssignment(document)
 			manager.edit(document)
 		end
 
+		function manager.assign(document)
+			local device, channel = assignment(document)
+			if device == nil then
+				return
+			end
+			local bank = tostring(document:GetElementById("assign-bank"):GetAttribute("value") or "")
+			local assigned = device.bankAssignment or {}
+			assigned[channel] = tonumber(bank)
+			busy = true
+			local ok, result = pcall(gnubase.midiDevice.set,
+				{name = selectedName(document), banks = device.banks, bankAssignment = assigned})
+			busy = false
+			report(document, ok and "" or tostring(result))
+			if ok then
+				device.bankAssignment = result.device.bankAssignment
+			end
+		end
 		local function selection(document)
 			local device = manager.devices[selectedName(document)]
 			local key = tostring(document:GetElementById("patch-banks"):GetAttribute("value") or "")
@@ -289,7 +339,11 @@
 						key = "patch" .. b .. "-" .. #bank.patches
 					elseif action == "remove" then
 						if kind == "bank" then
-							table.remove(device.banks, b)
+							table.remove(device.banks, b) -- the channels assigned the banks after it keep them
+							for channel, assigned in pairs(device.bankAssignment or {}) do
+								device.bankAssignment[channel] = assigned + 1 ~= b and
+									(assigned + 1 > b and assigned - 1 or assigned) or nil
+							end
 						elseif kind == "patch" and patch ~= nil then
 							table.remove(bank.patches, p)
 							key = "bank" .. b
@@ -336,7 +390,7 @@
 						end
 					end
 				end
-				gnubase.midiDevice.set{name = name, banks = device.banks}
+				gnubase.midiDevice.set{name = name, banks = device.banks, bankAssignment = device.bankAssignment or {}}
 				return key
 			end)
 			busy = false
@@ -398,6 +452,7 @@
 					<button id="install-device" onclick="MidiDevices.install(document)">Install Device</button>
 					<button id="remove-device" onclick="MidiDevices.remove(document)">Remove Device</button>
 				</div>
+				<div class="row" id="bank-assignment">Bank Assignment<span id="assign-channels"/><span id="assign-banks"/></div>
 			</div>
 			<div class="patches">
 				<listview id="patch-banks" title="Patch Banks" onchange="MidiDevices.edit(document)"

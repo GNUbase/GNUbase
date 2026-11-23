@@ -24,9 +24,11 @@ namespace gnubase::ui
 {
 	// Gives a document's <menuitem command="..."> elements their command: a click runs it as a key would
 	// (KeyCommands::run), with the JSON object in the item's parameters attribute, in the window and the focus zone
-	// around the item. Each item shows the command's first key in a .menu-keys element and is disabled while the
-	// command can't run (KeyCommands::canRun), and checked while KeyCommands::checked says so. Use it on the UI thread;
-	// the key commands, the window and the document must outlive it.
+	// around the item. Items in the menus of a <menubar>'s titles run in the zone that had the focus before the menu
+	// opened instead, as keys would, e.g. Edit > Quantize on the lower zone editor's notes (#761). Each item shows the
+	// command's first key in a .menu-keys element and is disabled while the command can't run (KeyCommands::canRun),
+	// and checked while KeyCommands::checked says so. Use it on the UI thread; the key commands, the window and the
+	// document must outlive it.
 	class MainMenu final : private Rml::EventListener
 	{
 	public:
@@ -59,11 +61,16 @@ namespace gnubase::ui
 			Rml::ObserverPtr<Rml::Element> keys; // its .menu-keys
 			std::string command;
 			engine::Json parameters;
-			std::string shownKeys; // the RML last written into keys
+			std::string shownKeys;  // the RML last written into keys
+			bool inMenuBar = false; // in the menu of a <menubar>'s title, or in one of its submenus
 		};
 
 		// Enables or disables the item's element, if it changed.
 		static void enable(Rml::Element& element, bool enabled);
+
+		// The focus zone the items of the menu bar's menus run in: the focused element's, or while a menu or the menu
+		// bar has the focus, the zone of the element that had it before. Null without a zone.
+		Rml::Element* barZone() const;
 
 		void ProcessEvent(Rml::Event& event) override;
 
@@ -71,6 +78,7 @@ namespace gnubase::ui
 		Window& m_window;
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::vector<Item> m_items;
-		std::optional<uint64_t> m_keysRevision; // of the bindings the items show the keys of
+		std::optional<uint64_t> m_keysRevision;     // of the bindings the items show the keys of
+		Rml::ObserverPtr<Rml::Element> m_focusZone; // of the element that had the focus when a menu took it
 	};
 }

@@ -140,7 +140,10 @@ namespace gnubase::ui
 		Subscription m_arrangerChanged;
 		engine::Json m_arrangerChain = engine::Json::object(); // the active chain's id and steps, as the list shows
 		Rml::ObserverPtr<Rml::Element> m_stepMenu;             // the chain list's context menu
+		Rml::ObserverPtr<Rml::Element> m_retrospectiveMenu;    // Retrospective Recording's pop-up menu
 		int m_touchedStep = -1;                                // the step right-clicked, for Remove Touched
+		std::vector<int> m_selectedSteps; // the steps selected, by index, for Remove Selected; a chain edit clears them
+		int m_stepAnchor = -1;            // the step clicked last, where Shift selects from
 		Subscription m_transportChanged;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};

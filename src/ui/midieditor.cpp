@@ -86,9 +86,43 @@ namespace gnubase::ui
 		constexpr int g_indent = 12;
 	}
 
-	MidiEditor::MidiEditor(
-		EngineBinding& binding, Rml::Element& root, std::string view, EditorPart part, std::function<void()> moved)
-		: m_binding(binding), m_root(root.GetObserverPtr()), m_name(std::move(view)), m_part(part),
+	void ProjectReads::read(std::function<void(const engine::Result&)> done)
+	{
+		if (m_loading && m_binding.handed() != m_sentAt)
+		{
+			m_next.push_back(std::move(done));
+			return;
+		}
+		m_current.push_back(std::move(done));
+		if (!m_loading)
+			send();
+	}
+
+	void ProjectReads::send()
+	{
+		m_loading = true;
+		m_sentAt = m_binding.handed();
+		m_binding.send("project.get", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired())
+					return;
+				m_loading = false;
+				const std::vector<std::function<void(const engine::Result&)>> done = std::exchange(m_current, {});
+				// Before the answer goes on, so that an editor that asks again in it joins the next read.
+				if (!m_next.empty())
+				{
+					m_current = std::exchange(m_next, {});
+					send();
+				}
+				for (const std::function<void(const engine::Result&)>& each : done)
+					each(result);
+			});
+	}
+
+	MidiEditor::MidiEditor(EngineBinding& binding, ProjectReads& reads, Rml::Element& root, std::string view,
+		EditorPart part, std::function<void()> moved)
+		: m_binding(binding), m_reads(reads), m_root(root.GetObserverPtr()), m_name(std::move(view)), m_part(part),
 		  m_moved(std::move(moved))
 	{
 		if (m_part == EditorPart::Editor)
@@ -204,7 +238,7 @@ namespace gnubase::ui
 			}
 	}
 
-	// ponytail: reads the whole project after every change, as the event display does.
+	// ponytail: reads the whole project after every change, as the event display does, once for all the editors.
 	void MidiEditor::requestProject()
 	{
 		if (m_loading)
@@ -213,7 +247,7 @@ namespace gnubase::ui
 			return;
 		}
 		m_loading = true;
-		m_binding.send("project.get", Json::object(),
+		m_reads.read(
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (alive.expired())

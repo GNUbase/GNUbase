@@ -464,6 +464,7 @@ namespace gnubase::ui
 			{"element", nodeOrNull(context.GetElementAtPoint({static_cast<float>(at.x), static_cast<float>(at.y)}))}};
 		dropFiles(shown, at, files);
 		m_shell.inputHandled();
+		shown.requestRender();
 		return result;
 	}
 

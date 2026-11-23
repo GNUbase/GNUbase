@@ -95,9 +95,12 @@ namespace gnubase::engine
 	Json toJson(const AudioPart& part);
 	Json toJson(const Note& note);
 	// A note's expression points (Note::expressions) from [{type, position, value}], sorted by position; name names
-	// them in errors. Throws std::invalid_argument for unknown types, negative positions and values out of range, or
-	// while loading a project leaves out points of unknown types and clamps the others, as the note's other values.
-	std::vector<ExpressionPoint> expressionsFromJson(const Json& json, const std::string& name, bool loading = false);
+	// them in errors. Throws std::invalid_argument for unknown types, negative positions, positions past longest (the
+	// longest project, longestProjectTicks, so that the note's start plus one can't overflow: #1831) and values out of
+	// range, or while loading a project leaves out points of unknown types and clamps the others, as the note's other
+	// values; loading's cutAtLongest cuts the positions then.
+	std::vector<ExpressionPoint> expressionsFromJson(
+		const Json& json, const std::string& name, time::Ticks longest, bool loading = false);
 	// The schema of a note's expressions in commands.
 	Json expressionsSchema();
 	Json toJson(const Controller& controller);

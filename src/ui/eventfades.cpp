@@ -231,6 +231,7 @@ namespace gnubase::ui
 			showVolume(lane, *event);
 		}
 		m_fadeLines->setLanes(std::move(lanes));
+		showVolumeReadout();
 	}
 
 	bool EventDisplay::openSelectedCrossfade()
@@ -300,6 +301,39 @@ namespace gnubase::ui
 		dialog->Show(Rml::ModalFlag::Modal);
 		m_dialog = dialog->GetObserverPtr();
 		m_dialogForObjects = !attributes.empty(); // events, or from and to
+	}
+
+	void EventDisplay::applyStandardFade(bool in)
+	{
+		const std::vector<uint64_t> events = selectedAudio();
+		if (events.empty())
+			return;
+		const char* key = in ? "editing.defaultFadeIn" : "editing.defaultFadeOut";
+		m_binding.send("settings.get", {{"key", key}},
+			[this, alive = std::weak_ptr<bool>(m_alive), events, in](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok())
+					return;
+				const Json& fade = result.value.at("value");
+				Json commands = Json::array();
+				// In each event's own clip's frames, as far as the other fade leaves room (p. 385).
+				for (const uint64_t id : events)
+					if (const auto found = m_fades.find(id); found != m_fades.end() && found->second.rate > 0.0)
+					{
+						const AudioFades& fades = found->second;
+						const int64_t room = std::max<int64_t>(0, fades.fadeRoom - (in ? fades.out : fades.in).length);
+						const int64_t length = std::min(
+							room, static_cast<int64_t>(std::llround(fade.at("length").get<double>() * fades.rate)));
+						commands.push_back({{"command", "audioEvent.setFades"},
+							{"parameters",
+								{{"event", id},
+									{in ? "fadeIn" : "fadeOut", {{"length", length}, {"shape", fade.at("shape")}}}}}});
+					}
+				if (!commands.empty())
+					edit("history.transaction",
+						{{"description", in ? "Apply Standard Fade In" : "Apply Standard Fade Out"},
+							{"commands", std::move(commands)}});
+			});
 	}
 
 	void EventDisplay::addFadeActions()
@@ -384,6 +418,8 @@ namespace gnubase::ui
 						edit("event.crossfade", {{"events", events}});
 				}},
 			// The quantize panel's Open Crossfade Editor (p. 379): only the editor.
-			{"audio.crossfadeEditor", [this] { openSelectedCrossfade(); }}});
+			{"audio.crossfadeEditor", [this] { openSelectedCrossfade(); }},
+			{"audio.applyStandardFadeIn", [this] { applyStandardFade(true); }},
+			{"audio.applyStandardFadeOut", [this] { applyStandardFade(false); }}});
 	}
 }

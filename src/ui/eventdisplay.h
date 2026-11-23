@@ -385,7 +385,8 @@ namespace gnubase::ui
 		// around the selected events. The Fades menu (#138, docs/features/fades.md): audio.fadeInToRange,
 		// audio.fadeOutFromRange and audio.adjustFadesToRange on the selection range, audio.crossfade (crossfades the
 		// selected audio events, or opens the crossfade editor for a crossfade they have), audio.removeFadeIn,
-		// audio.removeFadeOut, audio.removeFades and audio.fadeEditor (the fade dialog) on the selected audio events.
+		// audio.removeFadeOut, audio.removeFades, audio.fadeEditor (the fade dialog), and audio.applyStandardFadeIn
+		// and audio.applyStandardFadeOut (the default fades) on the selected audio events.
 		// audio.detectSilence, audio.spectrumAnalyzer and audio.statistics (#147, docs/features/audio-functions.md)
 		// open the Detect Silence dialog, the Spectrum Analyzer and the Statistics window for them.
 		// audio.removeVolumeCurve (#139, docs/features/volume-curves.md) resets the volume curves in the selection
@@ -747,6 +748,9 @@ namespace gnubase::ui
 			std::vector<engine::VolumePoint> curve;
 		};
 		void addFadeActions();
+		// Apply Standard Fade In or Out (reference manual p. 385): the user setting editing.defaultFadeIn or
+		// editing.defaultFadeOut on the selected audio events, as one undo step.
+		void applyStandardFade(bool in);
 		void readFades(const engine::Json& event, double rate, double timeRate);
 		// The fade handle at x and y dp in the event lanes, of a selected event (only those have handles): -1 its
 		// fade in's, 1 its fade out's, 0 none.
@@ -779,7 +783,14 @@ namespace gnubase::ui
 		// enough for one: dragging it gives every selected audio event the volume in dB that draggedVolume says.
 		std::optional<double> faderOf(const Shown& shown) const;
 		bool volumeDown(const Shown& shown, double x, double y);
+		// A move of the control dy dp from the press, fine with Shift (reference manual p. 402).
+		void volumeMove(double dy, bool fine);
 		void volumeUp();
+		// .volume-readout beside the dragged control: the pressed event's volume and its change since the press.
+		void showVolumeReadout();
+		// The mouse wheel lines over x and y dp in the event lanes, with editing.wheelEventVolumeAndFades: the volume
+		// of the audio event there, with Shift its fades (p. 382). Whether there was one.
+		bool wheelVolume(double x, double y, double lines, bool fades);
 		double draggedVolume(uint64_t event) const;
 		// The draw tool on an audio event: drags the curve point at x and y dp, or a new one there.
 		bool curveDown(const Shown& shown, double x, double y);
@@ -917,6 +928,7 @@ namespace gnubase::ui
 
 		engine::Engine& m_engine;
 		EngineBinding& m_binding;
+		const std::string m_wheelSteps; // what the wheel's steps over events change, for EngineBinding::sendStep
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the binding's answers after it went
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::Element* m_document = nullptr;
@@ -1004,6 +1016,7 @@ namespace gnubase::ui
 		std::map<uint64_t, AudioEventSpan> m_audioSpans;
 		std::string m_partMarksRml;     // what m_partMarks holds
 		Rml::Element* m_cuts = nullptr; // the .cutting-position lines
+		Rml::Element* m_volumeReadout = nullptr;
 		std::vector<int64_t> m_cuttingPositions;
 		size_t m_cutsShown = 0;                 // lines in m_cuts
 		std::map<uint64_t, AudioFades> m_fades; // by audio event
@@ -1026,6 +1039,7 @@ namespace gnubase::ui
 		uint64_t m_dragEvent = 0;       // pressed on
 		bool m_dragMoved = false;
 		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
+		double m_volumeDy = 0.0;           // dp from the press to the mouse, dragging the event volume
 		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
 		// Moving events, after the drag delay; a RangeMove drag, once across or on other tracks.
 		bool m_dragStarted = false;
@@ -1114,6 +1128,8 @@ namespace gnubase::ui
 		bool m_zoomHorizontalOnlyKnown = false;
 		bool m_treatMutedAudioLikeDeleted = true; // editing.treatMutedAudioLikeDeleted
 		bool m_treatMutedKnown = false;
+		bool m_wheelVolume = false; // editing.wheelEventVolumeAndFades
+		bool m_wheelVolumeKnown = false;
 		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, while the mouse is there
 		std::string m_held;           // the modifier keys held, as modifiersOf joins them, for the pointer
 		std::set<int> m_modifierKeys; // the modifier keys seen going down and not up (Rml::Input::KeyIdentifier)

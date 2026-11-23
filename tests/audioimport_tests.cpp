@@ -679,7 +679,9 @@ TEST_CASE("audioFile.import splits and converts a file in one pass into mono fil
 	}
 
 	// In one pass: the media folder holds the two mono files and no other audio file, such as a converted stereo file
-	// (#685); only their peak files may be next to them.
+	// (#685); only their peak files may be next to them. The peaks are written after the import, so the folder is
+	// listed once both are ready, not while a peak file is still a temporary one (#2059).
+	test::settlePeaks(song.client);
 	std::set<std::string> written;
 	for (const fs::directory_entry& entry : fs::directory_iterator(song.media))
 		if (entry.path().extension() != ".gbpeaks")

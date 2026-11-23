@@ -3,8 +3,10 @@
 // dummy device, driven with ui::Automation as MCP's UI tools drive it, with screenshots compared with golden images.
 #include "uiapp.h"
 
+#include "app/uitools.h"
 #include "engine/document/snap.h"
 #include "engine/time/tempomap.h"
+#include "mcp/server.h"
 #include "scripting/runtime.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
@@ -32,9 +34,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -163,6 +167,49 @@ TEST_CASE("UI tests click through GNUbase's UI and read it back, as MCP's UI too
 	CHECK(app.ui().dom(std::nullopt, "#name", 0).at("elements")[0].at("value") == "Bass");
 	const ui::Image field = app.ui().screenshot(std::nullopt, selector("#name"));
 	CHECK(field.width == static_cast<int>(200.0F * app.main().dpRatio()));
+}
+
+TEST_CASE("MCP's UI tools draw only the windows they change: reads draw none, input only its window (#745)", "[ui]")
+{
+	test::UiApp app;
+	app.keys().run("window.mixer", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.appUi().mixer(1) != nullptr; }));
+	const ui::Window* mixer = app.shell().find(app.appUi().mixerWindow(1));
+	REQUIRE(mixer != nullptr);
+	mcp::Server server{app.engine()};
+	app::addUiTools(server, app.shell());
+	// Calls the tool on another thread, as the HTTP server does, while this thread steps the shell as the UI's loop.
+	const auto call = [&app, &server](const std::string& tool, const Json& arguments)
+	{
+		const std::string request = Json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/call"},
+			{"params", {{"name", tool}, {"arguments", arguments}}}}
+										.dump();
+		std::future<std::optional<std::string>> answer =
+			std::async(std::launch::async, [&server, request] { return server.handle(std::string_view(request)); });
+		while (answer.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready)
+			app.shell().step(std::chrono::milliseconds(0));
+		const Json response = Json::parse(answer.get().value_or("{}"));
+		INFO(tool << ": " << response.dump().substr(0, 300));
+		CHECK(!response.at("result").at("isError").get<bool>());
+	};
+	for (int i = 0; i < 10; ++i) // what opening the mixer changed
+		app.shell().step(std::chrono::milliseconds(20));
+
+	const uint64_t mainFrames = app.main().frames();
+	const uint64_t mixerFrames = mixer->frames();
+	const Json inMixer = {{"window", mixer->id()}};
+	call("ui_windows", Json::object());
+	call("ui_dom", Json::object());
+	call("ui_dom", inMixer);
+	call("ui_screenshot", Json::object());
+	call("ui_screenshot", inMixer);
+	call("ui_wait", {{"window", mixer->id()}, {"selector", "body"}});
+	CHECK(app.main().frames() == mainFrames);
+	CHECK(mixer->frames() == mixerFrames);
+
+	call("ui_move", {{"window", mixer->id()}, {"x", 10}, {"y", 10}});
+	CHECK(app.main().frames() == mainFrames);
+	CHECK(mixer->frames() > mixerFrames);
 }
 
 TEST_CASE("waitUntil waits on while what it reads isn't there yet, and fails with its error past the deadline", "[ui]")
