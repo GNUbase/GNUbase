@@ -653,7 +653,9 @@ TEST_CASE("sample editor Process keeps zero fades at different project and clip 
 			CHECK(event.at("fadeRoom") == 6013);
 		}
 		else
+		{
 			CHECK(event.at("length") == 4031);
+		}
 		CHECK(event.at("fadeIn").at("length") == 0);
 		CHECK(event.at("fadeOut").at("length") == 0);
 	}
