@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -721,6 +722,61 @@ TEST_CASE(
 	CHECK(points[0].value == 0.0);
 	CHECK(points[1].type == gnubase::plugin::NoteExpression::Tuning);
 	CHECK(points[1].value == 120.0);
+}
+
+TEST_CASE("expression points lie at most the longest project's end after their note's start", "[integration]")
+{
+	// #1831: so that a note's start plus a point's position can't overflow, as for positions and lengths (#1906).
+	// Points past the note's end stay possible, as a note shortened by the trim tool keeps them.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	Json project = run(client, "project.get");
+	const int64_t longest = longestProjectTicks(projectFromJson(project));
+	const auto note = [](Json expressions)
+	{
+		return Json{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+			{"expressions", std::move(expressions)}};
+	};
+	const std::string bound = "must be at most " + std::to_string(longest);
+	CHECK_THAT(reject(client, "note.add",
+				   {{"part", part}, {"notes", Json::array({note(Json::array({point("tuning", longest + 1, 1.0)}))})}}),
+		ContainsSubstring("notes[0].expressions[0].position " + bound));
+	const Json id = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				Json::array({note(Json::array({point("tuning", 2 * g_beatTicks, 1.0), point("pan", longest, 0.5)}))})}})
+						.at("notes")
+						.at(0)
+						.at("id");
+	CHECK_THAT(reject(client, "note.set",
+				   {{"part", part},
+					   {"notes",
+						   Json::array({{{"id", id},
+							   {"expressions", {point("pan", 0, 0.5), point("tuning", longest + 1, 1.0)}}}})}}),
+		ContainsSubstring("notes[0].expressions[1].position " + bound));
+	CHECK_THAT(reject(client, "note.replaceExpression",
+				   {{"part", part}, {"type", "tuning"},
+					   {"notes",
+						   Json::array({{{"id", id}, {"from", 0}, {"to", longest + 1},
+							   {"points", Json::array({{{"position", longest + 1}, {"value", 1.0}}})}}})}}),
+		ContainsSubstring("notes[0].points[0].position " + bound));
+	const Json changed = run(client, "note.replaceExpression",
+		{{"part", part}, {"type", "tuning"},
+			{"notes",
+				Json::array({{{"id", id}, {"from", 0}, {"to", longest},
+					{"points", Json::array({{{"position", longest}, {"value", 2.0}}})}}})}});
+	CHECK(pointsOf(changed.at("notes").at(0)) == Points{{"pan", longest, 500}, {"tuning", longest, 2000}});
+
+	// A project file can hold any position: loading cuts its points at the longest project.
+	project = run(client, "project.get");
+	project["midiParts"][0]["notes"][0]["expressions"] =
+		Json::array({point("tuning", 10, 1.0), point("pan", std::numeric_limits<int64_t>::max(), 0.5)});
+	const Project loaded = projectFromJson(project);
+	const std::vector<ExpressionPoint>& points = loaded.midiParts.at(part).notes.begin()->second.expressions;
+	REQUIRE(points.size() == 2);
+	CHECK(points[0].position == 10);
+	CHECK(points[1].position == longest);
 }
 
 TEST_CASE("note.replaceExpression replaces one expression's points in a span of each note and keeps the others",

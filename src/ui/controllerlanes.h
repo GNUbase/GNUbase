@@ -105,9 +105,9 @@ namespace gnubase::ui
 		void begin(Rml::Event& event);
 		// Ends the gesture without its effect.
 		void cancel();
-		// Hears the mouseup and, in the capture phase, the mousedown in the root's document while a gesture goes on,
-		// or stops hearing them.
-		void listen(bool document);
+		// Hears the mouseup and, in the capture phase, the mousedown in every document of the root's window while a
+		// gesture goes on, or stops hearing them.
+		void listen(bool on);
 		void drag(Rml::Event& event);
 		void release(Rml::Event& event);
 		void menuItem(Rml::Element& menu, Rml::Element& item);
@@ -201,8 +201,8 @@ namespace gnubase::ui
 		std::map<std::pair<uint64_t, uint64_t>, std::set<std::string>> m_attributeSelection;
 		Rml::ObserverPtr<Rml::Element> m_dialog;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
-		// The document that a gesture hears the mouseup in, wherever in it the mouse goes up.
-		Rml::ObserverPtr<Rml::Element> m_document;
+		// The context's root element that a gesture hears the mouseup in, wherever in the window the mouse goes up.
+		Rml::ObserverPtr<Rml::Element> m_listened;
 
 		Gesture m_gesture = Gesture::None;
 		size_t m_lane = 0;

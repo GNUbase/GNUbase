@@ -233,6 +233,8 @@ namespace gnubase::engine
 				{
 					cut(time::TimeBase::Musical, entry.second.position);
 					cut(time::TimeBase::Musical, entry.second.length);
+					for (ExpressionPoint& point : entry.second.expressions) // from the note's start (#1831)
+						cut(time::TimeBase::Musical, point.position);
 				}
 			});
 	}
