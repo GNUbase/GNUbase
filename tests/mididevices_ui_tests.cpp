@@ -414,6 +414,12 @@ TEST_CASE("the MIDI device manager's Bank Assignment gives a MIDI channel one ba
 	app.call("channel.set", {{"channel", added.at("channel").at("id")}, {"midiChannel", 0}});
 	CHECK(
 		app.waitUntil([&] { return programs() == std::vector<std::string>{"Off", "Patches / Piano", "Drums / Kit"}; }));
+	// A track on Any uses channel 1's bank (GNUbase's choice).
+	app.call("midiDevice.set",
+		{{"name", "Synth"}, {"banks", devices(app).at("Synth").at("banks")},
+			{"bankAssignment", {{"1", 1}, {"10", 1}}}});
+	app.call("channel.set", {{"channel", added.at("channel").at("id")}, {"midiChannel", nullptr}});
+	CHECK(app.waitUntil([&] { return programs() == std::vector<std::string>{"Off", "Kit"}; }));
 	// Removing a bank in the manager keeps the channels on the banks they had.
 	app.keys().run("window.midiDeviceManager", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&] { return !elements(app, "#patch-banks listitem[value=bank1]").empty(); }));
@@ -421,5 +427,5 @@ TEST_CASE("the MIDI device manager's Bank Assignment gives a MIDI channel one ba
 	click(app, "#patch-banks listitem[value=bank1]");
 	click(app, "#remove-patch");
 	REQUIRE(app.waitUntil([&] { return devices(app).at("Synth").at("banks").size() == 1; }));
-	CHECK(devices(app).at("Synth").value("bankAssignment", Json()) == Json{{"10", 0}});
+	CHECK(devices(app).at("Synth").value("bankAssignment", Json()) == Json{{"1", 0}, {"10", 0}});
 }

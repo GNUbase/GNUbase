@@ -579,13 +579,11 @@ namespace gnubase::engine::settings
 					"channel's last program change before that position.",
 					Json{{"type", "boolean"}}, true, true},
 				{"midi.devices",
-					"The installed MIDI devices (midiDevice.install), by name: each has banks, each bank a name and "
-					"patches, each patch a name, a program (0 to 127), an optional bank (0 to 16383, sent as bank "
-					"select MSB and LSB) and an optional folder it is listed in, and an optional bankAssignment, the "
-					"bank "
-					"by index that MIDI channels \"1\" to \"16\" use (midiDevice.set). A MIDI track that names a "
-					"device "
-					"(channel.set device) chooses its program and bank by patch.",
+					"The installed MIDI devices (midiDevice.install), by name: each has banks and an optional "
+					"bankAssignment. Each bank has a name and patches, each patch a name, a program (0 to 127), an "
+					"optional bank (0 to 16383, sent as bank select MSB and LSB) and an optional folder it is listed "
+					"in. bankAssignment gives MIDI channels \"1\" to \"16\" a bank by its index (midiDevice.set). A "
+					"MIDI track that names a device (channel.set device) chooses its program and bank by patch.",
 					midi::devicesSchema(), Json::object()},
 				{"midi.importAutomation",
 					"Import Controller as Automation Tracks (reference manual p. 365): importing a MIDI file in the "

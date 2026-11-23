@@ -461,7 +461,8 @@ namespace gnubase::ui
 					options.emplace_back(patchValue(program, bank), std::to_string(program + 1));
 				return options;
 			}
-			// The bank that the Bank Assignment gives the track's MIDI channel (Any is 1, p. 1109), else all of them.
+			// The bank that the Bank Assignment (p. 1109) gives the track's MIDI channel, else all of them. A track on
+			// Any uses channel 1's bank: GNUbase's choice, the manual doesn't say.
 			Json banks = device->at("banks");
 			const Json midiChannel = channel.value("midiChannel", Json());
 			const Json assigned =

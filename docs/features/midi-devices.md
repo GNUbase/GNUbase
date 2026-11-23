@@ -46,11 +46,12 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   Backspace in the patch tree removes its selected bank, folder or preset when Enable Edit is on.
 - **Bank Assignment** (pp. 1109, 1111). A device with several banks can give a MIDI channel one of them:
   `bankAssignment`, the bank's index in `banks` by the channel's number from `"1"` to `"16"`, which `midiDevice.set`
-  replaces (a channel it leaves out uses all banks) and keeps when it is left out, except for banks that are gone. The
-  inspector's program selector on a track whose MIDI channel has a bank (Any counts as 1) offers only that bank's
-  patches, without the bank's name. The manager shows it for a device with several banks (`#bank-assignment`): a MIDI
-  channel and its bank, All Banks for none; a bank that the manager removes takes its channels' assignment with it, and
-  the channels of the banks after it keep theirs (`tests/mididevices_ui_tests.cpp`, `tests/midipatches_tests.cpp`).
+  replaces (a channel it leaves out uses all banks) and keeps by index when it is left out, dropping indices past the
+  last bank, so a caller that removes a bank passes the shifted assignment, as the manager does. The inspector's program
+  selector on a track whose MIDI channel has a bank (Any counts as 1, GNUbase's choice) offers only that bank's patches,
+  without the bank's name. The manager shows it for a device with several banks (`#bank-assignment`): a MIDI channel and
+  its bank, All Banks for none; a bank that the manager removes takes its channels' assignment with it, and the channels
+  of the banks after it keep theirs (`tests/mididevices_ui_tests.cpp`, `tests/midipatches_tests.cpp`).
 
 ## Not yet
 

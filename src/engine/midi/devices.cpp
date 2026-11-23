@@ -135,7 +135,8 @@ namespace gnubase::engine::midi
 				"bankAssignment, the Bank Assignment (p. 1109), replaces the bank that MIDI channels use, by index "
 				"in banks, keyed by the channel's number from \"1\" to \"16\": the program selector of a MIDI track "
 				"on such a channel (Any is 1) offers only that bank's patches. Without it the device keeps its "
-				"assignment, except for banks that are gone. Edits only this device in the user setting midi.devices, "
+				"assignment by index and drops indices past the last bank, so a caller that removes a bank passes the "
+				"shifted assignment. Edits only this device in the user setting midi.devices, "
 				"announces settings.changed, and returns the device. Tracks keep their selected program and bank.",
 				editSchema, {{"type", "object"}, {"properties", {{"device", device}}}, {"required", {"device"}}},
 				false},
