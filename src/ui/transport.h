@@ -43,6 +43,8 @@ namespace gnubase::ui
 	//                                button goes up, as a key held would, e.g. Forward, which winds while held
 	//   state="cycle"                checked while the transport's value is true: cycle, punchIn, punchOut,
 	//                                preRoll, postRoll, metronome, playing or recording
+	//   waiting="recordWaiting"      the state class .waiting while the transport's value is true: Record while a
+	//                                recording waits for the end of the pre-roll or the punch in (#2039)
 	//   time="position|left|right|length|preRollAmount|postRollAmount" format="primary|secondary|timeDisplay"
 	//                                the project cursor, a locator, the locator range or the pre-roll and post-roll
 	//                                amounts (lengths from the left and the right locator) in the time format of that

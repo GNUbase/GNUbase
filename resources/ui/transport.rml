@@ -32,7 +32,7 @@
 	<button id="cycle" class="icon-only" command="transport.toggle" parameters='{"setting": "cycle"}' state="cycle" title="Cycle"><svg class="icon" src="../icons/transport-loop.svg"/></button>
 	<button id="stop" class="icon-only" command="transport.stop" title="Stop"><svg class="icon" src="../icons/transport-stop.svg"/></button>
 	<button id="start" class="icon-only" command="transport.play" state="playing" title="Start"><svg class="icon" src="../icons/transport-play.svg"/></button>
-	<button id="record" class="icon-only" command="transport.toggle" parameters='{"setting": "record"}' state="recording" title="Record"><svg class="icon" src="../icons/transport-record.svg"/></button>
+	<button id="record" class="icon-only" command="transport.toggle" parameters='{"setting": "record"}' state="recording" waiting="recordWaiting" title="Record"><svg class="icon" src="../icons/transport-record.svg"/></button>
 </div>
 <div class="transport-section" section="timeDisplays" label="Time Displays" title="Time Displays">
 	<button id="primary-format" class="icon-only" menu="primary-format-menu" title="Select Primary Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>

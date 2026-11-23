@@ -517,6 +517,9 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (".transport button#record.checked", {"decorator": "none", "background-color": record},
          {"decorator": skin("button-checked")}),
         (".transport #record.checked svg.icon", {"image-color": "#ffffff"}, {"image-color": c["text"]}),
+        # A recording that waits for the end of the pre-roll or the punch in: Record half filled (#2039)
+        (".transport button#record.waiting", {"decorator": "none", "background-color": record + "40"},
+         {"decorator": skin("button-pressed")}),
         # The primary time display bold and in the titles' size; the position displays' height follows it (#1342)
         (".transport .primary-time", {"color": c["text"], "font-weight": "600",
                                       "font-size": f"{theme['fontSizes']['title']}dp"}, {}),

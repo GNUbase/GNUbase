@@ -96,12 +96,13 @@ namespace gnubase::engine
 				"midiRecordMode": {"type": "string", "enum": ["newParts", "merge", "replace"]},
 				"midiCycleRecordMode": {"type": "string",
 					"enum": ["mix", "overwrite", "keepLast", "stacked", "mixStacked"]},
-				"lockRecord": {"type": "boolean"},
+				"lockRecord": {"type": "boolean"}, "recordWaiting": {"type": "boolean"},
 				"arranger": {"type": "object", "properties": {"step": {"type": "integer"},
 					"repeat": {"type": "integer"}, "event": {"type": "integer"}}}},
 			"required": ["playing", "recording", "countingIn", "position", "start", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
-				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord", "arranger"]})");
+				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord", "recordWaiting",
+				"arranger"]})");
 		}
 
 		Json noParameters()
@@ -3090,7 +3091,8 @@ namespace gnubase::engine
 			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))},
 			{"midiRecordMode", g_midiRecordModes.at(static_cast<size_t>(settings.midiRecordMode))},
 			{"midiCycleRecordMode", g_midiCycleRecordModes.at(static_cast<size_t>(settings.midiCycleRecordMode))},
-			{"lockRecord", settings.lockRecord}, {"arranger", arrangerStatus()}};
+			{"lockRecord", settings.lockRecord}, {"recordWaiting", m_transport.recordWaits()},
+			{"arranger", arrangerStatus()}};
 	}
 
 	Json AudioEngine::arrangerStatus() const
@@ -3564,7 +3566,9 @@ namespace gnubase::engine
 				"(start, in samples, without the pre-roll), the locators and the modes. "
 				"After a locate the cursor is where it goes, even before the audio thread has applied it. countingIn: "
 				"the metronome counts in before a recording from stop (see transport.record); meanwhile playing is "
-				"true, and recording is whether recording starts where playback starts.",
+				"true, and recording is whether recording starts where playback starts. recordWaiting: a recording "
+				"waits for where it starts, the end of the pre-roll or the punch in at the left locator; meanwhile "
+				"recording is false, and transport.toggle with record cancels it.",
 				noParameters(), transportSchema(), true},
 			[this](CommandContext&) { return transportStatus(); });
 	}

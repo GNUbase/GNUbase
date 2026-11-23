@@ -2429,3 +2429,25 @@ TEST_CASE(
 	click(app, "#use-pre-roll");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("preRoll") == true; }));
 }
+
+TEST_CASE(
+	"the Record button shows a recording that waits for the pre-roll, and a second press cancels it (#2039)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	// A minute of pre-roll: the wait outlasts the test.
+	app.call("transport.set", {{"preRoll", true}, {"preRollAmount", 48000 * 60}});
+	app.call("transport.locate", {{"position", 48000 * 60}});
+	click(app, "#record");
+	REQUIRE(app.waitUntil([&app] { return hasClass(app, "#record", "waiting"); }));
+	CHECK(!checked(app, "#record"));
+	CHECK(transport(app).at("recordWaiting") == true);
+	click(app, "#record");
+	REQUIRE(app.waitUntil([&app] { return !hasClass(app, "#record", "waiting"); }));
+	const Json state = transport(app);
+	CHECK(state.at("recordWaiting") == false);
+	CHECK(state.at("recording") == false);
+	CHECK(!checked(app, "#record"));
+	click(app, "#stop");
+	REQUIRE(waitFor(app, [](const Json& stopped) { return stopped.at("playing") == false; }));
+}

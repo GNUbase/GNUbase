@@ -760,11 +760,15 @@ namespace gnubase::ui
 	{
 		if (!alive())
 			return;
-		for (Rml::Element* element : all("[state]"))
+		const auto on = [this](const std::string& key)
 		{
-			const auto value = m_status.find(attribute(*element, "state"));
-			setChecked(*element, value != m_status.end() && value->is_boolean() && value->get<bool>());
-		}
+			const auto value = m_status.find(key);
+			return value != m_status.end() && value->is_boolean() && value->get<bool>();
+		};
+		for (Rml::Element* element : all("[state]"))
+			setChecked(*element, on(attribute(*element, "state")));
+		for (Rml::Element* element : all("[waiting]"))
+			element->SetClass("waiting", on(attribute(*element, "waiting")));
 		showTempo();
 		for (Rml::Element* element : all("[field=tempoTrack]"))
 			setChecked(*element, m_tempoTrackActive);

@@ -1870,6 +1870,11 @@
 	{
 		image-color: #ffffff;
 	}
+	.transport button#record.waiting
+	{
+		decorator: none;
+		background-color: #ff527040;
+	}
 	.transport .primary-time
 	{
 		color: #f1f4ff;
@@ -2062,6 +2067,10 @@
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}
 	.transport button#record.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	.transport button#record.waiting:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}
