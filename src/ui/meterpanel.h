@@ -54,8 +54,10 @@ namespace gnubase::ui
 	// a true peak meter per channel of the main mix with its RMS level, RMS Max. and Peak Max., and the loudness meter,
 	// with the momentary and short-term loudness and their values as the engine measures them; the Master and
 	// Loudness buttons at its bottom switch between them, and each page's reset resets its own values (meter.reset
-	// with meters "main" or "loudness"), and a Ctrl-click on RMS Max. or Peak Max. resets that one alone. It reads the
-	// meters once a frame through the reader. Use it on the UI thread; the reader and the binding must outlive it.
+	// with meters "main" or "loudness"), and a Ctrl-click on RMS Max. or Peak Max. resets that one alone. Configure
+	// Meter Settings and Configure Loudness Settings open the meter settings pane (pp. 538-540) with the user settings
+	// meter.resetOnStart, meter.rmsAes17 and meter.rmsResolution. It reads the meters once a frame through the reader.
+	// Use it on the UI thread; the reader and the binding must outlive it.
 	class MeterPanel final : private Rml::EventListener
 	{
 	public:
@@ -71,11 +73,15 @@ namespace gnubase::ui
 		// What the display shows: each main channel's true peak, RMS level and peak maximum, then the texts.
 		std::vector<std::string> read();
 		void show(const std::vector<std::string>& shown);
+		// A user setting's value in the meter settings pane.
+		void showSetting(const std::string& key, const engine::Json& value);
 
 		MeterReader& m_reader;
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::shared_ptr<std::vector<uint64_t>> m_shows; // before m_meters, so the reader reads first
 		Subscription m_meters;
+		std::optional<Subscription> m_settings;
+		std::shared_ptr<bool> m_alive = std::make_shared<bool>(); // for the answers to settings.get
 	};
 }

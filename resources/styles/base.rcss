@@ -2747,9 +2747,41 @@ splitter.column .splitter-grip-horizontal
 	float: right;
 }
 
-.meter-display .meter-reset
+.meter-display .meter-reset, .meter-display .meter-configure
 {
 	margin-top: 4dp;
+}
+
+/* The meter settings pane, which Configure Meter Settings and Configure Loudness Settings open (.settings), under the
+   page: sections of a setting per row, its name to the left of its control. */
+.meter-display .meter-settings
+{
+	display: none;
+	margin-top: 6dp;
+}
+
+.meter-display.settings .meter-settings
+{
+	display: block;
+}
+
+.meter-display .meter-settings div
+{
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 2dp 0;
+}
+
+.meter-display .meter-settings .meter-settings-title
+{
+	font-weight: bold;
+}
+
+.meter-display .meter-settings valuefield
+{
+	width: 64dp;
+	height: 18dp;
 }
 
 .meter-display .meter-buttons

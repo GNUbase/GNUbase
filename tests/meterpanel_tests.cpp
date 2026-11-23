@@ -381,6 +381,51 @@ TEST_CASE("a channel meter's bars fall back from a peak at meter.fallback", "[ui
 	REQUIRE(app.waitUntil([&bar] { return bar() == -200.0F; }));
 }
 
+TEST_CASE("the meter settings pane sets Reset on Start and the master meter's RMS settings", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.appUi().docking().open("meter");
+	const auto setting = [&app](const std::string& key)
+	{ return app.call("settings.get", {{"key", key}}).at("value"); };
+	REQUIRE(app.waitUntil([&app] { return shown(app, ".meter-master .meter-configure"); }));
+	CHECK_FALSE(shown(app, ".meter-settings"));
+
+	// Configure Meter Settings opens the pane (p. 538), and closes it again.
+	click(app, ".meter-master .meter-configure");
+	REQUIRE(app.waitUntil([&app] { return shown(app, ".meter-settings"); }));
+	click(app, "[setting=\"meter.resetOnStart\"]");
+	click(app, "[setting=\"meter.rmsAes17\"]");
+	REQUIRE(app.waitUntil([&setting] { return setting("meter.rmsAes17") == true; }));
+	CHECK(setting("meter.resetOnStart") == true);
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json field = elements(app, "[setting=\"meter.rmsResolution\"]");
+			return !field.empty() && field[0].at("attributes").value("value", std::string()) == "300";
+		}));
+	app.ui().wheel(std::nullopt, {".meter-display [setting=\"meter.rmsResolution\"]", 0, std::nullopt}, 0.0F, -10.0F);
+	REQUIRE(app.waitUntil([&setting] { return setting("meter.rmsResolution") > 300; }));
+	click(app, ".meter-master .meter-configure");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, ".meter-settings"); }));
+
+	// The loudness page's Configure Loudness Settings opens the same pane, which follows the settings that MCP, Lua or
+	// the preferences change.
+	click(app, ".meter-tab[value=loudness]");
+	click(app, ".meter-loudness .meter-configure");
+	REQUIRE(app.waitUntil([&app] { return shown(app, ".meter-settings"); }));
+	app.call("settings.set", {{"key", "meter.rmsAes17"}, {"value", false}});
+	app.call("settings.set", {{"key", "meter.rmsResolution"}, {"value", 100}});
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json field = elements(app, "[setting=\"meter.rmsResolution\"]");
+			return !field.empty() && field[0].at("attributes").value("value", std::string()) == "100";
+		}));
+	CHECK_FALSE(elements(app, "[setting=\"meter.rmsAes17\"]").at(0).at("attributes").contains("checked"));
+	CHECK(elements(app, "[setting=\"meter.resetOnStart\"]").at(0).at("attributes").contains("checked"));
+}
+
 TEST_CASE("the meter reader reads only while a view shows meters", "[unit]")
 {
 	engine::Engine engine;
