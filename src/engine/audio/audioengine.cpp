@@ -559,15 +559,18 @@ namespace gnubase::engine
 		bool announce = !m_recordBitDepth.empty() && depth != m_recordBitDepth;
 		bool reopened = false;
 		m_recordBitDepth = depth;
-		// A new project sample rate: the device changes to it if it can, otherwise it plays faster or slower.
+		// A new project sample rate: the device changes to it if it can, otherwise it plays faster or slower, as an
+		// externally clocked one always does: its clock sets its rate (#405).
 		const double rate = m_snapshots.latest().sampleRate;
 		if (rate != m_projectRate)
 		{
 			const bool known = m_projectRate != 0.0; // not the first sync, which only learns the rate
 			m_projectRate = rate;
-			if (m_lost)
+			const Json& device = m_lost ? m_lost->parameters : m_parameters; // null without a device
+			const bool follow = !device.is_object() || !device.value("externallyClocked", false);
+			if (m_lost && follow)
 				m_lost->parameters.erase("sampleRate"); // it returns at the new rate if it supports it
-			if (m_device && m_device->format().sampleRate != rate && supports(m_device->info(), rate))
+			if (follow && m_device && m_device->format().sampleRate != rate && supports(m_device->info(), rate))
 			{
 				if (!m_lost)
 					m_parameters["sampleRate"] = rate;
@@ -584,7 +587,7 @@ namespace gnubase::engine
 				}
 				reopened = true;
 			}
-			else if (m_lost)
+			else if (follow && m_lost)
 			{
 				m_parameters.erase("sampleRate"); // it returns at the new rate if it supports it
 			}
@@ -1715,10 +1718,11 @@ namespace gnubase::engine
 			closeDevice();
 			throw CommandError("the driver of " + device + " can't monitor directly");
 		}
-		// Without a sample rate asked for, the device runs at the project's if it can.
+		// Without a sample rate asked for, the device runs at the project's if it can, unless an external clock sets
+		// its rate.
 		m_projectRate = m_snapshots.latest().sampleRate;
-		if (!parameters.contains("sampleRate") && m_device->format().sampleRate != m_projectRate &&
-			supports(info, m_projectRate))
+		if (!parameters.contains("sampleRate") && !parameters.value("externallyClocked", false) &&
+			m_device->format().sampleRate != m_projectRate && supports(info, m_projectRate))
 		{
 			Json atProjectRate = parameters;
 			atProjectRate["sampleRate"] = m_projectRate;
@@ -2309,7 +2313,8 @@ namespace gnubase::engine
 			{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels},
 			{"inputLatency", latency.input}, {"outputLatency", latency.output}, {"recordShift", m_recordShift},
 			{"recordOffset", m_recordOffset.load(std::memory_order_relaxed)}, {"directMonitoring", m_directMonitoring},
-			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate},
+			{"externallyClocked", m_parameters.value("externallyClocked", false)}, {"projectSampleRate", projectRate},
+			{"sampleRateMismatch", format.sampleRate != projectRate},
 			{"silenceReason", silenceReason.empty() ? Json(nullptr) : Json(silenceReason)}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
 			{"projectSampleRate", projectRate}, {"recordBitDepth", recordBitDepth},
@@ -2419,6 +2424,7 @@ namespace gnubase::engine
 					"backend": {"type": "string"}, "device": {"type": "string"}, "clockSource": {"type": "string"},
 					"sampleRate": {"type": "number"}, "blockSize": {"type": "integer"},
 					"recordShift": {"type": "integer"}, "directMonitoring": {"type": "boolean"},
+					"externallyClocked": {"type": "boolean"},
 					"inputChannels": {"type": "integer"}, "outputChannels": {"type": "integer"},
 					"captureSeconds": {"type": "number"}, "inputLatency": {"type": "integer"},
 					"outputLatency": {"type": "integer"}, "loopback": {"type": "boolean"},
@@ -2432,7 +2438,10 @@ namespace gnubase::engine
 				"platform's default backend, whose default device the OS plays on (wasapi, coreaudio or pipewire), or "
 				"the preferred one if this build lacks it. device: its id, by default the backend's default device. "
 				"sampleRate: by default the project's if the device supports it, otherwise the driver's current rate; "
-				"when the project's sample rate changes, the device follows it where it can. blockSize: by default "
+				"when the project's sample rate changes, the device follows it where it can. externallyClocked: the "
+				"hardware takes its clock from an external source, which sets its rate: the device neither opens at "
+				"the project's rate nor follows it, and plays faster or slower where they differ (sampleRateMismatch "
+				"in audio.get). blockSize: by default "
 				"the driver's preferred size. clockSource: a name from the device's clockSources. The device starts "
 				"at position 0, running if start says so, by default if the device it replaces ran (or, lost, was to "
 				"start again), or if the last audio.setDevice failed to run one it was to start. Another backend's "
@@ -2606,8 +2615,9 @@ namespace gnubase::engine
 				"of audio track playback were silent because a disk stream "
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
 				"sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as "
-				"it doesn't support the project's or was asked for another, and plays faster or slower, and "
-				"silenceReason why a running device plays silence (e.g. a PipeWire graph that another client holds at "
+				"it doesn't support the project's, was asked for another or is externallyClocked, and plays faster or "
+				"slower, and silenceReason why a running device plays silence (e.g. a PipeWire graph that another "
+				"client holds at "
 				"another rate), or null, which sends audio.changed when it changes; a new project "
 				"sample rate sends audio.changed. recordBitDepth is the project's (see project.set), for the record "
 				"format; a new one also sends audio.changed. lost: the device that went away (its backend, device id, "
