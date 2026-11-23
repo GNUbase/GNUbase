@@ -15,6 +15,7 @@ namespace gnubase::engine
 	{
 		State& state = *m_state;
 		std::unique_lock lock(state.mutex);
+		const bool measured = state.count != 0 && state.folder == folder;
 		if (!state.running)
 		{
 			state.running = true;
@@ -31,7 +32,9 @@ namespace gnubase::engine
 					shared->measured.notify_all();
 				})
 				.detach(); // a hanging disk keeps it, not the caller or the engine's end
-			state.measured.wait_for(lock, wait, [&state, before] { return state.count != before; });
+			// A folder with a measurement answers with it at once, so a slow one doesn't hold up the caller either
+			if (!measured)
+				state.measured.wait_for(lock, wait, [&state, before] { return state.count != before; });
 		}
 		if (state.count == 0 || state.folder != folder)
 			return std::nullopt;

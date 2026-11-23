@@ -23,8 +23,8 @@ namespace gnubase::engine
 		using Measure = std::function<uintmax_t(const std::filesystem::path& folder)>;
 		explicit DiskSpace(Measure measure = available);
 
-		// Starts a measurement of the folder unless one runs, and waits for it up to wait. Then the folder's latest
-		// measurement, or nullopt if it has none yet.
+		// Starts a measurement of the folder unless one runs. While the folder has no measurement yet, waits for it up
+		// to wait. Then the folder's latest measurement, or nullopt if it has none yet.
 		std::optional<uintmax_t> measure(const std::filesystem::path& folder, std::chrono::milliseconds wait);
 
 		static uintmax_t available(const std::filesystem::path& folder);

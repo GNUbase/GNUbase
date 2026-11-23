@@ -196,20 +196,22 @@ namespace gnubase::engine
 			return setup;
 		};
 		m_audio->setRecordSetup(recordSetup);
-		registerCommand({"recording.remainingTime", 1,
-							"The remaining record time (reference manual p. 356): how many seconds the record-enabled "
-							"audio tracks can record before the disk with the record folder is full, at the project's "
-							"sample rate and record bit depth; null while no track would record. With the space "
-							"available there in bytes, the channels that would record and the record folder: the "
-							"project's media folder Audio, or for an unsaved project a folder of the user's. The disk "
-							"is measured off the command thread: if that takes longer than a quarter of a second, it "
-							"answers with the folder's last measurement, and both are null while there is none.",
-							CommandInfo{}.parameters,
-							Json::parse(R"({"type": "object", "properties": {"seconds": {"type": ["number", "null"]},
+		registerCommand(
+			{"recording.remainingTime", 1,
+				"The remaining record time (reference manual p. 356): how many seconds the record-enabled "
+				"audio tracks can record before the disk with the record folder is full, at the project's "
+				"sample rate and record bit depth; null while no track would record. With the space "
+				"available there in bytes, the channels that would record and the record folder: the "
+				"project's media folder Audio, or for an unsaved project a folder of the user's. The disk "
+				"is measured off the command thread: each question starts a measurement unless one runs and "
+				"answers with the folder's last one at once; only while the folder has none yet does it "
+				"wait up to a quarter of a second for it, and both are null while there is none.",
+				CommandInfo{}.parameters,
+				Json::parse(R"({"type": "object", "properties": {"seconds": {"type": ["number", "null"]},
 								"availableBytes": {"type": ["integer", "null"]}, "channels": {"type": "integer"},
 								"folder": {"type": "string"}},
 								"required": ["seconds", "availableBytes", "channels", "folder"]})"),
-							true},
+				true},
 			[this, recordSetup, disk = std::make_shared<DiskSpace>()](CommandContext&)
 			{
 				const RecordSetup setup = recordSetup();

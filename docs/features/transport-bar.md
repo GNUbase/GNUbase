@@ -38,8 +38,9 @@ display at 150 % (#1450).
   commands through the UI's engine client, the UI's own commands in `AppUi`. Buttons with `state` are checked, the
   state class `.checked`, while the transport's value is true; they follow `transport.changed`, whoever changed it.
   Record also has `waiting="recordWaiting"`: the state class `.waiting` while a recording waits for the end of the
-  pre-roll or the punch in (`transport.get` `recordWaiting`), which the themes show as Record half filled; a click then
-  cancels the wait (#2039). The Transport menu's Pre-roll & Post-roll submenu has Use Pre-roll and Use Post-roll
+  pre-roll or the punch in (`transport.get` `recordWaiting`), which the flat GNUbase theme shows as Record filled with
+  the record color at a quarter opacity and the dark, light and high-contrast themes as pressed; a click then cancels
+  the wait (#2039). The Transport menu's Pre-roll & Post-roll submenu has Use Pre-roll and Use Post-roll
   (p. 303), `transport.toggle` with `preRoll` and `postRoll`, checked while they are on (#583).
   Buttons with `hold` run their command when the mouse button goes down and end it, as a key held, when it goes up,
   the mouse leaves the button or the window loses the keyboard focus. `ui::TransportControls` checks every control

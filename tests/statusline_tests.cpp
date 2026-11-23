@@ -230,8 +230,28 @@ TEST_CASE(
 		std::this_thread::sleep_for(10ms);
 	}
 	CHECK(available == uintmax_t{1000});
-	// Another folder waits for a measurement of its own.
-	CHECK(space.measure("b", 5s) == uintmax_t{2000});
+	// Once the folder has a measurement, a slow next one doesn't make the question wait: it answers with the last one.
+	{
+		const std::scoped_lock lock(disk->mutex);
+		disk->hangs = true;
+	}
+	const auto slow = std::chrono::steady_clock::now();
+	CHECK(space.measure("a", 5s) == uintmax_t{1000});
+	CHECK(std::chrono::steady_clock::now() - slow < 2s);
+	{
+		const std::scoped_lock lock(disk->mutex);
+		disk->hangs = false;
+	}
+	disk->changed.notify_all();
+	// Another folder waits for a measurement of its own, once the slow one has ended.
+	available.reset();
+	const auto other = std::chrono::steady_clock::now() + 10s;
+	while (!available && std::chrono::steady_clock::now() < other)
+	{
+		available = space.measure("b", 5s);
+		std::this_thread::sleep_for(10ms);
+	}
+	CHECK(available == uintmax_t{2000});
 }
 
 TEST_CASE("the status line shows the remaining record time of the record-enabled tracks", "[ui]")
