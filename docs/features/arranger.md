@@ -126,6 +126,11 @@ each section's event has a number after its name, how often its event came so fa
   and ends at other arranger events', parts' and markers' edges. What the drag shows stays until the lane shows the
   event as the engine has it. When the engine refuses an edit, such as a drawn event shorter than a sample, the
   display's `#edit-refused` says why ([event-display.md](event-display.md)).
+- **Renaming arranger events on the info line** (p. 405, [inspector.md](inspector.md)): while the arranger events
+  selected on the lane changed last, the info line has the class `arranger` and shows the first of them in timeline
+  order as it shows a cycle marker: its name (labelled Name), start, end and length, which `arranger.set` edits for
+  every selected one in one undo step, relative to the first one's value or with Ctrl+Enter the same for all; a new
+  start keeps an event's length. Selecting an event or a marker deselects the arranger events.
 - **The arranger editor** (`resources/ui/arranger-editor.rml`, the UI command `window.arranger`, in a window of its own)
   is driven by its own Lua script through the engine API: the toolbar switches arranger mode and picks the active chain
   and the jump mode, with the active chain's name in `#chain-name` (Rename Arranger Chain, p. 406: Enter renames it,
@@ -170,7 +175,8 @@ on the inspector's section opening the editor and leaving it open; the inspector
 its arrows disabled outside arranger mode, playing a step and triggering an event with their rows `.current`, Jump Mode
 both ways, its header closing and opening it, and renaming a step's event with Alt and a double click, not with a plain
 one, across a refresh that changes nothing the lists show; typing a step's repeats, capped to 999 and kept for text that
-isn't a number, picking its repeat mode and removing it with Remove Touched. `tests/theme_tests.cpp`: every theme fills
+isn't a number, picking its repeat mode and removing it with Remove Touched; the info line showing the arranger events
+selected on the lane, renaming, moving and resizing them, the first or both, and a part selected deselecting them. `tests/theme_tests.cpp`: every theme fills
 a selected arranger event.
 
 Both real-time comparisons in `tests/arranger_tests.cpp` retry runs that report playback dropouts, with at most five
@@ -180,7 +186,7 @@ adopts it while B plays; an attempt that misses that stretch, or is still making
 because a busy machine held up the test, is retried like one with dropouts. It compares only a capture with the edit
 made in time and without dropouts; exhausting the attempts fails the test (#1893, #1900).
 
-Not yet: renaming arranger events on the info line, selecting steps in the chain lists (Remove Selected) and drag and
+Not yet: selecting steps in the chain lists (Remove Selected) and drag and
 drop in them, moving or erasing all selected arranger events at once, the other flatten options (Checked and All Chains,
 New Project, Make Real Event Copies) and a dialog for them in the editor, key commands for triggering events, and
 arranging to an external timecode.

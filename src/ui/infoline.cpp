@@ -147,6 +147,26 @@ namespace gnubase::ui
 				element.RemoveAttribute(name);
 		}
 
+		// The selected arranger events, as cycle markers on the arranger track in timeline order (as project.get lists
+		// them), which the info line shows and edits as it does markers (p. 405).
+		std::vector<MarkerItem> arrangerEvents(const Json& project, const std::vector<uint64_t>& selection)
+		{
+			std::vector<MarkerItem> items;
+			if (!project.is_object() || !project.contains("arranger"))
+				return items;
+			const Json& arranger = project.at("arranger");
+			const double rate = projectTime(project).sampleRate;
+			for (const Json& event : arranger.at("events"))
+			{
+				const auto id = event.at("id").get<uint64_t>();
+				if (std::find(selection.begin(), selection.end(), id) != selection.end())
+					items.push_back(
+						{id, arranger.at("track").get<uint64_t>(), true, 0, event.at("name").get<std::string>(),
+							event.at("start").get<double>() / rate, event.at("endSamples").get<double>() / rate});
+			}
+			return items;
+		}
+
 		// What a field's gesture changes, as EngineBinding::sendStep names it: the info line's step owner, what the
 		// field edits (the selected "events" or an in-place editor's "notes") and the field. The steps of the events'
 		// fields keep the value that each event they change shows, by its id, with their record (#1471), and so do the
@@ -272,6 +292,8 @@ namespace gnubase::ui
 		const TimeFormat format = m_display.rulerFormat();
 		std::vector<uint64_t> markers = m_markerSource ? m_markerSource() : std::vector<uint64_t>();
 		const bool markersChanged = markers != m_markerSelection;
+		std::vector<uint64_t> arranger = m_arrangerSource ? m_arrangerSource() : std::vector<uint64_t>();
+		const bool arrangerChanged = arranger != m_arrangerSelection;
 		const std::map<uint64_t, std::set<uint64_t>>& points = m_display.selectedPoints();
 		const bool pointsChanged = points != m_pointSelection;
 		const std::optional<RangeSelection>& range = m_display.range();
@@ -279,7 +301,7 @@ namespace gnubase::ui
 			(range && m_range &&
 				(range->start != m_range->start || range->end != m_range->end || range->tracks != m_range->tracks));
 		if ((selection == m_selection && m_display.answers() == m_loads && format == m_format && !markersChanged &&
-				!pointsChanged && !rangeChanged && !m_notesDirty) ||
+				!arrangerChanged && !pointsChanged && !rangeChanged && !m_notesDirty) ||
 			!m_root->IsVisible(true)) // hidden: it asks once it shows
 			return;
 		// Whichever selection changed last shows; a marker clicked on the marker track wins.
@@ -290,9 +312,14 @@ namespace gnubase::ui
 			m_showsPoints = false;
 			m_showsRange = false;
 		}
-		if (markersChanged)
+		// Markers and arranger events show in the same fields: the one of them deselected doesn't end the other.
+		for (const bool ofArranger : {false, true})
 		{
-			m_showsMarkers = !markers.empty();
+			const std::vector<uint64_t>& items = ofArranger ? arranger : markers;
+			if (!(ofArranger ? arrangerChanged : markersChanged) || (items.empty() && m_arranger != ofArranger))
+				continue;
+			m_showsMarkers = !items.empty();
+			m_arranger = ofArranger;
 			if (m_showsMarkers)
 			{
 				m_showsNotes = false;
@@ -323,6 +350,7 @@ namespace gnubase::ui
 		m_range = range;
 		m_pointSelection = points;
 		m_markerSelection = std::move(markers);
+		m_arrangerSelection = std::move(arranger);
 		m_markers.clear();
 		m_selection = selection;
 		m_loads = m_display.answers();
@@ -349,7 +377,9 @@ namespace gnubase::ui
 			show();
 			return;
 		}
-		if (m_showsMarkers)
+		if (m_showsMarkers && m_arranger)
+			m_markers = arrangerEvents(m_display.project(), m_arrangerSelection);
+		else if (m_showsMarkers)
 			for (const MarkerItem& marker : readMarkers(m_display.project()).markers)
 				if (std::find(m_markerSelection.begin(), m_markerSelection.end(), marker.id) != m_markerSelection.end())
 					m_markers.push_back(marker);
@@ -483,7 +513,8 @@ namespace gnubase::ui
 		if (!m_root)
 			return;
 		Rml::Element& root = *m_root.get();
-		setClass(root, "markers", m_showsMarkers);
+		setClass(root, "markers", m_showsMarkers && !m_arranger);
+		setClass(root, "arranger", m_showsMarkers && m_arranger);
 		setClass(root, "notes", m_showsNotes);
 		setClass(root, "points", m_showsPoints);
 		setClass(root, "range", m_showsRange);
@@ -677,8 +708,8 @@ namespace gnubase::ui
 				setValue(*display, text);
 		if (Rml::Element* name = root.QuerySelector("textdisplay[field=name]"))
 			setFlag(*name, "disabled", false);
-		setLabel(root, "name", "Description");
-		setLabel(root, "start", "Position");
+		setLabel(root, "name", m_arranger ? "Name" : "Description");
+		setLabel(root, "start", m_arranger ? "Start" : "Position");
 		if (Rml::Element* shown = root.QuerySelector("[info-field=name]"))
 			setClass(*shown, "unavailable", false);
 		for (const char* field : {"end", "length"})
@@ -691,35 +722,37 @@ namespace gnubase::ui
 	}
 
 	// As for events: relative to the first marker's value, or with Ctrl+Enter the value typed for every one. A new
-	// position keeps a cycle marker's length; end and length change the cycle markers.
+	// position keeps a cycle marker's length; end and length change the cycle markers. Arranger events are edited so
+	// too, with arranger.set.
 	void InfoLine::editMarkers(const std::string& field, const std::string& text)
 	{
 		const ProjectMarkers project = readMarkers(m_display.project());
+		const char* command = m_arranger ? "arranger.set" : "marker.set";
+		const char* key = m_arranger ? "event" : "marker";
 		const TimeContext& context = project.time;
 		const MarkerItem& first = m_markers.front();
 		const auto cycle =
 			std::find_if(m_markers.begin(), m_markers.end(), [](const MarkerItem& m) { return m.cycle; });
 		Json commands = Json::array();
-		const auto set = [&commands, &project](const MarkerItem& marker, double start, double end)
+		const auto set = [&commands, &project, command, key](const MarkerItem& marker, double start, double end)
 		{
 			const auto track = std::find_if(project.tracks.begin(), project.tracks.end(),
 				[&marker](const ProjectMarkers::Track& each) { return each.id == marker.track; });
 			if (track == project.tracks.end() || start < 0.0 || (marker.cycle && end <= start))
 				return;
-			Json parameters = {{"marker", marker.id}};
+			Json parameters = {{key, marker.id}};
 			if (start != marker.start)
 				parameters["position"] = project.position(*track, start);
 			if (marker.cycle && (end != marker.end || start != marker.start))
 				parameters["end"] = project.position(*track, end);
 			if (parameters.size() > 1)
-				commands.push_back({{"command", "marker.set"}, {"parameters", std::move(parameters)}});
+				commands.push_back({{"command", command}, {"parameters", std::move(parameters)}});
 		};
 		if (field == "name")
 		{
 			for (const MarkerItem& marker : m_markers)
 				if (marker.name != text)
-					commands.push_back(
-						{{"command", "marker.set"}, {"parameters", {{"marker", marker.id}, {"name", text}}}});
+					commands.push_back({{"command", command}, {"parameters", {{key, marker.id}, {"name", text}}}});
 		}
 		else if (field == "start")
 		{
@@ -758,9 +791,10 @@ namespace gnubase::ui
 			show(); // the value that holds
 			return;
 		}
-		const std::map<std::string, const char*> labels = {
-			{"name", "Description"}, {"start", "Position"}, {"end", "End"}, {"length", "Length"}};
-		const std::string description = std::string("Change Marker ") + labels.at(field);
+		const std::map<std::string, const char*> labels = {{"name", m_arranger ? "Name" : "Description"},
+			{"start", m_arranger ? "Start" : "Position"}, {"end", "End"}, {"length", "Length"}};
+		const std::string description =
+			std::string(m_arranger ? "Change Arranger Event " : "Change Marker ") + labels.at(field);
 		m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
 	}
 

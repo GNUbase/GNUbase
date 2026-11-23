@@ -67,6 +67,9 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   marker's length; end and length change the cycle markers. The project window selects events or markers:
   selecting an event deselects the markers (`AppUi`, `MarkerLines::deselect`), a marker clicked deselects the events.
   A selection that names only markers the project no longer has shows `.empty`, until the marker lines drop them.
+- **Arranger events** (p. 405). The arranger events selected on the arranger track's lane show the same way, with the
+  class `arranger`: name (labelled Name), start, end and length, edited with `arranger.set`
+  ([arranger.md](arranger.md)).
 - **Automation points** (p. 881, [virgin-territory.md](virgin-territory.md)). When the event display's selected
   automation points changed last (`EventDisplay::selectedPoints`), the info line has the class `points` and shows the
   first one in time: its position (`field=start`, labelled Position), its value in the parameter's unit and Terminator,

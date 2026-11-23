@@ -200,6 +200,14 @@ namespace gnubase::ui
 		m_field->Focus();
 	}
 
+	void GlobalEventLane::deselect()
+	{
+		if (m_selection.empty())
+			return;
+		m_selection.clear();
+		show();
+	}
+
 	int64_t GlobalEventLane::nearestBar(double seconds) const
 	{
 		const TimeContext& time = m_display.time();

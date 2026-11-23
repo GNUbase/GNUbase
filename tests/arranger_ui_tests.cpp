@@ -700,3 +700,82 @@ TEST_CASE("the inspector's Current Arranger Chain list edits repeats and modes a
 	CHECK(chain()[0].at("mode") == "repeatForever");
 	CHECK(window.app.waitUntil([&] { return window.shown(steps + ".arranger-row") == 1; }));
 }
+
+TEST_CASE("the info line shows the arranger events selected on the lane and renames them", "[ui]")
+{
+	// Reference manual p. 405: an arranger event selected is renamed on the info line.
+	Window window;
+	window.app.appUi().docking().setVisible("project", "infoLine", true);
+	window.app.call("arranger.add", {{"position", 0}, {"end", 8 * g_quarter}});
+	window.app.call("arranger.add", {{"position", 8 * g_quarter}, {"end", 12 * g_quarter}});
+	const uint64_t track = window.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t part = window.app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_quarter}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.shown(".arranger-lane-event") == 2; }));
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".arranger-lane-row", "hidden"); }));
+	window.display.setTool(ui::Tool::ObjectSelection);
+	const auto click = [&window](ui::Point at, const std::vector<std::string>& modifiers)
+	{
+		window.app.ui().click(std::nullopt, {"", 0, at}, ui::MouseButton::Left, 1, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto field = [](const std::string& name) { return "#info-line textdisplay[field=" + name + "]"; };
+	const auto shows = [&window, &field](const std::string& name, const std::string& value)
+	{
+		return window.app.waitUntil(
+			[&] { return window.element(field(name)).at("attributes").value("value", "") == value; });
+	};
+	const auto type = [&window, &field](const std::string& name, const std::string& text)
+	{
+		window.app.ui().click(std::nullopt, {field(name), 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+		window.app.ui().key(std::nullopt, "Mod+A");
+		window.app.ui().text(std::nullopt, text);
+		window.app.ui().key(std::nullopt, "Enter");
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto label = [&window](const std::string& name)
+	{ return window.element("#info-line [info-field=" + name + "] .info-label").at("text").get<std::string>(); };
+
+	// A click on A shows it: its name, start, end and length.
+	click(window.at(1.0), {});
+	REQUIRE(shows("name", "A"));
+	CHECK(window.hasClass("#info-line", "arranger"));
+	CHECK_FALSE(window.hasClass("#info-line", "markers"));
+	CHECK(label("name") == "Name");
+	CHECK(label("start") == "Start");
+	CHECK(shows("start", "1.1.1.0"));
+	CHECK(shows("end", "3.1.1.0"));
+	CHECK(shows("length", "2.0.0.0"));
+	CHECK(window.hasClass("#info-line [info-field=mute]", "unavailable"));
+	CHECK_FALSE(window.hasClass("#info-line [info-field=end]", "unavailable"));
+
+	// Each field edits it with arranger.set, a new start keeping its length.
+	const size_t steps = window.app.call("history.get").at("steps").size();
+	type("name", "Intro");
+	REQUIRE(window.app.waitUntil([&] { return window.events()[0].at("name") == "Intro"; }));
+	type("end", "2.1.1.0");
+	REQUIRE(window.app.waitUntil([&] { return window.events()[0].at("end") == 4 * g_quarter; }));
+	// The info line edits from the events it shows, which follow the engine's a step or more later (#929).
+	REQUIRE(shows("end", "2.1.1.0"));
+	type("start", "1.3.1.0");
+	REQUIRE(window.app.waitUntil([&] { return window.events()[0].at("position") == 2 * g_quarter; }));
+	CHECK(window.events()[0].at("end") == 6 * g_quarter);
+	CHECK(window.app.call("history.get").at("steps").size() == steps + 3);
+
+	// With B selected too, a name goes to both in one undo step.
+	REQUIRE(shows("start", "1.3.1.0"));
+	click(window.at(5.0), {"ctrl"});
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#info-line", "multiple"); }));
+	type("name", "Chorus");
+	REQUIRE(window.app.waitUntil([&] { return window.events()[1].at("name") == "Chorus"; }));
+	CHECK(window.events()[0].at("name") == "Chorus");
+	CHECK(window.app.call("history.get").at("steps").size() == steps + 4);
+
+	// Selecting a part shows the part and deselects the arranger events.
+	window.display.select({part});
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass("#info-line", "arranger"); }));
+	CHECK(label("name") == "Name");
+	CHECK(window.shown(".arranger-lane-event.selected") == 0);
+}
