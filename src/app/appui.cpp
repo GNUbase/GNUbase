@@ -333,7 +333,10 @@ namespace gnubase::app
 			// Render in place and freeze (docs/features/render-in-place.md).
 			{"track.freezeSelected",
 				"Freezes the selected audio and instrument tracks, or unfreezes them if every one is frozen.", nullptr},
-			{"track.renderSelected", "Renders the selected audio and instrument tracks in place.", nullptr},
+			{"track.renderSelected",
+				"Renders in place: the selected audio events, audio parts and MIDI parts, else the selection range, "
+				"else the selected tracks, on audio and instrument tracks.",
+				nullptr},
 			// The chord track (docs/features/chord-track.md).
 			{"track.chordsToMidiSelected",
 				"Chords to MIDI: a MIDI part of the chord events on the first selected MIDI or instrument track, which "
@@ -1300,6 +1303,16 @@ namespace gnubase::app
 					{
 						return m_trackList != nullptr && (!paste || m_trackList->automationCopied()) &&
 							!(parameters ? m_trackList->selectedLanes(paste) : m_trackList->selection()).empty();
+					});
+			else if (id == "track.renderSelected")
+				// Also for selected events and parts or a selection range (reference manual pp. 1474-1477).
+				m_keys.enableWhen(command.id,
+					[this](ui::Window&, Rml::Element*)
+					{
+						return m_trackList != nullptr &&
+							(!m_trackList->selection().empty() ||
+								(m_eventDisplay &&
+									(!m_eventDisplay->selection().empty() || m_eventDisplay->range().has_value())));
 					});
 			else if (id == "track.pasteAutomationAll")
 				m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*)

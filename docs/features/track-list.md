@@ -246,8 +246,8 @@ sends engine commands, so whatever another client changes shows at once.
 - **Freeze and render in place** (pp. 219-220, 1471-1477): the context menu's Freeze/Unfreeze Selected Tracks
   (`track.freezeSelected`) freezes the selected audio and instrument tracks that aren't frozen, or unfreezes them when
   every one is; a frozen track's row has `.frozen`, which the themes show like a disabled one. Edit > Render in Place
-  > Render (with Current Settings) (`track.renderSelected`) renders them in place
-  ([render-in-place.md](render-in-place.md)).
+  > Render (with Current Settings) (`track.renderSelected`) renders them in place, or the selected events and parts
+  or the selection range ([render-in-place.md](render-in-place.md)).
 - **Key commands.** `AppUi` adds the track list's commands (`TrackList::actions`) as key commands in the project
   window's focus zone, enabled while the list exists and, for those of selected tracks, while tracks are selected,
   so the menus disable them otherwise.

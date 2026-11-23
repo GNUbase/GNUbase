@@ -30,6 +30,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -1991,6 +1992,59 @@ TEST_CASE("Freeze/Unfreeze Selected Tracks freezes and unfreezes them, Render in
 	REQUIRE(order.size() == 2);
 	CHECK(tracks.track(order[1]).at("name") == "Synth (Rendered)");
 	CHECK(tracks.track(order[1]).at("type") == "audio");
+}
+
+TEST_CASE("Render in Place renders the selected events and parts, else a selection range, else the tracks", "[ui]")
+{
+	// Reference manual pp. 1474-1477: with events or parts selected it renders them, with a range their part of it.
+	Tracks tracks;
+	tracks.app.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const uint64_t synth =
+		tracks.add({{"type", "instrument"}, {"instrument", "testSynth"}, {"timeBase", "linear"}, {"name", "Synth"}});
+	const auto part = [&tracks, synth](int64_t position)
+	{
+		const Json added =
+			tracks.app.call("midiPart.add", {{"track", synth}, {"position", position}, {"length", 4800}});
+		tracks.app.call("note.add",
+			{{"part", added.at("part").at("id")},
+				{"notes",
+					{{{"position", 0}, {"length", 1000000}, {"pitch", 60}, {"velocity", 0.8}}}}}); // to the part's end
+		return added.at("part").at("id").get<uint64_t>();
+	};
+	part(0);
+	const uint64_t second = part(9600);
+	tracks.rows(1);
+	tracks.click(row(synth) + " .track-name");
+
+	// The rendered track's events, by position and length.
+	const std::chrono::seconds rendering(60);
+	std::vector<uint64_t> known = tracks.order();
+	const auto render = [&](size_t rows)
+	{
+		tracks.app.keys().run("track.renderSelected", Json::object(), tracks.app.main(), nullptr);
+		tracks.rows(rows, rendering);
+		std::vector<std::pair<int64_t, int64_t>> events;
+		const std::vector<uint64_t> order = tracks.order();
+		const auto added = std::find_if(order.begin(), order.end(),
+			[&known](uint64_t id) { return std::find(known.begin(), known.end(), id) == known.end(); });
+		REQUIRE(added != order.end());
+		const Json project = tracks.app.call("project.get");
+		for (const Json& event : project.at("audioEvents"))
+			if (event.at("track") == *added)
+				events.emplace_back(event.at("position").get<int64_t>(), event.at("length").get<int64_t>());
+		known = order;
+		return events;
+	};
+	using Events = std::vector<std::pair<int64_t, int64_t>>;
+	tracks.display.select({second});
+	CHECK(render(2) == Events{{9600, 4800}});
+	tracks.display.select({});
+	tracks.app.keys().run("tool.rangeSelection", Json::object(), tracks.app.main(), nullptr);
+	tracks.display.setRange(ui::RangeSelection{2400, 7200, {synth}});
+	CHECK(render(3) == Events{{2400, 4800}});
+	tracks.display.setRange(std::nullopt);
+	tracks.click(row(synth) + " .track-name");
+	CHECK(render(4) == Events{{0, 14400}});
 }
 
 TEST_CASE(

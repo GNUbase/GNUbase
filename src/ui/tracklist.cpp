@@ -463,7 +463,48 @@ namespace gnubase::ui
 		};
 		m_actions["track.renderSelected"] = [this, renderable]
 		{
-			if (const std::vector<uint64_t> tracks = renderable(); !tracks.empty())
+			// The selected events and parts, else the selection range, else the selected tracks (reference manual pp.
+			// 1474-1477), on audio and instrument tracks.
+			const auto renders = [this](uint64_t track)
+			{
+				const auto found = m_index.find(track);
+				return found != m_index.end() &&
+					(m_tracks[found->second].type == "audio" || m_tracks[found->second].type == "instrument");
+			};
+			const auto add = [](std::vector<uint64_t>& to, uint64_t id)
+			{
+				if (std::find(to.begin(), to.end(), id) == to.end())
+					to.push_back(id);
+			};
+			std::vector<uint64_t> tracks;
+			const std::vector<uint64_t>& selected = m_display.selection(); // ascending
+			if (const Json& project = m_display.project(); project.is_object() && !selected.empty())
+			{
+				std::vector<uint64_t> events;
+				for (const char* kind : {"audioEvents", "audioParts", "midiParts"})
+					for (const Json& item : project.at(kind))
+						if (const auto id = item.at("id").get<uint64_t>();
+							std::binary_search(selected.begin(), selected.end(), id) &&
+							renders(item.at("track").get<uint64_t>()))
+						{
+							events.push_back(id);
+							add(tracks, item.at("track").get<uint64_t>());
+						}
+				if (!events.empty())
+					m_binding.send("track.renderInPlace", {{"tracks", tracks}, {"events", events}});
+				return;
+			}
+			if (const auto& range = m_display.range(); range && range->end > range->start)
+			{
+				for (const uint64_t track : range->tracks)
+					if (renders(track))
+						add(tracks, track);
+				if (!tracks.empty())
+					m_binding.send(
+						"track.renderInPlace", {{"tracks", tracks}, {"start", range->start}, {"end", range->end}});
+				return;
+			}
+			if (tracks = renderable(); !tracks.empty())
 				m_binding.send("track.renderInPlace", {{"tracks", tracks}});
 		};
 		// The chord track (docs/features/chord-track.md, reference manual pp. 1336, 1341-1344): Chords to MIDI onto the

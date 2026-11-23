@@ -116,8 +116,8 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 - `events` optionally selects audio event, audio part and MIDI part ids on the tracks in `tracks`. Only that material
   renders, including where unselected material overlaps it; `start` and `end`, if given, clip the selected ranges. The
   selection must be nonempty, without duplicate or unknown ids, and each requested track must have material in the
-  range. Selected events and separate/block modes require unfrozen tracks. These options are available through the
-  engine API, MCP and Lua; the event display's selection is not wired to them yet.
+  range. Selected events and separate/block modes require unfrozen tracks. Render in the Edit menu passes the event
+  display's selection (see In the UI).
 - `processing` (p. 1472): `dry` renders at `source`, and the new track gets the channel's plugin slots (copies, with
   their state), strip sections, fader, pan and sends; `channelSettings` (the default) renders at `strip`, and the new
   track gets the fader, pan and sends; `completeSignalPath` renders at `output`, so a mono track panned on a stereo
@@ -136,18 +136,23 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 
 - Edit > Render in Place > Render (with Current Settings) (`track.renderSelected`) and Edit > Freeze/Unfreeze >
   Selected Tracks (with Current Settings) (`track.freezeSelected`), which is also Freeze/Unfreeze Selected Tracks in
-  the track list's context menu ([track-list.md](track-list.md)). Both work on the selected audio and instrument
-  tracks with the commands' defaults; freezing unfreezes them when every one is frozen. A frozen track's row has
+  the track list's context menu ([track-list.md](track-list.md)). Both use the commands' defaults; freezing works on
+  the selected audio and instrument tracks and unfreezes them when every one is frozen. A frozen track's row has
   `.frozen`.
+- Render renders what the event display selects (pp. 1474-1477): the selected audio events, audio parts and MIDI parts
+  on audio and instrument tracks (`events`, each on its own track); without them, the selection range on its audio and
+  instrument tracks (`start` and `end`); without that, the selected tracks. It is enabled while any of them is
+  selected. Events selected only on other tracks, such as MIDI tracks, render nothing, so that a selection never falls
+  back to whole tracks.
 
 ## Not yet
 
 - The Render Tracks, Render Selection, Freeze Channel Options and Unfreeze Channel Options dialogs, with options that
   are saved for the next time; Freeze Channel in the inspector and the mixer, and the lit freeze buttons.
 - Locking a frozen track's events, parts and controls (p. 220); edits of them play once the track is unfrozen.
-- Wiring the event display's selection to rendering, the selection dialog's Keep/Mute Source Events, Mix down to One
-  Audio File and Hide Source Tracks (pp. 1472-1473); Complete Signal Path + Master FX, and groups and effect returns in
-  the complete signal path; copying the track's automation to the new track.
+- The selection dialog's Keep/Mute Source Events, Mix down to One Audio File and Hide Source Tracks (pp. 1472-1473);
+  Complete Signal Path + Master FX, and groups and effect returns in the complete signal path; copying the track's
+  automation to the new track.
 - Freezing only the instrument (p. 991) or the inserts before a given slot (p. 548), freezing external instruments
   and effects, and removing freeze files when unfreezing.
 - Plugin delay compensation (#71): a freeze file rendered at `inserts` holds its slots' latency, so once latency is
@@ -160,8 +165,9 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 background-job tests hold jobs at progress while another client edits: protected edits and transactions are refused,
 unrelated edits and events outside the range succeed, completion adds one undo step, and cancellation or failure unlocks
 without a project change. The mixdown snapshot test edits and removes the exported source while the job runs and
-compares the result with the starting audio. `tests/mixdown_ui_tests.cpp` uses the real app's automation API to check
-the rendering state class, progress and Cancel for all three background render commands.
+compares the result with the starting audio. `tests/tracklist_tests.cpp` renders a selected MIDI part, a selection
+range and, with neither, the selected track through the Edit menu's Render. `tests/mixdown_ui_tests.cpp` uses the real
+app's automation API to check the rendering state class, progress and Cancel for all three background render commands.
 
 A shutdown regression in `tests/renderinplace_tests.cpp` stops command posting during an active multi-track freeze or
 render in place, checking that the job releases sample leases before the live loader is destroyed and removes its
