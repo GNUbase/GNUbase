@@ -204,6 +204,8 @@ namespace gnubase::ui
 			filter("se-minimum-length", "Minimum Length", R"(min="0" max="1000" default="0" step="1")") +
 			R"(<button id="se-remove-hitpoints">Remove All</button><div class="section-header">Create</div>)" +
 			creates +
+			R"(<button slice-edit="closeGaps">Close Gaps (Crossfade)</button>)"
+			R"(<button slice-edit="deleteOverlaps">Delete Overlaps</button>)"
 			R"(<div class="se-midi-options off"><div class="section-header">Convert Hitpoints to MIDI Notes</div>)"
 			R"(<button class="se-velocity-mode checked" velocity-mode="dynamic">Dynamic Velocity</button>)"
 			R"(<button class="se-velocity-mode" velocity-mode="fixed">Fixed Velocity</button>)"
@@ -578,6 +580,22 @@ namespace gnubase::ui
 		return nullptr;
 	}
 
+	std::vector<uint64_t> SampleEditor::sliceEvents() const
+	{
+		std::vector<uint64_t> events;
+		if (!m_project.contains("audioEvents"))
+			return events;
+		uint64_t part = 0;
+		for (const Json& event : m_project.at("audioEvents"))
+			if (event.at("id") == m_event)
+				part = event.value("part", uint64_t{0});
+		if (part != 0)
+			for (const Json& event : m_project.at("audioEvents"))
+				if (event.value("part", uint64_t{0}) == part)
+					events.push_back(event.at("id").get<uint64_t>());
+		return events;
+	}
+
 	double SampleEditor::sampleRate() const
 	{
 		for (const Json& media : m_project.value("media", Json::array()))
@@ -716,6 +734,16 @@ namespace gnubase::ui
 				item->SetAttribute("disabled", true);
 		}
 		bool zeroCrossing = false;
+		items.clear();
+		root->QuerySelectorAll(items, "[slice-edit]");
+		const bool hasSlices = hasEvent() && sliceEvents().size() > 1;
+		for (Rml::Element* item : items)
+		{
+			if (hasSlices)
+				item->RemoveAttribute("disabled");
+			else
+				item->SetAttribute("disabled", true);
+		}
 		if (m_project.contains("snap"))
 			zeroCrossing = m_project.at("snap").value("zeroCrossing", false);
 		setClass(root->QuerySelector("#se-zero-crossing"), "checked", zeroCrossing);
@@ -1398,6 +1426,22 @@ namespace gnubase::ui
 	bool SampleEditor::clickHitpoints(Rml::Element& target, const std::string& id)
 	{
 		Rml::Element* root = m_root.get();
+		if (const Rml::Element* button = withAttribute(&target, "slice-edit", root))
+		{
+			const std::vector<uint64_t> events = sliceEvents();
+			if (events.size() > 1)
+			{
+				setInner(root->QuerySelector("#se-process-message"), "");
+				m_binding.send("event." + attribute(*button, "slice-edit"), {{"events", events}},
+					[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+					{
+						if (!alive.expired())
+							setInner(m_root->QuerySelector("#se-process-message"),
+								Rml::StringUtilities::EncodeRml(result.error));
+					});
+			}
+			return true;
+		}
 		Rml::Element* options = root->QuerySelector(".se-midi-options");
 		if (id == "se-edit-hitpoints")
 		{
