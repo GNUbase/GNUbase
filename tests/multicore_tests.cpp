@@ -420,6 +420,30 @@ TEST_CASE("Linux workers that rtkit makes real-time help the audio thread", "[un
 	CHECK(alone.at("activeThreads") == 1);
 	CHECK(alone.at("limitedBy") == "realtime");
 }
+
+TEST_CASE("Linux keeps the workers rtkit granted and doesn't ask it again when the device restarts", "[unit]")
+{
+	using gnubase::test::FakeRtkit;
+	if (gnubase::rt::hardwareThreads() < 4)
+		SKIP("fewer than four hardware threads");
+	const Faults faults({SIZE_MAX, false, false, true}); // the workers may not take real-time priority themselves
+	const FakeRtkit rtkit(FakeRtkit::Mode::Grants, 2);   // as at rtkit's limits
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"captureSeconds", 1}});
+	const Json processing = run(client, "audio.setProcessing", {{"threads", 4}}).at("processing");
+	CHECK(rtkit.requests().size() == 3);
+	CHECK(processing.at("activeThreads") == 3); // the audio thread and the two workers rtkit granted
+	CHECK(processing.at("limitedBy") == "realtime");
+
+	// A reset and a new device with the same period keep the workers: rtkit isn't asked again.
+	run(client, "audio.reset");
+	CHECK(run(client, "audio.setDevice", {{"captureSeconds", 1}}).at("processing") == processing);
+	CHECK(rtkit.requests().size() == 3);
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 4800}});
+	CHECK(run(client, "audio.performance").at("threads").size() == 3);
+}
 #endif
 
 TEST_CASE("processing threads the system refuses to start are a command error, not a crash", "[unit]")
@@ -439,9 +463,11 @@ TEST_CASE("processing threads the system refuses to start are a command error, n
 	}
 	run(client, "audio.setProcessing", {{"threads", 2}});
 	{
-		// A new device still opens and processes on the audio thread.
+		// A new device still opens and processes on the audio thread. Its block size differs, so that it needs new
+		// workers.
 		const Faults faults({0, false});
-		const Json opened = run(client, "audio.setDevice", {{"captureSeconds", 1}}).at("processing");
+		const Json opened =
+			run(client, "audio.setDevice", {{"captureSeconds", 1}, {"blockSize", 512}}).at("processing");
 		CHECK(opened.at("threads") == 2);
 		CHECK(opened.at("activeThreads") == 1);
 		CHECK(opened.at("limitedBy") == "system");

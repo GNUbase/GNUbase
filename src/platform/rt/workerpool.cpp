@@ -344,11 +344,12 @@ namespace gnubase::rt
 		g_refuseDirectRealtime.store(faults.refuseDirectRealtime);
 	}
 
-	WorkerPool::WorkerPool(size_t workers, double periodSeconds, void* workgroup)
+	WorkerPool::WorkerPool(size_t workers, double periodSeconds, void* workgroup, bool realtimeOnly)
 		: m_spin(std::clamp(std::chrono::duration_cast<std::chrono::steady_clock::duration>(
 								std::chrono::duration<double>(periodSeconds / 16.0)),
 			  std::chrono::duration_cast<std::chrono::steady_clock::duration>(g_minSpin),
-			  std::chrono::duration_cast<std::chrono::steady_clock::duration>(g_maxSpin)))
+			  std::chrono::duration_cast<std::chrono::steady_clock::duration>(g_maxSpin))),
+		  m_size(workers), m_realtimeOnly(realtimeOnly)
 	{
 		assertNotRealtime("starting a worker pool");
 		if (workers > g_maxWorkers)
@@ -362,7 +363,7 @@ namespace gnubase::rt
 				if (i >= g_threadLimit.load())
 					throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again),
 						"starting worker thread " + std::to_string(i + 1));
-				m_threads.emplace_back([this, i, periodSeconds, workgroup] { loop(i + 1, periodSeconds, workgroup); });
+				m_threads.emplace_back([this, periodSeconds, workgroup] { loop(periodSeconds, workgroup); });
 			}
 		}
 		catch (...)
@@ -373,6 +374,7 @@ namespace gnubase::rt
 		// Each worker tries to get real-time priority before it waits for jobs: afterwards realtime() is final.
 		for (size_t i = 0; i < workers; ++i)
 			m_started.wait();
+		m_workers = realtimeOnly ? realtimeWorkers() : workers;
 	}
 
 	WorkerPool::~WorkerPool()
@@ -392,7 +394,7 @@ namespace gnubase::rt
 
 	void WorkerPool::run(ParallelJob& job, size_t helpers) noexcept
 	{
-		helpers = std::min(helpers, m_threads.size());
+		helpers = std::min(helpers, m_workers);
 		if (helpers == 0)
 		{
 			job.work(0);
@@ -459,7 +461,7 @@ namespace gnubase::rt
 		m_priority.store(prioritySuitingCaller(), std::memory_order_relaxed); // published by the new generation
 	}
 
-	void WorkerPool::loop(size_t thread, double periodSeconds, void* workgroup)
+	void WorkerPool::loop(double periodSeconds, void* workgroup)
 	{
 		// A refused worker runs at normal priority, as on Linux without real-time privileges.
 		std::optional<ScopedRealtimePriority> priority;
@@ -475,8 +477,16 @@ namespace gnubase::rt
 		sched_param initialPriority{};
 		sched_getparam(0, &initialPriority);
 #endif
-		if (realtime || g_pretendRealtime.load())
-			m_realtime.fetch_add(1, std::memory_order_release);
+		// Workers with real-time priority are threads 1 to realtimeWorkers(), so that a pool of those alone has no
+		// gaps.
+		const bool counted = realtime || g_pretendRealtime.load();
+		if (!counted && m_realtimeOnly)
+		{
+			m_started.release();
+			return;
+		}
+		const size_t thread = counted ? 1 + m_realtime.fetch_add(1, std::memory_order_release)
+									  : m_size - m_others.fetch_add(1, std::memory_order_relaxed);
 #ifdef __APPLE__
 		// The device's workgroup tells the scheduler that this thread works for its audio thread's deadline.
 		auto* const group = static_cast<os_workgroup_t>(workgroup);

@@ -634,6 +634,29 @@ TEST_CASE("WorkerPool knows when its constructor returns which workers got real-
 	CHECK(WorkerPool(2).realtime()); // counted as real-time all the same
 }
 
+TEST_CASE("WorkerPool keeps only the workers that got real-time priority when asked to", "[unit]")
+{
+	Tasks tasks(200);
+	{
+		const Faults refusing({SIZE_MAX, true});
+		WorkerPool none(3, 0.005, nullptr, true);
+		CHECK(none.workers() == 0);
+		CHECK(none.realtime());
+		tasks.reset();
+		none.run(tasks); // on the calling thread alone
+		CHECK(tasks.done() == 200);
+		CHECK(tasks.calls[0] == 1);
+		CHECK(tasks.calls[1] == 0);
+	}
+	const Faults pretending({SIZE_MAX, true, true});
+	WorkerPool all(3, 0.005, nullptr, true);
+	CHECK(all.workers() == 3);
+	CHECK(all.realtime());
+	tasks.reset();
+	all.run(tasks);
+	CHECK(tasks.done() == 200);
+}
+
 TEST_CASE("WorkerPool wakes no more workers than a job takes", "[unit]")
 {
 	WorkerPool pool(4);
@@ -700,6 +723,20 @@ TEST_CASE("Linux workers that may not take real-time priority themselves get it 
 		rlimit limit{};
 		REQUIRE(getrlimit(RLIMIT_RTTIME, &limit) == 0);
 		CHECK(limit.rlim_max <= static_cast<rlim_t>(FakeRtkit::g_rttimeMax));
+	}
+	{
+		// At rtkit's limits only some workers get real-time priority; a pool of them alone works with those.
+		const FakeRtkit limited(FakeRtkit::Mode::Grants, 2);
+		WorkerPool pool(3, 0.005, nullptr, true);
+		CHECK(limited.requests().size() == 3);
+		CHECK(pool.workers() == 2);
+		CHECK(pool.realtime());
+		Tasks tasks(200);
+		tasks.reset();
+		pool.run(tasks);
+		CHECK(tasks.done() == 200);
+		for (size_t task = 0; task < 200; ++task)
+			CHECK(tasks.ranBy(task) <= 2); // threads 0 to 2: the workers left have no gaps
 	}
 	{
 		const FakeRtkit refusing(FakeRtkit::Mode::Refuses);

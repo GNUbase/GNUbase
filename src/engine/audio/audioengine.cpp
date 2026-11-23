@@ -1574,7 +1574,8 @@ namespace gnubase::engine
 		stopDevice();
 		if (m_device)
 			stopMonitoringDirectly(); // the hardware would go on monitoring
-		m_workers.reset();
+		if (m_device && m_device->workgroup() != nullptr)
+			m_workers.reset(); // the workers are in the device's workgroup, which ends with it
 		m_device.reset();
 		clearPerformance(); // the old device's numbers would stay up until the new one processes a block
 		m_dummy = nullptr;
@@ -2193,6 +2194,7 @@ namespace gnubase::engine
 		m_multiProcessing = multiProcessing;
 		m_threads = static_cast<size_t>(threads);
 		clearPerformance(); // threads that are dropped and added again would resume their old averages
+		m_workers.reset();  // a new try at real-time priority
 		if (!m_device)
 			return;
 		try
@@ -2211,29 +2213,28 @@ namespace gnubase::engine
 
 	void AudioEngine::startWorkers()
 	{
-		m_workers.reset();
-		m_limitedBy = Limit::None;
 		const size_t wanted = plannedThreads() - 1;
-		if (wanted == 0)
-			return;
 		const audio::DeviceFormat& format = m_device->format();
 		const double period = format.blockSize / format.sampleRate;
-		auto workers = std::make_unique<rt::WorkerPool>(wanted, period, m_device->workgroup());
-		if (!workers->realtime())
+		// A device that restarts with the same period keeps the workers and their priority: on Linux each new worker
+		// asks rtkit again, which grants only so many requests in a burst (#463).
+		if (m_workers && wanted == m_workersWanted && period == m_workersPeriod)
+			return;
+		m_workers.reset();
+		m_limitedBy = Limit::None;
+		if (wanted == 0)
+			return;
+		// The audio thread waits for nodes that workers hold: a worker without real-time priority that the OS
+		// preempts would make it miss its deadline. Only workers that got it help, if any.
+		m_workers = std::make_unique<rt::WorkerPool>(wanted, period, m_device->workgroup(), true);
+		m_workersWanted = wanted;
+		m_workersPeriod = period;
+		if (m_workers->workers() < wanted)
 		{
-			// The audio thread waits for nodes that workers hold: a worker without real-time priority that the OS
-			// preempts would make it miss its deadline. Only workers that got it help, if any.
-			const size_t realtime = workers->realtimeWorkers();
-			workers.reset();
-			if (realtime > 0)
-				workers = std::make_unique<rt::WorkerPool>(realtime, period, m_device->workgroup());
-			if (workers && !workers->realtime())
-				workers.reset();
 			m_limitedBy = Limit::Realtime;
-			logging::warning("{} of {} processing threads got real-time priority; processing with {}", realtime, wanted,
-				workers ? workers->workers() + 1 : 1);
+			logging::warning("{} of {} processing threads got real-time priority; processing with {}",
+				m_workers->workers(), wanted, m_workers->workers() + 1);
 		}
-		m_workers = std::move(workers);
 	}
 
 	void AudioEngine::startWorkersOrFallBack()
