@@ -1386,6 +1386,14 @@
 	{
 		background-color: #9e9e05;
 	}
+	.ds-peak
+	{
+		background-color: #ffffff;
+	}
+	.ds-handle
+	{
+		background-color: #00ffff;
+	}
 	.sa-bar
 	{
 		background-color: #ffff00;

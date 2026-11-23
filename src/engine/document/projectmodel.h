@@ -98,7 +98,8 @@ namespace gnubase::engine
 		CommandContext& context);
 
 	// What range.copy and range.cut keep for range.paste (eventedits.cpp): the events, parts and automation of a
-	// selection range, cut at its edges, where they were. Not part of the project or of undo.
+	// selection range, cut at its edges, or the events and parts they name whole, where they were. Not part of the
+	// project or of undo.
 	struct RangeClipboard
 	{
 		time::Samples start = 0; // the range, in project samples and in ticks
@@ -106,6 +107,7 @@ namespace gnubase::engine
 		time::Ticks startTicks = 0;
 		time::Ticks endTicks = 0;
 		double sampleRate = 0.0;             // the project's when it was copied, which its samples count in
+		time::Samples cursor = 0;            // the project cursor when it was copied, for range.paste relative
 		std::vector<ObjectId> tracks;        // the tracks it was copied from, from top to bottom
 		std::vector<AudioEvent> audioEvents; // with those of the audio parts
 		std::vector<AudioPart> audioParts;
@@ -156,10 +158,8 @@ namespace gnubase::engine
 		// is one undo step named action, like the commands here, and transactions can run it.
 		void addEdit(Engine& engine, CommandInfo info, std::string action, Handler handler);
 		// Runs a command registered with addEdit as part of the command running: on its project, with its events
-		// going out with that command's and its changes in that command's undo step. Unlike a transaction it doesn't
-		// check the parameters against the command's schema, so the caller passes valid ones, and doesn't sync shared
-		// parts between commands (syncSharedParts): the copies of a shared part it edits catch up only when the
-		// command running ends, so its caller must not read them before.
+		// going out with that command's and its changes in that command's undo step. Checks parameter and result
+		// schemas and synchronizes shared parts before returning, so the next edit sees their current contents.
 		Json runEdit(const std::string& command, Project& project, const Json& parameters, CommandContext& context);
 
 		// The project, for commands defined in other files that read it. Only on the command thread.

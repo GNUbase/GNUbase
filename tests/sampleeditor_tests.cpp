@@ -484,10 +484,10 @@ TEST_CASE("sample editor Process keeps ranges ordered, fades valid and progress 
 	Fixture f(path.u8string());
 	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
 	f.call("clip.setWarp", {{"clip", f.clip}, {"gridStart", 500}});
-	CHECK_THAT(
-		f.fails("sampleEditor.process", {{"event", f.event}, {"operation", "delete"}, {"start", 2000}, {"end", 3000}}),
-		ContainsSubstring("definition grid"));
-	f.call("clip.setWarp", {{"clip", f.clip}, {"gridStart", 0}, {"tempo", 120}}); // tempo alone does not warp playback
+	process(f, "delete", 2000, 3000, "all");
+	CHECK(objectWithId(f.call("project.get").at("clips"), f.clip).at("warp").at("gridStart") == 500);
+	f.call("history.undo");
+	f.call("clip.setWarp", {{"clip", f.clip}, {"gridStart", 0}, {"tempo", 120}});
 	f.call("clip.addRegion", {{"clip", f.clip}, {"start", 2500}, {"end", 5000}, {"name", "First id"}});
 	f.call("clip.addRegion", {{"clip", f.clip}, {"start", 2200}, {"end", 5000}, {"name", "Second id"}});
 	f.call(
@@ -513,6 +513,254 @@ TEST_CASE("sample editor Process keeps ranges ordered, fades valid and progress 
 	const Json regions = objectWithId(project.at("clips"), f.clip).at("regions");
 	CHECK(regions.at(0).at("name") == "First id");
 	CHECK(regions.at(1).at("name") == "Second id");
+}
+
+TEST_CASE("sample editor Process moves definition and warp anchors while keeping beat numbers", "[integration]")
+{
+	for (const bool musical : {false, true})
+		for (const bool withMarkers : {false, true})
+			for (const std::string operation : {"cut", "delete", "paste", "insertSilence", "copy"})
+			{
+				CAPTURE(musical, withMarkers, operation);
+				const test::TempDir dir;
+				const auto path = dir.path() / "source.wav";
+				test::writeWav(path, processAudio());
+				Fixture f(path.u8string());
+				f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+				f.call("clip.setWarp", {{"clip", f.clip}, {"gridStart", 500}, {"tempo", 120}, {"musical", musical}});
+				for (const auto& [beat, frame] : std::map<int, int>{{1, 1500}, {2, 2500}, {3, 4500}, {4, 6500}})
+					f.call("clip.adjustGrid", {{"clip", f.clip}, {"mode", "beat"}, {"beat", beat}, {"frame", frame}});
+				if (withMarkers)
+					for (const auto& [position, target] : std::map<int, int>{{1000, 1200}, {2500, 2700}, {4000, 4300}})
+						f.call("clip.addWarpMarker", {{"clip", f.clip}, {"position", position}, {"target", target}});
+				if (operation == "paste")
+					process(f, "copy", 7000, 7300);
+				const Json before = f.call("project.get");
+				process(f, operation, 2000, 3000, "all");
+				const Json after = f.call("project.get");
+				if (operation == "copy")
+				{
+					CHECK(after == before);
+					continue;
+				}
+				const Json warp = objectWithId(after.at("clips"), f.clip).at("warp");
+				CHECK(warp.at("musical") == musical);
+				CHECK(warp.at("tempo") == 120);
+				CHECK(warp.at("gridStart") == 500);
+				const bool insert = operation == "insertSilence";
+				int shift = -1000;
+				if (insert)
+					shift = 1000;
+				else if (operation == "paste")
+					shift = -700;
+				Json beats = Json::array({{{"beat", 1}, {"frame", 1500}}});
+				if (insert)
+					beats.push_back({{"beat", 2}, {"frame", 3500}});
+				beats.push_back({{"beat", 3}, {"frame", 4500 + shift}});
+				beats.push_back({{"beat", 4}, {"frame", 6500 + shift}});
+				CHECK(warp.at("beats") == beats);
+				Json markers = Json::array({{{"position", 1000}, {"target", 1200}}});
+				if (insert)
+					markers.push_back({{"position", 3500}, {"target", 3700}});
+				markers.push_back({{"position", 4000 + shift}, {"target", 4300 + shift}});
+				CHECK(warp.at("markers") == (withMarkers ? markers : Json::array()));
+				const Json event = objectWithId(after.at("audioEvents"), f.event);
+				CHECK(event.at("position") == g_second);
+				CHECK(event.at("offset") == 1000);
+				CHECK(event.at("length") == 4000 + shift);
+				if (musical || withMarkers)
+					CHECK(event.at("playedLength").get<int64_t>() > 0);
+				else
+					CHECK(!event.contains("playedLength"));
+				f.call("history.undo");
+				CHECK(f.call("project.get") == before);
+				f.call("history.redo");
+				CHECK(f.call("project.get") == after);
+			}
+}
+
+TEST_CASE("sample editor Process maps event fades through musical timing", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	test::writeWav(path, processAudio());
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 240}, {"musical", true}});
+	f.call(
+		"audioEvent.setFades", {{"event", f.event}, {"fadeIn", {{"length", 2000}}}, {"fadeOut", {{"length", 4000}}}});
+	const Json before = f.call("project.get");
+	process(f, "delete", 2000, 3000, "all");
+	const Json event = objectWithId(f.call("project.get").at("audioEvents"), f.event);
+	CHECK(event.at("playedLength") == 6000);
+	CHECK(event.at("fadeRoom") == 6000);
+	CHECK(event.at("fadeIn").at("length") == 2000);
+	CHECK(event.at("fadeOut").at("length") == 4000);
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+}
+
+TEST_CASE("sample editor Process preserves beat timing and maps fades across an edited definition", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	test::writeWav(path, processAudio());
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 120}, {"gridStart", 500}, {"musical", true}});
+	for (const auto& [beat, frame] : std::map<int, int>{{1, 1500}, {2, 2500}, {3, 4500}, {4, 6500}})
+		f.call("clip.adjustGrid", {{"clip", f.clip}, {"mode", "beat"}, {"beat", beat}, {"frame", frame}});
+	f.call(
+		"audioEvent.setFades", {{"event", f.event}, {"fadeIn", {{"length", 12000}}}, {"fadeOut", {{"length", 12000}}}});
+	f.call("clip.setFades", {{"clip", f.clip}, {"fadeIn", {{"length", 3500}}}, {"fadeOut", {{"length", 2000}}}});
+	process(f, "delete", 2000, 3000, "all");
+	const Json project = f.call("project.get");
+	const Json event = objectWithId(project.at("audioEvents"), f.event);
+	CHECK(event.at("playedLength") == 66000); // Beat 0.5 to beat 3.25, with surviving beat numbers unchanged.
+	CHECK(event.at("fadeIn").at("length") == 12000);
+	CHECK(event.at("fadeOut").at("length") == 18000);
+	const Json clip = objectWithId(project.at("clips"), f.clip);
+	CHECK(clip.at("fadeIn").at("length") == 2500);
+	CHECK(clip.at("fadeOut").at("length") == 2000);
+}
+
+TEST_CASE("sample editor Process keeps zero fades at different project and clip sample rates", "[integration]")
+{
+	for (const bool musical : {false, true})
+	{
+		CAPTURE(musical);
+		const test::TempDir dir;
+		const auto path = dir.path() / "source.wav";
+		test::writeWav(path, processAudio());
+		Fixture f(path.u8string());
+		f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+		f.call("project.set", {{"sampleRate", 44100}});
+		if (musical)
+		{
+			f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 240}, {"musical", true}});
+			process(f, "delete", 2000, 2994, "all");
+		}
+		else
+		{
+			f.call("audioEvent.set", {{"event", f.event}, {"length", 4031}});
+			process(f, "delete", 7000, 7001, "all");
+		}
+		const Json event = objectWithId(f.call("project.get").at("audioEvents"), f.event);
+		if (musical)
+		{
+			CHECK(event.at("length") == 3006);
+			CHECK(event.at("playedLength") == 5524);
+			CHECK(event.at("fadeRoom") == 6013);
+		}
+		else
+		{
+			CHECK(event.at("length") == 4031);
+		}
+		CHECK(event.at("fadeIn").at("length") == 0);
+		CHECK(event.at("fadeOut").at("length") == 0);
+	}
+}
+
+TEST_CASE("sample editor Draw preserves warped clips and edited grids", "[integration]")
+{
+	for (const bool musical : {false, true})
+	{
+		CAPTURE(musical);
+		const test::TempDir dir;
+		const auto path = dir.path() / "source.wav";
+		test::Audio expected = processAudio();
+		test::writeWav(path, expected);
+		Fixture f(path.u8string());
+		f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+		f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 240}, {"gridStart", 500}, {"musical", musical}});
+		f.call("clip.adjustGrid", {{"clip", f.clip}, {"mode", "beat"}, {"beat", 1}, {"frame", 1500}});
+		if (musical)
+			f.call("clip.addWarpMarker", {{"clip", f.clip}, {"position", 6000}, {"target", 6500}});
+		f.call(
+			"audioEvent.setFades", {{"event", f.event}, {"fadeIn", {{"length", 100}}}, {"fadeOut", {{"length", 100}}}});
+		f.call("clip.addRegion", {{"clip", f.clip}, {"start", 1800}, {"end", 2200}});
+		const Json before = f.call("project.get");
+		const Json job = f.call("sampleEditor.process",
+							  {{"event", f.event}, {"operation", "draw"}, {"start", 2000}, {"end", 2003},
+								  {"channel", 0}, {"samples", {-0.5, 0.25, 0.75}}, {"sharedCopies", "all"}})
+							 .at("job");
+		const Json done = test::waitForJob(f.client, job.at("id").get<uint64_t>());
+		INFO(done.dump());
+		REQUIRE(done.at("state") == "done");
+		const Json after = f.call("project.get");
+		CHECK(after.at("audioEvents") == before.at("audioEvents"));
+		const Json clip = objectWithId(after.at("clips"), f.clip);
+		Json expectedClip = objectWithId(before.at("clips"), f.clip);
+		expectedClip["media"] = clip.at("media");
+		CHECK(clip == expectedClip);
+		expected.samples.at(2000) = -0.5F;
+		expected.samples.at(2001) = 0.25F;
+		expected.samples.at(2002) = 0.75F;
+		CHECK(test::compareAudio(eventAudio(f), expected, 0.0F).equal);
+		f.call("history.undo");
+		CHECK(f.call("project.get") == before);
+		f.call("history.redo");
+		CHECK(f.call("project.get") == after);
+	}
+}
+
+TEST_CASE("sample editor Process keeps warped crossfades within played fade room", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	test::writeWav(path, processAudio());
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 240}, {"musical", true}});
+	const Json other =
+		f.call("audioEvent.add",
+			 {{"track", f.track}, {"clip", f.clip}, {"position", 48500}, {"offset", 1000}, {"length", 4000}})
+			.at("event")
+			.at("id");
+	f.call("crossfade.set", {{"from", f.event}, {"to", other}, {"length", 6000}, {"outLength", 6000}});
+	const Json before = f.call("project.get");
+	process(f, "delete", 2000, 2500, "all");
+	const Json event = objectWithId(f.call("project.get").at("audioEvents"), other);
+	CHECK(event.at("length") == 3500);
+	CHECK(event.at("fadeRoom") == 7000);
+	CHECK(event.at("crossfade").at("length") == 6000);
+	CHECK(event.at("crossfade").at("outLength") == 6000);
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+}
+
+TEST_CASE("sample editor Process drops removed grid starts and warp targets without invalid anchors", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	test::writeWav(path, processAudio());
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	f.call("clip.setWarp", {{"clip", f.clip}, {"gridStart", 2500}});
+	f.call("clip.adjustGrid", {{"clip", f.clip}, {"mode", "beat"}, {"beat", 1}, {"frame", 3000}});
+	f.call("clip.adjustGrid", {{"clip", f.clip}, {"mode", "beat"}, {"beat", 2}, {"frame", 5000}});
+	f.call("clip.addWarpMarker", {{"clip", f.clip}, {"position", 1000}, {"target", 2500}});
+	f.call("clip.addWarpMarker", {{"clip", f.clip}, {"position", 3000}, {"target", 4000}});
+	const Json before = f.call("project.get");
+	process(f, "delete", 2000, 3000, "all");
+	Json warp = objectWithId(f.call("project.get").at("clips"), f.clip).at("warp");
+	CHECK(warp.at("gridStart") == 2000);
+	CHECK(warp.at("beats") == Json::array({{{"beat", 2}, {"frame", 4000}}}));
+	CHECK(warp.at("markers") == Json::array({{{"position", 2000}, {"target", 3000}}}));
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+	process(f, "insertSilence", 2500, 3000, "all");
+	warp = objectWithId(f.call("project.get").at("clips"), f.clip).at("warp");
+	CHECK(warp.at("gridStart") == 3000);
+	CHECK(warp.at("markers").at(0).at("target") == 3000);
+	f.call("history.undo");
+	process(f, "delete", 0, 9600, "all");
+	const Json empty = f.call("project.get");
+	warp = objectWithId(empty.at("clips"), f.clip).at("warp");
+	CHECK(empty.at("audioEvents").empty());
+	CHECK(warp.at("gridStart") == 0);
+	CHECK(warp.at("beats").empty());
+	CHECK(warp.at("markers").empty());
 }
 
 TEST_CASE("sample editor Process failures preserve the clipboard and clean their files", "[integration]")

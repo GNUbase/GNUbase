@@ -6,6 +6,7 @@
 #include "platform/log.h"
 #include "ui/eventdisplay.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Event.h>
@@ -506,6 +507,18 @@ namespace gnubase::ui
 			return std::make_pair(
 				std::string(action), std::function<void()>(onRange(command, parameters, needsLength)));
 		};
+		// A range command for the selection range, or without one for the selected events while the project window
+		// has the focus.
+		const auto rangeOrSelection = [this, onRange, onSelection](const char* command)
+		{
+			return [this, range = onRange(command, Json::object()), events = onSelection(command, Json::object())]
+			{
+				if (m_range)
+					range();
+				else if (projectHasFocus())
+					events();
+			};
+		};
 		// Paste goes to the range's start and first track, or to the project cursor on the tracks it was copied from,
 		// where it selects what it pasted.
 		const auto paste = [this](bool time)
@@ -561,14 +574,17 @@ namespace gnubase::ui
 					else
 						events();
 				}},
-			rangeAction("edit.cut", "range.cut", Json::object()),
-			rangeAction("edit.copy", "range.copy", Json::object()),
+			// Without a range, Cut and Copy take the selected events (#1910).
+			{"edit.cut", rangeOrSelection("range.cut")},
+			{"edit.copy", rangeOrSelection("range.copy")},
 			{"edit.paste", paste(false)},
 			rangeAction("edit.cutTime", "range.cut", {{"time", true}}),
 			rangeAction("edit.deleteTime", "range.delete", {{"time", true}}),
 			{"edit.pasteTime", paste(true)},
 			// Paste at Origin (reference manual p. 270): where it was copied from, onto the tracks it came from.
 			{"edit.pasteAtOrigin", [this] { edit("range.paste", {{"origin", true}}, !m_range); }},
+			// Paste Relative to Cursor (p. 270): as far from the cursor as it was when copied.
+			{"edit.pasteRelative", [this] { edit("range.paste", {{"relative", true}}, !m_range); }},
 			rangeAction("edit.insertSilence", "range.insertSilence", Json::object()),
 			rangeAction("edit.splitRange", "range.split", Json::object(), false),
 			rangeAction("edit.cropRange", "range.crop", Json::object()),
@@ -730,10 +746,25 @@ namespace gnubase::ui
 		m_actions.insert(actions.begin(), actions.end());
 	}
 
+	bool EventDisplay::projectHasFocus() const
+	{
+		// The innermost focus zone around the focused element: Mod+X and Mod+C pressed in the lower zone's editors or
+		// an in-place editor reach the project window's binding too.
+		Rml::Context* context = alive() ? m_root->GetContext() : nullptr;
+		for (const Rml::Element* element = context == nullptr ? nullptr : context->GetFocusElement();
+			element != nullptr; element = element->GetParentNode())
+			if (element->HasAttribute("focuszone"))
+				return element->GetAttribute<Rml::String>("focuszone", "") == "project";
+		return true;
+	}
+
 	bool EventDisplay::canRun(const std::string& action) const
 	{
-		if (action == "edit.paste" || action == "edit.pasteTime" || action == "edit.pasteAtOrigin")
+		if (action == "edit.paste" || action == "edit.pasteTime" || action == "edit.pasteAtOrigin" ||
+			action == "edit.pasteRelative")
 			return m_copied;
+		if (action == "edit.cut" || action == "edit.copy")
+			return m_range ? m_range->end > m_range->start : !m_selection.empty() && projectHasFocus();
 		const auto found = m_rangeActions.find(action);
 		return found == m_rangeActions.end() || (m_range && (!found->second || m_range->end > m_range->start));
 	}

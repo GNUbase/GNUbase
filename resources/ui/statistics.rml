@@ -150,6 +150,9 @@
 			local events = {}
 			for _, event in ipairs(project.audioEvents) do
 				if wanted[event.id] then
+					local start = tonumber(document:GetAttribute("start"))
+					local finish = tonumber(document:GetAttribute("end"))
+					if start and finish then event.offset, event.length = start, finish - start end
 					events[#events + 1] = event
 				end
 			end

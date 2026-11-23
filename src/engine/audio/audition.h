@@ -14,6 +14,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -50,7 +51,9 @@ namespace gnubase::engine
 		// position of source's playlist), then nothing until stop. channels: the main mix's; maxFrames: the device's
 		// block size.
 		void play(const Subject& subject, const Playback::Track& source, std::map<ObjectId, std::string> mediaPaths,
-			double sampleRate, time::Samples position, time::Samples end, int channels, uint32_t maxFrames);
+			double sampleRate, time::Samples position, time::Samples end, int channels, uint32_t maxFrames,
+			float level = 1.0f,
+			std::optional<std::vector<std::pair<time::Samples, time::Samples>>> sections = std::nullopt);
 
 		// Command thread: plays the subject from where the audio thread got to in the last scrub of it (where that
 		// one starts if it hasn't played yet), to position, forwards or backwards, in seconds (default: the time since
@@ -103,6 +106,8 @@ namespace gnubase::engine
 			time::Samples start = 0;
 			time::Samples end = 0;
 			uint32_t maxFrames = 0;
+			float level = 1.0f;
+			std::optional<std::vector<std::pair<time::Samples, time::Samples>>> sections;
 			std::vector<float> buffer;
 			std::vector<float*> audio; // into buffer, per channel
 			// Scrubbing: frames of channels samples to play once.

@@ -56,6 +56,7 @@ namespace gnubase::ui
 		SampleTool tool() const { return m_tool; }
 		// The audio event it edits, or 0 for none.
 		uint64_t event() const { return hasEvent() ? m_event : 0; }
+		std::pair<int64_t, int64_t> analysisRange() const { return rangeOrEvent(); }
 		void setTool(SampleTool tool);
 		static bool isProcessCommand(const std::string& command);
 		bool canProcess() const;

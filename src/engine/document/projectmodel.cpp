@@ -3763,8 +3763,18 @@ namespace gnubase::engine
 	Json ProjectModel::runEdit(
 		const std::string& command, Project& project, const Json& parameters, CommandContext& context)
 	{
+		const auto edit = m_edits.find(command);
+		if (edit == m_edits.end())
+			throw CommandError(command + " is not a document edit");
+		if (const std::string problem = validate(parameters, edit->second.info.parameters); !problem.empty())
+			throw CommandError(command + ": " + problem);
+		const auto parts = sharedPartsOf(project.midiParts);
 		CommandContext inner(parameters, &context);
-		return m_edits.at(command).handler(project, inner);
+		Json result = edit->second.handler(project, inner);
+		if (const std::string problem = validate(result, edit->second.info.result, "result"); !problem.empty())
+			throw CommandError(command + ": " + problem);
+		syncSharedParts(parts, project, inner);
+		return result;
 	}
 
 	void ProjectModel::addControl(

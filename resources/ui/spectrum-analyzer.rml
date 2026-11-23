@@ -142,6 +142,9 @@
 				return
 			end
 			dialog.result = nil
+			local start = tonumber(document:GetAttribute("start"))
+			local finish = tonumber(document:GetAttribute("end"))
+			if start and finish then event.offset, event.length = start, finish - start end
 			dialog.job = createAnalysisJob(function(text)
 				document:GetElementById("sa-value").inner_rml = escape(text)
 			end)

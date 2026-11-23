@@ -751,7 +751,7 @@ TEST_CASE("zooming keeps at most one media.peaks in flight per waveform", "[unit
 TEST_CASE("the waveform of a one-hour file draws at once when its peak file exists", "[integration][slow]")
 {
 #ifdef GNUBASE_SANITIZED
-	SKIP("sanitizer builds are too slow to measure this");
+	SKIP("sanitizer builds are too slow to generate an hour of peaks");
 #endif
 	// One hour of a mono 100 Hz sine at 48 kHz, 16 bits: 345 MB, never committed.
 	const test::TempDir dir;
@@ -770,6 +770,7 @@ TEST_CASE("the waveform of a one-hour file draws at once when its peak file exis
 			writer->write(second.data(), second.size());
 		writer->close();
 	}
+	Json peakFile;
 	{
 		// The first time, the engine generates the peaks and writes the peak file.
 		engine::Engine engine;
@@ -781,9 +782,14 @@ TEST_CASE("the waveform of a one-hour file draws at once when its peak file exis
 		while (!ready() && std::chrono::steady_clock::now() < deadline)
 			std::this_thread::sleep_for(milliseconds(100));
 		REQUIRE(ready());
+		const Json status = client.call("media.peakStatus").value.at("media").at(0);
+		REQUIRE(status.at("generated") == true);
+		peakFile = status.at("file");
+		REQUIRE(!peakFile.get<std::string>().empty());
 	}
 
-	// The next time, the whole hour draws as soon as the event is added.
+	// The next time, the whole hour draws as soon as the event is added: the engine reads the peak file and generates
+	// nothing (#2086). How long the waveform takes depends on the machine and its load, so that is only reported.
 	Fixture fixture;
 	const Json track = fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
 	const auto before = std::chrono::steady_clock::now();
@@ -804,7 +810,10 @@ TEST_CASE("the waveform of a one-hour file draws at once when its peak file exis
 	REQUIRE(fixture.waitUntil(drawn));
 	const auto took = std::chrono::duration_cast<milliseconds>(std::chrono::steady_clock::now() - before);
 	WARN("the waveform of a one-hour file drew after " << took.count() << " ms");
-	CHECK(took < std::chrono::seconds(2));
+	const Json status = fixture.call("media.peakStatus").at("media").at(0);
+	CHECK(status.at("status") == "ready");
+	CHECK(status.at("generated") == false);
+	CHECK(status.at("file") == peakFile);
 	CHECK(waveforms(fixture.document)[0]->channels()[0].high.size() == 1000); // a column per pixel
 }
 

@@ -151,7 +151,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 100> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 101> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -251,13 +251,15 @@ namespace gnubase::app
 			{"edit.selectNext", "Selects the event after the selected one on its track.", "Right"},
 			{"edit.locatorsToSelection", "Sets the locators around the selected events.", "P"},
 			// Range editing (docs/features/range-editing.md), with the reference's keys (manual pp. 1562-1563).
-			{"edit.cut", "Cuts the selection range to the clipboard.", "Mod+X"},
-			{"edit.copy", "Copies the selection range to the clipboard.", "Mod+C"},
+			{"edit.cut", "Cuts the selection range, or else the selected events, to the clipboard.", "Mod+X"},
+			{"edit.copy", "Copies the selection range, or else the selected events, to the clipboard.", "Mod+C"},
 			{"edit.paste", "Pastes the clipboard at the selection range's start or the project cursor.", "Mod+V"},
 			{"edit.cutTime", "Cuts the selection range and closes the gap.", "Mod+Shift+X"},
 			{"edit.deleteTime", "Deletes the selection range and closes the gap.", "Shift+Backspace"},
 			{"edit.pasteTime", "Pastes the clipboard and moves what comes after it to make room.", "Mod+Shift+V"},
-			{"edit.pasteAtOrigin", "Pastes the clipboard where it was copied from.", "Mod+Shift+Down"},
+			{"edit.pasteAtOrigin", "Pastes the clipboard where it was copied from.", "Alt+V"},
+			{"edit.pasteRelative", "Pastes the clipboard as far from the project cursor as it was when copied.",
+				"Shift+V"},
 			{"edit.insertSilence", "Inserts silence as long as the selection range at its start.", "Mod+Shift+E"},
 			{"edit.splitRange", "Splits the events at the selection range's edges.", "Shift+X"},
 			{"edit.cropRange", "Crops the events that cross the selection range's edges to it.", nullptr},
@@ -1225,7 +1227,7 @@ namespace gnubase::app
 						audioFunction = "statistics.rml";
 					if (audioFunction != nullptr)
 					{
-						openAudioFunction(audioFunction);
+						openAudioFunction(audioFunction, window.id() == m_sampleEditor.window);
 						return;
 					}
 					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
@@ -3082,7 +3084,7 @@ namespace gnubase::app
 		return *document;
 	}
 
-	void AppUi::openAudioFunction(const std::string& file)
+	void AppUi::openAudioFunction(const std::string& file, bool sampleEditor)
 	{
 		AudioFunctionWindow& shown = m_audioFunctions[file];
 		if (shown.document && shown.document->GetParentNode() != nullptr && m_shell.find(shown.window) != nullptr)
@@ -3091,7 +3093,14 @@ namespace gnubase::app
 			return;
 		}
 		std::string events;
-		if (m_eventDisplay)
+		std::pair<int64_t, int64_t> range{};
+		if (sampleEditor && m_sampleEditor.editor)
+		{
+			if (m_sampleEditor.editor->event() != 0)
+				events = std::to_string(m_sampleEditor.editor->event());
+			range = m_sampleEditor.editor->analysisRange();
+		}
+		else if (m_eventDisplay)
 		{
 			const auto& selection = m_eventDisplay->selection();
 			for (const engine::Json& event : m_eventDisplay->project().at("audioEvents"))
@@ -3117,6 +3126,11 @@ namespace gnubase::app
 			return;
 		}
 		document->SetAttribute("events", events);
+		if (sampleEditor && range.second > range.first)
+		{
+			document->SetAttribute("start", std::to_string(range.first));
+			document->SetAttribute("end", std::to_string(range.second));
+		}
 		shown.document = document->GetObserverPtr();
 		m_projectDialogs.erase(std::remove_if(m_projectDialogs.begin(), m_projectDialogs.end(),
 								   [](const Rml::ObserverPtr<Rml::Element>& open) { return !open; }),

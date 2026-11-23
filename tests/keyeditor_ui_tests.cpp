@@ -1492,10 +1492,11 @@ TEST_CASE("Up and Down transpose the selected notes, Delete and Backspace delete
 	CHECK(f.partNotes().size() == 2);
 }
 
-TEST_CASE("in the lower zone Up, Down and Delete edit the selected notes, not the project window's selection", "[ui]")
+TEST_CASE("in the lower zone Up, Down, Delete, Mod+X and Mod+C don't edit the project window's selection", "[ui]")
 {
 	// The keys are bound in the project window's focus zone too: Delete to edit.delete, Up and Down to
-	// track.selectPrevious and track.selectNext. The note display takes them first (p. 1214).
+	// track.selectPrevious and track.selectNext. The note display takes them first (p. 1214). Mod+X and Mod+C, edit.cut
+	// and edit.copy, take the project window's selected events only while it has the focus (#1910).
 	Fixture f({1024, 768});
 	f.app.call("editor.close", {{"editor", "window"}});
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
@@ -1535,6 +1536,17 @@ TEST_CASE("in the lower zone Up, Down and Delete edit the selected notes, not th
 	f.settle();
 	CHECK(f.partNotes().size() == 1);
 	CHECK(display.selection() == std::vector<uint64_t>{f.part});
+
+	// The part being edited stays, and nothing is copied.
+	const auto parts = [&f] { return f.app.call("project.get").at("midiParts").size(); };
+	const size_t before = parts();
+	f.app.ui().key(f.window, "Mod+X");
+	f.app.ui().key(f.window, "Mod+C");
+	f.settle();
+	CHECK(parts() == before);
+	CHECK(f.partNotes().size() == 1);
+	CHECK(display.selection() == std::vector<uint64_t>{f.part});
+	CHECK(!display.canRun("edit.paste"));
 }
 
 TEST_CASE("step input and MIDI input in the key editor", "[ui]")

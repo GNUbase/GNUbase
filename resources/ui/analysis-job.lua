@@ -22,6 +22,7 @@ function createAnalysisJob(message)
 	gnubase.on("job.progress", progress)
 	gnubase.on("job.finished", finished)
 	return {
+		cancel = cancel,
 		start = function(command, parameters, done)
 			cancel()
 			complete = done

@@ -192,8 +192,21 @@ TEST_CASE("MCP's UI tools draw only the windows they change: reads draw none, in
 		INFO(tool << ": " << response.dump().substr(0, 300));
 		CHECK(!response.at("result").at("isError").get<bool>());
 	};
-	for (int i = 0; i < 10; ++i) // what opening the mixer changed
-		app.shell().step(std::chrono::milliseconds(20));
+	// What opening the mixer changed, and the frames it draws (#2084): the answers to what the mixer asked the engine,
+	// and the window layout, which the docking system saves at its next check twice a second once a window opened or
+	// moved, e.g. when the window system places the new window. Its answer and the settings.changed that comes with
+	// it draw every window. Each try saves the layout now, rather than at a check during the calls below, and it has
+	// settled once nothing is out and a step drew neither window.
+	const ui::EngineBinding& binding = app.appUi().binding();
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			const uint64_t mainBefore = app.main().frames();
+			const uint64_t mixerBefore = mixer->frames();
+			app.shell().step(std::chrono::milliseconds(0));
+			app.appUi().docking().saveWindows();
+			return binding.waiting() == 0 && app.main().frames() == mainBefore && mixer->frames() == mixerBefore;
+		}));
 
 	const uint64_t mainFrames = app.main().frames();
 	const uint64_t mixerFrames = mixer->frames();
@@ -1149,9 +1162,10 @@ TEST_CASE("the context menu's range commands wait for a selection range, which a
 			.at("attributes")
 			.contains("disabled");
 	};
-	const std::vector<const char*> rangeCommands = {"edit.cut", "edit.copy", "edit.splitRange", "edit.cropRange"};
+	const std::vector<const char*> rangeCommands = {"edit.splitRange", "edit.cropRange"};
 
-	// The object selection tool selects the part for the menu, whose range commands have no range to act on.
+	// The object selection tool selects the part for the menu, whose range commands have no range to act on; cut and
+	// copy take the selected part (#1910).
 	rightClick(at(200));
 	CHECK(display.selection().size() == 1);
 	for (const char* command : rangeCommands)
@@ -1160,13 +1174,29 @@ TEST_CASE("the context menu's range commands wait for a selection range, which a
 		CHECK(disabled(command));
 	}
 	CHECK(!disabled("edit.delete"));
+	CHECK(!disabled("edit.cut"));
+	CHECK(!disabled("edit.copy"));
 	CHECK(disabled("edit.paste")); // nothing copied yet
 	// A disabled item does nothing.
-	click(app, selector("#event-display-menu > menuitem[command=edit.cut]"));
+	click(app, selector("#event-display-menu > menuitem[command=edit.cropRange]"));
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(parts() == 1);
 	CHECK(display.selection().size() == 1);
 	app.ui().key(std::nullopt, "Escape");
+
+	// With the focus in another zone, Cut and Copy still take the clicked part: the menu takes the focus when it opens,
+	// and it lies in the project window's focus zone.
+	Rml::Element* lowerZone = app.main().context().GetDocument(0)->GetElementById("lower-zone");
+	REQUIRE(lowerZone != nullptr);
+	REQUIRE(lowerZone->Focus());
+	rightClick(at(200));
+	CHECK(app.main().context().GetFocusElement()->GetId() == "event-display-menu");
+	CHECK(!disabled("edit.cut"));
+	CHECK(!disabled("edit.copy"));
+	click(app, selector("#event-display-menu > menuitem[command=edit.cut]"));
+	REQUIRE(app.waitUntil([&parts] { return parts() == 0; }));
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&parts] { return parts() == 1; }));
 
 	// The range selection tool: a range from 1.5 to 2.5 seconds. A right click on the part leaves it unselected, and
 	// the range commands act on the range.

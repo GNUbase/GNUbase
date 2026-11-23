@@ -59,11 +59,23 @@ make such things as part of it (`ProjectModel::runEdit`), so that it is one undo
   clip: Convert Hitpoints to MIDI Notes' `velocityMode` (`dynamic`: the loudest hitpoint velocity 1, the others less as
   their peaks are quieter; `fixed`: `velocity`), `pitch` (default 36) and `length` (ticks, default a sixteenth).
 
+`runEdit` validates the nested command's parameters and result against its registered schemas and refuses commands that
+are not document edits. It synchronizes shared MIDI parts before returning, so another nested edit sees the updated
+copies. The outer command keeps the combined events and undo step and rolls back the project on failure.
+
 `event.deleteOverlaps` (reference manual p. 643) trims each selected audio event's end to the next selected start in the
 same track, part and lane. It preserves clip offsets and delegates trimming to `event.resize`, including its fade and
 warp handling. Equal starts keep the highest id and remove the others. The last event and unselected events stay as they
 are; locked events or parts fail the whole edit. It returns trimmed `events` and `removed` ids in one undo step.
 Automatic track fades still apply; this command creates no crossfades. It is available through the engine, MCP and Lua.
+
+`event.closeGaps` implements Close Gaps (Crossfade), reference manual p. 643. Within each track, part and lane it
+extends each selected slice's end through the gap into the next selected slice, then runs `crossfade.set`. Starts and
+clip offsets stay in place. `length` is the crossfade in milliseconds (default 10, from 0.1 to 500), limited to half the
+next slice's played length. Touching slices get crossfades too; existing overlaps and the last slice stay as they are.
+Timing follows the clips' warps through `event.resize`. Locked events or parts, frozen tracks and insufficient source
+audio fail the whole edit, including earlier pairs. It returns changed `events` in one undo step through the engine, MCP
+and Lua.
 
 ## In the UI
 
@@ -102,11 +114,14 @@ Automatic detection when audio is imported or recorded (the Editing - Audio pref
 and the hitpoints of the selected event in the project window; the Beats filter and warp markers, which need the clip's
 musical definition and warping (#144); Tab to the next slice; Alt+N and Alt+B to locate to hitpoints; Divide Audio
 Events at Hitpoints for folder tracks; the MIDI notes' destinations First Selected Track in the UI (the engine takes
-`track`), which replaces the parts of earlier conversions, and Project Clipboard; Close Gaps and a UI entry for Delete
-Overlaps. The detection is checked on synthesized loops only; recorded drum loops with hand-annotated onsets (room
-sound, bleed, flams) are yet to come.
+`track`), which replaces the parts of earlier conversions, and Project Clipboard; Close Gaps (Time Stretch) and project
+menu entries for Close Gaps and Delete Overlaps. The detection is checked on synthesized loops only; recorded drum loops
+with hand-annotated onsets (room sound, bleed, flams) are yet to come.
 
 ## Checks
+
+- `tests/hitpoints_tests.cpp`: `runEdit` refusing unknown edits, invalid parameters and malformed results, and shared
+  parts synchronized before the caller continues.
 
 - `tests/hitpoints_tests.cpp`: detection accuracy on two synthesized drum loops whose hits are known (straight eighths
   with a ghost note and an open hi-hat at 48 kHz; swung sixteenths with soft attacks under a noise floor, in stereo at
@@ -117,6 +132,9 @@ sound, bleed, flams) are yet to come.
   and moved ones measured where they go; `clip.setHitpoints` and its errors; slices, events, regions, markers, the
   groove and MIDI notes; Delete Overlaps within a part, unchanged offsets, equal starts, part boundaries, selection
   validation, locked events and undo/redo.
+- `tests/hitpoints_tests.cpp`: Close Gaps (Crossfade) preserving starts and offsets, musical warping, selection part and
+  lane boundaries, duplicate and empty selections, locked events, insufficient source audio, requested crossfade length,
+  its limit to half the next slice's played length, atomic rollback and undo/redo.
 - `tests/playback_tests.cpp`: auditioning a clip, and up to an end, as Play back Slice does.
 - `tests/hitpoints_ui_tests.cpp` drives the sample editor with `ui::Automation`: Edit Hitpoints showing the detected
   hitpoints at their frames, the threshold slider's drag as one undo step, Remove All; the handle, Shift, Ctrl and
