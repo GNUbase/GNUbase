@@ -364,7 +364,7 @@ TEST_CASE("the user's key commands and macros take effect in the app and the Edi
 	const auto menuKeys = [&app]
 	{
 		Strings shown;
-		for (const Json& found : elements(app, "menuitem[command=\"transport.toggle\"] .menu-keys"))
+		for (const Json& found : elements(app, "#transport-menu > menuitem[command=\"transport.toggle\"] .menu-keys"))
 			shown.push_back(found.value("text", std::string()));
 		return shown;
 	};

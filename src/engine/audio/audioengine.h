@@ -548,6 +548,8 @@ namespace gnubase::engine
 		bool m_multiProcessing = true;
 		size_t m_threads = defaultThreads(); // processing threads, the audio thread included
 		std::unique_ptr<rt::WorkerPool> m_workers;
+		size_t m_workersWanted = 0; // what m_workers started with
+		double m_workersPeriod = 0.0;
 		Limit m_limitedBy = Limit::None; // why m_workers has fewer than planned
 
 		// Performance data: measured by the audio thread, read by the command thread.

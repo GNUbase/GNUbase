@@ -55,6 +55,32 @@
 	width: 100%;
 }
 
+/* The tools' pointers over the lanes (#1857); the play and scrub tools' is the speaker. */
+.audio-part-editor[tool=erase] .ape-display
+{
+	cursor: tool-erase;
+}
+
+.audio-part-editor[tool=split] .ape-display
+{
+	cursor: tool-split;
+}
+
+.audio-part-editor[tool=glue] .ape-display
+{
+	cursor: tool-glue;
+}
+
+.audio-part-editor[tool=mute] .ape-display
+{
+	cursor: tool-mute;
+}
+
+.audio-part-editor[tool=play] .ape-display, .audio-part-editor[tool=scrub] .ape-display
+{
+	cursor: tool-play;
+}
+
 /* A drag element where a press starts a gesture, whose drag then ends wherever the button goes up, also outside the
    window. Only there: a finger pan doesn't scroll while the press has a drag element. */
 .audio-part-editor[tool=objectSelection] .ape-event:not(.inactive),

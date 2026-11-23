@@ -2,6 +2,7 @@
 #include "engine/settings/usersettings.h"
 
 #include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/devices.h"
@@ -368,6 +369,11 @@ namespace gnubase::engine::settings
 	{
 		static const Format format = []
 		{
+			const Json defaultFade = {{"type", "object"},
+				{"properties",
+					{{"shape", {{"type", "string"}, {"enum", fadeShapeNames()}}},
+						{"length", {{"type", "number"}, {"minimum", 0}}}}},
+				{"required", {"shape", "length"}}, {"additionalProperties", false}};
 			Format result;
 			result.name = "settings";
 			result.version = 1;
@@ -472,6 +478,14 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
 					"default", true},
+				{"editing.defaultFadeIn",
+					"The default fade in (reference manual p. 385): its shape and length in seconds, which Apply "
+					"Standard Fade In gives the selected audio events; the fade dialog's As Default sets it.",
+					defaultFade, Json{{"shape", "linear"}, {"length", 0.01}}},
+				{"editing.defaultFadeOut",
+					"The default fade out (reference manual p. 385): its shape and length in seconds, which Apply "
+					"Standard Fade Out gives the selected audio events; the fade dialog's As Default sets it.",
+					defaultFade, Json{{"shape", "linear"}, {"length", 0.01}}},
 				{"editing.defaultTimeBase",
 					"The time base of new tracks when track.add gives none (Default Track Time Type, reference manual "
 					"pp. 230, 1595): musical (bars and beats, so their events follow tempo changes), linear (time, so "
@@ -522,6 +536,11 @@ namespace gnubase::engine::settings
 					"event keeps its place in the stack and silences what lies behind it, which p. 228 advises when "
 					"assembling stacked takes.",
 					Json{{"type", "boolean"}}, true, true},
+				{"editing.wheelEventVolumeAndFades",
+					"Use Mouse Wheel for Event Volume and Fades (reference manual p. 1597): the mouse wheel over an "
+					"audio event in the project window changes its volume, and with Shift its fade in (in the "
+					"event's left half) or fade out (in its right half), instead of scrolling.",
+					Json{{"type", "boolean"}}, false, true},
 				{"editing.doubleClickOpensEditorIn",
 					"Double-click opens Editor in a Window/in Lower Zone (reference manual p. 1603): where a double "
 					"click on a MIDI part or an audio part in the project window and Open/Close Editor "
@@ -579,10 +598,11 @@ namespace gnubase::engine::settings
 					"channel's last program change before that position.",
 					Json{{"type", "boolean"}}, true, true},
 				{"midi.devices",
-					"The installed MIDI devices (midiDevice.install), by name: each has banks, each bank a name and "
-					"patches, each patch a name, a program (0 to 127), an optional bank (0 to 16383, sent as bank "
-					"select MSB and LSB) and an optional folder it is listed in. A MIDI track that names a device "
-					"(channel.set device) chooses its program and bank by patch.",
+					"The installed MIDI devices (midiDevice.install), by name: each has banks and an optional "
+					"bankAssignment. Each bank has a name and patches, each patch a name, a program (0 to 127), an "
+					"optional bank (0 to 16383, sent as bank select MSB and LSB) and an optional folder it is listed "
+					"in. bankAssignment gives MIDI channels \"1\" to \"16\" a bank by its index (midiDevice.set). A "
+					"MIDI track that names a device (channel.set device) chooses its program and bank by patch.",
 					midi::devicesSchema(), Json::object()},
 				{"midi.importAutomation",
 					"Import Controller as Automation Tracks (reference manual p. 365): importing a MIDI file in the "

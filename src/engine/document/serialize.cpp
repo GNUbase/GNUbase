@@ -1838,7 +1838,8 @@ namespace gnubase::engine
 						{{"on", limiter.on}, {"threshold", limiter.threshold}, {"release", limiter.release}}}}}};
 	}
 
-	std::vector<ExpressionPoint> expressionsFromJson(const Json& json, const std::string& name, bool loading)
+	std::vector<ExpressionPoint> expressionsFromJson(
+		const Json& json, const std::string& name, time::Ticks longest, bool loading)
 	{
 		std::vector<ExpressionPoint> points;
 		for (size_t i = 0; i < json.size(); ++i)
@@ -1860,6 +1861,9 @@ namespace gnubase::engine
 				point.position = 0;
 			if (point.position < 0)
 				throw std::invalid_argument(where + ".position must not be negative");
+			if (point.position > longest && !loading)
+				throw std::invalid_argument(
+					where + ".position must be at most " + std::to_string(longest) + ", the longest project");
 			const auto [minimum, maximum] = expressionRange(point.type);
 			point.value = loading ? std::clamp(item.at("value").get<double>(), minimum, maximum)
 								  : checkedNumber(item.at("value"), minimum, maximum, where + ".value");
@@ -2666,8 +2670,8 @@ namespace gnubase::engine
 				// Only the note's own attributes, each once, as note.add and note.set take them (#1684, #1762).
 				note.mutedArticulations = n.value("mutedArticulations", std::vector<std::string>());
 				note.mutedArticulations = mutedArticulationsFrom(Json::object(), note, noteName);
-				note.expressions =
-					expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions", true);
+				note.expressions = expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions",
+					std::numeric_limits<time::Ticks>::max(), true);
 				part.notes[note.id] = note;
 			}
 			for (const Json& c : item.at("controllers"))

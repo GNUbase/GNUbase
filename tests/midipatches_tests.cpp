@@ -139,6 +139,30 @@ TEST_CASE("MIDI device banks are replaced through the engine without changing ot
 	CHECK(devices.at("Other").at("banks") == other.at("banks"));
 }
 
+TEST_CASE("a MIDI device's Bank Assignment picks a bank for MIDI channels, and drops banks that go", "[unit]")
+{
+	// Reference manual pp. 1109, 1111: with several banks, a MIDI channel can use one of them.
+	Engine engine;
+	Client client(engine);
+	run(client, "midiDevice.install", {{"name", "Synth"}});
+	const Json banks = {
+		{{"name", "Patches"}, {"patches", Json::array()}}, {{"name", "Drums"}, {"patches", Json::array()}}};
+	const Json assignment = {{"10", 1}, {"1", 0}};
+	CHECK(run(client, "midiDevice.set", {{"name", "Synth"}, {"banks", banks}, {"bankAssignment", assignment}})
+			  .at("device") == Json{{"name", "Synth"}, {"banks", banks}, {"bankAssignment", assignment}});
+	const auto device = [&] { return run(client, "settings.get", {{"key", "midi.devices"}}).at("value").at("Synth"); };
+	CHECK(device().at("bankAssignment") == assignment);
+	CHECK_THAT(
+		client.call("midiDevice.set", {{"name", "Synth"}, {"banks", banks}, {"bankAssignment", {{"2", 2}}}}).error,
+		ContainsSubstring("bank"));
+	CHECK(!client.call("midiDevice.set", {{"name", "Synth"}, {"banks", banks}, {"bankAssignment", {{"17", 0}}}}).ok());
+	// Banks set without an assignment keep it, but not for banks that are gone.
+	run(client, "midiDevice.set", {{"name", "Synth"}, {"banks", Json::array({banks[0]})}});
+	CHECK(device().at("bankAssignment") == Json{{"1", 0}});
+	run(client, "midiDevice.set", {{"name", "Synth"}, {"banks", banks}, {"bankAssignment", Json::object()}});
+	CHECK(!device().contains("bankAssignment"));
+}
+
 TEST_CASE("loading ignores program and bank on channels without a MIDI track", "[unit]")
 {
 	Engine engine;

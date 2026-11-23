@@ -179,8 +179,11 @@ namespace gnubase::engine
 	public:
 		// Disk thread: "recording.finished" with recording.add's parameters, or "recording.failed" with a reason.
 		using Notify = std::function<void(const std::string& name, const Json& data)>;
+		// Creates the writer of each file: AudioFileWriter::create, but in tests.
+		using CreateWriter =
+			std::function<std::unique_ptr<AudioFileWriter>(const std::string& path, const WriteOptions& options)>;
 
-		explicit Recorder(Notify notify);
+		explicit Recorder(Notify notify, CreateWriter createWriter = AudioFileWriter::create);
 		~Recorder(); // ends a recording that is still open, once its files are created
 		Recorder(const Recorder&) = delete;
 		Recorder& operator=(const Recorder&) = delete;
@@ -250,6 +253,7 @@ namespace gnubase::engine
 			RecordTrack track;
 			std::string path;
 			std::unique_ptr<AudioFileWriter> writer;
+			time::Samples end = -1; // where a write failed, as at an AIFF file's 4 GB: the file ends there, or -1
 		};
 
 		struct Take
@@ -318,6 +322,7 @@ namespace gnubase::engine
 			const MidiTap::Sequencers& sequencers, uint32_t offset, uint32_t frames, time::Samples position) noexcept;
 
 		Notify m_notify;
+		CreateWriter m_createWriter;
 
 		// Set by prepare, while no audio thread runs.
 		int m_channels = 0;

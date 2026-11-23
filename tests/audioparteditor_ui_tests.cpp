@@ -633,7 +633,16 @@ TEST_CASE("the split, glue, mute and erase tools edit the events in the part", "
 {
 	Fixture f;
 	f.open();
+	// Each tool's pointer over the lanes, as MCP's ui_windows reports it (#1857).
+	const auto pointer = [&f](const ui::Target& target)
+	{
+		f.app.ui().move(f.window, target);
+		f.app.shell().step(std::chrono::milliseconds(0));
+		return f.app.ui().windows().at("cursor").get<std::string>();
+	};
+	CHECK(pointer(f.at(0.27, 0)).empty());
 	f.tool("split");
+	CHECK(pointer(f.at(0.27, 0)) == "tool-split");
 	f.click(f.at(0.27, 0));
 	REQUIRE(f.app.waitUntil([&] { return f.events().size() == 3; }));
 	f.settle();
@@ -642,6 +651,7 @@ TEST_CASE("the split, glue, mute and erase tools edit the events in the part", "
 	// The glue tool glues the second half to nothing: the next event on its lane doesn't continue it in the clip,
 	// so it sends nothing the engine would refuse. The first half it glues to the second half again.
 	f.tool("glue");
+	CHECK(pointer(f.at(0.4, 0)) == "tool-glue");
 	const size_t before = f.steps();
 	f.click(f.at(0.4, 0));
 	f.settle();
@@ -656,11 +666,13 @@ TEST_CASE("the split, glue, mute and erase tools edit the events in the part", "
 	CHECK(!f.ran("event.glue").at(0).contains("error"));
 
 	f.tool("mute");
+	CHECK(pointer(f.at(1.25, 0)) == "tool-mute");
 	f.click(f.at(1.25, 0));
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.second).at("mute") == true; }));
 	REQUIRE(f.app.waitUntil([&] { return f.has(eventSelector(f.second), "muted"); }));
 
 	f.tool("erase");
+	CHECK(pointer(f.at(1.25, 0)) == "tool-erase");
 	f.click(f.at(1.25, 0));
 	REQUIRE(f.app.waitUntil([&] { return f.events().size() == 1; }));
 	f.settle();
@@ -683,6 +695,9 @@ TEST_CASE("the play and scrub tools audition the part's track", "[ui]")
 			tracks.push_back(event.data.at("track").get<uint64_t>());
 		});
 	f.tool("play");
+	f.app.ui().move(f.window, f.at(1.25, 0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.app.ui().windows().at("cursor") == "tool-play"); // the speaker (#1857)
 	f.click(f.at(1.25, 0));
 	REQUIRE(f.app.waitUntil(
 		[&]
