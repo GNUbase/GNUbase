@@ -116,7 +116,8 @@ Delete, importing and exporting .syx files); the auditioning column and the proj
 presets and Setup (the transform editor); text, lyrics and SMF events, which the project has no type for; muting events
 and the mute tool (notes have no mute yet); the selection rectangle in the event display; key commands other than Delete
 and Backspace; the ruler, zooming and scrolling the event display; Set up Window Layout, the status line, nudging, snap
-and quantize on the toolbar; editing a program change's bank; and windows of their own for the key and list editors, which share the editor window.
+and quantize on the toolbar; editing a program change's bank; and windows of their own for the key and list editors,
+which share the editor window.
 
 ## Checks
 

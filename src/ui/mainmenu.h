@@ -68,13 +68,17 @@ namespace gnubase::ui
 		// Enables or disables the item's element, if it changed.
 		static void enable(Rml::Element& element, bool enabled);
 
+		// The focus zone the items of the menu bar's menus run in: the focused element's, or while a menu or the menu
+		// bar has the focus, the zone of the element that had it before. Null without a zone.
+		Rml::Element* barZone() const;
+
 		void ProcessEvent(Rml::Event& event) override;
 
 		KeyCommands& m_keys;
 		Window& m_window;
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::vector<Item> m_items;
-		std::optional<uint64_t> m_keysRevision; // of the bindings the items show the keys of
-		Rml::ObserverPtr<Rml::Element> m_focus; // what had the focus last outside menus and menu bars
+		std::optional<uint64_t> m_keysRevision;     // of the bindings the items show the keys of
+		Rml::ObserverPtr<Rml::Element> m_focusZone; // of the element that had the focus when a menu took it
 	};
 }

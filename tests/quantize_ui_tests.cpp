@@ -333,6 +333,23 @@ TEST_CASE("Q and the quantize commands take the lower zone editor's notes, not t
 	REQUIRE(mainZone->Focus());
 	f.menu("edit.quantize");
 	CHECK(f.startsAre({24 * g_unit, 48 * g_unit, 72 * g_unit}));
+
+	// A note of the editor with the focus, which the editor builds anew when the part's notes change: the focus goes
+	// to the note's parent without a Focus event, and the Edit menu still takes the editor's selected note (#761).
+	select({});
+	f.app.keys().run("edit.resetQuantize", Json::object(), f.app.main(), lowerZone);
+	CHECK(f.startsAre({26 * g_unit, 50 * g_unit, 73 * g_unit}));
+	select({f.notes[1]});
+	Rml::Element* note = lowerZone->QuerySelector(".key-note[note=\"" + std::to_string(f.notes[1]) + "\"]");
+	REQUIRE(note != nullptr);
+	REQUIRE(note->Focus());
+	const Rml::ObserverPtr<Rml::Element> focused = note->GetObserverPtr();
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes", {{{"position", 90 * g_unit}, {"length", 20 * g_unit}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return focused.get() == nullptr; }));
+	f.menu("edit.quantize");
+	CHECK(f.startsAre({26 * g_unit, 48 * g_unit, 73 * g_unit, 90 * g_unit}));
 }
 
 TEST_CASE("the quantize panel shows and changes the project's quantize settings", "[ui]")

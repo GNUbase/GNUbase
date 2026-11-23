@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/mainmenu.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
@@ -111,7 +112,7 @@ namespace gnubase::ui
 		// The items of a menu come one after the other: they share their parent's zone. Items of one command in one
 		// zone get the same answer for the whole update, wherever they are, as the enabled callbacks get the window
 		// and the zone, not the parameters.
-		Rml::Element* const focusZone = closestWith(m_focus.get(), "focuszone");
+		Rml::Element* const focusZone = barZone();
 		const Rml::Element* parent = nullptr;
 		Rml::Element* parentZone = nullptr;
 		std::map<std::pair<std::string_view, const Rml::Element*>, bool> answers;
@@ -159,13 +160,33 @@ namespace gnubase::ui
 		}
 	}
 
+	Rml::Element* MainMenu::barZone() const
+	{
+		// The focus moves to an ancestor without a Focus event, e.g. when the focused element goes away
+		// (Rml::Element::RemoveChild), so it is the context's focus, not the last Focus event's target.
+		const Rml::Element* document = m_document.get();
+		Rml::Context* context = document != nullptr ? document->GetContext() : nullptr;
+		Rml::Element* focused = context != nullptr ? context->GetFocusElement() : nullptr;
+		if (focused != nullptr && !inMenu(focused))
+			return closestWith(focused, "focuszone");
+		return m_focusZone.get();
+	}
+
 	void MainMenu::ProcessEvent(Rml::Event& event)
 	{
 		if (event.GetId() == Rml::EventId::Focus)
 		{
-			Rml::Element* focused = event.GetTargetElement();
-			if (focused != nullptr && !inMenu(focused))
-				m_focus = focused->GetObserverPtr();
+			// The context sets the new focus after it sent the Focus events, so going into a menu or the menu bar it
+			// still has the element that had the focus (Rml::Context::OnFocusChange). Its zone, not the element, as
+			// an editor may build that element anew while the menu is open (#761).
+			const Rml::Element* target = event.GetTargetElement();
+			Rml::Context* context = target != nullptr ? target->GetContext() : nullptr;
+			Rml::Element* focused = context != nullptr ? context->GetFocusElement() : nullptr;
+			if (inMenu(target) && focused != nullptr && !inMenu(focused))
+			{
+				Rml::Element* zone = closestWith(focused, "focuszone");
+				m_focusZone = zone != nullptr ? zone->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+			}
 			return;
 		}
 		// The clicked item follows what the click's listeners changed before it runs (#1120). The other items, and
@@ -176,7 +197,7 @@ namespace gnubase::ui
 		for (const Item& item : m_items)
 			if (item.element.get() == element)
 			{
-				Rml::Element* zone = item.inMenuBar ? closestWith(m_focus.get(), "focuszone") : nullptr;
+				Rml::Element* zone = item.inMenuBar ? barZone() : nullptr;
 				if (zone == nullptr)
 					zone = closestWith(element, "focuszone");
 				const bool enabled = m_keys.canRun(item.command, m_window, zone);

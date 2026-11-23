@@ -6,6 +6,7 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
+#include "ui/midieditor.h"
 #include "ui/rmlui.h"
 #include "uiapp.h"
 
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -597,6 +599,32 @@ TEST_CASE("the MIDI editors share one project read for each change (#625)", "[ui
 	app.appUi().docking().open("editorInspector");
 	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editorInspector"); }));
 	CHECK(reads(240) == before);
+}
+
+TEST_CASE("a project read asked for after the binding handed on something else is a read of its own (#625)", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	ui::EngineBinding& binding = app.appUi().binding();
+	ui::ProjectReads reads(binding);
+	// EngineBinding::handed() when each got its answer.
+	uint64_t first = 0;
+	uint64_t later = 0;
+	uint64_t again = 0;
+	// An answer the binding hands on while the first read is out: the read asked for then goes out once the first is
+	// answered.
+	binding.send("project.get", Json::object(),
+		[&](const engine::Result&) { reads.read([&](const engine::Result&) { later = binding.handed(); }); });
+	reads.read(
+		[&](const engine::Result&)
+		{
+			first = binding.handed();
+			// Asked for again from the answer: joins the read that went out for the later one.
+			reads.read([&](const engine::Result&) { again = binding.handed(); });
+		});
+	REQUIRE(app.waitUntil([&] { return again != 0; }));
+	CHECK(first != 0);
+	CHECK(first < later);
+	CHECK(again == later);
 }
 
 TEST_CASE("the MIDI menu opens the selected MIDI parts in the editor window's key, drum or list editor (#719)", "[ui]")

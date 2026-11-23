@@ -5,16 +5,18 @@ own, as keys do, show their keys and are disabled while their command can't run.
 `resources/ui/project.rml`; `ui::MainMenu` (`src/ui/mainmenu.h`) runs their items, and `app::AppUi` attaches it to the
 project window.
 
-- **Items.** A `<menuitem>` with a `command` attribute runs that command through the key commands
-  (`KeyCommands::run`, [key-commands.md](key-commands.md)), with the JSON object in its `parameters` attribute:
+- **Items.** A `<menuitem>` with a `command` attribute runs that command through the key commands (`KeyCommands::run`,
+  [key-commands.md](key-commands.md)), with the JSON object in its `parameters` attribute:
   `<menuitem command="transport.locate" parameters='{"target": "leftLocator"}'>`. An engine command goes through the
   UI's engine client, so a menu can do nothing that MCP and Lua can't; a UI command gets the window the menu is in and
   the focus zone around the item. An item of a menu bar title's menu, or of one of its submenus, runs in the zone that
-  had the focus before the menu opened, as its key would (#761): the menu remembers the last element focused outside
-  menus and menu bars. So Edit > Quantize and the Advanced Quantize items take the lower zone editor's selected notes
-  while the lower zone has the focus, not the project window's selected parts (reference manual p. 368), and every
-  other Edit item works on that zone too. A context menu's items keep the zone around the menu. Adding an entry is one line in the document; a new feature adds its command (engine
-  or UI) and its item, e.g. Import with #92.
+  had the focus before the menu opened, as its key would (#761): when the focus goes into the menu bar or a menu, the
+  menu keeps the zone of the element that had it, and it takes the focused element's zone otherwise, so an element that
+  goes away and leaves the focus to its parent counts too. So Edit > Quantize and the Advanced Quantize items take the
+  lower zone editor's selected notes while the lower zone has the focus, not the project window's selected parts
+  (reference manual p. 368), and every other Edit item works on that zone too. A context menu's items keep the zone
+  around the menu. Adding an entry is one line in the document; a new feature adds its command (engine or UI) and its
+  item, e.g. Import with #92.
 - **Checked when attached** (#446). `MainMenu` checks every item before it changes the document: parameters that
   aren't a JSON object, a command that doesn't exist and parameters the command doesn't take (`KeyCommands::check`, as
   for keys) throw `std::invalid_argument` naming the command, so a typo fails the tests instead of shipping a dead
