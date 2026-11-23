@@ -186,7 +186,7 @@ TEST_CASE("Strip Silence limits processing to the sample editor range", "[integr
 	CHECK(!f.client.call("event.stripSilence", {{"events", {f.event}}, {"start", at(2)}, {"end", at(1)}}).ok());
 }
 
-TEST_CASE("Strip Silence joins sounding range edges and fades only removed silence", "[integration]")
+TEST_CASE("Strip Silence keeps sounding range edges joined and preserves outside fades", "[integration]")
 {
 	bool gap = false;
 	SECTION("A continuous tone keeps its event and original outer fades")
@@ -233,6 +233,31 @@ TEST_CASE("Strip Silence joins sounding range edges and fades only removed silen
 	REQUIRE(regions.size() == (gap ? 2 : 1));
 	CHECK(regions.front().at("start") == at(0.5));
 	CHECK(regions.back().at("end") == at(2.5));
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+	f.call("history.redo");
+	CHECK(f.call("project.get") == after);
+}
+
+TEST_CASE("Strip Silence fades original edges when processing the whole event", "[integration]")
+{
+	Fixture f;
+	f.add(make(3.0, 1,
+			  [](int, double t) { return t >= 1.25 && t < 1.75 ? 0.0 : 0.5 * std::cos(2.0 * g_pi * 1000.0 * t); }),
+		"whole-tone");
+	f.call("audioEvent.setFades", {{"event", f.event}, {"fadeIn", {{"length", 96}}}, {"fadeOut", {{"length", 144}}}});
+	const Json before = f.call("project.get");
+	f.call("event.stripSilence", {{"events", {f.event}}, {"minimumClosed", 0}, {"fades", 5}});
+	const Json after = f.call("project.get");
+	const Json& events = after.at("audioEvents");
+	REQUIRE(events.size() == 2);
+	CHECK(events.front().at("offset") == 0);
+	CHECK(events.back().at("offset").get<int64_t>() + events.back().at("length").get<int64_t>() == at(3.0));
+	for (const auto& event : events)
+	{
+		CHECK(event.at("fadeIn").at("length") == 240);
+		CHECK(event.at("fadeOut").at("length") == 240);
+	}
 	f.call("history.undo");
 	CHECK(f.call("project.get") == before);
 	f.call("history.redo");

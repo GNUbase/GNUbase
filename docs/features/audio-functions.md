@@ -31,14 +31,14 @@ if the document changes meanwhile.
 - **Process** (`event.stripSilence`, one undo step, "Detect silence"): `regions` adds a region of the clip per section
   ([sample-editor.md](sample-editor.md)), named `regionName` and a number counting from `autoNumberStart` across the
   events; `strip` (the default) splits each event at the sections' edges (`event.split`) and removes the silent parts
-  (`event.remove`); `fades` gives each edge next to removed silence a fade of that many milliseconds, at most half the
-  event's played length in frames at the clip's sample rate (`fadeRoom`, [warp.md](warp.md)), and within the room left
-  by a preserved opposite fade (`audioEvent.setFades`). Intact edges keep their existing fades; without `strip`, Apply
-  Fades still sets both event edges. The job posts `event.applySilenceSections` to the command thread with its measured
-  sections and the project's starting revision. That edit runs those commands as part of it (`ProjectModel::runEdit`).
-  An edit, undo, redo or project replacement during analysis fails the job rather than applying stale sections.
-  Stripping a silent or locked event is an error. `event.stripSilence` cannot be part of a history transaction; the
-  apply command can.
+  (`event.remove`); `fades` gives each resulting event edge inside the processed range, its boundaries included, a fade
+  of that many milliseconds, at most half the event's played length in frames at the clip's sample rate (`fadeRoom`,
+  [warp.md](warp.md)), and within the room left by a preserved opposite fade (`audioEvent.setFades`). Edges outside the
+  range keep their existing fades. Without a range, all resulting events get both new fades, including at their original
+  edges. The job posts `event.applySilenceSections` to the command thread with its measured sections and the project's
+  starting revision. That edit runs those commands as part of it (`ProjectModel::runEdit`). An edit, undo, redo or
+  project replacement during analysis fails the job rather than applying stale sections. Stripping a silent or locked
+  event is an error. `event.stripSilence` cannot be part of a history transaction; the apply command can.
 - **Spectrum** (`analysis::PowerSpectrum`, `analysis::spectrumCurve`): Welch's average power spectrum, as
   `audio.analyze` measures it, at points 1/24 octave apart from 20 Hz up to the Nyquist frequency. Each point has the
   level of the strongest bin within 1/48 octave of it, or between the bins next to it where they are farther apart,
@@ -115,9 +115,9 @@ The sample editor's Process section opens all three functions for its event and 
 without a selection, independently of the project selection. Detect Silence's Process passes `start` and `end` clip
 frames to `event.stripSilence`: both must be supplied together and lie within the event. Audio outside that range stays;
 regions use only the measured sections. A sounding section touching a range edge joins the outside audio without a cut
-or a new fade there. With Strip Silence, new fades apply only at edges next to removed silence.
-`event.applySilenceSections` accepts the same bounds, with measured sections inside them. Analysis and preview can also
-use clip ranges outside the event.
+or a new fade there. New fades apply to event edges within the processed range, its boundaries included; outside edges
+keep their fades. `event.applySilenceSections` accepts the same bounds, with measured sections inside them. Analysis and
+preview can also use clip ranges outside the event.
 
 ## Not yet
 
@@ -129,6 +129,7 @@ Statistics' surround weighting.
 - `tests/audiofunctions_tests.cpp`: Strip Silence within a range preserving both outside pieces, adding only the
   measured region, undo and invalid bounds. A continuous tone through both range edges stays unsplit with its original
   outer fades; an interior gap gives only its two bordering edges new fades, with bounded regions and undo/redo.
+  Whole-event processing of a tone with a gap replaces the fades at both original edges too.
 - `tests/audiofunctions_ui_tests.cpp`: waveform peaks, threshold dragging, Mute Gaps preview and stopping on close; the
   sample editor's three analysis entries using its range independently of the project selection.
 

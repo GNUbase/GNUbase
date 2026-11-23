@@ -335,8 +335,8 @@ namespace gnubase::engine
 				"events; fades (Apply Fades, ms) gives the events that remain a fade in and a fade out of that "
 				"length, at most half of what each plays for in frames at the clip's sample rate (its length, "
 				"unless it plays warped). An event that strip would remove completely, or that is locked, is an "
-				"error. With strip, new fades apply only at edges bordering removed silence; other edges keep their "
-				"existing fades. "
+				"error. New fades apply at edges inside the processed range, including its boundaries; edges outside "
+				"it keep their existing fades. "
 				"Optional start/end clip frames bound processing within each event, as in event.stripSilence; "
 				"sections must lie within that range. Returns the events that remain and the regions, and the number "
 				"of sections.",
@@ -449,11 +449,8 @@ namespace gnubase::engine
 					for (const ObjectId piece : pieces)
 					{
 						const AudioEvent& part = project.audioEvents.at(piece);
-						const auto middle = part.offset + (part.length / 2);
-						const bool whole = !strip && middle >= range.start && middle < range.end;
-						const bool fadeIn = whole || (strip && part.offset > event.offset);
-						const bool fadeOut =
-							whole || (strip && part.offset + part.length < event.offset + event.length);
+						const bool fadeIn = part.offset >= range.start;
+						const bool fadeOut = part.offset + part.length <= range.end;
 						if (fades > 0.0 && (fadeIn || fadeOut))
 						{
 							const time::Samples room = fadeRoom(project, part);
