@@ -56,8 +56,9 @@ pictures and the notepad too with Set up Window Layout, which keeps the window's
   follows shows it; while none follows, another window opens (p. 499), as many as the user opens, each with its own
   Follow. The windows after the first open where the shell puts them, not where a workspace had them.
 - **Following the selection** (pp. 499-500). While Follow is on, a window shows the first selected track's channel, and
-  going to another channel in the window (previous, next, Go to Output) selects its track in the track list. With Follow
-  off, the window and the track list's selection go their own ways.
+  going to another channel in the window (previous, next, Go to Output) selects its track in the track list, so that
+  the other windows that follow show it too. With Follow off, the window and the track list's selection go their own
+  ways; turning Follow on shows the selected track's channel again.
 - **Add Effect Track to Send** (p. 554). The destination list of every send, in the mixers and in the window, ends with
   Add Effect Track to Send: it opens the add track dialog on the effect page in that window, with the track and the
   send (the document's `tracks`, `send` and `below` attributes), and the dialog's Add Track passes them to
@@ -89,9 +90,10 @@ and write states, the routing and the selection (p. 458).
   step, and respect `linked` false. In the app: the mixer's `e` opens the window for its channel and selects the track;
   the sections it shows; a control sending `channel.set`; previous, next and Go to Output; following the track selection
   and not following it; with Follow off, the UI command and the mixer's `e` opening a second window, which follows, and
-  bringing it to the front; a removed track; a closed second window; Copy and Paste Channel Settings, disabled for MIDI
-  and VCA channels; Add Effect Track to Send through the add track dialog, below the track whose send it is; the
-  inspector's `e`; the fader, an EQ gain, a dynamics threshold and a send level dragged while the engine answers late,
-  which follow the mouse and take one undo step each (#716); and a send knob's Ctrl-click value, which follows the
-  default send level also while the knob is ahead of the engine.
+  bringing it to the front; the second window following `e` on the first one's channel, and the first one's next channel
+  with Follow on again; a removed track; a closed second window; Copy and Paste Channel Settings, disabled for MIDI and
+  VCA channels; Add Effect Track to Send through the add track dialog, below the track whose send it is; the inspector's
+  `e`; the fader, an EQ gain, a dynamics threshold and a send level dragged while the engine answers late, which follow
+  the mouse and take one undo step each (#716); and a send knob's Ctrl-click value, which follows the default send level
+  also while the knob is ahead of the engine.
 - `tests/linkgroups_tests.cpp`: the link group's JSON with `eq`, `dynamics` and `sends`.

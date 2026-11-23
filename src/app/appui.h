@@ -494,7 +494,6 @@ namespace gnubase::app
 		std::array<MixerWindow, 4> m_mixers;
 		MixerWindow m_channelSettings;                    // the first channel settings window
 		std::map<int, MixerWindow> m_moreChannelSettings; // the others, from 2 on, as Edit Channel Settings opened them
-		uint64_t m_settingsTrack = 0;                     // the track they last went to or followed
 		std::weak_ptr<ui::Mixer> m_lowerMixer;            // the docking system owns it while it is there
 		struct EditorWindow
 		{

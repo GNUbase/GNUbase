@@ -429,9 +429,26 @@ TEST_CASE("the channel settings window shows a channel with its sections, goes t
 	REQUIRE(app.waitUntil([&] { return strips(app, other) == std::vector<uint64_t>{bass.channel}; }));
 	CHECK(app.appUi().channelSettingsWindows().size() == 2);
 
-	// A removed track's channel leaves its window empty; a closed window is gone from the list.
+	// Edit Channel Settings on the channel the first window shows brings that one to the front and selects the track,
+	// which the window that follows shows too.
+	const std::string editKeys = ".mixer-channel[channel=" + std::to_string(keys.channel) + "] button.mixer-edit";
+	click(app, mixer, editKeys);
+	REQUIRE(app.waitUntil([&] { return strips(app, other) == std::vector<uint64_t>{keys.channel}; }));
+	CHECK(strips(app, window) == std::vector<uint64_t>{keys.channel});
+	CHECK(selection(app) == std::vector<uint64_t>{keys.track});
+	CHECK(app.appUi().channelSettingsWindows().size() == 2);
+
+	// With Follow on again in the first window, going to the next channel in it selects that track, which the other
+	// window shows too.
+	function(app, window, "follow");
+	click(app, window, "#settings-next");
+	REQUIRE(app.waitUntil([&] { return strips(app, other) == std::vector<uint64_t>{bass.channel}; }));
+	CHECK(strips(app, window) == std::vector<uint64_t>{bass.channel});
+	CHECK(selection(app) == std::vector<uint64_t>{bass.track});
+
+	// A removed track's channel leaves its windows empty; a closed window is gone from the list.
 	app.call("track.remove", {{"track", bass.track}});
-	REQUIRE(app.waitUntil([&] { return strips(app, other).empty(); }));
+	REQUIRE(app.waitUntil([&] { return strips(app, other).empty() && strips(app, window).empty(); }));
 	app.shell().close(*other);
 	REQUIRE(app.waitUntil([&] { return app.appUi().channelSettingsWindows() == std::vector<ui::WindowId>{*window}; }));
 }

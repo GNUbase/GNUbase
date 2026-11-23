@@ -489,13 +489,11 @@ namespace gnubase::app
 						following.push_back(other.mixer.get());
 				if (!following.empty() && m_trackList)
 				{
+					// Each window on its own: another one may have gone to a track and selected it.
 					const std::vector<uint64_t> tracks = m_trackList->selection();
-					if (!tracks.empty() && tracks.front() != m_settingsTrack)
-					{
-						m_settingsTrack = tracks.front();
-						for (ui::Mixer* settings : following)
-							settings->showTrack(m_settingsTrack);
-					}
+					for (ui::Mixer* settings : following)
+						if (!tracks.empty() && settings->track() != tracks.front())
+							settings->showTrack(tracks.front());
 				}
 				if (m_keyboard && m_shell.find(m_keyboardWindow) == nullptr)
 					m_keyboard.reset(); // so too: its notes end
@@ -2207,7 +2205,6 @@ namespace gnubase::app
 		};
 		actions.wentTo = [this](uint64_t track)
 		{
-			m_settingsTrack = track;
 			if (m_trackList)
 				m_trackList->select({track});
 		};
@@ -2260,7 +2257,6 @@ namespace gnubase::app
 				m_binding, m_meters, m_docking, *root, std::string(), ui::MixerKind::ChannelSettings, mixerActions());
 			m_docking.attach(name, *document);
 		}
-		m_settingsTrack = track;
 		shown->mixer->showTrack(track);
 		if (m_trackList)
 			m_trackList->select({track});

@@ -687,7 +687,8 @@ namespace gnubase::engine
 			if (const auto state = m_channelStates.find(channel.id); !channel.listen &&
 				state != m_channelStates.end() && state->second->listenGain.load(std::memory_order_relaxed) > 0.0f)
 				fading.push_back(channel.id);
-		// Sends that left a destination glide out of it, unless their node would close a loop now.
+		// Sends that left a destination glide out of it, unless one of their nodes would close a loop now: then none
+		// of them does, they all stop at once.
 		std::vector<GoingSend> going = goingSends(snapshot);
 		std::vector<graph::FadingSend> fadingSends;
 		fadingSends.reserve(going.size());

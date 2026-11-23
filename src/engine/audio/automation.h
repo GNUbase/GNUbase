@@ -555,8 +555,8 @@ namespace gnubase::engine
 
 	// The processor of a send node (graph::NodeKind::Send): a post-fader send's input is its channel's output, a
 	// pre-fader send's the channel's PreFaderTap. It scales it by the send's gain, gliding over a block from the gain
-	// of the last block, which the channel's state keeps across graphs in the send's gain number slot (0 or 1), or
-	// from silence when fromSilence.
+	// of the last block, which the channel's state keeps across graphs in the gain slot `slot` (0 or 1) of the send's
+	// number, or from silence when fromSilence.
 	class SendStrip : public graph::Processor
 	{
 	public:
