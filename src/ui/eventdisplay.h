@@ -394,20 +394,23 @@ namespace gnubase::ui
 		// With the range selection tool,
 		// edit.delete deletes the range; edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence,
 		// edit.splitRange and edit.cropRange edit it, edit.paste and edit.pasteTime paste at its start (without a range
-		// at the project cursor), edit.pasteAtOrigin where it was copied from (range.paste origin) and edit.globalCopy
-		// copies the locator range on every track; edit.duplicate copies its contents to its end, where the range goes;
-		// edit.nudgeLeft and edit.nudgeRight move the range by a grid step without its contents, the start and end
-		// nudges its edges, and edit.nudgeTopUp, edit.nudgeTopDown, edit.nudgeBottomUp and edit.nudgeBottomDown take a
-		// track in or out at its top or bottom (reference manual pp. 288-291).
-		// edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points); and the
-		// tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue, tool.mute,
-		// tool.zoom, tool.line, tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or off).
+		// at the project cursor), edit.pasteAtOrigin where it was copied from (range.paste origin), edit.pasteRelative
+		// as far from the cursor as it was copied (range.paste relative) and edit.globalCopy copies the locator range
+		// on every track; without a range edit.cut and edit.copy take the selected events (#1910); edit.duplicate
+		// copies its contents to its end, where the range goes; edit.nudgeLeft and edit.nudgeRight move the range by a
+		// grid step without its contents, the start and end nudges its edges, and edit.nudgeTopUp, edit.nudgeTopDown,
+		// edit.nudgeBottomUp and edit.nudgeBottomDown take a track in or out at its top or bottom (reference manual pp.
+		// 288-291). edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points); and
+		// the tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue,
+		// tool.mute, tool.zoom, tool.line, tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or
+		// off).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 		// Whether the action can do something now, for menus and keys to disable it: the actions that only edit the
-		// selection range (edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence, edit.cropRange,
-		// edit.splitRange and the top and bottom nudges) need a range, all but edit.splitRange and the nudges one with
-		// a length; edit.paste, edit.pasteTime and edit.pasteAtOrigin need something copied, a rangeClipboard.changed
-		// since the project opened. The others always can.
+		// selection range (edit.cutTime, edit.deleteTime, edit.insertSilence, edit.cropRange, edit.splitRange and the
+		// top and bottom nudges) need a range, all but edit.splitRange and the nudges one with a length; edit.cut and
+		// edit.copy a range with a length or, without a range, selected events; edit.paste, edit.pasteTime,
+		// edit.pasteAtOrigin and edit.pasteRelative need something copied, a rangeClipboard.changed since the project
+		// opened. The others always can.
 		bool canRun(const std::string& action) const;
 
 		// Automation tracks (#121, automationtracks.cpp, docs/features/automation-tracks.md): lanes of their own below
@@ -541,6 +544,9 @@ namespace gnubase::ui
 
 		// Elements live while the root does.
 		bool alive() const { return static_cast<bool>(m_root); }
+		// Whether the focus is in the project window's own focus zone, not in the lower zone, an in-place editor or
+		// another zone: only there do Cut and Copy without a range take the selected events (#1910).
+		bool projectHasFocus() const;
 		float dpRatio() const;
 		double width() const;  // of the event lanes, in dp
 		double height() const; // of the event lanes, in dp

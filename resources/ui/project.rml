@@ -280,6 +280,7 @@
 				<menuitem command="edit.repeat">Repeat...</menuitem>
 				<menuitem command="edit.fillLoop">Fill Loop</menuitem>
 				<menuitem command="edit.pasteAtOrigin">Paste at Origin</menuitem>
+				<menuitem command="edit.pasteRelative">Paste Relative to Cursor</menuitem>
 				<menuseparator/>
 				<menuitem command="edit.toRealCopy">Convert to Real Copy</menuitem>
 			</menu>

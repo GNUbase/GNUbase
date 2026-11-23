@@ -98,7 +98,8 @@ namespace gnubase::engine
 		CommandContext& context);
 
 	// What range.copy and range.cut keep for range.paste (eventedits.cpp): the events, parts and automation of a
-	// selection range, cut at its edges, where they were. Not part of the project or of undo.
+	// selection range, cut at its edges, or the events and parts they name whole, where they were. Not part of the
+	// project or of undo.
 	struct RangeClipboard
 	{
 		time::Samples start = 0; // the range, in project samples and in ticks
@@ -106,6 +107,7 @@ namespace gnubase::engine
 		time::Ticks startTicks = 0;
 		time::Ticks endTicks = 0;
 		double sampleRate = 0.0;             // the project's when it was copied, which its samples count in
+		time::Samples cursor = 0;            // the project cursor when it was copied, for range.paste relative
 		std::vector<ObjectId> tracks;        // the tracks it was copied from, from top to bottom
 		std::vector<AudioEvent> audioEvents; // with those of the audio parts
 		std::vector<AudioPart> audioParts;

@@ -1149,9 +1149,10 @@ TEST_CASE("the context menu's range commands wait for a selection range, which a
 			.at("attributes")
 			.contains("disabled");
 	};
-	const std::vector<const char*> rangeCommands = {"edit.cut", "edit.copy", "edit.splitRange", "edit.cropRange"};
+	const std::vector<const char*> rangeCommands = {"edit.splitRange", "edit.cropRange"};
 
-	// The object selection tool selects the part for the menu, whose range commands have no range to act on.
+	// The object selection tool selects the part for the menu, whose range commands have no range to act on; cut and
+	// copy take the selected part (#1910).
 	rightClick(at(200));
 	CHECK(display.selection().size() == 1);
 	for (const char* command : rangeCommands)
@@ -1160,13 +1161,29 @@ TEST_CASE("the context menu's range commands wait for a selection range, which a
 		CHECK(disabled(command));
 	}
 	CHECK(!disabled("edit.delete"));
+	CHECK(!disabled("edit.cut"));
+	CHECK(!disabled("edit.copy"));
 	CHECK(disabled("edit.paste")); // nothing copied yet
 	// A disabled item does nothing.
-	click(app, selector("#event-display-menu > menuitem[command=edit.cut]"));
+	click(app, selector("#event-display-menu > menuitem[command=edit.cropRange]"));
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(parts() == 1);
 	CHECK(display.selection().size() == 1);
 	app.ui().key(std::nullopt, "Escape");
+
+	// With the focus in another zone, Cut and Copy still take the clicked part: the menu takes the focus when it opens,
+	// and it lies in the project window's focus zone.
+	Rml::Element* lowerZone = app.main().context().GetDocument(0)->GetElementById("lower-zone");
+	REQUIRE(lowerZone != nullptr);
+	REQUIRE(lowerZone->Focus());
+	rightClick(at(200));
+	CHECK(app.main().context().GetFocusElement()->GetId() == "event-display-menu");
+	CHECK(!disabled("edit.cut"));
+	CHECK(!disabled("edit.copy"));
+	click(app, selector("#event-display-menu > menuitem[command=edit.cut]"));
+	REQUIRE(app.waitUntil([&parts] { return parts() == 0; }));
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&parts] { return parts() == 1; }));
 
 	// The range selection tool: a range from 1.5 to 2.5 seconds. A right click on the part leaves it unselected, and
 	// the range commands act on the range.
