@@ -3301,12 +3301,42 @@ TEST_CASE("a fade handle drag ends without changes when the pressed event goes d
 	CHECK(fadeLength(f.audioEvents()[0], "fadeOut") == 0);
 }
 
+TEST_CASE(
+	"Apply Standard Fade In and Out give the selected audio events the default fades, as far as they fit", "[unit]")
+{
+	// Reference manual p. 385: editing.defaultFadeIn and editing.defaultFadeOut, 10 ms linear ones until the fade
+	// dialog's As Default sets others. The event is half a second long, at 48 kHz.
+	Fixture f;
+	f.display.select({f.event, f.part});
+	f.run("audio.applyStandardFadeIn");
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 480; }));
+	CHECK(f.audioEvents()[0].at("fadeIn").at("shape") == "linear");
+	f.call("settings.set", {{"key", "editing.defaultFadeOut"}, {"value", {{"shape", "exponential"}, {"length", 0.2}}}});
+	f.run("audio.applyStandardFadeOut");
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeOut") == 9600; }));
+	CHECK(f.audioEvents()[0].at("fadeOut").at("shape") == "exponential");
+	CHECK(fadeLength(f.audioEvents()[0], "fadeIn") == 480);
+	// One longer than the room the other fade leaves gets that room.
+	f.call("settings.set", {{"key", "editing.defaultFadeIn"}, {"value", {{"shape", "sCurve"}, {"length", 2.0}}}});
+	const size_t steps = f.call("history.get").at("steps").size();
+	f.run("audio.applyStandardFadeIn");
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 14400; }));
+	CHECK(f.call("history.get").at("steps").size() == steps + 1);
+	// Without selected audio events, nothing.
+	f.display.select({f.part});
+	f.call("settings.set", {{"key", "editing.defaultFadeIn"}, {"value", {{"shape", "linear"}, {"length", 0.1}}}});
+	f.run("audio.applyStandardFadeIn");
+	f.step();
+	CHECK(f.call("history.get").at("steps").size() == steps + 1);
+}
+
 TEST_CASE("the Fades menu's commands fade to the range, crossfade and remove fades", "[unit]")
 {
 	Fixture f;
 	const std::map<std::string, std::function<void()>>& actions = f.display.actions();
 	for (const char* id : {"audio.fadeInToRange", "audio.fadeOutFromRange", "audio.adjustFadesToRange",
-			 "audio.crossfade", "audio.removeFadeIn", "audio.removeFadeOut", "audio.removeFades", "audio.fadeEditor"})
+			 "audio.crossfade", "audio.removeFadeIn", "audio.removeFadeOut", "audio.removeFades", "audio.fadeEditor",
+			 "audio.applyStandardFadeIn", "audio.applyStandardFadeOut"})
 		CHECK(actions.count(id) == 1);
 	const Json first = f.audioEvents()[0];
 	const auto track = first.at("track").get<uint64_t>();
@@ -3388,6 +3418,12 @@ namespace
 	{
 		return event.at("volume").get<double>();
 	}
+
+	// The audio event as the display has it, which a press or the wheel edits from.
+	Json shown(Fixture& f)
+	{
+		return f.display.project().at("audioEvents")[0];
+	}
 }
 
 TEST_CASE(
@@ -3448,6 +3484,107 @@ TEST_CASE("the event volume control works with the draw tool too, instead of add
 	f.drag(216, 36, 216, 46);
 	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
 	CHECK(f.audioEvents()[0].at("volumeCurve").empty());
+}
+
+TEST_CASE("dragging the event volume shows the volume and its change, and Shift drags it in finer steps", "[unit]")
+{
+	// Reference manual p. 402: the change from the volume before the drag shows in brackets.
+	Fixture f;
+	f.display.select({f.event});
+	f.step();
+	Rml::Element* readout = f.document.QuerySelector(".volume-readout");
+	REQUIRE(readout != nullptr);
+	CHECK_FALSE(readout->IsClassSet("shown"));
+	// 10 dp down the 40 dp lane, from 0 dB half way up: -6 dB.
+	f.automation.press(std::nullopt, f.at(216, 36), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(216, 46));
+	f.step();
+	CHECK(readout->IsClassSet("shown"));
+	CHECK(readout->GetInnerRML() == "-6.0 dB (-6.0)");
+	// With Shift, 20 dp further move it as 2 dp would: 12 dp in all, -7.9 dB.
+	f.automation.move(std::nullopt, f.at(216, 66), {"shift"});
+	f.step();
+	CHECK(readout->GetInnerRML() == "-7.9 dB (-7.9)");
+	f.automation.release(std::nullopt, f.at(216, 66), ui::MouseButton::Left, {"shift"});
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(shown(f)) + 7.9) < 0.05; }));
+	CHECK_FALSE(readout->IsClassSet("shown"));
+	// The next drag measures its change from there: 4 dp up, +3.5 dB.
+	f.automation.press(std::nullopt, f.at(216, 36), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(216, 32));
+	f.step();
+	CHECK(readout->GetInnerRML() == "-4.4 dB (+3.5)");
+	f.automation.release(std::nullopt, f.at(216, 32), ui::MouseButton::Left);
+	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(shown(f)) + 4.42) < 0.05; }));
+}
+
+TEST_CASE("with editing.wheelEventVolumeAndFades, the mouse wheel over an audio event changes its volume, with Shift "
+		  "its fades",
+	"[unit]")
+{
+	// Reference manual pp. 382, 1597. The event goes from 200 to 250 dp, at 0.01 seconds per dp.
+	Fixture f;
+	const auto wheel = [&f](double x, float lines, const std::vector<std::string>& modifiers = {})
+	{
+		f.automation.wheel(std::nullopt, f.at(x, 20), 0.0F, lines, modifiers);
+		f.step();
+	};
+	const auto steps = [&f] { return f.call("history.get").at("steps").size(); };
+	// Off by default: the wheel scrolls, as without an event under it.
+	const size_t before = steps();
+	wheel(210, -1.0F);
+	wheel(210, -1.0F, {"shift"});
+	CHECK(steps() == before);
+	f.call("settings.set", {{"key", "editing.wheelEventVolumeAndFades"}, {"value", true}});
+	f.step();
+	// Up is 1 dB louder a line, down quieter, each line an undo step.
+	wheel(210, -2.0F);
+	REQUIRE(f.waitUntil([&f] { return eventVolume(shown(f)) == 2.0; }));
+	wheel(240, 3.0F);
+	REQUIRE(f.waitUntil([&f] { return eventVolume(shown(f)) == -1.0; }));
+	CHECK(steps() == before + 2);
+	// No louder than +6 dB.
+	wheel(225, -20.0F);
+	REQUIRE(f.waitUntil([&f] { return eventVolume(shown(f)) == 6.0; }));
+	// With Shift, the left half moves the end of the fade in, the right half the start of the fade out: up lengthens
+	// them by 10 dp a line, here 0.1 seconds.
+	wheel(210, -1.0F, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeIn").at("length") == 4800; }));
+	wheel(240, -2.0F, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeOut").at("length") == 9600; }));
+	// Some systems turn the wheel with Shift into one across: that moves the fade as the wheel's lines do.
+	f.automation.wheel(std::nullopt, f.at(240, 20), -1.0F, 0.0F, {"shift"});
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeOut").at("length") == 14400; }));
+	// Down shortens them, to none at the least; and they don't cross.
+	wheel(240, 5.0F, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeOut").at("length") == 0; }));
+	wheel(210, -10.0F, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeIn").at("length") == 24000; }));
+	// Over no event, the wheel scrolls.
+	const size_t now = steps();
+	wheel(500, -1.0F);
+	wheel(500, -1.0F, {"shift"});
+	CHECK(steps() == now);
+	CHECK(eventVolume(shown(f)) == 6.0);
+}
+
+TEST_CASE("quick mouse wheel lines over an audio event add up before the display has the first", "[unit]")
+{
+	// A quick turn brings several lines in one frame, before the project read after the first is in.
+	Fixture f;
+	f.call("settings.set", {{"key", "editing.wheelEventVolumeAndFades"}, {"value", true}});
+	f.step();
+	const size_t before = f.call("history.get").at("steps").size();
+	f.automation.wheel(std::nullopt, f.at(210, 20), 0.0F, -1.0F);
+	f.automation.wheel(std::nullopt, f.at(210, 20), 0.0F, -1.0F);
+	REQUIRE(f.waitUntil([&f] { return eventVolume(shown(f)) == 2.0; }));
+	CHECK(f.call("history.get").at("steps").size() == before + 2);
+	// With Shift, twice the length of one line for the fade in: 0.2 seconds.
+	f.automation.wheel(std::nullopt, f.at(210, 20), 0.0F, -1.0F, {"shift"});
+	f.automation.wheel(std::nullopt, f.at(210, 20), 0.0F, -1.0F, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return shown(f).at("fadeIn").at("length") == 9600; }));
+	CHECK(eventVolume(shown(f)) == 2.0);
 }
 
 TEST_CASE("the draw tool adds and drags volume curve points, the erase tool removes them", "[unit]")

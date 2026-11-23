@@ -4,7 +4,9 @@
      (audio.fadeEditor). Its Lua shows the first event's fades when the dialog shows; OK gives every event the curves
      and, with Apply Length (off at first, p. 386), the lengths in milliseconds, as one undo step (history.transaction
      of audioEvent.setFades): a length left as shown is the first event's exactly, not rounded to the 0.1 ms shown.
-     Cancel drops them. -->
+     Cancel drops them. As Default (p. 387) makes the shapes and lengths shown the default fades (the user settings
+     editing.defaultFadeIn and editing.defaultFadeOut) that Apply Standard Fade In and Out give, and leaves the dialog
+     open. -->
 <rml>
 <head>
 	<title>Fades</title>
@@ -133,16 +135,37 @@
 				field("Apply Length", '<input type="checkbox" id="fade-apply-length"/>')
 		end
 
-		function dialog.ok(document)
-			local applyLength = document:GetElementById("fade-apply-length"):HasAttribute("checked")
+		-- The lengths in milliseconds, nil for one that isn't 0 or more: a length left as shown is the one it stands for.
+		local function lengths(document)
 			local function lengthOf(id)
 				local text = valueOf(document, id)
-				return text == dialog.shown[id][1] and dialog.shown[id][2] or tonumber(text)
+				local ms = text == dialog.shown[id][1] and dialog.shown[id][2] or tonumber(text)
+				return ms ~= nil and ms >= 0 and ms or nil
 			end
-			local inMs = lengthOf("fade-in-length")
-			local outMs = lengthOf("fade-out-length")
-			if applyLength and (inMs == nil or outMs == nil or inMs < 0 or outMs < 0) then
-				document:GetElementById("fade-editor-message").inner_rml = "Lengths must be milliseconds, 0 or more"
+			return lengthOf("fade-in-length"), lengthOf("fade-out-length")
+		end
+
+		local function problem(document, text)
+			document:GetElementById("fade-editor-message").inner_rml = escape(text)
+		end
+
+		function dialog.asDefault(document)
+			local inMs, outMs = lengths(document)
+			if inMs == nil or outMs == nil then
+				problem(document, "Lengths must be milliseconds, 0 or more")
+				return
+			end
+			local ok, failure = pcall(gnubase.settings.set, {values = {
+				["editing.defaultFadeIn"] = {shape = valueOf(document, "fade-in-shape"), length = inMs / 1000},
+				["editing.defaultFadeOut"] = {shape = valueOf(document, "fade-out-shape"), length = outMs / 1000}}})
+			problem(document, ok and "" or tostring(failure))
+		end
+
+		function dialog.ok(document)
+			local applyLength = document:GetElementById("fade-apply-length"):HasAttribute("checked")
+			local inMs, outMs = lengths(document)
+			if applyLength and (inMs == nil or outMs == nil) then
+				problem(document, "Lengths must be milliseconds, 0 or more")
 				return
 			end
 			local commands = {}
@@ -161,7 +184,7 @@
 			if ok then
 				document:Close()
 			else
-				document:GetElementById("fade-editor-message").inner_rml = escape(tostring(failure))
+				problem(document, tostring(failure))
 			end
 		end
 	</script>
@@ -172,6 +195,7 @@
 		<div id="fade-editor-fields"/>
 		<div class="row">
 			<div id="fade-editor-message"/>
+			<button id="fade-editor-default" onclick="FadeEditor.asDefault(document)">As Default</button>
 			<button id="fade-editor-cancel" result="cancel">Cancel</button>
 			<button id="fade-editor-ok" class="primary" onclick="FadeEditor.ok(document)">OK</button>
 		</div>

@@ -101,7 +101,8 @@ namespace gnubase::ui
 	}
 
 	EventDisplay::EventDisplay(engine::Engine& engine, EngineBinding& binding, Rml::Element& root)
-		: m_engine(engine), m_binding(binding), m_root(root.GetObserverPtr()), m_document(root.GetOwnerDocument())
+		: m_engine(engine), m_binding(binding), m_wheelSteps(binding.stepOwner("event display") + "wheel"),
+		  m_root(root.GetObserverPtr()), m_document(root.GetOwnerDocument())
 	{
 		m_overview = &add(root, "div", "overview");
 		m_overviewEvents = &addCanvas<EventLanes>(*m_overview, "event-lanes", "overview-events");
@@ -121,6 +122,7 @@ namespace gnubase::ui
 		m_fadeLines = &addCanvas<FadeLines>(*m_area, "fade-lines", "fades");
 		m_partMarks = &add(*m_area, "div", "part-marks");
 		m_cuts = &add(*m_area, "div", "cutting-positions");
+		m_volumeReadout = &add(*m_area, "div", "volume-readout tooltip");
 		m_automationArea = &add(*m_area, "div", "automation-lanes");
 		m_editor = &add(*m_area, "div", "automation-editor");
 		m_rangeElement = &add(*m_area, "div", "range-selection");
@@ -272,6 +274,11 @@ namespace gnubase::ui
 					m_zoomHorizontalOnly = zoom->get<bool>();
 					m_zoomHorizontalOnlyKnown = true;
 				}
+				if (const auto wheel = values.find("editing.wheelEventVolumeAndFades"); wheel != values.end())
+				{
+					m_wheelVolume = wheel->get<bool>();
+					m_wheelVolumeKnown = true;
+				}
 				if (const auto muted = values.find("editing.treatMutedAudioLikeDeleted"); muted != values.end())
 				{
 					m_treatMutedKnown = true;
@@ -352,6 +359,12 @@ namespace gnubase::ui
 			{
 				if (!alive.expired() && result.ok() && !m_zoomHorizontalOnlyKnown)
 					m_zoomHorizontalOnly = result.value.at("value").get<bool>();
+			});
+		m_binding.send("settings.get", {{"key", "editing.wheelEventVolumeAndFades"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_wheelVolumeKnown)
+					m_wheelVolume = result.value.at("value").get<bool>();
 			});
 		m_binding.send("settings.get", {{"key", "editing.treatMutedAudioLikeDeleted"}},
 			[this, alive](const engine::Result& result)
@@ -1823,6 +1836,15 @@ namespace gnubase::ui
 		const auto across = event.GetParameter<float>("wheel_delta_x", 0.0F);
 		const bool control = event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0;
 		const bool shift = event.GetParameter<int>("shift_key", 0) != 0;
+		// Some systems turn the wheel with Shift into one across.
+		if (const float turned = lines != 0.0F || !shift ? lines : across; !control && m_wheelVolume &&
+			inside(event.GetTargetElement(), m_area) &&
+			wheelVolume(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio(), turned, shift))
+		{
+			event.StopPropagation();
+			return;
+		}
 		if (control && shift)
 		{
 			remember();
