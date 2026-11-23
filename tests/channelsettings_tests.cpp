@@ -408,13 +408,32 @@ TEST_CASE("the channel settings window shows a channel with its sections, goes t
 	REQUIRE(app.waitUntil([&] { return strips(app, window) == std::vector<uint64_t>{keys.channel}; }));
 	CHECK(selection(app) == std::vector<uint64_t>{bass.track});
 
-	// Edit Channel Settings as a UI command shows the first selected track's channel.
+	// With Follow off, Edit Channel Settings as a UI command opens another window for the first selected track's
+	// channel (p. 499); once a window shows it, that one comes to the front instead.
 	app.keys().run("window.channelSettings", Json::object(), app.main(), nullptr);
-	REQUIRE(app.waitUntil([&] { return strips(app, window) == std::vector<uint64_t>{bass.channel}; }));
+	REQUIRE(app.waitUntil([&] { return app.appUi().channelSettingsWindows().size() == 2; }));
+	const Window other = app.appUi().channelSettingsWindows()[1];
+	REQUIRE(app.waitUntil([&] { return strips(app, other) == std::vector<uint64_t>{bass.channel}; }));
+	CHECK(strips(app, window) == std::vector<uint64_t>{keys.channel});
+	app.keys().run("window.channelSettings", Json::object(), app.main(), nullptr);
+	app.shell().step(std::chrono::milliseconds(0));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.appUi().channelSettingsWindows().size() == 2);
 
-	// A removed track's channel leaves the window empty.
+	// The new window follows, the first one not; its mixer strip's Edit Channel Settings shows the channel in it.
+	app.appUi().trackList()->select({guitar.track});
+	REQUIRE(app.waitUntil([&] { return strips(app, other) == std::vector<uint64_t>{guitar.channel}; }));
+	CHECK(strips(app, window) == std::vector<uint64_t>{keys.channel});
+	const std::string editBass = ".mixer-channel[channel=" + std::to_string(bass.channel) + "] button.mixer-edit";
+	click(app, mixer, editBass);
+	REQUIRE(app.waitUntil([&] { return strips(app, other) == std::vector<uint64_t>{bass.channel}; }));
+	CHECK(app.appUi().channelSettingsWindows().size() == 2);
+
+	// A removed track's channel leaves its window empty; a closed window is gone from the list.
 	app.call("track.remove", {{"track", bass.track}});
-	REQUIRE(app.waitUntil([&] { return strips(app, window).empty(); }));
+	REQUIRE(app.waitUntil([&] { return strips(app, other).empty(); }));
+	app.shell().close(*other);
+	REQUIRE(app.waitUntil([&] { return app.appUi().channelSettingsWindows() == std::vector<ui::WindowId>{*window}; }));
 }
 
 TEST_CASE("the channel settings window copies and pastes channel settings and adds an effect track to a send", "[ui]")
