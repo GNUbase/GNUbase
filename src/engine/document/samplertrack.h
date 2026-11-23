@@ -12,7 +12,7 @@ namespace gnubase::engine
 {
 	class ProjectModel;
 
-	// sampler.create, sampler.load and sampler.normalize.
+	// sampler.create, sampler.load, sampler.normalize and sampler.zeroCrossings.
 	void registerSamplerCommands(ProjectModel& model, Engine& engine);
 
 	// Sampler 01, Sampler 02 and so on: prefix and the first number that no track's name has.

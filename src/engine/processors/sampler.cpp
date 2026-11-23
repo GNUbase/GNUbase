@@ -606,6 +606,14 @@ namespace gnubase::engine::processors
 					m_bend = (static_cast<double>(event.value) - 2147483648.0) / 2147483648.0;
 					break;
 				case graph::ProcessEvent::Type::Controller:
+					// All Sound Off silences the channel's voices at once, Reset All Controllers resets the bend:
+					// MIDI Reset sends both (reference manual p. 716).
+					if (event.key == 120)
+						for (Voice& voice : m_voices)
+							voice.active = voice.active && voice.channel != event.channel;
+					else if (event.key == 121)
+						m_bend = 0.0;
+					break;
 				case graph::ProcessEvent::Type::ChannelPressure:
 				case graph::ProcessEvent::Type::PolyPressure:
 				case graph::ProcessEvent::Type::Program:

@@ -215,6 +215,47 @@ TEST_CASE(
 	}
 }
 
+TEST_CASE("All Sound Off stops the sampler's voices on its channel, Reset All Controllers its pitch bend", "[unit]")
+{
+	const auto controller = [](uint8_t channel, uint8_t number)
+	{
+		ProcessEvent event;
+		event.type = ProcessEvent::Type::Controller;
+		event.channel = channel;
+		event.key = number;
+		return event;
+	};
+	Sampler sampler;
+	sampler.setSample(ramp(4096));
+	Bench bench(sampler);
+	// One shot plays on past the note-off: only MIDI Reset stops it (reference manual p. 716).
+	bench.add(parameter(0, Sampler::OneShot, 1.0));
+	bench.add(note(0, true, 60));
+	ProcessEvent other = note(0, true, 62);
+	other.channel = 1;
+	bench.add(other);
+	bench.add(note(1, false, 60));
+	bench.run(1);
+	REQUIRE(sampler.activeVoices() == 2);
+	bench.add(controller(0, 120));
+	bench.run(1);
+	CHECK(sampler.activeVoices() == 1);
+	bench.add(controller(1, 120));
+	CHECK(bench.left(1) == std::vector<float>(64, 0.0f));
+	CHECK(sampler.activeVoices() == 0);
+
+	// A bend up an octave, then Reset All Controllers: the next note plays at its own pitch.
+	bench.add(parameter(0, Sampler::PitchBendRange, 12.0));
+	ProcessEvent bend;
+	bend.type = ProcessEvent::Type::PitchBend;
+	bend.value = 0xffffffffU;
+	bench.add(bend);
+	bench.add(controller(0, 121));
+	bench.add(note(0, true, 60));
+	const std::vector<float> played = bench.left(1);
+	CHECK_THAT(played[1], WithinAbs(rampAt(1.0), 1e-6));
+}
+
 TEST_CASE("the sampler plays only the keys in its key range", "[unit]")
 {
 	Sampler sampler;
@@ -1309,6 +1350,40 @@ TEST_CASE("sampler.normalize sets the sample gain so that the peak reaches the l
 	// A missing file isn't silent.
 	fs::remove(session.file);
 	CHECK_THAT(reject(client, "sampler.normalize", {{"track", track}}), ContainsSubstring("missing"));
+}
+
+TEST_CASE("sampler.zeroCrossings moves positions to where the sample crosses zero", "[integration]")
+{
+	Session session;
+	Client& client = session.client;
+	const Json created = run(client, "sampler.create", {{"clip", session.clip}});
+	const auto track = created.at("track").at("id");
+	// The 220 Hz sine crosses zero every 48000 / 440 frames: frame 5040 (0.105) is nearest to the 46th crossing, at
+	// 5018.2. 0.1 lies on the 44th and 0 on the first; the end goes to the last, the 439th at 47890.9.
+	const auto snapped = [&] {
+		return run(client, "sampler.zeroCrossings", {{"track", track}, {"positions", {0.105, 0.1, 0.0, 1.0}}})
+			.at("positions")
+			.get<std::vector<double>>();
+	};
+	std::vector<double> positions = snapped();
+	REQUIRE(positions.size() == 4);
+	CHECK_THAT(positions[0] * 48000.0, WithinAbs(5018.0, 1e-6));
+	CHECK_THAT(positions[1] * 48000.0, WithinAbs(4800.0, 1e-6));
+	CHECK(positions[2] == 0.0);
+	CHECK_THAT(positions[3] * 48000.0, WithinAbs(47891.0, 1e-6));
+
+	// Reversed, positions count from the sample's end: 0.105 is frame 42960, nearest to the 394th crossing at 42981.8.
+	run(client, "parameter.set",
+		{{"channel", created.at("channel").at("id")}, {"target", {{"type", "instrument"}, {"parameter", Sampler::Reverse}}},
+			{"value", 1.0}});
+	const size_t steps = run(client, "history.get").at("steps").size();
+	positions = snapped();
+	CHECK_THAT((1.0 - positions[0]) * 48000.0, WithinAbs(42982.0, 1e-6));
+	CHECK(run(client, "history.get").at("steps").size() == steps); // a query: no undo step
+
+	const auto empty = run(client, "sampler.create").at("track").at("id");
+	CHECK_THAT(reject(client, "sampler.zeroCrossings", {{"track", empty}, {"positions", {0.5}}}),
+		ContainsSubstring("no sample"));
 }
 
 TEST_CASE("a track preset with another instrument takes the sampler's sample away", "[integration]")
