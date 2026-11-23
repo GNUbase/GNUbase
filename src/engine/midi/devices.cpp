@@ -6,7 +6,9 @@
 
 #include <array>
 #include <cstddef>
+#include <iterator>
 #include <string>
+#include <utility>
 
 namespace gnubase::engine::midi
 {
@@ -67,19 +69,30 @@ namespace gnubase::engine::midi
 				{"required", {"name", "patches"}}};
 			return {{"type", "array"}, {"items", bank}};
 		}
+
+		// Bank Assignment (reference manual p. 1109): the bank, by its index, that MIDI channels "1" to "16" use.
+		Json assignmentSchema()
+		{
+			Json channels = Json::object();
+			for (int channel = 1; channel <= 16; ++channel)
+				channels[std::to_string(channel)] = {{"type", "integer"}, {"minimum", 0}};
+			return {{"type", "object"}, {"properties", std::move(channels)}, {"additionalProperties", false}};
+		}
 	}
 
 	Json devicesSchema()
 	{
 		return {{"type", "object"},
 			{"additionalProperties",
-				{{"type", "object"}, {"properties", {{"banks", banksSchema()}}}, {"required", {"banks"}}}}};
+				{{"type", "object"}, {"properties", {{"banks", banksSchema()}, {"bankAssignment", assignmentSchema()}}},
+					{"required", {"banks"}}}}};
 	}
 
 	void registerDeviceCommands(Engine& engine)
 	{
 		const Json device = {{"type", "object"},
-			{"properties", {{"name", {{"type", "string"}}}, {"banks", banksSchema()}}},
+			{"properties",
+				{{"name", {{"type", "string"}}}, {"banks", banksSchema()}, {"bankAssignment", assignmentSchema()}}},
 			{"required", {"name", "banks"}}};
 		Json installSchema = nameSchema();
 		installSchema["properties"]["template"] = {{"type", "string"}, {"enum", {"empty", "gm"}}};
@@ -113,29 +126,51 @@ namespace gnubase::engine::midi
 			});
 		Json editSchema = nameSchema();
 		editSchema["properties"]["banks"] = banksSchema();
+		editSchema["properties"]["bankAssignment"] = assignmentSchema();
 		editSchema["required"].push_back("banks");
 		engine.registerCommand(
 			{"midiDevice.set", 1,
 				"Replaces an installed MIDI device's patch banks (reference manual pp. 1111-1114). Each bank has a "
 				"name and patches; each patch has a name, program (0 to 127), optional bank (0 to 16383) and folder. "
-				"Edits only this device in the user setting midi.devices, announces settings.changed, and returns "
-				"the device. Tracks keep their selected program and bank.",
+				"bankAssignment, the Bank Assignment (p. 1109), replaces the bank that MIDI channels use, by index "
+				"in banks, keyed by the channel's number from \"1\" to \"16\": the program selector of a MIDI track "
+				"on such a channel (Any is 1) offers only that bank's patches. Without it the device keeps its "
+				"assignment, except for banks that are gone. Edits only this device in the user setting midi.devices, "
+				"announces settings.changed, and returns the device. Tracks keep their selected program and bank.",
 				editSchema, {{"type", "object"}, {"properties", {{"device", device}}}, {"required", {"device"}}},
 				false},
 			[&engine](CommandContext& context)
 			{
-				const auto name = context.parameters().at("name").get<std::string>();
-				const Json& banks = context.parameters().at("banks");
+				const Json& parameters = context.parameters();
+				const auto name = parameters.at("name").get<std::string>();
+				const Json& banks = parameters.at("banks");
+				if (parameters.contains("bankAssignment"))
+					for (const auto& [channel, bank] : parameters.at("bankAssignment").items())
+						if (bank.get<size_t>() >= banks.size())
+							throw CommandError(
+								"MIDI channel " + channel + " is assigned a bank the device doesn't have");
+				Json device;
 				engine.modifySetting(context, "midi.devices",
 					[&](const Json& value)
 					{
 						if (!value.contains(name))
 							throw CommandError("there is no MIDI device " + name);
 						Json changed = value;
-						changed[name]["banks"] = banks;
+						device = value.at(name);
+						device["banks"] = banks;
+						Json assignment =
+							parameters.value("bankAssignment", device.value("bankAssignment", Json::object()));
+						for (auto channel = assignment.begin(); channel != assignment.end();)
+							channel =
+								channel->get<size_t>() < banks.size() ? std::next(channel) : assignment.erase(channel);
+						device.erase("bankAssignment");
+						if (!assignment.empty())
+							device["bankAssignment"] = std::move(assignment);
+						changed[name] = device;
 						return changed;
 					});
-				return Json{{"device", {{"name", name}, {"banks", banks}}}};
+				device["name"] = name;
+				return Json{{"device", std::move(device)}};
 			});
 		engine.registerCommand({"midiDevice.remove", 1,
 								   "Removes an installed MIDI device (midiDevice.install) by name. Tracks that name it "

@@ -44,12 +44,18 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   directly in its bank. Add Multiple Presets takes a count and uses the selected preset's name (with numbered suffixes),
   starting program, bank and folder, or starts at program 1 without a template. The range must fit programs 1 to 128.
   Backspace in the patch tree removes its selected bank, folder or preset when Enable Edit is on.
+- **Bank Assignment** (pp. 1109, 1111). A device with several banks can give a MIDI channel one of them:
+  `bankAssignment`, the bank's index in `banks` by the channel's number from `"1"` to `"16"`, which `midiDevice.set`
+  replaces (a channel it leaves out uses all banks) and keeps when it is left out, except for banks that are gone. The
+  inspector's program selector on a track whose MIDI channel has a bank (Any counts as 1) offers only that bank's
+  patches, without the bank's name. The manager shows it for a device with several banks (`#bank-assignment`): a MIDI
+  channel and its bank, All Banks for none; a bank that the manager removes takes its channels' assignment with it, and
+  the channels of the banks after it keep theirs (`tests/mididevices_ui_tests.cpp`, `tests/midipatches_tests.cpp`).
 
 ## Not yet
 
 - Devices playing through a MIDI output port: MIDI tracks don't play to MIDI ports yet, so a device has no Output
   and doesn't replace the track's output routing as in the reference (p. 1113); the track names it beside its output.
-- The per-channel Bank Assignment (p. 1109), which picks a device's bank by the track's MIDI channel.
 - The remaining manager editing commands (New Folder for empty or nested folders and drag and drop; pp. 1111–1112).
   Preset events other than bank select MSB and LSB and program change (p. 1112), the reference's other device scripts
   (XG and the instruments'), Export Setup and Import Setup (XML), device maps and device panels with their automation

@@ -581,7 +581,10 @@ namespace gnubase::engine::settings
 				{"midi.devices",
 					"The installed MIDI devices (midiDevice.install), by name: each has banks, each bank a name and "
 					"patches, each patch a name, a program (0 to 127), an optional bank (0 to 16383, sent as bank "
-					"select MSB and LSB) and an optional folder it is listed in. A MIDI track that names a device "
+					"select MSB and LSB) and an optional folder it is listed in, and an optional bankAssignment, the "
+					"bank "
+					"by index that MIDI channels \"1\" to \"16\" use (midiDevice.set). A MIDI track that names a "
+					"device "
 					"(channel.set device) chooses its program and bank by patch.",
 					midi::devicesSchema(), Json::object()},
 				{"midi.importAutomation",

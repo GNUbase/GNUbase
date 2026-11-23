@@ -461,7 +461,14 @@ namespace gnubase::ui
 					options.emplace_back(patchValue(program, bank), std::to_string(program + 1));
 				return options;
 			}
-			const Json& banks = device->at("banks");
+			// The bank that the Bank Assignment gives the track's MIDI channel (Any is 1, p. 1109), else all of them.
+			Json banks = device->at("banks");
+			const Json midiChannel = channel.value("midiChannel", Json());
+			const Json assigned =
+				device->value("bankAssignment", Json::object())
+					.value(std::to_string(midiChannel.is_number_integer() ? midiChannel.get<int>() + 1 : 1), Json());
+			if (assigned.is_number_integer() && assigned.get<int64_t>() >= 0 && assigned.get<size_t>() < banks.size())
+				banks = Json::array({banks.at(assigned.get<size_t>())});
 			for (const Json& deviceBank : banks)
 				for (const Json& patch : deviceBank.at("patches"))
 				{
