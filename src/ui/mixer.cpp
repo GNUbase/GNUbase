@@ -46,6 +46,7 @@ namespace gnubase::ui
 
 		constexpr double g_silence = -144.0;       // engine::g_minChannelVolume
 		constexpr double g_sendKnobMin = -60.0;    // a send level knob's lowest level, as the fader's
+		constexpr float g_meterEnd = 0.001f;       // -60 dB, where a channel meter's bar ends
 		constexpr int g_sends = 8;                 // engine::g_maxSends
 		constexpr const char* g_addEffect = "add"; // a send destination list's Add Effect Track to Send
 
@@ -616,8 +617,8 @@ namespace gnubase::ui
 				for (const auto& [key, value] : event.data.at("values").items())
 					setting(key, value);
 			}));
-		for (const char* key :
-			{"audio.defaultSendLevel", "meter.holdPeaks", "meter.holdForever", "meter.peakHoldTime", "meter.position"})
+		for (const char* key : {"audio.defaultSendLevel", "meter.holdPeaks", "meter.holdForever", "meter.peakHoldTime",
+				 "meter.position", "meter.fallback"})
 			m_binding.send("settings.get", {{"key", key}},
 				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 				{
@@ -891,6 +892,10 @@ namespace gnubase::ui
 	std::vector<std::vector<std::string>> Mixer::readMeters()
 	{
 		const auto now = std::chrono::steady_clock::now();
+		// The bars fall back from the peaks by meter.fallback (p. 1614), and below their scale to silence.
+		const auto fall = static_cast<float>(
+			std::pow(10.0, -m_fallback * std::chrono::duration<double>(now - m_metersRead).count() / 20.0));
+		m_metersRead = now;
 		std::vector<std::vector<std::string>> shown;
 		for (const uint64_t id : *m_metered)
 		{
@@ -905,8 +910,14 @@ namespace gnubase::ui
 				held.resize(std::max(held.size(), c + 1));
 				HeldPeak& mark = held[c];
 				if (level->peak[c] >= mark.level || mark.level > level->peakMax[c] || now - mark.at > m_peakHoldTime)
-					mark = {level->peak[c], now};
-				values.push_back(meterValue(level->peak[c]));
+				{
+					mark.level = level->peak[c];
+					mark.at = now;
+				}
+				mark.bar = std::max(level->peak[c], mark.bar * fall);
+				if (mark.bar < g_meterEnd)
+					mark.bar = level->peak[c];
+				values.push_back(meterValue(mark.bar));
 				values.push_back(m_holdPeaks ? meterValue(m_holdForever ? level->peakMax[c] : mark.level) : "");
 				largest = std::max(largest, level->peakMax[c]);
 			}
@@ -974,6 +985,8 @@ namespace gnubase::ui
 			m_holdForever = value.get<bool>();
 		else if (key == "meter.peakHoldTime")
 			m_peakHoldTime = std::chrono::milliseconds(value.get<int64_t>());
+		else if (key == "meter.fallback")
+			m_fallback = value.get<double>();
 		else
 			return;
 		for (const auto& [item, on] : {std::pair{"holdPeaks", m_holdPeaks}, std::pair{"holdForever", m_holdForever}})

@@ -532,6 +532,10 @@ namespace gnubase::engine::settings
 					"Use Drum Editor when Drum Map is assigned (reference manual p. 1603): a closed editor opens the "
 					"parts of a track with a drum map in the drum editor (editor.open).",
 					Json{{"type", "boolean"}}, true, true},
+				{"meter.fallback",
+					"Meters' Fallback (reference manual p. 1614): how fast the channel meters' bars fall after a "
+					"peak, 1 to 100 dB per second.",
+					Json{{"type", "number"}, {"minimum", 1}, {"maximum", 100}}, 20.0, true},
 				{"meter.holdForever",
 					"Meter Peak - Hold Forever (reference manual p. 467): the channel meters' peak marks hold the "
 					"highest level until the meters are reset (meter.reset); off, for meter.peakHoldTime.",

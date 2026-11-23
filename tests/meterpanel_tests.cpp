@@ -10,6 +10,7 @@
 #include "ui/enginebinding.h"
 #include "ui/meterpanel.h"
 #include "ui/shell.h"
+#include "ui/widgetutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -245,11 +246,14 @@ TEST_CASE("a channel meter's Global Meter Settings menu holds its peaks for a ti
 	app.call("transport.play");
 	app.call("audio.render", {{"frames", 4800}});
 	REQUIRE(app.waitUntil([&bar] { return bar().value("peak", std::string()) == "-6.0"; }));
+	// The bar falls back to the lower level (meter.fallback) while the audio plays on.
 	app.call("channel.set", {{"channel", channel}, {"volume", -20.0}});
-	app.call("audio.render", {{"frames", 4800}}); // the fader glides there: frames after these show only -26 dB
-	app.waitUntil([] { return false; }, std::chrono::milliseconds(100));
-	app.call("audio.render", {{"frames", 4800}});
-	REQUIRE(app.waitUntil([&bar] { return bar().value("value", std::string()) == "-26.0"; }));
+	REQUIRE(app.waitUntil(
+		[&app, &bar]
+		{
+			app.call("audio.render", {{"frames", 480}});
+			return bar().value("value", std::string()) == "-26.0";
+		}));
 	CHECK(bar().value("peak", std::string()) == "-6.0");
 	app.call("settings.set", {{"key", "meter.peakHoldTime"}, {"value", 500}});
 	REQUIRE(app.waitUntil([&bar] { return bar().value("peak", std::string()) == "-200"; }));
@@ -334,13 +338,47 @@ TEST_CASE("a channel meter's Global Meter Settings menu sets where the channel m
 	// The menu follows the setting that MCP, Lua or another mixer's menu change.
 	app.call("settings.set", {{"key", "meter.position"}, {"value", "postFader"}});
 	REQUIRE(app.waitUntil([&checked] { return checked() == "postFader"; }));
-	app.call("audio.render", {{"frames", 4800}});
-	REQUIRE(app.waitUntil(
-		[&bars]
+	REQUIRE(app.waitUntil( // the bar falls back to the lower level while the audio plays on (meter.fallback)
+		[&app, &bars]
 		{
+			app.call("audio.render", {{"frames", 480}});
 			const Json shown = bars();
 			return shown.size() == 1 && shown[0].at("attributes").value("value", std::string()) == "-13.0";
 		}));
+}
+
+TEST_CASE("a channel meter's bars fall back from a peak at meter.fallback", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const auto channel = app.call("track.add", {{"type", "audio"}}).at("channel").at("id").get<uint64_t>();
+	app.call("channel.set", {{"channel", channel}, {"monitor", true}});
+	app.call("settings.set", {{"key", "meter.fallback"}, {"value", 10.0}}); // dB per second
+	app.appUi().docking().open("mixer");
+	const std::string strip = ".mixer-channel[channel=" + std::to_string(channel) + "] ";
+	const auto bar = [&app, &strip]
+	{
+		const Json bars = app.ui().dom(std::nullopt, strip + ".mixer-meter meter", 0).at("elements");
+		const std::optional<float> value =
+			bars.empty() ? std::nullopt : ui::widgets::parse(bars[0].at("attributes").value("value", std::string()));
+		return value.value_or(0.0F);
+	};
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil([&bar] { return bar() == -6.0F; }));
+
+	// Silence after the peak (p. 1614): the bar falls 10 dB a second, not at once, to silence below its scale.
+	const auto start = std::chrono::steady_clock::now();
+	app.call("channel.set", {{"channel", channel}, {"mute", true}});
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil([&bar] { return bar() < -7.0F; }));
+	CHECK(std::chrono::steady_clock::now() - start > std::chrono::milliseconds(50));
+	REQUIRE(app.waitUntil([&bar] { return bar() < -9.0F; }));
+	CHECK(std::chrono::steady_clock::now() - start > std::chrono::milliseconds(250));
+	app.call("settings.set", {{"key", "meter.fallback"}, {"value", 100.0}});
+	REQUIRE(app.waitUntil([&bar] { return bar() == -200.0F; }));
 }
 
 TEST_CASE("the meter reader reads only while a view shows meters", "[unit]")

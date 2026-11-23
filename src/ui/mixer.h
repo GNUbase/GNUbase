@@ -210,16 +210,20 @@ namespace gnubase::ui
 		bool m_dropping = false;    // while another project drops the notes being typed
 		SoloHold m_soloHold;
 		double m_defaultSendLevel = 0.0; // the user setting audio.defaultSendLevel
-		// The Global Meter Settings (reference manual p. 467): meter.holdPeaks, meter.holdForever, meter.peakHoldTime.
+		// The Global Meter Settings (reference manual p. 467): meter.holdPeaks, meter.holdForever, meter.peakHoldTime;
+		// and meter.fallback (p. 1614).
 		bool m_holdPeaks = true;
 		bool m_holdForever = false;
 		std::chrono::milliseconds m_peakHoldTime{2000};
+		double m_fallback = 20.0; // dB per second
 		struct HeldPeak
 		{
 			float level = 0.0f;
 			std::chrono::steady_clock::time_point at;
+			float bar = 0.0f; // the level the bar shows, which falls back from the peaks
 		};
-		std::map<uint64_t, std::vector<HeldPeak>> m_held; // each metered channel's peak marks, per side
+		std::map<uint64_t, std::vector<HeldPeak>> m_held;   // each metered channel's peak marks and bars, per side
+		std::chrono::steady_clock::time_point m_metersRead; // when readMeters read them last
 		Rml::ObserverPtr<Rml::Element> m_meterMenu;
 
 		std::vector<Subscription> m_subscriptions;
