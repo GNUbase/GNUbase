@@ -186,6 +186,59 @@ TEST_CASE("Strip Silence limits processing to the sample editor range", "[integr
 	CHECK(!f.client.call("event.stripSilence", {{"events", {f.event}}, {"start", at(2)}, {"end", at(1)}}).ok());
 }
 
+TEST_CASE("Strip Silence joins sounding range edges and fades only removed silence", "[integration]")
+{
+	bool gap = false;
+	SECTION("A continuous tone keeps its event and original outer fades")
+	{
+	}
+	SECTION("A gap creates fades only at its two edges")
+	{
+		gap = true;
+	}
+	Fixture f;
+	f.add(make(3.0, 1, [gap](int, double t)
+			  { return gap && t >= 1.25 && t < 1.75 ? 0.0 : 0.5 * std::cos(2.0 * g_pi * 1000.0 * t); }),
+		"range-tone");
+	f.call("audioEvent.setFades", {{"event", f.event}, {"fadeIn", {{"length", 96}}}, {"fadeOut", {{"length", 144}}}});
+	const Json before = f.call("project.get");
+	f.call("event.stripSilence",
+		{{"events", {f.event}}, {"start", at(0.5)}, {"end", at(2.5)}, {"minimumClosed", 0}, {"fades", 5},
+			{"regions", true}});
+	const Json after = f.call("project.get");
+	const Json& events = after.at("audioEvents");
+	REQUIRE(events.size() == (gap ? 2 : 1));
+	if (!gap)
+		CHECK(events == before.at("audioEvents"));
+	else
+		for (const auto& event : events)
+		{
+			const auto start = event.at("offset").get<int64_t>();
+			const auto end = start + event.at("length").get<int64_t>();
+			if (start == 0)
+			{
+				CHECK(std::abs(end - at(1.25)) <= 48);
+				CHECK(event.at("fadeIn").at("length") == 96);
+				CHECK(event.at("fadeOut").at("length") == 240);
+			}
+			else
+			{
+				CHECK(std::abs(start - at(1.75)) <= 48);
+				CHECK(end == at(3.0));
+				CHECK(event.at("fadeIn").at("length") == 240);
+				CHECK(event.at("fadeOut").at("length") == 144);
+			}
+		}
+	const Json& regions = after.at("clips")[0].at("regions");
+	REQUIRE(regions.size() == (gap ? 2 : 1));
+	CHECK(regions.front().at("start") == at(0.5));
+	CHECK(regions.back().at("end") == at(2.5));
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+	f.call("history.redo");
+	CHECK(f.call("project.get") == after);
+}
+
 TEST_CASE("Detect Silence finds the tones of a signal, with its thresholds, minimum times and rolls", "[unit]")
 {
 	engine::analysis::SilenceSettings settings;

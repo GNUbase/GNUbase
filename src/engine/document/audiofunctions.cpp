@@ -335,7 +335,9 @@ namespace gnubase::engine
 				"events; fades (Apply Fades, ms) gives the events that remain a fade in and a fade out of that "
 				"length, at most half of what each plays for in frames at the clip's sample rate (its length, "
 				"unless it plays warped). An event that strip would remove completely, or that is locked, is an "
-				"error. Optional start/end clip frames bound processing within each event, as in event.stripSilence; "
+				"error. With strip, new fades apply only at edges bordering removed silence; other edges keep their "
+				"existing fades. "
+				"Optional start/end clip frames bound processing within each event, as in event.stripSilence; "
 				"sections must lie within that range. Returns the events that remain and the regions, and the number "
 				"of sections.",
 				objectSchema(applyProperties, {"events", "sections", "revision"}),
@@ -405,6 +407,16 @@ namespace gnubase::engine
 						if (range.end < event.offset + event.length)
 							sections.push_back({range.end, event.offset + event.length});
 						require(!sections.empty(), "audio event " + std::to_string(id) + " is silent");
+						// A range edge within sound is not a cut: keep it joined to the untouched outside audio.
+						std::vector<analysis::Section> joined;
+						for (const analysis::Section& section : sections)
+						{
+							if (!joined.empty() && joined.back().end == section.start)
+								joined.back().end = section.end;
+							else
+								joined.push_back(section);
+						}
+						sections = std::move(joined);
 						Json positions = Json::array();
 						for (const analysis::Section& section : sections)
 							for (const time::Samples edge : {section.start, section.end})
@@ -436,16 +448,27 @@ namespace gnubase::engine
 					}
 					for (const ObjectId piece : pieces)
 					{
-						const AudioEvent& keptPart = project.audioEvents.at(piece);
-						const auto middle = keptPart.offset + (keptPart.length / 2);
-						if (fades > 0.0 && middle >= range.start && middle < range.end)
+						const AudioEvent& part = project.audioEvents.at(piece);
+						const auto middle = part.offset + (part.length / 2);
+						const bool whole = !strip && middle >= range.start && middle < range.end;
+						const bool fadeIn = whole || (strip && part.offset > event.offset);
+						const bool fadeOut =
+							whole || (strip && part.offset + part.length < event.offset + event.length);
+						if (fades > 0.0 && (fadeIn || fadeOut))
 						{
-							const AudioEvent& part = project.audioEvents.at(piece);
-							const time::Samples length = std::min<time::Samples>(
-								std::llround(fades / 1000.0 * media.sampleRate), fadeRoom(project, part) / 2);
-							run("audioEvent.setFades",
-								{{"event", piece}, {"fadeIn", {{"length", length}}},
-									{"fadeOut", {{"length", length}}}});
+							const time::Samples room = fadeRoom(project, part);
+							const time::Samples length =
+								std::min<time::Samples>(std::llround(fades / 1000.0 * media.sampleRate), room / 2);
+							Json change = {{"event", piece}};
+							if (fadeIn)
+								change["fadeIn"] = {{"length",
+									std::min(length,
+										std::max<time::Samples>(0, room - (fadeOut ? 0 : part.fadeOut.length)))}};
+							if (fadeOut)
+								change["fadeOut"] = {{"length",
+									std::min(
+										length, std::max<time::Samples>(0, room - (fadeIn ? 0 : part.fadeIn.length)))}};
+							run("audioEvent.setFades", change);
 						}
 						kept.push_back(piece);
 					}
