@@ -37,6 +37,31 @@ namespace gnubase::ui
 		GlobalTracks, // the inspector: Global Tracks (pp. 1144-1146), the editor window's only, and Chord Editing
 	};
 
+	// The project reads of the MIDI editors (#625): up to five of them (the lower zone's editor, both Visibility tabs,
+	// the editor window's editor and its inspector) ask for the project after every change, and those that ask while
+	// the binding hands on the same answer or event share one project.get. One asked later, while that read is out,
+	// gets the next one, sent once it is answered, as what it asked for may have changed after the read went out. Use
+	// it on the UI thread; the binding must outlive it.
+	class ProjectReads
+	{
+	public:
+		explicit ProjectReads(EngineBinding& binding) : m_binding(binding) {}
+
+		// Calls done with project.get's result once a read answers that was sent while the binding handed on what it
+		// hands on now (EngineBinding::handed), or later.
+		void read(std::function<void(const engine::Result&)> done);
+
+	private:
+		void send();
+
+		EngineBinding& m_binding;
+		bool m_loading = false;
+		uint64_t m_sentAt = 0; // EngineBinding::handed() when the read out was sent
+		std::vector<std::function<void(const engine::Result&)>> m_current; // waiting for the read out
+		std::vector<std::function<void(const engine::Result&)>> m_next;    // for the next one
+		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);      // for answers that come after it went
+	};
+
 	// Fills an element with a part of a MIDI editor and follows the engine's editor view (editor.get, editor.changed)
 	// and the project, whichever client changes them. view is the editor's name in editor.* (lower or window). The
 	// editor's toolbar has Keep Editor Contents, the Part Editing Mode menu, the Activate Part for Editing menu and
@@ -46,12 +71,13 @@ namespace gnubase::ui
 	// activates. The inspector's Chord Editing section (pp. 1215-1218) shows the
 	// chord of the selected notes and changes it with note.voicing. Every change goes to the engine as editor.*
 	// commands. moved, if given, runs once Open in Separate Window or Open in Lower Zone has sent the parts to the
-	// other editor. Use it on the UI thread; the binding must outlive it.
+	// other editor. It reads the project through reads, shared with the other editors. Use it on the UI thread; the
+	// binding and reads must outlive it.
 	class MidiEditor final : private Rml::EventListener
 	{
 	public:
-		MidiEditor(EngineBinding& binding, Rml::Element& root, std::string view, EditorPart part = EditorPart::Editor,
-			std::function<void()> moved = {});
+		MidiEditor(EngineBinding& binding, ProjectReads& reads, Rml::Element& root, std::string view,
+			EditorPart part = EditorPart::Editor, std::function<void()> moved = {});
 		~MidiEditor() override;
 		MidiEditor(const MidiEditor&) = delete;
 		MidiEditor& operator=(const MidiEditor&) = delete;
@@ -112,6 +138,7 @@ namespace gnubase::ui
 		const engine::Json* track(uint64_t id) const;
 
 		EngineBinding& m_binding;
+		ProjectReads& m_reads;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // in the document's body
 		std::string m_name;

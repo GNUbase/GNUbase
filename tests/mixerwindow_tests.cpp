@@ -709,10 +709,27 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 4; }));
 	const auto control = [&](const std::string& param) { return strip(guitar.channel) + " [param=\"" + param + "\"]"; };
 
-	// The fader section has the panner (reference manual p. 465); MIDI channels don't.
+	// The fader section has the panner (reference manual p. 465); MIDI channels have MIDI pan instead (CC 10, 0 to
+	// 127, none until set), without pan bypass.
 	app.ui().wheel(window, {control("pan"), 0, std::nullopt}, 0.0F, -10.0F);
 	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("pan") > 0.0; }));
-	CHECK(elements(app, window, strip(piano.channel) + " .mixer-pan").empty());
+	CHECK(channelJson(app, piano.channel).at("midiPan").is_null());
+	app.ui().wheel(window, {strip(piano.channel) + " [param=\"midiPan\"]", 0, std::nullopt}, 0.0F, -10.0F);
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			const Json pan = channelJson(app, piano.channel).at("midiPan");
+			return pan.is_number_integer() && pan > 64;
+		}));
+	// Undone, the channel has no MIDI pan again, and the knob shows its default, the center.
+	const std::string midiPan = strip(piano.channel) + " [param=\"midiPan\"]";
+	REQUIRE(app.waitUntil(
+		[&] { return element(app, window, midiPan).at("attributes").value("value", std::string()) != "64"; }));
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&] { return channelJson(app, piano.channel).at("midiPan").is_null(); }));
+	REQUIRE(app.waitUntil(
+		[&] { return element(app, window, midiPan).at("attributes").value("value", std::string()) == "64"; }));
+	CHECK(elements(app, window, strip(piano.channel) + " [param=panBypass]").empty());
 	// The pan bypass button to its left; the combined panner's two controls instead of the pan control.
 	click(app, window, control("panBypass"));
 	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("panBypass") == true; }));
@@ -724,6 +741,21 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	app.ui().wheel(window, {control("panRight"), 0, std::nullopt}, 0.0F, 10.0F);
 	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("panRight") < 1.0; }));
 	CHECK(channelJson(app, guitar.channel).at("panLeft") == -1.0);
+	// A channel whose routing gives it no panner, mono into mono, shows none.
+	const auto group =
+		app.call("track.add", {{"type", "group"}, {"format", "mono"}}).at("channel").at("id").get<uint64_t>();
+	app.call(
+		"channel.set", {{"channel", guitar.channel}, {"format", "mono"}, {"panner", "balance"}, {"output", group}});
+	REQUIRE(app.waitUntil([&] { return !element(app, window, control("panBypass")).at("visible").get<bool>(); }));
+	CHECK(!element(app, window, control("pan")).at("visible").get<bool>());
+	// The group's format counts too: mono into stereo has a panner.
+	app.call("channel.set", {{"channel", group}, {"format", "stereo"}});
+	REQUIRE(app.waitUntil([&] { return element(app, window, control("pan")).at("visible").get<bool>(); }));
+	app.call("channel.set", {{"channel", group}, {"format", "mono"}});
+	REQUIRE(app.waitUntil([&] { return !element(app, window, control("pan")).at("visible").get<bool>(); }));
+	app.call("channel.set", {{"channel", guitar.channel}, {"output", bus(app, "output")}});
+	REQUIRE(app.waitUntil([&] { return element(app, window, control("panBypass")).at("visible").get<bool>(); }));
+	CHECK(element(app, window, control("pan")).at("visible").get<bool>());
 
 	// Set up Window Layout shows the sections, which are hidden until then; MIDI channels' are empty.
 	click(app, window, "#mixer-layout");

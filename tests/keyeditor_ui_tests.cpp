@@ -2052,12 +2052,10 @@ TEST_CASE("the note expression lines join the steps narrower than a pixel", "[ui
 	// line per pixel at most, not one per point.
 	Fixture f;
 	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}});
-	Json points = Json::array();
 	constexpr int count = 2000;
-	for (int i = 0; i < count; ++i)
-		points.push_back(
-			{{"type", "tuning"}, {"position", 2 * g_quarter * i / count}, {"value", i % 2 == 0 ? 10.0 : -10.0}});
-	f.app.call("note.set", {{"part", f.part}, {"notes", Json::array({{{"id", ids[0]}, {"expressions", points}}})}});
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes", Json::array({{{"id", ids[0]}, {"expressions", densePoints(count, 2 * g_quarter)}}})}});
 	f.app.call("editor.set", {{"editor", "window"}, {"showExpression", true}, {"expressionDoubleClick", true}});
 	const std::string steps = noteSelector(ids[0]) + " .key-expression-step";
 	REQUIRE(f.app.waitUntil([&] { return !f.elements(steps).empty(); }));
@@ -2090,12 +2088,10 @@ TEST_CASE(
 	// note with Show Note Expression Data already on, and resized, it builds the lines again for its width (#1671).
 	Fixture f;
 	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}});
-	Json points = Json::array();
 	constexpr int count = 2000;
-	for (int i = 0; i < count; ++i)
-		points.push_back(
-			{{"type", "tuning"}, {"position", 2 * g_quarter * i / count}, {"value", i % 2 == 0 ? 10.0 : -10.0}});
-	f.app.call("note.set", {{"part", f.part}, {"notes", Json::array({{{"id", ids[0]}, {"expressions", points}}})}});
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes", Json::array({{{"id", ids[0]}, {"expressions", densePoints(count, 2 * g_quarter)}}})}});
 	f.app.call("editor.set", {{"editor", "window"}, {"showExpression", true}});
 	f.app.call("editor.close", {{"editor", "window"}});
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
@@ -2174,12 +2170,10 @@ TEST_CASE("the lower zone's key editor joins a dense note's expression steps by 
 	// The app's update task fits the lines of the lower zone's key editor too, which renders before its layout (#1724).
 	Fixture f;
 	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}});
-	Json points = Json::array();
 	constexpr int count = 4000;
-	for (int i = 0; i < count; ++i)
-		points.push_back(
-			{{"type", "tuning"}, {"position", 2 * g_quarter * i / count}, {"value", i % 2 == 0 ? 10.0 : -10.0}});
-	f.app.call("note.set", {{"part", f.part}, {"notes", Json::array({{{"id", ids[0]}, {"expressions", points}}})}});
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes", Json::array({{{"id", ids[0]}, {"expressions", densePoints(count, 2 * g_quarter)}}})}});
 	f.app.call("editor.close", {{"editor", "window"}});
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
 	f.app.appUi().showProject();

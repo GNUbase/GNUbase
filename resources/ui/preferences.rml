@@ -253,6 +253,7 @@
 					label = "Use Up/Down Navigation Commands for Selecting Tracks only"}}},
 			{id = "editing-audio", parent = "Editing", name = "Audio", items = {
 				{key = "editing.treatMutedAudioLikeDeleted", label = "Treat Muted Audio Events like Deleted"},
+				{key = "editing.wheelEventVolumeAndFades", label = "Use Mouse Wheel for Event Volume and Fades"},
 				{key = "editing.onImportAudio", label = "On Import Audio Files", choices = {
 					{"openOptionsDialog", "Open Options Dialog"}, {"useSettings", "Use Settings"}}},
 				-- What Use Settings imports with, and the Import Options dialog starts from (pp. 358-359).
@@ -325,7 +326,8 @@
 			{id = "midi-filter", parent = "MIDI", name = "MIDI Filter", custom = "midiFilter",
 				keys = {"midi.recordFilter"}},
 			{id = "metering", name = "Metering", items = {
-				{key = "meter.peakHoldTime", label = "Meters' Peak Hold Time", unit = "ms"}}},
+				{key = "meter.peakHoldTime", label = "Meters' Peak Hold Time", unit = "ms"},
+				{key = "meter.fallback", label = "Meters' Fallback", unit = "dB/s"}}},
 			{id = "record", name = "Record", items = {
 				{key = "audio.stopAfterPunchOut", label = "Stop after Automatic Punch Out"}}},
 			{id = "record-audio", parent = "Record", name = "Audio", items = {

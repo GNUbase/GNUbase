@@ -102,18 +102,20 @@ namespace gnubase::rt
 		// waits until each has tried to get it. Each worker also joins workgroup, the audio workgroup of the device
 		// whose audio thread it helps (Device::workgroup, macOS only), which must outlive the pool. Throws
 		// std::invalid_argument for more workers, and std::system_error if a thread can't be started, after ending the
-		// ones that were.
-		explicit WorkerPool(size_t workers, double periodSeconds = 0.005, void* workgroup = nullptr);
+		// ones that were. With realtimeOnly the workers that didn't get real-time priority end at once, and the pool
+		// works with the others: workers() is realtimeWorkers().
+		explicit WorkerPool(
+			size_t workers, double periodSeconds = 0.005, void* workgroup = nullptr, bool realtimeOnly = false);
 		static constexpr size_t g_maxWorkers = 64;
 		~WorkerPool(); // joins the workers
 		WorkerPool(const WorkerPool&) = delete;
 		WorkerPool& operator=(const WorkerPool&) = delete;
 
-		size_t workers() const { return m_threads.size(); }
+		size_t workers() const { return m_workers; }
 
 		// The workers that got real-time priority, and whether all did. Final once the constructor returned.
 		size_t realtimeWorkers() const { return m_realtime.load(std::memory_order_acquire); }
-		bool realtime() const { return realtimeWorkers() == m_threads.size(); }
+		bool realtime() const { return realtimeWorkers() == m_workers; }
 
 		// The workers that joined the workgroup. Final once the constructor returned.
 		size_t workgroupWorkers() const { return m_joined.load(std::memory_order_acquire); }
@@ -124,7 +126,7 @@ namespace gnubase::rt
 		void run(ParallelJob& job, size_t helpers = SIZE_MAX) noexcept;
 
 	private:
-		void loop(size_t thread, double periodSeconds, void* workgroup);
+		void loop(double periodSeconds, void* workgroup);
 		uint64_t waitForJob(size_t worker, uint64_t seen, bool spin) noexcept; // returns the new generation
 		bool admit(uint64_t generation) noexcept;
 		void wake(size_t count) noexcept;
@@ -142,9 +144,13 @@ namespace gnubase::rt
 		std::atomic<uint64_t> m_sleeping{0};   // a bit per worker that sleeps or is about to
 		std::atomic<size_t> m_inside{0};       // workers inside the current job
 		std::atomic<size_t> m_realtime{0};
+		std::atomic<size_t> m_others{0}; // workers without real-time priority
 		std::atomic<size_t> m_joined{0}; // workers in the workgroup
 		std::atomic<bool> m_stop{false};
 		std::thread::id m_caller; // the thread that ran the last job; on Linux the workers follow its priority
+		const size_t m_size;      // the workers started
+		const bool m_realtimeOnly;
+		size_t m_workers = 0; // the workers that run jobs
 		std::vector<std::thread> m_threads;
 	};
 

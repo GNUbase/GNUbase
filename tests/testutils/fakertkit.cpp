@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <mutex>
 #include <optional>
@@ -22,6 +24,7 @@ namespace gnubase::test
 		struct State
 		{
 			FakeRtkit::Mode mode = FakeRtkit::Mode::Grants;
+			size_t grants = SIZE_MAX;
 			DBusServer* server = nullptr;
 			std::vector<DBusWatch*> watches; // the server's, for its listening socket
 			std::vector<DBusConnection*> connections;
@@ -94,11 +97,13 @@ namespace gnubase::test
 				dbus_uint32_t priority = 0;
 				dbus_message_get_args(
 					message, nullptr, DBUS_TYPE_UINT64, &thread, DBUS_TYPE_UINT32, &priority, DBUS_TYPE_INVALID);
+				size_t count = 0;
 				{
 					const std::scoped_lock lock(impl.mutex);
 					impl.requests.push_back({thread, priority});
+					count = impl.requests.size();
 				}
-				if (impl.mode == FakeRtkit::Mode::Refuses)
+				if (impl.mode == FakeRtkit::Mode::Refuses || count > impl.grants)
 					return dbus_message_new_error(message, DBUS_ERROR_ACCESS_DENIED, "refused");
 				return dbus_message_new_method_return(message);
 			}
@@ -165,9 +170,10 @@ namespace gnubase::test
 	{
 	};
 
-	FakeRtkit::FakeRtkit(Mode mode) : m_impl(std::make_unique<Impl>())
+	FakeRtkit::FakeRtkit(Mode mode, size_t grants) : m_impl(std::make_unique<Impl>())
 	{
 		m_impl->mode = mode;
+		m_impl->grants = grants;
 		if (const char* previous = std::getenv("DBUS_SYSTEM_BUS_ADDRESS"))
 			m_impl->previousAddress = previous;
 		if (mode == Mode::NoBus)

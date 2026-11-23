@@ -15,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -451,9 +452,13 @@ namespace gnubase::engine
 				"the buffer holds input in stop mode, when it comes over 30 s after the last input, from playback or "
 				"not. On the next audio device, input in stop mode leaves out the earlier devices' input in stop "
 				"mode, whose timing can't be placed against it, and keeps the input during playback. It is no "
-				"recording of the chord track: it makes no chord events. Returns what recording.add returns.",
+				"recording of the chord track: it makes no chord events. cycle: Insert as Cycle Recording (p. 355): "
+				"only the input from playback, as stacked parts on lanes of their own, one per cycle lap, all but the "
+				"last muted (recording.add's cycleMode stacked); laps after the first start at the left locator, and "
+				"those playback left end at the right one. It needs input from at least two laps. Returns what "
+				"recording.add returns.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
-					"properties": {"track": {"type": "integer"}}})"),
+					"properties": {"track": {"type": "integer"}, "cycle": {"type": "boolean"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"parts": {"type": "array"}},
 					"required": ["parts"]})"),
 				false},
@@ -467,6 +472,8 @@ namespace gnubase::engine
 				const double ratio = m_snapshots.latest().sampleRate / m_device->format().sampleRate;
 				const time::Samples cursor = m_transport.position();
 				const TransportSettings& locators = m_transport.settings();
+				const bool cycle = context.parameters().value("cycle", false);
+				std::vector<std::pair<time::Samples, time::Samples>> laps; // cycle: each lap's start and end
 				MidiTakeBuilder builder;
 				time::Samples start = -1;
 				int64_t stopped = -1;      // the device frame of the first input in stop mode
@@ -477,6 +484,8 @@ namespace gnubase::engine
 					time::Samples at = kept.position;
 					if (at < 0)
 					{
+						if (cycle)
+							continue; // Insert as Cycle Recording inserts only the input from playback
 						if (stopped < 0)
 							stopped = static_cast<int64_t>(kept.deviceFrame);
 						at = cursor +
@@ -488,24 +497,53 @@ namespace gnubase::engine
 						// position advances one sample per device frame, so it jumped back also when it advanced less
 						// than the device frames since the input before, as with a note held past the lap's end.
 						const auto frame = static_cast<int64_t>(kept.deviceFrame);
-						if (played >= 0 && at - played < frame - playedFrame)
-							builder.endNotes(locators.cycle && locators.right > played ? locators.right : played);
+						const bool lap = played >= 0 && at - played < frame - playedFrame;
+						if (lap)
+						{
+							const time::Samples end =
+								locators.cycle && locators.right > played ? locators.right : played;
+							builder.endNotes(end);
+							if (cycle)
+								laps.back().second = std::max(laps.back().second, end);
+						}
+						if (cycle && (lap || laps.empty()))
+						{
+							builder.setTake(laps.size());
+							const time::Samples begin =
+								lap && locators.cycle && locators.left < at ? locators.left : at;
+							laps.emplace_back(begin, at + 1);
+						}
 						played = at;
 						playedFrame = frame;
 					}
 					if (!filter.records(kept.event))
 						continue;
 					start = start < 0 ? at : std::min(start, at);
+					if (cycle)
+						laps.back().second = std::max(laps.back().second, at + 1);
 					builder.add(at, kept.event);
 				}
+				require(!cycle || laps.size() > 1,
+					"Insert as Cycle Recording needs input from at least two cycle laps "
+					"of playback in the track's retrospective buffer");
 				require(!builder.empty(), "the track's retrospective buffer holds nothing to insert");
-				builder.endNotes(builder.last() + 1);
-				const Json take = {{"position", start}, {"length", builder.last() - start + 1}};
+				Json takes = Json::array();
+				if (cycle)
+				{
+					builder.endNotes(laps.back().second);
+					for (const auto& [begin, end] : laps)
+						takes.push_back({{"position", begin}, {"length", end - begin}});
+				}
+				else
+				{
+					builder.endNotes(builder.last() + 1);
+					takes.push_back({{"position", start}, {"length", builder.last() - start + 1}});
+				}
 				Json added = context.call("recording.add",
 					{{"midiMode", "newParts"}, {"snapToBars", m_settings.get(settings::g_midiSnapPartsToBars)},
-						{"chordEvents", false},
+						{"chordEvents", false}, {"cycle", cycle}, {"cycleMode", "stacked"},
 						{"tracks",
-							Json::array({{{"track", track}, {"takes", Json::array({take})}, {"notes", builder.notes()},
+							Json::array({{{"track", track}, {"takes", std::move(takes)}, {"notes", builder.notes()},
 								{"controllers", builder.controllers()}}})}});
 				m_recorder.inserted(channel, events.back().deviceFrame); // only now: a failed insert keeps the buffer
 				return added;

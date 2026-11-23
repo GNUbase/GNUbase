@@ -340,3 +340,39 @@ TEST_CASE("the fade dialog gives every selected event the fades it shows, as one
 	closes(app, "#fade-editor");
 	CHECK(eventOf(app, events.first).at("fadeOut") == Json{{"length", 72000}, {"shape", "linear"}});
 }
+
+TEST_CASE("As Default in the fade dialog sets the default fades, which Apply Standard Fade In and Out give", "[ui]")
+{
+	// Reference manual pp. 385-387: the default fades take the dialog's shapes and lengths, with Apply Length off too.
+	test::UiApp app({900, 700});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const Events events(app);
+	REQUIRE(app.waitUntil([&display] { return display.project().at("audioEvents").size() == 2; }));
+	display.select({events.first});
+	run(app, "audio.fadeEditor", "#fade-editor");
+	choose(app, "#fade-in-shape", 3); // S-Curve
+	type(app, "#fade-in-length", "100");
+	type(app, "#fade-out-length", "250.5");
+	click(app, "#fade-editor-default");
+	CHECK(app.call("settings.get", {{"key", "editing.defaultFadeIn"}}).at("value") ==
+		Json{{"shape", "sCurve"}, {"length", 0.1}});
+	CHECK(app.call("settings.get", {{"key", "editing.defaultFadeOut"}}).at("value") ==
+		Json{{"shape", "linear"}, {"length", 0.2505}});
+	// It changes no event, and the dialog stays open.
+	CHECK(open(app, "#fade-editor"));
+	click(app, "#fade-editor-cancel");
+	closes(app, "#fade-editor");
+	CHECK(eventOf(app, events.first).at("fadeIn").at("length") == 0);
+
+	// Apply Standard Fade In and Out give the selected events the default fades.
+	display.select({events.first, events.second});
+	app.keys().run("audio.applyStandardFadeIn", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app, &events]
+		{ return eventOf(app, events.second).at("fadeIn") == Json{{"length", 4800}, {"shape", "sCurve"}}; }));
+	CHECK(eventOf(app, events.first).at("fadeIn") == Json{{"length", 4800}, {"shape", "sCurve"}});
+	app.keys().run("audio.applyStandardFadeOut", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app, &events]
+		{ return eventOf(app, events.first).at("fadeOut") == Json{{"length", 12024}, {"shape", "linear"}}; }));
+	CHECK(eventOf(app, events.second).at("fadeOut") == Json{{"length", 12024}, {"shape", "linear"}});
+	CHECK(app.call("history.get").at("steps").back().at("action") == "Apply Standard Fade Out");
+}

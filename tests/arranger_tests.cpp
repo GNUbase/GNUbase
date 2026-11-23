@@ -956,6 +956,21 @@ TEST_CASE("arranger.goToStep and arranger.trigger choose what plays, and transpo
 	CHECK(run(song.client, "transport.get").at("arranger").at("event") == song.b);
 }
 
+TEST_CASE("arranger.trigger takes the arranger events by their number in timeline order too", "[integration]")
+{
+	// Key commands trigger arranger events (reference manual p. 411): Trigger Arranger Event 1 to 9 (ui/keycommands.h)
+	// name them by their number, as the Arranger Events list orders them, not by an id that differs in every project.
+	Song song;
+	run(song.client, "arranger.set", {{"event", song.a}, {"position", 3000}, {"end", 3500}}); // A after B
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.a}}}}});
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	CHECK(run(song.client, "arranger.trigger", {{"number", 1}}).at("arranger").at("event") == song.b);
+	CHECK(run(song.client, "arranger.trigger", {{"number", 2}}).at("arranger").at("event") == song.a);
+	CHECK(reject(song.client, "arranger.trigger", {{"number", 3}}) == "there is no arranger event 3");
+	CHECK(reject(song.client, "arranger.trigger", {{"number", 0}}) == "there is no arranger event 0");
+	CHECK(reject(song.client, "arranger.trigger", {{"number", 1}, {"event", song.a}}) == "give event or number");
+}
+
 TEST_CASE("flatten turns the chain into a linear project that plays the same, one undo step", "[integration]")
 {
 	const gnubase::test::TempDir dir;

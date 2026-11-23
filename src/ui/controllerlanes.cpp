@@ -229,7 +229,8 @@ namespace gnubase::ui
 			menu->AddEventListener(Rml::EventId::Click, this);
 			m_menus.push_back(menu->GetObserverPtr());
 		}
-		// The mouseup that ends a gesture goes to the document (listen), so that it ends wherever the mouse goes up.
+		// The mouseup that ends a gesture goes to the window's context (listen), so that it ends wherever in the window
+		// the mouse goes up.
 		for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Click,
 				 Rml::EventId::Keydown, Rml::EventId::Blur})
 			root.AddEventListener(event, this);
@@ -732,10 +733,11 @@ namespace gnubase::ui
 					menuItem(*menu.get(), *item);
 				return;
 			}
-		if (event.GetId() == Rml::EventId::Mousedown && event.GetCurrentElement() == m_document.get())
+		if (event.GetId() == Rml::EventId::Mousedown && event.GetCurrentElement() == m_listened.get())
 		{
-			// A left press anywhere in the document while a gesture goes on: the gesture's mouseup never came, as when
-			// the mouse went up outside the window. It ends without its effect before anything hears the press.
+			// A left press anywhere in the window while a gesture goes on, also in another document such as a floating
+			// panel (#864): the gesture's mouseup never came, as when the mouse went up outside the window. It ends
+			// without its effect before anything hears the press.
 			if (event.GetParameter("button", 0) == 0)
 				cancel();
 			return;
@@ -1036,21 +1038,24 @@ namespace gnubase::ui
 		m_gesture = Gesture::None;
 	}
 
-	void ControllerLanes::listen(bool document)
+	void ControllerLanes::listen(bool on)
 	{
-		if (Rml::Element* listened = m_document.get())
+		if (Rml::Element* listened = m_listened.get())
 		{
 			listened->RemoveEventListener(Rml::EventId::Mouseup, this);
 			listened->RemoveEventListener(Rml::EventId::Mousedown, this, true);
 		}
-		m_document.reset();
-		if (const Rml::Element* root = m_root.get(); document && root != nullptr)
-			if (Rml::ElementDocument* owner = root->GetOwnerDocument())
+		m_listened.reset();
+		// The context's root element, the parent of its documents, hears them in every document of the window: a drag
+		// released over a floating panel ends there, and a press there ends one whose mouseup never came (#864).
+		if (const Rml::Element* root = m_root.get(); on && root != nullptr)
+			if (Rml::Context* context = root->GetContext(); context != nullptr && context->GetRootElement() != nullptr)
 			{
-				owner->AddEventListener(Rml::EventId::Mouseup, this);
-				// In the capture phase: before the press reaches the root or anything else in the document.
-				owner->AddEventListener(Rml::EventId::Mousedown, this, true);
-				m_document = owner->GetObserverPtr();
+				Rml::Element* top = context->GetRootElement();
+				top->AddEventListener(Rml::EventId::Mouseup, this);
+				// In the capture phase: before the press reaches the root or anything else in the window.
+				top->AddEventListener(Rml::EventId::Mousedown, this, true);
+				m_listened = top->GetObserverPtr();
 			}
 	}
 

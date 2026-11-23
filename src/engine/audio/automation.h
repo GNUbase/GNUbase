@@ -234,15 +234,16 @@ namespace gnubase::engine
 		ChannelFader();
 
 		// Audio thread. The context has the channel's own channels; a mono panner writes the second one of its
-		// stereo output after them. muted, if any, is scaled by the mute alone, frame by frame as the channel is.
-		void process(
-			const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted = nullptr) noexcept;
+		// stereo output after them. muted, if any, is scaled by the mute alone, frame by frame as the channel is;
+		// unpanned, if any, by the gain and the mute, without the panner.
+		void process(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted = nullptr,
+			PreFaderTap* unpanned = nullptr) noexcept;
 
 	private:
 		using Ramp = ParameterRamp;
 
-		void render(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted, uint32_t begin,
-			uint32_t end) noexcept;
+		void render(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted,
+			PreFaderTap* unpanned, uint32_t begin, uint32_t end) noexcept;
 
 		Ramp m_volume;
 		Ramp m_pan;
@@ -341,7 +342,11 @@ namespace gnubase::engine
 		// Audio thread: the automation events of the block for the plugins in the slots, from the source node to the
 		// slot nodes (SlotStrip), keyed by the slot's index in the program that plays.
 		graph::EventBuffer pluginEvents{graph::g_maxEventsPerBlock};
-		LevelMeter meter; // the channel's output after the fader, the panner and muting
+		LevelMeter meter; // where the user setting meter.position says (MeterPosition); MIDI tracks: see meterMidi
+		// Audio thread, MIDI tracks: each sounding note's MIDI 1.0 velocity plus 1, 0 for none, and how many notes
+		// sound at each velocity, for the meter.
+		std::array<uint8_t, g_midiNotes> midiVelocity{};
+		std::array<uint16_t, 128> midiVelocities{};
 		// Audio thread, MIDI tracks: whether mute (automation or the button) mutes the track's events, and the notes it
 		// let through that haven't ended, which a mute ends; the values of the pedals that hold notes (sustain,
 		// sostenuto, hold 2) on each MIDI channel, which a mute releases where it is down (above 0 in MIDI 1.0) and
@@ -428,6 +433,14 @@ namespace gnubase::engine
 		TapeMachine,        // while it stands or records, not while it only plays
 	};
 
+	// The user setting meter.position: where the channel meters measure (reference manual p. 467).
+	enum class MeterPosition : uint8_t
+	{
+		Input,      // after the pre section (its input gain and low and high cut), before the plugin slots
+		PostFader,  // after the fader and muting, without the panner
+		PostPanner, // the channel's output: after the panner too
+	};
+
 	// An audio track's input monitoring (docs/features/latency-and-monitoring.md).
 	struct Monitoring
 	{
@@ -477,6 +490,13 @@ namespace gnubase::engine
 			m_render = std::move(tap);
 			m_renderPoint = point;
 		}
+		// Command thread, before the graph compiles: where the strip measures the channel's meter; channels: the
+		// channel's own, which PostFader measures.
+		void meterAt(MeterPosition position, int channels)
+		{
+			m_meterPosition = position;
+			m_unpanned = position == MeterPosition::PostFader ? std::make_shared<PreFaderTap>(channels) : nullptr;
+		}
 		// Command thread, before the graph compiles: a routed MIDI track's own chase, which its source (the track's
 		// sequencer) fills in each block (MidiSequencer::stripChase). The strip doesn't send it on: its instrument
 		// chases the track with the others. It learns from it which pedals are down; with keep (the mute button
@@ -524,6 +544,8 @@ namespace gnubase::engine
 		void fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept;
 		// A MIDI track's mute: the block's events in out, muted as the fader's mute events say.
 		void muteMidi(graph::EventBuffer& out, const graph::TransportBlock& transport) noexcept;
+		// A MIDI track's meter: the velocity of the loudest note that sounds, frame by frame, 127 as 1.
+		void meterMidi(const graph::ProcessContext& context) noexcept;
 		std::shared_ptr<ChannelState> m_state;
 		std::shared_ptr<graph::Processor> m_source;
 		Panning m_panning;
@@ -545,12 +567,15 @@ namespace gnubase::engine
 		bool m_tapFollowsMute = false;         // the fader's mute applies to m_tap
 		std::shared_ptr<PreFaderTap> m_render; // or none, while nothing renders from the channel
 		RenderPoint m_renderPoint = RenderPoint::Strip;
+		MeterPosition m_meterPosition = MeterPosition::PostPanner;
+		std::shared_ptr<PreFaderTap> m_unpanned;            // what the PostFader meter measures
 		std::shared_ptr<const graph::EventBuffer> m_chased; // see chaseFrom
 		bool m_keepChase = false;
 		std::vector<graph::ProcessEvent> m_channelKinds; // see chasedWhenHeard
 		std::shared_ptr<const MidiSequencer> m_chaser;
-		uint64_t m_project = 0;    // see playsProject
-		ObjectId m_midiOutput = 0; // this graph's MIDI destination (playsMidiTrack)
+		uint64_t m_project = 0;         // see playsProject
+		ObjectId m_midiOutput = 0;      // this graph's MIDI destination (playsMidiTrack)
+		std::vector<float> m_midiLevel; // a block of meterMidi's levels, on a MIDI track's strip
 	};
 
 	// The processor of a send node (graph::NodeKind::Send): a post-fader send's input is its channel's output, a

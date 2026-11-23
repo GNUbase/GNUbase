@@ -1497,6 +1497,53 @@ TEST_CASE("the device follows the project's sample rate where it can and reports
 	CHECK(run(client, "audio.get").at("device").at("sampleRate") == 96000.0);
 }
 
+TEST_CASE("an externally clocked device keeps its sample rate and reports the mismatch", "[unit]")
+{
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()));
+	Client client(engine);
+	Json device = run(client, "audio.setDevice", {{"backend", "fake"}, {"externallyClocked", true}}).at("device");
+	CHECK(device.at("externallyClocked") == true);
+	run(client, "audio.start");
+
+	// A rate the device supports: it stays at its own, which the external clock sets, and plays faster or slower.
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	Json status = run(client, "audio.get");
+	CHECK(status.at("device").at("sampleRate") == 48000.0);
+	CHECK(status.at("device").at("sampleRateMismatch") == true);
+	CHECK(status.at("device").at("externallyClocked") == true);
+	CHECK(status.at("running") == true);
+
+	// Kept with the device's settings across resets, and a new device doesn't follow the project's rate either.
+	run(client, "audio.reset");
+	CHECK(run(client, "audio.get").at("device").at("externallyClocked") == true);
+	device = run(client, "audio.setDevice", {{"backend", "fake"}, {"externallyClocked", true}}).at("device");
+	CHECK(device.at("sampleRate") == 48000.0);
+	CHECK(device.at("sampleRateMismatch") == true);
+
+	// Off again: the device follows.
+	device = run(client, "audio.set", {{"externallyClocked", false}}).at("device");
+	CHECK(device.at("externallyClocked") == false);
+	CHECK(device.at("sampleRate") == 44100.0);
+	CHECK(device.at("sampleRateMismatch") == false);
+}
+
+TEST_CASE("a lost externally clocked device returns at its own sample rate", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const double rate =
+		run(client, "audio.setDevice", {{"externallyClocked", true}}).at("device").at("sampleRate").get<double>();
+	run(client, "audio.simulateDeviceLoss", {{"connected", false}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+	run(client, "project.set", {{"sampleRate", rate == 44100.0 ? 48000.0 : 44100.0}}); // one the dummy device has
+	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return data.at("lost").is_null(); }));
+	const Json device = run(client, "audio.get").at("device");
+	CHECK(device.at("sampleRate") == rate);
+	CHECK(device.at("sampleRateMismatch") == true);
+	CHECK(device.at("externallyClocked") == true);
+}
+
 TEST_CASE("a device that opens at the project's new sample rate but fails to start leaves the project changed",
 	"[integration]")
 {

@@ -156,6 +156,14 @@ namespace
 			app.shell().step(std::chrono::milliseconds(0));
 		}
 
+		// The mouse pointer over the target, as MCP's ui_windows reports it: empty for the OS's arrow (#1857).
+		std::string pointer(const ui::Target& target)
+		{
+			app.ui().move(window, target);
+			app.shell().step(std::chrono::milliseconds(0));
+			return app.ui().windows().at("cursor").get<std::string>();
+		}
+
 		void tool(const std::string& name)
 		{
 			click(of(".se-tool[se-tool=" + name + "]"));
@@ -702,6 +710,7 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 	f.open();
 	// Without a snap point of its own, the event snaps at its start (p. 626); dragging it sets one (p. 628).
 	REQUIRE(f.app.waitUntil([&] { return f.near(f.box(".se-snap-point").at("x").get<double>() + 1, f.x(1000), 2.5); }));
+	CHECK(f.pointer(of(".se-snap-point")) == "pointer"); // a hand (p. 628)
 	f.drag(of(".se-snap-point"), f.at(2500));
 	REQUIRE(f.app.waitUntil(
 		[&]
@@ -1015,6 +1024,7 @@ TEST_CASE("the Warp section, Free Warp and Flatten warp the clip", "[ui]")
 	f.click(of("#se-free-warp"));
 	REQUIRE(f.has("#se-free-warp", "checked"));
 	REQUIRE(f.has(".sample-editor", "free-warp"));
+	CHECK(f.pointer(f.at(3000)) == "tool-timewarp"); // a clock with arrows (p. 655)
 	f.drag(f.at(3000), f.at(3400));
 	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").size() == 1; }));
 	const Json marker = warp().at("markers").at(0);

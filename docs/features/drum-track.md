@@ -130,9 +130,8 @@ browser's Find Samples and Find Instruments, layer and pad presets, the toolbar'
 automation parameters with their quick controls, Learn CC and ranges (pp. 978-980), and the Add Track dialog's Event
 Type (pattern event or MIDI part) and Input Routing. A track preset has the whole file of a sample that a pad or a
 sampler plays a section of; `project.backup`'s `minimize` cuts such files down for backups. The numbered files that
-loading presets and projects leaves in `Track Presets/<name> media` and in media folders (`2-kick.wav`) stay until the
-user removes them: nothing yet says which of them a project still plays, as the reference's Cleanup would, and each load
-reads such files again to compare their CRC-32 with the entries' (cleanup is tracked in #1827).
+loading presets and projects leaves in `Track Presets/<name> media` and in media folders (`2-kick.wav`) stay until
+`media.cleanup` removes them ([pool.md](pool.md)); the UI has no item for it yet (#1827).
 
 ## Tests
 

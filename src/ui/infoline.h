@@ -40,20 +40,22 @@ namespace gnubase::ui
 	// (<valuefield field="volume">) and mute and lock (toggle buttons), a MIDI part's or an audio event's transpose
 	// (with what the project root key adds, rootKeyTranspose, in brackets), a MIDI part's velocity, the root key
 	// (<select field="rootKey">) and Global Transpose (a toggle button, checked for Independent) of a MIDI part, an
-	// audio event or an audio part's events, from event.get. The element has the class empty without a
-	// selection and multiple with more than one selected. Edits go to every selected event or part as one undo step
+	// audio event or an audio part's events, from event.get. The element has the class empty without a selection and
+	// multiple with more than one selected. Edits go to every selected event or part as one undo step
 	// (history.transaction): relative to each one's value, or with Ctrl (Cmd) held when Enter takes the value, the same
 	// value for all. With followMarkers it shows the markers selected on the marker tracks too, when their selection
 	// changed last (class markers): the first one's description, position and, for a cycle marker, end and length,
-	// which marker.set edits the same way. When the selection of an in-place editor changed last (class notes), it
-	// shows the first of its selected notes as that editor's own info line does (p. 1259): start, end and length in
-	// bars and beats, the pitch as a name, the velocities 0-127 and the channel 1-16, which note.set edits the same
-	// way, relative to the first note or with Ctrl (Cmd)+Enter the same value for all, the channel set for all. When
-	// the display's selected automation points changed last (class points), it shows the first one in time: its
-	// position, value and Terminator (p. 881), which automationPoint.set edits the same way. When the display's
-	// selection range changed last (class range), it shows the range (pp. 287-288): Range Start, Range End and Range
-	// Length in the ruler's time format and its Top Track and Bottom Track (<select field="topTrack">), which set the
-	// range (EventDisplay::setRange). Use it on the UI thread; the display and the binding must outlive it.
+	// which marker.set edits the same way. With followArranger it shows the arranger events selected on the arranger
+	// track's lane so too (class arranger, p. 405): the first one's name, start, end and length, which arranger.set
+	// edits. When the selection of an in-place editor changed last (class notes), it shows the first of its selected
+	// notes as that editor's own info line does (p. 1259): start, end and length in bars and beats, the pitch as a
+	// name, the velocities 0-127 and the channel 1-16, which note.set edits the same way, relative to the first note or
+	// with Ctrl (Cmd)+Enter the same value for all, the channel set for all. When the display's selected automation
+	// points changed last (class points), it shows the first one in time: its position, value and Terminator (p. 881),
+	// which automationPoint.set edits the same way. When the display's selection range changed last (class range), it
+	// shows the range (pp. 287-288): Range Start, Range End and Range Length in the ruler's time format and its Top
+	// Track and Bottom Track (<select field="topTrack">), which set the range (EventDisplay::setRange). Use it on the
+	// UI thread; the display and the binding must outlive it.
 
 	class InfoLine final : private Rml::EventListener
 	{
@@ -69,6 +71,11 @@ namespace gnubase::ui
 		void update();
 		// The ids of the markers selected on the marker tracks, which update asks for.
 		void followMarkers(std::function<std::vector<uint64_t>()> selection) { m_markerSource = std::move(selection); }
+		// The ids of the arranger events selected on the arranger track's lane, which update asks for.
+		void followArranger(std::function<std::vector<uint64_t>()> selection)
+		{
+			m_arrangerSource = std::move(selection);
+		}
 
 	private:
 		// A note selected in an in-place editor, as the key editor's info line shows it (p. 1259).
@@ -177,9 +184,13 @@ namespace gnubase::ui
 		Subscription m_reset;                                              // project.reset
 		std::function<std::vector<uint64_t>()> m_markerSource;
 		std::vector<uint64_t> m_markerSelection; // shown
-		bool m_showsMarkers = false;             // the markers' selection changed last
-		std::vector<MarkerItem> m_markers;       // the selected ones in timeline order, the first one first
-		Subscription m_editors;                  // editor.changed
+		bool m_showsMarkers = false;             // the markers' selection changed last, or the arranger events'
+		std::function<std::vector<uint64_t>()> m_arrangerSource;
+		std::vector<uint64_t> m_arrangerSelection; // shown
+		bool m_arranger = false;                   // m_markers are the selected arranger events
+		std::vector<MarkerItem> m_markers; // the selected ones in timeline order, the first one first; arranger events
+										   // as cycle markers on the arranger track
+		Subscription m_editors;            // editor.changed
 		std::map<std::string, engine::Json> m_viewSelections;    // each open in-place editor's selection seen
 		std::string m_noteView;                                  // the editor whose notes show
 		engine::Json m_noteSelection = engine::Json::array();    // its selection shown, or to show

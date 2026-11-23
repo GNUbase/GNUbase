@@ -2,6 +2,7 @@
 #include "ui/mixer.h"
 
 #include "engine/analysis/analysis.h"
+#include "engine/document/channelformat.h"
 #include "ui/docking.h"
 #include "ui/widgetutils.h"
 
@@ -45,6 +46,7 @@ namespace gnubase::ui
 
 		constexpr double g_silence = -144.0;       // engine::g_minChannelVolume
 		constexpr double g_sendKnobMin = -60.0;    // a send level knob's lowest level, as the fader's
+		constexpr float g_meterEnd = 0.001f;       // -60 dB, where a channel meter's bar ends
 		constexpr int g_sends = 8;                 // engine::g_maxSends
 		constexpr const char* g_addEffect = "add"; // a send destination list's Add Effect Track to Send
 
@@ -163,6 +165,21 @@ namespace gnubase::ui
 			for (std::string key; std::getline(text, key, '.');)
 				keys.push_back(key);
 			return keys;
+		}
+
+		// Whether a channel's routing gives it a panner (engine::pannerFor): not mono into mono, nor on destinations
+		// wider than stereo, nor without one.
+		bool hasPanner(const Json& project, const Json& channel)
+		{
+			const Json output = channel.value("output", Json(0));
+			std::optional<engine::ChannelFormat> destination;
+			for (const char* list : {"busses", "channels"})
+				for (const Json& each : project.value(list, Json::array()))
+					if (each.at("id") == output)
+						destination = engine::formatFromName(each.at("format").get<std::string>());
+			const std::optional<engine::ChannelFormat> format =
+				engine::formatFromName(channel.at("format").get<std::string>());
+			return format && destination && engine::pannerFor(*format, *destination) != engine::Panner::None;
 		}
 
 		// A strip control's value in the channel's JSON, or null.
@@ -518,7 +535,10 @@ namespace gnubase::ui
 		// The channel meters' Global Meter Settings (reference manual p. 467).
 		menus.emplace_back(R"(<menu id="mixer-meter-menu">)",
 			R"(<menuitem type="toggle" meter="holdPeaks" checked="">Meter Peak - Hold Peaks</menuitem>)"
-			R"(<menuitem type="toggle" meter="holdForever">Meter Peak - Hold Forever</menuitem>)"
+			R"(<menuitem type="toggle" meter="holdForever">Meter Peak - Hold Forever</menuitem><menuseparator/>)"
+			R"(<menuitem meter-position="input">Meter Position - Input</menuitem>)"
+			R"(<menuitem meter-position="postFader">Meter Position - Post-Fader</menuitem>)"
+			R"(<menuitem meter-position="postPanner" checked="">Meter Position - Post-Panner</menuitem>)"
 			R"(<menuseparator/><menuitem meter="reset">Reset Meters</menuitem>)");
 		menus.emplace_back(R"(<menu id="mixer-layout-pane" class="setup-pane">)", layout);
 		for (const auto& [open, items] : menus)
@@ -553,14 +573,16 @@ namespace gnubase::ui
 					const std::vector<engine::Event> channels = m_channelSteps.settle(changed);
 					if (changedOnly(changed, {"channel.changed"}))
 					{
-						// New routing changes which destinations the other strips' sends can take.
+						// New routing changes which destinations the other strips' sends can take, and a new routing
+						// or format which strips routed into a channel have a panner.
 						bool rerouted = false;
 						for (const engine::Event& each : channels)
 						{
 							Json before;
 							if (const Json* channel = takeChannel(m_project, each, &before))
 							{
-								rerouted = rerouted || routing(before) != routing(*channel);
+								rerouted = rerouted || routing(before) != routing(*channel) ||
+									before.value("format", Json()) != channel->value("format", Json());
 								showChannel(channel->at("id").get<uint64_t>());
 							}
 						}
@@ -597,7 +619,8 @@ namespace gnubase::ui
 				for (const auto& [key, value] : event.data.at("values").items())
 					setting(key, value);
 			}));
-		for (const char* key : {"audio.defaultSendLevel", "meter.holdPeaks", "meter.holdForever", "meter.peakHoldTime"})
+		for (const char* key : {"audio.defaultSendLevel", "meter.holdPeaks", "meter.holdForever", "meter.peakHoldTime",
+				 "meter.position", "meter.fallback"})
 			m_binding.send("settings.get", {{"key", key}},
 				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 				{
@@ -819,6 +842,9 @@ namespace gnubase::ui
 			rml += R"(</div><div class="mixer-fader" section="fader" label="Fader">)";
 			// The panner (reference manual p. 465): pan bypass, and the pan control or, while the strip is .combined,
 			// the combined panner's left and right controls.
+			if (channel->type == "midi") // MIDI pan, CC 10
+				rml += R"(<div class="mixer-panner"><knob class="mixer-pan" param="midiPan" title="Pan" min="0" )"
+					   R"(max="127" default="64" step="1"/></div>)";
 			if (audio)
 				rml += R"(<div class="mixer-panner"><button type="toggle" class="toggle" param="panBypass" )"
 					   R"(title="Pan Bypass">B</button>)"
@@ -840,14 +866,17 @@ namespace gnubase::ui
 			// Edit Channel Settings (reference manual p. 500).
 			if (channel->channel != nullptr && m_kind != MixerKind::ChannelSettings && m_actions.editChannel)
 				rml += R"(<button class="mixer-edit" edit="" title="Edit Channel Settings">e</button>)";
-			// The fader, from -60 dB, linear until the channel strip's dB law (#107), and the meter of an audio channel
-			// or of a VCA fader's channels summed (p. 516), whose bars come once the engine measured it (showMeters).
-			if (audio || vca)
+			// The fader, from -60 dB, linear until the channel strip's dB law (#107), and the meter of an audio or MIDI
+			// channel or of a VCA fader's channels summed (p. 516), whose bars come once the engine measured it
+			// (showMeters). MIDI channels have no fader here yet.
+			const bool midi = channel->type == "midi";
+			if (audio || vca || midi)
 			{
-				rml += R"(<div class="mixer-level"><fader min="-60" max="6" default="0" step="0.1"/>)"
-					   R"(<div class="mixer-meter" contextmenu="mixer-meter-menu"/></div>)"
-					   R"(<div class="mixer-readouts"><span class="mixer-volume"/>)"
-					   R"(<span class="mixer-peak" title="Meter Peak Level"/></div>)";
+				rml += std::string(R"(<div class="mixer-level">)") +
+					(midi ? "" : R"(<fader min="-60" max="6" default="0" step="0.1"/>)") +
+					R"(<div class="mixer-meter" contextmenu="mixer-meter-menu"/></div>)"
+					R"(<div class="mixer-readouts"><span class="mixer-volume"/>)"
+					R"(<span class="mixer-peak" title="Meter Peak Level"/></div>)";
 				m_metered->push_back(channel->id);
 			}
 			rml += "</div>";
@@ -866,6 +895,10 @@ namespace gnubase::ui
 	std::vector<std::vector<std::string>> Mixer::readMeters()
 	{
 		const auto now = std::chrono::steady_clock::now();
+		// The bars fall back from the peaks by meter.fallback (p. 1614), and below their scale to silence.
+		const auto fall = static_cast<float>(
+			std::pow(10.0, -m_fallback * std::chrono::duration<double>(now - m_metersRead).count() / 20.0));
+		m_metersRead = now;
 		std::vector<std::vector<std::string>> shown;
 		for (const uint64_t id : *m_metered)
 		{
@@ -880,8 +913,14 @@ namespace gnubase::ui
 				held.resize(std::max(held.size(), c + 1));
 				HeldPeak& mark = held[c];
 				if (level->peak[c] >= mark.level || mark.level > level->peakMax[c] || now - mark.at > m_peakHoldTime)
-					mark = {level->peak[c], now};
-				values.push_back(meterValue(level->peak[c]));
+				{
+					mark.level = level->peak[c];
+					mark.at = now;
+				}
+				mark.bar = std::max(level->peak[c], mark.bar * fall);
+				if (mark.bar < g_meterEnd)
+					mark.bar = level->peak[c];
+				values.push_back(meterValue(mark.bar));
 				values.push_back(m_holdPeaks ? meterValue(m_holdForever ? level->peakMax[c] : mark.level) : "");
 				largest = std::max(largest, level->peakMax[c]);
 			}
@@ -933,12 +972,24 @@ namespace gnubase::ui
 			show();
 			return;
 		}
+		if (key == "meter.position")
+		{
+			// The engine measures there (meter.get): the menu only shows where.
+			Rml::ElementList items;
+			if (m_meterMenu)
+				m_meterMenu->QuerySelectorAll(items, "[meter-position]");
+			for (Rml::Element* item : items)
+				setChecked(*item, attribute(*item, "meter-position") == value.get<std::string>());
+			return;
+		}
 		if (key == "meter.holdPeaks")
 			m_holdPeaks = value.get<bool>();
 		else if (key == "meter.holdForever")
 			m_holdForever = value.get<bool>();
 		else if (key == "meter.peakHoldTime")
 			m_peakHoldTime = std::chrono::milliseconds(value.get<int64_t>());
+		else if (key == "meter.fallback")
+			m_fallback = value.get<double>();
 		else
 			return;
 		for (const auto& [item, on] : {std::pair{"holdPeaks", m_holdPeaks}, std::pair{"holdForever", m_holdForever}})
@@ -1022,6 +1073,7 @@ namespace gnubase::ui
 		if (Rml::Element* solo = strip.QuerySelector("button[control=solo]"))
 			solo->SetClass("defeated", json.at("soloDefeat").get<bool>());
 		strip.SetClass("combined", json.value("panner", std::string()) == "combined");
+		strip.SetClass("no-panner", json.at("format") != "none" && !hasPanner(m_project, json));
 		Rml::ElementList controls;
 		strip.QuerySelectorAll(controls, "[param]");
 		m_updating = true; // filling a drop-down list sends a change
@@ -1043,7 +1095,9 @@ namespace gnubase::ui
 						control->SetAttribute(name, *value);
 			if (control->HasAttribute("value") && m_binding.sending(stepKey(m_stepOwner, channel.id, param)))
 				continue; // the control is ahead of the engine
-			const Json value = paramValue(json, param);
+			Json value = paramValue(json, param);
+			if (param == "midiPan" && value.is_null())
+				value = 64; // no MIDI pan, as before the first change: the knob shows its default, the center
 			if (control->GetTagName() == "select" && param.rfind("sends.", 0) != 0)
 			{
 				if (!value.is_null())
@@ -1420,8 +1474,10 @@ namespace gnubase::ui
 						m_binding.send("channel.set", std::move(parameters));
 						break;
 					}
-					// A knob's or a value field's drag, wheel turns or held arrow key: one undo step.
-					Json parameters = paramChange(param, given->Get<double>());
+					// A knob's or a value field's drag, wheel turns or held arrow key: one undo step. MIDI pan is a
+					// MIDI value.
+					Json parameters = paramChange(param,
+						param == "midiPan" ? Json(std::lround(given->Get<double>())) : Json(given->Get<double>()));
 					parameters["channel"] = channel->id;
 					const std::string what = stepKey(m_stepOwner, channel->id, param);
 					m_binding.sendStep(event.GetParameter("gesture", 0), what, "Change " + attribute(*target, "title"),
@@ -1465,6 +1521,11 @@ namespace gnubase::ui
 			{
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && m_actions.editChannel)
 					m_actions.editChannel(channel->track);
+			}
+			else if (target->HasAttribute("meter-position"))
+			{
+				m_binding.send(
+					"settings.set", {{"key", "meter.position"}, {"value", attribute(*target, "meter-position")}});
 			}
 			else if (target->IsClassSet("mixer-peak") || attribute(*target, "meter") == "reset")
 			{

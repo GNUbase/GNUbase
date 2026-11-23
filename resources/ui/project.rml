@@ -306,10 +306,12 @@
 		<menuitem id="render-in-place-submenu">Render in Place
 			<menu>
 				<menuitem command="track.renderSelected">Render (with Current Settings)</menuitem>
+				<menuitem command="track.renderSettings">Render Settings...</menuitem>
 			</menu>
 		</menuitem>
 		<menuitem id="freeze-submenu">Freeze/Unfreeze
 			<menu>
+				<menuitem command="track.freezeSelectedSettings">Selected Tracks...</menuitem>
 				<menuitem command="track.freezeSelected">Selected Tracks (with Current Settings)</menuitem>
 			</menu>
 		</menuitem>
@@ -336,8 +338,6 @@
 		<!-- The MIDI editors (docs/features/midi-editors.md) -->
 		<menuitem command="editor.openClose">Open/Close Editor</menuitem>
 		<menuitem command="window.lowerZoneEditor">Open Editor in Lower Zone</menuitem>
-		<menuitem command="editor.openList">Open List Editor</menuitem>
-		<menuitem command="editor.openDrum">Open Drum Editor</menuitem>
 		<!-- Drum maps (docs/features/drum-editor.md) -->
 		<menuitem command="drumMap.load">Load Drum Map...</menuitem>
 		<menuitem command="drumMap.save">Save Drum Map...</menuitem>
@@ -461,6 +461,9 @@
 				<menuitem command="audio.adjustFadesToRange">Adjust Fades to Range</menuitem>
 				<menuitem command="audio.crossfade">Crossfade</menuitem>
 				<menuseparator/>
+				<menuitem command="audio.applyStandardFadeIn">Apply Standard Fade In</menuitem>
+				<menuitem command="audio.applyStandardFadeOut">Apply Standard Fade Out</menuitem>
+				<menuseparator/>
 				<menuitem command="audio.removeFadeIn">Remove Fade In</menuitem>
 				<menuitem command="audio.removeFadeOut">Remove Fade Out</menuitem>
 				<menuitem command="audio.removeFades">Remove Fades</menuitem>
@@ -496,6 +499,10 @@
 	</menu>
 	<!-- MIDI functions (reference manual pp. 1118-1131, docs/features/midi-functions.md) -->
 	<menu id="midi-menu">
+		<!-- The MIDI editors in the editor window (docs/features/midi-editors.md) -->
+		<menuitem command="editor.openKey">Open Key Editor</menuitem>
+		<menuitem command="editor.openDrum">Open Drum Editor</menuitem>
+		<menuitem command="editor.openList">Open List Editor</menuitem>
 		<menuitem command="editor.openInPlace">Open In-Place Editor</menuitem>
 		<menuseparator/>
 		<menuitem command="midi.transposeSetup">Transpose Setup...</menuitem>
@@ -554,7 +561,7 @@
 		<menuseparator/>
 		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
 		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
-		<menuitem command="track.freezeSelected">Freeze/Unfreeze Selected Tracks</menuitem>
+		<menuitem command="track.freezeSelectedSettings">Freeze/Unfreeze Selected Tracks</menuitem>
 		<menuseparator/>
 		<!-- The tempo track (reference manual p. 1450) -->
 		<menuitem command="tempo.selectAll">Select All Events</menuitem>
@@ -632,6 +639,12 @@
 		<menuitem id="midi-retrospective-submenu">MIDI Retrospective Recording
 			<menu>
 				<menuitem id="midi-retrospective-empty" command="midi.clearRetrospective">Empty All Buffers</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="pre-post-roll-submenu">Pre-roll &amp; Post-roll
+			<menu>
+				<menuitem id="use-pre-roll" command="transport.toggle" parameters='{"setting": "preRoll"}'>Use Pre-roll</menuitem>
+				<menuitem id="use-post-roll" command="transport.toggle" parameters='{"setting": "postRoll"}'>Use Post-roll</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>

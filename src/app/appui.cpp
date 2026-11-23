@@ -151,7 +151,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 98> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 100> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -203,6 +203,8 @@ namespace gnubase::app
 			{"audio.removeFadeOut", "Removes the fade out of the selected audio events.", nullptr},
 			{"audio.removeFades", "Removes the fades and crossfades of the selected audio events.", nullptr},
 			{"audio.fadeEditor", "Opens the fade dialog for the selected audio events.", nullptr},
+			{"audio.applyStandardFadeIn", "Gives the selected audio events the default fade in.", nullptr},
+			{"audio.applyStandardFadeOut", "Gives the selected audio events the default fade out.", nullptr},
 			// The audio functions (docs/features/audio-functions.md).
 			{"audio.detectSilence", "Opens the Detect Silence dialog for the selected audio events.", nullptr},
 			{"audio.spectrumAnalyzer", "Opens the Spectrum Analyzer for the selected audio event.", nullptr},
@@ -318,7 +320,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 32> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 34> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected (unless "
 				"ui.upDownSelectsTracksOnly).",
@@ -334,8 +336,23 @@ namespace gnubase::app
 			{"track.enableSelected", "Enables the selected tracks again.", nullptr},
 			// Render in place and freeze (docs/features/render-in-place.md).
 			{"track.freezeSelected",
-				"Freezes the selected audio and instrument tracks, or unfreezes them if every one is frozen.", nullptr},
-			{"track.renderSelected", "Renders the selected audio and instrument tracks in place.", nullptr},
+				"Freezes the selected audio and instrument tracks with the Tail Size of render.freezeTail, or "
+				"unfreezes them if every one is frozen.",
+				nullptr},
+			{"track.freezeSelectedSettings",
+				"Opens Freeze Channel Options for the selected audio and instrument tracks that aren't frozen, and "
+				"freezes them with its Tail Size (render.freezeTail); unfreezes them if every one is frozen.",
+				nullptr},
+			{"track.renderSelected",
+				"Renders in place with the options of the user setting render.options: the selected audio events, "
+				"audio parts and MIDI parts, else the selection range, else the selected tracks, on audio and "
+				"instrument tracks.",
+				nullptr},
+			{"track.renderSettings",
+				"Opens Render Selection for the selected events and parts or the selection range, else Render Tracks "
+				"for the selected tracks, and renders them in place with its options, which it saves in "
+				"render.options.",
+				nullptr},
 			// The chord track (docs/features/chord-track.md).
 			{"track.chordsToMidiSelected",
 				"Chords to MIDI: a MIDI part of the chord events on the first selected MIDI or instrument track, which "
@@ -499,14 +516,16 @@ namespace gnubase::app
 					m_keyboard.reset(); // so too: its notes end
 				if (m_markers && m_shell.find(m_markersWindow) == nullptr)
 					m_markers.reset(); // its project subscriptions and playback watch end with its window
-				// The project window selects events, markers or time signature events: an event selected deselects
-				// the others.
+				// The project window selects events, markers, arranger or time signature events: an event selected
+				// deselects the others.
 				if (m_eventDisplay && m_markerLines && m_eventDisplay->selection() != m_eventSelection)
 				{
 					m_eventSelection = m_eventDisplay->selection();
 					if (!m_eventSelection.empty())
 					{
 						m_markerLines->deselect();
+						if (m_arrangerLane)
+							m_arrangerLane->deselect();
 						if (m_signatureLane)
 							m_signatureLane->row().setSelection({});
 					}
@@ -717,8 +736,8 @@ namespace gnubase::app
 				added.create = [this, editor = added.id == "editor"](Rml::Element& element)
 				{
 					Rml::Element& page = editor || !m_trackVisibility ? element : m_trackVisibility->showPanel(element);
-					auto shown = std::make_shared<ui::MidiEditor>(
-						m_binding, page, "lower", editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
+					auto shown = std::make_shared<ui::MidiEditor>(m_binding, m_editorReads, page, "lower",
+						editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
 					shown->setDrumMapSetup([this] { m_shell.post([this] { openDrumMaps(m_main); }); });
 					if (editor)
 						m_lowerEditor = shown;
@@ -1311,6 +1330,16 @@ namespace gnubase::app
 						return m_trackList != nullptr && (!paste || m_trackList->automationCopied()) &&
 							!(parameters ? m_trackList->selectedLanes(paste) : m_trackList->selection()).empty();
 					});
+			else if (id == "track.renderSelected" || id == "track.renderSettings")
+				// Also for selected events and parts or a selection range (reference manual pp. 1474-1477).
+				m_keys.enableWhen(command.id,
+					[this](ui::Window&, Rml::Element*)
+					{
+						return m_trackList != nullptr &&
+							(!m_trackList->selection().empty() ||
+								(m_eventDisplay &&
+									(!m_eventDisplay->selection().empty() || m_eventDisplay->range().has_value())));
+					});
 			else if (id == "track.pasteAutomationAll")
 				m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*)
 					{ return m_trackList != nullptr && m_trackList->automationCopied(); });
@@ -1361,6 +1390,15 @@ namespace gnubase::app
 				const std::string key = parameters.begin().key();
 				return (key == "audioRecordMode" || key == "midiRecordMode" || key == "midiCycleRecordMode") &&
 					m_transport.value(key, engine::Json()) == parameters.begin().value();
+			});
+
+		// Use Pre-roll and Use Post-roll show whether they are on (#583).
+		m_keys.checkWhen("transport.toggle",
+			[this](const engine::Json& parameters)
+			{
+				const std::string setting = parameters.value("setting", "");
+				return (setting == "preRoll" || setting == "postRoll") && m_transport.is_object() &&
+					m_transport.value(setting, false);
 			});
 
 		// Undo and Redo in the menus while the history has a step to undo or redo.
@@ -1886,8 +1924,12 @@ namespace gnubase::app
 		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
 		m_inPlace = std::make_unique<ui::InPlaceEditors>(*m_eventDisplay, m_binding);
 		if (m_infoLine)
+		{
 			m_infoLine->followMarkers(
 				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
+			m_infoLine->followArranger(
+				[this] { return m_arrangerLane != nullptr ? m_arrangerLane->selection() : std::vector<uint64_t>(); });
+		}
 		const auto deselectPoints = [this]
 		{
 			if (m_eventDisplay && !m_eventDisplay->selectedPoints().empty())
@@ -1898,12 +1940,14 @@ namespace gnubase::app
 			{
 				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
 					window->setSelection(selection);
-				// Markers selected deselect the time signature events and the automation points: Delete deletes what
-				// was selected last.
+				// Markers selected deselect the time signature events, the arranger events and the automation points:
+				// Delete deletes what was selected last.
 				if (selection.empty())
 					return;
 				if (m_signatureLane)
 					m_signatureLane->row().setSelection({});
+				if (m_arrangerLane)
+					m_arrangerLane->deselect();
 				deselectPoints();
 			});
 		// So do time signature events selected: the markers, the automation points and the selection range go.
@@ -2278,9 +2322,15 @@ namespace gnubase::app
 	{
 		// The editor window's left zone: the Visibility tab and the inspector's Global Tracks section (pp. 1144-1149).
 		m_docking.add({"editorVisibility", "Visibility", "editorWindow", "left", [this](Rml::Element& element)
-			{ return std::make_shared<ui::MidiEditor>(m_binding, element, "window", ui::EditorPart::Visibility); }});
+			{
+				return std::make_shared<ui::MidiEditor>(
+					m_binding, m_editorReads, element, "window", ui::EditorPart::Visibility);
+			}});
 		m_docking.add({"editorInspector", "Inspector", "editorWindow", "left", [this](Rml::Element& element)
-			{ return std::make_shared<ui::MidiEditor>(m_binding, element, "window", ui::EditorPart::GlobalTracks); }});
+			{
+				return std::make_shared<ui::MidiEditor>(
+					m_binding, m_editorReads, element, "window", ui::EditorPart::GlobalTracks);
+			}});
 		m_editorSubscriptions.push_back(
 			m_binding.on("editor.changed", [this](const engine::Event& event) { followEditor(event.data); }));
 		m_editorSubscriptions.push_back(m_binding.on(
@@ -2339,23 +2389,19 @@ namespace gnubase::app
 		}
 		m_keys.bind({"Mod+E", "editor.openClose", engine::Json::object(), "project"});
 		m_keys.bind({"Return", "editor.openClose", engine::Json::object(), "project"});
-		// Open List Editor (Mod+G, reference manual p. 1243): the selected MIDI parts in the editor window's list
-		// editor.
-		m_keys.add({"editor.openList", "Opens the selected MIDI parts in the list editor window.",
-			[this](ui::Window&, Rml::Element*)
-			{
-				const std::vector<uint64_t> parts = selected("midiParts");
-				if (!parts.empty())
-					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "list"}});
-			}});
-		// Open Drum Editor (reference manual p. 1221): the selected MIDI parts in the editor window's drum editor.
-		m_keys.add({"editor.openDrum", "Opens the selected MIDI parts in the drum editor window.",
-			[this](ui::Window&, Rml::Element*)
-			{
-				const std::vector<uint64_t> parts = selected("midiParts");
-				if (!parts.empty())
-					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "drum"}});
-			}});
+		// The MIDI menu's Open Key Editor (reference manual p. 1189), Open Drum Editor (p. 1221) and Open List Editor
+		// (Mod+G, p. 1243): the selected MIDI parts in the editor window, with that editor.
+		for (const auto& [command, content, description] : {
+				 std::tuple{"editor.openKey", "key", "Opens the selected MIDI parts in the key editor window."},
+				 std::tuple{"editor.openDrum", "drum", "Opens the selected MIDI parts in the drum editor window."},
+				 std::tuple{"editor.openList", "list", "Opens the selected MIDI parts in the list editor window."},
+			 })
+			m_keys.add({command, description, [this, content = std::string(content)](ui::Window&, Rml::Element*)
+				{
+					const std::vector<uint64_t> parts = selected("midiParts");
+					if (!parts.empty())
+						m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", content}});
+				}});
 		// Edit In-Place (Mod+Shift+I, reference manual p. 1261) opens or closes the in-place editors of the selected
 		// MIDI and instrument tracks, MIDI > Open In-Place Editor opens them (p. 1259). Both wait for such a track to
 		// be selected.
@@ -2586,7 +2632,7 @@ namespace gnubase::app
 		document->Show();
 		// Open in Lower Zone opens the Editor tab in the lower zone (reference manual, p. 1198).
 		m_editor.editor = std::make_unique<ui::MidiEditor>(
-			m_binding, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
+			m_binding, m_editorReads, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
 		m_editor.editor->setDrumMapSetup(
 			[this]
 			{
@@ -2639,6 +2685,12 @@ namespace gnubase::app
 		{ return m_editorViews.value(editor, engine::Json::object()).value("open", false); };
 		if (open("lower") && m_docking.windowOf("editor") == nullptr && !m_docking.visible("project", "lower"))
 			closeEditor("lower");
+		// The Editor tab coming to the front without an open editor, as when the user picks it from the tab bar or
+		// shows the lower zone with it, opens the editor with the project window's selected parts (p. 1153).
+		const bool editorTab = m_docking.showing("editor");
+		if (editorTab && !m_editorTabShown && !open("lower") && m_closing.count("lower") == 0)
+			openLowerIfClosed();
+		m_editorTabShown = editorTab;
 		if (!m_eventDisplay || m_eventDisplay->selection() == m_followed)
 			return;
 		// Editor Content Follows Event Selection (p. 1153): the MIDI parts, or else the audio parts, selected in the
@@ -2650,6 +2702,21 @@ namespace gnubase::app
 		for (const char* editor : {"window", "lower"})
 			if (open(editor) && !m_editorViews.at(editor).at("keepContents").get<bool>())
 				m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
+	}
+
+	void AppUi::openLowerIfClosed()
+	{
+		// Asks first: an editor.open on its way, such as the editor window's Open in Lower Zone, which brought the tab
+		// forward, comes before the answer, and then the editor keeps its parts.
+		m_binding.send("editor.get", {{"editor", "lower"}},
+			[this](const engine::Result& result)
+			{
+				if (!result.ok() || result.value.value("open", false) || !m_docking.showing("editor") ||
+					m_closing.count("lower") != 0)
+					return;
+				if (const std::vector<uint64_t> parts = selectedParts(); !parts.empty())
+					m_binding.send("editor.open", {{"editor", "lower"}, {"parts", parts}});
+			});
 	}
 
 	ui::Mixer* AppUi::toggleMixer(int number)

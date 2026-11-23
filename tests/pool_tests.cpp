@@ -359,6 +359,216 @@ TEST_CASE("pool.removeUnused removes the clips that no event uses and the files 
 	CHECK(run(song.client, "project.get").at("media").size() == 3);
 }
 
+TEST_CASE(
+	"media.cleanup removes the files of the media folders that neither the project nor its file uses", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const fs::path library = dir.path() / "library";
+	const fs::path kit = dir.path() / "settings" / "Track Presets" / "Kit media";
+	const fs::path song = dir.path() / "Song media" / "audio";
+	const fs::path file = dir.path() / "Song.dawproject";
+	writeFile(library / "take.wav", 480);
+	writeFile(library / "old.wav", 480);
+	run(client, "media.add", {{"path", utf8(library / "take.wav")}});
+	run(client, "media.add", {{"path", utf8(library / "old.wav")}});
+	run(client, "project.save", {{"path", utf8(file)}});
+	run(client, "project.load", {{"path", utf8(file)}}); // extracts them into Song media
+	// A track preset's file that a load took, one that an earlier version of the preset left, and one that an earlier
+	// version of the project left in its media folder.
+	writeFile(kit / "kick.wav", 480);
+	writeFile(kit / "2-kick.wav", 240);
+	writeFile(song / "2-take.wav", 240);
+	run(client, "media.add", {{"path", utf8(kit / "kick.wav")}});
+	gnubase::test::settlePeaks(client);
+	run(client, "project.save", {{"path", utf8(file)}, {"embedMedia", false}});
+	// The audio files that media.cleanup lists or removes, without the peak files that go with them.
+	const auto audioFiles = [&client](Json parameters = Json::object())
+	{
+		const Json result = run(client, "media.cleanup", std::move(parameters));
+		std::vector<std::string> files;
+		for (const Json& path : result.at("files"))
+			if (fs::u8path(path.get<std::string>()).extension() == ".wav")
+				files.push_back(path.get<std::string>());
+		std::sort(files.begin(), files.end());
+		return files;
+	};
+	const auto sorted = [](std::vector<std::string> files)
+	{
+		std::sort(files.begin(), files.end());
+		return files;
+	};
+	const Json listed = run(client, "media.cleanup");
+	CHECK(audioFiles() == sorted({utf8(song / "2-take.wav"), utf8(kit / "2-kick.wav")}));
+	CHECK(listed.at("size") == fs::file_size(song / "2-take.wav") + fs::file_size(kit / "2-kick.wav"));
+	REQUIRE(listed.at("sizes").size() == listed.at("files").size());
+	for (size_t i = 0; i < listed.at("files").size(); ++i) // each file's bytes, in the order of files
+		CHECK(listed.at("sizes").at(i) == fs::file_size(fs::u8path(listed.at("files").at(i).get<std::string>())));
+	CHECK(fs::exists(kit / "2-kick.wav")); // listing removes nothing
+
+	// A media file that the project no longer has stays while the undo history has it, and then while the project
+	// file refers to it.
+	Json old;
+	const Json project = run(client, "project.get");
+	for (const Json& media : project.at("media"))
+		if (fs::u8path(media.at("path").get<std::string>()).filename() == "old.wav")
+			old = media;
+	REQUIRE(old.at("path") == utf8(song / "old.wav"));
+	run(client, "media.remove", {{"media", old.at("id")}});
+	CHECK(audioFiles().size() == 2);
+	run(client, "history.set", {{"maxSteps", 1}});
+	run(client, "track.add", {{"type", "audio"}}); // the removal's step goes
+	REQUIRE(steps(client) == 1);
+	CHECK(audioFiles().size() == 2);
+	run(client, "project.save", {{"path", utf8(file)}, {"embedMedia", false}});
+	const std::vector<std::string> left =
+		sorted({utf8(song / "2-take.wav"), utf8(song / "old.wav"), utf8(kit / "2-kick.wav")});
+	CHECK(audioFiles() == left);
+
+	// files removes those of them that are unused, with their peak files; the others stay.
+	CHECK(fs::exists(song / "old.wav.gbpeaks"));
+	Json files = {utf8(song / "take.wav"), utf8(library / "take.wav")};
+	for (const std::string& path : left)
+		files.push_back(path);
+	CHECK(audioFiles({{"files", files}}) == left);
+	for (const std::string& path : left)
+		CHECK(!fs::exists(fs::u8path(path)));
+	CHECK(!fs::exists(song / "old.wav.gbpeaks"));
+	CHECK(fs::exists(song / "take.wav"));
+	CHECK(fs::exists(song / "take.wav.gbpeaks"));
+	CHECK(fs::exists(kit / "kick.wav"));
+	CHECK(fs::exists(library / "take.wav"));
+	CHECK(run(client, "media.cleanup").at("files").empty());
+}
+
+namespace
+{
+	// The audio files that media.cleanup lists, without the peak files that go with them.
+	std::vector<std::string> unusedAudio(Client& client)
+	{
+		const Json result = run(client, "media.cleanup");
+		std::vector<std::string> files;
+		for (const Json& path : result.at("files"))
+			if (fs::u8path(path.get<std::string>()).extension() == ".wav")
+				files.push_back(path.get<std::string>());
+		std::sort(files.begin(), files.end());
+		return files;
+	}
+
+	// Makes a folder the working folder while it lives.
+	class WorkingFolder
+	{
+	public:
+		explicit WorkingFolder(const fs::path& folder) { fs::current_path(folder); }
+		WorkingFolder(const WorkingFolder&) = delete;
+		WorkingFolder& operator=(const WorkingFolder&) = delete;
+		WorkingFolder(WorkingFolder&&) = delete;
+		WorkingFolder& operator=(WorkingFolder&&) = delete;
+		~WorkingFolder()
+		{
+			std::error_code error;
+			fs::current_path(m_previous, error);
+		}
+
+	private:
+		fs::path m_previous = fs::current_path();
+	};
+}
+
+TEST_CASE("media.cleanup keeps the files of media added by a path relative to the working folder", "[integration]")
+{
+	const test::TempDir dir;
+	const WorkingFolder working(dir.path());
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const fs::path song = dir.path() / "Song media" / "audio";
+	run(client, "project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	writeFile(song / "take.wav", 480);
+	writeFile(song / "2-take.wav", 240);
+	// Added after the save, so that only the project has it, by its path relative to the working folder.
+	const Json added = run(client, "media.add", {{"path", "Song media/audio/take.wav"}}).at("media");
+	REQUIRE(fs::u8path(added.at("path").get<std::string>()).is_relative());
+	gnubase::test::settlePeaks(client);
+	CHECK(unusedAudio(client) == std::vector<std::string>{utf8(song / "2-take.wav")});
+	run(client, "media.cleanup", {{"files", {utf8(song / "take.wav"), utf8(song / "2-take.wav")}}});
+	CHECK(fs::exists(song / "take.wav"));
+	CHECK(!fs::exists(song / "2-take.wav"));
+}
+
+TEST_CASE("media.cleanup keeps a track preset's file that a project template refers to", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const fs::path kit = dir.path() / "settings" / "Track Presets" / "Kit media";
+	writeFile(kit / "kick.wav", 480);
+	writeFile(kit / "2-kick.wav", 240);
+	run(client, "media.add", {{"path", utf8(kit / "kick.wav")}});
+	const fs::path templateFile =
+		fs::u8path(run(client, "project.saveTemplate", {{"name", "Drums"}}).at("file").get<std::string>());
+	run(client, "project.new"); // another project, which has neither file
+	CHECK(unusedAudio(client) == std::vector<std::string>{utf8(kit / "2-kick.wav")});
+	fs::remove(templateFile);
+	CHECK(unusedAudio(client) == std::vector<std::string>{utf8(kit / "2-kick.wav"), utf8(kit / "kick.wav")});
+}
+
+TEST_CASE("media.cleanup refuses while the project file can't be read, and every file stays", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const fs::path file = dir.path() / "Song.dawproject";
+	const fs::path song = dir.path() / "Song media" / "audio";
+	run(client, "project.save", {{"path", utf8(file)}});
+	writeFile(song / "2-take.wav", 240);
+	REQUIRE(unusedAudio(client) == std::vector<std::string>{utf8(song / "2-take.wav")});
+	std::ofstream(file, std::ios::binary | std::ios::trunc) << "not a project";
+	CHECK_THAT(reject(client, "media.cleanup", Json::object()), ContainsSubstring("can't tell which files"));
+	CHECK_THAT(reject(client, "media.cleanup", {{"files", {utf8(song / "2-take.wav")}}}),
+		ContainsSubstring("can't tell which files"));
+	CHECK(fs::exists(song / "2-take.wav"));
+}
+
+TEST_CASE(
+	"media.cleanup keeps a frozen track's freeze file, also while only an undo step has the track", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const fs::path file = dir.path() / "Song.dawproject";
+	writeFile(dir.path() / "library" / "take.wav", 4800);
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	run(client, "project.save", {{"path", utf8(file)}}); // a folder for the freeze file
+	const Json media = run(client, "media.add", {{"path", utf8(dir.path() / "library" / "take.wav")}}).at("media");
+	const Json clip = run(client, "clip.add", {{"media", media.at("id")}}).at("clip").at("id");
+	const Json track =
+		run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"name", "Take"}}).at("track").at("id");
+	run(client, "audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}});
+	const Json job = test::waitForJob(
+		client, run(client, "track.freeze", {{"tracks", {track}}, {"tail", 0}}).at("job").at("id").get<uint64_t>());
+	REQUIRE(job.at("state") == "done");
+	// Saved with the freeze file in it and loaded again, which extracts the freeze file into the media folder.
+	run(client, "project.save");
+	run(client, "project.load", {{"path", utf8(file)}});
+	Json frozen;
+	const Json loadedProject = run(client, "project.get");
+	for (const Json& loaded : loadedProject.at("tracks"))
+		if (loaded.at("name") == "Take")
+			frozen = loaded;
+	const fs::path freeze = fs::u8path(frozen.at("frozen").at("path").get<std::string>());
+	REQUIRE(freeze.parent_path() == dir.path() / "Song media" / "freeze");
+	gnubase::test::settlePeaks(client);
+	CHECK(unusedAudio(client).empty());
+	run(client, "track.unfreeze", {{"tracks", {frozen.at("id")}}});
+	CHECK(unusedAudio(client).empty()); // the undo step has the frozen track
+	run(client, "history.set", {{"maxSteps", 1}});
+	run(client, "track.add", {{"type", "audio"}}); // the unfreeze's step goes
+	REQUIRE(steps(client) == 1);
+	// The project file has it only embedded, which doesn't keep the extracted file.
+	CHECK(unusedAudio(client) == std::vector<std::string>{utf8(freeze)});
+}
+
 TEST_CASE("media.locate finds missing files in a folder by name and relinks them", "[integration]")
 {
 	SavedProject song;
