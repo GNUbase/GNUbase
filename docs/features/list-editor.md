@@ -68,7 +68,9 @@ doesn't have (#1580).
 
 - **Event list** (pp. 1251-1252, 1254). A click on a row selects its event, Ctrl (Cmd) or Shift and a click adds or
   removes it, a click in the empty rest deselects; a click also activates the event's part, as `MidiEditor` handles
-  clicks on `[part]`. A double click on a value edits it. A value typed for a selected event changes every selected
+  clicks on `[part]`. While a selection the list sent is unanswered, a view older than it (such as the `editor.changed`
+  of the click before a Shift-click) leaves the selection as clicked, as in the key editor (#1817), so that a move
+  right after it takes every event the clicks selected. A double click on a value edits it. A value typed for a selected event changes every selected
   event that has it by as much (the subtype and the values only those of the event's type); with Ctrl (Cmd) held
   with Enter, they all take the value. A pitch can be typed as a name, in either case, and spaces around a typed value
   don't count; a typed velocity is at least 1, as the value display sets it. A changed start moves the event, and the
@@ -139,8 +141,8 @@ which share the editor window.
   velocity, a value with spaces around it, a pitch name in lower case and a velocity of 0 that stays 1; the Insert
   Velocity and Length Quantize controls and the note the draw tool then draws; a typed value for notes of two parts
   in one undo step; a value display drag across two rows in one undo step that builds no time context while it goes
-  on; a move of two selected events that would take one before its part's start moving nothing, and one that moves
-  both; the erase tool erasing in the event display; Focus on Event Channels with a SysEx event selected; Delete
+  on; a Shift-click's selection staying while the view of the click before it comes in; a move of two selected events
+  that would take one before its part's start moving nothing, and one that moves both; the erase tool erasing in the event display; Focus on Event Channels with a SysEx event selected; Delete
   deleting a selected note and controller event in one undo step, and Backspace a SysEx message, but not while a
   value is typed; Alt and a drag copying a selected note and controller event in one undo step; a drag at a note's
   end resizing both selected notes in one undo step; a click without a drag at the end of a note off the grid, and an

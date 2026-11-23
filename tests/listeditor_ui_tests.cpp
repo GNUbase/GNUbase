@@ -5,6 +5,7 @@
 // the editor or never released. tests/listeditor_tests.cpp checks the engine's side.
 #include "engine/midi/midivalues.h"
 #include "engine/time/tempomap.h"
+#include "testutils/commandholds.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
 #include "ui/timeformat.h"
@@ -777,6 +778,45 @@ TEST_CASE("a value display drag across rows sets each one's value in one undo st
 		[&] { return std::abs(f.event("controllers", f.events[0]).at("value").get<double>() - 0.25) < 0.02; }));
 	CHECK(std::abs(f.event("notes", f.low).at("velocity").get<double>() - 0.75) < 0.02);
 	CHECK(f.steps() == before + 1);
+}
+
+// A Shift-click right after a click: the click's editor.changed, with its note alone, can come while the Shift-click's
+// editor.set is still out. The list keeps both notes selected, so that a move right then takes both.
+TEST_CASE("a Shift-click's selection stays while the view of the click before it comes in", "[ui]")
+{
+	test::CommandHolds holds; // declared before the fixture: its engine's command thread waits in hold()
+	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
+	f.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(f.app.engine(), "holder");
+	const ui::EngineBinding& binding = f.app.appUi().binding();
+
+	// The click's editor.set queues behind the first hold, the Shift-click's behind the second.
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	f.click(of(row("note", f.low) + " .list-type"));
+	const size_t clicked = binding.waiting("editor.set");
+	holder.send("test.hold");
+	f.click(of(row("note", f.high) + " .list-type"), 1, {"shift"});
+	const size_t shiftClicked = binding.waiting("editor.set") - clicked;
+	REQUIRE(shiftClicked > 0);
+	CHECK(f.has(row("note", f.low), "selected"));
+	CHECK(f.has(row("note", f.high), "selected"));
+
+	// The click's view comes in: both notes stay selected.
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("editor.set") == shiftClicked; }));
+	CHECK(f.has(row("note", f.low), "selected"));
+	CHECK(f.has(row("note", f.high), "selected"));
+
+	holds.release(2);
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("editor.set") == 0; }));
+	CHECK(f.view().at("selection").size() == 2);
+	CHECK(f.has(row("note", f.low), "selected"));
+	CHECK(f.has(row("note", f.high), "selected"));
 }
 
 TEST_CASE("a move takes every selected event, none before its part's start, and the erase tool erases in the event "

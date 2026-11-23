@@ -4,6 +4,7 @@
 #include "engine/midi/chords.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/quantizesettings.h"
+#include "platform/log.h"
 #include "ui/articulationnames.h"
 #include "ui/timeformat.h"
 
@@ -301,7 +302,6 @@ namespace gnubase::ui
 		m_view = view;
 		m_parts.clear();
 		m_rows.clear();
-		m_selection.clear();
 		if (!m_project.contains("tracks") || !m_view.contains("parts"))
 			return;
 		// Once per show: every cell's time and every typed one use it, and building it reads the tempo map.
@@ -370,10 +370,12 @@ namespace gnubase::ui
 				return std::make_tuple(a.start, !a.isNote(), a.part, a.id) <
 					std::make_tuple(b.start, !b.isNote(), b.part, b.id);
 			});
-		for (const Json& selected : m_view.value("selection", Json::array()))
-			m_selection.emplace(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
-		for (const Json& selected : m_view.value("controllerSelection", Json::array()))
-			m_selection.emplace(selected.at("part").get<uint64_t>(), selected.at("controller").get<uint64_t>());
+		// While a selection that select() sent is unanswered, the view can be older than it, such as the editor.changed
+		// of the selection before: the events stay as the mouse selected them, so that a move right after a Shift-click
+		// moves them all, as in the key editor (#1817). The view after the answer has the selection sent, or a newer
+		// one.
+		if (m_selectionsOut == 0)
+			m_selection = viewSelection();
 		m_from = 0;
 		m_to = 1;
 		if (!m_parts.empty())
@@ -681,6 +683,16 @@ namespace gnubase::ui
 		return found;
 	}
 
+	std::set<std::pair<uint64_t, uint64_t>> ListEditor::viewSelection() const
+	{
+		std::set<std::pair<uint64_t, uint64_t>> selection;
+		for (const Json& selected : m_view.value("selection", Json::array()))
+			selection.emplace(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
+		for (const Json& selected : m_view.value("controllerSelection", Json::array()))
+			selection.emplace(selected.at("part").get<uint64_t>(), selected.at("controller").get<uint64_t>());
+		return selection;
+	}
+
 	void ListEditor::select(std::set<std::pair<uint64_t, uint64_t>> rows, bool show)
 	{
 		m_selection = std::move(rows);
@@ -696,7 +708,23 @@ namespace gnubase::ui
 			}
 		if (show)
 			render(); // at once; editor.changed confirms it
-		setView({{"selection", notes}, {"controllerSelection", controllers}});
+		++m_selectionsOut;
+		m_binding.send("editor.set",
+			{{"editor", m_name}, {"selection", std::move(notes)}, {"controllerSelection", std::move(controllers)}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!result.ok())
+					logging::warning("The list editor cannot select events: {}", result.error);
+				if (alive.expired() || --m_selectionsOut != 0)
+					return;
+				// The engine's editor.changed comes before the answer: once all are answered, the view has the
+				// selection the editor shows, unless the last one was refused. Then the view's selection shows again.
+				if (std::set<std::pair<uint64_t, uint64_t>> shown = viewSelection(); shown != m_selection)
+				{
+					m_selection = std::move(shown);
+					render();
+				}
+			});
 	}
 
 	void ListEditor::setView(Json parameters)
