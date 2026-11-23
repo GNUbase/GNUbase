@@ -116,8 +116,10 @@ namespace gnubase::ui
 	bool EventDisplay::wheelVolume(double x, double y, double lines, bool fades)
 	{
 		const Shown* shown = eventAt(x, y);
-		const auto found = shown != nullptr ? m_fades.find(shown->id) : m_fades.end();
-		if (found == m_fades.end() || !(found->second.rate > 0.0) || lines == 0.0)
+		if (shown == nullptr || lines == 0.0)
+			return false;
+		const auto found = m_fades.find(shown->id);
+		if (found == m_fades.end() || !(found->second.rate > 0.0))
 			return false;
 		const AudioFades& audio = found->second;
 		if (!fades)
