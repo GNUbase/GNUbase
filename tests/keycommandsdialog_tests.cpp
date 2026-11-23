@@ -293,6 +293,14 @@ TEST_CASE("the key commands list every command a key can run with its default ke
 	CHECK(entryOf(commands, "marker.locate").is_null());
 	CHECK(entryOf(commands, "marker.setLocators").is_null());
 	CHECK_FALSE(entryOf(commands, "transport.play").is_null());
+	// Trigger Arranger Event 1 to 9 (reference manual p. 411) are listed without keys, for the user to give some.
+	CHECK(entryOf(commands, "arranger.trigger").is_null());
+	CHECK(entryOf(commands, "arranger.trigger", {{"number", 1}}).at("keys") == Json::array());
+	CHECK_FALSE(entryOf(commands, "arranger.trigger", {{"number", 9}}).is_null());
+	CHECK(entryOf(commands, "arranger.trigger", {{"number", 10}}).is_null());
+	keys.customize(Json::array({{{"command", "arranger.trigger"}, {"parameters", {{"number", 2}}}, {"keys", {"F8"}}}}),
+		Json::array());
+	CHECK(keys.keysFor("arranger.trigger", {{"number", 2}}) == Strings{"F8"});
 }
 
 TEST_CASE("key commands presets and files are kept by the engine", "[unit]")

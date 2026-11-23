@@ -594,7 +594,8 @@ namespace gnubase::ui
 			const Rml::ElementPtr holder = document->CreateElement("div");
 			holder->SetInnerRML(
 				R"(<menu id="inspector-arranger-step-menu">)"
-				R"(<menuitem class="arranger-remove-touched">Remove Touched</menuitem></menu>)"
+				R"(<menuitem class="arranger-remove-touched">Remove Touched</menuitem>)"
+				R"(<menuitem class="arranger-remove-selected">Remove Selected</menuitem></menu>)"
 				R"(<menu id="inspector-retrospective-menu">)"
 				R"(<menuitem class="retrospective-linear">Insert as Linear Recording</menuitem>)"
 				R"(<menuitem class="retrospective-cycle">Insert as Cycle Recording</menuitem>)"
@@ -732,7 +733,13 @@ namespace gnubase::ui
 					.append("</option>");
 			chain.append("</select></div>");
 		}
-		m_arrangerChain = {{"chain", arranger.value("chain", Json())}, {"steps", steps}};
+		Json shown = {{"chain", arranger.value("chain", Json())}, {"steps", steps}};
+		if (shown != m_arrangerChain)
+		{
+			m_selectedSteps.clear(); // the indices would name other steps now
+			m_stepAnchor = -1;
+		}
+		m_arrangerChain = std::move(shown);
 		// A list is built again only when it changed, so that a name being typed stays; the row playing is .current.
 		const auto list = [this](
 							  const char* selector, const std::string& rml, const char* key, const std::string& playing)
@@ -752,6 +759,14 @@ namespace gnubase::ui
 			}
 		};
 		list(".inspector-arranger-steps", chain, "step", std::to_string(m_arrangerPlaying.value("step", -1)));
+		if (const Rml::Element* element = m_root->QuerySelector(".inspector-arranger-steps"))
+			for (int i = 0; i < element->GetNumChildren(); ++i)
+			{
+				Rml::Element* row = element->GetChild(i);
+				const int index = row->GetAttribute<int>("step", -1);
+				setClass(*row, "selected",
+					std::find(m_selectedSteps.begin(), m_selectedSteps.end(), index) != m_selectedSteps.end());
+			}
 		list(".inspector-arranger-events", events, "event",
 			std::to_string(m_arrangerPlaying.value("event", uint64_t{0})));
 		if (Rml::Element* select = m_root->QuerySelector("select[control=arrangerJumpMode]"))
@@ -1413,6 +1428,16 @@ namespace gnubase::ui
 		sendChannel({{section, std::move(rack)}});
 	}
 
+	namespace
+	{
+		// The Current Arranger Chain row an element is or is in: Closest starts at the parent.
+		Rml::Element* stepRow(Rml::Element& element)
+		{
+			const char* const selector = ".inspector-arranger-steps .arranger-row";
+			return element.Matches(selector) ? &element : element.Closest(selector);
+		}
+	}
+
 	void Inspector::ProcessEvent(Rml::Event& event)
 	{
 		Rml::Element* target = event.GetTargetElement();
@@ -1425,16 +1450,18 @@ namespace gnubase::ui
 			// A right click in the Current Arranger Chain list touches the step it is on, for Remove Touched.
 			if (event.GetParameter<int>("button", 0) == 1)
 			{
-				const Rml::Element* row = target->Closest(".inspector-arranger-steps .arranger-row");
+				const Rml::Element* row = stepRow(*target);
 				m_touchedStep = row != nullptr ? row->GetAttribute<int>("step", -1) : -1;
 				if (Rml::Element* menu = m_stepMenu.get())
-					if (Rml::Element* item = menu->QuerySelector(".arranger-remove-touched"))
-					{
-						if (m_touchedStep < 0)
-							item->SetAttribute("disabled", "");
-						else
-							item->RemoveAttribute("disabled");
-					}
+					for (const auto& [item, off] : {std::make_pair(".arranger-remove-touched", m_touchedStep < 0),
+							 std::make_pair(".arranger-remove-selected", m_selectedSteps.empty())})
+						if (Rml::Element* found = menu->QuerySelector(item))
+						{
+							if (off)
+								found->SetAttribute("disabled", "");
+							else
+								found->RemoveAttribute("disabled");
+						}
 			}
 			break;
 		case Rml::EventId::Click:
@@ -1465,6 +1492,34 @@ namespace gnubase::ui
 				m_binding.send("arranger.trigger",
 					{{"event", std::strtoull(row->GetAttribute<Rml::String>("event", "0").c_str(), nullptr, 10)}},
 					whenRefused());
+			// A click on a step selects it, with Shift from the step clicked last, with Ctrl (Cmd) adds or removes it
+			// (p. 410); not on its arrow and its repeat mode.
+			if (const Rml::Element* row = stepRow(*target); row != nullptr && !target->IsClassSet("arranger-locate") &&
+				target->GetTagName() != "select" && target->Closest("select") == nullptr)
+			{
+				const int index = row->GetAttribute<int>("step", -1);
+				const auto found = std::find(m_selectedSteps.begin(), m_selectedSteps.end(), index);
+				if (event.GetParameter<int>("shift_key", 0) != 0 && m_stepAnchor >= 0)
+				{
+					m_selectedSteps.clear();
+					for (int each = std::min(index, m_stepAnchor); each <= std::max(index, m_stepAnchor); ++each)
+						m_selectedSteps.push_back(each);
+				}
+				else if (event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0)
+				{
+					if (found == m_selectedSteps.end())
+						m_selectedSteps.push_back(index);
+					else
+						m_selectedSteps.erase(found);
+					m_stepAnchor = index;
+				}
+				else
+				{
+					m_selectedSteps = {index};
+					m_stepAnchor = index;
+				}
+				m_stale = true;
+			}
 			// Retrospective Recording opens its pop-up menu, whose items insert or empty the track's buffer (pp.
 			// 354-356).
 			if (Rml::Element* button = target->IsClassSet("inspector-retrospective")
@@ -1479,7 +1534,12 @@ namespace gnubase::ui
 					{{"track", m_track}, {"cycle", target->IsClassSet("retrospective-cycle")}}, whenRefused());
 			if (m_track != 0 && target->IsClassSet("retrospective-empty"))
 				m_binding.send("midi.clearRetrospective", {{"track", m_track}}, whenRefused());
-			// Remove Touched removes the step right-clicked (p. 409).
+			// Remove Touched removes the step right-clicked, Remove Selected the steps selected (p. 410).
+			if (target->IsClassSet("arranger-remove-selected") && !target->HasAttribute("disabled") &&
+				!m_selectedSteps.empty())
+				m_binding.send("arranger.setChain",
+					{{"chain", m_arrangerChain.value("chain", Json())}, {"removeSteps", m_selectedSteps}},
+					whenRefused());
 			if (target->IsClassSet("arranger-remove-touched") && !target->HasAttribute("disabled") &&
 				m_touchedStep >= 0)
 				m_binding.send("arranger.setChain",

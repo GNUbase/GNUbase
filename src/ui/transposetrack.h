@@ -74,6 +74,9 @@ namespace gnubase::ui
 		Rml::Element* element() const { return m_element.get(); }
 		// Opens an event for editing.
 		void edit(uint64_t event);
+		// The arranger events selected, in the order they were; the info line shows them (p. 405).
+		const std::vector<uint64_t>& selection() const { return m_selection; }
+		void deselect();
 
 	private:
 		struct Event

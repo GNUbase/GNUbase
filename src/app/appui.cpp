@@ -506,14 +506,16 @@ namespace gnubase::app
 					m_keyboard.reset(); // so too: its notes end
 				if (m_markers && m_shell.find(m_markersWindow) == nullptr)
 					m_markers.reset(); // its project subscriptions and playback watch end with its window
-				// The project window selects events, markers or time signature events: an event selected deselects
-				// the others.
+				// The project window selects events, markers, arranger or time signature events: an event selected
+				// deselects the others.
 				if (m_eventDisplay && m_markerLines && m_eventDisplay->selection() != m_eventSelection)
 				{
 					m_eventSelection = m_eventDisplay->selection();
 					if (!m_eventSelection.empty())
 					{
 						m_markerLines->deselect();
+						if (m_arrangerLane)
+							m_arrangerLane->deselect();
 						if (m_signatureLane)
 							m_signatureLane->row().setSelection({});
 					}
@@ -1912,8 +1914,12 @@ namespace gnubase::app
 		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
 		m_inPlace = std::make_unique<ui::InPlaceEditors>(*m_eventDisplay, m_binding);
 		if (m_infoLine)
+		{
 			m_infoLine->followMarkers(
 				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
+			m_infoLine->followArranger(
+				[this] { return m_arrangerLane != nullptr ? m_arrangerLane->selection() : std::vector<uint64_t>(); });
+		}
 		const auto deselectPoints = [this]
 		{
 			if (m_eventDisplay && !m_eventDisplay->selectedPoints().empty())
@@ -1924,12 +1930,14 @@ namespace gnubase::app
 			{
 				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
 					window->setSelection(selection);
-				// Markers selected deselect the time signature events and the automation points: Delete deletes what
-				// was selected last.
+				// Markers selected deselect the time signature events, the arranger events and the automation points:
+				// Delete deletes what was selected last.
 				if (selection.empty())
 					return;
 				if (m_signatureLane)
 					m_signatureLane->row().setSelection({});
+				if (m_arrangerLane)
+					m_arrangerLane->deselect();
 				deselectPoints();
 			});
 		// So do time signature events selected: the markers, the automation points and the selection range go.

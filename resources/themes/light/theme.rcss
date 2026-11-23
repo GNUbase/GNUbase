@@ -145,6 +145,10 @@
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
+	.arranger-row.selected
+	{
+		background-color: #c2daf6;
+	}
 	listview thead td.sorted
 	{
 		color: #0969da;

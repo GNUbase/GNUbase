@@ -9,6 +9,7 @@
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/markers.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -699,4 +700,191 @@ TEST_CASE("the inspector's Current Arranger Chain list edits repeats and modes a
 	CHECK(chain()[0].at("event") == a);
 	CHECK(chain()[0].at("mode") == "repeatForever");
 	CHECK(window.app.waitUntil([&] { return window.shown(steps + ".arranger-row") == 1; }));
+}
+
+TEST_CASE("the info line shows the arranger events selected on the lane and renames them", "[ui]")
+{
+	// Reference manual p. 405: an arranger event selected is renamed on the info line.
+	Window window;
+	window.app.appUi().docking().setVisible("project", "infoLine", true);
+	window.app.call("arranger.add", {{"position", 0}, {"end", 8 * g_quarter}});
+	window.app.call("arranger.add", {{"position", 8 * g_quarter}, {"end", 12 * g_quarter}});
+	const uint64_t track = window.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t part = window.app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_quarter}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.shown(".arranger-lane-event") == 2; }));
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".arranger-lane-row", "hidden"); }));
+	window.display.setTool(ui::Tool::ObjectSelection);
+	const auto click = [&window](ui::Point at, const std::vector<std::string>& modifiers)
+	{
+		window.app.ui().click(std::nullopt, {"", 0, at}, ui::MouseButton::Left, 1, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto field = [](const std::string& name) { return "#info-line textdisplay[field=" + name + "]"; };
+	const auto shows = [&window, &field](const std::string& name, const std::string& value)
+	{
+		return window.app.waitUntil(
+			[&] { return window.element(field(name)).at("attributes").value("value", "") == value; });
+	};
+	const auto type = [&window, &field](const std::string& name, const std::string& text)
+	{
+		window.app.ui().click(std::nullopt, {field(name), 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+		window.app.ui().key(std::nullopt, "Mod+A");
+		window.app.ui().text(std::nullopt, text);
+		window.app.ui().key(std::nullopt, "Enter");
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto label = [&window](const std::string& name)
+	{ return window.element("#info-line [info-field=" + name + "] .info-label").at("text").get<std::string>(); };
+
+	// A click on A shows it: its name, start, end and length.
+	click(window.at(1.0), {});
+	REQUIRE(shows("name", "A"));
+	CHECK(window.hasClass("#info-line", "arranger"));
+	CHECK_FALSE(window.hasClass("#info-line", "markers"));
+	CHECK(label("name") == "Name");
+	CHECK(label("start") == "Start");
+	CHECK(shows("start", "1.1.1.0"));
+	CHECK(shows("end", "3.1.1.0"));
+	CHECK(shows("length", "2.0.0.0"));
+	CHECK(window.hasClass("#info-line [info-field=mute]", "unavailable"));
+	CHECK_FALSE(window.hasClass("#info-line [info-field=end]", "unavailable"));
+
+	// Each field edits it with arranger.set, a new start keeping its length.
+	const size_t steps = window.app.call("history.get").at("steps").size();
+	type("name", "Intro");
+	REQUIRE(window.app.waitUntil([&] { return window.events()[0].at("name") == "Intro"; }));
+	type("end", "2.1.1.0");
+	REQUIRE(window.app.waitUntil([&] { return window.events()[0].at("end") == 4 * g_quarter; }));
+	// The info line edits from the events it shows, which follow the engine's a step or more later (#929).
+	REQUIRE(shows("end", "2.1.1.0"));
+	type("start", "1.3.1.0");
+	REQUIRE(window.app.waitUntil([&] { return window.events()[0].at("position") == 2 * g_quarter; }));
+	CHECK(window.events()[0].at("end") == 6 * g_quarter);
+	CHECK(window.app.call("history.get").at("steps").size() == steps + 3);
+
+	// With B selected too, a name goes to both in one undo step.
+	REQUIRE(shows("start", "1.3.1.0"));
+	click(window.at(5.0), {"ctrl"});
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#info-line", "multiple"); }));
+	type("name", "Chorus");
+	REQUIRE(window.app.waitUntil([&] { return window.events()[1].at("name") == "Chorus"; }));
+	CHECK(window.events()[0].at("name") == "Chorus");
+	CHECK(window.app.call("history.get").at("steps").size() == steps + 4);
+
+	// An empty name leaves their names as they are: the next name is the only undo step more.
+	window.app.ui().click(std::nullopt, {field("name"), 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+	window.app.ui().key(std::nullopt, "Mod+A");
+	window.app.ui().key(std::nullopt, "Backspace");
+	window.app.ui().key(std::nullopt, "Enter");
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(shows("name", "Chorus"));
+	type("name", "Bridge");
+	REQUIRE(window.app.waitUntil([&] { return window.events()[1].at("name") == "Bridge"; }));
+	CHECK(window.events()[0].at("name") == "Bridge");
+	CHECK(window.app.call("history.get").at("steps").size() == steps + 5);
+
+	// A marker selected deselects the arranger events: the info line shows the marker, with its description.
+	window.app.call("track.add", {{"type", "marker"}});
+	const uint64_t marker =
+		window.app.call("marker.add", {{"position", 0}, {"name", "Verse"}}).at("marker").at("id").get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.shown(".marker-label") == 1; }));
+	window.app.appUi().markerLines()->pick({marker});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#info-line", "markers"); }));
+	CHECK_FALSE(window.hasClass("#info-line", "arranger"));
+	CHECK(label("name") == "Description");
+	CHECK(shows("name", "Verse"));
+	CHECK(window.shown(".arranger-lane-event.selected") == 0);
+
+	// Selecting a part shows the part and deselects the arranger events.
+	click(window.at(1.0), {});
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#info-line", "arranger"); }));
+	window.display.select({part});
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass("#info-line", "arranger"); }));
+	CHECK(label("name") == "Name");
+	CHECK(window.shown(".arranger-lane-event.selected") == 0);
+}
+
+TEST_CASE("the inspector's Current Arranger Chain list selects steps and removes the selected ones", "[ui]")
+{
+	// Reference manual p. 410: Ctrl (Cmd) or Shift and a click select several steps, Remove Selected removes them.
+	Window window;
+	const Json a = window.app.call("arranger.add", {{"position", 0}, {"end", 8 * g_quarter}}).at("event").at("id");
+	const Json b =
+		window.app.call("arranger.add", {{"position", 8 * g_quarter}, {"end", 16 * g_quarter}}).at("event").at("id");
+	window.app.call("arranger.setChain", {{"steps", {{{"event", a}}, {{"event", b}}, {{"event", a}}, {{"event", b}}}}});
+	window.app.call("arranger.setMode", {{"mode", true}});
+	const auto chain = [&window]
+	{
+		const Json arranger = window.app.call("arranger.get");
+		for (const Json& each : arranger.at("chains"))
+			if (each.at("id") == arranger.at("chain"))
+				return each.at("steps");
+		return Json::array();
+	};
+	const auto click =
+		[&window](const std::string& selector, ui::MouseButton button, const std::vector<std::string>& modifiers = {})
+	{
+		window.app.ui().click(std::nullopt, {selector, 0, std::nullopt}, button, 1, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const std::string row = "listitem[type=arranger]";
+	REQUIRE(window.app.waitUntil([&] { return window.shown(row + " .track-name") == 1; }));
+	window.app.appUi().docking().open("inspector");
+	window.display.setTool(ui::Tool::ObjectSelection);
+	click(row + " .track-name", ui::MouseButton::Left);
+	const std::string steps = ".inspector .inspector-arranger-steps ";
+	REQUIRE(window.app.waitUntil([&] { return window.shown(steps + ".arranger-row") == 4; }));
+	const auto selected = [&]
+	{
+		window.app.shell().step(std::chrono::milliseconds(0));
+		std::string rows;
+		for (int step = 0; step < 4; ++step)
+			rows += window.hasClass(steps + "[step=\"" + std::to_string(step) + "\"]", "selected") ? "x" : "-";
+		return rows;
+	};
+	const auto step = [&steps](int index) { return steps + "[step=\"" + std::to_string(index) + "\"] .name"; };
+
+	// A click selects a step, also beside its name, Shift up to another one, Ctrl (Cmd) adds or removes one.
+	const auto beside = [&window, &step](int index)
+	{
+		const Json name = window.box(step(index));
+		return ui::Point{static_cast<int>(std::floor(name.at("x").get<double>())) - 1,
+			static_cast<int>(std::lround(name.at("y").get<double>() + (name.at("height").get<double>() / 2.0)))};
+	};
+	window.app.ui().click(std::nullopt, {"", 0, beside(1)}, ui::MouseButton::Left, 1, {});
+	CHECK(selected() == "-x--");
+	click(step(3), ui::MouseButton::Left, {"shift"});
+	CHECK(selected() == "-xxx");
+	click(step(2), ui::MouseButton::Left, {"ctrl"});
+	CHECK(selected() == "-x-x");
+	click(step(0), ui::MouseButton::Left, {"ctrl"});
+	CHECK(selected() == "xx-x");
+	// The arrow plays from its step and leaves the selection as it is.
+	click(steps + "[step=\"2\"] .arranger-locate", ui::MouseButton::Left);
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(steps + "[step=\"2\"]", "current"); }));
+	CHECK(selected() == "xx-x");
+
+	// Remove Selected removes them, and the steps left are selected none.
+	const auto removeSelected = std::string("#inspector-arranger-step-menu .arranger-remove-selected");
+	const auto disabled = [&window](const std::string& item)
+	{ return window.element(item).value("attributes", Json::object()).contains("disabled"); };
+	// A right click beside a step's name touches the step too, for Remove Touched.
+	window.app.ui().click(std::nullopt, {"", 0, beside(2)}, ui::MouseButton::Right, 1, {});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#inspector-arranger-step-menu", "open"); }));
+	CHECK_FALSE(disabled("#inspector-arranger-step-menu .arranger-remove-touched"));
+	CHECK_FALSE(disabled(removeSelected));
+	click(removeSelected, ui::MouseButton::Left);
+	REQUIRE(window.app.waitUntil([&] { return chain().size() == 1; }));
+	CHECK(chain()[0].at("event") == a);
+	REQUIRE(window.app.waitUntil([&] { return window.shown(steps + ".arranger-row") == 1; }));
+	CHECK_FALSE(window.hasClass(steps + "[step=\"0\"]", "selected"));
+	// Without a selection Remove Selected is disabled.
+	click(step(0), ui::MouseButton::Right);
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#inspector-arranger-step-menu", "open"); }));
+	CHECK(window.element(removeSelected).value("attributes", Json::object()).contains("disabled"));
 }

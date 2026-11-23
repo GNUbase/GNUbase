@@ -44,12 +44,12 @@ reference manual pp. 164, 404-413).
   `transport.play` ends a Repeat Forever loop, going on with the next step or past the chain if the looping step is
   the last one (p. 407).
 - **Jump mode** (pp. 411-412): `arranger.goToStep` (the chain list, Previous and Next Chain Step, First and Last Repeat)
-  and `arranger.trigger` (an event from the events list, which then loops until another one is chosen) take over at
-  once while stopped or with the jump mode `none`, through a locate. While playing with another jump mode the
-  transport keeps them waiting until the next jump point of the event playing: every 4 or 2 bars from its start (the
-  first bar line at or after it), the next bar line, the next beat, or its end; at its end at the latest. Outside an
-  event they take over at once. A step or event that waits survives a chain edit: the new plan finds it again by the
-  event it plays, and drops it only when the chain lost that step.
+  and `arranger.trigger` (an event from the events list, by its id or with `number` the Nth in timeline order, which
+  then loops until another one is chosen) take over at once while stopped or with the jump mode `none`, through a
+  locate. While playing with another jump mode the transport keeps them waiting until the next jump point of the event
+  playing: every 4 or 2 bars from its start (the first bar line at or after it), the next bar line, the next beat, or
+  its end; at its end at the latest. Outside an event they take over at once. A step or event that waits survives a
+  chain edit: the new plan finds it again by the event it plays, and drops it only when the chain lost that step.
 - `transport.get` and `transport.changed` have `arranger`: the step and repeat playing and the arranger event playing,
   the step -1 and the event 0 both outside the chain and while the plan doesn't play (arranger mode off or an empty
   chain). Every new plan gets a generation number, by which the transport tells a new plan from the one it played,
@@ -102,6 +102,12 @@ each section's event has a number after its name, how often its event came so fa
   and the row of the step or event playing is `.current`. Like the track list's controls it follows
   `arranger.changed` and `transport.changed`, and reads `transport.get` on `arranger.changed`. A list is built again
   only when what it shows changed, so a name being typed stays.
+- **Selecting steps in a chain list** (p. 410): in the inspector's and the arranger editor's Current Arranger Chain
+  list a click on a step, not on its arrow, buttons or repeat mode, selects it (`.selected`, which the themes tint
+  with their accent), with Shift the steps from the one clicked last, with Ctrl (Cmd) adds or removes it. Remove Selected on the
+  list's context menu (`.arranger-remove-selected` in the inspector's, `#chain-step-menu .remove-selected` in the
+  editor's) removes them (`removeSteps`), disabled in the inspector without a selection. The steps are selected by
+  index, so a chain edit selects none. The editor selects on the press, as a button's click builds its list again.
 - **Renaming arranger events in a chain list** (p. 405): in the inspector's and the arranger editor's Current Arranger
   Chain list a step's name is a disabled `textdisplay` that Alt and a double click open, and a plain double click
   doesn't; Enter renames the step's event (`arranger.set`), an empty name keeps the old one. The editor doesn't build
@@ -126,6 +132,15 @@ each section's event has a number after its name, how often its event came so fa
   and ends at other arranger events', parts' and markers' edges. What the drag shows stays until the lane shows the
   event as the engine has it. When the engine refuses an edit, such as a drawn event shorter than a sample, the
   display's `#edit-refused` says why ([event-display.md](event-display.md)).
+- **Renaming arranger events on the info line** (p. 405, [inspector.md](inspector.md)): while the arranger events
+  selected on the lane changed last, the info line has the class `arranger` and shows the first of them in timeline
+  order as it shows a cycle marker: its name (labelled Name), start, end and length, which `arranger.set` edits for
+  every selected one in one undo step, relative to the first one's value or with Ctrl+Enter the same for all; a new
+  start keeps an event's length; an empty name keeps their names. Selecting an event or a marker deselects the
+  arranger events.
+- **Key commands** (p. 411): the key commands dialog lists Trigger Arranger Event 1 to 9 in the arranger area,
+  `arranger.trigger` with `number` 1 to 9, without default keys ([key-commands.md](key-commands.md)), so the user
+  gives them keys.
 - **The arranger editor** (`resources/ui/arranger-editor.rml`, the UI command `window.arranger`, in a window of its own)
   is driven by its own Lua script through the engine API: the toolbar switches arranger mode and picks the active chain
   and the jump mode, with the active chain's name in `#chain-name` (Rename Arranger Chain, p. 406: Enter renames it,
@@ -150,13 +165,15 @@ loading, with a file's repeats capped to 1 to 999; the chain playback render, sa
 each section, for two block sizes; real time against offline, also with a chain edit while playing; choosing steps and
 triggering events while stopped and playing, also across a chain edit that moves the chosen step; the plan a cue walks
 for the published generation, including when neither kept plan is it; a cue that falls between two plan generations;
+triggering events by their number in timeline order;
 `transport.play` ending a repeat forever loop, keeping a triggered event and starting from the left locator with the
 start mode cycleStart, and `transport.get` reporting no step while the plan doesn't play; flattening, played back
 linearly against the chain's audio, with undo, and its notes cut at the sections' edges, without `dontSplit` and with
 it, with `renameEvents` numbering the events.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
 mode, a locate arrow on every row, renaming the active chain, and renaming a step's event with Alt and a double click,
-across a refresh while it is typed. `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide as
+across a refresh while it is typed, and selecting steps and removing the selected ones, a chain edit selecting none.
+`tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide as
 its section with its name, the draw tool drawing one over the stretch dragged and, with a click, from the bar line at or
 before it to the next one, both snapped to bars; with the snap type Events, drawing from and to other arranger events'
 edges, the event drawn showing while the button is down, a click just after a bar line whose start snaps back to an edge
@@ -170,8 +187,11 @@ on the inspector's section opening the editor and leaving it open; the inspector
 its arrows disabled outside arranger mode, playing a step and triggering an event with their rows `.current`, Jump Mode
 both ways, its header closing and opening it, and renaming a step's event with Alt and a double click, not with a plain
 one, across a refresh that changes nothing the lists show; typing a step's repeats, capped to 999 and kept for text that
-isn't a number, picking its repeat mode and removing it with Remove Touched. `tests/theme_tests.cpp`: every theme fills
-a selected arranger event.
+isn't a number, picking its repeat mode and removing it with Remove Touched; the info line showing the arranger events
+selected on the lane, renaming, moving and resizing them, the first or both, and a part selected deselecting them;
+selecting steps with clicks, Shift and Ctrl, the arrow leaving the selection, and Remove Selected, disabled without a
+selection.
+`tests/theme_tests.cpp`: every theme fills a selected arranger event.
 
 Both real-time comparisons in `tests/arranger_tests.cpp` retry runs that report playback dropouts, with at most five
 attempts and a fresh song and audio file per attempt. Each retry emits a warning. The chain-edit comparison makes its
@@ -180,7 +200,6 @@ adopts it while B plays; an attempt that misses that stretch, or is still making
 because a busy machine held up the test, is retried like one with dropouts. It compares only a capture with the edit
 made in time and without dropouts; exhausting the attempts fails the test (#1893, #1900).
 
-Not yet: renaming arranger events on the info line, selecting steps in the chain lists (Remove Selected) and drag and
-drop in them, moving or erasing all selected arranger events at once, the other flatten options (Checked and All Chains,
-New Project, Make Real Event Copies) and a dialog for them in the editor, key commands for triggering events, and
-arranging to an external timecode.
+Not yet: drag and drop in the chain lists, moving or erasing all selected arranger events at once, the other flatten
+options (Checked and All Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, and arranging
+to an external timecode.

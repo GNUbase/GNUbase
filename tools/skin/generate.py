@@ -680,6 +680,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
          {"decorator": skin("list-item-selected")}),
         # The row of the arranger chain step or event that is playing (docs/features/arranger.md)
         (".arranger-row.current", {"decorator": skin("list-item-selected")}),
+        # The chain steps selected, for Remove Selected
+        (".arranger-row.selected", {"background-color": mix(c["surface"], c["accent"], .25)}),
         ("listview thead td.sorted", {"color": c["accent"]}),
         # Tabs
         ("tabset tabs", {"decorator": skin("tabbar")}),

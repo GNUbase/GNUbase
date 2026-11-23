@@ -191,11 +191,22 @@
 
 			rows = {}
 			local chain = activeChain(arranger)
+			-- The steps selected are by index: a chain edit, which may move them, selects none.
+			local shown = tostring(arranger.chain)
+			for _, step in ipairs(chain and chain.steps or {}) do
+				shown = shown .. " " .. step.event .. "/" .. step.repeats .. "/" .. step.mode
+			end
+			if shown ~= editor.stepsShown then
+				editor.stepsShown = shown
+				editor.selected = {}
+				editor.anchor = nil
+			end
 			-- The chain step buttons call arranger.goToStep, which needs arranger mode on (#880): disabled without it.
 			local off = arranger.mode and "" or ' disabled=""'
 			for index, step in ipairs(chain and chain.steps or {}) do
 				local s = index - 1
-				rows[#rows + 1] = '<div class="arranger-row' .. (playing.step == s and " current" or "") .. '" id="step-' ..
+				rows[#rows + 1] = '<div class="arranger-row' .. (playing.step == s and " current" or "") ..
+					(editor.selected[s] and " selected" or "") .. '" id="step-' ..
 					s .. '"><button class="locate" title="Go to step"' .. off .. ' onclick="ArrangerEditor.goTo(' .. s ..
 					')"><span class="locate-arrow">&gt;</span></button><textdisplay class="name" value="' ..
 					escape(names[step.event] or "") .. '" event="' .. step.event .. '" disabled=""/><span class="repeats">' ..
@@ -239,6 +250,51 @@
 
 		function editor.removeStep(index)
 			gnubase.arranger.setChain{removeSteps = {index - 1}}
+		end
+
+		local function held(parameters, key)
+			local value = parameters[key]
+			return value == true or (type(value) == "number" and value ~= 0)
+		end
+
+		-- A click on a step selects it, with Shift from the step clicked last, with Ctrl (Cmd) adds or removes it
+		-- (p. 410); not on its buttons and its repeat mode. On the press: a button's click builds the list again, which
+		-- takes its element away before the click would reach the list.
+		function editor.select(event)
+			if event.parameters.button ~= 0 then return end
+			local element = event.target_element
+			local row
+			while element ~= nil and row == nil do
+				if element.tag_name == "button" or element.tag_name == "select" then return end
+				if element:IsClassSet("arranger-row") then row = element end
+				element = element.parent_node
+			end
+			if row == nil then return end
+			local step = math.tointeger(tonumber(row.id:sub(6)))
+			local parameters = event.parameters
+			if held(parameters, "shift_key") and editor.anchor ~= nil then
+				editor.selected = {}
+				for each = math.min(step, editor.anchor), math.max(step, editor.anchor) do editor.selected[each] = true end
+			elseif held(parameters, "ctrl_key") or held(parameters, "meta_key") then
+				editor.selected[step] = not editor.selected[step] or nil
+				editor.anchor = step
+			else
+				editor.selected = {[step] = true}
+				editor.anchor = step
+			end
+			-- The rows stay, so that a second click on one is a double click.
+			local each = editor.document:GetElementById("chain-steps").first_child
+			while each ~= nil do
+				each:SetClass("selected", editor.selected[math.tointeger(tonumber(each.id:sub(6)))] == true)
+				each = each.next_sibling
+			end
+		end
+
+		-- Remove Selected on the chain list's context menu removes the steps selected (p. 410).
+		function editor.removeSelected()
+			local steps = {}
+			for step in pairs(editor.selected or {}) do steps[#steps + 1] = step end
+			if #steps > 0 then gnubase.arranger.setChain{removeSteps = steps} end
 		end
 
 		function editor.repeats(index, by)
@@ -364,8 +420,11 @@
 		<button id="flatten-chain" title="Flatten Chain" onclick="gnubase.arranger.flatten{}">Flatten</button>
 	</div>
 	<div id="arranger-lists">
-		<div id="chain-steps" class="arranger-list" ondblclick="ArrangerEditor.allowRename(event)" onchange="ArrangerEditor.renameEvent(event)"/>
+		<div id="chain-steps" class="arranger-list" contextmenu="chain-step-menu" onmousedown="ArrangerEditor.select(event)" ondblclick="ArrangerEditor.allowRename(event)" onchange="ArrangerEditor.renameEvent(event)"/>
 		<div id="arranger-events" class="arranger-list"/>
 	</div>
+	<menu id="chain-step-menu">
+		<menuitem class="remove-selected" onclick="ArrangerEditor.removeSelected()">Remove Selected</menuitem>
+	</menu>
 </body>
 </rml>
