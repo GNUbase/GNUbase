@@ -13,7 +13,6 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -682,10 +681,7 @@ TEST_CASE("audioFile.import splits and converts a file in one pass into mono fil
 	// In one pass: the media folder holds the two mono files and no other audio file, such as a converted stereo file
 	// (#685); only their peak files may be next to them. The peaks are written after the import, so the folder is
 	// listed once both are ready, not while a peak file is still a temporary one (#2059).
-	std::set<Json> pending(result.at("media").begin(), result.at("media").end());
-	const auto awaited = [&pending](const Json& data) { return pending.erase(data.at("media")) > 0; };
-	while (!pending.empty())
-		REQUIRE(test::waitForEvent(song.client, "media.peaksReady", awaited, std::chrono::seconds(20)).has_value());
+	test::settlePeaks(song.client);
 	std::set<std::string> written;
 	for (const fs::directory_entry& entry : fs::directory_iterator(song.media))
 		if (entry.path().extension() != ".gbpeaks")
