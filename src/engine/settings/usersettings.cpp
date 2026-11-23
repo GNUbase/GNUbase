@@ -685,6 +685,26 @@ namespace gnubase::engine::settings
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}, 5, true},
 				{"project.autoSaveInterval", "Minutes between auto saves.",
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 120}}, 15, true},
+				// Render in place and freeze (docs/features/render-in-place.md).
+				{"render.freezeTail",
+					"The Freeze Channel Options dialog's Tail Size in seconds (reference manual p. 992), which Freeze "
+					"Selected Tracks (with Current Settings) freezes with too: track.freeze's tail.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 60}}, 30},
+				{"render.options",
+					"The Render Tracks and Render Selection dialogs' options (reference manual pp. 1471-1477), which "
+					"Render (with Current Settings) renders with too: track.renderInPlace's mode, processing, tail, "
+					"sampleFormat, sourceTracks and name.",
+					Json{{"type", "object"}, {"additionalProperties", false},
+						{"properties",
+							{{"mode", {{"type", "string"}, {"enum", {"oneEvent", "separateEvents", "blockEvents"}}}},
+								{"processing",
+									{{"type", "string"}, {"enum", {"dry", "channelSettings", "completeSignalPath"}}}},
+								{"tail", {{"type", "number"}, {"minimum", 0}, {"maximum", 60}}},
+								{"sampleFormat",
+									{{"type", "string"}, {"enum", {"int16", "int24", "int32", "float32", "float64"}}}},
+								{"sourceTracks", {{"type", "string"}, {"enum", {"keep", "mute", "disable", "remove"}}}},
+								{"name", {{"type", "string"}, {"minLength", 1}}}}}},
+					Json::object()},
 				{"transport.cycleFollowsMarkers",
 					"Locating to a marker sets the left and right locators to it (marker.locate, marker.locateNext, "
 					"marker.locatePrevious): a cycle marker's range, or from a position marker to the next marker.",

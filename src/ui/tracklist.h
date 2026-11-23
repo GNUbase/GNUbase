@@ -232,6 +232,11 @@ namespace gnubase::ui
 		// Map to Chord Track (map-to-chord-track.rml) for MIDI parts.
 		void openChordDialog(const char* file, std::vector<uint64_t> parts);
 		void closedChordDialog(Rml::Event& event);
+		// Render in place and freeze (docs/features/render-in-place.md): the Render Tracks or Render Selection dialog
+		// (render-settings.rml) for target, track.renderInPlace's tracks and selection, or Freeze Channel Options
+		// (freeze-options.rml) for target's tracks, filled from options, render.options or render.freezeTail.
+		void openRenderDialog(const char* file, engine::Json target, const engine::Json& options);
+		void closedRenderDialog(Rml::Event& event);
 		// Runs the commands as one undo step; done, if any, gets its result.
 		void transaction(const std::string& description, engine::Json commands,
 			std::function<void(const engine::Result&)> done = {});
@@ -291,6 +296,9 @@ namespace gnubase::ui
 		std::vector<uint64_t> m_removing;              // the tracks it asks about
 		Rml::ObserverPtr<Rml::Element> m_chordDialog;  // a chord track dialog while open
 		std::vector<uint64_t> m_chordParts;            // the MIDI parts it is for
+		Rml::ObserverPtr<Rml::Element> m_renderDialog; // a render or freeze dialog while open
+		engine::Json m_renderTarget;                   // what it renders, see openRenderDialog
+		engine::Json m_renderOptions;                  // the options it opened with
 		Rml::ObserverPtr<Rml::Element> m_renameDialog; // rename-version.rml while open
 
 		Drag m_drag = Drag::None;

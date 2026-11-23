@@ -2047,6 +2047,110 @@ TEST_CASE("Render in Place renders the selected events and parts, else a selecti
 	CHECK(render(4) == Events{{0, 14400}});
 }
 
+TEST_CASE("The render and freeze dialogs render and freeze with their options and keep them for the next time", "[ui]")
+{
+	// Reference manual pp. 992, 1471-1477: the dialogs' options are saved and used for all further render operations.
+	Tracks tracks;
+	tracks.app.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const uint64_t synth =
+		tracks.add({{"type", "instrument"}, {"instrument", "testSynth"}, {"timeBase", "linear"}, {"name", "Synth"}});
+	const Json part = tracks.app.call("midiPart.add", {{"track", synth}, {"position", 0}, {"length", 4800}});
+	tracks.app.call("note.add",
+		{{"part", part.at("part").at("id")},
+			{"notes", {{{"position", 0}, {"length", 1000000}, {"pitch", 60}, {"velocity", 0.8}}}}});
+	tracks.rows(1);
+	tracks.click(row(synth) + " .track-name");
+	// The parameters of the commands that ran, oldest first, by name.
+	const auto ran = [&tracks](const char* command)
+	{
+		Json found = Json::array();
+		const Json log = tracks.app.call("engine.commandLog");
+		for (const Json& each : log.at("commands"))
+			if (each.at("command") == command)
+				found.push_back(each.at("parameters"));
+		return found;
+	};
+	const auto run = [&tracks](const char* command)
+	{ tracks.app.keys().run(command, Json::object(), tracks.app.main(), nullptr); };
+	const auto shown = [&tracks](const char* selector)
+	{ return tracks.app.waitUntil([&] { return elements(tracks.app, selector).size() == 1; }); };
+	const auto choose = [&tracks](const std::string& select, const char* key)
+	{
+		tracks.click(select);
+		tracks.app.ui().key(std::nullopt, key);
+		tracks.click(select);
+	};
+	const auto type = [&tracks](const std::string& field, int clicks, const std::string& text)
+	{
+		tracks.click(field, {}, clicks);
+		tracks.app.ui().key(std::nullopt, "Mod+A");
+		tracks.app.ui().text(std::nullopt, text);
+		if (clicks > 1) // a value field takes it with Enter
+			tracks.app.ui().key(std::nullopt, "Enter");
+	};
+	const std::chrono::seconds rendering(60);
+	// As the list shows it, which the next command reads.
+	const auto frozen = [&tracks, synth] { return hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); };
+
+	// Freeze Channel Options: its Tail Size freezes, and Selected Tracks (with Current Settings) freezes with it too.
+	run("track.freezeSelectedSettings");
+	REQUIRE(shown("#freeze-options-dialog"));
+	type("#freeze-tail", 2, "2");
+	tracks.click("#freeze-options-ok");
+	REQUIRE(tracks.app.waitUntil(frozen, rendering));
+	CHECK(ran("track.freeze").back() == Json{{"tracks", {synth}}, {"tail", 2.0}});
+	CHECK(tracks.app.call("settings.get", {{"key", "render.freezeTail"}}).at("value") == 2.0);
+	run("track.freezeSelectedSettings"); // every one frozen: unfreezes them without asking
+	REQUIRE(tracks.app.waitUntil([&frozen] { return !frozen(); }));
+	run("track.freezeSelected");
+	REQUIRE(tracks.app.waitUntil(frozen, rendering));
+	CHECK(ran("track.freeze").back() == Json{{"tracks", {synth}}, {"tail", 2.0}});
+	run("track.freezeSelected");
+	REQUIRE(tracks.app.waitUntil([&frozen] { return !frozen(); }));
+
+	// Render Tracks, for the selected track: its options render and are saved.
+	run("track.renderSettings");
+	REQUIRE(shown("#render-settings-dialog"));
+	CHECK(elements(tracks.app, "#render-settings-title").at(0).at("text") == "Render Tracks");
+	choose("#render-mode", "Up");
+	choose("#render-format", "Down");
+	choose("#render-source", "Down");
+	type("#render-tail", 2, "1");
+	tracks.click("#render-custom-name");
+	type("#render-name", 1, "Bounce");
+	tracks.click("#render-settings-render");
+	tracks.rows(2, rendering);
+	const Json options = {{"mode", "blockEvents"}, {"processing", "channelSettings"}, {"tail", 1.0},
+		{"sampleFormat", "float64"}, {"sourceTracks", "mute"}, {"name", "Bounce"}};
+	CHECK(tracks.app.call("settings.get", {{"key", "render.options"}}).at("value") == options);
+	Json expected = options;
+	expected["tracks"] = Json::array({synth});
+	CHECK(ran("track.renderInPlace").back() == expected);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.channel(synth).at("mute") == true; }));
+
+	// Render Selection, for a selected part, opens with them, without Source Tracks: a selection leaves its tracks
+	// as they are, with the current settings too.
+	tracks.app.call("channel.set", {{"channel", tracks.track(synth).at("channel")}, {"mute", false}});
+	tracks.click(row(synth) + " .track-name");
+	tracks.display.select({part.at("part").at("id").get<uint64_t>()});
+	run("track.renderSettings");
+	REQUIRE(shown("#render-settings-dialog"));
+	CHECK(elements(tracks.app, "#render-settings-title").at(0).at("text") == "Render Selection");
+	CHECK(elements(tracks.app, "#render-source").empty());
+	tracks.click("#render-settings-render");
+	tracks.rows(3, rendering);
+	expected = options;
+	expected.erase("sourceTracks");
+	expected["tracks"] = Json::array({synth});
+	expected["events"] = Json::array({part.at("part").at("id")});
+	CHECK(ran("track.renderInPlace").back() == expected);
+	CHECK(tracks.app.call("settings.get", {{"key", "render.options"}}).at("value") == options);
+	run("track.renderSelected");
+	tracks.rows(4, rendering);
+	CHECK(ran("track.renderInPlace").back() == expected);
+	CHECK(tracks.channel(synth).at("mute") == false);
+}
+
 TEST_CASE(
 	"the default theme draws the rows in their tracks' colors: a strip, the selected row lit and outlined, folders "
 	"tinted",
