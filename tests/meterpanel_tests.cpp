@@ -264,7 +264,7 @@ TEST_CASE("a channel meter's Global Meter Settings menu holds its peaks for a ti
 	REQUIRE(app.waitUntil([&bar] { return bar().value("value", std::string()) == "-26.0"; }));
 	CHECK_FALSE(bar().contains("peak"));
 	// The menu's items show the settings.
-	const Json items = app.ui().dom(std::nullopt, "#mixer-meter-menu menuitem[checked]", 0).at("elements");
+	const Json items = app.ui().dom(std::nullopt, "#mixer-meter-menu menuitem[meter][checked]", 0).at("elements");
 	REQUIRE(items.size() == 1);
 	CHECK(items[0].at("attributes").at("meter") == "holdForever");
 
@@ -274,11 +274,63 @@ TEST_CASE("a channel meter's Global Meter Settings menu holds its peaks for a ti
 	REQUIRE(app.waitUntil(
 		[&app]
 		{
-			const Json checked = app.ui().dom(std::nullopt, "#mixer-meter-menu menuitem[checked]", 0).at("elements");
+			const Json checked =
+				app.ui().dom(std::nullopt, "#mixer-meter-menu menuitem[meter][checked]", 0).at("elements");
 			return checked.size() == 1 && checked[0].at("attributes").at("meter") == "holdPeaks";
 		}));
 	app.call("audio.render", {{"frames", 4800}});
 	REQUIRE(app.waitUntil([&bar] { return bar().value("peak", std::string()) == "-26.0"; }));
+}
+
+TEST_CASE("a channel meter's Global Meter Settings menu sets where the channel meters measure", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const auto channel =
+		app.call("track.add", {{"type", "audio"}, {"channels", 1}}).at("channel").at("id").get<uint64_t>();
+	app.call("channel.set", {{"channel", channel}, {"monitor", true}, {"volume", -10.0}});
+	app.appUi().docking().open("mixer");
+	const std::string strip = ".mixer-channel[channel=" + std::to_string(channel) + "] ";
+	const auto bars = [&app, &strip]
+	{ return app.ui().dom(std::nullopt, strip + ".mixer-meter meter", 0).at("elements"); };
+	const auto checked = [&app]
+	{
+		const Json items =
+			app.ui().dom(std::nullopt, "#mixer-meter-menu menuitem[meter-position][checked]", 0).at("elements");
+		return items.size() == 1 ? items[0].at("attributes").at("meter-position").get<std::string>() : "";
+	};
+	REQUIRE(app.waitUntil([&checked] { return checked() == "postPanner"; }));
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil([&bars] { return bars().size() == 2; })); // both sides of the mono channel's panner
+
+	// Input (p. 467): the input level, one bar for the mono channel, before the fader: the stereo sine's -6 dBFS
+	// sides at -3 dB each.
+	app.ui().click(std::nullopt, {strip + ".mixer-meter", 0, std::nullopt}, ui::MouseButton::Right, 1, {});
+	app.ui().click(std::nullopt, {"#mixer-meter-menu menuitem[meter-position=input]", 0, std::nullopt},
+		ui::MouseButton::Left, 1, {});
+	CHECK(app.call("settings.get", {{"key", "meter.position"}}).at("value") == "input");
+	REQUIRE(app.waitUntil([&checked] { return checked() == "input"; }));
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil(
+		[&bars]
+		{
+			const Json shown = bars();
+			return shown.size() == 1 && shown[0].at("attributes").value("value", std::string()) == "-3.0";
+		}));
+
+	// The menu follows the setting that MCP, Lua or another mixer's menu change.
+	app.call("settings.set", {{"key", "meter.position"}, {"value", "postFader"}});
+	REQUIRE(app.waitUntil([&checked] { return checked() == "postFader"; }));
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil(
+		[&bars]
+		{
+			const Json shown = bars();
+			return shown.size() == 1 && shown[0].at("attributes").value("value", std::string()) == "-13.0";
+		}));
 }
 
 TEST_CASE("the meter reader reads only while a view shows meters", "[unit]")

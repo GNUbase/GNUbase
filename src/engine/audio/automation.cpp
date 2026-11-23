@@ -11,6 +11,7 @@
 #include "engine/midi/midivalues.h"
 
 #include <algorithm>
+#include <array>
 #include <bitset>
 #include <cmath>
 #include <cstddef>
@@ -812,8 +813,8 @@ namespace gnubase::engine
 		m_audible.set(1.0, 0);
 	}
 
-	void ChannelFader::process(
-		const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted) noexcept
+	void ChannelFader::process(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted,
+		PreFaderTap* unpanned) noexcept
 	{
 		uint32_t position = 0;
 		for (const graph::ProcessEvent& event : context.eventsIn)
@@ -821,7 +822,7 @@ namespace gnubase::engine
 			const uint32_t offset = std::min(event.offset, context.frames);
 			if (offset > position)
 			{
-				render(context, panning, muted, position, offset);
+				render(context, panning, muted, unpanned, position, offset);
 				position = offset;
 			}
 			if (event.type != graph::ProcessEvent::Type::Parameter)
@@ -838,11 +839,11 @@ namespace gnubase::engine
 					event.ramp);
 		}
 		if (position < context.frames)
-			render(context, panning, muted, position, context.frames);
+			render(context, panning, muted, unpanned, position, context.frames);
 	}
 
 	void ChannelFader::render(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted,
-		uint32_t begin, uint32_t end) noexcept
+		PreFaderTap* unpanned, uint32_t begin, uint32_t end) noexcept
 	{
 		// While nothing glides, one set of gains serves every frame; otherwise each frame gets its own.
 		const bool gliding = m_volume.length != 0 || m_pan.length != 0 || m_panLeft.length != 0 ||
@@ -860,6 +861,10 @@ namespace gnubase::engine
 				for (int c = 0; c < std::min(context.channels, muted->channels()); ++c)
 					for (uint32_t frame = i; frame < until; ++frame)
 						muted->channel(c)[frame] *= static_cast<float>(audible);
+			if (unpanned != nullptr && volume * audible != 1.0)
+				for (int c = 0; c < std::min(context.channels, unpanned->channels()); ++c)
+					for (uint32_t frame = i; frame < until; ++frame)
+						unpanned->channel(c)[frame] *= static_cast<float>(volume * audible);
 			i = until;
 		}
 	}
@@ -915,6 +920,8 @@ namespace gnubase::engine
 		m_sampleRate = sampleRate;
 		if (m_tap)
 			m_tap->prepare(maxFrames);
+		if (m_unpanned)
+			m_unpanned->prepare(maxFrames);
 		if (m_render)
 			m_render->prepare(maxFrames);
 	}
@@ -988,6 +995,8 @@ namespace gnubase::engine
 			muteMidi(context.eventsOut, context.transport);
 		render(RenderPoint::Source, context);
 		m_state->sections.processPre(m_faderEvents, context.audio, context.channels, context.frames);
+		if (m_meterPosition == MeterPosition::Input && context.channels > 0)
+			m_state->meter.process(context.audio, context.channels, context.frames, m_sampleRate);
 
 		if (m_part == StripPart::Source)
 		{
@@ -1444,16 +1453,33 @@ namespace gnubase::engine
 		if (m_tap)
 			for (int c = 0; c < std::min(context.channels, m_tap->channels()); ++c)
 				std::memcpy(m_tap->channel(c), context.audio[c], context.frames * sizeof(float));
+		std::array<float*, g_maxMeterChannels> unpanned{};
+		const int measured = m_unpanned ? std::min(m_unpanned->channels(), g_maxMeterChannels) : 0;
+		for (int c = 0; c < measured; ++c)
+		{
+			unpanned[static_cast<size_t>(c)] = m_unpanned->channel(c);
+			std::memcpy(unpanned[static_cast<size_t>(c)], context.audio[c], context.frames * sizeof(float));
+		}
 		m_faderOut.clear();
 		m_state->fader->process(
 			{context.audio, context.channels, context.frames, events, m_faderOut, context.transport}, m_panning,
-			m_tapFollowsMute ? m_tap.get() : nullptr);
+			m_tapFollowsMute ? m_tap.get() : nullptr, m_unpanned.get());
 		// A mono channel's panner makes its output stereo, as graph::describe gives its node.
 		const ChannelFormat wider = pannerOutput(m_panning.panner);
 		const int outputs = wider == ChannelFormat::None ? context.channels : channelCount(wider);
+		const float target = m_silent ? 0.0f : 1.0f;
+		float unpannedGain = m_state->outputGain; // the same glide for the PostFader meter
 		if (context.frames > 0)
-			glide(context, outputs, m_state->outputGain, m_silent ? 0.0f : 1.0f);
-		m_state->meter.process(context.audio, outputs, context.frames, m_sampleRate);
+		{
+			glide(context, outputs, m_state->outputGain, target);
+			if (measured > 0)
+				glide({unpanned.data(), measured, context.frames, events, m_faderOut, context.transport}, measured,
+					unpannedGain, target);
+		}
+		if (m_meterPosition == MeterPosition::PostPanner)
+			m_state->meter.process(context.audio, outputs, context.frames, m_sampleRate);
+		else if (measured > 0)
+			m_state->meter.process(unpanned.data(), measured, context.frames, m_sampleRate);
 	}
 
 	SlotStrip::SlotStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> plugin, uint8_t slot)

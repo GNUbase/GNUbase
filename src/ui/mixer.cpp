@@ -518,7 +518,10 @@ namespace gnubase::ui
 		// The channel meters' Global Meter Settings (reference manual p. 467).
 		menus.emplace_back(R"(<menu id="mixer-meter-menu">)",
 			R"(<menuitem type="toggle" meter="holdPeaks" checked="">Meter Peak - Hold Peaks</menuitem>)"
-			R"(<menuitem type="toggle" meter="holdForever">Meter Peak - Hold Forever</menuitem>)"
+			R"(<menuitem type="toggle" meter="holdForever">Meter Peak - Hold Forever</menuitem><menuseparator/>)"
+			R"(<menuitem meter-position="input">Meter Position - Input</menuitem>)"
+			R"(<menuitem meter-position="postFader">Meter Position - Post-Fader</menuitem>)"
+			R"(<menuitem meter-position="postPanner" checked="">Meter Position - Post-Panner</menuitem>)"
 			R"(<menuseparator/><menuitem meter="reset">Reset Meters</menuitem>)");
 		menus.emplace_back(R"(<menu id="mixer-layout-pane" class="setup-pane">)", layout);
 		for (const auto& [open, items] : menus)
@@ -597,7 +600,8 @@ namespace gnubase::ui
 				for (const auto& [key, value] : event.data.at("values").items())
 					setting(key, value);
 			}));
-		for (const char* key : {"audio.defaultSendLevel", "meter.holdPeaks", "meter.holdForever", "meter.peakHoldTime"})
+		for (const char* key :
+			{"audio.defaultSendLevel", "meter.holdPeaks", "meter.holdForever", "meter.peakHoldTime", "meter.position"})
 			m_binding.send("settings.get", {{"key", key}},
 				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 				{
@@ -930,6 +934,16 @@ namespace gnubase::ui
 		{
 			m_defaultSendLevel = value.get<double>();
 			show();
+			return;
+		}
+		if (key == "meter.position")
+		{
+			// The engine measures there (meter.get): the menu only shows where.
+			Rml::ElementList items;
+			if (m_meterMenu)
+				m_meterMenu->QuerySelectorAll(items, "[meter-position]");
+			for (Rml::Element* item : items)
+				setChecked(*item, attribute(*item, "meter-position") == value.get<std::string>());
 			return;
 		}
 		if (key == "meter.holdPeaks")
@@ -1464,6 +1478,11 @@ namespace gnubase::ui
 			{
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && m_actions.editChannel)
 					m_actions.editChannel(channel->track);
+			}
+			else if (target->HasAttribute("meter-position"))
+			{
+				m_binding.send(
+					"settings.set", {{"key", "meter.position"}, {"value", attribute(*target, "meter-position")}});
 			}
 			else if (target->IsClassSet("mixer-peak") || attribute(*target, "meter") == "reset")
 			{

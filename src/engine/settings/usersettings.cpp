@@ -544,6 +544,11 @@ namespace gnubase::engine::settings
 					"Meters' Peak Hold Time (reference manual p. 1614): how long the channel meters' peak marks hold "
 					"a peak, 500 to 30000 ms, unless meter.holdForever is on.",
 					Json{{"type", "integer"}, {"minimum", 500}, {"maximum", 30000}}, 2000, true},
+				{"meter.position",
+					"Meter Position (reference manual p. 467): where the channel meters measure (see meter.get): "
+					"input, after the pre section's input gain; postFader, after the fader and muting, without the "
+					"panner; postPanner, after the panner too, both sides of a mono channel's panner.",
+					Json{{"type", "string"}, {"enum", {"input", "postFader", "postPanner"}}}, "postPanner"},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",

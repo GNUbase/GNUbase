@@ -120,15 +120,16 @@ mixer's meters follow: Meter Peak - Hold Peaks (`meter.holdPeaks`, on by default
 Hold Forever (`meter.holdForever`) makes a mark the peak maximum, until a reset; without it a mark holds a peak for the
 Meters' Peak Hold Time (`meter.peakHoldTime`, 500 to 30000 ms, 2000 by default, on the preferences' Metering page,
 p. 1614) and then falls to the level, and a reset starts it again. The UI holds the marks, from the peaks of each frame.
-Reset Meters resets the channels' maxima, as a click on the Meter Peak Level does. Meter Position (Input, Post-Fader,
-Post-Panner) is not there yet: the engine meters after the fader, the panner and muting.
+Reset Meters resets the channels' maxima, as a click on the Meter Peak Level does. Meter Position - Input, Post-Fader
+and Post-Panner (`meter.position`, `[meter-position]`, checked as the setting says) choose where the engine measures
+the channels ([metering.md](metering.md)); after the panner by default.
 
 ## Not yet
 
 Channel selection and the agents and Move Selected Channels commands that work on it, dragging several channels at
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
 the right zone; the channel overview, the meter bridge, Channel Latency, the routing and inserts sections (#113) and the
-channel meters' Meter Position and Meters' Fallback, meter colors and clipping indicators (pp. 467-468, [metering.md](metering.md)); Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
+channel meters' Meters' Fallback, meter colors and clipping indicators (pp. 467-468, [metering.md](metering.md)); Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
 windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspaces.md)).
 
 ## Checks

@@ -5,6 +5,7 @@
 #include "engine/audio/meters.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "testutils/heldjob.h"
 #include "testutils/stopandjoin.h"
 
 #include <catch2/catch_approx.hpp>
@@ -581,6 +582,48 @@ TEST_CASE("a mono channel's meter reads both sides of its panner, and muting sil
 	CHECK(strip.at("peak").at(0).is_null());
 	CHECK(strip.at("peak").at(1).is_null());
 	CHECK(run(client, "meter.get").at("main").at("peak").at(1).is_null());
+}
+
+TEST_CASE(
+	"meter.position measures the channels after the input gain, after the fader or after the panner", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const Json added = run(client, "track.add", {{"type", "audio"}, {"channels", 1}});
+	const auto channel = added.at("channel").at("id").get<ObjectId>();
+	// The mono track's input, the stereo sine's two -6 dBFS sides at -3 dB each: -3 dBFS, 6 dB up in the pre section,
+	// 10 dB down at the fader, and at the center 3 dB down on each side with the -3 dB pan law.
+	run(client, "channel.set",
+		{{"channel", channel}, {"recordEnable", true}, {"pre", {{"gain", 6.0}}}, {"volume", -10.0}});
+	// A plugin slot splits the strip in two nodes (StripPart): the one before the slot measures the input.
+	if (GENERATE(false, true))
+		gnubase::test::waitForPlugin(
+			client, run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:eq"}}).at("slot").at("id"));
+	const auto peaks = [&client, channel](const std::string& position)
+	{
+		run(client, "settings.set", {{"key", "meter.position"}, {"value", position}});
+		run(client, "audio.render", {{"frames", 9600}});
+		return run(client, "meter.get", {{"channels", {channel}}}).at("channels").at(0).at("peak");
+	};
+
+	Json peak = peaks("postPanner"); // the default: both sides of the panner
+	REQUIRE(peak.size() == 2);
+	CHECK(peak.at(0).get<double>() == Approx(-10.02).margin(0.05));
+	CHECK(peak.at(1).get<double>() == Approx(-10.02).margin(0.05));
+	peak = peaks("postFader"); // the fader's gain without the panner: the channel's one side
+	REQUIRE(peak.size() == 1);
+	CHECK(peak.at(0).get<double>() == Approx(-7.01).margin(0.05));
+	peak = peaks("input");
+	REQUIRE(peak.size() == 1);
+	CHECK(peak.at(0).get<double>() == Approx(2.99).margin(0.05));
+
+	// Muting silences the channel after the fader, not its input.
+	run(client, "channel.set", {{"channel", channel}, {"mute", true}});
+	CHECK(peaks("input").at(0).get<double>() == Approx(2.99).margin(0.05));
+	CHECK(peaks("postFader").at(0).is_null());
 }
 
 TEST_CASE("a level meter channel that comes back starts without what it measured before", "[unit]")
