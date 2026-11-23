@@ -65,7 +65,6 @@
 	flex-shrink: 0;
 	width: 8dp;
 	height: 8dp;
-	border-radius: 4dp;
 }
 
 .sampler-display

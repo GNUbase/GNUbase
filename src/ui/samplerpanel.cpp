@@ -686,7 +686,8 @@ namespace gnubase::ui
 	}
 
 	// With Snap to Zero Crossing, a marker's drag ends where the sample crosses zero nearest to where it was let go
-	// (sampler.zeroCrossings), in the drag's undo step. What the user does next waits for it.
+	// (sampler.zeroCrossings), in the drag's undo step. Key commands, such as an undo right after the drag, wait for it
+	// (sendAwaited); the panel's own mouse input doesn't.
 	void SamplerPanel::snapToZero(const std::string& marker, int gesture)
 	{
 		const Parameter* found = parameter(marker);
@@ -699,6 +700,24 @@ namespace gnubase::ui
 				if (alive.expired() || !result.ok() || track != m_track)
 					return;
 				set(id, ordered(marker, result.value.at("positions").at(0).get<double>()), gesture);
+				showMarkers();
+			});
+	}
+
+	// A bar's drag likewise ends with both its markers where the sample crosses zero, in one query and the drag's step.
+	void SamplerPanel::snapBarToZero(const std::string& id, int gesture)
+	{
+		const Bar* bar = barOf(id);
+		if (bar == nullptr || m_track == 0)
+			return;
+		m_binding.sendAwaited("sampler.zeroCrossings",
+			{{"track", m_track}, {"positions", {value(bar->from), value(bar->to)}}},
+			[this, alive = std::weak_ptr<bool>(m_alive), id, gesture, track = m_track](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok() || track != m_track)
+					return;
+				const Json& positions = result.value.at("positions");
+				setBar(id, positions.at(0).get<double>(), positions.at(1).get<double>(), gesture);
 				showMarkers();
 			});
 	}
@@ -757,28 +776,34 @@ namespace gnubase::ui
 	void SamplerPanel::dragBar(const Rml::Event& event)
 	{
 		Rml::Element* display = find("sampler-display");
-		const Bar* bar = barOf(m_bar);
-		const Parameter* from = bar == nullptr ? nullptr : parameter(bar->from);
-		const Parameter* to = bar == nullptr ? nullptr : parameter(bar->to);
 		const float width = display == nullptr ? 0.0F : display->GetClientWidth();
-		if (from == nullptr || to == nullptr || !m_channel.is_object() || !(width > 0.0F))
+		if (!(width > 0.0F))
 			return;
 		const double moved = (event.GetParameter<float>("mouse_x", 0.0F) - m_barMouse) / static_cast<double>(width);
 		const double shift = std::clamp(value("Reverse") >= 0.5 ? -moved : moved, -std::min(m_barFrom, m_barTo),
 			1.0 - std::max(m_barFrom, m_barTo));
-		const double first = std::clamp(m_barFrom + shift, 0.0, 1.0);
-		const double second = std::clamp(m_barTo + shift, 0.0, 1.0);
-		const auto command = [this](uint32_t id, double share)
+		setBar(m_bar, std::clamp(m_barFrom + shift, 0.0, 1.0), std::clamp(m_barTo + shift, 0.0, 1.0), m_gesture);
+		showMarkers();
+	}
+
+	// Sets the two markers of a bar in one step.
+	void SamplerPanel::setBar(const std::string& id, double first, double second, int gesture)
+	{
+		const Bar* bar = barOf(id);
+		const Parameter* from = bar == nullptr ? nullptr : parameter(bar->from);
+		const Parameter* to = bar == nullptr ? nullptr : parameter(bar->to);
+		if (from == nullptr || to == nullptr || !m_channel.is_object())
+			return;
+		const auto command = [this](uint32_t parameter, double share)
 		{
 			return Json{{"command", "parameter.set"},
 				{"parameters",
-					{{"channel", m_channel.at("id")}, {"target", {{"type", "instrument"}, {"parameter", id}}},
+					{{"channel", m_channel.at("id")}, {"target", {{"type", "instrument"}, {"parameter", parameter}}},
 						{"value", share}}}};
 		};
-		m_binding.sendStep(m_gesture, barKey(bar->id), std::string("Move ") + bar->from + " and " + bar->to,
+		m_binding.sendStep(gesture, barKey(bar->id), std::string("Move ") + bar->from + " and " + bar->to,
 			Json::array({command(from->id, first), command(to->id, second)}), {},
 			Json{{bar->from, first}, {bar->to, second}});
-		showMarkers();
 	}
 
 	// Moves the keyboard's handle dragged to the key under the mouse: the key range's low key stays at or below its
@@ -889,6 +914,8 @@ namespace gnubase::ui
 		case Rml::EventId::Dragend:
 			if (m_snapToZero && snapsToZero(m_dragged))
 				snapToZero(m_dragged, m_gesture);
+			else if (m_snapToZero && !m_bar.empty())
+				snapBarToZero(m_bar, m_gesture);
 			if (!m_dragged.empty() || !m_bar.empty())
 			{
 				m_dragged.clear();

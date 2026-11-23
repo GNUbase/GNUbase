@@ -1327,6 +1327,7 @@
 	.sampler-received
 	{
 		background-color: #aeb7d0;
+		border-radius: 999dp;
 	}
 	.sampler-received.lit
 	{

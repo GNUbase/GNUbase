@@ -415,7 +415,9 @@ TEST_CASE("MIDI Reset sends All Sound Off and Reset All Controllers to the sampl
 	CHECK(f.elements("#sampler-message").at(0).value("text", "").empty());
 }
 
-TEST_CASE("Snap to Zero Crossing ends a marker's drag where the sample crosses zero, in the drag's undo step", "[ui]")
+TEST_CASE(
+	"Snap to Zero Crossing ends a marker's or a bar's drag where the sample crosses zero, in the drag's undo step",
+	"[ui]")
 {
 	Fixture f;
 	f.open();
@@ -450,6 +452,29 @@ TEST_CASE("Snap to Zero Crossing ends a marker's drag where the sample crosses z
 	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
 	// End stays after Start.
 	CHECK(f.parameter("End") >= f.parameter("Start"));
+
+	// A bar's drag ends with both its markers on zero crossings, in the same undo step.
+	f.set("End", 0.6);
+	const std::string range = ".sampler-bar[bar=range]";
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json bar = f.box(range);
+			return std::abs(bar.at("x").get<double>() + bar.at("width").get<double>() - (x + (0.6 * width))) < 2.0;
+		}));
+	const size_t barSteps = f.app.call("history.get").at("steps").size();
+	const Json bar = f.box(range);
+	const int barX = static_cast<int>(bar.at("x").get<double>() + (bar.at("width").get<double>() / 2));
+	const int barY = static_cast<int>(bar.at("y").get<double>() + (bar.at("height").get<double>() / 2));
+	f.app.ui().drag(std::nullopt, of(range), {"", 0, ui::Point{barX + static_cast<int>(0.1 * width), barY}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return std::abs(f.parameter("Start") - 0.5) < 0.01 && onCrossing(f.parameter("Start")) &&
+				std::abs(f.parameter("End") - 0.7) < 0.01 && onCrossing(f.parameter("End"));
+		}));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.app.call("history.get").at("steps").size() == barSteps + 1);
 
 	// Off again, the setting says so.
 	f.click("#sampler-zero");

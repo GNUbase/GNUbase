@@ -64,8 +64,9 @@ How it plays:
   monophonic note and takes over only the latest.
 - Each voice has its own filter, whose cutoff rises with the key by the key follow share (100 %: exactly with the
   pitch), after Drive's tanh saturation; Drive belongs to the filter section (p. 722) and is off with the filter.
-- All Sound Off (controller 120) silences the voices of its MIDI channel at once, One shot ones too, and Reset All
-  Controllers (121) takes the pitch bend back to none. The panel's MIDI Reset sends both (p. 716).
+- All Sound Off (controller 120) silences the voices of its MIDI channel at once, One shot ones too, and forgets the
+  held keys, so monophonic mode doesn't play a stuck key again when another one ends; Reset All Controllers (121)
+  takes the pitch bend back to none. The panel's MIDI Reset sends both (p. 716).
 - Loading (#1122): when a channel's sample changes, and for every sampler when a project loads, the audio engine's
   sample loader (`SampleLoader`, `src/engine/audio/sampleloader.h`) reads the file on a thread of its own, so a long
   sample holds up no command. Once it is read the engine runs `audio.updateSamples` on its own, which hands it to the
@@ -131,7 +132,8 @@ root `.sampler-panel` has the class `.empty`):
     `midi.activityListen` on for itself and reads the `midi.activity` events.
   - With Snap to Zero Crossing on, a drag of the marker of Start, End or the loop's start or end ends where the sample
     crosses zero nearest to where it was let go (`sampler.zeroCrossings`), still in order and in the drag's undo step;
-    what the user does next waits for it (`EngineBinding::sendAwaited`). The bars, the fades' markers and the value
+    so does a drag of a bar, with both its markers in one query. Key commands, such as an undo right after the drag,
+    wait for it (`EngineBinding::sendAwaited`); the panel's own mouse input doesn't. The fades' markers and the value
     fields set what they are given.
   - MIDI Reset (p. 716) sends All Sound Off and Reset All Controllers on all 16 MIDI channels straight to the sampler
     (`midi.inject` with `direct`), which stops what it plays, a long One shot sample too, and resets the pitch bend.
@@ -196,9 +198,9 @@ and without Fingered, the fades from the sample's start and from Start, and the 
 `tests/sampler_tests.cpp`, the new parameters to the real-time test and the fades to the settings that `keepSettings`
 doesn't keep.
 #1122 added the markers of the fades and the loop crossfade to `tests/sampler_ui_tests.cpp`, then MIDI Reset's
-messages, Snap to Zero Crossing at the end of a marker's drag and the event received indicator, which a note-off and an
-input outside all MIDI inputs don't light; `tests/sampler_tests.cpp` got All Sound Off and Reset All Controllers and
-`sampler.zeroCrossings`, reversed too.
+messages, Snap to Zero Crossing at the end of a marker's and a bar's drag and the event received indicator, which a
+note-off and an input outside all MIDI inputs don't light; `tests/sampler_tests.cpp` got All Sound Off and Reset All
+Controllers, which also forgets the held keys, and `sampler.zeroCrossings`, reversed too.
 #1343 added the warnings at every round of an offline render's wait for a sample and the error after the last of its
 20 rounds, tested with rounds of 20 ms instead of 30 s (`Engine::setOfflineSampleWait`), and checks that starting
 playback and recording from stop answer only after the held read is released.

@@ -83,6 +83,7 @@ namespace gnubase::ui
 		double crossfadeLimit() const;
 		double ordered(const std::string& marker, double share) const;
 		void snapToZero(const std::string& marker, int gesture);
+		void snapBarToZero(const std::string& id, int gesture);
 		void listen(bool on);
 		void readPorts(const engine::Json& ports);
 		void received(const engine::Json& activity);
@@ -91,6 +92,7 @@ namespace gnubase::ui
 		void drag(const Rml::Event& event);
 		void dragKey(const Rml::Event& event);
 		void dragBar(const Rml::Event& event);
+		void setBar(const std::string& id, double first, double second, int gesture);
 		void showMessage(const std::string& text);
 		void applySettings(const engine::Json& settings);
 		void saveSettings();

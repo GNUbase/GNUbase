@@ -254,6 +254,24 @@ TEST_CASE("All Sound Off stops the sampler's voices on its channel, Reset All Co
 	bench.add(note(0, true, 60));
 	const std::vector<float> played = bench.left(1);
 	CHECK_THAT(played[1], WithinAbs(rampAt(1.0), 1e-6));
+
+	// All Sound Off forgets the held keys: in monophonic mode a stuck key doesn't play again when another key ends.
+	Sampler mono;
+	mono.setSample(ramp(4096));
+	Bench monoBench(mono);
+	monoBench.add(parameter(0, Sampler::Monophonic, 1.0));
+	monoBench.add(note(0, true, 60));
+	monoBench.run(1);
+	monoBench.add(controller(0, 120));
+	monoBench.run(1);
+	REQUIRE(mono.activeVoices() == 0);
+	monoBench.add(note(0, true, 62));
+	monoBench.run(1);
+	REQUIRE(mono.activeVoices() == 1);
+	monoBench.add(note(0, false, 62));
+	monoBench.run(1);
+	CHECK(mono.activeVoices() == 0);
+	CHECK(monoBench.left(1) == std::vector<float>(64, 0.0f));
 }
 
 TEST_CASE("the sampler plays only the keys in its key range", "[unit]")
