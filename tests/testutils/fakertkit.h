@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -10,7 +11,8 @@ namespace gnubase::test
 	// Linux: a fake rtkit (org.freedesktop.RealtimeKit1) on a D-Bus server of its own, which the code under test
 	// reaches as the system bus (DBUS_SYSTEM_BUS_ADDRESS) while the object lives. It answers the bus's Hello, rtkit's
 	// MaxRealtimePriority and RTTimeUSecMax, and records MakeThreadRealtime requests, which it grants or refuses.
-	// Missing answers as a bus without rtkit; NoBus leaves no bus at that address.
+	// Grants grants the first grants requests only, as rtkit does once a user reaches its limits. Missing answers as a
+	// bus without rtkit; NoBus leaves no bus at that address.
 	class FakeRtkit
 	{
 	public:
@@ -29,7 +31,7 @@ namespace gnubase::test
 		static constexpr int32_t g_maxPriority = 20;
 		static constexpr int64_t g_rttimeMax = 3'600'000'000; // one hour in microseconds
 
-		explicit FakeRtkit(Mode mode = Mode::Grants);
+		explicit FakeRtkit(Mode mode = Mode::Grants, size_t grants = SIZE_MAX);
 		~FakeRtkit();
 		FakeRtkit(const FakeRtkit&) = delete;
 		FakeRtkit& operator=(const FakeRtkit&) = delete;
