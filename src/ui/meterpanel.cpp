@@ -67,7 +67,7 @@ namespace gnubase::ui
 				R"(<div reset="mainRmsMax">RMS Max.<span class="rms-max"/></div>)"
 				R"(<div reset="mainTruePeakHold">Peak Max.<span class="peak-max"/></div></div>)"
 				R"(<button class="meter-reset" value="main">Reset RMS Max. and Peak Max.</button>)"
-				R"(<button class="meter-configure toggle">Configure Meter Settings</button></div>)"
+				R"(<button class="meter-configure">Configure Meter Settings</button></div>)"
 				R"(<div class="meter-page meter-loudness"><div class="meter-bars">)"
 				R"(<meter class="momentary" min="-41" max="-14"/><meter class="short-term" min="-41" max="-14"/>)"
 				R"(</div><div class="meter-values">)"
@@ -78,12 +78,12 @@ namespace gnubase::ui
 				R"(<div>True Peak<span class="true-peak-max"/></div>)"
 				R"(<div>Time<span class="time"/></div></div>)"
 				R"(<button class="meter-reset" value="loudness">Reset Loudness</button>)"
-				R"(<button class="meter-configure toggle">Configure Loudness Settings</button></div>)"
+				R"(<button class="meter-configure">Configure Loudness Settings</button></div>)"
 				R"(<div class="meter-settings"><div class="meter-settings-title">Loudness</div>)"
-				R"(<div>Reset on Start<button type="toggle" class="toggle" setting="meter.resetOnStart"/></div>)"
+				R"(<div><span>Reset on Start</span><input type="checkbox" setting="meter.resetOnStart"/></div>)"
 				R"(<div class="meter-settings-title">RMS</div>)"
-				R"(<div>AES 17<button type="toggle" class="toggle" setting="meter.rmsAes17"/></div>)"
-				R"(<div>Resolution<valuefield setting="meter.rmsResolution" min="1" max="1000" step="1" )"
+				R"(<div><span>AES 17</span><input type="checkbox" setting="meter.rmsAes17"/></div>)"
+				R"(<div><span>Resolution</span><valuefield setting="meter.rmsResolution" min="1" max="1000" step="1" )"
 				R"(decimals="0" unit="ms"/></div></div>)"
 				R"(<div class="meter-buttons"><button class="meter-tab checked" value="master">Master</button>)"
 				R"(<button class="meter-tab" value="loudness">Loudness</button></div></div>)");
@@ -178,12 +178,16 @@ namespace gnubase::ui
 		Rml::Element* control = m_root ? m_root->QuerySelector("[setting=\"" + key + "\"]") : nullptr;
 		if (control == nullptr)
 			return;
+		// A check box sends a change for this, which mustn't go back to the engine: an older value, such as the answer
+		// to settings.get, would undo a click whose settings.set is still on its way.
+		m_showing = true;
 		if (value.is_boolean() && value.get<bool>())
 			control->SetAttribute("checked", "");
 		else if (value.is_boolean())
 			control->RemoveAttribute("checked");
 		else if (value.is_number())
 			control->SetAttribute("value", widgets::format(value.get<float>()));
+		m_showing = false;
 	}
 
 	void MeterPanel::ProcessEvent(Rml::Event& event)
@@ -193,16 +197,17 @@ namespace gnubase::ui
 			return;
 		if (event == Rml::EventId::Change)
 		{
-			// The meter settings pane's toggles and the RMS resolution in ms (pp. 539-540).
+			if (m_showing)
+				return;
+			// The meter settings pane's check boxes and the RMS resolution in ms (pp. 539-540).
 			const auto given = event.GetParameters().find("value");
-			if (const auto key = target->GetAttribute<Rml::String>("setting", "");
-				!key.empty() && given != event.GetParameters().end())
-				m_binding.send("settings.set",
-					{{"key", key},
-						{"value",
-							given->second.GetType() == Rml::Variant::BOOL
-								? engine::Json(given->second.Get<bool>())
-								: engine::Json(std::lround(given->second.Get<double>()))}});
+			const auto key = target->GetAttribute<Rml::String>("setting", "");
+			if (key.empty())
+				return;
+			if (target->GetAttribute<Rml::String>("type", "") == "checkbox")
+				m_binding.send("settings.set", {{"key", key}, {"value", target->HasAttribute("checked")}});
+			else if (given != event.GetParameters().end())
+				m_binding.send("settings.set", {{"key", key}, {"value", std::lround(given->second.Get<double>())}});
 			return;
 		}
 		if (target->IsClassSet("meter-configure"))

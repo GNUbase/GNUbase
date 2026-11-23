@@ -428,7 +428,7 @@ namespace gnubase::engine
 	// The user setting meter.position: where the channel meters measure (reference manual p. 467).
 	enum class MeterPosition : uint8_t
 	{
-		Input,      // after the pre section's input gain, before the plugin slots
+		Input,      // after the pre section (its input gain and low and high cut), before the plugin slots
 		PostFader,  // after the fader and muting, without the panner
 		PostPanner, // the channel's output: after the panner too
 	};

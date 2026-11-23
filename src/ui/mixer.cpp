@@ -573,14 +573,16 @@ namespace gnubase::ui
 					const std::vector<engine::Event> channels = m_channelSteps.settle(changed);
 					if (changedOnly(changed, {"channel.changed"}))
 					{
-						// New routing changes which destinations the other strips' sends can take.
+						// New routing changes which destinations the other strips' sends can take, and a new routing
+						// or format which strips routed into a channel have a panner.
 						bool rerouted = false;
 						for (const engine::Event& each : channels)
 						{
 							Json before;
 							if (const Json* channel = takeChannel(m_project, each, &before))
 							{
-								rerouted = rerouted || routing(before) != routing(*channel);
+								rerouted = rerouted || routing(before) != routing(*channel) ||
+									before.value("format", Json()) != channel->value("format", Json());
 								showChannel(channel->at("id").get<uint64_t>());
 							}
 						}
@@ -1092,7 +1094,9 @@ namespace gnubase::ui
 						control->SetAttribute(name, *value);
 			if (control->HasAttribute("value") && m_binding.sending(stepKey(m_stepOwner, channel.id, param)))
 				continue; // the control is ahead of the engine
-			const Json value = paramValue(json, param);
+			Json value = paramValue(json, param);
+			if (param == "midiPan" && value.is_null())
+				value = 64; // no MIDI pan, as before the first change: the knob shows its default, the center
 			if (control->GetTagName() == "select" && param.rfind("sends.", 0) != 0)
 			{
 				if (!value.is_null())

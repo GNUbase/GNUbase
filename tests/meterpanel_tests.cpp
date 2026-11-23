@@ -9,12 +9,14 @@
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
 #include "ui/meterpanel.h"
+#include "ui/renderer.h"
 #include "ui/shell.h"
 #include "ui/widgetutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -424,6 +426,44 @@ TEST_CASE("the meter settings pane sets Reset on Start and the master meter's RM
 		}));
 	CHECK_FALSE(elements(app, "[setting=\"meter.rmsAes17\"]").at(0).at("attributes").contains("checked"));
 	CHECK(elements(app, "[setting=\"meter.resetOnStart\"]").at(0).at("attributes").contains("checked"));
+}
+
+TEST_CASE("the meter settings pane shows its settings and which button opened it", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.setDpRatio(1.0F);
+	app.appUi().showProject();
+	app.appUi().docking().open("meter");
+	app.call("settings.set", {{"key", "meter.resetOnStart"}, {"value", true}});
+	REQUIRE(app.waitUntil([&app] { return shown(app, ".meter-master .meter-configure"); }));
+	click(app, ".meter-master .meter-configure");
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			return shown(app, ".meter-settings") &&
+				elements(app, "[setting=\"meter.resetOnStart\"]").at(0).at("attributes").contains("checked");
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+
+	// The display only, so that the rest of the window doesn't touch this image: Configure Meter Settings checked,
+	// its label in the button, and Reset on Start's check box on, AES 17's off.
+	const ui::Image window = app.screenshot("meter-settings-window", {1200, 700});
+	const Json box = app.ui().dom(std::nullopt, ".meter-display", 0).at("elements").at(0).at("box");
+	const int x = box.at("x").get<int>();
+	const int y = box.at("y").get<int>();
+	const int width = box.at("width").get<int>();
+	const int height = box.at("height").get<int>();
+	REQUIRE(x >= 0);
+	REQUIRE(y >= 0);
+	REQUIRE(x + width <= window.width);
+	REQUIRE(y + height <= window.height);
+	ui::Image display{width, height, {}};
+	for (int row = y; row < y + height; ++row)
+	{
+		const auto begin = window.pixels.begin() + (((static_cast<std::ptrdiff_t>(row) * window.width) + x) * 4);
+		display.pixels.insert(display.pixels.end(), begin, begin + (static_cast<std::ptrdiff_t>(width) * 4));
+	}
+	test::UiApp::checkGolden("meter-settings", display);
 }
 
 TEST_CASE("the meter reader reads only while a view shows meters", "[unit]")

@@ -83,5 +83,6 @@ namespace gnubase::ui
 		Subscription m_meters;
 		std::optional<Subscription> m_settings;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(); // for the answers to settings.get
+		bool m_showing = false;                                   // while showSetting sets a control
 	};
 }

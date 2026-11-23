@@ -721,6 +721,14 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 			const Json pan = channelJson(app, piano.channel).at("midiPan");
 			return pan.is_number_integer() && pan > 64;
 		}));
+	// Undone, the channel has no MIDI pan again, and the knob shows its default, the center.
+	const std::string midiPan = strip(piano.channel) + " [param=\"midiPan\"]";
+	REQUIRE(app.waitUntil(
+		[&] { return element(app, window, midiPan).at("attributes").value("value", std::string()) != "64"; }));
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&] { return channelJson(app, piano.channel).at("midiPan").is_null(); }));
+	REQUIRE(app.waitUntil(
+		[&] { return element(app, window, midiPan).at("attributes").value("value", std::string()) == "64"; }));
 	CHECK(elements(app, window, strip(piano.channel) + " [param=panBypass]").empty());
 	// The pan bypass button to its left; the combined panner's two controls instead of the pan control.
 	click(app, window, control("panBypass"));
@@ -740,6 +748,11 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 		"channel.set", {{"channel", guitar.channel}, {"format", "mono"}, {"panner", "balance"}, {"output", group}});
 	REQUIRE(app.waitUntil([&] { return !element(app, window, control("panBypass")).at("visible").get<bool>(); }));
 	CHECK(!element(app, window, control("pan")).at("visible").get<bool>());
+	// The group's format counts too: mono into stereo has a panner.
+	app.call("channel.set", {{"channel", group}, {"format", "stereo"}});
+	REQUIRE(app.waitUntil([&] { return element(app, window, control("pan")).at("visible").get<bool>(); }));
+	app.call("channel.set", {{"channel", group}, {"format", "mono"}});
+	REQUIRE(app.waitUntil([&] { return !element(app, window, control("pan")).at("visible").get<bool>(); }));
 	app.call("channel.set", {{"channel", guitar.channel}, {"output", bus(app, "output")}});
 	REQUIRE(app.waitUntil([&] { return element(app, window, control("panBypass")).at("visible").get<bool>(); }));
 	CHECK(element(app, window, control("pan")).at("visible").get<bool>());

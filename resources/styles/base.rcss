@@ -2753,7 +2753,8 @@ splitter.column .splitter-grip-horizontal
 }
 
 /* The meter settings pane, which Configure Meter Settings and Configure Loudness Settings open (.settings), under the
-   page: sections of a setting per row, its name to the left of its control. */
+   page: sections of a setting per row, its name (a span: a flex container lays out no bare text) to the left of its
+   control. */
 .meter-display .meter-settings
 {
 	display: none;
@@ -2765,7 +2766,7 @@ splitter.column .splitter-grip-horizontal
 	display: block;
 }
 
-.meter-display .meter-settings div
+.meter-display .meter-settings > div
 {
 	display: flex;
 	align-items: center;
@@ -2775,6 +2776,7 @@ splitter.column .splitter-grip-horizontal
 
 .meter-display .meter-settings .meter-settings-title
 {
+	display: block;
 	font-weight: bold;
 }
 

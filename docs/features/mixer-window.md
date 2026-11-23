@@ -160,6 +160,8 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
   names, is compared with the golden image `lower-zone-mixer.png`.
 - `tests/meterpanel_tests.cpp`: an audio channel's strip meter shows no bars and `-inf` before it played, then a bar
   per side at the sine's level with its peak mark, in the frame that the master meter shows the same peak;
-  a MIDI channel has none, and a click on the peak level resets the channels' maxima, not the master meter's. The
-  Global Meter Settings menu: a mark that holds the peak for the peak hold time while the level falls and then falls,
-  Hold Forever's mark at the maximum past that time, Reset Meters, and Hold Peaks off without marks.
+  a MIDI channel's has no bars until a note played and then one bar at the note's velocity, and a click on the peak
+  level resets the channels' maxima, not the master meter's. The Global Meter Settings menu: a mark that holds the peak
+  for the peak hold time while the level falls and then falls, Hold Forever's mark at the maximum past that time, Reset
+  Meters, Hold Peaks off without marks, and Meter Position, which sets `meter.position`, follows it, and moves the bar
+  to the level measured there. A strip's bar falls back from a peak by `meter.fallback`, not at once.

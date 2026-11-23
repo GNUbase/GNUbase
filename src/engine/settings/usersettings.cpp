@@ -550,7 +550,8 @@ namespace gnubase::engine::settings
 					Json{{"type", "integer"}, {"minimum", 500}, {"maximum", 30000}}, 2000, true},
 				{"meter.position",
 					"Meter Position (reference manual p. 467): where the channel meters measure (see meter.get): "
-					"input, after the pre section's input gain; postFader, after the fader and muting, without the "
+					"input, after the pre section (its input gain and low and high cut); postFader, after the fader "
+					"and muting, without the "
 					"panner; postPanner, after the panner too, both sides of a mono channel's panner.",
 					Json{{"type", "string"}, {"enum", {"input", "postFader", "postPanner"}}}, "postPanner"},
 				{"meter.resetOnStart",
