@@ -6,6 +6,7 @@
 #include "platform/log.h"
 #include "ui/eventdisplay.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Event.h>
@@ -506,14 +507,15 @@ namespace gnubase::ui
 			return std::make_pair(
 				std::string(action), std::function<void()>(onRange(command, parameters, needsLength)));
 		};
-		// A range command for the selection range, or without one for the selected events.
+		// A range command for the selection range, or without one for the selected events while the project window
+		// has the focus.
 		const auto rangeOrSelection = [this, onRange, onSelection](const char* command)
 		{
 			return [this, range = onRange(command, Json::object()), events = onSelection(command, Json::object())]
 			{
 				if (m_range)
 					range();
-				else
+				else if (projectHasFocus())
 					events();
 			};
 		};
@@ -744,13 +746,25 @@ namespace gnubase::ui
 		m_actions.insert(actions.begin(), actions.end());
 	}
 
+	bool EventDisplay::projectHasFocus() const
+	{
+		// The innermost focus zone around the focused element: Mod+X and Mod+C pressed in the lower zone's editors or
+		// an in-place editor reach the project window's binding too.
+		Rml::Context* context = alive() ? m_root->GetContext() : nullptr;
+		for (const Rml::Element* element = context == nullptr ? nullptr : context->GetFocusElement();
+			element != nullptr; element = element->GetParentNode())
+			if (element->HasAttribute("focuszone"))
+				return element->GetAttribute<Rml::String>("focuszone", "") == "project";
+		return true;
+	}
+
 	bool EventDisplay::canRun(const std::string& action) const
 	{
 		if (action == "edit.paste" || action == "edit.pasteTime" || action == "edit.pasteAtOrigin" ||
 			action == "edit.pasteRelative")
 			return m_copied;
 		if (action == "edit.cut" || action == "edit.copy")
-			return m_range ? m_range->end > m_range->start : !m_selection.empty();
+			return m_range ? m_range->end > m_range->start : !m_selection.empty() && projectHasFocus();
 		const auto found = m_rangeActions.find(action);
 		return found == m_rangeActions.end() || (m_range && (!found->second || m_range->end > m_range->start));
 	}

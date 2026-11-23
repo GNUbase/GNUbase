@@ -174,13 +174,15 @@ TEST_CASE("the info line shows the selection range and its edits set the range's
 	CHECK(window.hasClass("#info-line [info-field=bottomTrack]", "unavailable"));
 }
 
-TEST_CASE("Paste at Origin is in the Edit menu's Functions submenu", "[ui]")
+TEST_CASE("Paste at Origin and Paste Relative to Cursor are in the Edit menu's Functions submenu", "[ui]")
 {
-	// The reference manual, p. 270: Edit > Functions > Paste at Origin.
+	// The reference manual, p. 270: Edit > Functions > Paste at Origin and Paste Relative to Cursor.
 	Window window;
-	window.element("#functions-submenu menuitem[command=\"edit.pasteAtOrigin\"]");
-	CHECK(window.app.ui()
-			  .dom(std::nullopt, "#edit-menu menuitem[command=\"edit.pasteAtOrigin\"]", 0)
-			  .at("elements")
-			  .size() == 1);
+	for (const char* command : {"edit.pasteAtOrigin", "edit.pasteRelative"})
+	{
+		CAPTURE(command);
+		const std::string item = std::string("menuitem[command=\"") + command + "\"]";
+		window.element("#functions-submenu " + item);
+		CHECK(window.app.ui().dom(std::nullopt, "#edit-menu " + item, 0).at("elements").size() == 1);
+	}
 }

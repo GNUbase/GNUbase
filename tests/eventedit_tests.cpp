@@ -1836,6 +1836,28 @@ TEST_CASE("range.copy and range.cut with events copy those events whole, without
 	CHECK_THAT(f.fails("range.copy", f.range({{"events", {f.event}}})), ContainsSubstring("not both"));
 }
 
+TEST_CASE("range.copy with events copies an audio part with its events, not an event inside one", "[unit]")
+{
+	// The audio event from 1 to 3 seconds in an audio part of its own.
+	RangeFixture f;
+	const int64_t part = f.call("event.toPart", {{"events", {f.event}}}).at("events").at(0).get<int64_t>();
+	CHECK_THAT(f.fails("range.copy", {{"events", {f.event}}}), ContainsSubstring("copy the part"));
+	CHECK(f.call("range.copy", {{"events", {part}}}).at("events") == 1);
+
+	const Json pasted = f.call("range.paste", {{"position", 5 * g_second}}).at("events");
+	REQUIRE(pasted.size() == 1);
+	const Json info = f.call("event.get", {{"events", pasted}}).at("events").at(0);
+	CHECK(info.at("start") == 5 * g_second);
+	CHECK(info.at("end") == 7 * g_second);
+	const Json project = f.call("project.get");
+	CHECK(project.at("audioParts").size() == 2);
+	size_t inPasted = 0;
+	for (const Json& event : project.at("audioEvents"))
+		if (event.at("part") == pasted[0])
+			++inPasted;
+	CHECK(inPasted == 1);
+}
+
 TEST_CASE("range.paste with relative keeps the distance the copy had from the project cursor", "[unit]")
 {
 	// Paste Relative to Cursor (reference manual p. 270): the event starts half a second after the cursor.

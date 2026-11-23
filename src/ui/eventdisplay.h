@@ -543,6 +543,9 @@ namespace gnubase::ui
 
 		// Elements live while the root does.
 		bool alive() const { return static_cast<bool>(m_root); }
+		// Whether the focus is in the project window's own focus zone, not in the lower zone, an in-place editor or
+		// another zone: only there do Cut and Copy without a range take the selected events (#1910).
+		bool projectHasFocus() const;
 		float dpRatio() const;
 		double width() const;  // of the event lanes, in dp
 		double height() const; // of the event lanes, in dp

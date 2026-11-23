@@ -141,8 +141,8 @@ With a selection range ([tools.md](tools.md)) the edit commands work on it, and 
 | `edit.paste` | Mod+V | Pastes at the range's start onto its first track and those below; without a range at the cursor onto the tracks it came from, selecting what it pasted |
 | `edit.delete` | Delete, Backspace | Deletes the range (without one, the selected events) |
 | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Mod+Shift+X, Shift+Backspace, Mod+Shift+V | The same, closing the gap or making room |
-| `edit.pasteAtOrigin` | Mod+Shift+Down | Pastes where it was copied from, onto the tracks it came from (p. 270); without a range selecting what it pasted |
-| `edit.pasteRelative` | none | Pastes as far from the cursor as it was when copied, onto the tracks it came from (p. 270); without a range selecting what it pasted |
+| `edit.pasteAtOrigin` | Alt+V | Pastes where it was copied from, onto the tracks it came from (p. 270); without a range selecting what it pasted |
+| `edit.pasteRelative` | Shift+V | Pastes as far from the cursor as it was when copied, onto the tracks it came from (p. 270); without a range selecting what it pasted |
 | `edit.insertSilence` | Mod+Shift+E | Inserts silence |
 | `edit.splitRange`, `edit.cropRange` | Shift+X, none | Splits or crops at the range |
 | `edit.globalCopy` | none | Copies everything between the locators |
@@ -182,7 +182,8 @@ selection tool: Range Start, Range End, Range Length, Top Track and Bottom Track
 
 Not yet (#1910): Range Tool Splits Partly Selected Events, the range in the editors (they come with their tickets),
 and the controller events at the edges of a range inside a part. Pasting copied events onto the selected track, as the
-reference does, rather than onto the tracks they came from.
+reference does, rather than onto the tracks they came from, and a pasted audio event with its snap point on the cursor
+(p. 270), where Paste now puts the copied events' start.
 
 ## Checks
 
