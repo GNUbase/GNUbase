@@ -140,7 +140,8 @@ namespace gnubase::ui
 		Shell& m_shell;
 	};
 
-	// Runs task on the UI thread through Shell::post and returns what it returned, or throws what it threw. Throws
+	// Runs task on the UI thread through Shell::postQuietly and returns what it returned, or throws what it threw: it
+	// draws only the windows it changes, so reads draw none and input only the window it goes to (#745). Throws
 	// std::runtime_error if the UI thread doesn't run it within the timeout, or if the shell quits first. The task may
 	// still run after a timeout, so it must not refer to the caller's variables: capture them by value.
 	template <typename Task> auto onUiThread(Shell& shell, Task task, std::chrono::milliseconds timeout)
@@ -151,7 +152,7 @@ namespace gnubase::ui
 		// Dropped unrun, the job breaks the promise. Once run, the UI thread lets go of it at once rather than at the
 		// end of its step: what the task threw is shared with the caller through the exception's own reference count,
 		// which ThreadSanitizer doesn't see, so the caller is left the last one to hold it.
-		shell.post(
+		shell.postQuietly(
 			[job = std::move(job)]() mutable
 			{
 				(*job)();
