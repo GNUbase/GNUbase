@@ -77,4 +77,5 @@ elements, and mouse and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guid
   mixer window, and that a move in the mixer window draws it and not the main window; `tests/shell_tests.cpp` that
   quietly posted work draws only the windows it asks for. `tests/uitools_tests.cpp` checks scrolling targets into
   view, rejecting hidden centres without sending input, centres on hit-testable boundaries (including a target's
-  child), errors for unshowable drag starts and the scroll position left by a failed drag. `tests/window_tests.cpp` checks automation on real windows.
+  child), errors for unshowable drag starts and the scroll position left by a failed drag. `tests/window_tests.cpp`
+  checks automation on real windows.

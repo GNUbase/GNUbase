@@ -679,6 +679,13 @@ TEST_CASE("work posted quietly draws only the windows it asks for, as automation
 	ui.shell.step(milliseconds(0));
 	CHECK(first.frames() == firstFrames + 1);
 	CHECK(second.frames() == secondFrames);
+
+	// A window due for an update still draws when a quiet read updates its context first, as ui_dom does.
+	second.context().RequestNextUpdate(0);
+	ui.shell.postQuietly([&second] { second.context().Update(); });
+	ui.shell.step(milliseconds(0));
+	CHECK(second.frames() == secondFrames + 1);
+	CHECK(first.frames() == firstFrames + 1);
 }
 
 TEST_CASE("the shell doesn't step inside one of its steps, e.g. for a script that waits in an event handler", "[unit]")

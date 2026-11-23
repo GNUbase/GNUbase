@@ -404,6 +404,14 @@ namespace gnubase::ui
 			const std::scoped_lock lock(m_postedMutex);
 			posted.swap(m_posted);
 		}
+		if (!posted.empty())
+		{
+			// A read's Rml::Context::Update() clears the context's request for its next update: keep a due one.
+			const Clock::time_point due = Clock::now();
+			for (auto& [id, window] : m_open)
+				if (nextUpdate(*window, due) <= due)
+					window->m_renderRequested = true;
+		}
 		bool drawAll = false;
 		for (const Posted& task : posted)
 		{
