@@ -7,10 +7,11 @@
      Settings takes the whole factory set. The Presets tab makes a new set (p. 117): 8 to 32 basic colors, the factory
      set's hues and its grey (its last color), in 1, 2 or 4 tints, sorted by basic color or by tint; the Color Set
      tab then edits it. Missing Current Project Colors (p. 118) shows the colors of the project's set that the edited
-     set lacks, each replaced by the edited set's nearest color, which the mouse over it highlights. Apply sends
-     project.set and gives the tracks, events and parts in a missing color the one replacing it, one undo step
-     (history.transaction); Cancel drops the changes. The swatches show the
-     colors, which are user data: the one place in Lua that sets background-color (tests/stylerules_tests.cpp). -->
+     set lacks, each replaced by the color it was changed to in place (picker, Reset Color), else by the edited set's
+     nearest color, which the mouse over it highlights. Apply sends project.set and gives the tracks, events and parts
+     in a missing color the one replacing it, one undo step (history.transaction); Cancel drops the changes. The
+     swatches show the colors, which are user data: the one place in Lua that sets background-color
+     (tests/stylerules_tests.cpp). -->
 <rml>
 <head>
 	<title>Project Colors Setup</title>
@@ -81,7 +82,9 @@
 		ProjectColors = {}
 		local dialog = ProjectColors
 
-		local colors = {} -- the set as the dialog edits it: {name, color}
+		-- The set as the dialog edits it: {name, color, origin}, origin the project color an entry started from (kept
+		-- by the picker and Reset Color, none for Insert, Duplicate, presets and the factory set).
+		local colors = {}
 		local current = {} -- the project's set
 		local factory = {}
 		local selected = 1
@@ -113,13 +116,22 @@
 				local color = item.color:lower()
 				if not have[color] then
 					have[color] = true -- once each
-					local r, g, b = rgb(color)
-					local best, distance = 1, math.huge
+					local best
 					for index, other in ipairs(colors) do
-						local r2, g2, b2 = rgb(other.color)
-						local d = (r - r2) ^ 2 + (g - g2) ^ 2 + (b - b2) ^ 2
-						if d < distance then
-							best, distance = index, d
+						if other.origin == color then
+							best = index -- changed in place: its new color
+							break
+						end
+					end
+					if best == nil then
+						local r, g, b = rgb(color)
+						local distance = math.huge
+						for index, other in ipairs(colors) do
+							local r2, g2, b2 = rgb(other.color)
+							local d = (r - r2) ^ 2 + (g - g2) ^ 2 + (b - b2) ^ 2
+							if d < distance then
+								best, distance = index, d
+							end
 						end
 					end
 					result[#result + 1] = {color = color, replacement = best}
@@ -136,6 +148,21 @@
 			end
 		end
 
+		-- The Presets tab's missing colors, each replaced by the edited set's color in its attribute replacement.
+		local function showMissing(document)
+			local gone, rml = missing(), {}
+			for index, item in ipairs(gone) do
+				rml[index] = '<span class="color-swatch" color="' .. item.color .. '" replacement="' .. item.replacement
+					.. '" onmouseover="ProjectColors.highlight(document, ' .. item.replacement
+					.. ')" onmouseout="ProjectColors.highlight(document, nil)"/>'
+			end
+			local swatches = document:GetElementById("missing-colors")
+			swatches.inner_rml = table.concat(rml)
+			for index, item in ipairs(gone) do
+				swatches.child_nodes[index].style["background-color"] = item.color
+			end
+		end
+
 		-- The list, a row per color with its swatch, and the editor showing the selected one.
 		function dialog.show(document)
 			selected = math.max(1, math.min(selected, #colors))
@@ -148,18 +175,7 @@
 			list.inner_rml = table.concat(rml)
 			local swatches = document:GetElementById("preset-colors")
 			swatches.inner_rml = string.rep('<span class="color-swatch"/>', #colors)
-			local gone = missing()
-			rml = {}
-			for index, item in ipairs(gone) do
-				rml[index] = '<span class="color-swatch" color="' .. item.color .. '" replacement="' .. item.replacement
-					.. '" onmouseover="ProjectColors.highlight(document, ' .. item.replacement
-					.. ')" onmouseout="ProjectColors.highlight(document, nil)"/>'
-			end
-			local missingSwatches = document:GetElementById("missing-colors")
-			missingSwatches.inner_rml = table.concat(rml)
-			for index, item in ipairs(gone) do
-				missingSwatches.child_nodes[index].style["background-color"] = item.color
-			end
+			showMissing(document)
 			for index, item in ipairs(colors) do
 				list.child_nodes[index]:QuerySelector(".color-swatch").style["background-color"] = item.color
 				swatches.child_nodes[index].style["background-color"] = item.color
@@ -179,6 +195,9 @@
 		function dialog.load(document)
 			current = copy(gnubase.project.get().colors)
 			colors = copy(current)
+			for _, item in ipairs(colors) do
+				item.origin = item.color:lower()
+			end
 			factory = copy(gnubase.project.factoryColors().colors)
 			selected = 1
 			dialog.show(document)
@@ -220,6 +239,7 @@
 			if swatch ~= nil then
 				swatch.style["background-color"] = value
 			end
+			showMissing(document) -- not show(): it would reset the picker during a drag
 		end
 
 		function dialog.insert(document, duplicate)
@@ -241,7 +261,7 @@
 		function dialog.reset(document)
 			local original = factory[selected]
 			if colors[selected] ~= nil and original ~= nil then
-				colors[selected] = {name = original.name, color = original.color}
+				colors[selected] = {name = original.name, color = original.color, origin = colors[selected].origin}
 				dialog.show(document)
 			end
 		end
@@ -329,7 +349,7 @@
 			local function replacing(color)
 				return type(color) == "string" and replace[color:lower()] or nil
 			end
-			local commands = {{command = "project.set", parameters = {colors = colors}}}
+			local commands = {{command = "project.set", parameters = {colors = copy(colors)}}}
 			local project = gnubase.project.get()
 			for _, track in ipairs(project.tracks) do
 				if replacing(track.color) then

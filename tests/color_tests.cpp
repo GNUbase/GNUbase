@@ -824,3 +824,34 @@ TEST_CASE("the project colors setup dialog shows the missing project colors and 
 	CHECK(window.project().at("tracks")[0].at("color") == factory[1].at("color"));
 	CHECK(window.project().at("midiParts")[0].at("color") == factory[2].at("color"));
 }
+
+TEST_CASE("the project colors setup dialog gives a color changed in the picker's tracks its new color", "[ui]")
+{
+	ProjectWindow window;
+	const Json factory = window.app.call("project.factoryColors").at("colors");
+	const std::string old = factory[1].at("color").get<std::string>();
+	window.app.call("track.add", {{"type", "midi"}, {"color", old}});
+
+	const auto open = [&window] { return !window.elements("#project-colors-dialog").empty(); };
+	window.app.keys().run("project.colorsSetup", Json::object(), window.app.main(), nullptr);
+	REQUIRE(window.app.waitUntil(open));
+	window.click("#project-colors > listitem[value=\"2\"]");
+	auto* picker = window.find("#color-picker");
+	REQUIRE(picker != nullptr);
+	picker->SetAttribute("value", "#123456");
+	Rml::Dictionary parameters;
+	parameters["value"] = Rml::String("#123456");
+	picker->DispatchEvent(Rml::EventId::Change, parameters);
+
+	// The old color is missing at once, replaced by the color it was changed to, not by the nearest other one.
+	window.click("#colors-presets-tab");
+	const Json missing = window.elements("#missing-colors .color-swatch");
+	REQUIRE(missing.size() == 1);
+	CHECK(missing[0].at("attributes").at("color") == old);
+	CHECK(missing[0].at("attributes").at("replacement") == "2");
+
+	window.click("#colors-apply");
+	REQUIRE(window.app.waitUntil([&] { return !open(); }));
+	CHECK(window.project().at("colors")[1].at("color") == "#123456");
+	CHECK(window.project().at("tracks")[0].at("color") == "#123456");
+}
