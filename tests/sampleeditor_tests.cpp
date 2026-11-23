@@ -548,7 +548,11 @@ TEST_CASE("sample editor Process moves definition and warp anchors while keeping
 				CHECK(warp.at("tempo") == 120);
 				CHECK(warp.at("gridStart") == 500);
 				const bool insert = operation == "insertSilence";
-				const int shift = insert ? 1000 : operation == "paste" ? -700 : -1000;
+				int shift = -1000;
+				if (insert)
+					shift = 1000;
+				else if (operation == "paste")
+					shift = -700;
 				Json beats = Json::array({{{"beat", 1}, {"frame", 1500}}});
 				if (insert)
 					beats.push_back({{"beat", 2}, {"frame", 3500}});
@@ -618,6 +622,24 @@ TEST_CASE("sample editor Process preserves beat timing and maps fades across an 
 	const Json clip = objectWithId(project.at("clips"), f.clip);
 	CHECK(clip.at("fadeIn").at("length") == 2500);
 	CHECK(clip.at("fadeOut").at("length") == 2000);
+}
+
+TEST_CASE("sample editor Process keeps zero fades at different project and clip sample rates", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "source.wav";
+	test::writeWav(path, processAudio());
+	Fixture f(path.u8string());
+	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	f.call("project.set", {{"sampleRate", 44100}});
+	f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 240}, {"musical", true}});
+	process(f, "delete", 2000, 2994, "all");
+	const Json event = objectWithId(f.call("project.get").at("audioEvents"), f.event);
+	CHECK(event.at("length") == 3006);
+	CHECK(event.at("playedLength") == 5524);
+	CHECK(event.at("fadeRoom") == 6013);
+	CHECK(event.at("fadeIn").at("length") == 0);
+	CHECK(event.at("fadeOut").at("length") == 0);
 }
 
 TEST_CASE("sample editor Process keeps warped crossfades within played fade room", "[integration]")

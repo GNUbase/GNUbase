@@ -402,7 +402,7 @@ namespace gnubase::engine
 					};
 					fadeEdges[event.id] = {range.move(frame(static_cast<double>(event.fadeIn.length) * span.ratio)),
 						range.move(frame(static_cast<double>(span.end - span.start) -
-							static_cast<double>(event.fadeOut.length) * span.ratio))};
+							(static_cast<double>(event.fadeOut.length) * span.ratio)))};
 				});
 			project.media[media.id] = media;
 			context.emit("media.added", {{"media", toJson(media)}});
@@ -455,8 +455,10 @@ namespace gnubase::engine
 						const double ratio = project.sampleRate / media.sampleRate;
 						const auto played = [&](time::Samples frame)
 						{
-							return std::llround(
-								eventSamples(project, event, static_cast<double>(frame - event.offset)) / ratio);
+							return frame == end
+								? room
+								: std::llround(
+									  eventSamples(project, event, static_cast<double>(frame - event.offset)) / ratio);
 						};
 						event.fadeIn.length = std::clamp<time::Samples>(played(fadeInEnd), 0, room);
 						event.fadeOut.length =

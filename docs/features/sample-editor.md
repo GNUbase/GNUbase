@@ -188,7 +188,7 @@ making a sampler track of the range; what warping doesn't have yet is in [warp.m
 - `tests/sampleeditor_tests.cpp`: Process Cut, Copy, Paste, Delete and Insert Silence with definition edits and warp
   markers, musical mode on and off, surviving beat numbers, moved source and target anchors, insertion boundaries,
   removed grid starts and empty clips; musical timing and event fades through an edited grid, source-frame clip fades,
-  warped crossfades bounded by played fade room and undo/redo.
+  warped crossfades bounded by played fade room, zero fades across project/clip sample rates and undo/redo.
 - `tests/sampleeditor_tests.cpp`: Draw replacing one stereo channel with exact samples, unchanged clip regions and event
   timing, source preservation, undo/redo and invalid channel or sample count; Paste resampling and mono/stereo
   conversion in both directions, inserted lengths, unchanged surrounding audio and undo/redo.
