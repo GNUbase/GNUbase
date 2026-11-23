@@ -430,8 +430,8 @@ TEST_CASE("Linux keeps the workers rtkit granted and doesn't ask it again when t
 	const FakeRtkit rtkit(FakeRtkit::Mode::Grants, 2);   // as at rtkit's limits
 	Engine engine;
 	Client client(engine);
-	run(client, "audio.setDevice", {{"captureSeconds", 1}});
-	const Json processing = run(client, "audio.setProcessing", {{"threads", 4}}).at("processing");
+	run(client, "audio.setProcessing", {{"threads", 4}}); // before the device opens, whose pool would ask rtkit too
+	const Json processing = run(client, "audio.setDevice", {{"captureSeconds", 1}}).at("processing");
 	CHECK(rtkit.requests().size() == 3);
 	CHECK(processing.at("activeThreads") == 3); // the audio thread and the two workers rtkit granted
 	CHECK(processing.at("limitedBy") == "realtime");

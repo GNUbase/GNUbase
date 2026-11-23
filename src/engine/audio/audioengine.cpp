@@ -2221,8 +2221,9 @@ namespace gnubase::engine
 		const audio::DeviceFormat& format = m_device->format();
 		const double period = format.blockSize / format.sampleRate;
 		// A device that restarts with the same period keeps the workers and their priority: on Linux each new worker
-		// asks rtkit again, which grants only so many requests in a burst (#463).
-		if (m_workers && wanted == m_workersWanted && period == m_workersPeriod)
+		// asks rtkit again, which grants only so many requests in a burst (#463). Workers that a device's audio
+		// workgroup (macOS) has to take in start anew.
+		if (m_workers && wanted == m_workersWanted && period == m_workersPeriod && m_device->workgroup() == nullptr)
 			return;
 		m_workers.reset();
 		m_limitedBy = Limit::None;
