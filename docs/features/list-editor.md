@@ -69,12 +69,13 @@ doesn't have (#1580).
 - **Event list** (pp. 1251-1252, 1254). A click on a row selects its event, Ctrl (Cmd) or Shift and a click adds or
   removes it, a click in the empty rest deselects; a click also activates the event's part, as `MidiEditor` handles
   clicks on `[part]`. While a selection the list sent is unanswered, a view older than it (such as the `editor.changed`
-  of the click before a Shift-click) leaves the selection as clicked, as in the key editor (#1817), so that a move
-  right after it takes every event the clicks selected. A double click on a value edits it. A value typed for a selected event changes every selected
-  event that has it by as much (the subtype and the values only those of the event's type); with Ctrl (Cmd) held
-  with Enter, they all take the value. A pitch can be typed as a name, in either case, and spaces around a typed value
-  don't count; a typed velocity is at least 1, as the value display sets it. A changed start moves the event, and the
-  list sorts it again. SysEx bytes are typed in hexadecimal, with or without the F0 and F7 around them (p. 1255).
+  of the click before a Shift-click) leaves the selection as clicked, as in the key editor (#1817), so that a move right
+  after it takes every event the clicks selected. A double click on a value edits it. A value typed for a selected event
+  changes every selected event that has it by as much (the subtype and the values only those of the event's type); with
+  Ctrl (Cmd) held with Enter, they all take the value. A pitch can be typed as a name, in either case, and spaces around
+  a typed value don't count; a typed velocity is at least 1, as the value display sets it. A changed start moves the
+  event, and the list sorts it again. SysEx bytes are typed in hexadecimal, with or without the F0 and F7 around them
+  (p. 1255).
 - **Filters bar** (pp. 1250, 1254). A click on a type hides or shows it; with Ctrl (Cmd) it shows that type alone, and
   a second time all of them. The Focus menu shows only events of the first selected event's type (Event Types), also
   of its pitch or controller number (Event Types and Subtype), or of its channel (Event Channels); SysEx and directions
@@ -127,23 +128,24 @@ which share the editor window.
   opens other parts, back to the key editor once closed, also after `editor.set` gave the closed editor one, and refused
   when unknown; the selected controller events as view state of the editable parts, each once, refused for events that
   don't exist or parts that aren't editable, leaving with removed events, a change of the editing mode and closing.
-- `tests/listeditor_ui_tests.cpp` drives the app with `ui::Automation`: Open List Editor (its key and menu item)
-  lists a note and a controller event of each type in playback order, with their columns, the events at their time
-  and the velocity as a bar, and once closed Open/Close Editor opens the key editor; typing values for two selected
-  notes keeps their distance, with Ctrl sets the same value, a pitch typed as a name, a start that sorts the list
-  again, a pitch bend and a SysEx message typed in hexadecimal; the filters hiding a type, Ctrl showing one type and
-  all again, and the Focus menu's subtype and channel; the draw tool drawing a controller event and a note, the erase
-  tool, moving a note in the event display and a drag in the value display; a move, a draw and a value display drag
-  released outside the list editor and past the window's edge, each with its effect, also a move with a Focus filter
-  on, and ones whose mouseup never comes, ended by the next press without it, and a value display drag whose release
-  was lost ended as the mouse leaves the window; a touch pan over the type column scrolling the list; a draw dragged
-  in the event display being a multiple of the length quantize's length; a typed end, length, channel and release
-  velocity, a value with spaces around it, a pitch name in lower case and a velocity of 0 that stays 1; the Insert
-  Velocity and Length Quantize controls and the note the draw tool then draws; a typed value for notes of two parts
-  in one undo step; a value display drag across two rows in one undo step that builds no time context while it goes
-  on; a Shift-click's selection staying while the view of the click before it comes in; a move of two selected events
-  that would take one before its part's start moving nothing, and one that moves both; the erase tool erasing in the event display; Focus on Event Channels with a SysEx event selected; Delete
-  deleting a selected note and controller event in one undo step, and Backspace a SysEx message, but not while a
-  value is typed; Alt and a drag copying a selected note and controller event in one undo step; a drag at a note's
-  end resizing both selected notes in one undo step; a click without a drag at the end of a note off the grid, and an
+- `tests/listeditor_ui_tests.cpp` drives the app with `ui::Automation`: Open List Editor (its key and menu item) lists a
+  note and a controller event of each type in playback order, with their columns, the events at their time and the
+  velocity as a bar, and once closed Open/Close Editor opens the key editor; typing values for two selected notes keeps
+  their distance, with Ctrl sets the same value, a pitch typed as a name, a start that sorts the list again, a pitch
+  bend and a SysEx message typed in hexadecimal; the filters hiding a type, Ctrl showing one type and all again, and the
+  Focus menu's subtype and channel; the draw tool drawing a controller event and a note, the erase tool, moving a note
+  in the event display and a drag in the value display; a move, a draw and a value display drag released outside the
+  list editor and past the window's edge, each with its effect, also a move with a Focus filter on, and ones whose
+  mouseup never comes, ended by the next press without it, and a value display drag whose release was lost ended as the
+  mouse leaves the window; a touch pan over the type column scrolling the list; a draw dragged in the event display
+  being a multiple of the length quantize's length; a typed end, length, channel and release velocity, a value with
+  spaces around it, a pitch name in lower case and a velocity of 0 that stays 1; the Insert Velocity and Length Quantize
+  controls and the note the draw tool then draws; a typed value for notes of two parts in one undo step; a value display
+  drag across two rows in one undo step that builds no time context while it goes on; a Shift-click's selection staying
+  while the view of the click before it comes in, and a press whose selection the engine refuses showing the view's
+  selection again; a move of two selected events that would take one before its part's start moving nothing, and one
+  that moves both; the erase tool erasing in the event display; Focus on Event Channels with a SysEx event selected;
+  Delete deleting a selected note and controller event in one undo step, and Backspace a SysEx message, but not while a
+  value is typed; Alt and a drag copying a selected note and controller event in one undo step; a drag at a note's end
+  resizing both selected notes in one undo step; a click without a drag at the end of a note off the grid, and an
   Alt-click and a click on the SysEx message off it, changing nothing.

@@ -819,6 +819,52 @@ TEST_CASE("a Shift-click's selection stays while the view of the click before it
 	CHECK(f.has(row("note", f.high), "selected"));
 }
 
+TEST_CASE("a press whose selection the engine refuses shows the view's selection again in the list", "[ui]")
+{
+	// The list shows a note the engine no longer has, as when another client has just deleted it: the press's
+	// editor.set is refused, and once it is answered the list shows the view's selection again, not the press's, as the
+	// key editor does (#1897).
+	Fixture f;
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	// No read is out that would show the engine's project or view again before the press is answered.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return binding.waiting("project.get") == 0 && binding.waiting("editor.get") == 0 &&
+				binding.waiting("editor.set") == 0;
+		}));
+	Json project = f.app.call("project.get");
+	const Json view = f.view();
+	uint64_t gone = 0;
+	for (Json& part : project.at("midiParts"))
+		if (part.at("id") == f.part)
+		{
+			Json note = part.at("notes").at(0);
+			gone = note.at("id").get<uint64_t>() + 1000;
+			note["id"] = gone;
+			note["pitch"] = 62;
+			part.at("notes").push_back(note);
+		}
+	REQUIRE(gone != 0);
+	f.app.appUi().editorWindow()->listEditor()->show(project, view);
+	REQUIRE(!f.elements(row("note", gone)).empty());
+	REQUIRE(!f.has(row("note", gone), "selected"));
+	// A press on it in the event display released over the window's toolbar, where it was pressed: no edit and no
+	// click, which would activate the part with an editor.set of its own, whose editor.changed would show the view
+	// again anyway.
+	const ui::Point grip = f.grip(gone);
+	const int outside = f.middle(".midi-editor-toolbar");
+	const size_t before = f.steps();
+	f.app.ui().press(f.window, Fixture::point(grip.x, grip.y), ui::MouseButton::Left);
+	CHECK(f.has(row("note", gone), "selected")); // at once: no step has handed on the engine's answer yet
+	f.app.ui().release(f.window, Fixture::point(grip.x, outside), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("editor.set") == 0; }));
+	CHECK(!f.has(row("note", gone), "selected"));
+	CHECK(f.view().at("selection") == view.at("selection"));
+	CHECK(f.steps() == before);
+}
+
 TEST_CASE("a move takes every selected event, none before its part's start, and the erase tool erases in the event "
 		  "display",
 	"[ui]")
