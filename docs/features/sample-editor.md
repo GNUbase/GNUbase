@@ -81,8 +81,8 @@ instruments, before asking for the choice.
 
 The Draw tool uses `draw`, with a zero-based `channel` and `samples`: one value from -1 to 1 for each frame in the
 range, at most 65536. It replaces only that channel, preserving clip timing, regions, fades and the other channels. It
-uses the same shared-copy choice, cancellable job and undo as the other edits. Draw requires a clip without active
-warping or definition-grid edits.
+uses the same shared-copy choice, cancellable job and undo as the other edits. Warped clips and edited definition grids
+are supported: Draw preserves the definition and warp without moving frames.
 
 ## In the UI
 
@@ -188,7 +188,8 @@ making a sampler track of the range; what warping doesn't have yet is in [warp.m
 - `tests/sampleeditor_tests.cpp`: Process Cut, Copy, Paste, Delete and Insert Silence with definition edits and warp
   markers, musical mode on and off, surviving beat numbers, moved source and target anchors, insertion boundaries,
   removed grid starts and empty clips; musical timing and event fades through an edited grid, source-frame clip fades,
-  warped crossfades bounded by played fade room, zero fades across project/clip sample rates and undo/redo.
+  warped crossfades bounded by played fade room, zero fades across project/clip sample rates (musical and unwarped
+  events), Draw preserving warped clips and edited grids, exact replacement samples and undo/redo.
 - `tests/sampleeditor_tests.cpp`: Draw replacing one stereo channel with exact samples, unchanged clip regions and event
   timing, source preservation, undo/redo and invalid channel or sample count; Paste resampling and mono/stereo
   conversion in both directions, inserted lengths, unchanged surrounding audio and undo/redo.

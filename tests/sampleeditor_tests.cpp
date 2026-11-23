@@ -626,20 +626,80 @@ TEST_CASE("sample editor Process preserves beat timing and maps fades across an 
 
 TEST_CASE("sample editor Process keeps zero fades at different project and clip sample rates", "[integration]")
 {
-	const test::TempDir dir;
-	const auto path = dir.path() / "source.wav";
-	test::writeWav(path, processAudio());
-	Fixture f(path.u8string());
-	f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
-	f.call("project.set", {{"sampleRate", 44100}});
-	f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 240}, {"musical", true}});
-	process(f, "delete", 2000, 2994, "all");
-	const Json event = objectWithId(f.call("project.get").at("audioEvents"), f.event);
-	CHECK(event.at("length") == 3006);
-	CHECK(event.at("playedLength") == 5524);
-	CHECK(event.at("fadeRoom") == 6013);
-	CHECK(event.at("fadeIn").at("length") == 0);
-	CHECK(event.at("fadeOut").at("length") == 0);
+	for (const bool musical : {false, true})
+	{
+		CAPTURE(musical);
+		const test::TempDir dir;
+		const auto path = dir.path() / "source.wav";
+		test::writeWav(path, processAudio());
+		Fixture f(path.u8string());
+		f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+		f.call("project.set", {{"sampleRate", 44100}});
+		if (musical)
+		{
+			f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 240}, {"musical", true}});
+			process(f, "delete", 2000, 2994, "all");
+		}
+		else
+		{
+			f.call("audioEvent.set", {{"event", f.event}, {"length", 4031}});
+			process(f, "delete", 7000, 7001, "all");
+		}
+		const Json event = objectWithId(f.call("project.get").at("audioEvents"), f.event);
+		if (musical)
+		{
+			CHECK(event.at("length") == 3006);
+			CHECK(event.at("playedLength") == 5524);
+			CHECK(event.at("fadeRoom") == 6013);
+		}
+		else
+			CHECK(event.at("length") == 4031);
+		CHECK(event.at("fadeIn").at("length") == 0);
+		CHECK(event.at("fadeOut").at("length") == 0);
+	}
+}
+
+TEST_CASE("sample editor Draw preserves warped clips and edited grids", "[integration]")
+{
+	for (const bool musical : {false, true})
+	{
+		CAPTURE(musical);
+		const test::TempDir dir;
+		const auto path = dir.path() / "source.wav";
+		test::Audio expected = processAudio();
+		test::writeWav(path, expected);
+		Fixture f(path.u8string());
+		f.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+		f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 240}, {"gridStart", 500}, {"musical", musical}});
+		f.call("clip.adjustGrid", {{"clip", f.clip}, {"mode", "beat"}, {"beat", 1}, {"frame", 1500}});
+		if (musical)
+			f.call("clip.addWarpMarker", {{"clip", f.clip}, {"position", 6000}, {"target", 6500}});
+		f.call(
+			"audioEvent.setFades", {{"event", f.event}, {"fadeIn", {{"length", 100}}}, {"fadeOut", {{"length", 100}}}});
+		f.call("clip.addRegion", {{"clip", f.clip}, {"start", 1800}, {"end", 2200}});
+		const Json before = f.call("project.get");
+		const Json job = f.call("sampleEditor.process",
+							  {{"event", f.event}, {"operation", "draw"}, {"start", 2000}, {"end", 2003},
+								  {"channel", 0}, {"samples", {-0.5, 0.25, 0.75}}, {"sharedCopies", "all"}})
+							 .at("job");
+		const Json done = test::waitForJob(f.client, job.at("id").get<uint64_t>());
+		INFO(done.dump());
+		REQUIRE(done.at("state") == "done");
+		const Json after = f.call("project.get");
+		CHECK(after.at("audioEvents") == before.at("audioEvents"));
+		const Json clip = objectWithId(after.at("clips"), f.clip);
+		Json expectedClip = objectWithId(before.at("clips"), f.clip);
+		expectedClip["media"] = clip.at("media");
+		CHECK(clip == expectedClip);
+		expected.samples.at(2000) = -0.5F;
+		expected.samples.at(2001) = 0.25F;
+		expected.samples.at(2002) = 0.75F;
+		CHECK(test::compareAudio(eventAudio(f), expected, 0.0F).equal);
+		f.call("history.undo");
+		CHECK(f.call("project.get") == before);
+		f.call("history.redo");
+		CHECK(f.call("project.get") == after);
+	}
 }
 
 TEST_CASE("sample editor Process keeps warped crossfades within played fade room", "[integration]")

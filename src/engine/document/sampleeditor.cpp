@@ -401,13 +401,14 @@ namespace gnubase::engine
 								std::llround(eventFrames(project, event, samples)), 0, event.length);
 					};
 					fadeEdges[event.id] = {range.move(frame(static_cast<double>(event.fadeIn.length) * span.ratio)),
-						range.move(frame(static_cast<double>(span.end - span.start) -
+						range.move(frame(eventSamples(project, event, static_cast<double>(event.length)) -
 							(static_cast<double>(event.fadeOut.length) * span.ratio)))};
 				});
 			project.media[media.id] = media;
 			context.emit("media.added", {{"media", toJson(media)}});
 			clip.media = media.id;
-			processWarp(clip.warp, range, media.length);
+			if (parameters.at("operation") != "draw")
+				processWarp(clip.warp, range, media.length);
 			if (!all)
 			{
 				clip.id = project.newId();
@@ -591,8 +592,8 @@ namespace gnubase::engine
 					"insertSilence inserts the range's "
 					"length at its start. draw replaces start..end with samples in one zero-based channel, "
 					"one sample per frame (at most 65536, -1 to 1), preserving timing and the other channels. "
-					"Drawing corresponds to the Draw tool (reference manual p. 634) and requires no active warping "
-					"or edited definition grid. sharedCopies is required "
+					"Drawing corresponds to the Draw tool (reference manual p. 634) and preserves warped clips' "
+					"definition grids and warp anchors. sharedCopies is required "
 					"for shared clips: newVersion "
 					"edits only this event, all edits "
 					"all copies, including inactive track versions. Sampler tracks and drum pads count as users too. "
@@ -629,10 +630,6 @@ namespace gnubase::engine
 						"range must lie within the clip, start before end");
 					if (operation == "draw")
 					{
-						require(!clip.warp.musical && clip.warp.markers.empty() && clip.warp.beats.empty() &&
-								clip.warp.gridStart == 0,
-							"Drawing requires no active warping or edited definition grid; flatten active warping "
-							"first");
 						require(
 							parameters.contains("channel") && parameters.at("channel").get<int64_t>() < source.channels,
 							"draw requires a channel in the clip");
