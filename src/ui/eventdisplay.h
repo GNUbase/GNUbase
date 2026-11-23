@@ -385,7 +385,8 @@ namespace gnubase::ui
 		// around the selected events. The Fades menu (#138, docs/features/fades.md): audio.fadeInToRange,
 		// audio.fadeOutFromRange and audio.adjustFadesToRange on the selection range, audio.crossfade (crossfades the
 		// selected audio events, or opens the crossfade editor for a crossfade they have), audio.removeFadeIn,
-		// audio.removeFadeOut, audio.removeFades and audio.fadeEditor (the fade dialog) on the selected audio events.
+		// audio.removeFadeOut, audio.removeFades, audio.fadeEditor (the fade dialog), and audio.applyStandardFadeIn
+		// and audio.applyStandardFadeOut (the default fades) on the selected audio events.
 		// audio.detectSilence, audio.spectrumAnalyzer and audio.statistics (#147, docs/features/audio-functions.md)
 		// open the Detect Silence dialog, the Spectrum Analyzer and the Statistics window for them.
 		// audio.removeVolumeCurve (#139, docs/features/volume-curves.md) resets the volume curves in the selection
@@ -741,6 +742,9 @@ namespace gnubase::ui
 			std::vector<engine::VolumePoint> curve;
 		};
 		void addFadeActions();
+		// Apply Standard Fade In or Out (reference manual p. 385): the user setting editing.defaultFadeIn or
+		// editing.defaultFadeOut on the selected audio events, as one undo step.
+		void applyStandardFade(bool in);
 		void readFades(const engine::Json& event, double rate, double timeRate);
 		// The fade handle at x and y dp in the event lanes, of a selected event (only those have handles): -1 its
 		// fade in's, 1 its fade out's, 0 none.

@@ -2,6 +2,7 @@
 #include "engine/settings/usersettings.h"
 
 #include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/devices.h"
@@ -368,6 +369,11 @@ namespace gnubase::engine::settings
 	{
 		static const Format format = []
 		{
+			const Json defaultFade = {{"type", "object"},
+				{"properties",
+					{{"shape", {{"type", "string"}, {"enum", fadeShapeNames()}}},
+						{"length", {{"type", "number"}, {"minimum", 0}}}}},
+				{"required", {"shape", "length"}}, {"additionalProperties", false}};
 			Format result;
 			result.name = "settings";
 			result.version = 1;
@@ -472,6 +478,14 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
 					"default", true},
+				{"editing.defaultFadeIn",
+					"The default fade in (reference manual p. 385): its shape and length in seconds, which Apply "
+					"Standard Fade In gives the selected audio events; the fade dialog's As Default sets it.",
+					defaultFade, Json{{"shape", "linear"}, {"length", 0.01}}},
+				{"editing.defaultFadeOut",
+					"The default fade out (reference manual p. 385): its shape and length in seconds, which Apply "
+					"Standard Fade Out gives the selected audio events; the fade dialog's As Default sets it.",
+					defaultFade, Json{{"shape", "linear"}, {"length", 0.01}}},
 				{"editing.defaultTimeBase",
 					"The time base of new tracks when track.add gives none (Default Track Time Type, reference manual "
 					"pp. 230, 1595): musical (bars and beats, so their events follow tempo changes), linear (time, so "

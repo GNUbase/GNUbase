@@ -3301,12 +3301,42 @@ TEST_CASE("a fade handle drag ends without changes when the pressed event goes d
 	CHECK(fadeLength(f.audioEvents()[0], "fadeOut") == 0);
 }
 
+TEST_CASE(
+	"Apply Standard Fade In and Out give the selected audio events the default fades, as far as they fit", "[unit]")
+{
+	// Reference manual p. 385: editing.defaultFadeIn and editing.defaultFadeOut, 10 ms linear ones until the fade
+	// dialog's As Default sets others. The event is half a second long, at 48 kHz.
+	Fixture f;
+	f.display.select({f.event, f.part});
+	f.run("audio.applyStandardFadeIn");
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 480; }));
+	CHECK(f.audioEvents()[0].at("fadeIn").at("shape") == "linear");
+	f.call("settings.set", {{"key", "editing.defaultFadeOut"}, {"value", {{"shape", "exponential"}, {"length", 0.2}}}});
+	f.run("audio.applyStandardFadeOut");
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeOut") == 9600; }));
+	CHECK(f.audioEvents()[0].at("fadeOut").at("shape") == "exponential");
+	CHECK(fadeLength(f.audioEvents()[0], "fadeIn") == 480);
+	// One longer than the room the other fade leaves gets that room.
+	f.call("settings.set", {{"key", "editing.defaultFadeIn"}, {"value", {{"shape", "sCurve"}, {"length", 2.0}}}});
+	const size_t steps = f.call("history.get").at("steps").size();
+	f.run("audio.applyStandardFadeIn");
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 14400; }));
+	CHECK(f.call("history.get").at("steps").size() == steps + 1);
+	// Without selected audio events, nothing.
+	f.display.select({f.part});
+	f.call("settings.set", {{"key", "editing.defaultFadeIn"}, {"value", {{"shape", "linear"}, {"length", 0.1}}}});
+	f.run("audio.applyStandardFadeIn");
+	f.step();
+	CHECK(f.call("history.get").at("steps").size() == steps + 1);
+}
+
 TEST_CASE("the Fades menu's commands fade to the range, crossfade and remove fades", "[unit]")
 {
 	Fixture f;
 	const std::map<std::string, std::function<void()>>& actions = f.display.actions();
 	for (const char* id : {"audio.fadeInToRange", "audio.fadeOutFromRange", "audio.adjustFadesToRange",
-			 "audio.crossfade", "audio.removeFadeIn", "audio.removeFadeOut", "audio.removeFades", "audio.fadeEditor"})
+			 "audio.crossfade", "audio.removeFadeIn", "audio.removeFadeOut", "audio.removeFades", "audio.fadeEditor",
+			 "audio.applyStandardFadeIn", "audio.applyStandardFadeOut"})
 		CHECK(actions.count(id) == 1);
 	const Json first = f.audioEvents()[0];
 	const auto track = first.at("track").get<uint64_t>();

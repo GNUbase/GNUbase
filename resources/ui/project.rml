@@ -461,6 +461,9 @@
 				<menuitem command="audio.adjustFadesToRange">Adjust Fades to Range</menuitem>
 				<menuitem command="audio.crossfade">Crossfade</menuitem>
 				<menuseparator/>
+				<menuitem command="audio.applyStandardFadeIn">Apply Standard Fade In</menuitem>
+				<menuitem command="audio.applyStandardFadeOut">Apply Standard Fade Out</menuitem>
+				<menuseparator/>
 				<menuitem command="audio.removeFadeIn">Remove Fade In</menuitem>
 				<menuitem command="audio.removeFadeOut">Remove Fade Out</menuitem>
 				<menuitem command="audio.removeFades">Remove Fades</menuitem>
