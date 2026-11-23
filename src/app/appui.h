@@ -415,6 +415,7 @@ namespace gnubase::app
 		ui::Shell m_shell;
 		ui::UiSettings m_settings;
 		ui::EngineBinding m_binding;
+		ui::ProjectReads m_editorReads{m_binding}; // the MIDI editors', which go before it
 		ui::KeyCommands m_keys;
 		ui::MeterReader m_meters; // before the docking system, whose panels show meters, and the mixers
 		ui::Window& m_main;

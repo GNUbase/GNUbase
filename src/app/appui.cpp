@@ -707,8 +707,8 @@ namespace gnubase::app
 				added.create = [this, editor = added.id == "editor"](Rml::Element& element)
 				{
 					Rml::Element& page = editor || !m_trackVisibility ? element : m_trackVisibility->showPanel(element);
-					auto shown = std::make_shared<ui::MidiEditor>(
-						m_binding, page, "lower", editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
+					auto shown = std::make_shared<ui::MidiEditor>(m_binding, m_editorReads, page, "lower",
+						editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
 					shown->setDrumMapSetup([this] { m_shell.post([this] { openDrumMaps(m_main); }); });
 					if (editor)
 						m_lowerEditor = shown;
@@ -2243,9 +2243,15 @@ namespace gnubase::app
 	{
 		// The editor window's left zone: the Visibility tab and the inspector's Global Tracks section (pp. 1144-1149).
 		m_docking.add({"editorVisibility", "Visibility", "editorWindow", "left", [this](Rml::Element& element)
-			{ return std::make_shared<ui::MidiEditor>(m_binding, element, "window", ui::EditorPart::Visibility); }});
+			{
+				return std::make_shared<ui::MidiEditor>(
+					m_binding, m_editorReads, element, "window", ui::EditorPart::Visibility);
+			}});
 		m_docking.add({"editorInspector", "Inspector", "editorWindow", "left", [this](Rml::Element& element)
-			{ return std::make_shared<ui::MidiEditor>(m_binding, element, "window", ui::EditorPart::GlobalTracks); }});
+			{
+				return std::make_shared<ui::MidiEditor>(
+					m_binding, m_editorReads, element, "window", ui::EditorPart::GlobalTracks);
+			}});
 		m_editorSubscriptions.push_back(
 			m_binding.on("editor.changed", [this](const engine::Event& event) { followEditor(event.data); }));
 		m_editorSubscriptions.push_back(m_binding.on(
@@ -2551,7 +2557,7 @@ namespace gnubase::app
 		document->Show();
 		// Open in Lower Zone opens the Editor tab in the lower zone (reference manual, p. 1198).
 		m_editor.editor = std::make_unique<ui::MidiEditor>(
-			m_binding, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
+			m_binding, m_editorReads, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
 		m_editor.editor->setDrumMapSetup(
 			[this]
 			{

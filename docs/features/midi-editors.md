@@ -95,6 +95,10 @@ sends `editor.*` commands.
   coming to the front while the view `lower` is closed, as when the user picks it from the tab bar or shows the lower
   zone with it in front, opens the view with the project window's selected parts (p. 1153, #625). The app asks the
   engine first, so that an `editor.open` on its way, such as the editor window's Open in Lower Zone, keeps its parts.
+- **Project reads** (#625). Each `ui::MidiEditor` (up to five: the lower zone's editor, both Visibility tabs, the
+  editor window's editor and its inspector) needs the project after every change, but those that ask while the binding
+  hands on the same answer or event share one `project.get` (`ui::ProjectReads`, which `app::AppUi` owns). One that
+  asks later while that read is out gets the next read, which goes out once the first is answered.
 - **Following the selection** (p. 1153): when the project window's selection changes, its MIDI parts, or else its
   audio parts, open in every open editor that doesn't keep its contents.
 - **Commands**: `editor.openClose` (Mod+E and Return in the project window, Edit > Open/Close Editor, p. 1189) opens

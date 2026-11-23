@@ -5,6 +5,7 @@
 // tests/editors_tests.cpp checks the engine's editor views.
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
 #include "ui/rmlui.h"
 #include "uiapp.h"
 
@@ -559,4 +560,40 @@ TEST_CASE("the lower zone's Editor tab in front without an open editor opens it 
 	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys2}; }));
 	steps();
 	CHECK(parts(view(app, "lower")) == std::vector<uint64_t>{f.keys2});
+}
+
+TEST_CASE("the MIDI editors share one project read for each change (#625)", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	Fixture f(app);
+	ui::EngineBinding& binding = app.appUi().binding();
+	// How many project.get the UI answers for a note added, until none is out.
+	const auto reads = [&](int64_t position)
+	{
+		REQUIRE(app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+		size_t count = 0;
+		const ui::Subscription counted = binding.onResult("project.get", [&count](const engine::Result&) { ++count; });
+		app.call("note.add",
+			{{"part", f.keys1},
+				{"notes", {{{"position", position}, {"length", 120}, {"pitch", 60}, {"velocity", 0.5}}}}});
+		for (int i = 0; i < 5; ++i)
+			app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+		return count;
+	};
+	reads(0); // the first after the start may count reads of its own
+	// The lower zone's editor and the project window's Visibility tab are there from the start.
+	const size_t before = reads(120);
+
+	// Three more: the editor window, with its Visibility tab and inspector. They read no more.
+	f.select({f.keys1});
+	app.keys().run("window.lowerZoneEditor", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return app.appUi().lowerZoneEditor() != nullptr; }));
+	app.call("editor.open", {{"editor", "window"}, {"parts", {f.keys2}}});
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	app.appUi().docking().open("editorVisibility");
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editorVisibility"); }));
+	app.appUi().docking().open("editorInspector");
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editorInspector"); }));
+	CHECK(reads(240) == before);
 }
