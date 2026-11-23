@@ -192,8 +192,21 @@ TEST_CASE("MCP's UI tools draw only the windows they change: reads draw none, in
 		INFO(tool << ": " << response.dump().substr(0, 300));
 		CHECK(!response.at("result").at("isError").get<bool>());
 	};
-	for (int i = 0; i < 10; ++i) // what opening the mixer changed
-		app.shell().step(std::chrono::milliseconds(20));
+	// What opening the mixer changed, and the frames it draws (#2084): the answers to what the mixer asked the engine,
+	// and the window layout, which the docking system saves at its next check twice a second once a window opened or
+	// moved, e.g. when the window system places the new window. Its answer and the settings.changed that comes with
+	// it draw every window. Each try saves the layout now, rather than at a check during the calls below, and it has
+	// settled once nothing is out and a step drew neither window.
+	const ui::EngineBinding& binding = app.appUi().binding();
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			const uint64_t mainBefore = app.main().frames();
+			const uint64_t mixerBefore = mixer->frames();
+			app.shell().step(std::chrono::milliseconds(0));
+			app.appUi().docking().saveWindows();
+			return binding.waiting() == 0 && app.main().frames() == mainBefore && mixer->frames() == mixerBefore;
+		}));
 
 	const uint64_t mainFrames = app.main().frames();
 	const uint64_t mixerFrames = mixer->frames();

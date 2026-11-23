@@ -198,6 +198,8 @@ namespace gnubase::ui
 		// How many commands of that name were sent and their results not handed on yet, e.g. for tests of how many
 		// queries a view keeps open.
 		size_t waiting(const std::string& command) const;
+		// The same for commands of any name: none once the UI has every answer it asked for.
+		size_t waiting() const { return m_waiting.size(); }
 
 		// Sends the steps that wait (sendStep) and hands on results and events, as update() does, until no command that
 		// isn't a query, nor a query sent with sendAwaited, is out, including those that the dones send: e.g. so that
