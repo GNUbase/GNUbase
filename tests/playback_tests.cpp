@@ -851,6 +851,39 @@ TEST_CASE("auditioning up to an end plays the track to there and then nothing", 
 	}
 }
 
+TEST_CASE("audition preview keeps section timing and applies its level", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song(64);
+	const ObjectId clip = song.addClip(writeRamp(dir, "preview", 2, 4000));
+	const Json sections = {{{"start", 151}, {"end", 333}}, {{"start", 499}, {"end", 801}}};
+	run(song.client, "audition.start",
+		{{"clip", clip}, {"position", 100}, {"end", 900}, {"sections", sections}, {"level", 0.5}});
+	run(song.client, "audio.render", {{"frames", 1000}});
+	run(song.client, "audition.stop");
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const auto output = song.capture(channel, 1000);
+		size_t wrong = 0;
+		for (int64_t i = 0; i < 1000; ++i)
+		{
+			const int64_t at = 100 + i;
+			const bool audible = (at >= 151 && at < 333) || (at >= 499 && at < 801);
+			if (output[static_cast<size_t>(i)] != (audible ? ramp(at, channel) * 0.5f : 0.0f))
+				++wrong;
+		}
+		CHECK(wrong == 0);
+	}
+	for (const Json& invalid : {Json{{{"start", 20}, {"end", 10}}}, Json{{{"start", 0}, {"end", 4001}}},
+			 Json{{{"start", 10}, {"end", 30}}, {{"start", 20}, {"end", 40}}}})
+		CHECK(!song.client.call("audition.start", {{"clip", clip}, {"position", 0}, {"sections", invalid}}).ok());
+	run(song.client, "audition.start", {{"clip", clip}, {"position", 100}, {"sections", Json::array()}});
+	run(song.client, "audio.render", {{"frames", 100}});
+	CHECK(run(song.client, "audio.capture", {{"channel", 0}, {"start", 1000}, {"frames", 100}}).at("samples") ==
+		Json(std::vector<float>(100, 0.0f)));
+	run(song.client, "audition.stop");
+}
+
 TEST_CASE("auditioning a media file plays its frames, also outside the events that play it", "[integration]")
 {
 	// The sample editor's play tool plays the clip (reference manual p. 630): its media file from a frame, also in

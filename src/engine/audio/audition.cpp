@@ -50,7 +50,8 @@ namespace gnubase::engine
 
 	void Audition::play(const Subject& subject, const Playback::Track& source,
 		std::map<ObjectId, std::string> mediaPaths, double sampleRate, time::Samples position, time::Samples end,
-		int channels, uint32_t maxFrames)
+		int channels, uint32_t maxFrames, float level,
+		std::optional<std::vector<std::pair<time::Samples, time::Samples>>> sections)
 	{
 		// Where the audition before plays on from until this one is out, if one plays.
 		time::Samples playsOn = -1;
@@ -73,6 +74,8 @@ namespace gnubase::engine
 		state->start = position;
 		state->end = end;
 		state->maxFrames = maxFrames;
+		state->level = level;
+		state->sections = std::move(sections);
 		state->buffer.assign(static_cast<size_t>(channels) * maxFrames, 0.0f);
 		for (int c = 0; c < channels; ++c)
 			state->audio.push_back(state->buffer.data() + (static_cast<size_t>(c) * maxFrames));
@@ -311,6 +314,28 @@ namespace gnubase::engine
 			m_playback.endBlock();
 			// Up to the end, where the position stays, so that the streams aren't read any further.
 			const auto audible = static_cast<size_t>(std::min<time::Samples>(count, state.end - m_position));
+			// Detect Silence's preview preserves time in muted gaps. The immutable mask and buffers were allocated
+			// on the command thread; one search per block skips sections already played.
+			if (state.sections || state.level != 1.0f)
+			{
+				size_t section = 0;
+				if (state.sections)
+					section =
+						static_cast<size_t>(std::lower_bound(state.sections->begin(), state.sections->end(), m_position,
+												[](const auto& each, time::Samples at) { return each.second <= at; }) -
+							state.sections->begin());
+				for (size_t i = 0; i < audible; ++i)
+				{
+					const auto at = m_position + static_cast<time::Samples>(i);
+					if (state.sections)
+						while (section < state.sections->size() && (*state.sections)[section].second <= at)
+							++section;
+					const bool keep =
+						!state.sections || (section < state.sections->size() && (*state.sections)[section].first <= at);
+					for (size_t c = 0; c < channels; ++c)
+						state.audio[c][i] = keep ? state.audio[c][i] * state.level : 0.0f;
+				}
+			}
 			for (size_t c = 0; c < channels; ++c)
 				add(c, state.audio[c], 1, audible);
 			m_position += static_cast<time::Samples>(audible);
@@ -339,6 +364,10 @@ namespace gnubase::engine
 			"clip": {"type": "integer"}, "position": {"type": "integer"}}})");
 		Json startParameters = parameters;
 		startParameters["properties"]["end"] = {{"type", "integer"}};
+		startParameters["properties"]["level"] = {{"type", "number"}, {"minimum", 0}, {"maximum", 1}};
+		startParameters["properties"]["sections"] = Json::parse(R"({"type":"array", "maxItems":65536,
+			"items":{"type":"object", "additionalProperties":false, "required":["start","end"],
+			"properties":{"start":{"type":"integer","minimum":0},"end":{"type":"integer","minimum":0}}}})");
 		Json scrubParameters = parameters;
 		scrubParameters["properties"]["seconds"] = {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 1}};
 		const auto report = [this](CommandContext& context)
@@ -362,6 +391,7 @@ namespace gnubase::engine
 			time::Samples position = 0;
 			std::optional<time::Samples> end;
 			int channels = 0;
+			std::optional<std::vector<std::pair<time::Samples, time::Samples>>> sections;
 		};
 		const auto source = [this](const Json& given)
 		{
@@ -376,6 +406,7 @@ namespace gnubase::engine
 				require(end->get<time::Samples>() > position, "end must be after position");
 			if (given.contains("track"))
 			{
+				require(!given.contains("sections"), "sections require a media file or clip");
 				result.subject.track = given.at("track").get<ObjectId>();
 				require(position >= 0 && position <= g_maxPosition,
 					"position must be 0 to " + std::to_string(g_maxPosition) + " samples");
@@ -419,6 +450,20 @@ namespace gnubase::engine
 				const double ratio = snapshot.sampleRate / found->sampleRate;
 				const auto samples = [ratio](time::Samples frames)
 				{ return static_cast<time::Samples>(std::llround(static_cast<double>(frames) * ratio)); };
+				if (given.contains("sections"))
+				{
+					result.sections.emplace();
+					time::Samples previous = 0;
+					for (const Json& section : given.at("sections"))
+					{
+						const auto from = section.at("start").get<time::Samples>();
+						const auto to = section.at("end").get<time::Samples>();
+						require(from >= previous && from < to && to <= found->length,
+							"sections must be ordered, nonoverlapping ranges within the file");
+						result.sections->emplace_back(samples(from), samples(to));
+						previous = to;
+					}
+				}
 				PlaylistEntry entry;
 				entry.end = samples(found->length);
 				entry.media = found->id;
@@ -452,14 +497,16 @@ namespace gnubase::engine
 				"file on its own: position and end are then its sample frames, from 0 to its length, without the "
 				"events that play it. Or, instead of either, a clip: its media file so, with the clip's fades, as the "
 				"sample editor plays its clip; the result's clip is then the clip, and media its media file. Ends what "
-				"was auditioned before. Announces audition.changed.",
+				"was auditioned before. Optional level (0 to 1, default 1) sets the preview gain. For a clip or media "
+				"file, optional sections (ordered, nonoverlapping start/end ranges in source frames) mute everything "
+				"outside them without skipping time; an empty array mutes all audio. Announces audition.changed.",
 				startParameters, status, false},
 			[this, source, report](CommandContext& context)
 			{
 				const Source given = source(context.parameters());
 				m_audition.play(given.subject, given.playback, m_mediaPaths, m_snapshots.latest().sampleRate,
-					given.position, given.end.value_or(g_maxPosition + 1), given.channels,
-					m_device->format().blockSize);
+					given.position, given.end.value_or(g_maxPosition + 1), given.channels, m_device->format().blockSize,
+					context.parameters().value("level", 1.0f), given.sections);
 				return report(context);
 			});
 		engine.registerCommand(

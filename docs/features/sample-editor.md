@@ -135,7 +135,9 @@ themes.
   Range, Locate Selection and Loop Selection, of the selection range or else of the event. Locate Selection goes to
   its start, and from there to its end; Loop Selection sets the locators to it, turns cycle on and plays from its
   start.
-- **Process section** (pp. 619-620): Basic Commands (Cut, Copy, Paste, Delete, Insert Silence), Event or Range as Region.
+- **Process section** (pp. 619-620): Basic Commands (Cut, Copy, Paste, Delete, Insert Silence), Event or Range as
+  Region. Detect Silence, Spectrum Analyzer and Statistics open separate windows on the captured range, or the event
+  without one ([audio-functions.md](audio-functions.md)).
 - **Layout and axes** (pp. 621-622): the ruler stays above the waveform and follows its horizontal zoom and scroll,
   using the project's time format, tempo, sample rate and the event's clip-to-project mapping. The level scale beside
   each channel shows percentages or dB, chosen from its Level menu, and follows vertical waveform zoom. Its labels use

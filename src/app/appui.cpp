@@ -1235,7 +1235,7 @@ namespace gnubase::app
 						audioFunction = "statistics.rml";
 					if (audioFunction != nullptr)
 					{
-						openAudioFunction(audioFunction);
+						openAudioFunction(audioFunction, window.id() == m_sampleEditor.window);
 						return;
 					}
 					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
@@ -3011,7 +3011,7 @@ namespace gnubase::app
 		return *document;
 	}
 
-	void AppUi::openAudioFunction(const std::string& file)
+	void AppUi::openAudioFunction(const std::string& file, bool sampleEditor)
 	{
 		AudioFunctionWindow& shown = m_audioFunctions[file];
 		if (shown.document && shown.document->GetParentNode() != nullptr && m_shell.find(shown.window) != nullptr)
@@ -3020,7 +3020,14 @@ namespace gnubase::app
 			return;
 		}
 		std::string events;
-		if (m_eventDisplay)
+		std::pair<int64_t, int64_t> range{};
+		if (sampleEditor && m_sampleEditor.editor)
+		{
+			if (m_sampleEditor.editor->event() != 0)
+				events = std::to_string(m_sampleEditor.editor->event());
+			range = m_sampleEditor.editor->analysisRange();
+		}
+		else if (m_eventDisplay)
 		{
 			const auto& selection = m_eventDisplay->selection();
 			for (const engine::Json& event : m_eventDisplay->project().at("audioEvents"))
@@ -3046,6 +3053,11 @@ namespace gnubase::app
 			return;
 		}
 		document->SetAttribute("events", events);
+		if (sampleEditor && range.second > range.first)
+		{
+			document->SetAttribute("start", std::to_string(range.first));
+			document->SetAttribute("end", std::to_string(range.second));
+		}
 		shown.document = document->GetObserverPtr();
 		m_projectDialogs.erase(std::remove_if(m_projectDialogs.begin(), m_projectDialogs.end(),
 								   [](const Rml::ObserverPtr<Rml::Element>& open) { return !open; }),

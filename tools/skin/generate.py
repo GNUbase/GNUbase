@@ -1142,6 +1142,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # Spectrum Analyzer's bars with the one D is measured from in the second accent, the Statistics' headings
         (".ds-display, .sa-graph", {"background-color": c["surface"]}),
         (".ds-section", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
+        (".ds-peak", {"background-color": c["text"]}),
+        (".ds-handle", {"background-color": c["accent2"]}),
         (".sa-bar", {"background-color": c["accent"]}),
         *[(f".sa-graph.all .sa-bar.channel-{i + 1}", {"background-color": color})
           for i, color in enumerate(c["trackPalette"])],

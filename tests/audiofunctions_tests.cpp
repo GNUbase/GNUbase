@@ -164,6 +164,28 @@ namespace
 	}
 }
 
+TEST_CASE("Strip Silence limits processing to the sample editor range", "[integration]")
+{
+	Fixture f;
+	f.add(tones(), "range");
+	const Json before = f.call("project.get");
+	f.call("event.stripSilence", {{"events", {f.event}}, {"start", at(1.75)}, {"end", at(2.75)}, {"regions", true}});
+	const Json after = f.call("project.get");
+	CHECK(after.at("clips")[0].at("regions").size() == 1);
+	bool prefix = false;
+	bool suffix = false;
+	for (const auto& event : after.at("audioEvents"))
+	{
+		prefix = prefix || (event.at("offset") == 0 && event.at("length") == at(1.75));
+		suffix = suffix || (event.at("offset") == at(2.75) && event.at("length") == at(0.25));
+	}
+	CHECK(prefix);
+	CHECK(suffix);
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+	CHECK(!f.client.call("event.stripSilence", {{"events", {f.event}}, {"start", at(2)}, {"end", at(1)}}).ok());
+}
+
 TEST_CASE("Detect Silence finds the tones of a signal, with its thresholds, minimum times and rolls", "[unit]")
 {
 	engine::analysis::SilenceSettings settings;

@@ -382,7 +382,7 @@ namespace gnubase::app
 		// tracks, parts or notes in its attributes, closes when project.reset replaces the project (#1464).
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
 			const std::vector<std::pair<std::string, std::string>>& attributes = {});
-		void openAudioFunction(const std::string& file);
+		void openAudioFunction(const std::string& file, bool sampleEditor = false);
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track);
 		// The articulation map setup (resources/ui/articulation-maps.rml, #175) for a MIDI or instrument track, or with

@@ -9,6 +9,7 @@
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
+#include "ui/sampleeditor.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -214,6 +215,112 @@ namespace
 		return ui::Target{"", 0,
 			ui::Point{static_cast<int>(std::lround(graph.at("x").get<double>() + ((index - 0.5) * width))),
 				static_cast<int>(std::lround(graph.at("y").get<double>() + (graph.at("height").get<double>() / 2.0)))}};
+	}
+}
+
+TEST_CASE("Detect Silence draws peaks and previews with threshold handles and Mute Gaps", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	const Tones tones(app);
+	showTones(app, tones, 1);
+	run(app, "audio.detectSilence", "#detect-silence-dialog");
+	REQUIRE(app.waitUntil([&] { return !elements(app, ".ds-peak").empty(); }));
+	click(app, "#ds-analyze");
+	REQUIRE(app.waitUntil([&] { return text(app, "#ds-sections") == "2"; }));
+	const auto handle = element(app, "#ds-open-handle").at("box");
+	CHECK(handle.at("height").get<double>() > 0);
+	const auto display = element(app, "#ds-display").at("box");
+	const ui::Target threshold{"", 0,
+		ui::Point{static_cast<int>(handle.at("x").get<double>() + 4),
+			static_cast<int>(display.at("y").get<double>() + (display.at("height").get<double>() * 0.25))}};
+	app.ui().drag(audioWindow(app), {"#ds-open-handle", 0, std::nullopt}, threshold);
+	step(app);
+	const double openThreshold =
+		std::stod(element(app, "#ds-open-threshold").at("attributes").at("value").get<std::string>());
+	INFO(display.dump());
+	INFO(handle.dump());
+	INFO(element(app, "#ds-wave").dump());
+	CHECK(std::abs(openThreshold + 6.02) < 0.5);
+	// Put the detection settings back, then preview the two sections.
+	type(app, "#ds-open-threshold", "-20");
+	click(app, "#ds-analyze");
+	REQUIRE(app.waitUntil([&] { return text(app, "#ds-sections") == "2"; }));
+	click(app, "#ds-mute-gaps");
+	// A click invokes the same press and release path as holding the waveform.
+	click(app, "#ds-wave");
+	const auto log = app.call("engine.commandLog").at("commands");
+	bool started = false;
+	for (const auto& entry : log)
+		if (entry.at("command") == "audition.start")
+		{
+			started = true;
+			CHECK(entry.at("parameters").at("sections").size() == 2);
+		}
+	CHECK(started);
+	bool stopped = false;
+	for (const auto& entry : log)
+		stopped = stopped || entry.at("command") == "audition.stop";
+	CHECK(stopped);
+	// Closing a window while the button is held also stops its preview.
+	app.ui().press(audioWindow(app), {"#ds-wave", 0, std::nullopt}, ui::MouseButton::Left);
+	app.ui().close(audioWindow(app), false);
+	REQUIRE(app.waitUntil([&] { return !open(app, "#detect-silence-dialog"); }));
+	size_t closeStops = 0;
+	const Json closeLog = app.call("engine.commandLog").at("commands");
+	for (const auto& entry : closeLog)
+		if (entry.at("command") == "audition.stop")
+			++closeStops;
+	CHECK(closeStops == 2);
+}
+
+TEST_CASE("Sample editor audio analysis uses its range instead of the project selection", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	const Tones tones(app);
+	showTones(app, tones, 1);
+	app.call("sampleEditor.open", {{"event", tones.events[1]}});
+	app.call("sampleEditor.set", {{"selectionStart", 96000}, {"selectionEnd", 120000}});
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return app.appUi().sampleEditorWindow() != nullptr &&
+				app.appUi().sampleEditorWindow()->event() == tones.events[1];
+		}));
+	const ui::WindowId editor = app.appUi().sampleEditorWindowId();
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			const Json shown = app.ui().dom(editor, ".se-info [field=selectionStart]", 0);
+			return shown.at("elements")[0].value("text", std::string()) == "96000";
+		}));
+	for (const std::string command : {"audio.detectSilence", "audio.spectrumAnalyzer", "audio.statistics"})
+	{
+		INFO(command);
+		app.ui().click(editor, {"[audio-function=\"" + command + "\"]", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		step(app);
+		REQUIRE(app.waitUntil([&] { return audioWindow(app) != app.main().id(); }));
+		if (command == "audio.detectSilence")
+		{
+			click(app, "#ds-analyze");
+			REQUIRE(app.waitUntil([&] { return text(app, "#ds-sections") == "1"; }));
+			click(app, "#ds-cancel");
+		}
+		else
+		{
+			if (command == "audio.statistics")
+			{
+				REQUIRE(app.waitUntil([&] { return text(app, "#st-tables").find("-12.04 dB") != std::string::npos; }));
+				CHECK(text(app, "#st-tables").find("-6.02 dB") == std::string::npos);
+			}
+			else
+			{
+				REQUIRE(app.waitUntil([&] { return !elements(app, ".sa-bar").empty(); }));
+				const double height = element(app, "#sa-graph").at("box").at("height").get<double>();
+				CHECK(barHeight(app, bar(1000)) / height < 0.91);
+				CHECK(barHeight(app, bar(1000)) / height > 0.88);
+			}
+			click(app, command == "audio.statistics" ? "#st-close" : "#sa-close");
+		}
 	}
 }
 

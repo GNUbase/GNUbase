@@ -37,6 +37,12 @@ Each returns and announces `audition.changed`: the auditioned `track`, `media` a
 `mode`, `off`, `play` or `scrub`. Starting one ends what ran before. They need an audio device, and an audio track,
 a media file or a clip of the project.
 
+`audition.start` also accepts `level` (linear, 0 to 1, default 1) for preview gain. With a clip or media file,
+`sections` optionally gives ordered, nonoverlapping `start`/`end` ranges in its source frames. Everything outside them
+is muted without skipping time, as Detect Silence's Mute Gaps requires (reference manual p. 604). Omitting sections
+plays normally; an empty array plays silence. Sections are validated and converted to device samples on the command
+thread. The audio thread reads an immutable mask and applies gain in its existing, preallocated buffer.
+
 ## How it plays
 
 - Straight to the main mix's device ports, past the track's channel: its fader, pan, mute and effects don't apply,
@@ -66,6 +72,9 @@ a media file or a clip of the project.
   outputs after the busses, and reports where it plays through an `rt::SeqLockPair` for cueing.
 
 ## Checks
+
+- `tests/playback_tests.cpp`: preview gain and section edges within blocks, preserved gap timing, invalid and empty
+  masks, with nonzero stereo audio in the muted gaps.
 
 - `tests/playback_tests.cpp`: auditioning on the dummy device plays exactly the track's samples from the position, and
   up to an end, for two block sizes, with its channel turned down and muted and another track silent, then nothing

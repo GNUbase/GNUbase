@@ -3,6 +3,7 @@
 // the hitpoints of clips with their filters and edits, and what is made of them. tests/hitpoints_ui_tests.cpp drives
 // the sample editor's Hitpoints section in the app.
 #include "engine/analysis/onsets.h"
+#include "engine/document/projectmodel.h"
 #include "engine/engine.h"
 #include "testutils/heldjob.h"
 #include "testutils/testutils.h"
@@ -21,6 +22,43 @@
 using Catch::Matchers::ContainsSubstring;
 using namespace gnubase;
 using engine::Json;
+
+TEST_CASE("runEdit validates nested edits and synchronizes shared parts before the next edit", "[unit]")
+{
+	engine::Engine engine;
+	engine::ProjectModel model;
+	engine::Project project;
+	engine::MidiPart first;
+	first.id = 1;
+	first.shared = 3;
+	engine::Note note;
+	note.id = 4;
+	note.pitch = 60;
+	first.notes.emplace(note.id, note);
+	project.midiParts.emplace(first.id, first);
+	first.id = 2;
+	project.midiParts.emplace(first.id, first);
+	const Json schema = {{"type", "object"}, {"additionalProperties", false},
+		{"properties", {{"pitch", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}}}}, {"required", {"pitch"}}};
+	int calls = 0;
+	model.addEdit(engine, {"testNested.pitch", 1, "Changes a test note.", schema, schema, false}, "Test pitch",
+		[&calls](engine::Project& edited, engine::CommandContext& context)
+		{
+			++calls;
+			edited.midiParts.at(1).notes.at(4).pitch = context.parameters().at("pitch").get<uint8_t>();
+			return context.parameters();
+		});
+	const Json parameters = Json::object();
+	engine::CommandContext context(parameters);
+	CHECK_THROWS_AS(model.runEdit("testNested.missing", project, {}, context), engine::CommandError);
+	CHECK_THROWS_AS(model.runEdit("testNested.pitch", project, {{"pitch", 128}}, context), engine::CommandError);
+	CHECK(calls == 0);
+	CHECK(model.runEdit("testNested.pitch", project, {{"pitch", 62}}, context) == Json{{"pitch", 62}});
+	CHECK(project.midiParts.at(2).notes.at(4).pitch == 62);
+	model.addEdit(engine, {"testNested.badResult", 1, "Returns a malformed test result.", schema, schema, false},
+		"Bad result", [](engine::Project&, engine::CommandContext&) { return Json::object(); });
+	CHECK_THROWS_AS(model.runEdit("testNested.badResult", project, {{"pitch", 60}}, context), engine::CommandError);
+}
 
 namespace
 {
