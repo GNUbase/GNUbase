@@ -2604,6 +2604,12 @@ namespace gnubase::app
 		{ return m_editorViews.value(editor, engine::Json::object()).value("open", false); };
 		if (open("lower") && m_docking.windowOf("editor") == nullptr && !m_docking.visible("project", "lower"))
 			closeEditor("lower");
+		// The Editor tab coming to the front without an open editor, as when the user picks it from the tab bar or
+		// shows the lower zone with it, opens the editor with the project window's selected parts (p. 1153).
+		const bool editorTab = m_docking.showing("editor");
+		if (editorTab && !m_editorTabShown && !open("lower") && m_closing.count("lower") == 0)
+			openLowerIfClosed();
+		m_editorTabShown = editorTab;
 		if (!m_eventDisplay || m_eventDisplay->selection() == m_followed)
 			return;
 		// Editor Content Follows Event Selection (p. 1153): the MIDI parts, or else the audio parts, selected in the
@@ -2615,6 +2621,21 @@ namespace gnubase::app
 		for (const char* editor : {"window", "lower"})
 			if (open(editor) && !m_editorViews.at(editor).at("keepContents").get<bool>())
 				m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
+	}
+
+	void AppUi::openLowerIfClosed()
+	{
+		// Asks first: an editor.open on its way, such as the editor window's Open in Lower Zone, which brought the tab
+		// forward, comes before the answer, and then the editor keeps its parts.
+		m_binding.send("editor.get", {{"editor", "lower"}},
+			[this](const engine::Result& result)
+			{
+				if (!result.ok() || result.value.value("open", false) || !m_docking.showing("editor") ||
+					m_closing.count("lower") != 0)
+					return;
+				if (const std::vector<uint64_t> parts = selectedParts(); !parts.empty())
+					m_binding.send("editor.open", {{"editor", "lower"}, {"parts", parts}});
+			});
 	}
 
 	ui::Mixer* AppUi::toggleMixer(int number)

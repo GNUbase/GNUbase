@@ -91,7 +91,10 @@ sends `editor.*` commands.
   Closing the editor window, or hiding the lower zone while the Editor panel is docked there, closes the view, so Keep
   Editor Contents goes off (p. 1153); another tab of the lower zone in front of it doesn't. A new project closes both.
   Until the engine answers that `editor.close`, an `editor.changed` with the view open that was already on its way,
-  for example from following the selection, doesn't open the window or show the lower zone again.
+  for example from following the selection, doesn't open the window or show the lower zone again. The Editor tab
+  coming to the front while the view `lower` is closed, as when the user picks it from the tab bar or shows the lower
+  zone with it in front, opens the view with the project window's selected parts (p. 1153, #625). The app asks the
+  engine first, so that an `editor.open` on its way, such as the editor window's Open in Lower Zone, keeps its parts.
 - **Following the selection** (p. 1153): when the project window's selection changes, its MIDI parts, or else its
   audio parts, open in every open editor that doesn't keep its contents.
 - **Commands**: `editor.openClose` (Mod+E and Return in the project window, Edit > Open/Close Editor, p. 1189) opens
@@ -118,8 +121,9 @@ selection rectangle and Show Part Borders, Independent Track Loop, the global tr
 Tracks, track visibility configurations and agents, the Track Display and its settings, selecting tracks in the
 Visibility tab, the preference Editor Content Follows
 Event Selection, Open Editor Commands open Editors in a Window/in Lower Zone (p. 1603: the Audio and MIDI menus' open
-commands, such as Mod+E, which here is Open/Close Editor), and saving the global track setup with the project. The lower zone's Editor tab without an open view (after Open in Separate Window, or when the
-user picks it from the tab bar) shows an empty editor until Edit > Open Editor in Lower Zone, and the engine sends no
+commands, such as Mod+E, which here is Open/Close Editor), and saving the global track setup with the project. The lower zone's Editor tab that stays in front while its view closes (after Open in Separate
+Window, an `editor.close` from another client or a new project) shows an empty editor until it comes to the front
+again or Edit > Open Editor in Lower Zone, and the engine sends no
 `editor.changed` when a new project closes the editors or removed parts leave a view (#625).
 
 ## Checks

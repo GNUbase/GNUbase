@@ -512,3 +512,51 @@ TEST_CASE("an editor the user closed doesn't open again for an editor.changed st
 	CHECK(app.appUi().editorWindow() == nullptr);
 	CHECK(view(app, "window").at("open") == false);
 }
+
+TEST_CASE("the lower zone's Editor tab in front without an open editor opens it with the selected parts (#625)", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	Fixture f(app);
+	const auto steps = [&app]
+	{
+		for (int i = 0; i < 5; ++i)
+			app.shell().step(std::chrono::milliseconds(0));
+	};
+	// Picked from the tab bar, the Editor tab shows the project window's selected parts (p. 1153).
+	f.select({f.keys1});
+	app.appUi().docking().open("editor");
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys1}; }));
+
+	// Closed from another client, it stays closed while the tab stays in front, and opens again when the tab comes to
+	// the front again.
+	app.call("editor.close", {{"editor", "lower"}});
+	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
+	f.select({f.bass1});
+	steps();
+	CHECK(view(app, "lower").at("open") == false);
+	CHECK(app.appUi().docking().showing("editor"));
+	app.appUi().docking().open("mixer");
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("mixer"); }));
+	steps();
+	app.appUi().docking().open("editor");
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.bass1}; }));
+
+	// Behind the Mixer it stays closed; Open in Lower Zone from the editor window brings the tab forward with the
+	// window's parts, not the project window's selection.
+	app.call("editor.close", {{"editor", "lower"}});
+	app.appUi().docking().open("mixer");
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("mixer"); }));
+	f.select({f.keys1});
+	steps();
+	CHECK(view(app, "lower").at("open") == false);
+	app.call("editor.open", {{"editor", "window"}, {"parts", {f.keys2}}});
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	REQUIRE(app.waitUntil([&]
+		{ return ids(app, app.appUi().editorWindowId(), ".editor-part", "part") == std::vector<uint64_t>{f.keys2}; }));
+	click(app, app.appUi().editorWindowId(), "#editor-move");
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() == nullptr; }));
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editor"); }));
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys2}; }));
+	steps();
+	CHECK(parts(view(app, "lower")) == std::vector<uint64_t>{f.keys2});
+}

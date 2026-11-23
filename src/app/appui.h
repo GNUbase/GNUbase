@@ -314,6 +314,9 @@ namespace gnubase::app
 		// The selected MIDI parts, or else audio parts, open in the editors that follow the project window's
 		// selection (p. 1153).
 		void followSelection();
+		// Opens the lower zone's editor with the project window's selected parts, if the engine says it is closed and
+		// the Editor tab still shows then.
+		void openLowerIfClosed();
 		// What of a kind in project.get (midiParts, audioParts, audioEvents) is selected in the project window's event
 		// display.
 		std::vector<uint64_t> selected(const char* kind) const;
@@ -515,6 +518,7 @@ namespace gnubase::app
 		engine::Json m_editorViews = engine::Json::object(); // the engine's, by editor
 		std::set<std::string> m_closing;                     // the editors closeEditor closes, until the engine answers
 		std::vector<uint64_t> m_followed;                    // the selection the editors last followed
+		bool m_editorTabShown = false;                       // in the last followSelection
 		std::vector<ui::Subscription> m_editorSubscriptions;
 		// The key commands dialog (#161) and the user's key commands and macros, ui.keyCommands and ui.macros.
 		void addKeyCommandsDialog();
