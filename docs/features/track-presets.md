@@ -35,7 +35,8 @@ they are.
   extracts an archive's: a file there with other content, as after the preset was saved again with another file of the
   same name, stays, as a project may play it, and the new one goes beside it under a numbered name (`2-kick.wav`); one
   with the same content (size and CRC-32) is used as it is, write time included, so that loading the preset again
-  doesn't write over the files the project plays (#1567). Their clips come into the pool (`media.added`, `clip.added`)
+  doesn't write over the files the project plays (#1567); `media.cleanup` removes the ones nothing uses any more
+  (#1827, [pool.md](pool.md)). Their clips come into the pool (`media.added`, `clip.added`)
   unless it has the same clips already, so loading a preset again adds none, a media file with the same audio as one of
   the project's, as in the project the preset was saved in, shares the project's file, and the lanes of a drum track's
   patterns take the names of the pads (`pattern.changed`). Not the name, routing, sends, buttons or notes. The tracks

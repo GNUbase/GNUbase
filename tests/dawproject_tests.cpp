@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <set>
 #include <sstream>
@@ -442,6 +443,46 @@ TEST_CASE("a missing media file is referred to by its path, and loading extracts
 		{{"tracks", Json::array({run(client, "project.get").at("audioEvents")[0].at("track")})},
 			{"path", utf8(dir.path() / "tracks.dawproject")}});
 	CHECK(exported.at("missing").size() == 1);
+}
+
+TEST_CASE("a load doesn't read a file again whose size and write time a load of this run saw", "[integration]")
+{
+	// Every load compares the files that are there with the entries by their CRC-32; one that a load extracted or
+	// compared already is taken by its size and write time, not read again (#1827).
+	namespace fs = std::filesystem;
+	const test::TempDir dir;
+	const std::string audio = utf8(dir.path() / "take.wav");
+	writeWav(audio, 44100.0, 1, 44100);
+	Engine engine;
+	Client client(engine);
+	run(client, "media.add", {{"path", audio}});
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	const std::string media = utf8(dir.path() / "media");
+	run(client, "project.save", {{"path", file}});
+	const fs::path extracted = dir.path() / "media" / "audio" / "take.wav";
+	const auto loadedPath = [&]
+	{
+		run(client, "project.load", {{"path", file}, {"mediaFolder", media}});
+		const std::string path = run(client, "project.get").at("media")[0].at("path").get<std::string>();
+		settlePeaks(client);
+		run(client, "project.new"); // so that nothing has the file open while it changes
+		settlePeaks(client);
+		return path;
+	};
+	REQUIRE(loadedPath() == utf8(extracted));
+
+	// Changed in place with its size and write time kept, it is taken as the entry's content, unread.
+	const auto written = fs::last_write_time(extracted);
+	{
+		std::fstream stream(extracted, std::ios::in | std::ios::out | std::ios::binary);
+		stream.seekp(-1, std::ios::end);
+		stream.put('\x7f');
+	}
+	fs::last_write_time(extracted, written);
+	CHECK(loadedPath() == utf8(extracted));
+	// With another write time it is read: its content differs, so the entry goes beside it.
+	fs::last_write_time(extracted, written + std::chrono::seconds(2));
+	CHECK(loadedPath() == utf8(dir.path() / "media" / "audio" / "2-take.wav"));
 }
 
 #ifndef _WIN32
