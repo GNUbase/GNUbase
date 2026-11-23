@@ -750,8 +750,9 @@ namespace gnubase::ui
 		};
 		if (field == "name")
 		{
+			// An arranger event keeps its name when the field is left empty, as on the lane and in the chain lists.
 			for (const MarkerItem& marker : m_markers)
-				if (marker.name != text)
+				if (marker.name != text && !(m_arranger && text.empty()))
 					commands.push_back({{"command", command}, {"parameters", {{key, marker.id}, {"name", text}}}});
 		}
 		else if (field == "start")

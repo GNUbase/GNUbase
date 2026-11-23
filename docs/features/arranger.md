@@ -103,8 +103,8 @@ each section's event has a number after its name, how often its event came so fa
   `arranger.changed` and `transport.changed`, and reads `transport.get` on `arranger.changed`. A list is built again
   only when what it shows changed, so a name being typed stays.
 - **Selecting steps in a chain list** (p. 410): in the inspector's and the arranger editor's Current Arranger Chain
-  list a click on a step, not on its arrow, buttons or repeat mode, selects it (`.selected`, which the themes fill
-  lighter), with Shift the steps from the one clicked last, with Ctrl (Cmd) adds or removes it. Remove Selected on the
+  list a click on a step, not on its arrow, buttons or repeat mode, selects it (`.selected`, which the themes tint
+  with their accent), with Shift the steps from the one clicked last, with Ctrl (Cmd) adds or removes it. Remove Selected on the
   list's context menu (`.arranger-remove-selected` in the inspector's, `#chain-step-menu .remove-selected` in the
   editor's) removes them (`removeSteps`), disabled in the inspector without a selection. The steps are selected by
   index, so a chain edit selects none. The editor selects on the press, as a button's click builds its list again.
@@ -136,7 +136,8 @@ each section's event has a number after its name, how often its event came so fa
   selected on the lane changed last, the info line has the class `arranger` and shows the first of them in timeline
   order as it shows a cycle marker: its name (labelled Name), start, end and length, which `arranger.set` edits for
   every selected one in one undo step, relative to the first one's value or with Ctrl+Enter the same for all; a new
-  start keeps an event's length. Selecting an event or a marker deselects the arranger events.
+  start keeps an event's length; an empty name keeps their names. Selecting an event or a marker deselects the
+  arranger events.
 - **Key commands** (p. 411): the key commands dialog lists Trigger Arranger Event 1 to 9 in the arranger area,
   `arranger.trigger` with `number` 1 to 9, without default keys ([key-commands.md](key-commands.md)), so the user
   gives them keys.

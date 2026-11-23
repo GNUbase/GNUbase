@@ -1406,6 +1406,16 @@ namespace gnubase::ui
 		sendChannel({{section, std::move(rack)}});
 	}
 
+	namespace
+	{
+		// The Current Arranger Chain row an element is or is in: Closest starts at the parent.
+		Rml::Element* stepRow(Rml::Element& element)
+		{
+			const char* const selector = ".inspector-arranger-steps .arranger-row";
+			return element.Matches(selector) ? &element : element.Closest(selector);
+		}
+	}
+
 	void Inspector::ProcessEvent(Rml::Event& event)
 	{
 		Rml::Element* target = event.GetTargetElement();
@@ -1418,7 +1428,7 @@ namespace gnubase::ui
 			// A right click in the Current Arranger Chain list touches the step it is on, for Remove Touched.
 			if (event.GetParameter<int>("button", 0) == 1)
 			{
-				const Rml::Element* row = target->Closest(".inspector-arranger-steps .arranger-row");
+				const Rml::Element* row = stepRow(*target);
 				m_touchedStep = row != nullptr ? row->GetAttribute<int>("step", -1) : -1;
 				if (Rml::Element* menu = m_stepMenu.get())
 					for (const auto& [item, off] : {std::make_pair(".arranger-remove-touched", m_touchedStep < 0),
@@ -1462,8 +1472,8 @@ namespace gnubase::ui
 					whenRefused());
 			// A click on a step selects it, with Shift from the step clicked last, with Ctrl (Cmd) adds or removes it
 			// (p. 410); not on its arrow and its repeat mode.
-			if (const Rml::Element* row = target->Closest(".inspector-arranger-steps .arranger-row");
-				row != nullptr && !target->IsClassSet("arranger-locate") && target->Closest("select") == nullptr)
+			if (const Rml::Element* row = stepRow(*target); row != nullptr && !target->IsClassSet("arranger-locate") &&
+				target->GetTagName() != "select" && target->Closest("select") == nullptr)
 			{
 				const int index = row->GetAttribute<int>("step", -1);
 				const auto found = std::find(m_selectedSteps.begin(), m_selectedSteps.end(), index);

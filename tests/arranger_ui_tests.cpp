@@ -9,6 +9,7 @@
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/markers.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -773,7 +774,34 @@ TEST_CASE("the info line shows the arranger events selected on the lane and rena
 	CHECK(window.events()[0].at("name") == "Chorus");
 	CHECK(window.app.call("history.get").at("steps").size() == steps + 4);
 
+	// An empty name leaves their names as they are: the next name is the only undo step more.
+	window.app.ui().click(std::nullopt, {field("name"), 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+	window.app.ui().key(std::nullopt, "Mod+A");
+	window.app.ui().key(std::nullopt, "Backspace");
+	window.app.ui().key(std::nullopt, "Enter");
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(shows("name", "Chorus"));
+	type("name", "Bridge");
+	REQUIRE(window.app.waitUntil([&] { return window.events()[1].at("name") == "Bridge"; }));
+	CHECK(window.events()[0].at("name") == "Bridge");
+	CHECK(window.app.call("history.get").at("steps").size() == steps + 5);
+
+	// A marker selected deselects the arranger events: the info line shows the marker, with its description.
+	window.app.call("track.add", {{"type", "marker"}});
+	const uint64_t marker =
+		window.app.call("marker.add", {{"position", 0}, {"name", "Verse"}}).at("marker").at("id").get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.shown(".marker-label") == 1; }));
+	window.app.appUi().markerLines()->pick({marker});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#info-line", "markers"); }));
+	CHECK_FALSE(window.hasClass("#info-line", "arranger"));
+	CHECK(label("name") == "Description");
+	CHECK(shows("name", "Verse"));
+	CHECK(window.shown(".arranger-lane-event.selected") == 0);
+
 	// Selecting a part shows the part and deselects the arranger events.
+	click(window.at(1.0), {});
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#info-line", "arranger"); }));
 	window.display.select({part});
 	REQUIRE(window.app.waitUntil([&] { return !window.hasClass("#info-line", "arranger"); }));
 	CHECK(label("name") == "Name");
@@ -820,8 +848,14 @@ TEST_CASE("the inspector's Current Arranger Chain list selects steps and removes
 	};
 	const auto step = [&steps](int index) { return steps + "[step=\"" + std::to_string(index) + "\"] .name"; };
 
-	// A click selects a step, Shift up to another one, Ctrl (Cmd) adds or removes one.
-	click(step(1), ui::MouseButton::Left);
+	// A click selects a step, also beside its name, Shift up to another one, Ctrl (Cmd) adds or removes one.
+	const auto beside = [&window, &step](int index)
+	{
+		const Json name = window.box(step(index));
+		return ui::Point{static_cast<int>(std::floor(name.at("x").get<double>())) - 1,
+			static_cast<int>(std::lround(name.at("y").get<double>() + (name.at("height").get<double>() / 2.0)))};
+	};
+	window.app.ui().click(std::nullopt, {"", 0, beside(1)}, ui::MouseButton::Left, 1, {});
 	CHECK(selected() == "-x--");
 	click(step(3), ui::MouseButton::Left, {"shift"});
 	CHECK(selected() == "-xxx");
@@ -836,9 +870,14 @@ TEST_CASE("the inspector's Current Arranger Chain list selects steps and removes
 
 	// Remove Selected removes them, and the steps left are selected none.
 	const auto removeSelected = std::string("#inspector-arranger-step-menu .arranger-remove-selected");
-	click(step(2), ui::MouseButton::Right);
+	const auto disabled = [&window](const std::string& item)
+	{ return window.element(item).value("attributes", Json::object()).contains("disabled"); };
+	// A right click beside a step's name touches the step too, for Remove Touched.
+	window.app.ui().click(std::nullopt, {"", 0, beside(2)}, ui::MouseButton::Right, 1, {});
+	window.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#inspector-arranger-step-menu", "open"); }));
-	CHECK_FALSE(window.element(removeSelected).value("attributes", Json::object()).contains("disabled"));
+	CHECK_FALSE(disabled("#inspector-arranger-step-menu .arranger-remove-touched"));
+	CHECK_FALSE(disabled(removeSelected));
 	click(removeSelected, ui::MouseButton::Left);
 	REQUIRE(window.app.waitUntil([&] { return chain().size() == 1; }));
 	CHECK(chain()[0].at("event") == a);
