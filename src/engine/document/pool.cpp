@@ -7,12 +7,14 @@
 // they emit their events.
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
+#include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
+#include "platform/files.h"
 
 #include <algorithm>
 #include <cctype>
@@ -540,6 +542,93 @@ namespace gnubase::engine
 			removeFiles(unused);
 			return Json{{"media", std::move(conformed)}, {"changed", std::move(changed)}};
 		}
+
+		// The files of the folders that loads extract media files into that neither the project, nor a step of its
+		// undo history, nor its project file uses (media.cleanup, #1827): the project's media folder next to its file
+		// and the track presets' in the settings folder. A peak file goes with its audio file; temporary ones are the
+		// peak worker's. Each file comes with its audio file: itself, or the audio file of a peak file.
+		std::vector<std::pair<fs::path, fs::path>> unusedFiles(const Project& project, const History& history,
+			const std::string& projectFile, const fs::path& settingsDirectory)
+		{
+			std::set<files::FileIdentity> used;
+			const auto use = [&used](const std::string& path)
+			{
+				// Only absolute paths: a file's entries that weren't extracted keep their names inside it as paths.
+				if (fs::u8path(path).is_absolute())
+					if (const auto identity = files::fileIdentity(fs::u8path(path)))
+						used.insert(*identity);
+			};
+			const auto useTrack = [&use](const Track& track)
+			{
+				if (track.frozen)
+					use(track.frozen->path);
+			};
+			const auto useProject = [&](const Project& uses)
+			{
+				for (const auto& [id, media] : uses.media)
+					use(media.path);
+				for (const auto& [id, track] : uses.trackById)
+					useTrack(track);
+			};
+			useProject(project);
+			for (const HistoryStep& step : history.steps())
+			{
+				for (const ObjectChange<MediaFile>& change : step.change.media)
+					for (const std::optional<MediaFile>* media : {&change.before, &change.after})
+						if (media->has_value())
+							use((*media)->path);
+				for (const ObjectChange<Track>& change : step.change.tracks)
+					for (const std::optional<Track>* track : {&change.before, &change.after})
+						if (track->has_value())
+							useTrack(**track);
+			}
+			const auto endsWith = [](const std::string& name, const std::string& end)
+			{ return name.size() > end.size() && name.compare(name.size() - end.size(), end.size(), end) == 0; };
+			std::vector<fs::path> folders;
+			std::error_code error;
+			if (!projectFile.empty())
+			{
+				const fs::path file = fs::u8path(projectFile);
+				folders.push_back(file.parent_path() / fs::u8path(file.stem().u8string() + " media"));
+				// The file may refer to files it doesn't embed. One that can't be read keeps every file.
+				if (fs::exists(file, error) || error)
+				{
+					try
+					{
+						useProject(loadDawProject(projectFile, {}, false));
+					}
+					catch (const std::exception& failure)
+					{
+						throw CommandError("can't tell which files " + projectFile + " uses: " + failure.what());
+					}
+				}
+			}
+			if (!settingsDirectory.empty())
+				for (const fs::directory_entry& entry :
+					fs::directory_iterator(settingsDirectory / "Track Presets", error))
+				{
+					if (entry.is_directory(error) && endsWith(entry.path().filename().u8string(), " media"))
+						folders.push_back(entry.path());
+				}
+			std::vector<std::pair<fs::path, fs::path>> unused;
+			for (const fs::path& folder : folders)
+				for (const fs::directory_entry& entry : fs::recursive_directory_iterator(folder, error))
+				{
+					if (!entry.is_regular_file(error))
+						continue;
+					std::string name = entry.path().filename().u8string();
+					if (name.find(".gbpeaks.") != std::string::npos)
+						continue;
+					if (endsWith(name, ".gbpeaks"))
+						name.resize(name.size() - std::string(".gbpeaks").size());
+					fs::path audio = entry.path().parent_path() / fs::u8path(name);
+					const auto identity = files::fileIdentity(audio);
+					if (!identity || used.count(*identity) == 0)
+						unused.emplace_back(entry.path(), std::move(audio));
+				}
+			std::sort(unused.begin(), unused.end());
+			return unused;
+		}
 	}
 
 	void ProjectModel::registerPoolCommands(Engine& engine, Jobs& jobs)
@@ -549,6 +638,7 @@ namespace gnubase::engine
 		const Json boolean = {{"type", "boolean"}};
 		const Json string = {{"type", "string"}};
 		const Json ids = {{"type", "array"}, {"items", integer}};
+		const Json strings = {{"type", "array"}, {"items", string}};
 		const auto result = [](const std::vector<std::string>& names)
 		{
 			Json properties = Json::object();
@@ -801,6 +891,53 @@ namespace gnubase::engine
 					file = project.media.erase(file);
 				}
 				return Json{{"clips", std::move(clips)}, {"media", std::move(media)}};
+			});
+
+		addControl(engine,
+			{"media.cleanup", 1,
+				"Lists the files that loads extracted and nothing uses (#1827): the files in the project's media "
+				"folder "
+				"(<name> media next to its project file) and in the track presets' (Track Presets/<name> media in the "
+				"settings folder) that neither the project, nor a step of its undo history, nor its project file has "
+				"as a media or freeze file, such as the numbered ones (2-kick.wav) that a load puts beside a file with "
+				"other content. A peak file goes with its audio file. With files, removes those of them that are "
+				"among these from the disk, which undo can't bring back. A project or track preset that loads again "
+				"extracts what it needs. A file that another project refers to without embedding it, which only "
+				"project.save with embedMedia false and track.export with copyMedia false write, counts as unused. "
+				"Returns files, the files unused or, with files, removed; size, their bytes; and failed, the files "
+				"that couldn't be removed.",
+				objectSchema({{"files", strings}}),
+				objectSchema({{"files", strings}, {"size", integer}, {"failed", strings}}, {"files", "size", "failed"}),
+				false},
+			[this](CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				// A peak file goes with its audio file, and the paths are compared as listed.
+				std::set<std::string> chosen;
+				for (const Json& path : parameters.value("files", Json::array()))
+					chosen.insert(path.get<std::string>());
+				Json listed = Json::array();
+				Json failed = Json::array();
+				std::uintmax_t size = 0;
+				for (const auto& [file, audio] : unusedFiles(m_project, m_history, m_file, m_settingsDirectory))
+				{
+					std::error_code error;
+					const std::uintmax_t bytes = fs::file_size(file, error);
+					const std::uintmax_t known = error ? 0 : bytes;
+					if (parameters.contains("files"))
+					{
+						if (chosen.count(file.u8string()) == 0 && chosen.count(audio.u8string()) == 0)
+							continue;
+						if (!fs::remove(file, error))
+						{
+							failed.push_back(file.u8string());
+							continue;
+						}
+					}
+					listed.push_back(file.u8string());
+					size += known;
+				}
+				return Json{{"files", std::move(listed)}, {"size", size}, {"failed", std::move(failed)}};
 			});
 
 		addControl(engine,
