@@ -26,6 +26,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -234,6 +235,48 @@ namespace gnubase::engine
 			bool m_open = false;
 		};
 
+		// The CRC-32s of the files that loads of this run extracted or compared, by path, with the size and write time
+		// they had then: a file that still has both isn't read again, so loading a project or a track preset again
+		// doesn't read every file it extracted before (#1827). Loads run on several threads, as jobs do.
+		// ponytail: in memory, so the first load after a start reads them; an index file would keep them longer.
+		struct KnownCrc
+		{
+			std::uintmax_t size = 0;
+			std::filesystem::file_time_type written;
+			mz_ulong crc = 0;
+		};
+
+		struct KnownCrcs
+		{
+			std::mutex mutex;
+			std::map<std::string, KnownCrc> files;
+		};
+
+		KnownCrcs& knownCrcs()
+		{
+			static KnownCrcs known;
+			return known;
+		}
+
+		std::optional<mz_ulong> knownCrc(
+			const std::string& path, std::uintmax_t size, std::filesystem::file_time_type written)
+		{
+			KnownCrcs& known = knownCrcs();
+			const std::scoped_lock lock(known.mutex);
+			const auto found = known.files.find(path);
+			if (found == known.files.end() || found->second.size != size || found->second.written != written)
+				return std::nullopt;
+			return found->second.crc;
+		}
+
+		void rememberCrc(
+			const std::string& path, std::uintmax_t size, std::filesystem::file_time_type written, mz_ulong crc)
+		{
+			KnownCrcs& known = knownCrcs();
+			const std::scoped_lock lock(known.mutex);
+			known.files[path] = {size, written, crc};
+		}
+
 		class ZipReader
 		{
 		public:
@@ -284,9 +327,16 @@ namespace gnubase::engine
 			{
 				mz_zip_archive_file_stat stat{};
 				std::error_code error;
+				const std::filesystem::path path = std::filesystem::u8path(target);
 				if (mz_zip_reader_file_stat(&m_zip, locate(name), &stat) == MZ_FALSE ||
-					std::filesystem::file_size(std::filesystem::u8path(target), error) != stat.m_uncomp_size || error)
+					std::filesystem::file_size(path, error) != stat.m_uncomp_size || error)
 					return false;
+				// Read before the file, so that a change while it is read gives it another time for the next load.
+				const std::filesystem::file_time_type written = std::filesystem::last_write_time(path, error);
+				if (error)
+					return false;
+				if (const std::optional<mz_ulong> known = knownCrc(target, stat.m_uncomp_size, written))
+					return *known == stat.m_crc32;
 				const detail::File file = detail::openFile(target, "rb");
 				if (!file)
 					return false;
@@ -295,18 +345,30 @@ namespace gnubase::engine
 				size_t read = 0;
 				while ((read = std::fread(buffer.data(), 1, buffer.size(), file.get())) > 0)
 					crc = mz_crc32(crc, buffer.data(), read);
-				return std::ferror(file.get()) == 0 && crc == stat.m_crc32;
+				if (std::ferror(file.get()) != 0)
+					return false;
+				rememberCrc(target, stat.m_uncomp_size, written, crc);
+				return crc == stat.m_crc32;
 			}
 
 			void extract(const std::string& name, const std::string& target)
 			{
 				const mz_uint index = locate(name);
-				const detail::File file = detail::openFile(target, "wb");
-				if (!file)
-					throw DawProjectError("can't create " + target + ": " + detail::lastError());
-				if (mz_zip_reader_extract_to_cfile(&m_zip, index, file.get(), 0) == MZ_FALSE ||
-					std::fflush(file.get()) != 0)
-					throw DawProjectError("can't extract " + name + " from " + m_path);
+				{
+					const detail::File file = detail::openFile(target, "wb");
+					if (!file)
+						throw DawProjectError("can't create " + target + ": " + detail::lastError());
+					if (mz_zip_reader_extract_to_cfile(&m_zip, index, file.get(), 0) == MZ_FALSE ||
+						std::fflush(file.get()) != 0)
+						throw DawProjectError("can't extract " + name + " from " + m_path);
+				}
+				// Closed, so that the write time is the one the next load sees.
+				mz_zip_archive_file_stat stat{};
+				std::error_code error;
+				const std::filesystem::file_time_type written =
+					std::filesystem::last_write_time(std::filesystem::u8path(target), error);
+				if (mz_zip_reader_file_stat(&m_zip, index, &stat) != MZ_FALSE && !error)
+					rememberCrc(target, stat.m_uncomp_size, written, stat.m_crc32);
 			}
 
 		private:
