@@ -29,6 +29,7 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `tool-draw.svg` — Draw events with a pencil.
 - `tool-line.svg` — Draw lines and automation curves.
 - `tool-audition.svg` — Audition the item under the pointer.
+- `tool-color.svg` — Colorize events with a paint bucket.
 - `track-mute.svg` — Mute the track.
 - `track-solo.svg` — Solo the track.
 - `track-record-arm.svg` — Arm the track for recording.

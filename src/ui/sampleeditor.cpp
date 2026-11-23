@@ -3,6 +3,8 @@
 
 #include "engine/time/tempomap.h"
 #include "ui/canvas.h"
+#include "ui/timeformat.h"
+#include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -17,6 +19,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <filesystem>
 #include <utility>
 
 namespace gnubase::ui
@@ -25,13 +28,14 @@ namespace gnubase::ui
 
 	namespace
 	{
-		constexpr std::array<std::pair<SampleTool, const char*>, 4> g_tools = {{
+		constexpr std::array<std::pair<SampleTool, const char*>, 5> g_tools = {{
 			{SampleTool::Range, "range"},
+			{SampleTool::Draw, "draw"},
 			{SampleTool::Zoom, "zoom"},
 			{SampleTool::Play, "play"},
 			{SampleTool::Scrub, "scrub"},
 		}};
-		constexpr std::array<const char*, 4> g_toolTitles = {"Range Selection", "Zoom", "Play", "Scrub"};
+		constexpr std::array<const char*, 5> g_toolTitles = {"Range Selection", "Draw", "Zoom", "Play", "Scrub"};
 
 		// Set up Window Layout's parts (p. 614): the class the root gets while one is hidden.
 		constexpr std::array<std::pair<const char*, const char*>, 3> g_layout = {{
@@ -72,6 +76,13 @@ namespace gnubase::ui
 		constexpr double g_zoomStep = 2.0;
 		constexpr double g_minScale = 1.0 / 16.0; // frames per dp: zoomed in to 16 dp per frame
 		constexpr double g_dragThreshold = 2.0;   // dp a hitpoint moves before a press drags it
+		constexpr std::array<std::pair<const char*, const char*>, 5> g_processes = {{
+			{"cut", "Cut"},
+			{"copy", "Copy"},
+			{"paste", "Paste"},
+			{"delete", "Delete"},
+			{"insertSilence", "Insert Silence"},
+		}};
 
 		std::string attribute(const Rml::Element& element, const char* name)
 		{
@@ -155,7 +166,7 @@ namespace gnubase::ui
 	}
 
 	SampleEditor::SampleEditor(EngineBinding& binding, Rml::Element& root)
-		: m_binding(binding), m_root(root.GetObserverPtr())
+		: m_binding(binding), m_root(root.GetObserverPtr()), m_closeEvent(g_dialogCloseEvent)
 	{
 		std::string tools;
 		for (size_t i = 0; i < g_tools.size(); ++i)
@@ -175,6 +186,9 @@ namespace gnubase::ui
 		for (const auto& [select, title] : g_selects)
 			selects += std::string(R"(<button class="se-select" select=")") + select + R"(">)" + title + "</button>";
 		std::string creates;
+		std::string processes;
+		for (const auto& [operation, title] : g_processes)
+			processes += std::string(R"(<menuitem process=")") + operation + R"(">)" + title + "</menuitem>";
 		for (const auto& [create, title] : g_creates)
 			creates += std::string(R"(<button class="se-create" create=")") + create + R"(">)" + title + "</button>";
 		const auto filter = [](const char* id, const char* label, const char* range)
@@ -209,6 +223,7 @@ namespace gnubase::ui
 			R"(<button id="se-warp-reset">Reset</button>)";
 		root.SetInnerRML(R"(<div class="sample-editor empty"><div class="toolbar sample-editor-toolbar">)" + tools +
 			R"(<button id="se-zero-crossing">Snap to Zero Crossing</button>)"
+			R"(<button id="se-zoom-menu" menu="se-zoom-actions">Zoom</button>)"
 			R"(<div id="toolbar-quantize" class="toolbar-quantize"/><div class="spacer"/>)" +
 			layout + R"(</div><div class="info-line se-info">)" + info +
 			R"(</div><div class="se-overview"><waveform class="se-overview-wave"/><div class="se-overview-event"/>)"
@@ -219,17 +234,40 @@ namespace gnubase::ui
 			R"(<button id="se-locate">Locate Selection</button><button id="se-loop">Loop Selection</button>)"
 			R"(<button id="se-create-sampler">Create Sampler Track</button>)"
 			R"(<div class="section-header">Process</div>)"
+			R"(<button id="se-basic-commands" menu="se-process-menu">Basic Commands</button>)"
+			R"(<div id="se-process-message"/>)"
 			R"(<button id="se-range-region">Event or Range as Region</button><button id="se-flatten">Flatten</button>)" +
 			hitpoints + warpSection +
-			R"(</div><div class="se-main"><div class="se-display"><waveform class="se-wave"/>)"
+			R"(</div><div class="se-main"><div class="se-canvas"><div class="se-timeline">)"
+			R"(<button id="se-level-menu" menu="se-level-units">Level</button><ruler class="se-ruler"/>)"
+			R"(<div class="se-zoom-spacer"/></div>)"
+			R"(<div class="se-wave-area"><div class="se-level"/><div class="se-display"><waveform class="se-wave"/>)"
 			R"(<div class="se-outside se-before"/><div class="se-outside se-after"/><div class="se-region-shown"/>)"
 			R"(<div class="se-selection"/><div class="se-hitpoints"/><div class="se-warp-markers"/>)"
-			R"(<div class="se-snap-point"/></div>)"
+			R"(<div class="se-snap-point"/><div class="se-region-handle" edge="start"/>)"
+			R"(<div class="se-region-handle" edge="end"/><div class="se-half-axes"/></div>)"
+			R"(<fader id="se-vertical-zoom" min="-6" max="0" default="0" step="0.1"/></div>)"
+			R"(<div class="se-scroll-controls"><slider id="se-scroll" min="0" max="1" default="0" step="0.01"/>)"
+			R"(<slider id="se-horizontal-zoom" min="0" max="1" default="0" step="0.01"/></div></div>)"
 			R"(<div class="se-regions"><div class="toolbar se-regions-toolbar">)"
 			R"(<button id="se-add-region">Add Region</button><button id="se-remove-region">Remove Region</button>)"
 			R"(<button id="se-select-region">Select Region</button><button id="se-play-region">Play Region</button>)"
 			R"(</div><div class="se-region-list"/></div>)"
-			R"(</div></div></div>)");
+			R"(</div></div><menu id="se-process-menu">)" +
+			processes +
+			R"(</menu>)"
+			R"(<menu id="se-level-units"><menuitem level-unit="percent">Percent</menuitem>)"
+			R"(<menuitem level-unit="db">dB</menuitem><menuitem id="se-half-axis">Show Half Level Axis</menuitem></menu>)"
+			R"(<menu id="se-zoom-actions"><menuitem zoom="in">Zoom In</menuitem>)"
+			R"(<menuitem zoom="out">Zoom Out</menuitem><menuitem zoom="full">Zoom Full</menuitem>)"
+			R"(<menuitem zoom="selection">Zoom to Selection</menuitem>)"
+			R"(<menuitem zoom="selectionHorizontal">Zoom to Selection (Horiz.)</menuitem>)"
+			R"(<menuitem zoom="event">Zoom to Event</menuitem>)"
+			R"(<menuitem zoom="inVertical">Zoom In Vertically</menuitem>)"
+			R"(<menuitem zoom="outVertical">Zoom Out Vertically</menuitem>)"
+			R"(<menuitem zoom="inWaveform">Zoom In On Waveform Vertically</menuitem>)"
+			R"(<menuitem zoom="outWaveform">Zoom Out Of Waveform Vertically</menuitem>)"
+			R"(<menuitem zoom="undo">Undo Zoom</menuitem><menuitem zoom="redo">Redo Zoom</menuitem></menu></div>)");
 		for (const Rml::EventId event : g_rootEvents)
 			root.AddEventListener(event, this);
 		for (const Rml::EventId event : g_documentEvents)
@@ -242,6 +280,7 @@ namespace gnubase::ui
 			m_subscriptions.push_back(m_binding.on(event,
 				[this, reset = std::string(event) == "project.reset"](const engine::Event& changed)
 				{
+					cancelQuestion();
 					if (changedOnly(changed, {"channel.changed"}))
 						return; // a step that changed only channels, which it doesn't show (#1881)
 					requestProject();
@@ -251,8 +290,27 @@ namespace gnubase::ui
 		m_subscriptions.push_back(m_binding.on("sampleEditor.changed",
 			[this](const engine::Event& event)
 			{
+				cancelQuestion();
 				m_view = event.data;
 				show();
+			}));
+		m_subscriptions.push_back(m_binding.on("job.finished",
+			[this](const engine::Event& event)
+			{
+				const Json& job = event.data.at("job");
+				if (job.at("id") != m_processJob)
+					return;
+				m_processJob = 0;
+				m_drawSamples.clear();
+				if (job.at("state") == "done" && m_processParameters.at("operation") == "draw" &&
+					m_processParameters.at("event") == m_event)
+					m_binding.send("sampleEditor.set",
+						{{"selectionStart", m_processParameters.at("start")},
+							{"selectionEnd", m_processParameters.at("end")}});
+				setInner(m_root ? m_root->QuerySelector("#se-process-message") : nullptr,
+					Rml::StringUtilities::EncodeRml(
+						job.at("error").is_string() ? job.at("error").get<std::string>() : ""));
+				render();
 			}));
 		for (const char* event : {"media.peaksProgress", "media.peaksReady"})
 			m_subscriptions.push_back(m_binding.on(event,
@@ -270,6 +328,11 @@ namespace gnubase::ui
 
 	SampleEditor::~SampleEditor()
 	{
+		if (m_question)
+		{
+			m_question->RemoveEventListener(m_closeEvent, this);
+			m_question->GetOwnerDocument()->Close();
+		}
 		if (Rml::Element* root = m_root.get())
 		{
 			for (const Rml::EventId event : g_rootEvents)
@@ -279,6 +342,78 @@ namespace gnubase::ui
 			for (const Rml::EventId event : g_captureEvents)
 				root->RemoveEventListener(event, this, true);
 		}
+	}
+
+	bool SampleEditor::isProcessCommand(const std::string& command)
+	{
+		return std::any_of(g_processes.begin(), g_processes.end(),
+			[&](const auto& item) { return command == std::string("edit.") + item.first; });
+	}
+
+	bool SampleEditor::canProcess() const
+	{
+		return hasEvent() && m_selectionStart < m_selectionEnd && !m_processPending && m_processJob == 0 && !m_question;
+	}
+
+	void SampleEditor::process(const std::string& operation)
+	{
+		if (canProcess())
+			sendProcess(
+				{{"event", m_event}, {"operation", operation}, {"start", m_selectionStart}, {"end", m_selectionEnd}});
+	}
+
+	void SampleEditor::cancelQuestion()
+	{
+		++m_processEpoch;
+		if (m_question)
+		{
+			auto* dialog = m_question->GetOwnerDocument();
+			m_question->RemoveEventListener(g_dialogCloseEvent, this);
+			m_question.reset();
+			closeDialog(*dialog, "cancel");
+			m_drawSamples.clear();
+			renderDraw();
+		}
+	}
+
+	void SampleEditor::sendProcess(const Json& parameters)
+	{
+		m_processPending = true;
+		// Keep the clicked menu item enabled until its default action has closed the menu.
+		setInner(m_root->QuerySelector("#se-process-message"), "");
+		m_binding.send("sampleEditor.process", parameters,
+			[this, alive = std::weak_ptr<bool>(m_alive), epoch = m_processEpoch, parameters = parameters](
+				const engine::Result& result)
+			{
+				if (alive.expired())
+					return;
+				m_processPending = false;
+				if (result.ok())
+				{
+					m_processJob = result.value.at("job").at("id").get<uint64_t>();
+					m_processParameters = parameters;
+				}
+				else if (epoch == m_processEpoch && result.error == "choose sharedCopies: newVersion or all")
+				{
+					const auto path = std::filesystem::u8path(m_root->GetOwnerDocument()->GetSourceURL())
+										  .replace_filename("sample-editor-shared-copy.rml");
+					if (auto* dialog = m_root->GetContext()->LoadDocument(path.generic_u8string()))
+					{
+						m_processParameters = parameters;
+						m_question = dialog->GetObserverPtr();
+						dialog->AddEventListener(g_dialogCloseEvent, this);
+						dialog->Show(Rml::ModalFlag::Modal);
+					}
+				}
+				else if (epoch == m_processEpoch)
+				{
+					setInner(
+						m_root->QuerySelector("#se-process-message"), Rml::StringUtilities::EncodeRml(result.error));
+				}
+				if (!result.ok() && !m_question)
+					m_drawSamples.clear();
+				render();
+			});
 	}
 
 	void SampleEditor::setTool(SampleTool tool)
@@ -317,6 +452,7 @@ namespace gnubase::ui
 				if (result.ok())
 				{
 					m_project = result.value;
+					m_time = projectTime(m_project);
 					requestView(); // the view has the event's new section, or that it is gone
 				}
 				if (std::exchange(m_stale, false))
@@ -340,6 +476,12 @@ namespace gnubase::ui
 	{
 		if (m_view.empty() || !m_project.contains("audioEvents"))
 			return;
+		if (m_view.at("event") != m_event || (m_drag == Drag::Draw && m_view.at("media") != m_media))
+		{
+			if (m_drag == Drag::Draw)
+				m_drag = Drag::None;
+			m_drawSamples.clear();
+		}
 		m_event = m_view.at("event").get<uint64_t>();
 		m_media = m_view.at("media").get<uint64_t>();
 		m_length = m_view.at("length").get<int64_t>();
@@ -366,6 +508,10 @@ namespace gnubase::ui
 		if (hasEvent() && m_fitted != m_event && displayWidth() > 0.0)
 		{
 			m_fitted = m_event;
+			m_scale = 0.0;
+			m_gain = 1.0;
+			m_zoomUndo.clear();
+			m_zoomRedo.clear();
 			fit(0.0, static_cast<double>(m_length)); // Zoom Full, as clip-based zoom has it (p. 623)
 		}
 		render();
@@ -439,10 +585,7 @@ namespace gnubase::ui
 		const double width = displayWidth();
 		if (!(width > 0.0) || !(to > from))
 			return;
-		m_scale = std::max((to - from) / width, g_minScale);
-		m_start = from;
-		render();
-		ask(false);
+		setZoom({from, std::max((to - from) / width, g_minScale), m_gain});
 	}
 
 	void SampleEditor::zoom(double factor, double around)
@@ -452,11 +595,74 @@ namespace gnubase::ui
 			return;
 		const double full = static_cast<double>(m_length) / width;
 		const double scale = std::clamp(m_scale / factor, g_minScale, std::max(full, g_minScale));
-		m_start = std::clamp(around - ((around - m_start) * scale / m_scale), 0.0,
+		const double start = std::clamp(around - ((around - m_start) * scale / m_scale), 0.0,
 			std::max(0.0, static_cast<double>(m_length) - (width * scale)));
-		m_scale = scale;
+		setZoom({start, scale, m_gain});
+	}
+
+	void SampleEditor::setZoom(std::array<double, 3> view, bool remember)
+	{
+		const std::array<double, 3> before = {m_start, m_scale, m_gain};
+		if (view == before)
+			return;
+		if (remember && m_scale > 0.0)
+		{
+			m_zoomUndo.push_back(before);
+			m_zoomRedo.clear();
+		}
+		m_start = view[0];
+		m_scale = view[1];
+		m_gain = view[2];
 		render();
 		ask(false);
+	}
+
+	void SampleEditor::zoomAction(const std::string& action)
+	{
+		if (!hasEvent())
+			return;
+		if (action == "undo" || action == "redo")
+		{
+			auto& from = action == "undo" ? m_zoomUndo : m_zoomRedo;
+			auto& to = action == "undo" ? m_zoomRedo : m_zoomUndo;
+			if (!from.empty())
+			{
+				to.push_back({m_start, m_scale, m_gain});
+				const auto view = from.back();
+				from.pop_back();
+				setZoom(view, false);
+			}
+			return;
+		}
+		if (action == "in" || action == "out")
+		{
+			m_binding.send("transport.get", Json::object(),
+				[this, alive = std::weak_ptr<bool>(m_alive), event = m_event,
+					factor = action == "in" ? g_zoomStep : 1.0 / g_zoomStep](const engine::Result& result)
+				{
+					if (alive.expired() || !result.ok() || !hasEvent() || m_event != event || !(m_ratio > 0.0))
+						return;
+					const double width = displayWidth();
+					if (!(width > 0.0) || !(m_scale > 0.0))
+						return;
+					const double frame = std::clamp(
+						(result.value.at("position").get<double>() - static_cast<double>(m_clipStart)) / m_ratio, 0.0,
+						static_cast<double>(m_length));
+					const double full = static_cast<double>(m_length) / width;
+					const double scale = std::clamp(m_scale / factor, g_minScale, std::max(full, g_minScale));
+					setZoom({frame - (width * scale / 2.0), scale, m_gain});
+				});
+			return;
+		}
+		if (action == "full" || action == "selection")
+			fit(0.0, static_cast<double>(m_length));
+		else if (action == "event")
+			fit(static_cast<double>(m_offset), static_cast<double>(m_offset + m_eventLength));
+		else if (action == "selectionHorizontal")
+			fit(static_cast<double>(m_selectionStart), static_cast<double>(m_selectionEnd));
+		else
+			setZoom({m_start, m_scale,
+				std::clamp(m_gain * (action == "inVertical" || action == "inWaveform" ? 2.0 : 0.5), 1.0, 64.0)});
 	}
 
 	void SampleEditor::reveal(double from, double to)
@@ -485,7 +691,24 @@ namespace gnubase::ui
 		Rml::Element* editor = root != nullptr ? root->QuerySelector(".sample-editor") : nullptr;
 		if (editor == nullptr)
 			return;
+		renderDraw();
 		setClass(editor, "empty", !hasEvent());
+		const double full = std::max(g_minScale, static_cast<double>(m_length) / std::max(1.0, displayWidth()));
+		const double scrollRoom = std::max(0.0, static_cast<double>(m_length) - (displayWidth() * m_scale));
+		setValue(root->QuerySelector("#se-scroll"), scrollRoom > 0.0 ? m_start / scrollRoom : 0.0);
+		setValue(root->QuerySelector("#se-horizontal-zoom"),
+			full > g_minScale && m_scale > 0.0 ? std::log(full / m_scale) / std::log(full / g_minScale) : 0.0);
+		setValue(root->QuerySelector("#se-vertical-zoom"), -std::log2(m_gain));
+		renderAxes();
+		Rml::ElementList items;
+		root->QuerySelectorAll(items, "#se-basic-commands, #se-process-menu [process]");
+		for (Rml::Element* item : items)
+		{
+			if (canProcess())
+				item->RemoveAttribute("disabled");
+			else
+				item->SetAttribute("disabled", true);
+		}
 		bool zeroCrossing = false;
 		if (m_project.contains("snap"))
 			zeroCrossing = m_project.at("snap").value("zeroCrossing", false);
@@ -566,6 +789,7 @@ namespace gnubase::ui
 			wave->SetAttribute("start", m_start);
 			wave->SetAttribute("scale", m_scale);
 			wave->SetAttribute("media", m_media);
+			wave->SetAttribute("gain", m_gain);
 		}
 		place(root->QuerySelector(".se-before"), m_start, static_cast<double>(m_offset));
 		place(root->QuerySelector(".se-after"), static_cast<double>(m_offset + m_eventLength),
@@ -582,9 +806,59 @@ namespace gnubase::ui
 		if (shown != nullptr)
 			place(root->QuerySelector(".se-region-shown"), shown->at("start").get<double>(),
 				shown->at("end").get<double>());
+		for (const char* edge : {"start", "end"})
+		{
+			Rml::Element* handle = root->QuerySelector(std::string(".se-region-handle[edge=") + edge + "]");
+			setClass(handle, "off", shown == nullptr);
+			if (shown != nullptr)
+				place(handle,
+					m_drag == Drag::Region && m_regionEdge == edge ? m_dragged : shown->at(edge).get<double>(),
+					m_drag == Drag::Region && m_regionEdge == edge ? m_dragged : shown->at(edge).get<double>());
+		}
 		renderRegions();
 		renderHitpoints();
 		renderWarp();
+	}
+
+	void SampleEditor::renderAxes()
+	{
+		if (auto* ruler = dynamic_cast<Ruler*>(m_root->QuerySelector(".se-ruler")))
+		{
+			const TimeFormat format = timeFormatFromName(m_project.value("timeFormat", std::string("barsBeats")))
+										  .value_or(TimeFormat::BarsBeats);
+			ruler->setScale(rulerScale(format, m_time));
+			ruler->SetAttribute("start",
+				Rml::CreateString(
+					"%.17g", (static_cast<double>(m_clipStart) + (m_start * m_ratio)) / m_time.sampleRate));
+			ruler->SetAttribute("scale", Rml::CreateString("%.17g", m_scale * m_ratio / m_time.sampleRate));
+		}
+		int channels = 0;
+		for (const Json& media : m_project.value("media", Json::array()))
+			if (media.at("id") == m_media)
+				channels = media.at("channels").get<int>();
+		std::string levels;
+		for (int channel = 0; channel < channels; ++channel)
+		{
+			levels += R"(<div class="se-level-channel text-small">)";
+			for (int mark = 0; mark < 5; ++mark)
+			{
+				const double value = (1.0 - (0.5 * mark)) / m_gain;
+				std::string label = Rml::CreateString("%.3g%%", value * 100.0);
+				if (m_levelDb)
+					label = value == 0.0 ? "-inf" : Rml::CreateString("%.3g dB", 20.0 * std::log10(std::abs(value)));
+				levels += std::string(mark == 0 ? R"(<span class="se-level-top">)" : "<span>") + label + "</span>";
+			}
+			levels += "</div>";
+		}
+		setInner(m_root->QuerySelector(".se-level"), levels);
+		std::string axes;
+		if (m_halfAxis)
+			for (int channel = 0; channel < channels; ++channel)
+				for (const double level : {0.25, 0.75})
+					axes += R"(<div class="se-half-axis" style="top:)" +
+						Rml::CreateString("%.8g", (channel + level) * 100.0 / channels) + R"(%;"/> )";
+		setInner(m_root->QuerySelector(".se-half-axes"), axes);
+		setClass(m_root->QuerySelector("#se-half-axis"), "checked", m_halfAxis);
 	}
 
 	// The Warp section's switches and the audio tempo, and the clip's warp markers in the display: a line each
@@ -847,6 +1121,23 @@ namespace gnubase::ui
 
 	void SampleEditor::ProcessEvent(Rml::Event& event)
 	{
+		if (event.GetType() == g_dialogCloseEvent && m_question && event.GetCurrentElement() == m_question.get())
+		{
+			m_question->RemoveEventListener(g_dialogCloseEvent, this);
+			m_question.reset();
+			const auto answer = event.GetParameter<Rml::String>("result", "cancel");
+			if (answer == "newVersion" || answer == "all")
+			{
+				m_processParameters["sharedCopies"] = answer;
+				sendProcess(m_processParameters);
+			}
+			else
+			{
+				m_drawSamples.clear();
+			}
+			render();
+			return;
+		}
 		Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr || !m_root)
 			return;
@@ -908,6 +1199,28 @@ namespace gnubase::ui
 	void SampleEditor::click(Rml::Element& target)
 	{
 		Rml::Element* root = m_root.get();
+		if (target.GetId() == "se-half-axis")
+		{
+			m_halfAxis = !m_halfAxis;
+			renderAxes();
+			return;
+		}
+		if (const Rml::Element* item = withAttribute(&target, "zoom", root))
+		{
+			zoomAction(attribute(*item, "zoom"));
+			return;
+		}
+		if (const Rml::Element* item = withAttribute(&target, "level-unit", root))
+		{
+			m_levelDb = attribute(*item, "level-unit") == "db";
+			renderAxes();
+			return;
+		}
+		if (const Rml::Element* item = withAttribute(&target, "process", root))
+		{
+			process(attribute(*item, "process"));
+			return;
+		}
 		if (const Rml::Element* button = withAttribute(&target, "se-tool", root))
 		{
 			for (const auto& [tool, name] : g_tools)
@@ -1137,6 +1450,26 @@ namespace gnubase::ui
 	void SampleEditor::changed(Rml::Event& event, Rml::Element& target)
 	{
 		const std::string id = attribute(target, "id");
+		if (hasEvent() && (id == "se-scroll" || id == "se-horizontal-zoom" || id == "se-vertical-zoom"))
+		{
+			const double value = event.GetParameter<float>("value", 0.0F);
+			const int gesture = event.GetParameter<int>("gesture", 0);
+			const bool remember = gesture == 0 || gesture != m_zoomGesture;
+			m_zoomGesture = gesture;
+			if (id == "se-vertical-zoom")
+			{
+				setZoom({m_start, m_scale, std::exp2(-value)}, remember);
+			}
+			else
+			{
+				const double width = std::max(1.0, displayWidth());
+				const double full = std::max(g_minScale, static_cast<double>(m_length) / width);
+				const double scale = id == "se-horizontal-zoom" ? full * std::pow(g_minScale / full, value) : m_scale;
+				const double room = std::max(0.0, static_cast<double>(m_length) - (width * scale));
+				setZoom({id == "se-scroll" ? room * value : std::min(m_start, room), scale, m_gain}, remember);
+			}
+			return;
+		}
 		if (hasEvent() && id == "se-audio-tempo")
 		{
 			m_binding.send(
@@ -1234,6 +1567,12 @@ namespace gnubase::ui
 			return;
 		const double frame = frameAt(event);
 		m_pressed = m_dragged = frame;
+		if (const Rml::Element* handle = withClass(&target, "se-region-handle", root))
+		{
+			m_regionEdge = attribute(*handle, "edge");
+			m_drag = Drag::Region;
+			return;
+		}
 		// The snap point can be dragged with any tool (p. 628).
 		if (withClass(&target, "se-snap-point", root) != nullptr)
 		{
@@ -1252,6 +1591,14 @@ namespace gnubase::ui
 		}
 		switch (m_tool)
 		{
+		case SampleTool::Draw:
+			if (m_scale / dpRatio() <= 1.0 && !m_processPending && m_processJob == 0 && !m_question)
+			{
+				m_drawSamples.clear();
+				m_drag = Drag::Draw;
+				drawSamples(event);
+			}
+			break;
 		case SampleTool::Range:
 			// Shift and a click moves the nearer end of the selection range (p. 635).
 			if (event.GetParameter<int>("shift_key", 0) != 0 && m_selectionStart < m_selectionEnd)
@@ -1278,6 +1625,75 @@ namespace gnubase::ui
 		}
 	}
 
+	void SampleEditor::drawSamples(const Rml::Event& event)
+	{
+		auto* wave = dynamic_cast<Waveform*>(m_root->QuerySelector(".se-wave"));
+		if (wave == nullptr || wave->channels().empty() || wave->GetClientHeight() <= 0.0F)
+			return;
+		const double height = wave->GetClientHeight() / static_cast<double>(wave->channels().size());
+		const double y = event.GetParameter<float>("mouse_y", 0.0F) - wave->GetAbsoluteTop();
+		if (m_drawSamples.empty())
+			m_drawChannel =
+				static_cast<int>(std::clamp(y / height, 0.0, static_cast<double>(wave->channels().size() - 1)));
+		const auto frame = std::clamp<int64_t>(std::llround(frameAt(event)), 0, m_length - 1);
+		const auto value =
+			static_cast<float>(std::clamp((1.0 - (2.0 * ((y / height) - m_drawChannel))) / m_gain, -1.0, 1.0));
+		if (m_drawSamples.empty())
+		{
+			m_drawSamples[frame] = value;
+		}
+		else
+		{
+			const int64_t first = std::min(frame, m_drawSamples.begin()->first);
+			const int64_t last = std::max(frame, m_drawSamples.rbegin()->first);
+			if (last - first >= 65536)
+				return;
+			const float previous = m_drawSamples.at(m_drawLast);
+			for (int64_t at = std::min(frame, m_drawLast); at <= std::max(frame, m_drawLast); ++at)
+			{
+				const double fraction = frame == m_drawLast
+					? 1.0
+					: static_cast<double>(at - m_drawLast) / static_cast<double>(frame - m_drawLast);
+				m_drawSamples[at] = static_cast<float>(previous + ((value - previous) * fraction));
+			}
+		}
+		m_drawLast = frame;
+		renderDraw();
+	}
+
+	void SampleEditor::renderDraw()
+	{
+		Rml::Element* display = m_root ? m_root->QuerySelector(".se-display") : nullptr;
+		if (display == nullptr)
+			return;
+		auto* curve = dynamic_cast<Curve*>(display->QuerySelector(".se-draw-stroke"));
+		const auto* wave = dynamic_cast<Waveform*>(display->QuerySelector(".se-wave"));
+		if (!hasEvent() || m_drawSamples.empty() || wave == nullptr || wave->channels().empty())
+		{
+			if (curve != nullptr)
+				display->RemoveChild(curve);
+			return;
+		}
+		if (curve == nullptr)
+		{
+			curve = dynamic_cast<Curve*>(display->AppendChild(display->GetOwnerDocument()->CreateElement("curve")));
+			if (curve == nullptr)
+				return;
+			curve->SetClass("se-draw-stroke", true);
+			curve->setVirginTerritory(true);
+		}
+		const auto channels = static_cast<double>(wave->channels().size());
+		curve->SetProperty(Rml::PropertyId::Top, percent(100.0 * m_drawChannel / channels));
+		curve->SetProperty(Rml::PropertyId::Height, percent(100.0 / channels));
+		curve->SetAttribute("start", m_start);
+		curve->SetAttribute("scale", m_scale);
+		std::vector<CurvePoint> points;
+		points.reserve(m_drawSamples.size());
+		for (const auto& [frame, value] : m_drawSamples)
+			points.push_back({static_cast<double>(frame), std::clamp(0.5 + (0.5 * value * m_gain), 0.0, 1.0)});
+		curve->setPoints(std::move(points), m_drawSamples.size() == 1);
+	}
+
 	void SampleEditor::move(Rml::Event& event)
 	{
 		if (m_drag == Drag::None || !hasEvent() || !m_root)
@@ -1297,7 +1713,11 @@ namespace gnubase::ui
 			return;
 		}
 		m_dragged = frameAt(event);
-		if (m_drag == Drag::Scrub)
+		if (m_drag == Drag::Draw)
+		{
+			drawSamples(event);
+		}
+		else if (m_drag == Drag::Scrub)
 		{
 			scrub(m_dragged);
 		}
@@ -1319,7 +1739,33 @@ namespace gnubase::ui
 		}
 		if (drag == Drag::Overview)
 			return;
+		if (drag == Drag::Draw)
+		{
+			drawSamples(event);
+			Json samples = Json::array();
+			for (const auto& [frame, value] : m_drawSamples)
+				samples.push_back(value);
+			if (!samples.empty())
+				sendProcess({{"event", m_event}, {"operation", "draw"}, {"start", m_drawSamples.begin()->first},
+					{"end", m_drawSamples.rbegin()->first + 1}, {"channel", m_drawChannel}, {"samples", samples}});
+			return;
+		}
 		m_dragged = frameAt(event);
+		if (drag == Drag::Region)
+		{
+			if (const Json* selected = region(m_region);
+				selected != nullptr && std::abs(m_dragged - m_pressed) / m_scale >= g_dragThreshold)
+			{
+				const int64_t frame = std::clamp<int64_t>(std::llround(m_dragged),
+					m_regionEdge == "start" ? 0 : selected->at("start").get<int64_t>() + 1,
+					m_regionEdge == "end" ? m_length : selected->at("end").get<int64_t>() - 1);
+				if (frame != selected->at(m_regionEdge).get<int64_t>())
+					m_binding.send(
+						"clip.setRegion", {{"clip", m_view.at("clip")}, {"region", m_region}, {m_regionEdge, frame}});
+			}
+			render();
+			return;
+		}
 		if (drag == Drag::Hitpoint)
 		{
 			// A press without a drag leaves it where it is; moved, it is locked (p. 640).

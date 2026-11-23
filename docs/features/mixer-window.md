@@ -67,24 +67,29 @@ control's last step answered, its strip shows the engine's value; a refused one 
 - **Visibility and filter** (pp. 442, 454–456). The channel type filter's menu has a check item per type; the agents'
   menu has Show All Channels, which shows every hidden channel again. In a window, the left zone's Visibility tab
   (`Mixer::showVisibility`) has a toggle button per channel (`button.mixer-visibility-item[visibility=<id>]`), checked
-  while the mixer shows it. Each sends `mixer.set` for its own mixer. The lower zone's mixer follows the project
-  window's track visibility, and a window does with Sync Visibility of Project and Mixer
-  ([track-visibility.md](track-visibility.md)).
+  while the mixer shows it. Each sends `mixer.set` for its own mixer, and the mixer keeps the change at once, so that
+  changes made before the engine answers all count; it reads its view again once the last is answered, and ignores that
+  answer while a newer change is still out. The lower zone's mixer follows the project window's track visibility, and a
+  window does with Sync Visibility of Project and Mixer ([track-visibility.md](track-visibility.md)).
 - **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the left zone (in a
   window) and the strips' sections Pictures, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them, with
   Show All, Reset All and presets ([docking.md](docking.md)); the layout is the user setting
   `ui.layout`, per window (`mixer1` to `mixer4`, and `project` for the lower zone's).
 - **Order** (p. 496). A channel's name dragged onto another channel takes its place: its track moves into that
   track's folder with `track.move`, after it when it came from the left, before it otherwise, so the track list
-  follows. Busses keep their places, and a folder doesn't move into itself.
+  follows. Busses keep their places, and a folder doesn't move into itself. Any mouse button release in the window
+  ends the drag, also one outside the mixer.
 - **Track colors** (p. 1621). A strip's name shows its track's color, which is user data: code sets it as the name's
   `background-color` (and the `color` attribute), and marks the name `.colored`, and `.bright` where dark text has
   more contrast over the color than light text (WCAG 2's relative luminance). Every theme gives the text over it
   ([themes.md](themes.md)). Busses and tracks without a color show the theme's.
-- **Notes and pictures** (p. 497). The notepad shows the channel's notes; what is typed is sent with `channel.set`
-  when the field loses the focus, unless another project came in the meantime (`project.reset`), which drops it, as
-  the inspector does. The picture section shows the track's picture (an `<img>`, or an `<svg>` for SVG files); a
-  double click opens the OS's file dialog for a picture, then `track.set`.
+- **Notes and pictures** (p. 497). The notepad shows the channel's notes; what is typed is sent with `channel.set` when
+  the field loses the focus: also on Escape (p. 498), before its strip is made again or the mixer goes (its window
+  closing), and before File > Save, Save As and Save New Version, which leave the text fields of every window
+  (`ui::ProjectFiles`). Open, New, Revert and Quit leave them too before they ask whether the project has unsaved
+  changes, so a note still being typed counts as one. Another project that came in the meantime (`project.reset`) drops
+  it, as the inspector does. The picture section shows the track's picture (an `<img>`, or an `<svg>` for SVG files); a
+  double click opens the OS's file dialog for a picture, in the mixer's window, then `track.set`.
 
 ## Windows and the lower zone
 
@@ -93,18 +98,37 @@ control's last step answered, its strip shows the engine's value; a refused one 
   `window.mixer2` to `window.mixer4` (Studio > Mixer 2 to 4) the others, each with its own view and layout. Like every
   window, each opens on any monitor and renders at its monitor's scale (architecture.md, "UI shell"). The left zone
   has the Visibility tab, a panel (`mixer1Visibility` to `mixer4Visibility`) of the docking system; Tab moves the
-  focus between the zones (focus zones `left` and `mixer`). A window the user closes lets go of its mixer.
+  focus between the zones (focus zones `left` and `mixer`); in a window of its own, it opens and closes with its mixer
+  window. A window the user closes lets go of its mixer.
 - **The lower zone's mixer** (pp. 434–436): the project window's Mixer panel, with the view `lower`.
   `window.lowerZoneMixer` (Alt+F3, Studio > Mixer in Project Window) shows it as the lower zone's tab, or hides the
   lower zone while it shows it; while the panel is in a window of its own, it brings that window to the front with the
   focus. Its toolbar has no left zone button: the project window's left zone isn't the mixer's.
+
+## Channel meters
+
+An audio channel's strip has its meter next to the fader (`.mixer-meter`, reference manual p. 468): a `<meter>` per
+audio channel of the channel's meter (both sides of a mono channel on a stereo destination), -60 to +6 dB, with the
+peak since the last frame and its peak mark, and under it, beside the fader's volume, the Meter Peak
+Level (`.mixer-peak`), the highest of those maxima, which a click resets: every channel's (`meter.reset` with
+`meters` `channels`), not the master meter's. The bars come once the engine measured the channel, after it first
+played. The mixers read them through `ui::MeterReader`, the UI's one reader of the meters, which the right zone's meter
+display shares ([metering.md](metering.md)); MIDI channels, VCA faders and busses have no meter yet.
+
+A right click on a meter opens its Global Meter Settings (`#mixer-meter-menu`, p. 467), the user settings that every
+mixer's meters follow: Meter Peak - Hold Peaks (`meter.holdPeaks`, on by default) shows the peak marks; Meter Peak -
+Hold Forever (`meter.holdForever`) makes a mark the peak maximum, until a reset; without it a mark holds a peak for the
+Meters' Peak Hold Time (`meter.peakHoldTime`, 500 to 30000 ms, 2000 by default, on the preferences' Metering page,
+p. 1614) and then falls to the level, and a reset starts it again. The UI holds the marks, from the peaks of each frame.
+Reset Meters resets the channels' maxima, as a click on the Meter Peak Level does. Meter Position (Input, Post-Fader,
+Post-Panner) is not there yet: the engine meters after the fader, the panner and muting.
 
 ## Not yet
 
 Channel selection and the agents and Move Selected Channels commands that work on it, dragging several channels at
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
 the right zone; the channel overview, the meter bridge, Channel Latency, the routing and inserts sections (#113) and the
-channel meters; Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
+channel meters' Meter Position and Meters' Fallback, meter colors and clipping indicators (pp. 467-468, [metering.md](metering.md)); Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
 windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspaces.md)).
 
 ## Checks
@@ -117,8 +141,12 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
   once; the fader, the dB text and the mute and solo buttons both ways; two windows, the Visibility tab and the type
   filter hiding channels in one window only, Show All Channels, and `mixer.set` from the engine; Alt+F3 showing the
   lower zone's mixer with its own view and hiding the zone again; a closed window letting go of its mixer; the setup
-  pane's Pictures, Notepad and Fader, notes from the engine and typed in the notepad, and dropped when another
-  project loads, a picture shown and removed, and channel names dragged onto others reordering the tracks, while
+  pane's Pictures, Notepad and Fader, notes from the engine and typed in the notepad, and dropped when another project
+  loads, kept on Escape, a save from the project window, a strip made again and the window closing, a note being typed
+  making Revert ask about unsaved changes, a picture shown and removed, chosen with a double click in the mixer window's
+  file dialog, two visibility changes within one step, a name drag ended outside the mixer moving nothing, the
+  Visibility tab in a window of its own opening and closing with its mixer window, and channel names dragged onto others
+  reordering the tracks, while
   busses stay. A strip's name shows its track's color as `track.set` changes it, marked bright or not, and the theme's once the color is gone. A fader and a send's level
   dragged and the panner turned while the engine answers late follow the mouse, never back, end where the engine is, and
   are one undo step; values set through MCP show at once, and during a drag when it ends. A fader step the engine
@@ -126,3 +154,8 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
   the strip made again shows the engine's volume; a strip made again while its fader's step is in flight shows the
   engine's volume at once, not the widget's default. The lower zone's mixer in the default theme, with colored and plain
   names, is compared with the golden image `lower-zone-mixer.png`.
+- `tests/meterpanel_tests.cpp`: an audio channel's strip meter shows no bars and `-inf` before it played, then a bar
+  per side at the sine's level with its peak mark, in the frame that the master meter shows the same peak;
+  a MIDI channel has none, and a click on the peak level resets the channels' maxima, not the master meter's. The
+  Global Meter Settings menu: a mark that holds the peak for the peak hold time while the level falls and then falls,
+  Hold Forever's mark at the maximum past that time, Reset Meters, and Hold Peaks off without marks.

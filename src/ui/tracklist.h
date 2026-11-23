@@ -55,8 +55,9 @@ namespace gnubase::ui
 		std::vector<uint64_t> selection() const;
 		void select(const std::vector<uint64_t>& tracks);
 		// The selected automation tracks' lanes (#125): a click on an automation track's row, beside its buttons,
-		// selects it, Ctrl or Shift adds or removes it, a click on a track's own row deselects them.
-		std::vector<uint64_t> selectedLanes() const;
+		// selects it, Ctrl or Shift adds or removes it, a click on a track's own row deselects them. Unadded lanes
+		// (#1918) only with unadded, for the paste, which adds them: they have no automation to copy.
+		std::vector<uint64_t> selectedLanes(bool unadded = false) const;
 		// Whether automation.copy copied automation (its event automation.copied) since the project started: when the
 		// Paste Automation commands have something to paste.
 		bool automationCopied() const { return m_automationCopied; }
@@ -115,6 +116,8 @@ namespace gnubase::ui
 		// listener hears of the marker that Locate chooses (rename false), to select it, and of the one that a
 		// Shift-click on Add Cycle Marker adds (rename true), to name it.
 		void onMarker(std::function<void(uint64_t marker, bool rename)> listener) { m_onMarker = std::move(listener); }
+		// The arranger track's Open Arranger Editor (arrangerEditor, reference manual p. 164) calls the listener.
+		void onArrangerEditor(std::function<void()> listener) { m_onArrangerEditor = std::move(listener); }
 
 	private:
 		// A track as the list shows it, from the event display's project.
@@ -202,9 +205,11 @@ namespace gnubase::ui
 		bool ownLane(size_t lane) const;
 		size_t rowEnd(size_t lane) const;
 
+		// Paste Automation of Selected Parameters, which adds the unadded lanes in its undo step (#1918).
+		void pasteSelectedParameters();
 		// Automation tracks (#121): the rows below a track's own, at its automation lanes' heights.
 		void showAutomationRows(Rml::Element& row, size_t lane, size_t end); // display lanes lane+1 to end
-		const engine::Json* laneOf(uint64_t lane) const;                     // as project.get has it
+		const engine::Json* laneOf(uint64_t lane) const;                     // as project.get has it, or unadded
 		const engine::Json* targetOf(const engine::Json& lane) const;        // its automationLane.targets entry
 		void openParameters(uint64_t lane);                // fills the parameter selector for the automation track
 		uint64_t laneAt(Rml::Element* element) const;      // the lane of the automation row it is in, or 0
@@ -312,6 +317,7 @@ namespace gnubase::ui
 
 		std::map<std::string, std::function<void()>> m_actions;
 		std::function<void(uint64_t, bool)> m_onMarker;
+		std::function<void()> m_onArrangerEditor;
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_playback; // while playing, Current Tempo follows the cursor (#831)
 		bool m_playing = false;                 // the transport status followTransport last heard

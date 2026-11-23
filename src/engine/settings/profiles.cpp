@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -172,6 +173,29 @@ namespace gnubase::engine::settings
 
 		// What removeFolder renames the folders it deletes to, in the settings folder: profile-removed-<16 hex digits>.
 		constexpr std::string_view g_removedPrefix = "profile-removed-";
+		constexpr size_t g_removedDigits = 16;
+
+		// Whether a name in the settings folder is one that removeFolder gave a folder: nothing else that starts the
+		// same, such as a user's own profile-removed-notes.
+		bool isRemoved(const std::string& name)
+		{
+			return name.size() == g_removedPrefix.size() + g_removedDigits &&
+				name.compare(0, g_removedPrefix.size(), g_removedPrefix) == 0 &&
+				std::all_of(name.begin() + static_cast<std::ptrdiff_t>(g_removedPrefix.size()), name.end(),
+					[](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+		}
+
+		// Deletes a folder that removeFolder renamed; logs what stays, which the next start tries again.
+		void removeRenamed(const fs::path& removed)
+		{
+			std::error_code error;
+			fs::remove_all(removed, error);
+			// Not when another GNUbase process deleted it meanwhile, at its start.
+			std::error_code ignored;
+			if (error && fs::exists(removed, ignored))
+				logging::warning("Cannot delete {} completely, which the next start tries again: {}",
+					removed.u8string(), error.message());
+		}
 
 		// Deletes a folder with what is in it; error says what can't be deleted. Where a deleted folder stays until
 		// whatever still has it open lets go, such as a virus scanner looking at the files just written (Windows, on
@@ -180,26 +204,28 @@ namespace gnubase::engine::settings
 		// something can't be deleted would stay under its name. So the folder first gets a name of its own in the
 		// settings folder, which frees its name at once; not in profiles, where it would be a profile. One that can't
 		// be renamed, such as while a file in it is open or when profiles is on another volume, is deleted under its
-		// name. What stays of a renamed one goes at the next start (removeLeftovers, from switchProfile).
+		// name. What stays of a renamed one goes at the next start (removeLeftovers, from switchProfile). Logs what
+		// can't be deleted.
 		void removeFolder(const fs::path& directory, const fs::path& folder, std::error_code& error)
 		{
 			// Two processes that pick the same name are no harm: the second rename fails, or replaces an empty folder.
 			static std::atomic<uint64_t> counter{0};
 			const auto time = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
 			const uint64_t unique = time + (counter++ << 40U);
-			char hex[17] = {};
+			char hex[g_removedDigits + 1] = {};
 			std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(unique));
 			const fs::path removed = directory / (std::string(g_removedPrefix) + hex);
 			std::error_code renamed;
 			fs::rename(folder, removed, renamed);
-			if (renamed)
+			if (!renamed)
 			{
-				fs::remove_all(folder, error);
+				error.clear();
+				removeRenamed(removed);
 				return;
 			}
-			error.clear();
-			std::error_code ignored;
-			fs::remove_all(removed, ignored);
+			fs::remove_all(folder, error);
+			if (error)
+				logging::warning("Cannot delete {}: {}", folder.u8string(), error.message());
 		}
 
 		// Deletes what removeFolder couldn't delete of the folders it renamed.
@@ -208,14 +234,16 @@ namespace gnubase::engine::settings
 			std::error_code error;
 			std::vector<fs::path> leftovers;
 			for (fs::directory_iterator entry(directory, error), end; !error && entry != end; entry.increment(error))
-				if (entry->path().filename().u8string().compare(0, g_removedPrefix.size(), g_removedPrefix) == 0)
+				if (isRemoved(entry->path().filename().u8string()))
 					leftovers.push_back(entry->path());
 			for (const fs::path& leftover : leftovers)
-				fs::remove_all(leftover, error);
+				removeRenamed(leftover);
 		}
 
 		// Moves the profile files from one folder to another, replacing what is there; a file that from lacks goes
-		// from to as well, so that its defaults count. replacing, if any, comes before each file (switchProfile).
+		// from to as well, so that its defaults count. Each file is replaced in one rename, never deleted first: where
+		// a deleted file stays while something has it open, no file could take its name meanwhile. replacing, if any,
+		// comes before each file (switchProfile).
 		void moveFiles(const fs::path& from, const fs::path& to, const Replacing& replacing)
 		{
 			fs::create_directories(to);
@@ -223,13 +251,15 @@ namespace gnubase::engine::settings
 			{
 				if (replacing)
 					replacing(to / name);
-				fs::remove(to / name);
 				if (fs::exists(from / name))
 					fs::rename(from / name, to / name);
+				else
+					fs::remove(to / name);
 			}
 		}
 
-		// Copies the profile files from one folder to another as moveFiles moves them.
+		// Copies the profile files from one folder to another as moveFiles moves them: each copy replaces the file in
+		// one rename (files::writeAtomically).
 		void copyFiles(const fs::path& from, const fs::path& to, const Replacing& replacing = {})
 		{
 			fs::create_directories(to);
@@ -237,9 +267,15 @@ namespace gnubase::engine::settings
 			{
 				if (replacing)
 					replacing(to / name);
-				fs::remove(to / name);
-				if (fs::exists(from / name))
-					fs::copy_file(from / name, to / name);
+				if (!fs::exists(from / name))
+				{
+					fs::remove(to / name);
+					continue;
+				}
+				const std::optional<std::string> text = files::readFile(from / name);
+				if (!text)
+					throw fs::filesystem_error("read", from / name, std::make_error_code(std::errc::io_error));
+				files::writeAtomically(to / name, *text);
 			}
 		}
 

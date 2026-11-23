@@ -27,6 +27,7 @@ project or undo.
 | Line (`line`) | | | | p. 873 |
 | Play (`play`) | Auditions the audio track from there until the mouse is released | Scrub mode: scrubs the track along | | pp. 252-253 |
 | Time Warp (`timeWarp`) | Free Warp: a warp marker on the audio event there | Warp Grid: the musical position pressed plays where it is released; Free Warp: a warp marker moved there ([time-warp.md](time-warp.md)) | | pp. 1465-1467 |
+| Color (`color`) | Gives the event the tool's color, or the selection if the event is in it; Alt takes the event's color; Ctrl/Cmd opens the Choose Event Color pane for it ([colors.md](colors.md)) | | | pp. 114-115 |
 
 - **Modes.** The object selection tool sizes normally or with sizing moves contents (`setSizingMovesContents`);
   sizing applies time stretch waits for time stretching (M11). The line tool has the modes line, parabola, sine,
@@ -46,8 +47,10 @@ project or undo.
   pointer there) and scrubs what the event plays at the edge the release gives it, snapped: its clip at that clip
   frame (`audition.scrub` with `clip`, from the drag's `event.previewResize`), also over audio the event hides yet,
   and without moving the cursor (p. 268); the upper half of the edge scrubs the track, as the rest of the event does.
-  A click there without a drag does nothing more: no tool modifier of the object selection tool's clicks. On other
-  tracks it does nothing yet.
+  An event too narrow for edges, as for the object selection tool, scrubs the track everywhere. A click there
+  without a drag does nothing more: no tool modifier of the object selection tool's clicks. What the play tool
+  auditions or scrubs ends with the event display too, as when the project window closes by a key command during
+  the press. On other tracks it does nothing yet.
 - **Cross-hair cursor.** It shows with the tools that use it (object selection, range selection, draw, split, line),
   not with the others (p. 110).
 - **Selection range.** `range()` is the range: start and end in project samples and the tracks it covers by id, also
@@ -101,12 +104,13 @@ first click chooses the tool and the next opens its modes (p. 265): `#object-sel
 `#line-menu` with the line modes, `#play-menu` with the play modes and `#time-warp-toolbar-menu` with the time warp modes,
 each with the mode checked. The toolbox and the context menu's Tools choose the time warp tool too, and the
 Tools' Time Warp Mode chooses it with a mode. The toolbar hides sections that do not fit in a narrow window: with the
-time warp button, a 1024-pixel window at a dp ratio of 1 has no room for the color section and those after it, and
-none for the Quantize section either once the snap and grid types show their longest names.
+color tool's button, a 1024-pixel window at a dp ratio of 1 has no room for the Quantize section and those after it
+with the default labels, until the zoom presets are hidden, and a 1000-pixel window shows fewer sections once the
+snap and grid types show their longest names.
 
 The commands are in `EventDisplay::actions()`, and `app::AppUi` binds the reference's keys (p. 1569) in the project
 window: `tool.objectSelection` 1, `tool.rangeSelection` 2, `tool.split` 3, `tool.glue` 4, `tool.erase` 5, `tool.zoom`
-6, `tool.mute` 7, `tool.draw` 8, `tool.play` 9, `tool.line`, `tool.comp` and `tool.timeWarp` (no key), `tool.previous` F9, `tool.next` F10 (along the
+6, `tool.mute` 7, `tool.draw` 8, `tool.play` 9, `tool.line`, `tool.comp`, `tool.timeWarp` and `tool.color` (no key), `tool.previous` F9, `tool.next` F10 (along the
 toolbar, around at the ends) and `tool.combineSelectionTools` Alt+Shift+1.
 
 A tool chosen with one of these commands, by its key or from Lua's `gnubase.ui.command`, shows its name for a
@@ -148,8 +152,9 @@ RmlUi's `cursor` property; the pointers are SVG files in `resources/cursors` ([s
 
 | `pointer` | Where | Pointer |
 |---|---|---|
-| `objectSelection`, `comp` | The object selection and comp tools | The OS's arrow |
-| `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp), except on a fade handle ([fades.md](fades.md)), and except with Ctrl or Shift held unless they are a tool modifier (they add to the selection then) | `resize` |
+| `objectSelection`, `comp`, `color` | The object selection, comp and color tools | The OS's arrow |
+| `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp), except on a fade handle ([fades.md](fades.md)) or the repeat handle, and except with Ctrl or Shift held unless they are a tool modifier (they add to the selection then) | `resize` |
+| `repeat` | The object selection tool over the repeat handle in the middle of an event's right border, on lanes at least 80 dp high, or with Alt at the last selected event's lower right corner, where a drag repeats the selection ([parts-and-events.md](parts-and-events.md), p. 271) | The OS's pointing hand |
 | `split` | The object selection tool on an event with the tool modifier Split Event held (Alt), where a click splits it (p. 268) | `tool-split` |
 | `draw` | The object selection tool on an empty spot of an audio, MIDI or instrument lane with Split Event held, where a drag draws a part (p. 250) | `tool-draw` |
 | `resize`, `resizeVertical` | The range selection tool just inside the selection range's start or end, or its top or bottom, where a drag moves that edge, without Shift ([range-editing.md](range-editing.md)) | `resize`, the OS's `ns-resize` |
@@ -168,7 +173,7 @@ with, also where it leaves the lanes: the event area has RCSS `drag: drag`, and 
 until the button is up. MCP's `ui_windows` reports the pointer shown, as `cursor`: empty for the OS's arrow, also where
 a pointer's picture didn't load or RmlUi names one the OS doesn't have, such as its autoscroll pointers.
 
-Not yet: the time warp and color tools, the drumstick tool, and pointers of their own for the sizing modes; the rest of the reference's context
+Not yet: the drumstick tool, and pointers of their own for the sizing modes and the color tool; the rest of the reference's context
 menu, with the Audio and MIDI menus' functions, follows with those menus. Cut and Copy of selected events without a
 range (the event clipboard) wait for a ticket of their own. On X11, SDL shows only a pointer's scale-1 picture. The
 audio editor gets its toolbox when it comes. The Preferences dialog's Editing - Tools page
@@ -180,12 +185,15 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   previous around the ends, the root's attribute and the cross-hair cursor; the object selection tool's rectangle,
   with Ctrl, and setting the cursor; splitting, snapped, into equal pieces, and with a tool modifier changed through
   `settings.set`; gluing to the next and to all following events; erasing one and all later events; muting and
-  unmuting with clicks and a rectangle; zooming in, out, to a rectangle, back with a double click and forward again
+  unmuting with clicks and a rectangle; coloring an event and the selection with the color tool, taking an event's or
+  a track's color with Alt, the wheel's steps around the color set and Ctrl asking for the pane; zooming in, out, to a rectangle, back with a double click and forward again
   with Alt, neither leaving the double click's first click to redo; the rectangle zooming the track heights with `ui.zoomToolHorizontalOnly` off; drawing parts,
   snapped, by dragging and with a click, and MIDI parts with the object selection tool and Alt, none on audio tracks or with the line tool; auditioning the audio lane's
   track on the dummy device while the mouse is pressed, nothing on a MIDI lane, scrubbing with a drag, and resizing an
   audio event at its lower corners in scrub mode, with its pointer there, while the upper part of the edge scrubs, the dummy device playing the clip's hidden audio
-  that an edge dragged outwards reveals, and Alt and Alt+Shift clicks there neither splitting nor locating; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
+  that an edge dragged outwards reveals, the start edge scrubbing the clip at the event's offset, an event of 18 dp
+  scrubbing the track at its corners, and Alt and Alt+Shift clicks there neither splitting nor locating; an event
+  display that goes away during a press of the play tool, in either mode and during a resize, ending the audition; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
   every track, and the events they select when another tool takes over; range edges at zero crossings with Snap to
   Zero Crossing, for a drag, a click and a double click on an event and on a gap, and an edit right after the release
   waiting for them, also when a press starts another range before the answer (it edits the first range); the

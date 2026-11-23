@@ -8,6 +8,7 @@
 #include "engine/graph/graph.h"
 #include "engine/midi/midivalues.h"
 #include "engine/processors/testsynth.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -16,7 +17,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -27,7 +27,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -999,18 +998,6 @@ namespace
 		return run(client, "plugin.insert", {{"channel", channel}, {"plugin", plugin}}).at("slot").at("id");
 	}
 
-	// Waits until a slot's plugin is active, then builds the graph with it, as the engine does on its own then.
-	void waitUntilActive(Client& client, const Json& slot)
-	{
-		const auto status = [&]()
-		{ return run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status").get<std::string>(); };
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-		while (status() != "active" && std::chrono::steady_clock::now() < deadline)
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		REQUIRE(status() == "active");
-		run(client, "audio.updatePlugins");
-	}
-
 	Json pluginTarget(const Json& slot, uint32_t parameter)
 	{
 		return {{"type", "plugin"}, {"slot", slot}, {"parameter", parameter}};
@@ -1212,7 +1199,7 @@ TEST_CASE("plugin parameter automation plays sample-accurately in its slot", "[i
 	INFO("block size " << blockSize);
 	Mixer mixer(blockSize);
 	const Json slot = insertPlugin(mixer.client, mixer.channel, "builtin:gainPan");
-	waitUntilActive(mixer.client, slot);
+	gnubase::test::waitForPlugin(mixer.client, slot);
 	const ObjectId lane = idOf(
 		run(mixer.client, "automationLane.add", {{"track", mixer.track}, {"target", pluginTarget(slot, 0)}}), "lane");
 	// Steps at their samples; a ramp as the value of every 64th frame from its start, since gainPan doesn't glide.
@@ -1722,6 +1709,80 @@ TEST_CASE("automation.copy and automation.paste copy automation between tracks w
 	CHECK_THAT(reject(client, "automation.paste", {{"start", 100}, {"end", 100}}), ContainsSubstring("empty"));
 	CHECK_THAT(reject(client, "automation.copy", {{"lanes", {12345}}}), ContainsSubstring("no automation lane 12345"));
 	CHECK_THAT(reject(client, "automation.paste", {{"tracks", {12345}}}), ContainsSubstring("no track 12345"));
+}
+
+TEST_CASE("automation.paste onto parameters of tracks adds a lane only where it pastes", "[unit]")
+{
+	// The track list's Paste Automation of Selected Parameters onto automation tracks without lanes (#2018).
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
+	const ObjectId lane =
+		idOf(run(client, "automationLane.add", {{"track", audio}, {"target", {{"type", "volume"}}}}), "lane");
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
+	const ObjectId midi = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	const ObjectId other = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
+	const ObjectId pan =
+		idOf(run(client, "automationLane.add", {{"track", other}, {"target", {{"type", "pan"}}}}), "lane");
+	run(client, "transport.set", {{"left", 0}, {"right", 48000}});
+	REQUIRE(run(client, "automation.copy", {{"lanes", {lane}}}).at("lanes") == 1);
+
+	// A parameter the copy doesn't have, or a track without it, takes nothing: no lane, no undo step.
+	const Json before = run(client, "project.get");
+	const Json history = run(client, "history.get");
+	const Json nothing = run(client, "automation.paste",
+		{{"targets",
+			{{{"track", other}, {"target", {{"type", "mute"}}}},
+				{{"track", midi}, {"target", {{"type", "volume"}}}}}}});
+	CHECK(nothing.at("lanes").empty());
+	CHECK(run(client, "project.get") == before);
+	CHECK(run(client, "history.get") == history);
+
+	// One the copy has gets its lane, with lanes beside it, in one undo step.
+	const Json pasted = run(client, "automation.paste",
+		{{"targets", {{{"track", other}, {"target", {{"type", "volume"}}}}}}, {"lanes", {pan}}, {"start", 96000},
+			{"end", 144000}});
+	const Json lanes = run(client, "automationLane.list", {{"track", other}}).at("lanes");
+	REQUIRE(lanes.size() == 2);
+	CHECK(lanes[1].at("target").at("type") == "volume");
+	CHECK(!lanes[1].at("points").empty());
+	CHECK(pasted.at("lanes") == Json::array({lanes[1].at("id")}));
+	CHECK(run(client, "history.get").at("steps").size() == history.at("steps").size() + 1);
+	run(client, "history.undo");
+	CHECK(run(client, "project.get") == before);
+
+	// A controller or pitch bend target without a channel is channel 0, as automationLane.add takes it.
+	const ObjectId controller =
+		idOf(run(client, "automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 7}}}}),
+			"lane");
+	const ObjectId bend =
+		idOf(run(client, "automationLane.add", {{"track", midi}, {"target", {{"type", "pitchBend"}, {"channel", 0}}}}),
+			"lane");
+	for (const ObjectId id : {controller, bend})
+		run(client, "automationPoint.add", {{"lane", id}, {"points", {{{"position", 0}, {"value", 0.25}}}}});
+	REQUIRE(run(client, "automation.copy", {{"lanes", {controller, bend}}}).at("lanes") == 2);
+	const ObjectId midiOther = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	CHECK(run(client, "automation.paste",
+			  {{"targets",
+				  {{{"track", midiOther}, {"target", {{"type", "controller"}, {"number", 7}}}},
+					  {{"track", midiOther}, {"target", {{"type", "pitchBend"}}}}}}})
+			  .at("lanes")
+			  .size() == 2);
+	CHECK(run(client, "automationLane.list", {{"track", midiOther}}).at("lanes").size() == 2);
+
+	// A misspelled target is refused, as automationLane.add refuses it.
+	CHECK_THAT(
+		reject(client, "automation.paste", {{"targets", {{{"track", midiOther}, {"target", {{"type", "cc"}}}}}}}),
+		ContainsSubstring("must be one of"));
+	CHECK_THAT(reject(client, "automation.paste",
+				   {{"targets", {{{"track", midiOther}, {"target", {{"type", "controller"}, {"cc", 7}}}}}}}),
+		ContainsSubstring("is not allowed"));
+
+	CHECK_THAT(reject(client, "automation.paste", {{"tracks", {other}}, {"targets", Json::array()}}),
+		ContainsSubstring("not both"));
+	CHECK_THAT(
+		reject(client, "automation.paste", {{"targets", {{{"track", 12345}, {"target", {{"type", "volume"}}}}}}}),
+		ContainsSubstring("no track 12345"));
 }
 
 TEST_CASE("automation.copy keeps the given tracks without automation in their order, and says what it copied", "[unit]")

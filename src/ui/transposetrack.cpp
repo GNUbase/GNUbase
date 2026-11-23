@@ -165,6 +165,9 @@ namespace gnubase::ui
 		if (m_editing &&
 			std::none_of(m_list.begin(), m_list.end(), [this](const Event& event) { return event.id == *m_editing; }))
 			m_editing.reset();
+		m_selection.erase(
+			std::remove_if(m_selection.begin(), m_selection.end(), [this](uint64_t id) { return find(id) == nullptr; }),
+			m_selection.end());
 		settle();
 		show();
 	}
@@ -226,14 +229,30 @@ namespace gnubase::ui
 		std::string rml;
 		if (shownOnLane())
 			for (const Event& event : m_list)
+			{
 				rml += R"(<div class=")" + named("-event") + (event.detected ? " detected" : "") + R"(" event=")" +
-					std::to_string(event.id) + R"(">)" + Rml::StringUtilities::EncodeRml(event.text) + "</div>";
+					std::to_string(event.id) + R"(">)" + Rml::StringUtilities::EncodeRml(event.text);
+				// An arranger event's edges, which a drag resizes it by.
+				if (m_kind == LaneKind::Arranger)
+					rml +=
+						R"(<div class="arranger-lane-edge" edge="start"/><div class="arranger-lane-edge" edge="end"/>)";
+				rml += "</div>";
+			}
 		if (m_drawn)
 			rml += R"(<div class=")" + named("-event") + R"( drawing" event="0"/>)";
 		if (m_events->GetAttribute<Rml::String>("events", "") != rml)
 		{
 			m_events->SetAttribute("events", rml);
 			m_events->SetInnerRML(rml);
+		}
+		// The selection changes the elements' classes only, so that a press that selects keeps its element.
+		for (int i = 0; i < m_events->GetNumChildren(); ++i)
+		{
+			Rml::Element* element = m_events->GetChild(i);
+			const auto id = element->GetAttribute<uint64_t>("event", 0);
+			const bool selected = std::find(m_selection.begin(), m_selection.end(), id) != m_selection.end();
+			if (element->IsClassSet("selected") != selected)
+				element->SetClass("selected", selected);
 		}
 		m_field->SetClass("shown", m_editing.has_value());
 		place();
@@ -276,8 +295,9 @@ namespace gnubase::ui
 			// An event where it shows: moved while a drag moves it.
 			const auto span = [this](const Event& event)
 			{
-				const double shift = m_moved && m_moved->event == event.id ? m_moved->shift : 0.0;
-				return std::make_pair(seconds(event.start) + shift, seconds(event.end) + shift);
+				const bool moved = m_moved && m_moved->event == event.id;
+				return std::make_pair(seconds(event.start) + (moved ? m_moved->shift : 0.0),
+					seconds(event.end) + (moved ? m_moved->endShift : 0.0));
 			};
 			for (int i = 0; i < m_events->GetNumChildren(); ++i)
 			{
@@ -350,6 +370,7 @@ namespace gnubase::ui
 			m_field->Blur();
 			show();
 		}
+		m_edge = Edge::None;
 		const Tool tool = m_display.tool();
 		const bool drawing = tool == Tool::Draw || tool == Tool::Line;
 		std::optional<uint64_t> on = eventId(event.GetTargetElement(), named("-event"));
@@ -380,6 +401,30 @@ namespace gnubase::ui
 				return;
 			}
 			m_lastPress = std::make_pair(*on, now);
+			if (m_kind == LaneKind::Arranger)
+			{
+				// A click selects the event, with Ctrl (Cmd) or Shift adds or removes it; an edge resizes it.
+				const auto selected = std::find(m_selection.begin(), m_selection.end(), *on);
+				if (event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0 ||
+					event.GetParameter<int>("shift_key", 0) != 0)
+				{
+					if (selected == m_selection.end())
+						m_selection.push_back(*on);
+					else
+						m_selection.erase(selected);
+				}
+				else if (selected == m_selection.end())
+				{
+					m_selection = {*on};
+				}
+				const Rml::Element* target = event.GetTargetElement();
+				const auto edge = target != nullptr ? target->GetAttribute<Rml::String>("edge", "") : Rml::String();
+				if (edge == "start")
+					m_edge = Edge::Start;
+				else if (edge == "end")
+					m_edge = Edge::End;
+				show();
+			}
 			// Auditioning (reference manual pp. 1329-1330): the event plays while the button is down.
 			if (m_audition && (m_kind == LaneKind::Chord || m_kind == LaneKind::Scale))
 			{
@@ -390,8 +435,17 @@ namespace gnubase::ui
 			listen();
 			return;
 		}
+		m_lastPress.reset(); // a press beside the events ends a double click
 		if (!drawing)
+		{
+			// A press beside the arranger events clears their selection.
+			if (!m_selection.empty())
+			{
+				m_selection.clear();
+				show();
+			}
 			return;
+		}
 		// The draw tool adds an event at the nearest bar, to edit.
 		const Rml::Context* context = m_element->GetContext();
 		const float ratio = context == nullptr ? 1.0F : context->GetDensityIndependentPixelRatio();
@@ -449,7 +503,16 @@ namespace gnubase::ui
 		const Event* found = find(id);
 		if (std::abs(dx) >= g_dragStart && found != nullptr)
 		{
-			m_moved = Moved{id, movedTo(*found, dx) - seconds(found->start), found->start, true, false};
+			Moved moved{id, 0.0, 0.0, found->start, found->end, true, false};
+			const double start = seconds(found->start);
+			const double end = seconds(found->end);
+			if (m_edge == Edge::None)
+				moved.shift = moved.endShift = movedTo(*found, dx) - start;
+			else if (m_edge == Edge::Start) // not past its end
+				moved.shift = std::min(edgeTo(start, id, dx), end) - start;
+			else
+				moved.endShift = std::max(edgeTo(end, id, dx), start) - end;
+			m_moved = moved;
 			place();
 			return true;
 		}
@@ -471,7 +534,8 @@ namespace gnubase::ui
 			m_added.reset();
 		}
 		if (m_moved && m_moved->answered)
-			if (const Event* found = find(m_moved->event); found == nullptr || found->start != m_moved->from)
+			if (const Event* found = find(m_moved->event);
+				found == nullptr || found->start != m_moved->from || found->end != m_moved->fromEnd)
 				m_moved.reset();
 	}
 
@@ -524,7 +588,12 @@ namespace gnubase::ui
 			settle();
 			place();
 		};
-		if (m_kind == LaneKind::Arranger)
+		if (m_kind == LaneKind::Arranger && std::exchange(m_edge, Edge::None) != Edge::None)
+			send("arranger.set",
+				{{"event", found.id}, {"position", position(seconds(found.start) + m_moved->shift)},
+					{"end", position(seconds(found.end) + m_moved->endShift)}},
+				answered);
+		else if (m_kind == LaneKind::Arranger)
 			send("arranger.set", {{"event", found.id}, {"position", position(seconds(found.start) + m_moved->shift)}},
 				answered);
 		else
@@ -560,6 +629,11 @@ namespace gnubase::ui
 			return std::max(0.0, m_display.snapped(to, seconds(event.start), magnets(event.id)));
 		const int64_t bar = nearestBar(to);
 		return m_linear ? seconds(bar) : m_display.time().tempo.toSeconds(bar);
+	}
+
+	double GlobalEventLane::edgeTo(double edge, uint64_t event, double dx) const
+	{
+		return std::max(0.0, m_display.snapped(edge + (dx * m_display.view().scale), edge, magnets(event)));
 	}
 
 	std::vector<int64_t> GlobalEventLane::magnets(uint64_t except) const

@@ -3,10 +3,12 @@
 
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
+#include "ui/meterpanel.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -46,6 +48,11 @@ namespace gnubase::ui
 	// All buttons show (reference manual pp. 58, 447).
 	bool anyChannelHas(const engine::Json& project, const std::string& state);
 
+	// Whether the audio of channel from reaches channel to through outputs and sends, as the engine checks for loops
+	// (engine::routingLoops): a channel can't play into one whose audio comes back to it. The mixer's send destination
+	// lists and the inspector's output list leave such channels out.
+	bool routesTo(const engine::Json& project, uint64_t from, uint64_t to);
+
 	// Click and hold on a solo button switches solo defeat, as Alt-click does (p. 466): a view tells it where the mouse
 	// went down, and asks at the click on a solo button (control="solo") whether the press there was that long.
 	class SoloHold
@@ -77,8 +84,8 @@ namespace gnubase::ui
 	// What a mixer asks the app to do; each may be empty.
 	struct MixerActions
 	{
-		// A double click on a channel's picture section: choose its track's picture.
-		std::function<void(uint64_t track)> choosePicture;
+		// A double click on a channel's picture section: choose its track's picture, in the window of the element.
+		std::function<void(const Rml::Element& from, uint64_t track)> choosePicture;
 		// Edit Channel Settings (reference manual p. 500): open the channel settings window for the track's channel.
 		std::function<void(uint64_t track)> editChannel;
 		// Add Effect Track to Send (p. 554): the add track dialog for an effect track that the send goes to, in the
@@ -96,19 +103,22 @@ namespace gnubase::ui
 	// container of the docking system's set of sections "channel": the picture, the notepad and the fader, which the
 	// Set up Window Layout pane (#mixer-layout-pane) shows, hides and reorders. A channel name dragged onto another
 	// channel moves its track there with track.move; busses keep their places. Each strip of a track's channel has
-	// Edit Channel Settings (button.mixer-edit), and its sends' destination lists Add Effect Track to Send.
+	// Edit Channel Settings (button.mixer-edit), and its sends' destination lists Add Effect Track to Send. An audio
+	// channel's strip has its meter next to the fader (.mixer-meter, a <meter> per audio channel with the peak since
+	// the last frame and its peak mark, read once a frame through the meter reader) and its peak level under it
+	// (.mixer-peak, reference manual p. 468), which a click resets, every channel's (meter.reset channels).
 	//
 	// As the channel settings window's (MixerKind::ChannelSettings, view unused) it shows one track's channel, with the
 	// pre section, the equalizer, the strip, the sends and the fader shown by default, and a toolbar of its own: Go to
 	// Previous and Next Mixer Channel (#settings-previous, #settings-next), the channel's name (.settings-name), Go to
 	// Output (#settings-output) and the Functions menu (#settings-functions-menu) with Copy and Paste Channel Settings
-	// and Follow Edit Buttons or Selection Changes. Use it on the UI thread; the binding and the docking system must
-	// outlive it.
+	// and Follow Edit Buttons or Selection Changes. Use it on the UI thread; the binding, the meter reader and the
+	// docking system must outlive it.
 	class Mixer final : private Rml::EventListener
 	{
 	public:
-		Mixer(EngineBinding& binding, Docking& docking, Rml::Element& root, std::string view, MixerKind kind,
-			MixerActions actions);
+		Mixer(EngineBinding& binding, MeterReader& meters, Docking& docking, Rml::Element& root, std::string view,
+			MixerKind kind, MixerActions actions);
 		~Mixer() override;
 		Mixer(const Mixer&) = delete;
 		Mixer& operator=(const Mixer&) = delete;
@@ -148,10 +158,23 @@ namespace gnubase::ui
 		void setHidden(uint64_t id, bool hidden);
 		void setTypeHidden(const std::string& type, bool hidden);
 		void sendView(engine::Json parameters);
+		// Leaves the notepad being typed in, whose blur sends its text: before its strip or the mixer goes, and on
+		// project.reset, which drops it.
+		void leaveNotes();
 		void drop(uint64_t onto);
 		void showSettingsToolbar();
 		void goTo(uint64_t track);
 		const MixerChannel* channelOf(Rml::Element* element) const;
+		// The meters' values, per channel in m_metered: each audio channel's peak and its peak mark, held as the
+		// Global Meter Settings say (empty without Hold Peaks), then the peak level.
+		std::vector<std::vector<std::string>> readMeters();
+		// A user setting the mixer shows: audio.defaultSendLevel, or a Global Meter Setting.
+		void setting(const std::string& key, const engine::Json& value);
+		void showMeters(const std::vector<std::vector<std::string>>& shown);
+		// The display line's pop-up menu (reference manual p. 459), filled for the channel as it opens; link does what
+		// its item says.
+		void showLinkMenu(uint64_t channel);
+		void link(const std::string& item);
 
 		EngineBinding& m_binding;
 		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
@@ -160,6 +183,7 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_strips;             // the fader section
 		Rml::ObserverPtr<Rml::Element> m_filter;             // the channel type filter's button
 		Rml::ObserverPtr<Rml::Element> m_visibility;         // the Visibility tab's element
+		Rml::ObserverPtr<Rml::Element> m_window;             // its context's root, which every mouseup reaches
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // in the document's body
 		std::string m_view;
 		MixerKind m_kind = MixerKind::LowerZone;
@@ -175,13 +199,28 @@ namespace gnubase::ui
 		std::set<std::string> m_hiddenTypes;
 		std::vector<uint64_t> m_shown;
 		std::map<uint64_t, Rml::Element*> m_stripOf; // by channel id, while m_strips lives
+		MeterReader& m_meterReader;
+		std::shared_ptr<std::vector<uint64_t>> m_metered; // the channels whose strips have meters
 		bool m_loading = false;
 		bool m_stale = false;
-		uint64_t m_dragged = 0;  // the channel whose name a mouse button went down on
-		bool m_updating = false; // while the strips show the project's values
-		bool m_dropping = false; // while another project drops the notes being typed
+		uint64_t m_dragged = 0;     // the channel whose name a mouse button went down on
+		int m_viewSends = 0;        // its mixer.set commands not answered yet
+		uint64_t m_linkChannel = 0; // the channel whose display line's menu opened last
+		bool m_updating = false;    // while the strips show the project's values
+		bool m_dropping = false;    // while another project drops the notes being typed
 		SoloHold m_soloHold;
 		double m_defaultSendLevel = 0.0; // the user setting audio.defaultSendLevel
+		// The Global Meter Settings (reference manual p. 467): meter.holdPeaks, meter.holdForever, meter.peakHoldTime.
+		bool m_holdPeaks = true;
+		bool m_holdForever = false;
+		std::chrono::milliseconds m_peakHoldTime{2000};
+		struct HeldPeak
+		{
+			float level = 0.0f;
+			std::chrono::steady_clock::time_point at;
+		};
+		std::map<uint64_t, std::vector<HeldPeak>> m_held; // each metered channel's peak marks, per side
+		Rml::ObserverPtr<Rml::Element> m_meterMenu;
 
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went

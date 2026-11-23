@@ -818,6 +818,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
          {"background-color": mix(c["background"], c["textMuted"], .5)}),
         # The quantize panel's cutting positions (reference manual p. 378): where Slice would cut
         (".event-display .cutting-position", {"background-color": c["accent"]}),
+        # Grid lines behind the events (docs/features/snap.md, reference manual p. 109), and audio events' snap points
+        # (p. 105)
+        (".event-display event-lanes.grid-lines", {"color": mix(c["background"], c["textMuted"], .25),
+                                                   "stroke-color": "transparent"}),
+        (".event-display event-lanes.snap-points", {"color": c["accent2"], "stroke-color": "transparent"}),
         # Markers (docs/features/markers.md): lines behind the events, marker events and labels on marker tracks
         (".event-display .marker-lines", {"stroke-color": mix(c["background"], c["accent2"], .5),
                                           "stroke-width": f"{widths['hairline']}dp"}),
@@ -866,6 +871,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                                      "border-color": c["accent"]}),
         # and the one being drawn as an outline only, unlike the events the engine has (#1696)
         (".arranger-lane-row .arranger-lane-event.drawing", {"background-color": "transparent"}),
+        # and a selected one with the selection's color
+        (".arranger-lane-row .arranger-lane-event.selected", {"background-color": c["accent2"] + "80",
+                                                              "border-color": c["text"]}),
         # The chord pads (docs/features/chord-pads.md): pads with their chord, degree and remote key, the selected,
         # triggered, locked and reference pads, the adaptive voicing reference indicator (a square in the reference
         # frame's color) and the adaptive voicing indicator (a dot), and the chord assistant's suggestions by how well
@@ -966,6 +974,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".editor-visibility-check", {"decorator": skin("checkbox-off")}),
         (".editor-visibility-check.checked", {"decorator": skin("checkbox-on")}),
         (".editor-visibility-check.partial", {"decorator": skin("checkbox-mixed")}),
+        # Tracks that can't show in the editor, hidden in the project window or holding locked events, dimmed
+        (".editor-visibility-track.unavailable", {"color": c["textMuted"]}),
         # The key editor (docs/features/key-editor.md): the keyboard's white and black keys, the keys of selected
         # notes lit, the grid's rows of black keys darker, the notes, selected ones in the second accent, those
         # outside the part editing mode dimmed, the note being drawn with its velocity, and the step input cursor
@@ -1065,10 +1075,14 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".se-overview-selection, .se-selection", {"background-color": c["text"] + "33"}),
         (".se-overview-view", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent"]}),
         (".se-overview-snap, .se-snap-point", {"background-color": c["accent2"]}),
+        (".se-half-axis", {"background-color": c["textMuted"] + "66"}),
+        (".se-draw-stroke", {"color": c["accent2"], "stroke-color": c["accent2"],
+                             "stroke-width": f"{widths['focus']}dp"}),
         (".se-outside", {"background-color": c["background"] + "99"}),
         (".se-region-shown", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent2"],
                               "background-color": c["accent2"] + "1a"}),
         (".se-region.selected", {"background-color": mix(c["surface"], c["accent"], .4)}),
+        (".se-region-handle", {"border-color": c["accent2"]}),
         # Its hitpoints (docs/features/hitpoints.md): lines with a handle, locked ones' handles lit, disabled ones dim
         (".se-hitpoint-line, .se-hitpoint-handle", {"background-color": c["accent"]}),
         (".se-hitpoint.locked .se-hitpoint-handle", {"background-color": c["accent2"]}),
@@ -1152,9 +1166,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
         (".docking .strip", {"background-color": c["surface"]}),
-        # The status line (docs/features/status-line.md): a sample rate mismatch and a lost audio device stand out
+        # The status line (docs/features/status-line.md): a sample rate mismatch, a silent and a lost audio device stand
+        # out
         (".status-line .status-field", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
-        (".status-line .mismatch", {"color": c["warning"]}),
+        (".status-line .mismatch, #silent-device", {"color": c["warning"]}),
         ("#lost-device", {"color": c["danger"]}),
         # The info line and the inspector (docs/features/inspector.md): the info line's values in another color with
         # several events selected, bypassed and deactivated inserts dimmed
@@ -1171,6 +1186,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
         (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
         (".history .history-separator", {"background-color": c["accent"]}),
+        # The transport bar's Left and Right Divider (docs/features/transport-bar.md)
+        (".transport-divider", {"background-color": c["border"]}),
         # The quantize panel's grid display (docs/features/quantize.md): the grid positions and the catch range around
         # them
         (".quantize-display", {"background-color": c["surface"]}),

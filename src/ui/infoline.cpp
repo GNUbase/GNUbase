@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <exception>
 #include <functional>
 #include <map>
@@ -52,6 +53,13 @@ namespace gnubase::ui
 			R"(<div class="info-field" info-field="length" section="length" label="Length">)"
 			R"(<span class="info-label">Length</span>)"
 			R"(<textdisplay class="display" field="length"/></div>)"
+			// A selection range's top and bottom track (p. 288).
+			R"(<div class="info-field" info-field="topTrack" section="topTrack" label="Top Track">)"
+			R"(<span class="info-label">Top Track</span>)"
+			R"(<select field="topTrack" title="Top Track"/></div>)"
+			R"(<div class="info-field" info-field="bottomTrack" section="bottomTrack" label="Bottom Track">)"
+			R"(<span class="info-label">Bottom Track</span>)"
+			R"(<select field="bottomTrack" title="Bottom Track"/></div>)"
 			// A note's pitch, off velocity and channel, which the info line shows while an in-place editor's
 			// selection changed last (p. 1259), as that editor's own info line does (p. 1199).
 			R"(<div class="info-field" info-field="pitch" section="pitch" label="Pitch">)"
@@ -89,7 +97,14 @@ namespace gnubase::ui
 			R"(<select field="rootKey" title="Root Key"/></div>)"
 			R"(<div class="info-field" info-field="globalTranspose" section="globalTranspose" label="Global Transpose">)"
 			R"(<button type="toggle" field="globalTranspose")"
-			R"( title="Global Transpose: Follow">Follow</button></div>)";
+			R"( title="Global Transpose: Follow">Follow</button></div>)"
+			// A selected automation point's value, in its parameter's unit, and Terminator (p. 881).
+			R"(<div class="info-field" info-field="value" section="value" label="Value">)"
+			R"(<span class="info-label">Value</span>)"
+			R"(<textdisplay class="display" field="value"/></div>)"
+			R"(<div class="info-field" info-field="terminator" section="terminator" label="Terminator">)"
+			R"(<span class="info-label">Terminator</span>)"
+			R"(<button type="toggle" field="terminator" title="Terminator">No</button></div>)";
 
 		// The transpose a selected event or part can have either way: a MIDI part's -127 to 127, an audio event's
 		// -24 to 24, the time stretcher's real-time range (#1555).
@@ -218,6 +233,8 @@ namespace gnubase::ui
 		}
 		m_showsNotes = true;
 		m_showsMarkers = false;
+		m_showsPoints = false;
+		m_showsRange = false;
 		m_noteView = name;
 		m_noteSelection = selection;
 		m_notesDirty = true;
@@ -238,10 +255,14 @@ namespace gnubase::ui
 			if (shows() && (!numeric || number))
 			{
 				m_absolute = true;
-				if (m_showsNotes)
+				if (m_showsRange)
+					editRange(field, text);
+				else if (m_showsNotes)
 					editNotes(field, text, number.value_or(0.0F), 0);
 				else if (m_showsMarkers)
 					editMarkers(field, text);
+				else if (m_showsPoints)
+					editPoints(field, text);
 				else
 					edit(field, text, number.value_or(0.0F));
 				m_absolute = false;
@@ -251,8 +272,14 @@ namespace gnubase::ui
 		const TimeFormat format = m_display.rulerFormat();
 		std::vector<uint64_t> markers = m_markerSource ? m_markerSource() : std::vector<uint64_t>();
 		const bool markersChanged = markers != m_markerSelection;
+		const std::map<uint64_t, std::set<uint64_t>>& points = m_display.selectedPoints();
+		const bool pointsChanged = points != m_pointSelection;
+		const std::optional<RangeSelection>& range = m_display.range();
+		const bool rangeChanged = range.has_value() != m_range.has_value() ||
+			(range && m_range &&
+				(range->start != m_range->start || range->end != m_range->end || range->tracks != m_range->tracks));
 		if ((selection == m_selection && m_display.answers() == m_loads && format == m_format && !markersChanged &&
-				!m_notesDirty) ||
+				!pointsChanged && !rangeChanged && !m_notesDirty) ||
 			!m_root->IsVisible(true)) // hidden: it asks once it shows
 			return;
 		// Whichever selection changed last shows; a marker clicked on the marker track wins.
@@ -260,19 +287,53 @@ namespace gnubase::ui
 		{
 			m_showsMarkers = false;
 			m_showsNotes = false;
+			m_showsPoints = false;
+			m_showsRange = false;
 		}
 		if (markersChanged)
 		{
 			m_showsMarkers = !markers.empty();
 			if (m_showsMarkers)
+			{
 				m_showsNotes = false;
+				m_showsPoints = false;
+				m_showsRange = false;
+			}
 		}
+		if (pointsChanged)
+		{
+			m_showsPoints = !points.empty();
+			if (m_showsPoints)
+			{
+				m_showsMarkers = false;
+				m_showsNotes = false;
+				m_showsRange = false;
+			}
+		}
+		if (rangeChanged)
+		{
+			m_showsRange = range.has_value();
+			if (m_showsRange)
+			{
+				m_showsMarkers = false;
+				m_showsNotes = false;
+				m_showsPoints = false;
+			}
+		}
+		m_range = range;
+		m_pointSelection = points;
 		m_markerSelection = std::move(markers);
 		m_markers.clear();
 		m_selection = selection;
 		m_loads = m_display.answers();
 		m_format = format;
 		m_notesDirty = false;
+		if (m_showsRange)
+		{
+			m_events = Json::array(); // asked for again when the events show
+			show();
+			return;
+		}
 		if (m_showsNotes)
 		{
 			m_events = Json::array(); // asked for again when the events show
@@ -281,6 +342,13 @@ namespace gnubase::ui
 			return;
 		}
 		m_notes.clear();
+		m_points = m_showsPoints ? pointsOf() : std::vector<Point>();
+		if (m_showsPoints)
+		{
+			m_events = Json::array(); // asked for again when the events show
+			show();
+			return;
+		}
 		if (m_showsMarkers)
 			for (const MarkerItem& marker : readMarkers(m_display.project()).markers)
 				if (std::find(m_markerSelection.begin(), m_markerSelection.end(), marker.id) != m_markerSelection.end())
@@ -417,6 +485,25 @@ namespace gnubase::ui
 		Rml::Element& root = *m_root.get();
 		setClass(root, "markers", m_showsMarkers);
 		setClass(root, "notes", m_showsNotes);
+		setClass(root, "points", m_showsPoints);
+		setClass(root, "range", m_showsRange);
+		if (m_showsRange)
+		{
+			showRange();
+			return;
+		}
+		// The range's fields and labels (showRange) only for a selection range.
+		for (const char* field : {"topTrack", "bottomTrack"})
+			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
+				setClass(*shown, "unavailable", true);
+		setLabel(root, "start", "Start");
+		setLabel(root, "end", "End");
+		setLabel(root, "length", "Length");
+		if (m_showsPoints)
+		{
+			showPoints();
+			return;
+		}
 		if (m_showsNotes)
 		{
 			showNotes();
@@ -433,11 +520,12 @@ namespace gnubase::ui
 			return;
 		setLabel(root, "name", "Name");
 		setLabel(root, "start", "Start");
-		for (const char* field : {"end", "length", "mute", "lock"})
+		for (const char* field : {"name", "end", "length", "mute", "lock"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", false);
-		// The notes' fields show only for an in-place editor's selection (p. 1259).
-		for (const char* field : {"pitch", "releaseVelocity", "channel"})
+		// The notes' fields show only for an in-place editor's selection (p. 1259), the automation points' only for
+		// selected points (p. 881).
+		for (const char* field : {"pitch", "releaseVelocity", "channel", "value", "terminator"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", true);
 		const Json& first = m_events.front();
@@ -550,11 +638,15 @@ namespace gnubase::ui
 		const auto field = target->GetAttribute<Rml::String>("field", "");
 		m_absolute = m_absoluteTake && m_absoluteTake->first == field;
 		m_absoluteTake.reset();
-		if (m_showsNotes)
+		if (m_showsRange)
+			editRange(field, event.GetParameter<Rml::String>("value", ""));
+		else if (m_showsNotes)
 			editNotes(field, event.GetParameter<Rml::String>("value", ""), event.GetParameter<float>("value", 0.0F),
 				event.GetParameter<int>("gesture", 0));
 		else if (m_showsMarkers)
 			editMarkers(field, event.GetParameter<Rml::String>("value", ""));
+		else if (m_showsPoints)
+			editPoints(field, event.GetParameter<Rml::String>("value", ""));
 		else if (target->GetTagName() == "button")
 			edit(field, {}, event.GetParameter<bool>("value", false) ? 1.0F : 0.0F);
 		else
@@ -587,11 +679,13 @@ namespace gnubase::ui
 			setFlag(*name, "disabled", false);
 		setLabel(root, "name", "Description");
 		setLabel(root, "start", "Position");
+		if (Rml::Element* shown = root.QuerySelector("[info-field=name]"))
+			setClass(*shown, "unavailable", false);
 		for (const char* field : {"end", "length"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", !first.cycle);
 		for (const char* field : {"volume", "mute", "lock", "transpose", "velocity", "pitch", "releaseVelocity",
-				 "channel", "rootKey", "globalTranspose"})
+				 "channel", "rootKey", "globalTranspose", "value", "terminator"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", true);
 	}
@@ -670,6 +764,250 @@ namespace gnubase::ui
 		m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
 	}
 
+	// The selection range: its start, end and length, and its top and bottom track among the display's tracks.
+	void InfoLine::showRange()
+	{
+		Rml::Element& root = *m_root.get();
+		setClass(root, "empty", !m_range);
+		setClass(root, "multiple", false);
+		if (!m_range)
+			return;
+		const RangeSelection& range = *m_range;
+		const TimeContext context = projectTime(m_display.project());
+		const double start = static_cast<double>(range.start) / context.sampleRate;
+		const double end = static_cast<double>(range.end) / context.sampleRate;
+		const std::map<std::string, std::string> texts = {{"start", formatTime(m_format, start, context)},
+			{"end", formatTime(m_format, end, context)}, {"length", formatLength(m_format, start, end, context)}};
+		for (const auto& [field, text] : texts)
+			if (Rml::Element* display = root.QuerySelector("textdisplay[field=" + field + "]"))
+				setValue(*display, text);
+		setLabel(root, "start", "Range Start");
+		setLabel(root, "end", "Range End");
+		setLabel(root, "length", "Range Length");
+		Rml::ElementList fields;
+		root.QuerySelectorAll(fields, "[info-field]");
+		for (Rml::Element* field : fields)
+		{
+			const auto name = field->GetAttribute<Rml::String>("info-field", "");
+			setClass(*field, "unavailable",
+				name != "start" && name != "end" && name != "length" && name != "topTrack" && name != "bottomTrack");
+		}
+		// The display's tracks by name; the range's top and bottom are the first and last of its tracks among them,
+		// as a folded folder's lane stands for the tracks inside it.
+		const std::vector<uint64_t> order = m_display.shownTracks();
+		const Json& projectTracks = m_display.project().value("tracks", Json::array());
+		widgets::Options tracks;
+		for (const uint64_t id : order)
+			for (const Json& track : projectTracks)
+				if (track.value("id", uint64_t{0}) == id)
+					tracks.emplace_back(std::to_string(id), track.value("name", std::string()));
+		const auto shown = [&order](uint64_t track)
+		{ return std::find(order.begin(), order.end(), track) != order.end(); };
+		const auto top = std::find_if(range.tracks.begin(), range.tracks.end(), shown);
+		const auto bottom = std::find_if(range.tracks.rbegin(), range.tracks.rend(), shown);
+		if (Rml::Element* list = root.QuerySelector("select[field=topTrack]"))
+			widgets::fill(*list, tracks, top != range.tracks.end() ? std::to_string(*top) : std::string());
+		if (Rml::Element* list = root.QuerySelector("select[field=bottomTrack]"))
+			widgets::fill(*list, tracks, bottom != range.tracks.rend() ? std::to_string(*bottom) : std::string());
+	}
+
+	void InfoLine::editRange(const std::string& field, const std::string& text)
+	{
+		if (!m_range)
+			return;
+		const RangeSelection shown = *m_range;
+		RangeSelection range = shown;
+		const TimeContext context = projectTime(m_display.project());
+		const double rate = context.sampleRate;
+		bool changed = false;
+		if (field == "start" || field == "end")
+		{
+			if (const std::optional<double> typed = parseTime(m_format, text, context))
+			{
+				const int64_t to = positionSamples(*typed, rate);
+				const bool start = field == "start";
+				if (start ? to <= range.end : to >= range.start)
+				{
+					(start ? range.start : range.end) = to;
+					changed = true;
+				}
+			}
+		}
+		else if (field == "length")
+		{
+			const double start = static_cast<double>(range.start) / rate;
+			if (const std::optional<double> length = parseLength(m_format, text, start, context))
+			{
+				range.end = std::max(range.start, positionSamples(start + *length, rate));
+				changed = true;
+			}
+		}
+		else if ((field == "topTrack" || field == "bottomTrack") && !range.tracks.empty())
+		{
+			// The chosen track becomes the edge: the tracks between it and the edge are taken in or out, as the top
+			// and bottom nudges take them one by one (p. 289), never past the other edge.
+			const bool top = field == "topTrack";
+			const uint64_t chosen = std::strtoull(text.c_str(), nullptr, 10); // 0, no track, for no number
+			const std::vector<uint64_t> order = m_display.shownTracks();
+			const auto index = [&order](uint64_t track)
+			{ return std::find(order.begin(), order.end(), track) - order.begin(); };
+			const auto size = static_cast<std::ptrdiff_t>(order.size());
+			const auto at = index(chosen);
+			const auto edge = index(top ? range.tracks.front() : range.tracks.back());
+			const auto other = index(top ? range.tracks.back() : range.tracks.front());
+			if (at < size && edge < size && other < size && (top ? at <= other : at >= other))
+			{
+				const auto inside = std::find(range.tracks.begin(), range.tracks.end(), chosen);
+				if (inside != range.tracks.end())
+				{
+					if (top)
+						range.tracks.erase(range.tracks.begin(), inside);
+					else
+						range.tracks.erase(std::next(inside), range.tracks.end());
+				}
+				else if (top && at < edge)
+				{
+					range.tracks.insert(range.tracks.begin(), order.begin() + at, order.begin() + edge);
+				}
+				else if (!top && at > edge)
+				{
+					range.tracks.insert(range.tracks.end(), order.begin() + edge + 1, order.begin() + at + 1);
+				}
+				changed = range.tracks != shown.tracks;
+			}
+		}
+		if (!changed)
+		{
+			show(); // the range as it is
+			return;
+		}
+		m_display.setRange(std::move(range));
+	}
+
+	std::vector<InfoLine::Point> InfoLine::pointsOf() const
+	{
+		std::vector<Point> points;
+		const Json& project = m_display.project();
+		if (!project.is_object())
+			return points;
+		const TimeContext context = projectTime(project);
+		for (const Json& lane : project.at("automation"))
+		{
+			const auto selected = m_pointSelection.find(lane.at("id").get<uint64_t>());
+			if (selected == m_pointSelection.end())
+				continue;
+			Point base;
+			base.lane = selected->first;
+			for (const Json& track : project.at("tracks"))
+				if (track.at("id") == lane.at("track"))
+					base.linear = track.value("timeBase", std::string("musical")) == "linear";
+			if (const Json* targets = m_display.automationTargets(lane.at("track").get<uint64_t>()))
+				for (const Json& info : *targets)
+					if (info.at("target") == lane.at("target"))
+					{
+						base.minimum = info.at("minimum").get<double>();
+						base.maximum = info.at("maximum").get<double>();
+					}
+			for (const Json& json : lane.at("points"))
+				if (selected->second.count(json.at("id").get<uint64_t>()) != 0)
+				{
+					Point point = base;
+					point.id = json.at("id").get<uint64_t>();
+					point.position = json.at("position").get<int64_t>();
+					point.seconds = point.linear ? static_cast<double>(point.position) / context.sampleRate
+												 : context.tempo.toSeconds(point.position);
+					point.value = json.at("value").get<double>();
+					point.terminator = json.value("terminator", false);
+					points.push_back(point);
+				}
+		}
+		std::stable_sort(
+			points.begin(), points.end(), [](const Point& a, const Point& b) { return a.seconds < b.seconds; });
+		return points;
+	}
+
+	// The first selected automation point: its position, value and Terminator (p. 881).
+	void InfoLine::showPoints()
+	{
+		Rml::Element& root = *m_root.get();
+		// None of them in the display's project: removed, before the display drops them from its selection.
+		setClass(root, "empty", m_points.empty());
+		setClass(root, "multiple", m_points.size() > 1);
+		if (m_points.empty())
+			return;
+		setLabel(root, "start", "Position");
+		const Point& first = m_points.front();
+		if (Rml::Element* start = root.QuerySelector("textdisplay[field=start]"))
+			setValue(*start, formatTime(m_format, first.seconds, projectTime(m_display.project())));
+		if (Rml::Element* value = root.QuerySelector("textdisplay[field=value]"))
+			setValue(*value, widgets::format(static_cast<float>(first.value)));
+		if (Rml::Element* button = root.QuerySelector("button[field=terminator]"))
+		{
+			setFlag(*button, "checked", first.terminator);
+			setText(button, first.terminator ? "Yes" : "No");
+		}
+		Rml::ElementList fields;
+		root.QuerySelectorAll(fields, "[info-field]");
+		for (Rml::Element* field : fields)
+		{
+			const auto name = field->GetAttribute<Rml::String>("info-field", "");
+			setClass(*field, "unavailable", name != "start" && name != "value" && name != "terminator");
+		}
+	}
+
+	// As for events: relative to the first point's position or value, or with Ctrl+Enter the value typed for every one,
+	// kept in each parameter's range; Terminator goes to all, which makes the gap after each (p. 881).
+	void InfoLine::editPoints(const std::string& field, const std::string& text)
+	{
+		const TimeContext context = projectTime(m_display.project());
+		const Point& first = m_points.front();
+		std::map<uint64_t, Json> changes; // automationPoint.set's points, by lane
+		if (field == "start")
+		{
+			if (const std::optional<double> typed = parseTime(m_format, text, context))
+				for (const Point& point : m_points)
+				{
+					const double to = clampPositionSeconds(
+						m_absolute ? *typed : point.seconds + (*typed - first.seconds), context.sampleRate);
+					const int64_t position =
+						point.linear ? positionSamples(to, context.sampleRate) : context.tempo.toTicks(to);
+					if (position != point.position)
+						changes[point.lane].push_back({{"id", point.id}, {"position", position}});
+				}
+		}
+		else if (field == "value")
+		{
+			if (const std::optional<float> typed = widgets::parse(text))
+				for (const Point& point : m_points)
+				{
+					const double value = std::clamp(
+						m_absolute ? *typed : point.value + (*typed - first.value), point.minimum, point.maximum);
+					if (value != point.value)
+						changes[point.lane].push_back({{"id", point.id}, {"value", value}});
+				}
+		}
+		else if (field == "terminator")
+		{
+			for (const Point& point : m_points)
+				if (point.terminator == first.terminator)
+					changes[point.lane].push_back({{"id", point.id}, {"terminator", !first.terminator}});
+		}
+		Json commands = Json::array();
+		for (auto& [lane, points] : changes)
+			commands.push_back(
+				{{"command", "automationPoint.set"}, {"parameters", {{"lane", lane}, {"points", std::move(points)}}}});
+		if (commands.empty())
+		{
+			show(); // the value that holds
+			return;
+		}
+		const std::map<std::string, const char*> labels = {
+			{"start", "Position"}, {"value", "Value"}, {"terminator", "Terminator"}};
+		m_binding.send("history.transaction",
+			{{"description", std::string("Change Automation Point ") + labels.at(field)},
+				{"commands", std::move(commands)}});
+	}
+
 	// The first selected note of an in-place editor, as its own info line shows it (pp. 1199, 1259): positions in
 	// bars and beats, the pitch as a name, the velocities 0-127 and the channel 1-16.
 	void InfoLine::showNotes()
@@ -698,7 +1036,8 @@ namespace gnubase::ui
 		for (const char* field : {"start", "end", "length", "pitch", "velocity", "releaseVelocity", "channel"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", false);
-		for (const char* field : {"name", "volume", "mute", "lock", "transpose", "rootKey", "globalTranspose"})
+		for (const char* field :
+			{"name", "volume", "mute", "lock", "transpose", "rootKey", "globalTranspose", "value", "terminator"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", true);
 		if (Rml::Element* velocity = root.QuerySelector("valuefield[field=velocity]"))
@@ -981,10 +1320,13 @@ namespace gnubase::ui
 		}
 		else if (field == "name")
 		{
+			// MIDI and audio parts have names of their own; audio events show their clip's.
+			Json parts = Json::array();
 			for (const Json& event : m_events)
-				if (event.at("kind") == "midi")
-					commands.push_back(
-						{{"command", "midiPart.set"}, {"parameters", {{"part", event.at("id")}, {"name", text}}}});
+				if (event.at("kind") != "audio")
+					parts.push_back(event.at("id"));
+			if (!parts.empty())
+				commands.push_back({{"command", "event.set"}, {"parameters", {{"events", parts}, {"name", text}}}});
 		}
 		else if (field == "volume")
 		{

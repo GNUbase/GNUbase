@@ -674,6 +674,48 @@ TEST_CASE("context menus open at the mouse on a right click, inside the window, 
 	CHECK_FALSE(visible(app, "#track-menu"));
 }
 
+TEST_CASE("a menu taller than the window scrolls, and a submenu opens on the side where it fits (#1933)", "[ui]")
+{
+	test::UiApp app({640, 60});
+	const Events events(app.show("popups.rml"));
+	app.ui().click(std::nullopt, at("#corner"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	CHECK(has(element(app, "#track-menu"), "classes", "scrolls"));
+	CHECK(element(app, "#track-menu").at("box").at("height") == windowSize(app).height);
+	CHECK(insideWindow(app, "#track-menu"));
+
+	// The keys scroll the item they focus into view: Up after the menu opens focuses its last item, below the part
+	// shown, and Down back round to the first. Within a pixel, as RmlUi scrolls by whole pixels and the boxes are
+	// rounded.
+	const auto shown = [&app](const std::string& selector)
+	{
+		const Json menu = element(app, "#track-menu").at("box");
+		const Json item = element(app, selector).at("box");
+		return item.at("y").get<int>() + 1 >= menu.at("y").get<int>() &&
+			item.at("y").get<int>() + item.at("height").get<int>() <=
+			menu.at("y").get<int>() + menu.at("height").get<int>() + 1;
+	};
+	REQUIRE_FALSE(shown("#lock"));
+	app.ui().key(std::nullopt, "Up");
+	CHECK(has(element(app, "#lock"), "pseudoClasses", "focus"));
+	CHECK(shown("#lock"));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(has(element(app, "#rename"), "pseudoClasses", "focus"));
+	CHECK(shown("#rename"));
+
+	// At the window's right edge the submenu opens left of its item, inside the window, and the menu that scrolls
+	// doesn't clip it.
+	app.ui().move(std::nullopt, at("#lock"));
+	app.ui().move(std::nullopt, at("#color"));
+	REQUIRE(visible(app, "#colors"));
+	CHECK(insideWindow(app, "#colors"));
+	const Json menu = element(app, "#track-menu").at("box");
+	const Json colors = element(app, "#colors").at("box");
+	CHECK(colors.at("x").get<int>() + colors.at("width").get<int>() <= menu.at("x").get<int>());
+	click(app, "#blue");
+	CHECK(events.clicks.at("blue") == 1);
+}
+
 TEST_CASE("an open menu whose items change moves inside the window, from where it opened until input came", "[ui]")
 {
 	// #1665: the items that the opening press changes, as a lane's context menu's for the lane's type, place the menu
@@ -1814,6 +1856,76 @@ TEST_CASE(
 	CHECK(closes.counts == std::vector<std::string>{"7", "1", "1"});
 }
 
+TEST_CASE("a dialog under a window that gets shorter scrolls and stays inside the window (#1933)", "[ui]")
+{
+	CountCloses closes;
+	test::UiApp app;
+	app.show("popups.rml");
+	openCountDialog(app, closes);
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE_FALSE(has(element(app, "#count-dialog"), "classes", "scrolls"));
+	const int height = element(app, "#count-dialog").at("box").at("height").get<int>();
+
+	// The window shorter than the dialog and narrower than where it stands: it scrolls, as tall as the window, and
+	// moves inside it.
+	Rml::Context& context = app.main().context();
+	const Json box = element(app, "#count-dialog").at("box");
+	context.SetDimensions({box.at("x").get<int>() + box.at("width").get<int>() - 20, height / 2});
+	app.shell().step(std::chrono::milliseconds(0));
+	app.shell().step(std::chrono::milliseconds(0));
+	const Json shrunk = element(app, "#count-dialog").at("box");
+	CHECK(has(element(app, "#count-dialog"), "classes", "scrolls"));
+	CHECK(shrunk.at("height").get<int>() == context.GetDimensions().y);
+	CHECK(shrunk.at("x").get<int>() >= 0);
+	CHECK(shrunk.at("y").get<int>() >= 0);
+	CHECK(shrunk.at("x").get<int>() + shrunk.at("width").get<int>() <= context.GetDimensions().x);
+	CHECK(shrunk.at("y").get<int>() + shrunk.at("height").get<int>() <= context.GetDimensions().y);
+
+	// Tall enough again, it doesn't scroll.
+	context.SetDimensions({context.GetDimensions().x, height * 2});
+	app.shell().step(std::chrono::milliseconds(0));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(has(element(app, "#count-dialog"), "classes", "scrolls"));
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(app.waitUntil([&app] { return !countDialogOpen(app); }));
+}
+
+TEST_CASE("the wheel and Up and Down step a value field with autofocus while it is edited (#548)", "[ui]")
+{
+	CountCloses closes;
+	test::UiApp app;
+	app.show("popups.rml");
+	openCountDialog(app, closes);
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(has(element(app, "#count"), "classes", "editing"));
+	const auto count = [&app] { return element(app, "#count").at("attributes").at("value").get<std::string>(); };
+
+	// Up and Down step the value rather than moving the caret, and the field stays edited with the new number.
+	app.ui().key(std::nullopt, "Up");
+	app.ui().key(std::nullopt, "Up");
+	app.ui().key(std::nullopt, "Down");
+	CHECK(count() == "2");
+	CHECK(has(element(app, "#count"), "classes", "editing"));
+	// A number typed counts from it.
+	app.ui().text(std::nullopt, "5");
+	app.ui().key(std::nullopt, "Up");
+	CHECK(count() == "6");
+	// The wheel steps it too, up for more.
+	app.ui().wheel(std::nullopt, at("#count"), 0.0F, -2.0F, {});
+	CHECK(count() == "8");
+	CHECK(has(element(app, "#count"), "classes", "editing"));
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(app.waitUntil([&app] { return !countDialogOpen(app); }));
+	CHECK(closes.counts == std::vector<std::string>{"8"});
+
+	// A value field without autofocus still moves the caret.
+	openCountDialog(app, closes);
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().click(std::nullopt, at("#other"), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Up");
+	CHECK(element(app, "#other").at("attributes").at("value") == "1");
+}
+
 namespace
 {
 	// The page of views at dp ratio 1, with its data model.
@@ -2080,6 +2192,100 @@ TEST_CASE("list views with dragscroll scroll while a drag in them is held past t
 	app.waitUntil([] { return false; }, std::chrono::milliseconds(300));
 	CHECK(view->GetScrollTop() == 0.0F);
 	context.ProcessMouseButtonUp(0, 0);
+}
+
+namespace
+{
+	// A list view of forty rows with a drag handle at its top, which scrolls while a drag of the handle is held past
+	// the view's bottom edge (dragscroll).
+	struct DragScrollView
+	{
+		DragScrollView(test::UiApp& app, const ViewsPage& page, const std::string& handle)
+			: view(page.document->GetElementById("table")), context(app.main().context())
+		{
+			REQUIRE(view != nullptr);
+			std::string rml = handle + "<table><tbody>";
+			for (int i = 0; i < 40; ++i)
+				rml += R"(<tr value=")" + std::to_string(i) + R"("><td>Row</td></tr>)";
+			view->SetInnerRML(rml + "</tbody></table>");
+			view->SetAttribute("dragscroll", "dragscroll");
+			const Json grip = element(app, "#handle").at("box");
+			const Json box = element(app, "#table").at("box");
+			x = grip.at("x").get<int>() + 5;
+			y = grip.at("y").get<int>() + 5;
+			below = box.at("y").get<int>() + box.at("height").get<int>() + 60;
+		}
+
+		// The button goes down on the handle and the mouse goes below the view, which scrolls it.
+		void dragBelow(test::UiApp& app)
+		{
+			context.ProcessMouseMove(x, y, 0);
+			context.ProcessMouseButtonDown(0, 0);
+			context.ProcessMouseMove(x, y + 2, 0);
+			context.ProcessMouseMove(x, below, 0);
+			REQUIRE(app.waitUntil([this] { return view->GetScrollTop() > 0.0F; }));
+		}
+
+		// The view stays where it is put, with the button held below it.
+		bool staysAtTop(test::UiApp& app) const
+		{
+			view->SetScrollTop(0.0F);
+			return !app.waitUntil([this] { return view->GetScrollTop() > 0.0F; }, std::chrono::milliseconds(300));
+		}
+
+		Rml::Element* view;
+		Rml::Context& context;
+		int x = 0;
+		int y = 0;
+		int below = 0;
+	};
+}
+
+TEST_CASE("list views stop scrolling for a drag when they lose the focus", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	DragScrollView drag(app, page, R"(<div id="handle" style="drag: drag; height: 10dp;"/>)");
+	drag.dragBelow(app);
+	REQUIRE(drag.view->IsPseudoClassSet("focus"));
+
+	// RmlUi drops a drag whose element leaves the document, e.g. as the docking moves the panel: the view loses the
+	// focus, but no dragend comes.
+	Rml::Element* other = page.document->AppendChild(page.document->CreateElement("input"));
+	other->Focus();
+	REQUIRE(!drag.view->IsPseudoClassSet("focus"));
+	CHECK(drag.staysAtTop(app));
+	drag.context.ProcessMouseButtonUp(0, 0);
+}
+
+TEST_CASE("list views stop scrolling for a drag whose element is gone, also with the focus still in the view", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	// Elements take the focus unless they have focus: none, so removing the handle passes the focus to its parent in
+	// the view, which doesn't blur.
+	DragScrollView drag(app, page, R"(<div id="handle" style="drag: drag; height: 10dp;"/>)");
+	drag.dragBelow(app);
+	Rml::Element* handle = drag.view->GetElementById("handle");
+	REQUIRE(handle != nullptr);
+	// Kept alive, so that the view can't tell by a pointer that went null: the handle is no longer in the view.
+	const Rml::ElementPtr removed = drag.view->RemoveChild(handle);
+	CHECK(drag.staysAtTop(app));
+	drag.context.ProcessMouseButtonUp(0, 0);
+}
+
+TEST_CASE("list views stop scrolling for a drag whose element is no longer held, without a dragend", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	DragScrollView drag(app, page, R"(<div id="handle" style="drag: drag; height: 10dp;"/>)");
+	drag.dragBelow(app);
+	Rml::Element* handle = drag.view->GetElementById("handle");
+	REQUIRE(handle != nullptr);
+	REQUIRE(handle->IsPseudoClassSet("active"));
+	handle->SetPseudoClass("active", false);
+	CHECK(drag.staysAtTop(app));
+	drag.context.ProcessMouseButtonUp(0, 0);
 }
 
 TEST_CASE("table views keep the selection of rows rebuilt twice between two updates", "[ui]")

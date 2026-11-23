@@ -3370,6 +3370,17 @@ namespace gnubase::engine
 		followEvent(project, track, from, end, to, context);
 	}
 
+	Json automationTargetSchema()
+	{
+		const Json idSchema = {{"type", "integer"}};
+		return objectSchema(
+			{{"type",
+				 enumSchema({"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin", "strip",
+					 "controller", "pitchBend", "channelPressure", "midiEffect"})},
+				{"parameter", idSchema}, {"slot", idSchema}, {"number", idSchema}, {"channel", idSchema}},
+			{"type"});
+	}
+
 	bool hasStepCurve(const Project& project, const AutomationLane& lane)
 	{
 		return stepCurve(project, lane);
@@ -4060,15 +4071,35 @@ namespace gnubase::engine
 				return Json::object();
 			});
 		addControl(engine,
-			{"history.describe", 1, "Sets the details of a history step, a note for the user.",
-				objectSchema({{"step", {{"type", "integer"}}}, {"details", {{"type", "string"}}}}, {"step", "details"}),
+			{"history.describe", 1,
+				"Sets the details of a history step, a note for the user. The step is given by its index (step) or by "
+				"its id from history.get (id), which stays with it when the oldest steps go, so a client that "
+				"follows ids describes the step it means whatever other clients did meanwhile; exactly one of them.",
+				objectSchema(
+					{{"step", {{"type", "integer"}}}, {"id", {{"type", "integer"}}}, {"details", {{"type", "string"}}}},
+					{"details"}),
 				Json::object(), false},
 			[this](CommandContext& context)
 			{
-				const auto step = context.parameters().at("step").get<int64_t>();
-				requireRange(step, 0, static_cast<int64_t>(m_history.steps().size()) - 1, "step");
-				m_history.step(static_cast<size_t>(step)).details =
-					context.parameters().at("details").get<std::string>();
+				const Json& parameters = context.parameters();
+				require(parameters.contains("step") != parameters.contains("id"), "give either step or id");
+				size_t index = 0;
+				if (parameters.contains("id"))
+				{
+					const auto id = parameters.at("id").get<int64_t>();
+					const auto& steps = m_history.steps();
+					const auto found = std::find_if(steps.begin(), steps.end(),
+						[id](const HistoryStep& step) { return static_cast<int64_t>(step.id) == id; });
+					require(found != steps.end(), "id is not the id of a step");
+					index = static_cast<size_t>(found - steps.begin());
+				}
+				else
+				{
+					const auto step = parameters.at("step").get<int64_t>();
+					requireRange(step, 0, static_cast<int64_t>(m_history.steps().size()) - 1, "step");
+					index = static_cast<size_t>(step);
+				}
+				m_history.step(index).details = parameters.at("details").get<std::string>();
 				announceHistory(context);
 				return Json::object();
 			});
@@ -4148,9 +4179,10 @@ namespace gnubase::engine
 			{"graph.get", 1,
 				"The project's audio processing graph: its nodes (busses, then channels in track order, then for each "
 				"channel with plugin slots a channelSource node with what plays on the channel and a pluginSlot node "
-				"per slot, which pass the audio on to the channel's node, and while channels listen a listenBus node "
-				"that receives them) with the nodes they receive audio and events from, and the order they are "
-				"processed in. object is the bus, channel or slot id.",
+				"per slot, which pass the audio on to the channel's node, and while channels listen a listen node per "
+				"listening channel, which receives the channel's node and glides it in and out, and a listenBus node "
+				"that receives the listen nodes) with the nodes they receive audio and events from, and the order "
+				"they are processed in. object is the bus, channel or slot id.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
 		Json saveJob = Jobs::schema();
@@ -4451,20 +4483,27 @@ namespace gnubase::engine
 				return Json::object();
 			});
 		addControl(engine,
-			{"bus.removePreset", 1, "Removes one of the user's own bus presets.", presetName, noResult, false},
+			{"bus.removePreset", 1,
+				"Removes one of the user's own bus presets, also one that another GNUbase process on the same settings "
+				"folder removed already: then this one takes the presets of the settings file.",
+				presetName, noResult, false},
 			[&engine](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				const auto name = parameters.at("name").get<std::string>();
 				const BusDirection direction = busDirection(parameters.at("direction"));
+				// One that another GNUbase process removed from the settings file is still in this process's copy
+				// until it takes the file's value, which removing it here does.
+				const bool listed = userPresets(direction, context).contains(name);
 				engine.modifySetting(context, "audio.busPresets",
-					[direction, &name](const Json& value)
+					[direction, &name, listed](const Json& value)
 					{
 						Json presets = value;
 						Json& mine = presets[directionName(direction)];
-						require(mine.is_object() && mine.erase(name) == 1,
-							"no user bus preset " + name + "; only the user's own presets go");
-						return presets;
+						if (mine.is_object() && mine.erase(name) == 1)
+							return presets;
+						require(listed, "no user bus preset " + name + "; only the user's own presets go");
+						return value;
 					});
 				return Json::object();
 			});
@@ -5024,12 +5063,7 @@ namespace gnubase::engine
 		const Json numberSchema = {{"type", "number"}};
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
-		const Json target =
-			objectSchema({{"type",
-							  enumSchema({"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin",
-								  "strip", "controller", "pitchBend", "channelPressure", "midiEffect"})},
-							 {"parameter", idSchema}, {"slot", idSchema}, {"number", idSchema}, {"channel", idSchema}},
-				{"type"});
+		const Json target = automationTargetSchema();
 		const Json shape = enumSchema({"step", "linear", "curve"});
 		const Json pointsResult = {
 			{"type", "object"}, {"properties", {{"points", {{"type", "array"}}}}}, {"required", {"points"}}};

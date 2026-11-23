@@ -7,12 +7,14 @@
 #include "platform/audio/device.h"
 #include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -706,6 +708,43 @@ TEST_CASE("MIDI and instrument tracks play all MIDI inputs while they monitor or
 	CHECK(setup.parts()[0].at("notes").size() == 1);
 }
 
+TEST_CASE("turning MIDI thru off releases the keys and pedals it holds", "[integration]")
+{
+	// Record enable, monitor or the MIDI input going off while a key and the sustain pedal are held (#641).
+	const std::string off = GENERATE("recordEnable", "monitor", "midiInput");
+	INFO(off);
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	gnubase::midi::DummyBackend& backend = *dummy;
+	backend.addLoopback("Keys");
+	std::vector<std::unique_ptr<gnubase::midi::Backend>> midi;
+	midi.push_back(std::move(dummy));
+	Setup setup(64, std::move(midi));
+	Client& client = setup.client;
+	run(client, "midi.ports"); // opens the inputs
+	const auto keys = backend.openOutput("Keys");
+	if (off == "monitor")
+		run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	run(client, "audio.render", {{"frames", 64}}); // the new graph
+	constexpr gnubase::HostTime second = 1000000000;
+	for (const std::array<uint8_t, 3>& bytes : {std::array<uint8_t, 3>{0x90, 60, 100}, {0xB0, 64, 127}})
+	{
+		gnubase::audio::MidiMessage held;
+		held.size = 3;
+		held.bytes = bytes;
+		keys->send(held, gnubase::hostTime() - second); // the next block's first frame
+	}
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	run(client, "channel.set", {{"channel", setup.channel}, {off, off == "midiInput" ? Json("none") : Json(false)}});
+	run(client, "audio.render", {{"frames", 128}});
+	std::vector<std::vector<int>> played;
+	const Json capture = run(client, "midi.capture");
+	for (const Json& captured : capture.at("captured"))
+		played.push_back(captured.at("bytes").get<std::vector<int>>());
+	CHECK(std::find(played.begin(), played.end(), std::vector<int>{0x80, 60, 0}) != played.end());
+	CHECK(std::find(played.begin(), played.end(), std::vector<int>{0xB0, 64, 0}) != played.end());
+}
+
 TEST_CASE("MIDI and instrument tracks have record enable, monitor and a MIDI input", "[unit]")
 {
 	Engine engine;
@@ -995,4 +1034,161 @@ TEST_CASE(
 	CHECK(notesPlayed(client) ==
 		std::vector<std::vector<int64_t>>{
 			{0x90, 72, start + 1000}, {0x90, 76, start + 1000}, {0x90, 79, start + 1000}});
+}
+
+TEST_CASE("a recording through the transport merges into the part it overlaps or replaces what it had", "[integration]")
+{
+	const std::string mode = GENERATE("merge", "replace");
+	INFO(mode);
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "transport.set", {{"midiRecordMode", mode}});
+	const ObjectId part =
+		run(client, "midiPart.add", {{"track", setup.track}, {"position", 0}, {"length", 4 * g_beatTicks}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	run(client, "note.add",
+		{{"part", part}, {"notes", {note(0, g_beatTicks, 48), note(2 * g_beatTicks, g_beatTicks, 50)}}});
+	run(client, "transport.locate", {{"position", 2 * g_beat}});
+	run(client, "audio.render", {{"frames", 64}});
+	const auto now = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "transport.record");
+	setup.inject({message(now + g_beat, {0x90, 60, 100}), message(now + (2 * g_beat), {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 4 * g_beat}});
+	const Json added = setup.stop();
+	REQUIRE(added.is_object());
+	CHECK(added.at("parts") == Json::array({part}));
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	CHECK(parts[0].at("length") == 6 * g_beatTicks); // grown to hold the recording
+	const std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
+	REQUIRE(notes.size() == (mode == "merge" ? 3 : 2));
+	CHECK(notes.front() == std::vector<int64_t>{0, g_beatTicks, 48}); // before the recording: kept
+	CHECK(notes.back()[0] == 3 * g_beatTicks);
+	CHECK(notes.back()[2] == 60);
+}
+
+TEST_CASE("a recording of an audio and a MIDI track together is one recording.add and one undo step", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "audio.setDevice",
+		{{"blockSize", 64}, {"captureSeconds", 1},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 440.0}, {"Level", 0.5}}}}}});
+	run(client, "settings.set", {{"key", "audio.autoMonitoring"}, {"value", "manual"}});
+	run(client, "project.save", {{"path", (dir.path() / "take.dawproject").u8string()}});
+	const Json audio = run(client, "track.add", {{"type", "audio"}});
+	run(client, "channel.set", {{"channel", audio.at("channel").at("id")}, {"recordEnable", true}});
+	const size_t steps = run(client, "history.get").at("steps").size();
+	run(client, "transport.record");
+	setup.inject({message(1000, {0x90, 60, 100}), message(2000, {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 4000}});
+	const Json added = setup.stop();
+	REQUIRE(added.is_object());
+	CHECK(added.at("parts").size() == 1);
+	CHECK(added.at("events").size() == 1);
+	CHECK(run(client, "history.get").at("steps").size() == steps + 1);
+	REQUIRE(setup.parts().size() == 1);
+	run(client, "history.undo");
+	CHECK(setup.parts().empty());
+	CHECK(run(client, "project.get").at("audioEvents").empty());
+}
+
+TEST_CASE("a block with more MIDI input than a chunk holds records all of it", "[integration]")
+{
+	// A MIDI chunk holds 256 events; what doesn't fit goes on in the next one (#641).
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "transport.record");
+	std::vector<Json> messages;
+	messages.reserve(600);
+	for (int i = 0; i < 300; ++i)
+		messages.push_back(message(1000 + (i % 64), {0x90 + (i / 128), i % 128, 100}));
+	for (int i = 0; i < 300; ++i)
+		messages.push_back(message(2000, {0x80 + (i / 128), i % 128, 0}));
+	setup.inject(std::move(messages));
+	run(client, "audio.render", {{"frames", 3000}});
+	REQUIRE(setup.stop().is_object());
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	// Every note ends where its note-off came, at frame 2000: none was lost to end with the recording.
+	const std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
+	REQUIRE(notes.size() == 300);
+	for (const std::vector<int64_t>& each : notes)
+		CHECK(each[0] + each[1] == notes[0][0] + notes[0][1]);
+}
+
+TEST_CASE("the catch range records with midi.retrospectiveEvents 0, which inserts nothing", "[integration]")
+{
+	Setup setup(100);
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "settings.set", {{"key", "midi.retrospectiveEvents"}, {"value", 0}});
+	run(client, "settings.set", {{"key", "midi.recordCatchRange"}, {"value", 50}}); // 2400 frames
+	setup.inject({message(500, {0x90, 60, 100})});
+	run(client, "audio.render", {{"frames", 1000}});
+	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}}), ContainsSubstring("nothing"));
+	run(client, "transport.record"); // from frame 1000, at position 0
+	setup.inject({message(3000, {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 4000}});
+	REQUIRE(setup.stop().is_object());
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	const std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
+	REQUIRE(notes.size() == 1);
+	CHECK(notes[0][0] == 0);
+	CHECK(notes[0][2] == 60);
+}
+
+TEST_CASE("a retrospective insert that fails keeps the buffer for the next input", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}});
+	run(client, "settings.set", {{"key", "midi.recordFilter"}, {"value", {{"types", {"notes"}}}}});
+	setup.inject({message(1000, {0x90, 60, 100}), message(1000 + g_beat, {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 1000 + (2 * g_beat)}});
+	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}}), ContainsSubstring("nothing"));
+	setup.inject({message(1000 + (2 * g_beat), {0x90, 62, 100}), message(1000 + (3 * g_beat), {0x80, 62, 0})});
+	run(client, "audio.render", {{"frames", 2 * g_beat}});
+	run(client, "settings.set", {{"key", "midi.recordFilter"}, {"value", Json::object()}});
+	run(client, "midi.insertRetrospective", {{"track", setup.track}});
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	CHECK(notesOf(parts[0]) ==
+		std::vector<std::vector<int64_t>>{{0, g_beatTicks, 60}, {2 * g_beatTicks, g_beatTicks, 62}});
+}
+
+TEST_CASE("retrospective input from cycle playback ends a note held across a lap at the right locator", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	run(client, "transport.set", {{"left", 0}, {"right", 4 * g_beat}, {"cycle", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	const auto now = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "transport.play");
+	// Beat 2 to 3, then a note from beat 4 held into the next lap's beat 2, and one from that lap's beat 4 held into
+	// the next lap's beat 4.5, with no input in between: it ends later in its lap than it began.
+	setup.inject({message(now + g_beat, {0x90, 60, 100}), message(now + (2 * g_beat), {0x80, 60, 0}),
+		message(now + (3 * g_beat), {0x90, 62, 100}), message(now + (5 * g_beat), {0x80, 62, 0}),
+		message(now + (7 * g_beat), {0x90, 64, 100}), message(now + (11 * g_beat) + (g_beat / 2), {0x80, 64, 0})});
+	run(client, "audio.render", {{"frames", 12 * g_beat}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.insertRetrospective", {{"track", setup.track}});
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	const auto start = parts[0].at("position").get<int64_t>();
+	std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
+	for (std::vector<int64_t>& each : notes)
+		each[0] += start;
+	CHECK(notes ==
+		std::vector<std::vector<int64_t>>{
+			{g_beatTicks, g_beatTicks, 60}, {3 * g_beatTicks, g_beatTicks, 62}, {3 * g_beatTicks, g_beatTicks, 64}});
 }

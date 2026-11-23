@@ -15,6 +15,7 @@
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
 #include "ui/markers.h"
+#include "ui/meterpanel.h"
 #include "ui/midieditor.h"
 #include "ui/mixer.h"
 #include "ui/onscreenkeyboard.h"
@@ -154,6 +155,9 @@ namespace gnubase::app
 		// docs/features/arranger.md), or closes it if it is open: the UI command window.arranger. Its script follows
 		// the engine on its own. Throws std::runtime_error if the document can't be loaded.
 		void toggleArranger();
+		// Opens the arranger editor, or brings it to the front if it is open: Open Arranger Editor in the track list
+		// and on the inspector's Arranger Track section (reference manual pp. 164, 405).
+		void openArranger();
 		ui::WindowId arrangerWindow() const { return m_arrangerWindow; }
 		// The tempo curve on the tempo track's lane in the project window, null before showProject.
 		ui::TempoLane* tempoLane() { return m_tempoLane.get(); }
@@ -167,8 +171,9 @@ namespace gnubase::app
 		// The mixers (#106, docs/features/mixer-window.md): mixer window number 1 to 4 opens in a window of its own
 		// (resources/ui/mixer.rml), hidden like the main window, or closes if it is open: the UI commands window.mixer
 		// (F3), window.mixer2, window.mixer3 and window.mixer4. Returns it, or null when it closed it. Throws
-		// std::runtime_error if the document can't be loaded. mixer is the mixer of an open window, or null;
-		// lowerZoneMixer the project window's, while the docking system shows its panel somewhere.
+		// std::runtime_error if the document can't be loaded. mixer is a window's mixer, or null: it goes in the step
+		// after the user closed the window. lowerZoneMixer the project window's, while the docking system shows its
+		// panel somewhere.
 		ui::Mixer* toggleMixer(int number);
 		ui::Mixer* mixer(int number);
 		ui::WindowId mixerWindow(int number) const { return m_mixers.at(static_cast<size_t>(number - 1)).window; }
@@ -254,6 +259,8 @@ namespace gnubase::app
 		ui::RmlUi& rmlui() { return m_rmlui; }
 		scripting::Runtime& lua() { return m_lua; }
 		ui::KeyCommands& keyCommands() { return m_keys; }
+		// The project window's main menu, or null before the project window shows.
+		ui::MainMenu* mainMenu() { return m_menu.get(); }
 		ui::Docking& docking() { return m_docking; }
 		const ui::GpuRenderer& renderer() const { return m_renderer; }
 
@@ -284,6 +291,8 @@ namespace gnubase::app
 		void chooseMidiImport(ui::Window& window, bool newProject);
 		// Media > Find Missing Files: the OS's folder dialog, then media.locate looks for the missing files there.
 		void chooseMissingFolder(ui::Window& window);
+		// Shows what a pool command did, or why it failed, in the pool, which opens for it.
+		void reportInPool(const std::string& command, const engine::Result& result);
 		// The lower zone's mixer panel, the mixer windows' Visibility tabs and their UI commands, and Edit Channel
 		// Settings.
 		void addMixers();
@@ -294,6 +303,14 @@ namespace gnubase::app
 		void addEditors();
 		// Shows or closes the editor window or the lower zone's editor as the engine's view says.
 		void followEditor(const engine::Json& view);
+		// Opens parts in the editor (window or lower); the lower zone's brings its Editor tab forward and takes the
+		// keyboard focus (p. 100).
+		void openEditor(const std::string& editor, const std::vector<uint64_t>& parts);
+		// Where a double click on a part and Open/Close Editor open it: window or lower, by the preference
+		// editing.doubleClickOpensEditorIn (p. 1603).
+		std::string doubleClickEditor();
+		// Closes the editor (window or lower) that the user closed, Keep Editor Contents with it (p. 1153).
+		void closeEditor(const std::string& editor);
 		// The selected MIDI parts, or else audio parts, open in the editors that follow the project window's
 		// selection (p. 1153).
 		void followSelection();
@@ -345,8 +362,8 @@ namespace gnubase::app
 		// The OS's file dialog for objects of the project: chosen gets the file unless a project.reset came while it
 		// was open, as the ids it acts on are the old project's then (#1586, #1648).
 		void chooseProjectFile(const ui::FileDialog& dialog, std::function<void(const std::filesystem::path&)> chosen);
-		// The OS's file dialog for a track's picture in the mixer, then track.set.
-		void choosePicture(uint64_t track);
+		// The OS's file dialog for a track's picture in the mixer, in the window of the element, then track.set.
+		void choosePicture(const Rml::Element& from, uint64_t track);
 		// The drum map of the active track of an editor (window, else lower), then the OS's file dialog to save it in
 		// and drumMap.export.
 		void saveDrumMap(ui::WindowId parent, const std::string& editor = "window");
@@ -365,6 +382,7 @@ namespace gnubase::app
 		// tracks, parts or notes in its attributes, closes when project.reset replaces the project (#1464).
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
 			const std::vector<std::pair<std::string, std::string>>& attributes = {});
+		void openAudioFunction(const std::string& file);
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track);
 		// The articulation map setup (resources/ui/articulation-maps.rml, #175) for a MIDI or instrument track, or with
@@ -395,6 +413,7 @@ namespace gnubase::app
 		ui::UiSettings m_settings;
 		ui::EngineBinding m_binding;
 		ui::KeyCommands m_keys;
+		ui::MeterReader m_meters; // before the docking system, whose panels show meters, and the mixers
 		ui::Window& m_main;
 		ui::Docking m_docking;
 		engine::Engine& m_engine;
@@ -486,8 +505,15 @@ namespace gnubase::app
 			std::unique_ptr<ui::QuantizePanel> quantize; // its toolbar's quantize functions (#1344)
 		};
 		SampleEditorWindow m_sampleEditor;
+		struct AudioFunctionWindow
+		{
+			ui::WindowId window = 0;
+			Rml::ObserverPtr<Rml::Element> document;
+		};
+		std::map<std::string, AudioFunctionWindow> m_audioFunctions;
 		std::weak_ptr<ui::MidiEditor> m_lowerEditor;         // the docking system owns it while it is there
 		engine::Json m_editorViews = engine::Json::object(); // the engine's, by editor
+		std::set<std::string> m_closing;                     // the editors closeEditor closes, until the engine answers
 		std::vector<uint64_t> m_followed;                    // the selection the editors last followed
 		std::vector<ui::Subscription> m_editorSubscriptions;
 		// The key commands dialog (#161) and the user's key commands and macros, ui.keyCommands and ui.macros.

@@ -114,11 +114,11 @@ namespace gnubase::ui
 		}
 
 		// The arranger track's controls (reference manual p. 164), besides Switch Time Base: Select Active Arranger
-		// Chain, Current Item, Current Repeat and Activate Arranger Mode.
+		// Chain, Current Item, Current Repeat, Activate Arranger Mode and Open Arranger Editor.
 		bool arrangerControl(const std::string& control)
 		{
 			return control == "arrangerChain" || control == "arrangerItem" || control == "arrangerRepeat" ||
-				control == "arrangerMode";
+				control == "arrangerMode" || control == "arrangerEditor";
 		}
 
 		// What Current Item or Current Repeat shows of the arranger state playing (transport.get's arranger): the
@@ -295,9 +295,9 @@ namespace gnubase::ui
 				{"signatureLock", {"Lock", "L"}},
 				{"chordRecord", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
 				{"chordMute", {"Mute Chord Track", "M"}}, {"showScales", {"Show Scales", "S"}},
-				{"arrangerMode", {"Activate Arranger Mode", "A"}}, {"addPositionMarker", {"Add Position Marker", "+"}},
-				{"addCycleMarker", {"Add Cycle Marker", "[+]"}}, {"activateMarkerTrack", {"Activate Track", "A"}},
-				{"groupEditing", {"Group Editing", "G"}},
+				{"arrangerMode", {"Activate Arranger Mode", "A"}}, {"arrangerEditor", {"Open Arranger Editor", "E"}},
+				{"addPositionMarker", {"Add Position Marker", "+"}}, {"addCycleMarker", {"Add Cycle Marker", "[+]"}},
+				{"activateMarkerTrack", {"Activate Track", "A"}}, {"groupEditing", {"Group Editing", "G"}},
 				{"editInPlace", {"Edit In-Place", R"(<svg class="icon" src="../icons/tool-draw.svg"/>)"}}};
 			const auto& [title, content] = looks.at(control);
 			// A click on one leaves the track selection as it is (#1852): selecting the track on a click on its Solo is
@@ -613,12 +613,13 @@ namespace gnubase::ui
 				if (const std::vector<uint64_t> tracks = selection(); !tracks.empty())
 					m_binding.send(std::string("automation.") + which, {{"tracks", tracks}});
 			};
-			m_actions[prefix + "AutomationSelectedParameters"] = [this, which]
-			{
-				if (const std::vector<uint64_t> lanes = selectedLanes(); !lanes.empty())
-					m_binding.send(std::string("automation.") + which, {{"lanes", lanes}});
-			};
 		}
+		m_actions["track.copyAutomationSelectedParameters"] = [this]
+		{
+			if (const std::vector<uint64_t> lanes = selectedLanes(); !lanes.empty())
+				m_binding.send("automation.copy", {{"lanes", lanes}});
+		};
+		m_actions["track.pasteAutomationSelectedParameters"] = [this] { pasteSelectedParameters(); };
 		m_parameterMenu = m_document->GetElementById("automation-parameter-menu");
 		if (m_parameterMenu != nullptr)
 			for (const Rml::EventId id : {Rml::EventId::Click, Rml::EventId::Change})
@@ -1237,7 +1238,8 @@ namespace gnubase::ui
 						button->SetAttribute("value", text);
 					continue;
 				}
-				if (name == "setTimeOffset" || name == "addPositionMarker" || name == "addCycleMarker")
+				if (name == "setTimeOffset" || name == "addPositionMarker" || name == "addCycleMarker" ||
+					name == "arrangerEditor")
 					continue;
 				if (markerMenu(name))
 				{
@@ -1499,7 +1501,7 @@ namespace gnubase::ui
 		for (const Json& json : project.at("automation"))
 			if (json.at("id") == lane)
 				return &json;
-		return nullptr;
+		return m_display.unaddedLane(lane);
 	}
 
 	const Json* TrackList::targetOf(const Json& lane) const
@@ -1761,7 +1763,7 @@ namespace gnubase::ui
 			return;
 		const auto function = target->GetAttribute<Rml::String>("automation-function", "");
 		if (function == "remove") // with its points, and the automation track closes (reference manual p. 878)
-			m_binding.send("automationLane.remove", {{"lane", m_parameterLane}});
+			m_display.removeAutomationLane(m_parameterLane);
 		else if (function == "removeUnused")
 			m_display.removeUnusedAutomation(track);
 		else if (function == "onlyPlugin")
@@ -1861,8 +1863,9 @@ namespace gnubase::ui
 			}
 			if (Rml::Element* button = closest(target, "automation-read"))
 			{
-				// From what the button shows, which shows it at once (#1852).
-				if (const Json* lane = laneOf(automationLane(button)))
+				// From what the button shows, which shows it at once (#1852); an unadded lane has nothing to read.
+				if (const Json* lane = laneOf(automationLane(button));
+					lane != nullptr && m_display.unaddedLane(automationLane(button)) == nullptr)
 				{
 					const bool read = !button->IsClassSet("checked");
 					const auto id = lane->at("id").get<uint64_t>();
@@ -1873,6 +1876,9 @@ namespace gnubase::ui
 			}
 			if (Rml::Element* button = closest(target, "automation-append"))
 			{
+				// The new automation track can show at once, which builds the rows again and so deletes the button:
+				// the click goes no further (#1918).
+				event.StopPropagation();
 				if (const Row* row = rowOf(button))
 					m_display.appendAutomation(row->id);
 				return;
@@ -2045,6 +2051,12 @@ namespace gnubase::ui
 		if (name == "setTimeOffset")
 		{
 			m_binding.send("track.set", {{"track", row.id}, {"timeOffset", "cursor"}});
+			return;
+		}
+		if (name == "arrangerEditor")
+		{
+			if (m_onArrangerEditor)
+				m_onArrangerEditor();
 			return;
 		}
 		if (name == "editInPlace")
@@ -2482,13 +2494,28 @@ namespace gnubase::ui
 		return 0;
 	}
 
-	std::vector<uint64_t> TrackList::selectedLanes() const
+	std::vector<uint64_t> TrackList::selectedLanes(bool unadded) const
 	{
 		std::vector<uint64_t> lanes;
 		for (const uint64_t lane : m_selectedLanes)
-			if (laneOf(lane) != nullptr)
+			if (laneOf(lane) != nullptr && (unadded || m_display.unaddedLane(lane) == nullptr))
 				lanes.push_back(lane);
 		return lanes;
+	}
+
+	void TrackList::pasteSelectedParameters()
+	{
+		// An unadded automation track (#1918) is pasted onto as its track and target: automation.paste adds its lane
+		// only if it pastes into it, in the paste's one undo step (#2018).
+		Json lanes = Json::array();
+		Json targets = Json::array();
+		for (const uint64_t lane : selectedLanes(true))
+			if (const Json* unadded = m_display.unaddedLane(lane))
+				targets.push_back({{"track", unadded->at("track")}, {"target", unadded->at("target")}});
+			else
+				lanes.push_back(lane);
+		if (!lanes.empty() || !targets.empty())
+			m_binding.send("automation.paste", {{"lanes", std::move(lanes)}, {"targets", std::move(targets)}});
 	}
 
 	void TrackList::selectLane(Rml::Event& event, uint64_t lane)

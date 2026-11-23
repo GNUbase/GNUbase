@@ -122,6 +122,8 @@ namespace gnubase::ui
 		// text field keeps the arrow keys without modifiers, also those it can't use at its first or last line or
 		// character, which the text field lets through. Returns whether a command ran.
 		bool press(Window& window, const KeyPress& keys);
+		// The binding that press would run for the keys in the window now, with its zone, or nullopt.
+		std::optional<KeyBinding> bound(Window& window, const KeyPress& keys) const;
 		// The key went up: ends the commands that its presses run while it is held (UiCommand::release), whatever
 		// the modifiers are now. KI_UNKNOWN ends every one, as when the window lost the keyboard focus.
 		void released(const KeyPress& keys);
@@ -164,6 +166,10 @@ namespace gnubase::ui
 		// Whether a menu item of the command and parameters is checked now, or nullopt if checkWhen says nothing.
 		std::optional<bool> checked(const std::string& command, const engine::Json& parameters) const;
 
+		// Changes whenever the keys bound to commands may have changed (bind, remove, customize), so that a menu works
+		// out the keys it shows only then (ui/mainmenu.h).
+		uint64_t bindingsRevision() const { return m_revision; }
+
 	private:
 		// Remembers a key that runs a command while it is held.
 		void hold(int key, const std::string& command);
@@ -183,6 +189,8 @@ namespace gnubase::ui
 			std::vector<KeyPress> keys;
 		};
 
+		// What press runs for the keys in the window: the binding and the zone its command gets.
+		std::optional<std::pair<Bound, Rml::Element*>> find(Window& window, const KeyPress& keys) const;
 		// The default bindings with the user's key commands over them, into m_effective.
 		void rebuild();
 		bool isMacro(const std::string& command) const;
@@ -198,5 +206,6 @@ namespace gnubase::ui
 		std::map<std::string, std::vector<std::pair<std::string, engine::Json>>> m_macros; // by command id
 		std::vector<Bound> m_effective;                  // what the keys run: the defaults with the user's key commands
 		std::vector<std::pair<int, std::string>> m_held; // the keys down with the commands they run while held
+		uint64_t m_revision = 0;                         // of m_effective
 	};
 }

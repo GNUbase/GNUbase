@@ -379,18 +379,25 @@ TEST_CASE("MIDI > Merge MIDI in Loop merges between the locators, and Bounce MID
 	REQUIRE(f.app.waitUntil([&] { return f.count("tracks") == 1; }));
 
 	// Onto the selected track, erasing what was there: one part with the three notes, which Include Inserts, on by
-	// default, plays the track's MIDI modifiers into.
+	// default, plays the track's MIDI modifiers into, and with them what its MIDI send plays, which Include Sends, on
+	// by default too, adds (p. 1120).
 	std::vector<int> pitches;
 	for (const Json& note : f.notesOf(f.part))
-		pitches.push_back(note.at("pitch").get<int>() + 12);
+		for (const int added : {12, 19})
+			pitches.push_back(note.at("pitch").get<int>() + added);
 	std::sort(pitches.begin(), pitches.end());
 	const Json channel = f.app.call("project.get").at("tracks")[0].at("channel");
-	f.app.call("channel.set", {{"channel", channel}, {"modifiers", {{"transpose", 12}}}});
+	f.app.call("channel.set",
+		{{"channel", channel}, {"modifiers", {{"transpose", 12}}},
+			{"midiSends", {{"slots", {{{"effect", "transformer"}, {"parameters", {{"value", 7}}}}}}}}});
 	f.app.appUi().trackList()->select({f.track});
 	f.dialog("midi.mergeInLoop", "MIDI Merge Options");
 	const Json inserts = f.elements("#midi-function-inserts");
 	REQUIRE(inserts.size() == 1);
 	CHECK((inserts[0].contains("attributes") && inserts[0].at("attributes").contains("checked")));
+	const Json sends = f.elements("#midi-function-sends");
+	REQUIRE(sends.size() == 1);
+	CHECK((sends[0].contains("attributes") && sends[0].at("attributes").contains("checked")));
 	f.click("#midi-function-erase");
 	f.ok();
 	CHECK(f.app.waitUntil(

@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -650,6 +651,7 @@ namespace gnubase::ui
 			area = frame.size.y - (2.0F * inset);
 		}
 		const float height = area / static_cast<float>(m_channels.size());
+		const double gain = number(*this, "gain", 1.0);
 		const double first = std::max(frame.left, std::round(m_span.start / frame.unitsPerPixel));
 		const double last = std::min(frame.right, std::round(m_span.end() / frame.unitsPerPixel));
 		Rml::Mesh mesh;
@@ -663,7 +665,9 @@ namespace gnubase::ui
 			const double middle = frame.y(0.0) + offset + (height * (static_cast<float>(channel) + 0.5F));
 			const double half = height / 2.0;
 			const auto y = [&](int16_t sample)
-			{ return static_cast<float>(std::round(middle - (sample / 32767.0 * half))); };
+			{
+				return static_cast<float>(std::round(middle - (std::clamp(sample / 32767.0 * gain, -1.0, 1.0) * half)));
+			};
 			float previousTop = 0.0F;
 			float previousBottom = 0.0F;
 			float previousEnd = -1.0F;
@@ -702,7 +706,7 @@ namespace gnubase::ui
 
 	bool Waveform::drawsWith(const Rml::ElementAttributes& changed) const
 	{
-		return changed.count("brightness") != 0;
+		return changed.count("brightness") != 0 || changed.count("gain") != 0;
 	}
 
 	void Curve::setPoints(std::vector<CurvePoint> points, bool handles, bool dashed)
@@ -947,15 +951,18 @@ namespace gnubase::ui
 							static_cast<float>(at + (handleSize / 2.0)), handle);
 					}
 				}
+			// Fade handles at the top of the lane, event volume controls at its bottom.
 			if (handle.alpha != 0)
-				for (const double at : lane.handles)
-					if (at >= from - (handleSize * frame.unitsPerPixel) &&
-						at <= to + (handleSize * frame.unitsPerPixel))
-					{
-						const double x = std::round(at / frame.unitsPerPixel) - frame.left;
-						quad(mesh, static_cast<float>(x - (handleSize / 2.0)), frame.y(y0),
-							static_cast<float>(x + (handleSize / 2.0)), frame.y(y0 + handleSize), handle);
-					}
+				for (const auto& [places, squareTop] :
+					{std::pair{&lane.handles, y0}, std::pair{&lane.faders, y1 - handleSize}})
+					for (const double at : *places)
+						if (at >= from - (handleSize * frame.unitsPerPixel) &&
+							at <= to + (handleSize * frame.unitsPerPixel))
+						{
+							const double x = std::round(at / frame.unitsPerPixel) - frame.left;
+							quad(mesh, static_cast<float>(x - (handleSize / 2.0)), frame.y(squareTop),
+								static_cast<float>(x + (handleSize / 2.0)), frame.y(squareTop + handleSize), handle);
+						}
 		}
 		meshes.push_back({std::move(mesh), {}});
 	}

@@ -56,7 +56,9 @@ namespace gnubase::ui
 	// showing it as an .arranger-lane-event.drawing while the button is down (a click draws from the grid line at or
 	// before it to the next bar line), a drag moves one, both snapped as the display's drags snap with the other
 	// arranger events' edges as magnets too, and the field, as wide as the event, renames one (an empty name keeps the
-	// old one). An edit the engine refuses says why, as the display's own edits do (EventDisplay::showRefusal). The
+	// old one). A click selects an arranger event (.selected), with Ctrl (Cmd) adds or removes it, and a press beside
+	// the events clears the selection; a drag of an edge (.arranger-lane-edge) resizes the event, snapped as a move
+	// is. An edit the engine refuses says why, as the display's own edits do (EventDisplay::showRefusal). The
 	// row follows the project as the display reads it, and the track's own events (transpose.changed, chord.changed,
 	// arranger.changed), and the display's view. Use it on the UI thread; the display and the binding must outlive it.
 	class GlobalEventLane final : private Rml::EventListener
@@ -84,14 +86,24 @@ namespace gnubase::ui
 			bool detected = false;
 		};
 
-		// An event a drag moves, which shows moved until the lane reads it where the engine moved it.
+		// An event a drag moves or resizes, which shows so until the lane reads it where the engine put it.
 		struct Moved
 		{
 			uint64_t event = 0;
-			double shift = 0.0;    // seconds, snapped
+			double shift = 0.0;    // seconds the start moves, snapped
+			double endShift = 0.0; // and the end
 			int64_t from = 0;      // where it was, samples
+			int64_t fromEnd = 0;
 			bool dragging = false; // the button is still down
 			bool answered = false; // the move's answer is in
+		};
+
+		// What a drag on an arranger event changes: where it is, or one of its edges.
+		enum class Edge : uint8_t
+		{
+			None,
+			Start,
+			End,
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -108,7 +120,8 @@ namespace gnubase::ui
 		void move(Rml::Event& event);
 		void release(Rml::Event& event);
 		const Event* find(uint64_t id) const;
-		// Shows an event moved as a drag dx dp across moves it, if it moves that far; whether it does.
+		// Shows an event moved (or an arranger event's edge, m_edge) as a drag dx dp across moves it, if it moves that
+		// far; whether it does.
 		bool moveTo(uint64_t id, double dx);
 		// Ends what a drag shows once the lane shows the event drawn or moved as the engine has it.
 		void settle();
@@ -124,6 +137,8 @@ namespace gnubase::ui
 		std::pair<double, double> drawn(double from, double dx) const;
 		// Where a drag dx dp across moves an event's start to, in seconds.
 		double movedTo(const Event& event, double dx) const;
+		// Where a drag dx dp across moves an arranger event's edge at edge seconds to, in seconds.
+		double edgeTo(double edge, uint64_t event, double dx) const;
 		// The edges of the arranger events but one (0: all of them), in samples, which arranger events snap to.
 		std::vector<int64_t> magnets(uint64_t except) const;
 
@@ -147,6 +162,8 @@ namespace gnubase::ui
 		bool m_auditioning = false;
 		std::vector<Event> m_list;
 		std::optional<std::pair<uint64_t, float>> m_drag;       // the event pressed and where, in pixels
+		Edge m_edge = Edge::None;                               // the arranger event's edge pressed
+		std::vector<uint64_t> m_selection;                      // the arranger events selected
 		std::optional<Moved> m_moved;                           // what a drag moves
 		std::optional<std::pair<double, float>> m_draw;         // where the draw tool pressed, in seconds and pixels
 		std::optional<std::pair<double, double>> m_drawn;       // what it draws, seconds, until m_added shows

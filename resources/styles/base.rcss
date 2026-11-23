@@ -45,11 +45,21 @@ button
 	nav: auto;
 }
 
-/* Toolbar and transport buttons are for the mouse: a click focuses them, but Tab skips them and Space and Enter go to
-   the key commands, so Space still starts and stops playback (#456, docs/features/widgets.md). */
-.toolbar button, .transport button
+/* Buttons outside dialogs are for the mouse: those of toolbars, the transport controls, the track list, the
+   inspector's track buttons, the mixer's channels, the zones, the ruler, the info line, the chord pads, the drum sound
+   list and the pattern lanes. A click focuses them, but Tab skips them and Space and Enter go to the key commands, so
+   Space still starts and stops playback (#456, #653, #2016, docs/features/widgets.md). Setup panes keep Tab, Space and
+   Enter for their buttons, also those of a toolbar's or the transport controls' setup pane. */
+.toolbar button, .transport button, .track-list button, .inspector-buttons button, .mixer-channels button,
+button.zone-close, button.ruler-format, .info-field button, .chord-pads-toolbar button, button.drum-sound-mute,
+.pattern-lane-controls button
 {
 	tab-index: none;
+}
+
+.setup-pane button
+{
+	tab-index: auto;
 }
 
 /* A disabled button lets clicks pass and takes no focus (ui/widgets.h). */
@@ -312,7 +322,7 @@ tabset tab
 /* A section the toolbar has no room for, or a part it gives up first (fit="spare", such as Warp Quantize On/Off): out
    of the flow and unseen, so it takes no room and no gap, and still laid out, so the docking system knows the width it
    needs to show again. */
-.toolbar-section.no-room, .toolbar-section .no-room
+.toolbar-section.no-room, .toolbar-section .no-room, .transport-section.no-room
 {
 	position: absolute;
 	left: 0;
@@ -511,8 +521,9 @@ valuefield.editing .valuefield-text
 }
 
 /* The transport controls (docs/features/transport-bar.md): sections in a row, the time display window's big
-   display. The sections keep their contents' width, so a window too narrow for them cuts off the last ones at the
-   right edge rather than drawing sections over each other. */
+   display. The sections keep their contents' width; the transport bar hides those it has no room for (fit="room",
+   docs/features/docking.md), and a transport panel too narrow for them cuts off the last ones at the right edge,
+   rather than drawing sections over each other. */
 .transport
 {
 	display: flex;
@@ -538,6 +549,13 @@ valuefield.editing .valuefield-text
 .transport-section.hidden
 {
 	display: none;
+}
+
+/* The Left and Right Divider (fit="room", docs/features/docking.md): a line, the theme's color, between sections. */
+.transport-divider
+{
+	width: 1px;
+	height: 20dp;
 }
 
 .transport-section > *
@@ -911,7 +929,8 @@ meter .meter-peak
 
 /* Markers (docs/features/markers.md): the marker lines and marker events are event lanes like the events; code
    places the labels where their markers are. */
-.event-display .marker-lines, .event-display .marker-events
+.event-display .marker-lines, .event-display .marker-events, .event-display event-lanes.grid-lines,
+.event-display event-lanes.snap-points
 {
 	pointer-events: none;
 }
@@ -1123,6 +1142,26 @@ meter .meter-peak
 	padding: 2dp 3dp;
 	white-space: nowrap;
 	overflow: hidden;
+}
+
+/* An arranger event's edges, which a drag resizes it by. */
+.arranger-lane-row .arranger-lane-edge
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 4dp;
+	cursor: resize;
+}
+
+.arranger-lane-row .arranger-lane-edge[edge=start]
+{
+	left: 0;
+}
+
+.arranger-lane-row .arranger-lane-edge[edge=end]
+{
+	right: 0;
 }
 
 /* The chord pads zone (docs/features/chord-pads.md): its toolbars above the pads, which wrap, and the chord
@@ -1376,8 +1415,9 @@ meter .meter-peak
 	padding: 2dp;
 }
 
-/* MIDI parts excluded from global transpose (reference manual p. 421): code puts a .part-mark.independent at the
-   upper right corner of each, its left at the part's end, with the icon inside the part. */
+/* Marks at the upper right corner of events and parts: .independent if excluded from global transpose (reference manual
+   p. 421), .locked (p. 276), .shared for shared copies (p. 272). Code puts each event's marks in a .part-marks-of and
+   sets its right to the event's end, so the icons line up leftwards inside the event. */
 .event-display .part-marks
 {
 	position: absolute;
@@ -1408,11 +1448,19 @@ meter .meter-peak
 	width: 1px;
 }
 
-.event-display .part-mark
+.event-display .part-marks-of
 {
 	position: absolute;
-	margin-left: -14dp;
 	margin-top: 2dp;
+	margin-right: 2dp;
+	height: 12dp;
+	white-space: nowrap;
+}
+
+.event-display .part-mark
+{
+	display: inline-block;
+	margin-left: 2dp;
 	width: 12dp;
 	height: 12dp;
 }
@@ -1500,6 +1548,12 @@ meter .meter-peak
 .event-display .event-area[pointer=resizeVertical]
 {
 	cursor: ns-resize;
+}
+
+/* The repeat handle (docs/features/parts-and-events.md): the OS's pointing hand. */
+.event-display .event-area[pointer=repeat]
+{
+	cursor: pointer;
 }
 
 /* The name of a tool chosen with a key command, for a moment, at the top of the event lanes; the document gives it
@@ -1800,8 +1854,14 @@ meter .meter-peak
 	padding: 0 2dp;
 }
 
-/* The arranger track's Current Repeat (docs/features/arranger.md), such as 2/4: narrow, so that it sits beside Current
-   Item under the other controls in the arranger track's default controls area of 160dp. */
+/* The arranger track's Current Item and Current Repeat (docs/features/arranger.md), such as 2/4: narrow, so that they
+   sit beside each other and Open Arranger Editor under the other controls in the arranger track's default controls
+   area of 160dp. */
+.track-list .track-controls textdisplay.arranger-item
+{
+	width: 84dp;
+}
+
 .track-list .track-controls textdisplay.arranger-repeat
 {
 	width: 36dp;
@@ -1962,6 +2022,15 @@ menuitem > menu
 {
 	left: 100%;
 	top: -4dp;
+	clip: none; /* also beside a menu that scrolls */
+}
+
+/* A menu or a dialog taller than the window is as tall as the window and scrolls what it holds (#1933). */
+menu.scrolls, dialog.scrolls
+{
+	box-sizing: border-box;
+	max-height: 100vh;
+	overflow-y: auto;
 }
 
 menuseparator
@@ -2039,6 +2108,21 @@ menuitem .track-version-id
 	height: 12dp;
 	margin-right: 6dp;
 	vertical-align: middle;
+}
+
+/* The color tool's color, a strip under its icon (docs/features/tools.md); code gives it the color. */
+button[tool=color]
+{
+	position: relative;
+}
+
+button .tool-color
+{
+	position: absolute;
+	left: 5dp;
+	right: 5dp;
+	bottom: 2dp;
+	height: 3dp;
 }
 
 /* Every document's tooltip, under the mouse; it lets the mouse through. */
@@ -2494,6 +2578,87 @@ splitter.column .splitter-grip-horizontal
 	margin-left: 6dp;
 }
 
+/* The Arranger Track section (docs/features/arranger.md): Open Arranger Editor beside its header, and its lists' rows,
+   a step's arrow, name and repeats, an event's arrow and name. The row playing (.arranger-row.current) is the theme's. */
+.inspector-section-title
+{
+	display: flex;
+	align-items: center;
+	margin-top: 4dp;
+}
+
+.inspector-section-title .section-header
+{
+	flex: 1 1 0;
+	width: auto;
+	margin-top: 0;
+}
+
+.inspector-arranger-editor, .inspector .arranger-row button
+{
+	flex-shrink: 0;
+	min-width: 0;
+	width: 22dp;
+	padding: 0;
+	text-align: center;
+}
+
+.inspector-arranger-editor
+{
+	margin-left: 4dp;
+}
+
+.inspector-list-title
+{
+	padding: 2dp 0;
+}
+
+.inspector .arranger-row
+{
+	display: flex;
+	align-items: center;
+	height: 22dp;
+}
+
+.inspector .arranger-row .name
+{
+	flex: 1 1 0;
+	min-width: 0;
+	height: 20dp;
+	margin: 0 4dp;
+	padding: 2dp 4dp;
+	text-align: left;
+	overflow: hidden;
+}
+
+.inspector .arranger-row textdisplay.name input.text
+{
+	text-align: left;
+}
+
+.inspector .arranger-row .repeats
+{
+	flex-shrink: 0;
+	min-width: 0;
+	width: 28dp;
+	height: 20dp;
+	padding: 2dp;
+	text-align: right;
+}
+
+.inspector .arranger-row textdisplay.repeats input.text
+{
+	text-align: right;
+}
+
+/* A step's repeat mode, narrow: its drop-down list shows the modes' full names. */
+.inspector .arranger-row .mode
+{
+	flex-shrink: 0;
+	width: 56dp;
+	margin-left: 4dp;
+}
+
 /* The MIDI Inserts and MIDI Sends sections: a slot's control panel shows while its edit button opened it. */
 .midi-effect-panel
 {
@@ -2652,7 +2817,8 @@ listview.history
 /* The pool (ui/poolpanel.h): a toolbar, the message line, the info line, the column headers and a tree of folders and
    clips that fills the rest of its panel. The Media column takes the room the others leave. Rows have the state
    classes .folder or .clip, and clips .missing and .unused; the message line has .error for a failure, and its row
-   .running while a job of a pool command runs, which shows Stop. */
+   .running while a job of a pool command runs, which shows Stop. The View/Attributes menu hides a column with the
+   state class .hide-used, .hide-status, .hide-key, .hide-info or .hide-path on .pool. */
 .pool
 {
 	position: absolute;
@@ -2770,6 +2936,12 @@ listview.pool-list
 .pool-header span.path, .pool-list span.path
 {
 	width: 260dp;
+}
+
+.pool.hide-used span.used, .pool.hide-status span.status, .pool.hide-key span.key, .pool.hide-info span.info,
+.pool.hide-path span.path
+{
+	display: none;
 }
 
 /* The color picker: the saturation and value field, the hue strip, the old and new colors' swatches, and the value

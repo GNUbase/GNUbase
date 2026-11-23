@@ -26,8 +26,8 @@ The `event.*` commands ([parts-and-events.md](parts-and-events.md)) take audio p
 - **Gluing** audio events that continue each other in a clip, as after a split, makes one event; any other audio events
   and parts of one track become one part from the first start to the last end (reference manual p. 269), the first of
   the parts or a new one, with all their events.
-- **Deleting** a part deletes its events. `event.set` mutes, locks and colors parts; `event.toRealCopy` gives each of a
-  part's events a clip of its own; `event.get` has `kind` `audioPart`.
+- **Deleting** a part deletes its events. `event.set` mutes, locks, colors and renames parts; `event.toRealCopy` gives
+  each of a part's events a clip of its own; `event.get` has `kind` `audioPart`.
 - **Ranges** (`range.*`) cut parts at their edges like events and copy and paste them with their events.
 
 ## Playback
@@ -58,6 +58,8 @@ which a double click on a part opens. Empty parts come from:
   MIDI or instrument track;
 - a double click on an audio track between the locators (elsewhere on an audio track it does nothing).
 
+The info line renames the selected parts, audio and MIDI ones alike, with `event.set`.
+
 The Audio menu's Events to Part (`audio.eventsToPart`) and Dissolve Part (`audio.dissolvePart`) act on the selected
 audio events and parts and select what they make.
 
@@ -67,6 +69,7 @@ audio events and parts and select what they make.
   moving, copying, splitting (with what it announces), gluing, muting, locking, removing and duplicating parts with
   their events; playback cut at the part's edges and silent while muted; the DAWproject file with and without
   GNUbase's entry.
+- `tests/inspector_tests.cpp`: the info line renames an audio part and a MIDI part selected with it, as one undo step.
 - `tests/fade_tests.cpp`: fades that a part cuts play on up to its edges, sample by sample and against the golden file
   `fades-cut-by-part`.
 - `tests/snap_tests.cpp`: an event's magnets that its part hides don't attract.

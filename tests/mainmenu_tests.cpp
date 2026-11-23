@@ -184,6 +184,35 @@ TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI record mode", 
 	REQUIRE(app.waitUntil([&app] { return checked(app, "#midi-record-mode-merge"); }));
 }
 
+TEST_CASE("Transport > MIDI Retrospective Recording > Empty All Buffers empties every track's buffer", "[ui]")
+{
+	// Reference manual p. 356.
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const Json added = app.call("track.add", {{"type", "instrument"}});
+	const Json channel = added.at("channel").at("id");
+	app.call("channel.set", {{"channel", channel}, {"recordEnable", false}});
+	app.call("midi.inject",
+		{{"channel", channel},
+			{"messages",
+				{{{"position", 100}, {"bytes", {0x90, 60, 100}}}, {{"position", 200}, {"bytes", {0x80, 60, 0}}}}}});
+	app.call("audio.render", {{"frames", 640}});
+	app.call("midi.insertRetrospective", {{"track", added.at("track").at("id")}}); // the buffer holds the note
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#menu-bar button[menu=transport-menu]");
+	app.ui().move(std::nullopt, {"#midi-retrospective-submenu", 0, std::nullopt});
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#midi-retrospective-empty");
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			const engine::Result inserted =
+				engine::Client(app.engine()).call("midi.insertRetrospective", {{"track", added.at("track").at("id")}});
+			return !inserted.ok() && inserted.error.find("nothing") != std::string::npos;
+		}));
+}
+
 TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI cycle record mode", "[ui]")
 {
 	test::UiApp app({900, 640});
@@ -361,6 +390,112 @@ TEST_CASE("the main menu follows what a click's listeners changed before it runs
 		document->RemoveEventListener(Rml::EventId::Click, &enabler, true);
 	}
 	document->Close();
+}
+
+// The menu's update runs in every frame (#1901): it asks each command once per zone whether it can run, a click asks
+// only the clicked item's, and the keys are worked out and written again only when the bindings change.
+TEST_CASE("the main menu asks each command once per update and writes keys only when the bindings change", "[unit]")
+{
+	engine::Engine engine;
+	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
+	ui::Window& window = fake.shell.open(ui::WindowSpec{});
+	ui::EngineBinding binding(engine);
+	ui::KeyCommands keys(engine, binding);
+	int asked = 0;
+	int runs = 0;
+	for (const char* id : {"test.first", "test.second"})
+	{
+		keys.add({id, "A test command.", [&runs](ui::Window& /*window*/, Rml::Element* /*zone*/) { ++runs; }});
+		keys.enableWhen(id,
+			[&asked](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				++asked;
+				return true;
+			});
+	}
+	keys.bind({"Mod+1", "test.first"});
+	keys.bind({"Mod+2", "test.second"});
+	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(
+		R"(<rml><head><style>body { width: 100%; height: 100%; } menuitem { display: block; height: 20dp; }</style>)"
+		R"(</head><body><menuitem id="first" command="test.first"/><menuitem id="second" command="test.second"/>)"
+		R"(<menuitem id="again" command="test.first"/></body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	{
+		ui::MainMenu menu(keys, window, *document);
+		Rml::Element* first = document->QuerySelector("#first .menu-keys");
+		Rml::Element* second = document->QuerySelector("#second .menu-keys");
+		REQUIRE(first != nullptr);
+		REQUIRE(second != nullptr);
+		CHECK(first->GetInnerRML() == keyName("Mod+1"));
+		CHECK(second->GetInnerRML() == keyName("Mod+2"));
+
+		// The third item, apart from the first, has the first's command in the same zone: it adds no ask.
+		asked = 0;
+		menu.update();
+		CHECK(asked == 2);
+		asked = 0;
+		ui::Automation(fake.shell).click(std::nullopt, {"#first", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		CHECK(asked == 1);
+		CHECK(runs == 1);
+
+		// The menu compares the keys with what it wrote, not with the DOM: while the bindings stay, it writes nothing.
+		first->SetInnerRML("first");
+		second->SetInnerRML("second");
+		menu.update();
+		CHECK(first->GetInnerRML() == "first");
+		CHECK(second->GetInnerRML() == "second");
+		// Mod+2 runs test.first now: only the second item's keys change.
+		keys.bind({"Mod+2", "test.first"});
+		menu.update();
+		CHECK(first->GetInnerRML() == "first");
+		CHECK(second->GetInnerRML().empty());
+	}
+	document->Close();
+}
+
+TEST_CASE("the main menu's update reports its time per frame", "[ui][slow]")
+{
+	// A benchmark (#1901): the time of the main menu's update in an idle frame of the project window, with the default
+	// key commands and with a key command of the user's for every command, so that a regression shows in the output.
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.shell().step(std::chrono::milliseconds(0));
+	ui::MainMenu* menu = app.appUi().mainMenu();
+	REQUIRE(menu != nullptr);
+	const auto time = [menu]
+	{
+		constexpr int frames = 200;
+		const auto start = std::chrono::steady_clock::now();
+		for (int frame = 0; frame < frames; ++frame)
+			menu->update();
+		const std::chrono::duration<double, std::milli> taken = std::chrono::steady_clock::now() - start;
+		return taken.count() / frames;
+	};
+	const double defaults = time();
+
+	std::vector<std::string> free;
+	for (const char* modifiers : {"Mod+Alt+", "Mod+Alt+Shift+", "Ctrl+Alt+Shift+Meta+"})
+	{
+		for (char letter = 'A'; letter <= 'Z'; ++letter)
+			free.push_back(modifiers + std::string(1, letter));
+		for (int number = 1; number <= 24; ++number)
+			free.push_back(modifiers + std::string("F") + std::to_string(number));
+	}
+	Json custom = Json::array();
+	for (const Json& command : app.keys().commands())
+	{
+		if (free.empty())
+			break;
+		custom.push_back({{"command", command.at("command")}, {"parameters", command.at("parameters")},
+			{"keys", Json::array({free.back()})}});
+		free.pop_back();
+	}
+	app.keys().customize(custom, Json::array());
+	menu->update();
+	const double customized = time();
+	WARN("The main menu's update in an idle frame: " << defaults << " ms with the default key commands, " << customized
+													 << " ms with " << custom.size() << " key commands of the user's");
 }
 
 // ui::Automation runs the shell's input handler once after each input, once the input's listeners have run, so that

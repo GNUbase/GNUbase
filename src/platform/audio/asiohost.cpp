@@ -181,6 +181,9 @@ namespace gnubase::audio
 
 		// The open device: ASIO's callbacks have no context.
 		std::atomic<AsioDevice*> g_open{nullptr};
+		// The driver whose last device asked for a reset while it opened, before the engine read it; written when
+		// that device closes, read by the next one (only one is open at a time).
+		std::string g_askedWhileOpening;
 
 		class AsioDevice : public Device
 		{
@@ -215,6 +218,7 @@ namespace gnubase::audio
 				{
 					logging::error("Closing the ASIO driver {} failed: {}", m_info.name, error.what());
 				}
+				g_askedWhileOpening = m_askedWhileOpening ? m_info.name : std::string();
 				g_open = nullptr;
 			}
 
@@ -312,7 +316,25 @@ namespace gnubase::audio
 			// ponytail: the engine queues the reset with a lock and an allocation, which a driver's audio thread
 			// shouldn't do; drivers only ask when audio is interrupted anyway. Hand it to the driver thread if that
 			// ever glitches.
-			void driverReset() const { requestReset(); }
+			// A request before the engine has read the device is kept for it (#432), but asks for little: open reads
+			// the sizes and latencies after createBuffers. A driver that asks while every open runs would be reset
+			// without end, so such a request is dropped when this driver's previous device asked while it opened too,
+			// as the open that request's reset made does (#1972). A request after that still resets.
+			void driverReset() const
+			{
+				if (!resetsAtOnce())
+				{
+					const bool again = m_askedWhileOpening.exchange(true) || g_askedWhileOpening == m_info.name;
+					if (again)
+					{
+						logging::info("The ASIO driver {} asked for a reset again while it opened; it opened with its "
+									  "current settings",
+							m_info.name);
+						return;
+					}
+				}
+				requestReset();
+			}
 
 			// From the driver's callbacks, when it dropped out (kAsioOverload). Real-time safe.
 			void driverOverload() noexcept { reportOverload(); }
@@ -492,6 +514,7 @@ namespace gnubase::audio
 			DeviceInfo m_info;
 			DeviceLatency m_latency;
 			bool m_running = false;
+			mutable std::atomic<bool> m_askedWhileOpening{false}; // for a reset, before the engine read the device
 
 			std::atomic<AudioCallback*> m_callback{nullptr};
 			std::vector<float> m_inputSamples;

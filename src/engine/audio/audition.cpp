@@ -85,6 +85,7 @@ namespace gnubase::engine
 		cue.window = maxFrames;
 		cue.playsOn = playsOn;
 		m_playback.cue(cue);
+		startCued();
 		m_playback.waitUntilBuffered(g_startWait);
 		publish(std::move(state));
 	}

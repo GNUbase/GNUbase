@@ -117,10 +117,15 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Left, Right | `edit.selectPrevious`, `edit.selectNext` | Navigate Left, Right |
 | Up, Down | `track.selectPrevious`, `track.selectNext`, and the first event on the track while an event is selected, unless `ui.upDownSelectsTracksOnly` ([track-list.md](track-list.md)) | Navigate Up, Down |
 | Alt+F2 | `track.rename` | Rename Track |
+| Mod+E, Return | `editor.openClose` | Open/Close Editor ([midi-editors.md](midi-editors.md)) |
+| Mod+G | `editor.openList` | Open List Editor ([list-editor.md](list-editor.md)) |
+| Mod+Shift+I | `editor.editInPlace` | Edit In-Place ([in-place-editor.md](in-place-editor.md)) |
 | Mod+X, Mod+C, Mod+V | `edit.cut`, `edit.copy`, `edit.paste` | Cut, Copy, Paste ([range-editing.md](range-editing.md)) |
 | Mod+Shift+X, Shift+Backspace, Mod+Shift+V | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Cut Time, Delete Time, Paste Time |
+| Mod+Shift+Down | `edit.pasteAtOrigin` | Paste at Origin |
 | Mod+Shift+E | `edit.insertSilence` | Insert Silence |
 | Shift+X | `edit.splitRange` | Split (range) |
+| X | `audio.crossfade` | Crossfade ([fades.md](fades.md)) |
 | J | `edit.snap` | Snap On/Off ([snap.md](snap.md)) |
 | 1 to 9 | `tool.objectSelection`, `tool.rangeSelection`, `tool.split`, `tool.glue`, `tool.erase`, `tool.zoom`, `tool.mute`, `tool.draw`, `tool.play` | Object Selection Tool to Play Tool ([tools.md](tools.md)) |
 | F9, F10 | `tool.previous`, `tool.next` | Select Previous/Next Tool |
@@ -146,8 +151,9 @@ UI (`test::UiApp`, [ui-tests.md](ui-tests.md)), keys pressed through `ui::Automa
 transport and undo through the UI's client; the same keys run different commands in a project zone, an editor zone
 inside a lower zone, an element of the lower zone and outside any zone; lock keys don't count; a key from SDL's own
 event queue runs its command; and text fields, also their arrow keys at the ends, a focused button, a focused knob and
-a modal dialog keep their keys, while Space after a click on a toolbar or transport button starts and stops playback
-(`tests/transportbar_tests.cpp`).
+a modal dialog keep their keys, while Space and NumEnter after a click on a button of a toolbar, the transport
+controls, the track list, the inspector or a mixer channel run their key commands and a setup pane's button keeps
+Space (`tests/transportbar_tests.cpp`).
 
 `tests/keycommandsdialog_tests.cpp` checks the user's key commands and macros, their presets and files (including an
 import whose `format` or `version` has the wrong type), and the dialog below: its confirmations before Remove Key

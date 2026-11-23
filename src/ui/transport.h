@@ -59,6 +59,8 @@ namespace gnubase::ui
 	//   field="signature"            a <textdisplay> with the first time signature, "4/4"
 	//   field="tempoTrack"           a button that switches between fixed tempo and tempo track mode (Activate Tempo
 	//                                Track), checked in tempo track mode
+	//   field="autoQuantize"         a button that switches the project's auto quantize (quantize.set autoQuantize,
+	//                                reference manual p. 353), checked while it is on (quantize.get, quantize.changed)
 	//   field="tap"                  Tap Tempo: clicks on it in time set the tempo (tempo.tap, by the user setting
 	//                                transport.tapTempoMode) once they stop for two seconds; meanwhile the tempo
 	//                                fields show the tapped tempo, it has the state class .tapping, and each tap shows
@@ -125,6 +127,7 @@ namespace gnubase::ui
 		bool alive() const { return static_cast<bool>(m_root); }
 		std::vector<Rml::Element*> all(const std::string& selector) const; // in the root
 		void requestProject();
+		void requestQuantize();
 		void followTransport(const engine::Json& status);
 		void followFormats(const engine::Json& formats);
 		void followTimeDisplay(const engine::Json& options);
@@ -178,6 +181,7 @@ namespace gnubase::ui
 		std::chrono::steady_clock::time_point m_wheeled;
 		std::optional<Subscription> m_wheelPause;
 		bool m_tempoTrackActive = false;
+		bool m_autoQuantize = false;    // quantize.get's autoQuantize
 		std::vector<double> m_taps;     // when Tap was clicked, by RmlUi's clock, in seconds
 		std::string m_tapMode = "auto"; // transport.tapTempoMode
 		std::optional<Subscription> m_tapPause;

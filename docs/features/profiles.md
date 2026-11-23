@@ -35,7 +35,11 @@ track presets and templates (p. 1579).
   open (Windows, on file systems without POSIX deletes such as FAT, exFAT and network shares; NTFS frees the name at
   once), no folder could be made under its name meanwhile, so the next switch, which makes it again, would fail; and a
   folder with a file that can't be deleted would stay a profile. What of it can't be deleted goes at the next start
-  that uses the settings folder (not one with the factory settings).
+  that uses the settings folder (not one with the factory settings), which deletes only names of that form; the log
+  names each folder that stays, with the error. A folder that can't be renamed, such as while a file in it is open, is
+  deleted under its name, and `profile.remove` fails with the error if that fails too. The files of a profile are
+  replaced in one rename each, never deleted first, so that none is missing while something still has the old one
+  open.
 - **Names** are folder names on every OS: 1 to 100 characters, none of `< > : " / \ | ? *`, not ending with a dot or a
   space, and not a name that Windows keeps for devices (CON, CONIN$, CONOUT$, PRN, AUX, NUL, COM1 to COM9, LPT1 to
   LPT9 and COM¹ to COM³, LPT¹ to LPT³ with superscript digits, also with an extension). Since the folders aren't case-sensitive on Windows and macOS, a name that differs from another profile's
@@ -102,10 +106,16 @@ on macOS and Linux.
   with `next` and `unfinished` in `profile.list` and the active profile's rename refused, and dropped by Delete
   program preferences; a switch to a folder that is the active profile's refused; deleted folders (#1284): 20
   switches back and forth and a deleted profile added again while something has the deleted folders open, what is
-  left in `profile-removed-*` folders deleted at the next start, and on Linux and macOS, with a folder in it whose file
-  can't be deleted, a deleted profile gone at once and added again, the next profile's folder gone from `profiles` at
-  once after a switch and made again without that folder by the switch back, and a switch going ahead when such a
-  `profile-switch` was left.
+  left in `profile-removed-*` folders deleted at the next start, but other names that start the same, and with a folder
+  in it whose file can't be deleted (no write permission on Linux and macOS, access rules that deny deleting on
+  Windows; #1318), a deleted profile gone at once and added again with a log line for what stays, the next profile's
+  folder gone from `profiles` at once after a switch and made again without that folder by the switch back, a switch
+  going ahead when such a `profile-switch` was left, `profile-switch` gone after a switch, the active profile's
+  folder gone after a failed switch and after an unfinished one was undone, and the copies of an unfinished switch
+  gone after Delete program preferences; a folder that can't be renamed (a file in it open on Windows, no write
+  permission elsewhere) deleted under its name, or `profile.remove` failing when that fails too; a settings file that
+  can't take the next profile's staying as it was while the switch is undone, and one staying in place when the
+  copy of the active profile's file that a failed switch puts back can't be read.
 - `tests/profiles_ui_tests.cpp`: the Profile Manager from the Edit menu, adding, duplicating, renaming and deleting
   profiles through its name field and buttons, a taken name's error, and Activate Profile saying that the profile
   becomes active at the next start; Export and Import through the file dialogs, answered as `ui_file_dialog` does;

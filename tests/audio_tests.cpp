@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/engine.h"
+#include "engine/settings/usersettings.h"
 #include "platform/audio/dummydevice.h"
 #include "platform/hosttime.h"
 #include "platform/log.h"
@@ -136,6 +137,7 @@ namespace
 		std::atomic<DummyDevice*> device{nullptr}; // the device opened last
 		std::atomic<bool> connected{true};         // fake-1's hardware; opening fails without it
 		std::atomic<bool> failStart{false};        // starting fails, as with a driver that doesn't process audio
+		std::atomic<bool> busy{false}; // fake-1 is listed but doesn't open, as an endpoint held exclusively elsewhere
 		// Like an ASIO driver: fake-1 is listed as unavailable from a failed open until an open succeeds, whether it
 		// is connected or not, and the backend doesn't list presence.
 		std::atomic<bool> asioLike{false};
@@ -223,6 +225,8 @@ namespace
 				m_driver->failedOpen = true;
 				throw DeviceError("fake-1 is not connected");
 			}
+			if (m_driver->busy)
+				throw DeviceError("fake-1 is in use by another application");
 			DeviceFormat format;
 			format.sampleRate = config.sampleRate == 0.0 ? 48000.0 : config.sampleRate;
 			format.blockSize = config.blockSize == 0 ? m_driver->preferredBlockSize.load() : config.blockSize;
@@ -703,34 +707,44 @@ TEST_CASE("the device commands announce the slots whose status they changed, als
 	CHECK(announced(0) == noDevice);
 }
 
-TEST_CASE("a reset or a returning device that opens but fails to start still announces the device", "[integration]")
+TEST_CASE(
+	"a running device that opens again but fails to start is lost, and plays again once it starts", "[integration]")
 {
 	const auto driver = std::make_shared<FakeDriver>();
 	Engine engine(fakeBackends(driver));
 	Client client(engine);
 	run(client, "audio.setDevice", {{"backend", "fake"}});
 	run(client, "audio.start");
-	while (client.wait(std::chrono::milliseconds(0))) // the commands' own audio.changed
-		;
-	const auto openAndStopped = [](const Json& data)
-	{ return data.at("device").is_object() && data.at("running") == false && data.at("lost").is_null(); };
+	const auto lostToRestart = [](const Json& data)
+	{ return !data.at("lost").is_null() && data.at("lost").at("restart") == true; };
+	const auto backRunning = [](const Json& data)
+	{ return data.at("lost").is_null() && data.at("device").is_object() && data.at("running") == true; };
 
-	// audio.reset opens the device again, then starting it fails.
+	// audio.reset opens the device again, then starting it fails, as with an ASIO driver opened without its
+	// hardware: the device is lost and the engine keeps trying.
 	driver->failStart = true;
-	reject(client, "audio.reset");
-	CHECK(waitForEvent(client, "audio.changed", openAndStopped));
+	Json status = run(client, "audio.reset");
+	CHECK(status.at("device").is_null());
+	CHECK(lostToRestart(status));
+	CHECK_THAT(status.at("lost").at("reason").get<std::string>(), ContainsSubstring("doesn't process audio"));
+	CHECK(waitForEvent(client, "audio.changed", lostToRestart));
 	driver->failStart = false;
-	run(client, "audio.start");
+	CHECK(waitForEvent(client, "audio.changed", backRunning));
 
-	// The running device goes away and returns, then starting it fails: the automatic try still announces it.
-	driver->connected = false;
-	driver->device.load()->requestReset();
-	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
-	CHECK(run(client, "audio.get").at("lost").at("restart") == true);
+	// The driver asks for the reset itself while the fallback is set: the fallback plays until the device starts.
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "dummy"}});
 	driver->failStart = true;
-	driver->connected = true;
-	CHECK(waitForEvent(client, "audio.changed", openAndStopped));
-	CHECK(openAndStopped(run(client, "audio.get")));
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed",
+		[&lostToRestart](const Json& data) { return lostToRestart(data) && data.at("device").is_object(); }));
+	status = run(client, "audio.get");
+	CHECK(status.at("device").at("backend") == "dummy");
+	CHECK(status.at("running") == true);
+	CHECK(status.at("lost").at("device") == "fake-1");
+	driver->failStart = false;
+	CHECK(waitForEvent(client, "audio.changed", backRunning, std::chrono::seconds(10)));
+	CHECK(run(client, "audio.get").at("device").at("backend") == "fake");
+	run(client, "audio.stop");
 }
 
 TEST_CASE("audio.setPort renames and hides the device's ports, per device", "[unit]")
@@ -1090,6 +1104,114 @@ TEST_CASE("a fallback gives way to a lost device whose backend learns only by op
 	run(client, "audio.stop");
 }
 
+TEST_CASE("a lost device that is listed but doesn't open is tried less often while the fallback plays", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "dummy"}});
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	driver->busy = true; // listed as available all along
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return !data.at("lost").is_null() && data.at("device").is_object(); }));
+
+	// Every try closes the fallback, which starts over at 0: tries back off, so it counts for over a second.
+	int64_t longest = 0;
+	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+	while (std::chrono::steady_clock::now() < until)
+	{
+		longest = std::max(longest, run(client, "audio.get").at("position").get<int64_t>());
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	}
+	CHECK(longest > 48000);
+	// The failed tries change nothing and stay out of the log.
+	const Json log = run(client, "engine.commandLog").at("commands");
+	CHECK(std::count_if(
+			  log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "audio.reconnect"; }) == 0);
+
+	driver->busy = false;
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && data.at("device").is_object(); }));
+	CHECK(run(client, "audio.get").at("device").at("backend") == "fake");
+	run(client, "audio.stop");
+}
+
+TEST_CASE(
+	"a lost device that is listed but doesn't open is tried at once when the device list changes", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "dummy"}});
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	driver->busy = true; // listed as available all along
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return !data.at("lost").is_null() && data.at("device").is_object(); }));
+
+	// Every try closes the fallback, which starts over at 0: true once its position drops within the time given.
+	const auto triedWithin = [&client](std::chrono::milliseconds time)
+	{
+		int64_t last = run(client, "audio.get").at("position").get<int64_t>();
+		const auto until = std::chrono::steady_clock::now() + time;
+		while (std::chrono::steady_clock::now() < until)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+			const int64_t position = run(client, "audio.get").at("position").get<int64_t>();
+			if (position < last)
+				return true;
+			last = position;
+		}
+		return false;
+	};
+	// Tries at once, then after 1, 2 and 3 seconds: from the try after 4 seconds on, the next comes 3 seconds later.
+	std::this_thread::sleep_for(std::chrono::milliseconds(4200));
+	REQUIRE(triedWithin(std::chrono::seconds(4)));
+
+	// The device drops out of the list and returns as it was: that is a change, so it is tried at once.
+	driver->connected = false;
+	std::this_thread::sleep_for(std::chrono::milliseconds(700));
+	driver->connected = true;
+	CHECK(triedWithin(std::chrono::milliseconds(1000)));
+
+	// Its entry changes while it stays listed: tried at once too.
+	driver->unnamed = true;
+	CHECK(triedWithin(std::chrono::milliseconds(1000)));
+
+	driver->busy = false;
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && data.at("device").is_object(); }));
+	run(client, "audio.stop");
+}
+
+TEST_CASE("a try of a lost device that fails for another reason is announced and logged once", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	driver->failStart = true;
+	CHECK_THAT(run(client, "audio.reset").at("lost").at("reason").get<std::string>(),
+		ContainsSubstring("doesn't process audio"));
+
+	// Unplugged now: the next try fails with another reason, which is announced; the tries after it aren't.
+	driver->connected = false;
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data)
+		{
+			return !data.at("lost").is_null() &&
+				data.at("lost").at("reason").get<std::string>().find("not connected") != std::string::npos;
+		}));
+	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+	const Json log = run(client, "engine.commandLog").at("commands");
+	CHECK(std::count_if(
+			  log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "audio.reconnect"; }) == 1);
+}
+
 TEST_CASE("a device lost while the project's sample rate changes returns at the new rate", "[integration]")
 {
 	const auto driver = std::make_shared<FakeDriver>();
@@ -1375,6 +1497,25 @@ TEST_CASE("the device follows the project's sample rate where it can and reports
 	CHECK(run(client, "audio.get").at("device").at("sampleRate") == 96000.0);
 }
 
+TEST_CASE("a device that opens at the project's new sample rate but fails to start leaves the project changed",
+	"[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	driver->failStart = true;
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	CHECK(run(client, "project.get").at("sampleRate") == 44100.0);
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data)
+		{
+			return data.at("device").is_object() && data.at("device").at("sampleRate") == 44100.0 &&
+				data.at("running") == false && data.at("lost").is_null();
+		}));
+}
+
 TEST_CASE("audio.changed announces every new project sample rate, for the status line's record format", "[unit]")
 {
 	Engine engine(fakeBackends(std::make_shared<FakeDriver>()));
@@ -1560,13 +1701,15 @@ TEST_CASE("two GNUbase processes on one settings folder each change a port and k
 
 TEST_CASE("port settings keep the members of a later GNUbase's entries", "[integration]")
 {
-	// A later GNUbase gave a port's entry a member this one doesn't know.
+	// A later GNUbase gave a port's entry a member this one doesn't know, and an entry edited by hand doesn't fit.
 	const gnubase::test::TempDir dir;
 	{
 		std::ofstream file(dir.path() / "settings.json");
-		file << Json{{"version", 1},
+		file << Json{{"version", gnubase::engine::settings::userFormat().version},
 			{"values",
-				{{"audio.portSettings", {{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}, {"color", "#ff0000"}}}}},
+				{{"audio.portSettings",
+					 {{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}, {"color", "#ff0000"}}},
+						 {"dummy/dummy/in/Input 3", {{"visible", "no"}}}}},
 					{"midi.portSettings", {{"dummy/in/Keys", {{"showAs", "My keys"}, {"channel", 3}}}}}}}}
 					.dump();
 	}
@@ -1576,7 +1719,8 @@ TEST_CASE("port settings keep the members of a later GNUbase's entries", "[integ
 	Client client(engine);
 	run(client, "audio.setDevice");
 
-	// This GNUbase uses the members it knows, and its changes keep the others and the other entries.
+	// This GNUbase uses the members it knows and the entries that fit, and its changes keep the others and the other
+	// entries, also the one that doesn't fit.
 	CHECK(run(client, "audio.ports").at("inputs")[0].at("showAs") == "Mic");
 	const Json midi = run(client, "midi.ports").at("ports");
 	CHECK(std::any_of(midi.begin(), midi.end(),
@@ -1586,8 +1730,44 @@ TEST_CASE("port settings keep the members of a later GNUbase's entries", "[integ
 	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", ""}});
 	CHECK(settingsFile(dir.path()).at("audio.portSettings") ==
 		Json{{"dummy/dummy/in/Input 1", {{"showAs", "Vocals"}, {"color", "#ff0000"}}},
-			{"dummy/dummy/in/Input 2", {{"visible", false}}}});
+			{"dummy/dummy/in/Input 2", {{"visible", false}}}, {"dummy/dummy/in/Input 3", {{"visible", "no"}}}});
 	CHECK(settingsFile(dir.path()).at("midi.portSettings") == Json{{"dummy/in/Keys", {{"channel", 3}}}});
+}
+
+TEST_CASE("audio.setPort and midi.setPort send settings.changed only when the port's entry changes", "[integration]")
+{
+	// The settings file has an entry that doesn't fit, which the changes keep.
+	const gnubase::test::TempDir dir;
+	std::ofstream(dir.path() / "settings.json") << Json{{"version", gnubase::engine::settings::userFormat().version},
+		{"values", {{"audio.portSettings", {{"dummy/dummy/in/Input 3", {{"visible", "no"}}}}}}}}
+													   .dump();
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	dummy->addLoopback("Keys");
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()), dir.path(), midiBackends(std::move(dummy)));
+	Client client(engine);
+	run(client, "audio.setDevice");
+	// The settings.changed events since the last call: a command's events come before its result.
+	const auto changes = [&client]
+	{
+		int count = 0;
+		while (const std::optional<Message> message = client.wait(std::chrono::milliseconds(0)))
+		{
+			const auto* event = std::get_if<Event>(&*message);
+			count += event != nullptr && event->name == "settings.changed" ? 1 : 0;
+		}
+		return count;
+	};
+	changes();
+	run(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Mic"}});
+	CHECK(changes() == 1);
+	CHECK(settingsFile(dir.path()).at("audio.portSettings") ==
+		Json{{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}}}, {"dummy/dummy/in/Input 3", {{"visible", "no"}}}});
+	run(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Mic"}});
+	CHECK(changes() == 0);
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}});
+	CHECK(changes() == 1);
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}});
+	CHECK(changes() == 0);
 }
 
 namespace

@@ -3,6 +3,7 @@
 
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
+#include "ui/timeformat.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
@@ -80,6 +81,7 @@ namespace gnubase::ui
 		{
 			None,
 			Move,
+			Resize, // a note's end
 			Draw,
 			Values,
 		};
@@ -103,7 +105,8 @@ namespace gnubase::ui
 		std::string text(const Row& row, const std::string& field) const;
 		// The field's value as a whole number in the list's units, if the row's type has it.
 		static std::optional<int64_t> number(const Row& row, const std::string& field);
-		std::optional<int64_t> parse(const std::string& field, const std::string& typed, const Row& row) const;
+		// A value typed for the field: spaces around it don't count, and a pitch name can be in either case.
+		std::optional<int64_t> parse(const std::string& field, const std::string& text, const Row& row) const;
 		// The value display's bar: 0-1, if the row's type has one.
 		static std::optional<double> bar(const Row& row);
 
@@ -129,6 +132,10 @@ namespace gnubase::ui
 		void editField(const Row& edited, const std::string& field, const std::string& typed);
 		void add(int64_t start, int64_t length);
 		void erase(const Row& row);
+		// The row's event as the project has it.
+		engine::Json eventJson(const Row& row) const;
+		// Deletes the selected events: Delete and Backspace (pp. 1255, 1258).
+		void eraseSelected();
 
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
@@ -139,6 +146,7 @@ namespace gnubase::ui
 		std::set<std::string> m_hidden; // event types the filters bar hides
 		engine::Json m_project = engine::Json::object();
 		engine::Json m_view = engine::Json::object();
+		TimeContext m_time; // the project's, read once per show
 		std::vector<Part> m_parts;
 		std::vector<Row> m_rows;
 		std::set<std::pair<uint64_t, uint64_t>> m_selection; // notes and controller events: ids are unique
@@ -154,6 +162,7 @@ namespace gnubase::ui
 		// rebuild the rows while it goes on.
 		float m_laneLeft = 0.0F;
 		float m_laneWidth = 1.0F;
+		bool m_copy = false; // Alt (Opt) held at a move's press: it copies the events
 		std::map<std::pair<uint64_t, uint64_t>, double> m_values; // what a drag in the value display set
 		bool m_dragged = false; // a drag event came since the press: the mouse leaving the window keeps the gesture
 		// The document that a gesture hears the mouseup in, wherever in it the mouse goes up.

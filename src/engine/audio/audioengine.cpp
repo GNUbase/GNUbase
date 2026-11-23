@@ -35,7 +35,7 @@ namespace gnubase::engine
 		constexpr auto g_cueInterval = std::chrono::milliseconds(5);
 		constexpr auto g_activityInterval = std::chrono::milliseconds(100); // between two midi.activity runs
 		// The longest pre-roll and post-roll: an hour at 768 kHz.
-		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000;
+		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000; // in transport.set's schema too
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
 		// Rounds of the offline wait for the samplers' samples (10 minutes of 30 s) before a render gives up (#1343).
@@ -355,10 +355,17 @@ namespace gnubase::engine
 						const uint64_t applied = m_transport.appliedRequests();
 						const time::Samples countInStart = m_transport.countInStart();
 						cue.position = m_transport.position();
-						// At a start the command thread cued, until the audio thread plays from there, and while it
-						// counts in, where playback starts after it. Either may begin while this cues: the voice it
-						// reads stays.
-						if (state.start >= 0 && applied < state.startRequests)
+						// At a locate the command thread has cued and not sent yet, as its cue did but over this
+						// window: exactly there, keeping the voices the transport plays on from (#1136). At a start the
+						// command thread cued, until the audio thread plays from there, and while it counts in, where
+						// playback starts after it; either may begin while this cues: the voice it reads stays.
+						if (state.locate >= 0)
+						{
+							cue.playsOn = cue.playing ? cue.position : -1;
+							cue.position = state.locate;
+							cue.playing = false;
+						}
+						else if (state.start >= 0 && applied < state.startRequests)
 						{
 							cue.position = state.start;
 							cue.enter = state.enter;
@@ -389,6 +396,13 @@ namespace gnubase::engine
 		m_cueState.enter = enter;
 		m_cueState.startRequests = m_transport.sentRequests() + 1;
 		m_cueState.playing = true; // until sent() reads the transport, also when the start is applied before it
+	}
+
+	void AudioEngine::cueLocate(time::Samples position)
+	{
+		const std::scoped_lock order(m_cueOrderMutex); // after a cue the cue thread may be making for the old position
+		const std::scoped_lock lock(m_cueMutex);
+		m_cueState.locate = position;
 	}
 
 	void AudioEngine::rotatePlans(const std::shared_ptr<const ArrangerPlan>& newest)
@@ -459,6 +473,12 @@ namespace gnubase::engine
 	{
 		const std::scoped_lock lock(m_cueStartHookMutex);
 		m_cueStartHook = std::move(hook);
+	}
+
+	void AudioEngine::setLocateCuedHook(std::function<void()> hook)
+	{
+		const std::scoped_lock lock(m_locateCuedHookMutex);
+		m_locateCuedHook = std::move(hook);
 	}
 
 	void AudioEngine::stopCueing()
@@ -551,7 +571,17 @@ namespace gnubase::engine
 			{
 				if (!m_lost)
 					m_parameters["sampleRate"] = rate;
-				reset(); // retry the lost device, or reopen the fallback at the new rate
+				try
+				{
+					// Retries the lost device, or reopens the fallback at the new rate. A device that was there and
+					// doesn't start at it stays open and stopped: the project has changed all the same (#439).
+					reset(m_lost.has_value());
+				}
+				catch (const std::exception& error)
+				{
+					logging::warning(
+						"The audio device doesn't start at the project's new sample rate: {}", error.what());
+				}
 				reopened = true;
 			}
 			else if (m_lost)
@@ -649,7 +679,13 @@ namespace gnubase::engine
 		m_mutePreSends = m_settings.get(settings::g_audioMutePreSends);
 		m_treatMutedAudioLikeDeleted = m_settings.get(settings::g_editingTreatMutedAudioLikeDeleted);
 		const audio::DeviceFormat& format = m_device->format();
-		graph::GraphDesc desc = graph::describe(snapshot);
+		// Channels that stopped listening stay on the listen bus until their listen node glided them out.
+		std::vector<ObjectId> fading;
+		for (const RenderChannel& channel : snapshot.channels)
+			if (const auto state = m_channelStates.find(channel.id); !channel.listen &&
+				state != m_channelStates.end() && state->second->listenGain.load(std::memory_order_relaxed) > 0.0f)
+				fading.push_back(channel.id);
+		graph::GraphDesc desc = graph::describe(snapshot, fading);
 		m_sourceNodes.clear();
 		for (size_t n = 0; n < desc.nodes.size(); ++n)
 		{
@@ -745,6 +781,9 @@ namespace gnubase::engine
 		for (size_t n = 0; n < desc.nodes.size(); ++n)
 			if (desc.nodes[n].kind == graph::NodeKind::ListenBus)
 				program->listenNode = static_cast<int>(n);
+		program->listening = program->listenNode >= 0 &&
+			std::any_of(snapshot.channels.begin(), snapshot.channels.end(),
+				[](const RenderChannel& channel) { return channel.listen && channel.format != ChannelFormat::None; });
 		program->listen = m_listenGains;
 		m_revision = snapshot.revision;
 		if (m_programs)
@@ -1167,6 +1206,14 @@ namespace gnubase::engine
 					std::make_shared<SendStrip>(state, send.number, gain, send.preFader ? tap : nullptr);
 			}
 		}
+		for (graph::NodeDesc& node : desc.nodes)
+			if (node.kind == graph::NodeKind::Listen)
+			{
+				const auto channel = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
+					[&node](const RenderChannel& candidate) { return candidate.id == node.object; });
+				node.processor = std::make_shared<ListenStrip>(
+					states.at(node.object), channel != snapshot.channels.end() && channel->listen);
+			}
 		const std::scoped_lock lock(m_channelStatesMutex); // readMeters; the old states go after it unlocks
 		m_channelStates.swap(states);
 	}
@@ -1429,11 +1476,15 @@ namespace gnubase::engine
 	void AudioEngine::output(const audio::DeviceBlock& block, const Program& program) noexcept
 	{
 		// Outputs start silent; busses that share a port add up there, in bus order. While channels listen, the main
-		// mix glides to the listen dim over the block, and back once none does.
+		// mix glides to the listen dim over the block, and back once none does; the listen nodes glide the channels
+		// in and out of the listen bus at the same time (ListenStrip).
 		const int outputChannels = m_device->format().outputChannels;
 		const float dimFrom = m_dim;
-		const float dimTo = program.listenNode >= 0 ? program.listen.dim : 1.0f;
+		const float dimTo = program.listening ? program.listen.dim : 1.0f;
 		m_dim = dimTo;
+		const float levelFrom = m_listenLevel;
+		const float levelTo = program.listen.level;
+		m_listenLevel = levelTo;
 		for (size_t l = 0; l < program.outputs.size(); ++l)
 		{
 			const BusLink& link = program.outputs[l];
@@ -1459,7 +1510,7 @@ namespace gnubase::engine
 		}
 		if (program.listenNode < 0)
 			return;
-		// ponytail: the listening channels come in and go at once; a glide needs the listen bus in every graph.
+		const float step = (levelTo - levelFrom) / static_cast<float>(block.frames);
 		float* const* listen = program.graph.audio(program.listenNode);
 		for (size_t c = 0; c < program.mainPorts.size(); ++c)
 		{
@@ -1469,7 +1520,7 @@ namespace gnubase::engine
 			float* out = block.outputs[port];
 			const float* in = listen[c];
 			for (uint32_t i = 0; i < block.frames; ++i)
-				out[i] += in[i] * program.listen.level;
+				out[i] += in[i] * (levelFrom + (step * static_cast<float>(i + 1)));
 		}
 	}
 
@@ -1704,7 +1755,7 @@ namespace gnubase::engine
 		rebuild();
 	}
 
-	bool AudioEngine::reset()
+	bool AudioEngine::reset(bool loseIfStartFails)
 	{
 		require(m_device != nullptr || m_lost, "there is no audio device; set one with audio.setDevice");
 		// While a device is lost, it is the one to open: a fallback that plays gives way to it.
@@ -1731,6 +1782,7 @@ namespace gnubase::engine
 			measured = m_meter.data();
 			dropouts = m_deviceOverloadsKept + (m_device->overloads() - m_deviceOverloadsBefore);
 		}
+		const std::string fallbackBefore = fellBack ? m_backend + " " + m_device->info().id : std::string();
 		try
 		{
 			setDevice(parameters, true); // the loudness measurement goes on too
@@ -1740,22 +1792,31 @@ namespace gnubase::engine
 				m_deviceOverloadsKept = dropouts;
 				publishPerformance(m_meter.data());
 			}
+			// Some ASIO drivers open without their hardware and only fail to start: that is lost too (#472).
+			if (running && loseIfStartFails)
+				startDevice();
 		}
 		catch (const std::exception& error)
 		{
 			// E.g. unplugged: the engine goes on without it, or on the fallback, and tries again until it returns.
 			closeDevice();
 			if (!lost)
+			{
 				logging::warning(
 					"The audio device ({} {}) is lost, trying again until it returns: {}", backend, id, error.what());
+				m_lostListing = Json();
+			}
 			m_lost = Lost{backend, parameters, id, name, error.what(), running};
 			failOver();
 			waitForDevice();
-			return !lost || fellBack || m_device != nullptr;
+			// A try that fails as before and opens the same fallback again changes nothing (#467).
+			const std::string fallbackAfter = m_device ? m_backend + " " + m_device->info().id : std::string();
+			// One that fails for another reason is announced and logged once, as lost.reason changes.
+			return !lost || fallbackAfter != fallbackBefore || lost->reason != m_lost->reason;
 		}
 		if (lost)
 			logging::info("The audio device ({} {}) is back", backend, id);
-		if (running)
+		if (running && !loseIfStartFails)
 			startDevice();
 		return true;
 	}
@@ -1764,20 +1825,38 @@ namespace gnubase::engine
 	{
 		if (!m_lost)
 			return false;
-		if (m_device) // a fallback plays, which every try closes first
+		if (!m_device)
+			return reset();
+		// A fallback plays, which every try closes first.
+		// The listing is kept on every call, so a device that drops out and returns as before counts as a change.
+		Json listing;
+		const Listed listed = lostDeviceListed(listing);
+		const bool listChanged = listing != m_lostListing;
+		m_lostListing = std::move(listing);
+		if (listed == Listed::No)
+			return false;
+		const auto now = std::chrono::steady_clock::now();
+		if (listed == Listed::Yes && listChanged) // listed anew, or the list changed: try now
 		{
-			const Listed listed = lostDeviceListed();
-			if (listed == Listed::No ||
-				(listed == Listed::Maybe && std::chrono::steady_clock::now() < m_nextUncertainTry))
-				return false;
+			m_backoff = g_reconnectInterval;
+			m_nextTry = now;
 		}
-		return reset();
+		if (now < m_nextTry)
+			return false;
+		const bool changed = reset();
+		if (m_lost && m_device) // it failed again: a listed device's tries back off (#467)
+		{
+			m_backoff = std::min<std::chrono::steady_clock::duration>(2 * m_backoff, g_uncertainReconnectInterval);
+			m_nextTry = now + (listed == Listed::Yes ? m_backoff : g_uncertainReconnectInterval);
+		}
+		return changed;
 	}
 
-	AudioEngine::Listed AudioEngine::lostDeviceListed() const
+	AudioEngine::Listed AudioEngine::lostDeviceListed(Json& listing) const
 	{
 		if (!m_lost)
 			return Listed::No;
+		listing = m_dummyUnplugged;
 		if (m_lost->backend == "dummy")
 			return m_dummyUnplugged ? Listed::No : Listed::Yes;
 		for (const std::unique_ptr<audio::Backend>& backend : m_backends)
@@ -1787,6 +1866,9 @@ namespace gnubase::engine
 			try
 			{
 				const std::vector<audio::DeviceInfo> devices = backend->devices();
+				listing = Json::array();
+				for (const audio::DeviceInfo& info : devices)
+					listing.push_back(toJson(info));
 				const auto found = std::find_if(devices.begin(), devices.end(),
 					[this](const audio::DeviceInfo& info) { return info.id == m_lost->device; });
 				if (found == devices.end())
@@ -1822,7 +1904,7 @@ namespace gnubase::engine
 				setDevice(parameters); // which ends the loss
 				m_failingOver = false;
 				m_lost = lost;
-				m_nextUncertainTry = std::chrono::steady_clock::now() + g_uncertainReconnectInterval;
+				m_nextTry = std::chrono::steady_clock::now() + g_uncertainReconnectInterval;
 				if (lost.restart)
 					startDevice();
 				logging::info("Playing on {} {} until the audio device returns", m_backend, m_device->info().id);
@@ -2538,19 +2620,19 @@ namespace gnubase::engine
 			{"audio.reset", 1,
 				"Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this "
 				"when their settings change, e.g. in their control panel, or when their device goes away; the engine "
-				"then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost "
-				"in audio.get): the engine goes on without it and tries again about every half second until it "
-				"opens (audio.reconnect), then restarts it if it ran, so playback goes on where it stopped; "
+				"then resets on its own. A device that can't be opened, e.g. because it was unplugged, or that ran "
+				"and opens but doesn't start again, is lost (lost in audio.get): the engine goes on without it and "
+				"tries again about every half second until it opens (audio.reconnect), then restarts it if it ran, "
+				"so playback goes on where it stopped; "
 				"audio.start and audio.stop meanwhile decide whether it does. With the user setting "
 				"audio.fallbackDevice, a fallback device plays meanwhile and the engine switches back once the lost "
 				"device opens; a reset while one plays tries the lost device and opens the fallback again if that "
 				"fails. audio.setDevice ends the wait. The "
 				"performance measurement goes on across a reset, which itself counts nothing: a driver that resets "
 				"because of a dropout reports the dropout (see audio.performance). A reset that loses the device ends "
-				"the measurement. Sends audio.changed when the device closes, opens or is lost, and plugin.changed for "
-				"the "
-				"slots whose plugin's status changed, also when it fails "
-				"after the device opened again.",
+				"the measurement. Sends audio.changed when the device closes, opens or is lost, except for a reset "
+				"while a fallback plays that fails as the last try did and opens the same fallback again, which "
+				"changes nothing; and plugin.changed for the slots whose plugin's status changed.",
 				noParameters(), statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
 			{
@@ -2568,8 +2650,10 @@ namespace gnubase::engine
 				"unless a device is lost. While one is, the engine runs it on its own about every half second, one "
 				"try at a time. While a fallback device plays, it tries only once the backend lists the lost device "
 				"as available again, so that the fallback isn't interrupted, or every few seconds if the backend "
-				"learns only by opening it whether it is there (ASIO). Tries that find the device still gone "
-				"change nothing and are left out of engine.commandLog. Sends audio.changed when the device opens, and "
+				"learns only by opening it whether it is there (ASIO). A listed device that still doesn't open is "
+				"tried less often, up to every few seconds, until the backend's device list changes. Tries that "
+				"find the device still gone change nothing and are left out of engine.commandLog. Sends audio.changed "
+				"when the device opens or a try fails for another reason than the last one (lost.reason), and "
 				"plugin.changed for the slots whose plugin's status changed.",
 				noParameters(), statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
@@ -2578,14 +2662,10 @@ namespace gnubase::engine
 				announcingFailure([this, &changed] { changed = reconnect(); });
 				Json result = status();
 				if (changed)
-				{
 					context.emit("audio.changed", result);
-					announceSlots(&context);
-				}
 				else
-				{
 					context.leaveOutOfLog();
-				}
+				announceSlots(&context); // also after a try that opened the fallback again
 				return result;
 			});
 		engine.registerCommand(
@@ -2737,8 +2817,11 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"audio.stop", 1,
-				"Stops the audio device. Does nothing if it isn't running. While the device is lost (see audio.reset), "
-				"it stays stopped once it returns (restart in lost), and audio.changed announces that.",
+				"Stops the audio device. Does nothing if it isn't running. What the transport did on its own until "
+				"then, "
+				"such as a punch in, is taken over and announced with transport.changed (see transport.update). While "
+				"the device is lost (see audio.reset), it stays stopped once it returns (restart in lost), and "
+				"audio.changed announces that.",
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
@@ -2746,6 +2829,9 @@ namespace gnubase::engine
 				if (m_device && m_device->running())
 				{
 					stopDevice();
+					// What the audio thread changed since the cue thread last looked: it ends without a last look.
+					if (syncTransport())
+						context.emit("transport.changed", transportStatus());
 					if (m_lost)
 						m_lost->restart = false;
 					context.emit("audio.changed", status());
@@ -2836,6 +2922,7 @@ namespace gnubase::engine
 			const std::scoped_lock lock(m_cueMutex);
 			m_cueState.playing = m_transport.playing();
 			m_cueState.settings = m_transport.settings();
+			m_cueState.locate = -1; // sent or not, the cursor shows where playback goes (cueLocate)
 			if (!accepted)
 				m_cueState.start = -1; // the start cueStart announced doesn't come
 		}
@@ -3183,10 +3270,28 @@ namespace gnubase::engine
 			throw CommandError("give a position, by or target");
 		}
 		// Exactly there, like a start; while playing, playback plays on from the cursor until the audio thread
-		// takes the locate.
+		// takes the locate. The cue thread cues the same way until it is sent.
 		if (m_device)
-			cue(position, false, m_device->format().blockSize, true, -1,
-				m_transport.playing() ? m_transport.position() : -1);
+		{
+			cueLocate(position);
+			try
+			{
+				cue(position, false, m_device->format().blockSize, true, -1,
+					m_transport.playing() ? m_transport.position() : -1);
+				std::function<void()> hook;
+				{
+					const std::scoped_lock lock(m_locateCuedHookMutex);
+					hook = m_locateCuedHook;
+				}
+				if (hook)
+					hook();
+			}
+			catch (...)
+			{
+				cueLocate(-1);
+				throw;
+			}
+		}
 		sent(m_transport.locate(position));
 		if (m_transport.countingIn()) // again, so that it ends on the bar line where playback now starts
 			sent(m_transport.record(true, cueCountIn()));
@@ -3293,13 +3398,14 @@ namespace gnubase::engine
 			"Repeat Forever loop: playback then goes on with the next chain step, or past the chain if the looping "
 			"step is the last one.",
 			nullptr, [this](const Json&) { play(); });
-		// Lock Record: a recording doesn't stop or punch out by these commands, only by a confirmed stop.
-		const auto unlocked = [this]
+		// Lock Record: a recording doesn't stop or punch out by these commands unless that is confirmed. Also one that
+		// the audio thread punched in on its own and the command thread hasn't taken over yet (recordingNow).
+		const auto unlocked = [this](const Json& parameters, bool punchOut)
 		{
-			// A count-in hasn't recorded anything yet.
-			require(!m_transport.settings().lockRecord || !m_transport.recording() || m_transport.countingIn(),
-				"recording is locked: stop it with transport.stop confirmed, or unlock it with transport.set "
-				"lockRecord false first");
+			require(parameters.value("confirmed", false) || !m_transport.settings().lockRecord ||
+					!m_transport.recordingNow(),
+				std::string("recording is locked: ") + (punchOut ? "punch out" : "stop it") +
+					" with confirmed, or unlock it with transport.set lockRecord false first");
 		};
 		command("transport.stop",
 			"Stops playback and recording. With returnToStart the cursor goes back to where playback started or was "
@@ -3314,8 +3420,7 @@ namespace gnubase::engine
 			R"({"type": "object", "additionalProperties": false, "properties": {"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
-				if (!parameters.value("confirmed", false))
-					unlocked();
+				unlocked(parameters, false);
 				sent(m_transport.stop());
 			});
 		command("transport.record",
@@ -3324,31 +3429,37 @@ namespace gnubase::engine
 			"punchIn before the left locator, recording starts at the left locator instead. From stop, with the "
 			"metronome's count-in on (metronome.set countIn), the metronome counts in first and playback starts at "
 			"the exact sample where the count-in ends; transport.stop ends a count-in. record false punches out "
-			"and playback goes on, refused while lockRecord is on; the takes come later, with recording.added, as "
+			"and playback goes on, while lockRecord is on only with confirmed; the takes come later, with "
+			"recording.added, as "
 			"for transport.stop. Record-enabled tracks may monitor their input "
 			"meanwhile, by the user setting audio.autoMonitoring (see channel.set).",
-			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"}}})",
+			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"},
+				"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
 				const bool on = parameters.value("record", true);
 				if (!on)
-					unlocked();
+					unlocked(parameters, true);
 				record(on);
 			});
 		command("transport.toggle",
 			"Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, "
 			"punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, "
-			"off punches out). While lockRecord is on, it neither stops nor punches out a recording.",
+			"off punches out, or cancels a recording that waits for its own start; with punchIn on, playback still "
+			"punches in at the left locator). While lockRecord is on, it neither stops nor punches out a recording "
+			"unless it gets confirmed.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"setting": {"type": "string",
-				"enum": ["cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome", "record"]}}})",
+				"enum": ["cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome", "record"]},
+				"confirmed": {"type": "boolean"}}})",
 			[this, unlocked](const Json& parameters)
 			{
 				const std::string setting = parameters.value("setting", "");
 				if (setting == "record")
 				{
-					const bool on = m_transport.recording() || m_transport.countingIn();
+					// Also while it waits for where it starts, during the pre-roll: off cancels it (#583).
+					const bool on = m_transport.recording() || m_transport.countingIn() || m_transport.recordWaits();
 					if (on)
-						unlocked();
+						unlocked(parameters, true);
 					record(!on);
 					return;
 				}
@@ -3372,7 +3483,7 @@ namespace gnubase::engine
 				}
 				if (m_transport.playing())
 				{
-					unlocked();
+					unlocked(parameters, false);
 					sent(m_transport.stop());
 				}
 				else
@@ -3407,16 +3518,17 @@ namespace gnubase::engine
 			"recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or "
 			"replace. midiCycleRecordMode: what a MIDI cycle recording makes of its laps (see recording.add): mix "
 			"(the default), overwrite, keepLast, stacked or mixStacked. lockRecord: Lock Record, which "
-			"keeps a recording from stopping or punching out by accident: transport.stop stops it only with "
-			"confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at "
+			"keeps a recording from stopping or punching out by accident: transport.stop, transport.record and "
+			"transport.toggle stop it or punch out only with confirmed, and recording ignores the punch out at "
 			"the right locator; it stays on until it is set off.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
 				"left": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},
 				"right": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},
 				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"},
 				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"},
-				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},
-				"postRollAmount": {"type": "integer"}, "metronome": {"type": "boolean"},
+				"preRollAmount": {"type": "integer", "minimum": 0, "maximum": 2764800000}, "postRoll": {"type": "boolean"},
+				"postRollAmount": {"type": "integer", "minimum": 0, "maximum": 2764800000},
+				"metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string"}, "midiRecordMode": {"type": "string"},
 				"midiCycleRecordMode": {"type": "string"},
 				"lockRecord": {"type": "boolean"}}})",

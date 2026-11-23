@@ -73,12 +73,22 @@ namespace gnubase::engine
 		const bool playing = (state & 1U) != 0;
 		const bool recording = (state & 2U) != 0;
 		const bool countingIn = (state & 4U) != 0;
-		if (playing == m_requestedPlaying && recording == m_requestedRecording && countingIn == m_requestedCountingIn)
+		const bool waits = (state & 8U) != 0;
+		if (playing == m_requestedPlaying && recording == m_requestedRecording && countingIn == m_requestedCountingIn &&
+			waits == m_requestedRecordWaits)
 			return false;
 		m_requestedPlaying = playing;
 		m_requestedRecording = recording;
 		m_requestedCountingIn = countingIn;
+		m_requestedRecordWaits = waits;
 		return true;
+	}
+
+	bool Transport::recordingNow() const
+	{
+		if (m_appliedRequests.load(std::memory_order_acquire) != m_sentRequests)
+			return m_requestedRecording && !m_requestedCountingIn;   // what was asked last comes first, as in sync()
+		return (m_state.load(std::memory_order_acquire) & 6U) == 2U; // recording, not counting in
 	}
 
 	time::Samples Transport::position() const
@@ -108,6 +118,7 @@ namespace gnubase::engine
 		m_requestedPlaying = false;
 		m_requestedRecording = false;
 		m_requestedCountingIn = false;
+		m_requestedRecordWaits = false;
 		return true;
 	}
 
@@ -124,6 +135,7 @@ namespace gnubase::engine
 			m_requestedPlaying = false;
 			m_requestedRecording = false;
 			m_requestedCountingIn = false;
+			m_requestedRecordWaits = false;
 			return true;
 		}
 		bool now = !m_requested.punchIn || position() >= m_requested.left; // while playing
@@ -136,6 +148,7 @@ namespace gnubase::engine
 		}
 		m_requestedCountingIn = on && (m_requestedCountingIn || (fromStop && countIn.length > 0));
 		m_requestedRecording = on && now;
+		m_requestedRecordWaits = on && !now && !m_requestedCountingIn;
 		m_requestedPlaying = m_requestedPlaying || on;
 		return true;
 	}
@@ -342,8 +355,9 @@ namespace gnubase::engine
 			const auto [a, b] = pack(m_arranger, m_stateGeneration);
 			m_arrangerShared.store(a, b);
 		}
-		const auto state = static_cast<uint8_t>(
-			(m_playing || m_countingIn ? 1U : 0U) | (recording ? 2U : 0U) | (m_countingIn ? 4U : 0U));
+		const bool waits = m_playing && !m_recording && !m_countingIn && m_recordAt >= 0;
+		const auto state = static_cast<uint8_t>((m_playing || m_countingIn ? 1U : 0U) | (recording ? 2U : 0U) |
+			(m_countingIn ? 4U : 0U) | (waits ? 8U : 0U));
 		if (state == m_published && !changed)
 			return;
 		m_published = state;
@@ -482,6 +496,8 @@ namespace gnubase::engine
 				until(m_settings.left);
 			if (m_recording && punchesOut)
 				until(m_settings.right);
+			if (m_stopAt >= 0)
+				until(m_stopAt);
 			m_segments[m_block.segmentCount++] = {offset, length, m_position, m_recording};
 			m_block.recording = m_block.recording || m_recording;
 			offset += length;
@@ -493,6 +509,11 @@ namespace gnubase::engine
 				m_recording = false;
 				if (m_settings.stopAfterPunchOut && !cycles)
 					m_stopAt = m_settings.right + (m_settings.postRoll ? m_settings.postRollAmount : 0);
+			}
+			if (m_stopAt >= 0 && m_position >= m_stopAt) // at the exact sample: the rest of the block is silent
+			{
+				autoStop();
+				break;
 			}
 			if (jumps && arranged)
 			{

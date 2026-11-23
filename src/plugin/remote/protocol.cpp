@@ -240,7 +240,7 @@ namespace gnubase::plugin::remote
 		PluginInfo info;
 		info.descriptor = plugin.descriptor();
 		for (const std::string_view id : {AudioPorts::extensionId(), Params::extensionId(), State::extensionId(),
-				 Latency::extensionId(), Tail::extensionId()})
+				 Latency::extensionId(), Tail::extensionId(), KeySwitches::extensionId()})
 		{
 			if (plugin.extension(id) != nullptr)
 				info.extensions.emplace_back(id);

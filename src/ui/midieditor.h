@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -80,7 +81,22 @@ namespace gnubase::ui
 		bool showsAudio() const;
 		// The project's parts of the kind the editor shows: audio parts or MIDI parts.
 		engine::Json projectParts() const;
-		std::string visibilityRml() const;
+		// A row of the Visibility tab: a track, or a folder with tracks in it.
+		struct VisibilityRow
+		{
+			uint64_t track = 0;
+			int level = 0; // how deep in folders
+			bool folder = false;
+			std::string name;
+			std::string state; // of its check: checked, partial or empty
+			bool active = false;
+			bool unavailable = false;
+			bool disabled = false;
+		};
+		std::vector<VisibilityRow> visibilityRows() const;
+		// Puts the rows into the Visibility tab: in place while it shows the same tracks with the same names, so that
+		// a double click whose first click changed the view still reaches the row it started on.
+		static void showVisibility(Rml::Element& list, const std::vector<VisibilityRow>& rows);
 		std::string chordName() const;
 		void voice(const std::string& key, const std::string& value);
 		std::string globalTracksRml() const;
@@ -89,6 +105,10 @@ namespace gnubase::ui
 		void toggleTrack(uint64_t track, bool exclusive);
 		// The parts of a track, or of the tracks in a folder: how many there are and how many the editor shows.
 		std::pair<size_t, size_t> partsShown(uint64_t track) const;
+		std::vector<uint64_t> inside(uint64_t track) const; // the track and the tracks in it, nested too
+		bool showable(uint64_t id) const;                   // whether editor.set's showTracks takes it
+		bool hiddenInProject(uint64_t id) const;            // by itself or in a hidden folder
+		void fold(Rml::Element& list) const;                // the Visibility tab's rows, from m_collapsed
 		const engine::Json* track(uint64_t id) const;
 
 		EngineBinding& m_binding;
@@ -103,6 +123,7 @@ namespace gnubase::ui
 		engine::Json m_view = engine::Json::object();
 		bool m_loading = false;
 		bool m_stale = false;
+		std::set<uint64_t> m_collapsed; // the Visibility tab's collapsed folders
 		std::unique_ptr<KeyEditor> m_keys;
 		std::unique_ptr<ListEditor> m_list;
 		std::unique_ptr<AudioPartEditor> m_audio;

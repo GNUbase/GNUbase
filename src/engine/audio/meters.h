@@ -39,7 +39,8 @@ namespace gnubase::engine
 
 		// Any thread.
 		LevelReading read() const noexcept;
-		void reset() noexcept; // the maxima
+		void reset() noexcept;    // the maxima
+		void resetRms() noexcept; // only rmsMax
 		// The RMS level's resolution, how much of the signal it averages, 1 to 1000 ms (300 until set), and whether
 		// it adds AES17's 3 dB, so that a sine's RMS level is its peak level (reference manual p. 540).
 		void setRms(int milliseconds, bool aes17) noexcept;
@@ -73,6 +74,7 @@ namespace gnubase::engine
 		uint32_t m_windowFrames = 0;
 		uint32_t m_windowLength = 4800; // 100 ms
 		uint32_t m_resetsSeen = 0;
+		uint32_t m_rmsResetsSeen = 0;
 
 		std::atomic<int> m_channels{0};
 		std::array<std::atomic<float>, g_maxMeterChannels> m_peak{};
@@ -81,6 +83,7 @@ namespace gnubase::engine
 		std::array<std::atomic<float>, g_maxMeterChannels> m_publishedPeakMax{};
 		std::array<std::atomic<float>, g_maxMeterChannels> m_publishedRmsMax{};
 		std::atomic<uint32_t> m_resets{0};
+		std::atomic<uint32_t> m_rmsResets{0};
 		std::atomic<int> m_rmsResolution{300}; // ms
 		std::atomic<bool> m_aes17{false};
 	};

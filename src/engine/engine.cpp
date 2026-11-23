@@ -85,7 +85,8 @@ namespace gnubase::engine
 		Json toJson(const CommandInfo& info)
 		{
 			return {{"name", info.name}, {"version", info.version}, {"description", info.description},
-				{"parameters", info.parameters}, {"result", info.result}, {"query", info.query}};
+				{"parameters", info.parameters}, {"result", info.result}, {"query", info.query},
+				{"consumes", info.consumes}};
 		}
 	}
 
@@ -159,6 +160,12 @@ namespace gnubase::engine
 			RecordSetup setup;
 			setup.project = m_project->openedRevision();
 			setup.format = recordFormat(project);
+			if (setup.format.broadcast) // the preferences' strings (reference manual p. 1615); the recorder cuts them
+			{
+				setup.format.broadcast->description = m_settings->get(settings::g_audioBroadcastDescription);
+				setup.format.broadcast->originator = m_settings->get(settings::g_audioBroadcastAuthor);
+				setup.format.broadcast->originatorReference = m_settings->get(settings::g_audioBroadcastReference);
+			}
 			const std::string& file = m_project->file();
 			setup.folder = file.empty() ? recordings : mediaFolderFor(std::filesystem::u8path(file));
 			// With the chord track record-enabled, MIDI and instrument tracks that only monitor play in chord events
@@ -398,6 +405,11 @@ namespace gnubase::engine
 	void Engine::setCueStartHook(std::function<void()> hook)
 	{
 		m_audio->setCueStartHook(std::move(hook));
+	}
+
+	void Engine::setLocateCuedHook(std::function<void()> hook)
+	{
+		m_audio->setLocateCuedHook(std::move(hook));
 	}
 
 	void Engine::readMeters(MeterFrame& frame)

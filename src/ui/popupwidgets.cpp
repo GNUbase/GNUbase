@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <map>
 #include <memory>
 #include <optional>
@@ -81,6 +82,23 @@ namespace gnubase::ui
 				std::max(0.0F, std::min(at.x, window.x - size.x)), std::max(0.0F, std::min(at.y, window.y - size.y))};
 		}
 
+		// A popup taller than the window, a menu or a dialog, gets .scrolls, which makes it as tall as the window and
+		// scrolls what it holds, until that fits again (#1933). Whether that changed.
+		bool fitHeight(Rml::Element& popup)
+		{
+			const Rml::Box& box = popup.GetBox();
+			const float window = static_cast<float>(popup.GetContext()->GetDimensions().y);
+			const float borders = box.GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Top) +
+				box.GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Bottom);
+			const bool was = popup.IsClassSet("scrolls");
+			const bool scrolls =
+				was ? popup.GetScrollHeight() + borders > window : box.GetSize(Rml::BoxArea::Border).y > window;
+			if (scrolls == was)
+				return false;
+			popup.SetClass("scrolls", scrolls);
+			return true;
+		}
+
 		// What an element stands for: its and its ancestors' tags and attributes, but for those of its state and look
 		// (class, style) and of a value that can change in it.
 		std::string pathOf(const Rml::Element& element)
@@ -123,8 +141,9 @@ namespace gnubase::ui
 		// whose contextmenu attribute names the menu by id, or under a button whose menu attribute names it. A menu
 		// inside an item is its submenu, shown while the mouse is over the item or once Right opened it; its item
 		// shows a .menu-arrow part. A click on an item without a submenu closes the menu, as do Escape and a click
-		// outside it. Up and Down move the focus between the shown items, and Tab and Shift+Tab also to its other
-		// controls, such as a search field, round the ends without leaving the menu; Enter clicks the focused item,
+		// outside it. Up and Down move the focus between the shown items, in a menu without any, such as a setup pane
+		// of toggle buttons, between its controls; Tab and Shift+Tab also to its other controls, such as a search
+		// field, round the ends without leaving the menu; Enter clicks the focused item,
 		// Right opens the focused item's submenu and Left closes a submenu; in a menu of a <menubar>'s title, Right and
 		// Left otherwise open the next and previous title's menu. An open menu has the state class .open.
 		class Menu final : public Rml::Element
@@ -144,6 +163,8 @@ namespace gnubase::ui
 				m_settling = true;
 				moveTo(*this, at);
 				GetOwnerDocument()->UpdateDocument(); // for the menu's size
+				if (fitHeight(*this))
+					GetOwnerDocument()->UpdateDocument();
 				moveTo(*this, inside(*this, at));
 				Focus();
 			}
@@ -302,16 +323,24 @@ namespace gnubase::ui
 			void OnResize() override
 			{
 				Rml::Element::OnResize();
-				if (m_at && IsClassSet("open") && GetContext() != nullptr)
-				{
+				if (GetContext() == nullptr)
+					return;
+				if (m_at && IsClassSet("open"))
 					m_resized = true;
-					GetContext()->RequestNextUpdate(0.0);
-				}
+				GetContext()->RequestNextUpdate(0.0); // for a submenu too, which moves in the next update
 			}
 
+			// A shown menu taller than the window scrolls, and a shown submenu moves where it fits (#1933).
 			void OnUpdate() override
 			{
 				Rml::Element::OnUpdate();
+				if (GetContext() != nullptr && IsVisible(true))
+				{
+					if (fitHeight(*this))
+						GetContext()->RequestNextUpdate(0.0);
+					if (Rml::Element* item = GetParentNode(); item != nullptr && item->GetTagName() == "menuitem")
+						placeBeside(*item);
+				}
 				if (!std::exchange(m_resized, false) || !m_at || !IsClassSet("open"))
 					return;
 				const Rml::Vector2f at = inside(*this, *m_at);
@@ -321,6 +350,28 @@ namespace gnubase::ui
 			}
 
 		private:
+			// A submenu opens right of its item, its first item level with it, or left of the item where only that
+			// side fits; then it moves inside the window, as far as it must.
+			void placeBeside(Rml::Element& item)
+			{
+				const Rml::Vector2f size = GetBox().GetSize(Rml::BoxArea::Border);
+				const Rml::Vector2f origin = item.GetAbsoluteOffset(Rml::BoxArea::Border);
+				Rml::Vector2f at{origin.x + item.GetBox().GetSize(Rml::BoxArea::Border).x,
+					origin.y - GetBox().GetEdge(Rml::BoxArea::Padding, Rml::BoxEdge::Top) -
+						GetBox().GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Top)};
+				if (at.x + size.x > window().x && origin.x >= size.x)
+					at.x = origin.x - size.x;
+				at = inside(*this, at);
+				const Rml::Vector2f now = GetAbsoluteOffset(Rml::BoxArea::Border);
+				if (std::abs(now.x - at.x) >= 0.5F || std::abs(now.y - at.y) >= 0.5F)
+				{
+					moveTo(*this, at);
+					GetContext()->RequestNextUpdate(0.0);
+				}
+			}
+
+			Rml::Vector2f window() const { return Rml::Vector2f(GetContext()->GetDimensions()); }
+
 			// The item's submenu, or null.
 			static Menu* submenuOf(Rml::Element& item)
 			{
@@ -438,12 +489,15 @@ namespace gnubase::ui
 			}
 
 			// Focuses the next or previous item that is shown and not disabled, or with controls (for Tab) the next or
-			// previous of those and the menu's other controls; false if there is none. Hidden items, e.g. those a
-			// search leaves out, are skipped.
+			// previous of those and the menu's other controls, as also in a menu without items, and scrolls it into
+			// view in a menu that scrolls, as RmlUi's own Tab does (#1933); false if there is none. Hidden items, e.g.
+			// those a search leaves out, are skipped.
 			bool moveFocus(int direction, bool controls = false)
 			{
 				std::vector<Rml::Element*> items;
 				addStops(*this, controls, items);
+				if (items.empty() && !controls)
+					addStops(*this, true, items); // a menu without items, such as a setup pane of toggle buttons
 				if (items.empty())
 					return false;
 				const auto focused = std::find(items.begin(), items.end(), GetContext()->GetFocusElement());
@@ -451,7 +505,10 @@ namespace gnubase::ui
 				int index = direction > 0 ? 0 : count - 1;
 				if (focused != items.end())
 					index = (static_cast<int>(focused - items.begin()) + direction + count) % count;
-				items[static_cast<size_t>(index)]->Focus(true);
+				Rml::Element& item = *items[static_cast<size_t>(index)];
+				item.Focus(true);
+				item.ScrollIntoView({Rml::ScrollAlignment::Nearest, Rml::ScrollAlignment::Nearest,
+					Rml::ScrollBehavior::Instant, Rml::ScrollParentage::Closest});
 				return true;
 			}
 
@@ -746,6 +803,8 @@ namespace gnubase::ui
 				Rml::Element::OnResize();
 				if (GetContext() == nullptr)
 					return;
+				if (fitHeight(*this))
+					GetContext()->RequestNextUpdate(0.0); // laid out again, and then moved inside the window
 				if (m_placed)
 				{
 					const Rml::Vector2f at = GetAbsoluteOffset(Rml::BoxArea::Border);
@@ -756,6 +815,22 @@ namespace gnubase::ui
 				m_placed = true;
 				const Rml::Vector2f window(GetContext()->GetDimensions());
 				moveTo(*this, ((window - GetBox().GetSize(Rml::BoxArea::Border)) * 0.5F).Round());
+			}
+
+			// A window that gets shorter or narrower under the dialog leaves the dialog's box as it is, so OnResize
+			// doesn't run: here the dialog scrolls and moves inside the window, as menus do (#1933). Only when the
+			// window's size changed, so that a drag can still take the dialog past the window's edge.
+			void OnUpdate() override
+			{
+				Rml::Element::OnUpdate();
+				if (GetContext() == nullptr || !m_placed ||
+					std::exchange(m_window, GetContext()->GetDimensions()) == GetContext()->GetDimensions())
+					return;
+				if (fitHeight(*this))
+					GetContext()->RequestNextUpdate(0.0); // laid out again, and then moved inside the window
+				const Rml::Vector2f at = GetAbsoluteOffset(Rml::BoxArea::Border);
+				if (const Rml::Vector2f kept = inside(*this, at); kept != at)
+					moveTo(*this, kept);
 			}
 
 		private:
@@ -778,6 +853,7 @@ namespace gnubase::ui
 			Listener m_listener{[this](Rml::Event& event) { listen(event); }};
 			Rml::Vector2f m_grab; // where the mouse holds the dialog
 			bool m_placed = false;
+			Rml::Vector2i m_window; // the window's size in the last update
 			bool m_closed = false;
 		};
 
@@ -1077,6 +1153,14 @@ namespace gnubase::ui
 			std::unordered_map<const Rml::ElementDocument*, Rml::ObserverPtr<Rml::Element>> m_tooltips;
 			bool m_alt = false; // Alt is held alone, so releasing it toggles the menu bar
 		};
+	}
+
+	bool openMenu(Rml::Element& menu, Rml::Vector2f at)
+	{
+		auto* opened = dynamic_cast<Menu*>(&menu);
+		if (opened != nullptr)
+			opened->open(at);
+		return opened != nullptr;
 	}
 
 	bool closeDialog(Rml::ElementDocument& document, const std::string& result)

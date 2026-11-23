@@ -87,6 +87,10 @@ namespace gnubase::engine
 		// audition's mutex held: an override may run the audio thread's side (process), but play, scrub and stop
 		// take that mutex and would deadlock in it.
 		virtual void playedRead() {}
+		// play() calls this after it has cued the streams at its position and before its state is out, while the cue
+		// thread is held off: a cue for the state before would take the voices just cued where the state before
+		// needs new ones (#1136). Tests override it to cue at that moment; it runs without the audition's mutex.
+		virtual void startCued() {}
 
 	private:
 		// What the audio thread plays.

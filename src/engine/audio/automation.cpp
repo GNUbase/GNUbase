@@ -939,6 +939,15 @@ namespace gnubase::engine
 			ChannelStrip::glide(context, context.channels, m_state->sendGains[m_number], m_gain);
 	}
 
+	void ListenStrip::process(const graph::ProcessContext& context) noexcept
+	{
+		if (context.frames == 0)
+			return;
+		float gain = m_state->listenGain.load(std::memory_order_relaxed);
+		ChannelStrip::glide(context, context.channels, gain, m_listens ? 1.0f : 0.0f);
+		m_state->listenGain.store(gain, std::memory_order_relaxed);
+	}
+
 	uint32_t ChannelStrip::latency() const
 	{
 		const uint32_t source = m_source ? m_source->latency() : 0;

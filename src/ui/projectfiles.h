@@ -38,7 +38,8 @@ namespace gnubase::ui
 	// file.quit. They ask through the OS's file dialogs (Shell::showFileDialog) and GNUbase's own (the documents
 	// start-screen.rml, save-template.rml, backup-project.rml, backup-progress.rml, discard-changes.rml and
 	// project-error.rml in folder), and do everything with engine commands. Opening another project, reverting and
-	// quitting ask first if the project has unsaved changes, and a command that fails shows its error, as does an auto
+	// quitting ask first if the project has unsaved changes, saving first leaves the text fields being typed in, so
+	// that what they send on blur is saved too, and a command that fails shows its error, as does an auto
 	// save that fails. A dialog that comes while another is open, such as the unsaved changes question or an error,
 	// waits for it instead of being dropped; an error whose window went while it waited shows in the main window. A
 	// backup shows its progress, which Cancel stops, and whether it couldn't read files or open the backup. Quitting

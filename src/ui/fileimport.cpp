@@ -4,6 +4,8 @@
 // audioFile.import and midiFile.import.
 #include "ui/eventdisplay.h"
 
+#include "platform/log.h"
+
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
@@ -11,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -294,7 +297,20 @@ namespace gnubase::ui
 			if ((options.oneTrack && oneTrackApplies(import)) || (import.track && !import.selected))
 				parameters["oneTrack"] = true;
 		}
-		m_binding.send("audioFile.import", parameters);
+		m_binding.send("audioFile.import", parameters, importDone());
+	}
+
+	std::function<void(const engine::Result&)> EventDisplay::importDone()
+	{
+		return [this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+		{
+			if (result.ok() || alive.expired())
+				return;
+			if (m_importFailed)
+				m_importFailed(result.error);
+			else
+				logging::warning("The import failed: {}", result.error);
+		};
 	}
 
 	void EventDisplay::importMidi(const std::vector<std::string>& files, bool newProject)
@@ -335,7 +351,7 @@ namespace gnubase::ui
 						Json fileParameters = parameters;
 						fileParameters["position"] = position;
 						fileParameters["path"] = file;
-						m_binding.send("midiFile.import", fileParameters);
+						m_binding.send("midiFile.import", fileParameters, importDone());
 					}
 				};
 				if (import.dropped || !settings.at("midi.importToLeftLocator").get<bool>())

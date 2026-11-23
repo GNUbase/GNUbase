@@ -439,6 +439,18 @@ namespace gnubase::engine::settings
 					"Stop after automatic punch out: playback stops when recording punches out at the right locator, "
 					"after the post-roll if it's on (see transport.set), unless it cycles.",
 					Json{{"type", "boolean"}}, false, true},
+				{"audio.broadcastDescription",
+					"The description in the Broadcast Wave chunk of recorded Broadcast Wave files, cut to 256 bytes; "
+					"empty for the track's name.",
+					Json{{"type", "string"}}, "", true},
+				{"audio.broadcastAuthor",
+					"The author (originator) in the Broadcast Wave chunk of recorded Broadcast Wave files, cut to 32 "
+					"bytes.",
+					Json{{"type", "string"}}, "GNUbase", true},
+				{"audio.broadcastReference",
+					"The reference (originator reference) in the Broadcast Wave chunk of recorded Broadcast Wave "
+					"files, cut to 32 bytes.",
+					Json{{"type", "string"}}, "", true},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", g_lowestSampleRate}, {"maximum", g_highestSampleRate}},
 					48000.0},
@@ -510,10 +522,28 @@ namespace gnubase::engine::settings
 					"event keeps its place in the stack and silences what lies behind it, which p. 228 advises when "
 					"assembling stacked takes.",
 					Json{{"type", "boolean"}}, true, true},
+				{"editing.doubleClickOpensEditorIn",
+					"Double-click opens Editor in a Window/in Lower Zone (reference manual p. 1603): where a double "
+					"click on a MIDI part or an audio part in the project window and Open/Close Editor "
+					"(editor.openClose, Return) open the editor, the editor window or the project window's lower "
+					"zone, whose editor then takes the keyboard focus (p. 100).",
+					Json{{"type", "string"}, {"enum", {"window", "lowerZone"}}}, "lowerZone", true},
 				{"editing.useDrumEditor",
 					"Use Drum Editor when Drum Map is assigned (reference manual p. 1603): a closed editor opens the "
 					"parts of a track with a drum map in the drum editor (editor.open).",
 					Json{{"type", "boolean"}}, true, true},
+				{"meter.holdForever",
+					"Meter Peak - Hold Forever (reference manual p. 467): the channel meters' peak marks hold the "
+					"highest level until the meters are reset (meter.reset); off, for meter.peakHoldTime.",
+					Json{{"type", "boolean"}}, false},
+				{"meter.holdPeaks",
+					"Meter Peak - Hold Peaks (reference manual p. 467): the channel meters show the highest levels "
+					"as peak marks.",
+					Json{{"type", "boolean"}}, true},
+				{"meter.peakHoldTime",
+					"Meters' Peak Hold Time (reference manual p. 1614): how long the channel meters' peak marks hold "
+					"a peak, 500 to 30000 ms, unless meter.holdForever is on.",
+					Json{{"type", "integer"}, {"minimum", 500}, {"maximum", 30000}}, 2000, true},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",
@@ -636,7 +666,9 @@ namespace gnubase::engine::settings
 					Json::object(), true},
 				{"midi.retrospectiveEvents",
 					"How many MIDI events each MIDI or instrument track's retrospective buffer keeps of what came "
-					"from its MIDI input while it didn't record (midi.insertRetrospective); 0 keeps none.",
+					"from its MIDI input while it didn't record (midi.insertRetrospective); 0 keeps none, only the "
+					"catch "
+					"range's input (midi.recordCatchRange).",
 					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 100000}}, 10000, true},
 				{"midi.snapPartsToBars", "Recorded MIDI parts start and end at whole bars.", Json{{"type", "boolean"}},
 					true, true},
@@ -757,6 +789,16 @@ namespace gnubase::engine::settings
 					"of ui.layout as it was when a workspace last became active while none was, which No Workspace "
 					"brings back. Empty for none.",
 					layoutSchema(), Json::object()},
+				{"ui.poolColumns",
+					"The pool's columns that its View/Attributes menu shows or hides (reference manual pp. 417, 741): "
+					"used, status, key (Root Key), info and path, each whether it shows. What it leaves out has its "
+					"default: the Key column hidden, the others shown.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"used", {{"type", "boolean"}}}, {"status", {{"type", "boolean"}}},
+								{"key", {{"type", "boolean"}}}, {"info", {{"type", "boolean"}}},
+								{"path", {{"type", "boolean"}}}}}},
+					Json::object()},
 				{"ui.removeTracksWarning",
 					"Whether Remove Selected Tracks asks before it removes tracks that aren't empty: that hold events, "
 					"parts, markers or automation, or are folders with such tracks inside (reference manual p. 213).",
@@ -840,8 +882,10 @@ namespace gnubase::engine::settings
 					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock), for the chord track "
 					"chordRecord (Record Enable), chordMute (Mute Chord Track), chordAudition (Select Track for "
 					"Auditioning) and showScales (Show Scales), for the arranger track arrangerChain (Select Active "
-					"Arranger Chain), arrangerItem (Current Item), arrangerRepeat (Current Repeat, such as 2/4) and "
-					"arrangerMode (Activate Arranger Mode), for the signature track signatureLock (Lock) and "
+					"Arranger Chain), arrangerItem (Current Item), arrangerRepeat (Current Repeat, such as 2/4), "
+					"arrangerMode (Activate Arranger Mode) and arrangerEditor (Open Arranger Editor), for the "
+					"signature "
+					"track signatureLock (Lock) and "
 					"signatureOptions (Signature Track Options), and for "
 					"folders groupEditing (Group Editing). Mute and solo always show on tracks with a channel; a type "
 					"left out shows none.",
@@ -858,7 +902,8 @@ namespace gnubase::engine::settings
 												"showScales", "addPositionMarker", "addCycleMarker",
 												"activateMarkerTrack", "markerLocate", "markerCycle", "markerZoom",
 												"groupEditing", "signatureLock", "signatureOptions", "arrangerChain",
-												"arrangerItem", "arrangerRepeat", "arrangerMode", "editInPlace"}}}}}}},
+												"arrangerItem", "arrangerRepeat", "arrangerMode", "arrangerEditor",
+												"editInPlace"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
@@ -871,7 +916,9 @@ namespace gnubase::engine::settings
 						{"signature", {"signatureLock", "signatureOptions"}},
 						{"transpose", {"transposeMute", "keepInOctave", "timeBase", "transposeLock"}},
 						{"chord", {"chordRecord", "chordMute", "showScales", "timeBase", "chordAudition"}},
-						{"arranger", {"arrangerMode", "timeBase", "arrangerChain", "arrangerItem", "arrangerRepeat"}}}},
+						{"arranger",
+							{"arrangerMode", "timeBase", "arrangerChain", "arrangerItem", "arrangerRepeat",
+								"arrangerEditor"}}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "

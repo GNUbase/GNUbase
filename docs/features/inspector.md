@@ -18,6 +18,7 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   .info-field[info-field=…]   a label and its control, a section of the set infoLine (section=…)
     textdisplay[field=name]   a MIDI part's name; an audio event's clip name, disabled
     textdisplay[field=start], [field=end], [field=length]   in the ruler's time format
+    select[field=topTrack], [field=bottomTrack]             a selection range's top and bottom track
     textdisplay[field=pitch]  a note's pitch as a name (an in-place editor's notes, below)
     valuefield[field=volume]  audio events, in dB; .unavailable for parts
     button[field=mute], button[field=lock]                  toggle buttons
@@ -26,13 +27,14 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
     textdisplay[field=releaseVelocity], [field=channel]     a note's off velocity, 0-127, and channel, 1-16
     span[field=rootKeyTranspose]                            what the project root key adds, "(+2)", empty for 0
     select[field=rootKey], button[field=globalTranspose]    of MIDI parts, audio events and audio parts' events
+    textdisplay[field=value], button[field=terminator]      an automation point's value and Terminator (Yes/No)
 ```
 
 - **Editing** (p. 72). A double click edits a display or the volume as text, Enter takes it; mute and lock are toggles.
   The edit goes to every selected event or part, relative to its own value: a new start moves them all by as much
   as the first one moves, a new end or length resizes them all by as much (`event.move`, `event.resize` at the end).
   With Ctrl (Cmd) held when Enter takes the value, every one gets the value typed: the same start, end, length or
-  volume, also when it is the first one's own value. Names go to every selected part (`midiPart.set`), the volume to every selected audio event
+  volume, also when it is the first one's own value. Names go to every selected part, audio and MIDI alike (`event.set`), the volume to every selected audio event
   (`audioEvent.set`, -144 to 6 dB), mute and lock to all (`event.set`). Each edit is one `history.transaction`, so one
   undo restores every event; a drag, wheel turns or a held arrow key on the volume are one undo step too
   ([edit-history.md](edit-history.md), gestures).
@@ -65,6 +67,13 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   marker's length; end and length change the cycle markers. The project window selects events or markers:
   selecting an event deselects the markers (`AppUi`, `MarkerLines::deselect`), a marker clicked deselects the events.
   A selection that names only markers the project no longer has shows `.empty`, until the marker lines drop them.
+- **Automation points** (p. 881, [virgin-territory.md](virgin-territory.md)). When the event display's selected
+  automation points changed last (`EventDisplay::selectedPoints`), the info line has the class `points` and shows the
+  first one in time: its position (`field=start`, labelled Position), its value in the parameter's unit and Terminator,
+  Yes or No; its other fields are `.unavailable`. Edits go to every selected point as one `history.transaction` of
+  `automationPoint.set`s, one per lane: position and value relative to the first one's, or with Ctrl+Enter the value
+  typed for all, values kept in each parameter's range (`automationLane.targets`); Terminator goes to all, which ends
+  the curve at each point up to the next one, a gap. Selecting events deselects the points, and the other way round.
 - **An in-place editor's notes** (p. 1259, [in-place-editor.md](in-place-editor.md)). When an in-place editor's
   selection changed last, the info line has the class `notes` and shows its first selected note as that editor's own
   info line shows it ([key-editor.md](key-editor.md)): start, end and length in bars and beats, the pitch as a name such
@@ -77,6 +86,15 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   dragged note the drag's, and wheel turns over the field on two selections are an undo step for each (#1550,
   [ui-engine-binding.md](ui-engine-binding.md)). An event or part selected in the project window, an empty selection in
   the editor or the editor closing gives the info line back to what was selected before.
+- **The selection range** (pp. 287-288, #1910, [range-editing.md](range-editing.md)). When the event display's selection
+  range changed last (`EventDisplay::range`, made with the range selection tool or, with the selection tools combined,
+  the object selection tool), the info line has the class `range` and shows the range: its start, end and length in the
+  ruler's time format, labelled Range Start, Range End and Range Length, and its top and bottom track, drop-down lists
+  of the display's tracks; its other fields are `.unavailable`. Edits set the range (`EventDisplay::setRange`), not the
+  project, so they are no undo step: Range Start moves the start and Range End the end, each at most up to the other,
+  and Range Length moves the end. Top Track and Bottom Track take the tracks between the chosen one and the range's edge
+  in or out, as the top and bottom nudges take them one by one, but not past the other edge. Another tool takes the
+  range away and gives the info line back to the selected events.
 
 ## Inspector
 
@@ -115,7 +133,8 @@ one it has the class `empty` and says "No Track Selected".
 ```
 
 - **Sections** (pp. 79, 168–170). Each section has a `.section-header`; a click on it closes or opens the section
-  (`.collapsed`, view state). What a track doesn't have gets the class `unavailable` and doesn't show: the sections of
+  (`.collapsed`, view state), except an Alt-click on the Basics header, which opens the Choose Track Color pane
+  ([colors.md](colors.md)). What a track doesn't have gets the class `unavailable` and doesn't show: the sections of
   tracks without a channel (marker and ruler tracks, folders without a group channel), record, monitor and input on
   tracks other than audio tracks, inserts, volume and pan on MIDI tracks, which have no audio.
 - **Basics** (pp. 170–182): the channel's switches, fader and panner, sent with `channel.set` (`mute`, `solo`,
@@ -161,6 +180,10 @@ one it has the class `empty` and says "No Track Selected".
 - **Chord Track** (pp. 1329, 1333-1335): the chord track's Adaptive Voicings, Automatic Scales, Acoustic Feedback,
   voicing library and subset, Octave Offset, the piano's Custom Voicing options and range, and Shift Chords
   (`chord.setTrack`).
+- **Arranger Track** (pp. 405, 409-411, [arranger.md](arranger.md)): the arranger track's Open Arranger Editor beside
+  the header, the Current Arranger Chain and Arranger Events lists, whose arrows play a step and trigger an event, with
+  the one playing highlighted, Jump Mode, renaming a step's event with Alt and a double click on its name, a step's
+  repeats (a double click types them) and repeat mode, and Remove Touched on a step's context menu.
 - **Articulation Map** (pp. 1263, 1286, [articulation-maps.md](articulation-maps.md)): MIDI and instrument tracks'
   map, or No Map (`track.set` `articulationMap`), and Setup..., which opens the articulation map setup for the track.
 - **Track Versions** (pp. 231-232, [track-versions.md](track-versions.md)): the first selected track's active
@@ -213,21 +236,29 @@ instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the
   own position with a part shown before, a selection naming removed markers, and an untouched Ctrl+Enter on the position
   of three markers giving them the first one's in one undo step; a note selected in an in-place editor with its fields
   shown and edited, pitch relative and with Ctrl+Enter, velocity, channel and start, a part selected after it, its
-  editor deselecting and closing; the inspector's buttons, volume and pan both ways, the output from another client and
-  from the drop-down list, a refused output, the inserts overview with a bypassed slot, the notepad, renaming, notes and
-  a name being typed when another track is selected and when another client loads a project, arrow keys in the notepad
-  and the name, closing a section, hiding one in Set up Sections and opening it only from an empty area, and what a
-  group and a marker track don't have; the info line's and the toolbar's setup panes, a hidden field staying hidden when
-  the selection shows again and Show All leaving an unavailable one out; the MIDI Modifiers section's bypass, values, a
-  fraction's denominator, a generator's target with positions in ticks, a range the engine refuses, changes from another
-  client with undo, and an audio track without it; the MIDI Inserts and MIDI Sends sections' effect, a parameter from a
-  drop-down list and from a value field, on, bypass, the divider from the list and dragged in one step, a drag dropped
-  when the inspector shows another instrument track or a marker track, the control panel opened and closed, a send's
-  output and Pre, changes from another client with undo, and an audio track without them. A drag of the inspector's
-  volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are one undo step
-  each, and a MIDI modifier and a part's transpose dragged back to where they started while the engine answers late end
-  there. The info line's volume step that the engine refuses, one of the two selected events being gone, shows in the
-  command log, leaves no undo step and shows the engine's value again. While a dragged note's last velocity step is out,
-  another note selected in an in-place editor shows its own velocity and the dragged one the drag's; wheel turns on the
-  velocity of one note, then of the next with the mouse still over the field, are two undo steps.
+  editor deselecting and closing; two automation points selected with their position, value and Terminator shown,
+  position and value relative and value with Ctrl+Enter kept in range, Terminator set on one point in one undo step and
+  cleared again, and an event and a marker selected after them showing their Name field; the inspector's buttons, volume
+  and pan both ways, the output from another client and from the drop-down list, a refused output, an output list
+  without the channels that would close a loop, the inserts overview with a bypassed slot, the notepad, renaming, notes
+  and a name being typed when another track is selected and when another client loads a project, arrow keys in the
+  notepad and the name, closing a section, hiding one in Set up Sections and opening it only from an empty area, and
+  what a group and a marker track don't have; the info line's and the toolbar's setup panes, a hidden field staying
+  hidden when the selection shows again and Show All leaving an unavailable one out; the MIDI Modifiers section's
+  bypass, values, a fraction's denominator, a generator's target with positions in ticks, a range the engine refuses,
+  changes from another client with undo, and an audio track without it; the MIDI Inserts and MIDI Sends sections'
+  effect, a parameter from a drop-down list and from a value field, on, bypass, the divider from the list and dragged in
+  one step, a drag dropped when the inspector shows another instrument track or a marker track, the control panel opened
+  and closed, a send's output and Pre, changes from another client with undo, and an audio track without them. A drag of
+  the inspector's volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are
+  one undo step each, and a MIDI modifier and a part's transpose dragged back to where they started while the engine
+  answers late end there. The info line's volume step that the engine refuses, one of the two selected events being
+  gone, shows in the command log, leaves no undo step and shows the engine's value again. While a dragged note's last
+  velocity step is out, another note selected in an in-place editor shows its own velocity and the dragged one the
+  drag's; wheel turns on the velocity of one note, then of the next with the mouse still over the field, are two undo
+  steps.
+- `tests/rangeinfoline_ui_tests.cpp`: the info line of a selection range, its labels and fields and the others
+  unavailable; Range Start, Range Length and Range End setting the range with no undo step, a start past the end and an
+  end before the start changing nothing; Top Track and Bottom Track taking tracks in and out, not past the other edge;
+  and another tool giving the info line back to the selected part with its own labels.
 - `tests/mixerwindow_tests.cpp`: a drag of a mixer fader is one undo step.

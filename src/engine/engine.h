@@ -68,6 +68,9 @@ namespace gnubase::engine
 		Json parameters = Json{{"type", "object"}, {"additionalProperties", false}}; // JSON schema
 		Json result = Json::object();                                                // JSON schema
 		bool query = false; // only reads, never changes the project
+		// A query whose calls take what they return from a queue all clients share (midi.capture), so a second
+		// read gets other data. MCP lists it as a tool only, not as a resource.
+		bool consumes = false;
 	};
 
 	// A change announced by a command. Every client receives it.
@@ -300,6 +303,11 @@ namespace gnubase::engine
 		// for a hook that holds the thread. The thread gets a copy: a new hook applies from the next start on. Empty
 		// for none. Any thread.
 		void setCueStartHook(std::function<void()> hook);
+		// For tests: calls hook on the command thread in every locate while a device is set (transport.locate,
+		// audition.scrub of a track while the transport plays, an arranger jump), after the locate has cued the
+		// streams at its position and before it sends itself to the audio thread, e.g. to let the cue thread cue
+		// meanwhile, which then cues as the locate does (#1136). Empty for none. Any thread.
+		void setLocateCuedHook(std::function<void()> hook);
 
 	private:
 		friend class Client;

@@ -264,6 +264,8 @@ TEST_CASE("the pool panel's Key column shows and sets the root key of a clip's a
 				return each.at("rootKey").get<std::string>();
 		return std::string("no event");
 	};
+	// The View/Attributes menu's Root Key switches the column on (see the test below).
+	app.call("settings.set", {{"key", "ui.poolColumns"}, {"value", {{"key", true}}}});
 	openPool(app, 2);
 	// The Key column (reference manual p. 417): no key yet; the next one after none is C.
 	const std::string key = "#pool listitem select[field=rootKey]";
@@ -294,6 +296,55 @@ TEST_CASE("the pool panel's Key column shows and sets the root key of a clip's a
 	app.call("audioEvent.remove", {{"event", event}});
 	app.call("audioEvent.remove", {{"event", second}});
 	REQUIRE(app.waitUntil([&] { return elements(app, key).at(0).at("attributes").contains("disabled"); }));
+}
+
+TEST_CASE("the pool panel's View/Attributes menu switches its columns, the Key column off at first", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	addClip(app, writeAudio(dir.path() / "loop.wav", 4800));
+	openPool(app, 2);
+	const auto visible = [&app](const std::string& selector)
+	{
+		const Json found = elements(app, selector);
+		return !found.empty() && found.at(0).at("visible") == true;
+	};
+	const auto checked = [&app](const std::string& column)
+	{ return has(elements(app, "#pool-attributes-menu menuitem[pool-column=" + column + "]").at(0), "checked"); };
+	const auto setting = [&app] { return app.call("settings.get", {{"key", "ui.poolColumns"}}).at("value"); };
+
+	// As in the reference (manual p. 417), the Key column shows once the menu's Root Key turns it on.
+	CHECK(!visible(".pool-header span.key"));
+	CHECK(!visible("#pool listitem span.key"));
+	CHECK(visible(".pool-header span.used"));
+	CHECK(visible("#pool listitem span.path"));
+	CHECK(!checked("key"));
+	CHECK(checked("used"));
+	click(app, "#pool-attributes");
+	REQUIRE(visible("#pool-attributes-menu"));
+	click(app, "#pool-attributes-menu menuitem[pool-column=key]");
+	REQUIRE(app.waitUntil([&] { return setting().value("key", false); }));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(visible(".pool-header span.key"));
+	CHECK(visible("#pool listitem select[field=rootKey]"));
+	CHECK(checked("key"));
+
+	// The other columns go the same way, and the setting's changes from another client show at once.
+	click(app, "#pool-attributes");
+	click(app, "#pool-attributes-menu menuitem[pool-column=path]");
+	REQUIRE(app.waitUntil([&] { return !setting().value("path", true); }));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(!visible(".pool-header span.path"));
+	CHECK(!visible("#pool listitem span.path"));
+	CHECK(visible(".pool-header span.key"));
+	app.call("settings.set", {{"key", "ui.poolColumns"}, {"value", {{"used", false}}}});
+	REQUIRE(app.waitUntil([&] { return !visible(".pool-header span.used"); }));
+	CHECK(!checked("used"));
+	CHECK(!visible(".pool-header span.key")); // left out: its default
+	CHECK(!checked("key"));
+	CHECK(visible(".pool-header span.path"));
+	CHECK(checked("path"));
 }
 
 TEST_CASE("the pool panel's Import puts files into the pool through the Import Options dialog", "[ui]")
@@ -457,16 +508,29 @@ TEST_CASE(
 	CHECK(elements(app, "#prepare-archive-dialog").empty());
 }
 
-TEST_CASE("the pool panel says which media Prepare Archive left alone because they changed meanwhile", "[ui]")
+TEST_CASE("the pool panel says which media and frozen tracks Prepare Archive left alone because they changed meanwhile",
+	"[ui]")
 {
 	test::UiApp app({640, 480});
 	ui::EngineBinding binding{app.engine()};
 	Rml::ElementDocument& document = app.show("other.rml");
 	ui::PoolPanel panel(binding, *document.GetElementById("box"), [](const std::string&) {}, [] { return true; });
 	panel.report("media.prepareArchive",
-		{0, {{"copied", Json::array({1})}, {"missing", Json::array()}, {"changed", Json::array({2, 3})}}, {}});
+		{0,
+			{{"copied", Json::array({1})}, {"missing", Json::array()}, {"changed", Json::array({2, 3})},
+				{"changedTracks", Json::array()}},
+			{}});
 	CHECK(document.GetElementById("pool-message")->GetInnerRML() ==
 		"Copied 1 file into the project folder; 2 files changed meanwhile and were left as they are.");
+	// The frozen tracks whose freeze file changed meanwhile keep it (#2001).
+	panel.report("media.prepareArchive",
+		{0,
+			{{"copied", Json::array()}, {"missing", Json::array()}, {"changed", Json::array({2})},
+				{"changedTracks", Json::array({4})}},
+			{}});
+	CHECK(document.GetElementById("pool-message")->GetInnerRML() ==
+		"Copied 0 files into the project folder; 1 file changed meanwhile and was left as it is; 1 frozen track "
+		"changed meanwhile and was left as it is.");
 }
 
 TEST_CASE("the pool panel shows the Conform Files job's progress and that it was cancelled", "[ui]")
@@ -526,8 +590,18 @@ TEST_CASE("the pool panel shows what Find Missing Files' job found, and why a jo
 	std::filesystem::create_directories(dir.path() / "found");
 	test::writeWav(dir.path() / "found" / "kick.wav", {std::vector<float>(48000, 0.25f), 1, 48000});
 
-	// The folder dialog can't be answered in a test: media.locate goes the way it sends it, through the UI's binding.
-	app.keys().run("media.locate", {{"folder", (dir.path() / "found").u8string()}}, app.main(), nullptr);
+	// A folder dialog that fails says why, like a command that fails.
+	app.keys().run("pool.findMissing", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+	CHECK(app.shell().fileDialogs().begin()->second.kind == ui::FileDialogKind::Folder);
+	app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {}, "no file dialog on this system");
+	REQUIRE(
+		app.waitUntil([&app] { return message(app) == "Find Missing Files failed: no file dialog on this system"; }));
+	CHECK(has(elements(app, "#pool-message").at(0), "error"));
+
+	app.keys().run("pool.findMissing", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+	app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {dir.path() / "found"});
 	REQUIRE(app.waitUntil([&app] { return message(app) == "Found 1 of 2 missing files."; }, std::chrono::seconds(30)));
 	CHECK(!has(elements(app, "#pool-message").at(0), "error"));
 	CHECK(!offersStop(app));

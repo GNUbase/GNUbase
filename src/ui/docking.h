@@ -61,18 +61,21 @@ namespace gnubase::ui
 	//   sections="channel"            a container of sections of that set, such as each of the mixer's channels; its
 	//                                 children with section="eq" (label="EQ", default="hidden") are the sections, in
 	//                                 the user's order and hidden with the class .hidden. The first container says
-	//                                 which sections a set has and their default order; containers added later go
-	//                                 through arrangeSections
+	//                                 which sections a set has and their default order, and later ones add those it
+	//                                 lacks; containers added later go through arrangeSections
 	//   fit="room"                    a container of sections that shows only those it has room for: the shown
 	//                                 sections before its .spacer that don't fit in its width get the state class
 	//                                 .no-room, the last first, and show again once it has room for them. Its style
 	//                                 must keep the widths they need, so they stay laid out, out of the flow
+	//   divider="left|right"          a section of a fit="room" container that, while shown, keeps the sections
+	//                                 before it (left) or after it (right) shown, as the reference's dividers
 	//   fit="spare"                   an element in a section of a fit="room" container that goes before any
 	//                                 section does, the last one first: it gets .no-room while the sections fit only
 	//                                 without it, and its style keeps its width the same way
 	//   setup="channel"               a setup pane's list of the set's sections, which the docking system fills with a
 	//                                 toggle button per section (setup-section="eq"); a button dragged onto another
-	//                                 moves its section there
+	//                                 moves its section there, and Alt+Up and Alt+Down move the focused one, and its
+	//                                 section, one place
 	//   setup-all="channel"           a button that shows every section of the set (Show All)
 	//   setup-reset="channel"         a button that gives the set its default order and hidden sections (Reset All)
 	//   setup-presets="channel"       the set's presets from the user setting ui.setupPresets, which the docking system
@@ -83,9 +86,10 @@ namespace gnubase::ui
 	// Zones get the state class .hidden when hidden and .focused while the keyboard focus is in them; strips get
 	// .hidden. A tab is dragged onto another to move it there; a right click on the tabs opens the zone's tab menu,
 	// with Open in Separate Window and an item to show or hide each tab. A panel in a window of its own has a Dock
-	// button (#dock), and closing the window docks it too. A docking window's or a panel window's document that live
-	// reload loads again (ui/livereload.h) is attached in its place: what the panels' create returned for the old one
-	// goes first, then they fill the new one. Use it on the UI thread; the engine, the binding and the shell must
+	// button (#dock), and closing the window docks it too; a panel of an app window that addWindow opens and closes
+	// shows in a window of its own only while that one is open. A docking window's or a panel window's document that
+	// live reload loads again (ui/livereload.h) is attached in its place: what the panels' create returned for the old
+	// one goes first, then they fill the new one. Use it on the UI thread; the engine, the binding and the shell must
 	// outlive it.
 	class Docking final : private Rml::EventListener
 	{
@@ -146,9 +150,9 @@ namespace gnubase::ui
 		void recallPreset(const std::string& window, const std::string& set, const std::string& name);
 		// Arranges containers of sections added or rebuilt after attach, such as a new mixer channel: element, and the
 		// containers and setup panes in it, get the user's order and hidden sections. A set the window doesn't know yet
-		// is learned from its first container there, which fills the set's setup panes. Call it once element is in a
-		// docking window's document; anything else is left alone. A docked panel's content needn't: it is arranged when
-		// the panel shows.
+		// is learned from its first container there, which fills the set's setup panes, and a section it doesn't know
+		// yet from the first container that has it. Call it once element is in a docking window's document; anything
+		// else is left alone. A docked panel's content needn't: it is arranged when the panel shows.
 		void arrangeSections(Rml::Element& element);
 		// Shows the panel as its zone's active tab, with the zone shown; a panel in a window of its own stays there,
 		// and its window comes to the front with the keyboard focus, restored if it is minimized.
@@ -237,8 +241,8 @@ namespace gnubase::ui
 		const Section* section(const std::string& window, const std::string& set, const std::string& id) const;
 		bool sectionHidden(const std::string& window, const std::string& set, const std::string& id) const;
 		engine::Json& sectionsJson(const std::string& window, const std::string& set);
-		// Learns the sets of sections that the containers in root, root too, are the first of, and fills their setup
-		// panes. Whether it learned one.
+		// Learns the sections that the containers in root, root too, have and the window doesn't know yet, and fills
+		// their sets' setup panes. Whether it learned one.
 		static bool learnSections(Attached& attached, Rml::Element& root);
 		// The elements in root, root too, whose attribute name has the value, or any value if it is empty.
 		static std::vector<Rml::Element*> elementsWith(Rml::Element& root, const char* name, const std::string& value);

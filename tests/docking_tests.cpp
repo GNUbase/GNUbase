@@ -165,8 +165,9 @@ namespace
 	using Names = std::vector<std::string>;
 
 	// Appends a channel with the sections of tests/data/ui/sections.rml to the window's main zone, as the mixer adds
-	// one for a new track, and has the docking system arrange it.
-	Rml::Element& addChannel(test::UiApp& app, Rml::ElementDocument& document, const std::string& id)
+	// one for a new track, and has the docking system arrange it; without eq, one without an EQ section, as a MIDI
+	// channel (reference manual p. 479).
+	Rml::Element& addChannel(test::UiApp& app, Rml::ElementDocument& document, const std::string& id, bool eq = true)
 	{
 		Rml::Element* zone = document.GetElementById("main-zone");
 		REQUIRE(zone != nullptr);
@@ -176,8 +177,8 @@ namespace
 		channel->SetAttribute("sections", "channel");
 		channel->SetInnerRML(R"(<div class="channel-name">New</div>
 			<div section="routing" label="Routing"/>
-			<div section="inserts" label="Inserts"/>
-			<div section="eq" label="EQ" default="hidden"/>
+			<div section="inserts" label="Inserts"/>)" +
+			std::string(eq ? R"(<div section="eq" label="EQ" default="hidden"/>)" : "") + R"(
 			<div section="sends" label="Sends"/>
 			<div section="fader" label="Fader"/>
 			<div class="channel-footer"/>)");
@@ -1025,16 +1026,30 @@ TEST_CASE("a setup pane shows, hides and reorders a window's sections, as ui.lay
 	CHECK(savedLayout(app).at("windows").at("test").at("sections").at("channel") ==
 		Json{{"order", {"fader", "routing", "inserts", "eq", "sends"}}, {"hidden", {"inserts"}}});
 
-	// Any client changes them through the user setting, as MCP and Lua do. Sections it leaves out follow in the
-	// document's order, and names that aren't sections are ignored.
+	// Any client changes them through the user setting, as MCP and Lua do. Names that aren't sections are ignored.
 	Json layout = savedLayout(app);
 	layout["windows"]["test"]["sections"]["channel"] = {
-		{"order", {"sends", "mixer", "fader"}}, {"hidden", {"routing"}}};
+		{"order", {"sends", "mixer", "fader", "routing", "inserts", "eq"}}, {"hidden", {"routing"}}};
 	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
 	REQUIRE(app.waitUntil(
 		[&app] { return sections(app, "#channel-1", true) == Names{"sends", "fader", "routing", "inserts", "eq"}; }));
 	CHECK(sections(app, "#channel-2") == Names{"sends", "fader", "inserts", "eq"});
 	CHECK(paneItems(app) == Names{"sends*", "fader*", "routing", "inserts*", "eq*"});
+
+	// A set saved before some of its sections existed doesn't know them: one its order and hidden list don't name
+	// goes after the section before it in the document, with its default, so EQ stays hidden.
+	layout["windows"]["test"]["sections"]["channel"] = {{"order", {"sends", "fader"}}, {"hidden", {"routing"}}};
+	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+	REQUIRE(app.waitUntil(
+		[&app] { return sections(app, "#channel-1", true) == Names{"routing", "inserts", "eq", "sends", "fader"}; }));
+	CHECK(sections(app, "#channel-2") == Names{"inserts", "sends", "fader"});
+	CHECK(paneItems(app) == Names{"routing", "inserts*", "eq", "sends*", "fader*"});
+
+	// Showing or hiding a section saves the order with the hidden list, so the set knows EQ from then on.
+	app.appUi().docking().setSectionHidden("test", "channel", "inserts", true);
+	waitUntilSaved(app);
+	CHECK(savedLayout(app).at("windows").at("test").at("sections").at("channel") ==
+		Json{{"order", {"routing", "inserts", "eq", "sends", "fader"}}, {"hidden", {"routing", "inserts", "eq"}}});
 
 	// The engine API checks the setting's shape.
 	Json bad = layout;
@@ -1046,6 +1061,62 @@ TEST_CASE("a setup pane shows, hides and reorders a window's sections, as ui.lay
 	REQUIRE(
 		app.waitUntil([&app] { return sections(app, "#channel-1") == Names{"routing", "inserts", "sends", "fader"}; }));
 	CHECK(paneItems(app) == Names{"routing*", "inserts*", "eq", "sends*", "fader*"});
+}
+
+TEST_CASE("keys go through a setup pane's buttons, show and hide sections and move them", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	showSections(app);
+	app.ui().click(std::nullopt, at("#window-layout"), ui::MouseButton::Left, 1, {});
+	REQUIRE(has(element(app, "#layout-pane"), "open"));
+	// The zone, strip or section of the button that has the focus.
+	const auto focused = [&app]
+	{
+		const Rml::Element* focus = app.main().context().GetFocusElement();
+		REQUIRE(focus != nullptr);
+		return focus->GetAttribute<Rml::String>("toggle", focus->GetAttribute<Rml::String>("setup-section", ""));
+	};
+	const auto press = [&app, &focused](const char* keys)
+	{
+		app.ui().key(std::nullopt, keys);
+		app.shell().step(std::chrono::milliseconds(0));
+		return focused();
+	};
+
+	// Down and Up go through the zone and strip toggles and the section buttons, round the ends.
+	Names stops;
+	for (int i = 0; i < 8; ++i)
+		stops.push_back(press("Down"));
+	CHECK(stops == Names{"meterBridge", "left", "routing", "inserts", "eq", "sends", "fader", "meterBridge"});
+	CHECK(press("Up") == "fader");
+	CHECK(press("Up") == "sends");
+	CHECK(press("Up") == "eq");
+
+	// Space and Enter show and hide the focused button's section, and the pane stays open.
+	CHECK(press("Space") == "eq");
+	REQUIRE(app.waitUntil(
+		[&app] { return sections(app, "#channel-1") == Names{"routing", "inserts", "eq", "sends", "fader"}; }));
+	CHECK(press("Up") == "inserts");
+	CHECK(press("Enter") == "inserts");
+	REQUIRE(app.waitUntil([&app] { return sections(app, "#channel-1") == Names{"routing", "eq", "sends", "fader"}; }));
+	CHECK(paneItems(app) == Names{"routing*", "inserts", "eq*", "sends*", "fader*"});
+	CHECK(has(element(app, "#layout-pane"), "open"));
+
+	// Alt+Down and Alt+Up move the focused button's section one place, in the pane and in every channel, and the
+	// button keeps the focus; at an end they do nothing.
+	CHECK(press("Alt+Down") == "inserts");
+	CHECK(paneItems(app) == Names{"routing*", "eq*", "inserts", "sends*", "fader*"});
+	CHECK(sections(app, "#channel-2", true) == Names{"routing", "eq", "inserts", "sends", "fader"});
+	CHECK(press("Alt+Up") == "inserts");
+	CHECK(press("Alt+Up") == "inserts");
+	CHECK(paneItems(app) == Names{"inserts", "routing*", "eq*", "sends*", "fader*"});
+	CHECK(press("Alt+Up") == "inserts");
+	CHECK(paneItems(app) == Names{"inserts", "routing*", "eq*", "sends*", "fader*"});
+	CHECK(press("Down") == "routing"); // Up and Down follow the new order
+	CHECK(has(element(app, "#layout-pane"), "open"));
+	waitUntilSaved(app);
+	CHECK(savedLayout(app).at("windows").at("test").at("sections").at("channel") ==
+		Json{{"order", {"inserts", "routing", "eq", "sends", "fader"}}, {"hidden", {"inserts"}}});
 }
 
 TEST_CASE("the order and visibility of sections come back after a restart", "[ui]")
@@ -1127,7 +1198,8 @@ TEST_CASE("a window without containers of sections learns a set from the first c
 	test::UiApp app({1000, 700});
 	// The user's order and hidden sections from before, e.g. from a project that had channels.
 	Json layout = Json::object();
-	layout["windows"]["test"]["sections"]["channel"] = {{"order", {"sends", "fader"}}, {"hidden", {"routing"}}};
+	layout["windows"]["test"]["sections"]["channel"] = {
+		{"order", {"sends", "fader", "routing", "inserts", "eq"}}, {"hidden", {"routing"}}};
 	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
 	ui::Docking& docking = app.appUi().docking();
 	REQUIRE(app.waitUntil([&docking, &layout] { return docking.layout() == layout; }));
@@ -1139,9 +1211,10 @@ TEST_CASE("a window without containers of sections learns a set from the first c
 	const auto saveDisabled = [&app] { return element(app, "#save-preset").at("attributes").contains("disabled"); };
 	CHECK(saveDisabled()); // a preset would have no order
 
-	// An element that isn't in a docking window's document is left alone.
+	// An element that isn't in a docking window's document is left alone: no set is learned from it.
 	const Rml::ElementPtr loose = document.CreateElement("div");
 	loose->SetAttribute("sections", "channel");
+	loose->AppendChild(document.CreateElement("div"))->SetAttribute("section", "routing");
 	docking.arrangeSections(*loose);
 	CHECK(paneItems(app).empty());
 
@@ -1166,11 +1239,90 @@ TEST_CASE("a window without containers of sections learns a set from the first c
 	CHECK(sections(app, "#channel-1") == Names{"sends", "fader", "routing", "inserts", "eq"});
 }
 
+TEST_CASE("a set learns the sections that later containers bring, and keeps saved ones it doesn't know", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	ui::Docking& docking = app.appUi().docking();
+	const auto saved = [&app]
+	{
+		waitUntilSaved(app);
+		return savedLayout(app).at("windows").at("test").at("sections").at("channel");
+	};
+
+	SECTION("with its defaults")
+	{
+		// The first channel has no EQ; the next one's comes in its place, hidden by default.
+		Rml::ElementDocument& document = app.show("sections-later.rml");
+		docking.attach("test", document);
+		addChannel(app, document, "midi", false);
+		addChannel(app, document, "audio");
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(paneItems(app) == Names{"routing*", "inserts*", "eq", "sends*", "fader*"});
+		CHECK(sections(app, "#audio") == Names{"routing", "inserts", "sends", "fader"});
+		CHECK(docking.sections("test", "channel") == Names{"routing", "inserts", "eq", "sends", "fader"});
+	}
+
+	SECTION("with the user's layout")
+	{
+		// From a project with audio channels: EQ first and shown.
+		Json layout = Json::object();
+		layout["windows"]["test"]["sections"]["channel"] = {
+			{"order", {"eq", "routing", "inserts", "sends", "fader"}}, {"hidden", {"inserts"}}};
+		app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+		REQUIRE(app.waitUntil([&docking, &layout] { return docking.layout() == layout; }));
+		Rml::ElementDocument& document = app.show("sections-later.rml");
+		docking.attach("test", document);
+		addChannel(app, document, "midi", false);
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(paneItems(app) == Names{"routing*", "inserts", "sends*", "fader*"});
+
+		// Changes in the pane keep EQ's place and visibility in ui.layout.
+		docking.setSectionHidden("test", "channel", "sends", true);
+		docking.moveSection("test", "channel", "fader", "routing");
+		CHECK(saved() ==
+			Json{{"order", {"eq", "fader", "routing", "inserts", "sends"}}, {"hidden", {"inserts", "sends"}}});
+
+		// A channel with EQ brings it: the pane gets its button, and it shows where the user's layout has it.
+		addChannel(app, document, "audio");
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(paneItems(app) == Names{"eq*", "fader*", "routing*", "inserts", "sends"});
+		CHECK(element(app, "[setup-section=eq]").at("text") == "EQ");
+		CHECK(sections(app, "#audio") == Names{"eq", "fader", "routing"});
+		CHECK(sections(app, "#midi") == Names{"fader", "routing"});
+		docking.setSectionHidden("test", "channel", "routing", true);
+		CHECK(saved() ==
+			Json{{"order", {"eq", "fader", "routing", "inserts", "sends"}},
+				{"hidden", {"routing", "inserts", "sends"}}});
+	}
+
+	SECTION("with a saved order and no hidden list")
+	{
+		// After a drag: EQ, which the first channel doesn't have, still has its default, hidden.
+		Json layout = Json::object();
+		layout["windows"]["test"]["sections"]["channel"] = {{"order", {"routing", "sends", "inserts", "eq", "fader"}}};
+		app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+		REQUIRE(app.waitUntil([&docking, &layout] { return docking.layout() == layout; }));
+		Rml::ElementDocument& document = app.show("sections-later.rml");
+		docking.attach("test", document);
+		addChannel(app, document, "midi", false);
+		app.shell().step(std::chrono::milliseconds(0));
+		docking.setSectionHidden("test", "channel", "fader", true);
+		CHECK(saved() == Json{{"order", {"routing", "sends", "inserts", "fader"}}, {"hidden", {"fader"}}});
+
+		// A channel with EQ brings it hidden.
+		addChannel(app, document, "audio");
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(paneItems(app) == Names{"routing*", "sends*", "inserts*", "eq", "fader"});
+		CHECK(sections(app, "#audio") == Names{"routing", "sends", "inserts"});
+	}
+}
+
 TEST_CASE("a window learns a set from containers in a docked panel's content", "[ui]")
 {
 	test::UiApp app({1000, 700});
 	Json layout = Json::object();
-	layout["windows"]["test"]["sections"]["channel"] = {{"order", {"fader"}}, {"hidden", {"eq", "sends"}}};
+	layout["windows"]["test"]["sections"]["channel"] = {
+		{"order", {"fader", "routing", "eq", "sends"}}, {"hidden", {"eq", "sends"}}};
 	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
 	ui::Docking& docking = app.appUi().docking();
 	REQUIRE(app.waitUntil([&docking, &layout] { return docking.layout() == layout; }));

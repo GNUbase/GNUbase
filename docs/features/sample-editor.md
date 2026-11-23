@@ -36,10 +36,14 @@ Snap to zero crossing reads the file on the command thread with `zeroCrossingFra
 ## Process commands
 
 `sampleEditor.process` implements the Basic Commands on an audio event's clip range (reference manual pp. 619-620). It
-takes `event`, `start` and `end` in clip frames and `operation`: `cut`, `copy`, `paste`, `delete` or `insertSilence`.
-Cut and Delete close the gap; Paste replaces the range with the copied samples; Insert Silence inserts the range's
-length at its start without replacing any audio. Copy and Cut replace an engine audio clipboard, independent of the
-system text clipboard and of undo. Paste currently requires matching sample rates and channel counts.
+takes `event`, `start` and `end` in clip frames and `operation`: `cut`, `copy`, `paste`, `delete`, `insertSilence` or
+`draw`. Cut and Delete close the gap; Paste replaces the range with the copied samples; Insert Silence inserts the
+range's length at its start without replacing any audio. Copy and Cut replace an engine audio clipboard, independent of
+the system text clipboard and of undo. Paste converts the clipboard to the destination sample rate with the engine
+resampler, then mixes its default speaker arrangement with the engine channel conversion gains. Mono duplicates at unity
+into stereo; stereo folds to mono at -3.01 dB per channel. Uncommon channel counts map matching indices and leave extra
+channels silent. The inserted length is rounded at the destination rate. Conversion streams on the job thread and leaves
+the clipboard unchanged.
 
 File reads and writes run as cancellable jobs, streaming blocks to new float WAV files in the project's media folder
 (the recording folder before saving). The result is `job`; its result contains `clip`, `media` and `length` for an edit,
@@ -57,8 +61,21 @@ first implementation. A tempo value alone does not warp playback and is preserve
 `sampleEditor.applyProcess` and `sampleEditor.finishProcess` accept only engine-posted work; clients use
 `sampleEditor.process`.
 
-The Process menu, keys and shared-copy prompt still need UI wiring (#1968). The editor's layout, ruler and level scale,
-dragging regions, Zoom submenu and Draw tool remain in #730.
+The Process section's Basic Commands menu and the sample editor's Cut, Copy, Paste, Delete and Insert Silence key
+commands send these operations for the selected range. Without a selection they are disabled. The keys are Mod+X, Mod+C,
+Mod+V, Delete or Backspace, and Mod+Shift+E; the project window keeps its own commands. Engine refusals and job errors
+appear in the Process section. Process controls stay disabled while a command or its job is pending. These UI key
+commands use `sampleEditor.cut`, `sampleEditor.copy`, `sampleEditor.paste`, `sampleEditor.delete` and
+`sampleEditor.insertSilence`, so their assignments are separate from the project window's edit commands.
+
+When the engine requires a shared-copy choice, a modal question offers New Version, Continue (all copies), and Cancel.
+Copy never asks. The question keeps the event and range that requested it, and closes without editing if the project or
+editor selection changes. Escape cancels too. The engine checks all users, including inactive versions and sampler
+instruments, before asking for the choice.
+
+The Draw tool uses `draw`, with a zero-based `channel` and `samples`: one value from -1 to 1 for each frame in the
+range, at most 65536. It replaces only that channel, preserving clip timing, regions, fades and the other channels. It
+uses the same shared-copy choice, cancellable job and undo as the other edits.
 
 ## In the UI
 
@@ -69,7 +86,7 @@ crossfade editor), and with Open/Close Editor (Mod+E, Return) when audio events 
 first of them. Without either selected, Open/Close Editor closes it.
 
 ```
-.sample-editor[tool=range|zoom|play|scrub]   .empty without an event; .no-info, .no-overview, .no-regions
+.sample-editor[tool=range|draw|zoom|play|scrub]   .empty without an event; .no-info, .no-overview, .no-regions
   .toolbar.sample-editor-toolbar
     button.se-tool[se-tool]       the tools; .checked for the current one
     #se-zero-crossing             Snap to Zero Crossing (the project's snap setting); .checked while on
@@ -81,9 +98,10 @@ first of them. Without either selected, Open/Close Editor closes it.
                                   .se-overview-selection, .se-overview-snap and .se-overview-view (what the display shows)
   .se-body
     .se-inspector                 Range: button.se-select[select], #se-set-locators, #se-locate, #se-loop;
-                                  Process: #se-range-region
+                                  Process: #se-basic-commands, #se-process-message, #se-range-region
     .se-main
-      .se-display                 waveform.se-wave, .se-outside (.se-before, .se-after the event), .se-region-shown,
+      .se-canvas                  .se-timeline with #se-level-menu and ruler.se-ruler; .se-wave-area with .se-level
+        .se-display               waveform.se-wave, .se-outside (.se-before, .se-after the event), .se-region-shown,
                                   .se-selection (.off without one), .se-snap-point
       .se-regions                 #se-add-region, #se-remove-region, #se-select-region, #se-play-region and
                                   .se-region-list with a .se-region[region] per region (.selected): .se-region-name,
@@ -97,9 +115,16 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 | Tool | Gesture | Reference |
 |---|---|---|
 | Range Selection | A drag selects a range, with Snap to Zero Crossing at zero crossings; Shift and a click moves its nearer end; a click deselects | p. 635 |
+| Draw | At one sample per pixel or closer, draws replacement samples in the pressed channel, interpolating between pointer positions; release applies one edit and selects the corrected range | pp. 634-635 |
 | Zoom | A click zooms in around the frame clicked, with Alt out, at most to the whole clip | p. 630 |
 | Play | Auditions the clip with its fades from the frame pressed until the release, also outside the event and past its end (`audition.start` with the `clip`, [audition.md](audition.md)) | p. 630 |
 | Scrub | A drag scrubs the clip (`audition.scrub` with the `clip`) and moves the project cursor to where the frame plays | p. 634 |
+
+While drawing, `curve.se-draw-stroke` overlays the collected samples in the pressed channel's waveform lane, following
+horizontal scroll and zoom and vertical waveform zoom. It draws only between the stroke's endpoints, with a handle for
+a single sample. The overlay remains while the shared-copy choice or processing job is pending and disappears when the
+edit is refused, cancelled or finished, or the editor switches to another event. Its color and line width belong to the
+themes.
 
 - **Snap point** (pp. 626-628): a line at the event's snap point, at its start without one of its own; a drag with any
   tool sets it within the event (`event.setSnapPoint`).
@@ -110,35 +135,66 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
   Range, Locate Selection and Loop Selection, of the selection range or else of the event. Locate Selection goes to
   its start, and from there to its end; Loop Selection sets the locators to it, turns cycle on and plays from its
   start.
-- **Process section** (p. 620): Event or Range as Region.
+- **Process section** (pp. 619-620): Basic Commands (Cut, Copy, Paste, Delete, Insert Silence), Event or Range as Region.
+- **Layout and axes** (pp. 621-622): the ruler stays above the waveform and follows its horizontal zoom and scroll,
+  using the project's time format, tempo, sample rate and the event's clip-to-project mapping. The level scale beside
+  each channel shows percentages or dB, chosen from its Level menu, and follows vertical waveform zoom. Its labels use
+  the design system's `text-small` class, whose font size belongs to the theme. The regions list occupies the zone to
+  the right of the waveform. Show Half Level Axis in the Level menu toggles guides halfway between each channel's center
+  and its top and bottom. The bottom sliders scroll and zoom horizontally; the vertical slider zooms in when dragged
+  down. The controls follow the zoom menu and overview.
+- **Zoom menu** (p. 623): Zoom In/Out, Full, Selection, Selection (Horiz.), Event, vertical zoom and waveform vertical
+  zoom, Undo/Redo Zoom. Zoom In and Out center the display on the project cursor, mapped to clip frames and clamped to
+  the clip. Full and Selection show the whole clip, as clip-based zoom does without pitch analysis; Selection (Horiz.)
+  fits the range and Event fits the event. Vertical zoom magnifies the waveform up to 64 times, independently of the
+  overview. Zoom history belongs to the current editor event and adds no project undo steps.
 - **Hitpoints section** (pp. 636-647): detecting, filtering and editing hitpoints and making slices and more of them,
   in [hitpoints.md](hitpoints.md).
 - **Warp section** (pp. 648-656): Musical Mode, the audio tempo, Auto Adjust, Free Warp and Reset, and Flatten
   in the Process section, in [warp.md](warp.md).
 - **Regions list** (pp. 624-626): Add Region makes one of the selection range or else of the event, Remove Region
   removes the one selected in the list, Select Region selects its section and zooms to it, Play Region auditions it
-  (`audition.start` up to its end). A click on a region selects it in the list and shows it in the display, scrolled
-  to it at the same zoom; the display marks it. The rows are built again only when other regions are listed or
-  their order changes, so a double click stays one when its first press takes what was typed in another row. A
-  double click on its name, start or end types a new one in a field:
-  Enter or leaving the field takes it (`clip.setRegion`), Escape doesn't, and what isn't a whole number or a section
-  of the clip changes nothing, nor does the number shown written another way. When the regions change meanwhile,
-  such as by an undo, what was typed goes.
+  (`audition.start` up to its end). A click on a region selects it in the list and shows it in the display, scrolled to
+  it at the same zoom; the display marks it. The rows are built again only when other regions are listed or their order
+  changes, so a double click stays one when its first press takes what was typed in another row. A double click on its
+  name, start or end types a new one in a field: Enter or leaving the field takes it (`clip.setRegion`), Escape doesn't,
+  and what isn't a whole number or a section of the clip changes nothing, nor does the number shown written another way.
+  When the regions change meanwhile, such as by an undo, what was typed goes. The selected region has start and end
+  handles in the waveform; dragging either sends one `clip.setRegion` edit on release, bounded by the clip and the other
+  edge. A click without dragging leaves it unchanged.
 
 `resources/styles/sampleeditor.rcss` lays it out; the themes color it (`tools/skin/generate.py`).
 
 ## Not yet
 
 The editor in the lower zone and its inspector in the left zone; Keep Editor Contents and following the project window's
-selection; several events at once (Clip Editing Mode, Clip Display Mode, Activate Clip for Editing); the ruler, the grid
-and snapping to it, the level scale and vertical zoom, and horizontal scrolling and zoom other than the zoom tool and
-the overview; the Zoom submenu; Solo Editor, Audition, auto-scroll, the independent track loop and the toolbar's context
-menu; positions in the project's time format, and typing them; the Draw tool's volume curve and sample editing; moving
-regions' edges with the mouse and dragging regions into the project window; the clip's snap point when opened from the
-pool; the UI for the Process section's Basic Commands (#1968, pp. 619-620). Hooks for other tickets: offline processing
-(#141) and making a sampler track of the range; what warping doesn't have yet is in [warp.md](warp.md).
+selection; several events at once (Clip Editing Mode, Clip Display Mode, Activate Clip for Editing); the grid and
+snapping to it; Solo Editor, Audition, auto-scroll, the independent track loop and the toolbar's context menu; positions
+in the project's time format on the info line, and typing them; the Draw tool's volume curve; dragging regions into the
+project window; the clip's snap point when opened from the pool; Process editing of warped clips and edited definition
+grids (#1968). Hooks for other tickets: offline processing (#141) and making a sampler track of the range; what warping
+doesn't have yet is in [warp.md](warp.md).
 
 ## Checks
+
+- `tests/sampleeditor_tests.cpp`: Draw replacing one stereo channel with exact samples, unchanged clip regions and event
+  timing, source preservation, undo/redo and invalid channel or sample count; Paste resampling and mono/stereo
+  conversion in both directions, inserted lengths, unchanged surrounding audio and undo/redo.
+- `tests/sampleeditor_ui_tests.cpp`: Draw refusing coarse zoom, drawing and selecting corrected samples with undo; half
+  level guides toggled through the Level menu and both zoom sliders and horizontal scroll following the waveform;
+  cancelling a held Draw job preserving the selection; a stroke visible during a held drag in the second stereo
+  channel at vertical zoom, its frames and values, rendered pixels, and retention until a job succeeds, fails or is
+  cancelled.
+
+- `tests/uiapp_tests.cpp`: project and sample-editor Delete/Backspace assignments stay separate;
+  `tests/theme_tests.cpp`: all shared style sheets leave new font sizes to the themes.
+
+- `tests/sampleeditor_ui_tests.cpp`: each Basic Commands operation from its menu and keys, the clip's resulting length
+  and undo/redo; Copy without undo, unshared edits preserving the clip, the shared-copy question's New Version and
+  Continue choices, Cancel, Escape, closing the editor and project or selection changes while it is open; ruler
+  alignment and zoom mapping, percentage and dB levels, region start/end drags and undo, Zoom menu fits and zoom
+  undo/redo, Zoom In and Out centering on the cursor with a different file sample rate and cursors outside both clip
+  edges, vertical zoom changing the waveform's pixels and restoring them.
 
 - `tests/sampleeditor_tests.cpp`: Process samples and lengths for Cut, Delete, Paste and Insert Silence, Copy and
   clipboard replacement, shared-copy choices, regions and fades following edits, stereo samples, undo/redo, errors,

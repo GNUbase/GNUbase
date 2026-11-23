@@ -66,6 +66,11 @@ namespace gnubase::engine
 			m_peakMax.fill(0.0f);
 			m_rmsMax.fill(0.0f);
 		}
+		if (const uint32_t rmsResets = m_rmsResets.load(std::memory_order_acquire); rmsResets != m_rmsResetsSeen)
+		{
+			m_rmsResetsSeen = rmsResets;
+			m_rmsMax.fill(0.0f);
+		}
 		// Channels that come back, e.g. a mono channel's second side, start without what they measured before.
 		for (int c = m_channels.load(std::memory_order_relaxed); c < channels; ++c)
 		{
@@ -229,6 +234,14 @@ namespace gnubase::engine
 			m_publishedRmsMax[c].store(0.0f, std::memory_order_relaxed);
 		}
 		m_resets.fetch_add(1, std::memory_order_release);
+	}
+
+	void LevelMeter::resetRms() noexcept
+	{
+		// The RMS maximum plays no part in the frame's peaks: the audio thread clears its own at its next block.
+		for (std::atomic<float>& rmsMax : m_publishedRmsMax)
+			rmsMax.store(0.0f, std::memory_order_relaxed);
+		m_rmsResets.fetch_add(1, std::memory_order_release);
 	}
 
 	void LoudnessMeter::Histogram::add(double meanSquare) noexcept

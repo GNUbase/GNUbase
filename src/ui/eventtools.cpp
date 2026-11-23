@@ -101,7 +101,7 @@ namespace gnubase::ui
 
 	void EventDisplay::addToolActions()
 	{
-		constexpr int count = static_cast<int>(Tool::TimeWarp) + 1;
+		constexpr int count = static_cast<int>(Tool::Color) + 1;
 		for (int i = 0; i < count; ++i)
 		{
 			const auto tool = static_cast<Tool>(i);
@@ -141,6 +141,76 @@ namespace gnubase::ui
 		m_tool = tool;
 		showTools();
 		showPointer();
+	}
+
+	std::string EventDisplay::toolColor() const
+	{
+		if (!m_toolColor.empty() || !m_project.is_object() || m_project.value("colors", Json::array()).empty())
+			return m_toolColor;
+		return m_project.at("colors").front().at("color").get<std::string>();
+	}
+
+	void EventDisplay::setToolColor(std::string color)
+	{
+		m_toolColor = std::move(color);
+		showToolColor();
+	}
+
+	void EventDisplay::stepToolColor(int steps)
+	{
+		const Json colors = m_project.is_object() ? m_project.value("colors", Json::array()) : Json::array();
+		if (colors.empty())
+			return;
+		const auto count = static_cast<int>(colors.size());
+		const auto found = std::find_if(colors.begin(), colors.end(),
+			[current = toolColor()](const Json& color) { return color.at("color") == current; });
+		const int index =
+			found == colors.end() ? 0 : (((static_cast<int>(found - colors.begin()) + steps) % count) + count) % count;
+		setToolColor(colors[static_cast<size_t>(index)].at("color").get<std::string>());
+	}
+
+	void EventDisplay::showToolColor()
+	{
+		if (alive())
+			m_root->SetAttribute("tool-color", toolColor());
+		if (m_toolColorListener)
+			m_toolColorListener();
+	}
+
+	void EventDisplay::colorClick(uint64_t event)
+	{
+		const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), event);
+		if (m_pressed == "alt" && m_project.is_object())
+		{
+			// The event's own color, or else its track's; a track with the default color has none to take.
+			const auto byId = [](const Json& list, const Json& id)
+			{
+				const auto found =
+					std::find_if(list.begin(), list.end(), [&id](const Json& object) { return object.at("id") == id; });
+				return found == list.end() ? Json() : *found;
+			};
+			Json color;
+			for (const char* list : {"audioEvents", "midiParts", "audioParts"})
+				if (const Json found = byId(m_project.value(list, Json::array()), event); found.is_object())
+				{
+					const Json track = byId(m_project.at("tracks"), found.at("track"));
+					color = found.at("color").is_string() || !track.is_object() ? found.at("color") : track.at("color");
+				}
+			if (color.is_string())
+				setToolColor(color.get<std::string>());
+		}
+		else if (m_pressed == "ctrl")
+		{
+			if (!selected)
+				select({event});
+			if (m_chooseColor)
+				m_chooseColor(m_lanes->GetAbsoluteLeft() + static_cast<float>(m_pressX * dpRatio()),
+					m_lanes->GetAbsoluteTop() + static_cast<float>(m_pressY * dpRatio()));
+		}
+		else if (const std::string color = toolColor(); !color.empty() && m_pressed.empty())
+		{
+			edit("event.set", {{"events", selected ? m_selection : std::vector<uint64_t>{event}}, {"color", color}});
+		}
 	}
 
 	void EventDisplay::setCombineSelectionTools(bool on)
@@ -284,7 +354,7 @@ namespace gnubase::ui
 			m_drag = Drag::Comp;
 			return true;
 		case Tool::Draw:
-			// Volume curve points on audio events (reference manual p. 399); off a point, the event volume handle
+			// Volume curve points on audio events (reference manual p. 399); off a point, the event volume control
 			// (p. 401) as with the object selection tool.
 			if (shown != nullptr &&
 				((!curvePointAt(*shown, x, y) && volumeDown(*shown, x, y)) || curveDown(*shown, x, y)))
@@ -330,6 +400,7 @@ namespace gnubase::ui
 		case Tool::Split:
 		case Tool::Glue:
 		case Tool::Erase:
+		case Tool::Color:
 			if (shown != nullptr)
 				m_drag = Drag::Click;
 			return true;
@@ -523,6 +594,21 @@ namespace gnubase::ui
 				break;
 			Json parameters = {{"start", from.start}, {"end", from.end}, {"tracks", from.tracks},
 				{"position", to.start}, {"copy", modifiers("dragDrop.copy")}};
+			// Snapped to a musical grid line, it goes to the line's tick: a part on a bar lands on another bar's own
+			// tick, which can lie up to half a sample from the sample the range shows (#1785). Grid Relative from a
+			// line's own sample snaps to the other line, and from off the grid to its distance from it (#2005).
+			if (to.start != from.start)
+			{
+				const double start = static_cast<double>(from.start) / m_time.sampleRate;
+				const time::Position snapped = snapAt(start + ((x - m_pressX) * m_view.scale), start);
+				if (snapped.base == time::TimeBase::Musical && snapped.value >= 0 &&
+					(to.start != 0 || snapped.value == 0) &&
+					time::toSamples(snapped, m_time.tempo, m_time.sampleRate) == to.start)
+				{
+					parameters.erase("position");
+					parameters["positionTicks"] = snapped.value;
+				}
+			}
 			if (to.tracks != from.tracks)
 			{
 				// Where the range's top track goes: range.move names the tracks from the top.
@@ -623,6 +709,11 @@ namespace gnubase::ui
 			if (moved || !onEvent)
 				break;
 			const Shown& event = *pressed;
+			if (m_pressTool == Tool::Color)
+			{
+				colorClick(event.id);
+				break;
+			}
 			// The events after it on its track, in order.
 			std::vector<const Shown*> later;
 			for (const Shown& shown : m_events)

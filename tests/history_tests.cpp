@@ -354,6 +354,34 @@ TEST_CASE("the history lists every step with its action, time and details", "[un
 	CHECK_THAT(reject(client, "history.describe", {{"step", 2}, {"details", "x"}}), ContainsSubstring("step"));
 }
 
+TEST_CASE("history.describe finds a step by its id, which stays with it as the oldest steps go", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	addTrack(client);
+	const ObjectId track = addTrack(client);
+	run(client, "track.set", {{"track", track}, {"name", "Bass"}});
+	const Json before = run(client, "history.get").at("steps");
+	REQUIRE(before.size() == 3);
+	const int64_t id = before[2].at("id").get<int64_t>();
+
+	run(client, "history.set", {{"maxSteps", 2}}); // drops the oldest: the step is at another index now
+	run(client, "history.describe", {{"id", id}, {"details", "by id"}});
+	const Json after = run(client, "history.get").at("steps");
+	REQUIRE(after.size() == 2);
+	CHECK(after[0].at("details") == "");
+	CHECK(after[1].at("id") == id);
+	CHECK(after[1].at("details") == "by id");
+
+	// A step that is gone, neither or both of step and id are refused, and nothing changes.
+	CHECK_THAT(
+		reject(client, "history.describe", {{"id", before[0].at("id")}, {"details", "x"}}), ContainsSubstring("id"));
+	CHECK_THAT(reject(client, "history.describe", {{"details", "x"}}), ContainsSubstring("step"));
+	CHECK_THAT(
+		reject(client, "history.describe", {{"step", 0}, {"id", id}, {"details", "x"}}), ContainsSubstring("step"));
+	CHECK(run(client, "history.get").at("steps") == after);
+}
+
 TEST_CASE("a new change discards the steps that could be redone", "[unit]")
 {
 	Engine engine;
@@ -517,6 +545,15 @@ TEST_CASE("transactions with the same merge key join one undo step, like a fader
 	volume(-7.0, "");
 	volume(-8.0, "");
 	CHECK(position(client) == start + 6);
+
+	// Nor does the same key after an undo and a redo of its step: something was undone since.
+	volume(-9.0, "fader:4");
+	run(client, "history.undo");
+	run(client, "history.redo");
+	volume(-10.0, "fader:4");
+	CHECK(position(client) == start + 8);
+	run(client, "history.undo");
+	CHECK(volumeNow() == -9.0);
 }
 
 TEST_CASE("merged and joined tempo edits leave display format choices outside undo", "[unit]")

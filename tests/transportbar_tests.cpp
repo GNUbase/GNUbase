@@ -16,6 +16,7 @@
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
 #include "ui/timeformat.h"
+#include "ui/tracklist.h"
 #include "ui/transport.h"
 #include "ui/transportpanelfit.h"
 
@@ -72,6 +73,42 @@ namespace
 		return std::find(names.begin(), names.end(), "checked") != names.end();
 	}
 
+	// Clicks the button beside its icon, which focuses the button itself, then checks that Space starts and stops
+	// playback and NumEnter starts it (transport.play, reference manual p. 1572), rather than clicking the button again
+	// (#456, #653). on says whether the button is on; focuses whether the click leaves the focus on the button.
+	void keysAfterClick(test::UiApp& app, const std::string& button, std::optional<ui::WindowId> window,
+		const std::function<bool()>& on, bool focuses = true)
+	{
+		INFO(button);
+		const bool wasOn = on();
+		const Json box = element(app, button, window).at("box");
+		const ui::Point edge{box.at("x").get<int>() + 2, box.at("y").get<int>() + (box.at("height").get<int>() / 2)};
+		app.ui().click(window, {"", 0, edge}, ui::MouseButton::Left, 1, {});
+		REQUIRE(app.waitUntil([&on, wasOn] { return on() != wasOn; }));
+		const auto playing = [&app](bool playing)
+		{
+			return app.waitUntil(
+				[&app, playing] { return app.call("transport.get").at("playing").get<bool>() == playing; });
+		};
+		// The focus is the button: buttons without an id are told apart by their classes, attributes and box.
+		const Json focus = app.ui().key(window, "Space").at("focus");
+		const Json clicked = element(app, button, window);
+		REQUIRE(focus.is_object());
+		for (const char* key : {"tag", "id", "classes", "attributes", "box"})
+		{
+			INFO(key);
+			CHECK((!focuses || focus.value(key, Json()) == clicked.value(key, Json())));
+		}
+		REQUIRE(playing(true));
+		app.ui().key(window, "Space");
+		REQUIRE(playing(false));
+		app.ui().key(window, "NumEnter");
+		REQUIRE(playing(true));
+		app.ui().key(window, "Space");
+		REQUIRE(playing(false));
+		CHECK(on() != wasOn);
+	}
+
 	// What a display shows: a text display's value, another element's text.
 	std::string shows(test::UiApp& app, const std::string& selector, std::optional<ui::WindowId> window = std::nullopt)
 	{
@@ -93,7 +130,7 @@ namespace
 	}
 
 	// The project window with its transport bar shown. The shell fits windows into their monitor, 1024 pixels wide on
-	// CI, where a dp ratio of 1 cuts off the transport bar's last sections: at 0.75, about 1365 dp, they all fit.
+	// CI, where a dp ratio of 1 hides the transport bar's last sections: at 0.75, about 1365 dp, they all fit.
 	ui::EventDisplay& showBar(test::UiApp& app, float dpRatio = 0.75F)
 	{
 		app.setDpRatio(dpRatio);
@@ -184,29 +221,138 @@ TEST_CASE("Space starts and stops playback after a click on a toolbar or transpo
 	ui::Window* panel = app.appUi().transportPanel();
 	REQUIRE(panel != nullptr);
 
-	// A click beside the button's icon focuses the button itself, but Space runs its key command rather than clicking
-	// the button again.
 	const auto spaceToggles = [&app](const std::string& button, std::optional<ui::WindowId> window)
-	{
-		INFO(button);
-		const bool on = !checked(app, button, window);
-		const Json box = element(app, button, window).at("box");
-		const ui::Point edge{box.at("x").get<int>() + 2, box.at("y").get<int>() + (box.at("height").get<int>() / 2)};
-		app.ui().click(window, {"", 0, edge}, ui::MouseButton::Left, 1, {});
-		REQUIRE(app.waitUntil([&app, &button, window, on] { return checked(app, button, window) == on; }));
-		const Json focus = app.ui().key(window, "Space").at("focus");
-		CHECK(focus.value("id", std::string()) == button.substr(1));
-		REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == true; }));
-		app.ui().key(window, "Space");
-		REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == false; }));
-		CHECK(checked(app, button, window) == on);
-	};
+	{ keysAfterClick(app, button, window, [&app, &button, window] { return checked(app, button, window); }); };
 	spaceToggles("#cycle", std::nullopt);
 	spaceToggles("#metronome", panel->id());
 	spaceToggles("#snap", std::nullopt);
 }
 
-TEST_CASE("a narrow window cuts off the transport bar's last sections instead of drawing them over each other", "[ui]")
+TEST_CASE("Space and NumEnter run their key commands after a click on a track's, the inspector's or a mixer channel's "
+		  "buttons (#653)",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	const Json added = app.call("track.add", {{"type", "audio"}});
+	const auto channel = added.at("channel").at("id").get<uint64_t>();
+	const auto channelIs = [&app, channel](const char* state)
+	{
+		const Json project = app.call("project.get");
+		for (const Json& each : project.at("channels"))
+			if (each.at("id") == channel)
+				return each.value(state, false);
+		return false;
+	};
+	const std::string mute = ".track-list button.mute"; // the only track's
+	REQUIRE(app.waitUntil([&app, &mute] { return app.ui().dom(std::nullopt, mute, 0).at("elements").size() == 1; }));
+	keysAfterClick(app, mute, std::nullopt, [&channelIs] { return channelIs("mute"); });
+
+	// The inspector's buttons are the track list's in another place.
+	app.appUi().docking().open("inspector");
+	app.appUi().trackList()->select({added.at("track").at("id").get<uint64_t>()});
+	const std::string inspectorMute = ".inspector-buttons button.mute";
+	REQUIRE(app.waitUntil(
+		[&app, &inspectorMute] { return app.ui().dom(std::nullopt, inspectorMute, 0).at("elements").size() == 1; }));
+	REQUIRE(app.waitUntil([&app, &inspectorMute] { return element(app, inspectorMute).at("visible").get<bool>(); }));
+	keysAfterClick(app, inspectorMute, std::nullopt, [&channelIs] { return channelIs("mute"); });
+
+	app.keys().run("window.mixer", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.appUi().mixer(1) != nullptr; }));
+	const ui::WindowId mixer = app.appUi().mixerWindow(1);
+	const std::string solo = ".mixer-channel[channel=" + std::to_string(channel) + "] button.solo";
+	REQUIRE(app.waitUntil([&app, mixer, &solo] { return app.ui().dom(mixer, solo, 0).at("elements").size() == 1; }));
+	keysAfterClick(app, solo, mixer, [&channelIs] { return channelIs("solo"); });
+}
+
+TEST_CASE("Space and NumEnter run their key commands after a click on the info line's, the chord pads', a drum sound's "
+		  "or a pattern lane's buttons (#2016)",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const auto addPart = [&app](const char* type, const Json& extra)
+	{
+		const auto track = app.call("track.add", {{"type", type}}).at("track").at("id").get<uint64_t>();
+		Json parameters = {{"track", track}, {"position", 0}, {"length", 4 * g_quarter}};
+		parameters.update(extra);
+		return std::make_pair(track, app.call("midiPart.add", parameters).at("part").at("id").get<uint64_t>());
+	};
+	const auto shown = [&app](const std::string& selector, std::optional<ui::WindowId> window)
+	{
+		return app.waitUntil(
+			[&app, &selector, window]
+			{
+				const Json found = app.ui().dom(window, selector, 0).at("elements");
+				return found.size() == 1 && found[0].value("visible", false);
+			});
+	};
+	const auto editor = [&app](uint64_t part)
+	{
+		app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part})}});
+		REQUIRE(app.waitUntil([&app] { return app.appUi().editorWindow() != nullptr; }));
+		return app.appUi().editorWindowId();
+	};
+
+	SECTION("the info line's Mute and Lock")
+	{
+		app.setDpRatio(0.75F); // the whole info line
+		app.appUi().docking().setVisible("project", "infoLine", true);
+		display.select({addPart("midi", Json::object()).second});
+		for (const std::string button : {"#info-line button[field=mute]", "#info-line button[field=lock]"})
+		{
+			REQUIRE(shown(button, std::nullopt));
+			keysAfterClick(app, button, std::nullopt, [&app, &button] { return checked(app, button); });
+		}
+	}
+	SECTION("the chord pads' Mute Section and Latch Pads")
+	{
+		app.setDpRatio(0.5F); // the whole toolbar
+		app.keys().run("window.chordPads", Json::object(), app.main(), nullptr);
+		REQUIRE(shown("#chord-pads-pane-playerRemote-button", std::nullopt));
+		click(app, "#chord-pads-pane-playerRemote-button");
+		REQUIRE(shown("#chord-pads-mute-2", std::nullopt));
+		const auto pads = [&app] { return app.call("chordPads.get"); };
+		keysAfterClick(
+			app, "#chord-pads-mute-2", std::nullopt, [&pads] { return pads().at("mutedSections")[2].get<bool>(); });
+		keysAfterClick(
+			app, "#chord-pads-latchPads", std::nullopt, [&pads] { return pads().at("latchPads").get<bool>(); });
+	}
+	SECTION("a drum sound's Mute")
+	{
+		const auto [track, part] = addPart("midi", Json::object());
+		const Json gm = app.call("project.get").at("drumMaps").at(0).at("id");
+		const Json map = app.call("drumMap.add", {{"copy", gm}, {"name", "Kit"}}).at("map").at("id");
+		app.call("track.set", {{"track", track}, {"drumMap", map}});
+		const ui::WindowId window = editor(part);
+		const std::string mute = ".drum-sound[pitch=\"38\"] .drum-sound-mute";
+		REQUIRE(shown(mute, window));
+		REQUIRE(app.waitUntil([&app] { return app.appUi().editorWindow()->keyEditor()->scrollToPitch(37); }));
+		app.shell().step(std::chrono::milliseconds(0));
+		// The drum sound list hands the focus on to the keys, as a click on the keys does.
+		keysAfterClick(app, mute, window, [&app, &mute, window] { return checked(app, mute, window); }, false);
+	}
+	SECTION("a pattern lane's Mute and Solo")
+	{
+		const auto track = app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+		const Json pattern = app.call("pattern.add", {{"track", track}}).at("pattern").at("id");
+		const auto part = app.call("midiPart.add",
+								 {{"track", track}, {"position", 0}, {"length", 4 * g_quarter}, {"pattern", pattern}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+		const ui::WindowId window = editor(part);
+		for (const char* which : {"mute", "solo"})
+		{
+			const std::string button = std::string(".pattern-lane[pitch=\"38\"] .pattern-lane-") + which;
+			REQUIRE(shown(button, window));
+			keysAfterClick(app, button, window, [&app, &button, window] { return checked(app, button, window); });
+		}
+	}
+}
+
+TEST_CASE(
+	"a narrow window hides the transport bar's last sections, and its dividers keep the sections outside them", "[ui]")
 {
 	test::UiApp app({1024, 700});
 	showBar(app, 1.0F); // about 1240 dp of sections in 1024 dp
@@ -217,41 +363,122 @@ TEST_CASE("a narrow window cuts off the transport bar's last sections instead of
 			bar = found;
 	REQUIRE(bar != nullptr);
 	const float right = bar->GetAbsoluteLeft() + bar->GetOffsetWidth();
+	const std::vector<std::string> order = app.appUi().docking().sections("project", "transport");
+	REQUIRE(order.size() == 10);
+	CHECK(order.front() == "midiAutoQuantize"); // before the left divider, as in the reference manual, p. 306
+	CHECK(order.at(1) == "leftDivider");
+	CHECK(order.at(order.size() - 2) == "rightDivider");
+	const auto shown = [&app] { return app.shownSections("transport-bar"); };
+	const auto has = [](const std::vector<std::string>& list, const std::string& id)
+	{ return std::find(list.begin(), list.end(), id) != list.end(); };
 
-	// The sections keep their controls' width, one after the other, and the last ones go past the bar's right edge.
-	Rml::ElementList sections;
-	bar->QuerySelectorAll(sections, ".transport-section");
-	REQUIRE(sections.size() == 7);
-	float end = bar->GetAbsoluteLeft();
-	for (Rml::Element* section : sections)
+	// The shown sections keep their controls' width, one after the other, all inside the bar, and those it has no room
+	// for go, the last first. What shows is what a click reaches.
+	const auto checkShown = [&]
 	{
-		INFO(section->GetAttribute<Rml::String>("title", ""));
-		CHECK(section->GetAbsoluteLeft() >= end);
-		end = section->GetAbsoluteLeft() + section->GetOffsetWidth();
-		Rml::ElementList controls;
-		section->QuerySelectorAll(controls, "*");
-		for (Rml::Element* control : controls)
-			CHECK(control->GetAbsoluteLeft() + control->GetOffsetWidth() <= end + 0.5F);
-	}
-	CHECK(end > right);
-
-	// What shows is what a click reaches: the element in the middle of each control in the bar is the control or in it.
-	Rml::ElementList controls;
-	bar->QuerySelectorAll(controls, ".transport-section > *");
-	for (Rml::Element* control : controls)
-	{
-		const Rml::Vector2f middle(control->GetAbsoluteLeft() + (control->GetOffsetWidth() / 2.0F),
-			control->GetAbsoluteTop() + (control->GetOffsetHeight() / 2.0F));
-		if (middle.x >= right)
-			continue; // cut off
-		INFO(control->GetId());
-		const Rml::Element* hit = context.GetElementAtPoint(middle);
-		while (hit != nullptr && hit != control)
-			hit = hit->GetParentNode();
-		CHECK(hit == control);
-	}
+		app.shell().step(std::chrono::milliseconds(0));
+		float end = bar->GetAbsoluteLeft();
+		for (const std::string& id : shown())
+		{
+			INFO(id);
+			Rml::Element* section = bar->QuerySelector("[section=" + id + "]");
+			REQUIRE(section != nullptr);
+			CHECK(section->GetAbsoluteLeft() >= end);
+			end = section->GetAbsoluteLeft() + section->GetOffsetWidth();
+			CHECK(end <= right + 0.5F);
+			Rml::ElementList controls;
+			section->QuerySelectorAll(controls, "*");
+			for (Rml::Element* control : controls)
+				CHECK(control->GetAbsoluteLeft() + control->GetOffsetWidth() <= end + 0.5F);
+			for (int i = 0; i < section->GetNumChildren(); ++i)
+			{
+				Rml::Element* control = section->GetChild(i);
+				INFO(control->GetId());
+				const Rml::Vector2f middle(control->GetAbsoluteLeft() + (control->GetOffsetWidth() / 2.0F),
+					control->GetAbsoluteTop() + (control->GetOffsetHeight() / 2.0F));
+				const Rml::Element* hit = context.GetElementAtPoint(middle);
+				while (hit != nullptr && hit != control)
+					hit = hit->GetParentNode();
+				CHECK(hit == control);
+			}
+		}
+	};
+	checkShown();
+	std::vector<std::string> now = shown();
+	CHECK(!has(now, "midiAutoQuantize")); // hidden by default
+	CHECK(!has(now, "leftDivider"));
+	CHECK(!has(now, "click"));
+	CHECK(has(now, "transportControls"));
 	click(app, "#punch-in");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("punchIn") == true; }));
+
+	// The right divider keeps Click, after it, shown; the sections before it go instead.
+	app.appUi().docking().setSectionHidden("project", "transport", "rightDivider", false);
+	checkShown();
+	now = shown();
+	CHECK(has(now, "rightDivider"));
+	CHECK(has(now, "click"));
+	CHECK(!has(now, "tempoSignature"));
+
+	// The left divider after the transport controls keeps them and the sections before them shown; the time
+	// displays and the tempo, between the dividers, go first, also in a window too narrow for those outside.
+	app.appUi().docking().moveSection("project", "transport", "leftDivider", "transportControls"); // after them
+	app.appUi().docking().setSectionHidden("project", "transport", "leftDivider", false);
+	REQUIRE(app.appUi().docking().sections("project", "transport").at(5) == "leftDivider");
+	app.setDpRatio(2.0F);
+	app.shell().step(std::chrono::milliseconds(0));
+	now = app.shownSections("transport-bar");
+	CHECK(now ==
+		std::vector<std::string>{
+			"locators", "locatorRange", "punchPoints", "transportControls", "leftDivider", "rightDivider", "click"});
+
+	// Hidden again, the left divider keeps nothing.
+	app.appUi().docking().setSectionHidden("project", "transport", "leftDivider", true);
+	app.shell().step(std::chrono::milliseconds(0));
+	now = app.shownSections("transport-bar");
+	CHECK(!has(now, "transportControls"));
+	CHECK(has(now, "click"));
+
+	// The transport panel takes its sections' width and has no dividers, nor buttons for them in its setup pane.
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.appUi().transportPanel() != nullptr);
+	const ui::WindowId panel = app.appUi().transportPanel()->id();
+	CHECK(app.ui().dom(panel, "[divider]", 0).at("elements").empty());
+	CHECK(app.ui().dom(panel, "[setup-section=leftDivider]", 0).at("elements").empty());
+	CHECK(app.appUi().docking().sections("transportPanel", "transport").size() == 8);
+}
+
+TEST_CASE("a transport set saved before the dividers keeps them hidden in their places, and the bar still hides its "
+		  "last sections",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app, 1.0F); // about 1240 dp of sections in 1024 dp
+	const Json before = Json::array(
+		{"locators", "locatorRange", "punchPoints", "transportControls", "timeDisplays", "tempoSignature", "click"});
+	// An older workspace or preset with the order and hidden list, and a layout with only a hidden list.
+	const std::array<Json, 2> saved{
+		Json{{"order", before}, {"hidden", Json::array()}}, Json{{"hidden", Json::array()}}};
+	for (const Json& set : saved)
+	{
+		INFO(set.dump());
+		Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
+		layout["windows"]["project"]["sections"]["transport"] = set;
+		app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+		REQUIRE(app.waitUntil([&app, &layout] { return app.appUi().docking().layout() == layout; }));
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(app.appUi().docking().sections("project", "transport") ==
+			std::vector<std::string>{"midiAutoQuantize", "leftDivider", "locators", "locatorRange", "punchPoints",
+				"transportControls", "timeDisplays", "tempoSignature", "rightDivider", "click"});
+		const std::vector<std::string> shown = app.shownSections("transport-bar");
+		const auto has = [&shown](const std::string& id)
+		{ return std::find(shown.begin(), shown.end(), id) != shown.end(); };
+		CHECK(!has("midiAutoQuantize"));
+		CHECK(!has("leftDivider"));
+		CHECK(!has("rightDivider"));
+		CHECK(!has("click"));
+		CHECK(has("transportControls"));
+	}
 }
 
 TEST_CASE("every control of the default transport bar fits a 1024-pixel window at a dp ratio of 0.8", "[ui]")
@@ -1735,11 +1962,7 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 
 	// Show Beat Count Only: the beat in its bar.
 	app.ui().click(window, at("#time-display"), ui::MouseButton::Right, 1, {});
-	// This small window cannot show the whole menu: choose its items with the keyboard.
-	app.ui().key(window, "Up");
-	app.ui().key(window, "Up");
-	CHECK(app.ui().key(window, "Up").at("focus").at("id") == "beat-count-only");
-	app.ui().key(window, "Enter");
+	click(app, "#beat-count-only", window);
 	REQUIRE(app.waitUntil([&app, window] { return shows(app, "#time-display", window) == "4"; }));
 	CHECK(element(app, "#beat-count-only", window).at("attributes").contains("checked"));
 	CHECK(app.call("settings.get", {{"key", "ui.timeDisplay"}}).at("value").at("beatCountOnly") == true);
@@ -1748,9 +1971,7 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 
 	// Increase and Decrease Window Size: the window and its digits, whose sizes the theme has.
 	app.ui().click(window, at("#time-display"), ui::MouseButton::Right, 1, {});
-	app.ui().key(window, "Up");
-	CHECK(app.ui().key(window, "Up").at("focus").at("id") == "increase-size");
-	app.ui().key(window, "Enter");
+	click(app, "#increase-size", window);
 	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-2", window); }));
 	const ui::Size larger = app.shell().bounds(window).size();
 	CHECK(larger.width > normal.width);
@@ -1773,15 +1994,39 @@ TEST_CASE("the time display window shows beat counts only and changes its size",
 	CHECK(app.shell().bounds(again).size().width < normal.width);
 }
 
+TEST_CASE("a setup pane's buttons keep Space, also in the transport bar (#653)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.ui().click(std::nullopt, at("#transport-bar [section=click]"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#transport-setup"));
+	click(app, "#transport-setup [setup-section=locators]");
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(!visible(app, "#transport-bar [section=locators]"));
+	// Space clicks the focused section button again rather than starting playback.
+	const Json focus = app.ui().key(std::nullopt, "Space").at("focus");
+	REQUIRE(focus.is_object());
+	CHECK(focus.value("attributes", Json::object()).value("setup-section", std::string()) == "locators");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(visible(app, "#transport-bar [section=locators]"));
+	app.shell().step(std::chrono::milliseconds(50));
+	CHECK(transport(app).at("playing") == false);
+}
+
 TEST_CASE("setup panes show and hide the transport bar's and the transport panel's sections", "[ui]")
 {
 	test::UiApp app({1024, 700});
 	showBar(app);
 	CHECK(visible(app, "#transport-bar [section=locators]"));
+	const std::vector<std::string> before = app.shownSections("transport-bar");
 
-	// A right click on the bar opens its setup pane, which stays open while its buttons hide sections.
+	// A right click on the bar opens its setup pane, which stays open while its buttons hide sections. The pane, in
+	// the bar and wider than the room it has left, takes no room from its sections.
 	app.ui().click(std::nullopt, at("#transport-bar [section=click]"), ui::MouseButton::Right, 1, {});
 	REQUIRE(visible(app, "#transport-setup"));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.shownSections("transport-bar") == before);
+	CHECK(visible(app, "#transport-bar [section=click]"));
 	click(app, "#transport-setup [setup-section=locators]");
 	click(app, "#transport-setup [setup-section=punchPoints]");
 	app.shell().step(std::chrono::milliseconds(0));
@@ -1790,16 +2035,12 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	CHECK(visible(app, "#transport-bar [section=transportControls]"));
 	const Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
 	CHECK(layout.at("windows").at("project").at("sections").at("transport").at("hidden") ==
-		Json::array({"locators", "punchPoints"}));
+		Json::array({"midiAutoQuantize", "leftDivider", "locators", "punchPoints", "rightDivider"}));
 
 	// The transport panel has sections of its own.
 	app.ui().key(std::nullopt, "F2");
 	REQUIRE(app.appUi().transportPanel() != nullptr);
 	const ui::WindowId panel = app.appUi().transportPanel()->id();
-	ui::Rect bounds = app.shell().bounds(panel);
-	bounds.height = 300; // the setup pane is taller than the single-row panel
-	app.shell().setBounds(panel, bounds);
-	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(visible(app, "[section=locators]", panel));
 	app.ui().click(panel, at("[section=click]"), ui::MouseButton::Right, 1, {});
 	click(app, "#transport-setup [setup-section=click]", panel);
@@ -1853,8 +2094,8 @@ TEST_CASE("setup panes save and recall presets and reset their sections to the d
 	const Json saved = presets().at("transport");
 	REQUIRE(saved.size() == 1);
 	CHECK(saved.at(0).at("name") == "Compact");
-	CHECK(saved.at(0).at("hidden") == Json::array({"locators"}));
-	CHECK(saved.at(0).at("order").at(0) == "locators");
+	CHECK(saved.at(0).at("hidden") == Json::array({"midiAutoQuantize", "leftDivider", "locators", "rightDivider"}));
+	CHECK(saved.at(0).at("order").at(2) == "locators");
 	REQUIRE(app.waitUntil([&exists] { return exists("#transport-setup [setup-preset=Compact]"); }));
 
 	// Reset All: the default order and sections, also after the sections were reordered.

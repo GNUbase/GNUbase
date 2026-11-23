@@ -137,6 +137,13 @@ TEST_CASE("the Lua API reference is generated from the command registry", "[unit
 		CAPTURE(info.name);
 		CHECK(generated.find("#### `gnubase." + info.name + "`") != std::string::npos);
 	}
+	// A read that takes from a queue all clients share says so instead of claiming it changes nothing (#350).
+	const size_t capture = generated.find("#### `gnubase.midi.capture`");
+	REQUIRE(capture != std::string::npos);
+	const std::string entry = generated.substr(capture, generated.find("\n#### ", capture + 1) - capture);
+	CHECK(entry.find("Only reads the project, but each call takes what it returns from a queue all clients share.") !=
+		std::string::npos);
+	CHECK(entry.find("Only reads; changes nothing.") == std::string::npos);
 	writeGenerated("lua.md", generated);
 }
 

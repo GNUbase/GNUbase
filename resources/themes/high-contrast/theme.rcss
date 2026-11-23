@@ -555,6 +555,16 @@
 	{
 		background-color: #ffff00;
 	}
+	.event-display event-lanes.grid-lines
+	{
+		color: #323232;
+		stroke-color: transparent;
+	}
+	.event-display event-lanes.snap-points
+	{
+		color: #00ffff;
+		stroke-color: transparent;
+	}
 	.event-display .marker-lines
 	{
 		stroke-color: #008080;
@@ -670,6 +680,11 @@
 	.arranger-lane-row .arranger-lane-event.drawing
 	{
 		background-color: transparent;
+	}
+	.arranger-lane-row .arranger-lane-event.selected
+	{
+		background-color: #00ffff80;
+		border-color: #ffffff;
 	}
 	.chord-pad
 	{
@@ -938,6 +953,10 @@
 	{
 		decorator: svg(checkbox-mixed.svg);
 	}
+	.editor-visibility-track.unavailable
+	{
+		color: #c8c8c8;
+	}
 	.key-editor-key
 	{
 		background-color: #cfcfcf;
@@ -1184,6 +1203,16 @@
 	{
 		background-color: #00ffff;
 	}
+	.se-half-axis
+	{
+		background-color: #c8c8c866;
+	}
+	.se-draw-stroke
+	{
+		color: #00ffff;
+		stroke-color: #00ffff;
+		stroke-width: 3dp;
+	}
 	.se-outside
 	{
 		background-color: #00000099;
@@ -1197,6 +1226,10 @@
 	.se-region.selected
 	{
 		background-color: #666600;
+	}
+	.se-region-handle
+	{
+		border-color: #00ffff;
 	}
 	.se-hitpoint-line, .se-hitpoint-handle
 	{
@@ -1475,7 +1508,7 @@
 		color: #c8c8c8;
 		font-size: 11dp;
 	}
-	.status-line .mismatch
+	.status-line .mismatch, #silent-device
 	{
 		color: #ffb000;
 	}
@@ -1518,6 +1551,10 @@
 	.history .history-separator
 	{
 		background-color: #ffff00;
+	}
+	.transport-divider
+	{
+		background-color: #ffffff;
 	}
 	.quantize-display
 	{

@@ -1750,22 +1750,42 @@ namespace gnubase::engine
 		// or that of an event of an audio part that starts in the part's start sample before it, as a part cut in the
 		// sample one of its events starts in, before the cut's tick, keeps that event whole after the cut. Not an event
 		// that resizing the part's start hid before it, which can lie bars before it: an edit that would move that one
-		// before the project start is refused, as the part's own start would be. None on a linear track.
-		std::optional<time::Ticks> earliestTick(const Project& project, const Item& item)
+		// before the project start is refused, as the part's own start would be. None on a linear track. The events'
+		// ticks come from earliestInParts.
+		std::optional<time::Ticks> earliestTick(const Item& item, const std::map<ObjectId, time::Ticks>& inParts)
 		{
-			std::optional<time::Ticks> earliest;
-			const auto take = [&earliest](const time::Position& position)
-			{
-				if (position.base == time::TimeBase::Musical)
-					earliest = std::min(earliest.value_or(position.value), position.value);
-			};
-			take(item.position());
+			if (item.position().base != time::TimeBase::Musical)
+				return std::nullopt;
+			time::Ticks earliest = item.position().value;
 			if (item.audioPart != nullptr)
+				if (const auto found = inParts.find(item.audioPart->id); found != inParts.end())
+					earliest = std::min(earliest, found->second);
+			return earliest;
+		}
+
+		// For each audio part on a musical track among items, the earliest tick that one of its events starts at in
+		// the part's start sample (earliestTick): in one pass over the project's audio events, not one for each part,
+		// so that a range edit doesn't cost its parts times the project's audio events (#1785).
+		std::map<ObjectId, time::Ticks> earliestInParts(const Project& project, const std::vector<Item>& items)
+		{
+			std::map<ObjectId, time::Samples> starts;
+			for (const Item& item : items)
+				if (item.audioPart != nullptr && item.position().base == time::TimeBase::Musical)
+					starts[item.audioPart->id] = samples(project, item.position());
+			std::map<ObjectId, time::Ticks> earliest;
+			if (starts.empty())
+				return earliest;
+			for (const auto& [id, event] : project.audioEvents)
 			{
-				const time::Samples start = samples(project, item.position());
-				for (const auto& [id, event] : project.audioEvents)
-					if (event.part == item.audioPart->id && samples(project, event.position) == start)
-						take(event.position);
+				const auto start = starts.find(event.part);
+				if (start == starts.end() || event.position.base != time::TimeBase::Musical ||
+					samples(project, event.position) != start->second)
+					continue;
+				const auto known = earliest.find(event.part);
+				if (known == earliest.end())
+					earliest[event.part] = event.position.value;
+				else
+					known->second = std::min(known->second, event.position.value);
 			}
 			return earliest;
 		}
@@ -1785,21 +1805,27 @@ namespace gnubase::engine
 		// before tick 0 where one lies before the first: pasted at another tempo than it was copied at, where it no
 		// longer lies in the start sample, a clip at a lower sample rate that a cut at the start doesn't cut, or an
 		// event of an audio part cut in the sample it starts in, before the piece (earliestTick). Then the earliest of
-		// them lands on tick 0.
-		Gap landing(const Project& project, const std::vector<Item>& items, Gap gap, time::Ticks from, time::Samples at)
+		// them lands on tick 0. At a tick (positionTicks) the first of them lands on that tick, and without one on a
+		// musical track everything there moves by the ticks from the range's start tick to it (#1785), so that a part
+		// on a bar dragged to another bar lands on that bar's own tick.
+		Gap landing(const Project& project, const std::vector<Item>& items, Gap gap, time::Ticks from, time::Samples at,
+			const std::optional<time::Ticks>& tick)
 		{
 			const time::Samples start = samples(project, {time::TimeBase::Musical, from});
 			std::optional<time::Ticks> first;
 			std::optional<time::Ticks> earliest;
+			const std::map<ObjectId, time::Ticks> inParts = earliestInParts(project, items);
 			for (const Item& item : items)
 			{
 				const time::Position& position = item.position();
 				if (position.base == time::TimeBase::Musical && samples(project, position) == start)
 					first = std::min(first.value_or(position.value), position.value);
-				if (const std::optional<time::Ticks> tick = earliestTick(project, item))
-					earliest = std::min(earliest.value_or(*tick), *tick);
+				if (const std::optional<time::Ticks> own = earliestTick(item, inParts))
+					earliest = std::min(earliest.value_or(*own), *own);
 			}
-			if (first && (at == 0 || samples(project, {time::TimeBase::Musical, *first + gap.ticks}) != at))
+			if (tick)
+				gap.ticks = *tick - first.value_or(from);
+			else if (first && (at == 0 || samples(project, {time::TimeBase::Musical, *first + gap.ticks}) != at))
 				gap.ticks = ticks(project, {time::TimeBase::Linear, at}) - *first;
 			if (earliest && *earliest + gap.ticks < 0)
 				gap.ticks = -*earliest;
@@ -2113,6 +2139,49 @@ namespace gnubase::engine
 				}
 		}
 
+		// The project's tracks in order without the hidden ones (trackVisibility.set), as the project window shows
+		// them, but with those of keep.
+		std::vector<ObjectId> shownTracks(const Project& project, const std::vector<ObjectId>& keep)
+		{
+			std::vector<ObjectId> order = project.trackOrder();
+			const std::vector<ObjectId> hidden = hiddenTracks(project);
+			order.erase(std::remove_if(order.begin(), order.end(), [&hidden, &keep](ObjectId id)
+							{ return !contains(keep, id) && std::binary_search(hidden.begin(), hidden.end(), id); }),
+				order.end());
+			return order;
+		}
+
+		// The lanes the project window shows, from the top: each a track of shownTracks, and a folded folder's (the
+		// track layout's, #491) with the tracks inside it after it, as its lane shows their events (#1978).
+		std::vector<std::vector<ObjectId>> shownLanes(const Project& project, const std::vector<ObjectId>& keep)
+		{
+			const std::vector<ObjectId>& folded = project.trackLayout.folded;
+			std::vector<std::vector<ObjectId>> lanes;
+			for (const ObjectId id : shownTracks(project, keep))
+			{
+				bool inside = false;
+				if (!lanes.empty() && std::binary_search(folded.begin(), folded.end(), lanes.back().front()))
+					for (ObjectId parent = project.trackById.at(id).parent; parent != 0 && !inside;
+						parent = project.trackById.at(parent).parent)
+						inside = parent == lanes.back().front();
+				if (inside)
+					lanes.back().push_back(id);
+				else
+					lanes.push_back({id});
+			}
+			return lanes;
+		}
+
+		// A track's lane among lanes, and its place in it: 0 for the lane's own track.
+		std::pair<size_t, size_t> laneOf(const std::vector<std::vector<ObjectId>>& lanes, ObjectId track)
+		{
+			for (size_t lane = 0; lane < lanes.size(); ++lane)
+				for (size_t place = 0; place < lanes[lane].size(); ++place)
+					if (lanes[lane][place] == track)
+						return {lane, place};
+			throw CommandError("no track " + std::to_string(track));
+		}
+
 		// What a range holds, for the clipboard: with locked, the locked events and parts too. The cuts at its edges
 		// are made in a copy of the project.
 		RangeClipboard copyRange(const Project& project, const Range& range, bool locked)
@@ -2129,6 +2198,15 @@ namespace gnubase::engine
 			clipboard.endTicks = ticks(project, {time::TimeBase::Linear, range.end});
 			clipboard.sampleRate = project.sampleRate;
 			clipboard.tracks = range.tracks;
+			const std::vector<std::vector<ObjectId>> lanes = shownLanes(project, range.tracks);
+			size_t copied = 0;
+			for (size_t i = 0; i < range.tracks.size(); ++i)
+			{
+				const auto [lane, place] = laneOf(lanes, range.tracks[i]);
+				if (i != 0 && lane != laneOf(lanes, range.tracks[i - 1]).first)
+					++copied;
+				clipboard.lanes.emplace_back(copied, place);
+			}
 			for (const Item& item : within(scratch, range.tracks, range.start, range.end, locked))
 			{
 				if (item.audio != nullptr)
@@ -2264,12 +2342,14 @@ namespace gnubase::engine
 				if (position.base == time::TimeBase::Musical)
 					gap.ticks = std::min(gap.ticks, position.value);
 			};
+			std::vector<Item> following;
 			for (const Item& item : itemsOn(project, range.tracks, false))
-			{
-				const std::optional<time::Ticks> tick = earliestTick(project, item);
-				if (tick && after(project, item, range.end))
+				if (after(project, item, range.end))
+					following.push_back(item);
+			const std::map<ObjectId, time::Ticks> inParts = earliestInParts(project, following);
+			for (const Item& item : following)
+				if (const std::optional<time::Ticks> tick = earliestTick(item, inParts))
 					noEarlier({time::TimeBase::Musical, *tick});
-			}
 			for (const auto& [id, lane] : project.automation)
 				if (contains(range.tracks, lane.track) &&
 					project.trackById.at(lane.track).timeBase == time::TimeBase::Musical)
@@ -2451,9 +2531,11 @@ namespace gnubase::engine
 			return Json::object();
 		}
 
-		// Pastes a range clipboard at a position onto tracks, one for each copied track. Returns what it pasted.
+		// Pastes a range clipboard at a position onto tracks, one for each copied track, or at a tick, which lies in
+		// the sample at (landing). Returns what it pasted.
 		std::vector<Item> pasteClipboard(Project& project, const RangeClipboard& clipboard,
-			const std::vector<ObjectId>& tracks, time::Samples at, CommandContext& context)
+			const std::vector<ObjectId>& tracks, time::Samples at, const std::optional<time::Ticks>& tick,
+			CommandContext& context)
 		{
 			const auto onto = [&clipboard, &tracks](ObjectId source)
 			{
@@ -2461,7 +2543,8 @@ namespace gnubase::engine
 					std::find(clipboard.tracks.begin(), clipboard.tracks.end(), source) - clipboard.tracks.begin();
 				return tracks.at(static_cast<size_t>(index));
 			};
-			const Gap shift{at - clipboard.start, ticks(project, {time::TimeBase::Linear, at}) - clipboard.startTicks};
+			const Gap shift{at - clipboard.start,
+				tick.value_or(ticks(project, {time::TimeBase::Linear, at})) - clipboard.startTicks};
 			// The copies, where they were copied, until they all are there and go to where they land.
 			std::vector<Item> added;
 			// Audio parts, then their events, which they then take along to where they land.
@@ -2523,7 +2606,7 @@ namespace gnubase::engine
 						{ return entry.second.track == track && entry.second.target == copied.target; }))
 					automation.push_back(copied);
 			}
-			const Gap landed = landing(project, added, shift, clipboard.startTicks, at);
+			const Gap landed = landing(project, added, shift, clipboard.startTicks, at, tick);
 			for (const Item& item : added)
 			{
 				const ObjectId track = onto(item.track());
@@ -2541,38 +2624,41 @@ namespace gnubase::engine
 			return added;
 		}
 
-		// The project's tracks in order without the hidden ones (trackVisibility.set), as the project window shows
-		// them, but with those of keep.
-		std::vector<ObjectId> shownTracks(const Project& project, const std::vector<ObjectId>& keep)
+		// The track at a place in one of lanes, where range.move and range.paste with track put a track; refuses with
+		// what where there is none.
+		ObjectId landingTrack(const std::vector<std::vector<ObjectId>>& lanes, std::ptrdiff_t lane,
+			std::ptrdiff_t place, const std::string& what)
 		{
-			std::vector<ObjectId> order = project.trackOrder();
-			const std::vector<ObjectId> hidden = hiddenTracks(project);
-			order.erase(std::remove_if(order.begin(), order.end(), [&hidden, &keep](ObjectId id)
-							{ return !contains(keep, id) && std::binary_search(hidden.begin(), hidden.end(), id); }),
-				order.end());
-			return order;
+			require(lane >= 0 && lane < static_cast<std::ptrdiff_t>(lanes.size()) && place >= 0 &&
+					place < static_cast<std::ptrdiff_t>(lanes[static_cast<size_t>(lane)].size()),
+				what);
+			return lanes[static_cast<size_t>(lane)][static_cast<size_t>(place)];
 		}
 
 		// Where range.move puts the range's tracks for its track: the top one onto track, and each of the others as
-		// many tracks further on in the order the project window shows, so that the range keeps its shape.
+		// many lanes further on in the order the project window shows, so that the range keeps its shape. A folded
+		// folder's lane counts once, and a track in it goes to the same place in the lane it lands on (#1978).
 		std::vector<ObjectId> movedTracks(const Project& project, const std::vector<ObjectId>& tracks, ObjectId first)
 		{
 			require(project.trackById.count(first) != 0, "no track " + std::to_string(first));
 			require(!tracks.empty(), "the range has no tracks to move");
 			std::vector<ObjectId> keep = tracks;
 			keep.push_back(first);
-			const std::vector<ObjectId> order = shownTracks(project, keep);
-			const auto index = [&order](ObjectId id)
-			{ return std::find(order.begin(), order.end(), id) - order.begin(); };
-			const std::ptrdiff_t by = index(first) - index(tracks.front());
+			const std::vector<std::vector<ObjectId>> lanes = shownLanes(project, keep);
+			const auto [firstLane, firstPlace] = laneOf(lanes, first);
+			const auto [topLane, topPlace] = laneOf(lanes, tracks.front());
+			const std::string refused = "there aren't enough tracks from track " + std::to_string(first) +
+				" on for the range's " + std::to_string(tracks.size()) + " tracks";
 			std::vector<ObjectId> moved;
 			for (const ObjectId id : tracks)
 			{
-				const std::ptrdiff_t to = index(id) + by;
-				require(to >= 0 && to < static_cast<std::ptrdiff_t>(order.size()),
-					"there aren't enough tracks from track " + std::to_string(first) + " on for the range's " +
-						std::to_string(tracks.size()) + " tracks");
-				moved.push_back(order[static_cast<size_t>(to)]);
+				const auto [lane, place] = laneOf(lanes, id);
+				const auto shift = lane == topLane
+					? static_cast<std::ptrdiff_t>(firstPlace) - static_cast<std::ptrdiff_t>(topPlace)
+					: 0;
+				moved.push_back(landingTrack(lanes,
+					static_cast<std::ptrdiff_t>(lane + firstLane) - static_cast<std::ptrdiff_t>(topLane),
+					static_cast<std::ptrdiff_t>(place) + shift, refused));
 			}
 			return moved;
 		}
@@ -2584,8 +2670,8 @@ namespace gnubase::engine
 		// range the moved piece is new, of what starts in it and ends after it the piece that stays. A crossfade
 		// between a moved event and one that stays ends. Its audio comes in front where it lands, as range.paste puts
 		// it. The automation in the range moves as range.cut and range.paste move it. Returns what moved.
-		Json moveRange(Project& project, const Range& range, time::Samples at, const std::vector<ObjectId>& onto,
-			CommandContext& context)
+		Json moveRange(Project& project, const Range& range, time::Samples at, const std::optional<time::Ticks>& tick,
+			const std::vector<ObjectId>& onto, CommandContext& context)
 		{
 			const auto target = [&range, &onto](ObjectId track)
 			{
@@ -2621,7 +2707,7 @@ namespace gnubase::engine
 				movedEvents.insert(event->id);
 			}
 			const Gap landed =
-				landing(project, items, shift, ticks(project, {time::TimeBase::Linear, range.start}), at);
+				landing(project, items, shift, ticks(project, {time::TimeBase::Linear, range.start}), at, tick);
 			for (const Item& item : items)
 				checkTrack(project, item, target(item.track()));
 			for (const Item& item : items)
@@ -2643,6 +2729,40 @@ namespace gnubase::engine
 			return {{"events", idsOf(items)}};
 		}
 
+		// Where range.move and range.paste land: at position (project samples), or at positionTicks, a tick of the
+		// tempo map, as a drag snapped to a musical grid has it (#1785), which lies in the sample at; without either at
+		// the cursor, where there is one.
+		struct Destination
+		{
+			time::Samples at = 0;
+			std::optional<time::Ticks> tick;
+		};
+
+		Destination destinationFrom(
+			const Project& project, const Json& parameters, const std::optional<time::Samples>& cursor)
+		{
+			require(!(parameters.contains("position") && parameters.contains("positionTicks")),
+				"give position or positionTicks, not both");
+			if (parameters.contains("positionTicks"))
+			{
+				const auto tick = parameters.at("positionTicks").get<time::Ticks>();
+				require(tick >= 0, "positionTicks must not be before the project start");
+				const int64_t longest = longestPosition(project, time::TimeBase::Musical);
+				require(tick <= longest,
+					"positionTicks must be at most " + std::to_string(longest) + ", the longest project");
+				return {samples(project, {time::TimeBase::Musical, tick}), tick};
+			}
+			time::Samples at = 0;
+			if (parameters.contains("position"))
+				at = parameters.at("position").get<time::Samples>();
+			else if (cursor)
+				at = *cursor;
+			else
+				throw CommandError("give position or positionTicks");
+			require(at >= 0, "position must not be before the project start");
+			return {at, std::nullopt};
+		}
+
 		Json pasteRange(Project& project, CommandContext& context, const RangeClipboard* stored)
 		{
 			if (stored == nullptr)
@@ -2652,23 +2772,35 @@ namespace gnubase::engine
 			require(clipboard.sampleRate == project.sampleRate,
 				"the project's sample rate changed since the range was copied: copy it again");
 			const Json& parameters = context.parameters();
-			const time::Samples at = parameters.contains("position")
-				? parameters.at("position").get<time::Samples>()
-				: context.call("transport.get").at("position").get<time::Samples>();
-			require(at >= 0, "position must not be before the project start");
+			const bool given = parameters.contains("position") || parameters.contains("positionTicks");
+			// Paste at Origin (reference manual p. 270): where the range was copied from.
+			const bool origin = parameters.value("origin", false);
+			require(!(origin && given), "give origin or a position, not both");
+			const Destination to = destinationFrom(project, parameters,
+				given ? std::nullopt
+					  : std::optional(origin ? clipboard.start
+											 : context.call("transport.get").at("position").get<time::Samples>()));
+			const time::Samples at = to.at;
 			// Onto the tracks it came from, or from track on down.
 			std::vector<ObjectId> tracks = clipboard.tracks;
 			if (parameters.contains("track"))
 			{
-				// The tracks the project window shows: a folded folder's lane stands for the tracks in it.
+				// The lanes the project window shows, one for each copied lane: a folded folder's stands for the tracks
+				// in it, which take the copied tracks of a folded folder's lane in their order (#1978).
 				const auto first = parameters.at("track").get<ObjectId>();
-				const std::vector<ObjectId> order = shownTracks(project, {first});
-				const auto found = std::find(order.begin(), order.end(), first);
-				require(found != order.end(), "no track " + std::to_string(first));
-				require(static_cast<size_t>(order.end() - found) >= tracks.size(),
-					"there aren't enough tracks from track " + std::to_string(first) + " down for the " +
-						std::to_string(tracks.size()) + " copied tracks");
-				tracks.assign(found, found + static_cast<std::ptrdiff_t>(tracks.size()));
+				const std::vector<std::vector<ObjectId>> lanes = shownLanes(project, {first});
+				const auto [top, place] = laneOf(lanes, first);
+				const std::string refused = "there aren't enough tracks from track " + std::to_string(first) +
+					" down for the " + std::to_string(tracks.size()) + " copied tracks";
+				for (size_t i = 0; i < tracks.size(); ++i)
+				{
+					const auto [lane, copied] = clipboard.lanes[i];
+					const auto shift = lane == 0
+						? static_cast<std::ptrdiff_t>(place) - static_cast<std::ptrdiff_t>(clipboard.lanes[0].second)
+						: 0;
+					tracks[i] = landingTrack(lanes, static_cast<std::ptrdiff_t>(top + lane),
+						static_cast<std::ptrdiff_t>(copied) + shift, refused);
+				}
 			}
 			else
 			{
@@ -2679,7 +2811,7 @@ namespace gnubase::engine
 			if (parameters.value("time", false))
 				insertSpace(project, tracks, at,
 					{clipboard.end - clipboard.start, clipboard.endTicks - clipboard.startTicks}, false, context);
-			return {{"events", idsOf(pasteClipboard(project, clipboard, tracks, at, context))}};
+			return {{"events", idsOf(pasteClipboard(project, clipboard, tracks, at, to.tick, context))}};
 		}
 
 		// Flatten Chain (#167, reference manual pp. 407-411): from the start of the chain's first event on, the project
@@ -2747,7 +2879,7 @@ namespace gnubase::engine
 							note = note->second.position + note->second.length > end ? part.notes.erase(note)
 																					 : std::next(note);
 					}
-				pasteClipboard(project, copied, tracks, at, context);
+				pasteClipboard(project, copied, tracks, at, std::nullopt, context);
 				const time::TimeBase base = section.event->position.base;
 				const int number = ++count[section.event->id];
 				placed.push_back(
@@ -2934,30 +3066,47 @@ namespace gnubase::engine
 			require(clipboard.sampleRate == project.sampleRate,
 				"the project's sample rate changed since the automation was copied: copy it again");
 			const Json& parameters = context.parameters();
-			require(!(parameters.contains("tracks") && parameters.contains("lanes")), "give tracks or lanes, not both");
+			require(
+				!(parameters.contains("tracks") && (parameters.contains("lanes") || parameters.contains("targets"))),
+				"give tracks or lanes and targets, not both");
 			const auto [start, end] = startAndEnd(context);
 			require(start >= 0 && end >= start, "the range must start at or after 0 and not end before its start");
 			require(end > start, "the range is empty");
 			// Which copied lanes go onto which tracks: onto their own tracks; onto the tracks, from the top, one
-			// copied track onto each, or the one copied track onto all; or onto the lanes of the same parameter.
+			// copied track onto each, or the one copied track onto all; or onto the lanes of the same parameter and
+			// onto parameters of tracks without their lanes, as unadded automation tracks show them (#2018), each
+			// getting the copied lane of its parameter, if there is one, so that a lane comes only where it pastes.
 			std::vector<std::pair<const AutomationClipboard::Lane*, ObjectId>> pastes;
-			if (parameters.contains("lanes"))
+			std::vector<std::pair<ObjectId, Json>> onto; // the tracks and targets of lanes and targets
+			for (const ObjectId id : parameters.value("lanes", std::set<ObjectId>()))
 			{
-				for (const ObjectId id : parameters.at("lanes").get<std::set<ObjectId>>())
-				{
-					require(project.automation.count(id) != 0, "no automation lane " + std::to_string(id));
-					const AutomationLane& lane = project.automation.at(id);
-					const auto same = std::find_if(clipboard.lanes.begin(), clipboard.lanes.end(),
-						[&project, &lane](const AutomationClipboard::Lane& copied)
-						{
-							const std::optional<AutomationTarget> target = parameterOn(project, copied, lane.track);
-							return target && *target == lane.target;
-						});
-					if (same != clipboard.lanes.end())
-						pastes.emplace_back(&*same, lane.track);
-				}
+				require(project.automation.count(id) != 0, "no automation lane " + std::to_string(id));
+				const AutomationLane& lane = project.automation.at(id);
+				onto.emplace_back(lane.track, toJson(lane.target));
 			}
-			else if (parameters.contains("tracks"))
+			for (const Json& given : parameters.value("targets", Json::array()))
+			{
+				const auto track = given.at("track").get<ObjectId>();
+				require(project.trackById.count(track) != 0, "no track " + std::to_string(track));
+				onto.emplace_back(track, given.at("target"));
+			}
+			for (const auto& [track, target] : onto)
+			{
+				const auto same = std::find_if(clipboard.lanes.begin(), clipboard.lanes.end(),
+					[&project, track = track, &target = target](const AutomationClipboard::Lane& copied)
+					{
+						const std::optional<AutomationTarget> has = parameterOn(project, copied, track);
+						if (!has)
+							return false;
+						Json json = toJson(*has);
+						if (!target.contains("channel") && has->channel == 0)
+							json.erase("channel"); // automationLane.add's default
+						return json == target;
+					});
+				if (same != clipboard.lanes.end())
+					pastes.emplace_back(&*same, track);
+			}
+			if (parameters.contains("tracks"))
 			{
 				const auto named = parameters.at("tracks").get<std::set<ObjectId>>();
 				for (const ObjectId id : named)
@@ -2975,7 +3124,7 @@ namespace gnubase::engine
 							pastes.emplace_back(&copied, tracks[i]);
 				}
 			}
-			else
+			else if (!parameters.contains("lanes") && !parameters.contains("targets"))
 			{
 				for (const AutomationClipboard::Lane& copied : clipboard.lanes)
 					if (project.trackById.count(copied.lane.track) != 0)
@@ -3392,59 +3541,67 @@ namespace gnubase::engine
 		addEdit(engine,
 			{"range.paste", 1,
 				"Pastes the range clipboard (range.copy, range.cut) at position (project samples, default the project "
-				"cursor): onto the tracks it was copied from, or onto track and the tracks below it in the project's "
-				"order that aren't hidden (trackVisibility.set), one for each copied track, which must take the copied "
-				"events. What started where the copied range starts lands at position exactly (of several, the first "
-				"in ticks), and everything on musical tracks moves by the same ticks, keeping its distance from that "
-				"on every track. Audio events and MIDI parts come as unlocked real copies; automation replaces the "
-				"curve where it lands, on a lane of the same parameter. time (Paste Time) first makes room as long as "
-				"the copied range, as range.insertSilence does. A clipboard copied at another sample rate than the "
-				"project's is refused. Returns the new events.",
-				schema({{"position", integer()}, {"track", integer()}, {"time", boolean()}}, {}), eventsResult(),
-				false},
+				"cursor), or at positionTicks, a tick of the tempo map, or with origin (Paste at Origin) where it was "
+				"copied from: onto the tracks it was copied from, or onto "
+				"track and the tracks below it in the project's order that aren't hidden (trackVisibility.set), one "
+				"for each copied track, which must take the copied events; a folded folder (trackLayout.set) counts "
+				"as one track there, and the tracks inside one that were copied go into the tracks inside the one "
+				"they land on, in their order. What started where the copied range starts "
+				"lands at position exactly (of several, the first in ticks), at positionTicks on that tick, and "
+				"everything on musical tracks moves by the same ticks, keeping its distance from that on every track. "
+				"Audio events and MIDI parts come as unlocked real copies; automation replaces the curve where it "
+				"lands, on a lane of the same parameter. time (Paste Time) first makes room as long as the copied "
+				"range, as range.insertSilence does. A clipboard copied at another sample rate than the project's is "
+				"refused. Returns the new events.",
+				schema({{"position", integer()}, {"positionTicks", integer()}, {"origin", boolean()},
+						   {"track", integer()}, {"time", boolean()}},
+					{}),
+				eventsResult(), false},
 			"Paste", [this](Project& project, CommandContext& context)
 			{ return pasteRange(project, context, m_clipboard.get()); });
 
 		Json withPosition = rangeParameters;
 		withPosition["position"] = integer();
+		withPosition["positionTicks"] = integer();
 		withPosition["copy"] = boolean();
 		withPosition["track"] = integer();
 		addEdit(engine,
 			{"range.move", 1,
 				"Moves what lies in " + range +
-					" to position (project samples), as dragging a selection range does (reference manual p. 291), "
-					"without the range clipboard: on the same tracks, or with track onto other tracks, the range's top "
-					"track onto track and each of the others as many tracks further on in the project's order of "
-					"tracks that aren't hidden (trackVisibility.set), which must take the events moved there. Cut at "
-					"its edges (splitNotes as in range.split), "
-					"what lies in it moves by position minus start, in ticks on musical tracks, where what starts at "
-					"start lands at position exactly (of several, the first in ticks) and everything on musical "
-					"tracks moves by the same ticks, keeping its distance from that on every track. What moves "
-					"keeps its id, but the cuts make new pieces: of an event or part that starts before the range the "
-					"piece in it is new, of one that ends after it the piece after the range. The crossfades between "
-					"moved events stay, and so do shared copies of MIDI parts that the range holds whole; a crossfade "
-					"between a moved event and one that stays ends, and a shared copy cut at an edge becomes a real "
-					"copy. The automation in it is cut out as range.delete does and pasted at position as range.paste "
-					"does. copy (Alt, p. 432) leaves the range as it is and pastes a copy as range.paste does: real "
-					"copies with new ids. Either way the audio that lands comes in front of the events there, in the "
-					"order it was stacked. Locked events stay where they are and aren't copied. Returns the moved "
-					"events, or the copies.",
-				schema(withPosition, {"position"}), eventsResult(), false},
+					" to position (project samples), or to positionTicks, a tick of the tempo map, as dragging a "
+					"selection range does (reference manual p. 291), without the range clipboard: on the same tracks, "
+					"or with track onto other tracks, the range's top track onto track and each of the others as many "
+					"tracks further on in the project's order of tracks that aren't hidden (trackVisibility.set), "
+					"which must take the events moved there; a folded folder (trackLayout.set) counts as one track "
+					"there, and the range's tracks inside one go into the tracks inside the one they land on, in their "
+					"order. Cut at its edges (splitNotes as in range.split), what "
+					"lies in it moves by position minus start, in ticks on musical tracks, where what starts at start "
+					"lands at position exactly (of several, the first in ticks), at positionTicks on that tick, and "
+					"everything on musical tracks moves by the same ticks, keeping its distance from that on every "
+					"track. Give position or positionTicks. What moves keeps its id, but the cuts make new pieces: of "
+					"an event or part that starts before the range the piece in it is new, of one that ends after it "
+					"the piece after the range. The crossfades between moved events stay, and so do shared copies of "
+					"MIDI parts that the range holds whole; a crossfade between a moved event and one that stays ends, "
+					"and a shared copy cut at an edge becomes a real copy. The automation in it is cut out as "
+					"range.delete does and pasted at position as range.paste does. copy (Alt, p. 432) leaves the range "
+					"as it is and pastes a copy as range.paste does: real copies with new ids. Either way the audio "
+					"that lands comes in front of the events there, in the order it was stacked. Locked events stay "
+					"where they are and aren't copied. Returns the moved events, or the copies.",
+				schema(withPosition, {}), eventsResult(), false},
 			"Move Range",
 			[](Project& project, CommandContext& context)
 			{
 				const Range range = rangeFrom(project, context, true);
 				const Json& parameters = context.parameters();
-				const auto at = parameters.at("position").get<time::Samples>();
-				require(at >= 0, "position must not be before the project start");
+				const Destination to = destinationFrom(project, parameters, std::nullopt);
 				const std::vector<ObjectId> onto = parameters.contains("track")
 					? movedTracks(project, range.tracks, parameters.at("track").get<ObjectId>())
 					: range.tracks;
 				if (!parameters.value("copy", false))
-					return moveRange(project, range, at, onto, context);
+					return moveRange(project, range, to.at, to.tick, onto, context);
 				// Locked events aren't copied, as they don't move; nor are the events of a locked audio part.
 				const RangeClipboard copied = copyRange(project, range, false);
-				return Json{{"events", idsOf(pasteClipboard(project, copied, onto, at, context))}};
+				return Json{{"events", idsOf(pasteClipboard(project, copied, onto, to.at, to.tick, context))}};
 			});
 
 		addEdit(engine,
@@ -3498,15 +3655,23 @@ namespace gnubase::engine
 		addEdit(engine,
 			{"automation.paste", 1,
 				"Pastes what automation.copy copied " + between +
-					", where it replaces the automation: without tracks and lanes each lane onto its own track (Paste "
-					"Automation of All Tracks); onto tracks (ids), the copied tracks from the top one onto each, or "
-					"one copied track onto all of them; or onto lanes (ids), each getting the copied lane of its "
-					"parameter. A track takes the parameters it has, adding their lanes: a plugin's needs the same "
-					"plugin in the slot at the same place, an instrument's the same instrument; the others are left "
-					"out. A shorter range cuts the copy at the curve's value there, in a longer one its last value "
+					", where it replaces the automation: without tracks, lanes and targets each lane onto its own "
+					"track (Paste Automation of All Tracks); onto tracks (ids), the copied tracks from the top one "
+					"onto each, or one copied track onto all of them; or onto lanes (ids) and targets (parameters of "
+					"tracks, {track, target} as automationLane.add takes them), each getting the copied lane of its "
+					"parameter if there is one, a target adding its lane only then. A track takes the parameters it "
+					"has, adding their lanes: a plugin's needs the same plugin in the slot at the same place, an "
+					"instrument's the same instrument; the others are left out. A shorter range cuts the copy at the "
+					"curve's value there, in a longer one its last value "
 					"holds up to the end. A copy made at another sample rate than the project's is refused. Returns "
 					"the lanes it pasted into.",
-				schema({{"start", integer()}, {"end", integer()}, {"tracks", events()}, {"lanes", events()}}, {}),
+				schema({{"start", integer()}, {"end", integer()}, {"tracks", events()}, {"lanes", events()},
+						   {"targets",
+							   {{"type", "array"},
+								   {"items",
+									   schema({{"track", integer()}, {"target", automationTargetSchema()}},
+										   {"track", "target"})}}}},
+					{}),
 				schema({{"lanes", events()}}, {"lanes"}), false},
 			"Paste Automation", [this](Project& project, CommandContext& context)
 			{ return pasteCopiedAutomation(project, context, m_automationClipboard); });

@@ -68,6 +68,20 @@
 			margin: 0 6dp;
 		}
 
+		/* A step's name, which Alt and a double click open for typing (p. 405). */
+		.arranger-row textdisplay.name
+		{
+			min-width: 0;
+			height: 20dp;
+			padding: 2dp 4dp;
+			text-align: left;
+		}
+
+		.arranger-row textdisplay.name input.text
+		{
+			text-align: left;
+		}
+
 		.arranger-row .repeats
 		{
 			width: 28dp;
@@ -183,8 +197,9 @@
 				local s = index - 1
 				rows[#rows + 1] = '<div class="arranger-row' .. (playing.step == s and " current" or "") .. '" id="step-' ..
 					s .. '"><button class="locate" title="Go to step"' .. off .. ' onclick="ArrangerEditor.goTo(' .. s ..
-					')"><span class="locate-arrow">&gt;</span></button><span class="name">' ..
-					escape(names[step.event] or "") .. '</span><span class="repeats">' .. step.repeats ..
+					')"><span class="locate-arrow">&gt;</span></button><textdisplay class="name" value="' ..
+					escape(names[step.event] or "") .. '" event="' .. step.event .. '" disabled=""/><span class="repeats">' ..
+					step.repeats ..
 					'</span><button class="fewer" onclick="ArrangerEditor.repeats(' .. index ..
 					', -1)">-</button><button class="more" onclick="ArrangerEditor.repeats(' .. index ..
 					', 1)">+</button><select class="mode" onchange="ArrangerEditor.mode(' .. index ..
@@ -192,7 +207,10 @@
 					'</select><button class="remove" onclick="ArrangerEditor.removeStep(' .. index ..
 					')">Remove</button></div>'
 			end
-			document:GetElementById("chain-steps").inner_rml = table.concat(rows)
+			-- A name being typed stays: the list is built again once that is done.
+			if document:GetElementById("chain-steps"):QuerySelector(".editing") == nil then
+				document:GetElementById("chain-steps").inner_rml = table.concat(rows)
+			end
 
 			-- The toolbar's chain step buttons work only in arranger mode with a chain that has steps; First and Last
 			-- Repeat also need a step of that chain playing, so repeatOf finds its repeats (#880).
@@ -260,6 +278,37 @@
 			editor.goTo(playing.step, last and chain.steps[playing.step + 1].repeats - 1 or 0)
 		end
 
+		-- The step's name an event is for, or nil.
+		local function nameOf(event)
+			local element = event.target_element
+			while element ~= nil and element.tag_name ~= "textdisplay" do element = element.parent_node end
+			return element
+		end
+
+		-- Renaming Arranger Events (p. 405): Alt and a double click open a step's name, a plain double click doesn't.
+		-- The chain list hears of the double click before the name's own default action opens it.
+		function editor.allowRename(event)
+			local element = nameOf(event)
+			if element == nil then return end
+			local alt = event.parameters.alt_key
+			if alt == true or (type(alt) == "number" and alt ~= 0) then
+				element:RemoveAttribute("disabled")
+			else
+				element:SetAttribute("disabled", "")
+			end
+		end
+
+		-- Enter renames the step's event (arranger.changed then builds the list again); an empty name keeps the old one.
+		-- The name's own text field's changes pass by.
+		function editor.renameEvent(event)
+			local element = event.target_element
+			if element.tag_name ~= "textdisplay" then return end
+			element:SetAttribute("disabled", "")
+			local id = math.tointeger(tonumber(element:GetAttribute("event")))
+			local name = tostring(event.parameters.value or "")
+			if name ~= "" then gnubase.arranger.set{event = id, name = name} end
+		end
+
 		function editor.toggleMode()
 			gnubase.arranger.setMode{mode = not editor.arranger.mode}
 		end
@@ -315,7 +364,7 @@
 		<button id="flatten-chain" title="Flatten Chain" onclick="gnubase.arranger.flatten{}">Flatten</button>
 	</div>
 	<div id="arranger-lists">
-		<div id="chain-steps" class="arranger-list"/>
+		<div id="chain-steps" class="arranger-list" ondblclick="ArrangerEditor.allowRename(event)" onchange="ArrangerEditor.renameEvent(event)"/>
 		<div id="arranger-events" class="arranger-list"/>
 	</div>
 </body>

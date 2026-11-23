@@ -29,8 +29,10 @@ namespace gnubase::ui
 	namespace
 	{
 		constexpr double g_maxVelocity = 127.0;
+		constexpr int64_t g_minVelocity = 1; // a note on with velocity 0 is a note off
 		constexpr double g_maxController = 4294967295.0;
 		constexpr int64_t g_bendCenter = 8192;
+		constexpr float g_edge = 6.0F; // dp at a note's end where the object selection tool resizes it
 
 		// What the root hears in the bubble phase.
 		constexpr std::array<Rml::EventId, 6> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
@@ -302,7 +304,9 @@ namespace gnubase::ui
 		m_selection.clear();
 		if (!m_project.contains("tracks") || !m_view.contains("parts"))
 			return;
-		const TimeContext time = projectTime(m_project);
+		// Once per show: every cell's time and every typed one use it, and building it reads the tempo map.
+		m_time = projectTime(m_project);
+		const TimeContext& time = m_time;
 		std::map<uint64_t, const Json*> tracks;
 		for (const Json& track : m_project.at("tracks"))
 			tracks[track.at("id").get<uint64_t>()] = &track;
@@ -394,8 +398,8 @@ namespace gnubase::ui
 		if (m_focus == "none" || first == nullptr)
 			return true;
 		const Row& focus = *first;
-		if (m_focus == "channel")
-			return hasChannel(row.type) && hasChannel(focus.type) && row.channel == focus.channel;
+		if (m_focus == "channel") // SysEx and directions have no channel to focus on: everything shows
+			return !hasChannel(focus.type) || (hasChannel(row.type) && row.channel == focus.channel);
 		if (row.type != focus.type)
 			return false;
 		if (row.type == "articulation")
@@ -450,7 +454,7 @@ namespace gnubase::ui
 		const std::optional<int64_t> value = number(row, field);
 		if (!value)
 			return "";
-		const TimeContext time = projectTime(m_project);
+		const TimeContext& time = m_time;
 		if (field == "start" || field == "end")
 			return formatTime(TimeFormat::BarsBeats, time.tempo.toSeconds(*value), time);
 		if (field == "length")
@@ -461,9 +465,10 @@ namespace gnubase::ui
 		return std::to_string(*value);
 	}
 
-	std::optional<int64_t> ListEditor::parse(const std::string& field, const std::string& typed, const Row& row) const
+	std::optional<int64_t> ListEditor::parse(const std::string& field, const std::string& text, const Row& row) const
 	{
-		const TimeContext time = projectTime(m_project);
+		const TimeContext& time = m_time;
+		const std::string typed = Rml::StringUtilities::StripWhitespace(text);
 		if (field == "start" || field == "end")
 		{
 			const std::optional<double> seconds = parseTime(TimeFormat::BarsBeats, typed, time);
@@ -479,9 +484,10 @@ namespace gnubase::ui
 		const int64_t value = std::strtoll(typed.c_str(), &end, 10);
 		if (!typed.empty() && end != nullptr && *end == 0)
 			return value;
-		// A pitch can be a name, such as C3.
+		// A pitch can be a name, such as C3 or c3.
+		const std::string name = Rml::StringUtilities::ToLower(typed);
 		for (int pitch = 0; pitch < 128; ++pitch)
-			if (engine::midi::pitchName(pitch) == typed)
+			if (Rml::StringUtilities::ToLower(engine::midi::pitchName(pitch)) == name)
 				return pitch;
 		return std::nullopt;
 	}
@@ -699,13 +705,14 @@ namespace gnubase::ui
 		m_binding.send("editor.set", std::move(parameters));
 	}
 
-	// Sends the changes, each part's note.set or controller.set: one alone, several in a history.transaction.
+	// Sends the changes, each part's note.* or controller.* command: one alone, several in a history.transaction.
 	void ListEditor::edit(const std::string& description, std::map<std::pair<uint64_t, std::string>, Json> changes)
 	{
 		Json commands = Json::array();
 		for (auto& [key, items] : changes)
 			commands.push_back({{"command", key.second},
-				{"parameters", {{"part", key.first}, {key.second == "note.set" ? "notes" : "controllers", items}}}});
+				{"parameters",
+					{{"part", key.first}, {key.second.rfind("note.", 0) == 0 ? "notes" : "controllers", items}}}});
 		if (commands.size() == 1)
 			m_binding.send(commands[0].at("command").get<std::string>(), commands[0].at("parameters"));
 		else if (!commands.empty())
@@ -778,7 +785,8 @@ namespace gnubase::ui
 			else if (field == "secondary")
 				change["releaseVelocity"] = static_cast<double>(std::clamp<int64_t>(value, 0, 127)) / g_maxVelocity;
 			else if (field == "value" && type == "note")
-				change["velocity"] = static_cast<double>(std::clamp<int64_t>(value, 0, 127)) / g_maxVelocity;
+				change["velocity"] =
+					static_cast<double>(std::clamp<int64_t>(value, g_minVelocity, 127)) / g_maxVelocity;
 			else if (field == "value" || type == "channelPressure")
 				change["value"] = fromMidi1(value);
 			else if (type == "pitchBend")
@@ -831,6 +839,25 @@ namespace gnubase::ui
 			m_binding.send("note.remove", {{"part", row.part}, {"notes", Json::array({row.id})}});
 		else
 			m_binding.send("controller.remove", {{"part", row.part}, {"controllers", Json::array({row.id})}});
+	}
+
+	Json ListEditor::eventJson(const Row& row) const
+	{
+		for (const Json& part : m_project.at("midiParts"))
+			if (part.at("id") == row.part)
+				for (const Json& event : part.at(row.isNote() ? "notes" : "controllers"))
+					if (event.at("id") == row.id)
+						return event;
+		return Json::object();
+	}
+
+	void ListEditor::eraseSelected()
+	{
+		std::map<std::pair<uint64_t, std::string>, Json> changes;
+		for (const Row* row : selectedRows())
+			if (row->editable)
+				changes[{row->part, row->isNote() ? "note.remove" : "controller.remove"}].push_back(row->id);
+		edit("Delete", std::move(changes));
 	}
 
 	void ListEditor::openArticulationMenu(const Row& row)
@@ -920,8 +947,20 @@ namespace gnubase::ui
 		switch (event.GetId())
 		{
 		case Rml::EventId::Keydown:
+		{
 			m_ctrl = ctrl;
+			// While the list or the event display has the focus, as a press there gives it, and no value is typed,
+			// Delete and Backspace delete the selected events (pp. 1255, 1258) instead of the key commands.
+			const auto key = static_cast<Rml::Input::KeyIdentifier>(event.GetParameter<int>("key_identifier", 0));
+			if (closest(target, "list-editor-body", m_root.get()) != nullptr && target->GetTagName() != "input" &&
+				!ctrl && event.GetParameter("alt_key", 0) == 0 &&
+				(key == Rml::Input::KI_DELETE || key == Rml::Input::KI_BACK))
+			{
+				eraseSelected();
+				event.StopPropagation();
+			}
 			break;
+		}
 		case Rml::EventId::Mousedown:
 			if (event.GetParameter("button", 0) == 1 && event.GetCurrentElement() == m_root.get())
 			{
@@ -1098,17 +1137,26 @@ namespace gnubase::ui
 		}
 		// Decides the move before selecting: select() renders, and a Focus filter can then rebuild the rows, which
 		// destroys target and lane.
-		if (lane != nullptr && closest(target, "list-event", root) != nullptr)
+		if (Rml::Element* shown = closest(target, "list-event", root); lane != nullptr && shown != nullptr)
 		{
-			m_gesture = Gesture::Move;
+			// At a note's end the drag resizes it (p. 1255): within g_edge of it, on a note at least three times as
+			// wide.
+			const float ratio =
+				root->GetContext() != nullptr ? root->GetContext()->GetDensityIndependentPixelRatio() : 1.0F;
+			const float width = shown->GetBox().GetSize(Rml::BoxArea::Border).x;
+			const float x = event.GetParameter("mouse_x", 0.0F) - shown->GetAbsoluteOffset(Rml::BoxArea::Border).x;
+			const bool end = row->isNote() && width > 3 * g_edge * ratio && x >= width - (g_edge * ratio);
+			m_gesture = end ? Gesture::Resize : Gesture::Move;
+			m_copy = !end && event.GetParameter("alt_key", 0) != 0;
 			m_laneLeft = lane->GetAbsoluteOffset(Rml::BoxArea::Border).x;
 			m_laneWidth = std::max(lane->GetBox().GetSize(Rml::BoxArea::Border).x, 1.0F);
 			m_pressedAt = ticksAt(event, m_laneLeft, m_laneWidth);
 		}
-		// With a Focus filter a move's rows wait for editor.changed: rebuilt under the press, they would take the
-		// pressed element from under the mouse, and RmlUi would start no drag, so no dragend past the window's edge.
+		// With a Focus filter a move's or a resize's rows wait for editor.changed: rebuilt under the press, they would
+		// take the pressed element from under the mouse, and RmlUi would start no drag, so no dragend past the window's
+		// edge.
 		if (!selected(*row))
-			select({row->key()}, m_gesture != Gesture::Move || m_focus == "none");
+			select({row->key()}, (m_gesture != Gesture::Move && m_gesture != Gesture::Resize) || m_focus == "none");
 	}
 
 	void ListEditor::drag(Rml::Event& event)
@@ -1122,8 +1170,11 @@ namespace gnubase::ui
 			return;
 		const Rml::Vector2f origin = lane->GetAbsoluteOffset(Rml::BoxArea::Border);
 		const float width = std::max(lane->GetBox().GetSize(Rml::BoxArea::Border).x, 1.0F);
-		m_values[row->key()] = std::clamp((event.GetParameter("mouse_x", 0.0F) - origin.x) / width, 0.0F, 1.0F);
-		render();
+		const float value = std::clamp((event.GetParameter("mouse_x", 0.0F) - origin.x) / width, 0.0F, 1.0F);
+		m_values[row->key()] = value;
+		// Only the bar changes: rebuilding the list on every mouse move costs what all its rows do.
+		if (Rml::Element* shown = lane->QuerySelector(".list-value"))
+			shown->SetProperty(Rml::PropertyId::Width, percent(value * 100.0));
 	}
 
 	void ListEditor::release(Rml::Event& event)
@@ -1131,6 +1182,10 @@ namespace gnubase::ui
 		listen(false);
 		dragBody(false);
 		const Gesture gesture = std::exchange(m_gesture, Gesture::None);
+		// A press and release without a drag only selects: snapped where it was, an event off the grid would move or
+		// copy to the nearest grid line, a note's end there.
+		if ((gesture == Gesture::Resize || gesture == Gesture::Move) && !m_dragged)
+			return;
 		const Rml::Element* root = m_root.get();
 		if (gesture == Gesture::Draw)
 		{
@@ -1151,7 +1206,9 @@ namespace gnubase::ui
 					continue;
 				Json change = {{"id", row.id}};
 				if (row.isNote())
-					change["velocity"] = std::max(std::round(found->second * g_maxVelocity), 1.0) / g_maxVelocity;
+					change["velocity"] =
+						std::max(std::round(found->second * g_maxVelocity), static_cast<double>(g_minVelocity)) /
+						g_maxVelocity;
 				else if (row.type == "program")
 					change["number"] = std::lround(found->second * g_maxVelocity);
 				else
@@ -1161,9 +1218,24 @@ namespace gnubase::ui
 			m_values.clear();
 			edit("Change values", std::move(changes));
 		}
+		else if (gesture == Gesture::Resize && m_pressed)
+		{
+			// Gives the selected notes as much more or less length as the pressed one's end went, snapped (p. 1255).
+			const int64_t end = m_pressed->start + m_pressed->length;
+			const int64_t delta =
+				snap(static_cast<double>(end) + ticksAt(event, m_laneLeft, m_laneWidth) - m_pressedAt) - end;
+			std::map<std::pair<uint64_t, std::string>, Json> changes;
+			for (const Row* row : selectedRows())
+				if (row->editable && row->isNote() && delta != 0)
+					changes[{row->part, "note.set"}].push_back(
+						{{"id", row->id}, {"length", std::max<int64_t>(row->length + delta, 1)}});
+			edit("Resize", std::move(changes));
+		}
 		else if (gesture == Gesture::Move && m_pressed)
 		{
-			// Moves the selected events by as far as the pressed one went, snapped (p. 1255).
+			// Moves the selected events by as far as the pressed one went, snapped, or with Alt (Opt) held at the
+			// press copies them there, each with every field but its id and its quantize origin: that is the original's
+			// timing before a quantize, which a copy at another position doesn't share (p. 1255).
 			const int64_t delta =
 				snap(static_cast<double>(m_pressed->start) + ticksAt(event, m_laneLeft, m_laneWidth) - m_pressedAt) -
 				m_pressed->start;
@@ -1176,10 +1248,20 @@ namespace gnubase::ui
 					continue;
 				if (row->start + delta < row->partStart)
 					return; // nothing moves before its part
-				changes[{row->part, row->isNote() ? "note.set" : "controller.set"}].push_back(
-					{{"id", row->id}, {"position", row->start + delta - row->partStart}});
+				const int64_t position = row->start + delta - row->partStart;
+				if (!m_copy)
+				{
+					changes[{row->part, row->isNote() ? "note.set" : "controller.set"}].push_back(
+						{{"id", row->id}, {"position", position}});
+					continue;
+				}
+				Json copied = eventJson(*row);
+				copied.erase("id");
+				copied.erase("origin");
+				copied["position"] = position;
+				changes[{row->part, row->isNote() ? "note.add" : "controller.add"}].push_back(std::move(copied));
 			}
-			edit("Move", std::move(changes));
+			edit(m_copy ? "Copy" : "Move", std::move(changes));
 		}
 	}
 }

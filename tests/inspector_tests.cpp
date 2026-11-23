@@ -21,6 +21,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -203,6 +204,36 @@ TEST_CASE("the info line shows the first selected part, and its edits change eve
 	CHECK(window.shows("#info-line textdisplay[field=name]", "Bridge"));
 	window.display.select({});
 	CHECK(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "empty"); }));
+}
+
+TEST_CASE("the info line renames audio parts, with the MIDI parts selected with them", "[ui]")
+{
+	Window window;
+	const test::TempDir dir;
+	test::Audio audio;
+	audio.samples.assign(48000, 0.0F);
+	const auto file = dir.path() / "silence.wav";
+	test::writeWav(file, audio);
+	const uint64_t track = window.addTrack({{"type", "audio"}, {"channels", 1}});
+	const auto media = window.call("media.add", {{"path", file.u8string()}}).at("media").at("id");
+	const auto clip = window.call("clip.add", {{"media", media}}).at("clip").at("id");
+	const auto event =
+		window.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}, {"length", 24000}})
+			.at("event")
+			.at("id");
+	const auto part = window.call("event.toPart", {{"events", {event}}}).at("events")[0].get<uint64_t>();
+	const uint64_t midi = window.addPart(window.addTrack({{"type", "midi"}}), 0, 4 * g_quarter, "Keys");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioParts").size() == 1; }));
+
+	window.display.select({part, midi});
+	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, "#info-line", "empty"); }));
+	window.type("#info-line textdisplay[field=name]", "Verse");
+	REQUIRE(window.app.waitUntil([&] { return window.find("audioParts", part).at("name") == "Verse"; }));
+	CHECK(window.part(midi).at("name") == "Verse");
+	// One undo step for both.
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return window.part(midi).at("name") == "Keys"; }));
+	CHECK(window.find("audioParts", part).at("name") != "Verse");
 }
 
 TEST_CASE("the info line shows the note an in-place editor has selected, and edits it", "[ui]")
@@ -568,12 +599,13 @@ TEST_CASE("an untouched Ctrl+Enter on a marker's start gives every selected mark
 	window.addTrack({{"type", "marker"}});
 	const auto add = [&window](const Json& parameters)
 	{ return window.call("marker.add", parameters).at("marker").at("id").get<uint64_t>(); };
-	const uint64_t intro = add({{"position", 2 * g_quarter}, {"name", "Intro"}});
 	const uint64_t verse =
 		add({{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 8 * g_quarter}, {"name", "Verse"}});
 	// Every label in view: CI's screens make the window 1024 pixels wide, where the timeline beside the inspector shows
 	// less than 10 quarters.
 	const uint64_t outro = add({{"position", 6 * g_quarter}, {"name", "Outro"}});
+	// The first marker in time added last: the info line shows the first one in timeline order, not by id (#684).
+	const uint64_t intro = add({{"position", 2 * g_quarter}, {"name", "Intro"}});
 	const auto marker = [&window](uint64_t id) { return window.find("markers", id); };
 	REQUIRE(window.app.waitUntil([&] { return elements(window.app, ".marker-label").size() == 3; }));
 	const auto clickMarker = [&window](int index, const std::vector<std::string>& modifiers = {})
@@ -610,6 +642,112 @@ TEST_CASE("an untouched Ctrl+Enter on a marker's start gives every selected mark
 	CHECK(marker(verse).at("position") == 4 * g_quarter);
 	CHECK(marker(verse).at("end") == 8 * g_quarter);
 	CHECK(marker(intro).at("position") == 2 * g_quarter);
+}
+
+TEST_CASE("the info line shows the selected automation points, and its Terminator field makes a gap", "[ui]")
+{
+	Window window;
+	const uint64_t track = window.addTrack({{"type", "audio"}});
+	window.call("track.set", {{"track", track}, {"timeBase", "musical"}});
+	const auto lane = window.call("automationLane.add", {{"track", track}, {"target", {{"type", "volume"}}}})
+						  .at("lane")
+						  .at("id")
+						  .get<uint64_t>();
+	// The first point in time added last: the one that starts first shows.
+	window.call("automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 2 * g_quarter}, {"value", -6.0}}, {{"position", 4 * g_quarter}, {"value", 0.0}},
+					{{"position", g_quarter}, {"value", -12.0}}}}});
+	const auto points = [&window, track]
+	{
+		const Json all = window.call("automationLane.list", {{"track", track}}).at("lanes").at(0).at("points");
+		return std::vector<Json>(all.begin(), all.end()); // by position
+	};
+	const uint64_t first = points().at(0).at("id").get<uint64_t>();
+	const uint64_t second = points().at(1).at("id").get<uint64_t>();
+	window.display.showAutomation(track, true);
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return window.display.automationTargets(track) != nullptr &&
+				!window.display.project().at("automation").empty();
+		}));
+
+	// Two selected: the first one's position and value, the other fields unavailable.
+	window.display.selectPoints({{lane, {second, first}}});
+	REQUIRE(window.shows("#info-line textdisplay[field=start]", "1.2.1.0"));
+	CHECK(hasClass(window.app, "#info-line", "points"));
+	CHECK(hasClass(window.app, "#info-line", "multiple"));
+	CHECK(attribute(window.app, "#info-line textdisplay[field=value]", "value") == "-12");
+	CHECK(element(window.app, "#info-line [info-field=start] .info-label").at("text") == "Position");
+	CHECK(hasClass(window.app, "#info-line [info-field=name]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=volume]", "unavailable"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=terminator]", "unavailable"));
+	CHECK(element(window.app, "#info-line button[field=terminator]").at("text") == "No");
+
+	// Relative to the first one's position and value, each one an undo step.
+	const int64_t position = window.historyPosition();
+	window.type("#info-line textdisplay[field=start]", "1.3.1.0");
+	REQUIRE(window.app.waitUntil([&] { return points().at(0).at("position") == 2 * g_quarter; }));
+	CHECK(points().at(1).at("position") == 3 * g_quarter);
+	window.type("#info-line textdisplay[field=value]", "-9");
+	REQUIRE(window.app.waitUntil([&] { return points().at(0).at("value") == Catch::Approx(-9.0); }));
+	CHECK(points().at(1).at("value") == Catch::Approx(-3.0));
+	CHECK(window.historyPosition() == position + 2);
+	// With Ctrl+Enter the value typed for all, kept in the parameter's range.
+	window.type("#info-line textdisplay[field=value]", "100", "Ctrl+Enter");
+	REQUIRE(window.app.waitUntil([&] { return points().at(0).at("value") == Catch::Approx(6.0); }));
+	CHECK(points().at(1).at("value") == Catch::Approx(6.0));
+	CHECK(points().at(2).at("value") == Catch::Approx(0.0));
+
+	// One point selected, Terminator set to Yes: the gap up to the next point (p. 881), one undo step.
+	window.display.selectPoints({{lane, {second}}});
+	REQUIRE(window.shows("#info-line textdisplay[field=start]", "1.4.1.0"));
+	CHECK_FALSE(hasClass(window.app, "#info-line", "multiple"));
+	const int64_t before = window.historyPosition();
+	window.click("#info-line button[field=terminator]");
+	REQUIRE(window.app.waitUntil([&] { return points().at(1).value("terminator", false); }));
+	CHECK_FALSE(points().at(0).value("terminator", false));
+	CHECK(window.historyPosition() == before + 1);
+	REQUIRE(window.app.waitUntil(
+		[&] { return element(window.app, "#info-line button[field=terminator]").at("text") == "Yes"; }));
+	// Clicked again, it clears Terminator.
+	window.click("#info-line button[field=terminator]");
+	REQUIRE(window.app.waitUntil([&] { return !points().at(1).value("terminator", false); }));
+	REQUIRE(window.app.waitUntil(
+		[&] { return element(window.app, "#info-line button[field=terminator]").at("text") == "No"; }));
+	CHECK(window.historyPosition() == before + 2);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return points().at(1).value("terminator", false); }));
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return !points().at(1).value("terminator", false); }));
+
+	// An event selected gives the info line back to the events.
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 0, 4 * g_quarter, "Part");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Part"));
+	CHECK_FALSE(hasClass(window.app, "#info-line", "points"));
+	CHECK(window.display.selectedPoints().empty());
+	CHECK(hasClass(window.app, "#info-line [info-field=terminator]", "unavailable"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=name]", "unavailable"));
+
+	// A marker selected after the points shows its description.
+	window.addTrack({{"type", "marker"}});
+	const uint64_t marker = window.call("marker.add", {{"position", 2 * g_quarter}, {"name", "Intro"}})
+								.at("marker")
+								.at("id")
+								.get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("markers").size() == 1; }));
+	window.display.selectPoints({{lane, {first}}});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "points"); }));
+	window.app.appUi().markerLines()->pick({marker}); // as a click does, which deselects the points (#2011)
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+	CHECK(hasClass(window.app, "#info-line", "markers"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=name]", "unavailable"));
+	CHECK(element(window.app, "#info-line [info-field=name] .info-label").at("text") == "Description");
 }
 
 TEST_CASE("the inspector shows the selected track, and its controls change the track's channel", "[ui]")
@@ -792,8 +930,9 @@ TEST_CASE("the info line's setup pane shows, hides and orders its fields, with p
 	ui::Docking& docking = window.app.appUi().docking();
 	const std::vector<std::string> defaults = docking.sections("project", "infoLine");
 	CHECK(defaults ==
-		std::vector<std::string>{"name", "start", "end", "length", "pitch", "volume", "mute", "lock", "transpose",
-			"velocity", "releaseVelocity", "channel", "rootKey", "globalTranspose"});
+		std::vector<std::string>{"name", "start", "end", "length", "topTrack", "bottomTrack", "pitch", "volume", "mute",
+			"lock", "transpose", "velocity", "releaseVelocity", "channel", "rootKey", "globalTranspose", "value",
+			"terminator"});
 	const auto openPane = [&window]
 	{
 		if (!hasClass(window.app, "#info-line-setup", "open"))
@@ -915,6 +1054,33 @@ namespace
 		for (const double gap : now.between)
 			CHECK(std::abs(gap - now.between.front()) <= 2.0);
 		CHECK(std::abs(now.inset - expected.inset) <= 1.0);
+	}
+}
+
+TEST_CASE("the inspector's record and monitor buttons switch those of MIDI and instrument tracks", "[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}, {"name", "Keys"}});
+	const uint64_t instrument = window.addTrack({{"type", "instrument"}, {"name", "Synth"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
+	for (const std::pair<uint64_t, const char*>& each : {std::pair{midi, "Keys"}, std::pair{instrument, "Synth"}})
+	{
+		const uint64_t track = each.first;
+		const std::string name = each.second;
+		window.list.select({track});
+		REQUIRE(window.shows(".inspector textdisplay.inspector-name", name));
+		for (const char* control : {"record", "monitor"})
+		{
+			INFO(name << " " << control);
+			const std::string key = std::string(control) == "record" ? "recordEnable" : control;
+			const std::string button = ".inspector button[control=" + std::string(control) + "]";
+			const bool before = window.channel(track).at(key).get<bool>();
+			window.click(button);
+			REQUIRE(window.app.waitUntil([&] { return window.channel(track).at(key) == !before; }));
+			REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, button, "checked") != before; }));
+			window.call("channel.set", {{"channel", window.channel(track).at("id")}, {key, before}});
+			REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, button, "checked") == before; }));
+		}
 	}
 }
 
@@ -1255,7 +1421,7 @@ TEST_CASE("Warp Quantize On/Off goes from the toolbar before any section does", 
 
 TEST_CASE("the toolbar makes room for its sections with the widest labels, and for those the user hides", "[ui]")
 {
-	for (const int width : {1024, 840})
+	for (const int width : {1000, 840})
 	{
 		INFO("window width " << width);
 		Window window(width);
@@ -1274,7 +1440,7 @@ TEST_CASE("the toolbar makes room for its sections with the widest labels, and f
 		CHECK(wide.size() < before.size());
 
 		// The sections the user hides in the setup pane make room for the next one, which comes after them: the tools,
-		// the widest, make room for any one section, such as the Quantize section at 1024 pixels.
+		// the widest, make room for any one section, such as the Quantize section at 1000 pixels.
 		REQUIRE(wide.size() >= 4);
 		const std::string& next = defaults.at(wide.size() - 1); // the first one without room
 		docking.setSectionHidden("project", "toolbar", "zoomPresets", true);
@@ -1319,7 +1485,9 @@ TEST_CASE("an edit in the inspector goes to the track it started on when another
 	CHECK(window.find("tracks", vox).at("name") == "Vox");
 }
 
-TEST_CASE("a drag or wheel turns on a volume or pan field is one undo step, up to the project's maximum", "[ui]")
+TEST_CASE("a drag, wheel turns or a held arrow key on a volume or pan field is one undo step, up to the project's "
+		  "maximum, and a typed value one of its own",
+	"[ui]")
 {
 	Window window;
 	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}, {"timeBase", "linear"}});
@@ -1349,6 +1517,23 @@ TEST_CASE("a drag or wheel turns on a volume or pan field is one undo step, up t
 	window.app.ui().wheel(std::nullopt, {".inspector valuefield[control=pan]", 0, std::nullopt}, 0.0F, -1.0F);
 	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("pan") == 0.04; }));
 	CHECK(window.historyPosition() == position + 2);
+
+	// Up held on the focused volume, its key down repeating until it is released: one step. A typed value is one of
+	// its own.
+	window.click(".inspector valuefield[control=volume]");
+	position = window.historyPosition();
+	for (int repeat = 0; repeat < 3; ++repeat)
+		window.app.ui().key(std::nullopt, "Up", ui::KeyAction::Down);
+	window.app.ui().key(std::nullopt, "Up", ui::KeyAction::Up);
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == 1.5; }));
+	CHECK(window.historyPosition() == position + 1);
+	window.type(".inspector valuefield[control=volume]", "-6");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == -6.0; }));
+	CHECK(window.historyPosition() == position + 2);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == 1.5; }));
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == 0.0; }));
 
 	// The info line's volume of an audio event, dragged down.
 	const Json media =
@@ -2015,34 +2200,46 @@ TEST_CASE("the info line's refused volume step shows the engine's value again", 
 	CHECK(window.historyPosition() == position + 2); // the gesture's step and the removal; the refused one left none
 }
 
-TEST_CASE("the inspector shows the channel as it is when a change is refused", "[ui]")
+TEST_CASE("the inspector's output list leaves out the channels whose audio would come back", "[ui]")
 {
 	Window window;
 	const uint64_t drums = window.addTrack({{"type", "group"}, {"name", "Drums"}});
 	const uint64_t bus = window.addTrack({{"type", "group"}, {"name", "Bus"}});
-	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
-	// Drums play into Bus, so Bus into Drums would be a loop.
-	const uint64_t busChannel = window.channel(bus).at("id").get<uint64_t>();
-	window.call("channel.set", {{"channel", window.channel(drums).at("id")}, {"output", busChannel}});
-	const std::string output = std::to_string(window.channel(bus).at("output").get<uint64_t>());
+	const uint64_t reverb = window.addTrack({{"type", "effect"}, {"name", "Reverb"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 3; }));
+	const auto id = [&](uint64_t track) { return std::to_string(window.channel(track).at("id").get<uint64_t>()); };
+	// The values of the output list's options.
+	const auto options = [&]
+	{
+		std::vector<std::string> values;
+		Rml::Context& context = window.app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(
+					context.GetDocument(i)->QuerySelector(".inspector select[control=output]")))
+				for (int option = 0; option < select->GetNumOptions(); ++option)
+					values.push_back(select->GetOption(option)->GetAttribute<Rml::String>("value", ""));
+		return values;
+	};
+	const auto lists = [&](const std::string& value)
+	{
+		const std::vector<std::string> values = options();
+		return std::find(values.begin(), values.end(), value) != values.end();
+	};
+
+	// Drums play into Bus and send to Reverb, so neither Bus nor Reverb can play into Drums (the engine refuses
+	// it); Reverb can still play into Bus.
+	window.call("channel.set",
+		{{"channel", window.channel(drums).at("id")}, {"output", window.channel(bus).at("id")},
+			{"sends", {{{"send", 1}, {"destination", window.channel(reverb).at("id")}}}}});
 	window.list.select({bus});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bus"));
-	REQUIRE(window.shows(".inspector select[control=output]", output));
-
-	// Drums is the choice after the output bus.
-	window.click(".inspector select[control=output]");
-	window.app.ui().key(std::nullopt, "Down");
-	window.click(".inspector select[control=output]");
-	// Anywhere in the log, not just last: the project window's editor.inPlace after each project answer can follow it.
-	REQUIRE(window.app.waitUntil(
-		[&]
-		{
-			const Json commands = window.call("engine.commandLog").at("commands");
-			return std::any_of(commands.begin(), commands.end(), [](const Json& command)
-				{ return command.at("command") == "channel.set" && command.contains("error"); });
-		}));
-	CHECK(window.shows(".inspector select[control=output]", output));
-	CHECK(std::to_string(window.channel(bus).at("output").get<uint64_t>()) == output);
+	CHECK(window.app.waitUntil([&] { return !lists(id(drums)) && lists(id(reverb)); }));
+	window.list.select({reverb});
+	REQUIRE(window.app.waitUntil([&] { return lists(id(bus)); }));
+	CHECK(!lists(id(drums)));
+	window.list.select({drums});
+	REQUIRE(window.app.waitUntil([&] { return lists(id(reverb)); }));
+	CHECK(lists(id(bus)));
 }
 
 TEST_CASE("the info line asks for the selection only while it shows", "[ui]")
@@ -2115,6 +2312,34 @@ TEST_CASE("another project drops the inspector's edits in progress, and text fie
 	CHECK_FALSE(window.app.waitUntil(
 		[&] { return window.find("tracks", bass).at("name") != "Bass"; }, std::chrono::milliseconds(300)));
 	CHECK(window.find("tracks", vox).at("name") == "Vox");
+}
+
+TEST_CASE("another project drops the info line's edit in progress", "[ui]")
+{
+	Window window;
+	const test::TempDir folder;
+	const std::string file = (folder.path() / "song.dawproject").string();
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 4 * g_quarter, 4 * g_quarter, "Intro");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	window.call("project.save", {{"path", file}});
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+
+	// A name typed, not yet entered, when another client loads the project, whose part has the same id: the name is
+	// dropped, not given to the loaded project's part when the field is left.
+	window.click("#info-line textdisplay[field=name]", ui::MouseButton::Left, 2);
+	window.app.ui().key(std::nullopt, "Mod+A");
+	window.app.ui().text(std::nullopt, "Verse");
+	window.app.shell().step(std::chrono::milliseconds(0));
+	const uint64_t loads = window.display.loads();
+	window.call("project.load", {{"path", file}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.loads() > loads; }));
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+	window.click("#info-line textdisplay[field=start]");
+	CHECK_FALSE(
+		window.app.waitUntil([&] { return window.part(part).at("name") != "Intro"; }, std::chrono::milliseconds(300)));
 }
 
 TEST_CASE("the info line bounds typed start, end and length to the largest project position", "[ui]")

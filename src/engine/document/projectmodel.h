@@ -44,6 +44,10 @@ namespace gnubase::engine
 	// instruments, plugins and the channel strip, whose points are steps with whole values (projectmodel.cpp).
 	bool hasStepCurve(const Project& project, const AutomationLane& lane);
 
+	// The schema of an automation target as automationLane.add and automation.paste's targets take it
+	// (projectmodel.cpp).
+	Json automationTargetSchema();
+
 	// Changes the project's sample rate (projectmodel.cpp). Linear positions are in samples, so they are rescaled to
 	// keep their time, bounded to plus or minus time::g_maxPosition. Without context no events are emitted, for
 	// repairing a loaded project. The old rate must be finite and positive.
@@ -107,6 +111,9 @@ namespace gnubase::engine
 		std::vector<AudioPart> audioParts;
 		std::vector<MidiPart> midiParts;
 		std::vector<AutomationLane> automation; // the points in the range, with the curve's values at its edges
+		// Each copied track's lane, counted from the first of the copied lanes, and its place in it, 0 for the lane's
+		// own track and from 1 the tracks of a folded folder's lane (#1978).
+		std::vector<std::pair<size_t, size_t>> lanes;
 	};
 
 	// What automation.copy keeps for automation.paste (eventedits.cpp, reference manual pp. 878-879): the automation

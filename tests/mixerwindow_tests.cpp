@@ -18,6 +18,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Property.h>
 #include <RmlUi/Core/Types.h>
 #include <catch2/catch_approx.hpp>
@@ -27,6 +28,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <thread>
@@ -406,7 +408,7 @@ TEST_CASE("each mixer window and the lower zone's mixer hide channels of their o
 	app.ui().key(std::nullopt, "Alt+F3");
 	REQUIRE(app.waitUntil([&] { return !app.appUi().docking().visible("project", "lower"); }));
 
-	// A window the user closed lets go of its mixer.
+	// A window the user closed lets go of its mixer: the ui::Mixer goes.
 	app.shell().close(*second);
 	REQUIRE(app.waitUntil([&] { return app.appUi().mixer(2) == nullptr; }));
 }
@@ -508,6 +510,144 @@ TEST_CASE("mixer channels show notes and pictures, and a channel dragged onto an
 	CHECK(order() == std::vector<uint64_t>{a.track, b.track, c.track});
 }
 
+TEST_CASE("the notepad's text reaches the engine on Escape, when its strip or window goes, and before a save", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added a = addTrack(app, "audio", "A");
+	const Added b = addTrack(app, "audio", "B");
+	const Added c = addTrack(app, "audio", "C");
+	app.call("project.save", {{"path", (dir.path() / "notes.dawproject").u8string()}});
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 5; }));
+	click(app, window, "#mixer-layout");
+	click(app, window, "#mixer-layout-pane [setup-section=notes]");
+	REQUIRE(app.waitUntil([&] { return !has(element(app, window, strip(a.channel) + " .mixer-notes"), "hidden"); }));
+	app.ui().key(window, "Escape");
+	const auto type = [&](const Added& added, const std::string& text)
+	{
+		click(app, window, strip(added.channel) + " .mixer-notes-field");
+		app.ui().text(window, text);
+	};
+
+	// Escape closes the notepad (reference manual p. 498), keeping what was typed.
+	type(a, "Bass DI");
+	app.ui().key(window, "Escape");
+	REQUIRE(app.waitUntil([&] { return channelJson(app, a.channel).value("notes", "") == "Bass DI"; }));
+
+	// Saving from the project window saves the notes being typed in a mixer window.
+	type(b, "Room mic");
+	app.keys().run("file.save", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return !app.call("project.revision").at("modified").get<bool>(); }));
+	CHECK(channelJson(app, b.channel).value("notes", "") == "Room mic");
+
+	// A note being typed is an unsaved change when Revert, Open, New or Quit asks first.
+	type(a, " 2");
+	app.keys().run("file.revert", Json::object(), app.main(), nullptr);
+	const auto asked = [&]
+	{
+		const Json found = elements(app, app.main().id(), "#discard-changes-dialog");
+		return found.size() == 1 && found[0].at("visible").get<bool>();
+	};
+	REQUIRE(app.waitUntil(asked));
+	click(app, app.main().id(), "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&] { return !asked(); }));
+
+	// A strip made again, here for a new track, and a window closed with F3 keep them too.
+	type(c, "Overheads");
+	const Added d = addTrack(app, "audio", "D");
+	REQUIRE(app.waitUntil([&] { return channelJson(app, c.channel).value("notes", "") == "Overheads"; }));
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 6; }));
+	REQUIRE(app.waitUntil([&] { return !has(element(app, window, strip(d.channel) + " .mixer-notes"), "hidden"); }));
+	type(d, "Tambourine");
+	app.keys().run("window.mixer", Json::object(), app.main(), nullptr); // F3's command
+	REQUIRE(app.waitUntil([&] { return app.appUi().mixer(1) == nullptr; }));
+	REQUIRE(app.waitUntil([&] { return channelJson(app, d.channel).value("notes", "") == "Tambourine"; }));
+}
+
+TEST_CASE(
+	"a double click on a strip's picture section chooses its track's picture in that window's file dialog", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added a = addTrack(app, "audio", "A");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 3; }));
+	click(app, window, "#mixer-layout");
+	click(app, window, "#mixer-layout-pane [setup-section=picture]");
+	REQUIRE(app.waitUntil([&] { return !has(element(app, window, strip(a.channel) + " .mixer-picture"), "hidden"); }));
+	app.ui().key(window, "Escape");
+
+	app.ui().click(window, {strip(a.channel) + " .mixer-picture", 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+	REQUIRE(app.waitUntil([&] { return app.shell().fileDialogs().size() == 1; }));
+	const auto [id, dialog] = *app.shell().fileDialogs().begin();
+	CHECK(dialog.parent == window); // the mixer window, not the project window
+	const std::filesystem::path picture = dir.path() / "guitar.png";
+	REQUIRE(app.shell().answerFileDialog(id, {picture}));
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			const Json tracks = app.call("project.get").at("tracks");
+			return tracks.at(0).value("picture", "") == picture.u8string();
+		}));
+}
+
+TEST_CASE("a mixer takes every visibility change made before the engine's answer, and a drag ended elsewhere", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added a = addTrack(app, "audio", "A");
+	const Added b = addTrack(app, "audio", "B");
+	const Added c = addTrack(app, "audio", "C");
+	const uint64_t input = bus(app, "input");
+	const uint64_t output = bus(app, "output");
+	const Window window = openMixer(app, 1);
+	app.appUi().docking().setVisible("mixer1", "left", true);
+	REQUIRE(app.waitUntil([&] { return elements(app, window, ".mixer-visibility-item").size() == 5; }));
+
+	// Two channels hidden one after the other, within one step.
+	for (const uint64_t channel : {a.channel, b.channel})
+		app.ui().click(window, {".mixer-visibility-item[visibility=" + std::to_string(channel) + "]", 0, std::nullopt},
+			ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&] { return strips(app, window) == std::vector<uint64_t>{input, c.channel, output}; }));
+	CHECK(app.call("mixer.get", {{"mixer", "window1"}}).at("hidden") == Json{a.channel, b.channel});
+	click(app, window, "#mixer-agents");
+	click(app, window, "#mixer-agents-menu menuitem[agent=showAll]");
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 5; }));
+
+	// A channel name's drag that ends outside the mixer moves nothing, also not at a later mouse button release on a
+	// strip.
+	app.ui().press(window, {strip(a.channel) + " .mixer-channel-name", 0, std::nullopt}, ui::MouseButton::Left, {});
+	app.ui().release(window, {"#left-zone", 0, std::nullopt}, ui::MouseButton::Left, {});
+	app.ui().release(window, {strip(c.channel) + " .mixer-channel-name", 0, std::nullopt}, ui::MouseButton::Left, {});
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(app.waitUntil([&] { return strips(app, window).at(3) == a.channel; }, std::chrono::milliseconds(300)));
+}
+
+TEST_CASE("a mixer window's Visibility tab in a window of its own opens and closes with its mixer window", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	addTrack(app, "audio", "A");
+	ui::Docking& docking = app.appUi().docking();
+	docking.setFloating("mixer1Visibility", true);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(docking.windowOf("mixer1Visibility") == nullptr); // its mixer window isn't open
+
+	openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return docking.windowOf("mixer1Visibility") != nullptr; }));
+	const Window panel = docking.windowOf("mixer1Visibility")->id();
+	REQUIRE(app.waitUntil([&] { return elements(app, panel, ".mixer-visibility-item").size() == 3; }));
+
+	app.keys().run("window.mixer", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return docking.windowOf("mixer1Visibility") == nullptr; }));
+	CHECK(docking.layout().at("panels").at("mixer1Visibility").at("floating") == true);
+	openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return docking.windowOf("mixer1Visibility") != nullptr; }));
+}
+
 TEST_CASE("the mixer's setup pane saves and recalls presets, and Reset All brings the default order back", "[ui]")
 {
 	test::UiApp app({1200, 700});
@@ -573,6 +713,17 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	app.ui().wheel(window, {control("pan"), 0, std::nullopt}, 0.0F, -10.0F);
 	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("pan") > 0.0; }));
 	CHECK(elements(app, window, strip(piano.channel) + " .mixer-pan").empty());
+	// The pan bypass button to its left; the combined panner's two controls instead of the pan control.
+	click(app, window, control("panBypass"));
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("panBypass") == true; }));
+	REQUIRE(app.waitUntil([&] { return has(element(app, window, control("panBypass")), "checked"); }));
+	CHECK(!element(app, window, control("panLeft")).at("visible").get<bool>());
+	app.call("channel.set", {{"channel", guitar.channel}, {"panner", "combined"}, {"panBypass", false}});
+	REQUIRE(app.waitUntil([&] { return element(app, window, control("panLeft")).at("visible").get<bool>(); }));
+	CHECK(!element(app, window, control("pan")).at("visible").get<bool>());
+	app.ui().wheel(window, {control("panRight"), 0, std::nullopt}, 0.0F, 10.0F);
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("panRight") < 1.0; }));
+	CHECK(channelJson(app, guitar.channel).at("panLeft") == -1.0);
 
 	// Set up Window Layout shows the sections, which are hidden until then; MIDI channels' are empty.
 	click(app, window, "#mixer-layout");
@@ -600,6 +751,21 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	app.ui().wheel(window, {control("eq.bands.3.gain"), 0, std::nullopt}, 0.0F, -5.0F);
 	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("eq").at("bands")[2].at("gain") > 0.0; }));
 
+	// The cut filters' slopes and the types of EQ bands 1 and 4 are drop-down lists (reference manual pp. 474 and 480):
+	// each goes to its next choice, the bands from their shelves to their cuts.
+	for (const char* param : {"pre.lowCut.slope", "pre.highCut.slope", "eq.bands.1.type", "eq.bands.4.type"})
+	{
+		click(app, window, control(param));
+		app.ui().key(window, "Down");
+		click(app, window, control(param));
+	}
+	REQUIRE(app.waitUntil(
+		[&] { return channelJson(app, guitar.channel).at("eq").at("bands")[3].at("type") == "highCut"; }));
+	const Json picked = channelJson(app, guitar.channel);
+	CHECK(picked.at("pre").at("lowCut").at("slope") == 24);
+	CHECK(picked.at("pre").at("highCut").at("slope") == 24);
+	CHECK(picked.at("eq").at("bands")[0].at("type") == "lowCut");
+
 	// And they show what the engine has, whoever changed it.
 	app.call("channel.set",
 		{{"channel", guitar.channel}, {"pre", {{"gain", 6.5}, {"phase", false}}},
@@ -607,6 +773,12 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	REQUIRE(
 		app.waitUntil([&] { return element(app, window, control("pre.gain")).at("attributes").at("value") == "6.5"; }));
 	CHECK(element(app, window, control("eq.bands.1.frequency")).at("attributes").at("value") == "250");
+	app.call("channel.set",
+		{{"channel", guitar.channel}, {"pre", {{"lowCut", {{"slope", 48}}}}},
+			{"eq", {{"bands", {{{"band", 1}, {"type", "bell"}}}}}}});
+	REQUIRE(app.waitUntil(
+		[&] { return element(app, window, control("pre.lowCut.slope")).at("attributes").at("value") == "48"; }));
+	CHECK(element(app, window, control("eq.bands.1.type")).at("attributes").at("value") == "bell");
 	CHECK(!has(element(app, window, control("pre.phase")), "checked"));
 }
 
@@ -685,6 +857,41 @@ TEST_CASE(
 				"0";
 		}));
 	CHECK(!has(element(app, window, control(guitar.channel, "sends.2.on")), "checked"));
+}
+
+TEST_CASE("a send's destination list leaves out the channels whose audio would come back", "[ui]")
+{
+	test::UiApp app({1200, 900});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added drums = addTrack(app, "group", "Drums");
+	const Added bus = addTrack(app, "group", "Bus");
+	const Added reverb = addTrack(app, "effect", "Reverb");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 6; }));
+	// The values of a channel's send 1 destination list.
+	const auto options = [&](uint64_t channel)
+	{
+		std::vector<std::string> values;
+		if (auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(
+				findElement(app, window, strip(channel) + " [param=\"sends.1.destination\"]")))
+			for (int option = 0; option < select->GetNumOptions(); ++option)
+				values.push_back(select->GetOption(option)->GetAttribute<Rml::String>("value", ""));
+		return values;
+	};
+	const auto id = [](const Added& added) { return std::to_string(added.channel); };
+	REQUIRE(app.waitUntil([&]
+		{ return options(guitar.channel) == std::vector<std::string>{"0", id(drums), id(bus), id(reverb), "add"}; }));
+
+	// Drums send to Reverb: Reverb can't send to Drums, which the engine refuses; the other strips' lists follow.
+	app.call("channel.set", {{"channel", drums.channel}, {"sends", {{{"send", 1}, {"destination", reverb.channel}}}}});
+	REQUIRE(app.waitUntil([&] { return options(reverb.channel) == std::vector<std::string>{"0", id(bus), "add"}; }));
+	CHECK(options(drums.channel) == std::vector<std::string>{"0", id(bus), id(reverb), "add"});
+	// And play into Bus: Bus can't send to Drums either, nor Reverb to Bus through them.
+	app.call("channel.set", {{"channel", reverb.channel}, {"output", bus.channel}});
+	REQUIRE(app.waitUntil([&] { return options(bus.channel) == std::vector<std::string>{"0", "add"}; }));
+	CHECK(options(reverb.channel) == std::vector<std::string>{"0", id(bus), "add"});
+	CHECK(options(guitar.channel) == std::vector<std::string>{"0", id(drums), id(bus), id(reverb), "add"});
 }
 
 TEST_CASE(
@@ -955,6 +1162,106 @@ TEST_CASE("the other views of a channel follow a control dragged while the engin
 	}
 }
 
+TEST_CASE("the display line's menu moves a channel between link groups, unlinks them and lists their channels; a "
+		  "double click renames the group",
+	"[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added bass = addTrack(app, "audio", "Bass");
+	const Added keys = addTrack(app, "audio", "Keys");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 5; }));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	const auto groups = [&] { return app.call("project.get").at("linkGroups"); };
+	const auto showsLines = [&] { return has(element(app, window, ".mixer-channels"), "link-groups"); };
+	const auto line = [&](const Added& added) { return strip(added.channel) + " .mixer-link"; };
+	const auto lineText = [&](const Added& added)
+	{ return element(app, window, line(added)).at("attributes").value("value", ""); };
+	// Opens the display line's menu and, if given, the submenu of its item at that index.
+	const auto openMenu = [&](const Added& added, std::optional<int> submenu = std::nullopt)
+	{
+		clock->advance(1.0); // no double click with the click before, which would type the group's name
+		click(app, window, line(added));
+		REQUIRE(app.waitUntil([&] { return has(element(app, window, "#mixer-link-menu"), "open"); }));
+		if (submenu)
+		{
+			app.ui().move(window, {"#mixer-link-menu > menuitem", *submenu, std::nullopt});
+			app.shell().step(std::chrono::milliseconds(0));
+		}
+	};
+	CHECK(!showsLines()); // no display line without a link group (reference manual p. 458)
+	app.call("linkGroup.add", {{"channels", {guitar.channel, bass.channel}}, {"name", "Rhythm"}});
+	const uint64_t solo = app.call("linkGroup.add", {{"channels", {keys.channel}}, {"name", "Solo"}})
+							  .at("group")
+							  .at("id")
+							  .get<uint64_t>();
+	REQUIRE(app.waitUntil(showsLines));
+	REQUIRE(app.waitUntil([&] { return lineText(bass) == "1 Rhythm"; }));
+
+	// Linked Channels shows the group's channels (p. 459).
+	openMenu(bass);
+	const Json linked = elements(app, window, "#mixer-link-menu menuitem[disabled]");
+	REQUIRE(linked.size() == 2);
+	CHECK(linked[0].at("text") == "Guitar");
+	CHECK(linked[1].at("text") == "Bass");
+	app.ui().key(window, "Escape");
+
+	// Included in Link Group moves the channel into another group (p. 460).
+	openMenu(bass, 1);
+	click(app, window, "#mixer-link-menu menuitem[link=\"" + std::to_string(solo) + "\"]");
+	REQUIRE(app.waitUntil([&] { return groups().at(1).at("channels") == Json::array({keys.channel, bass.channel}); }));
+	CHECK(groups().at(0).at("channels") == Json::array({guitar.channel}));
+	REQUIRE(app.waitUntil([&] { return lineText(bass) == "2 Solo"; }));
+	// The submenu checks the channel's own group (p. 459), and picking that group again sends nothing.
+	const auto sets = [&]
+	{
+		const Json commands = app.call("engine.commandLog").at("commands");
+		return std::count_if(commands.begin(), commands.end(),
+			[](const Json& command) { return command.at("command") == "linkGroup.set"; });
+	};
+	const auto checked = [&](const std::string& link)
+	{
+		return element(app, window, "#mixer-link-menu menuitem[link=\"" + link + "\"]")
+			.value("attributes", Json::object())
+			.contains("checked");
+	};
+	openMenu(bass, 1);
+	CHECK(checked(std::to_string(solo)));
+	CHECK(!checked("0"));
+	const auto before = sets();
+	click(app, window, "#mixer-link-menu menuitem[link=\"" + std::to_string(solo) + "\"]");
+	REQUIRE(app.appUi().binding().settle(std::chrono::seconds(5)));
+	CHECK(sets() == before);
+	// None takes it out of its group (p. 461), which goes with its last channel.
+	openMenu(guitar, 1);
+	click(app, window, "#mixer-link-menu menuitem[link=\"0\"]");
+	REQUIRE(app.waitUntil([&] { return groups().size() == 1; }));
+	REQUIRE(app.waitUntil([&] { return lineText(guitar).empty() && lineText(bass) == "1 Solo"; }));
+	// And into a group again.
+	openMenu(guitar, 0); // without a group, Included in Link Group is the first item
+	click(app, window, "#mixer-link-menu menuitem[link=\"" + std::to_string(solo) + "\"]");
+	REQUIRE(app.waitUntil([&] { return groups().at(0).at("channels").size() == 3; }));
+
+	// A double click on the display line types the group's name (p. 459).
+	clock->advance(1.0);
+	app.ui().click(window, {line(keys), 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().key(window, "Mod+A");
+	app.ui().text(window, "Band");
+	app.ui().key(window, "Enter");
+	REQUIRE(app.waitUntil([&] { return groups().at(0).at("name") == "Band"; }));
+	REQUIRE(app.waitUntil([&] { return lineText(guitar) == "1 Band"; }));
+
+	// Unlink Selected Channels unlinks the line's group.
+	openMenu(keys);
+	click(app, window, "#mixer-link-menu menuitem[link=unlink]");
+	REQUIRE(app.waitUntil([&] { return groups().empty(); }));
+	REQUIRE(app.waitUntil([&] { return !showsLines(); }));
+}
+
 TEST_CASE("a VCA strip has a fader and buttons and picks the link group it controls; strips show their group", "[ui]")
 {
 	test::UiApp app({1200, 700});
@@ -971,13 +1278,20 @@ TEST_CASE("a VCA strip has a fader and buttons and picks the link group it contr
 	CHECK(element(app, window, strip(vca.channel)).at("attributes").at("type") == "vca");
 
 	// The display line shows the number and the name of the link group (reference manual p. 458).
-	REQUIRE(app.waitUntil(
-		[&] { return element(app, window, strip(guitar.channel) + " .mixer-link").at("text") == "1 Rhythm"; }));
-	CHECK(element(app, window, strip(vca.channel) + " .mixer-link").value("text", std::string()).empty());
+	const auto line = [&](const Added& added)
+	{ return element(app, window, strip(added.channel) + " .mixer-link").at("attributes").value("value", ""); };
+	REQUIRE(app.waitUntil([&] { return line(guitar) == "1 Rhythm"; }));
+	CHECK(line(vca).empty());
 
 	// A VCA fader has a fader, M, S and L, and no panner (p. 515).
 	CHECK(elements(app, window, strip(vca.channel) + " fader").size() == 1);
 	CHECK(elements(app, window, strip(vca.channel) + " .mixer-pan").empty());
+	// Its volume, the only readout without a meter's peak level, is centered under the fader.
+	const Json readouts = element(app, window, strip(vca.channel) + " .mixer-readouts").at("box");
+	const Json volume = element(app, window, strip(vca.channel) + " .mixer-volume").at("box");
+	const auto middle = [](const Json& box) { return box.at("x").get<double>() + (box.at("width").get<double>() / 2); };
+	CHECK(volume.at("width").get<double>() < readouts.at("width").get<double>());
+	CHECK(middle(volume) == Catch::Approx(middle(readouts)).margin(1.0));
 	CHECK(elements(app, window, strip(vca.channel) + " button[control=listen]").size() == 1);
 
 	// VCA Channel Controls Link Group: None, then the groups.

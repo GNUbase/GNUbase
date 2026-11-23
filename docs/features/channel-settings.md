@@ -44,8 +44,8 @@ pictures and the notepad too with Set up Window Layout, which keeps the window's
   .mixer-channels
     .mixer-channel[sections=channel][channel=<id>][type=<type>]   the strip, as in the mixer
 #settings-functions-menu
-  menuitem[function=copy]     Copy Channel Settings: channel.copySettings
-  menuitem[function=paste]    Paste Channel Settings: channel.pasteSettings onto the channel shown
+  menuitem[function=copy]     Copy Channel Settings: channel.copySettings; disabled for a MIDI or VCA channel
+  menuitem[function=paste]    Paste Channel Settings: channel.pasteSettings onto the channel shown; disabled likewise
   menuitem[function=follow]   Follow Edit Buttons or Selection Changes, checked by default
 ```
 
@@ -60,7 +60,9 @@ pictures and the notepad too with Set up Window Layout, which keeps the window's
   Add Effect Track to Send: it opens the add track dialog on the effect page in that window, with the track and the
   send (the document's `tracks`, `send` and `below` attributes), and the dialog's Add Track passes them to
   `track.add`: the new effect track goes below the track whose send it is. The list
-  shows the send's destination again when the project comes back.
+  shows the send's destination again when the project comes back. While the add track dialog is open, also in another
+  window, it comes to the front as it is instead, one dialog at a time: what was typed stays, and the send keeps its
+  destination, which the window's test of Add Effect Track to Send checks too.
 
 ## Not yet
 
@@ -84,7 +86,8 @@ write states, the routing and the selection (p. 458).
   for the sends, skip a send to the channel itself or one that would close a loop through another channel, take one undo
   step, and respect `linked` false. In the app: the mixer's `e` opens the window for its channel and selects the track;
   the sections it shows; a control sending `channel.set`; previous, next and Go to Output; following the track selection
-  and not following it; the UI command; a removed track; Copy and Paste Channel Settings; Add Effect Track to Send
+  and not following it; the UI command; a removed track; Copy and Paste Channel Settings, disabled for MIDI and VCA
+  channels; Add Effect Track to Send
   through the add track dialog, below the track whose send it is; the inspector's `e`; the fader, an EQ gain, a
   dynamics threshold and a send level dragged while the engine answers late, which follow the mouse and take one undo
   step each (#716); and a send knob's Ctrl-click value, which follows the default send level also while the knob is

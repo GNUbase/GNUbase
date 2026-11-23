@@ -3,12 +3,14 @@
 
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
+#include "ui/timeformat.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,6 +29,7 @@ namespace gnubase::ui
 	enum class SampleTool : uint8_t
 	{
 		Range,
+		Draw,
 		Zoom,
 		Play,
 		Scrub,
@@ -54,6 +57,9 @@ namespace gnubase::ui
 		// The audio event it edits, or 0 for none.
 		uint64_t event() const { return hasEvent() ? m_event : 0; }
 		void setTool(SampleTool tool);
+		static bool isProcessCommand(const std::string& command);
+		bool canProcess() const;
+		void process(const std::string& operation);
 
 		// The display's view: the clip frame at its left edge and frames per dp.
 		double start() const { return m_start; }
@@ -64,12 +70,14 @@ namespace gnubase::ui
 		{
 			None,
 			Range,
+			Draw,
 			SnapPoint,
 			Play,
 			Scrub,
 			Overview,
 			Hitpoint,
 			WarpMarker,
+			Region,
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -77,11 +85,14 @@ namespace gnubase::ui
 		void press(Rml::Event& event, Rml::Element& target);
 		void move(Rml::Event& event);
 		void release(Rml::Event& event);
+		void drawSamples(const Rml::Event& event);
+		void renderDraw();
 
 		void requestProject();
 		void requestView();
 		void show();
 		void render();
+		void renderAxes();
 		void renderRegions();
 		void renderHitpoints();
 		bool clickHitpoints(Rml::Element& target, const std::string& id);
@@ -92,12 +103,16 @@ namespace gnubase::ui
 		void changed(Rml::Event& event, Rml::Element& target);
 		void ask(bool overview);
 		void zoom(double factor, double around);
+		void zoomAction(const std::string& action);
+		void setZoom(std::array<double, 3> view, bool remember = true);
 		void fit(double from, double to);
 		void reveal(double from, double to); // scrolls the display to show these frames, at the same zoom
 		void editRegion(Rml::Element& cell); // a field instead of a region's name, start or end in the list
 		void finishEditing(bool keep);       // Enter (and leaving the field) or Escape
 		void auditionClip(int64_t from, std::optional<int64_t> to); // plays the clip, in its frames
 		void scrub(double frame);
+		void sendProcess(const engine::Json& parameters);
+		void cancelQuestion();
 
 		float dpRatio() const;
 		double displayWidth() const; // dp
@@ -154,5 +169,22 @@ namespace gnubase::ui
 		double m_pressed = 0.0; // clip frames
 		double m_dragged = 0.0;
 		std::vector<Subscription> m_subscriptions;
+		Rml::ObserverPtr<Rml::Element> m_question;
+		engine::Json m_processParameters;
+		uint64_t m_processEpoch = 0; // invalidates answers after the view or project changed
+		uint64_t m_processJob = 0;
+		bool m_processPending = false;
+		bool m_levelDb = false;
+		bool m_halfAxis = false;
+		std::map<int64_t, float> m_drawSamples;
+		int m_drawChannel = 0;
+		int64_t m_drawLast = 0;
+		TimeContext m_time;
+		double m_gain = 1.0;
+		std::vector<std::array<double, 3>> m_zoomUndo;
+		std::vector<std::array<double, 3>> m_zoomRedo;
+		int m_zoomGesture = 0;
+		std::string m_regionEdge;
+		const std::string m_closeEvent;
 	};
 }

@@ -100,18 +100,25 @@ the pool and conforming files to the project's sample rate. The engine commands 
   clips, folders first and each by name, ASCII letters in either case alike (alpha before Bass), in the columns Media,
   Used (empty when unused), Status (Missing or External), Key (a drop-down list of the root key of the clip's audio
   events, `select[field=rootKey]`, which sets it with `clip.set`; #1555, p. 417), Info (sample rate, channels,
-  length) and Path. The Key list is empty when the events' root keys differ, where "-" clears them, and disabled for
-  a clip that no audio event plays; it holds only the key it shows until it gets the focus, when it gets all 13, so
-  that a pool of thousands of clips doesn't hold 13 options for each (#1644). Rows have the state classes `.folder`
-  or `.clip`, and clips `.missing` and `.unused`. It follows `history.changed` and `project.saved`, so changes from
-  MCP, Lua or undo show, but not a step that changed only channels' levels and sends, such as a fader drag's (#1881):
-  other channel-only steps, such as a drum pad's Reset Pad, change which clips the sampler tracks and drum pads play,
-  which the Used column counts (`LevelSteps`). It reads the pool only while it shows
+  length) and Path. The toolbar's View/Attributes (`#pool-attributes`, a pop-up menu `#pool-attributes-menu` as in
+  the reference, pp. 417, 741) shows and hides every column but Media with its items Used, Status, Root Key, Info and
+  Path; as in the reference, the Key column shows only once Root Key turns it on. Which columns show is the user
+  setting `ui.poolColumns` (one boolean per column, those it leaves out at their defaults), so it stays when GNUbase
+  starts again, and its changes from MCP or Lua show at once; a hidden column has the state class `.hide-key` (and so
+  on) on `.pool`, which the shared style sheet hides. The Key list is empty when the events' root keys differ, where "-"
+  clears them, and disabled for a clip that no audio event plays; it holds only the key it shows until it gets the
+  focus, when it gets all 13, so that a pool of thousands of clips doesn't hold 13 options for each (#1644). Rows have
+  the state classes `.folder` or `.clip`, and clips `.missing` and `.unused`. It follows `history.changed` and
+  `project.saved`, so changes from MCP, Lua or undo show, but not a step that changed only channels' levels and sends,
+  such as a fader drag's (#1881): other channel-only steps, such as a drum pad's Reset Pad, change which clips the
+  sampler tracks and drum pads play, which the Used column counts (`LevelSteps`). It reads the pool only while it shows
   (`Docking::showing`, [docking.md](docking.md)): behind another tab or in a hidden zone it notes that the pool
   changed, and `AppUi`'s step reads it once the panel shows again.
 - **Messages.** `#pool-message` says what the last pool command did: how many missing files Find Missing Files found,
-  what Remove Unused Media and Remove Missing Files removed, how many files Conform Files converted, or why one
-  failed, with the state class `.error`, which the themes color as danger. The app hears the results of
+  what Remove Unused Media and Remove Missing Files removed, how many files Conform Files converted, how many files
+  Prepare Archive copied and how many media files and frozen tracks it left alone because they changed meanwhile
+  (`changed`, `changedTracks`, #2001), or why one failed, with the state class `.error`, which the themes color as
+  danger. The app hears the results of
   `pool.removeUnused`, `media.locate`, `media.removeMissing`, `media.conform` and `media.prepareArchive` (Media >
   Prepare Archive, [backup.md](backup.md)) from the toolbar, the Media menu and
   the folder dialog alike (`EngineBinding::onResult`, [ui-engine-binding.md](ui-engine-binding.md)) and opens the
@@ -122,7 +129,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
   While a job runs, the line's row (`.pool-status`) has the state class `.running`, which shows Stop (`#pool-stop`,
   as the reference's file search dialog has, p. 751); Stop sends `job.cancel` for it. Stop is only hidden otherwise
   (`visibility`), so the row keeps its height and the list doesn't move when a job starts.
-  A rename, a move or New Folder that fails says so there too.
+  A rename, a move or New Folder that fails says so there too, and so does a folder dialog of Find Missing Files that
+  fails (`AppUi::reportInPool`).
 - **Editing.** The names of folders and clips are fields: what is typed renames them (`poolFolder.set`, `clip.set`)
   with Enter or when the field loses the focus; a name typed away keeps the old one. Clips dragged onto a folder's
   row move into it (`clip.set`, several selected clips in one `history.transaction`). A drag lasts only while the
@@ -141,8 +149,8 @@ The Trash folder and emptying it, which deletes files from disk (p. 747), and th
 removing (Remove from Pool is what GNUbase does); renaming files on disk with their clips; the Video folder, regions,
 the Record folder and Set Pool Record Folder; the Resolve Missing Files dialog when a project with missing files opens,
 Browse for File and the Search for File dialog (`media.relink` and `media.locate` do their work); the search section;
-auditioning; the Musical Mode, Tempo, Sign., Algorithm, Type, Date, Origin Time, Image and Reel Name columns and
-choosing columns (the View/Attributes menu, whose Root Key option switches the Key column on, #1735); Insert into
+auditioning; the Musical Mode, Tempo, Sign., Algorithm, Type, Date, Origin Time, Image and Reel Name columns, and with
+them their View/Attributes items; Insert into
 Project and dragging clips into the project window; Minimize File, New Version, Reconstruct, pool files and libraries;
 converting to other bit depths, channels and file formats (only the sample rate is conformed); a theme color for missing
 clips.
@@ -184,11 +192,13 @@ job still runs and that its hold didn't lapse, and waits for it to end. It holds
 `Engine::setJobProgressHook`, which runs on the job's thread outside every lock: events and commands, also those that
 send events, go on meanwhile. `tests/poolpanel_tests.cpp` drives the panel in the app's UI with `ui::Automation`:
 Media > Open Pool Window and its key, the rows and columns, renaming by typing, dragging a clip onto a folder, New
-Folder and Remove Unused Media with its message, undo from another client, Import Medium through the Import Options
-dialog; names sorted in any case, a clip let go outside the panel not moved by a click on a folder's name or a drag from
-outside, a name typed away kept, no reading while another tab shows; Conform Files from the Media menu on a project that
-was never saved opening the pool with the error, and on a saved one showing the job's result once it is done, its
-progress, and Stop, which cancels it without moving the list; Find Missing Files' result from its job; a failed job's
-message; and, with a panel and binding of its own, a job that ended before its command's result came (the `job.get`
-path) and found files that changed meanwhile counted among those looked for. `tests/docking_tests.cpp` checks
-`Docking::showing`, `tests/enginebinding_tests.cpp` `EngineBinding::onResult`.
+Folder and Remove Unused Media with its message, undo from another client, the View/Attributes menu hiding and showing
+columns, the Key column only once Root Key turns it on, and `ui.poolColumns` set from another client, Import Medium
+through the Import Options dialog; names sorted in any case, a clip let go outside the panel not moved by a click on a
+folder's name or a drag from outside, a name typed away kept, no reading while another tab shows; Conform Files from the
+Media menu on a project that was never saved opening the pool with the error, and on a saved one showing the job's
+result once it is done, its progress, and Stop, which cancels it without moving the list; Find Missing Files through its
+folder dialog, a failed dialog's message and its job's result; a failed job's message; and, with a panel and binding of
+its own, a job that ended before its command's result came (the `job.get` path) and found files that changed meanwhile
+counted among those looked for. `tests/docking_tests.cpp` checks `Docking::showing`, `tests/enginebinding_tests.cpp`
+`EngineBinding::onResult`.

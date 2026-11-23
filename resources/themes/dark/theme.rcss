@@ -555,6 +555,16 @@
 	{
 		background-color: #5ea7b3;
 	}
+	.event-display event-lanes.grid-lines
+	{
+		color: #3e3f41;
+		stroke-color: transparent;
+	}
+	.event-display event-lanes.snap-points
+	{
+		color: #7896bd;
+		stroke-color: transparent;
+	}
 	.event-display .marker-lines
 	{
 		stroke-color: #46566a;
@@ -670,6 +680,11 @@
 	.arranger-lane-row .arranger-lane-event.drawing
 	{
 		background-color: transparent;
+	}
+	.arranger-lane-row .arranger-lane-event.selected
+	{
+		background-color: #7896bd80;
+		border-color: #f3f4f5;
 	}
 	.chord-pad
 	{
@@ -938,6 +953,10 @@
 	{
 		decorator: svg(checkbox-mixed.svg);
 	}
+	.editor-visibility-track.unavailable
+	{
+		color: #b7bbc0;
+	}
 	.key-editor-key
 	{
 		background-color: #cbcccd;
@@ -1184,6 +1203,16 @@
 	{
 		background-color: #7896bd;
 	}
+	.se-half-axis
+	{
+		background-color: #b7bbc066;
+	}
+	.se-draw-stroke
+	{
+		color: #7896bd;
+		stroke-color: #7896bd;
+		stroke-width: 2dp;
+	}
 	.se-outside
 	{
 		background-color: #15161799;
@@ -1197,6 +1226,10 @@
 	.se-region.selected
 	{
 		background-color: #38565c;
+	}
+	.se-region-handle
+	{
+		border-color: #7896bd;
 	}
 	.se-hitpoint-line, .se-hitpoint-handle
 	{
@@ -1475,7 +1508,7 @@
 		color: #b7bbc0;
 		font-size: 11dp;
 	}
-	.status-line .mismatch
+	.status-line .mismatch, #silent-device
 	{
 		color: #cda85f;
 	}
@@ -1518,6 +1551,10 @@
 	.history .history-separator
 	{
 		background-color: #5ea7b3;
+	}
+	.transport-divider
+	{
+		background-color: #484c50;
 	}
 	.quantize-display
 	{

@@ -29,7 +29,8 @@ namespace gnubase::ui
 	// program by the user setting midi.devices, and a MIDI or instrument track's input transformer: Off, Project, Track
 	// and, while it is on, Open Panel...), MIDI modifiers (MIDI and instrument tracks: bypass, value fields and
 	// the random generators' and ranges' targets), MIDI inserts and sends (MIDI and instrument tracks: their slots'
-	// effects and control panels), inserts (the channel's plugin slots) and notepad (the channel's
+	// effects and control panels), Arranger Track (the arranger track: its chain and events lists and jump mode, see
+	// showArranger), inserts (the channel's plugin slots) and notepad (the channel's
 	// notes in a <textarea>). A click on a section's header closes or opens it (.collapsed); what a track doesn't have
 	// gets the class unavailable. The controls send engine commands. The element has the class empty without a track.
 	// Beside the name, Edit Channel Settings (button.inspector-edit) runs editChannel with the track, for tracks with a
@@ -38,10 +39,12 @@ namespace gnubase::ui
 	{
 	public:
 		// editChannel opens a track's channel settings, setupArticulations the articulation map setup (#175),
-		// openInputTransformer the project input transformer (project) or the track's (#966).
+		// openInputTransformer the project input transformer (project) or the track's (#966), openArranger the
+		// arranger editor (Open Arranger Editor on the Arranger Track section).
 		Inspector(EngineBinding& binding, Rml::Element& root, std::function<void(uint64_t track)> editChannel = {},
 			std::function<void(uint64_t track)> setupArticulations = {},
-			std::function<void(uint64_t track, bool project)> openInputTransformer = {});
+			std::function<void(uint64_t track, bool project)> openInputTransformer = {},
+			std::function<void()> openArranger = {});
 		~Inspector() override;
 		Inspector(const Inspector&) = delete;
 		Inspector& operator=(const Inspector&) = delete;
@@ -66,6 +69,14 @@ namespace gnubase::ui
 		// control panels, and send a control's change (channel.set midiInserts and midiSends).
 		void showMidiEffects(const std::string& section, const engine::Json& rack);
 		void changeMidiEffect(const std::string& control, const Rml::Event& event);
+		// The Arranger Track section (pp. 405, 410-411): a row per step of the active chain and per arranger event,
+		// each with its arrow, the one playing .current, and the jump mode. A step's name is a disabled textdisplay
+		// that Alt and a double click open (p. 405).
+		void showArranger();
+		// Sends a step's repeats or repeat mode typed or chosen in the Current Arranger Chain list (arranger.setChain).
+		void changeStep(Rml::Element& control, const std::string& name, const std::string& value);
+		void followArranger(const engine::Json& status); // transport.get's or transport.changed's arranger
+		void readArrangerPlaying();                      // transport.get, into followArranger
 		// The Track Versions section (pp. 231-232): the active version's name and ID, and the list of them all.
 		void showVersions(const engine::Json& track);
 		// The selected tracks that have versions: a version command lists only those, since the engine refuses one
@@ -102,6 +113,7 @@ namespace gnubase::ui
 		std::function<void(uint64_t track)> m_editChannel;
 		std::function<void(uint64_t track)> m_setupArticulations;
 		std::function<void(uint64_t track, bool project)> m_openInputTransformer;
+		std::function<void()> m_openArranger;
 		uint64_t m_track = 0;
 		std::vector<uint64_t> m_selected; // the tracks the inspector shows, the first one's details
 		uint64_t m_loads = 0;
@@ -122,6 +134,14 @@ namespace gnubase::ui
 		std::set<uint64_t> m_inPlace;  // the tracks whose in-place editors are open (#131)
 		Subscription m_inPlaceChanged; // editor.changed of in-place editors
 		Subscription m_historyChanged; // history.changed, for m_inPlace
+		engine::Json m_arranger;       // the last arranger.changed, which arranger.setMode sends without a project read
+		uint64_t m_arrangerHanded = 0; // when it was handed on (EngineBinding::handed)
+		engine::Json m_arrangerPlaying = engine::Json::object(); // transport.changed's arranger
+		Subscription m_arrangerChanged;
+		engine::Json m_arrangerChain = engine::Json::object(); // the active chain's id and steps, as the list shows
+		Rml::ObserverPtr<Rml::Element> m_stepMenu;             // the chain list's context menu
+		int m_touchedStep = -1;                                // the step right-clicked, for Remove Touched
+		Subscription m_transportChanged;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }

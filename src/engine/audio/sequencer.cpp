@@ -1645,6 +1645,49 @@ namespace gnubase::engine
 		}
 	}
 
+	void MidiSequencer::thru(const graph::EventBuffer& events, bool on) noexcept
+	{
+		using Type = graph::ProcessEvent::Type;
+		constexpr std::array<uint8_t, 3> pedals = {64, 66, 69};
+		if (on)
+		{
+			m_input.merge(events);
+			for (const graph::ProcessEvent& event : events)
+				if (event.type == Type::NoteOn || event.type == Type::NoteOff)
+					m_thruDown[((event.channel % 16) * 128) + (event.key % 128)] = event.type == Type::NoteOn;
+				else if (event.type == Type::Controller && graph::holdsNotes(event.key))
+					m_thruPedals[(size_t{event.channel % 16U} * 3) +
+						static_cast<size_t>(std::find(pedals.begin(), pedals.end(), event.key) - pedals.begin())] =
+						!graph::endsNotes(event);
+			m_thruHolds = m_thruHolds || !events.empty();
+			return;
+		}
+		if (!m_thruHolds)
+			return;
+		// Turned off while a key or pedal is held: its release would never come.
+		m_input.nextSource();
+		graph::ProcessEvent release;
+		release.type = Type::NoteOff;
+		for (size_t index = 0; index < m_thruDown.size(); ++index)
+			if (m_thruDown[index])
+			{
+				release.channel = static_cast<uint8_t>(index / 128);
+				release.key = static_cast<uint8_t>(index % 128);
+				m_input.addEnd(release);
+			}
+		release.type = Type::Controller;
+		for (size_t index = 0; index < m_thruPedals.size(); ++index)
+			if (m_thruPedals[index])
+			{
+				release.channel = static_cast<uint8_t>(index / 3);
+				release.key = pedals[index % 3];
+				m_input.addEnd(release);
+			}
+		m_thruDown.fill(false);
+		m_thruPedals.fill(false);
+		m_thruHolds = false;
+	}
+
 	void InstrumentChannel::releaseNotesOf(MidiSequencer& departed,
 		const std::vector<std::shared_ptr<MidiSequencer>>& staying,
 		const std::vector<std::shared_ptr<MidiSendTap>>& stayingSends, const std::vector<PassedNotes>& passed) noexcept

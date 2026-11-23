@@ -19,13 +19,14 @@
 namespace gnubase::ui
 {
 	// The pool (#93, docs/features/pool.md): a toolbar, a message line, the info line and a tree of the pool's folders
-	// and clips from pool.get, with the columns Media, Used, Status, Key, Info and Path. The names of folders and clips
-	// are fields that rename them (poolFolder.set, clip.set) with Enter or when they lose the focus; clips dragged onto
-	// a folder's row move there. The toolbar's Import and Find Missing Files run the UI commands pool.import and
-	// pool.findMissing through run, which own the file dialogs; its other buttons send engine commands. It follows
-	// history.changed and project.saved, whichever client changed the pool, but reads the pool only while shown says
-	// it shows: the app calls update in every step, which reads it once it shows again. Use it on the UI thread; the
-	// binding must outlive it.
+	// and clips from pool.get, with the columns Media, Used, Status, Key, Info and Path. The toolbar's View/Attributes
+	// menu shows and hides the columns but Media (the user setting ui.poolColumns; the Key column only once its Root
+	// Key turns it on, reference manual p. 417). The names of folders and clips are fields that rename them
+	// (poolFolder.set, clip.set) with Enter or when they lose the focus; clips dragged onto a folder's row move there.
+	// The toolbar's Import and Find Missing Files run the UI commands pool.import and pool.findMissing through run,
+	// which own the file dialogs; its other buttons send engine commands. It follows history.changed and project.saved,
+	// whichever client changed the pool, but reads the pool only while shown says it shows: the app calls update in
+	// every step, which reads it once it shows again. Use it on the UI thread; the binding must outlive it.
 	class PoolPanel final : private Rml::EventListener
 	{
 	public:
@@ -63,6 +64,11 @@ namespace gnubase::ui
 		void setKey(const std::string& row, const std::string& key);
 		// Gives a clip's Key list all its choices, when it gets the focus.
 		void fillKey(Rml::Element& list);
+		// Shows the columns the user setting ui.poolColumns shows (the root's state classes hide-used and so on) and
+		// checks their items in the View/Attributes menu.
+		void showColumns(const engine::Json& columns);
+		// The View/Attributes menu's item of a column turned it on or off: ui.poolColumns.
+		void setColumn(const std::string& column, bool shown);
 		void drop(const std::string& folder);
 		void addFolder();
 		// Sends a command of the panel's own; a failure shows in the message line as the action's.
@@ -83,7 +89,9 @@ namespace gnubase::ui
 		Run m_run;
 		std::function<bool()> m_shown;
 		Rml::ObserverPtr<Rml::Element> m_root;
-		Rml::ObserverPtr<Rml::Element> m_view; // the <listview>
+		Rml::ObserverPtr<Rml::Element> m_view;           // the <listview>
+		Rml::ObserverPtr<Rml::Element> m_attributes;     // the View/Attributes menu, in the document's body
+		engine::Json m_columns = engine::Json::object(); // which columns show, every one of ui.poolColumns
 		engine::Json m_pool = engine::Json::object();
 		bool m_stale = true;                       // the pool changed since it was last read
 		std::vector<std::string> m_values;         // the rows' values as shown
@@ -97,6 +105,7 @@ namespace gnubase::ui
 		Subscription m_changed;
 		Subscription m_channelChanged;
 		Subscription m_saved;
+		Subscription m_settings;
 		Subscription m_jobProgress;
 		Subscription m_jobFinished;
 	};

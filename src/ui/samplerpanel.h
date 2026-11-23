@@ -25,11 +25,11 @@ namespace gnubase::ui
 {
 	// The sampler panel (#1029, reference manual pp. 710-717, 730, docs/features/sampler-track.md), a panel of the
 	// lower zone that shows the selected sampler track: its toolbar (Import Audio File, the sample's file name,
-	// Normalize Sample and Lock Parameter Settings), the waveform display with the sample's start and end and the
-	// loop's markers and the bars between them, the Playback, Pitch, Filter and Amp sections with a control per sampler
-	// parameter (from processor.list) and the keyboard section with the pitchbend range, the root key and the key range
-	// above a keyboard that shows them, with a handle for each (p. 730). The root gets the class empty while the
-	// selected track isn't a sampler track.
+	// Normalize Sample and Lock Parameter Settings), the waveform display with the markers of the sample's start and
+	// end, the loop, the fades and the loop crossfade and the bars between start and end and between the loop's ends,
+	// the Playback, Pitch, Filter and Amp sections with a control per sampler parameter (from processor.list) and the
+	// keyboard section with the pitchbend range, the root key and the key range above a keyboard that shows them, with
+	// a handle for each (p. 730). The root gets the class empty while the selected track isn't a sampler track.
 	//
 	// Controls, markers, bars and handles set the sampler's parameters (parameter.set), a drag or a widget's gesture
 	// one undo step (EngineBinding::sendStep); a click on a key sets the root key. A file dropped on the panel, or
@@ -77,6 +77,8 @@ namespace gnubase::ui
 		void build(const engine::Json& processors);
 		void show();
 		void showMarkers();
+		double markerShare(const std::string& marker) const;
+		double crossfadeLimit() const;
 		void ask();
 		void set(uint32_t id, double value, int gesture);
 		void drag(const Rml::Event& event);
