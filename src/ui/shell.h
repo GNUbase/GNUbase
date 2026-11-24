@@ -227,8 +227,10 @@ namespace gnubase::ui
 		void onMenuBarToggled(std::function<void(Window&)> handler) { m_menuBarToggled = std::move(handler); }
 		void setMenuBarShown(WindowId id, bool shown) { m_windows.setMenuBarShown(id, shown); }
 
-		// What the keyboard layout has at a physical key's place (WindowSystem::keyLabel).
+		// What the keyboard layout has at a physical key's place (WindowSystem::keyLabel), and a handler that runs
+		// when the layout changed, and with it what keyLabel gives.
 		std::string keyLabel(Rml::Input::KeyIdentifier position) const { return m_windows.keyLabel(position); }
+		void onKeymapChanged(std::function<void()> handler) { m_keymapChanged = std::move(handler); }
 		// Runs that handler; ui::Automation calls it after each input.
 		void inputHandled();
 
@@ -296,5 +298,6 @@ namespace gnubase::ui
 		std::function<void(Window&)> m_closeRequest;
 		std::function<void(Window&)> m_quitRequest;
 		std::function<void(Window&)> m_menuBarToggled;
+		std::function<void()> m_keymapChanged;
 	};
 }

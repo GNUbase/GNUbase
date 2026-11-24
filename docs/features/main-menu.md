@@ -72,9 +72,9 @@ project window.
   `ui::MainMenu` to each when it opens the window. They are hidden until the user shows them, so that they take no
   room from the faders and the note display. A mixer window (`resources/ui/mixer.rml`) has File (Save, Save As...,
   Quit), Edit (Undo, Redo, Key Commands...), Studio (Mixer to Mixer 4, On-Screen Keyboard, Studio Setup...) and Window
-  (Windows...); its Set up Window Layout pane has Menu Bar too (p. 439). The editor window
-  (`resources/ui/editor.rml`) has File, Edit (Undo, Redo, Cut, Copy, Paste, Delete, Select All, Select None, Quantize)
-  and Window.
+  (Windows...) (p. 55). Its Set up Window Layout pane has Menu Bar too, GNUbase's own addition for platforms whose
+  title bar has no Show Menu Bar item. The editor window (`resources/ui/editor.rml`) has File, Edit (Undo, Redo, Cut,
+  Copy, Paste, Delete, Select All, Select None, Quantize) and Window.
 
 ## Menus
 

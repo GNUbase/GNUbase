@@ -18,6 +18,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -295,9 +296,20 @@ TEST_CASE("the on-screen keyboard plays computer keys by their places, labels th
 
 	// Each key shows what the layout has at its computer key's place (reference manual p. 333): the lowest, Z's.
 	const std::string label = app.shell().keyLabel(KI_Z);
-	const Rml::Element* lowest = keyElement(app, 0).QuerySelector(".key-label");
+	Rml::Element* lowest = keyElement(app, 0).QuerySelector(".key-label");
 	REQUIRE(lowest != nullptr);
 	CHECK(lowest->GetInnerRML() == (label.empty() ? "Z" : label));
+	// After a keymap change the keys show what the window system then reports: here a stale label goes.
+	lowest->SetInnerRML("?");
+	SDL_Event keymap{};
+	keymap.type = SDL_EVENT_KEYMAP_CHANGED;
+	REQUIRE(SDL_PushEvent(&keymap));
+	REQUIRE(app.waitUntil(
+		[&app, lowest]
+		{
+			const std::string now = app.shell().keyLabel(KI_Z);
+			return lowest->GetInnerRML() == (now.empty() ? "Z" : now);
+		}));
 
 	// A German layout's Y, at a US keyboard's Z, plays the lowest key, not the upper row's Y (key 21), and its release
 	// ends it (#691).
@@ -342,9 +354,24 @@ TEST_CASE("the on-screen keyboard plays computer keys by their places, labels th
 	document.GetElementById("octave")->DispatchEvent(Rml::EventId::Change, {{"value", Rml::Variant(5.0F)}});
 	REQUIRE(document.GetElementById("velocity") != nullptr);
 	document.GetElementById("velocity")->DispatchEvent(Rml::EventId::Change, {{"value", Rml::Variant(80.0F)}});
+	// Saved once the change ends, as a slider's drag does when the mouse button goes up, not for each step.
+	const auto writes = [&app]
+	{
+		const Json log = app.call("engine.commandLog").at("commands");
+		return std::count_if(log.begin(), log.end(),
+			[](const Json& entry)
+			{
+				return entry.at("command") == "settings.set" &&
+					entry.at("parameters").value("key", std::string()) == "ui.onScreenKeyboard";
+			});
+	};
+	render(app);
+	CHECK(writes() == 0);
+	document.DispatchEvent(Rml::EventId::Mouseup, {{"button", Rml::Variant(0)}});
 	const Json saved = {{"octave", 5}, {"velocity", 80}};
 	REQUIRE(app.waitUntil(
 		[&app, &saved] { return app.call("settings.get", {{"key", "ui.onScreenKeyboard"}}).at("value") == saved; }));
+	CHECK(writes() == 1);
 	app.restart();
 	app.appUi().showProject();
 	app.ui().key(std::nullopt, "Alt+K");

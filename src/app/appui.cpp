@@ -581,6 +581,13 @@ namespace gnubase::app
 		// Show Menu Bar in a window's title bar context menu (Windows, reference manual p. 55).
 		m_shell.onMenuBarToggled(
 			[this](ui::Window& window) { m_keys.run("window.menuBar", engine::Json::object(), window, nullptr); });
+		// The on-screen keyboard's keys show what the new keyboard layout has at their places.
+		m_shell.onKeymapChanged(
+			[this]
+			{
+				if (ui::OnScreenKeyboard* keyboard = this->keyboard(); keyboard != nullptr)
+					keyboard->relabel();
+			});
 		m_keys.add({"window.markers", "Opens or closes the markers window.",
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});

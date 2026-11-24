@@ -64,7 +64,8 @@ namespace gnubase::engine::settings
 				{"properties",
 					{{"visible", {{"type", "boolean"}}}, {"size", {{"type", "number"}, {"minimum", 0}}},
 						{"active", {{"type", "string"}}}, {"tabs", strings}, {"hidden", strings}}}};
-			const Json sections = {{"type", "object"}, {"properties", {{"order", strings}, {"hidden", strings}}}};
+			const Json sections = {
+				{"type", "object"}, {"properties", {{"order", strings}, {"hidden", strings}, {"default", strings}}}};
 			const Json integer = {{"type", "integer"}};
 			const Json size = {{"type", "integer"}, {"minimum", 1}};
 			const Json bounds = {{"type", "object"},
@@ -801,14 +802,15 @@ namespace gnubase::engine::settings
 					"command macro.<name>.",
 					macrosSchema(), Json::array()},
 				{"ui.layout",
-					"The layout of the windows with zones: under windows, by window (project), its zones (left, "
-					"right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs "
-					"hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, "
-					"transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) "
-					"with the order of their sections and those hidden, and the sizes in dp of other elements that "
-					"splitters size (trackList: the track list's width), and for the app's windows (project, mixer1 "
-					"to mixer4, markers, onScreenKeyboard, tempoTrack, arranger, transportPanel, timeDisplay, "
-					"scriptConsole) whether "
+					"The layout of the windows with zones: under windows, by window (project, editorWindow), its zones "
+					"(left, right, lower) with whether each is visible, its size in dp, the order of its tabs, the "
+					"tabs hidden and the active one, and its strips (menuBar, toolbar, infoLine, overviewLine, "
+					"statusLine, transportBar) with whether each is shown, and its sets of sections (such as a mixer "
+					"channel's) with the order of their sections, those hidden and as default those the window "
+					"doesn't know yet, which keep their default visibility, and the sizes in dp of other elements "
+					"that splitters size (trackList: the track list's width), and for the app's windows (project, "
+					"mixer1 to mixer4, markers, onScreenKeyboard, tempoTrack, arranger, transportPanel, "
+					"timeDisplay, scriptConsole) whether "
 					"it is open, its bounds and the name of its monitor, and maximized if it is (its bounds the normal "
 					"ones); under panels, by panel, whether it is in a "
 					"window of its own and that window's bounds and monitor. What it leaves out has its default: a "
@@ -1045,8 +1047,9 @@ namespace gnubase::engine::settings
 					Json::object()},
 				{"ui.onScreenKeyboard",
 					"The on-screen keyboard's octave, 0 to 6 (the lowest key is C0 to C6), and the velocity of its "
-					"notes, 1 to 127 (docs/features/onscreen-keyboard.md).",
-					Json{{"type", "object"}, {"additionalProperties", false},
+					"notes, 1 to 127 (docs/features/onscreen-keyboard.md). Other properties, from later versions, are "
+					"kept.",
+					Json{{"type", "object"},
 						{"properties",
 							{{"octave", {{"type", "integer"}, {"minimum", 0}, {"maximum", 6}}},
 								{"velocity", {{"type", "integer"}, {"minimum", 1}, {"maximum", 127}}}}}},

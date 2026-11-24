@@ -15,8 +15,9 @@ when no MIDI keyboard is at hand.
   (`resources/ui/onscreen-keyboard.rml`, `ui::OnScreenKeyboard` in `src/ui/onscreenkeyboard.h`, opened by the UI
   command `window.onScreenKeyboard` in `app::AppUi`), and closes it again. It shows a piano keyboard of 29 keys, from
   a C to the E two octaves up, each labelled with the computer key that plays it, as the keyboard layout has it at
-  that key's place (p. 333): Z on a US layout, Y on a German one (`Shell::keyLabel`, from SDL). A key lights
-  (`.pressed`) while it sounds.
+  that key's place (p. 333): Z on a US layout, Y on a German one (`Shell::keyLabel`, from SDL). When the layout
+  changes while the window is open, the keys show the new one's (`Shell::onKeymapChanged`, from SDL's keymap change).
+  A key lights (`.pressed`) while it sounds.
 - **Computer keys.** The keys play by their places, whatever the keyboard layout, so that the two rows form a piano
   on every layout (#691). On a US keyboard the lower row plays the lower octave, Z S X D C V G B H N J M for C to B,
   and comma the next C; the upper row plays from that C up, Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P for C to E. So on a
@@ -30,8 +31,9 @@ when no MIDI keyboard is at hand.
 - **Octave and velocity.** The Octave slider moves the keyboard by octaves, seven in all: its lowest key is C0 to C6,
   C3 (middle C, note 60) by default. The Velocity slider sets the notes' velocity, 1 to 127, 100 by default. A note
   ends at the pitch it started at, also when the octave changes while it sounds. Both are the user setting
-  `ui.onScreenKeyboard`, `{"octave": 3, "velocity": 100}` by default, which the window sets as they change and reads
-  as it opens, so they last across restarts (#691).
+  `ui.onScreenKeyboard`, `{"octave": 3, "velocity": 100}` by default, which the window reads as it opens and sets
+  once a change ends, when the mouse button or a key goes up or the window closes, not for each step of a drag; so
+  they last across restarts (#691).
 - **Keys taken.** While the window is open, it takes the keys that no element used before the key commands, in every
   window: the keys of the two rows play, and the other keys run nothing, except the keys of the reference's exceptions,
   commands that keep their keys (#691): Save (Mod+S by default), Start/Stop Record (Num*), Start/Stop Playback
@@ -64,4 +66,5 @@ faders drag from their unrounded value, so a document that rounds each change do
 German layout's Y at a US keyboard's Z plays the lowest key and not the upper row's Y, a key at the 2's place that the
 layout's key codes don't name plays the upper C sharp, an M from the window system at a US keyboard's semicolon plays
 nothing while an M without a place plays B, and the lowest key's label is what the window system says the layout has
-at Z's place.
+at Z's place, also again after a keymap change. Changed octave and velocity are saved when the mouse button goes up,
+not before, and kept across a restart.

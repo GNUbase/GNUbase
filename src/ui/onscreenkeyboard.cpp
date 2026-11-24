@@ -24,8 +24,8 @@ namespace gnubase::ui
 	{
 		using namespace Rml::Input;
 
-		constexpr std::array<Rml::EventId, 4> g_events = {
-			Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Mouseout, Rml::EventId::Change};
+		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mouseup,
+			Rml::EventId::Mouseout, Rml::EventId::Change, Rml::EventId::Keyup};
 
 		// The computer keys that play the keys, from the lowest, by their places on a US keyboard (KeyPress::position):
 		// the lower row's octave, then the upper row's from the next C up. Comma plays that C too.
@@ -74,19 +74,13 @@ namespace gnubase::ui
 
 	OnScreenKeyboard::OnScreenKeyboard(EngineBinding& binding, Rml::ElementDocument& document, Settings& settings,
 		const std::function<std::string(KeyIdentifier position)>& label)
-		: m_binding(binding), m_document(document.GetObserverPtr()), m_settings(settings),
+		: m_binding(binding), m_document(document.GetObserverPtr()), m_settings(settings), m_label(label),
 		  m_keyElements(g_keys, nullptr)
 	{
-		// Each key labelled with what the layout has at its computer key's place (reference manual p. 333).
-		const auto keyRml = [&label](int key)
+		const auto keyRml = [](int key)
 		{
-			const auto index = static_cast<size_t>(key);
-			std::string shown = label ? label(g_computerKeys[index]) : std::string();
-			if (shown.empty())
-				shown = g_labels[index];
 			return R"(<div class=")" + std::string(black(key) ? "black-key" : "white-key") + R"(" note=")" +
-				std::to_string(key) + R"("><span class="key-label">)" + Rml::StringUtilities::EncodeRml(shown) +
-				"</span></div>";
+				std::to_string(key) + R"("><span class="key-label"></span></div>)";
 		};
 		// The white keys side by side; a black key in a slot as wide as a white key, between the two it lies
 		// between, and an empty slot where there is no black key.
@@ -110,7 +104,24 @@ namespace gnubase::ui
 			m_keyElements[static_cast<size_t>(element->GetAttribute<int>("note", 0))] = element;
 		for (const Rml::EventId id : g_events)
 			document.AddEventListener(id, this);
+		relabel();
 		show();
+	}
+
+	void OnScreenKeyboard::relabel()
+	{
+		// Each key labelled with what the layout has at its computer key's place (reference manual p. 333).
+		for (size_t key = 0; key < m_keyElements.size(); ++key)
+		{
+			Rml::Element* text =
+				m_keyElements[key] != nullptr ? m_keyElements[key]->QuerySelector(".key-label") : nullptr;
+			if (text == nullptr)
+				continue;
+			std::string shown = m_label ? m_label(g_computerKeys[key]) : std::string();
+			if (shown.empty())
+				shown = g_labels[key];
+			text->SetInnerRML(Rml::StringUtilities::EncodeRml(shown));
+		}
 	}
 
 	OnScreenKeyboard::~OnScreenKeyboard()
@@ -119,10 +130,11 @@ namespace gnubase::ui
 		{
 			while (!m_held.empty())
 				noteOff(m_held.back().source);
+			save();
 		}
 		catch (const std::exception& error)
 		{
-			logging::warning("The on-screen keyboard cannot end its notes: {}", error.what());
+			logging::warning("The on-screen keyboard cannot end its notes or save its settings: {}", error.what());
 		}
 		if (!m_document)
 			return;
@@ -174,6 +186,10 @@ namespace gnubase::ui
 		case Rml::EventId::Mouseup:
 			if (event.GetParameter("button", 0) == 0)
 				noteOff(g_mouse);
+			save(); // a slider's drag ended
+			return;
+		case Rml::EventId::Keyup:
+			save(); // a slider moved by keys
 			return;
 		case Rml::EventId::Mouseout:
 			// The mouse leaving the window ends its note: the button going up out there sends no mouseup.
@@ -190,17 +206,24 @@ namespace gnubase::ui
 				m_settings.velocity = std::clamp(value, 1, 127);
 			else
 				return;
-			// User settings, which last across restarts.
-			if (m_settings.octave != was.octave || m_settings.velocity != was.velocity)
-				m_binding.send("settings.set",
-					{{"key", "ui.onScreenKeyboard"},
-						{"value", {{"octave", m_settings.octave}, {"velocity", m_settings.velocity}}}});
+			// User settings, which last across restarts: written once the drag ends, not for each of its steps.
+			m_unsaved = m_unsaved || m_settings.octave != was.octave || m_settings.velocity != was.velocity;
 			show();
 			return;
 		}
 		default:
 			return;
 		}
+	}
+
+	void OnScreenKeyboard::save()
+	{
+		if (!m_unsaved)
+			return;
+		m_unsaved = false;
+		m_binding.send("settings.set",
+			{{"key", "ui.onScreenKeyboard"},
+				{"value", {{"octave", m_settings.octave}, {"velocity", m_settings.velocity}}}});
 	}
 
 	void OnScreenKeyboard::noteOn(int source, int key)

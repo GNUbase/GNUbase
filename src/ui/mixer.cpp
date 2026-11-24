@@ -515,7 +515,8 @@ namespace gnubase::ui
 		for (const auto& [type, label] : g_types)
 			filter += std::string(R"(<menuitem type="toggle" channel-type=")") + type + R"(" checked="">)" + label +
 				"</menuitem>";
-		// A mixer window's menu bar and left zone (reference manual pp. 55, 439).
+		// A mixer window's left zone (reference manual p. 439) and its menu bar (p. 55): GNUbase's own addition to
+		// the pane, for platforms whose title bar has no Show Menu Bar item.
 		std::string layout = m_kind == MixerKind::Window ? R"(<button type="toggle" toggle="menuBar">Menu Bar</button>)"
 														   R"(<button type="toggle" toggle="left">Left Zone</button>)"
 														 : "";

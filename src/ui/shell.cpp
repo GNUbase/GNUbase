@@ -284,6 +284,11 @@ namespace gnubase::ui
 			return;
 		case WindowEventKind::Wake:
 			return; // step runs the posted work
+		case WindowEventKind::KeymapChanged:
+			if (m_keymapChanged)
+				m_keymapChanged();
+			requestRender(); // what the handler changed, wherever it shows
+			return;
 
 		case WindowEventKind::FileDialogClosed:
 		{

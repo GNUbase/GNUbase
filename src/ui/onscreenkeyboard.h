@@ -28,7 +28,8 @@ namespace gnubase::ui
 	class OnScreenKeyboard final : private Rml::EventListener
 	{
 	public:
-		// The octave and velocity, which it sends as the user setting ui.onScreenKeyboard when they change.
+		// The octave and velocity, which it sends as the user setting ui.onScreenKeyboard when they changed and the
+		// mouse button or a key goes up, as a slider's drag ends, or the window closes.
 		struct Settings
 		{
 			int octave = 3;
@@ -57,6 +58,9 @@ namespace gnubase::ui
 		// The key went up: ends its note. KI_UNKNOWN ends every note, as when the window lost the keyboard focus.
 		void release(const KeyPress& keys);
 
+		// Labels the keys again with what label gives, as after the keyboard layout changed (Shell::onKeymapChanged).
+		void relabel();
+
 		// The MIDI note the key plays at the octave now.
 		int note(int key) const { return (12 * (m_settings.octave + 2)) + key; }
 
@@ -67,11 +71,14 @@ namespace gnubase::ui
 		void noteOn(int source, int key);
 		void noteOff(int source);
 		void send(int status, int note, int velocity);
+		void save(); // sends the settings if they changed since
 		void show();
 
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_document;
 		Settings& m_settings;
+		std::function<std::string(Rml::Input::KeyIdentifier position)> m_label;
+		bool m_unsaved = false;                   // the settings changed since they were last sent
 		std::vector<Rml::Element*> m_keyElements; // by key
 		struct Held
 		{

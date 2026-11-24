@@ -64,6 +64,7 @@ namespace gnubase::ui
 		FileDialogClosed, // a file dialog was answered, cancelled or failed
 		Wake,             // another thread asked the UI thread to wake up (wake), e.g. for work it posted
 		MenuBarToggled,   // the user picked Show Menu Bar in its title bar's context menu (setMenuBarShown)
+		KeymapChanged,    // the keyboard layout changed, and with it what keyLabel gives
 	};
 
 	struct WindowEvent
@@ -71,7 +72,7 @@ namespace gnubase::ui
 		WindowEvent(WindowEventKind kind, WindowId window = 0) : kind(kind), window(window) {}
 
 		WindowEventKind kind = WindowEventKind::Exposed;
-		WindowId window = 0;                      // zero for DisplaysChanged, Quit and FileDialogClosed
+		WindowId window = 0;                      // zero for DisplaysChanged, Quit, FileDialogClosed and KeymapChanged
 		Point position;                           // FilesDropped: where, in the window's pixels
 		std::vector<std::filesystem::path> files; // FilesDropped: the files; FileDialogClosed: what the user chose
 		uint64_t dialog = 0;                      // FileDialogClosed: the id showFileDialog was given
