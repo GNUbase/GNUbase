@@ -2,7 +2,8 @@
 <!-- A mixer window (docs/features/mixer-window.md, reference manual pp. 437-462): a docking window
      (docs/features/docking.md) with the left zone, whose Visibility tab lists the channels, and the main zone, which
      ui::Mixer fills with its toolbar and the fader section (#mixer). app::AppUi opens up to four of them, each with
-     the channels it hides kept in the project (mixer.set). -->
+     the channels it hides kept in the project (mixer.set). Its menu bar has the reduced menus of a window other than
+     the project window (reference manual p. 55, docs/features/main-menu.md), hidden until the user shows it. -->
 <rml>
 <head>
 	<title>Mixer</title>
@@ -27,6 +28,12 @@
 	</style>
 </head>
 <body class="docking">
+	<menubar id="menu-bar" strip="menuBar" default="hidden">
+		<button menu="file-menu">File</button>
+		<button menu="edit-menu">Edit</button>
+		<button menu="studio-menu">Studio</button>
+		<button menu="window-menu">Window</button>
+	</menubar>
 	<div class="zones">
 		<div id="left-zone" zone="left" focuszone="left" size="200" default="hidden"/>
 		<splitter for="left"/>
@@ -34,5 +41,30 @@
 			<div id="mixer"/>
 		</div>
 	</div>
+
+	<menu id="file-menu">
+		<menuitem command="file.save">Save</menuitem>
+		<menuitem command="file.saveAs">Save As...</menuitem>
+		<menuseparator/>
+		<menuitem command="file.quit">Quit</menuitem>
+	</menu>
+	<menu id="edit-menu">
+		<menuitem command="history.undo">Undo</menuitem>
+		<menuitem command="history.redo">Redo</menuitem>
+		<menuseparator/>
+		<menuitem command="window.keyCommands">Key Commands...</menuitem>
+	</menu>
+	<menu id="studio-menu">
+		<menuitem command="window.mixer">Mixer</menuitem>
+		<menuitem command="window.mixer2">Mixer 2</menuitem>
+		<menuitem command="window.mixer3">Mixer 3</menuitem>
+		<menuitem command="window.mixer4">Mixer 4</menuitem>
+		<menuseparator/>
+		<menuitem command="window.onScreenKeyboard">On-Screen Keyboard</menuitem>
+		<menuitem command="window.studioSetup">Studio Setup...</menuitem>
+	</menu>
+	<menu id="window-menu">
+		<menuitem command="window.windows">Windows...</menuitem>
+	</menu>
 </body>
 </rml>

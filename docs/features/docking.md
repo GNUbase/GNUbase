@@ -146,7 +146,9 @@ every Reset All, also of a set that had its defaults, so the app can fit the win
   container brings joins the set after the section before it in that container, with its default, and gets its button
   in the set's setup panes. While no container in the window has it, the set doesn't know it, but `ui.layout` keeps
   it: showing, hiding or moving another section keeps its place in the saved order and its entry in the hidden list,
-  so it comes back as the user left it.
+  so it comes back as the user left it. While the saved entry has an order but no hidden list, as a drag alone leaves
+  it, such a section still has its default visibility, which the window doesn't know: the entry's `default` list names
+  it, so that it keeps its place and comes back with its default (#2051).
 - **Containers that come later.** Containers added or rebuilt after `attach`, such as the mixer's channels as tracks
   come and go, go through `Docking::arrangeSections(element)` once they are in the document: the element and the
   containers and setup panes in it get the user's order and hidden sections at once. A set that has no container yet,

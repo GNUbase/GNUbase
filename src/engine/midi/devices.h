@@ -15,6 +15,7 @@ namespace gnubase::engine::midi
 	// The schema of midi.devices: devices by name, each with banks of patches ({name, program, bank, folder}).
 	Json devicesSchema();
 
-	// Registers midiDevice.install, midiDevice.set and midiDevice.remove, which change midi.devices.
+	// Registers midiDevice.install, midiDevice.set, midiDevice.import and midiDevice.remove, which change
+	// midi.devices, and midiDevice.export and midiDevice.readSetup for MIDI device setup files.
 	void registerDeviceCommands(Engine& engine);
 }

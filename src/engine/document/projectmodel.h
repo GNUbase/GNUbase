@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -47,6 +48,10 @@ namespace gnubase::engine
 	// The schema of an automation target as automationLane.add and automation.paste's targets take it
 	// (projectmodel.cpp).
 	Json automationTargetSchema();
+
+	// After media files were pointed at shorter files (pool.cpp): trims the fades of their clips and the audio events
+	// that play them, in every track version, to their new lengths, which must be positive (media.relink, #506).
+	void trimUsesToMedia(Project& project, CommandContext& context, const std::set<ObjectId>& media);
 
 	// Changes the project's sample rate (projectmodel.cpp). Linear positions are in samples, so they are rescaled to
 	// keep their time, bounded to plus or minus time::g_maxPosition. Without context no events are emitted, for
@@ -180,6 +185,12 @@ namespace gnubase::engine
 		void setSoloNotesSource(std::function<std::vector<std::pair<ObjectId, ObjectId>>()> source)
 		{
 			m_soloNotesSource = std::move(source);
+		}
+		// Runs after every change of the project: an edit, an undo or redo, another project opened. For view state kept
+		// outside the project, such as the editor views (editors.cpp), to announce what the change did to it.
+		void setChangeFollower(std::function<void(CommandContext& context)> follower)
+		{
+			m_changeFollower = std::move(follower);
 		}
 		// Sets Project::soloNotes from the source, for the editor views when they change: Solo Instrument changes
 		// what plays, not the project, so it publishes a render snapshot but leaves the project as saved and auto
@@ -322,6 +333,7 @@ namespace gnubase::engine
 		// what automation.copy copied, for automation.paste
 		std::optional<AutomationClipboard> m_automationClipboard;
 		std::function<std::vector<std::pair<ObjectId, ObjectId>>()> m_soloNotesSource;
+		std::function<void(CommandContext& context)> m_changeFollower;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
 }

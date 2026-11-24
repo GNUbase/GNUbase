@@ -4,10 +4,19 @@
 #include "engine/document/document.h"
 #include "engine/engine.h"
 
+#include <pugixml.hpp>
+
+#include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace gnubase::engine::midi
@@ -77,6 +86,127 @@ namespace gnubase::engine::midi
 			for (int channel = 1; channel <= 16; ++channel)
 				channels[std::to_string(channel)] = {{"type", "integer"}, {"minimum", 0}};
 			return {{"type", "object"}, {"properties", std::move(channels)}, {"additionalProperties", false}};
+		}
+
+		// Export Setup and Import Setup (reference manual pp. 1110, 1115): MIDI devices in an XML file of GNUbase's,
+		// <MidiDevices> with a <Device name> each, its <Bank name>s with their <Patch name program bank folder>s and
+		// its <BankAssignment channel bank>s. Programs and banks count from 0, as in midi.devices.
+		std::string writeSetup(const Json& devices)
+		{
+			pugi::xml_document document;
+			pugi::xml_node root = document.append_child("MidiDevices");
+			for (const auto& [name, device] : devices.items())
+			{
+				pugi::xml_node node = root.append_child("Device");
+				node.append_attribute("name") = name.c_str();
+				for (const Json& bank : device.at("banks"))
+				{
+					pugi::xml_node bankNode = node.append_child("Bank");
+					bankNode.append_attribute("name") = bank.at("name").get<std::string>().c_str();
+					for (const Json& patch : bank.at("patches"))
+					{
+						pugi::xml_node patchNode = bankNode.append_child("Patch");
+						patchNode.append_attribute("name") = patch.at("name").get<std::string>().c_str();
+						patchNode.append_attribute("program") = patch.at("program").get<int>();
+						if (patch.contains("bank"))
+							patchNode.append_attribute("bank") = patch.at("bank").get<int>();
+						if (patch.contains("folder"))
+							patchNode.append_attribute("folder") = patch.at("folder").get<std::string>().c_str();
+					}
+				}
+				const Json assignment = device.value("bankAssignment", Json::object());
+				for (const auto& [channel, bank] : assignment.items())
+				{
+					pugi::xml_node assigned = node.append_child("BankAssignment");
+					assigned.append_attribute("channel") = channel.c_str();
+					assigned.append_attribute("bank") = bank.get<int>();
+				}
+			}
+			std::ostringstream text;
+			document.save(text, "\t", pugi::format_default, pugi::encoding_utf8);
+			return text.str();
+		}
+
+		// An attribute's whole number into to[key], if the element has it; subject names it in the error, e.g. "the
+		// program of patch P of A".
+		void readNumber(
+			Json& to, const std::string& key, const pugi::xml_attribute& attribute, const std::string& subject)
+		{
+			if (!attribute)
+				return;
+			const std::string_view text = attribute.value();
+			long long number = 0;
+			const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
+			if (error != std::errc() || end != text.data() + text.size())
+				throw CommandError(subject + ", " + std::string(text) + ", isn't a whole number");
+			to[key] = number;
+		}
+
+		// The devices of a setup file, in its order, as midiDevice.set takes them: {name, banks, bankAssignment}.
+		Json readSetup(const std::string& path)
+		{
+			std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+			if (!in)
+				throw CommandError("can't open " + path);
+			const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+			pugi::xml_document document;
+			const pugi::xml_node root =
+				document.load_string(text.c_str()) ? document.child("MidiDevices") : pugi::xml_node();
+			if (!root)
+				throw CommandError(path + " isn't a MIDI device setup");
+			Json devices = Json::array();
+			Json byName = Json::object();
+			for (const pugi::xml_node node : root.children("Device"))
+			{
+				const std::string name = node.attribute("name").value();
+				if (name.empty())
+					throw CommandError("a MIDI device in the setup has no name");
+				if (byName.contains(name))
+					throw CommandError("the setup has the MIDI device " + name + " twice");
+				Json banks = Json::array();
+				for (const pugi::xml_node bankNode : node.children("Bank"))
+				{
+					Json patches = Json::array();
+					for (const pugi::xml_node patchNode : bankNode.children("Patch"))
+					{
+						Json patch = {{"name", patchNode.attribute("name").value()}};
+						const std::string of = " of patch " + patch.at("name").get<std::string>() + " of " + name;
+						readNumber(patch, "program", patchNode.attribute("program"), "the program" + of);
+						readNumber(patch, "bank", patchNode.attribute("bank"), "the bank" + of);
+						if (const pugi::xml_attribute folder = patchNode.attribute("folder"))
+							patch["folder"] = folder.value();
+						patches.push_back(std::move(patch));
+					}
+					banks.push_back({{"name", bankNode.attribute("name").value()}, {"patches", std::move(patches)}});
+				}
+				Json device = {{"banks", std::move(banks)}};
+				Json assignment = Json::object();
+				for (const pugi::xml_node assigned : node.children("BankAssignment"))
+				{
+					const std::string channel = assigned.attribute("channel").value();
+					readNumber(assignment, channel, assigned.attribute("bank"),
+						std::string("the bank of MIDI channel ").append(channel).append(" of ").append(name));
+				}
+				if (!assignment.empty())
+					device["bankAssignment"] = std::move(assignment);
+				byName[name] = device;
+				device["name"] = name;
+				devices.push_back(std::move(device));
+			}
+			if (const std::string wrong = validate(byName, devicesSchema(), "the setup's MIDI devices"); !wrong.empty())
+				throw CommandError(wrong);
+			for (const auto& [name, device] : byName.items())
+			{
+				const Json assignment = device.value("bankAssignment", Json::object());
+				for (const auto& [channel, bank] : assignment.items())
+					if (bank.get<size_t>() >= device.at("banks").size())
+						throw CommandError(std::string("MIDI channel ")
+								.append(channel)
+								.append(" of ")
+								.append(name)
+								.append(" is assigned a bank it doesn't have"));
+			}
+			return devices;
 		}
 	}
 
@@ -172,6 +302,71 @@ namespace gnubase::engine::midi
 					});
 				device["name"] = name;
 				return Json{{"device", std::move(device)}};
+			});
+		const Json pathSchema = {{"type", "object"}, {"properties", {{"path", {{"type", "string"}}}}},
+			{"required", {"path"}}, {"additionalProperties", false}};
+		const Json devicesResult = {{"type", "object"},
+			{"properties", {{"devices", {{"type", "array"}, {"items", device}}}}}, {"required", {"devices"}}};
+		engine.registerCommand(
+			{"midiDevice.export", 1,
+				"Export Setup (reference manual p. 1110): writes every installed MIDI device, with its banks, patches "
+				"and Bank Assignment, into a MIDI device setup file at path, XML that midiDevice.readSetup and "
+				"midiDevice.import read.",
+				pathSchema, Json::object(), true},
+			[](CommandContext& context)
+			{
+				const std::string path = context.parameters().at("path").get<std::string>();
+				std::ofstream out(std::filesystem::u8path(path), std::ios::binary | std::ios::trunc);
+				out << writeSetup(context.call("settings.get", {{"key", "midi.devices"}}).at("value"));
+				out.close();
+				if (!out)
+					throw CommandError("can't write " + path);
+				return Json::object();
+			});
+		engine.registerCommand(
+			{"midiDevice.readSetup", 1,
+				"Reads a MIDI device setup file (midiDevice.export) at path and returns its devices in the file's "
+				"order, as midiDevice.set takes them, without installing any: for the choice of devices that Import "
+				"Setup offers (reference manual p. 1115).",
+				pathSchema, devicesResult, true},
+			[](CommandContext& context)
+			{ return Json{{"devices", readSetup(context.parameters().at("path").get<std::string>())}}; });
+		Json importSchema = pathSchema;
+		importSchema["properties"]["devices"] = {{"type", "array"}, {"items", {{"type", "string"}}}};
+		engine.registerCommand(
+			{"midiDevice.import", 1,
+				"Import Setup (reference manual p. 1115): installs MIDI devices from a setup file at path "
+				"(midiDevice.export), those named in devices or else all of them. A name that is already installed "
+				"or that the file doesn't have installs none. Returns the devices installed.",
+				importSchema, devicesResult, false},
+			[&engine](CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const Json read = readSetup(parameters.at("path").get<std::string>());
+				Json chosen = parameters.contains("devices") ? Json::array() : read;
+				for (const Json& name : parameters.value("devices", Json::array()))
+				{
+					const auto found = std::find_if(
+						read.begin(), read.end(), [&name](const Json& each) { return each.at("name") == name; });
+					if (found == read.end())
+						throw CommandError("the setup has no MIDI device " + name.get<std::string>());
+					chosen.push_back(*found);
+				}
+				engine.modifySetting(context, "midi.devices",
+					[&chosen](const Json& value)
+					{
+						Json changed = value;
+						for (Json each : chosen)
+						{
+							const auto name = each.at("name").get<std::string>();
+							if (changed.contains(name))
+								throw CommandError("there is already a MIDI device " + name);
+							each.erase("name");
+							changed[name] = std::move(each);
+						}
+						return changed;
+					});
+				return Json{{"devices", std::move(chosen)}};
 			});
 		engine.registerCommand({"midiDevice.remove", 1,
 								   "Removes an installed MIDI device (midiDevice.install) by name. Tracks that name it "

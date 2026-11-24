@@ -508,6 +508,87 @@ TEST_CASE(
 	CHECK(elements(app, "#prepare-archive-dialog").empty());
 }
 
+TEST_CASE("Clean Up Media Folders from the Media menu lists the unused files and removes them after asking", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const auto cleanUp = [&app]
+	{
+		click(app, "#menu-bar button[menu=media-menu]");
+		click(app, "#media-menu menuitem[command=\"pool.cleanup\"]");
+	};
+	// Unsaved, the project has no media folder and nothing to remove.
+	cleanUp();
+	REQUIRE(app.waitUntil([&app] { return message(app) == "No files in the media folders are unused."; }));
+	CHECK(elements(app, "#cleanup-dialog").empty());
+
+	// A numbered file that a load left in the project's media folder (#1827), which nothing uses.
+	std::filesystem::create_directories(dir.path() / "project");
+	app.call(
+		"project.save", {{"path", (dir.path() / "project" / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	const std::filesystem::path unused = dir.path() / "project" / "Song media" / "2-kick.wav";
+	writeAudio(unused, 480);
+
+	// It asks first, as removing files can't be undone, with each file and its size; Cancel keeps them.
+	cleanUp();
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#cleanup-dialog").empty(); }));
+	CHECK(elements(app, "#cleanup-message").at(0).value("text", "") ==
+		"1 file in the media folders, 0.00 MB, isn't used by the project, its undo history or a template. Remove it "
+		"from the disk? This can't be undone.");
+	const Json files = elements(app, "#cleanup-files .path");
+	REQUIRE(files.size() == 1);
+	CHECK(std::filesystem::equivalent(std::filesystem::u8path(files.at(0).value("text", "")), unused));
+	CHECK(elements(app, "#cleanup-files .size").at(0).value("text", "") == "0.00 MB");
+	click(app, "#cleanup-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#cleanup-dialog").empty(); }));
+	CHECK(std::filesystem::exists(unused));
+
+	// Remove removes them and says so in the pool.
+	cleanUp();
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#cleanup-dialog").empty(); }));
+	click(app, "#cleanup-dialog button.primary");
+	REQUIRE(app.waitUntil([&app] { return message(app) == "Removed 1 file, 0.00 MB, from the disk."; }));
+	CHECK(!has(elements(app, "#pool-message").at(0), "error"));
+	CHECK(!std::filesystem::exists(unused));
+}
+
+TEST_CASE("Clean Up Media Folders says why the engine refused to list the unused files", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const std::filesystem::path file = dir.path() / "Song.dawproject";
+	app.call("project.save", {{"path", file.u8string()}, {"embedMedia", false}});
+	// A project file it can't read may refer to any file, so the engine removes none.
+	{
+		std::ofstream broken(file, std::ios::binary | std::ios::trunc);
+		broken << "not a project";
+	}
+	click(app, "#menu-bar button[menu=media-menu]");
+	click(app, "#media-menu menuitem[command=\"pool.cleanup\"]");
+	REQUIRE(app.waitUntil([&app] { return message(app).rfind("Clean Up Media Folders failed: ", 0) == 0; }));
+	CHECK(message(app).find("can't tell which files") != std::string::npos);
+	CHECK(has(elements(app, "#pool-message").at(0), "error"));
+	CHECK(elements(app, "#cleanup-dialog").empty());
+}
+
+TEST_CASE("the pool panel says which files Clean Up Media Folders couldn't remove", "[ui]")
+{
+	test::UiApp app({640, 480});
+	ui::EngineBinding binding{app.engine()};
+	Rml::ElementDocument& document = app.show("other.rml");
+	ui::PoolPanel panel(binding, *document.GetElementById("box"), [](const std::string&) {}, [] { return true; });
+	panel.report("media.cleanup",
+		{0,
+			{{"files", Json::array({"a.wav", "b.wav"})}, {"sizes", Json::array({1048576, 524288})}, {"size", 1572864},
+				{"failed", Json::array({"c.wav"})}},
+			{}});
+	CHECK(document.GetElementById("pool-message")->GetInnerRML() ==
+		"Removed 2 files, 1.50 MB, from the disk; couldn't remove c.wav.");
+	CHECK(document.GetElementById("pool-message")->IsClassSet("error"));
+}
+
 TEST_CASE("the pool panel says which media and frozen tracks Prepare Archive left alone because they changed meanwhile",
 	"[ui]")
 {

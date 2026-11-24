@@ -74,6 +74,28 @@
 	min-height: 40dp;
 }
 
+/* The auditioning column (p. 1251): the arrow shows in the row of the event that starts closest before the project
+   cursor, .at-cursor. */
+.list-audition
+{
+	flex: 0 0 16dp;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.list-audition svg.list-audition-arrow
+{
+	width: 10dp;
+	height: 10dp;
+	visibility: hidden;
+}
+
+.list-row.at-cursor .list-audition-arrow
+{
+	visibility: visible;
+}
+
 .list-type
 {
 	flex: 0 0 80dp;
