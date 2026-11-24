@@ -932,6 +932,8 @@ namespace gnubase::engine
 			sequence->articulations = channel.articulations;
 			sequence->drumInput = channel.drumInput;
 			sequence->inputChannel = channel.inputChannel;
+			sequence->expressionBypass = channel.expressionBypass;
+			sequence->expressionInputs = channel.expressionInputs;
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
 			sequence->preNotes = channel.preNotes;

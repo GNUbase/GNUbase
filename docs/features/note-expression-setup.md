@@ -25,17 +25,24 @@ channel's `noteExpression` in `src/engine/document/document.h`).
   and messages and values out of range, changing nothing; a project file's values out of range load clamped, an
   unknown message as none and an unknown expression not at all.
 
+- **Live input** (p. 1303): the track's MIDI input plays each assigned message as the expression of the notes the
+  input holds on the message's channel, every one of them getting the same value, over the expression's range: the
+  message's lowest value plays `min`, its highest `max`. The sequencer turns them into note expression events before
+  the inserts above the divider and the sends before the modifiers get the input, in place of the message, which no
+  longer plays (`MidiSequencer::assignExpression`, `src/engine/audio/sequencer.cpp`); one message can play several
+  expressions, and a message with no note held plays nothing. The track records the input with them, so they record
+  into the notes it records as their expression points (#1515). The bypass leaves the input's expression out of what
+  plays, MPE input's too, but not out of what records.
+
 `tests/noteexpression_tests.cpp` checks `noteExpression.set` with `project.get`, what a call leaves out, an expression
 back at its default leaving the list, saving and loading, undo, the refusals and a file's values loaded clamped, and
-that a bypassed track's note plays without its expression and plays it again with the bypass off.
+that a bypassed track's note plays without its expression and plays it again with the bypass off, and that the input
+plays a controller assigned to two expressions as the expression of the notes it holds, with and without the bypass.
 
 ## Not yet
 
 - The inspector's Note Expression section (pp. 1300-1302) with its expression list and In column, Parameter Details
   with MIDI Learn, and the Global section's Show Additional Functions; the expressions' visibility, which Parameter
   Selection in the key editor's expression editor follows (p. 1309); the parameter colors.
-- The track's MIDI input playing the assigned messages as the expression of its sounding notes over their ranges,
-  live and when recording, and the bypass leaving out the expression of live input; MIDI Learn assigning the next
-  message the track receives (p. 1304).
 - Loading and saving input assignments as presets (p. 1304), Record MIDI as Note Expression and overdub (p. 1302,
   #1515).

@@ -1106,3 +1106,41 @@ TEST_CASE("a track's note expression bypass plays its notes without their expres
 					{100, 0xE3, 0}, {100, 0xB3, 74}, {100, 0x93, 62}, {600, 0xB3, 74}, {1100, 0x83, 62}});
 	}
 }
+
+TEST_CASE("a track's MIDI input plays the assigned messages as the expression of its held notes, over their ranges",
+	"[integration]")
+{
+	for (const bool bypass : {false, true})
+	{
+		Setup setup;
+		Client& client = setup.client;
+		run(client, "noteExpression.set",
+			{{"track", setup.track}, {"bypass", bypass},
+				{"inputs", {input("brightness", "cc1", 0.0, 0.5), input("pan", "cc1", 1.0, 0.0)}}});
+		run(client, "audio.render", {{"frames", 64}});
+		run(client, "midi.capture", {{"start", true}});
+		// CC 1 before the note finds none to play on; CC 7 isn't assigned and passes.
+		run(client, "midi.inject",
+			{{"channel", setup.channel},
+				{"messages",
+					{message(0, {0xB2, 1, 127}), message(0, {0x92, 60, 100}), message(0, {0x92, 64, 100}),
+						message(0, {0xB2, 1, 127}), message(0, {0xB2, 7, 100}), message(0, {0x82, 60, 0}),
+						message(0, {0x82, 64, 0})}}});
+		run(client, "audio.render", {{"frames", 128}});
+		std::vector<std::vector<int64_t>> played;
+		for (std::vector<int64_t>& each : capturedFrom(client, 0))
+			played.emplace_back(each.begin() + 1, each.end());
+		INFO("bypass " << bypass);
+		// Brightness at the top of its range, half, as MIDI 1.0 CC 74 on each note, which the capture puts before a
+		// note-on of the same frame; pan reversed, left, which MIDI 1.0 doesn't have. With the bypass the notes play
+		// without it.
+		if (bypass)
+			CHECK(played ==
+				std::vector<std::vector<int64_t>>{
+					{0x92, 60, 100}, {0x92, 64, 100}, {0xB2, 7, 100}, {0x82, 60, 0}, {0x82, 64, 0}});
+		else
+			CHECK(played ==
+				std::vector<std::vector<int64_t>>{{0xB2, 74, 64}, {0x92, 60, 100}, {0xB2, 74, 64}, {0x92, 64, 100},
+					{0xB2, 7, 100}, {0x82, 60, 0}, {0x82, 64, 0}});
+	}
+}
