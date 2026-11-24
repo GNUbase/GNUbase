@@ -1074,3 +1074,88 @@ TEST_CASE("the inspector's Current Arranger Chain list moves and copies steps dr
 	CHECK(window.app.call("history.get").at("steps").size() == undoSteps + 1);
 	CHECK(order() == std::vector<uint64_t>{c, b, a, a, b});
 }
+
+TEST_CASE("arranger events selected on the lane deselect the automation points and points deselect them", "[ui]")
+{
+	// #2076: automation points are among the selections that arranger events selected deselect, and back.
+	Window window;
+	window.app.call("arranger.add", {{"position", 0}, {"end", 4 * g_quarter}});
+	const uint64_t track = window.app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	const auto lane = window.app.call("automationLane.add", {{"track", track}, {"target", {{"type", "volume"}}}})
+						  .at("lane")
+						  .at("id")
+						  .get<uint64_t>();
+	window.app.call("automationPoint.add", {{"lane", lane}, {"points", {{{"position", g_quarter}, {"value", -6.0}}}}});
+	const uint64_t point = window.app.call("automationLane.list", {{"track", track}})
+							   .at("lanes")
+							   .at(0)
+							   .at("points")
+							   .at(0)
+							   .at("id")
+							   .get<uint64_t>();
+	window.display.showAutomation(track, true);
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return window.shown(".arranger-lane-event") == 1 && !window.hasClass(".arranger-lane-row", "hidden") &&
+				window.display.automationTargets(track) != nullptr &&
+				!window.display.project().at("automation").empty();
+		}));
+	window.display.setTool(ui::Tool::ObjectSelection);
+	const auto selected = [&window] { return window.hasClass(".arranger-lane-event", "selected"); };
+	const auto selectPoint = [&]
+	{
+		window.display.selectPoints({{lane, {point}}});
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// Points selected, then a click on an arranger event: no points stay selected.
+	selectPoint();
+	REQUIRE_FALSE(window.display.selectedPoints().empty());
+	window.app.ui().click(std::nullopt, {"", 0, window.at(1.0)}, ui::MouseButton::Left, 1, {});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(selected());
+	CHECK(window.display.selectedPoints().empty());
+	// The arranger event selected, then points: the arranger event goes.
+	selectPoint();
+	CHECK(window.app.waitUntil([&] { return !selected(); }));
+	CHECK_FALSE(window.display.selectedPoints().empty());
+}
+
+TEST_CASE("a drag of selected arranger events, one at the project start, to the left changes nothing", "[ui]")
+{
+	// #2076: none of the arranger events dragged goes before the project start, so with one there they stay.
+	Window window;
+	const auto add = [&window](int64_t from, int64_t to)
+	{ return window.app.call("arranger.add", {{"position", from}, {"end", to}}).at("event").at("id").get<uint64_t>(); };
+	const uint64_t a = add(0, 4 * g_quarter);
+	const uint64_t b = add(4 * g_quarter, 8 * g_quarter);
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.shown(".arranger-lane-event") == 2 && !window.hasClass(".arranger-lane-row", "hidden"); }));
+	window.display.setTool(ui::Tool::ObjectSelection);
+	const auto x = [&window](uint64_t event)
+	{ return window.box(".arranger-lane-event[event=\"" + std::to_string(event) + "\"]").at("x").get<double>(); };
+	const auto showsWhereItIs = [&]
+	{ return std::abs(x(a) - window.at(0.0).x) < 2.0 && std::abs(x(b) - window.at(2.0).x) < 2.0; };
+	// B, then A with Ctrl: a press on B right after a click on it would be a double click.
+	window.app.ui().click(std::nullopt, {"", 0, window.at(3.0)}, ui::MouseButton::Left, 1, {});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	window.app.ui().click(std::nullopt, {"", 0, window.at(1.0)}, ui::MouseButton::Left, 1, {"ctrl"});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	const auto selected = [&window](uint64_t event)
+	{ return window.hasClass(".arranger-lane-event[event=\"" + std::to_string(event) + "\"]", "selected"); };
+	REQUIRE((selected(a) && selected(b)));
+	const size_t steps = window.app.call("history.get").at("steps").size();
+
+	// B dragged a bar to the left would take A before the project start: both show where they are.
+	window.app.ui().press(std::nullopt, {"", 0, window.at(3.0)}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, {"", 0, window.at(1.0)});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(showsWhereItIs());
+	window.app.ui().release(std::nullopt, {"", 0, window.at(1.0)}, ui::MouseButton::Left);
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.events()[0].at("position") == 0);
+	CHECK(window.events()[1].at("position") == 4 * g_quarter);
+	CHECK(window.app.call("history.get").at("steps").size() == steps);
+	CHECK(showsWhereItIs());
+}

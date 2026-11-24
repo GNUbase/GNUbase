@@ -537,6 +537,13 @@ namespace gnubase::ui
 				moved.shift = std::min(edgeTo(start, id, dx), end) - start;
 			else
 				moved.endShift = std::max(edgeTo(end, id, dx), start) - end;
+			if (group) // none of them before the project start
+			{
+				for (const uint64_t each : m_selection)
+					if (const Event* selected = find(each))
+						moved.shift = std::max(moved.shift, -seconds(selected->start));
+				moved.endShift = moved.shift;
+			}
 			m_moved = moved;
 			place();
 			return true;
@@ -621,6 +628,12 @@ namespace gnubase::ui
 			for (const uint64_t id : m_selection)
 				if (const Event* each = find(id))
 					by = std::max(by, -each->position);
+			if (by == 0) // held at the project start: nothing moves
+			{
+				m_moved.reset();
+				place();
+				return;
+			}
 			Json commands = Json::array();
 			for (const uint64_t id : m_selection)
 				if (const Event* each = find(id); each != nullptr && id != found.id)
