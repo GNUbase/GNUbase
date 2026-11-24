@@ -3675,6 +3675,30 @@ TEST_CASE("the draw tool adds and drags volume curve points, the erase tool remo
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents().empty(); }));
 }
 
+TEST_CASE("Ctrl and the draw tool draw a volume curve in place of the points the drawing passes", "[unit]")
+{
+	// Reference manual p. 400: a point where the press was and one at each move, as one undo step.
+	Fixture f;
+	f.display.setTool(ui::Tool::Draw);
+	f.click(225, 20);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
+	f.automation.press(std::nullopt, f.at(210, 20), ui::MouseButton::Left, {"ctrl"});
+	f.automation.move(std::nullopt, f.at(220, 10), {"ctrl"});
+	f.automation.move(std::nullopt, f.at(230, 30), {"ctrl"});
+	f.automation.release(std::nullopt, f.at(240, 20), ui::MouseButton::Left, {"ctrl"});
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 4; }));
+	const Json curve = f.audioEvents()[0].at("volumeCurve");
+	const std::vector<std::pair<int64_t, double>> drawn = {{4800, 0.0}, {9600, 3.5}, {14400, -6.0}, {19200, 0.0}};
+	for (size_t i = 0; i < drawn.size(); ++i)
+	{
+		CHECK(curve[i].at("position") == drawn[i].first);
+		CHECK(std::abs(curve[i].at("volume").get<double>() - drawn[i].second) < 0.1);
+	}
+	f.call("history.undo");
+	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
+}
+
 TEST_CASE("the draw and erase tools pass over curve points outside the event, which it doesn't show", "[unit]")
 {
 	// A split keeps the whole curve in both halves: the point 0.1 seconds in lies before the right half's start.
