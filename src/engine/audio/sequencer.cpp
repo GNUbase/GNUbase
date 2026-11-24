@@ -889,13 +889,15 @@ namespace gnubase::engine
 			m_sendOut[running.slot].merge(sent);
 			holdNotes(sent, m_sendHeld[running.slot]);
 		}
-		// Those to the track's own output get the notes only, so the track's other events reach it once.
+		// Those to the track's own output get the notes only, with their expression, so the track's other events
+		// reach it once.
 		source.removeIf(
 			[](const graph::ProcessEvent& event)
 			{
 				return event.type != graph::ProcessEvent::Type::NoteOn &&
 					event.type != graph::ProcessEvent::Type::NoteOff &&
-					event.type != graph::ProcessEvent::Type::PolyPressure;
+					event.type != graph::ProcessEvent::Type::PolyPressure &&
+					event.type != graph::ProcessEvent::Type::NoteExpression;
 			});
 		for (size_t i = sequence.insertCount; i < sequence.effects.size(); ++i)
 		{
