@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -47,6 +48,10 @@ namespace gnubase::engine
 	// The schema of an automation target as automationLane.add and automation.paste's targets take it
 	// (projectmodel.cpp).
 	Json automationTargetSchema();
+
+	// After media files were pointed at shorter files (pool.cpp): trims the fades of their clips and the audio events
+	// that play them, in every track version, to their new lengths, which must be positive (media.relink, #506).
+	void trimUsesToMedia(Project& project, CommandContext& context, const std::set<ObjectId>& media);
 
 	// Changes the project's sample rate (projectmodel.cpp). Linear positions are in samples, so they are rescaled to
 	// keep their time, bounded to plus or minus time::g_maxPosition. Without context no events are emitted, for

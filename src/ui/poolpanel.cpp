@@ -133,6 +133,8 @@ namespace gnubase::ui
 				return "Find Missing Files";
 			if (command == "media.prepareArchive")
 				return "Prepare Archive";
+			if (command == "media.cleanup")
+				return "Clean Up Media Folders";
 			for (const Button& button : g_buttons)
 				if (command == button.command)
 					return button.label;
@@ -278,20 +280,31 @@ namespace gnubase::ui
 			});
 	}
 
-	void PoolPanel::askPrepareArchive(int external, int missing)
+	Rml::ElementDocument* PoolPanel::ask(const char* file, std::function<void()> proceed)
 	{
 		if (m_question || !m_root)
-			return; // asking already
-		// From the folder of the panel's document, modal, in the panel's window.
+			return nullptr; // asking already
 		const std::string path = std::filesystem::u8path(m_root->GetOwnerDocument()->GetSourceURL())
-									 .replace_filename("prepare-archive.rml")
+									 .replace_filename(file)
 									 .generic_u8string();
 		Rml::ElementDocument* dialog = m_root->GetContext()->LoadDocument(path);
 		if (dialog == nullptr)
 		{
 			logging::warning("The pool can't open the dialog {}", path);
-			return;
+			return nullptr;
 		}
+		m_question = dialog->GetObserverPtr();
+		m_proceed = std::move(proceed);
+		dialog->AddEventListener(g_dialogCloseEvent, this);
+		dialog->Show(Rml::ModalFlag::Modal);
+		return dialog;
+	}
+
+	void PoolPanel::askPrepareArchive(int external, int missing)
+	{
+		Rml::ElementDocument* dialog = ask("prepare-archive.rml", [this] { m_binding.send("media.prepareArchive"); });
+		if (dialog == nullptr)
+			return;
 		if (Rml::Element* message = dialog->GetElementById("prepare-archive-message"))
 			message->SetInnerRML(counted(static_cast<size_t>(external), "file") +
 				(external == 1 ? " of the project is outside the project folder."
@@ -301,9 +314,53 @@ namespace gnubase::ui
 							(missing == 1 ? " more is missing and can't be copied."
 										  : " more are missing and can't be copied.")) +
 				(external == 1 ? " Copy it into its Audio folder?" : " Copy them into its Audio folder?"));
-		m_question = dialog->GetObserverPtr();
-		dialog->AddEventListener(g_dialogCloseEvent, this);
-		dialog->Show(Rml::ModalFlag::Modal);
+	}
+
+	void PoolPanel::cleanup()
+	{
+		m_binding.send("media.cleanup", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& listed)
+			{
+				if (alive.expired())
+					return;
+				if (!listed.ok())
+				{
+					report("media.cleanup", listed);
+					return;
+				}
+				const Json& files = listed.value.at("files");
+				if (files.empty())
+				{
+					showMessage("No files in the media folders are unused.", false);
+					return;
+				}
+				// Removing files from the disk can't be undone: it asks first.
+				Rml::ElementDocument* dialog = ask("cleanup.rml",
+					[this, files, alive]
+					{
+						m_binding.send("media.cleanup", {{"files", files}},
+							[this, alive](const engine::Result& removed)
+							{
+								if (!alive.expired())
+									report("media.cleanup", removed);
+							});
+					});
+				if (dialog == nullptr)
+					return;
+				const bool one = files.size() == 1;
+				if (Rml::Element* message = dialog->GetElementById("cleanup-message"))
+					message->SetInnerRML(encode(counted(files.size(), "file") + " in the media folders, " +
+						megabytes(listed.value.at("size").get<uint64_t>()) + (one ? ", isn't" : " in all, aren't") +
+						" used by the project, its undo history or a template. Remove " + (one ? "it" : "them") +
+						" from the disk? This can't be undone."));
+				std::string rml;
+				const Json& sizes = listed.value.at("sizes");
+				for (size_t i = 0; i < files.size(); ++i)
+					rml += R"(<div class="cleanup-file"><span class="path">)" + encode(files[i].get<std::string>()) +
+						R"(</span><span class="size">)" + megabytes(sizes[i].get<uint64_t>()) + "</span></div>";
+				if (Rml::Element* list = dialog->GetElementById("cleanup-files"))
+					list->SetInnerRML(rml);
+			});
 	}
 
 	void PoolPanel::ProcessEvent(Rml::Event& event)
@@ -312,8 +369,10 @@ namespace gnubase::ui
 		{
 			m_question->RemoveEventListener(g_dialogCloseEvent, this);
 			m_question.reset();
-			if (event.GetParameter<Rml::String>("result", "") == "ok")
-				m_binding.send("media.prepareArchive");
+			const std::function<void()> proceed = std::move(m_proceed);
+			m_proceed = nullptr;
+			if (event.GetParameter<Rml::String>("result", "") == "ok" && proceed)
+				proceed();
 			return;
 		}
 		Rml::Element* target = event.GetTargetElement();
@@ -457,6 +516,16 @@ namespace gnubase::ui
 						(changed == 1 ? " changed meanwhile and was left as it is"
 									  : " changed meanwhile and were left as they are");
 			text += ".";
+		}
+		else if (command == "media.cleanup")
+		{
+			text = "Removed " + counted(value.at("files").size(), "file") + ", " +
+				megabytes(value.at("size").get<uint64_t>()) + ", from the disk";
+			const Json& failed = value.at("failed");
+			for (size_t i = 0; i < failed.size(); ++i)
+				text += (i == 0 ? "; couldn't remove " : ", ") + failed[i].get<std::string>();
+			showMessage(text + ".", !failed.empty());
+			return;
 		}
 		showMessage(text, false);
 	}

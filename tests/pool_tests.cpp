@@ -739,6 +739,37 @@ TEST_CASE("media.locate takes a file within a millisecond of a length that anoth
 	const Json take = byId(run(song.client, "project.get").at("media"), named("take.wav").at("id"));
 	CHECK(fs::equivalent(fs::u8path(take.at("path").get<std::string>()), moved / "near" / "TAKE.wav"));
 	CHECK(fs::u8path(take.at("path").get<std::string>()).filename().u8string() == "TAKE.wav");
+	// The media file takes its new file's length, not the rounded one, and undo gives the old one back (#506).
+	CHECK(take.at("length") == 4810);
+	run(song.client, "history.undo");
+	CHECK(byId(run(song.client, "project.get").at("media"), take.at("id")).at("length") == 4800);
+
+	// A file a few frames shorter than the rounded length: the event, which played up to that length, is trimmed to
+	// the new end in the same undo step, so it stays within its clip and can still be changed.
+	const auto takeEvent = [&song, &take]
+	{
+		const Json events = run(song.client, "project.get").at("audioEvents");
+		const auto found = std::find_if(events.begin(), events.end(),
+			[&song, &take](const Json& event)
+			{
+				return byId(run(song.client, "project.get").at("clips"), event.at("clip")).at("media") == take.at("id");
+			});
+		REQUIRE(found != events.end());
+		return *found;
+	};
+	REQUIRE(takeEvent().at("length") == 4800);
+	writeFile(moved / "short" / "take.wav", 4795, 1);
+	CHECK(runJob(song.client, "media.locate", {{"folder", utf8(moved / "short")}}).at("relinked") ==
+		Json::array({take.at("id")}));
+	CHECK(byId(run(song.client, "project.get").at("media"), take.at("id")).at("length") == 4795);
+	const Json trimmed = takeEvent();
+	CHECK(trimmed.at("offset") == 0);
+	CHECK(trimmed.at("length") == 4795);
+	run(song.client, "audioEvent.set", {{"event", trimmed.at("id")}, {"volume", -3.0}});
+	run(song.client, "history.undo");
+	run(song.client, "history.undo");
+	CHECK(byId(run(song.client, "project.get").at("media"), take.at("id")).at("length") == 4800);
+	CHECK(takeEvent().at("length") == 4800);
 }
 
 TEST_CASE("media.removeMissing removes missing files with their clips and events", "[integration]")
@@ -1274,6 +1305,40 @@ TEST_CASE("media.relink skips an entry with length whose file went or changed, a
 	CHECK(run(song.client, "media.relink",
 			  {{"files", Json::array({{{"media", b}, {"path", utf8(song.library / "c.wav")}}})}, {"project", project}})
 			  .at("relinked") == Json::array({b}));
+}
+
+TEST_CASE("media.relink refuses a file without sample frames for a used media file", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "a.wav", 4800, 1);
+	writeFile(song.library / "short.wav", 4795, 1);
+	writeFile(song.library / "empty.wav", 0, 1);
+	const uint64_t clip = song.clip(song.library / "a.wav");
+	const uint64_t media = song.mediaOf(clip);
+	const auto track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	run(song.client, "audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}});
+	const auto entry = [&song, media](const std::string& file)
+	{ return Json{{"media", media}, {"path", utf8(song.library / file)}}; };
+	const Json before = run(song.client, "project.get");
+	const size_t steps0 = steps(song.client);
+
+	// Alone, and after a shorter file for the same media file in the same call: refused, nothing changes.
+	CHECK_THAT(reject(song.client, "media.relink", {{"files", Json::array({entry("empty.wav")})}}),
+		ContainsSubstring("no sample frames"));
+	CHECK_THAT(reject(song.client, "media.relink", {{"files", Json::array({entry("short.wav"), entry("empty.wav")})}}),
+		ContainsSubstring("no sample frames"));
+	const Json after = run(song.client, "project.get");
+	CHECK(after.at("media") == before.at("media"));
+	CHECK(after.at("audioEvents") == before.at("audioEvents"));
+	CHECK(steps(song.client) == steps0);
+
+	// An entry with length is skipped instead.
+	Json checked = entry("empty.wav");
+	checked["length"] = 0;
+	const Json skipped = run(song.client, "media.relink", {{"files", Json::array({checked})}});
+	CHECK(skipped.at("relinked").empty());
+	CHECK(skipped.at("skipped") == Json::array({media}));
+	CHECK(byId(run(song.client, "project.get").at("media"), media).at("length") == 4800);
 }
 
 TEST_CASE("a job's final command leaves a project opened while the job runs alone", "[integration]")

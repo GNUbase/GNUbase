@@ -246,6 +246,7 @@
 		<menuitem command="pool.findMissing">Find Missing Files...</menuitem>
 		<menuitem command="media.removeMissing">Remove Missing Files</menuitem>
 		<menuitem command="media.conform">Conform Files</menuitem>
+		<menuitem command="pool.cleanup">Clean Up Media Folders...</menuitem>
 		<menuseparator/>
 		<menuitem command="pool.prepareArchive">Prepare Archive</menuitem>
 	</menu>

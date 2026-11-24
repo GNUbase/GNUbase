@@ -648,6 +648,15 @@ namespace gnubase::engine
 		}
 	}
 
+	void trimUsesToMedia(Project& project, CommandContext& context, const std::set<ObjectId>& media)
+	{
+		std::map<ObjectId, Rescale> rescales;
+		for (const ObjectId id : media)
+			rescales[id] = {1.0, project.media.at(id).length};
+		if (!rescales.empty())
+			rescaleUses(project, context, rescales);
+	}
+
 	void ProjectModel::registerPoolCommands(Engine& engine, Jobs& jobs)
 	{
 		const Json integer = {{"type", "integer"}};
