@@ -132,8 +132,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
 - **Messages.** `#pool-message` says what the last pool command did: how many missing files Find Missing Files found,
   what Remove Unused Media and Remove Missing Files removed, how many files Conform Files converted, how many files
   Prepare Archive copied and how many media files and frozen tracks it left alone because they changed meanwhile
-  (`changed`, `changedTracks`, #2001), or why one failed, with the state class `.error`, which the themes color as
-  danger. The app hears the results of
+  (`changed`, `changedTracks`, #2001), what Clean Up Media Folders removed from the disk, or why one failed, with the
+  state class `.error`, which the themes color as danger. The app hears the results of
   `pool.removeUnused`, `media.locate`, `media.removeMissing`, `media.conform` and `media.prepareArchive` (Media >
   Prepare Archive, [backup.md](backup.md)) from the toolbar, the Media menu and
   the folder dialog alike (`EngineBinding::onResult`, [ui-engine-binding.md](ui-engine-binding.md)) and opens the
@@ -157,6 +157,11 @@ the pool and conforming files to the project's sample rate. The engine commands 
   sends `media.locate` with the folder; from the toolbar, the dialogs belong to the window the pool shows in. Remove
   Unused Media, Remove Missing Files, Conform Files and Create Folder send `pool.removeUnused`,
   `media.removeMissing`, `media.conform` and `poolFolder.add`.
+- **Media > Clean Up Media Folders** (`pool.cleanup`, `ui::PoolPanel::cleanup`, #1827) opens the pool and lists the
+  files `media.cleanup` finds unused: none says so in the message line; else `resources/ui/cleanup.rml` asks, as
+  removing files from the disk can't be undone, with how many there are, their size in all and each file with its size
+  (`#cleanup-files`), and Remove sends `media.cleanup` with them. The message line then says how many it removed and
+  their size, and names the files it couldn't remove (`failed`) with the state class `.error`.
 
 ## Not yet
 
