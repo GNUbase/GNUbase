@@ -643,8 +643,9 @@ namespace gnubase::engine
 	{
 		auto views = std::make_shared<Views>();
 		model.setSoloNotesSource([views, &model] { return soloNotes(*views, model); });
-		// A change of the project that removes parts from an open editor, brings them back or closes it, as a new
-		// project does, announces the editor's view, so that clients that follow events learn of it (#625).
+		// A change of the project that changes an open editor's parts (removes or adds them, brings them back or
+		// orders them anew) or closes it, as a new project does, announces the editor's view, so that clients that
+		// follow events learn of it (#625).
 		model.setChangeFollower(
 			[views, &model](CommandContext& context)
 			{
@@ -779,8 +780,8 @@ namespace gnubase::engine
 			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. "
 			"acousticFeedback: the editor plays a note while it is moved or drawn (pp. 1192, 1259). View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors. An edit, undo or redo that "
-			"removes an open editor's parts, brings them back or closes it, and a project that closes it, emit "
-			"editor.changed with its view.";
+			"changes an open editor's parts (removes, adds, brings back or reorders them) or closes it, and a "
+			"project that closes it, emit editor.changed with its view.";
 		const auto editorOnly = [&](Json properties = Json::object())
 		{
 			properties["editor"] = editorSchema;

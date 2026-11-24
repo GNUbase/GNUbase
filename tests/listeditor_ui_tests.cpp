@@ -1177,6 +1177,15 @@ TEST_CASE("the auditioning column points at the event at the cursor, locates to 
 	f.app.call("transport.locate", {{"position", samples(g_quarter)}});
 	f.settle(f.high);
 	CHECK(pointed() == std::vector<std::string>{high});
+	// An event that moves without changing the list's order takes the arrow along: the program change moves from 2
+	// quarters to 1.25, still after the high note, past the cursor at 1.5 quarters.
+	f.app.call("transport.locate", {{"position", samples(g_quarter + (g_quarter / 2))}});
+	f.app.call("controller.set",
+		{{"part", f.part},
+			{"controllers", Json::array({{{"id", f.events[1]}, {"position", g_quarter + (g_quarter / 4)}}})}});
+	REQUIRE(f.app.waitUntil([&] { return pointed() == std::vector<std::string>{std::to_string(f.events[1])}; }));
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return pointed() == std::vector<std::string>{high}; }));
 
 	// A click in the column moves the cursor to the event's start; a double click starts playback there, and another
 	// one stops it.
@@ -1188,6 +1197,16 @@ TEST_CASE("the auditioning column points at the event at the cursor, locates to 
 	f.app.call("audio.start");
 	f.click(of(row("note", f.low) + " .list-audition"), 2);
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("playing") == true; }));
+	// The double click's first click locates to the note, its dblclick starts playback, and the click that ends it
+	// doesn't locate again, which would play the first notes twice.
+	std::vector<std::string> sent;
+	const Json log = f.app.call("engine.commandLog");
+	for (const Json& each : log.at("commands"))
+		if (each.at("command") == "transport.locate" || each.at("command") == "transport.toggle")
+			sent.push_back(each.at("command").get<std::string>());
+	REQUIRE(sent.size() >= 2);
+	CHECK(sent[sent.size() - 2] == "transport.locate");
+	CHECK(sent.back() == "transport.toggle");
 	// The arrow follows the playback position, past the events at the start.
 	const std::vector<std::string> atStart = {std::to_string(f.low), std::to_string(f.events[0])};
 	REQUIRE(f.app.waitUntil(

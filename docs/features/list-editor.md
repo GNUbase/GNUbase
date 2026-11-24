@@ -122,7 +122,7 @@ doesn't have (#1580).
 
 The setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
 ([docking.md](docking.md)); the MIDI SysEx Editor dialog (address, ASCII, decimal and binary displays, Insert and
-Delete, importing and exporting .syx files); the Focus menu's user
+Delete, importing and exporting .syx files); the project cursor in the event display (p. 1245); the Focus menu's user
 presets and Setup (the transform editor); text, lyrics and SMF events, which the project has no type for; muting events
 and the mute tool (notes have no mute yet); the selection rectangle in the event display; key commands other than Delete
 and Backspace; the ruler, zooming and scrolling the event display; Set up Window Layout, the status line, nudging, snap

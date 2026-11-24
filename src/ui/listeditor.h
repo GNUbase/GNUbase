@@ -109,6 +109,8 @@ namespace gnubase::ui
 		// The auditioning column's arrow (p. 1251): at the last row shown that starts at the cursor or before it.
 		// Returns whether it moved.
 		bool showCursor();
+		// A transport.changed or transport.get status: the cursor, and while playing the playback position.
+		void followTransport(const engine::Json& status);
 		bool shown(const Row& row, const Row* first) const;
 		std::string text(const Row& row, const std::string& field) const;
 		// The field's value as a whole number in the list's units, if the row's type has it.
@@ -186,7 +188,8 @@ namespace gnubase::ui
 		std::vector<time::Ticks> m_starts; // the rows shown's starts, in their order
 		int m_atCursor = -1;               // the row shown that the arrow is at, -1 for none
 		std::vector<Subscription> m_subscriptions;
-		std::optional<Subscription> m_position;                       // while playing
+		std::optional<Subscription> m_position; // while playing
+		bool m_doubleClicked = false;           // the auditioning column's dblclick, until the click that ends it
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 	};
 }

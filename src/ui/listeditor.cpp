@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <tuple>
+#include <utility>
 
 namespace gnubase::ui
 {
@@ -280,29 +281,29 @@ namespace gnubase::ui
 		root.AddEventListener(Rml::EventId::Keydown, this, true);
 		root.AddEventListener(Rml::EventId::Dblclick, this);
 		// The auditioning column follows the project cursor, and while playing the playback position.
-		m_subscriptions.push_back(m_binding.on("transport.changed",
-			[this](const engine::Event& event)
-			{
-				m_cursor = event.data.at("position").get<int64_t>();
-				showCursor();
-				if (!event.data.at("playing").get<bool>() || !m_playbackPosition)
-					m_position.reset();
-				else if (!m_position)
-					m_position = m_binding.watch<int64_t>(m_root.get(), m_playbackPosition,
-						[this](const int64_t& sample)
-						{
-							m_cursor = sample;
-							return showCursor();
-						});
-			}));
+		m_subscriptions.push_back(
+			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
 		m_binding.send("transport.get", Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				if (alive.expired() || !result.ok())
-					return;
-				m_cursor = result.value.at("position").get<int64_t>();
-				showCursor();
+				if (!alive.expired() && result.ok())
+					followTransport(result.value);
 			});
+	}
+
+	void ListEditor::followTransport(const Json& status)
+	{
+		m_cursor = status.at("position").get<int64_t>();
+		showCursor();
+		if (!status.at("playing").get<bool>() || !m_playbackPosition)
+			m_position.reset();
+		else if (!m_position)
+			m_position = m_binding.watch<int64_t>(m_root.get(), m_playbackPosition,
+				[this](const int64_t& sample)
+				{
+					m_cursor = sample;
+					return showCursor();
+				});
 	}
 
 	ListEditor::~ListEditor()
@@ -614,9 +615,9 @@ namespace gnubase::ui
 		{
 			rows->SetInnerRML(rml);
 			m_rowsRml = rml;
-			m_starts = std::move(starts);
 			m_atCursor = -1;
 		}
+		m_starts = std::move(starts); // the starts change without the rows' RML when an event moves in its place
 		const auto range = static_cast<double>(m_to - m_from);
 		for (int i = 0; i < rows->GetNumChildren(); ++i)
 		{
@@ -1045,6 +1046,7 @@ namespace gnubase::ui
 			break;
 		}
 		case Rml::EventId::Mousedown:
+			m_doubleClicked = false;
 			if (event.GetParameter("button", 0) == 1 && event.GetCurrentElement() == m_root.get())
 			{
 				// After the document's popup behavior opened the menu (capture phase): the open menu moves inside the
@@ -1097,17 +1099,24 @@ namespace gnubase::ui
 			break;
 		case Rml::EventId::Click:
 			// A click in the auditioning column moves the cursor to the event's start, a double click also starts or
-			// stops playback (p. 1251).
+			// stops playback (p. 1251). The click that ends a double click comes after its dblclick, and doesn't locate
+			// again: playback that it started would jump back to the event.
 			if (const Row* row = rowOf(target);
 				row != nullptr && closest(target, "list-audition", m_root.get()) != nullptr)
-				m_binding.send("transport.locate",
-					{{"position", std::max<int64_t>(0, m_time.tempo.toSamples(row->start, m_time.sampleRate))}});
+			{
+				if (!std::exchange(m_doubleClicked, false))
+					m_binding.send("transport.locate",
+						{{"position", std::max<int64_t>(0, m_time.tempo.toSamples(row->start, m_time.sampleRate))}});
+			}
 			else
 				click(*target, ctrl);
 			break;
 		case Rml::EventId::Dblclick:
 			if (rowOf(target) != nullptr && closest(target, "list-audition", m_root.get()) != nullptr)
+			{
 				m_binding.send("transport.toggle");
+				m_doubleClicked = true;
+			}
 			break;
 		case Rml::EventId::Change:
 			if (target->GetId() == "list-insert-velocity")

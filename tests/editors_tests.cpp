@@ -294,6 +294,8 @@ TEST_CASE("the editors announce parts that a change removes and a new project cl
 	const uint64_t bass = f.track("midi");
 	const uint64_t keys1 = f.part(keys, 0);
 	const uint64_t bass1 = f.part(bass, 0);
+	const uint64_t lead = f.track("midi");
+	const uint64_t lead1 = f.part(lead, 0);
 	f.call("editor.open", {{"editor", "lower"}, {"parts", {keys1, bass1}}, {"activePart", bass1}});
 	f.call("editor.open", {{"editor", "window"}, {"parts", {keys1}}});
 	std::mutex mutex;
@@ -326,6 +328,25 @@ TEST_CASE("the editors announce parts that a change removes and a new project cl
 	events = taken();
 	REQUIRE(events.size() == 1);
 	CHECK(ids(events[0].at("parts")) == std::vector<uint64_t>{keys1, bass1});
+
+	// An in-place editor closes with its track, and undo brings it back open with the track's parts.
+	const std::string inPlace = "inPlace:" + std::to_string(lead);
+	f.call("editor.inPlace", {{"tracks", {lead}}, {"open", true}});
+	taken();
+	f.call("track.remove", {{"track", lead}});
+	events = taken();
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("editor") == inPlace);
+	CHECK(events[0].at("open") == false);
+	CHECK(events[0].at("parts").empty());
+	f.call("history.undo");
+	events = taken();
+	REQUIRE(events.size() == 1);
+	CHECK(events[0] == f.view(inPlace));
+	CHECK(events[0].at("open") == true);
+	CHECK(ids(events[0].at("parts")) == std::vector<uint64_t>{lead1});
+	f.call("editor.inPlace", {{"tracks", {lead}}, {"open", false}});
+	taken();
 
 	// A new project closes both editors.
 	f.call("project.new");

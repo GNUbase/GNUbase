@@ -20,9 +20,9 @@ modified and aren't saved, and a new or loaded project closes the editors.
 | `editor.set` | Changes an open editor's parts and active part or track, and any editor's editing mode, Keep Editor Contents and global tracks | pp. 1142-1156 |
 | `editor.close` | Closes it: no parts, Keep Editor Contents off | p. 1153 |
 
-Each emits `editor.changed` with the view, and so does a change of the project that removes parts from an open editor,
-brings them back or closes it: an edit, an undo or redo, or a new or loaded project (#625), for clients that follow
-events.
+Each emits `editor.changed` with the view, and so does a change of the project that changes an open editor's parts or
+closes it: an edit, an undo or redo that removes parts, brings them back, adds them to an in-place editor's track or
+orders them anew (`track.move`, a part move), or a new or loaded project (#625), for clients that follow events.
 
 - **Parts** are in the track list's order and on each track by position, as Activate Part for Editing lists them
   (p. 1143). Parts that are removed leave the view, and come back with an undo; the active part then moves to the first
@@ -141,7 +141,8 @@ Zone (#625).
   parts leaving and coming back with undo; showing, hiding and exclusively showing tracks and folders, the last track
   kept and tracks without parts, hidden tracks and tracks with locked parts refused; global tracks in the track list's order, refused for the lower zone and for
   other tracks, removed tracks leaving; a new project closing the editors; `editor.changed` for a removed part leaving,
-  its undo and a new project, and none for a change that leaves the parts.
+  its undo, an in-place editor closing with its track and opening again with its undo, and a new project, and none for
+  a change that leaves the parts.
 - `tests/midieditor_tests.cpp` drives the app with `ui::Automation`: Open/Close Editor for three parts on two tracks
   opens the editor window with them in order, the Activate Part for Editing menu lists them under their tracks and
   activates one, the part editing mode marks the editable parts, a click activates a part; the Visibility tab's checks
