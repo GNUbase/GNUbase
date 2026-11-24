@@ -559,9 +559,27 @@ namespace gnubase::engine::settings
 					"Meter Peak - Hold Forever (reference manual p. 467): the channel meters' peak marks hold the "
 					"highest level until the meters are reset (meter.reset); off, for meter.peakHoldTime.",
 					Json{{"type", "boolean"}}, false},
+				{"meter.holdOnStop",
+					"Hold on Stop (reference manual p. 540): the loudness measurement (meter.get's integrated, range, "
+					"seconds, the maxima and the main mix's truePeakMax) stays when playback stops; off, it starts "
+					"over there.",
+					Json{{"type", "boolean"}}, true},
 				{"meter.holdPeaks",
 					"Meter Peak - Hold Peaks (reference manual p. 467): the channel meters show the highest levels "
 					"as peak marks.",
+					Json{{"type", "boolean"}}, true},
+				{"meter.loudnessScale",
+					"EBU Scale (reference manual p. 539): the meter display's loudness bars on the EBU +9 scale, -41 "
+					"to -14 LUFS, or on the EBU +18 scale, -59 to -5 LUFS.",
+					Json{{"type", "string"}, {"enum", {"ebu9", "ebu18"}}}, "ebu9"},
+				{"meter.loudnessUnit",
+					"Unit (reference manual p. 539): the meter display shows loudness in LUFS, or in LU relative to "
+					"-23 LUFS.",
+					Json{{"type", "string"}, {"enum", {"lufs", "lu"}}}, "lufs"},
+				{"meter.measureLoudness",
+					"Measure Loudness (reference manual p. 537): playback measures the loudness (see meter.get); off, "
+					"it measures nothing, and the momentary and short-term loudness and the true peak still follow "
+					"the signal.",
 					Json{{"type", "boolean"}}, true},
 				{"meter.peakHoldTime",
 					"Meters' Peak Hold Time (reference manual p. 1614): how long the channel meters' peak marks hold "

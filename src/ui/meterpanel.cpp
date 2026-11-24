@@ -4,6 +4,7 @@
 #include "engine/analysis/analysis.h"
 #include "ui/widgetutils.h"
 
+#include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
@@ -54,11 +55,14 @@ namespace gnubase::ui
 		constexpr std::array<const char*, 8> g_readouts = {
 			"rms-max", "peak-max", "momentary-max", "short-term-max", "integrated", "range", "true-peak-max", "time"};
 		// The user settings that the meter settings pane shows.
-		constexpr std::array<const char*, 3> g_settings = {
-			"meter.resetOnStart", "meter.rmsAes17", "meter.rmsResolution"};
+		constexpr std::array<const char*, 7> g_settings = {"meter.loudnessUnit", "meter.loudnessScale",
+			"meter.resetOnStart", "meter.holdOnStop", "meter.measureLoudness", "meter.rmsAes17", "meter.rmsResolution"};
 
-		// The display's elements, in the panel's; returns the display. The loudness meter's scale is EBU +9 (p. 536):
-		// -41 to -14 LUFS.
+		// EBU R 128's reference level: 0 LU (p. 538).
+		constexpr double g_referenceLufs = -23.0;
+
+		// The display's elements, in the panel's; returns the display. The loudness meter's scale is EBU +9 (p. 536)
+		// until the setting meter.loudnessScale arrives: -41 to -14 LUFS.
 		Rml::Element& build(Rml::Element& element)
 		{
 			element.SetInnerRML(
@@ -77,10 +81,16 @@ namespace gnubase::ui
 				R"(<div>Range<span class="range"/></div>)"
 				R"(<div>True Peak<span class="true-peak-max"/></div>)"
 				R"(<div>Time<span class="time"/></div></div>)"
+				R"(<button class="meter-measure" setting="meter.measureLoudness">Measure Loudness</button>)"
 				R"(<button class="meter-reset" value="loudness">Reset Loudness</button>)"
 				R"(<button class="meter-configure">Configure Loudness Settings</button></div>)"
 				R"(<div class="meter-settings"><div class="meter-settings-title">Loudness</div>)"
+				R"(<div><span>Unit</span><select setting="meter.loudnessUnit"><option value="lufs">LUFS</option>)"
+				R"(<option value="lu">LU</option></select></div>)"
+				R"(<div><span>EBU Scale</span><select setting="meter.loudnessScale"><option value="ebu9">EBU +9</option>)"
+				R"(<option value="ebu18">EBU +18</option></select></div>)"
 				R"(<div><span>Reset on Start</span><input type="checkbox" setting="meter.resetOnStart"/></div>)"
+				R"(<div><span>Hold on Stop</span><input type="checkbox" setting="meter.holdOnStop"/></div>)"
 				R"(<div class="meter-settings-title">RMS</div>)"
 				R"(<div><span>AES 17</span><input type="checkbox" setting="meter.rmsAes17"/></div>)"
 				R"(<div><span>Resolution</span><valuefield setting="meter.rmsResolution" min="1" max="1000" step="1" )"
@@ -181,13 +191,27 @@ namespace gnubase::ui
 		// A check box sends a change for this, which mustn't go back to the engine: an older value, such as the answer
 		// to settings.get, would undo a click whose settings.set is still on its way.
 		m_showing = true;
-		if (value.is_boolean() && value.get<bool>())
+		if (control->GetTagName() == "button")
+			control->SetClass("checked", value.is_boolean() && value.get<bool>());
+		else if (value.is_boolean() && value.get<bool>())
 			control->SetAttribute("checked", "");
 		else if (value.is_boolean())
 			control->RemoveAttribute("checked");
 		else if (value.is_number())
 			control->SetAttribute("value", widgets::format(value.get<float>()));
+		else if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControl*>(control); select && value.is_string())
+			select->SetValue(value.get<std::string>());
 		m_showing = false;
+		// The loudness unit and scale (pp. 536 and 539): values in LU are relative to -23 LUFS; the bars stay in LUFS.
+		if (key == "meter.loudnessUnit")
+			m_lu = value == "lu";
+		const bool wide = key == "meter.loudnessScale" && value == "ebu18";
+		if (key == "meter.loudnessScale")
+			for (const char* bar : {".momentary", ".short-term"})
+			{
+				m_root->QuerySelector(bar)->SetAttribute("min", wide ? "-59" : "-41");
+				m_root->QuerySelector(bar)->SetAttribute("max", wide ? "-5" : "-14");
+			}
 	}
 
 	void MeterPanel::ProcessEvent(Rml::Event& event)
@@ -206,8 +230,17 @@ namespace gnubase::ui
 				return;
 			if (target->GetAttribute<Rml::String>("type", "") == "checkbox")
 				m_binding.send("settings.set", {{"key", key}, {"value", target->HasAttribute("checked")}});
+			else if (given != event.GetParameters().end() && target->GetTagName() == "select")
+				m_binding.send("settings.set", {{"key", key}, {"value", given->second.Get<Rml::String>()}});
 			else if (given != event.GetParameters().end())
 				m_binding.send("settings.set", {{"key", key}, {"value", std::lround(given->second.Get<double>())}});
+			return;
+		}
+		if (target->IsClassSet("meter-measure"))
+		{
+			// Measure Loudness (p. 537) switches the measurement on and off.
+			m_binding.send(
+				"settings.set", {{"key", "meter.measureLoudness"}, {"value", !target->IsClassSet("checked")}});
 			return;
 		}
 		if (target->IsClassSet("meter-configure"))
@@ -262,9 +295,11 @@ namespace gnubase::ui
 		shown.push_back(loudness(measured.shortTermMax));
 		shown.push_back(levelText(largest(main.rmsMax, main.channels), "dB"));
 		shown.push_back(levelText(largest(measured.truePeakHold, main.channels), "dB"));
-		shown.push_back(text(measured.momentaryMax, "LUFS"));
-		shown.push_back(text(measured.shortTermMax, "LUFS"));
-		shown.push_back(text(measured.integrated, "LUFS"));
+		const auto relative = [this](std::optional<double> value)
+		{ return m_lu ? text(value ? std::optional(*value - g_referenceLufs) : value, "LU") : text(value, "LUFS"); };
+		shown.push_back(relative(measured.momentaryMax));
+		shown.push_back(relative(measured.shortTermMax));
+		shown.push_back(relative(measured.integrated));
 		shown.push_back(text(measured.range, "LU"));
 		shown.push_back(levelText(largest(measured.truePeakMax, measured.channels), "dBTP"));
 		const auto seconds = static_cast<int64_t>(measured.seconds);

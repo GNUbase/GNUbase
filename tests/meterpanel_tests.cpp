@@ -13,6 +13,9 @@
 #include "ui/shell.h"
 #include "ui/widgetutils.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
@@ -439,6 +442,57 @@ TEST_CASE("the meter settings pane sets Reset on Start and the master meter's RM
 		}));
 	CHECK_FALSE(elements(app, "[setting=\"meter.rmsAes17\"]").at(0).at("attributes").contains("checked"));
 	CHECK(elements(app, "[setting=\"meter.resetOnStart\"]").at(0).at("attributes").contains("checked"));
+}
+
+TEST_CASE("the loudness meter's unit, scale, Hold on Stop and Measure Loudness follow their settings", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const auto channel = app.call("track.add", {{"type", "audio"}}).at("channel").at("id").get<uint64_t>();
+	app.call("channel.set", {{"channel", channel}, {"monitor", true}});
+	app.appUi().docking().open("meter");
+	const auto setting = [&app](const std::string& key)
+	{ return app.call("settings.get", {{"key", key}}).at("value"); };
+	const auto bar = [&app](const char* attribute)
+	{ return elements(app, ".meter-loudness meter.momentary").at(0).at("attributes").value(attribute, std::string()); };
+	app.call("transport.play");
+	app.call("audio.render", {{"frames", 48000}});
+	REQUIRE(app.waitUntil([&app] { return shown(app, ".meter-tab[value=loudness]"); }));
+	click(app, ".meter-tab[value=loudness]");
+	click(app, ".meter-loudness .meter-configure");
+	REQUIRE(app.waitUntil([&app]
+		{ return text(app, ".integrated") == "-6.0 LUFS" && !elements(app, ".meter-measure.checked").empty(); }));
+	CHECK(bar("max") == "-14"); // EBU +9 (reference manual p. 536)
+
+	// Unit in the settings pane (p. 539): LU, relative to -23 LUFS.
+	Rml::ElementFormControl* unit = nullptr;
+	for (int i = 0; unit == nullptr && i < app.main().context().GetNumDocuments(); ++i)
+		unit = rmlui_dynamic_cast<Rml::ElementFormControl*>(
+			app.main().context().GetDocument(i)->QuerySelector("[setting=\"meter.loudnessUnit\"]"));
+	REQUIRE(unit != nullptr);
+	unit->SetValue("lu");
+	REQUIRE(app.waitUntil([&setting] { return setting("meter.loudnessUnit") == "lu"; }));
+	REQUIRE(app.waitUntil([&app] { return text(app, ".integrated") == "17.0 LU"; }));
+	CHECK(text(app, ".momentary-max") == "17.0 LU");
+	CHECK(text(app, ".true-peak-max") == "-6.0 dBTP");
+
+	// EBU Scale follows the setting: EBU +18 is -59 to -5 LUFS (p. 536).
+	app.call("settings.set", {{"key", "meter.loudnessScale"}, {"value", "ebu18"}});
+	REQUIRE(app.waitUntil([&bar] { return bar("max") == "-5"; }));
+	CHECK(bar("min") == "-59");
+	CHECK(unit->GetValue() == "lu");
+
+	// Hold on Stop (p. 540) and Measure Loudness (p. 537) switch their settings.
+	click(app, "[setting=\"meter.holdOnStop\"]");
+	REQUIRE(app.waitUntil([&setting] { return setting("meter.holdOnStop") == false; }));
+	click(app, ".meter-measure");
+	REQUIRE(app.waitUntil([&setting] { return setting("meter.measureLoudness") == false; }));
+	REQUIRE(app.waitUntil([&app] { return elements(app, ".meter-measure.checked").empty(); }));
+	app.call("settings.set", {{"key", "meter.measureLoudness"}, {"value", true}});
+	REQUIRE(app.waitUntil([&app] { return !elements(app, ".meter-measure.checked").empty(); }));
 }
 
 TEST_CASE("the meter settings pane shows its settings and which button opened it", "[ui]")

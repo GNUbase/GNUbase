@@ -35,6 +35,8 @@ namespace gnubase::engine::settings
 	inline constexpr Key<bool> g_audioMutePreSends{"audio.mutePreSends"};
 	// An editing preference the audio engine reads to build the playlists (makePlaylist).
 	inline constexpr Key<bool> g_editingTreatMutedAudioLikeDeleted{"editing.treatMutedAudioLikeDeleted"};
+	inline constexpr Key<bool> g_meterHoldOnStop{"meter.holdOnStop"};
+	inline constexpr Key<bool> g_meterMeasureLoudness{"meter.measureLoudness"};
 	inline constexpr Key<std::string> g_meterPosition{"meter.position"};
 	inline constexpr Key<bool> g_meterResetOnStart{"meter.resetOnStart"};
 	inline constexpr Key<bool> g_meterRmsAes17{"meter.rmsAes17"};
