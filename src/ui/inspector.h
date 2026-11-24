@@ -30,7 +30,8 @@ namespace gnubase::ui
 	// program by the user setting midi.devices, and a MIDI or instrument track's input transformer: Off, Project, Track
 	// and, while it is on, Open Panel...), MIDI modifiers (MIDI and instrument tracks: bypass, value fields and
 	// the random generators' and ranges' targets), MIDI inserts and sends (MIDI and instrument tracks: their slots'
-	// effects and control panels), Arranger Track (the arranger track: its chain and events lists and jump mode, see
+	// effects and control panels), note expression (MIDI and instrument tracks: bypass, input assignments, MIDI Learn
+	// and ranges), Arranger Track (the arranger track: its chain and events lists and jump mode, see
 	// showArranger), inserts (the channel's plugin slots) and notepad (the channel's
 	// notes in a <textarea>). A click on a section's header closes or opens it (.collapsed); what a track doesn't have
 	// gets the class unavailable. The controls send engine commands. The element has the class empty without a track.
@@ -70,6 +71,14 @@ namespace gnubase::ui
 		// control panels, and send a control's change (channel.set midiInserts and midiSends).
 		void showMidiEffects(const std::string& section, const engine::Json& rack);
 		void changeMidiEffect(const std::string& control, const Rml::Event& event);
+		// The Note Expression section (pp. 1300-1302): shows the channel's noteExpression with the expression selected
+		// (m_expression) in Parameter Details, and sends a change of that one's input (noteExpression.set).
+		void showNoteExpression(const engine::Json& setup);
+		void sendExpressionInput(engine::Json change);
+		// Turns MIDI Learn on or off, listening to the MIDI inputs (midi.activityListen) while it is on.
+		void learn(bool on);
+		// Takes the MIDI inputs that aren't among all MIDI inputs, which MIDI Learn leaves out, from midi.ports.
+		void readPorts(const engine::Json& ports);
 		// The Arranger Track section (pp. 405, 410-411): a row per step of the active chain and per arranger event,
 		// each with its arrow, the one playing .current, and the jump mode. A step's name is a disabled textdisplay
 		// that Alt and a double click open (p. 405).
@@ -152,6 +161,11 @@ namespace gnubase::ui
 		std::optional<int> m_stepPressed;
 		std::optional<uint64_t> m_eventPressed;
 		Subscription m_transportChanged;
+		size_t m_expression = 0; // the Note Expression section's expression selected, by plugin::NoteExpression
+		bool m_learning = false; // its MIDI Learn is on
+		Subscription m_activity; // midi.activity, for MIDI Learn
+		std::set<std::string> m_notInAllInputs; // "backend id" of the MIDI inputs that aren't among all MIDI inputs
+		Subscription m_portsChanged;            // midi.changed, for them
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }

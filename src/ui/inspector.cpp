@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/inspector.h"
 
+#include "engine/document/document.h"
 #include "engine/midi/modifiers.h"
 #include "engine/time/tempomap.h"
+#include "platform/log.h"
 #include "ui/widgets.h"
 #include "ui/widgetutils.h"
 
@@ -20,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <limits>
 #include <map>
 #include <optional>
@@ -88,6 +91,7 @@ namespace gnubase::ui
 			R"(<div class="inspector-section" section="modifiers" label="MIDI Modifiers"/>)"
 			R"(<div class="inspector-section" section="midiInserts" label="MIDI Inserts"/>)"
 			R"(<div class="inspector-section" section="midiSends" label="MIDI Sends"/>)"
+			R"(<div class="inspector-section" section="noteExpression" label="Note Expression"/>)"
 			R"(<div class="inspector-section" section="chords" label="Chords">)"
 			R"(<button class="section-header">Chords</button><div class="section-body">)"
 			R"(<div class="inspector-row" row="followChords"><span class="inspector-label">Follow</span>)"
@@ -244,6 +248,69 @@ namespace gnubase::ui
 							integerField(name + "-maximum", low, 127, random ? 0 : 127, "Maximum"));
 				}
 			return rml + "</div>";
+		}
+
+		// The Note Expression section (pp. 1300-1302, #1513): its bypass, a row per expression with its input's short
+		// name (the In column), of which a click selects one, and that one's Parameter Details: its input (Input), MIDI
+		// Learn, and its range (Max. Value and Min. Value).
+		std::string noteExpressionRml()
+		{
+			std::string rml =
+				R"(<button class="section-header">Note Expression</button><div class="section-body">)"
+				R"(<div class="inspector-buttons"><button type="toggle" class="toggle bypass")"
+				R"( control="noteExpression-bypass" title="Bypass Note Expression">Bypass</button></div>)";
+			for (size_t i = 0; i < engine::g_expressionNames.size(); ++i)
+			{
+				std::string name = engine::g_expressionNames.at(i);
+				name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
+				rml += R"(<div class="inspector-row list-item" expression=")" + std::to_string(i) +
+					R"("><span class="expression-in"/><span>)" + name + "</span></div>";
+			}
+			rml += R"(<div class="inspector-list-title">Parameter Details</div>)";
+			rml += row("expressionInput", "Input", R"(<select control="noteExpression-input" title="Input"/>)");
+			rml += R"(<div class="inspector-buttons"><button type="toggle" class="toggle")"
+				   R"( control="noteExpression-learn" title="MIDI Learn">Learn</button></div>)";
+			for (const char* each : {"max", "min"})
+			{
+				const std::string end = each;
+				const std::string label = end == "max" ? "Max" : "Min";
+				std::string field = R"(<valuefield control="noteExpression-)";
+				field += end;
+				field += R"(" step="0.01" decimals="2" title=")";
+				field += label;
+				field += R"(. Value"/>)";
+				rml += row("expression-" + end, label, field);
+			}
+			return rml + "</div>";
+		}
+
+		// An expression's input as the In column shows it: PB, AT or a controller's number (p. 1304).
+		std::string inputShort(const std::string& input)
+		{
+			if (input == "pitchBend")
+				return "PB";
+			if (input == "aftertouch")
+				return "AT";
+			return input.rfind("cc", 0) == 0 ? input.substr(2) : "";
+		}
+
+		Options expressionInputs()
+		{
+			Options options = {{"none", "Off"}, {"pitchBend", "Pitchbend"}, {"aftertouch", "Aftertouch"}};
+			for (int number = 0; number < 128; ++number)
+				options.emplace_back("cc" + std::to_string(number), "CC " + std::to_string(number));
+			return options;
+		}
+
+		// The input MIDI Learn takes from a message's bytes: a controller's, pitch bend or aftertouch; else none.
+		std::string learnedInput(const Json& bytes)
+		{
+			const int status = bytes.empty() ? 0 : bytes.at(0).get<int>() & 0xF0;
+			if (status == 0xB0 && bytes.size() > 1)
+				return "cc" + std::to_string(bytes.at(1).get<int>());
+			if (status == 0xE0)
+				return "pitchBend";
+			return status == 0xD0 ? "aftertouch" : "";
 		}
 
 		// The MIDI Inserts and MIDI Sends sections (pp. 1104-1106): their controls are named after the channel's
@@ -537,7 +604,24 @@ namespace gnubase::ui
 				  readArrangerPlaying();
 			  })),
 		  m_transportChanged(
-			  binding.on("transport.changed", [this](const engine::Event& event) { followArranger(event.data); }))
+			  binding.on("transport.changed", [this](const engine::Event& event) { followArranger(event.data); })),
+		  // MIDI Learn assigns the next controller, pitch bend or aftertouch the track receives (p. 1304): from the
+		  // MIDI inputs among all MIDI inputs while its MIDI input is All MIDI Inputs, else none.
+		  m_activity(binding.on("midi.activity",
+			  [this](const engine::Event& event)
+			  {
+				  if (!m_learning || m_channel.value("midiInput", std::string("all")) != "all")
+					  return;
+				  for (const Json& message : event.data.at("received"))
+					  if (const std::string input = learnedInput(message.at("bytes")); m_learning && !input.empty() &&
+						  m_notInAllInputs.count(
+							  message.value("backend", std::string()) + " " + message.value("id", std::string())) == 0)
+					  {
+						  learn(false);
+						  sendExpressionInput({{"input", input}});
+					  }
+			  })),
+		  m_portsChanged(binding.on("midi.changed", [this](const engine::Event& event) { readPorts(event.data); }))
 	{
 		root.SetClass("inspector", true);
 		// Set up Sections from an empty area (p. 167), in the project window's document; the controls have none.
@@ -548,6 +632,8 @@ namespace gnubase::ui
 		for (const bool sends : {false, true})
 			if (Rml::Element* section = root.QuerySelector(sends ? "[section=midiSends]" : "[section=midiInserts]"))
 				section->SetInnerRML(midiEffectsRml(sends));
+		if (Rml::Element* section = root.QuerySelector("[section=noteExpression]"))
+			section->SetInnerRML(noteExpressionRml());
 		Rml::ElementList controls;
 		root.QuerySelectorAll(controls, "[control], textarea, .inserts");
 		for (Rml::Element* control : controls)
@@ -606,6 +692,15 @@ namespace gnubase::ui
 
 	Inspector::~Inspector()
 	{
+		// MIDI Learn stops listening with the inspector. Sending may throw, which a destructor must not pass on.
+		try
+		{
+			learn(false);
+		}
+		catch (const std::exception& error)
+		{
+			logging::warning("The inspector cannot stop listening for MIDI input: {}", error.what());
+		}
 		for (Rml::Element* menu : {m_stepMenu.get(), m_retrospectiveMenu.get()})
 			if (menu != nullptr)
 			{
@@ -640,6 +735,9 @@ namespace gnubase::ui
 		if (Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
 			track != m_track && focus != nullptr && focus != m_root.get() && m_root->Contains(focus))
 			focus->Blur();
+		// MIDI Learn belongs to the track it started on.
+		if (track != m_track)
+			learn(false);
 		m_track = track;
 		m_selected = tracks;
 		m_loads = loads;
@@ -861,6 +959,7 @@ namespace gnubase::ui
 		available("[section=modifiers]", noteTrack);
 		available("[section=midiInserts]", noteTrack);
 		available("[section=midiSends]", noteTrack);
+		available("[section=noteExpression]", noteTrack);
 		// Edit In-Place (p. 1259), checked while the track's in-place editor is open.
 		available("button[control=editInPlace]", noteTrack);
 		if (Rml::Element* button = element("button[control=editInPlace]"))
@@ -1081,6 +1180,8 @@ namespace gnubase::ui
 			if (noteTrack && channel->contains("midiInserts"))
 				for (const char* section : {"midiInserts", "midiSends"})
 					showMidiEffects(section, channel->at(section));
+			if (noteTrack && channel->contains("noteExpression"))
+				showNoteExpression(channel->at("noteExpression"));
 
 			// The inserts: an overview of the slots, bypassed and deactivated ones marked.
 			std::string slots;
@@ -1205,6 +1306,89 @@ namespace gnubase::ui
 				fieldValue(stepKey(m_stepOwner, m_channel.at("id"), name),
 					widgets::format(static_cast<float>(std::round(shown) + 0.0)))); // not -0
 		}
+	}
+
+	void Inspector::showNoteExpression(const Json& setup)
+	{
+		const auto [low, high] = engine::expressionRange(static_cast<plugin::NoteExpression>(m_expression));
+		Json selected = {{"input", "none"}, {"min", low}, {"max", high}};
+		std::array<std::string, engine::g_expressionNames.size()> shorts;
+		for (const Json& input : setup.at("inputs"))
+		{
+			const std::string type = input.at("type").get<std::string>();
+			size_t index = 0;
+			while (index < shorts.size() && type != engine::g_expressionNames.at(index))
+				++index;
+			if (index == shorts.size())
+				continue;
+			shorts.at(index) = inputShort(input.at("input").get<std::string>());
+			if (index == m_expression)
+				selected = input;
+		}
+		Rml::ElementList rows;
+		m_root->QuerySelectorAll(rows, "[section=noteExpression] [expression]");
+		for (Rml::Element* row : rows)
+		{
+			const auto index = row->GetAttribute<size_t>("expression", 0);
+			setClass(*row, "selected", index == m_expression);
+			if (Rml::Element* in = row->QuerySelector(".expression-in");
+				in != nullptr && index < shorts.size() && in->GetInnerRML() != shorts.at(index))
+				in->SetInnerRML(shorts.at(index));
+		}
+		const auto control = [this](const std::string& name)
+		{ return m_root->QuerySelector("[section=noteExpression] [control=noteExpression-" + name + "]"); };
+		for (const auto& [name, on] :
+			{std::make_pair("bypass", setup.at("bypass") == true), std::make_pair("learn", m_learning)})
+			if (Rml::Element* button = control(name))
+			{
+				if (on)
+					button->SetAttribute("checked", "");
+				else
+					button->RemoveAttribute("checked");
+			}
+		if (Rml::Element* input = control("input"))
+			widgets::fill(*input, expressionInputs(), selected.at("input").get<std::string>());
+		for (const char* end : {"max", "min"})
+			if (Rml::Element* field = control(end))
+			{
+				setAttribute(*field, "min", widgets::format(static_cast<float>(low)));
+				setAttribute(*field, "max", widgets::format(static_cast<float>(high)));
+				setAttribute(*field, "value", widgets::format(selected.at(end).get<float>(), 2));
+			}
+	}
+
+	void Inspector::sendExpressionInput(Json change)
+	{
+		if (m_track == 0)
+			return;
+		change["type"] = engine::g_expressionNames.at(m_expression);
+		m_binding.send(
+			"noteExpression.set", {{"track", m_track}, {"inputs", Json::array({std::move(change)})}}, whenRefused());
+	}
+
+	void Inspector::learn(bool on)
+	{
+		if (on != m_learning)
+			m_binding.send("midi.activityListen", {{"on", on}, {"listener", m_stepOwner}});
+		if (on && !m_learning)
+			m_binding.send("midi.ports", Json::object(),
+				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && result.ok())
+						readPorts(result.value);
+				});
+		m_learning = on;
+		if (Rml::Element* button = m_root ? m_root->QuerySelector("[control=noteExpression-learn]") : nullptr;
+			button != nullptr && !on)
+			button->RemoveAttribute("checked");
+	}
+
+	void Inspector::readPorts(const Json& ports)
+	{
+		m_notInAllInputs.clear();
+		for (const Json& port : ports.value("ports", Json::array()))
+			if (port.value("input", false) && !port.value("inAllInputs", true))
+				m_notInAllInputs.insert(port.value("backend", std::string()) + " " + port.value("id", std::string()));
 	}
 
 	void Inspector::showMidiEffects(const std::string& section, const Json& rack)
@@ -1562,6 +1746,15 @@ namespace gnubase::ui
 							{{"tracks", tracks}, {"version", up->GetAttribute<int>("version", 1)}}, whenRefused());
 					break;
 				}
+			// A click on an expression's row selects it for Parameter Details.
+			if (const Rml::Element* row = target->HasAttribute("expression") ? target : target->Closest("[expression]");
+				row != nullptr && m_channel.is_object())
+			{
+				m_expression =
+					std::min(row->GetAttribute<size_t>("expression", 0), engine::g_expressionNames.size() - 1);
+				learn(false);
+				showNoteExpression(m_channel.at("noteExpression"));
+			}
 			// A MIDI effect's edit button opens and closes its control panel.
 			if (target->IsClassSet("midi-effect-edit") && target->GetParentNode() != nullptr &&
 				target->GetParentNode()->GetParentNode() != nullptr)
@@ -1855,6 +2048,27 @@ namespace gnubase::ui
 		if (name.rfind("midiInserts-", 0) == 0 || name.rfind("midiSends-", 0) == 0)
 		{
 			changeMidiEffect(name, event);
+			return;
+		}
+		if (name == "noteExpression-bypass")
+		{
+			m_binding.send("noteExpression.set",
+				{{"track", m_track}, {"bypass", event.GetParameter<bool>("value", false)}}, whenRefused());
+			return;
+		}
+		if (name == "noteExpression-input")
+		{
+			sendExpressionInput({{"input", event.GetParameter<Rml::String>("value", "none")}});
+			return;
+		}
+		if (name == "noteExpression-max" || name == "noteExpression-min")
+		{
+			sendExpressionInput({{name.substr(name.size() - 3), event.GetParameter<float>("value", 0.0F)}});
+			return;
+		}
+		if (name == "noteExpression-learn")
+		{
+			learn(event.GetParameter<bool>("value", false));
 			return;
 		}
 		if (name == "volume" || name == "pan")

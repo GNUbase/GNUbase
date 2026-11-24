@@ -818,6 +818,8 @@ namespace gnubase::engine
 			render.inputChannel = static_cast<int8_t>(midi::trackMidiChannel(project, trackId).value_or(-1));
 			render.modifiers = channel.modifiers;
 			render.expressionBypass = channel.noteExpression.bypass;
+			for (const auto& [type, input] : channel.noteExpression.inputs)
+				render.expressionInputs.at(static_cast<size_t>(type)) = input;
 			if (const ArticulationMap* articulations = midi::articulationMapOf(project, track.id))
 				render.articulations = *articulations;
 			render.midiInserts = channel.midiInserts;
