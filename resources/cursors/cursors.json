@@ -1,6 +1,7 @@
 {
   "resize": {"hotspot": [12, 12]},
   "tool-draw": {"hotspot": [4, 20]},
+  "tool-drumstick": {"hotspot": [5, 19]},
   "tool-erase": {"hotspot": [5, 18]},
   "tool-glue": {"hotspot": [12, 12]},
   "tool-line": {"hotspot": [3, 18]},

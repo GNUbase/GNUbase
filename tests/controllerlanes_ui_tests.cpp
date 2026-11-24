@@ -1056,3 +1056,29 @@ TEST_CASE("a controller step that another event now starts with loses its width"
 			{"controllers", {{{"id", added.at("controllers").at(1).at("id")}, {"position", 2 * g_sixteenth}}}}});
 	REQUIRE(f.app.waitUntil([&] { return f.box(first).at("width").get<double>() < width / 16.0; }));
 }
+
+TEST_CASE("the object selection tool shows a pointing hand over pitchbend events", "[ui]")
+{
+	Fixture f;
+	f.app.call("editor.set",
+		{{"editor", "window"}, {"lanes", {{{"type", "pitchBend"}}, {{"type", "controller"}, {"number", 1}}}}});
+	f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 4 * g_sixteenth}, {"type", "pitchBend"}, {"value", 0.9}},
+					{{"position", 4 * g_sixteenth}, {"type", "controller"}, {"number", 1}, {"value", 0.9}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-step").size() == 2; }));
+	const auto pointer = [&f](int lane)
+	{
+		f.app.ui().move(f.window, of(Fixture::area(lane) + " .controller-step"));
+		f.app.shell().step(std::chrono::milliseconds(0));
+		return f.app.ui().windows().at("cursor").get<std::string>();
+	};
+	// p. 1176; other controllers keep the arrow.
+	CHECK(pointer(0) == "pointer");
+	CHECK(pointer(1).empty());
+	f.tool("draw");
+	CHECK(pointer(0).empty());
+	f.tool("objectSelection");
+	CHECK(pointer(0) == "pointer");
+}

@@ -8,6 +8,7 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/keyeditor.h"
 #include "ui/midieditor.h"
 #include "ui/tracklist.h"
 
@@ -17,6 +18,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 using namespace gnubase;
 using engine::Json;
@@ -163,4 +165,57 @@ TEST_CASE("the key editor's tools show their pointers over the note display, the
 	CHECK(over("glue") == "tool-glue");
 	CHECK(over("mute") == "tool-mute");
 	CHECK(over("objectSelection").empty());
+}
+
+TEST_CASE("a note's ends in the key editor show the resize pointer, unless Shift or Ctrl adds the note instead", "[ui]")
+{
+	test::UiApp app({1200, 800});
+	app.setDpRatio(1.0F);
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	const Json part =
+		app.call("midiPart.add", {{"track", track.at("id")}, {"position", 0}, {"length", 4 * time::g_ticksPerQuarter}})
+			.at("part");
+	app.call("note.add",
+		{{"part", part.at("id")},
+			{"notes", {{{"position", 0}, {"length", 2 * time::g_ticksPerQuarter}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part.at("id")})}});
+	REQUIRE(app.waitUntil([&app] { return app.appUi().editorWindow() != nullptr; }));
+	const ui::WindowId window = app.appUi().editorWindowId();
+	REQUIRE(app.waitUntil([&] { return app.ui().dom(window, ".key-note", 0).at("elements").size() == 1; }));
+	REQUIRE(app.waitUntil([&app] { return app.appUi().editorWindow()->keyEditor()->scrollToPitch(60); }));
+	app.shell().step(std::chrono::milliseconds(0));
+	const Json box = app.ui().dom(window, ".key-note", 0).at("elements").at(0).at("box");
+	const int x = box.at("x").get<int>();
+	const int y = box.at("y").get<int>() + (box.at("height").get<int>() / 2);
+	const int width = box.at("width").get<int>();
+	const auto over = [&app, window](int at, int height, const std::vector<std::string>& modifiers = {})
+	{
+		app.ui().move(window, point(at, height), modifiers);
+		return pointer(app);
+	};
+	// Within 6 dp of an end a press resizes the note (pp. 1213-1214), elsewhere it moves it.
+	CHECK(over(x + 2, y) == "resize");
+	CHECK(over(x + width - 2, y) == "resize");
+	CHECK(over(x + (width / 2), y).empty());
+	// The modifiers held while the mouse moves count.
+	CHECK(over(x + width - 2, y, {"shift"}).empty());
+	CHECK(over(x + width - 3, y, {"ctrl"}).empty());
+	CHECK(over(x + width - 2, y) == "resize");
+	// The draw tool draws there.
+	app.ui().click(window, at(".key-tool[key-tool=draw]"), ui::MouseButton::Left, 1, {});
+	CHECK(over(x + width - 2, y) == "tool-draw");
+}
+
+TEST_CASE("a mixer channel's name, which a drag moves, shows the pointing hand", "[ui]")
+{
+	test::UiApp app({1200, 800});
+	const Json added = app.call("track.add", {{"type", "audio"}});
+	const std::string name = ".mixer-channel[channel=" + std::to_string(added.at("channel").at("id").get<uint64_t>()) +
+		"] .mixer-channel-name";
+	app.keys().run("window.mixer", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.appUi().mixer(1) != nullptr; }));
+	const ui::WindowId mixer = app.appUi().mixerWindow(1);
+	REQUIRE(app.waitUntil([&] { return app.ui().dom(mixer, name, 0).at("elements").size() == 1; }));
+	app.ui().move(mixer, at(name));
+	CHECK(pointer(app) == "pointer"); // p. 496
 }

@@ -344,6 +344,29 @@ TEST_CASE("Open List Editor lists every event of the selected parts in playback 
 	CHECK(f.elements(".list-editor").empty());
 }
 
+TEST_CASE("the draw tool shows the pencil over the event display and the erase tool the eraser over the rows", "[ui]")
+{
+	Fixture f;
+	const std::string note = row("note", f.low);
+	const auto pointer = [&f](const ui::Target& at)
+	{
+		f.app.ui().move(f.window, at);
+		f.app.shell().step(std::chrono::milliseconds(0));
+		return f.app.ui().windows().at("cursor").get<std::string>();
+	};
+	CHECK(pointer(f.at(note + " .list-event-lane", 0.7)).empty());
+	f.tool("draw");
+	CHECK(pointer(f.at(note + " .list-event-lane", 0.7)) == "tool-draw");
+	CHECK(pointer(f.at(".list-filler .list-event-lane", 0.5)) == "tool-draw"); // the empty row under the events
+	CHECK(pointer(of(note + " .list-type")).empty());
+	f.tool("erase");
+	CHECK(pointer(of(note + " .list-type")) == "tool-erase");
+	CHECK(pointer(f.at(note + " .list-value-lane", 0.5)) == "tool-erase");
+	CHECK(pointer(f.at(".list-filler .list-event-lane", 0.5)).empty());
+	f.tool("objectSelection");
+	CHECK(pointer(of(note + " .list-type")).empty());
+}
+
 TEST_CASE("values typed into the event list change the selected events, by as much or to the same value", "[ui]")
 {
 	Fixture f;

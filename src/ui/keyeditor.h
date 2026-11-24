@@ -174,6 +174,9 @@ namespace gnubase::ui
 		void moveToInPlace(const Rml::Event& event, Rml::Element& grid, uint64_t track);
 		// What a press on a note's box starts: a resize near its ends, else a move.
 		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
+		// The note display's pointer for where the mouse is (docs/features/pointers.md): resize where a press resizes
+		// a note, else the tool's.
+		void showPointer(Rml::Event& event);
 		// Starts drawing a note at the snapped position under the press, as the draw tool's press does.
 		void startDraw(double ticks);
 		// Takes the drawn note out of the grid, into m_removedDrawn.
