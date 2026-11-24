@@ -38,6 +38,13 @@ namespace gnubase::ui
 
 	GpuRenderer::GpuRenderer(SdlWindowSystem& windows, int msaaSamples) : m_windows(windows), m_msaaSamples(msaaSamples)
 	{
+#if defined(__APPLE__) && defined(NDEBUG)
+		// SDL_GPU's debug mode, on by default, turns on Metal's API validation layer through this variable unless it is
+		// set already. Release builds draw without it, as it costs CPU time for every command, and the virtual GPU of
+		// CI's macOS runners aborts frames as large as a project window with an in-place editor and the inspector under
+		// it (#2063). Debug builds keep it, and setting the variable to 1 brings it back.
+		SDL_setenv_unsafe("MTL_DEBUG_LAYER", "0", 0);
+#endif
 		// RmlUi's renderer brings its shaders in all three formats; SDL_GPU picks the API this machine has.
 		const SDL_PropertiesID properties = SDL_CreateProperties();
 		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
