@@ -19,8 +19,10 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -426,7 +428,10 @@ namespace gnubase::engine
 				"Adds what a recording wrote, as the engine does when a recording ends. Per audio track its file "
 				"(path) as a media file and clip, and an audio event per take. A take is a run of the file (offset "
 				"and length in its frames) recorded at position (project samples), such as a cycle lap; a file may "
-				"start with audio pre-record before its first take. mode, the audio record mode (transport.set), says "
+				"start with audio pre-record before its first take. A track may come with several files, as a "
+				"recording split at 4 GB "
+				"makes: they are one recording, whose takes mode and the lanes apply to together. mode, the audio "
+				"record mode (transport.set), says "
 				"what happens to the track's unlocked events where the takes overlap them: keepHistory (the default) "
 				"keeps them, cycleHistoryReplace cuts them out and keeps every take, replace cuts out what each take "
 				"overlaps, also of the takes before it. With keepHistory and cycleHistoryReplace, the events of the "
@@ -527,6 +532,14 @@ namespace gnubase::engine
 			return {{"media", media}, {"clips", clips}, {"events", events}, {"parts", parts}};
 		}
 		bool changed = false; // a track is there to add to, or chord events were recorded
+		struct AudioTake
+		{
+			ObjectId track = 0;
+			ObjectId clip = 0;
+			Take take;
+			time::Samples end = 0; // project samples
+		};
+		std::vector<AudioTake> audio; // the audio tracks' takes, added once every entry's file is
 		for (const Json& entry : parameters.at("tracks"))
 		{
 			const auto trackId = entry.at("track").get<ObjectId>();
@@ -579,54 +592,59 @@ namespace gnubase::engine
 							{"end", takes[index].offset + takes[index].length},
 							{"name", "Take " + std::to_string(index + 1)}});
 
-			const auto endOf = [ratio](const Take& each)
+			for (const Take& each : takes)
+				audio.push_back({trackId, clip, each,
+					each.position +
+						static_cast<time::Samples>(std::llround(static_cast<double>(each.length) * ratio))});
+		}
+		// All entries of a track are one recording: a recording split into several files (#580) sends one per file,
+		// and the cuts and lanes of each file's takes must not touch the events of the others.
+		if (mode == "cycleHistoryReplace")
+			for (const AudioTake& each : audio) // before any take is added, so that every take stays
+				replace(each.track, each.take.position, each.end);
+		// Keeping the takes, a cycle recording puts them on lanes of their own (reference manual p. 226): those that
+		// overlap another take of the track, as laps do; one that a locate during recording started may overlap none.
+		std::vector<bool> stacked(audio.size(), false);
+		if (mode != "replace")
+			for (size_t i = 0; i < audio.size(); ++i)
+				for (size_t j = i + 1; j < audio.size(); ++j)
+					if (audio[i].track == audio[j].track && audio[i].take.position < audio[j].end &&
+						audio[j].take.position < audio[i].end)
+						stacked[i] = stacked[j] = true;
+		std::map<ObjectId, std::pair<time::Samples, time::Samples>> stackedSpans; // per track
+		for (size_t i = 0; i < audio.size(); ++i)
+			if (stacked[i])
 			{
-				return each.position +
-					static_cast<time::Samples>(std::llround(static_cast<double>(each.length) * ratio));
-			};
-			if (mode == "cycleHistoryReplace")
-				for (const Take& each : takes) // before any take is added, so that every take stays
-					replace(trackId, each.position, endOf(each));
-			// Keeping the takes, a cycle recording puts them on lanes of their own (reference manual p. 226): those
-			// that overlap another take, as laps do; one that a locate during recording started may overlap none.
-			std::vector<bool> stacked(takes.size(), false);
-			if (mode != "replace")
-				for (size_t i = 0; i < takes.size(); ++i)
-					for (size_t j = i + 1; j < takes.size(); ++j)
-						if (takes[i].position < endOf(takes[j]) && takes[j].position < endOf(takes[i]))
-							stacked[i] = stacked[j] = true;
-			time::Samples from = std::numeric_limits<time::Samples>::max();
-			time::Samples to = std::numeric_limits<time::Samples>::min();
-			for (size_t i = 0; i < takes.size(); ++i)
-				if (stacked[i])
-				{
-					from = std::min(from, takes[i].position);
-					to = std::max(to, endOf(takes[i]));
-				}
-			int lane = from < to ? firstFreeLane(project, trackId, from, to) : 0;
-			for (size_t i = 0; i < takes.size(); ++i)
-			{
-				const Take& each = takes[i];
-				if (mode == "replace")
-					replace(trackId, each.position, endOf(each));
-				const time::Position at = time::rebase(
-					{time::TimeBase::Linear, each.position}, found->second.timeBase, project.tempo, project.sampleRate);
-				const Json event = run("audioEvent.add",
-					{{"track", trackId}, {"clip", clip}, {"position", at.value}, {"offset", each.offset},
-						{"length", each.length}})
-									   .at("event")
-									   .at("id");
-				// Recorded events follow global transpose with the project root key, or with transpose events are
-				// independent of it, as recorded MIDI parts (#1368, reference manual p. 420).
-				const bool transposed = !project.transpose.events.empty();
-				if (transposed || project.rootKey >= 0)
-					run("audioEvent.set",
-						{{"event", event}, {"rootKey", transposed ? std::string() : rootKeyName(project.rootKey)},
-							{"globalTranspose", transposed ? "independent" : "follow"}});
-				if (stacked[i])
-					run("event.set", {{"events", Json::array({event})}, {"lane", std::min(lane++, g_lastLane)}});
-				events.push_back(event);
+				auto& span =
+					stackedSpans.try_emplace(audio[i].track, audio[i].take.position, audio[i].end).first->second;
+				span = {std::min(span.first, audio[i].take.position), std::max(span.second, audio[i].end)};
 			}
+		std::map<ObjectId, int> lanes; // the next lane per track
+		for (const auto& [track, span] : stackedSpans)
+			lanes[track] = firstFreeLane(project, track, span.first, span.second);
+		for (size_t i = 0; i < audio.size(); ++i)
+		{
+			const AudioTake& each = audio[i];
+			if (mode == "replace")
+				replace(each.track, each.take.position, each.end);
+			const time::Position at = time::rebase({time::TimeBase::Linear, each.take.position},
+				project.trackById.at(each.track).timeBase, project.tempo, project.sampleRate);
+			const Json event = run("audioEvent.add",
+				{{"track", each.track}, {"clip", each.clip}, {"position", at.value}, {"offset", each.take.offset},
+					{"length", each.take.length}})
+								   .at("event")
+								   .at("id");
+			// Recorded events follow global transpose with the project root key, or with transpose events are
+			// independent of it, as recorded MIDI parts (#1368, reference manual p. 420).
+			const bool transposed = !project.transpose.events.empty();
+			if (transposed || project.rootKey >= 0)
+				run("audioEvent.set",
+					{{"event", event}, {"rootKey", transposed ? std::string() : rootKeyName(project.rootKey)},
+						{"globalTranspose", transposed ? "independent" : "follow"}});
+			if (stacked[i])
+				run("event.set",
+					{{"events", Json::array({event})}, {"lane", std::min(lanes[each.track]++, g_lastLane)}});
+			events.push_back(event);
 		}
 		// Recording chord events (#933, reference manual p. 1345): with the chord track record-enabled, the chords
 		// that the notes recorded in each take make replace the chord events over that take, so that the laps of a

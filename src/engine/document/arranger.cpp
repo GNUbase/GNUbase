@@ -156,6 +156,35 @@ namespace gnubase::engine
 			return steps;
 		}
 
+		// arranger.setChain's moveSteps, copy, addEvents and to: the steps moved or copied, then those of the events
+		// added, before the step at to as the list was.
+		void moveSteps(const Project& project, ArrangerChain& chain, const Json& parameters)
+		{
+			const auto size = static_cast<int64_t>(chain.steps.size());
+			int64_t to = parameters.value("to", size);
+			require(to >= 0 && to <= size, "to must be 0 to " + std::to_string(size));
+			const auto indices = parameters.value("moveSteps", std::set<int64_t>());
+			std::vector<ArrangerStep> moved;
+			for (const int64_t index : indices)
+			{
+				require(index >= 0 && index < size, "the chain has no step " + std::to_string(index));
+				moved.push_back(chain.steps[static_cast<size_t>(index)]);
+			}
+			Json added = Json::array();
+			for (const Json& event : parameters.value("addEvents", Json::array()))
+				added.push_back({{"event", event}});
+			for (const ArrangerStep& step : stepsFrom(project, added))
+				moved.push_back(step);
+			if (!parameters.value("copy", false))
+				for (auto index = indices.rbegin(); index != indices.rend(); ++index)
+				{
+					chain.steps.erase(chain.steps.begin() + *index);
+					if (*index < to)
+						--to;
+				}
+			chain.steps.insert(chain.steps.begin() + to, moved.begin(), moved.end());
+		}
+
 		// "Chain N" with the first number from the number of chains on that no chain has.
 		std::string chainName(const Project& project)
 		{
@@ -365,10 +394,15 @@ namespace gnubase::engine
 				"arranger event played repeats times (1 to 999, default 1) in a repeat mode: normal (then the next "
 				"step), repeatForever (until another step or event is chosen) or pauseAfterRepeats (then playback "
 				"stops at the next step). Appending, moving and copying steps give the whole list; removeSteps "
-				"removes the steps at those indices (0 for the first; Remove Touched and Remove Selected).",
+				"removes the steps at those indices (0 for the first; Remove Touched and Remove Selected). Then "
+				"moveSteps moves the steps at those indices, in their order, to before the step at to (default: the "
+				"end) as the list was, or copies them there with copy, and addEvents inserts steps of those arranger "
+				"events there, as dragging steps and dropping events in the chain list do.",
 				objectSchema(
 					{{"chain", idSchema}, {"name", stringSchema}, {"steps", {{"type", "array"}, {"items", stepSchema}}},
-						{"removeSteps", {{"type", "array"}, {"items", integerSchema}}}}),
+						{"removeSteps", {{"type", "array"}, {"items", integerSchema}}},
+						{"moveSteps", {{"type", "array"}, {"items", integerSchema}}}, {"copy", {{"type", "boolean"}}},
+						{"addEvents", {{"type", "array"}, {"items", idSchema}}}, {"to", integerSchema}}),
 				chainResult, false},
 			[](Project& project, CommandContext& context)
 			{
@@ -388,6 +422,8 @@ namespace gnubase::engine
 						chain.steps.erase(chain.steps.begin() + *index);
 					}
 				}
+				if (parameters.contains("moveSteps") || parameters.contains("addEvents"))
+					moveSteps(project, chain, parameters);
 				announce(project, context);
 				return Json{{"chain", chainJson(chain)}};
 			});

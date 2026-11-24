@@ -704,6 +704,50 @@ TEST_CASE("arranger events and chains: names, steps, undo and the arranger track
 	CHECK(arranger.at("chains").empty());
 }
 
+TEST_CASE("arranger.setChain moves and copies steps and inserts events where they are dropped", "[integration]")
+{
+	// Reference manual pp. 409-410: steps are dragged up or down, with Alt copied, and events dropped into the chain.
+	Engine engine;
+	Client client{engine};
+	const ObjectId a = idOf(run(client, "arranger.add", {{"position", 0}, {"end", 1000}}), "event");
+	const ObjectId b = idOf(run(client, "arranger.add", {{"position", 1000}, {"end", 2000}}), "event");
+	const ObjectId c = idOf(run(client, "arranger.add", {{"position", 2000}, {"end", 3000}}), "event");
+	run(client, "arranger.setChain",
+		{{"steps", {{{"event", a}, {"repeats", 2}}, {{"event", b}}, {{"event", c}, {"mode", "repeatForever"}}}}});
+	const auto order = [&client]
+	{
+		std::vector<ObjectId> events;
+		const Json arranger = run(client, "arranger.get");
+		for (const Json& step : arranger.at("chains")[0].at("steps"))
+			events.push_back(step.at("event").get<ObjectId>());
+		return events;
+	};
+	const Json steps = run(client, "arranger.get").at("chains")[0].at("steps");
+
+	// Moved: the steps keep their repeats and modes, in their order, before the step at to as the list was.
+	run(client, "arranger.setChain", {{"moveSteps", {0}}, {"to", 3}});
+	CHECK(order() == std::vector<ObjectId>{b, c, a});
+	CHECK(run(client, "arranger.get").at("chains")[0].at("steps")[2] == steps[0]);
+	run(client, "arranger.setChain", {{"moveSteps", {2, 0}}, {"to", 0}});
+	CHECK(order() == std::vector<ObjectId>{b, a, c});
+	run(client, "history.undo");
+	run(client, "history.undo");
+	CHECK(run(client, "arranger.get").at("chains")[0].at("steps") == steps);
+	// Copied: the steps stay where they are too.
+	run(client, "arranger.setChain", {{"moveSteps", {1, 2}}, {"to", 1}, {"copy", true}});
+	CHECK(order() == std::vector<ObjectId>{a, b, c, b, c});
+	// Events inserted, at the end without to.
+	run(client, "arranger.setChain", {{"addEvents", {c, a}}, {"to", 0}});
+	CHECK(order() == std::vector<ObjectId>{c, a, a, b, c, b, c});
+	run(client, "arranger.setChain", {{"addEvents", {b}}});
+	CHECK(order().back() == b);
+	CHECK(run(client, "arranger.get").at("chains")[0].at("steps")[0].at("repeats") == 1);
+
+	CHECK(reject(client, "arranger.setChain", {{"moveSteps", {9}}}) == "the chain has no step 9");
+	CHECK(reject(client, "arranger.setChain", {{"addEvents", {a}}, {"to", 99}}) == "to must be 0 to 8");
+	CHECK(reject(client, "arranger.setChain", {{"addEvents", {999}}}) == "no arranger event 999");
+}
+
 TEST_CASE("the arranger is saved with the project", "[integration]")
 {
 	const gnubase::test::TempDir dir;

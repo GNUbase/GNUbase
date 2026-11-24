@@ -584,6 +584,7 @@ TEST_CASE("a note dragged from one in-place editor to another moves to that trac
 	CHECK(moved.at("length") == g_quarter);
 	CHECK(moved.at("velocity") == source.at("velocity"));
 	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+	CHECK(f.app.call("history.get").at("steps").back().at("action") == "Move notes"); // also for several parts (#2014)
 	// The moved note left its editor's selection.
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").empty(); }));
 
@@ -784,7 +785,7 @@ TEST_CASE("a controller event of another source part goes along as one undo step
 	CHECK(partOf(f.part).at("notes").size() == 1);
 	const Json history = f.app.call("history.get");
 	CHECK(history.at("steps").size() == steps + 1);
-	CHECK(history.at("steps").back().at("action") == "Move");
+	CHECK(history.at("steps").back().at("action") == "Move notes"); // as one part's lone note.move (#2014)
 
 	// One undo brings the note and the controller event back to their parts.
 	f.app.call("history.undo");

@@ -293,3 +293,40 @@ TEST_CASE("the status line shows the remaining record time of the record-enabled
 	const std::regex shown(R"(Max\. Record Time: (\d+ h \d\d min|\d+ min \d\d s))");
 	CHECK(std::regex_match(text(app, "#record-time"), shown));
 }
+
+TEST_CASE(
+	"Studio > More Options > Max. Record Time shows the remaining record time in a window of its own (#645)", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	CHECK(app.ui()
+			  .dom(std::nullopt, "#studio-menu menuitem[command=\"window.maxRecordTime\"]", 0)
+			  .at("elements")
+			  .size() == 1);
+	// The window whose document is max-record-time.rml, or none.
+	const auto window = [&app]() -> std::optional<ui::WindowId>
+	{
+		const Json windows = app.ui().windows();
+		for (const Json& open : windows.at("windows"))
+			for (const Json& document : open.at("documents"))
+				if (document.at("source").get<std::string>().find("max-record-time.rml") != std::string::npos)
+					return open.at("id").get<ui::WindowId>();
+		return std::nullopt;
+	};
+	const auto shown = [&app, &window]
+	{
+		const std::optional<ui::WindowId> id = window();
+		if (!id)
+			return std::string();
+		const Json found = app.ui().dom(id, "#record-time", 0).at("elements");
+		return found.size() == 1 ? found[0].value("text", std::string()) : std::string();
+	};
+	app.keys().run("window.maxRecordTime", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return shown() == "Max. Record Time: -"; })); // no track would record
+	const Json added = app.call("track.add", {{"type", "audio"}, {"channels", 1}});
+	app.call("channel.set", {{"channel", added.at("channel").at("id")}, {"recordEnable", true}});
+	const std::regex time(R"(Max\. Record Time: (\d+ h \d\d min|\d+ min \d\d s))");
+	CHECK(app.waitUntil([&] { return std::regex_match(shown(), time); }, std::chrono::seconds(10)));
+	app.keys().run("window.maxRecordTime", Json::object(), app.main(), nullptr);
+	CHECK(app.waitUntil([&] { return !window(); }));
+}

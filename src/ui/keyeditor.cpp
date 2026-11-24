@@ -35,9 +35,9 @@ namespace gnubase::ui
 		constexpr int g_pitches = 128;
 		constexpr double g_maxVelocity = 127.0;
 		constexpr float g_edge = 6.0F; // dp at a note's ends where the object selection tool resizes it
-		constexpr std::array<Rml::EventId, 9> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
+		constexpr std::array<Rml::EventId, 8> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
 			Rml::EventId::Mouseup, Rml::EventId::Drag, Rml::EventId::Dragend, Rml::EventId::Click,
-			Rml::EventId::Dblclick, Rml::EventId::Change, Rml::EventId::Keydown};
+			Rml::EventId::Dblclick, Rml::EventId::Change};
 		// dp the drumstick goes from its press before its release deletes the sound's later notes too (p. 1242)
 		constexpr float g_dragThreshold = 4.0F;
 		// The zoom the keyboard's left part drags (p. 1261): its limits, and the dp a drag goes to the right to double
@@ -337,6 +337,9 @@ namespace gnubase::ui
 		}
 		const std::string keys = whiteKeys + blackKeys;
 		root.SetClass("drum-editor", drum);
+		// Up, Down, Delete and Backspace transpose and delete the selected notes as key commands of this zone, which
+		// a press in the note display gives the focus (p. 1214, app::AppUi::addMidiFunctions).
+		root.SetAttribute("focuszone", "keyEditor");
 		updateOrder();
 		root.SetInnerRML(R"(<div class="toolbar key-editor-toolbar">)" + tools + R"(<span class="separator"/>)" +
 			transpose + R"(<span class="separator"/>)" + inputs +
@@ -1544,6 +1547,17 @@ namespace gnubase::ui
 		return row >= 0 && row < static_cast<int>(m_order.size()) ? m_order.at(static_cast<size_t>(row)) : -1;
 	}
 
+	void KeyEditor::removeSelected()
+	{
+		std::map<uint64_t, Json> notes;
+		for (const Note* note : selectedNotes())
+			notes[note->part].push_back(note->id);
+		Json commands = Json::array();
+		for (auto& [part, ids] : notes)
+			commands.push_back({{"command", "note.remove"}, {"parameters", {{"part", part}, {"notes", ids}}}});
+		edit("Remove notes", std::move(commands));
+	}
+
 	void KeyEditor::transpose(int semitones)
 	{
 		std::map<uint64_t, Json> changes;
@@ -1559,7 +1573,7 @@ namespace gnubase::ui
 		Json commands = Json::array();
 		for (auto& [part, notes] : changes)
 			commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", notes}}}});
-		edit("Transpose", std::move(commands));
+		edit("Change notes", std::move(commands));
 	}
 
 	// Edits on the info line go to every selected note, relative to the first one's value; the channel is the same
@@ -1584,7 +1598,7 @@ namespace gnubase::ui
 			Json commands = Json::array();
 			for (auto& [part, items] : changes)
 				commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
-			edit("Change Articulations", std::move(commands));
+			edit("Change notes", std::move(commands));
 			return;
 		}
 		const Note& first = *notes.front();
@@ -1833,35 +1847,6 @@ namespace gnubase::ui
 				setView({{"insertVelocity",
 					std::clamp(event.GetParameter<float>("value", 100.0F) / g_maxVelocity, 0.0, 1.0)}});
 			break;
-		case Rml::EventId::Keydown:
-		{
-			// While the note display has the focus, Delete and Backspace delete the selected notes, Up and Down
-			// transpose them by a semitone, with Shift by an octave (p. 1214), instead of the key commands.
-			const auto key = static_cast<Rml::Input::KeyIdentifier>(event.GetParameter<int>("key_identifier", 0));
-			if (target != m_root.get() || event.GetParameter("ctrl_key", 0) != 0 ||
-				event.GetParameter("alt_key", 0) != 0 || event.GetParameter("meta_key", 0) != 0)
-				break;
-			if (key == Rml::Input::KI_DELETE || key == Rml::Input::KI_BACK)
-			{
-				std::map<uint64_t, Json> notes;
-				for (const Note* note : selectedNotes())
-					notes[note->part].push_back(note->id);
-				Json commands = Json::array();
-				for (auto& [part, ids] : notes)
-					commands.push_back({{"command", "note.remove"}, {"parameters", {{"part", part}, {"notes", ids}}}});
-				edit("Delete", std::move(commands));
-			}
-			else if (key == Rml::Input::KI_UP || key == Rml::Input::KI_DOWN)
-			{
-				transpose((key == Rml::Input::KI_UP ? 1 : -1) * (event.GetParameter("shift_key", 0) != 0 ? 12 : 1));
-			}
-			else
-			{
-				break;
-			}
-			event.StopPropagation();
-			break;
-		}
 		default:
 			break;
 		}
@@ -1912,7 +1897,7 @@ namespace gnubase::ui
 			inGrid = inGrid || each == area;
 		if (!inGrid)
 			return;
-		root->Focus(); // the note display takes the keys (ProcessEvent's Keydown)
+		root->Focus(); // the keys go to the key commands of the editor's focus zone
 		if (m_expressionOpen)
 		{
 			// In the expression editor the draw tool draws points (pp. 1310-1311) and the erase tool deletes them, a
@@ -2005,7 +1990,7 @@ namespace gnubase::ui
 		}
 		case KeyTool::Erase:
 			if (pressed != nullptr)
-				edit("Erase",
+				edit("Remove notes",
 					Json::array({{{"command", "note.remove"},
 						{"parameters", {{"part", pressed->part}, {"notes", Json::array({pressed->id})}}}}}));
 			return;
@@ -2033,7 +2018,7 @@ namespace gnubase::ui
 			{
 				change["length"] = cut - pressed->start;
 			}
-			edit("Trim",
+			edit("Change notes",
 				Json::array({{{"command", "note.set"},
 					{"parameters", {{"part", pressed->part}, {"notes", Json::array({change})}}}}}));
 			return;
@@ -2059,7 +2044,7 @@ namespace gnubase::ui
 					commands.push_back({{"command", "note.split"},
 						{"parameters", {{"part", part.id}, {"notes", ids}, {"position", cut - part.start}}}});
 			}
-			edit("Split", std::move(commands));
+			edit("Split notes", std::move(commands));
 			return;
 		}
 		case KeyTool::Line: // only on the controller lanes
@@ -2078,7 +2063,7 @@ namespace gnubase::ui
 					next = &each;
 			if (next == nullptr)
 				return;
-			edit("Glue",
+			edit("Glue notes",
 				Json::array({{{"command", "note.glue"},
 					{"parameters", {{"part", pressed->part}, {"note", pressed->id}, {"next", next->id}}}}}));
 			return;
@@ -2389,7 +2374,7 @@ namespace gnubase::ui
 			Json commands = Json::array();
 			for (const auto& [part, notes] : removed)
 				commands.push_back({{"command", "note.remove"}, {"parameters", {{"part", part}, {"notes", notes}}}});
-			edit("Erase", std::move(commands));
+			edit("Remove notes", std::move(commands));
 			return;
 		}
 		if (gesture == Gesture::Draw)
@@ -2460,7 +2445,7 @@ namespace gnubase::ui
 		for (auto& [part, items] : controllers)
 			commands.push_back(
 				{{"command", "controller.set"}, {"parameters", {{"part", part}, {"controllers", items}}}});
-		edit(gesture == Gesture::Move ? "Move" : "Resize", std::move(commands));
+		edit("Change notes", std::move(commands));
 	}
 
 	void KeyEditor::releaseOutside(Rml::Event& event)
@@ -2622,7 +2607,7 @@ namespace gnubase::ui
 					{{"part", part}, {"notes", ids.first}, {"controllers", ids.second}, {"target", target->at("id")},
 						{"ticks", dt}, {"semitones", semitones}}}});
 		m_pressed.reset();
-		edit("Move", std::move(commands));
+		edit("Move notes", std::move(commands));
 	}
 
 	// With the object selection tool a double click on a note deletes it, in the empty grid it inserts a note of the
@@ -2663,7 +2648,7 @@ namespace gnubase::ui
 			}
 			else if (pressed->editable)
 			{
-				edit("Delete",
+				edit("Remove notes",
 					Json::array({{{"command", "note.remove"},
 						{"parameters", {{"part", pressed->part}, {"notes", Json::array({pressed->id})}}}}}));
 			}
@@ -2715,7 +2700,7 @@ namespace gnubase::ui
 		Json commands = Json::array();
 		for (auto& [part, items] : changes)
 			commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
-		edit("Change Articulations", std::move(commands));
+		edit("Change notes", std::move(commands));
 	}
 
 	const Json* KeyEditor::activeMap() const

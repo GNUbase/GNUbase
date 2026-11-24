@@ -124,9 +124,12 @@ Editor panel going (its tab hidden, the panel opened in a window of its own, or 
 in-place editor closing, or the switch to the drum editor, which builds a key editor of its own. A press on a key
 selects and deselects no notes.
 
-A press in the note display gives it the keyboard focus. Then Up and Down transpose the selected notes by a semitone,
-with Shift by an octave, and Delete and Backspace delete them (p. 1214), before the key commands hear the keys: in the
-lower zone, Delete deletes the notes, not the project window's selected events.
+A press in the note display gives the editor the keyboard focus. Its element is the focus zone `keyEditor`, where Up
+and Down transpose the selected notes by a semitone, with Shift by an octave, and Delete and Backspace delete them
+(p. 1214): the key commands `keyEditor.transposeUp`, `keyEditor.transposeDown`, `keyEditor.transposeOctaveUp`,
+`keyEditor.transposeOctaveDown` and `keyEditor.delete` ([key-commands.md](key-commands.md), #679), which the Key
+Commands dialog binds to other keys. In the lower zone they come before the project window's keys, so Delete deletes
+the notes, not the project window's selected events.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -138,6 +141,11 @@ lower zone, Delete deletes the notes, not the project window's selected events.
 | Glue | A click glues the note to the next one of its pitch; the first one's values stay, the next one's expression joins its own (`note.glue`) | p. 1215 |
 | Mute | On the Articulations lane, a click mutes a direction or attribute, or unmutes it ([articulation-maps.md](articulation-maps.md), #1684); in the note display nothing yet, as notes have no mute (#679) | pp. 1193, 1289 |
 
+- **Undo steps.** A gesture sends each part's `note.*` command, the commands of several parts in one
+  `history.transaction` named as the engine names the lone command's step, so that the step has the same name either
+  way (#2014): "Change notes" for a move or resize in the editor, transposing, trimming and the articulations, "Move
+  notes" for a move onto another in-place editor, "Remove notes" for Delete, Backspace, the erase tool and the
+  drumstick, "Split notes" and "Glue notes".
 - **Gestures that leave the editor.** While a press in the note display or on the keyboard's left part goes on, the grid
   or the keyboard's left part is an RmlUi drag element (`.key-editor.in-gesture`): its drag events come wherever the
   mouse is, also outside the window, where the platform captures the mouse while the button is held and nothing is
@@ -181,12 +189,12 @@ Live MIDI keyboard input into `editor.input` (it waits for the MIDI recording in
 the step input cursor and lengthening a held chord; the Mute tool on notes (notes have no mute yet; it mutes the
 Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note
 display (it draws on the controller lanes); the selection rectangle, the trim tool's drag across several notes and the
-draw tool's modifiers for velocity, pitch and position; transposing and deleting as key commands that the Key Commands
-dialog can bind to other keys; the nudge buttons, Solo Editor, Record in Editor, pitch visibility, the Scale Assistant,
-Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom and scrolling; the key
-at the mouse's pitch lit while the mouse moves in the note display (p. 1204); drum map names in the key editor and
-articulation names; Add to Chord Track, Match with Chord Track, Create Chord Events and the chord insert tools;
-quantizing from the toolbar (#132) and the Length section's functions (#133); the key editor's context menu.
+draw tool's modifiers for velocity, pitch and position; the nudge buttons, Solo Editor, Record in Editor, pitch
+visibility, the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout;
+horizontal zoom and scrolling; the key at the mouse's pitch lit while the mouse moves in the note display (p. 1204);
+drum map names in the key editor and articulation names; Add to Chord Track, Match with Chord Track, Create Chord
+Events and the chord insert tools; quantizing from the toolbar (#132) and the Length section's functions (#133); the
+key editor's context menu.
 
 ## Checks
 
@@ -216,14 +224,16 @@ quantizing from the toolbar (#132) and the Length section's functions (#133); th
   released there ending without its effect, its note keeping the length the mouse gives it while the display is shown
   again during it; a move's notes at the time under the mouse as the range changes during it; the erase, trim (and with
   Alt), split and glue tools, and the split tool splitting the selected notes of two parts at one position in one undo
-  step; the transpose palette, Up and Down (with Shift), Delete and Backspace, and typing a pitch and a start before the
-  part's on the info line; step input with its cursor, a click moving it, and MIDI input selecting the next note; the
-  Chord Editing section naming and changing a chord; the toolbox with the setting on and off, with and without a
-  modifier key, choosing tools; drags on the keyboard's left part zooming the rows in and out between the limits, from
-  the height a style sheet gives them, also after a style change at a zoom and back at 1, the keyboard as high as the
-  rows of any height, nothing zoomed or scrolled without a row height to scale and no height left on the rows for a
-  later style, the zoom snapping to 1 near it, and scrolling the note display, while a click there zooms nothing, and a
-  click and a drag there leaving a note an earlier press selected and the history alone; the lower zone's key editor at
-  its default size giving the note display more room than the controller lanes, at dp ratios 1 and 2, and the lanes
-  whole in a lower zone of 400 dp; the editor window's lane keeping its 64 dp and the note display its 40%, and the
-  in-place editor's lanes keeping their height with its toolbar shown.
+  step; each gesture's undo step named the same over notes of one part and of two, also the drumstick's delete drag
+  (`tests/drumeditor_ui_tests.cpp`); the transpose palette, Up and Down (with Shift), Delete and Backspace, and
+  Transpose Up bound to another key, and typing a pitch and a start before the part's on the info line; step input with
+  its cursor, a click moving it, and MIDI input selecting the next note; the Chord Editing section naming and changing a
+  chord; the toolbox with the setting on and off, with and without a modifier key, choosing tools; drags on the
+  keyboard's left part zooming the rows in and out between the limits, from the height a style sheet gives them, also
+  after a style change at a zoom and back at 1, the keyboard as high as the rows of any height, nothing zoomed or
+  scrolled without a row height to scale and no height left on the rows for a later style, the zoom snapping to 1 near
+  it, and scrolling the note display, while a click there zooms nothing, and a click and a drag there leaving a note an
+  earlier press selected and the history alone; the lower zone's key editor at its default size giving the note display
+  more room than the controller lanes, at dp ratios 1 and 2, and the lanes whole in a lower zone of 400 dp; the editor
+  window's lane keeping its 64 dp and the note display its 40%, and the in-place editor's lanes keeping their height
+  with its toolbar shown.

@@ -20,6 +20,7 @@ namespace gnubase::engine::graph
 		uint32_t frames = 0;  // at least 1
 		int64_t position = 0; // the project position, in samples, of the segment's first frame
 		bool recording = false;
+		bool lap = false; // cycle playback jumped here from the right locator: a cycle lap starts (#2067)
 	};
 
 	// A count-in before playback starts, during which the metronome clicks on a timeline of its own (#101): the

@@ -32,7 +32,7 @@ the pool and conforming files to the project's sample rate. The engine commands 
 - **`media.cleanup`** lists the files that loads extracted and nothing uses (#1827), as the reference's Cleanup did:
   those in the project's media folder (`<name> media` next to its project file) and in the track presets'
   (`Track Presets/<name> media` in the settings folder) that neither the project, nor a step of its undo history, nor
-  its project file, nor a project template (`Project Templates` in the settings folder) has as a media or freeze file.
+  its project file, nor a project template (`Project Templates` in the settings folder) has as a media or freeze file or a track picture.
   Such are the numbered files (`2-kick.wav`) that a load puts beside a file with other content
   ([project-files.md](project-files.md), [track-presets.md](track-presets.md)), and the files of media files removed
   from the pool once no undo step has them. A peak file goes with its audio file, and the peak

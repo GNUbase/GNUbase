@@ -69,7 +69,7 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
   them to that track's part at the drop, keeping their ids, their distances to the pressed one and every other field
   they have, as one undo step; the selected controller events go along, as in a move within the editor (p. 1188), each
   part's in its `note.move`, with empty `notes` for a part that gives only controller events; several source parts' go
-  in one `history.transaction`, the undo step "Move" (one part's alone is `note.move`'s "Move notes"); nothing moves
+  in one `history.transaction`, named "Move notes" as one part's lone `note.move` is (#2014); nothing moves
   when the drop lies where the target track has no part, or a note would land before that part's start or outside the
   pitches (p. 1261). A click on a part in the row of parts activates it (p. 1152). The editors' menus have ids of their
   own, ending in `-inPlace-<track>` (`ui::menuIdSuffix`), since they share the project window's document with each other

@@ -28,12 +28,12 @@ when no MIDI keyboard is at hand.
   until GNUbase quits.
 - **Keys taken.** While the window is open, it takes the keys that no element used before the key commands, in every
   window: the keys of the two rows play, and the other keys run nothing, except the keys of the reference's exceptions,
-  commands that keep their keys (#691): Save (Mod+S by default), Start/Stop Record (Num*), Start/Stop Playback
-  (Space), Jump to Left Locator (Num1), Delete (Delete, and Backspace in the project window and the sample editor),
-  Cycle on/off (Num/), Show/Hide Transport Panel (F2) and Show/Hide On-Screen Keyboard (Alt+K). The window asks the
-  key commands what a key would run (`KeyCommands::bound`), so a command the user gave another key keeps that key,
-  and its old key runs nothing. Text fields keep the keys typed into them. Closing the window gives the key commands
-  their keys back.
+  commands that keep their keys (#691): Save (Mod+S by default), Start/Stop Record (Num*), Start/Stop Playback (Space),
+  Jump to Left Locator (Num1), Delete (Delete, and Backspace in the project window, the sample editor and the key
+  editor's note display), Cycle on/off (Num/), Show/Hide Transport Panel (F2) and Show/Hide On-Screen Keyboard (Alt+K).
+  The window asks the key commands what a key would run (`KeyCommands::bound`), so a command the user gave another key
+  keeps that key, and its old key runs nothing. Text fields keep the keys typed into them. Closing the window gives the
+  key commands their keys back.
 - **Notes end.** Notes that sound end when their key or button goes up, when GNUbase loses the keyboard focus, and
   when the window closes.
 

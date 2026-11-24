@@ -19,8 +19,13 @@ and panners' engine side is in [mixer.md](mixer.md).
   project in GNUbase's extra entry (`mixers` in `project.get`), empty for files from before.
 - **Notes** (p. 497): the channel's notes (`channel.set` `notes`), which the inspector's notepad edits too
   ([inspector.md](inspector.md)). **Pictures** (p. 497): `track.set` `picture`, an image file (PNG, JPEG or SVG) that
-  the mixer shows on the track's channel, or empty. Both are undo steps and copied by `track.duplicate`; pictures are
-  saved in GNUbase's extra entry, notes also in DAWproject's `comment`.
+  the mixer shows on the track's channel, or empty; a relative path is taken from the working folder and kept
+  absolute. Both are undo steps and copied by `track.duplicate`; notes are saved in DAWproject's `comment` too.
+  Pictures go with the project file as freeze files do, so a project keeps them when it moves (the reference keeps
+  them with the project as well, in its folder Track Pictures, p. 125): `project.save` embeds each picture under
+  `pictures/` and a load extracts it into the project's media folder, where `media.cleanup` leaves it; with
+  `embedMedia` false the file refers to a picture relative to itself when it is in the file's folder, otherwise by its
+  absolute path, as it does to a picture that is missing. GNUbase's extra entry has them as `pictures`, by track id.
 
 ## The mixer
 
@@ -43,6 +48,7 @@ control's last step answered, its strip shows the engine's value; a refused one 
     .mixer-channel[sections=channel][channel=<id>][type=<type>]   a strip per channel it shows
       .mixer-channel-name[color]        the track's color, .colored while it has one, .bright on a bright color
       .mixer-picture[section=picture]   Pictures, hidden by default
+      .mixer-routing[section=routing]   Routing (mixers only): select[param=input] (audio tracks), select[param=output], hidden by default
       .mixer-pre, .mixer-eq, .mixer-strip   Pre, Equalizer and Strip (audio channels), hidden by default (channel-strip.md)
       .mixer-sends[section=sends]       Sends (audio channels), hidden by default (routing.md)
       .mixer-notes[section=notes]       Notepad, hidden by default: textarea.mixer-notes-field
@@ -72,9 +78,14 @@ control's last step answered, its strip shows the engine's value; a refused one 
   answer while a newer change is still out. The lower zone's mixer follows the project window's track visibility, and a
   window does with Sync Visibility of Project and Mixer ([track-visibility.md](track-visibility.md)).
 - **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the left zone (in a
-  window) and the strips' sections Pictures, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them, with
+  window) and the strips' sections Pictures, Routing, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them, with
   Show All, Reset All and presets ([docking.md](docking.md)); the layout is the user setting
   `ui.layout`, per window (`mixer1` to `mixer4`, and `project` for the lower zone's).
+- **Routing** (pp. 471-473): Input Routing picks an audio track's input bus, Output Routing where a channel plays: an
+  output bus, or a group or effect channel whose audio doesn't come back to it (`routesTo`), for a MIDI track an
+  instrument; No Bus or Not Connected disconnects. Each sends `channel.set` with `input` or `output`; the lists are the
+  inspector's (`inputChoices`, `outputChoices`). The channel settings window has no Routing section, as in the
+  reference.
 - **Order** (p. 496). A channel's name dragged onto another channel takes its place: its track moves into that
   track's folder with `track.move`, after it when it came from the left, before it otherwise, so the track list
   follows. Busses keep their places, and a folder doesn't move into itself. Any mouse button release in the window
@@ -132,7 +143,7 @@ below their -60 dB end to silence: the UI keeps each bar's level and lowers it b
 
 Channel selection and the agents and Move Selected Channels commands that work on it, dragging several channels at
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
-the right zone; the channel overview, the meter bridge, Channel Latency, the routing and inserts sections (#113) and the
+the right zone; the channel overview, the meter bridge, Channel Latency, the inserts section (#113), routing several selected channels at once (p. 471) and the
 channel meters' colors and clipping indicators (pp. 467-468, [metering.md](metering.md)); Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
 windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspaces.md)).
 
@@ -140,7 +151,9 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
 
 - `tests/mixerviews_tests.cpp`: each mixer's hidden channels and types, sorted and in the filter's order, kept per
   mixer, refused for unknown ids, types and mixers, not undo steps, without channels that are gone, and saved and
-  loaded; notes and pictures as undo steps, copied with a track, saved and loaded.
+  loaded; notes and pictures as undo steps, copied with a track, saved and loaded; a picture embedded in the file and
+  extracted next to it once the original is gone, kept by `media.cleanup`, and referred to relative to the file when
+  not embedded, so it loads from a folder that moved.
 - `tests/mixerwindow_tests.cpp` drives the app with `ui::Automation`: F3 opens a mixer window with the busses and the
   channels in the track list's order and closes it again; tracks added, renamed, moved and removed by the engine show at
   once; the fader, the dB text and the mute and solo buttons both ways; two windows, the Visibility tab and the type
@@ -152,7 +165,8 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
   file dialog, two visibility changes within one step, a name drag ended outside the mixer moving nothing, the
   Visibility tab in a window of its own opening and closing with its mixer window, and channel names dragged onto others
   reordering the tracks, while
-  busses stay. A strip's name shows its track's color as `track.set` changes it, marked bright or not, and the theme's once the color is gone. A fader and a send's level
+  busses stay. The Routing section lists the input busses, and the output busses and the group and effect channels a
+  channel can play into, an instrument for a MIDI track, sends `channel.set` and follows the engine. A strip's name shows its track's color as `track.set` changes it, marked bright or not, and the theme's once the color is gone. A fader and a send's level
   dragged and the panner turned while the engine answers late follow the mouse, never back, end where the engine is, and
   are one undo step; values set through MCP show at once, and during a drag when it ends. A fader step the engine
   refuses, its track being gone, shows in the command log, leaves no undo step and, once an undo brings the track back,

@@ -10,6 +10,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -56,8 +57,10 @@ namespace gnubase::ui
 	// Loudness buttons at its bottom switch between them, and each page's reset resets its own values (meter.reset
 	// with meters "main" or "loudness"), and a Ctrl-click on RMS Max. or Peak Max. resets that one alone. Configure
 	// Meter Settings and Configure Loudness Settings open the meter settings pane (pp. 538-540) with the user settings
-	// meter.resetOnStart, meter.rmsAes17 and meter.rmsResolution. It reads the meters once a frame through the reader.
-	// Use it on the UI thread; the reader and the binding must outlive it.
+	// meter.loudnessUnit, meter.loudnessScale, meter.resetOnStart, meter.holdOnStop, meter.rmsAes17 and
+	// meter.rmsResolution, and the thresholds above which Momentary Max., Short-Term, Integrated and True Peak turn red
+	// (.over); Measure Loudness switches meter.measureLoudness. It reads the meters once a frame through
+	// the reader. Use it on the UI thread; the reader and the binding must outlive it.
 	class MeterPanel final : private Rml::EventListener
 	{
 	public:
@@ -84,5 +87,7 @@ namespace gnubase::ui
 		std::optional<Subscription> m_settings;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(); // for the answers to settings.get
 		bool m_showing = false;                                   // while showSetting sets a control
+		bool m_lu = false;                                        // the user setting meter.loudnessUnit is lu
+		std::map<std::string, double> m_thresholds; // the settings meter.<name>Reference and meter.<name>Tolerance
 	};
 }

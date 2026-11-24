@@ -4,6 +4,7 @@
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
 #include "ui/meterpanel.h"
+#include "ui/widgetutils.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
@@ -52,6 +53,12 @@ namespace gnubase::ui
 	// (engine::routingLoops): a channel can't play into one whose audio comes back to it. The mixer's send destination
 	// lists and the inspector's output list leave such channels out.
 	bool routesTo(const engine::Json& project, uint64_t from, uint64_t to);
+
+	// Where the channel of a track of the type can play: output busses, group and effect channels whose audio doesn't
+	// come back to it (routesTo), or for MIDI tracks the instrument channels, as in the add track dialog; and where an
+	// audio track records from. The inspector's and the mixer's routing lists (reference manual pp. 471-473).
+	widgets::Options outputChoices(const engine::Json& project, const std::string& type, uint64_t channel);
+	widgets::Options inputChoices(const engine::Json& project);
 
 	// Click and hold on a solo button switches solo defeat, as Alt-click does (p. 466): a view tells it where the mouse
 	// went down, and asks at the click on a solo button (control="solo") whether the press there was that long.

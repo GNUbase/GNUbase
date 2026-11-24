@@ -515,6 +515,8 @@ namespace gnubase::app
 				if (m_eventDisplay && m_markerLines && !m_eventDisplay->selectedPoints().empty())
 				{
 					m_markerLines->deselect();
+					if (m_arrangerLane)
+						m_arrangerLane->deselect();
 					if (m_signatureLane && !m_signatureLane->row().selection().empty())
 						m_signatureLane->row().setSelection({});
 				}
@@ -533,6 +535,8 @@ namespace gnubase::app
 						if (range)
 						{
 							m_markerLines->deselect();
+							if (m_arrangerLane)
+								m_arrangerLane->deselect();
 							if (m_signatureLane)
 								m_signatureLane->row().setSelection({});
 						}
@@ -1128,13 +1132,16 @@ namespace gnubase::app
 				attributes.emplace_back("type", "drum");
 				openOnce(window, "add-track.rml", m_addTrack, attributes);
 			}});
-		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the add
-		// track dialog's page for the new track, which the selected tracks play or send into.
+		// Group Track, Effect Track and VCA Track to Selected Tracks (reference manual pp. 546, 554, 517): the add
+		// track dialog's page for the new track, which the selected tracks play or send into, or which controls them.
 		for (const auto& [id, type, description] :
 			{std::tuple{"track.addGroupToSelected", "group",
 				 "Opens the add track dialog for a group track that the selected tracks play into."},
 				std::tuple{"track.addEffectToSelected", "effect",
-					"Opens the add track dialog for an effect track that the selected tracks send to."}})
+					"Opens the add track dialog for an effect track that the selected tracks send to."},
+				std::tuple{"track.addVcaToSelected", "vca",
+					"Opens the add track dialog for a VCA track that controls a new link group of the selected "
+					"tracks' channels."}})
 		{
 			m_keys.add(
 				{id, description, [this, below, type = std::string(type)](ui::Window& window, Rml::Element* /*zone*/)
@@ -1236,11 +1243,13 @@ namespace gnubase::app
 						m_sampleEditor.editor->process(id.substr(5));
 						return;
 					}
-					// Delete removes the selected markers or time signature events, which the project window
-					// selects instead of events.
+					// Delete removes the selected markers, time signature or arranger events, which the project
+					// window selects instead of events.
 					if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
 						return;
 					if (id == "edit.delete" && m_signatureLane && m_signatureLane->row().removeSelected())
+						return;
+					if (id == "edit.delete" && m_arrangerLane && m_arrangerLane->removeSelected())
 						return;
 					if (m_eventDisplay)
 						m_eventDisplay->actions().at(id)();
@@ -1395,20 +1404,22 @@ namespace gnubase::app
 			});
 
 		// Lock Record (docs/features/recording.md): a stop or punch out that the engine refused because recording is
-		// locked asks whether to do it anyway (lock-record.rml); the engine's reason says which it was.
+		// locked asks whether to do it anyway (lock-record.rml), in the window whose key, button or menu item sent it
+		// (#645); the engine's reason says which it was.
 		for (const char* command : {"transport.stop", "transport.toggle", "transport.record"})
 			m_lockRecord.push_back(m_binding.onResult(command,
-				[this](const engine::Result& result)
+				[this, command](const engine::Result& result)
 				{
 					if (result.ok())
 						return;
 					const bool punchOut = result.error.find("punch out") != std::string::npos;
 					m_binding.send("transport.get", engine::Json::object(),
-						[this, punchOut](const engine::Result& status)
+						[this, punchOut, from = m_keys.sentFrom(command)](const engine::Result& status)
 						{
+							ui::Window* window = m_shell.find(from);
 							if (status.ok() && status.value.at("lockRecord").get<bool>() &&
 								status.value.at("recording").get<bool>())
-								openOnce(m_main, "lock-record.rml", m_lockRecordDialog,
+								openOnce(window != nullptr ? *window : m_main, "lock-record.rml", m_lockRecordDialog,
 									{{"action", punchOut ? "punchOut" : "stop"}});
 						});
 				}));
@@ -1418,6 +1429,8 @@ namespace gnubase::app
 			{
 				if (m_statusLine)
 					m_statusLine->update();
+				if (m_maxRecordTime)
+					m_maxRecordTime->update();
 			});
 
 		// The transport controls' commands (docs/features/transport-bar.md); the engine's transport commands have
@@ -1425,6 +1438,10 @@ namespace gnubase::app
 		m_keys.add({"window.transportPanel", "Shows or hides the transport panel.",
 			[this](ui::Window&, Rml::Element*) { toggleTransportPanel(); }});
 		m_keys.bind({"F2", "window.transportPanel"});
+		m_keys.add({"window.maxRecordTime",
+			"Shows or hides the Max. Record Time window: the remaining record time, as the status line shows it "
+			"(reference manual p. 356).",
+			[this](ui::Window&, Rml::Element*) { toggleMaxRecordTime(); }});
 		m_keys.add({"window.timeDisplay", "Shows or hides the time display window.",
 			[this](ui::Window&, Rml::Element*) { toggleTimeDisplay(); }});
 		m_keys.add({"time.exchangeFormats", "Switches the primary and the secondary time format of the transport bar.",
@@ -1800,6 +1817,35 @@ namespace gnubase::app
 		m_docking.saveWindows();
 	}
 
+	void AppUi::toggleMaxRecordTime()
+	{
+		m_docking.saveWindows(); // its bounds as the user left them
+		if (m_shell.find(m_maxRecordTimeWindow) != nullptr)
+		{
+			m_shell.close(m_maxRecordTimeWindow);
+			m_maxRecordTime.reset();
+			return;
+		}
+		ui::WindowSpec spec;
+		spec.title = "Max. Record Time";
+		spec.size = {260, 60};
+		spec.bounds = m_docking.bounds("maxRecordTime");
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		m_maxRecordTimeWindow = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "max-record-time.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		if (document == nullptr)
+		{
+			m_shell.close(m_maxRecordTimeWindow);
+			logging::error("Cannot load {}", file.u8string());
+			return;
+		}
+		document->Show();
+		m_maxRecordTime = std::make_unique<ui::StatusLine>(m_binding, *document);
+		m_docking.saveWindows();
+	}
+
 	void AppUi::toggleTimeDisplay()
 	{
 		toggle(m_timeDisplay, "timeDisplay", "time-display.rml", "Time Display", g_timeDisplaySizes.at(1));
@@ -1930,15 +1976,34 @@ namespace gnubase::app
 					m_arrangerLane->deselect();
 				deselectPoints();
 			});
-		// So do time signature events selected: the markers, the automation points and the selection range go.
+		// So do time signature events selected: the markers, the arranger events, the automation points and the
+		// selection range go.
 		m_signatureLane->onSelect(
 			[this, deselectPoints]
 			{
 				if (m_markerLines)
 					m_markerLines->deselect();
+				if (m_arrangerLane)
+					m_arrangerLane->deselect();
 				deselectPoints();
 				if (m_eventDisplay && m_eventDisplay->range())
 					m_eventDisplay->setRange(std::nullopt);
+			});
+		// And arranger events selected on their lane: the events and the time signature events too (#2076).
+		m_arrangerLane->onSelect(
+			[this, deselectPoints]
+			{
+				if (m_markerLines)
+					m_markerLines->deselect();
+				if (m_signatureLane)
+					m_signatureLane->row().setSelection({});
+				if (m_eventDisplay)
+				{
+					m_eventDisplay->select({});
+					if (m_eventDisplay->range())
+						m_eventDisplay->setRange(std::nullopt);
+				}
+				deselectPoints();
 			});
 		if (m_trackList)
 			m_trackList->onArrangerEditor([this] { m_shell.post([this] { openArranger(); }); });

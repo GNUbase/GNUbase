@@ -1542,6 +1542,10 @@
 	{
 		color: #ff8c8c;
 	}
+	.meter-display .meter-values span.over
+	{
+		color: #ff8c8c;
+	}
 	.info-line.multiple .info-field
 	{
 		color: #ffff00;

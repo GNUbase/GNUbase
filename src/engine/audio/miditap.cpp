@@ -479,6 +479,7 @@ namespace gnubase::engine
 				int64_t stopped = -1;      // the device frame of the first input in stop mode
 				time::Samples played = -1; // where the last input during playback played
 				int64_t playedFrame = 0;   // and its device frame
+				uint32_t playedLap = 0;    // and its cycle lap
 				for (const RetrospectiveEvent& kept : events)
 				{
 					time::Samples at = kept.position;
@@ -493,15 +494,17 @@ namespace gnubase::engine
 					}
 					else
 					{
-						// Playback jumped back, at a cycle lap: the notes held across it end where the lap ended. The
-						// position advances one sample per device frame, so it jumped back also when it advanced less
-						// than the device frames since the input before, as with a note held past the lap's end.
+						// Playback jumped back, at a cycle lap or a locate: the notes held across it end where it
+						// jumped from. The position advances one sample per device frame, so it jumped back also when
+						// it advanced less than the device frames since the input before, as with a note held past the
+						// lap's end. Only a jump that the audio thread marked as a cycle lap starts a lap (#2067).
 						const auto frame = static_cast<int64_t>(kept.deviceFrame);
-						const bool lap = played >= 0 && at - played < frame - playedFrame;
-						if (lap)
+						const bool back = played >= 0 && at - played < frame - playedFrame;
+						const bool lap = played >= 0 && kept.lap != playedLap;
+						if (back)
 						{
 							const time::Samples end =
-								locators.cycle && locators.right > played ? locators.right : played;
+								lap && locators.cycle && locators.right > played ? locators.right : played;
 							builder.endNotes(end);
 							if (cycle)
 								laps.back().second = std::max(laps.back().second, end);
@@ -513,8 +516,11 @@ namespace gnubase::engine
 								lap && locators.cycle && locators.left < at ? locators.left : at;
 							laps.emplace_back(begin, at + 1);
 						}
+						if (cycle)
+							laps.back().first = std::min(laps.back().first, at); // after a locate back in the lap
 						played = at;
 						playedFrame = frame;
+						playedLap = kept.lap;
 					}
 					if (!filter.records(kept.event))
 						continue;
@@ -559,6 +565,31 @@ namespace gnubase::engine
 				const Json& parameters = context.parameters();
 				m_recorder.clearRetrospective(parameters.contains("track") ? midiChannel(parameters.at("track")) : 0);
 				return Json::object();
+			});
+		engine.registerCommand(
+			{"midi.getRetrospective", 1,
+				"What the retrospective buffer of a MIDI or instrument track holds (reference manual pp. 353-355): "
+				"events, how many input events it kept, and cycleLaps, from how many cycle laps of playback its input "
+				"came, as midi.insertRetrospective with cycle counts them: Insert as Cycle Recording needs two or "
+				"more (p. 355). A locate back during playback starts no lap.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
+					"properties": {"track": {"type": "integer"}}})"),
+				Json::parse(R"({"type": "object", "properties": {"events": {"type": "integer"},
+					"cycleLaps": {"type": "integer"}}, "required": ["events", "cycleLaps"]})"),
+				true},
+			[this, midiChannel](CommandContext& context)
+			{
+				const std::vector<RetrospectiveEvent> events =
+					m_recorder.retrospective(midiChannel(context.parameters().at("track")));
+				size_t laps = 0;
+				uint32_t last = 0;
+				for (const RetrospectiveEvent& kept : events)
+					if (kept.position >= 0 && (laps == 0 || kept.lap != last))
+					{
+						++laps;
+						last = kept.lap;
+					}
+				return Json{{"events", events.size()}, {"cycleLaps", laps}};
 			});
 	}
 }
