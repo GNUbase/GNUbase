@@ -80,7 +80,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   the button's state.
 - **Buttons:** `button` with `:hover`, `:active`, `:disabled`, `:focus-visible` and the state classes `.checked` and
   `.suspended` (a switch that is on but paused, such as auto-scroll while editing); `button.primary`; `button.icon-only`; toggle buttons `button.toggle` with `.mute`, `.solo`, `.record` or `.monitor`
-  and `.checked` when on.
+  and `.checked` when on; a checked toggle of none of these kinds, such as the mixer strip's section switches and the
+  inspector's toggles, has a skin of its own (`toggle-on`, #2070).
 - **Fields and choices:** `input.text`, `input.password`, `textarea` (`:focus`, `:disabled`), `select` (`:hover`;
   `:focus` while open or focused), `input.checkbox` (`:checked`, `.mixed`), `input.radio`, `input.range`, `progress`,
   and the scroll bars.
@@ -119,7 +120,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   flat look's own (#1314), and none of those, styles the same widgets and states as the others, draws the focus ring
   on every focusable widget in each of its states, gives the key editor's piano keyboard
   white keys lighter than its black keys, gives mixer strip names text with WCAG's 4.5:1 contrast on any track color,
-  dims the audio part editor's events that their part hides entirely, and the high contrast theme meets WCAG's
+  dims the audio part editor's events that their part hides entirely, gives checked toggles of no kind a skin unlike
+  unchecked ones', after their rules, and the high contrast theme meets WCAG's
   contrast ratios. The default theme's bar buttons, tabs and inspector headers are flat, the other themes' framed,
   their arrow skins the plain button's, and no bar rule reaches toggle or primary buttons; the disabled menu button's
   rule comes after the checked one's; the default theme's primary time display is in the titles' size; its lanes

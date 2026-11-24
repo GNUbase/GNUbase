@@ -484,6 +484,19 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
 					"default", true},
+				{"editing.defaultColors",
+					"The color set of new projects (project.new without a template), which the project colors "
+					"setup's Save Color Set as Default sets (reference manual p. 118): {name, color} entries as in "
+					"project.set colors; empty for the factory set (project.factoryColors).",
+					Json{{"type", "array"},
+						{"items",
+							{{"type", "object"},
+								{"properties",
+									{{"name", {{"type", "string"}}},
+										{"color",
+											{{"type", "string"}, {"pattern", "^#[0-9A-Fa-f]{6}$"}, {"maxLength", 7}}}}},
+								{"required", Json::array({"name", "color"})}, {"additionalProperties", false}}}},
+					Json::array()},
 				{"editing.defaultFadeIn",
 					"The default fade in (reference manual p. 385): its shape and length in seconds, which Apply "
 					"Standard Fade In gives the selected audio events; the fade dialog's As Default sets it.",
