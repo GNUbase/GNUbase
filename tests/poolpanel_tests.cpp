@@ -553,6 +553,26 @@ TEST_CASE("Clean Up Media Folders from the Media menu lists the unused files and
 	CHECK(!std::filesystem::exists(unused));
 }
 
+TEST_CASE("Clean Up Media Folders says why the engine refused to list the unused files", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const std::filesystem::path file = dir.path() / "Song.dawproject";
+	app.call("project.save", {{"path", file.u8string()}, {"embedMedia", false}});
+	// A project file it can't read may refer to any file, so the engine removes none.
+	{
+		std::ofstream broken(file, std::ios::binary | std::ios::trunc);
+		broken << "not a project";
+	}
+	click(app, "#menu-bar button[menu=media-menu]");
+	click(app, "#media-menu menuitem[command=\"pool.cleanup\"]");
+	REQUIRE(app.waitUntil([&app] { return message(app).rfind("Clean Up Media Folders failed: ", 0) == 0; }));
+	CHECK(message(app).find("can't tell which files") != std::string::npos);
+	CHECK(has(elements(app, "#pool-message").at(0), "error"));
+	CHECK(elements(app, "#cleanup-dialog").empty());
+}
+
 TEST_CASE("the pool panel says which files Clean Up Media Folders couldn't remove", "[ui]")
 {
 	test::UiApp app({640, 480});

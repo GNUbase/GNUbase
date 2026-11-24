@@ -743,6 +743,33 @@ TEST_CASE("media.locate takes a file within a millisecond of a length that anoth
 	CHECK(take.at("length") == 4810);
 	run(song.client, "history.undo");
 	CHECK(byId(run(song.client, "project.get").at("media"), take.at("id")).at("length") == 4800);
+
+	// A file a few frames shorter than the rounded length: the event, which played up to that length, is trimmed to
+	// the new end in the same undo step, so it stays within its clip and can still be changed.
+	const auto takeEvent = [&song, &take]
+	{
+		const Json events = run(song.client, "project.get").at("audioEvents");
+		const auto found = std::find_if(events.begin(), events.end(),
+			[&song, &take](const Json& event)
+			{
+				return byId(run(song.client, "project.get").at("clips"), event.at("clip")).at("media") == take.at("id");
+			});
+		REQUIRE(found != events.end());
+		return *found;
+	};
+	REQUIRE(takeEvent().at("length") == 4800);
+	writeFile(moved / "short" / "take.wav", 4795, 1);
+	CHECK(runJob(song.client, "media.locate", {{"folder", utf8(moved / "short")}}).at("relinked") ==
+		Json::array({take.at("id")}));
+	CHECK(byId(run(song.client, "project.get").at("media"), take.at("id")).at("length") == 4795);
+	const Json trimmed = takeEvent();
+	CHECK(trimmed.at("offset") == 0);
+	CHECK(trimmed.at("length") == 4795);
+	run(song.client, "audioEvent.set", {{"event", trimmed.at("id")}, {"volume", -3.0}});
+	run(song.client, "history.undo");
+	run(song.client, "history.undo");
+	CHECK(byId(run(song.client, "project.get").at("media"), take.at("id")).at("length") == 4800);
+	CHECK(takeEvent().at("length") == 4800);
 }
 
 TEST_CASE("media.removeMissing removes missing files with their clips and events", "[integration]")

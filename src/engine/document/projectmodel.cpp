@@ -2706,6 +2706,7 @@ namespace gnubase::engine
 				parameters.contains("project") && parameters.at("project").get<uint64_t>() != openedProject;
 			Json relinked = Json::array();
 			Json skipped = Json::array();
+			std::set<ObjectId> shortened;
 			for (const Json& entry : parameters.at("files"))
 			{
 				const ObjectId id = entry.at("media").get<ObjectId>();
@@ -2753,11 +2754,16 @@ namespace gnubase::engine
 						std::to_string(media.channels) + " at " + std::to_string(std::llround(media.sampleRate)) +
 						" Hz");
 				media.path = path;
-				// A file within media.locate's tolerance has another length than project.xml gave (#506).
-				media.length = withinLongest(project, time::TimeBase::Linear, info.frames, "length");
+				// A file within media.locate's tolerance has another length than project.xml gave (#506); what played
+				// past a shorter file's end is trimmed, so that the events stay within their clips.
+				const time::Samples length = withinLongest(project, time::TimeBase::Linear, info.frames, "length");
+				if (length > 0 && length < media.length)
+					shortened.insert(id);
+				media.length = length;
 				context.emit("media.changed", {{"media", toJson(media)}});
 				relinked.push_back(id);
 			}
+			trimUsesToMedia(project, context, shortened);
 			return {{"relinked", std::move(relinked)}, {"skipped", std::move(skipped)}};
 		}
 
@@ -4811,7 +4817,8 @@ namespace gnubase::engine
 		add(engine,
 			{"media.relink", 1,
 				"Points media files at other files, such as copies, as one undo step. Each new file must be an audio "
-				"file with the media file's sample rate and channel count; the media file takes its length. An entry "
+				"file with the media file's sample rate and channel count; the media file takes its length, and the "
+				"clip fades and audio events that play past a shorter file's end are trimmed to it. An entry "
 				"with from applies only if the media file is still there and still points at from; one with length "
 				"only if its new file can be read, fits and has that many sample frames; otherwise it is skipped. With "
 				"project, every entry is skipped unless that project is still open (project.revision's project). "
