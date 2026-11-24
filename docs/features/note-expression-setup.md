@@ -40,15 +40,26 @@ channel's `noteExpression` in `src/engine/document/document.h`).
   into the notes it records as their expression points (#1515). The bypass leaves the input's expression out of what
   plays, MPE input's too, but not out of what records.
 
+- **Recording** (pp. 1302, 1316, #1515): what the input plays of an assigned message records into the notes that sound
+  as their expression points, as MPE input does, and not as controller events; every note held on the message's channel
+  gets the value.
+- **Convert to Note Expression** (p. 1316, #1515): `noteExpression.convert` turns a part's controller events whose
+  message the setup assigns into points of the notes that sound at them on their channel, over the expression's range,
+  and removes them from the part, one undo step ("Convert to note expression"). An event that no note sounds at stays,
+  so that nothing is lost, as the reference's release phases keep it.
+
 `tests/noteexpression_tests.cpp` checks `noteExpression.set` with `project.get`, what a call leaves out, an expression
 back at its default leaving the list, saving and loading, undo, the refusals and a file's values loaded clamped, and
 that a bypassed track's note plays without its expression and plays it again with the bypass off, and that the input
-plays a controller assigned to two expressions as the expression of the notes it holds, with and without the bypass.
+plays a controller assigned to two expressions as the expression of the notes it holds, with and without the bypass,
+records an assigned controller into the notes that sound, and that `noteExpression.convert` turns a part's assigned
+controllers into its notes' points, leaves the others and those no note sounds at, and undoes in one step.
 
 ## Not yet
 
 - In the inspector's Note Expression section, the Global section's Show Additional Functions; the expressions'
   visibility, which Parameter Selection in the key editor's expression editor follows (p. 1309); the parameter colors.
   MIDI Learn takes the next message from any MIDI input, not only the track's.
-- Loading and saving input assignments as presets (p. 1304), Record MIDI as Note Expression and overdub (p. 1302,
-  #1515).
+- Loading and saving input assignments as presets (p. 1304); Record MIDI as Note Expression, Overdub Note Exp. and
+  its Latch Buffer (p. 1302): recording into the notes of the parts that play, which the input doesn't hold (#1515);
+  Convert to Note Expression in the MIDI menu, and its release phases (p. 1316, #1515).

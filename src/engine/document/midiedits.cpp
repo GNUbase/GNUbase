@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Changing the notes and controllers of a MIDI part (#27): note.set and controller.set, the key editor's split and
 // glue tools (#1419): note.split and note.glue, its chord editing (#127): note.chord and note.voicing, and a track's
-// note expression setup (#1513): noteExpression.set. Like every command that changes the project, each is one undo
-// step and changes nothing if it fails (ProjectModel::add).
+// note expression setup (#1513): noteExpression.set, and Convert to Note Expression (#1515): noteExpression.convert.
+// Like every command that changes the project, each is one undo step and changes nothing if it fails
+// (ProjectModel::add).
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/chords.h"
+#include "engine/midi/mpeinput.h"
 #include "plugin/events.h"
 
 #include <algorithm>
@@ -138,6 +140,67 @@ namespace gnubase::engine
 			setup = noteExpressionFromJson(parameters, setup, false);
 			context.emit("channel.changed", {{"channel", toJson(channel->second)}});
 			return {{"track", id}, {"noteExpression", toJson(setup)}};
+		}
+
+		// Convert to Note Expression (#1515, reference manual p. 1316): the part's controller events whose message the
+		// track's setup assigns to an expression become points of it in the notes that sound there on their channel,
+		// each the event's value over the expression's range, and leave the part. Those that no note sounds at stay.
+		Json convertToExpression(Project& project, CommandContext& context)
+		{
+			MidiPart& part = findPart(project, context.parameters());
+			const NoteExpressionSetup& setup =
+				project.channels.at(project.trackById.at(part.track).channel).noteExpression;
+			std::map<ObjectId, Note> notes; // the notes that get points, as they will be
+			Json removed = Json::array();
+			for (auto controller = part.controllers.begin(); controller != part.controllers.end();)
+			{
+				const Controller& event = controller->second;
+				std::optional<uint8_t> message;
+				if (event.type == ControllerType::Control)
+					message = event.number;
+				else if (event.type == ControllerType::PitchBend)
+					message = midi::MpeSetup::g_pitchBend;
+				else if (event.type == ControllerType::ChannelPressure)
+					message = midi::MpeSetup::g_aftertouch;
+				bool taken = false;
+				for (const auto& [type, input] : setup.inputs)
+				{
+					if (!message || input.message != message)
+						continue;
+					const double value = input.min + ((input.max - input.min) * (event.value / g_maxControllerValue));
+					for (const auto& [id, note] : part.notes)
+						if (note.channel == event.channel && event.position >= note.position &&
+							event.position < note.position + note.length)
+						{
+							taken = true;
+							notes.try_emplace(id, note).first->second.expressions.push_back(
+								{type, event.position - note.position, value});
+						}
+				}
+				if (!taken)
+				{
+					++controller;
+					continue;
+				}
+				removed.push_back(controller->first);
+				controller = part.controllers.erase(controller);
+			}
+			Json changed = Json::array();
+			for (auto& [id, note] : notes)
+			{
+				std::stable_sort(note.expressions.begin(), note.expressions.end(),
+					[](const ExpressionPoint& a, const ExpressionPoint& b) { return a.position < b.position; });
+				part.notes.at(id) = note;
+				changed.push_back(toJson(note));
+			}
+			if (changed.empty())
+			{
+				context.markUnchanged();
+				return {{"notes", changed}};
+			}
+			context.emit("note.changed", {{"part", part.id}, {"notes", changed}});
+			context.emit("controller.removed", {{"part", part.id}, {"controllers", removed}});
+			return {{"notes", changed}};
 		}
 
 		// The key editor's expression editor (#1512, #1795): each change replaces the note's points of one expression
@@ -627,6 +690,19 @@ namespace gnubase::engine
 					{"properties", {{"track", integer}, {"noteExpression", {{"type", "object"}}}}}},
 				false},
 			"Change note expression setup", setNoteExpression);
+		addEdit(engine,
+			{"noteExpression.convert", 1,
+				"Convert to Note Expression (reference manual p. 1316): the controller events of a MIDI part whose "
+				"message its track's note expression setup assigns to an expression (noteExpression.set inputs: a "
+				"controller, pitch bend or aftertouch) become points of that expression in the notes that sound at "
+				"their position on their MIDI channel, every such note getting the same one, the event's value over "
+				"the expression's range, and are removed from the part. Events that no note sounds at stay. Refuses a "
+				"part that doesn't exist. Emits note.changed and controller.removed; with nothing to convert it "
+				"changes nothing. Returns the notes that got points.",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part"}},
+					{"properties", {{"part", integer}}}},
+				resultSchema("notes"), false},
+			"Convert to note expression", convertToExpression);
 		const Json noteMove = {{"type", "object"}, {"additionalProperties", false},
 			{"required", {"part", "notes", "target"}},
 			{"properties",

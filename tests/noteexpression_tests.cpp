@@ -1144,3 +1144,77 @@ TEST_CASE("a track's MIDI input plays the assigned messages as the expression of
 					{0xB2, 7, 100}, {0x82, 60, 0}, {0x82, 64, 0}});
 	}
 }
+
+TEST_CASE("a controller assigned to an expression records into the notes that sound as their expression points",
+	"[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "noteExpression.set", {{"track", setup.track}, {"inputs", {input("brightness", "cc1", 0.0, 1.0)}}});
+	run(client, "transport.record");
+	run(client, "midi.inject",
+		{{"channel", setup.channel},
+			{"messages",
+				{message(1000, {0x91, 60, 100}), message(1000, {0x91, 64, 100}), message(2000, {0xB1, 1, 127}),
+					message(3000, {0x81, 60, 0}), message(3500, {0xB1, 1, 0}), message(4000, {0x81, 64, 0})}}});
+	run(client, "audio.render", {{"frames", 5000}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(waitFor(client, "recording.added").is_object());
+	const Json part = run(client, "project.get").at("midiParts").at(0);
+	// Both notes get the value while they sound, the one still held the next one too; nothing records as a controller.
+	CHECK(part.at("controllers").empty());
+	REQUIRE(part.at("notes").size() == 2);
+	std::map<int, Points> points;
+	for (const Json& note : part.at("notes"))
+		points[note.at("pitch").get<int>()] = pointsOf(note);
+	CHECK(points[60] == Points{{"brightness", ticksOf(1000), 1000}});
+	CHECK(points[64] == Points{{"brightness", ticksOf(1000), 1000}, {"brightness", ticksOf(2500), 0}});
+}
+
+TEST_CASE("noteExpression.convert turns a part's assigned controllers into the expression of the notes that sound",
+	"[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	run(client, "noteExpression.set", {{"track", setup.track}, {"inputs", {input("brightness", "cc1", 0.0, 0.5)}}});
+	run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5}, {"channel", 0}},
+					{{"position", 0}, {"length", 2 * g_beatTicks}, {"pitch", 64}, {"velocity", 0.5},
+						{"channel", 1}}}}});
+	// CC 1 on each note's channel; CC 7 isn't assigned, and the last CC 1 has no note sounding.
+	run(client, "controller.add",
+		{{"part", part},
+			{"controllers",
+				{{{"position", g_beatTicks / 2}, {"number", 1}, {"value", 1.0}, {"channel", 0}},
+					{{"position", 3 * g_beatTicks / 2}, {"number", 1}, {"value", 0.5}, {"channel", 1}},
+					{{"position", g_beatTicks / 2}, {"number", 7}, {"value", 0.5}, {"channel", 0}},
+					{{"position", 3 * g_beatTicks}, {"number", 1}, {"value", 0.5}, {"channel", 0}}}}});
+	const Json before = run(client, "project.get").at("midiParts").at(0);
+
+	const Json converted = run(client, "noteExpression.convert", {{"part", part}});
+	CHECK(converted.at("notes").size() == 2);
+	const Json after = run(client, "project.get").at("midiParts").at(0);
+	std::map<int, Points> points;
+	for (const Json& note : after.at("notes"))
+		points[note.at("pitch").get<int>()] = pointsOf(note);
+	CHECK(points[60] == Points{{"brightness", g_beatTicks / 2, 500}});
+	CHECK(points[64] == Points{{"brightness", 3 * g_beatTicks / 2, 250}});
+	std::vector<std::pair<int64_t, int>> left;
+	for (const Json& controller : after.at("controllers"))
+		left.emplace_back(controller.at("position").get<int64_t>(), controller.at("number").get<int>());
+	std::sort(left.begin(), left.end());
+	CHECK(left == std::vector<std::pair<int64_t, int>>{{g_beatTicks / 2, 7}, {3 * g_beatTicks, 1}});
+	CHECK(run(client, "history.get").at("steps").back().at("action") == "Convert to note expression");
+
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("midiParts").at(0) == before);
+	// Nothing to convert changes nothing.
+	run(client, "noteExpression.set",
+		{{"track", setup.track}, {"inputs", {{{"type", "brightness"}, {"input", "none"}}}}});
+	CHECK(run(client, "noteExpression.convert", {{"part", part}}).at("notes").empty());
+	CHECK(run(client, "project.get").at("midiParts").at(0) == before);
+}
