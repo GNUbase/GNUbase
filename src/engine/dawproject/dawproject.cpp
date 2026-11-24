@@ -2274,8 +2274,24 @@ namespace gnubase::engine
 		// Each file goes in once, under a name that no other one has, also in another case: they are extracted into
 		// one folder. Where the file system folds a letter's case that this folding doesn't (a non-ASCII one on
 		// Windows and macOS), the extraction keeps the entries apart (Importer::freeTarget).
-		std::map<std::string, std::string> embeddedFreezes; // freeze file -> entry in the file
-		std::set<std::string> taken;                        // the entries in lowercase
+		std::map<std::string, std::string> embeddedFiles; // freeze file or picture -> entry in the file
+		std::set<std::string> taken;                      // the entries in lowercase
+		const auto embed = [&embeddedFiles, &taken](const std::string& file, const std::string& folder)
+		{
+			auto found = embeddedFiles.find(file);
+			if (found == embeddedFiles.end())
+			{
+				const std::string name = pathOf(file).filename().u8string();
+				std::string entry = folder + "/" + name;
+				for (int copy = 2; !taken.insert(foldedName(pathOf(entry))).second; ++copy)
+				{
+					entry = folder;
+					entry += "/" + std::to_string(copy) + "-" + name;
+				}
+				found = embeddedFiles.emplace(file, entry).first;
+			}
+			return found->second;
+		};
 		for (const auto& [id, track] : project.trackById)
 		{
 			if (!track.frozen)
@@ -2290,21 +2306,35 @@ namespace gnubase::engine
 			}
 			else if (options.embedMedia)
 			{
-				auto found = embeddedFreezes.find(track.frozen->path);
-				if (found == embeddedFreezes.end())
-				{
-					const std::string name = pathOf(track.frozen->path).filename().u8string();
-					std::string entry = "freeze/" + name;
-					for (int copy = 2; !taken.insert(foldedName(pathOf(entry))).second; ++copy)
-						entry = "freeze/" + std::to_string(copy) + "-" + name;
-					found = embeddedFreezes.emplace(track.frozen->path, entry).first;
-				}
-				stored = found->second;
+				stored = embed(track.frozen->path, "freeze");
 			}
 			frozen[std::to_string(id)] = stored;
 		}
+		// Track pictures likewise, so that a project keeps them when it moves (the reference keeps them with the
+		// project too, in its folder Track Pictures). A missing one is referred to where it was, as nothing plays it,
+		// and not listed as missing; while embedding, by its absolute path, as a relative one could name an embedded
+		// file, as with freeze files above.
+		Json pictures = Json::object();
+		for (const auto& [id, track] : project.trackById)
+		{
+			if (track.picture.empty())
+				continue;
+			std::error_code error;
+			std::string stored = referencePath(track.picture, fileFolder);
+			if (options.embedMedia && std::filesystem::is_regular_file(pathOf(track.picture), error))
+			{
+				stored = embed(track.picture, "pictures");
+			}
+			else if (options.embedMedia)
+			{
+				const std::filesystem::path absolute = std::filesystem::absolute(pathOf(track.picture), error);
+				stored = error ? track.picture : absolute.lexically_normal().u8string();
+			}
+			pictures[std::to_string(id)] = stored;
+		}
 		const Json extension = {{"format", g_extensionFormat}, {"application", std::string("GNUbase ") + version()},
-			{"projectXml", checksum(xml)}, {"media", media}, {"frozen", frozen}, {"project", document}};
+			{"projectXml", checksum(xml)}, {"media", media}, {"frozen", frozen}, {"pictures", pictures},
+			{"project", document}};
 
 		pugi::xml_document metadata;
 		metadata.append_child("MetaData").append_child("Title").text() = project.name.c_str();
@@ -2327,7 +2357,7 @@ namespace gnubase::engine
 					const std::vector<char> bytes = readBytes(project.media.at(id).path);
 					zip.add(mediaPath, bytes.data(), bytes.size(), false);
 				}
-			for (const auto& [file, entry] : embeddedFreezes)
+			for (const auto& [file, entry] : embeddedFiles)
 			{
 				const std::vector<char> bytes = readBytes(file);
 				zip.add(entry, bytes.data(), bytes.size(), false);
@@ -2405,6 +2435,11 @@ namespace gnubase::engine
 					track.frozen->path = importer.resolvedPath(
 						stored->get<std::string>(), !zip.containsExactly(stored->get<std::string>()));
 			}
+			const Json pictures = extension.value("pictures", Json::object()); // none in files from before
+			for (auto& [id, track] : project.trackById)
+				if (const auto stored = pictures.find(std::to_string(id)); stored != pictures.end())
+					track.picture = importer.resolvedPath(
+						stored->get<std::string>(), !zip.containsExactly(stored->get<std::string>()));
 			// The buttons a freeze locks are off (track.freeze), also when a file from before says they are on.
 			for (auto& entry : project.channels)
 				if (lockedByFreeze(project, entry.second))

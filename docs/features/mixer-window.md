@@ -19,8 +19,13 @@ and panners' engine side is in [mixer.md](mixer.md).
   project in GNUbase's extra entry (`mixers` in `project.get`), empty for files from before.
 - **Notes** (p. 497): the channel's notes (`channel.set` `notes`), which the inspector's notepad edits too
   ([inspector.md](inspector.md)). **Pictures** (p. 497): `track.set` `picture`, an image file (PNG, JPEG or SVG) that
-  the mixer shows on the track's channel, or empty. Both are undo steps and copied by `track.duplicate`; pictures are
-  saved in GNUbase's extra entry, notes also in DAWproject's `comment`.
+  the mixer shows on the track's channel, or empty; a relative path is taken from the working folder and kept
+  absolute. Both are undo steps and copied by `track.duplicate`; notes are saved in DAWproject's `comment` too.
+  Pictures go with the project file as freeze files do, so a project keeps them when it moves (the reference keeps
+  them with the project as well, in its folder Track Pictures, p. 125): `project.save` embeds each picture under
+  `pictures/` and a load extracts it into the project's media folder, where `media.cleanup` leaves it; with
+  `embedMedia` false the file refers to a picture relative to itself when it is in the file's folder, otherwise by its
+  absolute path, as it does to a picture that is missing. GNUbase's extra entry has them as `pictures`, by track id.
 
 ## The mixer
 
@@ -146,7 +151,9 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
 
 - `tests/mixerviews_tests.cpp`: each mixer's hidden channels and types, sorted and in the filter's order, kept per
   mixer, refused for unknown ids, types and mixers, not undo steps, without channels that are gone, and saved and
-  loaded; notes and pictures as undo steps, copied with a track, saved and loaded.
+  loaded; notes and pictures as undo steps, copied with a track, saved and loaded; a picture embedded in the file and
+  extracted next to it once the original is gone, kept by `media.cleanup`, and referred to relative to the file when
+  not embedded, so it loads from a folder that moved.
 - `tests/mixerwindow_tests.cpp` drives the app with `ui::Automation`: F3 opens a mixer window with the busses and the
   channels in the track list's order and closes it again; tracks added, renamed, moved and removed by the engine show at
   once; the fader, the dB text and the mute and solo buttons both ways; two windows, the Visibility tab and the type

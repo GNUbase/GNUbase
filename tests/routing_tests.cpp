@@ -662,7 +662,7 @@ TEST_CASE("group and effect tracks go into the project's Group and FX folders", 
 	CHECK(effect.at("track").at("parent") != group.at("track").at("parent"));
 
 	CHECK_THAT(reject(client, "track.add", {{"type", "audio"}, {"projectFolder", true}}),
-		ContainsSubstring("only group and effect"));
+		ContainsSubstring("only group, effect and VCA"));
 	CHECK_THAT(reject(client, "track.add",
 				   {{"type", "group"}, {"projectFolder", true}, {"parent", group.at("track").at("parent")}}),
 		ContainsSubstring("other parent"));

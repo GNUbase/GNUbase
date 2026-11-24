@@ -1132,13 +1132,16 @@ namespace gnubase::app
 				attributes.emplace_back("type", "drum");
 				openOnce(window, "add-track.rml", m_addTrack, attributes);
 			}});
-		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the add
-		// track dialog's page for the new track, which the selected tracks play or send into.
+		// Group Track, Effect Track and VCA Track to Selected Tracks (reference manual pp. 546, 554, 517): the add
+		// track dialog's page for the new track, which the selected tracks play or send into, or which controls them.
 		for (const auto& [id, type, description] :
 			{std::tuple{"track.addGroupToSelected", "group",
 				 "Opens the add track dialog for a group track that the selected tracks play into."},
 				std::tuple{"track.addEffectToSelected", "effect",
-					"Opens the add track dialog for an effect track that the selected tracks send to."}})
+					"Opens the add track dialog for an effect track that the selected tracks send to."},
+				std::tuple{"track.addVcaToSelected", "vca",
+					"Opens the add track dialog for a VCA track that controls a new link group of the selected "
+					"tracks' channels."}})
 		{
 			m_keys.add(
 				{id, description, [this, below, type = std::string(type)](ui::Window& window, Rml::Element* /*zone*/)

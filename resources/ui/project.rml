@@ -553,9 +553,10 @@
 		<menuitem command="project.addTrackFromPreset">Add Track from Preset...</menuitem>
 		<menuitem command="track.saveTrackPreset">Save Track Preset...</menuitem>
 		<menuitem command="track.loadTrackPreset">Load Track Preset...</menuitem>
-		<!-- Routing (reference manual pp. 546, 554, docs/features/routing.md) -->
+		<!-- Routing (reference manual pp. 546, 554, docs/features/routing.md) and VCA faders (p. 517, link-groups.md) -->
 		<menuitem command="track.addGroupToSelected">Group Track to Selected Tracks...</menuitem>
 		<menuitem command="track.addEffectToSelected">Effect Track to Selected Tracks...</menuitem>
+		<menuitem command="track.addVcaToSelected">VCA Track to Selected Tracks...</menuitem>
 		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
