@@ -515,6 +515,8 @@ namespace gnubase::app
 				if (m_eventDisplay && m_markerLines && !m_eventDisplay->selectedPoints().empty())
 				{
 					m_markerLines->deselect();
+					if (m_arrangerLane)
+						m_arrangerLane->deselect();
 					if (m_signatureLane && !m_signatureLane->row().selection().empty())
 						m_signatureLane->row().setSelection({});
 				}
@@ -533,6 +535,8 @@ namespace gnubase::app
 						if (range)
 						{
 							m_markerLines->deselect();
+							if (m_arrangerLane)
+								m_arrangerLane->deselect();
 							if (m_signatureLane)
 								m_signatureLane->row().setSelection({});
 						}
@@ -1236,11 +1240,13 @@ namespace gnubase::app
 						m_sampleEditor.editor->process(id.substr(5));
 						return;
 					}
-					// Delete removes the selected markers or time signature events, which the project window
-					// selects instead of events.
+					// Delete removes the selected markers, time signature or arranger events, which the project
+					// window selects instead of events.
 					if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
 						return;
 					if (id == "edit.delete" && m_signatureLane && m_signatureLane->row().removeSelected())
+						return;
+					if (id == "edit.delete" && m_arrangerLane && m_arrangerLane->removeSelected())
 						return;
 					if (m_eventDisplay)
 						m_eventDisplay->actions().at(id)();
@@ -1930,15 +1936,34 @@ namespace gnubase::app
 					m_arrangerLane->deselect();
 				deselectPoints();
 			});
-		// So do time signature events selected: the markers, the automation points and the selection range go.
+		// So do time signature events selected: the markers, the arranger events, the automation points and the
+		// selection range go.
 		m_signatureLane->onSelect(
 			[this, deselectPoints]
 			{
 				if (m_markerLines)
 					m_markerLines->deselect();
+				if (m_arrangerLane)
+					m_arrangerLane->deselect();
 				deselectPoints();
 				if (m_eventDisplay && m_eventDisplay->range())
 					m_eventDisplay->setRange(std::nullopt);
+			});
+		// And arranger events selected on their lane: the events and the time signature events too (#2076).
+		m_arrangerLane->onSelect(
+			[this, deselectPoints]
+			{
+				if (m_markerLines)
+					m_markerLines->deselect();
+				if (m_signatureLane)
+					m_signatureLane->row().setSelection({});
+				if (m_eventDisplay)
+				{
+					m_eventDisplay->select({});
+					if (m_eventDisplay->range())
+						m_eventDisplay->setRange(std::nullopt);
+				}
+				deselectPoints();
 			});
 		if (m_trackList)
 			m_trackList->onArrangerEditor([this] { m_shell.post([this] { openArranger(); }); });

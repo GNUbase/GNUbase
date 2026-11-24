@@ -888,3 +888,104 @@ TEST_CASE("the inspector's Current Arranger Chain list selects steps and removes
 	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#inspector-arranger-step-menu", "open"); }));
 	CHECK(window.element(removeSelected).value("attributes", Json::object()).contains("disabled"));
 }
+
+TEST_CASE("arranger events selected on the lane deselect the rest and Delete and a drag act on all selected", "[ui]")
+{
+	// #2076, reference manual p. 404: arranger events are selected, moved and deleted as events are.
+	Window window;
+	const auto add = [&window](int64_t from, int64_t to)
+	{ return window.app.call("arranger.add", {{"position", from}, {"end", to}}).at("event").at("id").get<uint64_t>(); };
+	const uint64_t a = add(0, 4 * g_quarter);
+	const uint64_t b = add(4 * g_quarter, 8 * g_quarter);
+	const uint64_t c = add(8 * g_quarter, 12 * g_quarter);
+	const auto selected = [&window](uint64_t event)
+	{ return window.hasClass(".arranger-lane-event[event=\"" + std::to_string(event) + "\"]", "selected"); };
+	const auto position = [&window](uint64_t event)
+	{
+		for (const Json& each : window.events())
+			if (each.at("id") == event)
+				return each.at("position").get<int64_t>();
+		return int64_t{-1};
+	};
+	const uint64_t track = window.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t part = window.app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_quarter}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+	window.app.call("track.add", {{"type", "marker"}});
+	const uint64_t marker = window.app.call("marker.add", {{"position", 0}}).at("marker").at("id").get<uint64_t>();
+	window.app.call("track.add", {{"type", "signature"}});
+	window.app.call("signature.add", {{"bar", 4}, {"numerator", 3}, {"denominator", 4}});
+	ui::MarkerLines& markers = *window.app.appUi().markerLines();
+	ui::SignatureRow& signatures = window.app.appUi().signatureLane()->row();
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return window.shown(".arranger-lane-event") == 3 && !window.hasClass(".arranger-lane-row", "hidden") &&
+				window.shown(".signature-event") == 2 && !markers.loading();
+		}));
+	window.display.setTool(ui::Tool::ObjectSelection);
+	// A click on an arranger event, another one each time, as two soon after each other on one open it.
+	const auto click = [&window](ui::Point at, const std::vector<std::string>& modifiers)
+	{
+		window.app.ui().click(std::nullopt, {"", 0, at}, ui::MouseButton::Left, 1, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// An arranger event selected deselects the events, the markers, the time signature events and the range.
+	window.display.select({part});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	click(window.at(1.0), {});
+	CHECK(selected(a));
+	CHECK(window.display.selection().empty());
+	markers.pick({marker});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(selected(a));
+	click(window.at(3.0), {});
+	CHECK(selected(b));
+	CHECK(markers.selection().empty());
+	signatures.setSelection({4});
+	click(window.at(5.0), {});
+	CHECK(selected(c));
+	CHECK(signatures.selection().empty());
+	window.display.setRange(ui::RangeSelection{0, 48000, {track}});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.app.waitUntil([&] { return !selected(c); })); // the range deselects them, as it does markers
+	click(window.at(1.0), {});
+	CHECK(selected(a));
+	CHECK_FALSE(window.display.range().has_value());
+	// And a time signature event selected deselects them.
+	window.app.ui().click(std::nullopt, {".signature-event", 1, std::nullopt}, ui::MouseButton::Left, 1, {});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(signatures.selection().size() == 1);
+	CHECK_FALSE(selected(a));
+
+	// A drag of one of the selected moves all selected, in one undo step, and they follow the mouse.
+	click(window.at(5.0), {});
+	click(window.at(1.0), {"ctrl"});
+	REQUIRE(signatures.selection().empty());
+	const size_t steps = window.app.call("history.get").at("steps").size();
+	window.app.ui().press(std::nullopt, {"", 0, window.at(5.0)}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, {"", 0, window.at(7.2)});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.app.waitUntil(
+		[&]
+		{
+			return std::abs(
+					   window.box(".arranger-lane-event[event=\"" + std::to_string(a) + "\"]").at("x").get<double>() -
+					   window.at(2.0).x) < 2.0;
+		}));
+	window.app.ui().release(std::nullopt, {"", 0, window.at(7.2)}, ui::MouseButton::Left);
+	REQUIRE(window.app.waitUntil([&] { return position(c) == 12 * g_quarter; }));
+	CHECK(position(a) == 4 * g_quarter);
+	CHECK(position(b) == 4 * g_quarter); // B wasn't selected
+	CHECK(window.app.call("history.get").at("steps").size() == steps + 1);
+
+	// Delete removes the selected arranger events, in one undo step, and nothing else.
+	window.app.keys().run("edit.delete", Json::object(), window.app.main(), nullptr);
+	REQUIRE(window.app.waitUntil([&] { return window.events().size() == 1; }));
+	CHECK(window.events()[0].at("id") == b);
+	CHECK(window.app.call("history.get").at("steps").size() == steps + 2);
+	CHECK(window.app.call("project.get").at("markers").size() == 1);
+	CHECK(window.app.call("project.get").at("midiParts").size() == 1);
+}

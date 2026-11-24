@@ -127,6 +127,11 @@ each section's event has a number after its name, how often its event came so fa
   event (`.selected`, which the themes fill with the selection's color), with Ctrl (Cmd) adds or removes it, and a press
   beside the events selects none; a drag of an event's edge, an `.arranger-lane-edge` (4 dp wide, with the resize
   cursor), resizes it (`arranger.set` with `position` and `end`), snapped as a move is, the edge not past the other one.
+  A drag of one of several selected events moves them all by as much in the track's time base, none before the project
+  start, in one undo step (`history.transaction` of `arranger.set`), and they all follow the mouse; Delete removes the
+  selected events (`arranger.remove`, #2076). Arranger events selected deselect the events, markers, time signature
+  events, automation points and the selection range, and each of those selected deselects the arranger events, so that
+  Delete deletes what was selected last.
   Drawing and moving snap as the event display's drags do ([snap.md](snap.md), `EventDisplay::snapped`), with the other
   arranger events' edges as magnets too, so with Snap on and the snap type Events, as p. 404 asks, a new event starts
   and ends at other arranger events', parts' and markers' edges. What the drag shows stays until the lane shows the
@@ -190,7 +195,9 @@ one, across a refresh that changes nothing the lists show; typing a step's repea
 isn't a number, picking its repeat mode and removing it with Remove Touched; the info line showing the arranger events
 selected on the lane, renaming, moving and resizing them, the first or both, and a part selected deselecting them;
 selecting steps with clicks, Shift and Ctrl, the arrow leaving the selection, and Remove Selected, disabled without a
-selection.
+selection; arranger events selected deselecting a part, a marker, a time signature event and the range, a range and a
+time signature event selected deselecting them, a drag of one of two selected moving both in one undo step, and Delete
+removing them.
 `tests/theme_tests.cpp`: every theme fills a selected arranger event.
 
 Both real-time comparisons in `tests/arranger_tests.cpp` retry runs that report playback dropouts, with at most five
@@ -200,6 +207,5 @@ adopts it while B plays; an attempt that misses that stretch, or is still making
 because a busy machine held up the test, is retried like one with dropouts. It compares only a capture with the edit
 made in time and without dropouts; exhausting the attempts fails the test (#1893, #1900).
 
-Not yet: drag and drop in the chain lists, moving or erasing all selected arranger events at once, the other flatten
-options (Checked and All Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, and arranging
+Not yet: drag and drop in the chain lists, the other flatten options (Checked and All Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, and arranging
 to an external timecode.

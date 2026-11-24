@@ -113,10 +113,11 @@ namespace gnubase::ui
 	GlobalEventLane::Event GlobalEventLane::eventFrom(const Json& event) const
 	{
 		const auto start = event.at("start").get<int64_t>();
-		Event result{event.at("id").get<uint64_t>(), start, event.value("endSamples", start), {}, {}, false};
+		Event result{event.at("id").get<uint64_t>(), start, event.value("endSamples", start), {}, {}, false, 0};
 		if (m_kind == LaneKind::Arranger)
 		{
 			result.text = result.value = event.at("name").get<std::string>();
+			result.position = event.at("position").get<int64_t>();
 		}
 		else if (m_kind == LaneKind::Chord)
 		{
@@ -206,6 +207,14 @@ namespace gnubase::ui
 			return;
 		m_selection.clear();
 		show();
+	}
+
+	bool GlobalEventLane::removeSelected()
+	{
+		if (m_kind != LaneKind::Arranger || m_selection.empty())
+			return false;
+		send("arranger.remove", {{"events", m_selection}});
+		return true;
 	}
 
 	int64_t GlobalEventLane::nearestBar(double seconds) const
@@ -303,7 +312,10 @@ namespace gnubase::ui
 			// An event where it shows: moved while a drag moves it.
 			const auto span = [this](const Event& event)
 			{
-				const bool moved = m_moved && m_moved->event == event.id;
+				const bool moved = m_moved &&
+					(m_moved->event == event.id ||
+						(m_moved->group &&
+							std::find(m_selection.begin(), m_selection.end(), event.id) != m_selection.end()));
 				return std::make_pair(seconds(event.start) + (moved ? m_moved->shift : 0.0),
 					seconds(event.end) + (moved ? m_moved->endShift : 0.0));
 			};
@@ -425,6 +437,8 @@ namespace gnubase::ui
 				{
 					m_selection = {*on};
 				}
+				if (!m_selection.empty() && m_onSelect)
+					m_onSelect();
 				const Rml::Element* target = event.GetTargetElement();
 				const auto edge = target != nullptr ? target->GetAttribute<Rml::String>("edge", "") : Rml::String();
 				if (edge == "start")
@@ -511,7 +525,10 @@ namespace gnubase::ui
 		const Event* found = find(id);
 		if (std::abs(dx) >= g_dragStart && found != nullptr)
 		{
-			Moved moved{id, 0.0, 0.0, found->start, found->end, true, false};
+			// A drag of one of the arranger events selected moves them all; an edge resizes the one.
+			const bool group = m_kind == LaneKind::Arranger && m_edge == Edge::None && m_selection.size() > 1 &&
+				std::find(m_selection.begin(), m_selection.end(), id) != m_selection.end();
+			Moved moved{id, 0.0, 0.0, found->start, found->end, true, false, group};
 			const double start = seconds(found->start);
 			const double end = seconds(found->end);
 			if (m_edge == Edge::None)
@@ -601,6 +618,24 @@ namespace gnubase::ui
 				{{"event", found.id}, {"position", position(seconds(found.start) + m_moved->shift)},
 					{"end", position(seconds(found.end) + m_moved->endShift)}},
 				answered);
+		else if (m_kind == LaneKind::Arranger && m_moved->group)
+		{
+			// All selected by as much in the track's time base, in one undo step, none before the project start. The
+			// one dragged comes last, so that what the drag shows ends once all have moved.
+			int64_t by = position(seconds(found.start) + m_moved->shift) - found.position;
+			for (const uint64_t id : m_selection)
+				if (const Event* each = find(id))
+					by = std::max(by, -each->position);
+			Json commands = Json::array();
+			for (const uint64_t id : m_selection)
+				if (const Event* each = find(id); each != nullptr && id != found.id)
+					commands.push_back({{"command", "arranger.set"},
+						{"parameters", {{"event", id}, {"position", each->position + by}}}});
+			commands.push_back({{"command", "arranger.set"},
+				{"parameters", {{"event", found.id}, {"position", found.position + by}}}});
+			send("history.transaction", {{"description", "Move Arranger Events"}, {"commands", std::move(commands)}},
+				answered);
+		}
 		else if (m_kind == LaneKind::Arranger)
 			send("arranger.set", {{"event", found.id}, {"position", position(seconds(found.start) + m_moved->shift)}},
 				answered);
