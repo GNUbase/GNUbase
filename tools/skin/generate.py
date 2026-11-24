@@ -1185,6 +1185,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".status-line .status-field", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".status-line .mismatch, #silent-device", {"color": c["warning"]}),
         ("#lost-device", {"color": c["danger"]}),
+        (".meter-display .meter-values span.over", {"color": c["danger"]}),
         # The info line and the inspector (docs/features/inspector.md): the info line's values in another color with
         # several events selected, bypassed and deactivated inserts dimmed
         (".info-line.multiple .info-field", {"color": c["accent"]}),

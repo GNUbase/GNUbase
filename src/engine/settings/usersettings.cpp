@@ -568,6 +568,14 @@ namespace gnubase::engine::settings
 					"Meter Peak - Hold Peaks (reference manual p. 467): the channel meters show the highest levels "
 					"as peak marks.",
 					Json{{"type", "boolean"}}, true},
+				{"meter.integratedReference",
+					"Integrated threshold (reference manual p. 539): the meter display's Integrated readout turns red "
+					"above "
+					"this reference plus meter.integratedTolerance, in LUFS.",
+					Json{{"type", "number"}, {"minimum", -70}, {"maximum", 0}}, -23.0},
+				{"meter.integratedTolerance",
+					"Integrated threshold's tolerance (reference manual p. 539), 0 to 10, in LU.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 10}}, 1.0},
 				{"meter.loudnessScale",
 					"EBU Scale (reference manual p. 539): the meter display's loudness bars on the EBU +9 scale, -41 "
 					"to -14 LUFS, or on the EBU +18 scale, -59 to -5 LUFS.",
@@ -581,6 +589,14 @@ namespace gnubase::engine::settings
 					"it measures nothing, and the momentary and short-term loudness and the true peak still follow "
 					"the signal.",
 					Json{{"type", "boolean"}}, true},
+				{"meter.momentaryMaxReference",
+					"Momentary Max. threshold (reference manual p. 539): the meter display's Momentary Max. readout "
+					"turns red above "
+					"this reference plus meter.momentaryMaxTolerance, in LUFS.",
+					Json{{"type", "number"}, {"minimum", -70}, {"maximum", 0}}, -15.0},
+				{"meter.momentaryMaxTolerance",
+					"Momentary Max. threshold's tolerance (reference manual p. 539), 0 to 10, in LU.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 10}}, 0.0},
 				{"meter.peakHoldTime",
 					"Meters' Peak Hold Time (reference manual p. 1614): how long the channel meters' peak marks hold "
 					"a peak, 500 to 30000 ms, unless meter.holdForever is on.",
@@ -603,6 +619,22 @@ namespace gnubase::engine::settings
 					"Resolution (reference manual p. 540): how much of the signal the master meter's RMS level "
 					"averages, 1 to 1000 ms (see meter.get).",
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}}, 300},
+				{"meter.shortTermReference",
+					"Short-Term threshold (reference manual p. 539): the meter display's Short-Term readout turns red "
+					"above "
+					"this reference plus meter.shortTermTolerance, in LUFS.",
+					Json{{"type", "number"}, {"minimum", -70}, {"maximum", 0}}, -18.0},
+				{"meter.shortTermTolerance",
+					"Short-Term threshold's tolerance (reference manual p. 539), 0 to 10, in LU.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 10}}, 0.0},
+				{"meter.truePeakReference",
+					"True Peak threshold (reference manual p. 539): the meter display's True Peak readout turns red "
+					"above "
+					"this reference plus meter.truePeakTolerance, in dBTP.",
+					Json{{"type", "number"}, {"minimum", -20}, {"maximum", 3}}, -1.0},
+				{"meter.truePeakTolerance",
+					"True Peak threshold's tolerance (reference manual p. 539), 0 to 10, in dB.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 10}}, 0.0},
 				{"midi.chaseBeyondParts",
 					"Chases controller events from the whole track; off, only from the MIDI parts under the "
 					"position, so none outside parts.",

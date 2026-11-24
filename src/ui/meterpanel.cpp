@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace gnubase::ui
 {
@@ -58,8 +60,34 @@ namespace gnubase::ui
 		constexpr std::array<const char*, 7> g_settings = {"meter.loudnessUnit", "meter.loudnessScale",
 			"meter.resetOnStart", "meter.holdOnStop", "meter.measureLoudness", "meter.rmsAes17", "meter.rmsResolution"};
 
+		// The readouts with thresholds (p. 539), as the settings meter.<name>Reference and meter.<name>Tolerance name
+		// them, and their elements.
+		constexpr std::array<std::pair<const char*, const char*>, 4> g_thresholds = {{{"momentaryMax", "momentary-max"},
+			{"shortTerm", "short-term-max"}, {"integrated", "integrated"}, {"truePeak", "true-peak-max"}}};
+
 		// EBU R 128's reference level: 0 LU (p. 538).
 		constexpr double g_referenceLufs = -23.0;
+
+		// The settings pane's rows of reference and tolerance for each threshold (p. 539).
+		std::string thresholds()
+		{
+			const auto field = [](const std::string& key, const char* title, const char* min, const char* max)
+			{
+				return R"(<valuefield setting="meter.)" + key + R"(" title=")" + title + R"(" min=")" + min +
+					R"(" max=")" + max + R"(" step="0.1" decimals="1"/>)";
+			};
+			std::string rml;
+			for (const auto& [name, label] :
+				{std::pair{"momentaryMax", "Momentary Max."}, std::pair{"shortTerm", "Short-Term"},
+					std::pair{"integrated", "Integrated"}, std::pair{"truePeak", "True Peak"}})
+			{
+				const bool peak = std::string(name) == "truePeak";
+				rml += std::string(R"(<div class="meter-threshold"><span>)") + label + "</span>" +
+					field(std::string(name) + "Reference", "Reference", peak ? "-20" : "-70", peak ? "3" : "0") +
+					field(std::string(name) + "Tolerance", "Tolerance", "0", "10") + "</div>";
+			}
+			return rml;
+		}
 
 		// The display's elements, in the panel's; returns the display. The loudness meter's scale is EBU +9 (p. 536)
 		// until the setting meter.loudnessScale arrives: -41 to -14 LUFS.
@@ -84,7 +112,8 @@ namespace gnubase::ui
 				R"(<button class="meter-measure" setting="meter.measureLoudness">Measure Loudness</button>)"
 				R"(<button class="meter-reset" value="loudness">Reset Loudness</button>)"
 				R"(<button class="meter-configure">Configure Loudness Settings</button></div>)"
-				R"(<div class="meter-settings"><div class="meter-settings-title">Loudness</div>)"
+				R"(<div class="meter-settings"><div class="meter-settings-title">Loudness</div>)" +
+				thresholds() +
 				R"(<div><span>Unit</span><select setting="meter.loudnessUnit"><option value="lufs">LUFS</option>)"
 				R"(<option value="lu">LU</option></select></div>)"
 				R"(<div><span>EBU Scale</span><select setting="meter.loudnessScale"><option value="ebu9">EBU +9</option>)"
@@ -166,7 +195,11 @@ namespace gnubase::ui
 				for (const auto& [key, value] : event.data.at("values").items())
 					showSetting(key, value);
 			});
-		for (const char* key : g_settings)
+		std::vector<std::string> keys(g_settings.begin(), g_settings.end());
+		for (const auto& threshold : g_thresholds)
+			for (const char* part : {"Reference", "Tolerance"})
+				keys.push_back(std::string("meter.") + threshold.first + part);
+		for (const std::string& key : keys)
 			m_binding.send("settings.get", {{"key", key}},
 				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 				{
@@ -202,6 +235,8 @@ namespace gnubase::ui
 		else if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControl*>(control); select && value.is_string())
 			select->SetValue(value.get<std::string>());
 		m_showing = false;
+		if (value.is_number())
+			m_thresholds[key] = value.get<double>();
 		// The loudness unit and scale (pp. 536 and 539): values in LU are relative to -23 LUFS; the bars stay in LUFS.
 		if (key == "meter.loudnessUnit")
 			m_lu = value == "lu";
@@ -232,8 +267,10 @@ namespace gnubase::ui
 				m_binding.send("settings.set", {{"key", key}, {"value", target->HasAttribute("checked")}});
 			else if (given != event.GetParameters().end() && target->GetTagName() == "select")
 				m_binding.send("settings.set", {{"key", key}, {"value", given->second.Get<Rml::String>()}});
-			else if (given != event.GetParameters().end())
+			else if (given != event.GetParameters().end() && target->GetAttribute<Rml::String>("decimals", "") == "0")
 				m_binding.send("settings.set", {{"key", key}, {"value", std::lround(given->second.Get<double>())}});
+			else if (given != event.GetParameters().end())
+				m_binding.send("settings.set", {{"key", key}, {"value", given->second.Get<double>()}});
 			return;
 		}
 		if (target->IsClassSet("meter-measure"))
@@ -305,6 +342,20 @@ namespace gnubase::ui
 		const auto seconds = static_cast<int64_t>(measured.seconds);
 		shown.push_back(
 			std::to_string(seconds / 60) + ":" + (seconds % 60 < 10 ? "0" : "") + std::to_string(seconds % 60));
+		// Whether each value with a threshold is above its reference plus its tolerance (p. 539).
+		const float truePeak = largest(measured.truePeakMax, measured.channels);
+		const std::array<std::optional<double>, g_thresholds.size()> values = {
+			measured.momentaryMax, measured.shortTermMax, measured.integrated, engine::analysis::decibels(truePeak)};
+		for (size_t i = 0; i < values.size(); ++i)
+		{
+			const std::string key = std::string("meter.") + g_thresholds.at(i).first;
+			const auto reference = m_thresholds.find(key + "Reference");
+			const auto tolerance = m_thresholds.find(key + "Tolerance");
+			shown.emplace_back(values.at(i) && reference != m_thresholds.end() && tolerance != m_thresholds.end() &&
+						*values.at(i) > reference->second + tolerance->second
+					? "over"
+					: "");
+		}
 		return shown;
 	}
 
@@ -312,7 +363,7 @@ namespace gnubase::ui
 	{
 		if (!m_root)
 			return;
-		const size_t channels = (shown.size() - g_readouts.size() - 4) / 3;
+		const size_t channels = (shown.size() - g_readouts.size() - g_thresholds.size() - 4) / 3;
 		Rml::Element* bars = m_root->QuerySelector(".meter-master .meter-bars");
 		if (bars->GetNumChildren() != static_cast<int>(channels))
 		{
@@ -337,5 +388,7 @@ namespace gnubase::ui
 		}
 		for (const char* readout : g_readouts)
 			setText(m_root->QuerySelector(std::string(".") + readout), shown[at++]);
+		for (const auto& [name, element] : g_thresholds)
+			m_root->QuerySelector(std::string(".") + element)->SetClass("over", shown[at++] == "over");
 	}
 }

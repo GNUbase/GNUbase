@@ -2866,6 +2866,19 @@ splitter.column .splitter-grip-horizontal
 	width: 84dp;
 }
 
+/* A threshold's reference and tolerance (p. 539), after its name. */
+.meter-display .meter-threshold span
+{
+	flex: 1;
+	white-space: nowrap;
+}
+
+.meter-display .meter-settings .meter-threshold valuefield
+{
+	width: 52dp;
+	margin-left: 4dp;
+}
+
 .meter-display .meter-settings valuefield
 {
 	width: 64dp;

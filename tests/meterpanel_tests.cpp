@@ -495,6 +495,48 @@ TEST_CASE("the loudness meter's unit, scale, Hold on Stop and Measure Loudness f
 	REQUIRE(app.waitUntil([&app] { return !elements(app, ".meter-measure.checked").empty(); }));
 }
 
+TEST_CASE("the loudness readouts turn red above their thresholds", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const auto channel = app.call("track.add", {{"type", "audio"}}).at("channel").at("id").get<uint64_t>();
+	app.call("channel.set", {{"channel", channel}, {"monitor", true}});
+	app.appUi().docking().open("meter");
+	app.call("transport.play");
+	app.call("audio.render", {{"frames", 48000}});
+	REQUIRE(app.waitUntil([&app] { return shown(app, ".meter-tab[value=loudness]"); }));
+	click(app, ".meter-tab[value=loudness]");
+	// -6 LUFS: above the default thresholds, but -6 dBTP isn't (reference manual pp. 537 and 539).
+	const auto over = [&app]
+	{
+		std::vector<std::string> readouts;
+		for (const char* readout : {"momentary-max", "short-term-max", "integrated", "true-peak-max"})
+			if (!elements(app, std::string(".") + readout + ".over").empty())
+				readouts.emplace_back(readout);
+		return readouts;
+	};
+	REQUIRE(app.waitUntil([&] { return text(app, ".integrated") == "-6.0 LUFS" && over().size() == 2; }));
+	CHECK(over() == std::vector<std::string>{"momentary-max", "integrated"}); // no short-term loudness yet
+
+	// A reference and a tolerance above the value turn its readout back; the pane sets them.
+	app.call("settings.set", {{"key", "meter.integratedReference"}, {"value", -10.0}});
+	app.call("settings.set", {{"key", "meter.integratedTolerance"}, {"value", 4.0}});
+	REQUIRE(app.waitUntil([&] { return over() == std::vector<std::string>{"momentary-max"}; }));
+	app.call("settings.set", {{"key", "meter.truePeakReference"}, {"value", -10.0}});
+	REQUIRE(app.waitUntil([&] { return over() == std::vector<std::string>{"momentary-max", "true-peak-max"}; }));
+	click(app, ".meter-loudness .meter-configure");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "[setting=\"meter.truePeakTolerance\"]"); }));
+	app.ui().wheel(
+		std::nullopt, {".meter-display [setting=\"meter.truePeakTolerance\"]", 0, std::nullopt}, 0.0F, -10.0F);
+	REQUIRE(app.waitUntil([&app]
+		{ return app.call("settings.get", {{"key", "meter.truePeakTolerance"}}).at("value").get<double>() > 0.0; }));
+	app.call("settings.set", {{"key", "meter.truePeakTolerance"}, {"value", 6.0}});
+	REQUIRE(app.waitUntil([&] { return over() == std::vector<std::string>{"momentary-max"}; }));
+}
+
 TEST_CASE("the meter settings pane shows its settings and which button opened it", "[ui]")
 {
 	test::UiApp app({1000, 680}); // CI's macOS runner opens windows at most 1024 by 684
