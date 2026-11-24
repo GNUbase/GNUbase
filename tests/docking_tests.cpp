@@ -1297,9 +1297,10 @@ TEST_CASE("a set learns the sections that later containers bring, and keeps save
 
 	SECTION("with a saved order and no hidden list")
 	{
-		// After a drag: EQ, which the first channel doesn't have, still has its default, hidden.
+		// After a drag that put EQ first: EQ, which the first channel doesn't have, still has its default, hidden,
+		// and keeps its place.
 		Json layout = Json::object();
-		layout["windows"]["test"]["sections"]["channel"] = {{"order", {"routing", "sends", "inserts", "eq", "fader"}}};
+		layout["windows"]["test"]["sections"]["channel"] = {{"order", {"eq", "routing", "sends", "inserts", "fader"}}};
 		app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
 		REQUIRE(app.waitUntil([&docking, &layout] { return docking.layout() == layout; }));
 		Rml::ElementDocument& document = app.show("sections-later.rml");
@@ -1307,13 +1308,19 @@ TEST_CASE("a set learns the sections that later containers bring, and keeps save
 		addChannel(app, document, "midi", false);
 		app.shell().step(std::chrono::milliseconds(0));
 		docking.setSectionHidden("test", "channel", "fader", true);
-		CHECK(saved() == Json{{"order", {"routing", "sends", "inserts", "fader"}}, {"hidden", {"fader"}}});
+		CHECK(saved() ==
+			Json{
+				{"order", {"eq", "routing", "sends", "inserts", "fader"}}, {"hidden", {"fader"}}, {"default", {"eq"}}});
 
-		// A channel with EQ brings it hidden.
+		// A channel with EQ brings it hidden, in its place.
 		addChannel(app, document, "audio");
 		app.shell().step(std::chrono::milliseconds(0));
-		CHECK(paneItems(app) == Names{"routing*", "sends*", "inserts*", "eq", "fader"});
+		CHECK(paneItems(app) == Names{"eq", "routing*", "sends*", "inserts*", "fader"});
 		CHECK(sections(app, "#audio") == Names{"routing", "sends", "inserts"});
+
+		// Showing another section, now that the window knows EQ, saves its visibility like any other's.
+		docking.setSectionHidden("test", "channel", "fader", false);
+		CHECK(saved() == Json{{"order", {"eq", "routing", "sends", "inserts", "fader"}}, {"hidden", {"eq"}}});
 	}
 }
 
