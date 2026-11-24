@@ -1039,6 +1039,12 @@ TEST_CASE("the Warp section, Free Warp and Flatten warp the clip", "[ui]")
 	const double moved = warp().at("markers").at(0).at("target").get<double>();
 	REQUIRE(f.app.waitUntil(
 		[&] { return f.near(f.box(".se-warp-marker").at("x").get<double>() + (3 * f.dpRatio()), f.x(moved), 2); }));
+	// Over a marker, any modifier key turns the pointer into an eraser (pp. 654, 656).
+	CHECK(f.pointer(f.at(moved + 1000)) == "tool-timewarp");
+	f.app.ui().move(f.window, f.at(moved), {"ctrl"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.app.ui().windows().at("cursor") == "tool-erase");
+	CHECK(f.pointer(f.at(moved + 1000)) == "tool-timewarp");
 	f.click(f.at(moved), {"alt"});
 	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").empty(); }));
 	f.drag(f.at(3000), f.at(3400));

@@ -101,6 +101,8 @@ namespace gnubase::ui
 		bool clickWarp(const std::string& id);
 		void renderWarp();
 		void pressWarp(Rml::Event& event, Rml::Element& target);
+		// The pointer for what a press with the modifiers held does there (docs/features/pointers.md).
+		void showPointer(const Rml::Event& event, Rml::Element& target);
 		void changed(Rml::Event& event, Rml::Element& target);
 		void ask(bool overview);
 		void zoom(double factor, double around);
