@@ -8,6 +8,7 @@
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -1116,16 +1117,20 @@ TEST_CASE("a track's MIDI input plays the assigned messages as the expression of
 		Client& client = setup.client;
 		run(client, "noteExpression.set",
 			{{"track", setup.track}, {"bypass", bypass},
-				{"inputs", {input("brightness", "cc1", 0.0, 0.5), input("pan", "cc1", 1.0, 0.0)}}});
+				{"inputs",
+					{input("brightness", "cc1", 0.0, 0.5), input("pan", "cc1", 1.0, 0.0),
+						input("tuning", "pitchBend", -12.0, 12.0), input("pressure", "aftertouch", 0.0, 1.0)}}});
 		run(client, "audio.render", {{"frames", 64}});
 		run(client, "midi.capture", {{"start", true}});
-		// CC 1 before the note finds none to play on; CC 7 isn't assigned and passes.
+		// CC 1 before the note finds none to play on; CC 7 isn't assigned and passes. Pitch bend at its center plays
+		// a tuning of 0 on the held notes, aftertouch their pressure.
 		run(client, "midi.inject",
 			{{"channel", setup.channel},
 				{"messages",
 					{message(0, {0xB2, 1, 127}), message(0, {0x92, 60, 100}), message(0, {0x92, 64, 100}),
 						message(0, {0xB2, 1, 127}), message(0, {0xB2, 7, 100}), message(0, {0x82, 60, 0}),
-						message(0, {0x82, 64, 0})}}});
+						message(0, {0x82, 64, 0}), message(0, {0x92, 67, 100}), message(0, {0xE2, 0, 64}),
+						message(0, {0xD2, 100}), message(0, {0x82, 67, 0})}}});
 		run(client, "audio.render", {{"frames", 128}});
 		std::vector<std::vector<int64_t>> played;
 		for (std::vector<int64_t>& each : capturedFrom(client, 0))
@@ -1136,21 +1141,50 @@ TEST_CASE("a track's MIDI input plays the assigned messages as the expression of
 		// without it.
 		if (bypass)
 			CHECK(played ==
-				std::vector<std::vector<int64_t>>{
-					{0x92, 60, 100}, {0x92, 64, 100}, {0xB2, 7, 100}, {0x82, 60, 0}, {0x82, 64, 0}});
+				std::vector<std::vector<int64_t>>{{0x92, 60, 100}, {0x92, 64, 100}, {0xB2, 7, 100}, {0x82, 60, 0},
+					{0x82, 64, 0}, {0x92, 67, 100}, {0x82, 67, 0}});
 		else
 			CHECK(played ==
 				std::vector<std::vector<int64_t>>{{0xB2, 74, 64}, {0x92, 60, 100}, {0xB2, 74, 64}, {0x92, 64, 100},
-					{0xB2, 7, 100}, {0x82, 60, 0}, {0x82, 64, 0}});
+					{0xB2, 7, 100}, {0x82, 60, 0}, {0x82, 64, 0}, {0xE2, 0, 64}, {0xD2, 100}, {0x92, 67, 100},
+					{0x82, 67, 0}});
 	}
+}
+
+TEST_CASE("the note-offs of a block that assigned controllers fill still play", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "noteExpression.set", {{"track", setup.track}, {"inputs", {input("brightness", "cc1", 0.0, 1.0)}}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	// Ten held notes and 110 CC 1 make 1100 expression events, more than a block holds, before the note-offs.
+	Json messages = Json::array();
+	for (int key = 60; key < 70; ++key)
+		messages.push_back(message(0, {0x90, key, 100}));
+	for (int i = 0; i < 110; ++i)
+		messages.push_back(message(0, {0xB0, 1, i}));
+	for (int key = 60; key < 70; ++key)
+		messages.push_back(message(0, {0x80, key, 0}));
+	run(client, "midi.inject", {{"channel", setup.channel}, {"messages", messages}});
+	run(client, "audio.render", {{"frames", 128}});
+	std::vector<int64_t> ended;
+	for (const std::vector<int64_t>& each : capturedFrom(client, 0))
+		if (each.size() > 2 && each[1] == 0x80)
+			ended.push_back(each[2]);
+	CHECK(ended == std::vector<int64_t>{60, 61, 62, 63, 64, 65, 66, 67, 68, 69});
 }
 
 TEST_CASE("a controller assigned to an expression records into the notes that sound as their expression points",
 	"[integration]")
 {
+	// The bypass leaves it out of what plays, not of what records.
+	const bool bypass = GENERATE(false, true);
+	INFO("bypass " << bypass);
 	Setup setup;
 	Client& client = setup.client;
-	run(client, "noteExpression.set", {{"track", setup.track}, {"inputs", {input("brightness", "cc1", 0.0, 1.0)}}});
+	run(client, "noteExpression.set",
+		{{"track", setup.track}, {"bypass", bypass}, {"inputs", {input("brightness", "cc1", 0.0, 1.0)}}});
 	run(client, "transport.record");
 	run(client, "midi.inject",
 		{{"channel", setup.channel},
@@ -1178,21 +1212,28 @@ TEST_CASE("noteExpression.convert turns a part's assigned controllers into the e
 	Setup setup;
 	Client& client = setup.client;
 	const ObjectId part = addPart(client, setup.track);
-	run(client, "noteExpression.set", {{"track", setup.track}, {"inputs", {input("brightness", "cc1", 0.0, 0.5)}}});
+	run(client, "noteExpression.set",
+		{{"track", setup.track},
+			{"inputs",
+				{input("brightness", "cc1", 0.0, 0.5), input("tuning", "pitchBend", -12.0, 12.0),
+					input("pressure", "aftertouch", 0.0, 1.0)}}});
 	run(client, "note.add",
 		{{"part", part},
 			{"notes",
 				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5}, {"channel", 0}},
 					{{"position", 0}, {"length", 2 * g_beatTicks}, {"pitch", 64}, {"velocity", 0.5},
 						{"channel", 1}}}}});
-	// CC 1 on each note's channel; CC 7 isn't assigned, and the last CC 1 has no note sounding.
+	// CC 1 on each note's channel; CC 7 isn't assigned, and the last CC 1 has no note sounding. Pitch bend at its
+	// center is a tuning of 0, aftertouch the pressure.
 	run(client, "controller.add",
 		{{"part", part},
 			{"controllers",
 				{{{"position", g_beatTicks / 2}, {"number", 1}, {"value", 1.0}, {"channel", 0}},
 					{{"position", 3 * g_beatTicks / 2}, {"number", 1}, {"value", 0.5}, {"channel", 1}},
 					{{"position", g_beatTicks / 2}, {"number", 7}, {"value", 0.5}, {"channel", 0}},
-					{{"position", 3 * g_beatTicks}, {"number", 1}, {"value", 0.5}, {"channel", 0}}}}});
+					{{"position", 3 * g_beatTicks}, {"number", 1}, {"value", 0.5}, {"channel", 0}},
+					{{"position", g_beatTicks / 4}, {"type", "pitchBend"}, {"value", 0.5}, {"channel", 0}},
+					{{"position", g_beatTicks}, {"type", "channelPressure"}, {"value", 0.25}, {"channel", 1}}}}});
 	const Json before = run(client, "project.get").at("midiParts").at(0);
 
 	const Json converted = run(client, "noteExpression.convert", {{"part", part}});
@@ -1201,8 +1242,8 @@ TEST_CASE("noteExpression.convert turns a part's assigned controllers into the e
 	std::map<int, Points> points;
 	for (const Json& note : after.at("notes"))
 		points[note.at("pitch").get<int>()] = pointsOf(note);
-	CHECK(points[60] == Points{{"brightness", g_beatTicks / 2, 500}});
-	CHECK(points[64] == Points{{"brightness", 3 * g_beatTicks / 2, 250}});
+	CHECK(points[60] == Points{{"brightness", g_beatTicks / 2, 500}, {"tuning", g_beatTicks / 4, 0}});
+	CHECK(points[64] == Points{{"brightness", 3 * g_beatTicks / 2, 250}, {"pressure", g_beatTicks, 250}});
 	std::vector<std::pair<int64_t, int>> left;
 	for (const Json& controller : after.at("controllers"))
 		left.emplace_back(controller.at("position").get<int64_t>(), controller.at("number").get<int>());
@@ -1214,7 +1255,10 @@ TEST_CASE("noteExpression.convert turns a part's assigned controllers into the e
 	CHECK(run(client, "project.get").at("midiParts").at(0) == before);
 	// Nothing to convert changes nothing.
 	run(client, "noteExpression.set",
-		{{"track", setup.track}, {"inputs", {{{"type", "brightness"}, {"input", "none"}}}}});
+		{{"track", setup.track},
+			{"inputs",
+				{{{"type", "brightness"}, {"input", "none"}}, {{"type", "tuning"}, {"input", "none"}},
+					{{"type", "pressure"}, {"input", "none"}}}}});
 	CHECK(run(client, "noteExpression.convert", {{"part", part}}).at("notes").empty());
 	CHECK(run(client, "project.get").at("midiParts").at(0) == before);
 }

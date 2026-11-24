@@ -653,7 +653,10 @@ namespace gnubase::engine
 						m_assigned.add(expression);
 					}
 			}
-			if (!consumed)
+			// A full block drops expression rather than what ends notes, which held has already let go of.
+			if (!consumed && graph::endsNotes(event))
+				m_assigned.addEnd(event);
+			else if (!consumed)
 				m_assigned.add(event);
 			assigned = assigned || consumed;
 		}

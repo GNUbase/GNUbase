@@ -29,8 +29,10 @@ channel's `noteExpression` in `src/engine/document/document.h`).
   expression with its input's short name in the In column (PB, AT or the controller's number), of which a click
   selects one, and the selected one's Parameter Details: Input (Off, Pitchbend, Aftertouch, CC 0-127), MIDI Learn and
   its Max. and Min. Value, in the expression's range. MIDI Learn listens to the MIDI inputs (`midi.activityListen`,
-  `midi.activity`) until the next controller, pitch bend or aftertouch, which becomes the selected expression's input;
-  it ends when another expression is selected. Every change is a `noteExpression.set`.
+  `midi.activity`) until the next controller, pitch bend or aftertouch the track receives, which becomes the selected
+  expression's input: from the inputs among all MIDI inputs (`midi.ports` `inAllInputs`) while the track's MIDI input
+  is All MIDI Inputs, else none. It ends when another expression is selected or the inspector shows another track.
+  Every change is a `noteExpression.set`.
 - **Live input** (p. 1303): the track's MIDI input plays each assigned message as the expression of the notes the
   input holds on the message's channel, every one of them getting the same value, over the expression's range: the
   message's lowest value plays `min`, its highest `max`. The sequencer turns them into note expression events before
@@ -58,8 +60,8 @@ controllers into its notes' points, leaves the others and those no note sounds a
 ## Not yet
 
 - In the inspector's Note Expression section, the Global section's Show Additional Functions; the expressions'
-  visibility, which Parameter Selection in the key editor's expression editor follows (p. 1309); the parameter colors.
-  MIDI Learn takes the next message from any MIDI input, not only the track's.
-- Loading and saving input assignments as presets (p. 1304); Record MIDI as Note Expression, Overdub Note Exp. and
+  visibility, which Parameter Selection in the key editor's expression editor follows (p. 1309); the parameter colors
+  (#2120).
+- Loading and saving input assignments as presets (p. 1304, #2120); Record MIDI as Note Expression, Overdub Note Exp. and
   its Latch Buffer (p. 1302): recording into the notes of the parts that play, which the input doesn't hold (#1515);
   Convert to Note Expression in the MIDI menu, and its release phases (p. 1316, #1515).

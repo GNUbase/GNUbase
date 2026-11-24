@@ -265,7 +265,7 @@ instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the
   one step, a drag dropped when the inspector shows another instrument track or a marker track, the control panel opened
   and closed, a send's output and Pre, changes from another client with undo, and an audio track without them; the Note
 Expression section's bypass, an expression's input chosen and its range typed, its In column, and MIDI Learn taking a
-controller from a MIDI input, with undo. A drag of
+controller from a MIDI input, not from one outside all MIDI inputs, and ending when another track shows, with undo. A drag of
   the inspector's volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are
   one undo step each, and a MIDI modifier and a part's transpose dragged back to where they started while the engine
   answers late end there. The info line's volume step that the engine refuses, one of the two selected events being

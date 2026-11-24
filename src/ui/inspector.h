@@ -76,6 +76,8 @@ namespace gnubase::ui
 		void sendExpressionInput(engine::Json change);
 		// Turns MIDI Learn on or off, listening to the MIDI inputs (midi.activityListen) while it is on.
 		void learn(bool on);
+		// Takes the MIDI inputs that aren't among all MIDI inputs, which MIDI Learn leaves out, from midi.ports.
+		void readPorts(const engine::Json& ports);
 		// The Arranger Track section (pp. 405, 410-411): a row per step of the active chain and per arranger event,
 		// each with its arrow, the one playing .current, and the jump mode. A step's name is a disabled textdisplay
 		// that Alt and a double click open (p. 405).
@@ -155,6 +157,8 @@ namespace gnubase::ui
 		size_t m_expression = 0; // the Note Expression section's expression selected, by plugin::NoteExpression
 		bool m_learning = false; // its MIDI Learn is on
 		Subscription m_activity; // midi.activity, for MIDI Learn
+		std::set<std::string> m_notInAllInputs; // "backend id" of the MIDI inputs that aren't among all MIDI inputs
+		Subscription m_portsChanged;            // midi.changed, for them
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }

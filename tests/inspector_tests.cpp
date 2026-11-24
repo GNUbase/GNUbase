@@ -2747,11 +2747,13 @@ TEST_CASE("the inspector's Note Expression section shows and changes the track's
 {
 	auto backend = std::make_unique<midi::DummyBackend>();
 	backend->addLoopback("Keys");
+	backend->addLoopback("Pads");
 	midi::DummyBackend& dummy = *backend;
 	std::vector<std::unique_ptr<midi::Backend>> backends;
 	backends.push_back(std::move(backend));
 	Window window(1200, std::move(backends));
 	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	const uint64_t voice = window.addTrack({{"type", "audio"}, {"name", "Voice"}});
 	window.list.select({keys});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
 	CHECK_FALSE(hasClass(window.app, ".inspector [section=noteExpression]", "unavailable"));
@@ -2775,25 +2777,53 @@ TEST_CASE("the inspector's Note Expression section shows and changes the track's
 	REQUIRE(window.app.waitUntil([&] { return setup().at("inputs") == Json::array({tuning}); }));
 	CHECK(element(window.app, section + "[expression=\"2\"] .expression-in").value("text", "") == "PB");
 
-	// MIDI Learn on brightness takes the next controller the MIDI inputs receive.
+	// MIDI Learn on brightness takes the next controller the track receives: none from an input that isn't among
+	// all MIDI inputs.
+	std::string pads;
+	const Json ports = window.call("midi.ports");
+	for (const Json& port : ports.at("ports"))
+		if (port.at("input") == true && port.at("name") == "Pads")
+			pads = port.at("id").get<std::string>();
+	REQUIRE(!pads.empty());
+	window.call("midi.setPort", {{"id", pads}, {"input", true}, {"inAllInputs", false}});
 	window.click(section + "[expression=\"5\"]");
 	window.click(section + "button[control=noteExpression-learn]");
-	const std::unique_ptr<midi::Output> device = dummy.openOutput("Keys");
-	audio::MidiMessage message;
-	message.size = 3;
-	message.bytes = {0xB0, 21, 64};
-	device->send(message, hostTime() - 1000000000);
-	REQUIRE(window.app.waitUntil(
-		[&]
-		{
-			if (!window.call("audio.get").at("running").get<bool>())
+	const std::unique_ptr<midi::Output> keysOut = dummy.openOutput("Keys");
+	const std::unique_ptr<midi::Output> padsOut = dummy.openOutput("Pads");
+	// The device sends a controller, and the inspector hears of it (midi.activity, which offline the test runs).
+	const auto send = [&](midi::Output& device, uint8_t number)
+	{
+		audio::MidiMessage message;
+		message.size = 3;
+		message.bytes = {0xB0, number, 64};
+		device.send(message, hostTime() - 1000000000);
+		return window.app.waitUntil(
+			[&]
 			{
+				if (window.call("audio.get").at("running").get<bool>())
+					return true; // the engine runs midi.activity itself
 				window.call("audio.render", {{"frames", 128}});
-				window.call("midi.activity");
-			}
-			return setup().at("inputs").size() == 2;
-		}));
+				return !window.call("midi.activity").at("received").empty();
+			});
+	};
+	REQUIRE(send(*padsOut, 22));
+	for (int i = 0; i < 3; ++i)
+		window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(setup().at("inputs").size() == 1);
+	CHECK(hasClass(window.app, section + "button[control=noteExpression-learn]", "checked"));
+	REQUIRE(send(*keysOut, 21));
+	REQUIRE(window.app.waitUntil([&] { return setup().at("inputs").size() == 2; }));
 	CHECK(setup().at("inputs").at(1) == Json{{"type", "brightness"}, {"input", "cc21"}, {"min", 0.0}, {"max", 1.0}});
+	CHECK_FALSE(hasClass(window.app, section + "button[control=noteExpression-learn]", "checked"));
+
+	// Learn ends when the inspector shows another track, so that the next controller goes to none.
+	window.click(section + "button[control=noteExpression-learn]");
+	REQUIRE(window.app.waitUntil(
+		[&] { return hasClass(window.app, section + "button[control=noteExpression-learn]", "checked"); }));
+	window.list.select({voice});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Voice"));
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
 	CHECK_FALSE(hasClass(window.app, section + "button[control=noteExpression-learn]", "checked"));
 	window.call("history.undo");
 	REQUIRE(window.app.waitUntil([&] { return setup().at("inputs") == Json::array({tuning}); }));

@@ -264,7 +264,7 @@ loading cutting them there.
   1303), a color per expression in the overlay, which draws all of them alike, and Trim Note Expression to Note Length
   and Remove Note Expression in the MIDI menu (p. 1314).
 - Parameter Selection lists the expressions the note uses and those chosen in the inspector, not all seven (p. 1309,
-  #1513).
+  #2120).
 - What the inspector's Note Expression section doesn't have yet: [note-expression-setup.md](note-expression-setup.md).
 - The Note Expression Assignment's Preferred and Alternative rules (Expression Name Contains, Note Expression Number, As
   Recommended by Instrument, p. 1299), and renewing the assignments when the instrument or its preset changes (p. 1298,

@@ -640,17 +640,23 @@ namespace gnubase::ui
 			  })),
 		  m_transportChanged(
 			  binding.on("transport.changed", [this](const engine::Event& event) { followArranger(event.data); })),
-		  // MIDI Learn assigns the next controller, pitch bend or aftertouch the MIDI inputs receive (p. 1304).
+		  // MIDI Learn assigns the next controller, pitch bend or aftertouch the track receives (p. 1304): from the
+		  // MIDI inputs among all MIDI inputs while its MIDI input is All MIDI Inputs, else none.
 		  m_activity(binding.on("midi.activity",
 			  [this](const engine::Event& event)
 			  {
+				  if (!m_learning || m_channel.value("midiInput", std::string("all")) != "all")
+					  return;
 				  for (const Json& message : event.data.at("received"))
-					  if (const std::string input = learnedInput(message.at("bytes")); m_learning && !input.empty())
+					  if (const std::string input = learnedInput(message.at("bytes")); m_learning && !input.empty() &&
+						  m_notInAllInputs.count(
+							  message.value("backend", std::string()) + " " + message.value("id", std::string())) == 0)
 					  {
 						  learn(false);
 						  sendExpressionInput({{"input", input}});
 					  }
-			  }))
+			  })),
+		  m_portsChanged(binding.on("midi.changed", [this](const engine::Event& event) { readPorts(event.data); }))
 	{
 		root.SetClass("inspector", true);
 		// Set up Sections from an empty area (p. 167), in the project window's document; the controls have none.
@@ -762,6 +768,9 @@ namespace gnubase::ui
 		if (Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
 			track != m_track && focus != nullptr && focus != m_root.get() && m_root->Contains(focus))
 			focus->Blur();
+		// MIDI Learn belongs to the track it started on.
+		if (track != m_track)
+			learn(false);
 		m_track = track;
 		m_selected = tracks;
 		m_loads = loads;
@@ -1394,10 +1403,25 @@ namespace gnubase::ui
 	{
 		if (on != m_learning)
 			m_binding.send("midi.activityListen", {{"on", on}, {"listener", m_stepOwner}});
+		if (on && !m_learning)
+			m_binding.send("midi.ports", Json::object(),
+				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && result.ok())
+						readPorts(result.value);
+				});
 		m_learning = on;
 		if (Rml::Element* button = m_root ? m_root->QuerySelector("[control=noteExpression-learn]") : nullptr;
 			button != nullptr && !on)
 			button->RemoveAttribute("checked");
+	}
+
+	void Inspector::readPorts(const Json& ports)
+	{
+		m_notInAllInputs.clear();
+		for (const Json& port : ports.value("ports", Json::array()))
+			if (port.value("input", false) && !port.value("inAllInputs", true))
+				m_notInAllInputs.insert(port.value("backend", std::string()) + " " + port.value("id", std::string()));
 	}
 
 	void Inspector::showMidiEffects(const std::string& section, const Json& rack)
