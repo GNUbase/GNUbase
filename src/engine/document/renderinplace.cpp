@@ -1000,7 +1000,11 @@ namespace gnubase::engine
 				const std::string sources = parameters.value("sourceTracks", std::string("keep"));
 				if (parameters.value("hideSourceTracks", false) && sources != "remove")
 				{
-					std::vector<ObjectId> hidden = project.trackVisibility.hidden;
+					// The stored list keeps removed hidden tracks for undo; trackVisibility.set refuses them.
+					std::vector<ObjectId> hidden;
+					for (const ObjectId id : project.trackVisibility.hidden)
+						if (project.trackById.count(id) != 0)
+							hidden.push_back(id);
 					for (const auto& [id, destination] : destinations)
 						hidden.push_back(id);
 					run("trackVisibility.set", {{"hidden", hidden}});

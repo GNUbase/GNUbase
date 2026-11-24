@@ -5,6 +5,7 @@
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
 #include "engine/document/rendersnapshot.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/plugins/hostmanager.h"
 #include "engine/processors/builtinplugin.h"
@@ -30,6 +31,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -402,7 +404,20 @@ TEST_CASE("an instrument track frozen without its inserts plays them on its free
 	const ObjectId slot = project.insertGain(synth.channel, 3.0);
 	run(project.client, "channel.set", {{"channel", synth.channel}, {"pre", {{"gain", -2.0}}}});
 	run(project.client, "audio.render", {{"frames", 4096}});
+	const std::vector<float> unautomated = project.mainMix();
+	// The slot's automation plays on the file too.
+	const ObjectId lane = run(project.client, "automationLane.add",
+		{{"track", synth.track}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}}})
+							  .at("lane")
+							  .at("id")
+							  .get<ObjectId>();
+	run(project.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", -12.0}, {"shape", "step"}},
+					{{"position", 20000}, {"value", 0.0}, {"shape", "step"}}}}});
 	const std::vector<float> live = project.mainMix();
+	REQUIRE(nullTest(live, unautomated) > 0.01f);
 
 	const Json frozen = run(project.client, "track.freeze",
 		{{"tracks", {audio.track, synth.track}}, {"tail", 1}, {"includeInserts", false}});
@@ -412,7 +427,8 @@ TEST_CASE("an instrument track frozen without its inserts plays them on its free
 	project.activate({synth.channel});
 	CHECK(nullTest(project.mainMix(), live) < 1e-20f);
 
-	// The slot plays on the file: turning it down turns the track down.
+	// The slot plays on the file: without its automation, turning it down turns the track down.
+	run(project.client, "automationLane.set", {{"lane", lane}, {"read", false}});
 	project.setGain(synth.channel, slot, -18.0);
 	run(project.client, "audio.render", {{"frames", 4096}});
 	CHECK(nullTest(project.mainMix(), live) > 0.01f);
@@ -423,6 +439,14 @@ TEST_CASE("an instrument track frozen without its inserts plays them on its free
 	run(project.client, "project.load", {{"path", file.u8string()}});
 	CHECK(project.track(synth.track).at("frozen").at("inserts") == false);
 	CHECK(project.slotNodes() == 1);
+
+	// Only an instrument track can be frozen without its inserts: a file that says so of an audio track doesn't load.
+	Json saved = run(project.client, "project.get");
+	CHECK_NOTHROW(projectFromJson(saved));
+	for (Json& track : saved.at("tracks"))
+		if (track.at("id") == audio.track)
+			track.at("frozen")["inserts"] = false;
+	CHECK_THROWS_AS(projectFromJson(saved), std::invalid_argument);
 }
 
 TEST_CASE("undo brings back the freeze file that was frozen then", "[integration]")
@@ -1330,6 +1354,20 @@ TEST_CASE("render in place mutes the source events and hides the source tracks i
 	CHECK(rendered.at("tracks").size() == 1);
 	run(project.client, "history.undo");
 	CHECK_FALSE(muted());
+	CHECK(run(project.client, "trackVisibility.get").at("hidden") == Json::array({source.track}));
+}
+
+TEST_CASE("hiding the source tracks still works once a hidden track has been removed", "[integration]")
+{
+	// The stored list keeps the removed track for undo, which trackVisibility.set refuses: the render leaves it out.
+	Session project;
+	const Session::Track gone = project.addTrack("Ramp");
+	const Session::Track source = project.addTrack("Ramp");
+	run(project.client, "trackVisibility.set", {{"hidden", {gone.track}}});
+	run(project.client, "track.remove", {{"track", gone.track}});
+	const Json rendered =
+		run(project.client, "track.renderInPlace", {{"tracks", {source.track}}, {"hideSourceTracks", true}});
+	CHECK(rendered.at("tracks").size() == 1);
 	CHECK(run(project.client, "trackVisibility.get").at("hidden") == Json::array({source.track}));
 }
 
