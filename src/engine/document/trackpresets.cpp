@@ -11,6 +11,7 @@
 #include "engine/document/document.h"
 #include "engine/document/drumtrack.h"
 #include "engine/document/projectmodel.h"
+#include "engine/document/samplertrack.h"
 #include "engine/document/serialize.h"
 #include "engine/document/trackversions.h"
 #include "engine/engine.h"
@@ -211,9 +212,10 @@ namespace gnubase::engine
 
 			// The copy of a clip, with its media file: a file the project has already is used as it is, and so is a
 			// clip of the project that is the same but for its id, folder and region ids, so that loading a preset
-			// again adds no copies of its clips to the pool. A new one goes into the pool's top folder, or a drum
-			// pad's into its folder Drum Machine (drumPoolFolder, #1614).
-			ObjectId clip(ObjectId id, bool drumPad = false)
+			// again adds no copies of its clips to the pool. A new one goes into the pool's top folder, or into the
+			// folder that folder gives: a drum pad's into Drum Machine (drumPoolFolder, #1614), a sampler's into
+			// Sampler Tracks (samplerPoolFolder, #1122).
+			ObjectId clip(ObjectId id, ObjectId (*folder)(Project&, CommandContext*) = nullptr)
 			{
 				if (const auto found = m_clips.find(id); found != m_clips.end())
 					return found->second;
@@ -226,7 +228,7 @@ namespace gnubase::engine
 					if (sameClip(clip, other))
 						return m_clips[id] = mine;
 				clip.id = m_to.newId();
-				clip.folder = drumPad ? drumPoolFolder(m_to, nullptr) : 0;
+				clip.folder = folder != nullptr ? folder(m_to, nullptr) : 0;
 				for (ClipRegion& region : clip.regions)
 					region.id = m_to.newId();
 				m_clips[id] = clip.id;
@@ -291,10 +293,10 @@ namespace gnubase::engine
 				channel.output = original.output;
 				channel.id = m_to.newId();
 				channel.track = track;
-				channel.sample = clip(original.sample); // a sampler's (#180), with the instrument
+				channel.sample = clip(original.sample, samplerPoolFolder); // a sampler's (#180), with the instrument
 				channel.pads = original.pads;           // a drum machine's (#182)
 				for (auto& [pad, drum] : channel.pads)
-					drum.sample = clip(drum.sample, true);
+					drum.sample = clip(drum.sample, drumPoolFolder);
 				// The fader top may be lower here (as project.set brings volumes down to it).
 				channel.volume = std::min(channel.volume, m_to.maxVolume);
 				for (Send& send : channel.sends)
@@ -1038,12 +1040,12 @@ namespace gnubase::engine
 			channel.instrument = sound.instrument;
 			channel.instrumentParameters = sound.instrumentParameters;
 			if (sound.instrument == "sampler") // its sample, as copies take it (#1503)
-				channel.sample = copier.clip(sound.sample);
+				channel.sample = copier.clip(sound.sample, samplerPoolFolder);
 			if (sound.instrument == "drumMachine") // the pads with their names and samples, as copies take them (#1361)
 			{
 				channel.pads = sound.pads;
 				for (auto& [pad, drum] : channel.pads)
-					drum.sample = copier.clip(drum.sample, true);
+					drum.sample = copier.clip(drum.sample, drumPoolFolder);
 				syncDrumLanes(project, channel, context);
 			}
 			if (channel.format != ChannelFormat::None)

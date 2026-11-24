@@ -70,6 +70,16 @@ namespace gnubase::engine
 			return found != channel.instrumentParameters.end() ? found->second : defaultValue;
 		}
 
+		// The command's parameters with a file's clip in place of path, in the pool folder Sampler Tracks (p. 710).
+		Json samplerClip(ProjectModel& model, Project& project, CommandContext& context)
+		{
+			const Json parameters = withSampleClip(model, project, context.parameters(), context);
+			if (context.parameters().contains("path"))
+				model.runEdit("clip.set", project,
+					{{"clip", parameters.at("clip")}, {"folder", samplerPoolFolder(project, &context)}}, context);
+			return parameters;
+		}
+
 		Json result(const Project& project, const Channel& channel, CommandContext& context)
 		{
 			Json json = {{"channel", toJson(channel)}};
@@ -122,6 +132,25 @@ namespace gnubase::engine
 		return section;
 	}
 
+	ObjectId topPoolFolder(Project& project, const std::string& name, CommandContext* context)
+	{
+		for (const auto& [id, each] : project.poolFolders)
+			if (each.parent == 0 && each.name == name)
+				return id;
+		PoolFolder folder;
+		folder.id = project.newId();
+		folder.name = name;
+		project.poolFolders[folder.id] = folder;
+		if (context != nullptr)
+			context->emit("poolFolder.added", {{"folder", toJson(folder)}});
+		return folder.id;
+	}
+
+	ObjectId samplerPoolFolder(Project& project, CommandContext* context)
+	{
+		return topPoolFolder(project, "Sampler Tracks", context);
+	}
+
 	Json withSampleClip(ProjectModel& model, Project& project, const Json& parameters, CommandContext& context)
 	{
 		if (!parameters.contains("path"))
@@ -143,8 +172,8 @@ namespace gnubase::engine
 			objectSchema({{"track", {{"type", "object"}}}, {"channel", {{"type", "object"}}}}, {"track", "channel"});
 		const std::string sectionText =
 			"The sample is a pool clip, clip, the clip of the audio event event, or an audio file, path, which goes "
-			"into the pool as a clip, from start to end in the clip's frames (default: the event's or the whole "
-			"clip).";
+			"into the pool as a clip, in the pool folder Sampler Tracks, which is made if the pool has none (p. 710), "
+			"from start to end in the clip's frames (default: the event's or the whole clip).";
 
 		model.addEdit(engine,
 			{"sampler.create", 1,
@@ -162,7 +191,7 @@ namespace gnubase::engine
 			"Create sampler track",
 			[&model](Project& project, CommandContext& context)
 			{
-				const Json parameters = withSampleClip(model, project, context.parameters(), context);
+				const Json parameters = samplerClip(model, project, context);
 				const bool sample = parameters.contains("event") || parameters.contains("clip");
 				require(sample || (!parameters.contains("start") && !parameters.contains("end")),
 					"start and end need event, clip or path");
@@ -194,7 +223,7 @@ namespace gnubase::engine
 			"Load sample",
 			[&model](Project& project, CommandContext& context)
 			{
-				const Json parameters = withSampleClip(model, project, context.parameters(), context);
+				const Json parameters = samplerClip(model, project, context);
 				Channel& channel = samplerChannel(project, parameters.at("track").get<ObjectId>());
 				const SampleSection section = sampleSection(project, parameters);
 				if (parameters.value("keepSettings", false))

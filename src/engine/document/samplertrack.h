@@ -32,4 +32,11 @@ namespace gnubase::engine
 	// The parameters with a file (path) put into the pool as a clip (Import Audio File, or a file dropped on the
 	// sampler panel or a drum pad, reference manual pp. 710, 713, 944): clip in place of path, in the same undo step.
 	Json withSampleClip(ProjectModel& model, Project& project, const Json& parameters, CommandContext& context);
+
+	// The pool folder of that name at the pool's top, made if the pool has none; emitting poolFolder.added then, with a
+	// context.
+	ObjectId topPoolFolder(Project& project, const std::string& name, CommandContext* context);
+
+	// The pool folder Sampler Tracks, where the files loaded into samplers go (reference manual p. 710).
+	ObjectId samplerPoolFolder(Project& project, CommandContext* context);
 }
