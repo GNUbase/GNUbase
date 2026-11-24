@@ -841,12 +841,15 @@ namespace gnubase::engine
 					render.padPlayer = static_cast<int>(player);
 			if (const DrumMap* map = midi::drumMapOf(project, track.id))
 			{
-				const auto plays = [&render](const DrumSound& sound)
-				{ render.drumInput.push_back({sound.oNote, static_cast<int8_t>(sound.channel), sound.mute}); };
+				// What comes in through the I-notes plays only the sounds that Solo Instrument solos (p. 1223), the
+				// drum editor's auditions (drumSounds) every sound that isn't muted.
+				const std::bitset<g_drumSounds> soloed = soloedSounds(project, track.id);
+				const auto plays = [&render](const DrumSound& sound, bool mute)
+				{ render.drumInput.push_back({sound.oNote, static_cast<int8_t>(sound.channel), mute}); };
 				for (const uint8_t pitch : midi::inputPitches(*map))
-					plays(map->sounds.at(pitch));
+					plays(map->sounds.at(pitch), !soundPlays(map, soloed, pitch));
 				for (const DrumSound& sound : map->sounds)
-					plays(sound);
+					plays(sound, sound.mute);
 			}
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())

@@ -61,11 +61,13 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   them, which every render snapshot takes and turns into the soloed pitches of each track with a map, so a selected note
   moved to another sound solos that one, a map assigned to the track afterwards solos its selected notes' sounds, and a
   selected note whose sound Show Drum Sounds in Use by Instrument hides after a change of the pads or the map no longer
-  solos it. The notes it silences select no sound slot of an articulation map either. It changes what plays, not the
-  project: no undo step, not saved, and the project stays as saved, though `project.revision` advances. Playback only;
-  what is played live still plays every sound. Render in place, freeze and export render what plays, so while it is on
-  they take only the soloed sounds, and a frozen track keeps them after it is off: as with the mixer's solo, what is
-  heard is what is rendered, so switch it off before rendering the whole kit.
+  solos it. The notes it silences select no sound slot of an articulation map either. What is played live through the
+  I-notes (MIDI thru, `midi.inject`) plays only the soloed sounds too, as a muted sound's notes don't play; the drum
+  editor's auditions (`drumSounds`) play every sound that isn't muted. `ProjectModel::updateSoloNotes` asks the editor
+  views once per change of a view. It changes what plays, not the project: no undo step, not saved, and the project
+  stays as saved, though `project.revision` advances. Render in place, freeze and export render what plays, so while it
+  is on they take only the soloed sounds, and a frozen track keeps them after it is off: as with the mixer's solo, what
+  is heard is what is rendered, so switch it off before rendering the whole kit.
 - **Loading**: a note's pitch must be 0-127 and its channel 0-15 in the GNUbase entry of a project (as the DAWproject
   import clamps them), since the maps and the editors take the pitch as an index; an entry that has others is
   damaged, and the project loads from `project.xml`.
@@ -183,10 +185,10 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
 Outputs per sound in playback and MIDI thru (the sounds play on the track's output), so also the setup's Output pop-up
 and auditioning there: MIDI tracks play only to instrument tracks yet, not to MIDI output ports; name lists other than
 GM Default, such as a MIDI device's, and a drum track's pad names as its list without a map; Show Drum Sounds in Use by
-Instrument for plugin instruments, which needs a wrapper extension for the pads they play; Solo Instrument for what is
-played live; showing drum notes in the project window's parts, once parts show their notes (#1313); Create Drum Map from
-Instrument (p. 1238); reordering the list by dragging; the score settings (Display Note, Noteheads, Voice, Instrument
-Type, Technique); importing the reference's own drum map files.
+Instrument for plugin instruments, which needs a wrapper extension for the pads they play; showing drum notes in the
+project window's parts, once parts show their notes (#1313); Create Drum Map from Instrument (p. 1238); reordering the
+list by dragging; the score settings (Display Note, Noteheads, Voice, Instrument Type, Technique); importing the
+reference's own drum map files.
 
 ## Checks
 
@@ -200,8 +202,9 @@ Type, Technique); importing the reference's own drum map files.
   with Drum-Map Link; O-Note Conversion; the drum editor content, its view settings and parts of a track with a map
   opening in it unless the preference is off; Solo Instrument playing only the selected notes' sounds, following a
   selected note to another sound, leaving a saved project unmodified, soloing on a map assigned after it went on, no
-  longer soloing a selected note whose pad a reset takes out of the sounds in use and soloing it again on undo, and
-  not for nothing selected, another content, a closed editor, a track without a map or with it off; `visibleSounds` and
+  longer soloing a selected note whose pad a reset takes out of the sounds in use and soloing it again on undo, and not
+  for nothing selected, another content, a closed editor, a track without a map or with it off; the notes played live
+  through the I-notes soloed too but the auditions not, and `updateSoloNotes` asking the views once; `visibleSounds` and
   the grid type `zoom`, refusing other values; `soundsInUse` null without a drum machine, a drum track's kit, and a MIDI
   track's sounds through its map's O-notes to the drum track it plays to, and the selection leaving out the notes of the
   sounds it hides; `gmNames` saved and loaded, undone and refused for audio tracks; the view's `soundNames`, null

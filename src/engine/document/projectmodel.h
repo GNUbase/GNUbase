@@ -273,7 +273,10 @@ namespace gnubase::engine
 		// command announced, which describe the step's change, so that clients that follow them needn't read the
 		// project.
 		void announceHistory(CommandContext& context, bool step = false) const;
+		// Publishes a render snapshot of the project, with Project::soloNotes from the source first.
 		void publish();
+		// The same with Project::soloNotes as it is.
+		void compileAndPublish();
 
 		struct TrackRender;
 		static Json renderInput(const Project& project, const TrackRender& render);

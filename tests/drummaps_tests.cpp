@@ -3,6 +3,7 @@
 // remove, export and import, a track's map, playback and MIDI thru through the O-notes, channels and mutes, input
 // through the I-notes, O-Note Conversion, and the drum editor's content and Drum-Map Link.
 // tests/drumeditor_ui_tests.cpp drives the drum editor in the app.
+#include "engine/document/projectmodel.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
 #include "engine/midi/drummaps.h"
@@ -770,6 +771,73 @@ TEST_CASE("Solo Instrument follows the sounds in use when the instrument's pads 
 	f.call("history.undo"); // its pad back, the note is selected again
 	CHECK(f.call("editor.get", {{"editor", "window"}}).at("selection") == Json::array({snare}));
 	CHECK(pitches() == std::vector<int>{38});
+}
+
+TEST_CASE("Solo Instrument silences the other sounds played live too", "[integration]")
+{
+	// p. 1223 (#1838): what comes in through the I-notes plays only the soloed sounds, as the parts do; the drum
+	// editor's auditions (drumSounds) still play every sound that isn't muted.
+	engine::Engine engine(audio::makeBackends(), {}, std::vector<std::unique_ptr<midi::Backend>>());
+	engine::Client client(engine);
+	const auto run = [&client](const std::string& command, Json parameters = Json::object())
+	{
+		const engine::Result result = client.call(command, std::move(parameters));
+		INFO(command << " failed: " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	run("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const Json added = run("track.add", {{"type", "instrument"}});
+	const Json track = added.at("track").at("id");
+	const Json channel = added.at("channel").at("id");
+	run("channel.set", {{"channel", channel}, {"instrument", "noteProbe"}, {"monitor", true}});
+	run("track.set", {{"track", track}, {"drumMap", run("project.get").at("drumMaps").at(0).at("id")}});
+	const Json part = run("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}}).at("part").at("id");
+	const Json snare = run(
+		"note.add", {{"part", part}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 38}, {"velocity", 0.5}}}}})
+						   .at("notes")
+						   .at(0)
+						   .at("id");
+	run("editor.open", {{"editor", "window"}, {"parts", {part}}, {"content", "drum"}});
+	run("editor.set",
+		{{"editor", "window"}, {"selection", {{{"part", part}, {"note", snare}}}}, {"soloInstrument", true}});
+	run("audio.render", {{"frames", 64}}); // the new graph
+	run("midi.capture", {{"start", true}});
+	const auto play = [&](int pitch, bool sounds = false)
+	{
+		run("midi.inject",
+			{{"channel", channel}, {"drumSounds", sounds},
+				{"messages",
+					{{{"position", 0}, {"bytes", {0x90, pitch, 100}}},
+						{{"position", 0}, {"bytes", {0x80, pitch, 0}}}}}});
+		run("audio.render", {{"frames", 64}});
+		return notesPlayed(run("midi.capture"));
+	};
+	CHECK(play(36).empty()); // the bass drum, soloed out
+	CHECK(play(38) == std::vector<std::vector<int>>{{0x99, 38}, {0x89, 38}});
+	CHECK(play(36, true) == std::vector<std::vector<int>>{{0x99, 36}, {0x89, 36}}); // auditioned
+	run("editor.set", {{"editor", "window"}, {"soloInstrument", false}});
+	run("audio.render", {{"frames", 64}});
+	CHECK(play(36) == std::vector<std::vector<int>>{{0x99, 36}, {0x89, 36}});
+}
+
+TEST_CASE("updateSoloNotes asks the editor views for the soloed notes once", "[unit]")
+{
+	// #1838: it compared the source's answer with the project's and then asked again to publish it.
+	engine::ProjectModel model;
+	int calls = 0;
+	const std::vector<std::pair<engine::ObjectId, engine::ObjectId>> soloed = {{1, 2}};
+	model.setSoloNotesSource(
+		[&]
+		{
+			++calls;
+			return soloed;
+		});
+	model.updateSoloNotes();
+	CHECK(calls == 1);
+	CHECK(model.project().soloNotes == soloed);
+	model.updateSoloNotes(); // unchanged: only the comparison
+	CHECK(calls == 2);
 }
 
 TEST_CASE("the editor view names the active track's drum sounds", "[unit]")
