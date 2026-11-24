@@ -70,6 +70,12 @@
 	width: 3dp;
 }
 
+/* The object selection tool's pointing hand over pitchbend events (reference manual p. 1176). */
+.key-editor[tool=objectSelection] .controller-lane[lane-kind=pitchBend] .controller-step:not(.inactive)
+{
+	cursor: pointer;
+}
+
 /* The Articulations lane (docs/features/articulation-maps.md): as tall as its rows, the sound slots lane and a row
    per articulation, with the lane's name and the articulations' names beside them. Code places the slots,
    directions and attributes in percent of the area's width; a reset (.reset) is as wide as this gives it. */

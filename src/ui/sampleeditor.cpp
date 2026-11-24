@@ -3,6 +3,7 @@
 
 #include "engine/time/tempomap.h"
 #include "ui/canvas.h"
+#include "ui/cursors.h"
 #include "ui/timeformat.h"
 #include "ui/widgets.h"
 
@@ -947,6 +948,29 @@ namespace gnubase::ui
 		return true;
 	}
 
+	// Free Warp removes the marker clicked with a modifier key, under an eraser (pp. 654, 656); Edit Hitpoints inserts
+	// one with Alt, under the pencil, and disables or enables the line clicked with Shift, under a cross (p. 640).
+	void SampleEditor::showPointer(const Rml::Event& event, Rml::Element& target)
+	{
+		Rml::Element* root = m_root.get();
+		Rml::Element* editor = root != nullptr ? root->QuerySelector(".sample-editor") : nullptr;
+		if (editor == nullptr || m_drag != Drag::None)
+			return;
+		const bool shift = modifier(event, "shift_key");
+		const bool alt = modifier(event, "alt_key");
+		const bool ctrl = modifier(event, "ctrl_key") || modifier(event, "meta_key");
+		const Rml::Element* hitpoint = withClass(&target, "se-hitpoint", root);
+		std::string pointer;
+		if (m_freeWarp && (shift || alt || ctrl) && withClass(&target, "se-warp-marker", root) != nullptr)
+			pointer = "erase";
+		else if (m_editHitpoints && hitpoint != nullptr && shift &&
+			withClass(&target, "se-hitpoint-handle", root) == nullptr)
+			pointer = "disable";
+		else if (m_editHitpoints && hitpoint == nullptr && alt && withClass(&target, "se-display", root) != nullptr)
+			pointer = "draw";
+		setPointer(*editor, pointer);
+	}
+
 	// Free Warp's gestures in the display (pp. 654-656): a drag from anywhere inserts a warp marker there and moves it
 	// to where it ends, a drag of a marker moves it, and a click on one with a modifier key removes it.
 	void SampleEditor::pressWarp(Rml::Event& event, Rml::Element& target)
@@ -1189,6 +1213,7 @@ namespace gnubase::ui
 			press(event, *target);
 			break;
 		case Rml::EventId::Mousemove:
+			showPointer(event, *target);
 			move(event);
 			break;
 		case Rml::EventId::Mouseup:

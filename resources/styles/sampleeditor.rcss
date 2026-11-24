@@ -373,6 +373,24 @@
 	cursor: resize;
 }
 
+/* With the modifier keys (reference manual pp. 640, 654, 656), as code names what a press does in the editor's
+   pointer: Alt inserts a hitpoint, Shift disables or enables the one clicked, and any modifier removes the warp
+   marker clicked. */
+.sample-editor.edit-hitpoints[pointer=draw] .se-display
+{
+	cursor: tool-draw;
+}
+
+.sample-editor.edit-hitpoints[pointer=disable] .se-hitpoint
+{
+	cursor: crosshair;
+}
+
+.sample-editor.free-warp[pointer=erase] .se-warp-marker
+{
+	cursor: tool-erase;
+}
+
 .se-filter
 {
 	display: flex;

@@ -48,6 +48,18 @@
 	drag: drag;
 }
 
+/* The tools' pointers (docs/features/pointers.md): the draw tool's over the event display, where it draws, the
+   erase tool's over the rows it deletes. */
+.list-editor[tool=draw] .list-editor-body .list-event-lane
+{
+	cursor: tool-draw;
+}
+
+.list-editor[tool=erase] .list-editor-rows .list-row:not(.inactive)
+{
+	cursor: tool-erase;
+}
+
 .list-editor-rows
 {
 	flex-shrink: 0;

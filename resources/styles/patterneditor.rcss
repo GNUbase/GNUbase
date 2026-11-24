@@ -82,6 +82,13 @@
 	margin: 1dp;
 }
 
+/* The draw tool's pointer where a press adds or removes steps: with the draw tool, or with Alt (reference manual p.
+   924); code sets the editor's pointer. */
+.pattern-editor[pointer=draw] .pattern-step
+{
+	cursor: tool-draw;
+}
+
 .pattern-parameter-lane
 {
 	flex: 0 0 120dp;

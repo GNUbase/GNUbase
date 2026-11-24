@@ -1302,3 +1302,31 @@ TEST_CASE("the drum editor has neither the note expression buttons, the overlay 
 	CHECK(f.elements(".key-input[setting=expressionDoubleClick]").empty());
 	CHECK(f.elements(".key-expression-editor").empty());
 }
+
+TEST_CASE("the drumstick shows its pointer, and a note's ends the resize pointer where a press resizes it", "[ui]")
+{
+	Fixture f;
+	f.app.call("note.add",
+		{{"part", f.part}, {"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 1; }));
+	f.scroll(36);
+	const auto pointer = [&f](const ui::Target& at)
+	{
+		f.app.ui().move(f.window, at);
+		f.app.shell().step(std::chrono::milliseconds(0));
+		return f.app.ui().windows().at("cursor").get<std::string>();
+	};
+	f.click(of(".key-tool[key-tool=draw]"));
+	CHECK(pointer(f.at(8.0, 36)) == "tool-drumstick");
+	// Diamonds have no ends; with Show Note Length a note's ends resize (p. 1242), with either tool.
+	CHECK(pointer(of(".drum-note")) == "tool-drumstick");
+	f.click(of(".key-input[setting=showNoteLength]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").empty() && f.elements(".key-note").size() == 1; }));
+	const auto end = [&] { return f.inside(".key-note", f.box(".key-note").at("width").get<double>() - 2.0); };
+	CHECK(pointer(end()) == "resize");
+	CHECK(pointer(f.inside(".key-note", f.box(".key-note").at("width").get<double>() / 2.0)) == "tool-drumstick");
+	f.click(of(".key-tool[key-tool=objectSelection]"));
+	CHECK(pointer(f.inside(".key-note", 2.0)) == "resize");
+	CHECK(pointer(end()) == "resize");
+	CHECK(pointer(f.at(8.0, 36)).empty());
+}

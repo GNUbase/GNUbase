@@ -3,6 +3,7 @@
 
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
+#include "ui/cursors.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -599,6 +600,9 @@ namespace gnubase::ui
 				press(event);
 			break;
 		case Rml::EventId::Mousemove:
+			// Over the steps, the draw tool's pointer where a press draws: the draw tool's, or with Alt (p. 924).
+			if (Rml::Element* root = m_root.get())
+				setPointer(*root, m_tool == "draw" || event.GetParameter("alt_key", 0) != 0 ? "draw" : "");
 			drag(event);
 			break;
 		case Rml::EventId::Mouseup:

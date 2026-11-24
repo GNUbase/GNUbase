@@ -9,6 +9,11 @@
 #include <optional>
 #include <string>
 
+namespace Rml
+{
+	class Element;
+}
+
 // GNUbase's own mouse pointers (#469): SVG files that the style sheets name with RmlUi's cursor property.
 // docs/features/svg.md describes them.
 namespace gnubase::ui
@@ -42,4 +47,10 @@ namespace gnubase::ui
 		std::map<std::string, std::array<float, 2>> m_hotspots; // by name, in the SVG's width and height units
 		std::map<std::string, Cursor> m_loaded;
 	};
+
+	// Names what a press does where the mouse is in the element's attribute pointer, which the style sheets choose the
+	// pointer by (docs/features/pointers.md), or removes it for an empty name. Styles the document at once and asks
+	// for another update: RmlUi takes the pointer for the element under the mouse from its style as the last update
+	// left it, so the pointer then changes at once, also while the mouse doesn't move.
+	void setPointer(Rml::Element& element, const std::string& pointer);
 }

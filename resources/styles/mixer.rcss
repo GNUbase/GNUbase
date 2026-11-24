@@ -54,7 +54,7 @@
 	overflow: hidden;
 	white-space: nowrap;
 	text-align: center;
-	cursor: move;
+	cursor: pointer; /* a drag reorders the channels, under a hand (reference manual p. 496) */
 }
 
 /* The display line, a textdisplay: the number and the name of the channel's link group, on every strip while the

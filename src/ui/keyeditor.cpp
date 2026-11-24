@@ -8,6 +8,7 @@
 #include "platform/log.h"
 #include "ui/articulationnames.h"
 #include "ui/controllerlanes.h"
+#include "ui/cursors.h"
 #include "ui/timeformat.h"
 
 #include <RmlUi/Core/ComputedValues.h>
@@ -1786,6 +1787,7 @@ namespace gnubase::ui
 			dragDuringGesture();
 			break;
 		case Rml::EventId::Mousemove:
+			showPointer(event);
 			drag(event);
 			break;
 		case Rml::EventId::Drag:
@@ -2087,6 +2089,24 @@ namespace gnubase::ui
 		if (width > 3 * edge && x <= edge)
 			return Gesture::ResizeStart;
 		return Gesture::Move;
+	}
+
+	void KeyEditor::showPointer(Rml::Event& event)
+	{
+		Rml::Element* root = m_root.get();
+		Rml::Element* grid = root != nullptr ? root->QuerySelector(".key-editor-grid") : nullptr;
+		if (grid == nullptr || m_gesture != Gesture::None)
+			return;
+		// As press decides: the object selection tool resizes unless Shift or Ctrl (Cmd) adds the note to the
+		// selection, the drumstick resizes with Show Note Length.
+		Rml::Element* target = event.GetTargetElement();
+		const Note* note = grid->Contains(target) ? noteOf(target) : nullptr;
+		const bool adds = event.GetParameter("shift_key", 0) != 0 || event.GetParameter("ctrl_key", 0) != 0 ||
+			event.GetParameter("meta_key", 0) != 0;
+		const bool resizes = note != nullptr && note->editable && !m_expressionOpen &&
+			((m_tool == KeyTool::ObjectSelection && !adds) || (m_tool == KeyTool::Draw && m_drum && !diamonds())) &&
+			edgeGesture(target, event) != Gesture::Move;
+		setPointer(*grid, resizes ? "resize" : "");
 	}
 
 	void KeyEditor::startDraw(double ticks)
