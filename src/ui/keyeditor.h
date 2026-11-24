@@ -204,9 +204,9 @@ namespace gnubase::ui
 		DrumDraw drumDraw(const Rml::Event& event) const;
 		// Ends the drumstick's draw: removes the drawn note and the velocity and inserts the draw's notes.
 		void endDrumDraw(const DrumDraw& draw);
-		// Plays the pitch on the active track's instrument, as a pressed key of the keyboard does (p. 1204), after
-		// ending the pitch played before; without one only ends it.
-		void sound(std::optional<int> pitch);
+		// Plays the pitch at the MIDI velocity on the active track's instrument, as a pressed key of the keyboard
+		// does (p. 1204), after ending the pitch played before; without one only ends it.
+		void sound(std::optional<int> pitch, int velocity = 100);
 		void toolbar(Rml::Element& target);
 		// The note display opens the toolbox on a right click with the user setting ui.toolboxOnRightClick, else on
 		// one with a modifier key.

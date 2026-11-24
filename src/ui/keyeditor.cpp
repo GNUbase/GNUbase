@@ -390,6 +390,7 @@ namespace gnubase::ui
 			key->SetProperty(Rml::PropertyId::Height, percent(height * 100.0 / g_pitches));
 		}
 		m_lanes = std::make_unique<ControllerLanes>(binding, *root.QuerySelector(".controller-lanes"), m_name);
+		m_lanes->setFeedback([this](std::optional<int> pitch, int velocity) { sound(pitch, velocity); });
 		Rml::ElementDocument* document = root.GetOwnerDocument();
 		const Rml::ElementPtr holder = document->CreateElement("div");
 		std::string items;
@@ -2269,16 +2270,17 @@ namespace gnubase::ui
 		}
 	}
 
-	void KeyEditor::sound(std::optional<int> pitch)
+	void KeyEditor::sound(std::optional<int> pitch, int velocity)
 	{
 		// Into the track's channel as if from its MIDI input (midi.inject), on MIDI channel 1 as chord.audition plays;
 		// without an audio device or an instrument nothing sounds, which is no error to report. The drum editor plays
 		// the sound of the pitch itself, not the first with its I-note (drumSounds).
-		const auto inject = [this](uint64_t channel, int note, bool on)
+		const auto inject = [this, velocity](uint64_t channel, int note, bool on)
 		{
 			m_binding.send("midi.inject",
 				{{"channel", channel}, {"drumSounds", m_drum},
-					{"messages", Json::array({{{"position", 0}, {"bytes", {on ? 0x90 : 0x80, note, on ? 100 : 0}}}})}},
+					{"messages",
+						Json::array({{{"position", 0}, {"bytes", {on ? 0x90 : 0x80, note, on ? velocity : 0}}}})}},
 				[](const engine::Result&) {});
 		};
 		if (const auto sounding = std::exchange(m_sounding, std::nullopt))

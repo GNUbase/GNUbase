@@ -3943,11 +3943,15 @@ namespace gnubase::engine
 
 	void ProjectModel::updateSoloNotes()
 	{
-		if (!m_soloNotesSource || m_soloNotesSource() == m_project.soloNotes)
+		if (!m_soloNotesSource)
+			return;
+		auto soloNotes = m_soloNotesSource();
+		if (soloNotes == m_project.soloNotes)
 			return;
 		const bool saved = m_savedRevision == m_revision;
 		const bool autoSaved = m_autoSavedRevision == m_revision;
-		publish();
+		m_project.soloNotes = std::move(soloNotes);
+		compileAndPublish();
 		if (saved)
 			m_savedRevision = m_revision;
 		if (autoSaved)
@@ -3958,6 +3962,11 @@ namespace gnubase::engine
 	{
 		if (m_soloNotesSource)
 			m_project.soloNotes = m_soloNotesSource();
+		compileAndPublish();
+	}
+
+	void ProjectModel::compileAndPublish()
+	{
 		m_snapshots.publish(compile(m_project, ++m_revision, &m_snapshots.latest(), m_openedRevision));
 	}
 

@@ -92,6 +92,11 @@ part, or else channel 0.
 - **A right click below a lane's name** (p. 1261) opens `#controller-lane-context-menu` at the mouse: the lane types,
   named controllers and the Continuous Controllers to add a lane, and Remove This Lane of the lane it opened for.
 - **Bars are thin**: a press on a note lane that misses a bar takes the note starting nearest in the grid cell.
+- **Acoustic Feedback** (p. 1259): while the key editor's `acousticFeedback` is on, a value drag on the velocity lane
+  plays the pressed note at its own velocity, then at that velocity moved by as far as the mouse went, which the
+  release sets, again whenever that changes, and the draw tool the note it paints nearest to the mouse at the value
+  under the mouse, until the release (`ControllerLanes::setFeedback`, which the key editor plays through
+  its own feedback, [key-editor.md](key-editor.md)).
 - **Gestures**: while a drag goes on the lanes hear the mouseup in every document of the window (on its context's root
   element, #864), so a drag released outside the lanes, also over a floating panel, ends there, with its effect at that
   point. A left press anywhere in the window while a drag goes on means its mouseup never came (released outside the
@@ -136,7 +141,8 @@ editor's lanes.
   that one; the line tool and painting on a lane whose events are on another channel; drags released outside the lanes
   and over another document of the window, and never released (#864); a right release and press during a value drag
   ending nothing; the line tool released left of the part and over the toolbar; a value drag over the selected notes of
-  two parts as one undo step; a poly pressure lane with two selected notes; Auto Select Controllers with a note moved; a
-  preset saved with Add Preset, loaded and removed with Remove Preset; events drawn on a lane playing back; a step that
-  another event now starts with losing its width (#1580). `tests/uithemes_tests.cpp`: every theme draws play probability
-  and velocity variance bars dashed.
+  two parts as one undo step; a poly pressure lane with two selected notes; with Acoustic Feedback, a velocity drag
+  playing its note at the velocity pressed and then at the one it sets, the draw tool the note it paints, and nothing
+  with it off; Auto Select Controllers with a note moved; a preset saved with Add Preset, loaded and removed with Remove
+  Preset; events drawn on a lane playing back; a step that another event now starts with losing its width (#1580).
+  `tests/uithemes_tests.cpp`: every theme draws play probability and velocity variance bars dashed.
