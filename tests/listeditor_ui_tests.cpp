@@ -918,8 +918,12 @@ TEST_CASE("a press anywhere in the window ends a gesture whose mouseup never cam
 	const int outside = f.middle(".midi-editor-toolbar");
 	const ui::Point grip = f.grip(f.low);
 	const int spare = f.spare();
-	INFO("the toolbar's empty space ends at " << spare << ", the note is pressed at " << grip.x);
-	REQUIRE(spare > grip.x + 50); // a move ending there would move the note on
+	// A move ending there would move the note on by an eighth or more, two steps of the quantize grid.
+	const double ticks = (spare - grip.x) / f.box(row("note", f.low) + " .list-event-lane").at("width").get<double>() *
+		static_cast<double>(g_bar);
+	INFO("the toolbar's empty space ends at " << spare << ", the note is pressed at " << grip.x << ", " << ticks
+											  << " ticks before it");
+	REQUIRE(ticks >= static_cast<double>(g_quarter) / 2);
 	const size_t before = f.steps();
 
 	// A move: a click on the editor window's toolbar, away from the pressed point, moves nothing.
@@ -1151,4 +1155,47 @@ TEST_CASE("a click in the event display without a drag changes no event, off the
 	CHECK(f.event("controllers", f.events[5]).at("position") == (3 * g_quarter) + 1);
 	CHECK(f.types().size() == 8);
 	CHECK(f.steps() == before);
+}
+
+TEST_CASE("the auditioning column points at the event at the cursor, locates to an event and starts playback", "[ui]")
+{
+	Fixture f;
+	const ui::TimeContext time = ui::projectTime(f.app.call("project.get"));
+	const auto samples = [&time](int64_t ticks) { return time.tempo.toSamples(ticks, time.sampleRate); };
+	const auto pointed = [&f]
+	{
+		std::vector<std::string> rows;
+		for (const Json& each : f.elements(".list-editor-rows .list-row.at-cursor"))
+			rows.push_back(each.at("attributes").value("note", each.at("attributes").value("controller", "")));
+		return rows;
+	};
+	const std::string high = std::to_string(f.high);
+
+	// The arrow is at the event that starts closest before the cursor (p. 1251), also between two events.
+	f.app.call("transport.locate", {{"position", samples(g_quarter + (g_quarter / 2))}});
+	REQUIRE(f.app.waitUntil([&] { return pointed() == std::vector<std::string>{high}; }));
+	f.app.call("transport.locate", {{"position", samples(g_quarter)}});
+	f.settle(f.high);
+	CHECK(pointed() == std::vector<std::string>{high});
+
+	// A click in the column moves the cursor to the event's start; a double click starts playback there, and another
+	// one stops it.
+	f.click(of(row("controller", f.events[3]) + " .list-audition"));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("position") == samples(3 * g_quarter); }));
+	REQUIRE(f.app.waitUntil([&] { return pointed().size() == 1 && pointed() != std::vector<std::string>{high}; }));
+	CHECK(f.app.call("transport.get").at("playing") == false);
+	f.app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	f.app.call("audio.start");
+	f.click(of(row("note", f.low) + " .list-audition"), 2);
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("playing") == true; }));
+	// The arrow follows the playback position, past the events at the start.
+	const std::vector<std::string> atStart = {std::to_string(f.low), std::to_string(f.events[0])};
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const std::vector<std::string> rows = pointed();
+			return rows.size() == 1 && std::find(atStart.begin(), atStart.end(), rows[0]) == atStart.end();
+		}));
+	f.click(of(row("note", f.low) + " .list-audition"), 2);
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("playing") == false; }));
 }

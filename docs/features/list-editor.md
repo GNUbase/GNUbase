@@ -37,7 +37,9 @@ Edits are the existing commands: `note.add`, `note.set`, `note.remove`, `control
   .list-row.list-editor-header      the columns' names
   .list-editor-body                 scrolls vertically
     .list-editor-rows               a .list-row[part][note|controller][type] per event shown (.selected, .inactive
-                                    outside the part editing mode): span.list-type, textdisplay.list-cell[field=start|
+                                    outside the part editing mode, .at-cursor for the auditioning column's arrow):
+                                    span.list-audition with svg.list-audition-arrow, span.list-type,
+                                    textdisplay.list-cell[field=start|
                                     end|length|subtype|value|secondary|channel|attributes] (disabled where the type
                                     has no such value), .list-event-lane with the .list-event, .list-value-lane with
                                     the .list-value bar
@@ -76,6 +78,11 @@ doesn't have (#1580).
   a typed value don't count; a typed velocity is at least 1, as the value display sets it. A changed start moves the
   event, and the list sorts it again. SysEx bytes are typed in hexadecimal, with or without the F0 and F7 around them
   (p. 1255).
+- **Auditioning column** (p. 1251, #719). Its arrow points at the last event shown that starts at the project cursor or
+  before it, also while playing: the list editor follows `transport.changed` and, while playing, the playback position
+  (`Engine::playbackPosition`, which `app::AppUi` hands the editors), and moves the arrow only when it points at
+  another row. A click there moves the cursor to the event's start (`transport.locate`), a double click also starts or
+  stops playback (`transport.toggle`); neither selects, draws or erases.
 - **Filters bar** (pp. 1250, 1254). A click on a type hides or shows it; with Ctrl (Cmd) it shows that type alone, and
   a second time all of them. The Focus menu shows only events of the first selected event's type (Event Types), also
   of its pitch or controller number (Event Types and Subtype), or of its channel (Event Channels); SysEx and directions
@@ -115,7 +122,7 @@ doesn't have (#1580).
 
 The setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
 ([docking.md](docking.md)); the MIDI SysEx Editor dialog (address, ASCII, decimal and binary displays, Insert and
-Delete, importing and exporting .syx files); the auditioning column and the project cursor; the Focus menu's user
+Delete, importing and exporting .syx files); the Focus menu's user
 presets and Setup (the transform editor); text, lyrics and SMF events, which the project has no type for; muting events
 and the mute tool (notes have no mute yet); the selection rectangle in the event display; key commands other than Delete
 and Backspace; the ruler, zooming and scrolling the event display; Set up Window Layout, the status line, nudging, snap
@@ -148,4 +155,6 @@ which share the editor window.
   Delete deleting a selected note and controller event in one undo step, and Backspace a SysEx message, but not while a
   value is typed; Alt and a drag copying a selected note and controller event in one undo step; a drag at a note's end
   resizing both selected notes in one undo step; a click without a drag at the end of a note off the grid, and an
-  Alt-click and a click on the SysEx message off it, changing nothing.
+  Alt-click and a click on the SysEx message off it, changing nothing; the auditioning column's arrow at the event at
+  or before the cursor, a click there locating to an event, a double click starting and stopping playback, and the arrow
+  following the playback position.

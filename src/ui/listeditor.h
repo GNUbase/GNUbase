@@ -9,6 +9,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -30,11 +31,14 @@ namespace gnubase::ui
 	// columns, the event in the event display at its time and its value as a bar in the value display. show() gives it
 	// the project and the engine's editor view whenever they change; the selection is the view's (editor.set selection
 	// and controllerSelection), and every edit goes to the engine as note.* and controller.* commands, those of
-	// several parts in one history.transaction. Use it on the UI thread; the binding must outlive it.
+	// several parts in one history.transaction. The auditioning column points at the event at the project cursor, which
+	// playbackPosition (Engine::playbackPosition) gives while playing. Use it on the UI thread; the binding must
+	// outlive it.
 	class ListEditor final : private Rml::EventListener
 	{
 	public:
-		ListEditor(EngineBinding& binding, Rml::Element& root, std::string view);
+		ListEditor(EngineBinding& binding, Rml::Element& root, std::string view,
+			std::function<int64_t()> playbackPosition = {});
 		~ListEditor() override;
 		ListEditor(const ListEditor&) = delete;
 		ListEditor& operator=(const ListEditor&) = delete;
@@ -102,6 +106,9 @@ namespace gnubase::ui
 		void click(Rml::Element& target, bool ctrl);
 
 		void render();
+		// The auditioning column's arrow (p. 1251): at the last row shown that starts at the cursor or before it.
+		// Returns whether it moved.
+		bool showCursor();
 		bool shown(const Row& row, const Row* first) const;
 		std::string text(const Row& row, const std::string& field) const;
 		// The field's value as a whole number in the list's units, if the row's type has it.
@@ -174,6 +181,12 @@ namespace gnubase::ui
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::optional<std::pair<uint64_t, uint64_t>> m_menuRow; // the part and note or direction of the menu
 		bool m_menuNote = false;
+		std::function<int64_t()> m_playbackPosition;
+		int64_t m_cursor = 0;              // the project cursor, samples
+		std::vector<time::Ticks> m_starts; // the rows shown's starts, in their order
+		int m_atCursor = -1;               // the row shown that the arrow is at, -1 for none
+		std::vector<Subscription> m_subscriptions;
+		std::optional<Subscription> m_position;                       // while playing
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 	};
 }

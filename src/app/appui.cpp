@@ -719,6 +719,7 @@ namespace gnubase::app
 					auto shown = std::make_shared<ui::MidiEditor>(m_binding, m_editorReads, page, "lower",
 						editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
 					shown->setDrumMapSetup([this] { m_shell.post([this] { openDrumMaps(m_main); }); });
+					shown->setPlaybackPosition([this] { return m_engine.playbackPosition(); });
 					if (editor)
 						m_lowerEditor = shown;
 					return std::shared_ptr<void>(shown);
@@ -2640,6 +2641,7 @@ namespace gnubase::app
 		// Open in Lower Zone opens the Editor tab in the lower zone (reference manual, p. 1198).
 		m_editor.editor = std::make_unique<ui::MidiEditor>(
 			m_binding, m_editorReads, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
+		m_editor.editor->setPlaybackPosition([this] { return m_engine.playbackPosition(); });
 		m_editor.editor->setDrumMapSetup(
 			[this]
 			{
