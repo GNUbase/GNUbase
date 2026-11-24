@@ -138,7 +138,8 @@ transport controls' commands (F2, the enter commands, Exchange Time Formats, P f
 
 The key editor's element is the focus zone `keyEditor` ([key-editor.md](key-editor.md), #679), in the editor window,
 the lower zone and the in-place editors: a command bound there acts on the editor whose zone it was pressed in. A
-command bound everywhere that asks which editor, such as `edit.quantize`, gets the zone around it, the lower zone or the
+command bound everywhere that asks which editor, such as `edit.quantize` and the MIDI functions, gets the `keyEditor`
+zone and looks past it (`AppUi::quantizeTarget`) to the zone around it: the editor window's, the lower zone or the
 in-place editor's.
 
 | Keys | Command | Reference |

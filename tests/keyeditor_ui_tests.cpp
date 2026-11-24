@@ -1631,6 +1631,25 @@ TEST_CASE("Up and Down transpose the selected notes, Delete and Backspace delete
 	CHECK(f.note(ids[1]).at("pitch") == 64);
 }
 
+TEST_CASE("with the on-screen keyboard open, Delete and Backspace still delete the selected notes", "[ui]")
+{
+	// The on-screen keyboard takes the keys of the key commands, except the reference's exceptions, Delete among them
+	// (p. 332).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {g_quarter, 64, g_quarter}});
+	f.app.ui().key(f.window, "Alt+K");
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().keyboard() != nullptr; }));
+	f.click(of(noteSelector(ids[0])));
+	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{ids[0]}; }));
+	f.app.ui().key(f.window, "Delete");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).is_null(); }));
+	f.click(of(noteSelector(ids[1])));
+	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{ids[1]}; }));
+	f.app.ui().key(f.window, "Backspace");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).is_null(); }));
+	CHECK(f.app.appUi().keyboard() != nullptr);
+}
+
 TEST_CASE("in the lower zone Up, Down, Delete, Mod+X and Mod+C don't edit the project window's selection", "[ui]")
 {
 	// The keys are bound in the project window's focus zone too: Delete to edit.delete, Up and Down to
