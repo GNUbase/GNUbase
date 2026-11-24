@@ -14,7 +14,7 @@ nothing if it fails.
 | Command | What it does | Reference |
 |---|---|---|
 | `event.move` | Moves by `delta` project samples or by `ticks`, and onto `track` (of the events' type) | pp. 256–259 |
-| `event.copy` | Copies, moved like `event.move`; `shared` makes shared copies of MIDI parts | p. 270 |
+| `event.copy` | Copies, moved like `event.move`; `shared` makes shared copies of parts | p. 270 |
 | `event.duplicate` | `count` copies one after the other from the end of the last event; `shared` as above | pp. 270–272 |
 | `event.fillLoop` | Copies on the grid of the events' length from `start` to `end` (default the locators), the last cut | p. 272 |
 | `event.resize` | Moves the `edge` (start or end) by `delta` or `ticks`; `mode` normal or moveContents | pp. 264–268 |
@@ -23,7 +23,7 @@ nothing if it fails.
 | `event.glue` | Glues events of one track into the first | p. 269 |
 | `event.set` | Mutes or unmutes, locks or unlocks | pp. 276–277 |
 | `event.remove` | Deletes | p. 255 |
-| `event.toRealCopy` | Turns shared copies into real ones: a part's own notes, an audio event's own clip | p. 272 |
+| `event.toRealCopy` | Turns shared copies into real ones: a part's own notes, an audio event's own clip, an audio part out of its group with its events' own clips | p. 272 |
 | `event.get` | Where events are, in project samples and ticks, their name, mute, lock and shared group | p. 72 |
 
 - **Ticks.** Events, parts and notes on musical tracks have their positions and lengths in ticks, 1,720,320 to the
@@ -81,12 +81,24 @@ contents change for its own sake, by a resize that moves its notes, a split or a
 note ids; so does `event.toRealCopy`. A group's last part is no longer shared. The position, length, name, mute and
 lock stay each part's own. Shared copies are saved in `gnubase.json`; `project.xml` gets them as ordinary clips.
 
+Shared copies of an audio part (#660) share its events, placed from the part's start. Since an audio part's events are
+audio events of their own, with ids of their own, a copy can't hold the same ones: when the events of one copy of a
+group change, by any command that edits audio events, the other copies' events change in place to match, at the same
+places from their own starts, and those the edit added or removed are added or removed there too (`audioEvent.changed`,
+`audioEvent.added`, `audioEvent.removed`). Each copy's events keep their ids, so a `history.transaction` can edit
+events of several copies, and what is each copy's own: its place in the track's stack, so `event.toFront` on one copy
+moves only that one, and its crossfades with events outside the part. Events are matched by what they share, as they
+were before the command; `sharedPartsOf` copies the shared audio parts' events for that. A copy leaves its group where
+its events change against its edges for its own sake: when sizing its start without moving its contents or its end
+while moving them, when it is split or glued, and with `event.toRealCopy`. A range paste, a track preset and a stashed
+track version make real copies; `track.duplicate` keeps the copied parts in their groups.
+
 ## The event display
 
 The display keeps a selection (`EventDisplay::selection`, ascending ids, also in the root's attribute `selection`
 for MCP's `ui_dom`); it isn't part of the project or of undo. Selected events show again over the others in
 `event-lanes.selected-events`, muted ones in `event-lanes.muted-events`, which the themes color (lit and greyed out).
-Locked events show a lock icon (p. 276) and shared copies of MIDI parts a link icon (p. 272) in their upper right
+Locked events show a lock icon (p. 276) and shared copies of parts a link icon (p. 272) in their upper right
 corner (#384): a `.part-mark.locked` and a `.part-mark.shared`, attribute `part` the event's id, in the event's
 `.part-marks-of` in the display's `.part-marks`, next to the mark of events excluded from global transpose
 ([transpose.md](transpose.md)).
@@ -99,7 +111,7 @@ modifiers, which change the keys below):
 | Click | Selects the event, or nothing on an empty spot | p. 253 |
 | Ctrl (Cmd) or Shift and a click | Adds the event to the selection or takes it out, also where the keys are a drag's tool modifier (Copy, Shared Copy, Disable Snapping at an edge): a press with them released without a drag. Such a press leaves the selection as it is until the drag starts, and the release works out the click from the selection then, without events that went meanwhile | |
 | Drag | Moves the selection, also onto other tracks; snapped ([snap.md](snap.md)) | p. 256 |
-| Alt and a drag; with Shift too | Copies the selection; shared copies of MIDI parts | pp. 270–271 |
+| Alt and a drag; with Shift too | Copies the selection; shared copies of parts | pp. 270–271 |
 | Ctrl (Cmd) while dragging | Keeps a move or copy across or up and down, whichever the mouse went further | pp. 256, 271 |
 | Left, Right | Selects the event before or after the selected one on its track | p. 253 |
 | Up, Down | Selects the track above or below, and its first event; an empty track keeps the selected events | pp. 218, 253 |

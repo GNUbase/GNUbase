@@ -792,9 +792,12 @@ namespace gnubase::ui
 		// of the audio event there, with Shift its fades (p. 382). Whether there was one.
 		bool wheelVolume(double x, double y, double lines, bool fades);
 		double draggedVolume(uint64_t event) const;
-		// The draw tool on an audio event: drags the curve point at x and y dp, or a new one there.
+		// The draw tool on an audio event: drags the curve point at x and y dp, or a new one there; with Ctrl draws
+		// points along the drag and where it is let go (drawCurveTo).
 		bool curveDown(const Shown& shown, double x, double y);
-		void curveUp();
+		void curveMove(double x, double y);
+		void drawCurveTo(double x, double y, bool release);
+		void curveUp(double x, double y);
 		std::vector<engine::VolumePoint> draggedCurve(uint64_t event) const;
 		std::optional<size_t> curvePointAt(const Shown& shown, double x, double y) const;
 		bool eraseCurvePoint(const Shown& shown, double x, double y);     // the erase tool, on a point
@@ -1041,6 +1044,7 @@ namespace gnubase::ui
 		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
 		double m_volumeDy = 0.0;           // dp from the press to the mouse, dragging the event volume
 		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
+		std::vector<std::pair<double, double>> m_drawnCurve; // with Ctrl: where the drag went, in dp (#670)
 		// Moving events, after the drag delay; a RangeMove drag, once across or on other tracks.
 		bool m_dragStarted = false;
 		bool m_dragToggles = false;         // a Ctrl/Shift click takes the pressed event or point out of the selection

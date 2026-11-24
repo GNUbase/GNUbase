@@ -471,9 +471,7 @@ namespace gnubase::ui
 			break;
 		}
 		case Drag::VolumePoint:
-			m_dragDx = x - m_pressX;
-			m_dragDy = y - m_pressY;
-			showFades();
+			curveMove(x, y);
 			break;
 		case Drag::Play:
 			if (m_playMode == PlayMode::Scrub)
@@ -690,7 +688,7 @@ namespace gnubase::ui
 			break;
 		}
 		case Drag::VolumePoint:
-			curveUp();
+			curveUp(x, y);
 			break;
 		case Drag::TimeWarp:
 			timeWarpUp(x);

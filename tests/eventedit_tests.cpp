@@ -456,7 +456,8 @@ TEST_CASE("Only shared parts are copied for comparing shared copies", "[unit]")
 	using gnubase::engine::ObjectId;
 
 	// A dense part that isn't shared, beside a group of two copies.
-	std::map<ObjectId, MidiPart> parts;
+	gnubase::engine::Project project;
+	std::map<ObjectId, MidiPart>& parts = project.midiParts;
 	MidiPart dense;
 	dense.id = 1;
 	for (ObjectId note = 1; note <= 1000; ++note)
@@ -471,12 +472,23 @@ TEST_CASE("Only shared parts are copied for comparing shared copies", "[unit]")
 		parts[id] = copy;
 	}
 
-	const std::map<ObjectId, MidiPart> snapshot = gnubase::engine::sharedPartsOf(parts);
-	REQUIRE(snapshot.size() == 2);
-	CHECK(snapshot.count(1) == 0);
-	CHECK(snapshot.at(2).shared == 7);
-	CHECK(snapshot.at(3).notes.size() == 1);
-	CHECK(gnubase::engine::sharedPartsOf({}).empty());
+	// Of audio parts, the shared ones with their events.
+	project.audioParts[4].id = 4;
+	project.audioParts[5].id = 5;
+	project.audioParts[5].shared = 8;
+	project.audioEvents[6].part = 4;
+	project.audioEvents[9].part = 5;
+
+	const gnubase::engine::SharedParts snapshot = gnubase::engine::sharedPartsOf(project);
+	REQUIRE(snapshot.midiParts.size() == 2);
+	CHECK(snapshot.midiParts.count(1) == 0);
+	CHECK(snapshot.midiParts.at(2).shared == 7);
+	CHECK(snapshot.midiParts.at(3).notes.size() == 1);
+	CHECK(snapshot.audioParts.size() == 1);
+	CHECK(snapshot.audioParts.count(5) == 1);
+	CHECK(snapshot.audioEvents.size() == 1);
+	CHECK(snapshot.audioEvents.count(9) == 1);
+	CHECK(gnubase::engine::sharedPartsOf(gnubase::engine::Project()).midiParts.empty());
 }
 
 TEST_CASE("event.resize moves the start or the end, revealing content or moving it", "[unit]")

@@ -124,6 +124,10 @@ namespace gnubase::engine
 			for (MidiPart& part : version.midiParts)
 				if (part.shared != 0 && elsewhere(part.shared))
 					detach(project, part);
+			// A stashed audio part's copies elsewhere don't keep its events alike: it leaves their group.
+			// ponytail: copies within the version leave it too; keep them shared like MIDI parts' if that matters.
+			for (AudioPart& part : version.audioParts)
+				part.shared = 0;
 		}
 
 		// Makes a version of the track active: its events and parts go into the project. The active one's must be
@@ -324,6 +328,7 @@ namespace gnubase::engine
 		for (AudioPart part : version.audioParts)
 		{
 			part.track = track;
+			part.shared = 0;
 			parts[part.id] = project.newId();
 			part.id = parts.at(part.id);
 			copy.audioParts.push_back(std::move(part));

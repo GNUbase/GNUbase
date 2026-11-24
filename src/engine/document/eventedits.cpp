@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Editing parts and events in the project window (#85, reference manual pp. 245-277): the event.* commands, which
-// take audio events and MIDI parts alike by id, and shared copies of MIDI parts. Like every command that changes the
+// take audio events and MIDI parts alike by id, and shared copies of parts. Like every command that changes the
 // project, each is one undo step and changes nothing if it fails (ProjectModel::addEdit). And range editing (#88,
 // reference manual pp. 285-294): the range.* commands and the range clipboard.
 // docs/features/parts-and-events.md and docs/features/range-editing.md describe them.
@@ -373,7 +373,8 @@ namespace gnubase::engine
 		}
 
 		// A copy with a new id, unlocked and without a crossfade. A MIDI part's notes and controllers get new ids, or
-		// for a shared copy are the original's, with which it then shares them.
+		// for a shared copy are the original's, with which it then shares them. A shared copy of an audio part joins
+		// the original's group, whose events syncSharedParts keeps alike.
 		Item copyOf(Project& project, const Item& item, bool shared, CommandContext& context)
 		{
 			if (item.audio != nullptr)
@@ -390,9 +391,15 @@ namespace gnubase::engine
 			{
 				// Copies of its events, with the crossfades between them. They come in front, as added last, in the
 				// order they are stacked: their new ids follow it.
+				if (shared && item.audioPart->shared == 0)
+				{
+					item.audioPart->shared = project.newId();
+					context.emit("audioPart.changed", {{"part", toJson(*item.audioPart)}});
+				}
 				AudioPart part = *item.audioPart;
 				part.id = project.newId();
 				part.lock = false;
+				part.shared = shared ? part.shared : 0;
 				AudioPart& copy = project.audioParts[part.id] = part;
 				std::map<ObjectId, ObjectId> ids;
 				std::vector<AudioEvent> events;
@@ -482,6 +489,8 @@ namespace gnubase::engine
 				const time::Position moved{part.position.base, value};
 				if (moveContents)
 					shiftEvents(project, part, ticks(project, moved) - ticks(project, part.position));
+				else if (moved != part.position)
+					part.shared = 0; // its events move against its start: they are its own now
 				part.position = moved;
 				part.length = end - value;
 				return;
@@ -569,8 +578,11 @@ namespace gnubase::engine
 				const time::Position oldEnd = endOf(project, item);
 				part.length =
 					std::max<int64_t>(1, rebased(project, end, part.position.base).value - part.position.value);
-				if (moveContents)
+				if (moveContents && endOf(project, item) != oldEnd)
+				{
+					part.shared = 0;
 					shiftEvents(project, part, ticks(project, endOf(project, item)) - ticks(project, oldEnd));
+				}
 				return;
 			}
 			if (item.audio != nullptr)
@@ -637,6 +649,7 @@ namespace gnubase::engine
 				const int64_t split = rebased(project, {time::TimeBase::Linear, at}, part.position.base).value;
 				if (split <= part.position.value || split >= end || !inside(project, part.position, end, at))
 					return {};
+				part.shared = 0;
 				AudioPart right = part;
 				right.id = project.newId();
 				right.position = {part.position.base, split};
@@ -1016,7 +1029,7 @@ namespace gnubase::engine
 			Project copy = project;
 			CommandContext inner(context.parameters());
 			resizeEvents(copy, inner);
-			syncSharedParts(project.midiParts, copy, inner); // as ProjectModel does after the edit
+			syncSharedParts(sharedPartsOf(project), copy, inner); // as ProjectModel does after the edit
 			Json result = {{"audioEvents", Json::array()}, {"audioParts", Json::array()}, {"midiParts", Json::array()}};
 			// With a warped event's playedLength and the derived rootKeyTranspose, as project.get gives them.
 			const auto audioEvent = [&copy](const AudioEvent& event)
@@ -1135,6 +1148,7 @@ namespace gnubase::engine
 				end = std::max(end, rebased(project, endOf(project, item), base).value);
 			part->position = {base, start};
 			part->length = end - start;
+			part->shared = 0;
 			for (const Item& item : items)
 			{
 				if (item.audio != nullptr)
@@ -1383,11 +1397,18 @@ namespace gnubase::engine
 				// the pool's new version.
 				std::vector<AudioEvent*> events;
 				if (item.audio != nullptr)
+				{
 					events.push_back(item.audio);
+				}
 				else if (item.audioPart != nullptr)
+				{
+					item.audioPart->shared = 0;
 					events = eventsIn(project, item.id());
+				}
 				else
+				{
 					detach(project, *item.part);
+				}
 				for (AudioEvent* event : events)
 				{
 					Clip clip = project.clips.at(event->clip);
@@ -1474,6 +1495,7 @@ namespace gnubase::engine
 				const time::Samples start = samples(project, item.position());
 				std::string kind = "midi";
 				std::string name;
+				ObjectId shared = 0;
 				if (audio)
 				{
 					kind = "audio";
@@ -1483,16 +1505,17 @@ namespace gnubase::engine
 				{
 					kind = "audioPart";
 					name = item.audioPart->name;
+					shared = item.audioPart->shared;
 				}
 				else
 				{
 					name = item.part->name;
+					shared = item.part->shared;
 				}
 				Json info = {{"id", item.id()}, {"kind", kind}, {"track", item.track()}, {"name", name},
 					{"start", start}, {"end", samples(project, end)}, {"length", samples(project, end) - start},
 					{"startTicks", ticks(project, item.position())}, {"endTicks", ticks(project, end)},
-					{"mute", item.mute()}, {"lock", item.locked()}, {"lane", item.lane()},
-					{"shared", item.part != nullptr ? item.part->shared : ObjectId{0}}};
+					{"mute", item.mute()}, {"lock", item.locked()}, {"lane", item.lane()}, {"shared", shared}};
 				result.push_back(std::move(info));
 			}
 			return {{"events", std::move(result)}};
@@ -2597,6 +2620,7 @@ namespace gnubase::engine
 				AudioPart part = copied;
 				part.id = project.newId();
 				part.lock = false;
+				part.shared = 0;
 				parts[copied.id] = part.id;
 				pastedParts.push_back(&(project.audioParts[part.id] = part));
 			}
@@ -3220,9 +3244,180 @@ namespace gnubase::engine
 		}
 	}
 
-	void syncSharedParts(const std::map<ObjectId, MidiPart>& before, Project& project, CommandContext& context)
+	namespace
 	{
-		// The first part of each group whose notes or controllers changed is what the group now holds.
+		// An event as the shared copies of its audio part share it: placed from the part's start, without what stays
+		// each copy's own, its track, its place in the stack (front, rank) and a crossfade from an event outside the
+		// part.
+		AudioEvent sharedOf(const std::map<ObjectId, AudioEvent>& events, AudioEvent event, const AudioPart& part)
+		{
+			event.position.value -= part.position.value;
+			event.track = 0;
+			event.front = 0;
+			event.rank = 0;
+			if (const auto from = events.find(event.crossfade.from);
+				from == events.end() || from->second.part != part.id)
+				event.crossfade = Crossfade();
+			return event;
+		}
+
+		// What the shared copies of an audio part share: its events by id.
+		// ponytail: a pass over every audio event per shared part; index them by part if that ever shows.
+		std::vector<AudioEvent> contentsOf(const std::map<ObjectId, AudioEvent>& events, const AudioPart& part)
+		{
+			std::vector<AudioEvent> contents;
+			for (const auto& [id, event] : events)
+				if (event.part == part.id)
+					contents.push_back(sharedOf(events, event, part));
+			return contents;
+		}
+
+		// The events of two copies of a group, which were alike, paired: each of from's with the one of to's in the
+		// same place in the order of what they share. The position from the part's start is in its track's time base,
+		// which can differ between the copies, so it orders as a number after the rest, as rebasing keeps the order.
+		// The slice information and the quantize origin are left out, as the copies don't keep them alike: only the
+		// part that was sliced keeps the first, and a save keeps the second only in the event's own time base.
+		std::map<ObjectId, ObjectId> pairedEvents(const std::map<ObjectId, AudioEvent>& fromEvents,
+			const AudioPart& from, const std::map<ObjectId, AudioEvent>& toEvents, const AudioPart& to)
+		{
+			const auto sorted = [](const std::map<ObjectId, AudioEvent>& events, const AudioPart& part)
+			{
+				std::vector<std::tuple<std::string, int64_t, ObjectId>> keys;
+				for (const auto& [id, event] : events)
+					if (event.part == part.id)
+					{
+						AudioEvent shared = sharedOf(events, event, part);
+						const int64_t position = shared.position.value;
+						shared.id = 0;
+						shared.part = 0;
+						shared.crossfade.from = 0;
+						shared.position = {};
+						noSliceOrigin(shared);
+						shared.quantizeOrigin.reset();
+						keys.emplace_back(toJson(shared).dump(), position, id);
+					}
+				std::sort(keys.begin(), keys.end());
+				return keys;
+			};
+			const auto fromKeys = sorted(fromEvents, from);
+			const auto toKeys = sorted(toEvents, to);
+			std::map<ObjectId, ObjectId> pairs;
+			for (size_t i = 0; i < std::min(fromKeys.size(), toKeys.size()); ++i)
+				pairs[std::get<2>(fromKeys[i])] = std::get<2>(toKeys[i]);
+			return pairs;
+		}
+
+		// An audio part's events become like source's, at the same places from its start: each changes in place,
+		// keeping its id, its place in the stack and its crossfades with events outside the part, and what source
+		// added or removed is added or removed. Added events come in front, as copyOf adds them, unless they share
+		// the place of an event they pair with, as the pieces of a split do.
+		void copyContents(const SharedParts& before, Project& project, const AudioPart& source, const AudioPart& part,
+			CommandContext& context)
+		{
+			const auto inPart = [&project](ObjectId event, const AudioPart& of)
+			{
+				const auto found = project.audioEvents.find(event);
+				return found != project.audioEvents.end() && found->second.part == of.id;
+			};
+			// Paired as they were before the command, or as they are for a part that joined the group in it.
+			const std::map<ObjectId, AudioEvent>* was = &project.audioEvents;
+			const AudioPart* wasPart = &part;
+			if (const auto old = before.audioParts.find(part.id);
+				old != before.audioParts.end() && old->second.shared == part.shared)
+			{
+				was = &before.audioEvents;
+				wasPart = &old->second;
+			}
+			const std::map<ObjectId, ObjectId> pairs =
+				pairedEvents(before.audioEvents, before.audioParts.at(source.id), *was, *wasPart);
+			const std::vector<AudioEvent*> events = stackedIn(project, source.id);
+			std::map<ObjectId, ObjectId> ids;
+			std::map<ObjectId, ObjectId> places;
+			std::set<ObjectId> kept;
+			for (const AudioEvent* event : events)
+				if (const auto pair = pairs.find(event->id); pair != pairs.end() && inPart(pair->second, part))
+				{
+					ids[event->id] = pair->second;
+					kept.insert(pair->second);
+					places[frontOf(*event)] = frontOf(project.audioEvents.at(pair->second));
+				}
+			std::vector<ObjectId> removed;
+			for (const AudioEvent* event : eventsIn(project, part.id))
+				if (kept.count(event->id) == 0)
+					removed.push_back(event->id);
+			for (const ObjectId id : removed)
+				removeItem(project, audioItem(project.audioEvents.at(id)), 0, context);
+			for (const AudioEvent* event : events)
+				if (ids.count(event->id) == 0)
+					ids[event->id] = project.newId();
+			const Gap gap{samples(project, part.position) - samples(project, source.position),
+				ticks(project, part.position) - ticks(project, source.position)};
+			for (const AudioEvent* event : events)
+			{
+				AudioEvent copy = *event;
+				copy.id = ids.at(event->id);
+				copy.track = part.track;
+				copy.part = part.id;
+				copy.position = rebased(project,
+					shifted(project, copy.position, gap.shift(copy.position.base, 1), false), part.position.base);
+				noSliceOrigin(copy);
+				const auto existing = project.audioEvents.find(copy.id);
+				if (const auto from = ids.find(event->crossfade.from); from != ids.end())
+					copy.crossfade.from = from->second;
+				else if (existing != project.audioEvents.end() && !inPart(existing->second.crossfade.from, part))
+					copy.crossfade = existing->second.crossfade;
+				else
+					copy.crossfade = Crossfade();
+				if (existing != project.audioEvents.end())
+				{
+					copy.front = existing->second.front;
+					copy.rank = existing->second.rank;
+					if (!(copy == existing->second))
+					{
+						existing->second = copy;
+						context.emit("audioEvent.changed", {{"event", toJson(copy)}});
+					}
+					continue;
+				}
+				const auto place = places.find(frontOf(*event));
+				copy.front = place != places.end() ? place->second : 0;
+				context.emit("audioEvent.added", {{"event", toJson(copy)}});
+				project.audioEvents[copy.id] = copy;
+			}
+		}
+	}
+
+	void syncSharedParts(const SharedParts& before, Project& project, CommandContext& context)
+	{
+		// The first part of each group whose contents changed is what the group now holds.
+		std::map<ObjectId, const AudioPart*> audioSources;
+		std::map<ObjectId, int> audioMembers;
+		for (const auto& [id, part] : project.audioParts)
+		{
+			if (part.shared == 0)
+				continue;
+			++audioMembers[part.shared];
+			const auto old = before.audioParts.find(id);
+			if (old != before.audioParts.end() && old->second.shared == part.shared &&
+				audioSources.count(part.shared) == 0 &&
+				contentsOf(before.audioEvents, old->second) != contentsOf(project.audioEvents, part))
+				audioSources[part.shared] = &part;
+		}
+		for (auto& [id, part] : project.audioParts)
+		{
+			if (part.shared == 0)
+				continue;
+			if (audioMembers[part.shared] < 2)
+			{
+				part.shared = 0; // the last of its copies is a part like any other
+				context.emit("audioPart.changed", {{"part", toJson(part)}});
+			}
+			else if (const auto source = audioSources.find(part.shared);
+				source != audioSources.end() && source->second != &part)
+			{
+				copyContents(before, project, *source->second, part, context);
+			}
+		}
 		std::map<ObjectId, const MidiPart*> sources;
 		std::map<ObjectId, int> members;
 		for (const auto& [id, part] : project.midiParts)
@@ -3230,8 +3425,8 @@ namespace gnubase::engine
 			if (part.shared == 0)
 				continue;
 			++members[part.shared];
-			const auto old = before.find(id);
-			if (old != before.end() && old->second.shared == part.shared && sources.count(part.shared) == 0 &&
+			const auto old = before.midiParts.find(id);
+			if (old != before.midiParts.end() && old->second.shared == part.shared && sources.count(part.shared) == 0 &&
 				(old->second.notes != part.notes || old->second.controllers != part.controllers))
 				sources[part.shared] = &part;
 		}
@@ -3258,12 +3453,19 @@ namespace gnubase::engine
 		}
 	}
 
-	std::map<ObjectId, MidiPart> sharedPartsOf(const std::map<ObjectId, MidiPart>& parts)
+	SharedParts sharedPartsOf(const Project& project)
 	{
-		std::map<ObjectId, MidiPart> shared;
-		for (const auto& [id, part] : parts)
+		SharedParts shared;
+		for (const auto& [id, part] : project.midiParts)
 			if (part.shared != 0)
-				shared.emplace_hint(shared.end(), id, part);
+				shared.midiParts.emplace_hint(shared.midiParts.end(), id, part);
+		for (const auto& [id, part] : project.audioParts)
+			if (part.shared != 0)
+				shared.audioParts.emplace_hint(shared.audioParts.end(), id, part);
+		if (!shared.audioParts.empty())
+			for (const auto& [id, event] : project.audioEvents)
+				if (shared.audioParts.count(event.part) != 0)
+					shared.audioEvents.emplace_hint(shared.audioEvents.end(), id, event);
 		return shared;
 	}
 
@@ -3288,7 +3490,8 @@ namespace gnubase::engine
 			{"event.copy", 1,
 				"Copies audio events and MIDI parts, moved by delta project samples or by ticks and onto track as "
 				"event.move moves them. Copies of audio events play the same clip; shared copies of MIDI parts share "
-				"their notes and controllers with the original, so that editing one edits all. Returns the copies.",
+				"their notes and controllers with the original, those of audio parts their events, so that editing "
+				"one edits all. Returns the copies.",
 				schema(copyParameters, {"events"}), eventsResult(), false},
 			"Copy", copyEvents);
 
@@ -3296,7 +3499,7 @@ namespace gnubase::engine
 			{"event.duplicate", 1,
 				"Duplicates audio events and MIDI parts count times (default 1, at most 1000; Edit > Repeat) "
 				"one after the other, from the end of the last one, keeping their positions relative to each other; "
-				"shared makes shared copies of MIDI parts. Returns the copies.",
+				"shared makes shared copies of parts. Returns the copies.",
 				schema({{"events", events()}, {"count", integer()}, {"shared", boolean()}}, {"events"}), eventsResult(),
 				false},
 			"Duplicate", duplicateEvents);
@@ -3305,7 +3508,7 @@ namespace gnubase::engine
 			{"event.fillLoop", 1,
 				"Fills the range from start to end (project samples, default the locators) with copies of audio "
 				"events and MIDI parts, one after the other on the grid of their length, cutting the last one at "
-				"end. shared makes shared copies of MIDI parts. Returns the copies.",
+				"end. shared makes shared copies of parts. Returns the copies.",
 				schema({{"events", events()}, {"start", integer()}, {"end", integer()}, {"shared", boolean()}},
 					{"events"}),
 				eventsResult(), false},
@@ -3470,7 +3673,8 @@ namespace gnubase::engine
 			{"event.toRealCopy", 1,
 
 				"Converts shared copies to real copies: a MIDI part gets notes and controllers of its own, an audio "
-				"event a clip of its own. Returns the events.",
+				"event a clip of its own, and an audio part leaves its shared copies and gives each of its events one. "
+				"Returns the events.",
 				schema({{"events", events()}}, {"events"}), eventsResult(), false},
 			"Convert to Real Copy", toRealCopy);
 

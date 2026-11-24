@@ -330,6 +330,7 @@ namespace gnubase::engine
 						AudioPart part = original;
 						part.id = m_to.newId();
 						part.track = track;
+						part.shared = 0;
 						parts[id] = part.id;
 						m_to.audioParts[part.id] = std::move(part);
 					}

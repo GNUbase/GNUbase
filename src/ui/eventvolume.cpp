@@ -215,10 +215,50 @@ namespace gnubase::ui
 			select({shown.id});
 		m_dragEvent = shown.id;
 		m_dragPoint = curvePointAt(shown, x, y);
+		m_drawnCurve.clear();
+		if (m_pressed == "ctrl") // draws a curve (reference manual p. 400)
+		{
+			m_dragPoint.reset();
+			m_drawnCurve.emplace_back(x, y);
+		}
 		m_dragDx = 0.0;
 		m_dragDy = 0.0;
 		m_drag = Drag::VolumePoint;
 		return true;
+	}
+
+	void EventDisplay::curveMove(double x, double y)
+	{
+		m_dragDx = x - m_pressX;
+		m_dragDy = y - m_pressY;
+		drawCurveTo(x, y, false);
+		showFades();
+	}
+
+	void EventDisplay::drawCurveTo(double x, double y, bool release)
+	{
+		const auto fades = m_fades.find(m_dragEvent);
+		const auto shown = std::find_if(
+			m_events.begin(), m_events.end(), [this](const Shown& each) { return each.id == m_dragEvent; });
+		if (m_drawnCurve.empty() || fades == m_fades.end() || shown == m_events.end() ||
+			!(fades->second.timeRate > 0.0))
+			return;
+		// Inside the event: past its edges the drawing stays at the edge, where it has one point.
+		const double left = (shown->start - m_view.start) / m_view.scale;
+		const double right = left + (static_cast<double>(fades->second.length) / fades->second.timeRate / m_view.scale);
+		x = std::clamp(x, left, std::max(left, right));
+		// ponytail: a point every few dp the mouse goes sideways, and one where it is let go; thin them out if curves
+		// get too dense.
+		constexpr double step = 4.0;
+		const double from = m_drawnCurve.back().first;
+		if (x == from || (!release && std::abs(x - from) < step))
+			return;
+		// Where the drawing goes back over itself, it replaces what it drew there before.
+		const auto passed = [from, x](const std::pair<double, double>& point)
+		{ return x > from ? point.first > from && point.first <= x : point.first >= x && point.first < from; };
+		const auto last = std::prev(m_drawnCurve.end());
+		m_drawnCurve.erase(std::remove_if(m_drawnCurve.begin(), last, passed), last);
+		m_drawnCurve.emplace_back(x, y);
 	}
 
 	std::vector<engine::VolumePoint> EventDisplay::draggedCurve(uint64_t event) const
@@ -230,6 +270,31 @@ namespace gnubase::ui
 		if (m_drag != Drag::VolumePoint || event != m_dragEvent || shown == m_events.end() ||
 			(m_dragPoint && *m_dragPoint >= curve.size()))
 			return curve;
+		const auto pointAt = [this, &fades, &shown](double x, double fraction)
+		{
+			const double seconds = m_view.start + (x * m_view.scale);
+			return engine::VolumePoint{fades.offset +
+					std::clamp<int64_t>(std::llround((seconds - shown->start) * fades.timeRate), 0, fades.length),
+				engine::volumeDb(fraction * g_volumeLineTop / gain(fades.volume)), 0.0};
+		};
+		const auto byPosition = [](const engine::VolumePoint& a, const engine::VolumePoint& b)
+		{ return a.position < b.position; };
+		if (!m_drawnCurve.empty())
+		{
+			// The drawn points replace those between the first and the last of them.
+			std::vector<engine::VolumePoint> drawn;
+			drawn.reserve(m_drawnCurve.size());
+			for (const auto& [x, y] : m_drawnCurve)
+				drawn.push_back(pointAt(x, volumeFraction(*shown, y)));
+			std::stable_sort(drawn.begin(), drawn.end(), byPosition);
+			curve.erase(
+				std::remove_if(curve.begin(), curve.end(), [&drawn](const engine::VolumePoint& point)
+					{ return point.position >= drawn.front().position && point.position <= drawn.back().position; }),
+				curve.end());
+			curve.insert(curve.end(), drawn.begin(), drawn.end());
+			std::stable_sort(curve.begin(), curve.end(), byPosition);
+			return curve;
+		}
 		// A new point goes where the press was and follows the mouse. The pressed point moves from where it is by the
 		// drag's movement (reference manual p. 400: a click only selects it): inside the event.
 		double fromX = m_pressX;
@@ -247,27 +312,24 @@ namespace gnubase::ui
 			fraction = std::clamp(from - (height > 0.0 ? m_dragDy / height : 0.0), 0.0, std::max(from, 1.0));
 			keepsVolume = keepsVolume || fraction == from;
 		}
-		const double seconds = m_view.start + ((fromX + m_dragDx) * m_view.scale);
-		const int64_t frame = fades.offset +
-			std::clamp<int64_t>(std::llround((seconds - shown->start) * fades.timeRate), 0, fades.length);
-		const double volume = engine::volumeDb(fraction * g_volumeLineTop / gain(fades.volume));
+		const engine::VolumePoint moved = pointAt(fromX + m_dragDx, fraction);
 		if (m_dragPoint)
 		{
-			curve[*m_dragPoint].position = frame;
+			curve[*m_dragPoint].position = moved.position;
 			if (!keepsVolume)
-				curve[*m_dragPoint].volume = volume;
+				curve[*m_dragPoint].volume = moved.volume;
 		}
 		else
 		{
-			curve.push_back({frame, volume, 0.0});
+			curve.push_back(moved);
 		}
-		std::stable_sort(curve.begin(), curve.end(),
-			[](const engine::VolumePoint& a, const engine::VolumePoint& b) { return a.position < b.position; });
+		std::stable_sort(curve.begin(), curve.end(), byPosition);
 		return curve;
 	}
 
-	void EventDisplay::curveUp()
+	void EventDisplay::curveUp(double x, double y)
 	{
+		drawCurveTo(x, y, true);
 		// A click on a point, or a drag that leaves it where it is, changes nothing and makes no undo step.
 		if (const auto fades = m_fades.find(m_dragEvent); fades != m_fades.end())
 		{
@@ -278,6 +340,7 @@ namespace gnubase::ui
 				edit("audioEvent.setVolumeCurve", {{"event", m_dragEvent}, {"points", engine::toJson(curve)}});
 		}
 		m_dragPoint.reset();
+		m_drawnCurve.clear();
 		m_dragDx = 0.0;
 		m_dragDy = 0.0;
 	}

@@ -376,3 +376,47 @@ TEST_CASE("As Default in the fade dialog sets the default fades, which Apply Sta
 	CHECK(eventOf(app, events.second).at("fadeOut") == Json{{"length", 12024}, {"shape", "linear"}});
 	CHECK(app.call("history.get").at("steps").back().at("action") == "Apply Standard Fade Out");
 }
+
+TEST_CASE("As Default in the crossfade editor sets the default crossfade, which new crossfades get", "[ui]")
+{
+	// Reference manual p. 392: As Default keeps the editor's mode and curves for the crossfades made later, Recall
+	// Default shows them again.
+	test::UiApp app({900, 700});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const Events events(app);
+	REQUIRE(app.waitUntil([&display] { return display.project().at("audioEvents").size() == 2; }));
+	app.call("event.crossfade", {{"events", {events.first, events.second}}});
+	REQUIRE(app.waitUntil([&display] { return display.project().at("audioEvents")[1].at("crossfade").is_object(); }));
+	display.select({events.first, events.second});
+	run(app, "audio.crossfade", "#crossfade-editor");
+	choose(app, "#crossfade-mode", 2);      // custom
+	choose(app, "#crossfade-out-shape", 3); // S-curve
+	click(app, "#crossfade-default");
+	CHECK(app.call("settings.get", {{"key", "editing.defaultCrossfade"}}).at("value") ==
+		Json{{"mode", "custom"}, {"shape", "linear"}, {"outShape", "sCurve"}});
+	// It changes no crossfade, and the editor stays open.
+	CHECK(open(app, "#crossfade-editor"));
+	click(app, "#crossfade-cancel");
+	closes(app, "#crossfade-editor");
+	CHECK(eventOf(app, events.second).at("crossfade").at("mode") == "equalGain");
+
+	// A new crossfade is the default one.
+	app.call("crossfade.remove", {{"event", events.second}});
+	app.call("event.crossfade", {{"events", {events.first, events.second}}});
+	CHECK(eventOf(app, events.second).at("crossfade").at("mode") == "custom");
+	CHECK(eventOf(app, events.second).at("crossfade").at("outShape") == "sCurve");
+
+	// Recall Default shows the default in the editor, which OK then gives the crossfade.
+	app.call("crossfade.set", {{"from", events.first}, {"to", events.second}, {"mode", "equalPower"}});
+	REQUIRE(app.waitUntil(
+		[&display] { return display.project().at("audioEvents")[1].at("crossfade").at("mode") == "equalPower"; }));
+	run(app, "audio.crossfade", "#crossfade-editor");
+	CHECK(element(app, "#crossfade-mode").at("value") == "equalPower");
+	click(app, "#crossfade-recall-default");
+	CHECK(element(app, "#crossfade-mode").at("value") == "custom");
+	CHECK(element(app, "#crossfade-out-shape").at("value") == "sCurve");
+	click(app, "#crossfade-ok");
+	closes(app, "#crossfade-editor");
+	CHECK(eventOf(app, events.second).at("crossfade").at("mode") == "custom");
+	CHECK(eventOf(app, events.second).at("crossfade").at("outShape") == "sCurve");
+}

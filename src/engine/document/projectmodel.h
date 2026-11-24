@@ -83,15 +83,23 @@ namespace gnubase::engine
 	// tempo.changed.
 	void tempoChanged(Project& project, const time::TempoMap& before, CommandContext& context);
 
-	// After a command, and after each command of a transaction (eventedits.cpp): the first shared copy of a MIDI part
-	// whose notes or controllers changed since before gives them to its other copies, and a copy without others is no
-	// longer shared.
-	void syncSharedParts(const std::map<ObjectId, MidiPart>& before, Project& project, CommandContext& context);
+	// What syncSharedParts needs of the parts before a command (eventedits.cpp): copies of the shared ones only, and
+	// of the shared audio parts' events. It compares a part with its earlier self only if that was in the same group,
+	// so a part that isn't shared yet needn't be copied: one that becomes shared in the command gives no edit to its
+	// new group either way.
+	struct SharedParts
+	{
+		std::map<ObjectId, MidiPart> midiParts;
+		std::map<ObjectId, AudioPart> audioParts;
+		std::map<ObjectId, AudioEvent> audioEvents;
+	};
 
-	// What syncSharedParts needs of the parts before a command (eventedits.cpp): copies of the shared ones only. It
-	// compares a part with its earlier self only if that was in the same group, so a part that isn't shared yet needn't
-	// be copied: one that becomes shared in the command gives no edit to its new group either way.
-	std::map<ObjectId, MidiPart> sharedPartsOf(const std::map<ObjectId, MidiPart>& parts);
+	SharedParts sharedPartsOf(const Project& project);
+
+	// After a command, and after each command of a transaction (eventedits.cpp): the first shared copy of a part whose
+	// contents changed since before gives them to its other copies, a MIDI part its notes and controllers, an audio
+	// part copies of its events, and a copy without others is no longer shared.
+	void syncSharedParts(const SharedParts& before, Project& project, CommandContext& context);
 
 	// Cutting a range in a cycle marker (markers.cpp, reference manual p. 425), for range.cut and range.delete: the
 	// part of the range from start to end (project samples) is taken out of each cycle marker on the marker tracks
