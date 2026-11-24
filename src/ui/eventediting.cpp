@@ -760,6 +760,9 @@ namespace gnubase::ui
 
 	bool EventDisplay::canRun(const std::string& action) const
 	{
+		if (action == "audio.closeGapsCrossfade" || action == "audio.closeGapsTimeStretch" ||
+			action == "audio.deleteOverlaps")
+			return !selectedAudio().empty();
 		if (action == "edit.paste" || action == "edit.pasteTime" || action == "edit.pasteAtOrigin" ||
 			action == "edit.pasteRelative")
 			return m_copied;

@@ -87,6 +87,12 @@ again, as the reference manual, p. 643 recommends.
 
 ## In the UI
 
+Audio > Advanced has Close Gaps (Crossfade), Close Gaps (Time Stretch) and Delete Overlaps, the UI commands
+`audio.closeGapsCrossfade`, `audio.closeGapsTimeStretch` and `audio.deleteOverlaps`. They run `event.closeGaps` with the
+corresponding mode or `event.deleteOverlaps` on the selected audio events, filtering out selected MIDI parts. Without
+selected audio events they are disabled. Each edit is one undo step; the selection range does not replace the event
+selection.
+
 The sample editor's inspector has the Hitpoints section, and its display shows the hitpoints that count and the
 disabled ones.
 
@@ -122,11 +128,14 @@ Automatic detection when audio is imported or recorded (the Editing - Audio pref
 and the hitpoints of the selected event in the project window; the Beats filter and warp markers, which need the clip's
 musical definition and warping (#144); Tab to the next slice; Alt+N and Alt+B to locate to hitpoints; Divide Audio
 Events at Hitpoints for folder tracks; the MIDI notes' destinations First Selected Track in the UI (the engine takes
-`track`), which replaces the parts of earlier conversions, and Project Clipboard; project menu entries for Close Gaps
-and Delete Overlaps. The detection is checked on synthesized loops only; recorded drum loops with hand-annotated onsets
-(room sound, bleed, flams) are yet to come.
+`track`), which replaces the parts of earlier conversions, and Project Clipboard. The detection is checked on
+synthesized loops only; recorded drum loops with hand-annotated onsets (room sound, bleed, flams) are yet to come.
 
 ## Checks
+
+- `tests/mainmenu_tests.cpp`: all three Audio > Advanced slice entries, disabled with no selection or MIDI parts alone,
+  enabled for selected audio events; crossfade, time stretch and overlap results, untouched unselected audio and MIDI,
+  one undo step and undo/redo.
 
 - `tests/hitpoints_tests.cpp`: `runEdit` refusing unknown edits, invalid parameters and malformed results, and shared
   parts synchronized before the caller continues.

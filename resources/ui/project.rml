@@ -479,6 +479,9 @@
 		<menuitem id="audio-advanced-submenu">Advanced
 			<menu>
 				<menuitem command="audio.detectSilence">Detect Silence...</menuitem>
+				<menuitem command="audio.closeGapsCrossfade">Close Gaps (Crossfade)</menuitem>
+				<menuitem command="audio.closeGapsTimeStretch">Close Gaps (Time Stretch)</menuitem>
+				<menuitem command="audio.deleteOverlaps">Delete Overlaps</menuitem>
 				<menuseparator/>
 				<!-- docs/features/time-warp.md -->
 				<menuitem command="audio.setDefinitionFromTempo">Set Definition from Tempo...</menuitem>

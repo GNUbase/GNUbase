@@ -9,6 +9,7 @@
 #include "ui/automation.h"
 #include "ui/canvas.h"
 #include "ui/enginebinding.h"
+#include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
 #include "ui/rmlui.h"
@@ -799,5 +800,95 @@ TEST_CASE("a transport window whose controls are refused closes again (#669)", "
 		app.shell().step(std::chrono::milliseconds(0));
 		CHECK((each.panel ? appUi.timeDisplay() != nullptr : appUi.transportPanel() != nullptr));
 		CHECK(app.shell().windows().size() == 2);
+	}
+}
+
+TEST_CASE("Audio Advanced slice menu entries follow the audio selection and edit with undo", "[ui]")
+{
+	struct Case
+	{
+		const char* command;
+		int64_t length;
+		int64_t expected;
+	};
+	for (const Case& each : {Case{"audio.closeGapsCrossfade", 48000, 96480},
+			 Case{"audio.closeGapsTimeStretch", 48000, 96000}, Case{"audio.deleteOverlaps", 120000, 96000}})
+	{
+		CAPTURE(each.command);
+		const test::TempDir dir;
+		test::Audio audio;
+		audio.samples.assign(144000, 0.25F);
+		const auto path = dir.path() / "slices.wav";
+		test::writeWav(path, audio);
+		test::UiApp app({1000, 760});
+		auto& display = app.appUi().showProject();
+		app.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+		const Json track = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+		const Json media = app.call("media.add", {{"path", path.u8string()}}).at("media").at("id");
+		const Json clip = app.call("clip.add", {{"media", media}}).at("clip").at("id");
+		const auto add = [&](int64_t position, int64_t offset, int64_t length)
+		{
+			return app
+				.call("audioEvent.add",
+					{{"track", track}, {"clip", clip}, {"position", position}, {"offset", offset}, {"length", length}})
+				.at("event")
+				.at("id")
+				.get<uint64_t>();
+		};
+		const uint64_t first = add(0, 0, each.length);
+		const uint64_t second = add(96000, 48000, 24000);
+		add(240000, 0, 24000); // An unselected event of the same clip must stay unchanged.
+		const Json midiTrack = app.call("track.add", {{"type", "midi"}}).at("track").at("id");
+		const uint64_t midi = app.call("midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", 960}})
+								  .at("part")
+								  .at("id")
+								  .get<uint64_t>();
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				return display.project().at("audioEvents").size() == 3 && display.project().at("midiParts").size() == 1;
+			}));
+		const std::string item = "menuitem[command=\"" + std::string(each.command) + "\"]";
+		const auto openMenu = [&]
+		{
+			click(app, "#menu-bar button[menu=audio-menu]");
+			app.ui().move(std::nullopt, {"#audio-advanced-submenu", 0, std::nullopt});
+			REQUIRE(app.waitUntil([&] { return shown(app, item); }));
+		};
+		display.select({});
+		openMenu();
+		CHECK(disabled(app, item));
+		click(app, "#menu-bar button[menu=audio-menu]");
+		display.select({midi});
+		openMenu();
+		CHECK(disabled(app, item));
+		click(app, "#menu-bar button[menu=audio-menu]");
+		display.select({first, second, midi});
+		openMenu();
+		CHECK(!disabled(app, item));
+		const Json before = app.call("project.get");
+		const size_t steps = app.call("history.get").at("steps").size();
+		click(app, item);
+		REQUIRE(app.waitUntil([&] { return display.project().at("audioEvents")[0].at("length") == each.expected; }));
+		const Json after = app.call("project.get");
+		CHECK(after.at("audioEvents")[0].at("position") == 0);
+		CHECK(after.at("audioEvents")[1].at("position") == 96000);
+		CHECK(after.at("audioEvents")[1].at("offset") == 48000);
+		CHECK(after.at("audioEvents")[1].at("length") == 24000);
+		if (std::string(each.command) == "audio.closeGapsCrossfade")
+		{
+			CHECK(after.at("audioEvents")[1].at("crossfade").at("from") == first);
+		}
+		else
+		{
+			CHECK(after.at("audioEvents")[1] == before.at("audioEvents")[1]);
+		}
+		CHECK(after.at("audioEvents")[2] == before.at("audioEvents")[2]);
+		CHECK(after.at("midiParts") == before.at("midiParts"));
+		CHECK(app.call("history.get").at("steps").size() == steps + 1);
+		app.call("history.undo");
+		CHECK(app.call("project.get") == before);
+		app.call("history.redo");
+		CHECK(app.call("project.get") == after);
 	}
 }

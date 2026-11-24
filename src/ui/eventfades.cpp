@@ -359,9 +359,25 @@ namespace gnubase::ui
 					edit("event.removeFades", {{"events", events}, {"fadeIn", in}, {"fadeOut", out}});
 			};
 		};
-		m_actions.insert({{"audio.fadeInToRange", toRange("in")}, {"audio.fadeOutFromRange", toRange("out")},
-			{"audio.adjustFadesToRange", toRange("adjust")}, {"audio.removeFadeIn", remove(true, false)},
-			{"audio.removeFadeOut", remove(false, true)}, {"audio.removeFades", remove(true, true)},
+		const auto slices = [this](const char* command, const char* mode)
+		{
+			return [this, command, mode]
+			{
+				if (const auto events = selectedAudio(); !events.empty())
+				{
+					Json parameters = {{"events", events}};
+					if (mode != nullptr)
+						parameters["mode"] = mode;
+					edit(command, std::move(parameters));
+				}
+			};
+		};
+		m_actions.insert({{"audio.closeGapsCrossfade", slices("event.closeGaps", "crossfade")},
+			{"audio.closeGapsTimeStretch", slices("event.closeGaps", "timeStretch")},
+			{"audio.deleteOverlaps", slices("event.deleteOverlaps", nullptr)}, {"audio.fadeInToRange", toRange("in")},
+			{"audio.fadeOutFromRange", toRange("out")}, {"audio.adjustFadesToRange", toRange("adjust")},
+			{"audio.removeFadeIn", remove(true, false)}, {"audio.removeFadeOut", remove(false, true)},
+			{"audio.removeFades", remove(true, true)},
 			{"audio.fadeEditor",
 				[this]
 				{
