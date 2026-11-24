@@ -150,7 +150,9 @@ namespace gnubase::engine
 			options.broadcast = broadcast;
 		}
 		else if (options.format != AudioFormat::Flac)
+		{
 			options.text = FileText{}; // the same strings in a Wave or AIFF file's text chunks (p. 1615)
+		}
 		return options;
 	}
 
