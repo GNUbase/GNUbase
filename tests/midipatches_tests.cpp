@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -161,6 +163,78 @@ TEST_CASE("a MIDI device's Bank Assignment picks a bank for MIDI channels, and d
 	CHECK(device().at("bankAssignment") == Json{{"1", 0}});
 	run(client, "midiDevice.set", {{"name", "Synth"}, {"banks", banks}, {"bankAssignment", Json::object()}});
 	CHECK(!device().contains("bankAssignment"));
+}
+
+TEST_CASE("Export Setup writes the MIDI devices into a file, which Import Setup installs all or some of", "[unit]")
+{
+	// Reference manual pp. 1110, 1115: the setup is an XML file, and the user chooses the devices to import.
+	const gnubase::test::TempDir dir;
+	const std::string path = (dir.path() / "Setup.xml").u8string();
+	const Json banks = {{{"name", "Patches"},
+							{"patches",
+								{{{"name", "Piano & <Strings>"}, {"program", 0}, {"bank", 300}, {"folder", "Keys"}},
+									{{"name", "Lead"}, {"program", 127}}}}},
+		{{"name", "Drums"}, {"patches", {{{"name", "Kit"}, {"program", 8}}}}}};
+	Json devices;
+	{
+		Engine engine;
+		Client client(engine);
+		run(client, "midiDevice.install", {{"name", "Sound Module"}, {"template", "gm"}});
+		run(client, "midiDevice.install", {{"name", "Synth \"X\""}});
+		run(client, "midiDevice.set", {{"name", "Synth \"X\""}, {"banks", banks}, {"bankAssignment", {{"10", 1}}}});
+		run(client, "midiDevice.export", {{"path", path}});
+		devices = run(client, "settings.get", {{"key", "midi.devices"}}).at("value");
+	}
+
+	Engine engine;
+	Client client(engine);
+	const auto installed = [&] { return run(client, "settings.get", {{"key", "midi.devices"}}).at("value"); };
+	// Reading the file lists its devices and installs none.
+	const Json read = run(client, "midiDevice.readSetup", {{"path", path}}).at("devices");
+	REQUIRE(read.size() == 2);
+	CHECK(read[0] == Json{{"name", "Sound Module"}, {"banks", devices.at("Sound Module").at("banks")}});
+	CHECK(read[1] == Json{{"name", "Synth \"X\""}, {"banks", banks}, {"bankAssignment", {{"10", 1}}}});
+	CHECK(installed().empty());
+
+	// The devices chosen, all of them without a choice; a name that is taken or not in the file is refused, and then
+	// none is installed.
+	CHECK(run(client, "midiDevice.import", {{"path", path}, {"devices", {"Synth \"X\""}}}).at("devices") ==
+		Json::array({read[1]}));
+	CHECK(installed() == Json{{"Synth \"X\"", devices.at("Synth \"X\"")}});
+	CHECK_THAT(reject(client, "midiDevice.import", {{"path", path}}), ContainsSubstring("already"));
+	CHECK_THAT(reject(client, "midiDevice.import", {{"path", path}, {"devices", {"Sound Module", "Other"}}}),
+		ContainsSubstring("Other"));
+	CHECK(installed().size() == 1);
+	run(client, "midiDevice.remove", {{"name", "Synth \"X\""}});
+	CHECK(run(client, "midiDevice.import", {{"path", path}}).at("devices").size() == 2);
+	CHECK(installed() == devices);
+
+	// A file that is missing, isn't a setup or has a broken patch is refused.
+	CHECK_THAT(reject(client, "midiDevice.readSetup", {{"path", (dir.path() / "Missing.xml").u8string()}}),
+		ContainsSubstring("can't"));
+	const auto refused = [&](const std::string& text)
+	{
+		const std::string file = (dir.path() / "Broken.xml").u8string();
+		std::ofstream(std::filesystem::u8path(file), std::ios::binary) << text;
+		return reject(client, "midiDevice.import", {{"path", file}});
+	};
+	CHECK_THAT(refused("<DrumMap/>"), ContainsSubstring("MIDI device setup"));
+	CHECK_THAT(refused(R"(<MidiDevices><Device name="A"><Bank name="B"><Patch name="P" program="128"/></Bank></Device>)"
+					   "</MidiDevices>"),
+		ContainsSubstring("program"));
+	CHECK_THAT(
+		refused(R"(<MidiDevices><Device name="A"/><Device name="A"/></MidiDevices>)"), ContainsSubstring("twice"));
+	CHECK_THAT(refused(R"(<MidiDevices><Device name="A"><Bank name="B"><Patch name="P" program="1.5"/></Bank></Device>)"
+					   "</MidiDevices>"),
+		ContainsSubstring("the program of patch P of A, 1.5, isn't a whole number"));
+	CHECK_THAT(
+		refused(R"(<MidiDevices><Device name="A"><BankAssignment channel="10" bank="x"/></Device></MidiDevices>)"),
+		ContainsSubstring("the bank of MIDI channel 10 of A, x, isn't a whole number"));
+	CHECK_THAT(refused(R"(<MidiDevices><Device name="A"><Bank name="B"/><BankAssignment channel="10" bank="1"/>)"
+					   "</Device></MidiDevices>"),
+		ContainsSubstring("bank it doesn't have"));
+	CHECK_THAT(refused("<MidiDevices><Device/></MidiDevices>"), ContainsSubstring("no name"));
+	CHECK(installed() == devices);
 }
 
 TEST_CASE("loading ignores program and bank on channels without a MIDI track", "[unit]")

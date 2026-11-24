@@ -8,7 +8,11 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
 - **VCA tracks** (`track.add` `type` `vca`, p. 153) have a channel without audio, input or output (`format`
   `none`, not in the render snapshot or the processing graph): a fader (`volume`), mute, solo, solo defeat, listen,
   monitor and record enable, and an automation lane for its volume (`parameter.list` lists only that). New ones are
-  called VCA 01, VCA 02 and so on.
+  called VCA 01, VCA 02 and so on. With `tracks` (Add VCA Track to Selected Tracks, p. 517), the tracks' channels go
+  into a new link group that the new VCA fader controls, in the same undo step; tracks without a channel, such as
+  folders without a group channel, are left out. The reference turns that group's Selection off, which link groups
+  don't link yet. `projectFolder` puts it into the project's VCA folder (Add to Project 'VCA' Folder, p. 154), as it
+  does group and effect tracks into theirs ([routing.md](routing.md)).
 - **Link groups** (`Project::linkGroups`, `LinkGroup` in `src/engine/document/document.h`, in `project.get` as
   `linkGroups`): a name, the linked `channels`, what they link and the `vca` that controls them, 0 for none. A channel
   is in one group at most and a VCA fader controls one group at most: a group that takes a channel or a VCA fader
@@ -66,7 +70,9 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
   is left out. A VCA strip (`type` `vca`) has a fader with its meter, M, S and L, and instead of the panner a drop-down
   list `.mixer-vca-group` (VCA Channel Controls Link Group, p. 515) with None and the link groups, which sends
   `linkGroup.set`. The channel type filter has VCA Channels.
-- The add track dialog has a VCA page with the name and the count (p. 154). The inspector shows a VCA track's fader,
+- The add track dialog has a VCA page with Add to Project 'VCA' Folder, the name and the count (p. 154). The track
+  list's context menu has VCA Track to Selected Tracks (`track.addVcaToSelected`), which opens it for the selected
+  tracks ([add-track.md](add-track.md)). The inspector shows a VCA track's fader,
   mute, solo, record and monitor, without routing, pan or inserts.
 
 ## Not yet
@@ -75,7 +81,8 @@ The Link Group Settings dialog and the mixer toolbar's Link, Edit Link Group Set
 which need channels selected in the mixer; linking inserts, automation read and write, routing and selection (p. 458);
 the Abs button's absolute instead of relative changes (p. 460): without it the equalizers', the dynamics' and the send
 levels' changes should go on by as much as they moved, as the fader and the pan do, but they go on as the values given;
-Add VCA Track to Selected Tracks and the project's VCA folder (pp. 154, 517); Combine Automation of VCA and Linked
+Add VCA Track in the mixer's context menu, and Add VCA Track to Selected Tracks for channels selected there
+(pp. 516-517); Combine Automation of VCA and Linked
 Channels, and the channels' automation tracks showing the combined curve (pp. 516, 519); VCA mute automation; the
 display line menu's Edit Link Group Settings and a double click with a modifier key, which open that dialog (p. 459).
 
@@ -86,7 +93,8 @@ display line menu's Edit Link Group Settings and a double click with a modifier 
   doesn't; a channel moving between groups, removing tracks and unlinking; refusals. VCA tracks' channels and their
   parameter; a VCA fader turns off the volume link, passes its buttons on through a nested VCA fader in one undo step,
   refuses loops, leaves the group it controlled for another one; removing a VCA track turns the volume link back on;
-  groups without channels go; default names stay unique; saving and loading. Rendered through the dummy device: the
+  groups without channels go; default names stay unique; a VCA track for tracks controlling a new group of their
+  channels, in the project's VCA folder, in one undo step; saving and loading. Rendered through the dummy device: the
   reference manual's nested example (-3, -10 and +4 dB play at -9 dB), a VCA ramp over a static channel fader exactly,
   and a VCA ramp over the channel's own ramp within 0.001; a VCA fader's meter 6 dB above its two equal channels', also
   through a nested VCA fader, and none for a VCA fader without channels.

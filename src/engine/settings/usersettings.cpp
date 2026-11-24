@@ -64,7 +64,8 @@ namespace gnubase::engine::settings
 				{"properties",
 					{{"visible", {{"type", "boolean"}}}, {"size", {{"type", "number"}, {"minimum", 0}}},
 						{"active", {{"type", "string"}}}, {"tabs", strings}, {"hidden", strings}}}};
-			const Json sections = {{"type", "object"}, {"properties", {{"order", strings}, {"hidden", strings}}}};
+			const Json sections = {
+				{"type", "object"}, {"properties", {{"order", strings}, {"hidden", strings}, {"default", strings}}}};
 			const Json integer = {{"type", "integer"}};
 			const Json size = {{"type", "integer"}, {"minimum", 1}};
 			const Json bounds = {{"type", "object"},
@@ -446,17 +447,22 @@ namespace gnubase::engine::settings
 					"after the post-roll if it's on (see transport.set), unless it cycles.",
 					Json{{"type", "boolean"}}, false, true},
 				{"audio.broadcastDescription",
-					"The description in the Broadcast Wave chunk of recorded Broadcast Wave files, cut to 256 bytes; "
-					"empty for the track's name.",
+					"The description in the Broadcast Wave chunk of recorded Broadcast Wave files, cut to 256 bytes, "
+					"and in the text of recorded Wave and AIFF files; empty for the track's name.",
 					Json{{"type", "string"}}, "", true},
 				{"audio.broadcastAuthor",
 					"The author (originator) in the Broadcast Wave chunk of recorded Broadcast Wave files, cut to 32 "
-					"bytes.",
+					"bytes, and in the text of recorded Wave and AIFF files.",
 					Json{{"type", "string"}}, "GNUbase", true},
 				{"audio.broadcastReference",
 					"The reference (originator reference) in the Broadcast Wave chunk of recorded Broadcast Wave "
-					"files, cut to 32 bytes.",
+					"files, cut to 32 bytes, and in the text of recorded Wave and AIFF files.",
 					Json{{"type", "string"}}, "", true},
+				{"audio.waveOver4GB",
+					"When recording Wave files larger than 4 GB: rf64 (the default) makes such a file RF64, which "
+					"only applications that support RF64 open; split goes on in a new file, as file systems such as "
+					"FAT32 need. AIFF files are always split at 4 GB.",
+					Json{{"type", "string"}, {"enum", {"rf64", "split"}}}, "rf64", true},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", g_lowestSampleRate}, {"maximum", g_highestSampleRate}},
 					48000.0},
@@ -559,10 +565,44 @@ namespace gnubase::engine::settings
 					"Meter Peak - Hold Forever (reference manual p. 467): the channel meters' peak marks hold the "
 					"highest level until the meters are reset (meter.reset); off, for meter.peakHoldTime.",
 					Json{{"type", "boolean"}}, false},
+				{"meter.holdOnStop",
+					"Hold on Stop (reference manual p. 540): the loudness measurement (meter.get's integrated, range, "
+					"seconds, the maxima and the main mix's truePeakMax) stays when playback stops; off, it starts "
+					"over there.",
+					Json{{"type", "boolean"}}, true},
 				{"meter.holdPeaks",
 					"Meter Peak - Hold Peaks (reference manual p. 467): the channel meters show the highest levels "
 					"as peak marks.",
 					Json{{"type", "boolean"}}, true},
+				{"meter.integratedReference",
+					"Integrated threshold (reference manual p. 539): the meter display's Integrated readout turns red "
+					"above "
+					"this reference plus meter.integratedTolerance, in LUFS.",
+					Json{{"type", "number"}, {"minimum", -70}, {"maximum", 0}}, -23.0},
+				{"meter.integratedTolerance",
+					"Integrated threshold's tolerance (reference manual p. 539), 0 to 10, in LU.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 10}}, 1.0},
+				{"meter.loudnessScale",
+					"EBU Scale (reference manual p. 539): the meter display's loudness bars on the EBU +9 scale, -41 "
+					"to -14 LUFS, or on the EBU +18 scale, -59 to -5 LUFS.",
+					Json{{"type", "string"}, {"enum", {"ebu9", "ebu18"}}}, "ebu9"},
+				{"meter.loudnessUnit",
+					"Unit (reference manual p. 539): the meter display shows loudness in LUFS, or in LU relative to "
+					"-23 LUFS.",
+					Json{{"type", "string"}, {"enum", {"lufs", "lu"}}}, "lufs"},
+				{"meter.measureLoudness",
+					"Measure Loudness (reference manual p. 537): playback measures the loudness (see meter.get); off, "
+					"it measures nothing, and the momentary and short-term loudness and the true peak still follow "
+					"the signal.",
+					Json{{"type", "boolean"}}, true},
+				{"meter.momentaryMaxReference",
+					"Momentary Max. threshold (reference manual p. 539): the meter display's Momentary Max. readout "
+					"turns red above "
+					"this reference plus meter.momentaryMaxTolerance, in LUFS.",
+					Json{{"type", "number"}, {"minimum", -70}, {"maximum", 0}}, -15.0},
+				{"meter.momentaryMaxTolerance",
+					"Momentary Max. threshold's tolerance (reference manual p. 539), 0 to 10, in LU.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 10}}, 0.0},
 				{"meter.peakHoldTime",
 					"Meters' Peak Hold Time (reference manual p. 1614): how long the channel meters' peak marks hold "
 					"a peak, 500 to 30000 ms, unless meter.holdForever is on.",
@@ -585,6 +625,22 @@ namespace gnubase::engine::settings
 					"Resolution (reference manual p. 540): how much of the signal the master meter's RMS level "
 					"averages, 1 to 1000 ms (see meter.get).",
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}}, 300},
+				{"meter.shortTermReference",
+					"Short-Term threshold (reference manual p. 539): the meter display's Short-Term readout turns red "
+					"above "
+					"this reference plus meter.shortTermTolerance, in LUFS.",
+					Json{{"type", "number"}, {"minimum", -70}, {"maximum", 0}}, -18.0},
+				{"meter.shortTermTolerance",
+					"Short-Term threshold's tolerance (reference manual p. 539), 0 to 10, in LU.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 10}}, 0.0},
+				{"meter.truePeakReference",
+					"True Peak threshold (reference manual p. 539): the meter display's True Peak readout turns red "
+					"above "
+					"this reference plus meter.truePeakTolerance, in dBTP.",
+					Json{{"type", "number"}, {"minimum", -20}, {"maximum", 3}}, -1.0},
+				{"meter.truePeakTolerance",
+					"True Peak threshold's tolerance (reference manual p. 539), 0 to 10, in dB.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 10}}, 0.0},
 				{"midi.chaseBeyondParts",
 					"Chases controller events from the whole track; off, only from the MIDI parts under the "
 					"position, so none outside parts.",
@@ -801,14 +857,15 @@ namespace gnubase::engine::settings
 					"command macro.<name>.",
 					macrosSchema(), Json::array()},
 				{"ui.layout",
-					"The layout of the windows with zones: under windows, by window (project), its zones (left, "
-					"right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs "
-					"hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, "
-					"transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) "
-					"with the order of their sections and those hidden, and the sizes in dp of other elements that "
-					"splitters size (trackList: the track list's width), and for the app's windows (project, mixer1 "
-					"to mixer4, markers, onScreenKeyboard, tempoTrack, arranger, transportPanel, timeDisplay, "
-					"scriptConsole) whether "
+					"The layout of the windows with zones: under windows, by window (project, editorWindow), its zones "
+					"(left, right, lower) with whether each is visible, its size in dp, the order of its tabs, the "
+					"tabs hidden and the active one, and its strips (menuBar, toolbar, infoLine, overviewLine, "
+					"statusLine, transportBar) with whether each is shown, and its sets of sections (such as a mixer "
+					"channel's) with the order of their sections, those hidden and as default those the window "
+					"doesn't know yet, which keep their default visibility, and the sizes in dp of other elements "
+					"that splitters size (trackList: the track list's width), and for the app's windows (project, "
+					"mixer1 to mixer4, markers, onScreenKeyboard, tempoTrack, arranger, transportPanel, "
+					"timeDisplay, scriptConsole) whether "
 					"it is open, its bounds and the name of its monitor, and maximized if it is (its bounds the normal "
 					"ones); under panels, by panel, whether it is in a "
 					"window of its own and that window's bounds and monitor. What it leaves out has its default: a "
@@ -1043,6 +1100,15 @@ namespace gnubase::engine::settings
 												{"order", {{"type", "array"}, {"items", {{"type", "string"}}}}},
 												{"hidden", {{"type", "array"}, {"items", {{"type", "string"}}}}}}}}}}}},
 					Json::object()},
+				{"ui.onScreenKeyboard",
+					"The on-screen keyboard's octave, 0 to 6 (the lowest key is C0 to C6), and the velocity of its "
+					"notes, 1 to 127 (docs/features/onscreen-keyboard.md). Other properties, from later versions, are "
+					"kept.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"octave", {{"type", "integer"}, {"minimum", 0}, {"maximum", 6}}},
+								{"velocity", {{"type", "integer"}, {"minimum", 1}, {"maximum", 127}}}}}},
+					Json{{"octave", 3}, {"velocity", 100}}},
 				{"ui.workspaces",
 					"The global workspaces, for every project (workspace.* commands, docs/features/workspaces.md): "
 					"each a name and its layout, a copy of ui.layout.",

@@ -17,6 +17,14 @@
 #include <string>
 #include <utility>
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#include <commctrl.h>
+#endif
+
 namespace gnubase::ui
 {
 	namespace
@@ -174,6 +182,8 @@ namespace gnubase::ui
 			case SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED:
 			case SDL_EVENT_DISPLAY_USABLE_BOUNDS_CHANGED: // e.g. a taskbar moved to another edge
 				return WindowEventKind::DisplaysChanged;
+			case SDL_EVENT_KEYMAP_CHANGED:
+				return WindowEventKind::KeymapChanged;
 			default:
 				return std::nullopt;
 			}
@@ -236,6 +246,7 @@ namespace gnubase::ui
 			throw sdlError("SDL cannot start its video subsystem");
 		m_dialogEvent = SDL_RegisterEvents(1);
 		m_wakeEvent = SDL_RegisterEvents(1);
+		m_menuBarEvent = SDL_RegisterEvents(1);
 	}
 
 	SdlWindowSystem::~SdlWindowSystem()
@@ -322,6 +333,121 @@ namespace gnubase::ui
 		const WindowId id = SDL_GetWindowID(window);
 		m_textInputs[id] = std::make_unique<SdlTextInput>(window);
 		return id;
+	}
+
+#ifdef _WIN32
+	namespace
+	{
+		// Show Menu Bar's id in a window's system menu: below 0xF000, the system's own, with the low four bits
+		// clear, which Windows uses itself.
+		constexpr UINT_PTR g_showMenuBar = 0x4D10;
+
+		// Sees Show Menu Bar picked in the system menu, which Windows sends to the window rather than posting it,
+		// and passes it on as an SDL event of the type in data, for the window whose SDL id is window.
+		LRESULT CALLBACK systemMenuProc(
+			HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR window, DWORD_PTR data)
+		{
+			if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == g_showMenuBar)
+			{
+				SDL_Event event{};
+				event.type = static_cast<Uint32>(data);
+				event.user.windowID = static_cast<SDL_WindowID>(window);
+				if (!SDL_PushEvent(&event))
+					logging::warning("Cannot pass Show Menu Bar on: {}", SDL_GetError());
+				return 0;
+			}
+			if (message == WM_NCDESTROY)
+				RemoveWindowSubclass(hwnd, systemMenuProc, window);
+			return DefSubclassProc(hwnd, message, wParam, lParam);
+		}
+	}
+#endif
+
+	namespace
+	{
+		// SDL's scancodes name the physical keys after a US keyboard's, as RmlUi's key identifiers: every key, so
+		// that a layout's letter at another place, such as a French layout's M at the semicolon's, keeps that place.
+		// KI_UNKNOWN only for keys that neither knows.
+		Rml::Input::KeyIdentifier positionOf(SDL_Scancode code)
+		{
+			using namespace Rml::Input;
+			if (code >= SDL_SCANCODE_A && code <= SDL_SCANCODE_Z)
+				return static_cast<KeyIdentifier>(KI_A + (code - SDL_SCANCODE_A));
+			if (code >= SDL_SCANCODE_1 && code <= SDL_SCANCODE_9)
+				return static_cast<KeyIdentifier>(KI_1 + (code - SDL_SCANCODE_1));
+			switch (code)
+			{
+			case SDL_SCANCODE_0:
+				return KI_0;
+			case SDL_SCANCODE_COMMA:
+				return KI_OEM_COMMA;
+			case SDL_SCANCODE_SEMICOLON:
+				return KI_OEM_1;
+			case SDL_SCANCODE_EQUALS:
+				return KI_OEM_PLUS;
+			case SDL_SCANCODE_MINUS:
+				return KI_OEM_MINUS;
+			case SDL_SCANCODE_PERIOD:
+				return KI_OEM_PERIOD;
+			case SDL_SCANCODE_SLASH:
+				return KI_OEM_2;
+			case SDL_SCANCODE_GRAVE:
+				return KI_OEM_3;
+			case SDL_SCANCODE_LEFTBRACKET:
+				return KI_OEM_4;
+			case SDL_SCANCODE_BACKSLASH:
+			case SDL_SCANCODE_NONUSHASH:
+				return KI_OEM_5;
+			case SDL_SCANCODE_RIGHTBRACKET:
+				return KI_OEM_6;
+			case SDL_SCANCODE_APOSTROPHE:
+				return KI_OEM_7;
+			case SDL_SCANCODE_NONUSBACKSLASH:
+				return KI_OEM_102;
+			default: // the keys that type no character have a key code of their own, whatever the layout
+				return RmlSDL::ConvertKey(static_cast<int>(static_cast<SDL_Keycode>(code) | SDLK_SCANCODE_MASK));
+			}
+		}
+
+		SDL_Scancode scancodeOf(Rml::Input::KeyIdentifier position)
+		{
+			using namespace Rml::Input;
+			if (position >= KI_A && position <= KI_Z)
+				return static_cast<SDL_Scancode>(SDL_SCANCODE_A + (position - KI_A));
+			if (position >= KI_1 && position <= KI_9)
+				return static_cast<SDL_Scancode>(SDL_SCANCODE_1 + (position - KI_1));
+			if (position == KI_0)
+				return SDL_SCANCODE_0;
+			return position == KI_OEM_COMMA ? SDL_SCANCODE_COMMA : SDL_SCANCODE_UNKNOWN;
+		}
+	}
+
+	std::string SdlWindowSystem::keyLabel(Rml::Input::KeyIdentifier position) const
+	{
+		const SDL_Scancode code = scancodeOf(position);
+		if (code == SDL_SCANCODE_UNKNOWN)
+			return {};
+		const char* name = SDL_GetKeyName(SDL_GetKeyFromScancode(code, SDL_KMOD_NONE, false));
+		return name != nullptr ? name : "";
+	}
+
+	void SdlWindowSystem::setMenuBarShown([[maybe_unused]] WindowId window, [[maybe_unused]] bool shown)
+	{
+#ifdef _WIN32
+		// Show Menu Bar in the title bar's context menu, the system menu (reference manual p. 55).
+		auto* hwnd = static_cast<HWND>(SDL_GetPointerProperty(
+			SDL_GetWindowProperties(sdlWindow(window)), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+		HMENU menu = hwnd != nullptr ? GetSystemMenu(hwnd, FALSE) : nullptr;
+		if (menu == nullptr)
+			return;
+		if (GetMenuState(menu, g_showMenuBar, MF_BYCOMMAND) == static_cast<UINT>(-1))
+		{
+			AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+			AppendMenuW(menu, MF_STRING, g_showMenuBar, L"Show Menu Bar");
+			SetWindowSubclass(hwnd, systemMenuProc, window, m_menuBarEvent);
+		}
+		CheckMenuItem(menu, g_showMenuBar, MF_BYCOMMAND | (shown ? MF_CHECKED : MF_UNCHECKED));
+#endif
 	}
 
 	void SdlWindowSystem::destroyWindow(WindowId window)
@@ -534,6 +660,8 @@ namespace gnubase::ui
 	{
 		if (event.type == m_wakeEvent && m_wakeEvent != 0)
 			return WindowEvent{WindowEventKind::Wake};
+		if (event.type == m_menuBarEvent && m_menuBarEvent != 0)
+			return WindowEvent{WindowEventKind::MenuBarToggled, event.user.windowID};
 		if (event.type == m_dialogEvent)
 		{
 			const std::unique_ptr<DialogResult> result(static_cast<DialogResult*>(event.user.data1));
@@ -637,10 +765,11 @@ namespace gnubase::ui
 			const bool unused = RmlSDL::InputEventHandler(target->second, window, event);
 			WindowEvent input{WindowEventKind::Input, id};
 			if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && unused) // one key command per press
-				input.key =
-					KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), RmlSDL::GetKeyModifierState()};
+				input.key = KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), RmlSDL::GetKeyModifierState(),
+					positionOf(event.key.scancode)};
 			else if (event.type == SDL_EVENT_KEY_UP)
-				input.keyUp = KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), 0};
+				input.keyUp =
+					KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), 0, positionOf(event.key.scancode)};
 			else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) // a key held then goes up elsewhere
 				input.keyUp = KeyPress{Rml::Input::KI_UNKNOWN, 0};
 			return input;

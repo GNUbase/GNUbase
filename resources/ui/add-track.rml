@@ -92,7 +92,7 @@
 			arranger = {}, -- one per project (reference manual p. 164)
 			transpose = {}, -- one per project (reference manual p. 165)
 			chord = {}, -- one per project (reference manual p. 1319)
-			vca = {"name", "count"}, -- reference manual p. 154
+			vca = {"projectFolder", "name", "count"}, -- reference manual p. 154
 		}
 
 		-- The pages whose tracks a command of their own creates: a sampler track is an instrument track that plays the
@@ -206,7 +206,7 @@
 				return field("Time Offset", '<input type="text" id="track-time-offset"/>')
 			end,
 			projectFolder = function(_, type)
-				local name = type == "group" and "Group" or "FX"
+				local name = ({group = "Group", effect = "FX", vca = "VCA"})[type]
 				return '<div class="field"><input type="checkbox" id="track-project-folder"/>' ..
 					'<label for="track-project-folder">' .. escape("Add to Project '" .. name .. "' Folder") ..
 					"</label></div>"
@@ -236,7 +236,7 @@
 					dialog.instruments[#dialog.instruments + 1] = processor
 				end
 			end
-			-- Group Track and Effect Track to Selected Tracks open the page with the tracks to route.
+			-- Group Track, Effect Track and VCA Track to Selected Tracks open the page with the tracks to route or link.
 			dialog.forType = document:GetAttribute("type")
 			dialog.tracks = {}
 			for id in (document:GetAttribute("tracks") or ""):gmatch("%d+") do
@@ -330,7 +330,7 @@
 			chord = true}
 
 		-- Where new tracks go: below dialog.below, among the tracks of its folder, as track.add's parent and index;
-		-- nothing (the end of the project) without it, or into the project's Group or FX folder.
+		-- nothing (the end of the project) without it, or into the project's Group, FX or VCA folder.
 		local function placement(track)
 			if dialog.below == nil or track.projectFolder then
 				return nil
@@ -359,7 +359,7 @@
 
 		-- Add Track: Count tracks in one undo step, below the selected track in the order they were added. The dialog
 		-- stays open with Keep Dialog Open, its next tracks below these, and when the engine refuses, with its message.
-		-- Tracks into the project's Group or FX folder leave dialog.below where it was, so the next tracks of the open
+		-- Tracks into the project's Group, FX or VCA folder leave dialog.below where it was, so the next tracks of the open
 		-- dialog go below the selection, not into the folder. The selected tracks go to the first new track only,
 		-- once: each new group would take them from the one before, each new effect track another send of every one
 		-- of them.

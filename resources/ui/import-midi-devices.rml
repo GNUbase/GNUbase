@@ -1,0 +1,104 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Import MIDI Devices (docs/features/midi-devices.md, reference manual p. 1115): the MIDI device manager's Import
+     Setup opens it with the path of the setup file the user chose (the UI command midiDevice.importSetup). It lists
+     the file's devices (midiDevice.readSetup) with a check box each, checked unless a device of that name is installed,
+     and OK installs the checked ones (midiDevice.import), which the manager shows as it follows settings.changed. -->
+<rml>
+<head>
+	<title>Import MIDI Devices</title>
+	<style>
+		dialog
+		{
+			width: 360dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#import-devices
+		{
+			display: block;
+			max-height: 240dp;
+			overflow-y: auto;
+		}
+
+		#import-devices label
+		{
+			display: block;
+		}
+
+		#import-devices-message
+		{
+			flex: 1;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		ImportMidiDevices = {}
+		-- The names of the file's devices, by the index of their check box.
+		local names = {}
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function report(document, message)
+			document:GetElementById("import-devices-message").inner_rml = escape(message or "")
+		end
+
+		function ImportMidiDevices.load(document)
+			local ok, result = pcall(gnubase.midiDevice.readSetup, {path = document:GetAttribute("path")})
+			if not ok then
+				report(document, result)
+				return
+			end
+			local installed = gnubase.settings.get{key = "midi.devices"}.value
+			names = {}
+			local rows = {}
+			for i, device in ipairs(result.devices) do
+				names[i] = device.name
+				rows[i] = '<label><input type="checkbox" class="checkbox" device="' .. i .. '"' ..
+					(installed[device.name] == nil and " checked" or "") .. "/>" .. escape(device.name) .. "</label>"
+			end
+			document:GetElementById("import-devices").inner_rml = table.concat(rows)
+		end
+
+		function ImportMidiDevices.import(document)
+			local chosen = {}
+			for i, name in ipairs(names) do
+				if document:QuerySelector('input[device="' .. i .. '"]'):HasAttribute("checked") then
+					chosen[#chosen + 1] = name
+				end
+			end
+			if #chosen == 0 then
+				document:Close()
+				return
+			end
+			local ok, result = pcall(gnubase.midiDevice.import, {path = document:GetAttribute("path"), devices = chosen})
+			if ok then
+				document:Close()
+			else
+				report(document, result)
+			end
+		end
+	</script>
+</head>
+<body onshow="ImportMidiDevices.load(document)">
+	<dialog id="import-midi-devices">
+		<div class="dialog-titlebar">Import MIDI Devices</div>
+		<div class="row" id="import-devices"/>
+		<div class="row buttons">
+			<div id="import-devices-message"/>
+			<button result="cancel">Cancel</button>
+			<button id="import-devices-ok" class="primary" onclick="ImportMidiDevices.import(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

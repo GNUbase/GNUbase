@@ -52,6 +52,18 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   without the bank's name. The manager shows it for a device with several banks (`#bank-assignment`): a MIDI channel and
   its bank, All Banks for none; a bank that the manager removes takes its channels' assignment with it, and the channels
   of the banks after it keep theirs (`tests/mididevices_ui_tests.cpp`, `tests/midipatches_tests.cpp`).
+- **Export Setup and Import Setup** (pp. 1110, 1115). `midiDevice.export` writes every installed device, with its banks,
+  patches and Bank Assignment, into a MIDI device setup file: XML of GNUbase's own, `<MidiDevices>` with a
+  `<Device name>` each, its `<Bank name>`s with their `<Patch name program bank folder>`s and its
+  `<BankAssignment channel bank>`s, programs and banks from 0 as in `midi.devices`. The reference's setup files have a
+  format of their own, which GNUbase doesn't read. `midiDevice.readSetup` lists a file's devices without installing
+  them, and `midiDevice.import` installs the ones it names, or all: a name that is installed already or that the file
+  doesn't have installs none, and the file's devices are checked against the schema of `midi.devices`. The manager's
+  Export Setup asks for the file (`MIDI Devices.xml` at first, `.xml` added when the name has no extension) and shows
+  why the export failed; Import Setup asks for a file and opens Import MIDI Devices
+  (`resources/ui/import-midi-devices.rml`), which lists its devices with a check box each, checked unless a device of
+  that name is installed, and installs the checked ones with OK, or shows why it couldn't. They are the UI commands
+  `midiDevice.exportSetup` and `midiDevice.importSetup`.
 
 ## Not yet
 
@@ -59,8 +71,8 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   and doesn't replace the track's output routing as in the reference (p. 1113); the track names it beside its output.
 - The remaining manager editing commands (New Folder for empty or nested folders and drag and drop; pp. 1111–1112).
   Preset events other than bank select MSB and LSB and program change (p. 1112), the reference's other device scripts
-  (XG and the instruments'), Export Setup and Import Setup (XML), device maps and device panels with their automation
-  (pp. 1115–1117), and the program selector in the track list.
+  (XG and the instruments'), device maps and device panels with their automation (pp. 1115–1117), and the program
+  selector in the track list.
 
 ## Checks
 
@@ -73,23 +85,25 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   program change alone without a bank, nothing without a program, and a device's patch; stopping after a part's program
   and controllers without resending the track's values, Return to Start resending them, rerouting while stopped and
   playing, loading ignoring program and bank on non-MIDI channels, the device bank limit checked, and `midiDevice.set`
-  replacing banks and empty lists without changing other devices or accepting missing devices or malformed banks. On a
-  MIDI track's channel ([mixer.md](mixer.md)): the patch, MIDI volume and pan going out on it and again on another; its
-  parts', automation's (a controller, pitch bend and channel pressure) and input's events (notes, controllers, pitch
-  bend, pressure and program changes) on it, a held key's note-off on the channel its note-on went to, and Any keeping
-  theirs; a drum sound's own channel; sound slots' output events in playback and from remote triggers (key switches with
-  and without latch, program changes), a selected slot going out again on a new channel and back to Any, and one with a
-  channel of its own staying there; a send before the MIDI modifiers getting the input there, through the drum map (a
-  drum sound on Any and one with a channel of its own), Live Input and the slot that the remote triggers selected,
-  without the trigger, also once it starts to play again after the trigger, with the map's slots changed before, and
-  while a trigger without latch is held, whose release brings the default slot back there too; and automation lanes of
-  one controller playing there side by side: of two, only the one whose latest point lies latest sending where playback
-  starts or locates; two lanes of the MIDI volume, the first sending the channel's before its first point and in its
-  gaps, the second nothing; every point sent, also one that repeats its lane's value, and the value a lane's last point
-  left standing in its gap sent again at a locate, also past two lanes that end at one position, where the second one's
-  terminator wins; a point that a gap follows, a terminator that repeats its lane's value and the lanes' last points
-  with virgin territory, each sent when played through and again at a locate past it; and at a cycle jump the value of
-  the lane whose point lies latest.
+  replacing banks and empty lists without changing other devices or accepting missing devices or malformed banks;
+  `midiDevice.export` writing a setup that `midiDevice.readSetup` lists without installing and `midiDevice.import`
+  installs, chosen devices or all, refusing taken names, names the file doesn't have, files that are missing or aren't
+  setups, broken patches and a device twice. On a MIDI track's channel ([mixer.md](mixer.md)): the patch, MIDI volume
+  and pan going out on it and again on another; its parts', automation's (a controller, pitch bend and channel pressure)
+  and input's events (notes, controllers, pitch bend, pressure and program changes) on it, a held key's note-off on the
+  channel its note-on went to, and Any keeping theirs; a drum sound's own channel; sound slots' output events in
+  playback and from remote triggers (key switches with and without latch, program changes), a selected slot going out
+  again on a new channel and back to Any, and one with a channel of its own staying there; a send before the MIDI
+  modifiers getting the input there, through the drum map (a drum sound on Any and one with a channel of its own), Live
+  Input and the slot that the remote triggers selected, without the trigger, also once it starts to play again after the
+  trigger, with the map's slots changed before, and while a trigger without latch is held, whose release brings the
+  default slot back there too; and automation lanes of one controller playing there side by side: of two, only the one
+  whose latest point lies latest sending where playback starts or locates; two lanes of the MIDI volume, the first
+  sending the channel's before its first point and in its gaps, the second nothing; every point sent, also one that
+  repeats its lane's value, and the value a lane's last point left standing in its gap sent again at a locate, also past
+  two lanes that end at one position, where the second one's terminator wins; a point that a gap follows, a terminator
+  that repeats its lane's value and the lanes' last points with virgin territory, each sent when played through and
+  again at a locate past it; and at a cycle jump the value of the lane whose point lies latest.
 - `tests/mididevices_ui_tests.cpp` drives the app with `ui::Automation`: the inspector choosing a program and typing a
   bank, then with an installed device its patches by name, the bank row gone, the track's own patch listed, a patch
   chosen and a removed device shown as not installed; the MIDI device manager installing a GM device with its bank,
@@ -97,4 +111,6 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   external installs, settings edits and removals while preserving selection, closing and reopening, interleaved folders
   shown once with all their patches, and Enable Edit creating, renaming and removing banks, folders and presets, editing
   program, optional bank and folder, escaping names, Backspace removal, adding a preset range from a template, and
-  refusing invalid numbers or an overflowing range without changing settings.
+  refusing invalid numbers or an overflowing range without changing settings; Export Setup writing every device into the
+  file chosen and Import Setup offering the file's devices, the installed ones unchecked, installing the checked ones
+  and showing why a taken name installs none.

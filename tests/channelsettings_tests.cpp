@@ -258,6 +258,18 @@ TEST_CASE("link groups link the equalizers, the dynamics and the sends", "[unit]
 	// linked false changes only the channel.
 	run(client, "channel.set", {{"channel", a}, {"eq", {{"bypass", true}}}, {"linked", false}});
 	CHECK(channelJson(client, b).at("eq").at("bypass") == false);
+
+	// A MIDI or VCA channel in the group has no equalizers or dynamics, so it keeps its own and hears of no change.
+	const ObjectId midi = add(client, "midi");
+	const ObjectId vca = add(client, "vca");
+	run(client, "linkGroup.set", {{"group", group.at("id")}, {"channels", {a, b, midi, vca}}});
+	const Json midiBefore = channelJson(client, midi);
+	const Json vcaBefore = channelJson(client, vca);
+	run(client, "channel.set",
+		{{"channel", a}, {"eq", {{"bands", {{{"band", 2}, {"gain", 4.0}}}}}}, {"strip", {{"gate", {{"on", false}}}}}});
+	CHECK(channelJson(client, b).at("eq").at("bands").at(1).at("gain") == 4.0);
+	CHECK(channelJson(client, midi) == midiBefore);
+	CHECK(channelJson(client, vca) == vcaBefore);
 }
 
 namespace

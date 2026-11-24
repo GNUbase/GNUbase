@@ -15,6 +15,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -169,6 +171,82 @@ TEST_CASE("the MIDI device manager installs, shows and removes MIDI devices", "[
 	click(app, "#remove-device");
 	REQUIRE(app.waitUntil([&] { return !devices(app).contains("My Synth"); }));
 	CHECK(devices(app).contains("Sound Module"));
+	click(app, "#close");
+	REQUIRE(app.waitUntil([&] { return elements(app, "#midi-devices").empty(); }));
+}
+
+TEST_CASE("the MIDI device manager exports its devices into a setup file and imports those chosen from it", "[ui]")
+{
+	// Export Setup and Import Setup, reference manual pp. 1110, 1115.
+	test::UiApp app{{900, 640}};
+	app.call("midiDevice.install", {{"name", "Sound Module"}, {"template", "gm"}});
+	app.call("midiDevice.install", {{"name", "My Synth"}});
+	app.keys().run("window.midiDeviceManager", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return elements(app, "#installed-devices listitem").size() == 2; }));
+	const auto answer = [&](const std::filesystem::path& file)
+	{
+		REQUIRE(app.waitUntil([&] { return app.shell().fileDialogs().size() == 1; }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	};
+	const auto message = [&](const std::string& selector)
+	{
+		const Json found = elements(app, selector);
+		return found.empty() ? std::string() : found[0].value("text", std::string());
+	};
+
+	// Export Setup: every installed device, into the file chosen, with the extension the user left out.
+	const test::TempDir dir;
+	click(app, "#export-setup");
+	answer(dir.path() / "Studio");
+	const std::filesystem::path file = dir.path() / "Studio.xml";
+	REQUIRE(app.waitUntil([&] { return std::filesystem::exists(file); }));
+	CHECK(app.call("midiDevice.readSetup", {{"path", file.u8string()}}).at("devices").size() == 2);
+
+	// Import Setup: the file's devices, checked unless installed; OK installs the checked ones and closes.
+	app.call("midiDevice.remove", {{"name", "My Synth"}});
+	REQUIRE(app.waitUntil([&] { return elements(app, "#installed-devices listitem").size() == 1; }));
+	const auto import = [&]
+	{
+		click(app, "#import-setup");
+		answer(file);
+		REQUIRE(app.waitUntil([&] { return elements(app, "#import-devices input").size() == 2; }));
+	};
+	import();
+	CHECK(elements(app, "#import-devices label")[0].at("text") == "My Synth");
+	CHECK(elements(app, "#import-devices input[checked]").size() == 1);
+	click(app, "#import-devices-ok");
+	REQUIRE(app.waitUntil([&] { return devices(app).contains("My Synth"); }));
+	CHECK(devices(app).size() == 2);
+	REQUIRE(app.waitUntil([&] { return elements(app, "#import-midi-devices").empty(); }));
+	REQUIRE(app.waitUntil([&] { return elements(app, "#installed-devices listitem").size() == 2; }));
+
+	// A checked name that is taken installs none, and the dialog says why.
+	app.call("midiDevice.remove", {{"name", "My Synth"}});
+	import();
+	click(app, "#import-devices input[device=\"2\"]");
+	REQUIRE(app.waitUntil([&] { return elements(app, "#import-devices input[checked]").size() == 2; }));
+	click(app, "#import-devices-ok");
+	REQUIRE(app.waitUntil([&] { return message("#import-devices-message").find("already") != std::string::npos; }));
+	CHECK(!devices(app).contains("My Synth"));
+	click(app, "#import-midi-devices button[result=cancel]");
+	REQUIRE(app.waitUntil([&] { return elements(app, "#import-midi-devices").empty(); }));
+
+	// A file that isn't a setup lists no devices, and the dialog says why.
+	const std::filesystem::path notSetup = dir.path() / "Notes.txt";
+	std::ofstream(notSetup, std::ios::binary) << "not a setup";
+	click(app, "#import-setup");
+	answer(notSetup);
+	REQUIRE(app.waitUntil(
+		[&] { return message("#import-devices-message").find("isn't a MIDI device setup") != std::string::npos; }));
+	CHECK(elements(app, "#import-devices input").empty());
+	click(app, "#import-midi-devices button[result=cancel]");
+	REQUIRE(app.waitUntil([&] { return elements(app, "#import-midi-devices").empty(); }));
+
+	// Export Setup into a folder that doesn't exist writes nothing, and the manager says why.
+	click(app, "#export-setup");
+	answer(dir.path() / "Missing" / "Studio.xml");
+	REQUIRE(app.waitUntil([&] { return message("#midi-devices-message").find("can't write") != std::string::npos; }));
+	CHECK(!std::filesystem::exists(dir.path() / "Missing"));
 	click(app, "#close");
 	REQUIRE(app.waitUntil([&] { return elements(app, "#midi-devices").empty(); }));
 }

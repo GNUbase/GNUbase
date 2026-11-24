@@ -2,7 +2,8 @@
 // The main menu bar (#392, ui/mainmenu.h): the project window's menus run engine and UI commands as keys do, show
 // their keys and are disabled while their command can't run. The tests click through them with ui::Automation, as
 // MCP's ui_click does. Items with a command that doesn't exist or parameters it doesn't take are refused (#446), and
-// the transport windows whose controls are refused close again (#669).
+// the transport windows whose controls are refused close again (#669). The mixer and editor windows have reduced menus,
+// and Show Menu Bar is in a window's title bar context menu on Windows (#444).
 #include "engine/engine.h"
 #include "testutils/fakeui.h"
 #include "testutils/testutils.h"
@@ -13,6 +14,7 @@
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
 #include "ui/rmlui.h"
+#include "ui/sdlwindowsystem.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -20,6 +22,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/SystemInterface.h>
+#include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -32,6 +35,14 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#include <array>
+#endif
 
 using namespace gnubase;
 using Catch::Matchers::ContainsSubstring;
@@ -643,6 +654,114 @@ TEST_CASE("the menu bar shows and hides like the project window's strips, and Fi
 	click(app, "#menu-bar button[menu=file-menu]");
 	click(app, "menuitem[command=\"file.quit\"]");
 	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
+#ifdef _WIN32
+namespace
+{
+	HWND hwndOf(ui::WindowId window)
+	{
+		return static_cast<HWND>(SDL_GetPointerProperty(SDL_GetWindowProperties(ui::SdlWindowSystem::sdlWindow(window)),
+			SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+	}
+
+	// The id of Show Menu Bar in the window's system menu, the context menu of its title bar; 0 without it.
+	UINT showMenuBar(ui::WindowId window)
+	{
+		HMENU menu = GetSystemMenu(hwndOf(window), FALSE);
+		for (int i = 0; i < GetMenuItemCount(menu); ++i)
+		{
+			std::array<wchar_t, 64> text{};
+			GetMenuStringW(menu, static_cast<UINT>(i), text.data(), static_cast<int>(text.size()), MF_BYPOSITION);
+			if (std::wstring(text.data()) == L"Show Menu Bar")
+				return GetMenuItemID(menu, i);
+		}
+		return 0;
+	}
+
+	bool menuBarChecked(ui::WindowId window)
+	{
+		return (GetMenuState(GetSystemMenu(hwndOf(window), FALSE), showMenuBar(window), MF_BYCOMMAND) & MF_CHECKED) !=
+			0;
+	}
+}
+#endif
+
+TEST_CASE("the mixer and editor windows have reduced menus whose menu bars show and hide (#444)", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const uint64_t track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t part = app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", 192000}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+	const auto shownIn = [&app](ui::WindowId window, const std::string& selector)
+	{
+		const Json found = app.ui().dom(window, selector, 0).at("elements");
+		return found.size() == 1 && found[0].at("visible").get<bool>();
+	};
+	const auto clickIn = [&app](ui::WindowId window, const std::string& selector)
+	{
+		app.ui().click(window, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	// Show Menu Bar in the window's title bar context menu, picked as the user would; elsewhere window.menuBar, which
+	// it runs.
+	const auto toggle = [&app](ui::WindowId window)
+	{
+#ifdef _WIN32
+		REQUIRE(showMenuBar(window) != 0);
+		SendMessageW(hwndOf(window), WM_SYSCOMMAND, showMenuBar(window), 0);
+		app.shell().step(std::chrono::milliseconds(0));
+#else
+		app.keys().run("window.menuBar", Json::object(), *app.shell().find(window), nullptr);
+#endif
+	};
+	// The menu bar, hidden at first, shows from the title bar's context menu, hides and shows again; Edit > Undo takes
+	// back the track added last.
+	const auto check = [&](ui::WindowId window)
+	{
+		REQUIRE(app.waitUntil([&] { return !app.ui().dom(window, "#menu-bar", 0).at("elements").empty(); }));
+		CHECK(!shownIn(window, "#menu-bar"));
+		toggle(window);
+		REQUIRE(app.waitUntil([&] { return shownIn(window, "#menu-bar"); }));
+#ifdef _WIN32
+		CHECK(menuBarChecked(window));
+#endif
+		toggle(window);
+		REQUIRE(app.waitUntil([&] { return !shownIn(window, "#menu-bar"); }));
+#ifdef _WIN32
+		CHECK(!menuBarChecked(window));
+#endif
+		toggle(window);
+		REQUIRE(app.waitUntil([&] { return shownIn(window, "#menu-bar"); }));
+		app.call("track.add", {{"type", "audio"}});
+		REQUIRE(app.waitUntil([&] { return app.call("project.get").at("tracks").size() == 2; }));
+		clickIn(window, "#menu-bar button[menu=edit-menu]");
+		REQUIRE(shownIn(window, "#edit-menu"));
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				return app.ui().dom(window, "menuitem[command=\"history.undo\"][disabled]", 0).at("elements").empty();
+			}));
+		clickIn(window, "menuitem[command=\"history.undo\"]");
+		REQUIRE(app.waitUntil([&] { return app.call("project.get").at("tracks").size() == 1; }));
+	};
+
+	app.keys().run("window.mixer", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.appUi().mixer(1) != nullptr; }));
+	const ui::WindowId mixer = app.appUi().mixerWindow(1);
+	check(mixer);
+	// The mixer window's Set up Window Layout pane has Menu Bar too (reference manual p. 439).
+	clickIn(mixer, "#mixer-layout");
+	clickIn(mixer, "button[toggle=menuBar]");
+	REQUIRE(app.waitUntil([&] { return !shownIn(mixer, "#menu-bar"); }));
+	CHECK(shownIn(app.main().id(), "#menu-bar")); // each window has its own
+
+	app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part})}});
+	REQUIRE(app.waitUntil([&app] { return app.appUi().editorWindow() != nullptr; }));
+	check(app.appUi().editorWindowId());
 }
 
 TEST_CASE("the main menu refuses items with a command it doesn't know or parameters the command doesn't take (#446)",

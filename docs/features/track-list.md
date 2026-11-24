@@ -233,7 +233,8 @@ sends engine commands, so whatever another client changes shows at once.
   it changed, so clients never hear of a passing activation (#983).
 - **Group Track and Effect Track to Selected Tracks** (pp. 546, 554): the context menu's commands
   `track.addGroupToSelected` and `track.addEffectToSelected` open the add track dialog for a group or effect track
-  that the selected tracks play or send into ([add-track.md](add-track.md), [routing.md](routing.md)).
+  that the selected tracks play or send into ([add-track.md](add-track.md), [routing.md](routing.md)), and VCA Track to
+  Selected Tracks (p. 517), `track.addVcaToSelected`, for a VCA track that controls them ([link-groups.md](link-groups.md)).
   Remove Selected Tracks asks first when a track it removes holds something (`resources/ui/remove-tracks.rml`): the
   list decides from its copy of the project, by content alone, so a track with events, parts, markers or automation,
   or a folder with such a track inside, warns, whatever plays into it. Remove removes them, Cancel or Escape keeps

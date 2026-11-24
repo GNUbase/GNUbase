@@ -55,6 +55,7 @@ namespace gnubase::engine
 			bool dither = false;
 			std::optional<double> normalize; // the peak in dBFS
 			bool overwrite = false;
+			std::optional<BroadcastInfo> broadcast;
 		};
 
 		struct PreparedMixdown
@@ -219,6 +220,13 @@ namespace gnubase::engine
 				require(*result.normalize >= -60.0 && *result.normalize <= 0.0, "normalize must be from -60 to 0 dB");
 			}
 			result.overwrite = parameters.value("conflicts", std::string("unique")) == "overwrite";
+			if (const auto chunk = parameters.find("broadcastWave"); chunk != parameters.end())
+			{
+				require(result.format == AudioFormat::Wav, "a Broadcast Wave chunk goes into WAV files only");
+				result.broadcast =
+					broadcastNow(chunk->value("description", std::string()), chunk->value("author", std::string()),
+						chunk->value("reference", std::string()), chunk->value("timeReference", uint64_t{0}));
+			}
 			return result;
 		}
 
@@ -281,6 +289,7 @@ namespace gnubase::engine
 			options.sampleFormat = format.sampleFormat;
 			options.sampleRate = format.sampleRate;
 			options.channels = target.channels;
+			options.broadcast = format.broadcast;
 			target.ready =
 				createFreeFile(target.path.parent_path(), fs::u8path(target.path.filename().u8string() + ".writing"));
 			const std::unique_ptr<AudioFileWriter> writer = AudioFileWriter::create(target.ready.u8string(), options);
@@ -615,9 +624,19 @@ namespace gnubase::engine
 			"the device runs at " + std::to_string(std::lround(m_device->format().sampleRate)) +
 				" Hz, not at the project sample rate of " + std::to_string(std::lround(snapshot.sampleRate)) + " Hz");
 		const FileFormat format = formatFrom(parameters, snapshot.sampleRate);
-		(void)format;
 		Json request = parameters;
 		request["start"] = parameters.value("start", m_transport.settings().left);
+		if (const auto chunk = request.find("broadcastWave"); chunk != request.end())
+		{
+			// The preferences' strings by default (reference manual p. 1615), and where the file starts, in samples
+			// since midnight at the file's rate.
+			chunk->emplace("description", m_settings.get(settings::g_audioBroadcastDescription));
+			chunk->emplace("author", m_settings.get(settings::g_audioBroadcastAuthor));
+			chunk->emplace("reference", m_settings.get(settings::g_audioBroadcastReference));
+			const double seconds =
+				(request.at("start").get<double>() / snapshot.sampleRate) + project.value("startTime", 0.0);
+			(*chunk)["timeReference"] = std::llround(std::max(seconds, 0.0) * format.sampleRate);
+		}
 		request["end"] = parameters.value("end", m_transport.settings().right);
 		require(request.at("end").get<int64_t>() > request.at("start").get<int64_t>(),
 			"the range is empty: end must be after start");
@@ -734,7 +753,11 @@ namespace gnubase::engine
 				"float32 or float64; AIFF takes the integer ones, FLAC int16 and int24. sampleRate: the file's, "
 				"converted from the project's (the default). dither: TPDF dither for int16 and int24. normalize: the "
 				"file's peak in dBFS (-60 to 0). conflicts: unique (the default) adds a number to a name that is "
-				"taken, overwrite replaces the file. point renders channels from inside their strip instead of after "
+				"taken, overwrite replaces the file. broadcastWave gives WAV files a Broadcast Wave chunk: its "
+				"description, author and reference default to the preferences audio.broadcastDescription, "
+				"audio.broadcastAuthor and audio.broadcastReference and are cut to 256, 32 and 32 bytes; it has the "
+				"date and time of the export and as its time reference where the file starts plus the project's start "
+				"time. point renders channels from inside their strip instead of after "
 				"the fader and panner (output, the default), in the channel's format, as render in place and freeze "
 				"do: source is what plays on the channel, before its pre section and plugin slots; inserts is after "
 				"the slots, before the strip's other sections; strip is after those, before the fader. tail renders "
@@ -755,6 +778,9 @@ namespace gnubase::engine
 					"sampleFormat": {"type": "string", "enum": ["int16", "int24", "int32", "float32", "float64"]},
 					"sampleRate": {"type": "number"}, "dither": {"type": "boolean"}, "normalize": {"type": "number"},
 					"conflicts": {"type": "string", "enum": ["unique", "overwrite"]},
+					"broadcastWave": {"type": "object", "additionalProperties": false, "properties": {
+						"description": {"type": "string"}, "author": {"type": "string"},
+						"reference": {"type": "string"}}},
 											"point": {"type": "string", "enum": ["output", "strip", "inserts", "source"]},
 											"tail": {"type": "number", "minimum": 0, "maximum": 60}}})"),
 				{{"type", "object"}, {"properties", {{"job", Jobs::schema()}}}, {"required", {"job"}}}, false},

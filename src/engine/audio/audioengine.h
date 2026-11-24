@@ -106,6 +106,12 @@ namespace gnubase::engine
 		void setStopAfterPunchOut(bool stop);
 		// The user setting meter.resetOnStart.
 		void setMeterResetOnStart(bool reset) { m_meterResetOnStart.store(reset, std::memory_order_relaxed); }
+		// The user settings meter.measureLoudness and meter.holdOnStop.
+		void setMeterLoudness(bool measure, bool holdOnStop)
+		{
+			m_meterMeasureLoudness.store(measure, std::memory_order_relaxed);
+			m_meterHoldOnStop.store(holdOnStop, std::memory_order_relaxed);
+		}
 		// The user settings meter.rmsResolution and meter.rmsAes17, for the master meter.
 		void setMeterRms(int milliseconds, bool aes17) { m_mainMeter.setRms(milliseconds, aes17); }
 		// The one reader that reads all meters once a frame (Engine::readMeters); not the audio thread.
@@ -571,6 +577,8 @@ namespace gnubase::engine
 		LoudnessMeter m_loudness;
 		bool m_meterPlaying = false; // audio thread: whether the last block played, for meter.resetOnStart
 		std::atomic<bool> m_meterResetOnStart{false};
+		std::atomic<bool> m_meterMeasureLoudness{true};
+		std::atomic<bool> m_meterHoldOnStop{true};
 		rt::TripleBuffer<PerformanceData> m_performance;
 		std::atomic<bool> m_resetPerformance{false};
 		uint64_t m_deviceOverloadsBefore = 0; // the device's overloads when the measurement started

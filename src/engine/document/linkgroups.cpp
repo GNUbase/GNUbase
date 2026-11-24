@@ -147,17 +147,6 @@ namespace gnubase::engine
 					return name;
 		}
 
-		Json addGroup(Project& project, CommandContext& context)
-		{
-			LinkGroup group;
-			group.id = project.newId();
-			group.name = defaultName(project);
-			change(project, group, context.parameters(), context);
-			Json result = {{"group", toJson(project.linkGroups.at(group.id))}};
-			context.emit("linkGroup.added", result);
-			return result;
-		}
-
 		LinkGroup& findGroup(Project& project, const Json& parameters)
 		{
 			const auto id = parameters.at("group").get<ObjectId>();
@@ -182,6 +171,17 @@ namespace gnubase::engine
 			context.emit("linkGroup.removed", {{"group", id}});
 			return Json::object();
 		}
+	}
+
+	Json addLinkGroup(Project& project, CommandContext& context)
+	{
+		LinkGroup group;
+		group.id = project.newId();
+		group.name = defaultName(project);
+		change(project, group, context.parameters(), context);
+		Json result = {{"group", toJson(project.linkGroups.at(group.id))}};
+		context.emit("linkGroup.added", result);
+		return result;
 	}
 
 	void removeFromLinkGroups(Project& project, const std::vector<ObjectId>& gone, CommandContext& context)
@@ -251,7 +251,7 @@ namespace gnubase::engine
 				"with a VCA fader the sends. " +
 					settings + " Emits linkGroup.added.",
 				schema(true), groupResult, false},
-			"Link channels", addGroup);
+			"Link channels", addLinkGroup);
 		model.addEdit(engine,
 			{"linkGroup.set", 1,
 				"Changes a link group: what isn't given stays. " + settings + " Emits linkGroup.changed.",

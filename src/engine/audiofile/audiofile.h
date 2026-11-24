@@ -60,6 +60,15 @@ namespace gnubase::engine
 		uint64_t timeReference = 0;      // the first sample's position, in samples since midnight
 	};
 
+	// The text that Wave and AIFF files carry (reference manual p. 1615): in a Wave file's LIST INFO chunk as ICMT,
+	// IART and ISRC, in an AIFF file as its NAME, AUTH and ANNO chunks. Empty strings are left out.
+	struct FileText
+	{
+		std::string description;
+		std::string author;
+		std::string reference;
+	};
+
 	struct AudioFileInfo
 	{
 		AudioFormat format = AudioFormat::Wav;
@@ -75,6 +84,14 @@ namespace gnubase::engine
 	{
 	public:
 		using std::runtime_error::runtime_error;
+	};
+
+	// A write that would make the file larger than its format can address: AIFF and, with Rf64::Never, WAV at 4 GB.
+	// The file stays as it was before the write.
+	class AudioFileFull : public AudioFileError
+	{
+	public:
+		using AudioFileError::AudioFileError;
 	};
 
 	// Reads an audio file as 32-bit float sample frames with the channels interleaved.
@@ -105,11 +122,13 @@ namespace gnubase::engine
 		AudioFileInfo m_info;
 	};
 
-	// WAV: RF64 when the file outgrows the 4 GB that plain WAV can address, or always.
+	// WAV: RF64 when the file outgrows the 4 GB that plain WAV can address, always, or never: then a write that would
+	// pass 4 GB throws AudioFileFull.
 	enum class Rf64 : uint8_t
 	{
 		Auto,
 		Always,
+		Never,
 	};
 
 	struct WriteOptions
@@ -120,6 +139,7 @@ namespace gnubase::engine
 		int channels = 2;
 		Rf64 rf64 = Rf64::Auto;                 // WAV only
 		std::optional<BroadcastInfo> broadcast; // WAV only
+		std::optional<FileText> text;           // WAV and AIFF
 	};
 
 	// Writes an audio file from 32-bit float sample frames with the channels interleaved. Integer formats round and

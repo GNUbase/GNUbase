@@ -60,6 +60,21 @@ project window.
   submenus are menus inside items, marked by an arrow. With a menu open, the mouse over another title opens that
   title's menu instead; Left and Right move between the menus, and into and out of submenus; Alt on its own opens the
   File menu on Windows and Linux, and closes it again.
+- **Show Menu Bar in the title bar's context menu** (#444). On Windows the OS draws a window's title bar, and its
+  context menu is the window's system menu: every window with a menu bar gets Show Menu Bar there, checked while its
+  menu bar shows (`WindowSystem::setMenuBarShown`, which the docking system calls as it applies a window's layout).
+  Picking it sends the shell `MenuBarToggled` (`Shell::onMenuBarToggled`), and `app::AppUi` runs `window.menuBar` in
+  that window. The SDL window system adds the item to the system menu and subclasses the window's procedure for it,
+  since Windows sends the item's `WM_SYSCOMMAND` to the window instead of posting it. Other platforms have no such
+  item.
+- **Other windows' reduced menus** (#444). Windows other than the project window have their own menu bars with fewer
+  menus, in their documents, each a `strip="menuBar"` that `ui.layout` keeps per window, and `app::AppUi` attaches a
+  `ui::MainMenu` to each when it opens the window. They are hidden until the user shows them, so that they take no
+  room from the faders and the note display. A mixer window (`resources/ui/mixer.rml`) has File (Save, Save As...,
+  Quit), Edit (Undo, Redo, Key Commands...), Studio (Mixer to Mixer 4, On-Screen Keyboard, Studio Setup...) and Window
+  (Windows...) (p. 55). Its Set up Window Layout pane has Menu Bar too, GNUbase's own addition for platforms whose
+  title bar has no Show Menu Bar item. The editor window (`resources/ui/editor.rml`) has File, Edit (Undo, Redo, Cut,
+  Copy, Paste, Delete, Select All, Select None, Quantize) and Window.
 
 ## Menus
 
@@ -81,9 +96,7 @@ features they run. Quitting waits for the shell's next step, since it closes eve
 
 ## Not yet
 
-The reduced menus of other windows (the mixer and the editors, when they open in windows of their own); Show Menu Bar
-in the context menu of a window's title bar on Windows, which the OS draws (it is in Set up Window Layout for now); the
-system menu bar on macOS, where the window shows its own menu bar until then (and Alt doesn't open it).
+A reduced menu for the sample editor's window, which isn't a docking window yet; the system menu bar on macOS, where each window shows its own menu bar until then (and Alt doesn't open it).
 
 ## Checks
 
@@ -103,6 +116,10 @@ the File menu's Import item shows its arrow, the mouse moves from File to Edit, 
 and Alt opens and closes the File menu (mouse moves and key presses, as MCP's `ui_move` and `ui_key` do). A menu with an
 item whose command doesn't exist or is empty, whose parameters an engine command doesn't take or has of the wrong type,
 that gives a UI command parameters, or whose parameters aren't a JSON object throws and leaves the document as it was;
+a mixer window's and the editor window's menu bars, hidden at first, show, hide and show again from Show Menu Bar in
+their title bar's context menu (on Windows, picked by sending the system menu's `WM_SYSCOMMAND` to the window, which also checks the item's check
+mark; `window.menuBar` elsewhere), Edit > Undo in each takes back the track added last, and the mixer's Set up Window
+Layout pane hides its menu bar while the project window's stays;
 the project window, the transport panel and the time display window open, and every `command` in the documents and
 fragments of `resources/ui` passes `KeyCommands::check`, as does every command their buttons run from Lua with
 `gnubase.ui.command`.

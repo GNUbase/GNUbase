@@ -414,32 +414,6 @@ namespace gnubase::ui
 			return type == "audio" || type == "instrument" || type == "midi";
 		}
 
-		// Where the channel of a track of the type can play: output busses, group and effect channels whose audio
-		// doesn't come back to it (routesTo), or for MIDI tracks the instrument channels, as in the add track dialog;
-		// and where an audio track records from.
-		Options outputs(const Json& project, const std::string& type, uint64_t channel)
-		{
-			Options options;
-			if (type == "midi")
-			{
-				options.emplace_back("0", "Not Connected");
-				for (const Json& track : project.at("tracks"))
-					if (track.at("type") == "instrument")
-						options.emplace_back(std::to_string(track.at("channel").get<uint64_t>()), track.at("name"));
-				return options;
-			}
-			options.emplace_back("0", "No Bus");
-			for (const Json& bus : project.at("busses"))
-				if (bus.at("direction") == "output")
-					options.emplace_back(std::to_string(bus.at("id").get<uint64_t>()), bus.at("name"));
-			for (const Json& track : project.at("tracks"))
-				if ((track.at("type") == "group" || track.at("type") == "effect" || track.at("type") == "folder") &&
-					track.at("channel") != 0 && track.at("channel") != channel &&
-					!routesTo(project, track.at("channel").get<uint64_t>(), channel))
-					options.emplace_back(std::to_string(track.at("channel").get<uint64_t>()), track.at("name"));
-			return options;
-		}
-
 		// A MIDI track's patch as the program selector's value: "off", or the program and bank, "5:300" ("5:" without a
 		// bank).
 		std::string patchValue(const Json& program, const Json& bank)
@@ -494,15 +468,6 @@ namespace gnubase::ui
 				return "off";
 			const Json transformer = channel.value("inputTransformer", Json::object());
 			return transformer.value("mode", std::string("off"));
-		}
-
-		Options inputs(const Json& project)
-		{
-			Options options{{"0", "No Bus"}};
-			for (const Json& bus : project.at("busses"))
-				if (bus.at("direction") == "input")
-					options.emplace_back(std::to_string(bus.at("id").get<uint64_t>()), bus.at("name"));
-			return options;
 		}
 
 		// What a field's gesture changes, as EngineBinding::sendStep names it: the inspector's step owner, then e.g.
@@ -658,6 +623,8 @@ namespace gnubase::ui
 		m_root->RemoveEventListener(Rml::EventId::Keydown, this, true);
 		for (const Rml::EventId id : {Rml::EventId::Dragstart, Rml::EventId::Drag, Rml::EventId::Dragend})
 			m_root->RemoveEventListener(id, this);
+		if (Rml::ElementDocument* document = m_root->GetOwnerDocument())
+			document->RemoveEventListener(Rml::EventId::Mouseup, this);
 	}
 
 	void Inspector::update(const std::vector<uint64_t>& tracks, const Json& project, uint64_t loads, uint64_t read)
@@ -1063,10 +1030,10 @@ namespace gnubase::ui
 					*pan, "value", fieldValue(key("pan"), widgets::format(channel->at("pan").get<float>() * 100.0F)));
 			const auto id = channel->at("id").get<uint64_t>();
 			if (Rml::Element* output = element("select[control=output]"))
-				widgets::fill(
-					*output, outputs(*m_project, type, id), std::to_string(channel->at("output").get<uint64_t>()));
+				widgets::fill(*output, outputChoices(*m_project, type, id),
+					std::to_string(channel->at("output").get<uint64_t>()));
 			if (Rml::Element* input = element("select[control=input]"); input != nullptr && type == "audio")
-				widgets::fill(*input, inputs(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
+				widgets::fill(*input, inputChoices(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
 			// A MIDI or instrument track's MIDI input: all MIDI inputs, the chord pads (reference manual p. 1367) or
 			// none.
 			if (Rml::Element* input = element("select[control=input]");
@@ -1436,6 +1403,9 @@ namespace gnubase::ui
 			const char* const selector = ".inspector-arranger-steps .arranger-row";
 			return element.Matches(selector) ? &element : element.Closest(selector);
 		}
+
+		// An Arranger Events row.
+		constexpr const char* g_eventRow = ".inspector-arranger-events .arranger-row";
 	}
 
 	void Inspector::ProcessEvent(Rml::Event& event)
@@ -1447,6 +1417,24 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Mousedown:
 			m_soloHold.pressed(target);
+			// A press on a step or an arranger event, not on its buttons or repeat mode, may drag it into the chain
+			// list: the document tells of the release wherever it is.
+			m_stepPressed.reset();
+			m_eventPressed.reset();
+			if (event.GetParameter<int>("button", 0) == 0 && target->GetTagName() != "button" &&
+				target->GetTagName() != "select" && target->Closest("select") == nullptr)
+			{
+				if (const Rml::Element* row = stepRow(*target))
+					m_stepPressed = row->GetAttribute<int>("step", -1);
+				else if (const Rml::Element* item = target->Matches(g_eventRow) ? target : target->Closest(g_eventRow))
+					m_eventPressed = std::strtoull(item->GetAttribute<Rml::String>("event", "0").c_str(), nullptr, 10);
+				if (Rml::ElementDocument* document = m_root->GetOwnerDocument();
+					document != nullptr && (m_stepPressed || m_eventPressed))
+				{
+					document->RemoveEventListener(Rml::EventId::Mouseup, this); // a press without its release
+					document->AddEventListener(Rml::EventId::Mouseup, this);
+				}
+			}
 			// A right click in the Current Arranger Chain list touches the step it is on, for Remove Touched.
 			if (event.GetParameter<int>("button", 0) == 1)
 			{
@@ -1526,9 +1514,23 @@ namespace gnubase::ui
 					? target
 					: target->Closest(".inspector-retrospective");
 				button != nullptr && m_retrospectiveMenu)
+			{
+				// Insert as Cycle Recording only for input from two or more cycle laps (p. 355, #2067).
+				if (Rml::Element* item = m_retrospectiveMenu->QuerySelector(".retrospective-cycle"); item != nullptr)
+				{
+					item->SetAttribute("disabled", "");
+					if (m_track != 0)
+						m_binding.send("midi.getRetrospective", {{"track", m_track}},
+							[item = item->GetObserverPtr()](const engine::Result& result)
+							{
+								if (item && result.ok() && result.value.at("cycleLaps").get<size_t>() > 1)
+									item->RemoveAttribute("disabled");
+							});
+				}
 				openMenu(*m_retrospectiveMenu.get(),
 					{button->GetAbsoluteLeft(), button->GetAbsoluteTop() + button->GetOffsetHeight()});
-			if (m_track != 0 &&
+			}
+			if (m_track != 0 && !target->HasAttribute("disabled") &&
 				(target->IsClassSet("retrospective-linear") || target->IsClassSet("retrospective-cycle")))
 				m_binding.send("midi.insertRetrospective",
 					{{"track", m_track}, {"cycle", target->IsClassSet("retrospective-cycle")}}, whenRefused());
@@ -1592,6 +1594,11 @@ namespace gnubase::ui
 					break;
 				}
 			break;
+		case Rml::EventId::Mouseup:
+			if (Rml::ElementDocument* document = m_root->GetOwnerDocument())
+				document->RemoveEventListener(Rml::EventId::Mouseup, this);
+			dropOnChain(event);
+			break;
 		case Rml::EventId::Change:
 			if (!m_showing && !m_dropping && target->HasAttribute("control"))
 				change(*target, event);
@@ -1616,6 +1623,46 @@ namespace gnubase::ui
 		default:
 			break;
 		}
+	}
+
+	void Inspector::dropOnChain(const Rml::Event& event)
+	{
+		const std::optional<int> step = std::exchange(m_stepPressed, std::nullopt);
+		const std::optional<uint64_t> added = std::exchange(m_eventPressed, std::nullopt);
+		Rml::Element* target = event.GetTargetElement();
+		if (target == nullptr ||
+			(!target->IsClassSet("inspector-arranger-steps") &&
+				target->Closest(".inspector-arranger-steps") == nullptr))
+			return;
+		// On a step's upper half before it, on its lower half after it; beside the steps after the last one.
+		const int size = static_cast<int>(m_arrangerChain.value("steps", Json::array()).size());
+		int to = size;
+		if (Rml::Element* row = stepRow(*target))
+		{
+			to = row->GetAttribute<int>("step", 0);
+			if (step == to) // a click
+				return;
+			if (event.GetParameter<float>("mouse_y", 0.0F) >= row->GetAbsoluteTop() + (row->GetOffsetHeight() / 2))
+				++to;
+		}
+		Json parameters = {{"chain", m_arrangerChain.value("chain", Json())}, {"to", to}};
+		if (step)
+		{
+			// The steps selected move together if the one dragged is one of them.
+			const bool selected =
+				std::find(m_selectedSteps.begin(), m_selectedSteps.end(), *step) != m_selectedSteps.end();
+			parameters["moveSteps"] = selected ? m_selectedSteps : std::vector<int>{*step};
+			parameters["copy"] = event.GetParameter<int>("alt_key", 0) != 0;
+		}
+		else if (added)
+		{
+			parameters["addEvents"] = {*added};
+		}
+		else
+		{
+			return;
+		}
+		m_binding.send("arranger.setChain", std::move(parameters), whenRefused());
 	}
 
 	void Inspector::showDivider(int gap)

@@ -9,7 +9,9 @@ equalizer and the strip's dynamics, and their controls in the mixer. The fader a
 - **Settings** are part of the channel (`Channel::sections`, `ChannelSections` in `src/engine/document/document.h`),
   in `project.get` as its `pre`, `eq` and `strip` objects, changed with `channel.set`: each object changes only what
   it has, an EQ band is picked by its `band` (1 to 4). Values out of range, slopes other than 6, 12, 24, 36 and 48 dB
-  per octave and band types a band can't have are refused; MIDI channels have no sections. Every change is an undo
+  per octave and band types a band can't have are refused; MIDI channels have no sections. `channel.set`'s parameter
+  schema has each section's fields with their types, ranges and choices (#636), so MCP clients can check a call and
+  find the fields without reading the description; the schema refuses unknown fields too. Every change is an undo
   step, copied by `track.duplicate` and saved in GNUbase's extra entry; files from before have every section off.
 - **Pre** (pp. 473–474): `gain` (-24 to +24 dB), `phase` (inverts the polarity), and a `lowCut` (20 Hz to 20 kHz) and
   a `highCut` (50 Hz to 20 kHz), each `on` with its `frequency` and `slope` (default 12 dB per octave).
@@ -79,13 +81,14 @@ The strip's other modules (tools: de-esser and envelope shaper; saturation), the
 maximizer and standard limiter, moving modules in the signal flow, side-chains, auto release and auto makeup, gain
 reduction and gate state LEDs, the EQ curve display and note names for frequencies, EQ and strip presets, choosing the
 combined panner in the pan control's context menu (it is `channel.set`'s `panner`), pre-fader and post-fader
-insert slots, the sections of input and output channels, the sections in the inspector, and routing. The channel
-settings window shows them for one channel ([channel-settings.md](channel-settings.md)). The sends are in
-[routing.md](routing.md). Mapping the equalizer onto DAWproject's `Equalizer` device comes with DAWproject devices.
+insert slots, the sections of input and output channels, and the sections in the inspector. The channel settings window
+shows them for one channel ([channel-settings.md](channel-settings.md)). The mixers' Routing section is in
+[mixer-window.md](mixer-window.md). The sends are in [routing.md](routing.md). Mapping the equalizer onto DAWproject's `Equalizer` device comes with DAWproject devices.
 
 ## Checks
 
-- `tests/channelstrip_tests.cpp`: `channel.set` changes, refuses, undoes, saves and loads the sections; a strip with
+- `tests/channelstrip_tests.cpp`: `channel.set` changes, refuses (through its schema too: out of range, wrong types,
+  unknown fields, an EQ band without its number), undoes, saves and loads the sections; a strip with
   everything off, and one whose EQ was on and went off, passes its audio bit-exactly; measured with `audio.analyze`,
   the pre gain, the phase (the negated input), the low and high cuts at their slopes, EQ bells, shelves and cuts and
   the EQ bypass, the gate's range, the compressor's reduction and makeup and the limiter's threshold change the output

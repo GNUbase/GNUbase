@@ -38,18 +38,19 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
   track (p. 198), the lowest one if several are, in its folder and in the order they were added, as `track.add`'s
   `parent` and `index`: the UI command passes it as the document attribute `below`. Tracks that stay at the top level
   (marker, tempo, signature, arranger, transpose and chord tracks) go below the selected track's top-level folder, and
-  tracks for the project's Group or FX folder into that folder. Without a selected track they go to the end of the
+  tracks for the project's Group, FX or VCA folder into that folder. Without a selected track they go to the end of the
   project. The dialog closes, unless Keep Dialog Open is checked: then it shows the page again, with the new group and
   instrument channels among the outputs, for adding more of another type, below the tracks it just added; tracks that
-  went into the project's Group or FX folder leave `below` where it was, so the next tracks go below the selection, not
+  went into the project's Group, FX or VCA folder leave `below` where it was, so the next tracks go below the selection, not
   into that folder. A track the engine refuses, such as an eleventh marker track, adds nothing, and the dialog stays
   open with the engine's message. Cancel and Escape close it.
 
-- **For selected tracks.** Group Track to Selected Tracks and Effect Track to Selected Tracks in the track list's
-  context menu open the dialog on the group or effect page with the document attributes `type` and `tracks` (the
+- **For selected tracks.** Group Track, Effect Track and VCA Track to Selected Tracks (p. 517) in the track list's
+  context menu open the dialog on the group, effect or VCA page with the document attributes `type` and `tracks` (the
   selected tracks' ids); Add Track then passes them as `track.add` `tracks`, so they play or send into the new track
-  ([routing.md](routing.md)). With a Count above 1 they go to the first new track only, for group and effect tracks
-  alike: each new group would take them from the one before, and each new effect track would take another send of
+  ([routing.md](routing.md)), or their channels form a new link group that the new VCA fader controls
+  ([link-groups.md](link-groups.md)). With a Count above 1 they go to the first new track only, for group and effect
+  tracks alike: each new group would take them from the one before, and each new effect track would take another send of
   every selected track. Keep Dialog Open's next Add Track adds tracks without them. Add Effect Track to Send, in the
   mixer's and the channel settings window's send destination lists ([routing.md](routing.md)), opens the effect page
   the same way, with the track and the send (`tracks`, `send` and `below` attributes): the new effect track goes
@@ -85,7 +86,8 @@ them).
 - **The tempo track** (`type` `tempo`, p. 162) has a page without settings: a project has one at most
   ([tempo-track.md](tempo-track.md)). So has **the signature track** (`type` `signature`, p. 163,
   [signature-track.md](signature-track.md)).
-- **VCA tracks** (`type` `vca`, p. 154) have the name and the count ([link-groups.md](link-groups.md)).
+- **VCA tracks** (`type` `vca`, p. 154) have Add to Project 'VCA' Folder (`projectFolder`), the name and the count
+  ([link-groups.md](link-groups.md)).
 
 ## Not yet
 
@@ -93,7 +95,7 @@ The track color (the default color until the color picker joins the dialog), the
 (the video track with its ticket; the arranger, transpose and chord tracks are there, once
 per project, [arranger.md](arranger.md), [transpose.md](transpose.md), [chord-track.md](chord-track.md)), an
 instrument or effect plugin chosen on the page (M05), MIDI inputs and MIDI 2.0 output groups, the event type
-(pattern events), the project's VCA folder, and track presets.
+(pattern events), and track presets.
 
 ## Checks
 
@@ -104,6 +106,7 @@ instrument or effect plugin chosen on the page (M05), MIDI inputs and MIDI 2.0 o
   through MCP, and the three MIDI tracks go with one undo; an eleventh marker track shows the engine's message and
   keeps the dialog open. Group and Effect Track to Selected Tracks route the selected tracks into the new track;
   Group Track to Selected Tracks with a Count of 2 into the first one only, and not again with Keep Dialog Open.
+  VCA Track to Selected Tracks links the selected tracks' channels to a new VCA fader in the project's VCA folder.
 - `tests/addtrack_tests.cpp` also adds tracks below a selected track in a folder with the dialog (in order, with
   Keep Dialog Open below those, and a marker track below the folder), with Keep Dialog Open below the selection
   after an effect track into the project's FX folder, and double-clicks in the track list and the
