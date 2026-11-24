@@ -4240,10 +4240,12 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.save", 1,
 				"Saves the project as a DAWproject file: as path, which is then the project's file (save as), or "
-				"without path to the project's file (save). Media files and frozen tracks' freeze files are copied "
-				"into it unless embedMedia is false; then the file refers to them where they are, relative to itself "
-				"if they are in its folder. One that is missing is referred to by its absolute path, so that the file "
-				"has no copy of it: the result lists them (missing). The file becomes the first of the recent "
+				"without path to the project's file (save). Media files, frozen tracks' freeze files and track "
+				"pictures are copied into it unless embedMedia is false; then the file refers to them where they are, "
+				"relative to itself if they are in its folder. A media or freeze file that is missing is referred to "
+				"by its absolute path, so that the file has no copy of it: the result lists them (missing). A missing "
+				"picture is referred to where it was (by its absolute path while embedding) and isn't listed in "
+				"missing. The file becomes the first of the recent "
 				"projects (project.recent). The files a project records, converts on import, renders, flattens and "
 				"freezes while it has no file go into one folder outside any project; the save after that copies "
 				"those still in it into the project's media and Freeze folders as a job, returned as job (null "
