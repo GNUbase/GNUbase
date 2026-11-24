@@ -565,6 +565,8 @@ namespace gnubase::engine
 			{
 				if (track.frozen)
 					use(track.frozen->path);
+				if (!track.picture.empty())
+					use(track.picture);
 			};
 			const auto useProject = [&](const Project& uses)
 			{

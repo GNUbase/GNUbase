@@ -481,9 +481,9 @@ TEST_CASE("mixer channels show notes and pictures, and a channel dragged onto an
 	image.height = 8;
 	image.pixels.assign(size_t{8} * 8 * 4, 200);
 	REQUIRE(ui::writePng(image, dir.path() / "guitar.png"));
-	app.call("track.set", {{"track", c.track}, {"picture", picture}});
+	const Json absolute = app.call("track.set", {{"track", c.track}, {"picture", picture}}).at("track").at("picture");
 	REQUIRE(app.waitUntil([&] { return elements(app, window, strip(c.channel) + " .mixer-picture img").size() == 1; }));
-	CHECK(element(app, window, strip(c.channel) + " .mixer-picture img").at("attributes").at("src") == picture);
+	CHECK(element(app, window, strip(c.channel) + " .mixer-picture img").at("attributes").at("src") == absolute);
 	app.call("track.set", {{"track", c.track}, {"picture", ""}});
 	REQUIRE(app.waitUntil([&] { return elements(app, window, strip(c.channel) + " .mixer-picture img").empty(); }));
 

@@ -8,6 +8,8 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -113,15 +115,17 @@ TEST_CASE("channels have notes and tracks a picture, as undo steps saved with th
 	const auto [track, channel] = f.track("audio");
 	CHECK(f.call("channel.set", {{"channel", channel}, {"notes", "Take 3 is the one"}}).at("channel").at("notes") ==
 		"Take 3 is the one");
+	// A picture's path is absolute, relative ones to the working folder, so the mixer finds it from anywhere.
+	const std::string picture = (std::filesystem::current_path() / "pictures" / "guitar.png").u8string();
 	CHECK(f.call("track.set", {{"track", track}, {"picture", "pictures/guitar.png"}}).at("track").at("picture") ==
-		"pictures/guitar.png");
+		picture);
 	f.call("history.undo");
 	CHECK(f.call("project.get").at("tracks").at(0).at("picture").get<std::string>().empty());
 	f.call("history.redo");
 
 	// A copy of the track has them too.
 	const Json copy = f.call("track.duplicate", {{"track", track}}).at("track");
-	CHECK(copy.at("picture") == "pictures/guitar.png");
+	CHECK(copy.at("picture") == picture);
 	const Json channels = f.call("project.get").at("channels");
 	CHECK(std::count_if(channels.begin(), channels.end(),
 			  [](const Json& item) { return item.value("notes", "") == "Take 3 is the one"; }) == 2);
@@ -131,7 +135,37 @@ TEST_CASE("channels have notes and tracks a picture, as undo steps saved with th
 	f.call("project.save", {{"path", file}});
 	f.call("project.load", {{"path", file}});
 	const Json project = f.call("project.get");
-	CHECK(project.at("tracks").at(0).at("picture") == "pictures/guitar.png");
+	CHECK(project.at("tracks").at(0).at("picture") == picture); // missing, so referred to where it was
 	for (const Json& item : project.at("channels"))
 		CHECK(item.at("notes") == "Take 3 is the one");
+}
+
+TEST_CASE("a track's picture goes with its project file", "[unit]")
+{
+	Fixture f;
+	const uint64_t track = f.track("audio").first;
+	const test::TempDir dir;
+	const std::filesystem::path picture = dir.path() / "guitar.png";
+	std::ofstream(picture, std::ios::binary) << "a picture";
+	f.call("track.set", {{"track", track}, {"picture", picture.u8string()}});
+	const auto loaded = [&f]
+	{ return std::filesystem::u8path(f.call("project.get").at("tracks").at(0).at("picture").get<std::string>()); };
+
+	// Saved into the file, as media files are: once the picture is gone, the load extracts it next to the file.
+	const std::filesystem::path file = dir.path() / "pictures.dawproject";
+	f.call("project.save", {{"path", file.u8string()}});
+	std::filesystem::remove(picture);
+	f.call("project.load", {{"path", file.u8string()}});
+	CHECK(loaded().parent_path() == dir.path() / "pictures media" / "pictures");
+	CHECK(test::readText(loaded()) == "a picture");
+	// Not unused: cleaning up the media folder keeps it.
+	CHECK(f.call("media.cleanup").at("files").empty());
+
+	// Without embedding, a picture in the file's folder is referred to relative to the file, so the folder can move.
+	f.call("project.save", {{"path", file.u8string()}, {"embedMedia", false}});
+	const test::TempDir moved;
+	std::filesystem::copy(dir.path(), moved.path(), std::filesystem::copy_options::recursive);
+	std::filesystem::remove_all(dir.path() / "pictures media");
+	f.call("project.load", {{"path", (moved.path() / "pictures.dawproject").u8string()}});
+	CHECK(test::readText(loaded()) == "a picture");
 }

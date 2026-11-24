@@ -1498,7 +1498,14 @@ namespace gnubase::engine
 				track.name = parameters.at("name").get<std::string>();
 			track.color = newColor;
 			track.timeFormat = parameters.value("timeFormat", track.timeFormat);
-			track.picture = parameters.value("picture", track.picture);
+			if (parameters.contains("picture"))
+			{
+				// Absolute, so that the mixer finds it wherever it looks from (saveDawProject keeps it with the file).
+				const std::string picture = parameters.at("picture").get<std::string>();
+				track.picture = picture.empty()
+					? picture
+					: std::filesystem::absolute(std::filesystem::u8path(picture)).lexically_normal().u8string();
+			}
 			if (parameters.contains("drumMap"))
 			{
 				track.drumMap = parameters.at("drumMap").get<ObjectId>();
@@ -4587,7 +4594,9 @@ namespace gnubase::engine
 				"(reference manual p. 274): in the project window, selecting an event, a part or a range on a track "
 				"inside it then selects those of its other tracks with the same start and end too. picture is an image "
 				"file (PNG, JPEG or SVG) that the mixer shows "
-				"on the track's channel, or empty for none. drumMap is the drum map (drumMap.add) a MIDI or instrument "
+				"on the track's channel, or empty for none; a relative path is taken from the working folder, and "
+				"project.save embeds the file (or, without embedMedia, refers to it), as it does media files. drumMap "
+				"is the drum map (drumMap.add) a MIDI or instrument "
 				"track's notes play through, or 0 for none; articulationMap its articulation map "
 				"(articulationMap.add), or 0 for none, whose remote triggers also select the sound slot of the notes "
 				"played into the track (midi.inject, its MIDI input): a trigger key or program doesn't play but sends "

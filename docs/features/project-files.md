@@ -96,8 +96,8 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   with what may be an older copy that the user only wanted to look at. A `.bak` elsewhere isn't an auto save and opens
   as the project's file.
 - **Project folder.** The folder of the project's file. GNUbase puts the media folder `Audio` ([backup.md](backup.md))
-  and `Auto Saves` into it; the other folders of the reference (Edits, Images, Track Pictures) come with their
-  features.
+  and `Auto Saves` into it; the other folders of the reference (Edits, Images) come with their features. Track
+  pictures go into the project's media folder, as freeze files do ([mixer-window.md](mixer-window.md)).
 
 ## UI
 
