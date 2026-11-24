@@ -2882,15 +2882,20 @@ namespace gnubase::engine
 					(relative ? clipboard.start - clipboard.cursor : 0);
 			Destination to = destinationFrom(project, parameters, fallback);
 			// Paste (p. 270): a clipboard of events lands with its first audio event's snap point at the position.
-			if (parameters.value("snap", false) && clipboard.events)
+			const bool snapped = parameters.value("snap", false);
+			require(!snapped || (!parameters.contains("positionTicks") && !origin && !relative),
+				"give snap with position or the project cursor");
+			if (snapped && clipboard.events)
 			{
-				require(!parameters.contains("positionTicks") && !origin && !relative,
-					"give snap with position or the project cursor");
 				const AudioEvent* first = nullptr;
 				for (const AudioEvent& event : clipboard.audioEvents)
-					if (event.part == 0 &&
-						(first == nullptr || eventSpan(project, event).start < eventSpan(project, *first).start))
-						first = &event;
+					if (event.part == 0)
+					{
+						// As pasteClipboard refuses it, before the event's span needs the clip.
+						require(project.clips.count(event.clip) != 0, "the clip of a copied audio event is gone");
+						if (first == nullptr || eventSpan(project, event).start < eventSpan(project, *first).start)
+							first = &event;
+					}
 				if (first != nullptr)
 				{
 					time::Samples snap = eventSpan(project, *first).start;
@@ -3592,7 +3597,11 @@ namespace gnubase::engine
 			{"range.split", 1,
 				"Splits the audio events and MIDI parts on " + range +
 					" at its edges; a range of no length splits at its start. Locked events stay whole; splitNotes "
-					"cuts notes across an edge in two, as event.split does. Returns the new events after the splits.",
+					"cuts notes across an edge in two, as event.split does. The piece of a MIDI part after a cut "
+					"starts with the value each controller curve (control change, poly pressure, pitch bend, channel "
+					"pressure) has there, so the curves stay as they were (reference manual p. 288); this holds for "
+					"every range command that cuts, but event.split doesn't add them. Returns the new events after the "
+					"splits.",
 				schema(rangeParameters, {}), eventsResult(), false},
 			"Split Range", splitRange);
 
@@ -3724,8 +3733,9 @@ namespace gnubase::engine
 				"instead of track, pastes from it on as track does, but a copied track that finds no track there, or "
 				"one that can't take what was copied from it, goes onto the track it came from. With snap a "
 				"clipboard of events (range.copy with events) lands with the snap point of its first audio event that "
-				"isn't in a part, or that event's start, at position or the cursor. A clipboard copied at another "
-				"sample rate than the project's is refused. Returns the new events.",
+				"isn't in a part, or that event's start, at position or the cursor; snap with positionTicks, origin or "
+				"relative is refused. A clipboard copied at another sample rate than the project's is refused. "
+				"Returns the new events.",
 				schema({{"position", integer()}, {"positionTicks", integer()}, {"origin", boolean()},
 						   {"relative", boolean()}, {"track", integer()}, {"selectedTrack", integer()},
 						   {"snap", boolean()}, {"time", boolean()}},

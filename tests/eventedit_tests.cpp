@@ -1717,6 +1717,13 @@ TEST_CASE(
 	CHECK(controllers(g_bar).size() == 5); // the piece before the range keeps what it had
 	f.call("history.undo");
 	CHECK(controllers(g_bar).size() == 7);
+
+	// Crop cuts at the range's start on its own: the cropped piece starts with the curves' values, without the
+	// program change.
+	f.call("range.crop", f.range());
+	CHECK(controllers(g_bar + g_quarter) == inRange);
+	f.call("history.undo");
+	CHECK(controllers(g_bar).size() == 7);
 }
 
 TEST_CASE("range.copy without a range copies everything between the locators: global copy", "[unit]")
@@ -1957,10 +1964,26 @@ TEST_CASE("range.paste with selectedTrack pastes onto it where it takes the copy
 	f.call("history.undo");
 	CHECK_THAT(f.fails("range.paste", {{"position", g_second / 4}, {"snap", true}}),
 		ContainsSubstring("before the project start"));
+	// With the copied event's clip gone, snap refuses as the paste would.
+	const int64_t clip = f.call("project.get").at("audioEvents")[0].at("clip").get<int64_t>();
+	f.call("event.remove", {{"events", {f.event}}});
+	f.call("clip.remove", {{"clip", clip}});
+	CHECK_THAT(
+		f.fails("range.paste", {{"position", 5 * g_second}, {"snap", true}}), ContainsSubstring("clip of a copied"));
+	f.call("history.undo");
+	f.call("history.undo");
 	// A range's copy pastes at its start.
 	f.call("range.copy", f.range());
 	f.call("range.paste", {{"position", 5 * g_second}, {"snap", true}});
 	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}, {5 * g_second, 11 * g_second / 2}});
+	f.call("history.undo");
+	// snap goes only with position or the cursor, whatever was copied.
+	for (const Json& with : {Json{{"positionTicks", g_bar}}, Json{{"origin", true}}, Json{{"relative", true}}})
+	{
+		Json parameters = with;
+		parameters["snap"] = true;
+		CHECK_THAT(f.fails("range.paste", parameters), ContainsSubstring("give snap with position"));
+	}
 }
 
 TEST_CASE(

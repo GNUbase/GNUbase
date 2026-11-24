@@ -2781,6 +2781,16 @@ TEST_CASE(
 	f.run("edit.paste");
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 3; }));
 	CHECK(f.audioEvents()[2].at("track") == tracks[0].at("id"));
+
+	// Paste Relative to Cursor goes onto the selected track as well, 2 seconds after the cursor at 6 seconds as the
+	// event was after it at the copy, without the snap point.
+	f.call("transport.locate", {{"position", 288000}});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 6.0; }));
+	selected = {other};
+	f.run("edit.pasteRelative");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 4; }));
+	CHECK(f.audioEvents()[3].at("track") == other);
+	CHECK(f.audioEvents()[3].at("position") == 384000);
 }
 
 TEST_CASE(
