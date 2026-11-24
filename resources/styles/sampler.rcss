@@ -1,11 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* The sampler panel (ui/samplerpanel.h, docs/features/sampler-track.md): the toolbar, the waveform display with the
    markers, the bars between them, the loop and the shades outside the start and end, the keyboard, and the sections
-   side by side. Code places the markers, the loop and the shades in percent of the sample. The root gets .empty without
-   a sampler track, the loop and its markers .off without a loop mode, the loop's markers .loop, the marker or bar being
-   dragged .dragged, the loop's bar .loop and .off, keys .black, .root and .outside (the key range), the keyboard's
-   handles .root (the root key's, the others the key range's) and .dragged, the toolbar's message .error and its event
-   received indicator .lit; the themes color them. Code places the handles on their keys in percent of the keyboard. */
+   side by side. Code places the markers, the loop and the shades in percent of the part of the sample shown. The root
+   gets .empty without a sampler track, the loop and its markers .off without a loop mode, the loop's markers .loop,
+   markers outside the part shown .out-of-view, the marker or bar being dragged .dragged, the loop's bar .loop and
+   .off, keys .black, .root and .outside (the key range), the keyboard's handles .root (the root key's, the others the
+   key range's) and .dragged, the toolbar's message .error and its event received indicator .lit; the themes color
+   them. Code places the handles on their keys in percent of the keyboard. Above the display lies its ruler with the
+   format's drop-down list as an arrow button at its right, beside it the vertical zoom and below it the scroll slider
+   and the horizontal zoom (reference manual p. 717). */
 .sampler-panel
 {
 	display: flex;
@@ -25,7 +28,8 @@
 	display: block;
 }
 
-.sampler-panel.empty .sampler-toolbar, .sampler-panel.empty .sampler-display,
+.sampler-panel.empty .sampler-toolbar, .sampler-panel.empty .sampler-timeline,
+.sampler-panel.empty .sampler-view, .sampler-panel.empty .sampler-zoom,
 .sampler-panel.empty .sampler-sections, .sampler-panel.empty .sampler-keyboard,
 .sampler-panel.empty .sampler-handles
 {
@@ -67,11 +71,76 @@
 	height: 8dp;
 }
 
+/* The vertical zoom and the format's list keep 6dp off the display and the ruler, where the End marker's flag reaches
+   when End is at the sample's end. */
+.sampler-timeline, .sampler-zoom
+{
+	display: flex;
+	flex-shrink: 0;
+	height: 24dp;
+	gap: 6dp;
+}
+
+.sampler-ruler
+{
+	display: block;
+	flex: 1 1 0;
+}
+
+/* As wide as the vertical zoom below it, so that the ruler is as wide as the display; its list opens leftwards. */
+.sampler-ruler-format
+{
+	flex-shrink: 0;
+	width: 24dp;
+}
+
+.sampler-ruler-format selectvalue
+{
+	visibility: hidden;
+}
+
+.sampler-ruler-format selectbox
+{
+	width: 96dp;
+	margin-left: -72dp;
+}
+
+.sampler-view
+{
+	display: flex;
+	flex: 1 1 0;
+	min-height: 40dp;
+	gap: 6dp;
+}
+
 .sampler-display
 {
 	position: relative;
 	flex: 1 1 0;
-	min-height: 40dp;
+}
+
+#sampler-vertical-zoom
+{
+	flex-shrink: 0;
+	width: 24dp;
+	height: auto;
+}
+
+.sampler-zoom
+{
+	align-items: center;
+	padding-right: 30dp;
+}
+
+#sampler-scroll
+{
+	flex: 1 1 0;
+}
+
+#sampler-horizontal-zoom
+{
+	flex-shrink: 0;
+	width: 120dp;
 }
 
 .sampler-wave
@@ -95,7 +164,8 @@
 	left: 0;
 }
 
-.sampler-loop.off, .sampler-marker.off
+/* Markers outside the part of the sample shown (.out-of-view) are out of sight too. */
+.sampler-loop.off, .sampler-marker.off, .sampler-marker.out-of-view
 {
 	display: none;
 }

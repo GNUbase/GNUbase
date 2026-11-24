@@ -269,6 +269,83 @@ TEST_CASE("the bars between the markers move start and end, or the loop, togethe
 	REQUIRE(f.app.waitUntil([&] { return f.has(".sampler-bar[bar=loop]", "off"); }));
 }
 
+TEST_CASE("the display's ruler shows the sample's time in the format chosen, and its sliders zoom", "[ui]")
+{
+	// Reference manual p. 717 (#1122): the ruler over the display, its format a user setting, and the zoom sliders.
+	Fixture f;
+	f.set("Start", 0.5);
+	f.open();
+	const Json display = f.box("#sampler-display");
+	const double x = display.at("x").get<double>();
+	const double width = display.at("width").get<double>();
+	const double y = display.at("y").get<double>() + (display.at("height").get<double>() / 2);
+	const Json ruler = f.box(".sampler-ruler");
+	CHECK_THAT(ruler.at("x").get<double>(), WithinAbs(x, 1.0));
+	CHECK_THAT(ruler.at("width").get<double>(), WithinAbs(width, 1.0));
+	CHECK(ruler.at("y").get<double>() < display.at("y").get<double>());
+	const auto attribute = [&](const std::string& selector, const char* name)
+	{ return f.elements(selector).at(0).at("attributes").value(name, std::string()); };
+	CHECK(attribute(".sampler-ruler", "format") == "seconds");
+	CHECK(std::stod(attribute(".sampler-ruler", "start")) == 0.0);
+	// Its scale follows its width once it is laid out.
+	REQUIRE(f.app.waitUntil([&] { return !attribute(".sampler-ruler", "scale").empty(); }));
+	const double full = std::stod(attribute(".sampler-ruler", "scale"));
+	CHECK(full > 0.0);
+
+	// The format: the next one, samples, is the user setting.
+	f.click("#sampler-ruler-format");
+	f.app.ui().key(std::nullopt, "Down");
+	f.click("#sampler-ruler-format");
+	REQUIRE(f.app.waitUntil([&] { return attribute(".sampler-ruler", "format") == "samples"; }));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.app.call("settings.get", {{"key", "ui.samplerPanel"}})
+					   .at("value")
+					   .value("rulerFormat", std::string()) == "samples";
+		}));
+
+	const auto slide = [&](const char* id, double fraction, bool vertical = false)
+	{
+		const Json box = f.box(id);
+		const double from = box.at("x").get<double>() + (box.at("width").get<double>() * 0.5);
+		const double top = box.at("y").get<double>() + (box.at("height").get<double>() * 0.5);
+		f.app.ui().drag(std::nullopt, {"", 0, ui::Point{static_cast<int>(from), static_cast<int>(top)}},
+			{"", 0,
+				ui::Point{static_cast<int>(from + (vertical ? 0 : box.at("width").get<double>() * fraction)),
+					static_cast<int>(top + (vertical ? box.at("height").get<double>() * fraction : 0))}});
+		f.app.shell().step(std::chrono::milliseconds(0));
+	};
+	// Zoomed in around the middle: Start stays there, End goes out of sight and the ruler shows less.
+	slide("#sampler-horizontal-zoom", 0.3);
+	REQUIRE(f.app.waitUntil([&] { return std::stod(attribute(".sampler-ruler", "scale")) < full / 2; }));
+	CHECK(std::stod(attribute(".sampler-ruler", "start")) > 0.0);
+	const auto centre = [&](const std::string& marker)
+	{
+		const Json box = f.box(".sampler-marker[marker=\"" + marker + "\"]");
+		return box.at("x").get<double>() + (box.at("width").get<double>() / 2);
+	};
+	CHECK_THAT(centre("Start"), WithinAbs(x + (width / 2), 3.0));
+	CHECK(f.has(".sampler-marker[marker=\"End\"]", "out-of-view"));
+	CHECK(!f.has(".sampler-marker[marker=\"Start\"]", "out-of-view"));
+	// A marker's drag counts in the part shown.
+	f.app.ui().drag(std::nullopt, of(".sampler-marker[marker=\"Start\"]"),
+		{"", 0, ui::Point{static_cast<int>(x + (width * 0.75)), static_cast<int>(y)}});
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("Start") > 0.5; }));
+	CHECK(f.parameter("Start") < 0.7);
+	CHECK_THAT(centre("Start"), WithinAbs(x + (width * 0.75), 3.0));
+
+	// Scrolled to the start, the ruler starts at the sample's.
+	slide("#sampler-scroll", -1.0);
+	REQUIRE(f.app.waitUntil([&] { return std::stod(attribute(".sampler-ruler", "start")) == 0.0; }));
+	CHECK(f.has(".sampler-marker[marker=\"Start\"]", "out-of-view"));
+
+	// The vertical zoom raises the waveform's gain.
+	CHECK(std::stod(attribute(".sampler-wave", "gain")) == 1.0);
+	slide("#sampler-vertical-zoom", 0.3, true);
+	REQUIRE(f.app.waitUntil([&] { return std::stod(attribute(".sampler-wave", "gain")) > 1.0; }));
+}
+
 TEST_CASE("the markers of the fades and the loop crossfade set their lengths", "[ui]")
 {
 	Fixture f;

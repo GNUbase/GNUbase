@@ -1372,8 +1372,8 @@ TEST_CASE("a file that a sampler loads goes into the pool folder Sampler Tracks"
 	run(client, "project.new");
 	run(client, "track.import", {{"path", archive.u8string()}});
 	const Json channels = run(client, "project.get").at("channels");
-	const auto sampler = std::find_if(channels.begin(), channels.end(),
-		[](const Json& channel) { return channel.at("instrument") == "sampler"; });
+	const auto sampler = std::find_if(
+		channels.begin(), channels.end(), [](const Json& channel) { return channel.at("instrument") == "sampler"; });
 	REQUIRE(sampler != channels.end());
 	CHECK(folderOf(sampler->at("sample")).value("name", std::string()) == "Sampler Tracks");
 }

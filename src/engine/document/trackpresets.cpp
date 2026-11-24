@@ -294,7 +294,7 @@ namespace gnubase::engine
 				channel.id = m_to.newId();
 				channel.track = track;
 				channel.sample = clip(original.sample, samplerPoolFolder); // a sampler's (#180), with the instrument
-				channel.pads = original.pads;           // a drum machine's (#182)
+				channel.pads = original.pads;                              // a drum machine's (#182)
 				for (auto& [pad, drum] : channel.pads)
 					drum.sample = clip(drum.sample, drumPoolFolder);
 				// The fader top may be lower here (as project.set brings volumes down to it).
