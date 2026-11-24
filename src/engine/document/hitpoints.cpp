@@ -286,7 +286,7 @@ namespace gnubase::engine
 			Clip clip;
 			clip.id = project.newId();
 			clip.media = rendered.id;
-			clip.name = source.name;
+			clip.name = source.name + " Flattened";
 			clip.folder = source.folder;
 			project.clips[clip.id] = clip;
 			context.emit("clip.added", {{"clip", toJson(clip)}});
@@ -299,6 +299,9 @@ namespace gnubase::engine
 			event.clip = clip.id;
 			event.offset = 0;
 			event.length = outputFrames;
+			event.quantizeOrigin.reset();
+			event.sliceOrigin.reset();
+			event.slicedFrom = 0;
 			context.emit("audioEvent.changed", {{"event", toJson(event)}});
 		}
 
@@ -316,7 +319,8 @@ namespace gnubase::engine
 					"mode timeStretch instead renders each gapped slice's current audio, preserving pitch, into a "
 					"new clip up to the next start (offline stretch ratio 0.1 to 10); no crossfade. Other events of "
 					"the source clip stay unchanged. Undo before changing tempo again. Rendering runs on the command "
-					"thread; failed edits remove their files, undo retains them for redo. mode defaults to crossfade.",
+					"thread; failed edits remove their files, undo retains them for redo. Discards slice and quantize "
+					"origins that belonged to the old clip. mode defaults to crossfade.",
 					objectSchema({{"events", ids}, {"length", {{"type", "number"}, {"minimum", 0.1}, {"maximum", 500}}},
 									 {"mode", {{"type", "string"}, {"enum", {"crossfade", "timeStretch"}}}}},
 						{"events"}),

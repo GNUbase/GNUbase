@@ -363,7 +363,15 @@ namespace gnubase::ui
 		{
 			return [this, command, mode]
 			{
-				if (const auto events = selectedAudio(); !events.empty())
+				auto events = selectedAudio();
+				if (m_project.contains("audioEvents"))
+					for (const Json& event : m_project.at("audioEvents"))
+					{
+						const auto part = event.value("part", uint64_t{0});
+						if (part != 0 && std::binary_search(m_selection.begin(), m_selection.end(), part))
+							events.push_back(event.at("id").get<uint64_t>());
+					}
+				if (!events.empty())
 				{
 					Json parameters = {{"events", events}};
 					if (mode != nullptr)

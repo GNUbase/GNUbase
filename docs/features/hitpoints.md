@@ -79,19 +79,21 @@ and Lua.
 
 `event.closeGaps` also accepts `mode: "timeStretch"` for Close Gaps (Time Stretch). Each selected slice with a gap is
 rendered from its current audio, including its warp and clip fades, then stretched offline without shifting pitch to end
-at the next selected start. The result is a new clip and float WAV in the project media folder, or the recording folder
-for an unsaved project. Other events of the source clip stay unchanged. The stretch ratio must be from 0.1 to 10;
-touching and overlapping slices stay unchanged. Rendering runs on the command thread and holds the slice audio in
-memory. Failed edits remove their rendered files; undo keeps successful files for redo. Undo before changing tempo
-again, as the reference manual, p. 643 recommends.
+at the next selected start. The result is a new clip named after the source with Flattened appended and a float WAV in
+the project media folder, or the recording folder for an unsaved project. Other events of the source clip stay
+unchanged. The stretch ratio must be from 0.1 to 10; touching and overlapping slices stay unchanged. Rendering runs on
+the command thread and holds the slice audio in memory. Failed edits remove their rendered files; undo keeps successful
+files for redo. Undo before changing tempo again, as the reference manual, p. 643 recommends. Moving to the rendered
+clip clears the event's slice and quantize origins from the old clip, so Reset Slices cannot restore an offset or length
+from that source onto the new clip. Undo restores those origins along with the original clip.
 
 ## In the UI
 
 Audio > Advanced has Close Gaps (Crossfade), Close Gaps (Time Stretch) and Delete Overlaps, the UI commands
 `audio.closeGapsCrossfade`, `audio.closeGapsTimeStretch` and `audio.deleteOverlaps`. They run `event.closeGaps` with the
-corresponding mode or `event.deleteOverlaps` on the selected audio events, filtering out selected MIDI parts. Without
-selected audio events they are disabled. Each edit is one undo step; the selection range does not replace the event
-selection.
+corresponding mode or `event.deleteOverlaps` on selected audio events and all events inside audio parts selected in the
+project window, filtering out selected MIDI parts. Without selected audio events or nonempty audio parts they are
+disabled. Each edit is one undo step; the selection range does not replace the event selection.
 
 The sample editor's inspector has the Hitpoints section, and its display shows the hitpoints that count and the
 disabled ones.
@@ -133,6 +135,11 @@ synthesized loops only; recorded drum loops with hand-annotated onsets (room sou
 
 ## Checks
 
+- `tests/hitpoints_ui_tests.cpp`: all three Audio > Advanced commands on a selected part created by
+  `event.fromHitpoints`, with unselected audio preserved and undo/redo.
+- `tests/hitpoints_tests.cpp`: quantize slicing, time-stretch gap closing and Reset Slices keep every event inside its
+  clip; rendered events discard all three old-clip origins, and undo/redo restore the recorded states.
+
 - `tests/mainmenu_tests.cpp`: all three Audio > Advanced slice entries, disabled with no selection or MIDI parts alone,
   enabled for selected audio events; crossfade, time stretch and overlap results, untouched unselected audio and MIDI,
   one undo step and undo/redo.
@@ -153,7 +160,7 @@ synthesized loops only; recorded drum loops with hand-annotated onsets (room sou
   lane boundaries, duplicate and empty selections, locked events, insufficient source audio, requested crossfade length,
   its limit to half the next slice's played length, atomic rollback and undo/redo.
 - `tests/hitpoints_tests.cpp`: Close Gaps (Time Stretch) preserves pitch, slice starts, source clips and the next event;
-  musical warping, atomic rollback with file cleanup and undo/redo.
+  musical warping, rendered clip naming, atomic rollback with file cleanup and undo/redo.
 - `tests/playback_tests.cpp`: auditioning a clip, and up to an end, as Play back Slice does.
 - `tests/hitpoints_ui_tests.cpp` drives the sample editor with `ui::Automation`: Edit Hitpoints showing the detected
   hitpoints at their frames, the threshold slider's drag as one undo step, Remove All; the handle, Shift, Ctrl and

@@ -2,6 +2,16 @@
 -- Detect Silence's waveform and held preview (reference manual p. 604), through the engine API.
 local dialog = DetectSilence
 
+local function origin(element)
+	local x, y = element.client_left, element.client_top
+	while element do
+		x, y = x + element.offset_left, y + element.offset_top
+		element = element.offset_parent
+		if element then x, y = x - element.scroll_left, y - element.scroll_top end
+	end
+	return x, y
+end
+
 function dialog.zoom(document)
 	local zoom = tonumber(document:GetElementById("ds-zoom"):GetAttribute("value")) or 1
 	document:GetElementById("ds-display").style.width = (zoom * 100) .. "%"
@@ -13,24 +23,21 @@ function dialog.wheel(document, event)
 	local zoom = document:GetElementById("ds-zoom")
 	if p.ctrl_key == 1 or p.ctrl_key == true or p.meta_key == 1 or p.meta_key == true then
 		local value = tonumber(zoom:GetAttribute("value")) or 1
+		local view = document:GetElementById("ds-view")
+		local wave = document:GetElementById("ds-wave")
+		local pointer = p.mouse_x - origin(view)
+		local fraction = (view.scroll_left + pointer) / wave.client_width
 		value = math.max(1, math.min(16, value * (p.wheel_delta_y < 0 and 2 or 0.5)))
 		zoom:SetAttribute("value", tostring(value))
 		dialog.zoom(document)
+		-- Apply the new width before the scroll range clamps the pointer's new offset.
+		document.context:Update()
+		view.scroll_left = fraction * wave.client_width - pointer
 	else
 		local view = document:GetElementById("ds-view")
 		view.scroll_left = view.scroll_left + (p.wheel_delta_y + p.wheel_delta_x) * view.client_width / 8
 	end
 	event:StopPropagation()
-end
-
-local function origin(element)
-	local x, y = element.client_left, element.client_top
-	while element do
-		x, y = x + element.offset_left, y + element.offset_top
-		element = element.offset_parent
-		if element then x, y = x - element.scroll_left, y - element.scroll_top end
-	end
-	return x, y
 end
 
 function dialog.peaks(document)

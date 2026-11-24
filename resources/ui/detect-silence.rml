@@ -7,6 +7,7 @@
 <rml>
 <head>
 	<title>Detect Silence</title>
+	<link type="text/rcss" href="../styles/audiofunctions.rcss"/>
 	<style>
 		dialog
 		{
@@ -255,18 +256,18 @@
 	<dialog id="detect-silence-dialog">
 		<div class="dialog-titlebar">Detect Silence</div>
 		<div id="ds-event"/>
-		<div id="ds-view" onmousescroll="DetectSilence.wheel(document, event)">
-			<div id="ds-display" class="ds-display">
-				<div id="ds-sections-display"/>
-				<div id="ds-wave" onmousedown="DetectSilence.press(document, event)"/>
-				<div id="ds-open-handle" class="ds-handle" threshold="open" title="Open Threshold"
-					onmousedown="DetectSilence.press(document, event)"/>
-				<div id="ds-close-handle" class="ds-handle" threshold="close" title="Close Threshold"
-					onmousedown="DetectSilence.press(document, event)"/>
+		<div id="ds-waveform">
+			<div id="ds-view" onmousescroll="DetectSilence.wheel(document, event)">
+				<div id="ds-display" class="ds-display">
+					<div id="ds-sections-display"/>
+					<div id="ds-wave" onmousedown="DetectSilence.press(document, event)"/>
+					<div id="ds-open-handle" class="ds-handle" threshold="open" title="Open Threshold"
+						onmousedown="DetectSilence.press(document, event)"/>
+					<div id="ds-close-handle" class="ds-handle" threshold="close" title="Close Threshold"
+						onmousedown="DetectSilence.press(document, event)"/>
+				</div>
 			</div>
-		</div>
-		<div class="row"><label for="ds-zoom">Zoom</label>
-			<slider id="ds-zoom" min="1" max="16" value="1" step="1" onchange="DetectSilence.zoom(document)"/>
+			<fader id="ds-zoom" title="Zoom" min="1" max="16" value="1" step="1" onchange="DetectSilence.zoom(document)"/>
 		</div>
 		<div class="row ds-preview">
 			<span>Preview</span><slider id="ds-preview-level" min="0" max="1" value="1" step="0.01"/>

@@ -287,10 +287,27 @@ TEST_CASE("Detect Silence zooms and scrolls its waveform without changing analys
 	const double width = element(app, "#ds-wave").at("box").at("width").get<double>();
 	const double sectionWidth = elements(app, ".ds-section")[0].at("box").at("width").get<double>();
 	REQUIRE(open(app, "#ds-zoom"));
+	const Json viewBox = element(app, "#ds-view").at("box");
+	const Json zoomBox = element(app, "#ds-zoom").at("box");
+	CHECK(zoomBox.at("x").get<double>() >= viewBox.at("x").get<double>() + viewBox.at("width").get<double>());
+	CHECK(zoomBox.at("y").get<double>() < viewBox.at("y").get<double>() + viewBox.at("height").get<double>());
 	app.ui().wheel(audioWindow(app), {"#ds-view", 0, std::nullopt}, 0.0F, -1.0F, {"ctrl"});
 	REQUIRE(app.waitUntil([&] { return element(app, "#ds-wave").at("box").at("width").get<double>() > width * 1.5; }));
 	CHECK(elements(app, ".ds-section")[0].at("box").at("width").get<double>() > sectionWidth * 1.5);
 	CHECK(text(app, "#ds-sections") == "2");
+	const ui::Point pointer{static_cast<int>(viewBox.at("x").get<double>() + (viewBox.at("width").get<double>() * 0.3)),
+		static_cast<int>(viewBox.at("y").get<double>() + 70)};
+	for (const std::string modifier : {"ctrl", "meta"})
+		for (const float delta : {-1.0F, 1.0F})
+		{
+			const Json before = element(app, "#ds-wave").at("box");
+			const double fraction = (pointer.x - before.at("x").get<double>()) / before.at("width").get<double>();
+			app.ui().wheel(audioWindow(app), {"", 0, pointer}, 0.0F, delta, {modifier});
+			REQUIRE(
+				app.waitUntil([&] { return element(app, "#ds-wave").at("box").at("width") != before.at("width"); }));
+			const Json after = element(app, "#ds-wave").at("box");
+			CHECK(std::abs(pointer.x - after.at("x").get<double>() - (fraction * after.at("width").get<double>())) < 2);
+		}
 	app.ui().wheel(audioWindow(app), {"#ds-view", 0, std::nullopt}, 0.0F, 2.0F);
 	REQUIRE(app.waitUntil(
 		[&]

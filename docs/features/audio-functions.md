@@ -111,7 +111,8 @@ Mute Gaps plays only the measured sections, leaving the gaps silent without skip
 `sections`, [audition.md](audition.md)). Changing detection settings clears the measured sections and cancels pending
 analysis, so Mute Gaps requires Analyze again, or Auto.
 
-The Zoom slider and Ctrl/Cmd+wheel enlarge the waveform horizontally from 1 to 16 times. A scrollbar or the unmodified
+The Zoom slider to the right of the waveform and Ctrl/Cmd+wheel enlarge it horizontally from 1 to 16 times. Wheel zoom
+keeps the clip position under the pointer in place, within the available scroll range. A scrollbar or the unmodified
 wheel scrolls it. Peaks are requested at the zoomed resolution; measured sections share the same timeline and stay
 unchanged. Threshold handles stay at the waveform's beginning and end, and preview starts at the clip frame under the
 pointer, including the scroll offset. Zoom applies to the captured event or sample-editor range and does not change the
@@ -134,7 +135,8 @@ formats use the channel-count fallback.
 
 - `tests/audiofunctions_ui_tests.cpp`: waveform zoom and scroll preserve section counts, scale section geometry and
   preview the frame under the pointer with Mute Gaps; scrollbar clicks do not audition, and threshold handles stay
-  aligned with the waveform when zoomed.
+  aligned with the waveform when zoomed; the zoom slider sits to the right, and Ctrl/Cmd+wheel keeps the frame under the
+  pointer in place when zooming in and out.
 - `tests/audiofunctions_tests.cpp`: extensible WAV speaker masks override the channel-count defaults, including LFE,
   back-center and front-of-center channels; missing and inconsistent masks fall back without losing true peaks.
 

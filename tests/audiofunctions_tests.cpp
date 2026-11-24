@@ -551,7 +551,7 @@ TEST_CASE("clip.statistics uses an extensible WAV speaker mask instead of the ch
 				output.put(static_cast<char>((value >> (8 * i)) & 0xff));
 		};
 		output.write("RIFF", 4);
-		integer(static_cast<uint32_t>(60 + original.size() - data), 4);
+		integer(static_cast<uint32_t>(52 + original.size() - data), 4);
 		output.write("WAVEfmt ", 8);
 		integer(40, 4);
 		integer(0xfffe, 2);
@@ -569,6 +569,12 @@ TEST_CASE("clip.statistics uses an extensible WAV speaker mask instead of the ch
 		integer(0x719b3800, 4);
 		output.write(original.data() + data, static_cast<std::streamsize>(original.size() - data));
 		output.close();
+		std::ifstream rendered(path, std::ios::binary);
+		rendered.seekg(4);
+		uint32_t riffSize = 0;
+		for (int i = 0; i < 4; ++i)
+			riffSize |= static_cast<uint32_t>(static_cast<unsigned char>(rendered.get())) << (8 * i);
+		CHECK(riffSize == std::filesystem::file_size(path) - 8);
 		CHECK(engine::AudioFileReader::open(path.u8string())->info().channelMask == mask);
 		const Json measured = f.call("clip.statistics", {{"clip", f.clip}});
 		if (mask == 0x0fU)
