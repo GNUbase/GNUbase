@@ -135,7 +135,7 @@ synthesized loops only; recorded drum loops with hand-annotated onsets (room sou
 
 ## Checks
 
-- `tests/hitpoints_ui_tests.cpp`: all three Audio > Advanced commands on a selected part created by
+- `tests/mainmenu_tests.cpp`: all three Audio > Advanced commands on a selected part created by
   `event.fromHitpoints`, with unselected audio preserved and undo/redo.
 - `tests/hitpoints_tests.cpp`: quantize slicing, time-stretch gap closing and Reset Slices keep every event inside its
   clip; rendered events discard all three old-clip origins, and undo/redo restore the recorded states.
