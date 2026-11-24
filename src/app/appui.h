@@ -179,16 +179,19 @@ namespace gnubase::app
 		ui::WindowId mixerWindow(int number) const { return m_mixers.at(static_cast<size_t>(number - 1)).window; }
 		ui::Mixer* lowerZoneMixer() { return m_lowerMixer.lock().get(); }
 		// The channel settings window (#112, docs/features/channel-settings.md, resources/ui/channel-settings.rml):
-		// Edit Channel Settings opens it for a track's channel, or shows that channel in it while it is open, and
-		// selects the track; while it follows, it shows the first selected track's channel. The UI command
-		// window.channelSettings opens it for the first selected track. Throws std::runtime_error if the document
-		// can't be loaded. channelSettings is its mixer while it is open, or null.
+		// Edit Channel Settings opens it for a track's channel and selects the track: a window that shows the channel
+		// comes to the front, or else the first that follows shows it; with Follow off in every one, another window
+		// opens (reference manual p. 499). While a window follows, it shows the first selected track's channel. The UI
+		// command window.channelSettings opens it for the first selected track. Throws std::runtime_error if the
+		// document can't be loaded. channelSettings is the first window's mixer while it is open, or null;
+		// channelSettingsWindows are the open windows, the first one first.
 		ui::Mixer* openChannelSettings(uint64_t track);
 		ui::Mixer* channelSettings()
 		{
 			return m_shell.find(m_channelSettings.window) != nullptr ? m_channelSettings.mixer.get() : nullptr;
 		}
 		ui::WindowId channelSettingsWindow() const { return m_channelSettings.window; }
+		std::vector<ui::WindowId> channelSettingsWindows();
 		// The MIDI editors (#126, docs/features/midi-editors.md): the editor window (resources/ui/editor.rml), which
 		// opens and closes as the engine's editor view window does (editor.open, editor.close), and the project
 		// window's Editor panel in the lower zone, which shows as the view lower opens. Null while they don't show.
@@ -296,6 +299,9 @@ namespace gnubase::app
 		// The lower zone's mixer panel, the mixer windows' Visibility tabs and their UI commands, and Edit Channel
 		// Settings.
 		void addMixers();
+		// Once a frame: lets go of the mixer windows the user closed, and the channel settings windows that follow show
+		// the first selected track (reference manual p. 499).
+		void updateMixerWindows();
 		// What the mixers ask of the app: pictures, Edit Channel Settings, Add Effect Track to Send, and the channel
 		// settings window going to another track, which the track list then selects.
 		ui::MixerActions mixerActions();
@@ -493,9 +499,9 @@ namespace gnubase::app
 			std::unique_ptr<ui::Mixer> mixer;
 		};
 		std::array<MixerWindow, 4> m_mixers;
-		MixerWindow m_channelSettings;         // the channel settings window
-		uint64_t m_settingsTrack = 0;          // the track it last went to or followed
-		std::weak_ptr<ui::Mixer> m_lowerMixer; // the docking system owns it while it is there
+		MixerWindow m_channelSettings;                    // the first channel settings window
+		std::map<int, MixerWindow> m_moreChannelSettings; // the others, from 2 on, as Edit Channel Settings opened them
+		std::weak_ptr<ui::Mixer> m_lowerMixer;            // the docking system owns it while it is there
 		struct EditorWindow
 		{
 			ui::WindowId window = 0;

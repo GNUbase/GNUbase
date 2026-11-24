@@ -934,8 +934,10 @@ namespace gnubase::engine
 		m_samples.assign(static_cast<size_t>(m_channels) * maxFrames, 0.0f);
 	}
 
-	SendStrip::SendStrip(std::shared_ptr<ChannelState> state, int number, float gain, std::shared_ptr<PreFaderTap> tap)
-		: m_state(std::move(state)), m_number(static_cast<size_t>(number)), m_gain(gain), m_tap(std::move(tap))
+	SendStrip::SendStrip(std::shared_ptr<ChannelState> state, int number, int slot, float gain,
+		std::shared_ptr<PreFaderTap> tap, bool fromSilence)
+		: m_state(std::move(state)), m_number(static_cast<size_t>(number)), m_slot(static_cast<size_t>(slot)),
+		  m_gain(gain), m_tap(std::move(tap)), m_fromSilence(fromSilence)
 	{
 	}
 
@@ -944,8 +946,13 @@ namespace gnubase::engine
 		if (m_tap)
 			for (int c = 0; c < std::min(context.channels, m_tap->channels()); ++c)
 				std::memcpy(context.audio[c], m_tap->channel(c), context.frames * sizeof(float));
-		if (context.frames > 0)
-			ChannelStrip::glide(context, context.channels, m_state->sendGains[m_number], m_gain);
+		if (context.frames == 0)
+			return;
+		std::atomic<float>& stored = m_state->sends[m_number][m_slot].gain;
+		float gain = m_fromSilence ? 0.0f : stored.load(std::memory_order_relaxed);
+		m_fromSilence = false;
+		ChannelStrip::glide(context, context.channels, gain, m_gain);
+		stored.store(gain, std::memory_order_relaxed);
 	}
 
 	void ListenStrip::process(const graph::ProcessContext& context) noexcept
@@ -965,6 +972,7 @@ namespace gnubase::engine
 
 	void ChannelStrip::process(const graph::ProcessContext& context) noexcept
 	{
+		m_state->played.store(true, std::memory_order_relaxed);
 		if (m_part == StripPart::Fader)
 		{
 			// The source node played the automation in this block already.

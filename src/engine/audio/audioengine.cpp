@@ -23,8 +23,10 @@
 #include <map>
 #include <numeric>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <utility>
 
 namespace gnubase::engine
@@ -700,7 +702,24 @@ namespace gnubase::engine
 			if (const auto state = m_channelStates.find(channel.id); !channel.listen &&
 				state != m_channelStates.end() && state->second->listenGain.load(std::memory_order_relaxed) > 0.0f)
 				fading.push_back(channel.id);
-		graph::GraphDesc desc = graph::describe(snapshot, fading);
+		// Sends that left a destination glide out of it, unless one of their nodes would close a loop now: then none
+		// of them does, they all stop at once.
+		std::vector<GoingSend> going = goingSends(snapshot);
+		std::vector<graph::FadingSend> fadingSends;
+		fadingSends.reserve(going.size());
+		for (const GoingSend& send : going)
+			fadingSends.push_back(send.node);
+		graph::GraphDesc desc = graph::describe(snapshot, fading, fadingSends);
+		if (!going.empty())
+			try
+			{
+				graph::processingOrder(desc);
+			}
+			catch (const std::invalid_argument&)
+			{
+				going.clear();
+				desc = graph::describe(snapshot, fading);
+			}
 		m_sourceNodes.clear();
 		for (size_t n = 0; n < desc.nodes.size(); ++n)
 		{
@@ -740,7 +759,7 @@ namespace gnubase::engine
 		const uint64_t generation = ++m_generation;
 		attachMidi(snapshot, desc, generation);
 		attachSlots(snapshot, desc);
-		attachStrips(snapshot, desc);
+		attachStrips(snapshot, desc, going);
 		std::vector<std::vector<int>> ports = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
 		if (m_directMonitoring)
 			monitorDirectly(snapshot, desc, ports);
@@ -1105,7 +1124,47 @@ namespace gnubase::engine
 			m_engine->post("audio.updateSamples");
 	}
 
-	void AudioEngine::attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc)
+	std::vector<AudioEngine::GoingSend> AudioEngine::goingSends(const RenderSnapshot& snapshot) const
+	{
+		std::map<ObjectId, int> indices;
+		for (size_t i = 0; i < snapshot.channels.size(); ++i)
+			indices[snapshot.channels[i].id] = static_cast<int>(i);
+		std::vector<GoingSend> going;
+		for (size_t i = 0; i < snapshot.channels.size(); ++i)
+		{
+			const RenderChannel& channel = snapshot.channels[i];
+			const auto state = m_channelStates.find(channel.id);
+			if (state == m_channelStates.end() || state->second->sendsProject != snapshot.opened)
+				continue;
+			for (size_t number = 0; number < g_maxSends; ++number)
+			{
+				ObjectId destination = 0; // where the send goes now
+				for (const RenderSend& send : channel.sends)
+					if (static_cast<size_t>(send.number) == number)
+						destination = snapshot.channels[static_cast<size_t>(send.destination)].id;
+				const auto& gains = state->second->sends[number];
+				std::vector<GoingSend> sends;
+				for (size_t slot = 0; slot < gains.size(); ++slot)
+				{
+					const auto to = indices.find(gains[slot].destination);
+					if (to != indices.end() && gains[slot].destination != destination &&
+						gains[slot].gain.load(std::memory_order_relaxed) > 0.0f)
+						sends.push_back({{static_cast<int>(i), to->second, gains[slot].preFader}, number, slot});
+				}
+				if (sends.size() == gains.size() && destination != 0)
+				{
+					const auto load = [&gains](const GoingSend& send)
+					{ return gains[send.slot].gain.load(std::memory_order_relaxed); };
+					sends.erase(load(sends[0]) < load(sends[1]) ? sends.begin() : sends.begin() + 1);
+				}
+				going.insert(going.end(), sends.begin(), sends.end());
+			}
+		}
+		return going;
+	}
+
+	void AudioEngine::attachStrips(
+		const RenderSnapshot& snapshot, graph::GraphDesc& desc, const std::vector<GoingSend>& going)
 	{
 		std::map<ObjectId, std::shared_ptr<ChannelState>> states;
 		const size_t firstChannel = snapshot.busses.size();
@@ -1205,24 +1264,67 @@ namespace gnubase::engine
 				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)
 					->tapRender(tap->second.tap, tap->second.point);
 
-			// The send nodes come in the order of the channels and their sends (graph::describe).
+			// The send nodes come in the order of the channels and their sends, then those gliding out
+			// (graph::describe).
 			std::shared_ptr<PreFaderTap> tap;
-			for (const RenderSend& send : channel.sends)
+			const auto addSend = [&](size_t number, size_t slot, float gain, bool preFader, bool fromSilence)
 			{
-				if (send.preFader && !tap)
+				if (preFader && !tap)
 				{
 					tap = std::make_shared<PreFaderTap>(channelCount(channel.format));
 					fader->tapPreFader(tap, m_mutePreSends);
 				}
 				while (desc.nodes[sendNode].kind != graph::NodeKind::Send)
 					++sendNode;
+				desc.nodes[sendNode++].processor = std::make_shared<SendStrip>(state, static_cast<int>(number),
+					static_cast<int>(slot), gain, preFader ? tap : nullptr, fromSilence);
+			};
+			// A send keeps the gain slot that has its destination. A new destination takes the other slot, which
+			// isn't gliding out, and the send glides into it from silence once the channel played.
+			std::array<std::array<std::pair<ObjectId, bool>, 2>, g_maxSends> next{}; // each slot's destination, pre
+			for (const GoingSend& send : going)
+				if (send.node.channel == static_cast<int>(i))
+				{
+					const ChannelState::SendGain& gain = state->sends[send.number][send.slot];
+					next[send.number][send.slot] = {gain.destination, gain.preFader};
+				}
+			const bool sameProject = state->sendsProject == snapshot.opened;
+			for (const RenderSend& send : channel.sends)
+			{
+				const auto number = static_cast<size_t>(send.number);
+				const ObjectId destination = snapshot.channels[static_cast<size_t>(send.destination)].id;
+				size_t slot = next[number][0].first != 0 ? 1 : 0;
+				bool fromSilence = state->played.load(std::memory_order_relaxed);
+				for (size_t candidate = 0; candidate < 2; ++candidate)
+					if (sameProject && state->sends[number][candidate].destination == destination)
+					{
+						slot = candidate;
+						fromSilence = false;
+					}
 				// Mute Pre-Send when Mute (reference manual p. 1623): the mute button mutes pre-fader sends too, and
 				// mute automation through the tap.
 				const float gain = send.preFader && channel.muted && m_mutePreSends ? 0.0f : send.gain;
-				desc.nodes[sendNode++].processor =
-					std::make_shared<SendStrip>(state, send.number, gain, send.preFader ? tap : nullptr);
+				addSend(number, slot, gain, send.preFader, fromSilence);
+				next[number][slot] = {destination, send.preFader};
 			}
+			for (const GoingSend& send : going)
+				if (send.node.channel == static_cast<int>(i))
+					addSend(send.number, send.slot, 0.0f, send.node.preFader, false);
+			for (size_t number = 0; number < g_maxSends; ++number)
+				for (size_t slot = 0; slot < 2; ++slot)
+					std::tie(state->sends[number][slot].destination, state->sends[number][slot].preFader) =
+						next[number][slot];
+			state->sendsProject = snapshot.opened;
 		}
+		for (graph::NodeDesc& node : desc.nodes)
+			if (node.kind == graph::NodeKind::VcaMeter)
+			{
+				const auto kept = m_channelStates.find(node.object);
+				const std::shared_ptr<ChannelState> state =
+					kept != m_channelStates.end() ? kept->second : std::make_shared<ChannelState>();
+				states[node.object] = state;
+				node.processor = std::make_shared<VcaMeterStrip>(state);
+			}
 		for (graph::NodeDesc& node : desc.nodes)
 			if (node.kind == graph::NodeKind::Listen)
 			{

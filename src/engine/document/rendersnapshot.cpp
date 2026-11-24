@@ -642,15 +642,24 @@ namespace gnubase::engine
 		}
 
 		// VCA faders (docs/features/link-groups.md): each channel's volume, static and automated, times the volume of
-		// every VCA fader that controls it. vcaCurves: the VCA faders' volume automation that plays, by channel.
+		// every VCA fader that controls it, and the VCA faders with the channels whose sum their meters show.
+		// vcaCurves: the VCA faders' volume automation that plays, by channel.
 		void applyVcaFaders(
 			const Project& project, const std::map<ObjectId, Points>& vcaCurves, RenderSnapshot& snapshot)
 		{
-			for (RenderChannel& channel : snapshot.channels)
+			for (const ObjectId trackId : project.trackOrder())
+				if (const Track& track = project.trackById.at(trackId);
+					track.type == TrackType::Vca && track.channel != 0)
+					snapshot.vcas.push_back({track.channel, {}});
+			for (size_t index = 0; index < snapshot.channels.size(); ++index)
 			{
+				RenderChannel& channel = snapshot.channels[index];
 				const std::vector<ObjectId> chain = vcaChain(project, channel.id);
 				if (chain.empty() || channel.format == ChannelFormat::None)
 					continue;
+				for (RenderVca& vca : snapshot.vcas)
+					if (std::find(chain.begin(), chain.end(), vca.id) != chain.end())
+						vca.channels.push_back(static_cast<int>(index));
 				double factor = 1.0;
 				std::vector<const Points*> curves;
 				for (const ObjectId vca : chain)

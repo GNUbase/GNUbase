@@ -1315,15 +1315,11 @@ TEST_CASE("a VCA strip has a fader and buttons and picks the link group it contr
 	REQUIRE(app.waitUntil([&] { return line(guitar) == "1 Rhythm"; }));
 	CHECK(line(vca).empty());
 
-	// A VCA fader has a fader, M, S and L, and no panner (p. 515).
+	// A VCA fader has a fader with the meter of its channels summed (p. 516), M, S and L, and no panner (p. 515).
 	CHECK(elements(app, window, strip(vca.channel) + " fader").size() == 1);
+	CHECK(elements(app, window, strip(vca.channel) + " .mixer-meter").size() == 1);
+	CHECK(elements(app, window, strip(vca.channel) + " .mixer-peak").size() == 1);
 	CHECK(elements(app, window, strip(vca.channel) + " .mixer-pan").empty());
-	// Its volume, the only readout without a meter's peak level, is centered under the fader.
-	const Json readouts = element(app, window, strip(vca.channel) + " .mixer-readouts").at("box");
-	const Json volume = element(app, window, strip(vca.channel) + " .mixer-volume").at("box");
-	const auto middle = [](const Json& box) { return box.at("x").get<double>() + (box.at("width").get<double>() / 2); };
-	CHECK(volume.at("width").get<double>() < readouts.at("width").get<double>());
-	CHECK(middle(volume) == Catch::Approx(middle(readouts)).margin(1.0));
 	CHECK(elements(app, window, strip(vca.channel) + " button[control=listen]").size() == 1);
 
 	// VCA Channel Controls Link Group: None, then the groups.

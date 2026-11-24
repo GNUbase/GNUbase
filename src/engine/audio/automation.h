@@ -368,13 +368,21 @@ namespace gnubase::engine
 		// The gain on its way to the listen bus after the last block (ListenStrip), written by the audio thread: the
 		// command thread keeps a channel that stopped listening on the listen bus while it is above 0.
 		std::atomic<float> listenGain{0.0f};
-		// Audio thread: each send's gain after the last block (SendStrip), -1 before the first.
-		std::array<float, g_maxSends> sendGains = []
+		// Whether the channel's strip processed a block, written by the audio thread: a send that gets a destination
+		// after that glides in from silence (AudioEngine::attachStrips).
+		std::atomic<bool> played{false};
+		// Two gains per send number, so that a send that moves to another destination glides out of the old one while
+		// it glides into the new one. gain: the send node's gain after the last block (SendStrip), -1 before the
+		// first, written by the audio thread; the command thread keeps a node that went on gliding out while it is
+		// above 0. destination and preFader: the command thread's, what the node of the last graph had, 0 if none.
+		struct SendGain
 		{
-			std::array<float, g_maxSends> gains{};
-			gains.fill(-1.0f);
-			return gains;
-		}();
+			std::atomic<float> gain{-1.0f};
+			ObjectId destination = 0;
+			bool preFader = false;
+		};
+		std::array<std::array<SendGain, 2>, g_maxSends> sends;
+		uint64_t sendsProject = 0; // the command thread's: the project of the destinations (RenderSnapshot::opened)
 	};
 
 	// A channel's audio before its fader, after the strip's sections, for its pre-fader sends: the channel's strip
@@ -572,19 +580,43 @@ namespace gnubase::engine
 
 	// The processor of a send node (graph::NodeKind::Send): a post-fader send's input is its channel's output, a
 	// pre-fader send's the channel's PreFaderTap. It scales it by the send's gain, gliding over a block from the gain
-	// of the last block, which the channel's state keeps across graphs.
+	// of the last block, which the channel's state keeps across graphs in the gain slot `slot` (0 or 1) of the send's
+	// number, or from silence when fromSilence.
 	class SendStrip : public graph::Processor
 	{
 	public:
-		SendStrip(std::shared_ptr<ChannelState> state, int number, float gain, std::shared_ptr<PreFaderTap> tap);
+		SendStrip(std::shared_ptr<ChannelState> state, int number, int slot, float gain,
+			std::shared_ptr<PreFaderTap> tap, bool fromSilence);
 
 		void process(const graph::ProcessContext& context) noexcept override;
 
 	private:
 		std::shared_ptr<ChannelState> m_state;
 		size_t m_number = 0; // the send's index
+		size_t m_slot = 0;
 		float m_gain = 0.0f;
 		std::shared_ptr<PreFaderTap> m_tap;
+		bool m_fromSilence = false; // audio thread: until the first block
+	};
+
+	// The processor of a VCA fader's meter node (graph::NodeKind::VcaMeter): it measures the sum of the outputs of the
+	// channels the VCA fader controls into its channel state's meter.
+	class VcaMeterStrip : public graph::Processor
+	{
+	public:
+		explicit VcaMeterStrip(std::shared_ptr<ChannelState> state) : m_state(std::move(state)) {}
+
+		void process(const graph::ProcessContext& context) noexcept override
+		{
+			m_state->meter.process(context.audio, context.channels, context.frames, m_sampleRate);
+		}
+
+	protected:
+		void prepare(double sampleRate, uint32_t /*maxFrames*/) override { m_sampleRate = sampleRate; }
+
+	private:
+		std::shared_ptr<ChannelState> m_state;
+		double m_sampleRate = 48000.0;
 	};
 
 	// The processor of a channel's listen node (graph::NodeKind::Listen): it glides the channel's output over a block

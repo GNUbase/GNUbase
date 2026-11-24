@@ -38,6 +38,7 @@ namespace gnubase::engine::graph
 		Listen,        // a channel's way to the listen bus, which glides it in and out
 		Send,          // a channel's send to a group or effect channel: its share of the channel's audio
 		MidiSend,      // a MIDI send's way to another instrument track: what the send's effect plays there
+		VcaMeter,      // a VCA fader's meter: the sum of its channels' outputs, which goes nowhere
 	};
 
 	const char* toString(NodeKind kind);
@@ -71,6 +72,15 @@ namespace gnubase::engine::graph
 		std::vector<int> channels;
 	};
 
+	// A send node without a send: from the channel at index channel of a render snapshot to the one at index
+	// destination, before the fader or after it.
+	struct FadingSend
+	{
+		int channel = 0;
+		int destination = 0;
+		bool preFader = false;
+	};
+
 	struct GraphDesc
 	{
 		std::vector<NodeDesc> nodes;
@@ -89,10 +99,14 @@ namespace gnubase::engine::graph
 	// output in that format; a pre-fader send, in the channel's format, only follows its channel, whose strip hands it
 	// the audio before the fader (ChannelStrip). Each sends to its destination's first node. Then a node per MIDI
 	// send that plays to another instrument track, by channel and slot, which follows the node its channel's sequencer
-	// runs in and sends events to that instrument's first node. While channels listen, a listen node per listening
-	// channel receives its output after the fader, and a listen bus in the main mix's format comes last and receives
-	// the listen nodes. fading: channels that stopped listening and still glide out, which keep their listen node.
-	GraphDesc describe(const RenderSnapshot& snapshot, const std::vector<ObjectId>& fading = {});
+	// runs in and sends events to that instrument's first node. Then a meter node per VCA fader with channels, in the
+	// main mix's format (stereo without one), which receives their outputs. While channels listen, a listen node per
+	// listening channel receives its output after the fader, and a listen bus in the main mix's format comes last and
+	// receives the listen nodes. fading: channels that stopped listening and still glide out, which keep their listen
+	// node. fadingSends: sends that went or moved to another destination and still glide out (AudioEngine), each with a
+	// node after its channel's other send nodes.
+	GraphDesc describe(const RenderSnapshot& snapshot, const std::vector<ObjectId>& fading = {},
+		const std::vector<FadingSend>& fadingSends = {});
 
 	// The order in which nodes are processed: every node after the nodes it receives audio or events from, and
 	// otherwise by index, so the order depends only on the graph and not on the order of its connections. Throws

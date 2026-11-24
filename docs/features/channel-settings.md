@@ -51,11 +51,14 @@ pictures and the notepad too with Set up Window Layout, which keeps the window's
 
 - **Opening it** (p. 500): Edit Channel Settings, the `e` button (`button.mixer-edit`) on every track's strip in the
   mixers and beside the track's name in the inspector (`button.inspector-edit`), and the UI command
-  `window.channelSettings` for the first selected track. Each opens the window, or shows the channel in it while it is
-  open, and selects the track in the track list (`AppUi::openChannelSettings`).
-- **Following the selection** (pp. 499-500). While Follow is on, the window shows the first selected track's channel,
-  and going to another channel in the window (previous, next, Go to Output) selects its track in the track list. With
-  Follow off, the window and the track list's selection go their own ways.
+  `window.channelSettings` for the first selected track. Each selects the track in the track list and shows its channel
+  (`AppUi::openChannelSettings`): a window that shows it already comes to the front, or else the first window that
+  follows shows it; while none follows, another window opens (p. 499), as many as the user opens, each with its own
+  Follow. The windows after the first open where the shell puts them, not where a workspace had them.
+- **Following the selection** (pp. 499-500). While Follow is on, a window shows the first selected track's channel, and
+  going to another channel in the window (previous, next, Go to Output) selects its track in the track list, so that
+  the other windows that follow show it too. With Follow off, the window and the track list's selection go their own
+  ways; turning Follow on shows the selected track's channel again.
 - **Add Effect Track to Send** (p. 554). The destination list of every send, in the mixers and in the window, ends with
   Add Effect Track to Send: it opens the add track dialog on the effect page in that window, with the track and the
   send (the document's `tracks`, `send` and `below` attributes), and the dialog's Add Track passes them to
@@ -66,14 +69,14 @@ pictures and the notepad too with Set up Window Layout, which keeps the window's
 
 ## Not yet
 
-The channel settings window's left and right zones and their layout as in the reference; the inserts section with
-the strip's pre- or post-insert position (#113), the cue sends and direct routing sections and the output chain; Go
-to Last and Next Edited Channel, Search Channels, Go to Input, Edit Instrument, track presets and the window's other
-functions; the equalizer's curve display, its settings panel and channel comparison (pp. 509-511); the details views
-of the strip's modules (pp. 505-508); several channel settings windows at once; the track list's own Edit Channel
-Settings button; the channels of input and output busses; copying the first selected channel's settings from the
-mixer's Functions menu, which needs channel selection in the mixer; linking the inserts, the automation read and
-write states, the routing and the selection (p. 458).
+The channel settings window's left and right zones and their layout as in the reference; the inserts section with the
+strip's pre- or post-insert position (#113), the cue sends and direct routing sections and the output chain; Go to Last
+and Next Edited Channel, Search Channels, Go to Input, Edit Instrument, track presets and the window's other functions;
+the equalizer's curve display, its settings panel and channel comparison (pp. 509-511); the details views of the strip's
+modules (pp. 505-508); the places of the channel settings windows after the first in workspaces; the track list's own
+Edit Channel Settings button; the channels of input and output busses; copying the first selected channel's settings
+from the mixer's Functions menu, which needs channel selection in the mixer; linking the inserts, the automation read
+and write states, the routing and the selection (p. 458).
 
 ## Checks
 
@@ -86,10 +89,11 @@ write states, the routing and the selection (p. 458).
   for the sends, skip a send to the channel itself or one that would close a loop through another channel, take one undo
   step, and respect `linked` false. In the app: the mixer's `e` opens the window for its channel and selects the track;
   the sections it shows; a control sending `channel.set`; previous, next and Go to Output; following the track selection
-  and not following it; the UI command; a removed track; Copy and Paste Channel Settings, disabled for MIDI and VCA
-  channels; Add Effect Track to Send
-  through the add track dialog, below the track whose send it is; the inspector's `e`; the fader, an EQ gain, a
-  dynamics threshold and a send level dragged while the engine answers late, which follow the mouse and take one undo
-  step each (#716); and a send knob's Ctrl-click value, which follows the default send level also while the knob is
-  ahead of the engine.
+  and not following it; with Follow off, the UI command and the mixer's `e` opening a second window, which follows, and
+  bringing it to the front; the second window following `e` on the first one's channel, and the first one's next channel
+  with Follow on again; a removed track; a closed second window; Copy and Paste Channel Settings, disabled for MIDI and
+  VCA channels; Add Effect Track to Send through the add track dialog, below the track whose send it is; the inspector's
+  `e`; the fader, an EQ gain, a dynamics threshold and a send level dragged while the engine answers late, which follow
+  the mouse and take one undo step each (#716); and a send knob's Ctrl-click value, which follows the default send level
+  also while the knob is ahead of the engine.
 - `tests/linkgroups_tests.cpp`: the link group's JSON with `eq`, `dynamics` and `sends`.

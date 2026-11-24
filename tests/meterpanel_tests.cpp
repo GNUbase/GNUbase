@@ -203,6 +203,20 @@ TEST_CASE("the mixer's channel meters and the meter display read the same frames
 	REQUIRE(app.waitUntil([&mixer] { return mixer(".mixer-peak").at(0).value("text", std::string()) == "-inf"; }));
 	CHECK(text(app, ".peak-max") == "-6.0 dB");
 
+	// A VCA fader's meter shows its channels summed (p. 516), here the one channel.
+	const auto vca = app.call("track.add", {{"type", "vca"}}).at("channel").at("id").get<uint64_t>();
+	app.call("linkGroup.add", {{"channels", {channel}}, {"vca", vca}});
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil(
+		[&app, vca]
+		{
+			const Json bars =
+				app.ui()
+					.dom(std::nullopt, ".mixer-channel[channel=" + std::to_string(vca) + "] .mixer-meter meter", 0)
+					.at("elements");
+			return bars.size() == 2 && bars[0].at("attributes").value("value", std::string()) == "-6.0";
+		}));
+
 	// The MIDI channel's meter shows the velocity of the note that sounds (p. 468).
 	app.call("channel.set", {{"channel", midi}, {"monitor", true}});
 	app.call("midi.inject", {{"channel", midi}, {"messages", {{{"position", 0}, {"bytes", {0x90, 60, 127}}}}}});

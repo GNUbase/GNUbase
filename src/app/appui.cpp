@@ -26,6 +26,8 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -489,21 +491,7 @@ namespace gnubase::app
 				// The cutting positions show while the quantize panel is open.
 				if (m_eventDisplay && m_quantizePanel.expired())
 					m_eventDisplay->setCuttingPositions({});
-				for (MixerWindow& shown : m_mixers)
-					if (shown.mixer && m_shell.find(shown.window) == nullptr)
-						shown.mixer.reset(); // the user closed its window
-				if (m_channelSettings.mixer && m_shell.find(m_channelSettings.window) == nullptr)
-					m_channelSettings.mixer.reset();
-				// The channel settings window follows the track selection (reference manual p. 499).
-				if (ui::Mixer* settings = channelSettings(); settings != nullptr && settings->follows() && m_trackList)
-				{
-					const std::vector<uint64_t> tracks = m_trackList->selection();
-					if (!tracks.empty() && tracks.front() != m_settingsTrack)
-					{
-						m_settingsTrack = tracks.front();
-						settings->showTrack(m_settingsTrack);
-					}
-				}
+				updateMixerWindows();
 				if (m_keyboard && m_shell.find(m_keyboardWindow) == nullptr)
 					m_keyboard.reset(); // so too: its notes end
 				if (m_markers && m_shell.find(m_markersWindow) == nullptr)
@@ -2241,48 +2229,100 @@ namespace gnubase::app
 		};
 		actions.wentTo = [this](uint64_t track)
 		{
-			m_settingsTrack = track;
 			if (m_trackList)
 				m_trackList->select({track});
 		};
 		return actions;
 	}
 
+	void AppUi::updateMixerWindows()
+	{
+		for (MixerWindow& shown : m_mixers)
+			if (shown.mixer && m_shell.find(shown.window) == nullptr)
+				shown.mixer.reset(); // the user closed its window
+		if (m_channelSettings.mixer && m_shell.find(m_channelSettings.window) == nullptr)
+			m_channelSettings.mixer.reset();
+		for (auto other = m_moreChannelSettings.begin(); other != m_moreChannelSettings.end();)
+			other =
+				m_shell.find(other->second.window) == nullptr ? m_moreChannelSettings.erase(other) : std::next(other);
+		// The channel settings windows that follow follow the track selection (reference manual p. 499).
+		std::vector<ui::Mixer*> following;
+		if (channelSettings() != nullptr && channelSettings()->follows())
+			following.push_back(channelSettings());
+		for (auto& [number, other] : m_moreChannelSettings)
+			if (other.mixer->follows())
+				following.push_back(other.mixer.get());
+		if (!following.empty() && m_trackList)
+		{
+			// Each window on its own: another one may have gone to a track and selected it.
+			const std::vector<uint64_t> tracks = m_trackList->selection();
+			for (ui::Mixer* settings : following)
+				if (!tracks.empty() && settings->track() != tracks.front())
+					settings->showTrack(tracks.front());
+		}
+	}
+
 	ui::Mixer* AppUi::openChannelSettings(uint64_t track)
 	{
-		if (channelSettings() == nullptr)
+		std::vector<MixerWindow*> open; // the first window first
+		if (channelSettings() != nullptr)
+			open.push_back(&m_channelSettings);
+		for (auto& [number, other] : m_moreChannelSettings)
+			if (m_shell.find(other.window) != nullptr)
+				open.push_back(&other);
+		const auto shows = [track](const MixerWindow* window) { return window->mixer->track() == track; };
+		const auto follows = [](const MixerWindow* window) { return window->mixer->follows(); };
+		auto found = std::find_if(open.begin(), open.end(), shows);
+		if (found == open.end())
+			found = std::find_if(open.begin(), open.end(), follows);
+		MixerWindow* shown = found != open.end() ? *found : nullptr;
+		if (shown != nullptr && !m_hidden)
+			m_shell.raise(shown->window);
+		if (shown == nullptr)
 		{
-			m_channelSettings.mixer.reset();
+			// The first window, or else another one with the next free number.
+			int number = channelSettings() != nullptr ? 2 : 1;
+			while (number > 1 && m_moreChannelSettings.count(number) != 0)
+				++number;
+			shown = number == 1 ? &m_channelSettings : &m_moreChannelSettings[number];
+			const std::string name = number == 1 ? "channelSettings" : "channelSettings" + std::to_string(number);
+			shown->mixer.reset();
 			ui::WindowSpec spec;
 			spec.title = "Channel Settings";
 			spec.size = {1000, 560};
-			spec.bounds = m_docking.bounds("channelSettings");
+			spec.bounds = m_docking.bounds(name);
 			spec.hidden = m_hidden;
 			const ui::Window& window = m_shell.open(spec);
-			m_channelSettings.window = window.id();
+			shown->window = window.id();
 			const std::filesystem::path file = m_resources / "ui" / "channel-settings.rml";
 			Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
 			Rml::Element* root = document != nullptr ? document->GetElementById("mixer") : nullptr;
 			if (root == nullptr)
 			{
-				m_shell.close(m_channelSettings.window);
-				m_channelSettings.window = 0;
+				m_shell.close(shown->window);
+				shown->window = 0;
 				throw std::runtime_error("cannot load the channel settings window from " + file.u8string());
 			}
 			document->Show();
-			m_channelSettings.mixer = std::make_unique<ui::Mixer>(
+			shown->mixer = std::make_unique<ui::Mixer>(
 				m_binding, m_meters, m_docking, *root, std::string(), ui::MixerKind::ChannelSettings, mixerActions());
-			m_docking.attach("channelSettings", *document);
+			m_docking.attach(name, *document);
 		}
-		else if (!m_hidden)
-		{
-			m_shell.raise(m_channelSettings.window);
-		}
-		m_settingsTrack = track;
-		m_channelSettings.mixer->showTrack(track);
+		shown->mixer->showTrack(track);
 		if (m_trackList)
 			m_trackList->select({track});
-		return m_channelSettings.mixer.get();
+		return shown->mixer.get();
+	}
+
+	std::vector<ui::WindowId> AppUi::channelSettingsWindows()
+	{
+		std::vector<ui::WindowId> windows;
+		if (channelSettings() != nullptr)
+			windows.push_back(m_channelSettings.window);
+		for (const auto& [number, window] : m_moreChannelSettings)
+			if (m_shell.find(window.window) != nullptr)
+				windows.push_back(window.window);
+		return windows;
 	}
 
 	void AppUi::addEditors()

@@ -241,13 +241,6 @@
 	margin-top: 4dp;
 }
 
-/* A VCA strip's volume, without a peak level, stays centered under the fader. */
-.mixer-readouts > :only-child
-{
-	margin-left: auto;
-	margin-right: auto;
-}
-
 .mixer-peak
 {
 	cursor: pointer;
