@@ -793,10 +793,11 @@ namespace gnubase::ui
 		bool wheelVolume(double x, double y, double lines, bool fades);
 		double draggedVolume(uint64_t event) const;
 		// The draw tool on an audio event: drags the curve point at x and y dp, or a new one there; with Ctrl draws
-		// points along the drag (curveMove).
+		// points along the drag and where it is let go (drawCurveTo).
 		bool curveDown(const Shown& shown, double x, double y);
 		void curveMove(double x, double y);
-		void curveUp();
+		void drawCurveTo(double x, double y, bool release);
+		void curveUp(double x, double y);
 		std::vector<engine::VolumePoint> draggedCurve(uint64_t event) const;
 		std::optional<size_t> curvePointAt(const Shown& shown, double x, double y) const;
 		bool eraseCurvePoint(const Shown& shown, double x, double y);     // the erase tool, on a point

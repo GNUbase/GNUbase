@@ -3699,6 +3699,51 @@ TEST_CASE("Ctrl and the draw tool draw a volume curve in place of the points the
 	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
 }
 
+TEST_CASE(
+	"a drawn volume curve stays inside the event, ends where it is let go and redraws where it goes back", "[unit]")
+{
+	// Reference manual p. 400. The event is 200 to 250 dp, 480 frames a dp; the drawing has a point every 4 dp.
+	Fixture f;
+	f.display.setTool(ui::Tool::Draw);
+	const auto draw = [&f](const std::vector<std::pair<double, double>>& path)
+	{
+		f.automation.press(
+			std::nullopt, f.at(path.front().first, path.front().second), ui::MouseButton::Left, {"ctrl"});
+		for (size_t i = 1; i + 1 < path.size(); ++i)
+			f.automation.move(std::nullopt, f.at(path[i].first, path[i].second), {"ctrl"});
+		f.automation.release(
+			std::nullopt, f.at(path.back().first, path.back().second), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+	};
+	const auto positions = [&f]
+	{
+		std::vector<int64_t> result;
+		const Json curve = f.audioEvents()[0].at("volumeCurve");
+		for (const Json& point : curve)
+			result.push_back(point.at("position").get<int64_t>());
+		return result;
+	};
+	SECTION("past the end, one point at the edge")
+	{
+		draw({{240, 20}, {248, 20}, {256, 20}, {264, 20}, {272, 20}, {280, 20}});
+		REQUIRE(f.waitUntil([&f] { return !f.audioEvents()[0].at("volumeCurve").empty(); }));
+		CHECK(positions() == std::vector<int64_t>{19200, 23040, 24000});
+	}
+	SECTION("a point where it is let go, also less than 4 dp from the last")
+	{
+		draw({{210, 20}, {220, 20}, {222, 20}});
+		REQUIRE(f.waitUntil([&f] { return !f.audioEvents()[0].at("volumeCurve").empty(); }));
+		CHECK(positions() == std::vector<int64_t>{4800, 9600, 10560});
+	}
+	SECTION("going back over the drawing replaces its points there")
+	{
+		draw({{210, 20}, {220, 20}, {230, 10}, {240, 20}, {225, 30}, {225, 30}});
+		REQUIRE(f.waitUntil([&f] { return !f.audioEvents()[0].at("volumeCurve").empty(); }));
+		CHECK(positions() == std::vector<int64_t>{4800, 9600, 12000, 19200});
+		CHECK(std::abs(f.audioEvents()[0].at("volumeCurve")[2].at("volume").get<double>() + 6.0) < 0.1);
+	}
+}
+
 TEST_CASE("the draw and erase tools pass over curve points outside the event, which it doesn't show", "[unit]")
 {
 	// A split keeps the whole curve in both halves: the point 0.1 seconds in lies before the right half's start.
@@ -4257,6 +4302,17 @@ TEST_CASE("locked events and shared copies show an icon in their upper right cor
 	const auto right = [](Rml::Element* element) { return element->GetAbsoluteLeft() + element->GetOffsetWidth(); };
 	CHECK((right(mark(copy, "locked")) <= mark(copy, "shared")->GetAbsoluteLeft() ||
 		right(mark(copy, "shared")) <= mark(copy, "locked")->GetAbsoluteLeft()));
+
+	// Shared copies of an audio part show it too.
+	const auto audioPart = f.call("event.toPart", {{"events", {f.event}}}).at("events")[0].get<uint64_t>();
+	REQUIRE(f.waitUntil([&] { return f.display.project().at("audioParts").size() == 1; }));
+	CHECK(mark(audioPart, "shared") == nullptr);
+	const auto audioCopy = f.call("event.copy", {{"events", {audioPart}}, {"delta", 48000}, {"shared", true}})
+							   .at("events")[0]
+							   .get<uint64_t>();
+	REQUIRE(f.waitUntil([&] { return mark(audioPart, "shared") != nullptr && mark(audioCopy, "shared") != nullptr; }));
+	f.call("event.toRealCopy", {{"events", {audioCopy}}});
+	REQUIRE(f.waitUntil([&] { return mark(audioPart, "shared") == nullptr && mark(audioCopy, "shared") == nullptr; }));
 }
 
 TEST_CASE("grid lines show the grid behind the events, and a line at an audio event's snap point while it is inside it",

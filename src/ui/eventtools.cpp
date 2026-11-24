@@ -697,7 +697,7 @@ namespace gnubase::ui
 			break;
 		}
 		case Drag::VolumePoint:
-			curveUp();
+			curveUp(x, y);
 			break;
 		case Drag::TimeWarp:
 			timeWarpUp(x);

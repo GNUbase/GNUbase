@@ -3246,58 +3246,134 @@ namespace gnubase::engine
 
 	namespace
 	{
-		// What the shared copies of an audio part share: its events by id, placed from its start and on no track.
+		// An event as the shared copies of its audio part share it: placed from the part's start, without what stays
+		// each copy's own, its track, its place in the stack (front, rank) and a crossfade from an event outside the
+		// part.
+		AudioEvent sharedOf(const std::map<ObjectId, AudioEvent>& events, AudioEvent event, const AudioPart& part)
+		{
+			event.position.value -= part.position.value;
+			event.track = 0;
+			event.front = 0;
+			event.rank = 0;
+			if (const auto from = events.find(event.crossfade.from);
+				from == events.end() || from->second.part != part.id)
+				event.crossfade = Crossfade();
+			return event;
+		}
+
+		// What the shared copies of an audio part share: its events by id.
 		// ponytail: a pass over every audio event per shared part; index them by part if that ever shows.
 		std::vector<AudioEvent> contentsOf(const std::map<ObjectId, AudioEvent>& events, const AudioPart& part)
 		{
 			std::vector<AudioEvent> contents;
 			for (const auto& [id, event] : events)
 				if (event.part == part.id)
-				{
-					AudioEvent& relative = contents.emplace_back(event);
-					relative.position.value -= part.position.value;
-					relative.track = 0;
-				}
+					contents.push_back(sharedOf(events, event, part));
 			return contents;
 		}
 
-		// An audio part's events make way for copies of source's, at the same places from its start, as copyOf
-		// copies them.
-		void copyContents(Project& project, const AudioPart& source, const AudioPart& part, CommandContext& context)
+		// The events of two copies of a group, which were alike, paired: each of from's with the one of to's in the
+		// same place in the order of what they share.
+		std::map<ObjectId, ObjectId> pairedEvents(const std::map<ObjectId, AudioEvent>& fromEvents,
+			const AudioPart& from, const std::map<ObjectId, AudioEvent>& toEvents, const AudioPart& to)
 		{
-			for (auto event = project.audioEvents.begin(); event != project.audioEvents.end();)
+			const auto sorted = [](const std::map<ObjectId, AudioEvent>& events, const AudioPart& part)
 			{
-				if (event->second.part != part.id)
-				{
-					++event;
-					continue;
-				}
-				context.emit("audioEvent.removed", {{"event", event->first}});
-				event = project.audioEvents.erase(event);
+				std::vector<std::pair<std::string, ObjectId>> keys;
+				for (const auto& [id, event] : events)
+					if (event.part == part.id)
+					{
+						AudioEvent shared = sharedOf(events, event, part);
+						shared.id = 0;
+						shared.part = 0;
+						shared.crossfade.from = 0;
+						keys.emplace_back(toJson(shared).dump(), id);
+					}
+				std::sort(keys.begin(), keys.end());
+				return keys;
+			};
+			const auto fromKeys = sorted(fromEvents, from);
+			const auto toKeys = sorted(toEvents, to);
+			std::map<ObjectId, ObjectId> pairs;
+			for (size_t i = 0; i < std::min(fromKeys.size(), toKeys.size()); ++i)
+				pairs[fromKeys[i].second] = toKeys[i].second;
+			return pairs;
+		}
+
+		// An audio part's events become like source's, at the same places from its start: each changes in place,
+		// keeping its id, its place in the stack and its crossfades with events outside the part, and what source
+		// added or removed is added or removed. Added events come in front, as copyOf adds them, unless they share
+		// the place of an event they pair with, as the pieces of a split do.
+		void copyContents(const SharedParts& before, Project& project, const AudioPart& source, const AudioPart& part,
+			CommandContext& context)
+		{
+			const auto inPart = [&project](ObjectId event, const AudioPart& of)
+			{
+				const auto found = project.audioEvents.find(event);
+				return found != project.audioEvents.end() && found->second.part == of.id;
+			};
+			// Paired as they were before the command, or as they are for a part that joined the group in it.
+			const std::map<ObjectId, AudioEvent>* was = &project.audioEvents;
+			const AudioPart* wasPart = &part;
+			if (const auto old = before.audioParts.find(part.id);
+				old != before.audioParts.end() && old->second.shared == part.shared)
+			{
+				was = &before.audioEvents;
+				wasPart = &old->second;
 			}
+			const std::map<ObjectId, ObjectId> pairs =
+				pairedEvents(before.audioEvents, before.audioParts.at(source.id), *was, *wasPart);
+			const std::vector<AudioEvent*> events = stackedIn(project, source.id);
+			std::map<ObjectId, ObjectId> ids;
+			std::map<ObjectId, ObjectId> places;
+			std::set<ObjectId> kept;
+			for (const AudioEvent* event : events)
+				if (const auto pair = pairs.find(event->id); pair != pairs.end() && inPart(pair->second, part))
+				{
+					ids[event->id] = pair->second;
+					kept.insert(pair->second);
+					places[frontOf(*event)] = frontOf(project.audioEvents.at(pair->second));
+				}
+			std::vector<ObjectId> removed;
+			for (const AudioEvent* event : eventsIn(project, part.id))
+				if (kept.count(event->id) == 0)
+					removed.push_back(event->id);
+			for (const ObjectId id : removed)
+				removeItem(project, audioItem(project.audioEvents.at(id)), 0, context);
+			for (const AudioEvent* event : events)
+				if (ids.count(event->id) == 0)
+					ids[event->id] = project.newId();
 			const Gap gap{samples(project, part.position) - samples(project, source.position),
 				ticks(project, part.position) - ticks(project, source.position)};
-			std::map<ObjectId, ObjectId> ids;
-			std::vector<AudioEvent> copies;
-			for (const AudioEvent* event : stackedIn(project, source.id))
+			for (const AudioEvent* event : events)
 			{
-				ids[event->id] = project.newId();
-				copies.push_back(*event);
-			}
-			for (AudioEvent& copy : copies)
-			{
-				const auto from = ids.find(copy.crossfade.from);
-				if (from == ids.end())
-					copy.crossfade = Crossfade();
-				else
-					copy.crossfade.from = from->second;
-				copy.id = ids.at(copy.id);
+				AudioEvent copy = *event;
+				copy.id = ids.at(event->id);
 				copy.track = part.track;
 				copy.part = part.id;
-				copy.front = 0;
 				copy.position = rebased(project,
 					shifted(project, copy.position, gap.shift(copy.position.base, 1), false), part.position.base);
 				noSliceOrigin(copy);
+				const auto existing = project.audioEvents.find(copy.id);
+				if (const auto from = ids.find(event->crossfade.from); from != ids.end())
+					copy.crossfade.from = from->second;
+				else if (existing != project.audioEvents.end() && !inPart(existing->second.crossfade.from, part))
+					copy.crossfade = existing->second.crossfade;
+				else
+					copy.crossfade = Crossfade();
+				if (existing != project.audioEvents.end())
+				{
+					copy.front = existing->second.front;
+					copy.rank = existing->second.rank;
+					if (!(copy == existing->second))
+					{
+						existing->second = copy;
+						context.emit("audioEvent.changed", {{"event", toJson(copy)}});
+					}
+					continue;
+				}
+				const auto place = places.find(frontOf(*event));
+				copy.front = place != places.end() ? place->second : 0;
 				context.emit("audioEvent.added", {{"event", toJson(copy)}});
 				project.audioEvents[copy.id] = copy;
 			}
@@ -3332,7 +3408,7 @@ namespace gnubase::engine
 			else if (const auto source = audioSources.find(part.shared);
 				source != audioSources.end() && source->second != &part)
 			{
-				copyContents(project, *source->second, part, context);
+				copyContents(before, project, *source->second, part, context);
 			}
 		}
 		std::map<ObjectId, const MidiPart*> sources;

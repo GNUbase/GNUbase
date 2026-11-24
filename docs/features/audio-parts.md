@@ -18,7 +18,8 @@ The `event.*` commands ([parts-and-events.md](parts-and-events.md)) take audio p
 
 - **Moving and copying** take the part's events along, also onto another audio track; a copy has copies of the events,
   and crossfades between them join the copies. An event in a part can't move to another track by itself. Shared
-  copies (`shared`, reference manual p. 272) keep their events alike ([parts-and-events.md](parts-and-events.md)).
+  copies (`shared`, reference manual p. 272) keep their events alike ([parts-and-events.md](parts-and-events.md)),
+  also those `track.duplicate` copies with their track.
 - **Resizing.** Normal sizing reveals or hides events: they keep their time. Sizing moves contents moves them with the
   edge.
 - **Splitting** cuts the events across the position too; what lies after it goes into the new part. Without `events`,

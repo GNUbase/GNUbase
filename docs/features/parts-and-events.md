@@ -83,11 +83,15 @@ lock stay each part's own. Shared copies are saved in `gnubase.json`; `project.x
 
 Shared copies of an audio part (#660) share its events, placed from the part's start. Since an audio part's events are
 audio events of their own, with ids of their own, a copy can't hold the same ones: when the events of one copy of a
-group change, by any command that edits audio events, its other copies get new copies of them in place of theirs, at
-the same places from their own starts, as `audioEvent.removed` and `audioEvent.added`. `sharedPartsOf` copies the
-shared audio parts' events for the comparison. A copy leaves its group where its events change against its edges for
-its own sake: when sizing its start without moving its contents or its end while moving them, when it is split or
-glued, and with `event.toRealCopy`. A range paste, a track preset and a stashed track version make real copies.
+group change, by any command that edits audio events, the other copies' events change in place to match, at the same
+places from their own starts, and those the edit added or removed are added or removed there too (`audioEvent.changed`,
+`audioEvent.added`, `audioEvent.removed`). Each copy's events keep their ids, so a `history.transaction` can edit
+events of several copies, and what is each copy's own: its place in the track's stack, so `event.toFront` on one copy
+moves only that one, and its crossfades with events outside the part. Events are matched by what they share, as they
+were before the command; `sharedPartsOf` copies the shared audio parts' events for that. A copy leaves its group where
+its events change against its edges for its own sake: when sizing its start without moving its contents or its end
+while moving them, when it is split or glued, and with `event.toRealCopy`. A range paste, a track preset and a stashed
+track version make real copies; `track.duplicate` keeps the copied parts in their groups.
 
 ## The event display
 

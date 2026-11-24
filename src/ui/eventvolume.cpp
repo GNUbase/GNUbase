@@ -231,11 +231,34 @@ namespace gnubase::ui
 	{
 		m_dragDx = x - m_pressX;
 		m_dragDy = y - m_pressY;
-		// ponytail: a point every few dp the mouse goes sideways; thin them out if curves get too dense.
-		constexpr double step = 4.0;
-		if (!m_drawnCurve.empty() && std::abs(x - m_drawnCurve.back().first) >= step)
-			m_drawnCurve.emplace_back(x, y);
+		drawCurveTo(x, y, false);
 		showFades();
+	}
+
+	void EventDisplay::drawCurveTo(double x, double y, bool release)
+	{
+		const auto fades = m_fades.find(m_dragEvent);
+		const auto shown = std::find_if(
+			m_events.begin(), m_events.end(), [this](const Shown& each) { return each.id == m_dragEvent; });
+		if (m_drawnCurve.empty() || fades == m_fades.end() || shown == m_events.end() ||
+			!(fades->second.timeRate > 0.0))
+			return;
+		// Inside the event: past its edges the drawing stays at the edge, where it has one point.
+		const double left = (shown->start - m_view.start) / m_view.scale;
+		const double right = left + (static_cast<double>(fades->second.length) / fades->second.timeRate / m_view.scale);
+		x = std::clamp(x, left, std::max(left, right));
+		// ponytail: a point every few dp the mouse goes sideways, and one where it is let go; thin them out if curves
+		// get too dense.
+		constexpr double step = 4.0;
+		const double from = m_drawnCurve.back().first;
+		if (x == from || (!release && std::abs(x - from) < step))
+			return;
+		// Where the drawing goes back over itself, it replaces what it drew there before.
+		const auto passed = [from, x](const std::pair<double, double>& point)
+		{ return x > from ? point.first > from && point.first <= x : point.first >= x && point.first < from; };
+		const auto last = std::prev(m_drawnCurve.end());
+		m_drawnCurve.erase(std::remove_if(m_drawnCurve.begin(), last, passed), last);
+		m_drawnCurve.emplace_back(x, y);
 	}
 
 	std::vector<engine::VolumePoint> EventDisplay::draggedCurve(uint64_t event) const
@@ -304,8 +327,9 @@ namespace gnubase::ui
 		return curve;
 	}
 
-	void EventDisplay::curveUp()
+	void EventDisplay::curveUp(double x, double y)
 	{
+		drawCurveTo(x, y, true);
 		// A click on a point, or a drag that leaves it where it is, changes nothing and makes no undo step.
 		if (const auto fades = m_fades.find(m_dragEvent); fades != m_fades.end())
 		{
