@@ -678,6 +678,9 @@ namespace gnubase::engine
 		bool lock = false;       // event.* commands don't move, resize, split, glue or remove it
 		std::string color;       // "#rrggbb", or empty to follow the track's color
 		int lane = 0;            // the track's lane it is on, from 0
+		// Shared copies (docs/features/parts-and-events.md) have the same id here: an edit of one's events goes to
+		// the others. 0: not shared.
+		ObjectId shared = 0;
 	};
 
 	inline constexpr double g_minEventVolume = -144.0;
@@ -1976,8 +1979,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.color, a.lane) ==
-			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.color, b.lane);
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.color, a.lane, a.shared) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.color, b.lane, b.shared);
 	}
 
 	inline bool operator==(const NoteTiming& a, const NoteTiming& b)

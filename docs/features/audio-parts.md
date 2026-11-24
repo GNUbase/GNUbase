@@ -17,7 +17,8 @@ they play.
 The `event.*` commands ([parts-and-events.md](parts-and-events.md)) take audio parts like MIDI parts, by id:
 
 - **Moving and copying** take the part's events along, also onto another audio track; a copy has copies of the events,
-  and crossfades between them join the copies. An event in a part can't move to another track by itself.
+  and crossfades between them join the copies. An event in a part can't move to another track by itself. Shared
+  copies (`shared`, reference manual p. 272) keep their events alike ([parts-and-events.md](parts-and-events.md)).
 - **Resizing.** Normal sizing reveals or hides events: they keep their time. Sizing moves contents moves them with the
   edge.
 - **Splitting** cuts the events across the position too; what lies after it goes into the new part. Without `events`,
@@ -67,7 +68,8 @@ audio events and parts and select what they make.
 
 - `tests/audiopart_tests.cpp`: `audioPart.add`; Events to Part and Dissolve Part with undo, also of a muted part;
   moving, copying, splitting (with what it announces), gluing, muting, locking, removing and duplicating parts with
-  their events; playback cut at the part's edges and silent while muted; the DAWproject file with and without
+  their events; shared copies, an edit of one's events reaching the others and undone with them, and the copies that
+  leave their group; playback cut at the part's edges and silent while muted; the DAWproject file with and without
   GNUbase's entry.
 - `tests/inspector_tests.cpp`: the info line renames an audio part and a MIDI part selected with it, as one undo step.
 - `tests/fade_tests.cpp`: fades that a part cuts play on up to its edges, sample by sample and against the golden file

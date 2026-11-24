@@ -267,6 +267,63 @@ TEST_CASE("audio parts move, copy, split, glue, mute, lock and go with their eve
 	CHECK(f.count("audioParts") == 2);
 }
 
+TEST_CASE("shared copies of an audio part share their events", "[unit]")
+{
+	Fixture f;
+	const int64_t audio = f.track("audio");
+	const int64_t other = f.track("audio");
+	const int64_t first = f.audioEvent(audio, g_second, g_second);
+	const Json part = f.call("event.toPart", {{"events", {first}}}).at("events").at(0);
+
+	// Shared copies (reference manual p. 272) are one group, which event.get reports too.
+	const Json copy =
+		f.call("event.copy", {{"events", {part}}, {"delta", 4 * g_second}, {"track", other}, {"shared", true}})
+			.at("events")
+			.at(0);
+	const Json twin = f.call("event.duplicate", {{"events", {copy}}, {"shared", true}}).at("events").at(0);
+	const Json group = f.part(part).at("shared");
+	CHECK(group != 0);
+	CHECK(f.part(copy).at("shared") == group);
+	CHECK(f.part(twin).at("shared") == group);
+	CHECK(f.call("event.get", {{"events", {copy}}}).at("events").at(0).at("shared") == group);
+	CHECK(f.part(f.call("event.copy", {{"events", {part}}}).at("events").at(0)).at("shared") == 0);
+	f.call("history.undo");
+
+	// An edit of one copy's events reaches the others, each at its own place, as one undo step.
+	const Json event = f.eventsIn(copy).at(0).at("id");
+	f.call("audioEvent.set", {{"event", event}, {"volume", -6.0}, {"position", (5 * g_second) + (g_second / 2)}});
+	for (const auto& [each, start] : {std::pair{part, g_second}, std::pair{twin, 6 * g_second}})
+	{
+		const std::vector<Json> events = f.eventsIn(each);
+		REQUIRE(events.size() == 1);
+		CHECK(events[0].at("volume") == -6.0);
+		CHECK(events[0].at("position") == start + (g_second / 2));
+		CHECK(events[0].at("track") == f.part(each).at("track"));
+	}
+	f.call("history.undo");
+	CHECK(f.eventsIn(part).at(0).at("volume") == 0.0);
+	CHECK(f.eventsIn(twin).at(0).at("position") == 6 * g_second);
+	CHECK(f.audio(event).at("volume") == 0.0);
+
+	// A copy whose events move against its start leaves the group, so does one converted to a real copy, whose
+	// events get clips of their own, and the last copy is a part like any other.
+	f.call("event.resize", {{"events", {twin}}, {"edge", "start"}, {"delta", g_second / 4}});
+	CHECK(f.part(twin).at("shared") == 0);
+	CHECK(f.part(part).at("shared") == group);
+	f.call("event.toRealCopy", {{"events", {copy}}});
+	CHECK(f.part(copy).at("shared") == 0);
+	CHECK(f.part(part).at("shared") == 0);
+	CHECK(f.eventsIn(copy).at(0).at("clip") != f.eventsIn(part).at(0).at("clip"));
+	f.call("audioEvent.set", {{"event", first}, {"volume", -3.0}});
+	CHECK(f.eventsIn(copy).at(0).at("volume") == 0.0);
+
+	// Splitting a shared copy takes both pieces out of the group.
+	const Json pair = f.call("event.duplicate", {{"events", {part}}, {"shared", true}}).at("events").at(0);
+	f.call("event.split", {{"events", {pair}}, {"positions", {(2 * g_second) + (g_second / 2)}}});
+	CHECK(f.part(pair).at("shared") == 0);
+	CHECK(f.part(part).at("shared") == 0);
+}
+
 TEST_CASE("a dissolved muted part leaves its events muted, as they played", "[unit]")
 {
 	Fixture f;
@@ -347,6 +404,7 @@ TEST_CASE("audio parts are saved in the DAWproject file", "[integration]")
 	const Json part = f.call("event.toPart", {{"events", {first, second}}}).at("events").at(0);
 	f.call("event.set", {{"events", {part}}, {"mute", true}, {"color", "#123456"}});
 	f.call("audioPart.add", {{"track", audio}, {"position", 6 * g_second}, {"length", g_second}, {"name", "Empty"}});
+	f.call("event.copy", {{"events", {part}}, {"delta", 8 * g_second}, {"shared", true}});
 	const Json before = f.call("project.get");
 	const std::string file = (dir.path() / "parts.dawproject").u8string();
 	f.call("project.save", {{"path", file}, {"embedMedia", false}});
@@ -364,7 +422,7 @@ TEST_CASE("audio parts are saved in the DAWproject file", "[integration]")
 	writeZip(other, entries);
 	f.call("project.load", {{"path", other}});
 	const Json loaded = f.call("project.get");
-	REQUIRE(loaded.at("audioParts").size() == 2);
+	REQUIRE(loaded.at("audioParts").size() == 3); // a shared copy as an ordinary clip
 	const Json& muted = loaded.at("audioParts").at(0);
 	CHECK(muted.at("mute") == true);
 	CHECK(f.call("event.get", {{"events", {muted.at("id")}}}).at("events").at(0).at("start") == g_second);

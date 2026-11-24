@@ -770,7 +770,7 @@ namespace gnubase::engine
 	{
 		return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
 			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"color", colorJson(part.color)},
-			{"lane", part.lane}};
+			{"lane", part.lane}, {"shared", part.shared}};
 	}
 
 	Json toJson(const Note& note)
@@ -2611,6 +2611,7 @@ namespace gnubase::engine
 			part.lock = item.value("lock", false);
 			part.color = eventColorFrom(item);
 			part.lane = std::max(0, item.value("lane", 0));
+			part.shared = item.value("shared", ObjectId{0});
 			return part;
 		};
 		for (const Json& item : json.value("audioParts", Json::array()))

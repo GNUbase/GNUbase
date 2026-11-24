@@ -3722,7 +3722,7 @@ namespace gnubase::engine
 					result = handler(m_project, context);
 					if (context.unchanged())
 						return result;
-					syncSharedParts(before.midiParts, m_project, context);
+					syncSharedParts(sharedPartsOf(before), m_project, context);
 					midi::adoptPatterns(m_project, context);
 					followTrackFolders(m_project, context, before);
 					if (!m_trackRenders.empty())
@@ -3768,7 +3768,7 @@ namespace gnubase::engine
 			throw CommandError(command + " is not a document edit");
 		if (const std::string problem = validate(parameters, edit->second.info.parameters); !problem.empty())
 			throw CommandError(command + ": " + problem);
-		const auto parts = sharedPartsOf(project.midiParts);
+		const SharedParts parts = sharedPartsOf(project);
 		CommandContext inner(parameters, &context);
 		Json result = edit->second.handler(project, inner);
 		if (const std::string problem = validate(result, edit->second.info.result, "result"); !problem.empty())
@@ -3967,7 +3967,7 @@ namespace gnubase::engine
 				// Each command's edit reaches the other shared copies before the next command runs, so that edits of
 				// several copies of a group all stay and a command sees what an earlier one did to another copy. Only
 				// shared parts are compared, so only they are copied, not every note of every part (#426).
-				const std::map<ObjectId, MidiPart> parts = sharedPartsOf(project.midiParts);
+				const SharedParts parts = sharedPartsOf(project);
 				results.push_back(edit->second.handler(project, inner));
 				syncSharedParts(parts, project, inner);
 			}
