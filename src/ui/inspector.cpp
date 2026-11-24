@@ -414,32 +414,6 @@ namespace gnubase::ui
 			return type == "audio" || type == "instrument" || type == "midi";
 		}
 
-		// Where the channel of a track of the type can play: output busses, group and effect channels whose audio
-		// doesn't come back to it (routesTo), or for MIDI tracks the instrument channels, as in the add track dialog;
-		// and where an audio track records from.
-		Options outputs(const Json& project, const std::string& type, uint64_t channel)
-		{
-			Options options;
-			if (type == "midi")
-			{
-				options.emplace_back("0", "Not Connected");
-				for (const Json& track : project.at("tracks"))
-					if (track.at("type") == "instrument")
-						options.emplace_back(std::to_string(track.at("channel").get<uint64_t>()), track.at("name"));
-				return options;
-			}
-			options.emplace_back("0", "No Bus");
-			for (const Json& bus : project.at("busses"))
-				if (bus.at("direction") == "output")
-					options.emplace_back(std::to_string(bus.at("id").get<uint64_t>()), bus.at("name"));
-			for (const Json& track : project.at("tracks"))
-				if ((track.at("type") == "group" || track.at("type") == "effect" || track.at("type") == "folder") &&
-					track.at("channel") != 0 && track.at("channel") != channel &&
-					!routesTo(project, track.at("channel").get<uint64_t>(), channel))
-					options.emplace_back(std::to_string(track.at("channel").get<uint64_t>()), track.at("name"));
-			return options;
-		}
-
 		// A MIDI track's patch as the program selector's value: "off", or the program and bank, "5:300" ("5:" without a
 		// bank).
 		std::string patchValue(const Json& program, const Json& bank)
@@ -494,15 +468,6 @@ namespace gnubase::ui
 				return "off";
 			const Json transformer = channel.value("inputTransformer", Json::object());
 			return transformer.value("mode", std::string("off"));
-		}
-
-		Options inputs(const Json& project)
-		{
-			Options options{{"0", "No Bus"}};
-			for (const Json& bus : project.at("busses"))
-				if (bus.at("direction") == "input")
-					options.emplace_back(std::to_string(bus.at("id").get<uint64_t>()), bus.at("name"));
-			return options;
 		}
 
 		// What a field's gesture changes, as EngineBinding::sendStep names it: the inspector's step owner, then e.g.
@@ -1063,10 +1028,10 @@ namespace gnubase::ui
 					*pan, "value", fieldValue(key("pan"), widgets::format(channel->at("pan").get<float>() * 100.0F)));
 			const auto id = channel->at("id").get<uint64_t>();
 			if (Rml::Element* output = element("select[control=output]"))
-				widgets::fill(
-					*output, outputs(*m_project, type, id), std::to_string(channel->at("output").get<uint64_t>()));
+				widgets::fill(*output, outputChoices(*m_project, type, id),
+					std::to_string(channel->at("output").get<uint64_t>()));
 			if (Rml::Element* input = element("select[control=input]"); input != nullptr && type == "audio")
-				widgets::fill(*input, inputs(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
+				widgets::fill(*input, inputChoices(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
 			// A MIDI or instrument track's MIDI input: all MIDI inputs, the chord pads (reference manual p. 1367) or
 			// none.
 			if (Rml::Element* input = element("select[control=input]");
@@ -1526,9 +1491,23 @@ namespace gnubase::ui
 					? target
 					: target->Closest(".inspector-retrospective");
 				button != nullptr && m_retrospectiveMenu)
+			{
+				// Insert as Cycle Recording only for input from two or more cycle laps (p. 355, #2067).
+				if (Rml::Element* item = m_retrospectiveMenu->QuerySelector(".retrospective-cycle"); item != nullptr)
+				{
+					item->SetAttribute("disabled", "");
+					if (m_track != 0)
+						m_binding.send("midi.getRetrospective", {{"track", m_track}},
+							[item = item->GetObserverPtr()](const engine::Result& result)
+							{
+								if (item && result.ok() && result.value.at("cycleLaps").get<size_t>() > 1)
+									item->RemoveAttribute("disabled");
+							});
+				}
 				openMenu(*m_retrospectiveMenu.get(),
 					{button->GetAbsoluteLeft(), button->GetAbsoluteTop() + button->GetOffsetHeight()});
-			if (m_track != 0 &&
+			}
+			if (m_track != 0 && !target->HasAttribute("disabled") &&
 				(target->IsClassSet("retrospective-linear") || target->IsClassSet("retrospective-cycle")))
 				m_binding.send("midi.insertRetrospective",
 					{{"track", m_track}, {"cycle", target->IsClassSet("retrospective-cycle")}}, whenRefused());

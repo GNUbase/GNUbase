@@ -926,6 +926,51 @@ TEST_CASE("a send's destination list leaves out the channels whose audio would c
 	CHECK(options(guitar.channel) == std::vector<std::string>{"0", id(drums), id(bus), id(reverb), "add"});
 }
 
+TEST_CASE("the mixer's Routing section picks a channel's input and output bus", "[ui]")
+{
+	test::UiApp app({1200, 900});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added drums = addTrack(app, "group", "Drums");
+	const Added synth = addTrack(app, "instrument", "Synth");
+	const Added piano = addTrack(app, "midi", "Piano");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 6; }));
+	const auto select = [&](uint64_t channel, const char* param)
+	{
+		return dynamic_cast<Rml::ElementFormControlSelect*>(
+			findElement(app, window, strip(channel) + " [param=" + param + "]"));
+	};
+	const auto options = [&](uint64_t channel, const char* param)
+	{
+		std::vector<std::string> values;
+		if (Rml::ElementFormControlSelect* list = select(channel, param))
+			for (int option = 0; option < list->GetNumOptions(); ++option)
+				values.push_back(list->GetOption(option)->GetAttribute<Rml::String>("value", ""));
+		return values;
+	};
+	const std::string in = std::to_string(bus(app, "input"));
+	const std::string out = std::to_string(bus(app, "output"));
+	const auto id = [](const Added& added) { return std::to_string(added.channel); };
+
+	// Input Routing lists the input busses, Output Routing the output busses and the group and effect channels whose
+	// audio doesn't come back (reference manual pp. 471-473); a MIDI track plays into an instrument.
+	REQUIRE(app.waitUntil([&] { return options(guitar.channel, "input") == std::vector<std::string>{"0", in}; }));
+	CHECK(options(guitar.channel, "output") == std::vector<std::string>{"0", out, id(drums)});
+	CHECK(options(drums.channel, "output") == std::vector<std::string>{"0", out});
+	CHECK(options(drums.channel, "input").empty()); // only audio tracks record
+	CHECK(options(piano.channel, "output") == std::vector<std::string>{"0", id(synth)});
+	CHECK(select(guitar.channel, "output")->GetValue() == out);
+
+	// Picking an entry sends channel.set; the list follows what other clients set.
+	select(guitar.channel, "output")->SetValue(id(drums));
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("output") == drums.channel; }));
+	select(guitar.channel, "input")->SetValue("0");
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("input") == 0; }));
+	app.call("channel.set", {{"channel", guitar.channel}, {"output", bus(app, "output")}});
+	REQUIRE(app.waitUntil([&] { return select(guitar.channel, "output")->GetValue() == out; }));
+}
+
 TEST_CASE(
 	"solo, mute and listen in the mixer: exclusive solo, solo defeat, listen and the Deactivate All buttons", "[ui]")
 {

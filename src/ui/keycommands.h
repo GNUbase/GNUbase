@@ -132,6 +132,8 @@ namespace gnubase::ui
 		void run(const std::string& command, const engine::Json& parameters, Window& window, Rml::Element* zone);
 		// Ends a command that runs while held, as its key going up would, e.g. for a button released.
 		void release(const std::string& command);
+		// The window that run last sent the engine command from, for a dialog about its result, or 0 if none.
+		WindowId sentFrom(const std::string& command) const;
 
 		// The user's key commands and macros, as the user settings ui.keyCommands and ui.macros have them: each entry
 		// of keyCommands gives a command, with its parameters, all its keys, which replace its default keys in the zone
@@ -208,5 +210,6 @@ namespace gnubase::ui
 		std::vector<Bound> m_effective;                  // what the keys run: the defaults with the user's key commands
 		std::vector<std::pair<int, std::string>> m_held; // the keys down with the commands they run while held
 		uint64_t m_revision = 0;                         // of m_effective
+		std::map<std::string, WindowId> m_sentFrom;      // by engine command
 	};
 }

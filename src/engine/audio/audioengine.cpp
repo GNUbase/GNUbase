@@ -1652,6 +1652,7 @@ namespace gnubase::engine
 			m_loudness.reset();
 			m_loudness.resetTruePeakHold();
 		}
+		const bool stopped = m_meterPlaying && !playing;
 		m_meterPlaying = playing;
 		std::array<const float*, g_maxMeterChannels> channels{};
 		int count = 0;
@@ -1659,7 +1660,12 @@ namespace gnubase::engine
 			if (port >= 0 && port < m_device->format().outputChannels && count < g_maxMeterChannels)
 				channels[static_cast<size_t>(count++)] = block.outputs[port];
 		m_mainMeter.process(channels.data(), count, block.frames, m_device->format().sampleRate);
-		m_loudness.process(channels.data(), count, block.frames, playing);
+		// Measure Loudness off measures nothing; Hold on Stop off starts the measurement over at the stop (pp. 537,
+		// 540).
+		m_loudness.process(
+			channels.data(), count, block.frames, playing && m_meterMeasureLoudness.load(std::memory_order_relaxed));
+		if (stopped && !m_meterHoldOnStop.load(std::memory_order_relaxed))
+			m_loudness.reset();
 	}
 
 	void AudioEngine::captureInput(const audio::DeviceBlock& block) noexcept

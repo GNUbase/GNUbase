@@ -16,16 +16,18 @@ using engine::Json;
 
 namespace
 {
-	bool shown(test::UiApp& app, const std::string& selector)
+	using Window = std::optional<ui::WindowId>;
+
+	bool shown(test::UiApp& app, const std::string& selector, Window window = std::nullopt)
 	{
-		const Json found = app.ui().dom(std::nullopt, selector, 0).at("elements");
+		const Json found = app.ui().dom(window, selector, 0).at("elements");
 		return found.size() == 1 && found[0].at("visible").get<bool>();
 	}
 
-	void click(test::UiApp& app, const std::string& selector)
+	void click(test::UiApp& app, const std::string& selector, Window window = std::nullopt)
 	{
-		REQUIRE(app.waitUntil([&app, &selector] { return shown(app, selector); }));
-		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		REQUIRE(app.waitUntil([&app, &selector, window] { return shown(app, selector, window); }));
+		app.ui().click(window, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 
@@ -81,4 +83,27 @@ TEST_CASE("stopping a locked recording asks first, and Unlock Record stops it at
 	app.ui().key(std::nullopt, "Num0");
 	REQUIRE(app.waitUntil([&] { return !transport(app).at("playing").get<bool>(); }));
 	CHECK(!shown(app, "#lock-record-dialog"));
+}
+
+TEST_CASE("a refused stop asks in the window whose key sent it (#645)", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.call("transport.set", {{"lockRecord", true}});
+	app.ui().key(std::nullopt, "F3");
+	REQUIRE(app.waitUntil([&] { return app.appUi().mixer(1) != nullptr; }));
+	const Window mixer = app.appUi().mixerWindow(1);
+	app.call("transport.record");
+
+	app.ui().key(mixer, "Num0");
+	REQUIRE(app.waitUntil([&] { return shown(app, "#lock-record-dialog", mixer); }));
+	CHECK(!shown(app, "#lock-record-dialog"));
+	click(app, "#lock-record-dialog button[result=cancel]", mixer);
+	REQUIRE(app.waitUntil([&] { return !shown(app, "#lock-record-dialog", mixer); }));
+	CHECK(transport(app).at("recording") == true);
+
+	// The main window's key asks there again.
+	app.ui().key(std::nullopt, "Num0");
+	REQUIRE(app.waitUntil([&] { return shown(app, "#lock-record-dialog"); }));
+	CHECK(!shown(app, "#lock-record-dialog", mixer));
 }

@@ -332,6 +332,8 @@
 				{key = "audio.stopAfterPunchOut", label = "Stop after Automatic Punch Out"}}},
 			{id = "record-audio", parent = "Record", name = "Audio", items = {
 				{key = "audio.preRecordSeconds", label = "Audio Pre-Record Seconds"},
+				{key = "audio.waveOver4GB", label = "When Recording Wave Files Larger than 4GB", choices = {
+					{"split", "Split Files"}, {"rf64", "Use RF64 Format"}}},
 				{section = "Broadcast Wave"},
 				{key = "audio.broadcastDescription", label = "Description"},
 				{key = "audio.broadcastAuthor", label = "Author"},

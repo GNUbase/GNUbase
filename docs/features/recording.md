@@ -56,16 +56,26 @@ transport's record state and the record mode setting.
   field's 256 or 32 bytes between two UTF-8 characters; then the local date and time the recording started, and as its time reference
   the position of the file's first frame (pre-recorded input included) plus the project's start time, in samples since
   midnight. The time reference doesn't wrap at midnight: a file that starts past 24 h counts on, as the 64-bit field
-  allows, and a pre-record that reaches back before 0:00:00 gives 0. File names are cut to 200 bytes in the same way, so
+  allows, and a pre-record that reaches back before 0:00:00 gives 0. Wave and AIFF files carry the same three strings
+  as text (p. 1615: "not only Broadcast Wave files"), the description again the track name while it's empty: a Wave
+  file in its LIST INFO chunk as ICMT, IART and ISRC, an AIFF file as its NAME, AUTH and ANNO chunks (`FileText`);
+  an empty string is left out. File names are cut to 200 bytes in the same way, so
   a long track name still fits the file systems' 255. A file is complete once the recording ends; after a crash the
   frames written so far are in it, as the reference describes (p. 347): until a WAV or AIFF file is closed, its RIFF or
   FORM size and its data or SSND size are 0xFFFFFFFF, which readers take as "up to the end of the file", and a FLAC
   file's STREAMINFO has no sample count, for which the FLAC reader counts the frames that decode. A writer opens its
-  file for others to read along. A Wave file that outgrows 4 GB becomes RF64 when it is closed. An AIFF file can't
-  hold more than 4 GB: a write that would pass that, or that fails otherwise, ends the file there. The recording
-  fails for it once (`recording.failed`), the other tracks record on, and the file still lands, with its takes ending
+  file for others to read along. A Wave file larger than 4 GB (p. 1615) becomes RF64 when it is closed, or with the
+  preference `audio.waveOver4GB` `split` (Record > Audio, When Recording Wave Files Larger than 4GB: Split Files)
+  goes on in a new file, named as a second file of the track (`Audio 1-2.wav`), which FAT32 needs. An AIFF file can't
+  be RF64, so it is always split at 4 GB. The writer refuses the write that would pass 4 GB with `AudioFileFull`, and
+  the recorder writes that block into the next file; each file lands with the parts of the takes in it, as events of
+  their own, so a take that the split cuts becomes two events that meet (#580). `recording.add` takes a track's files as
+  one recording: the record mode's cuts and the takes' lanes cover the takes of all of them. A Broadcast Wave file's time
+  reference counts on from the file before. A write that fails otherwise ends the file there. The recording fails
+  for it once (`recording.failed`), the other tracks record on, and the file still lands, with its takes ending
   where the file ends (#580). Tests: `tests/audiofile_tests.cpp` (a file that was never closed),
-  `tests/recording_tests.cpp` (formats, the Broadcast Wave chunk and the time reference).
+  `tests/recording_tests.cpp` (formats, the Broadcast Wave chunk and the time reference, the text of Wave and AIFF
+  files, a full file that goes on in the next one).
 - **Takes.** A file holds everything recorded from the start of the recording to its end. Each run of consecutive
   project positions is a take: a cycle lap, or what was recorded between punching in and out (`transport.record` with
   `record: false` or a punch out at the right locator ends a recording, and recording again or a punch in at the left
@@ -97,16 +107,17 @@ transport's record state and the record mode setting.
   its offset after the pre-recorded frames, so resizing its start to the left brings them out. Input from before a gap
   (a lost chunk, a new device) isn't kept.
 - **Lock Record** (#104, p. 356) keeps a recording from ending by accident. `transport.set` with `lockRecord`, which
-  the Transport menu's Lock Record and Unlock Record set (the reference has key commands without default keys for
-  them; the key commands editor will bind them), turns it on and off; it stays on for later recordings until it is
-  turned off. While it is on and the transport records, `transport.stop`, `transport.toggle` and `transport.record`
+  the Transport menu's Lock Record and Unlock Record set, turns it on and off; it stays on for later recordings until
+  it is turned off. The key commands editor lists both in the transport area without default keys, as the reference
+  does (#645). While it is on and the transport records, `transport.stop`, `transport.toggle` and `transport.record`
   refuse to stop or punch out unless they get `confirmed`, and their reason says which they refused; playback that
   doesn't record stops as usual. The check reads the audio thread's state (`Transport::recordingNow`), so a stop just
   after the punch in at the left locator, before the command thread has taken it over, is refused too. The audio
   thread ignores the automatic punch out at the right locator, so with `audio.stopAfterPunchOut` playback doesn't stop
   there either. In the UI, a stop, Start/Stop or Record that the engine refused this way opens
   `resources/ui/lock-record.rml` (`app::AppUi` hears the refusal with `EngineBinding::onResult` and checks
-  `transport.get`), which asks to confirm what was refused: Stop sends `transport.stop` with `confirmed`, Punch Out
+  `transport.get`) in the window whose key, button or menu item sent the command (`KeyCommands::sentFrom`, the main
+  window for a command from elsewhere, #645), so a refusal in a mixer or editor window of its own asks there; it asks to confirm what was refused: Stop sends `transport.stop` with `confirmed`, Punch Out
   `transport.record` with `record` false and `confirmed`, so playback goes on; Cancel goes on recording. Tests:
   `tests/transport_tests.cpp` (the punch out ignored for any block size, the commands, a stop right after the punch
   in) and `tests/lockrecord_tests.cpp` (the menu and the dialog in the app's UI).
@@ -118,14 +129,11 @@ transport's record state and the record mode setting.
   as one on a network drive, doesn't hold up the engine's commands: the command starts a measurement and answers
   with the folder's last one at once; only while the folder has none yet does it wait a quarter of a second for it,
   and `seconds` and `availableBytes` are null while there is none. It starts no second measurement while one runs. Tests: `tests/statusline_tests.cpp`. The
-  status line shows it ([status-line.md](status-line.md)).
+  status line shows it, and the Max. Record Time window ([status-line.md](status-line.md)).
 
 ## Not yet
 
 Record folders per track (p. 343); the common record modes (Punch In/Out, Re-Record, starting at the left locator or
-the selection, p. 339); punch points apart from the locators (p. 319); drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); the Broadcast Wave strings in Wave and
-AIFF files and as the defaults of an export's Broadcast Wave chunk, and the choice between splitting Wave files over
-4 GB and RF64 (p. 1615); recording the output of a bus or channel (p. 345);
-adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash; the Max. Record
-Time window of its own (Studio > More Options, p. 356), which the status line field stands for, and with record
-folders per track the time of the fullest disk.
+the selection, p. 339); punch points apart from the locators (p. 319); drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); recording the output of a bus or channel (p. 345);
+adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash; with record
+folders per track, the remaining record time of the fullest disk (p. 356).

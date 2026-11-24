@@ -165,6 +165,38 @@ namespace gnubase::engine
 			return {{"type", "array"}, {"items", std::move(items)}};
 		}
 
+		// channel.set's pre, eq and strip, with each field's type and range (docs/features/channel-strip.md).
+		std::array<Json, 3> sectionSchemas()
+		{
+			const Json on = {{"type", "boolean"}};
+			const auto range = [](double low, double high)
+			{ return Json{{"type", "number"}, {"minimum", low}, {"maximum", high}}; };
+			const auto cut = [&](double low)
+			{
+				return objectSchema({{"on", on}, {"frequency", range(low, 20000.0)},
+					{"slope", {{"type", "integer"}, {"enum", {6, 12, 24, 36, 48}}}}});
+			};
+			Json band = objectSchema(
+				{{"band", {{"type", "integer"}, {"minimum", 1}, {"maximum", 4}}}, {"on", on},
+					{"type", enumSchema({"bell", "lowShelf", "lowCut", "highShelf", "highCut"})},
+					{"frequency", range(20.0, 20000.0)}, {"gain", range(-24.0, 24.0)}, {"q", range(0.1, 12.0)}},
+				{"band"});
+			return {objectSchema(
+						{{"gain", range(-24.0, 24.0)}, {"phase", on}, {"lowCut", cut(20.0)}, {"highCut", cut(50.0)}}),
+				objectSchema({{"bypass", on}, {"bands", arraySchema(std::move(band))}}),
+				objectSchema(
+					{{"gate",
+						 objectSchema({{"on", on}, {"threshold", range(-80.0, 0.0)}, {"range", range(-80.0, 0.0)},
+							 {"attack", range(0.01, 100.0)}, {"release", range(1.0, 4000.0)}})},
+						{"compressor",
+							objectSchema({{"on", on}, {"threshold", range(-60.0, 0.0)}, {"ratio", range(1.0, 20.0)},
+								{"attack", range(0.1, 100.0)}, {"release", range(10.0, 2000.0)},
+								{"makeup", range(0.0, 24.0)}})},
+						{"limiter",
+							objectSchema(
+								{{"on", on}, {"threshold", range(-30.0, 0.0)}, {"release", range(1.0, 1000.0)}})}})};
+		}
+
 		// An object schema that also allows null.
 		Json nullable(Json schema)
 		{
@@ -4645,6 +4677,7 @@ namespace gnubase::engine
 				objectSchema({{"track", idSchema}}, {"track"}), resultSchema({"track"}), false},
 			duplicateTrack);
 
+		const std::array<Json, 3> sections = sectionSchemas();
 		add(engine,
 			{"channel.set", 1,
 				"Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output "
@@ -4755,10 +4788,9 @@ namespace gnubase::engine
 						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "chordPads", "none"})},
 						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
 						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
-						{"linked", booleanSchema}, {"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}},
-						{"strip", {{"type", "object"}}}, {"modifiers", {{"type", "object"}}},
-						{"midiInserts", {{"type", "object"}}}, {"midiSends", {{"type", "object"}}},
-						{"inputTransformer", {{"type", "object"}}},
+						{"linked", booleanSchema}, {"pre", sections[0]}, {"eq", sections[1]}, {"strip", sections[2]},
+						{"modifiers", {{"type", "object"}}}, {"midiInserts", {{"type", "object"}}},
+						{"midiSends", {{"type", "object"}}}, {"inputTransformer", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},

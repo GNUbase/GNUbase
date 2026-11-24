@@ -301,6 +301,27 @@ TEST_CASE("a mixdown is written as WAV, AIFF or FLAC in their sample formats", "
 	CHECK(standard.info.sampleFormat == SampleFormat::Int24);
 }
 
+TEST_CASE("a mixdown's Broadcast Wave chunk takes the preferences' strings by default (#580)", "[integration]")
+{
+	Session project;
+	project.addTrack("Ramp", 0);
+	run(project.client, "settings.set",
+		{{"values", {{"audio.broadcastDescription", "Session one"}, {"audio.broadcastReference", "REF-0042"}}}});
+	run(project.client, "project.set", {{"startTime", 3600.0}});
+	CHECK(!readFile(project.exportedFile({{"start", 0}, {"end", 1000}})).info.broadcast.has_value());
+	// The author given, cut to its 32 bytes; at 96 kHz the time reference counts the file's samples.
+	const Read read = readFile(project.exportedFile({{"start", 48000}, {"end", 49000}, {"sampleRate", 96000},
+		{"broadcastWave", {{"author", std::string(40, 'a')}}}}));
+	REQUIRE(read.info.broadcast.has_value());
+	const BroadcastInfo info = read.info.broadcast.value_or(BroadcastInfo{});
+	CHECK(info.description == "Session one");
+	CHECK(info.originator == std::string(32, 'a'));
+	CHECK(info.originatorReference == "REF-0042");
+	CHECK(info.originationDate.size() == 10);
+	CHECK(info.originationTime.size() == 8);
+	CHECK(info.timeReference == 3601ULL * 96000); // the project starts at 1:00:00, the file 1 s later
+}
+
 TEST_CASE("a mixdown converts the sample rate, dithers and normalizes", "[integration]")
 {
 	Session project;
@@ -369,6 +390,8 @@ TEST_CASE("a mixdown refuses what it can't export and leaves no files", "[integr
 	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}, {"format", "aiff"}, {"sampleFormat", "float64"}}),
 		ContainsSubstring("AIFF"));
 	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}, {"point", "strip"}}), ContainsSubstring("only channels"));
+	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}, {"format", "aiff"}, {"broadcastWave", Json::object()}}),
+		ContainsSubstring("WAV files only"));
 
 	// The graph would run at the device's rate and the events at the project's.
 	run(project.client, "audio.setDevice",

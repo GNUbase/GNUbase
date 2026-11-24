@@ -232,6 +232,8 @@ namespace gnubase::app
 		ui::TransportControls* transportBar() { return m_transportBar.get(); }
 		void toggleTransportPanel();
 		void toggleTimeDisplay();
+		// window.maxRecordTime: the Max. Record Time window (resources/ui/max-record-time.rml, #645).
+		void toggleMaxRecordTime();
 		ui::Window* transportPanel() { return m_transportPanel.shown(m_shell); }
 		ui::Window* timeDisplay() { return m_timeDisplay.shown(m_shell); }
 
@@ -451,6 +453,8 @@ namespace gnubase::app
 		std::vector<uint64_t> m_eventSelection;         // the display's, as the last step saw it
 		std::optional<ui::RangeSelection> m_eventRange; // as well
 		ui::Winding m_winding{m_binding};               // Rewind and Forward held, which the transport controls end
+		ui::WindowId m_maxRecordTimeWindow = 0;
+		std::unique_ptr<ui::StatusLine> m_maxRecordTime; // the Max. Record Time window's
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;

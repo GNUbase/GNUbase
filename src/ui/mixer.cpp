@@ -392,6 +392,38 @@ namespace gnubase::ui
 			{ return channel.value(state, false) || (state == "solo" && channel.value("soloDefeat", false)); });
 	}
 
+	widgets::Options outputChoices(const Json& project, const std::string& type, uint64_t channel)
+	{
+		widgets::Options options;
+		if (type == "midi")
+		{
+			options.emplace_back("0", "Not Connected");
+			for (const Json& track : project.at("tracks"))
+				if (track.at("type") == "instrument")
+					options.emplace_back(std::to_string(track.at("channel").get<uint64_t>()), track.at("name"));
+			return options;
+		}
+		options.emplace_back("0", "No Bus");
+		for (const Json& bus : project.at("busses"))
+			if (bus.at("direction") == "output")
+				options.emplace_back(std::to_string(bus.at("id").get<uint64_t>()), bus.at("name"));
+		for (const Json& track : project.at("tracks"))
+			if ((track.at("type") == "group" || track.at("type") == "effect" || track.at("type") == "folder") &&
+				track.at("channel") != 0 && track.at("channel") != channel &&
+				!routesTo(project, track.at("channel").get<uint64_t>(), channel))
+				options.emplace_back(std::to_string(track.at("channel").get<uint64_t>()), track.at("name"));
+		return options;
+	}
+
+	widgets::Options inputChoices(const Json& project)
+	{
+		widgets::Options options{{"0", "No Bus"}};
+		for (const Json& bus : project.at("busses"))
+			if (bus.at("direction") == "input")
+				options.emplace_back(std::to_string(bus.at("id").get<uint64_t>()), bus.at("name"));
+		return options;
+	}
+
 	bool routesTo(const Json& project, uint64_t from, uint64_t to)
 	{
 		const auto channels = project.find("channels");
@@ -838,6 +870,18 @@ namespace gnubase::ui
 			std::string rml = R"(<div class="mixer-channel-name"/><textdisplay class="mixer-link")" +
 				std::string(channel->channel != nullptr ? R"( menu="mixer-link-menu" title="Link Settings")" : "") +
 				R"(/><div class="mixer-picture" section="picture" label="Pictures" default="hidden"/>)";
+			// The Routing section, only in the mixers (reference manual p. 471): an audio track's input bus, and where
+			// the channel plays.
+			if (m_kind != MixerKind::ChannelSettings)
+				rml += std::string(R"(<div class="mixer-section mixer-routing" section="routing" label="Routing" )"
+								   R"(default="hidden">)") +
+					(channel->type == "audio"
+							? R"(<div class="mixer-row"><select param="input" title="Input Routing"/></div>)"
+							: "") +
+					(channel->channel != nullptr && !vca
+							? R"(<div class="mixer-row"><select param="output" title="Output Routing"/></div>)"
+							: "") +
+					"</div>";
 			rml += sectionsRml(audio, m_kind == MixerKind::ChannelSettings);
 			rml += R"(<div class="mixer-notes" section="notes" label="Notepad" default="hidden">)";
 			if (channel->channel != nullptr)
@@ -1101,7 +1145,14 @@ namespace gnubase::ui
 			Json value = paramValue(json, param);
 			if (param == "midiPan" && value.is_null())
 				value = 64; // no MIDI pan, as before the first change: the knob shows its default, the center
-			if (control->GetTagName() == "select" && param.rfind("sends.", 0) != 0)
+			if (param == "input" || param == "output")
+			{
+				if (value.is_number())
+					widgets::fill(*control,
+						param == "input" ? inputChoices(m_project) : outputChoices(m_project, channel.type, channel.id),
+						std::to_string(value.get<uint64_t>()));
+			}
+			else if (control->GetTagName() == "select" && param.rfind("sends.", 0) != 0)
 			{
 				if (!value.is_null())
 					widgets::fill(*control, sectionChoices(param),
