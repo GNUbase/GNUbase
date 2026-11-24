@@ -16,6 +16,7 @@ tool in [tools.md](tools.md).
 | Free Warp in the sample editor, the time warp tool in the event display | `tool-timewarp`, a clock with arrows | pp. 655, 1466 |
 | The key editor keyboard's left part, which scrolls and zooms | `move`, the four-way arrow | p. 1261 |
 | The key editor's note display, by the tool (`[tool]` on `.key-editor`) | `tool-draw`, `tool-line`, `tool-erase`, `tool-split` for trim and split, `tool-glue`, `tool-mute` | p. 1215 |
+| The audio part editor's lanes, by the tool | `tool-erase`, `tool-split`, `tool-glue`, `tool-mute`, `tool-play` for play and scrub | pp. 693, 700-701 |
 | The drum editor's note display with the drumstick | `tool-drumstick` | p. 1224 |
 | A note's ends where a press resizes it: the object selection tool's without Shift or Ctrl (Cmd), the drumstick's with Show Note Length | `resize` | pp. 1213-1214, 1242 |
 | Pitchbend events in the controller display, with the object selection tool | `pointer` | p. 1176 |
@@ -45,4 +46,4 @@ name in the style sheets and documents is one of the OS's pointers or one of GNU
 **Not yet** (left in #1857): drag and drop's not-allowed and copy pointers; modifier keys that change the editors'
 pointers while the mouse rests, as the event display's do; the pointing hand where the reference shows one and
 GNUbase doesn't have the gesture yet: the ruler's locator range (p. 315) and the segments of the sample editor's pitch
-editing (p. 674).
+editing (p. 674); links and clickable cells.

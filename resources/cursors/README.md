@@ -6,7 +6,7 @@ Style sheets name a pointer with RmlUi's `cursor` property, `cursor: tool-draw;`
 
 - `resize.svg` — Resize an event at its edge (hotspot in the middle).
 - `tool-draw.svg` — Draw tool (the pencil's tip).
-- `tool-drumstick.svg` � The drum editor's drumstick (the tip's lower left).
+- `tool-drumstick.svg` — The drum editor's drumstick (the tip's lower left).
 - `tool-erase.svg` — Erase tool (the eraser's lower edge).
 - `tool-glue.svg` — Glue tool (the middle).
 - `tool-line.svg` — Line tool (the line's start).

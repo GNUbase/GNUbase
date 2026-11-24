@@ -126,6 +126,21 @@ TEST_CASE("text fields show the text I-beam", "[ui]")
 	CHECK(pointerOver(app, at("#insert-tempo-ok")).empty());
 }
 
+// A drag on these does what the element plainly is for, so they keep the OS's arrow (docs/features/pointers.md).
+TEST_CASE("dialog title bars, dock tabs and value widgets keep the OS's arrow", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	app.appUi().docking().setVisible("project", "lower", true);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(pointerOver(app, at("tab[panel=mixer]")).empty());
+
+	app.keys().run("tempo.insertAtCursor", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app]
+		{ return !app.ui().dom(std::nullopt, "#insert-tempo-dialog .dialog-titlebar", 0).at("elements").empty(); }));
+	CHECK(pointerOver(app, at("#insert-tempo-dialog .dialog-titlebar")).empty());
+}
+
 TEST_CASE("the time warp tool shows a clock with arrows over the event lanes", "[ui]")
 {
 	test::UiApp app({800, 300});
@@ -206,7 +221,7 @@ TEST_CASE("a note's ends in the key editor show the resize pointer, unless Shift
 	CHECK(over(x + width - 2, y) == "tool-draw");
 }
 
-TEST_CASE("a mixer channel's name, which a drag moves, shows the pointing hand", "[ui]")
+TEST_CASE("a mixer channel's name, which a drag moves, shows the pointing hand, its fader the arrow", "[ui]")
 {
 	test::UiApp app({1200, 800});
 	const Json added = app.call("track.add", {{"type", "audio"}});
@@ -218,4 +233,10 @@ TEST_CASE("a mixer channel's name, which a drag moves, shows the pointing hand",
 	REQUIRE(app.waitUntil([&] { return app.ui().dom(mixer, name, 0).at("elements").size() == 1; }));
 	app.ui().move(mixer, at(name));
 	CHECK(pointer(app) == "pointer"); // p. 496
+	// The fader, a value widget, keeps the OS's arrow (docs/features/pointers.md).
+	const std::string fader = ".mixer-channel[channel=" + std::to_string(added.at("channel").at("id").get<uint64_t>()) +
+		"] .mixer-fader fader";
+	REQUIRE(app.ui().dom(mixer, fader, 0).at("elements").size() == 1);
+	app.ui().move(mixer, at(fader));
+	CHECK(pointer(app).empty());
 }

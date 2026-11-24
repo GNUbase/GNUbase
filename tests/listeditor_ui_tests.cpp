@@ -365,6 +365,29 @@ TEST_CASE("the draw tool shows the pencil over the event display and the erase t
 	CHECK(pointer(f.at(".list-filler .list-event-lane", 0.5)).empty());
 	f.tool("objectSelection");
 	CHECK(pointer(of(note + " .list-type")).empty());
+
+	// The rows of a part that isn't editable keep the arrow under the erase tool, as a press there deletes nothing.
+	const auto second = f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}})
+							.at("part")
+							.at("id")
+							.get<uint64_t>();
+	const auto other =
+		f.app
+			.call("note.add",
+				{{"part", second},
+					{"notes",
+						Json::array(
+							{{{"position", 0}, {"length", g_quarter}, {"pitch", 67}, {"velocity", 50.0 / 127.0}}})}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", {f.part, second}}});
+	f.app.call("editor.set", {{"editor", "window"}, {"activePart", f.part}, {"editingMode", "activePart"}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(row("note", other), "inactive"); }));
+	f.tool("erase");
+	CHECK(pointer(of(row("note", other) + " .list-type")).empty());
+	CHECK(pointer(of(note + " .list-type")) == "tool-erase");
 }
 
 TEST_CASE("values typed into the event list change the selected events, by as much or to the same value", "[ui]")
