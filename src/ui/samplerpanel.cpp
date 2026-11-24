@@ -216,11 +216,17 @@ namespace gnubase::ui
 			R"(<button id="sampler-normalize" title="Normalize Sample">Normalize</button>)"
 			R"(<button id="sampler-lock" type="toggle" title="Lock Parameter Settings">Lock</button>)"
 			R"(<button id="sampler-midi-reset" title="MIDI Reset">Reset</button>)"
-			R"(</div><div class="sampler-display" id="sampler-display"><waveform class="sampler-wave"/>)"
+			R"(</div><div class="sampler-timeline"><ruler class="sampler-ruler"/>)"
+			R"(<select id="sampler-ruler-format" class="sampler-ruler-format" title="Ruler Format"/></div>)"
+			R"(<div class="sampler-view"><div class="sampler-display" id="sampler-display"><waveform class="sampler-wave"/>)"
 			R"(<div class="sampler-outside sampler-before"/><div class="sampler-outside sampler-after"/>)"
 			R"(<div class="sampler-loop"/>)" +
-			markers + R"(</div><div class="sampler-handles" id="sampler-handles">)" + handles +
-			R"(</div><div class="sampler-keyboard" id="sampler-keyboard">)" + keys +
+			markers +
+			R"(</div><fader id="sampler-vertical-zoom" min="-6" max="0" default="0" step="0.1" title="Vertical Zoom"/>)"
+			R"(</div><div class="sampler-zoom"><slider id="sampler-scroll" min="0" max="1" default="0" step="0.01"/>)"
+			R"(<slider id="sampler-horizontal-zoom" min="0" max="1" default="0" step="0.01" title="Horizontal Zoom"/>)"
+			R"(</div><div class="sampler-handles" id="sampler-handles">)" +
+			handles + R"(</div><div class="sampler-keyboard" id="sampler-keyboard">)" + keys +
 			R"(</div><div class="sampler-sections" id="sampler-sections"/></div>)");
 		for (const Rml::EventId id : g_events)
 			element.AddEventListener(id, this);
@@ -230,7 +236,10 @@ namespace gnubase::ui
 				[this](const engine::Event& event)
 				{
 					if (m_media != 0 && event.data.value("media", Json()) == m_media)
+					{
+						m_asked = {};
 						ask();
+					}
 				}));
 		// Lock Parameter Settings and the Normalization Level are a user setting, so they outlast the panel.
 		m_subscriptions.push_back(m_binding.on("settings.changed",
@@ -399,13 +408,17 @@ namespace gnubase::ui
 			m_received = false;
 			setClass(find("sampler-received"), "lit", false);
 		}
-		// The waveform's columns follow the display's width once it is laid out, and whenever it changes.
-		if (Rml::Element* wave = m_root ? m_root->QuerySelector(".sampler-wave") : nullptr;
-			wave != nullptr && m_media != 0 && wave->GetClientWidth() != m_askedWidth)
-			ask();
+		// The waveform's columns and the ruler follow their widths once they are laid out, and whenever they change.
+		Rml::Element* wave = m_root ? m_root->QuerySelector(".sampler-wave") : nullptr;
+		Rml::Element* ruler = m_root ? m_root->QuerySelector(".sampler-ruler") : nullptr;
+		if (wave != nullptr && ruler != nullptr && m_media != 0 &&
+			(wave->GetClientWidth() != m_askedWidth || ruler->GetClientWidth() != m_rulerWidth))
+			showView();
 		if (track == m_selected && loads == m_loads)
 			return;
 		m_selected = track;
+		if (loads != m_loads)
+			readTimeContext(project, m_time);
 		m_loads = loads;
 		const Json* found = findIn(project, "tracks", track);
 		const Json* channel = found == nullptr ? nullptr : findIn(project, "channels", found->value("channel", Json()));
@@ -430,15 +443,18 @@ namespace gnubase::ui
 			media = medium->at("id").get<uint64_t>();
 			length = medium->at("length").get<int64_t>();
 			m_mediaChannels = std::max(medium->value("channels", 1), 1);
+			m_sampleRate = std::max(medium->value("sampleRate", 48000.0), 1.0);
 			file = clip->value("name", std::string());
 		}
 		setText(find("sampler-file"), file);
-		if (media != m_media || length != m_length)
+		if (media != m_media)
 		{
-			m_media = media;
-			m_length = length;
-			ask();
+			m_viewStart = 0.0; // another sample shows whole
+			m_viewWidth = 1.0;
+			m_gain = 1.0;
 		}
+		m_media = media;
+		m_length = length;
 		show();
 	}
 
@@ -473,6 +489,9 @@ namespace gnubase::ui
 		}
 		setChecked(find("sampler-lock"), m_lock);
 		setChecked(find("sampler-zero"), m_snapToZero);
+		if (Rml::Element* format = find("sampler-ruler-format"))
+			widgets::fill(
+				*format, {{"barsBeats", "Bars+Beats"}, {"seconds", "Seconds"}, {"samples", "Samples"}}, m_rulerFormat);
 		if (Rml::Element* level = find("sampler-level"); level != nullptr &&
 			std::abs(widgets::number(*level, "value", static_cast<float>(m_level) + 1.0F) - m_level) > 1e-6)
 			level->SetAttribute("value", widgets::format(static_cast<float>(m_level)));
@@ -501,11 +520,92 @@ namespace gnubase::ui
 				setClass(element, "outside", key < low || key > high);
 			}
 		}
-		showMarkers();
+		showView();
 	}
 
-	// Places the markers, the loop and the shades outside the start and end, in percent of the sample: geometry from
-	// the parameters. Reversed, the sampler counts them from the sample's end (docs/features/sampler-track.md).
+	// Where a position on the display, a share of the sample from its start, lies in the part shown: 0 at its left
+	// edge, 1 at its right one.
+	double SamplerPanel::viewed(double position) const
+	{
+		return (position - m_viewStart) / m_viewWidth;
+	}
+
+	// The ruler, the waveform and the zoom sliders for the part of the sample shown (p. 717), the markers in it, and
+	// the peaks for it.
+	void SamplerPanel::showView()
+	{
+		Rml::Element* root = m_root.get();
+		if (root == nullptr)
+			return;
+		const Rml::Context* context = root->GetContext();
+		const double ratio = context == nullptr ? 1.0 : context->GetDensityIndependentPixelRatio();
+		const double seconds = static_cast<double>(m_length) / m_sampleRate;
+		if (auto* ruler = dynamic_cast<Ruler*>(root->QuerySelector(".sampler-ruler")))
+		{
+			// The sample's time from its start, at its own rate, with the project's tempo for bars and beats.
+			TimeContext time = m_time;
+			time.sampleRate = m_sampleRate;
+			time.startTime = 0.0;
+			time.sampleStart = 0.0;
+			time.barOffset = 0;
+			time.barShift = 0;
+			ruler->setScale(rulerScale(timeFormatFromName(m_rulerFormat).value_or(TimeFormat::Seconds), time));
+			ruler->SetAttribute("format", m_rulerFormat);
+			ruler->SetAttribute("start", Rml::CreateString("%.17g", m_viewStart * seconds));
+			m_rulerWidth = ruler->GetClientWidth();
+			if (m_rulerWidth > 0.0F)
+				ruler->SetAttribute("scale", Rml::CreateString("%.17g", m_viewWidth * seconds * ratio / m_rulerWidth));
+		}
+		if (auto* wave = dynamic_cast<Waveform*>(root->QuerySelector(".sampler-wave")))
+		{
+			m_askedWidth = wave->GetClientWidth();
+			wave->SetAttribute("start", m_viewStart * static_cast<double>(m_length));
+			if (m_askedWidth > 0.0F)
+				wave->SetAttribute("scale", m_viewWidth * static_cast<double>(m_length) * ratio / m_askedWidth);
+			wave->SetAttribute("gain", m_gain);
+		}
+		const double minimum = m_length > 64 ? 64.0 / static_cast<double>(m_length) : 1.0;
+		m_showing = true;
+		const auto setValue = [](Rml::Element* element, double value)
+		{
+			if (element != nullptr && !element->IsPseudoClassSet("active") &&
+				std::abs(element->GetAttribute<double>("value", 0.0) - value) > 1e-6)
+				element->SetAttribute("value", value);
+		};
+		setValue(find("sampler-scroll"), m_viewWidth < 1.0 ? m_viewStart / (1.0 - m_viewWidth) : 0.0);
+		setValue(find("sampler-horizontal-zoom"), minimum < 1.0 ? std::log(m_viewWidth) / std::log(minimum) : 0.0);
+		setValue(find("sampler-vertical-zoom"), -std::log2(m_gain));
+		m_showing = false;
+		showMarkers();
+		ask();
+	}
+
+	// The horizontal zoom shows from the whole sample down to 64 frames around the middle of what it showed, the
+	// scroll slider moves that along the sample, and the vertical zoom raises the waveform up to 64 times.
+	void SamplerPanel::zoom(const std::string& slider, double value)
+	{
+		if (slider == "sampler-vertical-zoom")
+		{
+			m_gain = std::exp2(-std::clamp(value, -6.0, 0.0));
+		}
+		else if (slider == "sampler-horizontal-zoom")
+		{
+			const double minimum = m_length > 64 ? 64.0 / static_cast<double>(m_length) : 1.0;
+			const double middle = m_viewStart + (m_viewWidth / 2.0);
+			m_viewWidth = std::pow(minimum, std::clamp(value, 0.0, 1.0));
+			m_viewStart = middle - (m_viewWidth / 2.0);
+		}
+		else
+		{
+			m_viewStart = std::clamp(value, 0.0, 1.0) * (1.0 - m_viewWidth);
+		}
+		m_viewStart = std::clamp(m_viewStart, 0.0, 1.0 - m_viewWidth);
+		showView();
+	}
+
+	// Places the markers, the loop and the shades outside the start and end, in percent of the part of the sample
+	// shown: geometry from the parameters. Reversed, the sampler counts them from the sample's end
+	// (docs/features/sampler-track.md).
 	void SamplerPanel::showMarkers()
 	{
 		Rml::Element* display = find("sampler-display");
@@ -517,13 +617,21 @@ namespace gnubase::ui
 			const double share = std::clamp(markerShare(name), 0.0, 1.0);
 			return reverse ? 1.0 - share : share;
 		};
+		// A range between two positions, within the part shown: its left edge and width there.
+		const auto range = [&](double first, double second)
+		{
+			const double left = std::clamp(viewed(std::min(first, second)), 0.0, 1.0);
+			return std::make_pair(left, std::clamp(viewed(std::max(first, second)), 0.0, 1.0) - left);
+		};
 		Rml::ElementList markers;
 		display->QuerySelectorAll(markers, ".sampler-marker");
 		const bool looping = std::lround(value("Loop mode")) != 0;
 		for (Rml::Element* marker : markers)
 		{
 			const auto name = marker->GetAttribute<Rml::String>("marker", "");
-			marker->SetProperty(Rml::PropertyId::Left, percent(at(name)));
+			const double shown = viewed(at(name));
+			marker->SetProperty(Rml::PropertyId::Left, percent(shown));
+			setClass(marker, "out-of-view", shown < 0.0 || shown > 1.0);
 			setClass(marker, "dragged", name == m_dragged);
 			setClass(marker, "off", !looping && name.rfind("Loop", 0) == 0);
 		}
@@ -532,14 +640,14 @@ namespace gnubase::ui
 			Rml::Element* element = display->QuerySelector(std::string(".sampler-bar[bar=") + bar.id + "]");
 			if (element == nullptr)
 				continue;
-			const double from = std::min(at(bar.from), at(bar.to));
-			element->SetProperty(Rml::PropertyId::Left, percent(from));
-			element->SetProperty(Rml::PropertyId::Width, percent(std::max(at(bar.from), at(bar.to)) - from));
+			const auto [left, width] = range(at(bar.from), at(bar.to));
+			element->SetProperty(Rml::PropertyId::Left, percent(left));
+			element->SetProperty(Rml::PropertyId::Width, percent(width));
 			setClass(element, "dragged", bar.id == m_bar);
 			setClass(element, "off", !looping && std::string(bar.id) == "loop");
 		}
-		const double start = std::min(at("Start"), at("End"));
-		const double end = std::max(at("Start"), at("End"));
+		const double start = std::clamp(viewed(std::min(at("Start"), at("End"))), 0.0, 1.0);
+		const double end = std::clamp(viewed(std::max(at("Start"), at("End"))), 0.0, 1.0);
 		if (Rml::Element* before = display->QuerySelector(".sampler-before"))
 			before->SetProperty(Rml::PropertyId::Width, percent(start));
 		if (Rml::Element* after = display->QuerySelector(".sampler-after"))
@@ -549,15 +657,15 @@ namespace gnubase::ui
 		}
 		if (Rml::Element* loop = display->QuerySelector(".sampler-loop"))
 		{
-			const double from = std::min(at("Loop start"), at("Loop end"));
-			loop->SetProperty(Rml::PropertyId::Left, percent(from));
-			loop->SetProperty(Rml::PropertyId::Width, percent(std::max(at("Loop start"), at("Loop end")) - from));
+			const auto [left, width] = range(at("Loop start"), at("Loop end"));
+			loop->SetProperty(Rml::PropertyId::Left, percent(left));
+			loop->SetProperty(Rml::PropertyId::Width, percent(width));
 			setClass(loop, "off", !looping);
 		}
 	}
 
-	// Asks media.peaks for the whole sample, a column per pixel of the display; one question in flight, and what
-	// changed meanwhile is asked once it is answered.
+	// Asks media.peaks for the part of the sample shown, a column per pixel of the display, unless it asked for that
+	// last; one question in flight, and what changed meanwhile is asked once it is answered.
 	void SamplerPanel::ask()
 	{
 		Rml::Element* root = m_root.get();
@@ -567,6 +675,7 @@ namespace gnubase::ui
 		if (m_media == 0 || m_length < 1)
 		{
 			wave->setPeaks({}, {});
+			m_asked = {};
 			return;
 		}
 		if (m_asking)
@@ -575,19 +684,21 @@ namespace gnubase::ui
 			return;
 		}
 		const float width = wave->GetClientWidth();
-		m_askedWidth = width;
-		const Rml::Context* context = wave->GetContext();
-		const float ratio = context == nullptr ? 1.0F : context->GetDensityIndependentPixelRatio();
 		if (!(width > 0.0F))
 			return;
-		wave->SetAttribute("start", 0.0);
-		wave->SetAttribute("scale", static_cast<double>(m_length) * ratio / width);
+		const auto length = static_cast<double>(m_length);
+		const int64_t from = std::clamp<int64_t>(std::llround(std::floor(m_viewStart * length)), 0, m_length - 1);
+		const int64_t to =
+			std::clamp<int64_t>(std::llround(std::ceil((m_viewStart + m_viewWidth) * length)), from + 1, m_length);
 		const int64_t pixels =
 			std::clamp<int64_t>(std::lround(width), 1, std::min(g_maxPixels, g_maxColumnValues / m_mediaChannels));
+		const std::array<int64_t, 4> asked = {static_cast<int64_t>(m_media), from, to, pixels};
+		if (asked == m_asked)
+			return;
+		m_asked = asked;
 		m_asking = true;
-		m_binding.send("media.peaks", {{"media", m_media}, {"start", 0}, {"frames", m_length}, {"pixels", pixels}},
-			[this, alive = std::weak_ptr<bool>(m_alive), media = m_media, length = m_length](
-				const engine::Result& result)
+		m_binding.send("media.peaks", {{"media", m_media}, {"start", from}, {"frames", to - from}, {"pixels", pixels}},
+			[this, alive = std::weak_ptr<bool>(m_alive), media = m_media, from, to](const engine::Result& result)
 			{
 				if (alive.expired())
 					return;
@@ -600,7 +711,7 @@ namespace gnubase::ui
 					for (const Json& channel : result.value.at("channels"))
 						columns.push_back({channel.at("min").get<std::vector<int16_t>>(),
 							channel.at("max").get<std::vector<int16_t>>()});
-					waveform->setPeaks({0.0, static_cast<double>(length)}, std::move(columns));
+					waveform->setPeaks({static_cast<double>(from), static_cast<double>(to - from)}, std::move(columns));
 				}
 				if (std::exchange(m_again, false) || media != m_media)
 					ask();
@@ -656,9 +767,11 @@ namespace gnubase::ui
 		const float width = display == nullptr ? 0.0F : display->GetClientWidth();
 		if (dragged == nullptr || !(width > 0.0F))
 			return;
-		const double x = std::clamp(
-			(event.GetParameter<float>("mouse_x", 0.0F) - display->GetAbsoluteLeft()) / static_cast<double>(width), 0.0,
-			1.0);
+		const double x = m_viewStart +
+			(std::clamp(
+				 (event.GetParameter<float>("mouse_x", 0.0F) - display->GetAbsoluteLeft()) / static_cast<double>(width),
+				 0.0, 1.0) *
+				m_viewWidth);
 		double share = value("Reverse") >= 0.5 ? 1.0 - x : x;
 		const double range = std::max(value("End") - value("Start"), 0.0);
 		if (m_dragged == "Fade in")
@@ -779,7 +892,8 @@ namespace gnubase::ui
 		const float width = display == nullptr ? 0.0F : display->GetClientWidth();
 		if (!(width > 0.0F))
 			return;
-		const double moved = (event.GetParameter<float>("mouse_x", 0.0F) - m_barMouse) / static_cast<double>(width);
+		const double moved =
+			(event.GetParameter<float>("mouse_x", 0.0F) - m_barMouse) / static_cast<double>(width) * m_viewWidth;
 		const double shift = std::clamp(value("Reverse") >= 0.5 ? -moved : moved, -std::min(m_barFrom, m_barTo),
 			1.0 - std::max(m_barFrom, m_barTo));
 		setBar(m_bar, std::clamp(m_barFrom + shift, 0.0, 1.0), std::clamp(m_barTo + shift, 0.0, 1.0), m_gesture);
@@ -854,6 +968,8 @@ namespace gnubase::ui
 		m_lock = m_settings.value("lockParameters", false);
 		m_snapToZero = m_settings.value("snapToZero", false);
 		m_level = std::clamp(m_settings.value("normalizeLevel", 0.0), -96.0, 0.0);
+		const std::string format = m_settings.value("rulerFormat", std::string("seconds"));
+		m_rulerFormat = format == "barsBeats" || format == "samples" ? format : "seconds";
 		show();
 	}
 
@@ -863,6 +979,7 @@ namespace gnubase::ui
 		m_settings["lockParameters"] = m_lock;
 		m_settings["snapToZero"] = m_snapToZero;
 		m_settings["normalizeLevel"] = m_level;
+		m_settings["rulerFormat"] = m_rulerFormat;
 		++m_savesSent;
 		m_binding.send("settings.set", {{"key", "ui.samplerPanel"}, {"value", m_settings}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& /*result*/)
@@ -980,6 +1097,23 @@ namespace gnubase::ui
 			{
 				m_snapToZero = event.GetParameter<bool>("value", false);
 				saveSettings();
+				return;
+			}
+			if (!m_showing && target != nullptr && target->GetId() == "sampler-ruler-format")
+			{
+				const auto format = event.GetParameter<Rml::String>("value", "seconds");
+				if (format == m_rulerFormat)
+					return;
+				m_rulerFormat = format;
+				saveSettings();
+				showView();
+				return;
+			}
+			if (!m_showing && target != nullptr &&
+				(target->GetId() == "sampler-horizontal-zoom" || target->GetId() == "sampler-scroll" ||
+					target->GetId() == "sampler-vertical-zoom"))
+			{
+				zoom(target->GetId(), event.GetParameter<float>("value", 0.0F));
 				return;
 			}
 			if (!m_showing && target != nullptr && target->GetId() == "sampler-level")

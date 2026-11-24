@@ -4,11 +4,13 @@
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
 #include "ui/rmlui.h"
+#include "ui/timeformat.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 #include <RmlUi/Core/Types.h>
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -28,10 +30,10 @@ namespace gnubase::ui
 	// lower zone that shows the selected sampler track: its toolbar (the event received indicator, Snap to Zero
 	// Crossing, Import Audio File, the sample's file name, Normalize Sample, Lock Parameter Settings and MIDI Reset),
 	// the waveform display with the markers of the sample's start and end, the loop, the fades and the loop crossfade
-	// and the bars between start and end and between the loop's ends, the Playback, Pitch, Filter and Amp sections with
-	// a control per sampler parameter (from processor.list) and the keyboard section with the pitchbend range, the root
-	// key and the key range above a keyboard that shows them, with a handle for each (p. 730). The root gets the class
-	// empty while the selected track isn't a sampler track.
+	// and the bars between start and end and between the loop's ends, its ruler and zoom sliders (p. 717), the
+	// Playback, Pitch, Filter and Amp sections with a control per sampler parameter (from processor.list) and the
+	// keyboard section with the pitchbend range, the root key and the key range above a keyboard that shows them, with
+	// a handle for each (p. 730). The root gets the class empty while the selected track isn't a sampler track.
 	//
 	// Controls, markers, bars and handles set the sampler's parameters (parameter.set), a drag or a widget's gesture
 	// one undo step (EngineBinding::sendStep); a click on a key sets the root key. A file dropped on the panel, or
@@ -39,7 +41,7 @@ namespace gnubase::ui
 	// Parameter Settings; Normalize Sample runs sampler.normalize with the toolbar's Normalization Level (p. 735). Why
 	// a load, Normalize Sample or MIDI Reset failed shows in the toolbar (#1122). Lock Parameter Settings, the
 	// Normalization Level and Snap to Zero Crossing are the user setting ui.samplerPanel, so they last when the panel
-	// is made anew. Use it on the UI thread; the binding must outlive it.
+	// is made anew, and so is the ruler's format. Use it on the UI thread; the binding must outlive it.
 	class SamplerPanel final : private Rml::EventListener
 	{
 	public:
@@ -88,6 +90,9 @@ namespace gnubase::ui
 		void readPorts(const engine::Json& ports);
 		void received(const engine::Json& activity);
 		void ask();
+		void showView();
+		void zoom(const std::string& slider, double value);
+		double viewed(double position) const;
 		void set(uint32_t id, double value, int gesture);
 		void drag(const Rml::Event& event);
 		void dragKey(const Rml::Event& event);
@@ -118,13 +123,24 @@ namespace gnubase::ui
 		int m_mediaChannels = 1;
 		bool m_asking = false;     // media.peaks is in flight
 		bool m_again = false;      // and asks again when it answers
-		float m_askedWidth = 0.0F; // the display's width in pixels that it asked for
+		float m_askedWidth = 0.0F; // the display's width in pixels that it showed the part for
 		std::string m_dragged;     // the marker a drag moves: the parameter's name
 		std::string m_handle;      // the keyboard's handle a drag moves: root, low or high
 		std::string m_bar;         // the bar a drag moves: range (Start and End) or loop
 		float m_barMouse = 0.0F;   // where its drag began
 		double m_barFrom = 0.0;    // and its markers' values then
 		double m_barTo = 0.0;
+
+		// The part of the sample that the display shows (p. 717), shares of it from its start, and the waveform's gain.
+		double m_viewStart = 0.0;
+		double m_viewWidth = 1.0;
+		double m_gain = 1.0;
+		float m_rulerWidth = 0.0F;             // the ruler's width in pixels that it showed the part for
+		std::array<int64_t, 4> m_asked{};      // media, first and end frame, and pixels of media.peaks' last question
+		double m_sampleRate = 48000.0;         // the sample's, which the ruler counts in
+		TimeContext m_time;                    // the project's tempo and signatures, for bars and beats
+		std::string m_rulerFormat = "seconds"; // barsBeats, seconds or samples, the user setting ui.samplerPanel's
+
 		int m_gesture = 0;      // counts drags down, each one undo step: value fields number theirs up from 1
 		bool m_showing = false; // while show sets the controls, whose changes aren't the user's
 		engine::Json m_settings = engine::Json::object(); // ui.samplerPanel, with what later versions add to it

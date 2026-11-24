@@ -670,12 +670,12 @@ TEST_CASE("the ruler's time format menu opens from its arrow button and with a r
 	CHECK(hasClass(app, "#ruler-format-menu > [format=barsBeats]", "checked"));
 	click(app, menuItem(app, "#ruler-format-menu", "Seconds"));
 	CHECK(window.display.rulerFormat() == ui::TimeFormat::Seconds);
-	CHECK(element(app, "ruler").at("attributes").at("format") == "seconds");
+	CHECK(element(app, ".timeline-ruler").at("attributes").at("format") == "seconds");
 	CHECK(hasClass(app, "#ruler-format-menu > [format=seconds]", "checked"));
 	CHECK(!hasClass(app, "#ruler-format-menu > [format=barsBeats]", "checked"));
 
 	// A right click anywhere in the ruler opens it at the mouse.
-	const Json ruler = element(app, "ruler").at("box");
+	const Json ruler = element(app, ".timeline-ruler").at("box");
 	const ui::Point at{ruler.at("x").get<int>() + 100, ruler.at("y").get<int>() + 4};
 	app.ui().click(std::nullopt, {"", 0, at}, ui::MouseButton::Right, 1, {});
 	REQUIRE(visible(app, "#ruler-format-menu"));
