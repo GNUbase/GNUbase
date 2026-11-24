@@ -840,6 +840,21 @@ TEST_CASE("recording.add applies the audio record modes to the events a take ove
 				{{"position", 700}, {"offset", 100}, {"length", 100}}}));
 		CHECK(spans() == Spans{{0, 100}, {100, 100}, {200, 500}, {700, 100}, {800, 200}});
 	}
+	SECTION("a track's files, as a split recording sends them, are one recording that keeps every take")
+	{
+		const Json result = run(client, "recording.add",
+			{{"mode", "cycleHistoryReplace"}, {"cycle", true},
+				{"tracks",
+					Json::array({{{"track", track}, {"path", file}, {"takes", Json::array({two[0]})}},
+						{{"track", track}, {"path", file}, {"takes", Json::array({two[1]})}}})}});
+		CHECK(result.at("events").size() == 2);
+		CHECK(spans() == Spans{{0, 400}, {400, 200}, {500, 200}, {700, 300}});
+		std::vector<std::pair<int64_t, int64_t>> lanes; // [position, lane]: the laps stack across the files
+		for (const Json& event : eventsOn(client, track))
+			lanes.emplace_back(event.at("position").get<int64_t>(), event.at("lane").get<int64_t>());
+		std::sort(lanes.begin(), lanes.end());
+		CHECK(lanes == std::vector<std::pair<int64_t, int64_t>>{{0, 0}, {400, 0}, {500, 1}, {700, 0}});
+	}
 	SECTION("replace keeps only the last take where takes overlap")
 	{
 		add("replace", two);

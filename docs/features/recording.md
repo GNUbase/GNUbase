@@ -69,7 +69,8 @@ transport's record state and the record mode setting.
   goes on in a new file, named as a second file of the track (`Audio 1-2.wav`), which FAT32 needs. An AIFF file can't
   be RF64, so it is always split at 4 GB. The writer refuses the write that would pass 4 GB with `AudioFileFull`, and
   the recorder writes that block into the next file; each file lands with the parts of the takes in it, as events of
-  their own, so a take that the split cuts becomes two events that meet (#580). A Broadcast Wave file's time
+  their own, so a take that the split cuts becomes two events that meet (#580). `recording.add` takes a track's files as
+  one recording: the record mode's cuts and the takes' lanes cover the takes of all of them. A Broadcast Wave file's time
   reference counts on from the file before. A write that fails otherwise ends the file there. The recording fails
   for it once (`recording.failed`), the other tracks record on, and the file still lands, with its takes ending
   where the file ends (#580). Tests: `tests/audiofile_tests.cpp` (a file that was never closed),
@@ -133,7 +134,6 @@ transport's record state and the record mode setting.
 ## Not yet
 
 Record folders per track (p. 343); the common record modes (Punch In/Out, Re-Record, starting at the left locator or
-the selection, p. 339); punch points apart from the locators (p. 319); drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); stacking the laps of a cycle recording
-that a split puts into two files onto lanes together; recording the output of a bus or channel (p. 345);
+the selection, p. 339); punch points apart from the locators (p. 319); drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); recording the output of a bus or channel (p. 345);
 adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash; with record
 folders per track, the remaining record time of the fullest disk (p. 356).
