@@ -318,6 +318,22 @@ TEST_CASE("Group and Effect Track to Selected Tracks route the selected tracks i
 	CHECK(elements(app, "#add-track-message").at(0).value("text", "").empty());
 	click(app, "#add-track-cancel");
 	REQUIRE(app.waitUntil([&app] { return !open(app); }));
+
+	// VCA Track to Selected Tracks (p. 517): a VCA fader that controls a new link group of their channels, here in
+	// the project's VCA folder (p. 154).
+	app.keys().run("track.addVcaToSelected", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return open(app); }));
+	CHECK(elements(app, "#track-types").at(0).at("attributes").at("value") == "vca");
+	click(app, "#track-project-folder");
+	click(app, "#add-track-confirm");
+	REQUIRE(app.waitUntil([&app] { return !open(app); }));
+	project = app.call("project.get");
+	const Json& vca = project.at("tracks").back();
+	CHECK(vca.at("type") == "vca");
+	REQUIRE(project.at("linkGroups").size() == 1);
+	CHECK(project.at("linkGroups").at(0).at("vca") == vca.at("channel"));
+	CHECK(project.at("linkGroups").at(0).at("channels") ==
+		Json{first.at("channel").at("id"), second.at("channel").at("id")});
 }
 
 TEST_CASE("the add track dialog adds below the selected track, in its folder or below it", "[ui]")

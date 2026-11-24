@@ -26,8 +26,8 @@ in [busses.md](busses.md) and [folder-tracks.md](folder-tracks.md), the fader in
   (MIDI, marker and ruler tracks, VCA tracks, folders without a group channel) and, without `send`, tracks whose eight
   sends all have a destination. A selected folder stands for its group channel, not for the tracks inside it, which
   are routed only when they are selected themselves. Routing that would close a loop refuses the whole command.
-- **The project's Group and FX folders** (pp. 150-152). `track.add` `projectFolder` puts a group or effect track into
-  the first folder at the top level named Group or FX, which it adds at the end of the project if there is none, in
+- **The project's Group, FX and VCA folders** (pp. 150-152, 154). `track.add` `projectFolder` puts a group, effect or
+  VCA track into the first folder at the top level named Group, FX or VCA, which it adds at the end of the project if there is none, in
   the same undo step. The folder is found by its name, so after it is renamed the next such track gets a new one.
 - **Default send level** (p. 552). The user setting `audio.defaultSendLevel` (0 dB) is the level of the sends that
   `track.add` makes, up to the project's maximum volume, and the level Ctrl-click gives a send's knob in the mixer.

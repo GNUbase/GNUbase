@@ -38,10 +38,10 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
   track (p. 198), the lowest one if several are, in its folder and in the order they were added, as `track.add`'s
   `parent` and `index`: the UI command passes it as the document attribute `below`. Tracks that stay at the top level
   (marker, tempo, signature, arranger, transpose and chord tracks) go below the selected track's top-level folder, and
-  tracks for the project's Group or FX folder into that folder. Without a selected track they go to the end of the
+  tracks for the project's Group, FX or VCA folder into that folder. Without a selected track they go to the end of the
   project. The dialog closes, unless Keep Dialog Open is checked: then it shows the page again, with the new group and
   instrument channels among the outputs, for adding more of another type, below the tracks it just added; tracks that
-  went into the project's Group or FX folder leave `below` where it was, so the next tracks go below the selection, not
+  went into the project's Group, FX or VCA folder leave `below` where it was, so the next tracks go below the selection, not
   into that folder. A track the engine refuses, such as an eleventh marker track, adds nothing, and the dialog stays
   open with the engine's message. Cancel and Escape close it.
 

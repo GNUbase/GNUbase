@@ -2284,7 +2284,10 @@ namespace gnubase::engine
 				const std::string name = pathOf(file).filename().u8string();
 				std::string entry = folder + "/" + name;
 				for (int copy = 2; !taken.insert(foldedName(pathOf(entry))).second; ++copy)
-					entry = folder + "/" + std::to_string(copy) + "-" + name;
+				{
+					entry = folder;
+					entry += "/" + std::to_string(copy) + "-" + name;
+				}
 				found = embeddedFiles.emplace(file, entry).first;
 			}
 			return found->second;

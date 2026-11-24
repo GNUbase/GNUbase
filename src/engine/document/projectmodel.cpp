@@ -1278,6 +1278,28 @@ namespace gnubase::engine
 			}
 		}
 
+		// Add VCA Track to Selected Tracks (reference manual p. 517): the tracks' channels go into a new link group
+		// that the new VCA fader controls. Tracks without a channel, such as folders without a group channel, are left
+		// out. Link groups don't link the selection yet, which the reference turns off for such a group.
+		void linkToVca(Project& project, ObjectId vca, const Json& tracks, CommandContext& context)
+		{
+			Json channels = Json::array();
+			std::set<ObjectId> seen;
+			for (const Json& item : tracks)
+			{
+				const auto id = item.get<ObjectId>();
+				require(seen.insert(id).second, "tracks lists track " + idText(id) + " twice");
+				const Track& track = find(project.trackById, id, "track");
+				if (project.channels.count(track.channel) != 0)
+					channels.push_back(track.channel);
+			}
+			if (channels.empty())
+				return;
+			const Json parameters = {{"channels", std::move(channels)}, {"vca", vca}};
+			CommandContext inner(parameters, &context);
+			addLinkGroup(project, inner);
+		}
+
 		Json addTrack(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -1285,10 +1307,13 @@ namespace gnubase::engine
 			ObjectId parent = folderParent(project, parameters);
 			if (parameters.value("projectFolder", false))
 			{
-				require(type == TrackType::Group || type == TrackType::Effect,
-					"only group and effect tracks go into the project's Group and FX folders");
+				const std::map<TrackType, const char*> folders = {
+					{TrackType::Group, "Group"}, {TrackType::Effect, "FX"}, {TrackType::Vca, "VCA"}};
+				const auto folder = folders.find(type);
+				require(folder != folders.end(),
+					"only group, effect and VCA tracks go into the project's Group, FX and VCA folders");
 				require(parent == 0, "a track in the project's folder has no other parent");
-				parent = projectFolder(project, type == TrackType::Group ? "Group" : "FX", context);
+				parent = projectFolder(project, folder->second, context);
 			}
 			const size_t index = insertIndex(parameters, siblings(project, parent));
 			const bool groupChannel = parameters.value("groupChannel", false);
@@ -1402,13 +1427,18 @@ namespace gnubase::engine
 				routeTo(project, *channel, parameters, context);
 				return result;
 			}
+			if (parameters.contains("tracks") && channel && type == TrackType::Vca)
+			{
+				linkToVca(project, channel->id, parameters.at("tracks"), context);
+				return result;
+			}
 			require(!parameters.contains("send"),
 				type == TrackType::Effect ? "send needs tracks: the tracks that send to the new effect track"
 										  : "only effect tracks take a send");
 			// Move Selected Tracks to New Folder (p. 223).
 			if (parameters.contains("tracks"))
 			{
-				require(type == TrackType::Folder, "only folders, group and effect tracks take tracks");
+				require(type == TrackType::Folder, "only folders, group, effect and VCA tracks take tracks");
 				for (const Json& moved : parameters.at("tracks"))
 				{
 					const auto id = moved.get<ObjectId>();
@@ -4544,8 +4574,11 @@ namespace gnubase::engine
 				"their first send without a destination, switched on, after the fader and at the user setting "
 				"audio.defaultSendLevel (Effect Track to Selected Tracks, Add Effect Track to Send); tracks without "
 				"an audio channel, such as MIDI tracks and folders without a group channel, and without send those "
-				"with no free send, are left out. projectFolder "
-				"puts a group or effect track into the project's Group or FX folder, the first folder of that name "
+				"with no free send, are left out; for a VCA track, their channels go into a new link group that it "
+				"controls (linkGroup.add; Add VCA Track to Selected Tracks), tracks without a channel left out. "
+				"projectFolder "
+				"puts a group, effect or VCA track into the project's Group, FX or VCA folder, the first folder of "
+				"that name "
 				"at the top level, added at the end if there is none. With the user setting editing.applyFolderColor, "
 				"a track added to a folder "
 				"without a color takes the folder's. Marker tracks have no channel and stay at the top level; a "
