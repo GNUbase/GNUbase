@@ -476,6 +476,52 @@ TEST_CASE("meter.get reads a channel, the main mix and its loudness through the 
 }
 
 TEST_CASE(
+	"Hold on Stop keeps the loudness measurement at the stop, Measure Loudness off measures nothing", "[integration]")
+{
+	// A 1 kHz sine at -6 dBFS, monitored, so the main mix plays it while the transport plays and stands.
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const auto channel = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
+	run(client, "settings.set", {{"key", "audio.autoMonitoring"}, {"value", "whileRecordEnabled"}});
+	run(client, "channel.set", {{"channel", channel}, {"recordEnable", true}});
+	const auto playFor = [&client](int64_t frames)
+	{
+		run(client, "transport.play");
+		run(client, "audio.render", {{"frames", frames}});
+		run(client, "transport.stop");
+		run(client, "audio.render", {{"frames", 4800}});
+		return run(client, "meter.get");
+	};
+
+	// Hold on Stop, the default (reference manual p. 540): Integrated, Range and True Peak stay after the stop.
+	CHECK(run(client, "settings.get", {{"key", "meter.holdOnStop"}}).at("value") == true);
+	Json meters = playFor(48000);
+	CHECK(meters.at("loudness").at("integrated").get<double>() == Approx(-6.02).margin(0.1));
+	CHECK(meters.at("loudness").at("seconds").get<double>() == Approx(1.0).margin(0.1));
+	CHECK(meters.at("main").at("truePeakMax").at(0).get<double>() == Approx(-6.02).margin(0.1));
+	// Off, the stop starts the measurement over.
+	run(client, "settings.set", {{"key", "meter.holdOnStop"}, {"value", false}});
+	meters = playFor(48000);
+	CHECK(meters.at("loudness").at("integrated").is_null());
+	CHECK(meters.at("loudness").at("seconds") == 0.0);
+	CHECK(meters.at("main").at("truePeakMax").at(0).is_null());
+	CHECK(meters.at("loudness").at("momentary").get<double>() == Approx(-6.02).margin(0.1)); // follows the signal
+
+	// Measure Loudness off (p. 537): playback measures nothing; the momentary loudness still follows the signal.
+	run(client, "settings.set", {{"key", "meter.holdOnStop"}, {"value", true}});
+	run(client, "settings.set", {{"key", "meter.measureLoudness"}, {"value", false}});
+	meters = playFor(48000);
+	CHECK(meters.at("loudness").at("integrated").is_null());
+	CHECK(meters.at("loudness").at("seconds") == 0.0);
+	CHECK(meters.at("loudness").at("momentary").get<double>() == Approx(-6.02).margin(0.1));
+	run(client, "settings.set", {{"key", "meter.measureLoudness"}, {"value", true}});
+	CHECK(playFor(24000).at("loudness").at("seconds").get<double>() == Approx(0.5).margin(0.1));
+}
+
+TEST_CASE(
 	"meter.reset resets the master meter's RMS Max. or Peak Max. alone, or only the channels' maxima", "[integration]")
 {
 	// A 1 kHz sine at -6 dBFS, monitored while the transport stands.

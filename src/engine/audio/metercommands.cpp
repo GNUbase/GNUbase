@@ -103,7 +103,8 @@ namespace gnubase::engine
 				"loudness maxima, integrated, range and seconds only count while the transport "
 				"plays, with blocks from where playback started, and go on across audio.reset at the same sample "
 				"rate; null until there is a value. The user setting meter.resetOnStart starts the loudness meter "
-				"and the main mix's maxima over when playback starts.",
+				"and the main mix's maxima over when playback starts; with meter.measureLoudness off playback "
+				"measures nothing, and with meter.holdOnStop off the measurement starts over when playback stops.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
 					"channels": {"type": "array", "items": {"type": "integer"}}}})"),
 				meterSchema(), true},

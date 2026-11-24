@@ -286,6 +286,8 @@ namespace gnubase::engine
 		m_audio->setChase(chase);
 		m_audio->setStopAfterPunchOut(m_settings->get(settings::g_audioStopAfterPunchOut));
 		m_audio->setMeterResetOnStart(m_settings->get(settings::g_meterResetOnStart));
+		m_audio->setMeterLoudness(
+			m_settings->get(settings::g_meterMeasureLoudness), m_settings->get(settings::g_meterHoldOnStop));
 		m_audio->setMeterRms(static_cast<int>(m_settings->get(settings::g_meterRmsResolution)),
 			m_settings->get(settings::g_meterRmsAes17));
 	}
