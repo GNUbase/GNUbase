@@ -136,6 +136,17 @@ The other edit commands ([parts-and-events.md](parts-and-events.md)) have no def
 transport controls' commands (F2, the enter commands, Exchange Time Formats, P for Locators to Selection) are in
 [transport-bar.md](transport-bar.md).
 
+The key editor's element is the focus zone `keyEditor` ([key-editor.md](key-editor.md), #679), in the editor window,
+the lower zone and the in-place editors: a command bound there acts on the editor whose zone it was pressed in. A
+command bound everywhere that asks which editor, such as `edit.quantize`, gets the zone around it, the lower zone or the
+in-place editor's.
+
+| Keys | Command | Reference |
+|---|---|---|
+| Up, Down | `keyEditor.transposeUp`, `keyEditor.transposeDown` | Transpose by a semitone (p. 1214) |
+| Shift+Up, Shift+Down | `keyEditor.transposeOctaveUp`, `keyEditor.transposeOctaveDown` | Transpose by an octave |
+| Delete, Backspace | `keyEditor.delete` | Delete |
+
 The UI command `file.quit` (Quit, in the main menu's File menu) has Mod+Q, everywhere, and `window.onScreenKeyboard`
 (Show/Hide On-Screen Keyboard, [onscreen-keyboard.md](onscreen-keyboard.md)) Alt+K. Commands that come with their
 tickets bring their keys, such as the mixer's F3 and Alt+F3 ([mixer-window.md](mixer-window.md)), cycle, record and the

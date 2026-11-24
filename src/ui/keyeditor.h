@@ -103,6 +103,14 @@ namespace gnubase::ui
 		// scrolled to a pitch before.
 		bool scrollToPitch(int pitch);
 
+		// The editor's element, its focus zone keyEditor: the key commands keyEditor.* act on the editor whose element
+		// is the zone they were pressed in (app::AppUi::addMidiFunctions, #679).
+		const Rml::Element* zone() const { return m_root.get(); }
+		// Transposes the selected notes, all or none (the transpose palette, keyEditor.transposeUp and the others).
+		void transpose(int semitones);
+		// Deletes the selected notes (keyEditor.delete).
+		void removeSelected();
+
 	private:
 		struct Note
 		{
@@ -301,7 +309,6 @@ namespace gnubase::ui
 		// At the view's insert velocity unless one is given.
 		void addNotes(const Part& part, const std::vector<int64_t>& starts, int64_t length, int pitch,
 			std::optional<double> velocity = std::nullopt);
-		void transpose(int semitones);
 		void editInfo(const std::string& field, const std::string& text);
 		// The articulation map of a note's track, or null.
 		const engine::Json* articulationMap(const Note& note) const;

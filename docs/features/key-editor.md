@@ -124,9 +124,12 @@ Editor panel going (its tab hidden, the panel opened in a window of its own, or 
 in-place editor closing, or the switch to the drum editor, which builds a key editor of its own. A press on a key
 selects and deselects no notes.
 
-A press in the note display gives it the keyboard focus. Then Up and Down transpose the selected notes by a semitone,
-with Shift by an octave, and Delete and Backspace delete them (p. 1214), before the key commands hear the keys: in the
-lower zone, Delete deletes the notes, not the project window's selected events.
+A press in the note display gives the editor the keyboard focus. Its element is the focus zone `keyEditor`, where Up
+and Down transpose the selected notes by a semitone, with Shift by an octave, and Delete and Backspace delete them
+(p. 1214): the key commands `keyEditor.transposeUp`, `keyEditor.transposeDown`, `keyEditor.transposeOctaveUp`,
+`keyEditor.transposeOctaveDown` and `keyEditor.delete` ([key-commands.md](key-commands.md), #679), which the Key
+Commands dialog binds to other keys. In the lower zone they come before the project window's keys, so Delete deletes
+the notes, not the project window's selected events.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -186,8 +189,7 @@ Live MIDI keyboard input into `editor.input` (it waits for the MIDI recording in
 the step input cursor and lengthening a held chord; the Mute tool on notes (notes have no mute yet; it mutes the
 Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note
 display (it draws on the controller lanes); the selection rectangle, the trim tool's drag across several notes and the
-draw tool's modifiers for velocity, pitch and position; transposing and deleting as key commands that the Key Commands
-dialog can bind to other keys; the nudge buttons, Solo Editor, Record in Editor, Acoustic Feedback for velocity edits,
+draw tool's modifiers for velocity, pitch and position; the nudge buttons, Solo Editor, Record in Editor, Acoustic Feedback for velocity edits,
 pitch visibility, the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout;
 horizontal zoom and scrolling; the key at the mouse's pitch lit while the mouse moves in the note display (p. 1204);
 drum map names in the key editor and articulation names; Add to Chord Track, Match with Chord Track, Create Chord
@@ -222,8 +224,9 @@ key editor's context menu.
   released there ending without its effect, its note keeping the length the mouse gives it while the display is shown
   again during it; a move's notes at the time under the mouse as the range changes during it; the erase, trim (and with
   Alt), split and glue tools, and the split tool splitting the selected notes of two parts at one position in one undo
-  step; the transpose palette, Up and Down (with Shift), Delete and Backspace, and typing a pitch and a start before the
-  part's on the info line; step input with its cursor, a click moving it, and MIDI input selecting the next note; the
+  step; each gesture's undo step named the same over notes of one part and of two, also the drumstick's delete drag
+  (`tests/drumeditor_ui_tests.cpp`); the transpose palette, Up and Down (with Shift), Delete and Backspace, and Transpose
+  Up bound to another key, and typing a pitch and a start before the part's on the info line; step input with its cursor, a click moving it, and MIDI input selecting the next note; the
   Chord Editing section naming and changing a chord; the toolbox with the setting on and off, with and without a
   modifier key, choosing tools; drags on the keyboard's left part zooming the rows in and out between the limits, from
   the height a style sheet gives them, also after a style change at a zoom and back at 1, the keyboard as high as the

@@ -1610,6 +1610,25 @@ TEST_CASE("Up and Down transpose the selected notes, Delete and Backspace delete
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[2]).is_null(); }));
 	f.settle();
 	CHECK(f.partNotes().size() == 2);
+
+	// They are key commands of the key editor's focus zone (#679), which the Key Commands dialog binds to other keys:
+	// with Transpose Up on J, J transposes, and Up does nothing more.
+	f.app.call("settings.set",
+		{{"key", "ui.keyCommands"}, {"value", {{{"command", "keyEditor.transposeUp"}, {"keys", {"J"}}}}}});
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.app.keys().keysFor("keyEditor.transposeUp") == std::vector<std::string>{"J"}; }));
+	f.click(of(noteSelector(ids[0])));
+	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{ids[0]}; }));
+	f.app.ui().key(f.window, "J");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 61; }));
+	f.settle();
+	f.app.ui().key(f.window, "Shift+Down");
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 49; }));
+	f.settle();
+	f.app.ui().key(f.window, "Up");
+	f.app.call("engine.version"); // the engine has what the UI sent before
+	CHECK(f.note(ids[0]).at("pitch") == 49);
+	CHECK(f.note(ids[1]).at("pitch") == 64);
 }
 
 TEST_CASE("in the lower zone Up, Down, Delete, Mod+X and Mod+C don't edit the project window's selection", "[ui]")
