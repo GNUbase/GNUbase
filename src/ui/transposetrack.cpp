@@ -613,12 +613,7 @@ namespace gnubase::ui
 			settle();
 			place();
 		};
-		if (m_kind == LaneKind::Arranger && std::exchange(m_edge, Edge::None) != Edge::None)
-			send("arranger.set",
-				{{"event", found.id}, {"position", position(seconds(found.start) + m_moved->shift)},
-					{"end", position(seconds(found.end) + m_moved->endShift)}},
-				answered);
-		else if (m_kind == LaneKind::Arranger && m_moved->group)
+		if (m_moved->group)
 		{
 			// All selected by as much in the track's time base, in one undo step, none before the project start. The
 			// one dragged comes last, so that what the drag shows ends once all have moved.
@@ -635,7 +630,13 @@ namespace gnubase::ui
 				{"parameters", {{"event", found.id}, {"position", found.position + by}}}});
 			send("history.transaction", {{"description", "Move Arranger Events"}, {"commands", std::move(commands)}},
 				answered);
+			return;
 		}
+		if (m_kind == LaneKind::Arranger && std::exchange(m_edge, Edge::None) != Edge::None)
+			send("arranger.set",
+				{{"event", found.id}, {"position", position(seconds(found.start) + m_moved->shift)},
+					{"end", position(seconds(found.end) + m_moved->endShift)}},
+				answered);
 		else if (m_kind == LaneKind::Arranger)
 			send("arranger.set", {{"event", found.id}, {"position", position(seconds(found.start) + m_moved->shift)}},
 				answered);

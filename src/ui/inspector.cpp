@@ -1651,10 +1651,9 @@ namespace gnubase::ui
 		const std::optional<int> step = std::exchange(m_stepPressed, std::nullopt);
 		const std::optional<uint64_t> added = std::exchange(m_eventPressed, std::nullopt);
 		Rml::Element* target = event.GetTargetElement();
-		const Rml::Element* list = target == nullptr         ? nullptr
-			: target->IsClassSet("inspector-arranger-steps") ? target
-															 : target->Closest(".inspector-arranger-steps");
-		if (list == nullptr)
+		if (target == nullptr ||
+			(!target->IsClassSet("inspector-arranger-steps") &&
+				target->Closest(".inspector-arranger-steps") == nullptr))
 			return;
 		// On a step's upper half before it, on its lower half after it; beside the steps after the last one.
 		const int size = static_cast<int>(m_arrangerChain.value("steps", Json::array()).size());
