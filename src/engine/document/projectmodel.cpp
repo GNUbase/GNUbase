@@ -1975,6 +1975,9 @@ namespace gnubase::engine
 					continue;
 				for (const ObjectId other : linkedTo(project, id, key, linked))
 				{
+					// A MIDI or VCA channel has no equalizers, dynamics or sends: its unused ones stay as they are.
+					if (project.channels.at(other).format == ChannelFormat::None)
+						continue;
 					Channel& to = follower(other);
 					Channel trial = to;
 					try
@@ -1986,7 +1989,7 @@ namespace gnubase::engine
 					}
 					catch (const std::exception&)
 					{
-						continue; // a MIDI channel, or a send to itself: it keeps its own
+						continue; // a send to itself or into a loop: it keeps its own
 					}
 					to = trial;
 				}
