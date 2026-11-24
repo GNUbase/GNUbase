@@ -20,7 +20,9 @@ modified and aren't saved, and a new or loaded project closes the editors.
 | `editor.set` | Changes an open editor's parts and active part or track, and any editor's editing mode, Keep Editor Contents and global tracks | pp. 1142-1156 |
 | `editor.close` | Closes it: no parts, Keep Editor Contents off | p. 1153 |
 
-Each emits `editor.changed` with the view.
+Each emits `editor.changed` with the view, and so does a change of the project that removes parts from an open editor,
+brings them back or closes it: an edit, an undo or redo, or a new or loaded project (#625), for clients that follow
+events.
 
 - **Parts** are in the track list's order and on each track by position, as Activate Part for Editing lists them
   (p. 1143). Parts that are removed leave the view, and come back with an undo; the active part then moves to the first
@@ -129,8 +131,7 @@ Follows Event Selection, Open Editor Commands open Editors in a Window/in Lower 
 open commands, such as Mod+E, which here is Open/Close Editor), and saving the global track setup with the project. The
 lower zone's Editor tab that stays in front while its view closes (after Open in Separate Window, an `editor.close` from
 another client or a new project) shows an empty editor until it comes to the front again or Edit > Open Editor in Lower
-Zone, and the engine sends no `editor.changed` when a new project closes the editors or removed parts leave a view
-(#625).
+Zone (#625).
 
 ## Checks
 
@@ -139,7 +140,8 @@ Zone, and the engine sends no `editor.changed` when a new project closes the edi
   the parts and Keep Editor Contents; the active part and track and the editable parts in each editing mode; removed
   parts leaving and coming back with undo; showing, hiding and exclusively showing tracks and folders, the last track
   kept and tracks without parts, hidden tracks and tracks with locked parts refused; global tracks in the track list's order, refused for the lower zone and for
-  other tracks, removed tracks leaving; a new project closing the editors.
+  other tracks, removed tracks leaving; a new project closing the editors; `editor.changed` for a removed part leaving,
+  its undo and a new project, and none for a change that leaves the parts.
 - `tests/midieditor_tests.cpp` drives the app with `ui::Automation`: Open/Close Editor for three parts on two tracks
   opens the editor window with them in order, the Activate Part for Editing menu lists them under their tracks and
   activates one, the part editing mode marks the editable parts, a click activates a part; the Visibility tab's checks

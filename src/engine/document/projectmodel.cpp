@@ -3746,6 +3746,8 @@ namespace gnubase::engine
 					record(
 						finishesRender ? renderAction(m_applyingRender) : action, before, std::move(change), context);
 				publish();
+				if (m_changeFollower)
+					m_changeFollower(context);
 				if (m_applyingRender != 0)
 					endTrackRender(m_applyingRender, context);
 				return result;
@@ -3930,6 +3932,8 @@ namespace gnubase::engine
 			context.emit("trackLayout.changed", std::move(now));
 		announceHistory(context);
 		publish();
+		if (m_changeFollower)
+			m_changeFollower(context);
 		return {{"position", m_history.position()}};
 	}
 
