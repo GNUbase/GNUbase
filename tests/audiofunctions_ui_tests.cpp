@@ -273,6 +273,73 @@ TEST_CASE("Detect Silence draws peaks and previews with threshold handles and Mu
 	CHECK(closeStops == 2);
 }
 
+TEST_CASE("Detect Silence zooms and scrolls its waveform without changing analysis or preview timing", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	const Tones tones(app);
+	app.call("audioEvent.set", {{"event", tones.events[0]}, {"offset", 12000}, {"length", 120000}});
+	showTones(app, tones, 1);
+	run(app, "audio.detectSilence", "#detect-silence-dialog");
+	REQUIRE(app.waitUntil([&] { return !elements(app, ".ds-peak").empty(); }));
+	click(app, "#ds-analyze");
+	REQUIRE(app.waitUntil([&] { return text(app, "#ds-sections") == "2"; }));
+	const Json jobs = app.call("job.list").at("jobs");
+	const double width = element(app, "#ds-wave").at("box").at("width").get<double>();
+	const double sectionWidth = elements(app, ".ds-section")[0].at("box").at("width").get<double>();
+	REQUIRE(open(app, "#ds-zoom"));
+	app.ui().wheel(audioWindow(app), {"#ds-view", 0, std::nullopt}, 0.0F, -1.0F, {"ctrl"});
+	REQUIRE(app.waitUntil([&] { return element(app, "#ds-wave").at("box").at("width").get<double>() > width * 1.5; }));
+	CHECK(elements(app, ".ds-section")[0].at("box").at("width").get<double>() > sectionWidth * 1.5);
+	CHECK(text(app, "#ds-sections") == "2");
+	app.ui().wheel(audioWindow(app), {"#ds-view", 0, std::nullopt}, 0.0F, 2.0F);
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return element(app, "#ds-wave").at("box").at("x").get<double>() <
+				element(app, "#ds-view").at("box").at("x").get<double>();
+		}));
+	const auto view = element(app, "#ds-view").at("box");
+	// Using the native horizontal scrollbar must not audition the audio beneath it.
+	app.ui().click(audioWindow(app),
+		{"", 0,
+			ui::Point{static_cast<int>(view.at("x").get<double>() + view.at("width").get<double>() / 2),
+				static_cast<int>(view.at("y").get<double>() + view.at("height").get<double>() - 2)}},
+		ui::MouseButton::Left, 1, {});
+	const Json scrollLog = app.call("engine.commandLog").at("commands");
+	for (const auto& entry : scrollLog)
+		CHECK(entry.at("command") != "audition.start");
+	const auto wave = element(app, "#ds-wave").at("box");
+	const auto threshold = element(app, "#ds-open-handle").at("box");
+	CHECK(std::abs(threshold.at("y").get<double>() - wave.at("y").get<double>() -
+			  (0.45 * wave.at("height").get<double>())) < 1);
+	CHECK(wave.at("x").get<double>() < view.at("x").get<double>());
+	click(app, "#ds-mute-gaps");
+	click(app, "#ds-view");
+	const auto log = app.call("engine.commandLog").at("commands");
+	bool previewed = false;
+	for (const auto& entry : log)
+		if (entry.at("command") == "audition.start")
+		{
+			previewed = true;
+			const auto& parameters = entry.at("parameters");
+			const double fraction =
+				(view.at("x").get<double>() + view.at("width").get<double>() / 2 - wave.at("x").get<double>()) /
+				wave.at("width").get<double>();
+			CHECK(std::abs(parameters.at("position").get<double>() - (12000 + fraction * (120000 - 1))) < 1000);
+			CHECK(parameters.at("end") == 132000);
+			CHECK(parameters.at("sections").size() == 2);
+		}
+	CHECK(previewed);
+	// The slider can restore the full view; zooming never starts a second analysis job.
+	click(app, "#ds-zoom");
+	for (int i = 0; i < 16; ++i)
+		app.ui().key(audioWindow(app), "Left");
+	REQUIRE(app.waitUntil(
+		[&] { return std::abs(element(app, "#ds-wave").at("box").at("width").get<double>() - width) < 1; }));
+	CHECK(app.call("job.list").at("jobs") == jobs);
+	click(app, "#ds-cancel");
+}
+
 TEST_CASE("Sample editor audio analysis uses its range instead of the project selection", "[ui]")
 {
 	test::UiApp app({1000, 760});

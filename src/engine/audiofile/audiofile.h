@@ -68,6 +68,7 @@ namespace gnubase::engine
 		int channels = 2;
 		time::Samples frames = 0;
 		std::optional<BroadcastInfo> broadcast; // WAV files with a bext chunk
+		uint32_t channelMask = 0; // WAVEFORMATEXTENSIBLE speaker bits, in ascending bit order; 0 when unspecified
 	};
 
 	class AudioFileError : public std::runtime_error

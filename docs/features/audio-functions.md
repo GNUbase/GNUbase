@@ -50,10 +50,10 @@ if the document changes meanwhile.
   windows 10 ms apart, both as AES17 has them (a full-scale sine is 0 dB). Loudness and true peak come from the loudness
   meter ([metering.md](metering.md)), which the audio is fed through offline: maximum momentary and short-term loudness,
   integrated loudness, loudness range and the true peak per channel, 4 times oversampled, of up to 8 channels; channels
-  beyond have their sample peak as true peak. Loudness uses the default [channel format](channel-formats.md) for the
-  file's channel count: front speakers weigh 1, surrounds 1.41 and LFE 0. LFE still contributes to true peak and its
-  channel statistics. Unknown channel counts keep unit weights for the first eight channels; files do not yet report a
-  speaker mask.
+  beyond have their sample peak as true peak. Loudness uses a WAVEFORMATEXTENSIBLE speaker mask from the file when its
+  set bits match the channel count; otherwise it uses the default [channel format](channel-formats.md) for that count.
+  Front speakers weigh 1, back and side surrounds 1.41 and LFE 0. LFE still contributes to true peak and its channel
+  statistics. Files without a usable mask or a known channel count keep unit weights for the first eight channels.
 - **Pitch** (`analysis::PitchEstimator`, also used by Statistics): scans each channel in fixed memory, averaging samples
   down to about 12 kHz and keeping the loudest 2048-sample window by its energy without DC. Cumulative mean normalized
   squared differences identify the first periodic minimum; interpolation estimates its frequency, from 40 to 2000 Hz.
@@ -111,6 +111,12 @@ Mute Gaps plays only the measured sections, leaving the gaps silent without skip
 `sections`, [audition.md](audition.md)). Changing detection settings clears the measured sections and cancels pending
 analysis, so Mute Gaps requires Analyze again, or Auto.
 
+The Zoom slider and Ctrl/Cmd+wheel enlarge the waveform horizontally from 1 to 16 times. A scrollbar or the unmodified
+wheel scrolls it. Peaks are requested at the zoomed resolution; measured sections share the same timeline and stay
+unchanged. Threshold handles stay at the waveform's beginning and end, and preview starts at the clip frame under the
+pointer, including the scroll offset. Zoom applies to the captured event or sample-editor range and does not change the
+analyzed or processed range.
+
 The sample editor's Process section opens all three functions for its event and captures its range, or the event's range
 without a selection, independently of the project selection. Detect Silence's Process passes `start` and `end` clip
 frames to `event.stripSilence`: both must be supplied together and lie within the event. Audio outside that range stays;
@@ -121,10 +127,16 @@ preview can also use clip ranges outside the event.
 
 ## Not yet
 
-The Detect Silence window's zoom; entry points from the pool; polyphonic pitch estimation; speaker masks from files for
-Statistics' surround weighting.
+Entry points from the pool; polyphonic pitch estimation. Speaker masks are read from extensible WAV files; other file
+formats use the channel-count fallback.
 
 ## Checks
+
+- `tests/audiofunctions_ui_tests.cpp`: waveform zoom and scroll preserve section counts, scale section geometry and
+  preview the frame under the pointer with Mute Gaps; scrollbar clicks do not audition, and threshold handles stay
+  aligned with the waveform when zoomed.
+- `tests/audiofunctions_tests.cpp`: extensible WAV speaker masks override the channel-count defaults, including LFE,
+  back-center and front-of-center channels; missing and inconsistent masks fall back without losing true peaks.
 
 - `tests/audiofunctions_tests.cpp`: Strip Silence within a range preserving both outside pieces, adding only the
   measured region, undo and invalid bounds. A continuous tone through both range edges stays unsplit with its original

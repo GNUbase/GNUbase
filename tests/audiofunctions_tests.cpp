@@ -3,6 +3,7 @@
 // reference signals whose values are known, and the commands that process events with them.
 // tests/audiofunctions_ui_tests.cpp drives their dialogs in the app.
 #include "engine/analysis/statistics.h"
+#include "engine/audiofile/audiofile.h"
 #include "engine/engine.h"
 #include "testutils/heldjob.h"
 #include "testutils/testutils.h"
@@ -16,7 +17,9 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -521,6 +524,60 @@ TEST_CASE("clip.statistics weights surround speakers and excludes LFE only from 
 			CHECK(number(measured.at("channels").at(speaker).at("truePeak")) == Approx(0.25).margin(0.002));
 			CHECK(number(measured.at("loudness").at("maxTruePeak")) == Approx(-12.0412).margin(0.05));
 		}
+}
+
+TEST_CASE("clip.statistics uses an extensible WAV speaker mask instead of the channel count", "[integration]")
+{
+	Fixture f;
+	const double reference = number(f.statistics(make(1.0, 1, [](int, double t) { return sine(1000.0, 0.25, t); }))
+			.at("loudness")
+			.at("integrated"));
+	// Four channels need not be quadro: L R C LFE, or L R C back-center. Invalid masks use the default.
+	for (const uint32_t mask : {0x0fU, 0x107U, 0xc3U, 0U, 3U})
+	{
+		CAPTURE(mask);
+		f.add(make(1.0, 4, [](int c, double t) { return c == 3 ? sine(1000.0, 0.25, t) : 0.0; }), "masked");
+		const auto path = f.dir.path() / "masked.wav";
+		// WAVEFORMATEXTENSIBLE float, with the speaker mask in its fmt chunk. Keep the generated sample data.
+		std::ifstream input(path, std::ios::binary);
+		const std::string original((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+		input.close();
+		const auto data = original.find("data");
+		REQUIRE(data != std::string::npos);
+		std::ofstream output(path, std::ios::binary | std::ios::trunc);
+		const auto integer = [&output](uint32_t value, int bytes)
+		{
+			for (int i = 0; i < bytes; ++i)
+				output.put(static_cast<char>((value >> (8 * i)) & 0xff));
+		};
+		output.write("RIFF", 4);
+		integer(static_cast<uint32_t>(60 + original.size() - data), 4);
+		output.write("WAVEfmt ", 8);
+		integer(40, 4);
+		integer(0xfffe, 2);
+		integer(4, 2);
+		integer(g_rate, 4);
+		integer(g_rate * 16, 4);
+		integer(16, 2);
+		integer(32, 2);
+		integer(22, 2);
+		integer(32, 2);
+		integer(mask, 4);
+		integer(3, 4); // IEEE float subformat GUID
+		integer(0x00100000, 4);
+		integer(0xaa000080, 4);
+		integer(0x719b3800, 4);
+		output.write(original.data() + data, static_cast<std::streamsize>(original.size() - data));
+		output.close();
+		CHECK(engine::AudioFileReader::open(path.u8string())->info().channelMask == mask);
+		const Json measured = f.call("clip.statistics", {{"clip", f.clip}});
+		if (mask == 0x0fU)
+			CHECK(measured.at("loudness").at("integrated").is_null());
+		else
+			CHECK(number(measured.at("loudness").at("integrated")) ==
+				Approx(reference + (mask == 0xc3U ? 0.0 : 10.0 * std::log10(1.41))).margin(0.05));
+		CHECK(number(measured.at("channels")[3].at("truePeak")) == Approx(0.25).margin(0.002));
+	}
 }
 
 TEST_CASE("clip.estimatePitch finds a fundamental beneath louder harmonics and measures a clip range", "[integration]")

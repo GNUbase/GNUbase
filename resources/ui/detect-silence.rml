@@ -13,7 +13,7 @@
 			width: 520dp;
 		}
 
-		#ds-event, #ds-display, .content, .row
+		#ds-event, .content, .row
 		{
 			margin: 8dp 12dp 0 12dp;
 		}
@@ -255,11 +255,18 @@
 	<dialog id="detect-silence-dialog">
 		<div class="dialog-titlebar">Detect Silence</div>
 		<div id="ds-event"/>
-		<div id="ds-display" class="ds-display" onmousedown="DetectSilence.press(document, event)">
-			<div id="ds-sections-display"/>
-			<div id="ds-wave"/>
-			<div id="ds-open-handle" class="ds-handle" threshold="open" title="Open Threshold"/>
-			<div id="ds-close-handle" class="ds-handle" threshold="close" title="Close Threshold"/>
+		<div id="ds-view" onmousescroll="DetectSilence.wheel(document, event)">
+			<div id="ds-display" class="ds-display">
+				<div id="ds-sections-display"/>
+				<div id="ds-wave" onmousedown="DetectSilence.press(document, event)"/>
+				<div id="ds-open-handle" class="ds-handle" threshold="open" title="Open Threshold"
+					onmousedown="DetectSilence.press(document, event)"/>
+				<div id="ds-close-handle" class="ds-handle" threshold="close" title="Close Threshold"
+					onmousedown="DetectSilence.press(document, event)"/>
+			</div>
+		</div>
+		<div class="row"><label for="ds-zoom">Zoom</label>
+			<slider id="ds-zoom" min="1" max="16" value="1" step="1" onchange="DetectSilence.zoom(document)"/>
 		</div>
 		<div class="row ds-preview">
 			<span>Preview</span><slider id="ds-preview-level" min="0" max="1" value="1" step="0.01"/>
