@@ -739,6 +739,10 @@ TEST_CASE("media.locate takes a file within a millisecond of a length that anoth
 	const Json take = byId(run(song.client, "project.get").at("media"), named("take.wav").at("id"));
 	CHECK(fs::equivalent(fs::u8path(take.at("path").get<std::string>()), moved / "near" / "TAKE.wav"));
 	CHECK(fs::u8path(take.at("path").get<std::string>()).filename().u8string() == "TAKE.wav");
+	// The media file takes its new file's length, not the rounded one, and undo gives the old one back (#506).
+	CHECK(take.at("length") == 4810);
+	run(song.client, "history.undo");
+	CHECK(byId(run(song.client, "project.get").at("media"), take.at("id")).at("length") == 4800);
 }
 
 TEST_CASE("media.removeMissing removes missing files with their clips and events", "[integration]")

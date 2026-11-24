@@ -50,11 +50,11 @@ the pool and conforming files to the project's sample rate. The engine commands 
   same-named file of another take (a common kick.wav) isn't relinked with events pointing past its end. A length that
   another application's project.xml gave for a file missing at load is its `duration` times the sample rate, off by the
   duration's rounding, so a file within a millisecond's frames fits too (#506). Of the files that fit, it takes the one
-  closest in length, and of those equally close the one with the same spelling. `media` limits it to some media files,
-  each looked for once however often it is given. Since the folder can be large (a whole drive), it runs as a job (see
-  below). A file found that goes or changes before the job relinks it is skipped and reported as `changed` (its
-  `media.relink` entry has the `length` the file must have), so the other files found are still relinked. A single file
-  is relinked with `media.relink` ([backup.md](backup.md)).
+  closest in length, and of those equally close the one with the same spelling, and the media file takes that file's
+  length. `media` limits it to some media files, each looked for once however often it is given. Since the folder can be
+  large (a whole drive), it runs as a job (see below). A file found that goes or changes before the job relinks it is
+  skipped and reported as `changed` (its `media.relink` entry has the `length` the file must have), so the other files
+  found are still relinked. A single file is relinked with `media.relink` ([backup.md](backup.md)).
 - **`media.removeMissing`** removes the missing media files with their clips and the audio events that play them
   (`audioEvent.remove`, so crossfades from them go too), as one undo step.
 - **`media.conform`** writes each media file at another sample rate than the project's into the media folder as a
