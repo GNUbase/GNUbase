@@ -4,6 +4,7 @@
 #include "engine/document/document.h"
 #include "engine/midi/modifiers.h"
 #include "engine/time/tempomap.h"
+#include "platform/log.h"
 #include "ui/widgets.h"
 #include "ui/widgetutils.h"
 
@@ -21,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <limits>
 #include <map>
 #include <optional>
@@ -272,9 +274,12 @@ namespace gnubase::ui
 			{
 				const std::string end = each;
 				const std::string label = end == "max" ? "Max" : "Min";
-				rml += row("expression-" + end, label,
-					R"(<valuefield control="noteExpression-)" + end + R"(" step="0.01" decimals="2" title=")" + label +
-						R"(. Value"/>)");
+				std::string field = R"(<valuefield control="noteExpression-)";
+				field += end;
+				field += R"(" step="0.01" decimals="2" title=")";
+				field += label;
+				field += R"(. Value"/>)";
+				rml += row("expression-" + end, label, field);
 			}
 			return rml + "</div>";
 		}
@@ -716,7 +721,15 @@ namespace gnubase::ui
 
 	Inspector::~Inspector()
 	{
-		learn(false);
+		// MIDI Learn stops listening with the inspector. Sending may throw, which a destructor must not pass on.
+		try
+		{
+			learn(false);
+		}
+		catch (const std::exception& error)
+		{
+			logging::warning("The inspector cannot stop listening for MIDI input: {}", error.what());
+		}
 		for (Rml::Element* menu : {m_stepMenu.get(), m_retrospectiveMenu.get()})
 			if (menu != nullptr)
 			{
@@ -1326,9 +1339,10 @@ namespace gnubase::ui
 		std::array<std::string, engine::g_expressionNames.size()> shorts;
 		for (const Json& input : setup.at("inputs"))
 		{
-			const auto name = std::find(engine::g_expressionNames.begin(), engine::g_expressionNames.end(),
-				input.at("type").get<std::string>());
-			const auto index = static_cast<size_t>(name - engine::g_expressionNames.begin());
+			const std::string type = input.at("type").get<std::string>();
+			size_t index = 0;
+			while (index < shorts.size() && type != engine::g_expressionNames.at(index))
+				++index;
 			if (index == shorts.size())
 				continue;
 			shorts.at(index) = inputShort(input.at("input").get<std::string>());
