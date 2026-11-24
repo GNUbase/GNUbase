@@ -330,6 +330,10 @@ TEST_CASE("Group and Effect Track to Selected Tracks route the selected tracks i
 	project = app.call("project.get");
 	const Json& vca = project.at("tracks").back();
 	CHECK(vca.at("type") == "vca");
+	const auto vcaFolder = std::find_if(project.at("tracks").begin(), project.at("tracks").end(),
+		[&vca](const Json& track) { return track.at("id") == vca.at("parent"); });
+	REQUIRE(vcaFolder != project.at("tracks").end());
+	CHECK(vcaFolder->at("name") == "VCA");
 	REQUIRE(project.at("linkGroups").size() == 1);
 	CHECK(project.at("linkGroups").at(0).at("vca") == vca.at("channel"));
 	CHECK(project.at("linkGroups").at(0).at("channels") ==

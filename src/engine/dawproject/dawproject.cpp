@@ -2311,16 +2311,26 @@ namespace gnubase::engine
 			frozen[std::to_string(id)] = stored;
 		}
 		// Track pictures likewise, so that a project keeps them when it moves (the reference keeps them with the
-		// project too, in its folder Track Pictures). A missing one is referred to where it was, as nothing plays it.
+		// project too, in its folder Track Pictures). A missing one is referred to where it was, as nothing plays it,
+		// and not listed as missing; while embedding, by its absolute path, as a relative one could name an embedded
+		// file, as with freeze files above.
 		Json pictures = Json::object();
 		for (const auto& [id, track] : project.trackById)
 		{
 			if (track.picture.empty())
 				continue;
 			std::error_code error;
-			const bool there = std::filesystem::is_regular_file(pathOf(track.picture), error);
-			pictures[std::to_string(id)] = options.embedMedia && there ? embed(track.picture, "pictures")
-																	   : referencePath(track.picture, fileFolder);
+			std::string stored = referencePath(track.picture, fileFolder);
+			if (options.embedMedia && std::filesystem::is_regular_file(pathOf(track.picture), error))
+			{
+				stored = embed(track.picture, "pictures");
+			}
+			else if (options.embedMedia)
+			{
+				const std::filesystem::path absolute = std::filesystem::absolute(pathOf(track.picture), error);
+				stored = error ? track.picture : absolute.lexically_normal().u8string();
+			}
+			pictures[std::to_string(id)] = stored;
 		}
 		const Json extension = {{"format", g_extensionFormat}, {"application", std::string("GNUbase ") + version()},
 			{"projectXml", checksum(xml)}, {"media", media}, {"frozen", frozen}, {"pictures", pictures},

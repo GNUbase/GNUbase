@@ -554,6 +554,9 @@ TEST_CASE("a VCA track added for tracks controls a new link group of their chann
 	CHECK(run(client, "project.get").at("tracks").size() == 3);
 	CHECK_THAT(reject(client, "track.add", {{"type", "vca"}, {"tracks", {track(audio), track(audio)}}}),
 		ContainsSubstring("twice"));
+	CHECK_THAT(reject(client, "track.add", {{"type", "vca"}, {"tracks", {track(audio)}}, {"send", 1}}),
+		ContainsSubstring("only effect tracks take a send"));
+	CHECK(groups(client).empty());
 }
 
 TEST_CASE("new link groups get a name no other group has", "[unit]")

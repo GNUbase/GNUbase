@@ -22,7 +22,7 @@ and panners' engine side is in [mixer.md](mixer.md).
   the mixer shows on the track's channel, or empty; a relative path is taken from the working folder and kept
   absolute. Both are undo steps and copied by `track.duplicate`; notes are saved in DAWproject's `comment` too.
   Pictures go with the project file as freeze files do, so a project keeps them when it moves (the reference keeps
-  them with the project as well, in its folder Track Pictures, p. 215): `project.save` embeds each picture under
+  them with the project as well, in its folder Track Pictures, p. 125): `project.save` embeds each picture under
   `pictures/` and a load extracts it into the project's media folder, where `media.cleanup` leaves it; with
   `embedMedia` false the file refers to a picture relative to itself when it is in the file's folder, otherwise by its
   absolute path, as it does to a picture that is missing. GNUbase's extra entry has them as `pictures`, by track id.

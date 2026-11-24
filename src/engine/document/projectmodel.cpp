@@ -1427,14 +1427,14 @@ namespace gnubase::engine
 				routeTo(project, *channel, parameters, context);
 				return result;
 			}
+			require(!parameters.contains("send"),
+				type == TrackType::Effect ? "send needs tracks: the tracks that send to the new effect track"
+										  : "only effect tracks take a send");
 			if (parameters.contains("tracks") && channel && type == TrackType::Vca)
 			{
 				linkToVca(project, channel->id, parameters.at("tracks"), context);
 				return result;
 			}
-			require(!parameters.contains("send"),
-				type == TrackType::Effect ? "send needs tracks: the tracks that send to the new effect track"
-										  : "only effect tracks take a send");
 			// Move Selected Tracks to New Folder (p. 223).
 			if (parameters.contains("tracks"))
 			{

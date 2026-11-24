@@ -168,4 +168,18 @@ TEST_CASE("a track's picture goes with its project file", "[unit]")
 	std::filesystem::remove_all(dir.path() / "pictures media");
 	f.call("project.load", {{"path", (moved.path() / "pictures.dawproject").u8string()}});
 	CHECK(test::readText(loaded()) == "a picture");
+
+	// While embedding, a missing picture in the file's folder is referred to by its absolute path: a relative one
+	// could name another track's picture that the same save embeds, here as pictures/guitar.png.
+	const std::filesystem::path missing = dir.path() / "pictures" / "guitar.png";
+	f.call(
+		"track.set", {{"track", f.call("project.get").at("tracks").at(0).at("id")}, {"picture", missing.u8string()}});
+	const test::TempDir elsewhere;
+	std::ofstream(elsewhere.path() / "guitar.png", std::ios::binary) << "another picture";
+	f.call("track.set", {{"track", f.track("audio").first}, {"picture", (elsewhere.path() / "guitar.png").u8string()}});
+	f.call("project.save", {{"path", file.u8string()}});
+	f.call("project.load", {{"path", file.u8string()}});
+	const Json tracks = f.call("project.get").at("tracks");
+	CHECK(std::filesystem::u8path(tracks.at(0).at("picture").get<std::string>()) == missing);
+	CHECK(test::readText(std::filesystem::u8path(tracks.at(1).at("picture").get<std::string>())) == "another picture");
 }
