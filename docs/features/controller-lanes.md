@@ -93,8 +93,9 @@ part, or else channel 0.
   named controllers and the Continuous Controllers to add a lane, and Remove This Lane of the lane it opened for.
 - **Bars are thin**: a press on a note lane that misses a bar takes the note starting nearest in the grid cell.
 - **Acoustic Feedback** (p. 1259): while the key editor's `acousticFeedback` is on, a value drag on the velocity lane
-  plays the pressed note at the velocity under the mouse, again whenever that changes, and the draw tool the note it
-  paints nearest to the mouse, until the release (`ControllerLanes::setFeedback`, which the key editor plays through
+  plays the pressed note at its own velocity, then at that velocity moved by as far as the mouse went, which the
+  release sets, again whenever that changes, and the draw tool the note it paints nearest to the mouse at the value
+  under the mouse, until the release (`ControllerLanes::setFeedback`, which the key editor plays through
   its own feedback, [key-editor.md](key-editor.md)).
 - **Gestures**: while a drag goes on the lanes hear the mouseup in every document of the window (on its context's root
   element, #864), so a drag released outside the lanes, also over a floating panel, ends there, with its effect at that

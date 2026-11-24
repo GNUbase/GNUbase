@@ -734,7 +734,9 @@ namespace gnubase::engine
 			"(track.set gmNames) General MIDI's, else null; the editors show them. soloInstrument (Solo Instrument, "
 			"p. 1223) plays, of the tracks with a drum map "
 			"that its selected notes are on, only the notes of the selected notes' sounds, while it is open with "
-			"content drum; showNoteLength shows its notes as boxes of their length, not "
+			"content drum, also of the sounds played in through the I-notes (midi.inject without drumSounds), while "
+			"auditions with drumSounds still play every sound; showNoteLength shows its notes as boxes of their "
+			"length, not "
 			"diamonds (p. 1227); gridType, what its notes snap to (p. 1227): quantize, the quantize grid, zoom, a note "
 			"value that the editor's zoom chooses (Adapt to Zoom), or drumMap, the snap of each note's sound in the "
 			"track's drum map; "
@@ -754,7 +756,8 @@ namespace gnubase::engine
 			"expression (pp. 1303-1313): showExpression shows the notes' expression over them, expressionDoubleClick "
 			"makes a double click on a note open the expression editor instead of deleting it, and expressionType is "
 			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. "
-			"acousticFeedback: the editor plays a note while it is moved or drawn (pp. 1192, 1259). View state: no "
+			"acousticFeedback: the editor plays a note while it is moved or drawn, and a note whose velocity the "
+			"velocity lane edits (pp. 1192, 1259). View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors.";
 		const auto editorOnly = [&](Json properties = Json::object())
 		{

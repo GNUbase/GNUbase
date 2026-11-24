@@ -791,7 +791,11 @@ TEST_CASE("Solo Instrument silences the other sounds played live too", "[integra
 	const Json track = added.at("track").at("id");
 	const Json channel = added.at("channel").at("id");
 	run("channel.set", {{"channel", channel}, {"instrument", "noteProbe"}, {"monitor", true}});
-	run("track.set", {{"track", track}, {"drumMap", run("project.get").at("drumMaps").at(0).at("id")}});
+	// The snare's and the electric snare's I-notes swapped, so the solo goes by the sound an I-note plays.
+	const Json map =
+		run("drumMap.add", {{"copy", run("project.get").at("drumMaps").at(0).at("id")}}).at("map").at("id");
+	run("drumMap.set", {{"map", map}, {"sounds", {{{"pitch", 38}, {"iNote", 40}}, {{"pitch", 40}, {"iNote", 38}}}}});
+	run("track.set", {{"track", track}, {"drumMap", map}});
 	const Json part = run("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}}).at("part").at("id");
 	const Json snare = run(
 		"note.add", {{"part", part}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 38}, {"velocity", 0.5}}}}})
@@ -813,12 +817,14 @@ TEST_CASE("Solo Instrument silences the other sounds played live too", "[integra
 		run("audio.render", {{"frames", 64}});
 		return notesPlayed(run("midi.capture"));
 	};
-	CHECK(play(36).empty()); // the bass drum, soloed out
-	CHECK(play(38) == std::vector<std::vector<int>>{{0x99, 38}, {0x89, 38}});
+	CHECK(play(36).empty());                                                        // the bass drum, soloed out
+	CHECK(play(40) == std::vector<std::vector<int>>{{0x99, 38}, {0x89, 38}});       // the snare's I-note
+	CHECK(play(38).empty());                                                        // the electric snare's
 	CHECK(play(36, true) == std::vector<std::vector<int>>{{0x99, 36}, {0x89, 36}}); // auditioned
 	run("editor.set", {{"editor", "window"}, {"soloInstrument", false}});
 	run("audio.render", {{"frames", 64}});
 	CHECK(play(36) == std::vector<std::vector<int>>{{0x99, 36}, {0x89, 36}});
+	CHECK(play(38) == std::vector<std::vector<int>>{{0x99, 40}, {0x89, 40}});
 }
 
 TEST_CASE("updateSoloNotes asks the editor views for the soloed notes once", "[unit]")
