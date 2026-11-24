@@ -81,10 +81,9 @@ The strip's other modules (tools: de-esser and envelope shaper; saturation), the
 maximizer and standard limiter, moving modules in the signal flow, side-chains, auto release and auto makeup, gain
 reduction and gate state LEDs, the EQ curve display and note names for frequencies, EQ and strip presets, choosing the
 combined panner in the pan control's context menu (it is `channel.set`'s `panner`), pre-fader and post-fader
-insert slots, the sections of input and output channels, and the sections in the inspector. The mixers' Routing section
-is in [mixer-window.md](mixer-window.md). The channel
-settings window shows them for one channel ([channel-settings.md](channel-settings.md)). The sends are in
-[routing.md](routing.md). Mapping the equalizer onto DAWproject's `Equalizer` device comes with DAWproject devices.
+insert slots, the sections of input and output channels, and the sections in the inspector. The channel settings window
+shows them for one channel ([channel-settings.md](channel-settings.md)). The mixers' Routing section is in
+[mixer-window.md](mixer-window.md). The sends are in [routing.md](routing.md). Mapping the equalizer onto DAWproject's `Equalizer` device comes with DAWproject devices.
 
 ## Checks
 

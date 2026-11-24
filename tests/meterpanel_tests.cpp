@@ -535,6 +535,14 @@ TEST_CASE("the loudness readouts turn red above their thresholds", "[ui]")
 		{ return app.call("settings.get", {{"key", "meter.truePeakTolerance"}}).at("value").get<double>() > 0.0; }));
 	app.call("settings.set", {{"key", "meter.truePeakTolerance"}, {"value", 6.0}});
 	REQUIRE(app.waitUntil([&] { return over() == std::vector<std::string>{"momentary-max"}; }));
+
+	// Past 3 s there is a short-term loudness: -6 LUFS, above the default -18 LUFS; then a threshold above it.
+	app.call("audio.render", {{"frames", 48000 * 3}});
+	REQUIRE(app.waitUntil([&] { return text(app, ".short-term-max") == "-6.0 LUFS"; }));
+	REQUIRE(app.waitUntil([&] { return over() == std::vector<std::string>{"momentary-max", "short-term-max"}; }));
+	app.call("settings.set", {{"key", "meter.shortTermReference"}, {"value", -10.0}});
+	app.call("settings.set", {{"key", "meter.shortTermTolerance"}, {"value", 4.0}});
+	REQUIRE(app.waitUntil([&] { return over() == std::vector<std::string>{"momentary-max"}; }));
 }
 
 TEST_CASE("the meter settings pane shows its settings and which button opened it", "[ui]")

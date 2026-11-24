@@ -56,7 +56,7 @@ namespace gnubase::ui
 		// The readouts, in the order read() gives their texts after the bars.
 		constexpr std::array<const char*, 8> g_readouts = {
 			"rms-max", "peak-max", "momentary-max", "short-term-max", "integrated", "range", "true-peak-max", "time"};
-		// The user settings that the meter settings pane shows.
+		// The user settings that the meter settings pane shows, and Measure Loudness on the loudness page (p. 537).
 		constexpr std::array<const char*, 7> g_settings = {"meter.loudnessUnit", "meter.loudnessScale",
 			"meter.resetOnStart", "meter.holdOnStop", "meter.measureLoudness", "meter.rmsAes17", "meter.rmsResolution"};
 
@@ -259,7 +259,8 @@ namespace gnubase::ui
 		{
 			if (m_showing)
 				return;
-			// The meter settings pane's check boxes and the RMS resolution in ms (pp. 539-540).
+			// The meter settings pane's check boxes, the Unit and EBU Scale lists, the threshold fields and the RMS
+			// resolution in ms (pp. 539-540).
 			const auto given = event.GetParameters().find("value");
 			const auto key = target->GetAttribute<Rml::String>("setting", "");
 			if (key.empty())
