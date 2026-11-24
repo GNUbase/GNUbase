@@ -1043,6 +1043,14 @@ namespace gnubase::engine::settings
 												{"order", {{"type", "array"}, {"items", {{"type", "string"}}}}},
 												{"hidden", {{"type", "array"}, {"items", {{"type", "string"}}}}}}}}}}}},
 					Json::object()},
+				{"ui.onScreenKeyboard",
+					"The on-screen keyboard's octave, 0 to 6 (the lowest key is C0 to C6), and the velocity of its "
+					"notes, 1 to 127 (docs/features/onscreen-keyboard.md).",
+					Json{{"type", "object"}, {"additionalProperties", false},
+						{"properties",
+							{{"octave", {{"type", "integer"}, {"minimum", 0}, {"maximum", 6}}},
+								{"velocity", {{"type", "integer"}, {"minimum", 1}, {"maximum", 127}}}}}},
+					Json{{"octave", 3}, {"velocity", 100}}},
 				{"ui.workspaces",
 					"The global workspaces, for every project (workspace.* commands, docs/features/workspaces.md): "
 					"each a name and its layout, a copy of ui.layout.",

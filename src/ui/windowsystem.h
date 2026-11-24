@@ -32,11 +32,17 @@ namespace gnubase::ui
 		bool hidden = false;        // tests and offscreen screenshots
 	};
 
-	// A key pressed with the modifiers held, as RmlUi has them: Rml::Input::KeyModifier flags.
+	// A key pressed with the modifiers held, as RmlUi has them: Rml::Input::KeyModifier flags. Two compare by key and
+	// modifiers.
 	struct KeyPress
 	{
 		Rml::Input::KeyIdentifier key = Rml::Input::KI_UNKNOWN;
 		int modifiers = 0;
+		// The physical key, by its place: the key a US keyboard has there, whatever the layout, for the letters, the
+		// digits and comma; KI_UNKNOWN for other keys and where the window system doesn't say, as for ui::Automation's
+		// keys, which count as typed on a US keyboard. Key commands follow the layout, the key; the on-screen keyboard
+		// plays by place (#691).
+		Rml::Input::KeyIdentifier position = Rml::Input::KI_UNKNOWN;
 
 		bool operator==(const KeyPress& other) const { return key == other.key && modifiers == other.modifiers; }
 		bool operator<(const KeyPress& other) const
@@ -178,6 +184,10 @@ namespace gnubase::ui
 		// bar where the OS draws it with a menu of its own: Windows' system menu (reference manual p. 55). Picking it
 		// sends MenuBarToggled. Nothing elsewhere.
 		virtual void setMenuBarShown(WindowId window, bool shown) = 0;
+
+		// What the keyboard layout has at a physical key's place (KeyPress::position), as its label: "Z" on a US
+		// layout, "Y" on a German one. Empty if the window system doesn't know.
+		virtual std::string keyLabel(Rml::Input::KeyIdentifier position) const = 0;
 
 		// The next event, waiting up to timeout for one; without timeout, until one arrives. Input events are
 		// delivered to the window's input target before they are reported.

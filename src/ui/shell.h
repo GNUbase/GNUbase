@@ -226,6 +226,9 @@ namespace gnubase::ui
 		// setMenuBarShown shows it, checked or not (WindowSystem::setMenuBarShown).
 		void onMenuBarToggled(std::function<void(Window&)> handler) { m_menuBarToggled = std::move(handler); }
 		void setMenuBarShown(WindowId id, bool shown) { m_windows.setMenuBarShown(id, shown); }
+
+		// What the keyboard layout has at a physical key's place (WindowSystem::keyLabel).
+		std::string keyLabel(Rml::Input::KeyIdentifier position) const { return m_windows.keyLabel(position); }
 		// Runs that handler; ui::Automation calls it after each input.
 		void inputHandled();
 

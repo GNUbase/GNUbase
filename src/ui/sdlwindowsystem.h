@@ -50,6 +50,7 @@ namespace gnubase::ui
 		void setCursor(const Cursor& cursor) override;
 		void showFileDialog(uint64_t id, const FileDialog& dialog) override;
 		void setMenuBarShown(WindowId window, bool shown) override;
+		std::string keyLabel(Rml::Input::KeyIdentifier position) const override;
 		std::optional<WindowEvent> nextEvent(std::optional<std::chrono::milliseconds> timeout) override;
 		void wake() override;
 

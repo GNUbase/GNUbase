@@ -279,3 +279,51 @@ TEST_CASE("notes played on the on-screen keyboard with the computer keyboard and
 	CHECK(app.appUi().keyboard()->note(0) == 12 * (std::stoi(octave) + 2));
 	CHECK(dragTo("#velocity", 0.0F) == "1");
 }
+
+TEST_CASE("the on-screen keyboard plays computer keys by their places, labels them as the layout has them and keeps "
+		  "its octave",
+	"[ui]")
+{
+	using namespace Rml::Input;
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.ui().key(std::nullopt, "Alt+K");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().keyboard() != nullptr; }));
+
+	// Each key shows what the layout has at its computer key's place (reference manual p. 333): the lowest, Z's.
+	const std::string label = app.shell().keyLabel(KI_Z);
+	const Rml::Element* lowest = keyElement(app, 0).QuerySelector(".key-label");
+	REQUIRE(lowest != nullptr);
+	CHECK(lowest->GetInnerRML() == (label.empty() ? "Z" : label));
+
+	// A German layout's Y, at a US keyboard's Z, plays the lowest key, not the upper row's Y (key 21), and its release
+	// ends it (#691).
+	app.shell().unusedKey(app.main(), ui::KeyPress{KI_Y, 0, KI_Z});
+	CHECK(keyElement(app, 0).IsClassSet("pressed"));
+	CHECK(!keyElement(app, 21).IsClassSet("pressed"));
+	app.shell().keyReleased(app.main(), ui::KeyPress{KI_Y, 0, KI_Z});
+	CHECK(!keyElement(app, 0).IsClassSet("pressed"));
+	// A key that the layout's key codes don't name, such as a French layout's 2 (é), plays by its place too.
+	app.shell().unusedKey(app.main(), ui::KeyPress{KI_UNKNOWN, 0, KI_2});
+	CHECK(keyElement(app, 13).IsClassSet("pressed"));
+	app.shell().keyReleased(app.main(), ui::KeyPress{KI_UNKNOWN, 0, KI_2});
+	CHECK(!keyElement(app, 13).IsClassSet("pressed"));
+
+	// The octave and velocity are user settings, which last across restarts.
+	Rml::ElementDocument& document = *keyElement(app, 0).GetOwnerDocument();
+	REQUIRE(document.GetElementById("octave") != nullptr);
+	document.GetElementById("octave")->DispatchEvent(Rml::EventId::Change, {{"value", Rml::Variant(5.0F)}});
+	REQUIRE(document.GetElementById("velocity") != nullptr);
+	document.GetElementById("velocity")->DispatchEvent(Rml::EventId::Change, {{"value", Rml::Variant(80.0F)}});
+	const Json saved = {{"octave", 5}, {"velocity", 80}};
+	REQUIRE(app.waitUntil(
+		[&app, &saved] { return app.call("settings.get", {{"key", "ui.onScreenKeyboard"}}).at("value") == saved; }));
+	app.restart();
+	app.appUi().showProject();
+	app.ui().key(std::nullopt, "Alt+K");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().keyboard() != nullptr; }));
+	CHECK(app.appUi().keyboard()->note(0) == 84);
+	const Json velocity = app.ui().dom(app.appUi().keyboardWindow(), "#velocity-value", 0).at("elements");
+	REQUIRE(velocity.size() == 1);
+	CHECK(velocity[0].value("text", std::string()) == "80");
+}

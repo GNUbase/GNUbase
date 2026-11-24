@@ -2028,7 +2028,14 @@ namespace gnubase::app
 			throw std::runtime_error("cannot load the on-screen keyboard from " + file.u8string());
 		}
 		document->Show();
-		m_keyboard = std::make_unique<ui::OnScreenKeyboard>(m_binding, *document, m_keyboardSettings);
+		// The octave and velocity, user settings (ui.onScreenKeyboard).
+		if (const engine::Result saved =
+				engine::Client(m_engine).call("settings.get", {{"key", "ui.onScreenKeyboard"}});
+			saved.ok())
+			m_keyboardSettings = {
+				saved.value.at("value").value("octave", 3), saved.value.at("value").value("velocity", 100)};
+		m_keyboard = std::make_unique<ui::OnScreenKeyboard>(m_binding, *document, m_keyboardSettings,
+			[this](Rml::Input::KeyIdentifier position) { return m_shell.keyLabel(position); });
 		m_docking.saveWindows();
 		return m_keyboard.get();
 	}

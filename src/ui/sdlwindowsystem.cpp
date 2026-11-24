@@ -361,6 +361,44 @@ namespace gnubase::ui
 	}
 #endif
 
+	namespace
+	{
+		// SDL's scancodes name the physical keys after a US keyboard's: the letters, the digits and comma, as RmlUi's
+		// key identifiers, and back.
+		Rml::Input::KeyIdentifier positionOf(SDL_Scancode code)
+		{
+			using namespace Rml::Input;
+			if (code >= SDL_SCANCODE_A && code <= SDL_SCANCODE_Z)
+				return static_cast<KeyIdentifier>(KI_A + (code - SDL_SCANCODE_A));
+			if (code >= SDL_SCANCODE_1 && code <= SDL_SCANCODE_9)
+				return static_cast<KeyIdentifier>(KI_1 + (code - SDL_SCANCODE_1));
+			if (code == SDL_SCANCODE_0)
+				return KI_0;
+			return code == SDL_SCANCODE_COMMA ? KI_OEM_COMMA : KI_UNKNOWN;
+		}
+
+		SDL_Scancode scancodeOf(Rml::Input::KeyIdentifier position)
+		{
+			using namespace Rml::Input;
+			if (position >= KI_A && position <= KI_Z)
+				return static_cast<SDL_Scancode>(SDL_SCANCODE_A + (position - KI_A));
+			if (position >= KI_1 && position <= KI_9)
+				return static_cast<SDL_Scancode>(SDL_SCANCODE_1 + (position - KI_1));
+			if (position == KI_0)
+				return SDL_SCANCODE_0;
+			return position == KI_OEM_COMMA ? SDL_SCANCODE_COMMA : SDL_SCANCODE_UNKNOWN;
+		}
+	}
+
+	std::string SdlWindowSystem::keyLabel(Rml::Input::KeyIdentifier position) const
+	{
+		const SDL_Scancode code = scancodeOf(position);
+		if (code == SDL_SCANCODE_UNKNOWN)
+			return {};
+		const char* name = SDL_GetKeyName(SDL_GetKeyFromScancode(code, SDL_KMOD_NONE, false));
+		return name != nullptr ? name : "";
+	}
+
 	void SdlWindowSystem::setMenuBarShown([[maybe_unused]] WindowId window, [[maybe_unused]] bool shown)
 	{
 #ifdef _WIN32
@@ -695,10 +733,11 @@ namespace gnubase::ui
 			const bool unused = RmlSDL::InputEventHandler(target->second, window, event);
 			WindowEvent input{WindowEventKind::Input, id};
 			if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && unused) // one key command per press
-				input.key =
-					KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), RmlSDL::GetKeyModifierState()};
+				input.key = KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), RmlSDL::GetKeyModifierState(),
+					positionOf(event.key.scancode)};
 			else if (event.type == SDL_EVENT_KEY_UP)
-				input.keyUp = KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), 0};
+				input.keyUp =
+					KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), 0, positionOf(event.key.scancode)};
 			else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) // a key held then goes up elsewhere
 				input.keyUp = KeyPress{Rml::Input::KI_UNKNOWN, 0};
 			return input;
