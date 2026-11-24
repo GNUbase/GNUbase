@@ -58,9 +58,10 @@ namespace gnubase::ui
 	// arranger events' edges as magnets too, and the field, as wide as the event, renames one (an empty name keeps the
 	// old one). A click selects an arranger event (.selected), with Ctrl (Cmd) adds or removes it, and a press beside
 	// the events clears the selection; a drag of an edge (.arranger-lane-edge) resizes the event, snapped as a move
-	// is. An edit the engine refuses says why, as the display's own edits do (EventDisplay::showRefusal). The
-	// row follows the project as the display reads it, and the track's own events (transpose.changed, chord.changed,
-	// arranger.changed), and the display's view. Use it on the UI thread; the display and the binding must outlive it.
+	// is, and a drag of a selected one moves all selected (#2076). An edit the engine refuses says why, as the
+	// display's own edits do (EventDisplay::showRefusal). The row follows the project as the display reads it, and the
+	// track's own events (transpose.changed, chord.changed, arranger.changed), and the display's view. Use it on the UI
+	// thread; the display and the binding must outlive it.
 	class GlobalEventLane final : private Rml::EventListener
 	{
 	public:
@@ -77,6 +78,10 @@ namespace gnubase::ui
 		// The arranger events selected, in the order they were; the info line shows them (p. 405).
 		const std::vector<uint64_t>& selection() const { return m_selection; }
 		void deselect();
+		// Removes the arranger events selected (Delete); whether there were any.
+		bool removeSelected();
+		// Told when a click selects arranger events, so that the other selections go (AppUi).
+		void onSelect(std::function<void()> handler) { m_onSelect = std::move(handler); }
 
 	private:
 		struct Event
@@ -87,6 +92,7 @@ namespace gnubase::ui
 			std::string text;  // as the event shows it
 			std::string value; // as the field edits it
 			bool detected = false;
+			int64_t position = 0; // an arranger event's start in the track's time base
 		};
 
 		// An event a drag moves or resizes, which shows so until the lane reads it where the engine put it.
@@ -99,6 +105,7 @@ namespace gnubase::ui
 			int64_t fromEnd = 0;
 			bool dragging = false; // the button is still down
 			bool answered = false; // the move's answer is in
+			bool group = false;    // the selected arranger events move with it
 		};
 
 		// What a drag on an arranger event changes: where it is, or one of its edges.
@@ -164,9 +171,10 @@ namespace gnubase::ui
 		bool m_audition = false;   // a press auditions the event
 		bool m_auditioning = false;
 		std::vector<Event> m_list;
-		std::optional<std::pair<uint64_t, float>> m_drag;       // the event pressed and where, in pixels
-		Edge m_edge = Edge::None;                               // the arranger event's edge pressed
-		std::vector<uint64_t> m_selection;                      // the arranger events selected
+		std::optional<std::pair<uint64_t, float>> m_drag; // the event pressed and where, in pixels
+		Edge m_edge = Edge::None;                         // the arranger event's edge pressed
+		std::vector<uint64_t> m_selection;                // the arranger events selected
+		std::function<void()> m_onSelect;
 		std::optional<Moved> m_moved;                           // what a drag moves
 		std::optional<std::pair<double, float>> m_draw;         // where the draw tool pressed, in seconds and pixels
 		std::optional<std::pair<double, double>> m_drawn;       // what it draws, seconds, until m_added shows

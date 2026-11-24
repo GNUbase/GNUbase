@@ -266,3 +266,26 @@ TEST_CASE("the Hitpoints section's Create section makes MIDI notes and slices", 
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("audioParts").size() == 1; }));
 	CHECK(f.app.call("project.get").at("audioEvents").size() == g_bursts.size() + 1);
 }
+
+TEST_CASE("Edit Hitpoints shows the pencil where Alt inserts a hitpoint and a cross where Shift disables one", "[ui]")
+{
+	Fixture f;
+	f.edit();
+	f.shown(g_bursts.size());
+	const double second = f.hitpoints().at(1).at("position").get<double>();
+	const auto pointer = [&f](const ui::Target& at, const std::vector<std::string>& modifiers = {})
+	{
+		f.app.ui().move(f.window, at, modifiers);
+		f.app.shell().step(std::chrono::milliseconds(0));
+		return f.app.ui().windows().at("cursor").get<std::string>();
+	};
+	// Elsewhere a click plays a slice, on a hitpoint's line a drag moves it (p. 640).
+	CHECK(pointer(f.at(24000)) == "tool-play");
+	CHECK(pointer(f.at(26000), {"alt"}) == "tool-draw");
+	CHECK(pointer(f.at(24000)) == "tool-play");
+	CHECK(pointer(f.at(second)) == "resize");
+	CHECK(pointer(f.at(second, 20.0), {"shift"}) == "crosshair");
+	CHECK(pointer(f.at(second, 30.0), {"alt"}) == "resize");
+	// The handle locks it with or without Shift.
+	CHECK(pointer(f.at(second, 3.0), {"shift"}) == "resize");
+}

@@ -524,6 +524,41 @@ TEST_CASE("a link group that loses all its channels goes, and its VCA fader stay
 	CHECK(groups(client).at(0).at("channels") == Json({d}));
 }
 
+TEST_CASE("a VCA track added for tracks controls a new link group of their channels", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const Json audio = run(client, "track.add", {{"type", "audio"}});
+	const Json midi = run(client, "track.add", {{"type", "midi"}});
+	const Json folder = run(client, "track.add", {{"type", "folder"}});
+	const auto track = [](const Json& added) { return added.at("track").at("id").get<ObjectId>(); };
+
+	// Add VCA Track to Selected Tracks (reference manual p. 517): the tracks' channels are linked, and the new VCA
+	// fader controls them; a folder without a group channel has no channel to link. Add to Project 'VCA' Folder
+	// (p. 154) puts it into the project's VCA folder.
+	const Json vca = run(client, "track.add",
+		{{"type", "vca"}, {"projectFolder", true}, {"tracks", {track(audio), track(midi), track(folder)}}});
+	const Json group = groups(client).at(0);
+	CHECK(group.at("channels") == Json{audio.at("channel").at("id"), midi.at("channel").at("id")});
+	CHECK(group.at("vca") == vca.at("channel").at("id"));
+	CHECK(group.at("volume") == false);
+	const Json tracks = run(client, "project.get").at("tracks");
+	const auto vcaFolder = std::find_if(tracks.begin(), tracks.end(),
+		[&vca](const Json& item) { return item.at("id") == vca.at("track").at("parent"); });
+	REQUIRE(vcaFolder != tracks.end());
+	CHECK(vcaFolder->at("name") == "VCA");
+
+	// One undo step takes back the track, its folder and the group.
+	run(client, "history.undo");
+	CHECK(groups(client).empty());
+	CHECK(run(client, "project.get").at("tracks").size() == 3);
+	CHECK_THAT(reject(client, "track.add", {{"type", "vca"}, {"tracks", {track(audio), track(audio)}}}),
+		ContainsSubstring("twice"));
+	CHECK_THAT(reject(client, "track.add", {{"type", "vca"}, {"tracks", {track(audio)}}, {"send", 1}}),
+		ContainsSubstring("only effect tracks take a send"));
+	CHECK(groups(client).empty());
+}
+
 TEST_CASE("new link groups get a name no other group has", "[unit]")
 {
 	Engine engine;

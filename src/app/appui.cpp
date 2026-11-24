@@ -338,12 +338,14 @@ namespace gnubase::app
 			{"track.enableSelected", "Enables the selected tracks again.", nullptr},
 			// Render in place and freeze (docs/features/render-in-place.md).
 			{"track.freezeSelected",
-				"Freezes the selected audio and instrument tracks with the Tail Size of render.freezeTail, or "
-				"unfreezes them if every one is frozen.",
+				"Freezes the selected audio and instrument tracks with the Tail Size of render.freezeTail and the "
+				"Include Inserts for Instrument Tracks of render.freezeInserts, or unfreezes them if every one is "
+				"frozen.",
 				nullptr},
 			{"track.freezeSelectedSettings",
 				"Opens Freeze Channel Options for the selected audio and instrument tracks that aren't frozen, and "
-				"freezes them with its Tail Size (render.freezeTail); unfreezes them if every one is frozen.",
+				"freezes them with its Tail Size and Include Inserts for Instrument Tracks (render.freezeTail, "
+				"render.freezeInserts); unfreezes them if every one is frozen.",
 				nullptr},
 			{"track.renderSelected",
 				"Renders in place with the options of the user setting render.options: the selected audio events, "
@@ -484,8 +486,7 @@ namespace gnubase::app
 						++it;
 					}
 				}
-				if (m_menu)
-					m_menu->update();
+				updateMenus();
 				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
 					pool->update();
 				// The cutting positions show while the quantize panel is open.
@@ -515,6 +516,8 @@ namespace gnubase::app
 				if (m_eventDisplay && m_markerLines && !m_eventDisplay->selectedPoints().empty())
 				{
 					m_markerLines->deselect();
+					if (m_arrangerLane)
+						m_arrangerLane->deselect();
 					if (m_signatureLane && !m_signatureLane->row().selection().empty())
 						m_signatureLane->row().setSelection({});
 				}
@@ -533,6 +536,8 @@ namespace gnubase::app
 						if (range)
 						{
 							m_markerLines->deselect();
+							if (m_arrangerLane)
+								m_arrangerLane->deselect();
 							if (m_signatureLane)
 								m_signatureLane->row().setSelection({});
 						}
@@ -578,11 +583,16 @@ namespace gnubase::app
 					m_winding.stop(); // the keyboard focus lost: also a button held
 			});
 		// What a script's click or key changed shows in the menu before the script reads the DOM, as after a step.
-		m_shell.onInputHandled(
+		m_shell.onInputHandled([this] { updateMenus(); });
+		// Show Menu Bar in a window's title bar context menu (Windows, reference manual p. 55).
+		m_shell.onMenuBarToggled(
+			[this](ui::Window& window) { m_keys.run("window.menuBar", engine::Json::object(), window, nullptr); });
+		// The on-screen keyboard's keys show what the new keyboard layout has at their places.
+		m_shell.onKeymapChanged(
 			[this]
 			{
-				if (m_menu)
-					m_menu->update();
+				if (ui::OnScreenKeyboard* keyboard = this->keyboard(); keyboard != nullptr)
+					keyboard->relabel();
 			});
 		m_keys.add({"window.markers", "Opens or closes the markers window.",
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
@@ -719,6 +729,7 @@ namespace gnubase::app
 					auto shown = std::make_shared<ui::MidiEditor>(m_binding, m_editorReads, page, "lower",
 						editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
 					shown->setDrumMapSetup([this] { m_shell.post([this] { openDrumMaps(m_main); }); });
+					shown->setPlaybackPosition([this] { return m_engine.playbackPosition(); });
 					if (editor)
 						m_lowerEditor = shown;
 					return std::shared_ptr<void>(shown);
@@ -890,6 +901,15 @@ namespace gnubase::app
 				m_docking.open("pool");
 				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
 					pool->prepareArchive();
+			}});
+		m_keys.add({"pool.cleanup",
+			"Removes the files of the media folders that nothing uses from the disk, after asking in the pool, which "
+			"opens for it.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				m_docking.open("pool");
+				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
+					pool->cleanup();
 			}});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
@@ -1128,13 +1148,16 @@ namespace gnubase::app
 				attributes.emplace_back("type", "drum");
 				openOnce(window, "add-track.rml", m_addTrack, attributes);
 			}});
-		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the add
-		// track dialog's page for the new track, which the selected tracks play or send into.
+		// Group Track, Effect Track and VCA Track to Selected Tracks (reference manual pp. 546, 554, 517): the add
+		// track dialog's page for the new track, which the selected tracks play or send into, or which controls them.
 		for (const auto& [id, type, description] :
 			{std::tuple{"track.addGroupToSelected", "group",
 				 "Opens the add track dialog for a group track that the selected tracks play into."},
 				std::tuple{"track.addEffectToSelected", "effect",
-					"Opens the add track dialog for an effect track that the selected tracks send to."}})
+					"Opens the add track dialog for an effect track that the selected tracks send to."},
+				std::tuple{"track.addVcaToSelected", "vca",
+					"Opens the add track dialog for a VCA track that controls a new link group of the selected "
+					"tracks' channels."}})
 		{
 			m_keys.add(
 				{id, description, [this, below, type = std::string(type)](ui::Window& window, Rml::Element* /*zone*/)
@@ -1236,11 +1259,13 @@ namespace gnubase::app
 						m_sampleEditor.editor->process(id.substr(5));
 						return;
 					}
-					// Delete removes the selected markers or time signature events, which the project window
-					// selects instead of events.
+					// Delete removes the selected markers, time signature or arranger events, which the project
+					// window selects instead of events.
 					if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
 						return;
 					if (id == "edit.delete" && m_signatureLane && m_signatureLane->row().removeSelected())
+						return;
+					if (id == "edit.delete" && m_arrangerLane && m_arrangerLane->removeSelected())
 						return;
 					if (m_eventDisplay)
 						m_eventDisplay->actions().at(id)();
@@ -1395,20 +1420,22 @@ namespace gnubase::app
 			});
 
 		// Lock Record (docs/features/recording.md): a stop or punch out that the engine refused because recording is
-		// locked asks whether to do it anyway (lock-record.rml); the engine's reason says which it was.
+		// locked asks whether to do it anyway (lock-record.rml), in the window whose key, button or menu item sent it
+		// (#645); the engine's reason says which it was.
 		for (const char* command : {"transport.stop", "transport.toggle", "transport.record"})
 			m_lockRecord.push_back(m_binding.onResult(command,
-				[this](const engine::Result& result)
+				[this, command](const engine::Result& result)
 				{
 					if (result.ok())
 						return;
 					const bool punchOut = result.error.find("punch out") != std::string::npos;
 					m_binding.send("transport.get", engine::Json::object(),
-						[this, punchOut](const engine::Result& status)
+						[this, punchOut, from = m_keys.sentFrom(command)](const engine::Result& status)
 						{
+							ui::Window* window = m_shell.find(from);
 							if (status.ok() && status.value.at("lockRecord").get<bool>() &&
 								status.value.at("recording").get<bool>())
-								openOnce(m_main, "lock-record.rml", m_lockRecordDialog,
+								openOnce(window != nullptr ? *window : m_main, "lock-record.rml", m_lockRecordDialog,
 									{{"action", punchOut ? "punchOut" : "stop"}});
 						});
 				}));
@@ -1418,6 +1445,8 @@ namespace gnubase::app
 			{
 				if (m_statusLine)
 					m_statusLine->update();
+				if (m_maxRecordTime)
+					m_maxRecordTime->update();
 			});
 
 		// The transport controls' commands (docs/features/transport-bar.md); the engine's transport commands have
@@ -1425,6 +1454,10 @@ namespace gnubase::app
 		m_keys.add({"window.transportPanel", "Shows or hides the transport panel.",
 			[this](ui::Window&, Rml::Element*) { toggleTransportPanel(); }});
 		m_keys.bind({"F2", "window.transportPanel"});
+		m_keys.add({"window.maxRecordTime",
+			"Shows or hides the Max. Record Time window: the remaining record time, as the status line shows it "
+			"(reference manual p. 356).",
+			[this](ui::Window&, Rml::Element*) { toggleMaxRecordTime(); }});
 		m_keys.add({"window.timeDisplay", "Shows or hides the time display window.",
 			[this](ui::Window&, Rml::Element*) { toggleTimeDisplay(); }});
 		m_keys.add({"time.exchangeFormats", "Switches the primary and the secondary time format of the transport bar.",
@@ -1800,6 +1833,35 @@ namespace gnubase::app
 		m_docking.saveWindows();
 	}
 
+	void AppUi::toggleMaxRecordTime()
+	{
+		m_docking.saveWindows(); // its bounds as the user left them
+		if (m_shell.find(m_maxRecordTimeWindow) != nullptr)
+		{
+			m_shell.close(m_maxRecordTimeWindow);
+			m_maxRecordTime.reset();
+			return;
+		}
+		ui::WindowSpec spec;
+		spec.title = "Max. Record Time";
+		spec.size = {260, 60};
+		spec.bounds = m_docking.bounds("maxRecordTime");
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		m_maxRecordTimeWindow = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "max-record-time.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		if (document == nullptr)
+		{
+			m_shell.close(m_maxRecordTimeWindow);
+			logging::error("Cannot load {}", file.u8string());
+			return;
+		}
+		document->Show();
+		m_maxRecordTime = std::make_unique<ui::StatusLine>(m_binding, *document);
+		m_docking.saveWindows();
+	}
+
 	void AppUi::toggleTimeDisplay()
 	{
 		toggle(m_timeDisplay, "timeDisplay", "time-display.rml", "Time Display", g_timeDisplaySizes.at(1));
@@ -1930,15 +1992,34 @@ namespace gnubase::app
 					m_arrangerLane->deselect();
 				deselectPoints();
 			});
-		// So do time signature events selected: the markers, the automation points and the selection range go.
+		// So do time signature events selected: the markers, the arranger events, the automation points and the
+		// selection range go.
 		m_signatureLane->onSelect(
 			[this, deselectPoints]
 			{
 				if (m_markerLines)
 					m_markerLines->deselect();
+				if (m_arrangerLane)
+					m_arrangerLane->deselect();
 				deselectPoints();
 				if (m_eventDisplay && m_eventDisplay->range())
 					m_eventDisplay->setRange(std::nullopt);
+			});
+		// And arranger events selected on their lane: the events and the time signature events too (#2076).
+		m_arrangerLane->onSelect(
+			[this, deselectPoints]
+			{
+				if (m_markerLines)
+					m_markerLines->deselect();
+				if (m_signatureLane)
+					m_signatureLane->row().setSelection({});
+				if (m_eventDisplay)
+				{
+					m_eventDisplay->select({});
+					if (m_eventDisplay->range())
+						m_eventDisplay->setRange(std::nullopt);
+				}
+				deselectPoints();
 			});
 		if (m_trackList)
 			m_trackList->onArrangerEditor([this] { m_shell.post([this] { openArranger(); }); });
@@ -2031,7 +2112,14 @@ namespace gnubase::app
 			throw std::runtime_error("cannot load the on-screen keyboard from " + file.u8string());
 		}
 		document->Show();
-		m_keyboard = std::make_unique<ui::OnScreenKeyboard>(m_binding, *document, m_keyboardSettings);
+		// The octave and velocity, user settings (ui.onScreenKeyboard).
+		if (const engine::Result saved =
+				engine::Client(m_engine).call("settings.get", {{"key", "ui.onScreenKeyboard"}});
+			saved.ok())
+			m_keyboardSettings = {
+				saved.value.at("value").value("octave", 3), saved.value.at("value").value("velocity", 100)};
+		m_keyboard = std::make_unique<ui::OnScreenKeyboard>(m_binding, *document, m_keyboardSettings,
+			[this](Rml::Input::KeyIdentifier position) { return m_shell.keyLabel(position); });
 		m_docking.saveWindows();
 		return m_keyboard.get();
 	}
@@ -2233,6 +2321,22 @@ namespace gnubase::app
 				m_trackList->select({track});
 		};
 		return actions;
+	}
+
+	void AppUi::updateMenus()
+	{
+		if (m_menu)
+			m_menu->update();
+		for (auto it = m_windowMenus.begin(); it != m_windowMenus.end();)
+		{
+			if (m_shell.find(it->first) == nullptr)
+			{
+				it = m_windowMenus.erase(it); // the menu holds the window
+				continue;
+			}
+			it->second->update();
+			++it;
+		}
 	}
 
 	void AppUi::updateMixerWindows()
@@ -2624,7 +2728,7 @@ namespace gnubase::app
 		spec.size = {1000, 600};
 		spec.bounds = m_docking.bounds("editor");
 		spec.hidden = m_hidden;
-		const ui::Window& window = m_shell.open(spec);
+		ui::Window& window = m_shell.open(spec);
 		m_editor.window = window.id();
 		const std::filesystem::path file = m_resources / "ui" / "editor.rml";
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
@@ -2640,6 +2744,7 @@ namespace gnubase::app
 		// Open in Lower Zone opens the Editor tab in the lower zone (reference manual, p. 1198).
 		m_editor.editor = std::make_unique<ui::MidiEditor>(
 			m_binding, m_editorReads, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
+		m_editor.editor->setPlaybackPosition([this] { return m_engine.playbackPosition(); });
 		m_editor.editor->setDrumMapSetup(
 			[this]
 			{
@@ -2651,6 +2756,7 @@ namespace gnubase::app
 					});
 			});
 		m_docking.attach("editorWindow", *document);
+		m_windowMenus[window.id()] = std::make_unique<ui::MainMenu>(m_keys, window, *document);
 	}
 
 	void AppUi::closeEditor(const std::string& editor)
@@ -2743,7 +2849,7 @@ namespace gnubase::app
 		spec.size = {1000, 560};
 		spec.bounds = m_docking.bounds("mixer" + std::to_string(number));
 		spec.hidden = m_hidden;
-		const ui::Window& window = m_shell.open(spec);
+		ui::Window& window = m_shell.open(spec);
 		shown.window = window.id();
 		const std::filesystem::path file = m_resources / "ui" / "mixer.rml";
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
@@ -2758,6 +2864,7 @@ namespace gnubase::app
 		shown.mixer = std::make_unique<ui::Mixer>(m_binding, m_meters, m_docking, *root,
 			"window" + std::to_string(number), ui::MixerKind::Window, mixerActions());
 		m_docking.attach("mixer" + std::to_string(number), *document);
+		m_windowMenus[window.id()] = std::make_unique<ui::MainMenu>(m_keys, window, *document);
 		m_docking.saveWindows();
 		return shown.mixer.get();
 	}

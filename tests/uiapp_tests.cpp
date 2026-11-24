@@ -149,6 +149,24 @@ TEST_CASE("UI tests run GNUbase's UI on the dummy device, with its fonts and the
 	}
 }
 
+TEST_CASE("macOS release builds draw without Metal's validation layer, debug builds with it", "[ui]")
+{
+	// The validation layer costs CPU time for every command, and the virtual GPU of CI's macOS runners aborts large
+	// frames with it, such as the inspector's tests with an in-place editor (#2063). The variable must be set before
+	// the first Metal device, which the UI's renderer creates.
+	const test::UiApp app;
+	const char* layer = std::getenv("MTL_DEBUG_LAYER");
+#ifdef __APPLE__
+#ifdef NDEBUG
+	CHECK(std::string(layer != nullptr ? layer : "") == "0");
+#else
+	CHECK(std::string(layer != nullptr ? layer : "") == "1");
+#endif
+#else
+	CHECK(layer == nullptr); // only SDL_GPU's Metal driver sets it
+#endif
+}
+
 TEST_CASE("UI tests click through GNUbase's UI and read it back, as MCP's UI tools do", "[ui]")
 {
 	test::UiApp app;
@@ -652,12 +670,12 @@ TEST_CASE("the ruler's time format menu opens from its arrow button and with a r
 	CHECK(hasClass(app, "#ruler-format-menu > [format=barsBeats]", "checked"));
 	click(app, menuItem(app, "#ruler-format-menu", "Seconds"));
 	CHECK(window.display.rulerFormat() == ui::TimeFormat::Seconds);
-	CHECK(element(app, "ruler").at("attributes").at("format") == "seconds");
+	CHECK(element(app, ".timeline-ruler").at("attributes").at("format") == "seconds");
 	CHECK(hasClass(app, "#ruler-format-menu > [format=seconds]", "checked"));
 	CHECK(!hasClass(app, "#ruler-format-menu > [format=barsBeats]", "checked"));
 
 	// A right click anywhere in the ruler opens it at the mouse.
-	const Json ruler = element(app, "ruler").at("box");
+	const Json ruler = element(app, ".timeline-ruler").at("box");
 	const ui::Point at{ruler.at("x").get<int>() + 100, ruler.at("y").get<int>() + 4};
 	app.ui().click(std::nullopt, {"", 0, at}, ui::MouseButton::Right, 1, {});
 	REQUIRE(visible(app, "#ruler-format-menu"));

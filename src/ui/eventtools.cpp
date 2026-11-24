@@ -5,11 +5,10 @@
 // key command switches the tool (#469). Edits go to the engine as event.* and midiPart.add commands.
 // docs/features/tools.md describes them.
 #include "engine/time/tempomap.h"
+#include "ui/cursors.h"
 #include "ui/eventdisplay.h"
 
-#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
-#include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Property.h>
 
 #include <algorithm>
@@ -264,15 +263,7 @@ namespace gnubase::ui
 	{
 		if (!alive() || !m_mouse || m_drag != Drag::None)
 			return;
-		const std::string pointer = pointerAt(m_mouse->first, m_mouse->second, m_held);
-		if (m_area->GetAttribute<Rml::String>("pointer", "") == pointer)
-			return;
-		m_area->SetAttribute("pointer", pointer);
-		// RmlUi takes the pointer for the element under the mouse from its style as the last update left it: style
-		// it now, and update again, so that the pointer changes at once, also when the mouse doesn't move.
-		m_document->GetOwnerDocument()->UpdateDocument();
-		if (Rml::Context* context = m_root->GetContext())
-			context->RequestNextUpdate(0);
+		setPointer(*m_area, pointerAt(m_mouse->first, m_mouse->second, m_held));
 	}
 
 	void EventDisplay::showContextMenus()

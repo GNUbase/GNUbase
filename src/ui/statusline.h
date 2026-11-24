@@ -40,6 +40,7 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_silentDevice;
 		Rml::ObserverPtr<Rml::Element> m_recordTime;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for audio.get's answer
+		bool m_asking = false;                                        // recording.remainingTime is on its way
 		Subscription m_changed;
 	};
 }

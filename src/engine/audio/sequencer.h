@@ -15,6 +15,7 @@
 
 #include <array>
 #include <atomic>
+#include <bitset>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -163,6 +164,11 @@ namespace gnubase::engine
 		std::vector<LiveHarmony> liveInput;  // Live Input: what the notes played into the track move to, by position
 		std::vector<LiveDrumNote> drumInput; // RenderChannel::drumInput: by I-note, then by sound; or empty
 		int8_t inputChannel = -1; // the MIDI channel the events played into the track go out on, or -1 for theirs
+		// The track's note expression setup (#1513): the input assignment of each expression, by
+		// plugin::NoteExpression, and whether the events played into the track play without their expression.
+		std::array<ExpressionInput, g_expressionNames.size()> expressionInputs;
+		bool expressionBypass = false;
+		bool assignsExpression = false; // filled in by setSequence: an expression has a message
 		// The track's articulation map (#175): its remote triggers select the sound slot of the notes played into the
 		// track; without slots for none.
 		ArticulationMap articulations;
@@ -374,6 +380,9 @@ namespace gnubase::engine
 		void takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept;
 		// Remembers the values the automation sends the effects' parameters in the block (m_automated).
 		void remember(const MidiSequence& sequence, const graph::EventBuffer& events) noexcept;
+		// Plays the messages of the input that the track's note expression setup assigns as the expression of the
+		// notes the input holds on their channel, each expression's value over its range, in their place (#1513).
+		void assignExpression(const MidiSequence& sequence) noexcept;
 		// Forgets the notes the inserts and the sends to the track's output hold.
 		void forgetEffects() noexcept;
 		// An event of its input as the modifiers play it, on the track's MIDI channel if it has one
@@ -526,8 +535,10 @@ namespace gnubase::engine
 		double m_sampleRate = 0.0; // prepare's, for new effects; 0: not prepared yet
 		uint32_t m_maxFrames = 0;
 		// Audio thread: allocated by setSequence before the first sequence with effects.
-		graph::EventBuffer m_own;    // the track's own events, for the effects
-		graph::EventBuffer m_chainA; // what the effects play, in turns
+		graph::EventBuffer m_own;      // the track's own events, for the effects
+		graph::EventBuffer m_assigned; // assignExpression's, there once a sequence assigned a message
+		std::array<std::bitset<128>, 16> m_assignedHeld{}; // the notes the input holds, by channel, for it
+		graph::EventBuffer m_chainA;                       // what the effects play, in turns
 		graph::EventBuffer m_chainB;
 		// The block's parameter events for the effects (midi::g_effectEvents), which its automation sends among its
 		// events in, and an effect's events in with its own of them.

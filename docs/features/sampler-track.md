@@ -11,17 +11,20 @@ sampler is a GNUbase processor and runs inside the engine (architecture rule 3).
 
 | Command | What it does | Reference |
 |---|---|---|
-| `sampler.create` | A new sampler track with a pool clip (`clip`), an audio event's clip (`event`) or an audio file (`path`), which goes into the pool as a clip in the same undo step, from `start` to `end` in clip frames (default: the event's section or the whole clip), or empty without any; named `name`, or Sampler 01, Sampler 02 and so on, the first number no track's name has; placed and routed with `parent`, `index` and `output` as `track.add` does | pp. 143-144, 711 |
+| `sampler.create` | A new sampler track with a pool clip (`clip`), an audio event's clip (`event`) or an audio file (`path`), which goes into the pool as a clip in the same undo step, into the pool folder Sampler Tracks, made when the first file comes (p. 710), from `start` to `end` in clip frames (default: the event's section or the whole clip), or empty without any; named `name`, or Sampler 01, Sampler 02 and so on, the first number no track's name has; placed and routed with `parent`, `index` and `output` as `track.add` does | pp. 143-144, 710-711 |
 | `sampler.load` | Loads another sample, the same way, into a sampler track while it plays (hot swap). Its settings go back to their defaults, or with `keepSettings` (Lock Parameter Settings) only those of the sample: root key, start, end, the fades, loop start, end and crossfade | pp. 710, 715-716 |
 | `sampler.normalize` | Sets the Sample gain so that the highest peak between start and end reaches `level` dBFS (default 0); refused for a silent sample or a missing file | pp. 715, 735 |
 | `sampler.zeroCrossings` | A query for Snap to Zero Crossing: moves `positions`, shares of the sample as Start and End are (counted from its end with Reverse), each to the nearest frame within 50 ms where the sum of its channels changes sign, the frame of the two there that is nearer to zero; a position without one near stays | p. 713 |
 
-Each but the query is one undo step and emits `channel.changed`; `sampler.create` also `track.added`. Another instrument
+Each but the query is one undo step and emits `channel.changed`; `sampler.create` also `track.added`, and with a file
+`media.added`, `clip.added`, `clip.changed` and, for the first one, `poolFolder.added`. Another instrument
 (`channel.set`, or a track preset's in `track.loadPreset`) drops the sample. A sampler's clip counts as used in the pool
 (`pool.get`, `pool.removeUnused`, `clip.remove` refuses it, `media.removeMissing` empties the sampler) and in a backup
 (`project.backup`, p. 710: its `removeUnused` keeps it, and `minimize` copies a file that a sampler plays whole, as
 Start, End and the loop are shares of it). Imported and exported tracks (`track.import`, `track.export`) and track
-presets (`track.savePreset`, with the sample's file in the preset, and `track.loadPreset`) take their sample along. The
+presets (`track.savePreset`, with the sample's file in the preset, and `track.loadPreset`) take their sample along,
+whose clip goes into the pool folder Sampler Tracks when the project hasn't the same one yet, as the drum pads' go into
+Drum Machine ([drum-track.md](drum-track.md)). The
 sample is saved with the channel in `gnubase.json`; a clip that isn't in the pool when the project loads is dropped.
 
 The sampler's settings are its parameters (`processor.list`, `parameter.set`, automatable like any instrument's):
@@ -95,10 +98,10 @@ How it plays:
 Not yet: warped (time-stretched) playback with sync to the tempo, the quality modes, transient, grid and manual slicing
 with fades and the slices' MIDI phrase, the pitch and filter envelopes and a multi-node amp envelope, the LFOs, Trim
 Sample, Hot Swap Preview Sample that restores the sample before, the sampler panel's own undo history and A/B
-settings, loading by dragging an event or a MIDI part onto the panel, a pool folder of the sampler's samples (p. 710),
-and transferring the sample to another instrument, which needs a plugin wrapper extension for samples. The display's
-ruler and zoom, the toolbar's Read/Write Automation and preset section, and the Add Track dialog's Input Routing and
-Event Type, which no page of it has yet ([add-track.md](add-track.md)), are open too (#1122).
+settings, loading by dragging an event or a MIDI part onto the panel, and transferring the sample to another
+instrument, which needs a plugin wrapper extension for samples. Key commands for the display's zoom, the toolbar's
+Read/Write Automation and preset section, and the Add Track dialog's Input Routing and Event Type, which no page of it
+has yet ([add-track.md](add-track.md)), are open too (#1122).
 
 ## In the UI
 
@@ -117,9 +120,9 @@ root `.sampler-panel` has the class `.empty`):
   (`#sampler-zero`), Import Audio File (`#sampler-import`, a file dialog, then `sampler.load` with `path`), the clip's
   name (`#sampler-file`), the Normalization Level (`#sampler-level`, -96 to 0 dBFS, p. 735), Normalize Sample
   (`#sampler-normalize`, `sampler.normalize` with that `level`), Lock Parameter Settings (`#sampler-lock`), which
-  loads keep the settings with (`keepSettings`), and MIDI Reset (`#sampler-midi-reset`). The lock, the level and Snap
-  to Zero Crossing are the user setting `ui.samplerPanel` (`lockParameters`, `normalizeLevel`, `snapToZero`; what
-  later versions add to it is kept), so they stay as they were when the panel is made anew, e.g. in a window of its
+  loads keep the settings with (`keepSettings`), and MIDI Reset (`#sampler-midi-reset`). The lock, the level, Snap
+  to Zero Crossing and the ruler's format are the user setting `ui.samplerPanel` (`lockParameters`, `normalizeLevel`,
+  `snapToZero`, `rulerFormat`; what later versions add to it is kept), so they stay as they were when the panel is made anew, e.g. in a window of its
   own. While the panel's own changes of it are on their way, e.g. during a drag of
   the level, the older ones that `settings.changed` brings back don't set the field back. A change from elsewhere still
   shows: results and events reach the panel in the engine's order, so one made after the panel's last `settings.set`
@@ -151,6 +154,14 @@ root `.sampler-panel` has the class `.empty`):
   `.off` with the loop) that the themes show on hover: dragging it moves both markers by as far as the mouse went,
   keeping their distance, and stops at the sample's ends, both parameters in one step and one undo step
   per drag (p. 717).
+- **Ruler and zoom** (p. 717, #1122): above the display a ruler (`.sampler-ruler`) shows the part of the sample shown,
+  from the sample's start and at its own rate, in the format that the arrow button at its right picks
+  (`#sampler-ruler-format`: Bars+Beats at the project's tempo and signatures, Seconds, the default, or Samples).
+  Beside the display the vertical zoom (`#sampler-vertical-zoom`) raises the waveform up to 64 times; below it the
+  scroll slider (`#sampler-scroll`) moves along the sample and the horizontal zoom (`#sampler-horizontal-zoom`) shows
+  from the whole sample down to 64 frames around the middle of what it showed, asking `media.peaks` for that part
+  only. The markers, the bars, the loop and the shades lie in the part shown, markers outside it are hidden
+  (`.out-of-view`), and drags count in it. The zoom is the panel's own, the whole sample again with another one.
 - **Sections** (`.sampler-section`): Playback, Pitch, Filter, Amp and Keyboard, a control per parameter of
   `processor.list`'s sampler (`[parameter]`, `#sampler-parameter-<id>`): a toggle for those that are on or off, a
   drop-down list for those with options, a value field for the others, each gesture one undo step (`parameter.set`
@@ -204,3 +215,6 @@ Controllers, which also forgets the held keys, and `sampler.zeroCrossings`, reve
 #1343 added the warnings at every round of an offline render's wait for a sample and the error after the last of its
 20 rounds, tested with rounds of 20 ms instead of 30 s (`Engine::setOfflineSampleWait`), and checks that starting
 playback and recording from stop answer only after the held read is released.
+#1122 then added to `tests/sampler_tests.cpp` the pool folder Sampler Tracks that files loaded into samplers, and
+imported samplers' samples, go into, and to `tests/sampler_ui_tests.cpp` the ruler with its format and the zoom
+sliders, with a marker's drag while zoomed in.

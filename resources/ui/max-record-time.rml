@@ -1,0 +1,32 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Max. Record Time window (Studio > More Options, reference manual p. 356): the remaining record time that the
+     status line shows too, in a window of its own. app::AppUi fills #record-time with a ui::StatusLine. -->
+<rml>
+<head>
+	<title>Max. Record Time</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#record-time
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+			text-align: center;
+			padding-top: 12dp;
+		}
+	</style>
+</head>
+<body>
+	<div id="record-time" class="display"/>
+</body>
+</rml>

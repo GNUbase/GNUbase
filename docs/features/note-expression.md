@@ -264,16 +264,16 @@ loading cutting them there.
   1303), a color per expression in the overlay, which draws all of them alike, and Trim Note Expression to Note Length
   and Remove Note Expression in the MIDI menu (p. 1314).
 - Parameter Selection lists the expressions the note uses and those chosen in the inspector, not all seven (p. 1309,
-  #1513).
-- The inspector's Note Expression section with its input assignments, MIDI learn, value ranges and bypass (pp.
-  1300-1302, #1513).
+  #2120).
+- What the inspector's Note Expression section doesn't have yet: [note-expression-setup.md](note-expression-setup.md).
 - The Note Expression Assignment's Preferred and Alternative rules (Expression Name Contains, Note Expression Number, As
   Recommended by Instrument, p. 1299), and renewing the assignments when the instrument or its preset changes (p. 1298,
   #1829): they choose among a plugin's own expressions and need to know which expressions an instrument has, which need
   #1516; with the seven common ones and MIDI PolyPressure the assignment is what the page sets. More known MPE
   devices, which are detected by their port's name only.
-- Recording MIDI controllers as note expression, overdub and converting controller events into note expression (pp.
-  1316-1318, #1515), with the toolbar switch that records expression for a selected note from MIDI input (pp. 1303,
+- Overdubbing note expression and Convert to Note Expression in the MIDI menu (pp. 1316-1318, #1515; recording the
+  assigned controllers and `noteExpression.convert` are in [note-expression-setup.md](note-expression-setup.md)), with
+  the toolbar switch that records expression for a selected note from MIDI input (pp. 1303,
   1308) and the dialog that sets which MIDI messages record as expression (pp. 1314-1315).
 - A plugin's own expressions with their names and ranges (VST3 custom note expressions), CLAP and MIDI 2.0 per-note
   controllers in the adapters, MPE output that allocates channels for notes that share one and a pitch range other

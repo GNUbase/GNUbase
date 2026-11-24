@@ -191,6 +191,13 @@ namespace gnubase::app
 
 	AppUi::QuantizeTarget AppUi::quantizeTarget(ui::Window& window, Rml::Element* zone) const
 	{
+		// A key editor's own zone (#679) counts as the zone it lies in: the lower zone or an in-place editor.
+		if (zone != nullptr && zone->GetAttribute<Rml::String>("focuszone", "") == "keyEditor")
+		{
+			zone = zone->GetParentNode();
+			while (zone != nullptr && !zone->HasAttribute("focuszone"))
+				zone = zone->GetParentNode();
+		}
 		// An editor's selected notes, or with selected ones required none, every note of the parts it edits.
 		const auto ofView = [](const Json& view, bool selected)
 		{

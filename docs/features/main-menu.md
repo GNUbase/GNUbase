@@ -60,6 +60,21 @@ project window.
   submenus are menus inside items, marked by an arrow. With a menu open, the mouse over another title opens that
   title's menu instead; Left and Right move between the menus, and into and out of submenus; Alt on its own opens the
   File menu on Windows and Linux, and closes it again.
+- **Show Menu Bar in the title bar's context menu** (#444). On Windows the OS draws a window's title bar, and its
+  context menu is the window's system menu: every window with a menu bar gets Show Menu Bar there, checked while its
+  menu bar shows (`WindowSystem::setMenuBarShown`, which the docking system calls as it applies a window's layout).
+  Picking it sends the shell `MenuBarToggled` (`Shell::onMenuBarToggled`), and `app::AppUi` runs `window.menuBar` in
+  that window. The SDL window system adds the item to the system menu and subclasses the window's procedure for it,
+  since Windows sends the item's `WM_SYSCOMMAND` to the window instead of posting it. Other platforms have no such
+  item.
+- **Other windows' reduced menus** (#444). Windows other than the project window have their own menu bars with fewer
+  menus, in their documents, each a `strip="menuBar"` that `ui.layout` keeps per window, and `app::AppUi` attaches a
+  `ui::MainMenu` to each when it opens the window. They are hidden until the user shows them, so that they take no
+  room from the faders and the note display. A mixer window (`resources/ui/mixer.rml`) has File (Save, Save As...,
+  Quit), Edit (Undo, Redo, Key Commands...), Studio (Mixer to Mixer 4, On-Screen Keyboard, Studio Setup...) and Window
+  (Windows...) (p. 55). Its Set up Window Layout pane has Menu Bar too, GNUbase's own addition for platforms whose
+  title bar has no Show Menu Bar item. The editor window (`resources/ui/editor.rml`) has File, Edit (Undo, Redo, Cut,
+  Copy, Paste, Delete, Select All, Select None, Quantize) and Window.
 
 ## Menus
 
@@ -67,7 +82,7 @@ project window.
 |---|---|
 | File | New Project, Open...; Save, Save As..., Back up Project..., Save as Template..., Save New Version, Revert ([project-files.md](project-files.md)); Import (Audio File... `file.importAudio`, MIDI File... `file.importMidi`, [file-import.md](file-import.md); Tempo Track... `file.importTempo`; Markers... `file.importMarkers`, [markers.md](markers.md); Tracks from Project or Track Archive... `file.importTracks`, [track-presets.md](track-presets.md)); Export (Audio Mixdown... `file.exportMixdown`, Quick Audio Export... `file.quickExport`, [mixdown.md](mixdown.md); Tempo Track... `file.exportTempo`, [tempo-track.md](tempo-track.md); Markers... `file.exportMarkers`; Selected Tracks... `file.exportTracks`, [track-presets.md](track-presets.md); Key Command Assignments... `keyCommands.exportAssignments`, [key-commands.md](key-commands.md)); Quit (`file.quit`, Mod+Q) |
 | Edit | Undo, Redo; Delete; Functions (Split at Cursor, Split Loop, Duplicate, Repeat..., Fill Loop, Convert to Real Copy); Select (All, None, Invert, In Loop, From Start to Cursor, From Cursor to End, Events under Cursor); Move (Event Start to Cursor, Event End to Cursor); Render in Place (Render (with Current Settings), Render Settings...), Freeze/Unfreeze (Selected Tracks..., Selected Tracks (with Current Settings)) (`track.renderSelected`, `track.renderSettings`, `track.freezeSelectedSettings`, `track.freezeSelected`, [render-in-place.md](render-in-place.md)); Mute, Unmute, Lock, Unlock; Quantize (`edit.quantize`, Q), Reset Quantize, Quantize Panel (`window.quantizePanel`), Advanced Quantize (Quantize MIDI Event Lengths, Quantize MIDI Event Ends, Freeze MIDI Quantize, Create Groove Quantize Preset, [quantize.md](quantize.md)); Open/Close Editor, Open Editor in Lower Zone (`editor.openClose`, `window.lowerZoneEditor`, [midi-editors.md](midi-editors.md)); Load Drum Map..., Save Drum Map... (`drumMap.load`, `drumMap.save`, [drum-editor.md](drum-editor.md)); Macros (the user's macros, `macro.<name>`, and Key Commands...), Key Commands... (`window.keyCommands`, [key-commands.md](key-commands.md)); Profile Manager... (`window.profiles`, [profiles.md](profiles.md)); Preferences... (`window.preferences`, [preferences.md](preferences.md)) |
-| Media | Open Pool Window (`window.pool`, Mod+P); Import Medium... (`pool.import`); Create Folder; Remove Unused Media; Find Missing Files... (`pool.findMissing`); Remove Missing Files; Conform Files ([pool.md](pool.md)); Prepare Archive ([backup.md](backup.md)) |
+| Media | Open Pool Window (`window.pool`, Mod+P); Import Medium... (`pool.import`); Create Folder; Remove Unused Media; Find Missing Files... (`pool.findMissing`); Remove Missing Files; Conform Files ([pool.md](pool.md)); Clean Up Media Folders... (`pool.cleanup`, [pool.md](pool.md)); Prepare Archive ([backup.md](backup.md)) |
 | Transport | Start, Stop, Start/Stop, Record, Lock Record, Unlock Record ([recording.md](recording.md)); Audio Record Mode (Keep History, Cycle History + Replace, Replace, [recording.md](recording.md)); MIDI Record Mode (New Parts, Merge, Replace, [midi-recording.md](midi-recording.md); Mix, Overwrite, Keep Last, Stacked, Mix-Stacked (No Mute), [cycle-recording.md](cycle-recording.md)); Go to Project Start; Locators (Go to Left/Right Locator Position, Set Left/Right Locator to Project Cursor Position, Exchange Left & Right Locator Positions); Set Project Cursor Position (Locate Next/Previous Marker) |
 | Project | Add Track...; Project Input Transformer... `project.inputTransformer`, [midi-rules.md](midi-rules.md); Project Rule Editor... `project.ruleEditor`, [project-rules.md](project-rules.md); Tempo Track (Open Tempo Track Editor, Activate Tempo Track, Tempo Detection... `tempo.detection`, [tempo-detection.md](tempo-detection.md); Process Tempo... `tempo.openProcessTempo`, Process Bars... `tempo.openProcessBars`, [time-warp.md](time-warp.md)); Chord Track (Chords to MIDI `track.chordsToMidiSelected`, Create Chord Events `track.createChordEventsSelected`, [chord-track.md](chord-track.md)); Show/Hide Chord Pads (`window.chordPads`, [chord-pads.md](chord-pads.md)); Remove Selected Tracks, Remove Empty Tracks, Duplicate Tracks; Track Folding; Auto Fades Settings... (`project.autoFades`, [fades.md](fades.md)); Project Setup... (`window.projectSetup`, [project-setup.md](project-setup.md)) |
 | Audio | Fades (Fade In to Range Start, Fade Out from Range End, Adjust Fades to Range, Crossfade (X), Remove Fade In, Remove Fade Out, Remove Fades, Open Fade Editor(s), [fades.md](fades.md)); Advanced (Detect Silence... `audio.detectSilence`; Set Definition from Tempo... `audio.setDefinitionFromTempo`, Copy Warp Markers from Selected Event `audio.copyWarpMarkers`, Paste Warp Markers to Selected Events `audio.pasteWarpMarkers`, [time-warp.md](time-warp.md)), Spectrum Analyzer (`audio.spectrumAnalyzer`), Statistics (`audio.statistics`) ([audio-functions.md](audio-functions.md)); Create Sampler Track (`audio.createSamplerTrack`, [sampler-track.md](sampler-track.md)); Realtime Processing (Flatten Realtime Processing `audio.flatten`, Unstretch Audio `audio.unstretch`, [warp.md](warp.md)) |
@@ -81,9 +96,7 @@ features they run. Quitting waits for the shell's next step, since it closes eve
 
 ## Not yet
 
-The reduced menus of other windows (the mixer and the editors, when they open in windows of their own); Show Menu Bar
-in the context menu of a window's title bar on Windows, which the OS draws (it is in Set up Window Layout for now); the
-system menu bar on macOS, where the window shows its own menu bar until then (and Alt doesn't open it).
+A reduced menu for the sample editor's window, which isn't a docking window yet; the system menu bar on macOS, where each window shows its own menu bar until then (and Alt doesn't open it).
 
 ## Checks
 
@@ -103,6 +116,10 @@ the File menu's Import item shows its arrow, the mouse moves from File to Edit, 
 and Alt opens and closes the File menu (mouse moves and key presses, as MCP's `ui_move` and `ui_key` do). A menu with an
 item whose command doesn't exist or is empty, whose parameters an engine command doesn't take or has of the wrong type,
 that gives a UI command parameters, or whose parameters aren't a JSON object throws and leaves the document as it was;
+a mixer window's and the editor window's menu bars, hidden at first, show, hide and show again from Show Menu Bar in
+their title bar's context menu (on Windows, picked by sending the system menu's `WM_SYSCOMMAND` to the window, which also checks the item's check
+mark; `window.menuBar` elsewhere), Edit > Undo in each takes back the track added last, and the mixer's Set up Window
+Layout pane hides its menu bar while the project window's stays;
 the project window, the transport panel and the time display window open, and every `command` in the documents and
 fragments of `resources/ui` passes `KeyCommands::check`, as does every command their buttons run from Lua with
 `gnubase.ui.command`.

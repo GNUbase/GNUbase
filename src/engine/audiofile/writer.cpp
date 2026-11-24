@@ -92,6 +92,18 @@ namespace gnubase::engine
 				integer(static_cast<uint64_t>(std::ldexp(fraction, 64)), 8);
 			}
 
+			// A text chunk, unless the text is empty: in WAV with a null character at its end, in AIFF without.
+			void textChunk(const char* id, const std::string& value)
+			{
+				if (value.empty())
+					return;
+				const size_t size = value.size() + (m_bigEndian ? 0 : 1);
+				text(id);
+				integer(size, 4);
+				field(value, size + (size % 2)); // chunks are padded to an even size
+			}
+
+			void append(const Bytes& other) { m_data.insert(m_data.end(), other.m_data.begin(), other.m_data.end()); }
 			const std::vector<uint8_t>& data() const { return m_data; }
 			void clear() { m_data.clear(); }
 
@@ -168,6 +180,20 @@ namespace gnubase::engine
 				if (options.broadcast)
 					broadcastChunk(header, *options.broadcast);
 				formatChunk(header);
+				if (options.text)
+				{
+					Bytes info(false);
+					info.text("INFO");
+					info.textChunk("ICMT", options.text->description);
+					info.textChunk("IART", options.text->author);
+					info.textChunk("ISRC", options.text->reference);
+					if (info.data().size() > 4)
+					{
+						header.text("LIST");
+						header.integer(info.data().size(), 4);
+						header.append(info);
+					}
+				}
 				if (isFloat(options.sampleFormat))
 				{
 					header.text("fact");
@@ -201,6 +227,8 @@ namespace gnubase::engine
 				m_bytes.clear();
 				for (size_t i = 0; i < samples; ++i)
 					m_bytes.sample(buffer[i], m_options.sampleFormat);
+				if (m_options.rf64 == Rf64::Never && m_output.size() + m_bytes.data().size() > g_max32)
+					throw AudioFileFull("WAV files without RF64 can't be larger than 4 GB");
 				m_output.write(m_bytes.data());
 				m_frames += frames;
 			}
@@ -320,6 +348,12 @@ namespace gnubase::engine
 				header.integer(0, 4); // unknown: readers count the frames in SSND
 				header.integer(static_cast<uint64_t>(bitsOf(options.sampleFormat)), 2);
 				header.extended(options.sampleRate);
+				if (options.text)
+				{
+					header.textChunk("NAME", options.text->description);
+					header.textChunk("AUTH", options.text->author);
+					header.textChunk("ANNO", options.text->reference);
+				}
 				header.text("SSND");
 				m_soundSize = header.data().size();
 				header.integer(g_unknownSize, 4);
@@ -349,7 +383,7 @@ namespace gnubase::engine
 				for (size_t i = 0; i < samples; ++i)
 					m_bytes.sample(buffer[i], m_options.sampleFormat);
 				if (m_output.size() + m_bytes.data().size() > g_max32)
-					throw AudioFileError("AIFF files can't be larger than 4 GB");
+					throw AudioFileFull("AIFF files can't be larger than 4 GB");
 				m_output.write(m_bytes.data());
 				m_frames += frames;
 			}
@@ -504,6 +538,8 @@ namespace gnubase::engine
 			}
 			if (options.broadcast && options.format != AudioFormat::Wav)
 				rejected("broadcast information outside WAV files");
+			if (options.text && options.format != AudioFormat::Wav && options.format != AudioFormat::Aiff)
+				rejected("text outside WAV and AIFF files");
 			if (options.broadcast)
 			{
 				const BroadcastInfo& info = *options.broadcast;

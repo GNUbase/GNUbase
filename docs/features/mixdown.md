@@ -45,6 +45,12 @@ Mixdown dialog and Quick Audio Export. The offline rendering it builds on is `au
   `int16`, `int24` (the default), `int32`, `float32` or `float64`, the names `project.set` uses for the record bit
   depth. AIFF takes the integer ones, FLAC 16 and 24 bits. `sampleRate` converts from the project's rate with the
   same r8brain resampler as imports (`Resampler`), so a file at another rate has `Resampler::outputLength` frames.
+- **Broadcast Wave chunk** (#580, p. 1615). `broadcastWave` gives WAV files a bext chunk. Its `description`, `author`
+  and `reference` default to the Broadcast Wave strings of the preferences (`audio.broadcastDescription`,
+  `audio.broadcastAuthor`, `audio.broadcastReference`, [recording.md](recording.md)) and are cut to their fields' 256,
+  32 and 32 bytes between two UTF-8 characters (`broadcastNow`, shared with recording). The origination date and time
+  are the export's, and the time reference is where the file starts plus the project's start time, in samples of the
+  file's rate since midnight. Other formats refuse it. Tests: `tests/mixdown_tests.cpp`.
 - **Dither and normalizing.** `dither` adds TPDF dither (the built-in dither's core, `dsp::Dither`, without noise
   shaping) when writing 16 or 24 bits; its noise comes from a fixed seed, so the same export gives the same file.
   `normalize` scales each file so that its peak is that many dBFS (-60 to 0).
@@ -84,7 +90,8 @@ Mixdown dialog and Quick Audio Export. The offline rendering it builds on is `au
 - Real-time export (p. 1485), with the meters updating.
 - Cycle marker and arranger ranges (p. 1480), and the Effects choices for several channels: dry, and through groups,
   sends and the master (p. 1484).
-- Export as split channels, mono downmix and L/R from surround (p. 1483); Broadcast Wave, marker and iXML chunks.
+- Export as split channels, mono downmix and L/R from surround (p. 1483); marker and iXML chunks; the Broadcast Wave
+  chunk in the export dialog.
 - The export queue, saved with the project (pp. 1490–1494); file format presets (p. 1501); naming schemes
   (pp. 1486–1488); Always Ask for conflicts; After Export (create an audio track, insert into the pool, new project).
 - Keep Dialog Open; a folder chooser and recent paths; Show in Explorer/Finder; channel search and syncing the

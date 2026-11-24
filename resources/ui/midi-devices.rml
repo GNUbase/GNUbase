@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The MIDI device manager (#136, docs/features/midi-devices.md, reference manual pp. 1109-1114): the installed MIDI
-     devices, installing a GM device or defining a new one, removing one, and editing its banks, folders and presets.
-     app::AppUi opens it (the UI command window.midiDeviceManager). Its Lua reads the devices from the user setting
+     devices, installing a GM device or defining a new one, removing one, exporting and importing setup files, and
+     editing its banks, folders and presets. app::AppUi opens it (the UI command window.midiDeviceManager). Its Lua reads the devices from the user setting
      midi.devices, follows settings.changed, and changes them only through engine commands, at once. -->
 <rml>
 <head>
@@ -451,6 +451,10 @@
 				<div class="row">
 					<button id="install-device" onclick="MidiDevices.install(document)">Install Device</button>
 					<button id="remove-device" onclick="MidiDevices.remove(document)">Remove Device</button>
+				</div>
+				<div class="row">
+					<button id="export-setup" onclick="gnubase.ui.command{command = 'midiDevice.exportSetup'}">Export Setup</button>
+					<button id="import-setup" onclick="gnubase.ui.command{command = 'midiDevice.importSetup'}">Import Setup</button>
 				</div>
 				<div class="row" id="bank-assignment">Bank Assignment<span id="assign-channels"/><span id="assign-banks"/></div>
 			</div>

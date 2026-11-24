@@ -134,13 +134,17 @@ TEST_CASE("channel.set changes the strip's sections, checks them, undoes them an
 		INFO(parameters.dump());
 		CHECK_THAT(result.error, ContainsSubstring(reason));
 	};
-	refused({{"pre", {{"gain", 30.0}}}}, "pre.gain must be a number from -24 to 24");
-	refused({{"pre", {{"highCut", {{"frequency", 30.0}}}}}}, "pre.highCut.frequency must be a number from 50");
-	refused({{"pre", {{"lowCut", {{"slope", 18}}}}}}, "slope must be 6, 12, 24, 36 or 48");
+	// The schema refuses fields of the wrong type or out of range (#636), so MCP clients can check their calls.
+	refused({{"pre", {{"gain", 30.0}}}}, "pre.gain must be at most 24");
+	refused({{"pre", {{"highCut", {{"frequency", 30.0}}}}}}, "pre.highCut.frequency must be at least 50");
+	refused({{"pre", {{"lowCut", {{"slope", 18}}}}}}, "slope must be one of [6,12,24,36,48]");
+	refused({{"pre", {{"lowcut", {{"on", true}}}}}}, "lowcut");
 	refused({{"eq", {{"bands", {{{"band", 2}, {"type", "lowShelf"}}}}}}}, "eq band 2 can't be of type");
-	refused({{"eq", {{"bands", {{{"band", 5}}}}}}}, "band from 1 to 4");
-	refused({{"strip", {{"compressor", {{"ratio", 0.5}}}}}}, "strip.compressor.ratio");
-	refused({{"strip", {{"gate", {{"on", 1}}}}}}, "strip.gate.on must be true or false");
+	refused({{"eq", {{"bands", {{{"band", 5}}}}}}}, "band must be at most 4");
+	refused({{"eq", {{"bands", {{{"on", true}}}}}}}, "band");
+	refused({{"strip", {{"compressor", {{"ratio", 0.5}}}}}}, "strip.compressor.ratio must be at least 1");
+	refused({{"strip", {{"gate", {{"on", 1}}}}}}, "strip.gate.on must be boolean");
+	refused({{"strip", {{"limiter", {{"release", 2000.0}}}}}}, "strip.limiter.release must be at most 1000");
 	const Json midi = run(strip.client, "track.add", {{"type", "midi"}}).at("channel");
 	CHECK_THAT(strip.client.call("channel.set", {{"channel", midi.at("id")}, {"eq", Json::object()}}).error,
 		ContainsSubstring("a MIDI channel has no pre, eq or strip section"));

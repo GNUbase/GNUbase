@@ -148,6 +148,21 @@ namespace
 				}));
 		}
 
+		// Waits until the display's project, which an in-place editor opens with, has that many notes, as the
+		// constructor does. An editor opened before shows notes added since only after the display's read and two more
+		// round trips, each with a draw, which a loaded runner drawing in software may not finish in a wait (#2037).
+		void waitForNotes(size_t count)
+		{
+			REQUIRE(app.waitUntil(
+				[this, count]
+				{
+					size_t read = 0;
+					for (const Json& part : display.project().at("midiParts"))
+						read += part.at("notes").size();
+					return read == count;
+				}));
+		}
+
 		void scroll(int pitch)
 		{
 			REQUIRE(
@@ -584,6 +599,7 @@ TEST_CASE("a note dragged from one in-place editor to another moves to that trac
 	CHECK(moved.at("length") == g_quarter);
 	CHECK(moved.at("velocity") == source.at("velocity"));
 	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+	CHECK(f.app.call("history.get").at("steps").back().at("action") == "Move notes"); // also for several parts (#2014)
 	// The moved note left its editor's selection.
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").empty(); }));
 
@@ -784,7 +800,7 @@ TEST_CASE("a controller event of another source part goes along as one undo step
 	CHECK(partOf(f.part).at("notes").size() == 1);
 	const Json history = f.app.call("history.get");
 	CHECK(history.at("steps").size() == steps + 1);
-	CHECK(history.at("steps").back().at("action") == "Move");
+	CHECK(history.at("steps").back().at("action") == "Move notes"); // as one part's lone note.move (#2014)
 
 	// One undo brings the note and the controller event back to their parts.
 	f.app.call("history.undo");
@@ -1075,6 +1091,7 @@ TEST_CASE("quantizing in an in-place editor quantizes its notes, not the project
 					{{"position", (3 * g_quarter) + 7}, {"length", g_sixteenth}, {"pitch", 69}, {"velocity", 0.5}}}}});
 	const uint64_t first = added.at("notes").at(0).at("id").get<uint64_t>();
 	f.app.call("quantize.set", {{"preset", "1/16"}});
+	f.waitForNotes(4);
 	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 4; }));
 	f.display.select({f.part});
@@ -1263,6 +1280,7 @@ TEST_CASE("the expression editor of an in-place editor knows the project read it
 			.at(0)
 			.at("id")
 			.get<uint64_t>();
+	f.waitForNotes(3);
 	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 3; }));
 	f.scroll(61);

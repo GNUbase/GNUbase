@@ -136,6 +136,18 @@ The other edit commands ([parts-and-events.md](parts-and-events.md)) have no def
 transport controls' commands (F2, the enter commands, Exchange Time Formats, P for Locators to Selection) are in
 [transport-bar.md](transport-bar.md).
 
+The key editor's element is the focus zone `keyEditor` ([key-editor.md](key-editor.md), #679), in the editor window,
+the lower zone and the in-place editors: a command bound there acts on the editor whose zone it was pressed in. A
+command bound everywhere that asks which editor, such as `edit.quantize` and the MIDI functions, gets the `keyEditor`
+zone and looks past it (`AppUi::quantizeTarget`) to the zone around it: the editor window's, the lower zone or the
+in-place editor's.
+
+| Keys | Command | Reference |
+|---|---|---|
+| Up, Down | `keyEditor.transposeUp`, `keyEditor.transposeDown` | Transpose by a semitone (p. 1214) |
+| Shift+Up, Shift+Down | `keyEditor.transposeOctaveUp`, `keyEditor.transposeOctaveDown` | Transpose by an octave |
+| Delete, Backspace | `keyEditor.delete` | Delete |
+
 The UI command `file.quit` (Quit, in the main menu's File menu) has Mod+Q, everywhere, and `window.onScreenKeyboard`
 (Show/Hide On-Screen Keyboard, [onscreen-keyboard.md](onscreen-keyboard.md)) Alt+K. Commands that come with their
 tickets bring their keys, such as the mixer's F3 and Alt+F3 ([mixer-window.md](mixer-window.md)), cycle, record and the
@@ -208,7 +220,8 @@ user settings ([settings.md](settings.md)), so MCP and Lua change them with `set
 The UI command `window.keyCommands` opens `resources/ui/key-commands.rml`, modal (Edit > Key Commands...). Its Lua gets
 the commands with their default keys from `gnubase.ui.keyCommands()` (`KeyCommands::commands`: the UI's commands, the
 engine's that change something and run without parameters, the default bindings' commands with their parameters, and
-Trigger Arranger Event 1 to 9, `arranger.trigger` with `number`, without default keys ([arranger.md](arranger.md)); not
+Trigger Arranger Event 1 to 9, `arranger.trigger` with `number`, without default keys ([arranger.md](arranger.md)),
+and Lock Record and Unlock Record, `transport.set` with `lockRecord` true and false, likewise ([recording.md](recording.md)); not
 those that need one of their parameters though none is required, such as `chordPads.trigger` and `marker.locate`, whose
 schema says so with `minProperties`, `engine::needsOne`) and writes keys with `gnubase.ui.keyName`, which takes `keys`
 as the settings write them, or a key event's `key` with `ctrl`, `alt`, `shift` and `meta`, and returns `keys` and

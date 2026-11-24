@@ -565,6 +565,8 @@ namespace gnubase::engine
 			{
 				if (track.frozen)
 					use(track.frozen->path);
+				if (!track.picture.empty())
+					use(track.picture);
 			};
 			const auto useProject = [&](const Project& uses)
 			{
@@ -644,6 +646,15 @@ namespace gnubase::engine
 			std::sort(unused.begin(), unused.end());
 			return unused;
 		}
+	}
+
+	void trimUsesToMedia(Project& project, CommandContext& context, const std::set<ObjectId>& media)
+	{
+		std::map<ObjectId, Rescale> rescales;
+		for (const ObjectId id : media)
+			rescales[id] = {1.0, project.media.at(id).length};
+		if (!rescales.empty())
+			rescaleUses(project, context, rescales);
 	}
 
 	void ProjectModel::registerPoolCommands(Engine& engine, Jobs& jobs)
@@ -913,7 +924,8 @@ namespace gnubase::engine
 				"Lists the files that loads extracted and nothing uses: the files in the project's media folder "
 				"(<name> media next to its project file) and in the track presets' (Track Presets/<name> media in the "
 				"settings folder) that neither the project, nor a step of its undo history, nor its project file, nor "
-				"a project template has as a media or freeze file, such as the numbered ones (2-kick.wav) that a load "
+				"a project template has as a media or freeze file or a track picture, such as the numbered ones "
+				"(2-kick.wav) that a load "
 				"puts beside a file with other content. A peak file goes with its audio file. With files, removes "
 				"those of them that are among these from the disk, which undo can't bring back. A project or track "
 				"preset that loads again extracts what it needs. A file that another project refers to without "

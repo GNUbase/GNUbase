@@ -32,7 +32,7 @@ the pool and conforming files to the project's sample rate. The engine commands 
 - **`media.cleanup`** lists the files that loads extracted and nothing uses (#1827), as the reference's Cleanup did:
   those in the project's media folder (`<name> media` next to its project file) and in the track presets'
   (`Track Presets/<name> media` in the settings folder) that neither the project, nor a step of its undo history, nor
-  its project file, nor a project template (`Project Templates` in the settings folder) has as a media or freeze file.
+  its project file, nor a project template (`Project Templates` in the settings folder) has as a media or freeze file or a track picture.
   Such are the numbered files (`2-kick.wav`) that a load puts beside a file with other content
   ([project-files.md](project-files.md), [track-presets.md](track-presets.md)), and the files of media files removed
   from the pool once no undo step has them. A peak file goes with its audio file, and the peak
@@ -50,9 +50,10 @@ the pool and conforming files to the project's sample rate. The engine commands 
   same-named file of another take (a common kick.wav) isn't relinked with events pointing past its end. A length that
   another application's project.xml gave for a file missing at load is its `duration` times the sample rate, off by the
   duration's rounding, so a file within a millisecond's frames fits too (#506). Of the files that fit, it takes the one
-  closest in length, and of those equally close the one with the same spelling. `media` limits it to some media files,
-  each looked for once however often it is given. Since the folder can be large (a whole drive), it runs as a job (see
-  below). A file found that goes or changes before the job relinks it is skipped and reported as `changed` (its
+  closest in length, and of those equally close the one with the same spelling, and the media file takes that file's
+  length; what played past a shorter file's end is trimmed, as `media.relink` does. `media` limits it to some media
+  files, each looked for once however often it is given. Since the folder can be large (a whole drive), it runs as a job
+  (see below). A file found that goes or changes before the job relinks it is skipped and reported as `changed` (its
   `media.relink` entry has the `length` the file must have), so the other files found are still relinked. A single file
   is relinked with `media.relink` ([backup.md](backup.md)).
 - **`media.removeMissing`** removes the missing media files with their clips and the audio events that play them
@@ -132,8 +133,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
 - **Messages.** `#pool-message` says what the last pool command did: how many missing files Find Missing Files found,
   what Remove Unused Media and Remove Missing Files removed, how many files Conform Files converted, how many files
   Prepare Archive copied and how many media files and frozen tracks it left alone because they changed meanwhile
-  (`changed`, `changedTracks`, #2001), or why one failed, with the state class `.error`, which the themes color as
-  danger. The app hears the results of
+  (`changed`, `changedTracks`, #2001), what Clean Up Media Folders removed from the disk, or why one failed, with the
+  state class `.error`, which the themes color as danger. The app hears the results of
   `pool.removeUnused`, `media.locate`, `media.removeMissing`, `media.conform` and `media.prepareArchive` (Media >
   Prepare Archive, [backup.md](backup.md)) from the toolbar, the Media menu and
   the folder dialog alike (`EngineBinding::onResult`, [ui-engine-binding.md](ui-engine-binding.md)) and opens the
@@ -157,6 +158,11 @@ the pool and conforming files to the project's sample rate. The engine commands 
   sends `media.locate` with the folder; from the toolbar, the dialogs belong to the window the pool shows in. Remove
   Unused Media, Remove Missing Files, Conform Files and Create Folder send `pool.removeUnused`,
   `media.removeMissing`, `media.conform` and `poolFolder.add`.
+- **Media > Clean Up Media Folders** (`pool.cleanup`, `ui::PoolPanel::cleanup`, #1827) opens the pool and lists the
+  files `media.cleanup` finds unused: none says so in the message line; else `resources/ui/cleanup.rml` asks, as
+  removing files from the disk can't be undone, with how many there are, their size in all and each file with its size
+  (`#cleanup-files`), and Remove sends `media.cleanup` with them. The message line then says how many it removed and
+  their size, and names the files it couldn't remove (`failed`) with the state class `.error`.
 
 ## Not yet
 
@@ -188,9 +194,11 @@ saved project's files are moved into another folder while it is closed, the load
 `media.locate` finds one in a subfolder under another letter case and skips one whose channel count doesn't fit, the
 event plays the same section, the saved project keeps the new path, and undo brings back the old one. Another test
 has `media.locate` skip a same-named file of another length but take one within a millisecond of a length that another
-application's project.xml rounded, prefer the closest length over the same spelling and the same spelling over another
-case among equally close ones, match ASCII letters in any case but not Ö for ö, and look for a media file given twice
-once. Both run as jobs, which the tests wait for: `transport.locate` is answered while `media.locate` on a folder of
+application's project.xml rounded, give the media file the found file's length, which undo takes back, trim the event of
+a file a few frames shorter than the rounded length to the new end, where `audioEvent.set` still changes it and undo
+gives back both lengths, prefer the closest length over the same spelling and the same spelling over another case among
+equally close ones, match ASCII letters in any case but not Ö for ö, and look for a media file given twice once. Both
+run as jobs, which the tests wait for: `transport.locate` is answered while `media.locate` on a folder of
 2500 files runs, whose progress names the folder; `job.cancel` stops `media.locate` and `media.conform` with nothing
 changed and no file left in the media folder; a missing file removed while `media.locate` looks for it, a media file
 relinked by hand while `media.conform` converts it, and a new project sample rate set meanwhile keep the edit, and the
@@ -218,7 +226,10 @@ through the Import Options dialog; names sorted in any case, a clip let go outsi
 folder's name or a drag from outside, a name typed away kept, no reading while another tab shows; Conform Files from the
 Media menu on a project that was never saved opening the pool with the error, and on a saved one showing the job's
 result once it is done, its progress, and Stop, which cancels it without moving the list; Find Missing Files through its
-folder dialog, a failed dialog's message and its job's result; a failed job's message; and, with a panel and binding of
-its own, a job that ended before its command's result came (the `job.get` path) and found files that changed meanwhile
-counted among those looked for. `tests/docking_tests.cpp` checks `Docking::showing`, `tests/enginebinding_tests.cpp`
-`EngineBinding::onResult`.
+folder dialog, a failed dialog's message and its job's result; a failed job's message; Media > Clean Up Media Folders
+saying that nothing is unused in an unsaved project, its dialog's text, file list and sizes, Cancel keeping the file,
+Remove deleting it and saying so, and a refused `media.cleanup` (a project file it can't read) named as failed with
+`.error`; and, with a panel and binding of its own, a job that ended before its command's result came (the `job.get`
+path) and found files that changed meanwhile counted among those looked for, and the files Clean Up Media Folders
+couldn't remove (`failed`) named with `.error`. `tests/docking_tests.cpp` checks `Docking::showing`,
+`tests/enginebinding_tests.cpp` `EngineBinding::onResult`.

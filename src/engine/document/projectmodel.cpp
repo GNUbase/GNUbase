@@ -165,6 +165,38 @@ namespace gnubase::engine
 			return {{"type", "array"}, {"items", std::move(items)}};
 		}
 
+		// channel.set's pre, eq and strip, with each field's type and range (docs/features/channel-strip.md).
+		std::array<Json, 3> sectionSchemas()
+		{
+			const Json on = {{"type", "boolean"}};
+			const auto range = [](double low, double high)
+			{ return Json{{"type", "number"}, {"minimum", low}, {"maximum", high}}; };
+			const auto cut = [&](double low)
+			{
+				return objectSchema({{"on", on}, {"frequency", range(low, 20000.0)},
+					{"slope", {{"type", "integer"}, {"enum", {6, 12, 24, 36, 48}}}}});
+			};
+			Json band = objectSchema(
+				{{"band", {{"type", "integer"}, {"minimum", 1}, {"maximum", 4}}}, {"on", on},
+					{"type", enumSchema({"bell", "lowShelf", "lowCut", "highShelf", "highCut"})},
+					{"frequency", range(20.0, 20000.0)}, {"gain", range(-24.0, 24.0)}, {"q", range(0.1, 12.0)}},
+				{"band"});
+			return {objectSchema(
+						{{"gain", range(-24.0, 24.0)}, {"phase", on}, {"lowCut", cut(20.0)}, {"highCut", cut(50.0)}}),
+				objectSchema({{"bypass", on}, {"bands", arraySchema(std::move(band))}}),
+				objectSchema(
+					{{"gate",
+						 objectSchema({{"on", on}, {"threshold", range(-80.0, 0.0)}, {"range", range(-80.0, 0.0)},
+							 {"attack", range(0.01, 100.0)}, {"release", range(1.0, 4000.0)}})},
+						{"compressor",
+							objectSchema({{"on", on}, {"threshold", range(-60.0, 0.0)}, {"ratio", range(1.0, 20.0)},
+								{"attack", range(0.1, 100.0)}, {"release", range(10.0, 2000.0)},
+								{"makeup", range(0.0, 24.0)}})},
+						{"limiter",
+							objectSchema(
+								{{"on", on}, {"threshold", range(-30.0, 0.0)}, {"release", range(1.0, 1000.0)}})}})};
+		}
+
 		// An object schema that also allows null.
 		Json nullable(Json schema)
 		{
@@ -1278,6 +1310,28 @@ namespace gnubase::engine
 			}
 		}
 
+		// Add VCA Track to Selected Tracks (reference manual p. 517): the tracks' channels go into a new link group
+		// that the new VCA fader controls. Tracks without a channel, such as folders without a group channel, are left
+		// out. Link groups don't link the selection yet, which the reference turns off for such a group.
+		void linkToVca(Project& project, ObjectId vca, const Json& tracks, CommandContext& context)
+		{
+			Json channels = Json::array();
+			std::set<ObjectId> seen;
+			for (const Json& item : tracks)
+			{
+				const auto id = item.get<ObjectId>();
+				require(seen.insert(id).second, "tracks lists track " + idText(id) + " twice");
+				const Track& track = find(project.trackById, id, "track");
+				if (project.channels.count(track.channel) != 0)
+					channels.push_back(track.channel);
+			}
+			if (channels.empty())
+				return;
+			const Json parameters = {{"channels", std::move(channels)}, {"vca", vca}};
+			CommandContext inner(parameters, &context);
+			addLinkGroup(project, inner);
+		}
+
 		Json addTrack(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -1285,10 +1339,13 @@ namespace gnubase::engine
 			ObjectId parent = folderParent(project, parameters);
 			if (parameters.value("projectFolder", false))
 			{
-				require(type == TrackType::Group || type == TrackType::Effect,
-					"only group and effect tracks go into the project's Group and FX folders");
+				const std::map<TrackType, const char*> folders = {
+					{TrackType::Group, "Group"}, {TrackType::Effect, "FX"}, {TrackType::Vca, "VCA"}};
+				const auto folder = folders.find(type);
+				require(folder != folders.end(),
+					"only group, effect and VCA tracks go into the project's Group, FX and VCA folders");
 				require(parent == 0, "a track in the project's folder has no other parent");
-				parent = projectFolder(project, type == TrackType::Group ? "Group" : "FX", context);
+				parent = projectFolder(project, folder->second, context);
 			}
 			const size_t index = insertIndex(parameters, siblings(project, parent));
 			const bool groupChannel = parameters.value("groupChannel", false);
@@ -1405,10 +1462,15 @@ namespace gnubase::engine
 			require(!parameters.contains("send"),
 				type == TrackType::Effect ? "send needs tracks: the tracks that send to the new effect track"
 										  : "only effect tracks take a send");
+			if (parameters.contains("tracks") && channel && type == TrackType::Vca)
+			{
+				linkToVca(project, channel->id, parameters.at("tracks"), context);
+				return result;
+			}
 			// Move Selected Tracks to New Folder (p. 223).
 			if (parameters.contains("tracks"))
 			{
-				require(type == TrackType::Folder, "only folders, group and effect tracks take tracks");
+				require(type == TrackType::Folder, "only folders, group, effect and VCA tracks take tracks");
 				for (const Json& moved : parameters.at("tracks"))
 				{
 					const auto id = moved.get<ObjectId>();
@@ -1498,7 +1560,14 @@ namespace gnubase::engine
 				track.name = parameters.at("name").get<std::string>();
 			track.color = newColor;
 			track.timeFormat = parameters.value("timeFormat", track.timeFormat);
-			track.picture = parameters.value("picture", track.picture);
+			if (parameters.contains("picture"))
+			{
+				// Absolute, so that the mixer finds it wherever it looks from (saveDawProject keeps it with the file).
+				const std::string picture = parameters.at("picture").get<std::string>();
+				track.picture = picture.empty()
+					? picture
+					: std::filesystem::absolute(std::filesystem::u8path(picture)).lexically_normal().u8string();
+			}
 			if (parameters.contains("drumMap"))
 			{
 				track.drumMap = parameters.at("drumMap").get<ObjectId>();
@@ -1975,6 +2044,9 @@ namespace gnubase::engine
 					continue;
 				for (const ObjectId other : linkedTo(project, id, key, linked))
 				{
+					// A MIDI or VCA channel has no equalizers, dynamics or sends: its unused ones stay as they are.
+					if (project.channels.at(other).format == ChannelFormat::None)
+						continue;
 					Channel& to = follower(other);
 					Channel trial = to;
 					try
@@ -1986,7 +2058,7 @@ namespace gnubase::engine
 					}
 					catch (const std::exception&)
 					{
-						continue; // a MIDI channel, or a send to itself: it keeps its own
+						continue; // a send to itself or into a loop: it keeps its own
 					}
 					to = trial;
 				}
@@ -2706,6 +2778,7 @@ namespace gnubase::engine
 				parameters.contains("project") && parameters.at("project").get<uint64_t>() != openedProject;
 			Json relinked = Json::array();
 			Json skipped = Json::array();
+			std::set<ObjectId> shortened;
 			for (const Json& entry : parameters.at("files"))
 			{
 				const ObjectId id = entry.at("media").get<ObjectId>();
@@ -2741,21 +2814,29 @@ namespace gnubase::engine
 					continue;
 				}
 				if (checked &&
-					(info.sampleRate != media.sampleRate || info.channels != media.channels ||
+					(info.frames <= 0 || info.sampleRate != media.sampleRate || info.channels != media.channels ||
 						info.frames != entry.at("length").get<int64_t>()))
 				{
 					skipped.push_back(id);
 					continue;
 				}
+				require(info.frames > 0, path + " has no sample frames");
 				require(info.sampleRate == media.sampleRate && info.channels == media.channels,
 					path + " has " + std::to_string(info.channels) + " channels at " +
 						std::to_string(std::llround(info.sampleRate)) + " Hz, media file " + idText(id) + " " +
 						std::to_string(media.channels) + " at " + std::to_string(std::llround(media.sampleRate)) +
 						" Hz");
 				media.path = path;
+				// A file within media.locate's tolerance has another length than project.xml gave (#506); what played
+				// past a shorter file's end is trimmed, so that the events stay within their clips.
+				const time::Samples length = withinLongest(project, time::TimeBase::Linear, info.frames, "length");
+				if (length < media.length)
+					shortened.insert(id);
+				media.length = length;
 				context.emit("media.changed", {{"media", toJson(media)}});
 				relinked.push_back(id);
 			}
+			trimUsesToMedia(project, context, shortened);
 			return {{"relinked", std::move(relinked)}, {"skipped", std::move(skipped)}};
 		}
 
@@ -3746,6 +3827,8 @@ namespace gnubase::engine
 					record(
 						finishesRender ? renderAction(m_applyingRender) : action, before, std::move(change), context);
 				publish();
+				if (m_changeFollower)
+					m_changeFollower(context);
 				if (m_applyingRender != 0)
 					endTrackRender(m_applyingRender, context);
 				return result;
@@ -3930,6 +4013,8 @@ namespace gnubase::engine
 			context.emit("trackLayout.changed", std::move(now));
 		announceHistory(context);
 		publish();
+		if (m_changeFollower)
+			m_changeFollower(context);
 		return {{"position", m_history.position()}};
 	}
 
@@ -4200,10 +4285,12 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.save", 1,
 				"Saves the project as a DAWproject file: as path, which is then the project's file (save as), or "
-				"without path to the project's file (save). Media files and frozen tracks' freeze files are copied "
-				"into it unless embedMedia is false; then the file refers to them where they are, relative to itself "
-				"if they are in its folder. One that is missing is referred to by its absolute path, so that the file "
-				"has no copy of it: the result lists them (missing). The file becomes the first of the recent "
+				"without path to the project's file (save). Media files, frozen tracks' freeze files and track "
+				"pictures are copied into it unless embedMedia is false; then the file refers to them where they are, "
+				"relative to itself if they are in its folder. A media or freeze file that is missing is referred to "
+				"by its absolute path, so that the file has no copy of it: the result lists them (missing). A missing "
+				"picture is referred to where it was (by its absolute path while embedding) and isn't listed in "
+				"missing. The file becomes the first of the recent "
 				"projects (project.recent). The files a project records, converts on import, renders, flattens and "
 				"freezes while it has no file go into one folder outside any project; the save after that copies "
 				"those still in it into the project's media and Freeze folders as a job, returned as job (null "
@@ -4291,9 +4378,9 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.new", 1,
 				"Replaces the project with an empty one that has a stereo input and output bus, or the busses of the "
-				"user's bus presets named Default (see bus.savePreset), or with template, a copy of the project "
-				"template of that name (see project.templates), and clears the undo history. The new project has no "
-				"file until it is saved.",
+				"user's bus presets named Default (see bus.savePreset) and the color set editing.defaultColors, or "
+				"with template, a copy of the project template of that name (see project.templates), and clears the "
+				"undo history. The new project has no file until it is saved.",
 				objectSchema({{"template", stringSchema}}), noResult, false},
 			[this](CommandContext& context)
 			{
@@ -4303,6 +4390,10 @@ namespace gnubase::engine
 					return Json::object();
 				}
 				Project project = newProject();
+				// The user's default color set (editing.defaultColors), else the factory set.
+				if (const Json colors = context.call("settings.get", {{"key", "editing.defaultColors"}}).at("value");
+					!colors.empty())
+					project.colors = colorsFromJson(colors);
 				for (const BusDirection direction : {BusDirection::Input, BusDirection::Output})
 					if (const Json presets = userPresets(direction, context); presets.contains("Default"))
 					{
@@ -4534,8 +4625,11 @@ namespace gnubase::engine
 				"their first send without a destination, switched on, after the fader and at the user setting "
 				"audio.defaultSendLevel (Effect Track to Selected Tracks, Add Effect Track to Send); tracks without "
 				"an audio channel, such as MIDI tracks and folders without a group channel, and without send those "
-				"with no free send, are left out. projectFolder "
-				"puts a group or effect track into the project's Group or FX folder, the first folder of that name "
+				"with no free send, are left out; for a VCA track, their channels go into a new link group that it "
+				"controls (linkGroup.add; Add VCA Track to Selected Tracks), tracks without a channel left out. "
+				"projectFolder "
+				"puts a group, effect or VCA track into the project's Group, FX or VCA folder, the first folder of "
+				"that name "
 				"at the top level, added at the end if there is none. With the user setting editing.applyFolderColor, "
 				"a track added to a folder "
 				"without a color takes the folder's. Marker tracks have no channel and stay at the top level; a "
@@ -4584,7 +4678,9 @@ namespace gnubase::engine
 				"(reference manual p. 274): in the project window, selecting an event, a part or a range on a track "
 				"inside it then selects those of its other tracks with the same start and end too. picture is an image "
 				"file (PNG, JPEG or SVG) that the mixer shows "
-				"on the track's channel, or empty for none. drumMap is the drum map (drumMap.add) a MIDI or instrument "
+				"on the track's channel, or empty for none; a relative path is taken from the working folder, and "
+				"project.save embeds the file (or, without embedMedia, refers to it), as it does media files. drumMap "
+				"is the drum map (drumMap.add) a MIDI or instrument "
 				"track's notes play through, or 0 for none; articulationMap its articulation map "
 				"(articulationMap.add), or 0 for none, whose remote triggers also select the sound slot of the notes "
 				"played into the track (midi.inject, its MIDI input): a trigger key or program doesn't play but sends "
@@ -4645,6 +4741,7 @@ namespace gnubase::engine
 				objectSchema({{"track", idSchema}}, {"track"}), resultSchema({"track"}), false},
 			duplicateTrack);
 
+		const std::array<Json, 3> sections = sectionSchemas();
 		add(engine,
 			{"channel.set", 1,
 				"Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output "
@@ -4755,10 +4852,9 @@ namespace gnubase::engine
 						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "chordPads", "none"})},
 						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
 						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
-						{"linked", booleanSchema}, {"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}},
-						{"strip", {{"type", "object"}}}, {"modifiers", {{"type", "object"}}},
-						{"midiInserts", {{"type", "object"}}}, {"midiSends", {{"type", "object"}}},
-						{"inputTransformer", {{"type", "object"}}},
+						{"linked", booleanSchema}, {"pre", sections[0]}, {"eq", sections[1]}, {"strip", sections[2]},
+						{"modifiers", {{"type", "object"}}}, {"midiInserts", {{"type", "object"}}},
+						{"midiSends", {{"type", "object"}}}, {"inputTransformer", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},
@@ -4809,11 +4905,14 @@ namespace gnubase::engine
 		add(engine,
 			{"media.relink", 1,
 				"Points media files at other files, such as copies, as one undo step. Each new file must be an audio "
-				"file with the media file's sample rate and channel count. An entry with from applies only if the "
-				"media file is still there and still points at from; one with length only if its new file can be "
-				"read, fits and has that many sample frames; otherwise it is skipped. With project, every entry is "
-				"skipped unless that project is still open (project.revision's project). Returns the media files it "
-				"relinked and the ones it skipped.",
+				"file with sample frames and the media file's sample rate and channel count; the media file takes its "
+				"length, and the "
+				"clip fades and audio events that play past a shorter file's end are trimmed to it. An entry "
+				"with from applies only if the media file is still there and still points at from; one with length "
+				"only if its new file can be read, fits and has that many sample frames (not none); otherwise it is "
+				"skipped. With "
+				"project, every entry is skipped unless that project is still open (project.revision's project). "
+				"Returns the media files it relinked and the ones it skipped.",
 				objectSchema({{"files",
 								  arraySchema(objectSchema({{"media", idSchema}, {"path", stringSchema},
 															   {"from", stringSchema}, {"length", integerSchema}},

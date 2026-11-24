@@ -777,3 +777,27 @@ TEST_CASE("Open Pattern Editor opens the selected MIDI parts in the pattern edit
 	// The part plays no pattern yet: the editor offers new ones.
 	REQUIRE(app.waitUntil([&] { return app.ui().dom(window, "#pattern-new-drum", 0).at("elements").size() == 1; }));
 }
+
+TEST_CASE("the draw tool, and the step selection tool with Alt, show the pencil over the steps", "[ui]")
+{
+	Fixture f;
+	// Over one step, then another: the pointer follows the modifiers held while the mouse moves.
+	int index = 0;
+	const auto pointer = [&f, &index](const std::vector<std::string>& modifiers = {})
+	{
+		index = 5 - index;
+		f.app.ui().move(f.window, of(cell(38, index)), modifiers);
+		f.app.shell().step(std::chrono::milliseconds(0));
+		return f.app.ui().windows().at("cursor").get<std::string>();
+	};
+	CHECK(pointer() == "tool-draw");
+	CHECK(pointer({"alt"}) == "tool-draw");
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	CHECK(pointer().empty());
+	// With Alt a click adds a step or removes it, and the pointer turns into the draw tool's (p. 924).
+	CHECK(pointer({"alt"}) == "tool-draw");
+	CHECK(pointer().empty());
+	f.app.ui().move(f.window, of(".pattern-tool[pattern-tool=draw]"), {"alt"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.app.ui().windows().at("cursor").get<std::string>().empty());
+}

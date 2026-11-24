@@ -228,7 +228,9 @@ namespace gnubase::engine
 		int8_t inputChannel = -1;  // MIDI channels: the one the events played into it go out on, -1 (Any) for theirs
 		midi::Modifiers modifiers; // MIDI and instrument channels: notes has them applied, live notes get them
 		bool expressionBypass = false; // MIDI and instrument channels: the notes play without their expression (#1513)
-		midi::EffectRack midiInserts;  // MIDI and instrument channels: the effects their sequencer runs
+		// MIDI and instrument channels: the input assignment of each expression, by plugin::NoteExpression (#1513).
+		std::array<ExpressionInput, g_expressionNames.size()> expressionInputs;
+		midi::EffectRack midiInserts; // MIDI and instrument channels: the effects their sequencer runs
 		midi::EffectRack midiSends;
 		// MIDI and instrument channels: where each MIDI send's effect plays, an instrument channel's index, or -1 for
 		// the track's own output.

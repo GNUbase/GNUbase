@@ -15,6 +15,9 @@ namespace gnubase::engine
 
 	void registerLinkGroupCommands(ProjectModel& model, Engine& engine);
 
+	// linkGroup.add with the context's parameters, for track.add's VCA track for tracks.
+	Json addLinkGroup(Project& project, CommandContext& context);
+
 	// Takes the channels that are gone out of their link groups, and VCA faders that are gone out of the groups they
 	// control: a group that loses its VCA fader links the volume again (reference manual p. 518), one that loses its
 	// last channel goes. Emits linkGroup.changed and linkGroup.removed.

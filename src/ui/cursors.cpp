@@ -4,6 +4,9 @@
 #include "engine/schema.h"
 #include "platform/log.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <lunasvg.h>
 
 #include <algorithm>
@@ -111,5 +114,19 @@ namespace gnubase::ui
 			cursor.images.push_back(std::move(image));
 		}
 		return cursor;
+	}
+
+	void setPointer(Rml::Element& element, const std::string& pointer)
+	{
+		if (element.GetAttribute<Rml::String>("pointer", "") == pointer)
+			return;
+		if (pointer.empty())
+			element.RemoveAttribute("pointer");
+		else
+			element.SetAttribute("pointer", pointer);
+		if (Rml::ElementDocument* document = element.GetOwnerDocument())
+			document->UpdateDocument();
+		if (Rml::Context* context = element.GetContext())
+			context->RequestNextUpdate(0);
 	}
 }

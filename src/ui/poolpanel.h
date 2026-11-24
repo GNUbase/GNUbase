@@ -44,15 +44,20 @@ namespace gnubase::ui
 
 		// Shows in the message line (#pool-message, with the class error for a failure) what a pool command did:
 		// pool.removeUnused, media.locate, media.removeMissing, media.conform or media.prepareArchive, wherever in the
-		// UI it was sent. media.locate, media.conform and media.prepareArchive start jobs: the line follows the job's
-		// progress and shows its result once it is done. While one runs, the line's row (.pool-status) has the class
-		// running, which shows Stop (#pool-stop), and Stop cancels it (reference manual p. 751).
+		// UI it was sent, or media.cleanup, which the panel sends itself. media.locate, media.conform and
+		// media.prepareArchive start jobs: the line follows the job's progress and shows its result once it is done.
+		// While one runs, the line's row (.pool-status) has the class running, which shows Stop (#pool-stop), and Stop
+		// cancels it (reference manual p. 751).
 		void report(const std::string& command, const engine::Result& result);
 
 		// Media > Prepare Archive (pool.prepareArchive): asks in the panel's window before media.prepareArchive copies
 		// files from outside the project folder into it (prepare-archive.rml, reference manual p. 135), and sends it
 		// at once if there are none, or if the project has no file, which the engine refuses.
 		void prepareArchive();
+
+		// Media > Clean Up Media Folders (pool.cleanup, #1827): lists the files media.cleanup finds unused in
+		// cleanup.rml, which asks before media.cleanup removes them from the disk, or says there are none.
+		void cleanup();
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
@@ -77,6 +82,9 @@ namespace gnubase::ui
 		// Opens prepare-archive.rml, which asks whether to copy the external files that are there, as many as
 		// external, and says how many others are missing.
 		void askPrepareArchive(int external, int missing);
+		// Opens the dialog file from the folder of the panel's document, modal, in the panel's window; proceed runs if
+		// it closes with the result ok. Null if it is asking already or the dialog can't open.
+		Rml::ElementDocument* ask(const char* file, std::function<void()> proceed);
 		// A job of a pool command ended (job.finished, or job.get for one that ended before report heard of it).
 		void jobEnded(const engine::Json& job);
 		// Cancels the jobs of pool commands that run.
@@ -98,7 +106,8 @@ namespace gnubase::ui
 		std::set<std::string> m_collapsed;         // folders the user closed
 		std::vector<std::string> m_dragged;        // clips a mouse button went down on, until it goes up
 		Rml::ObserverPtr<Rml::Element> m_pressed;  // what it went down on
-		Rml::ObserverPtr<Rml::Element> m_question; // prepare-archive.rml while it asks
+		Rml::ObserverPtr<Rml::Element> m_question; // the dialog of ask while it asks
+		std::function<void()> m_proceed;           // what its ok does
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 		std::map<uint64_t, std::string> m_jobs; // the running jobs of pool commands it reports, with their commands
 		LevelSteps m_levelSteps;                // whether a step changed only channels' levels (#1881)

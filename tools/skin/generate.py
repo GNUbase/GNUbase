@@ -126,7 +126,7 @@ NINE_NAMES = [
     "dialog", "dialog-titlebar", "panel", "panel-header", "toolbar", "display", "tooltip", "focus-ring",
     "button-normal", "button-hover", "button-pressed", "button-disabled", "button-checked",
     "button-primary-normal", "button-primary-hover", "button-primary-pressed",
-    "toggle-off", "toggle-hover", "toggle-mute", "toggle-solo", "toggle-record", "toggle-monitor",
+    "toggle-off", "toggle-hover", "toggle-on", "toggle-mute", "toggle-solo", "toggle-record", "toggle-monitor",
     "field-normal", "field-focus", "field-disabled", "dropdown-normal", "dropdown-hover", "dropdown-open",
     "dropdown-button-normal", "dropdown-button-hover", "dropdown-button-pressed", "dropdown-button-disabled",
     "disclosure-open", "disclosure-closed",
@@ -179,10 +179,11 @@ def mix(a: str, b: str, amount: float) -> str:
 
 
 def toggle_fill(theme: dict, kind: str) -> str:
-    """A checked mute, solo, record or monitor button's fill: its color, darkened toward the background unless the
-    theme keeps bright fills."""
+    """A checked toggle's fill: its kind's color (accent2 for toggles of no kind, such as section switches), darkened
+    toward the background unless the theme keeps bright fills."""
     c = theme["colors"]
-    color = {"mute": c["warning"], "solo": c["accent"], "record": c["danger"], "monitor": c["success"]}[kind]
+    color = {"on": c["accent2"], "mute": c["warning"], "solo": c["accent"], "record": c["danger"],
+             "monitor": c["success"]}[kind]
     return color if theme.get("brightFills") else mix(color, c["background"], .10 if theme["glow"] else .24)
 
 
@@ -260,7 +261,8 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
             extra = glow_rect(w, h, c["accent2"], r) if theme["glow"] else ""
     elif name.startswith("toggle-"):
         state = name.removeprefix("toggle-"); r = 3
-        colors = {"mute": c["warning"], "solo": c["accent"], "record": c["danger"], "monitor": c["success"]}
+        colors = {"on": c["accent2"], "mute": c["warning"], "solo": c["accent"], "record": c["danger"],
+                  "monitor": c["success"]}
         if theme["flat"] and state in ("off", "hover"):
             bg = mix(c["surfaceRaised"], c["border"], .7 if state == "off" else 1); border = "none"
         elif state == "hover": bg = mix(bg, accent, .14); border = mix(border, accent, .5)
@@ -703,10 +705,14 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("button svg.icon", {"image-color": c["text"]}),
         ("button:disabled svg.icon", {"image-color": c["textMuted"]}),
         ("button.primary svg.icon", {"image-color": on_accent}),
-        # Toggle buttons: mute, solo, record and monitor
+        # Toggle buttons: mute, solo, record, monitor and those of no kind
         ("button.toggle", {"decorator": skin("toggle-off"), "color": c["textMuted"],
                            "font-size": f"{sizes['small']}dp", "font-weight": "600"}),
         ("button.toggle:hover", {"decorator": skin("toggle-hover"), "color": c["text"]}),
+        # A checked toggle of no kind, such as the mixer strip's section switches; after button.toggle, which has the
+        # same specificity as button.checked (#2070)
+        ("button.toggle.checked",
+         {"decorator": skin("toggle-on"), "color": on_fill(theme, toggle_fill(theme, "on"), c["text"])}),
     ]
     for kind in ("mute", "solo", "record", "monitor"):
         rules.append((f"button.toggle.{kind}.checked",
@@ -714,7 +720,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     # Listen is monitoring; solo defeat keeps the solo button off, in the solo color.
     rules.append(("button.toggle.listen.checked",
                   {"decorator": skin("toggle-monitor"), "color": on_fill(theme, toggle_fill(theme, "monitor"), c["text"])}))
-    # The icons of checked record and monitor buttons in their labels' color, unless they are disabled
+    # The icons of checked toggles of no kind, such as Edit In-Place, and record and monitor buttons in their labels'
+    # color, unless they are disabled
+    rules.append(("button.toggle.checked:not(:disabled) svg.icon",
+                  {"image-color": on_fill(theme, toggle_fill(theme, "on"), c["text"])}))
     for kind in ("record", "monitor"):
         rules.append((f"button.toggle.{kind}.checked:not(:disabled) svg.icon",
                       {"image-color": on_fill(theme, toggle_fill(theme, kind), c["text"])}))
@@ -1185,6 +1194,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".status-line .status-field", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".status-line .mismatch, #silent-device", {"color": c["warning"]}),
         ("#lost-device", {"color": c["danger"]}),
+        (".meter-display .meter-values span.over", {"color": c["danger"]}),
         # The info line and the inspector (docs/features/inspector.md): the info line's values in another color with
         # several events selected, bypassed and deactivated inserts dimmed
         (".info-line.multiple .info-field", {"color": c["accent"]}),

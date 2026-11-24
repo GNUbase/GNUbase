@@ -155,17 +155,7 @@ namespace gnubase::engine
 
 	ObjectId drumPoolFolder(Project& project, CommandContext* context)
 	{
-		constexpr const char* name = "Drum Machine";
-		for (const auto& [id, each] : project.poolFolders)
-			if (each.parent == 0 && each.name == name)
-				return id;
-		PoolFolder folder;
-		folder.id = project.newId();
-		folder.name = name;
-		project.poolFolders[folder.id] = folder;
-		if (context != nullptr)
-			context->emit("poolFolder.added", {{"folder", toJson(folder)}});
-		return folder.id;
+		return topPoolFolder(project, "Drum Machine", context);
 	}
 
 	const Channel* drumChannelOf(const Project& project, ObjectId track)

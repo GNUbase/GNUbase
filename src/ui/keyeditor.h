@@ -103,6 +103,14 @@ namespace gnubase::ui
 		// scrolled to a pitch before.
 		bool scrollToPitch(int pitch);
 
+		// The editor's element, its focus zone keyEditor: the key commands keyEditor.* act on the editor whose element
+		// is the zone they were pressed in (app::AppUi::addMidiFunctions, #679).
+		const Rml::Element* zone() const { return m_root.get(); }
+		// Transposes the selected notes, all or none (the transpose palette, keyEditor.transposeUp and the others).
+		void transpose(int semitones);
+		// Deletes the selected notes (keyEditor.delete).
+		void removeSelected();
+
 	private:
 		struct Note
 		{
@@ -174,6 +182,9 @@ namespace gnubase::ui
 		void moveToInPlace(const Rml::Event& event, Rml::Element& grid, uint64_t track);
 		// What a press on a note's box starts: a resize near its ends, else a move.
 		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
+		// The note display's pointer for where the mouse is (docs/features/pointers.md): resize where a press resizes
+		// a note, else the tool's.
+		void showPointer(Rml::Event& event);
 		// Starts drawing a note at the snapped position under the press, as the draw tool's press does.
 		void startDraw(double ticks);
 		// Takes the drawn note out of the grid, into m_removedDrawn.
@@ -290,7 +301,8 @@ namespace gnubase::ui
 		void showLanes();
 		void setView(engine::Json parameters);
 		// Sends note.* commands, each {command, parameters}: one alone, several in a history.transaction. done, unless
-		// empty, runs with the result.
+		// empty, runs with the result. The description is the engine's name for the commands' undo step, such as
+		// "Move notes", so that a gesture's step has one name whether it changes one part or several (#2014).
 		void edit(const std::string& description, engine::Json commands,
 			std::function<void(const engine::Result&)> done = {});
 		// Whether the project shown may lack an edit that the expression editor sent: one is out, or the last one that
@@ -300,7 +312,6 @@ namespace gnubase::ui
 		// At the view's insert velocity unless one is given.
 		void addNotes(const Part& part, const std::vector<int64_t>& starts, int64_t length, int pitch,
 			std::optional<double> velocity = std::nullopt);
-		void transpose(int semitones);
 		void editInfo(const std::string& field, const std::string& text);
 		// The articulation map of a note's track, or null.
 		const engine::Json* articulationMap(const Note& note) const;

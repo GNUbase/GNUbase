@@ -246,6 +246,7 @@
 		<menuitem command="pool.findMissing">Find Missing Files...</menuitem>
 		<menuitem command="media.removeMissing">Remove Missing Files</menuitem>
 		<menuitem command="media.conform">Conform Files</menuitem>
+		<menuitem command="pool.cleanup">Clean Up Media Folders...</menuitem>
 		<menuseparator/>
 		<menuitem command="pool.prepareArchive">Prepare Archive</menuitem>
 	</menu>
@@ -553,9 +554,10 @@
 		<menuitem command="project.addTrackFromPreset">Add Track from Preset...</menuitem>
 		<menuitem command="track.saveTrackPreset">Save Track Preset...</menuitem>
 		<menuitem command="track.loadTrackPreset">Load Track Preset...</menuitem>
-		<!-- Routing (reference manual pp. 546, 554, docs/features/routing.md) -->
+		<!-- Routing (reference manual pp. 546, 554, docs/features/routing.md) and VCA faders (p. 517, link-groups.md) -->
 		<menuitem command="track.addGroupToSelected">Group Track to Selected Tracks...</menuitem>
 		<menuitem command="track.addEffectToSelected">Effect Track to Selected Tracks...</menuitem>
+		<menuitem command="track.addVcaToSelected">VCA Track to Selected Tracks...</menuitem>
 		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
@@ -678,6 +680,7 @@
 		<menuitem id="studio-more-options">More Options
 			<menu>
 				<menuitem command="window.midiDeviceManager">MIDI Device Manager</menuitem>
+				<menuitem command="window.maxRecordTime">Max. Record Time</menuitem>
 			</menu>
 		</menuitem>
 		<menuitem command="window.studioSetup">Studio Setup...</menuitem>

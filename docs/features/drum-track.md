@@ -131,7 +131,7 @@ automation parameters with their quick controls, Learn CC and ranges (pp. 978-98
 Type (pattern event or MIDI part) and Input Routing. A track preset has the whole file of a sample that a pad or a
 sampler plays a section of; `project.backup`'s `minimize` cuts such files down for backups. The numbered files that
 loading presets and projects leaves in `Track Presets/<name> media` and in media folders (`2-kick.wav`) stay until
-`media.cleanup` removes them ([pool.md](pool.md)); the UI has no item for it yet (#1827).
+`media.cleanup` removes them, also from Media > Clean Up Media Folders ([pool.md](pool.md), #1827).
 
 ## Tests
 

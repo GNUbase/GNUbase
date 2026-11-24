@@ -59,6 +59,10 @@ namespace gnubase::app
 			"timeDisplay", [this] { return m_timeDisplay.window; },
 			opener([this] { return timeDisplay() != nullptr; }, [this] { toggleTimeDisplay(); }));
 		m_docking.addWindow(
+			"maxRecordTime", [this] { return m_maxRecordTimeWindow; },
+			opener(
+				[this] { return m_shell.find(m_maxRecordTimeWindow) != nullptr; }, [this] { toggleMaxRecordTime(); }));
+		m_docking.addWindow(
 			"scriptConsole", [this] { return m_scriptConsoleWindow; },
 			opener(
 				[this] { return m_shell.find(m_scriptConsoleWindow) != nullptr; }, [this] { toggleScriptConsole(); }));

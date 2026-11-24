@@ -404,6 +404,51 @@ TEST_CASE("merging with Include Inserts and Include Sends plays what the track's
 		}
 }
 
+TEST_CASE("merging through the MIDI effects keeps the per-note expression and attributes of the notes they play",
+	"[integration]")
+{
+	// An attribute whose sound slot plays its notes a semitone higher, so that it shows in what plays; the merged
+	// notes keep it and the new track's map plays the slot after the effects, as playback did before them (#2000).
+	const auto setUp = [](EffectTrack& track)
+	{
+		const Json map = run(track.client, "articulationMap.add",
+			{{"name", "Strings"}, {"articulations", {{{"name", "Accent"}, {"type", "attribute"}, {"group", 0}}}},
+				{"slots",
+					{{{"name", "Normal"}}, {{"name", "Accent"}, {"articulations", {"Accent"}}, {"transpose", 1}}}}});
+		run(track.client, "track.set", {{"track", track.track}, {"articulationMap", map.at("map").at("id")}});
+		run(track.client, "note.add",
+			{{"part", track.part},
+				{"notes",
+					{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5}, {"channel", 2},
+						{"articulations", {"Accent"}},
+						{"expressions",
+							{{{"type", "tuning"}, {"position", g_beatTicks / 4}, {"value", 12.0}},
+								{{"type", "tuning"}, {"position", g_beatTicks / 2}, {"value", -3.0}}}}}}}});
+		track.set("midiInserts", {{"slots", {slot("transformer", {{"action", "Transpose"}, {"value", 12}})}}});
+		track.set("midiSends", {{"slots", {slot("transformer", {{"action", "Transpose"}, {"value", 24}})}}});
+	};
+	EffectTrack played;
+	setUp(played);
+	run(played.client, "transport.play");
+	played.render(2 * g_beat);
+	const std::string expected = played.captured();
+	// The note through the insert and through the send to the track's own instrument, each a semitone higher by its
+	// slot and with its bends, which as MIDI 1.0 are its channel's.
+	REQUIRE(expected ==
+		"0 e2 00 40\n0 92 49 40\n0 e2 00 40\n0 92 61 40\n6000 e2 00 50\n6000 e2 00 50\n12000 e2 00 3c\n"
+		"12000 e2 00 3c\n24000 82 49 00\n24000 82 61 00\n");
+
+	EffectTrack merged;
+	setUp(merged);
+	run(merged.client, "midi.merge",
+		{{"start", 0}, {"end", 4 * g_beat}, {"tracks", {merged.track}}, {"includeInserts", true},
+			{"includeSends", true}});
+	run(merged.client, "event.set", {{"events", {merged.part}}, {"mute", true}});
+	run(merged.client, "transport.play");
+	merged.render(2 * g_beat);
+	CHECK(merged.captured() == expected);
+}
+
 TEST_CASE("the arpeggiator returns when its output is full, and ends its note once there is room", "[unit]")
 {
 	using namespace gnubase::engine::graph;

@@ -125,6 +125,10 @@ one it has the class `empty` and says "No Track Selected".
                                    .midi-effect-panel with [control=midiInserts-0-parameter-rate] etc.
     [section=midiSends]            the same with midiSends-, button[control=midiSends-pre] and per slot
                                    select[control=midiSends-0-output]
+    [section=noteExpression]       MIDI and instrument tracks: button[control=noteExpression-bypass], a row per
+                                   expression [expression=0..6] (.selected) with its .expression-in,
+                                   select[control=noteExpression-input], button[control=noteExpression-learn],
+                                   valuefield[control=noteExpression-max] and [control=noteExpression-min]
     [section=chords]               MIDI and instrument tracks with a chord track: select[control=followChords]
     [section=articulations]        MIDI and instrument tracks: select[control=articulationMap],
                                    button.inspector-articulation-setup
@@ -181,6 +185,9 @@ one it has the class `empty` and says "No Track Selected".
   drop-down list for each parameter with options, a value field for the others, sent with `channel.set` `midiInserts`
   and `midiSends`. An effect chosen is on and its control panel opens (p. 1105). A drag, wheel turns or a held arrow
   key on a value are one undo step.
+- **Note Expression** (pp. 1300-1304, [note-expression-setup.md](note-expression-setup.md)): Bypass, the expressions
+  with their inputs' short names in the In column, and the selected one's Parameter Details: Input, MIDI Learn and its
+  Max. and Min. Value, sent with `noteExpression.set`.
 - **Chords** (pp. 1338-1340, [chord-track.md](chord-track.md)): MIDI and instrument tracks' Follow Chord Track
   (`chord.follow` `mode`), with Single Voice its voice and master, This Track's Voicings and Live Input, while the
   project has a chord track.
@@ -256,7 +263,9 @@ instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the
   changes from another client with undo, and an audio track without it; the MIDI Inserts and MIDI Sends sections'
   effect, a parameter from a drop-down list and from a value field, on, bypass, the divider from the list and dragged in
   one step, a drag dropped when the inspector shows another instrument track or a marker track, the control panel opened
-  and closed, a send's output and Pre, changes from another client with undo, and an audio track without them. A drag of
+  and closed, a send's output and Pre, changes from another client with undo, and an audio track without them; the Note
+Expression section's bypass, an expression's input chosen and its range typed, its In column, and MIDI Learn taking a
+controller from a MIDI input, not from one outside all MIDI inputs, and ending when another track shows, with undo. A drag of
   the inspector's volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are
   one undo step each, and a MIDI modifier and a part's transpose dragged back to where they started while the engine
   answers late end there. The info line's volume step that the engine refuses, one of the two selected events being

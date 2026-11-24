@@ -563,7 +563,8 @@ namespace gnubase::engine
 			{"groupEditing", track.groupEditing}, {"lock", track.lock}};
 		if (track.frozen)
 			json["frozen"] = {{"path", track.frozen->path}, {"sampleRate", track.frozen->sampleRate},
-				{"channels", track.frozen->channels}, {"length", track.frozen->length}};
+				{"channels", track.frozen->channels}, {"length", track.frozen->length},
+				{"inserts", track.frozen->inserts}};
 		if (track.type == TrackType::Ruler)
 		{
 			json["timeFormat"] = track.timeFormat;
@@ -2282,8 +2283,10 @@ namespace gnubase::engine
 			if (const Json frozen = item.value("frozen", Json()); !frozen.is_null()) // and before #116 none
 			{
 				track.frozen = Freeze{frozen.at("path").get<std::string>(), frozen.at("sampleRate").get<double>(),
-					frozen.at("channels").get<int>(), frozen.at("length").get<time::Samples>()};
+					frozen.at("channels").get<int>(), frozen.at("length").get<time::Samples>(),
+					frozen.value("inserts", true)}; // and before #760 with them
 				if ((track.type != TrackType::Audio && track.type != TrackType::Instrument) ||
+					(!track.frozen->inserts && track.type != TrackType::Instrument) ||
 					!(track.frozen->sampleRate > 0.0) || track.frozen->channels < 1 || track.frozen->length < 0)
 					throw std::invalid_argument("track " + std::to_string(track.id) + " can't be frozen like that");
 			}

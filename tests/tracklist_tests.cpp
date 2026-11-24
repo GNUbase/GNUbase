@@ -2147,19 +2147,23 @@ TEST_CASE("The render and freeze dialogs render and freeze with their options an
 	// As the list shows it, which the next command reads.
 	const auto frozen = [&tracks, synth] { return hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); };
 
-	// Freeze Channel Options: its Tail Size freezes, and Selected Tracks (with Current Settings) freezes with it too.
+	// Freeze Channel Options: its Tail Size and Include Inserts for Instrument Tracks freeze, and Selected Tracks
+	// (with Current Settings) freezes with them too.
 	run("track.freezeSelectedSettings");
 	REQUIRE(shown("#freeze-options-dialog"));
 	type("#freeze-tail", 2, "2");
+	tracks.click("#freeze-inserts");
 	tracks.click("#freeze-options-ok");
 	REQUIRE(tracks.app.waitUntil(frozen, rendering));
-	CHECK(ran("track.freeze").back() == Json{{"tracks", {synth}}, {"tail", 2.0}});
+	const Json freeze = {{"tracks", {synth}}, {"tail", 2.0}, {"includeInserts", false}};
+	CHECK(ran("track.freeze").back() == freeze);
 	CHECK(tracks.app.call("settings.get", {{"key", "render.freezeTail"}}).at("value") == 2.0);
+	CHECK(tracks.app.call("settings.get", {{"key", "render.freezeInserts"}}).at("value") == false);
 	run("track.freezeSelectedSettings"); // every one frozen: unfreezes them without asking
 	REQUIRE(tracks.app.waitUntil([&frozen] { return !frozen(); }));
 	run("track.freezeSelected");
 	REQUIRE(tracks.app.waitUntil(frozen, rendering));
-	CHECK(ran("track.freeze").back() == Json{{"tracks", {synth}}, {"tail", 2.0}});
+	CHECK(ran("track.freeze").back() == freeze);
 	run("track.freezeSelected");
 	REQUIRE(tracks.app.waitUntil([&frozen] { return !frozen(); }));
 
@@ -2176,15 +2180,15 @@ TEST_CASE("The render and freeze dialogs render and freeze with their options an
 	tracks.click("#render-settings-render");
 	tracks.rows(2, rendering);
 	const Json options = {{"mode", "blockEvents"}, {"processing", "channelSettings"}, {"tail", 1.0},
-		{"sampleFormat", "float64"}, {"sourceTracks", "mute"}, {"name", "Bounce"}};
+		{"sampleFormat", "float64"}, {"sourceTracks", "mute"}, {"hideSourceTracks", false}, {"name", "Bounce"}};
 	CHECK(tracks.app.call("settings.get", {{"key", "render.options"}}).at("value") == options);
 	Json expected = options;
 	expected["tracks"] = Json::array({synth});
 	CHECK(ran("track.renderInPlace").back() == expected);
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.channel(synth).at("mute") == true; }));
 
-	// Render Selection, for a selected part, opens with them, without Source Tracks: a selection leaves its tracks
-	// as they are, with the current settings too.
+	// Render Selection, for a selected part, opens with them, without Source Tracks and Hide Source Tracks: a
+	// selection leaves its tracks as they are, with the current settings too. Mute Source Events mutes the part.
 	tracks.app.call("channel.set", {{"channel", tracks.track(synth).at("channel")}, {"mute", false}});
 	tracks.click(row(synth) + " .track-name");
 	tracks.display.select({part.at("part").at("id").get<uint64_t>()});
@@ -2192,14 +2196,29 @@ TEST_CASE("The render and freeze dialogs render and freeze with their options an
 	REQUIRE(shown("#render-settings-dialog"));
 	CHECK(elements(tracks.app, "#render-settings-title").at(0).at("text") == "Render Selection");
 	CHECK(elements(tracks.app, "#render-source").empty());
+	CHECK(elements(tracks.app, "#render-hide").empty());
+	choose("#render-source-events", "Down");
 	tracks.click("#render-settings-render");
 	tracks.rows(3, rendering);
-	expected = options;
+	Json saved = options;
+	saved["sourceEvents"] = "mute";
+	expected = saved;
 	expected.erase("sourceTracks");
+	expected.erase("hideSourceTracks");
 	expected["tracks"] = Json::array({synth});
 	expected["events"] = Json::array({part.at("part").at("id")});
 	CHECK(ran("track.renderInPlace").back() == expected);
-	CHECK(tracks.app.call("settings.get", {{"key", "render.options"}}).at("value") == options);
+	CHECK(tracks.app.call("settings.get", {{"key", "render.options"}}).at("value") == saved);
+	const auto partMuted = [&tracks, &part]
+	{
+		const Json state = tracks.app.call("project.get");
+		for (const Json& each : state.at("midiParts"))
+			if (each.at("id") == part.at("part").at("id"))
+				return each.at("mute").get<bool>();
+		return false;
+	};
+	CHECK(partMuted());
+	tracks.app.call("event.set", {{"events", {part.at("part").at("id")}}, {"mute", false}});
 	run("track.renderSelected");
 	tracks.rows(4, rendering);
 	CHECK(ran("track.renderInPlace").back() == expected);

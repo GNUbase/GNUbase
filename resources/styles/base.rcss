@@ -2693,6 +2693,14 @@ splitter.column .splitter-grip-horizontal
 	padding: 2dp 0;
 }
 
+/* The Note Expression section's expressions (docs/features/note-expression-setup.md): the In column, then the name. */
+.inspector .expression-in
+{
+	width: 28dp;
+	flex-shrink: 0;
+	padding-left: 4dp;
+}
+
 .inspector .arranger-row
 {
 	display: flex;
@@ -2828,7 +2836,7 @@ splitter.column .splitter-grip-horizontal
 	float: right;
 }
 
-.meter-display .meter-reset, .meter-display .meter-configure
+.meter-display .meter-measure, .meter-display .meter-reset, .meter-display .meter-configure
 {
 	margin-top: 4dp;
 }
@@ -2859,6 +2867,24 @@ splitter.column .splitter-grip-horizontal
 {
 	display: block;
 	font-weight: bold;
+}
+
+.meter-display .meter-settings select
+{
+	width: 84dp;
+}
+
+/* A threshold's reference and tolerance (p. 539), after its name. */
+.meter-display .meter-threshold span
+{
+	flex: 1;
+	white-space: nowrap;
+}
+
+.meter-display .meter-settings .meter-threshold valuefield
+{
+	width: 52dp;
+	margin-left: 4dp;
 }
 
 .meter-display .meter-settings valuefield

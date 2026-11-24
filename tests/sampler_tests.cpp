@@ -1163,9 +1163,9 @@ namespace
 			clip = run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id").get<ObjectId>();
 		}
 
-		Engine engine;
-		Client client{engine};
 		gnubase::test::TempDir folder;
+		Engine engine{gnubase::audio::makeBackends(), folder.path() / "settings"}; // for track presets
+		Client client{engine};
 		fs::path file;
 		ObjectId clip = 0;
 	};
@@ -1331,6 +1331,71 @@ TEST_CASE("sampler.load swaps the sample, resetting the settings unless they are
 	for (const Json& item : channels)
 		if (item.at("id") == channel)
 			CHECK(item.at("sample") == 0);
+}
+
+TEST_CASE("a file that a sampler loads goes into the pool folder Sampler Tracks", "[integration]")
+{
+	// The pool lists the samples loaded into samplers in a folder of their own (reference manual p. 710, #1122).
+	Session session;
+	Client& client = session.client;
+	const auto folderOf = [&](const Json& clipId)
+	{
+		const Json pool = run(client, "pool.get");
+		for (const Json& clip : pool.at("clips"))
+			if (clip.at("id") == clipId)
+				for (const Json& folder : pool.at("folders"))
+					if (folder.at("id") == clip.at("folder"))
+						return folder;
+		return Json();
+	};
+	const Json created = run(client, "sampler.create", {{"path", session.file.u8string()}});
+	const Json folder = folderOf(created.at("channel").at("sample"));
+	REQUIRE(folder.is_object());
+	CHECK(folder.at("name") == "Sampler Tracks");
+	CHECK(folder.at("parent") == 0);
+	// A second file shares the folder; a clip of the pool stays where it is.
+	const auto track = created.at("track").at("id");
+	Json loaded = run(client, "sampler.load", {{"track", track}, {"path", session.file.u8string()}});
+	CHECK(folderOf(loaded.at("channel").at("sample")) == folder);
+	loaded = run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
+	CHECK(folderOf(session.clip).is_null());
+	// The folder comes and goes with the first file's undo step.
+	run(client, "history.undo");
+	run(client, "history.undo");
+	run(client, "history.undo");
+	CHECK(run(client, "pool.get").at("folders").empty());
+
+	// A sampler track imported into another project brings its sample into that project's folder.
+	run(client, "history.redo");
+	const fs::path archive = session.folder.path() / "sampler.dawproject";
+	run(client, "track.export", {{"tracks", {track}}, {"path", archive.u8string()}, {"copyMedia", false}});
+	run(client, "project.new");
+	run(client, "track.import", {{"path", archive.u8string()}});
+	const Json channels = run(client, "project.get").at("channels");
+	const auto sampler = std::find_if(
+		channels.begin(), channels.end(), [](const Json& channel) { return channel.at("instrument") == "sampler"; });
+	REQUIRE(sampler != channels.end());
+	CHECK(folderOf(sampler->at("sample")).value("name", std::string()) == "Sampler Tracks");
+
+	// A track preset loaded onto a sampler track of a new project, and the tracks of a preset added to one.
+	const auto samplerFolder = [&]
+	{
+		const Json project = run(client, "project.get");
+		for (const Json& channel : project.at("channels"))
+			if (channel.at("instrument") == "sampler")
+				return folderOf(channel.at("sample")).value("name", std::string());
+		return std::string();
+	};
+	run(client, "project.new");
+	const auto saved = run(client, "sampler.create", {{"path", session.file.u8string()}}).at("track").at("id");
+	run(client, "track.savePreset", {{"tracks", Json::array({saved})}, {"name", "Sine"}});
+	run(client, "project.new");
+	const auto empty = run(client, "sampler.create").at("track").at("id");
+	run(client, "track.loadPreset", {{"tracks", Json::array({empty})}, {"name", "Sine"}});
+	CHECK(samplerFolder() == "Sampler Tracks");
+	run(client, "project.new");
+	run(client, "track.addFromPreset", {{"name", "Sine"}});
+	CHECK(samplerFolder() == "Sampler Tracks");
 }
 
 TEST_CASE("sampler.normalize sets the sample gain so that the peak reaches the level", "[integration]")

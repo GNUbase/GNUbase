@@ -212,8 +212,9 @@ TEST_CASE("every theme shows the keyboard focus on every widget that takes it, i
 		// Hovered and pressed ones keep looking so with the focus, also while the mouse presses them.
 		for (const char* widget : {"button", "button:hover", "button:active", "button.primary", "button.primary:hover",
 				 "button.primary:active", "button.checked", "button.toggle", "button.toggle:hover",
-				 "button.toggle.mute.checked", "input.checkbox", "input.checkbox:checked", "input.radio",
-				 "input.radio:checked", "listview", "valuefield", "knob", "fader", "slider", "input.range", "menuitem"})
+				 "button.toggle.checked", "button.toggle.mute.checked", "input.checkbox", "input.checkbox:checked",
+				 "input.radio", "input.radio:checked", "listview", "valuefield", "knob", "fader", "slider",
+				 "input.range", "menuitem"})
 		{
 			INFO("widget " << widget);
 			CHECK(std::find(focused.begin(), focused.end(), std::string(widget) + ":focus-visible") != focused.end());
@@ -283,21 +284,22 @@ TEST_CASE("the high contrast theme's labels and marks stand out from the fills u
 		return std::string(document.select_node(query).node().attribute(name).value());
 	};
 	// WCAG 2's enhanced contrast for text (1.4.6): labels on buttons filled with the accent or a toggle's color.
-	for (const auto& [selector, skin] : std::vector<std::pair<std::string, std::string>>{
-			 {"button.primary", "button-primary-normal.svg"}, {"button.toggle.mute.checked", "toggle-mute.svg"},
-			 {"button.toggle.solo.checked", "toggle-solo.svg"}, {"button.toggle.record.checked", "toggle-record.svg"},
-			 {"button.toggle.monitor.checked", "toggle-monitor.svg"},
-			 {"button.toggle.listen.checked", "toggle-monitor.svg"}})
+	for (const auto& [selector, skin] :
+		std::vector<std::pair<std::string, std::string>>{{"button.primary", "button-primary-normal.svg"},
+			{"button.toggle.checked", "toggle-on.svg"}, {"button.toggle.mute.checked", "toggle-mute.svg"},
+			{"button.toggle.solo.checked", "toggle-solo.svg"}, {"button.toggle.record.checked", "toggle-record.svg"},
+			{"button.toggle.monitor.checked", "toggle-monitor.svg"},
+			{"button.toggle.listen.checked", "toggle-monitor.svg"}})
 	{
 		INFO(selector);
 		CHECK(contrast(color(selector), attribute(skin, "//rect", "fill")) >= 7.0);
 	}
-	// The icons of record and monitor buttons too.
-	for (const char* kind : {"record", "monitor"})
+	// The icons of record and monitor buttons and of toggles of no kind, such as Edit In-Place, too.
+	for (const auto& [kind, skin] : std::vector<std::pair<std::string, std::string>>{
+			 {".record", "toggle-record.svg"}, {".monitor", "toggle-monitor.svg"}, {"", "toggle-on.svg"}})
 	{
-		INFO(kind);
-		const std::string skin = std::string_view(kind) == "record" ? "toggle-record.svg" : "toggle-monitor.svg";
-		CHECK(contrast(color("button.toggle." + std::string(kind) + ".checked:not(:disabled) svg.icon", "image-color"),
+		INFO("toggle" << kind);
+		CHECK(contrast(color("button.toggle" + kind + ".checked:not(:disabled) svg.icon", "image-color"),
 				  attribute(skin, "//rect", "fill")) >= 7.0);
 	}
 	// The marks of checked and mixed check boxes on the accent.
@@ -683,6 +685,38 @@ TEST_CASE("every theme draws the arranger event being drawn as an outline", "[un
 				drawing = declarations;
 		}
 		CHECK(drawing.find("background-color: transparent") != std::string::npos);
+	}
+}
+
+TEST_CASE("every theme marks a checked toggle button of any kind", "[unit]")
+{
+	// The mixer strip's section switches and the inspector's toggles have no kind of their own, such as mute or solo:
+	// a checked one has a skin of its own, from a rule after those of toggles that are off or under the mouse, which
+	// have the same specificity (#2070).
+	for (const std::string& theme : themes())
+	{
+		INFO("theme " << theme);
+		std::map<std::string, std::pair<size_t, std::string>> found; // selector: its index and decorator
+		const std::vector<std::pair<std::string, std::string>> sheet =
+			rules(gnubase::test::readText(themesDir() / theme / "theme.rcss"));
+		for (size_t i = 0; i < sheet.size(); ++i)
+		{
+			const auto& [selector, declarations] = sheet[i];
+			const size_t first = selector.find_first_not_of(" \t");
+			const size_t at = declarations.find("decorator:");
+			if (at != std::string::npos)
+				found[selector.substr(first, selector.find_last_not_of(" \t\r") + 1 - first)] = {
+					i, declarations.substr(at, declarations.find(';', at) - at)};
+		}
+		REQUIRE(found.count("button.toggle.checked") == 1);
+		const auto& [index, decorator] = found.at("button.toggle.checked");
+		for (const char* other : {"button.checked", "button.toggle", "button.toggle:hover"})
+		{
+			INFO(other);
+			REQUIRE(found.count(other) == 1);
+			CHECK(found.at(other).first < index);
+			CHECK(found.at(other).second != decorator);
+		}
 	}
 }
 

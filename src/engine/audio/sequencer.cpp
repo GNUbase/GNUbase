@@ -454,6 +454,10 @@ namespace gnubase::engine
 			for (graph::EventBuffer& buffer : m_sendOut)
 				buffer = graph::EventBuffer(graph::g_maxEventsPerBlock);
 		sequence->sendBuffers = m_sendOut[0].capacity() != 0;
+		sequence->assignsExpression = std::any_of(sequence->expressionInputs.begin(), sequence->expressionInputs.end(),
+			[](const ExpressionInput& input) { return input.message.has_value(); });
+		if (sequence->assignsExpression && m_assigned.capacity() == 0)
+			m_assigned = graph::EventBuffer(graph::g_maxEventsPerBlock);
 
 		// Sends before modifiers that change notes play what a sequencer without them plays (p. 1106).
 		const bool preSends = sequence->sends.pre && sequence->insertCount < sequence->effects.size() && modified;
@@ -581,6 +585,7 @@ namespace gnubase::engine
 		if (sequence.serial != m_serial)
 			takeEffects(sequence, context.eventsOut);
 		remember(sequence, context.eventsIn);
+		assignExpression(sequence);
 		if (sequence.effects.empty())
 		{
 			playOwn(sequence, context, context.eventsOut);
@@ -598,13 +603,67 @@ namespace gnubase::engine
 			graph::EventBuffer& input = sequence.pre->input();
 			input.clear();
 			for (const graph::ProcessEvent& event : m_input)
-				input.add(event);
+				if (!sequence.expressionBypass || event.type != graph::ProcessEvent::Type::NoteExpression)
+					input.add(event);
 			m_preOut.clear();
 			sequence.pre->process({nullptr, 0, context.frames, m_none, m_preOut, context.transport});
 		}
 		m_own.clear();
 		playOwn(sequence, context, m_own);
 		runEffects(sequence, context, context.eventsOut);
+	}
+
+	void MidiSequencer::assignExpression(const MidiSequence& sequence) noexcept
+	{
+		using Type = graph::ProcessEvent::Type;
+		if (!sequence.assignsExpression)
+			return;
+		m_assigned.clear();
+		bool assigned = false;
+		for (const graph::ProcessEvent& event : m_input)
+		{
+			std::bitset<128>& held = m_assignedHeld.at(event.channel % 16U);
+			if (event.type == Type::NoteOn || event.type == Type::NoteOff)
+				held.set(event.key % 128U, event.type == Type::NoteOn);
+			// The message as the setup names it (midi::MpeSetup's messages), or none.
+			int message = -1;
+			if (event.type == Type::Controller)
+				message = event.key % 128;
+			else if (event.type == Type::PitchBend)
+				message = midi::MpeSetup::g_pitchBend;
+			else if (event.type == Type::ChannelPressure)
+				message = midi::MpeSetup::g_aftertouch;
+			bool consumed = false;
+			for (size_t type = 0; message >= 0 && type < sequence.expressionInputs.size(); ++type)
+			{
+				const ExpressionInput& input = sequence.expressionInputs.at(type);
+				if (input.message != static_cast<uint8_t>(message))
+					continue;
+				consumed = true;
+				graph::ProcessEvent expression = event;
+				expression.type = Type::NoteExpression;
+				expression.parameter = plugin::expressionId(static_cast<plugin::NoteExpression>(type));
+				expression.parameterValue = input.min +
+					((input.max - input.min) *
+						(event.value / static_cast<double>(std::numeric_limits<uint32_t>::max())));
+				for (size_t key = 0; key < held.size(); ++key)
+					if (held.test(key))
+					{
+						expression.key = static_cast<uint8_t>(key);
+						m_assigned.add(expression);
+					}
+			}
+			// A full block drops expression rather than what ends notes, which held has already let go of.
+			if (!consumed && graph::endsNotes(event))
+				m_assigned.addEnd(event);
+			else if (!consumed)
+				m_assigned.add(event);
+			assigned = assigned || consumed;
+		}
+		if (!assigned)
+			return;
+		m_input.clear();
+		m_input.merge(m_assigned);
 	}
 
 	void MidiSequencer::runInputEffects(const MidiSequence& sequence, const graph::ProcessContext& context) noexcept
@@ -889,13 +948,15 @@ namespace gnubase::engine
 			m_sendOut[running.slot].merge(sent);
 			holdNotes(sent, m_sendHeld[running.slot]);
 		}
-		// Those to the track's own output get the notes only, so the track's other events reach it once.
+		// Those to the track's own output get the notes only, with their expression, so the track's other events
+		// reach it once.
 		source.removeIf(
 			[](const graph::ProcessEvent& event)
 			{
 				return event.type != graph::ProcessEvent::Type::NoteOn &&
 					event.type != graph::ProcessEvent::Type::NoteOff &&
-					event.type != graph::ProcessEvent::Type::PolyPressure;
+					event.type != graph::ProcessEvent::Type::PolyPressure &&
+					event.type != graph::ProcessEvent::Type::NoteExpression;
 			});
 		for (size_t i = sequence.insertCount; i < sequence.effects.size(); ++i)
 		{
@@ -944,6 +1005,9 @@ namespace gnubase::engine
 		}
 		for (graph::ProcessEvent event : m_input)
 		{
+			// The bypass leaves out the input's expression where it plays; the track still records it.
+			if (sequence.expressionBypass && event.type == graph::ProcessEvent::Type::NoteExpression)
+				continue;
 			if (triggerSlot(sequence, event, out))
 			{
 				// The trigger's note-on gives its channel to a new note, which plays nothing: no expression.

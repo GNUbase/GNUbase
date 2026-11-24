@@ -1075,7 +1075,13 @@ namespace gnubase::engine::midi
 			uint8_t channel = 0;
 			uint8_t pitch = 0;
 			uint16_t velocity = 0;
+			const Note* from = nullptr;               // the merged note whose note-on played it: its attributes (#2000)
+			std::vector<ExpressionPoint> expressions; // its per-note expression, at project ticks
 		};
+
+		// The parameter of the NoteExpression event that runEffects sends after each note-on, its value the note's
+		// index, so that the notes the effects play from it are known: it goes where the note's expression goes.
+		constexpr uint32_t g_sourceTag = 0xFFFFFFFF;
 
 		// The slots of a MIDI insert or send section whose effects play a track's parts, in order, as the sequencer
 		// takes them: none while the section is bypassed, and of the inserts only those below the divider, as those
@@ -1092,8 +1098,10 @@ namespace gnubase::engine::midi
 		// Plays notes through MIDI effects, each playing what the one before it played, as a track's sequencer runs
 		// them from the first note on, with the slots' values and the project's tempo map. Offline, in blocks of a
 		// fixed size, so that the same notes give the same result every time (rule 6); the effects play the same for
-		// every block size anyway. A note-on of a channel and pitch that sounds already ends the note there. It stops
-		// once the notes that start before until have ended: what starts later isn't merged.
+		// every block size anyway. The notes' expression plays into them as the sequencer sends it, and what they play
+		// of it goes to the notes it lands on, as do the attributes of the note whose note-on played them. A note-on of
+		// a channel and pitch that sounds already ends the note there. It stops once the notes that start before until
+		// have ended: what starts later isn't merged.
 		std::vector<PlayedNote> runEffects(const Project& project, const std::vector<const EffectSlot*>& chain,
 			std::vector<PlayedNote> notes, time::Samples until)
 		{
@@ -1135,6 +1143,16 @@ namespace gnubase::engine::midi
 				event.key = note.pitch;
 				event.velocity = note.velocity;
 				in.push_back({note.start, event});
+				event.type = Type::NoteExpression;
+				event.parameter = g_sourceTag;
+				event.parameterValue = static_cast<double>(&note - notes.data());
+				in.push_back({note.start, event});
+				for (const ExpressionPoint& point : note.expressions)
+				{
+					event.parameter = plugin::expressionId(point.type);
+					event.parameterValue = point.value;
+					in.push_back({project.tempo.toSamples(point.position, project.sampleRate), event});
+				}
 				event.type = Type::NoteOff;
 				event.velocity = 0;
 				in.push_back({note.end, event});
@@ -1202,9 +1220,21 @@ namespace gnubase::engine::midi
 					}
 					if (event.type == Type::NoteOn)
 					{
-						played.push_back({sample, sample, event.channel, event.key, event.velocity});
+						played.push_back({sample, sample, event.channel, event.key, event.velocity, nullptr, {}});
 						note = played.size();
 						held += sample < until ? 1 : 0;
+					}
+					else if (event.type == Type::NoteExpression && note != 0 && event.parameter == g_sourceTag)
+					{
+						const auto index = static_cast<size_t>(event.parameterValue);
+						if (played[note - 1].from == nullptr && index < notes.size())
+							played[note - 1].from = notes[index].from;
+					}
+					else if (event.type == Type::NoteExpression && note != 0 &&
+						event.parameter < g_expressionNames.size())
+					{
+						played[note - 1].expressions.push_back({static_cast<plugin::NoteExpression>(event.parameter),
+							project.tempo.toTicks(sample, project.sampleRate), event.parameterValue});
 					}
 				}
 			}
@@ -1604,10 +1634,20 @@ namespace gnubase::engine::midi
 			with.transpose += playedAt(project, source, candidate.sourceAt);
 			uint8_t pitch = candidate.note.pitch;
 			uint16_t velocity = playedVelocity(candidate.note, source.id);
-			if (modifyNote(with, candidate.seed, pitch, velocity))
-				into.push_back(
-					{sampleOf(candidate.note.position), sampleOf(candidate.note.position + candidate.note.length),
-						candidate.note.channel, pitch, velocity});
+			if (!modifyNote(with, candidate.seed, pitch, velocity))
+				return;
+			const Ticks end = candidate.note.position + candidate.note.length;
+			PlayedNote played{sampleOf(candidate.note.position), sampleOf(end), candidate.note.channel, pitch, velocity,
+				&candidate.note, {}};
+			// Its expression as the render snapshot plays it: within the note, and none with the track's bypass.
+			if (!project.channels.at(project.trackById.at(source.track).channel).noteExpression.bypass)
+				for (ExpressionPoint point : candidate.note.expressions)
+				{
+					point.position += candidate.note.position;
+					if (point.position < end)
+						played.expressions.push_back(point);
+				}
+			into.push_back(std::move(played));
 		};
 		for (const auto& [track, playing] : effects)
 		{
@@ -1648,6 +1688,16 @@ namespace gnubase::engine::midi
 					note.pitch = each.pitch;
 					note.velocity = each.velocity;
 					note.channel = each.channel;
+					if (each.from != nullptr)
+					{
+						note.articulations = each.from->articulations;
+						note.mutedArticulations = each.from->mutedArticulations;
+					}
+					for (ExpressionPoint point : each.expressions)
+					{
+						point.position -= note.position;
+						note.expressions.push_back(point);
+					}
 					const int pitch = note.pitch - globalAt(project, newSetting, note.position);
 					fits = fits && pitch >= 0 && pitch <= 127;
 					written.push_back(note);

@@ -240,6 +240,11 @@
 		decorator: svg-ninepatch(toggle-hover.svg, 6 6 6 6);
 		color: #f1f4ff;
 	}
+	button.toggle.checked
+	{
+		decorator: svg-ninepatch(toggle-on.svg, 6 6 6 6);
+		color: #f1f4ff;
+	}
 	button.toggle.mute.checked
 	{
 		decorator: svg-ninepatch(toggle-mute.svg, 6 6 6 6);
@@ -264,6 +269,10 @@
 	{
 		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
 		color: #f1f4ff;
+	}
+	button.toggle.checked:not(:disabled) svg.icon
+	{
+		image-color: #f1f4ff;
 	}
 	button.toggle.record.checked:not(:disabled) svg.icon
 	{
@@ -1544,6 +1553,10 @@
 	{
 		color: #ff5270;
 	}
+	.meter-display .meter-values span.over
+	{
+		color: #ff5270;
+	}
 	.info-line.multiple .info-field
 	{
 		color: #10dff2;
@@ -1709,6 +1722,10 @@
 	button.toggle:hover:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-hover.svg, 6 6 6 6);
+	}
+	button.toggle.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-on.svg, 6 6 6 6);
 	}
 	button.toggle.mute.checked:focus-visible
 	{

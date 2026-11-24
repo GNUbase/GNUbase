@@ -32,11 +32,16 @@ namespace gnubase::ui
 		bool hidden = false;        // tests and offscreen screenshots
 	};
 
-	// A key pressed with the modifiers held, as RmlUi has them: Rml::Input::KeyModifier flags.
+	// A key pressed with the modifiers held, as RmlUi has them: Rml::Input::KeyModifier flags. Two compare by key and
+	// modifiers.
 	struct KeyPress
 	{
 		Rml::Input::KeyIdentifier key = Rml::Input::KI_UNKNOWN;
 		int modifiers = 0;
+		// The physical key, by its place: the key a US keyboard has there, whatever the layout; KI_UNKNOWN where the
+		// window system doesn't say, as for ui::Automation's keys, which count as typed on a US keyboard. Key commands
+		// follow the layout, the key; the on-screen keyboard plays by place (#691).
+		Rml::Input::KeyIdentifier position = Rml::Input::KI_UNKNOWN;
 
 		bool operator==(const KeyPress& other) const { return key == other.key && modifiers == other.modifiers; }
 		bool operator<(const KeyPress& other) const
@@ -58,6 +63,8 @@ namespace gnubase::ui
 		FilesDropped,     // files were dragged from elsewhere and dropped on the window
 		FileDialogClosed, // a file dialog was answered, cancelled or failed
 		Wake,             // another thread asked the UI thread to wake up (wake), e.g. for work it posted
+		MenuBarToggled,   // the user picked Show Menu Bar in its title bar's context menu (setMenuBarShown)
+		KeymapChanged,    // the keyboard layout changed, and with it what keyLabel gives
 	};
 
 	struct WindowEvent
@@ -65,7 +72,7 @@ namespace gnubase::ui
 		WindowEvent(WindowEventKind kind, WindowId window = 0) : kind(kind), window(window) {}
 
 		WindowEventKind kind = WindowEventKind::Exposed;
-		WindowId window = 0;                      // zero for DisplaysChanged, Quit and FileDialogClosed
+		WindowId window = 0;                      // zero for DisplaysChanged, Quit, FileDialogClosed and KeymapChanged
 		Point position;                           // FilesDropped: where, in the window's pixels
 		std::vector<std::filesystem::path> files; // FilesDropped: the files; FileDialogClosed: what the user chose
 		uint64_t dialog = 0;                      // FileDialogClosed: the id showFileDialog was given
@@ -172,6 +179,15 @@ namespace gnubase::ui
 		// Shows the OS's file dialog without waiting for it. What the user chooses, or why the dialog failed, comes
 		// later as a FileDialogClosed event with the given id.
 		virtual void showFileDialog(uint64_t id, const FileDialog& dialog) = 0;
+
+		// Shows Show Menu Bar, checked while the window's menu bar shows, in the context menu of the window's title
+		// bar where the OS draws it with a menu of its own: Windows' system menu (reference manual p. 55). Picking it
+		// sends MenuBarToggled. Nothing elsewhere.
+		virtual void setMenuBarShown(WindowId window, bool shown) = 0;
+
+		// What the keyboard layout has at a physical key's place (KeyPress::position), as its label: "Z" on a US
+		// layout, "Y" on a German one. Empty if the window system doesn't know.
+		virtual std::string keyLabel(Rml::Input::KeyIdentifier position) const = 0;
 
 		// The next event, waiting up to timeout for one; without timeout, until one arrives. Input events are
 		// delivered to the window's input target before they are reported.

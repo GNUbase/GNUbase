@@ -48,6 +48,18 @@
 	drag: drag;
 }
 
+/* The tools' pointers (docs/features/pointers.md): the draw tool's over the event display, where it draws, the
+   erase tool's over the rows it deletes. */
+.list-editor[tool=draw] .list-editor-body .list-event-lane
+{
+	cursor: tool-draw;
+}
+
+.list-editor[tool=erase] .list-editor-rows .list-row:not(.inactive)
+{
+	cursor: tool-erase;
+}
+
 .list-editor-rows
 {
 	flex-shrink: 0;
@@ -72,6 +84,28 @@
 {
 	flex: 1 1 auto;
 	min-height: 40dp;
+}
+
+/* The auditioning column (p. 1251): the arrow shows in the row of the event that starts closest before the project
+   cursor, .at-cursor. */
+.list-audition
+{
+	flex: 0 0 16dp;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.list-audition svg.list-audition-arrow
+{
+	width: 10dp;
+	height: 10dp;
+	visibility: hidden;
+}
+
+.list-row.at-cursor .list-audition-arrow
+{
+	visibility: visible;
 }
 
 .list-type

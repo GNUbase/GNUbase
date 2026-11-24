@@ -1241,3 +1241,25 @@ TEST_CASE("Insert as Cycle Recording stacks what each cycle lap played as a part
 	run(client, "history.undo"); // one undo step
 	CHECK(setup.parts().empty());
 }
+
+TEST_CASE("a locate back while playing without cycle mode starts no cycle lap (#2067)", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	run(client, "transport.play");
+	const auto play = [&]
+	{
+		const auto now = run(client, "audio.get").at("position").get<int64_t>();
+		setup.inject({message(now + 100, {0x90, 60, 100}), message(now + 1000, {0x80, 60, 0})});
+		run(client, "audio.render", {{"frames", 2000}});
+	};
+	play();
+	run(client, "transport.locate", {{"position", 0}});
+	play();
+	const Json kept = run(client, "midi.getRetrospective", {{"track", setup.track}});
+	CHECK(kept.at("events") == 4);
+	CHECK(kept.at("cycleLaps") == 1);
+	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}}),
+		ContainsSubstring("lap"));
+}
