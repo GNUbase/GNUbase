@@ -363,8 +363,9 @@ namespace gnubase::ui
 
 	namespace
 	{
-		// SDL's scancodes name the physical keys after a US keyboard's: the letters, the digits and comma, as RmlUi's
-		// key identifiers, and back.
+		// SDL's scancodes name the physical keys after a US keyboard's, as RmlUi's key identifiers: every key, so
+		// that a layout's letter at another place, such as a French layout's M at the semicolon's, keeps that place.
+		// KI_UNKNOWN only for keys that neither knows.
 		Rml::Input::KeyIdentifier positionOf(SDL_Scancode code)
 		{
 			using namespace Rml::Input;
@@ -372,9 +373,38 @@ namespace gnubase::ui
 				return static_cast<KeyIdentifier>(KI_A + (code - SDL_SCANCODE_A));
 			if (code >= SDL_SCANCODE_1 && code <= SDL_SCANCODE_9)
 				return static_cast<KeyIdentifier>(KI_1 + (code - SDL_SCANCODE_1));
-			if (code == SDL_SCANCODE_0)
+			switch (code)
+			{
+			case SDL_SCANCODE_0:
 				return KI_0;
-			return code == SDL_SCANCODE_COMMA ? KI_OEM_COMMA : KI_UNKNOWN;
+			case SDL_SCANCODE_COMMA:
+				return KI_OEM_COMMA;
+			case SDL_SCANCODE_SEMICOLON:
+				return KI_OEM_1;
+			case SDL_SCANCODE_EQUALS:
+				return KI_OEM_PLUS;
+			case SDL_SCANCODE_MINUS:
+				return KI_OEM_MINUS;
+			case SDL_SCANCODE_PERIOD:
+				return KI_OEM_PERIOD;
+			case SDL_SCANCODE_SLASH:
+				return KI_OEM_2;
+			case SDL_SCANCODE_GRAVE:
+				return KI_OEM_3;
+			case SDL_SCANCODE_LEFTBRACKET:
+				return KI_OEM_4;
+			case SDL_SCANCODE_BACKSLASH:
+			case SDL_SCANCODE_NONUSHASH:
+				return KI_OEM_5;
+			case SDL_SCANCODE_RIGHTBRACKET:
+				return KI_OEM_6;
+			case SDL_SCANCODE_APOSTROPHE:
+				return KI_OEM_7;
+			case SDL_SCANCODE_NONUSBACKSLASH:
+				return KI_OEM_102;
+			default: // the keys that type no character have a key code of their own, whatever the layout
+				return RmlSDL::ConvertKey(static_cast<int>(static_cast<SDL_Keycode>(code) | SDLK_SCANCODE_MASK));
+			}
 		}
 
 		SDL_Scancode scancodeOf(Rml::Input::KeyIdentifier position)

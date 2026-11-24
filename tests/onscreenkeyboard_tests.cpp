@@ -12,6 +12,9 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <SDL3/SDL_events.h>
+#include <SDL3/SDL_keycode.h>
+#include <SDL3/SDL_scancode.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -308,6 +311,30 @@ TEST_CASE("the on-screen keyboard plays computer keys by their places, labels th
 	CHECK(keyElement(app, 13).IsClassSet("pressed"));
 	app.shell().keyReleased(app.main(), ui::KeyPress{KI_UNKNOWN, 0, KI_2});
 	CHECK(!keyElement(app, 13).IsClassSet("pressed"));
+	// Keys outside the two rows play nothing, whatever the layout has there: a French layout's M at a US keyboard's
+	// semicolon is not the US M (key 11). The Z pressed after it shows that the window has handled both.
+	const auto sdlKey = [&app](SDL_EventType type, SDL_Keycode key, SDL_Scancode place)
+	{
+		SDL_Event event{};
+		event.type = type;
+		event.key.windowID = app.main().id();
+		event.key.key = key;
+		event.key.scancode = place;
+		event.key.down = type == SDL_EVENT_KEY_DOWN;
+		REQUIRE(SDL_PushEvent(&event));
+	};
+	sdlKey(SDL_EVENT_KEY_DOWN, SDLK_M, SDL_SCANCODE_SEMICOLON);
+	sdlKey(SDL_EVENT_KEY_DOWN, SDLK_Z, SDL_SCANCODE_Z);
+	REQUIRE(app.waitUntil([&app] { return keyElement(app, 0).IsClassSet("pressed"); }));
+	CHECK(!keyElement(app, 11).IsClassSet("pressed"));
+	sdlKey(SDL_EVENT_KEY_UP, SDLK_M, SDL_SCANCODE_SEMICOLON);
+	sdlKey(SDL_EVENT_KEY_UP, SDLK_Z, SDL_SCANCODE_Z);
+	REQUIRE(app.waitUntil([&app] { return !keyElement(app, 0).IsClassSet("pressed"); }));
+	// M without a place, as from ui::Automation, counts as typed on a US keyboard.
+	app.shell().unusedKey(app.main(), ui::KeyPress{KI_M, 0});
+	CHECK(keyElement(app, 11).IsClassSet("pressed"));
+	app.shell().keyReleased(app.main(), ui::KeyPress{KI_M, 0});
+	CHECK(!keyElement(app, 11).IsClassSet("pressed"));
 
 	// The octave and velocity are user settings, which last across restarts.
 	Rml::ElementDocument& document = *keyElement(app, 0).GetOwnerDocument();

@@ -38,10 +38,9 @@ namespace gnubase::ui
 	{
 		Rml::Input::KeyIdentifier key = Rml::Input::KI_UNKNOWN;
 		int modifiers = 0;
-		// The physical key, by its place: the key a US keyboard has there, whatever the layout, for the letters, the
-		// digits and comma; KI_UNKNOWN for other keys and where the window system doesn't say, as for ui::Automation's
-		// keys, which count as typed on a US keyboard. Key commands follow the layout, the key; the on-screen keyboard
-		// plays by place (#691).
+		// The physical key, by its place: the key a US keyboard has there, whatever the layout; KI_UNKNOWN where the
+		// window system doesn't say, as for ui::Automation's keys, which count as typed on a US keyboard. Key commands
+		// follow the layout, the key; the on-screen keyboard plays by place (#691).
 		Rml::Input::KeyIdentifier position = Rml::Input::KI_UNKNOWN;
 
 		bool operator==(const KeyPress& other) const { return key == other.key && modifiers == other.modifiers; }

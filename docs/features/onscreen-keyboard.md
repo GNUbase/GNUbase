@@ -21,9 +21,9 @@ when no MIDI keyboard is at hand.
   on every layout (#691). On a US keyboard the lower row plays the lower octave, Z S X D C V G B H N J M for C to B,
   and comma the next C; the upper row plays from that C up, Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P for C to E. So on a
   German layout the key labelled Y plays the lower C, and on a French one A plays the upper C. A key press carries its
-  physical key (`KeyPress::position`, from SDL's scancode) besides the layout's key, which key commands follow
-  ([key-commands.md](key-commands.md)); keys from `ui::Automation`, MCP and Lua have no place and count as typed on
-  a US keyboard. Several keys play at once. A key plays from its press to its release, and a held key's OS repeats
+  physical key (`KeyPress::position`, from SDL's scancode, for every key) besides the layout's key, which key commands
+  follow ([key-commands.md](key-commands.md)); keys from `ui::Automation`, MCP and Lua have no place and count as typed
+  on a US keyboard. Several keys play at once. A key plays from its press to its release, and a held key's OS repeats
   play nothing more.
 - **Mouse.** Pressing the left button on a key plays it until the button goes up, or until the mouse leaves the window,
   where the button going up sends no event.
@@ -62,5 +62,6 @@ the next time. Dragging the octave and velocity sliders through `ui::Automation`
 steps rounds to one, and a drag of less than half a step per mouse move still moves the octave: sliders, knobs and
 faders drag from their unrounded value, so a document that rounds each change doesn't hold the drag back (#691). A
 German layout's Y at a US keyboard's Z plays the lowest key and not the upper row's Y, a key at the 2's place that the
-layout's key codes don't name plays the upper C sharp, and the lowest key's label is what the window system says the
-layout has at Z's place.
+layout's key codes don't name plays the upper C sharp, an M from the window system at a US keyboard's semicolon plays
+nothing while an M without a place plays B, and the lowest key's label is what the window system says the layout has
+at Z's place.
