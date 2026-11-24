@@ -338,12 +338,14 @@ namespace gnubase::app
 			{"track.enableSelected", "Enables the selected tracks again.", nullptr},
 			// Render in place and freeze (docs/features/render-in-place.md).
 			{"track.freezeSelected",
-				"Freezes the selected audio and instrument tracks with the Tail Size of render.freezeTail, or "
-				"unfreezes them if every one is frozen.",
+				"Freezes the selected audio and instrument tracks with the Tail Size of render.freezeTail and the "
+				"Include Inserts for Instrument Tracks of render.freezeInserts, or unfreezes them if every one is "
+				"frozen.",
 				nullptr},
 			{"track.freezeSelectedSettings",
 				"Opens Freeze Channel Options for the selected audio and instrument tracks that aren't frozen, and "
-				"freezes them with its Tail Size (render.freezeTail); unfreezes them if every one is frozen.",
+				"freezes them with its Tail Size and Include Inserts for Instrument Tracks (render.freezeTail, "
+				"render.freezeInserts); unfreezes them if every one is frozen.",
 				nullptr},
 			{"track.renderSelected",
 				"Renders in place with the options of the user setting render.options: the selected audio events, "

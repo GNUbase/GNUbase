@@ -564,9 +564,13 @@ namespace gnubase::engine
 				"automation. Its monitor and record enable buttons go off, and those of the MIDI tracks that play it, "
 				"and can't be turned on while it is frozen (see channel.set). Renders as mixdown.export does, and is "
 				"refused when it is, for a frozen or disabled track and for one with nothing to play. One undo step. "
-				"Returns a cancellable background job; its result holds the tracks. Affected tracks are locked until "
-				"the job applies the freeze as one undo step, fails or is cancelled.",
-				{{"type", "object"}, {"additionalProperties", false}, {"properties", {{"tracks", ids}, {"tail", tail}}},
+				"includeInserts false (Include Inserts for Instrument Tracks, p. 992; default true) renders an "
+				"instrument track's instrument only, before its pre section and slots, which then still play on the "
+				"file with their automation (the track's frozen.inserts is false); an audio track's file holds them in "
+				"any case. Returns a cancellable background job; its result holds the tracks. Affected tracks are "
+				"locked until the job applies the freeze as one undo step, fails or is cancelled.",
+				{{"type", "object"}, {"additionalProperties", false},
+					{"properties", {{"tracks", ids}, {"tail", tail}, {"includeInserts", {{"type", "boolean"}}}}},
 					{"required", {"tracks"}}},
 				{{"type", "object"}, {"properties", {{"job", Jobs::schema()}}}, {"required", {"job"}}}, false},
 			[this, freezeFolder, &engine](CommandContext& context)
@@ -575,6 +579,7 @@ namespace gnubase::engine
 				const Json& parameters = context.parameters();
 				const std::vector<ObjectId> tracks = trackList(parameters);
 				const double seconds = parameters.value("tail", 30.0);
+				const bool inserts = parameters.value("includeInserts", true);
 				const RenderSnapshot& snapshot = m_snapshots.latest();
 				std::vector<Span> spans;
 				for (const ObjectId id : tracks)
@@ -597,7 +602,8 @@ namespace gnubase::engine
 					render->ends.push_back(spans[i].end);
 					render->work.push_back(engine.prepareMixdown({{"folder", folder.u8string()},
 						{"name", fileNameOf(track)}, {"channels", {track.channel}}, {"start", 0}, {"end", spans[i].end},
-						{"point", "inserts"}, {"tail", seconds}, {"sampleFormat", "float32"}}));
+						{"point", inserts || track.type != TrackType::Instrument ? "inserts" : "source"},
+						{"tail", seconds}, {"sampleFormat", "float32"}}));
 				}
 				return startTrackRender(engine, render, context);
 			});
@@ -702,7 +708,10 @@ namespace gnubase::engine
 				"default) renders after the slots and the strip, before the fader, and the new track gets the fader, "
 				"pan and sends; completeSignalPath renders after the fader and panner, in the output's format, and "
 				"the new track gets no settings. sourceTracks: keep (the default), mute, disable or remove the "
-				"tracks rendered. Renders as mixdown.export does, and is refused when it is, for a disabled track, "
+				"tracks rendered; hideSourceTracks true hides them in the project window unless they are removed, as "
+				"trackVisibility.set does, which undo leaves; sourceEvents mute (default keep) mutes the events and "
+				"parts in events, which it "
+				"needs. Renders as mixdown.export does, and is refused when it is, for a disabled track, "
 				"with dry for a frozen track (its freeze file is already through the slots that dry copies), and "
 				"with completeSignalPath for a silent track: muted, or silenced by another track's solo. One undo "
 				"step when the background job finishes. Returns a cancellable job whose result holds the new tracks, "
@@ -721,6 +730,8 @@ namespace gnubase::engine
 							{"sampleFormat",
 								{{"type", "string"}, {"enum", {"int16", "int24", "int32", "float32", "float64"}}}},
 							{"sourceTracks", {{"type", "string"}, {"enum", {"keep", "mute", "disable", "remove"}}}},
+							{"hideSourceTracks", {{"type", "boolean"}}},
+							{"sourceEvents", {{"type", "string"}, {"enum", {"keep", "mute"}}}},
 							{"name", {{"type", "string"}, {"minLength", 1}}}}},
 					{"required", {"tracks"}}},
 				{{"type", "object"}, {"properties", {{"job", Jobs::schema()}}}, {"required", {"job"}}}, false},
@@ -730,6 +741,9 @@ namespace gnubase::engine
 				const Json& parameters = context.parameters();
 				const std::vector<ObjectId> tracks = trackList(parameters);
 				require(parameters.contains("start") == parameters.contains("end"), "give both start and end, or none");
+				require(
+					parameters.value("sourceEvents", std::string("keep")) == "keep" || parameters.contains("events"),
+					"sourceEvents mute needs events, the events and parts to mute");
 				if (parameters.contains("start"))
 					require(parameters.at("end").get<time::Samples>() > parameters.at("start").get<time::Samples>(),
 						"the range is empty: end must be after start");
@@ -872,7 +886,8 @@ namespace gnubase::engine
 						Track& track = project.trackById.at(tracks[i]);
 						const Channel& channel = project.channels.at(track.channel);
 						track.frozen = Freeze{files[i].at("path").get<std::string>(), project.sampleRate,
-							channelCount(channel.format), files[i].at("frames").get<time::Samples>()};
+							channelCount(channel.format), files[i].at("frames").get<time::Samples>(),
+							track.type != TrackType::Instrument || parameters.value("includeInserts", true)};
 						result.push_back(toJson(track));
 						context.emit("track.changed", {{"track", result.back()}});
 					}
@@ -979,7 +994,21 @@ namespace gnubase::engine
 						context.emit("plugin.added", {{"slot", describeSlot(project, slot)}});
 				}
 
+				// The source options (reference manual pp. 1473, 1476), the events before their tracks can go.
+				if (parameters.value("sourceEvents", std::string("keep")) == "mute")
+					run("event.set", {{"events", parameters.at("events")}, {"mute", true}});
 				const std::string sources = parameters.value("sourceTracks", std::string("keep"));
+				if (parameters.value("hideSourceTracks", false) && sources != "remove")
+				{
+					// The stored list keeps removed hidden tracks for undo; trackVisibility.set refuses them.
+					std::vector<ObjectId> hidden;
+					for (const ObjectId id : project.trackVisibility.hidden)
+						if (project.trackById.count(id) != 0)
+							hidden.push_back(id);
+					for (const auto& [id, destination] : destinations)
+						hidden.push_back(id);
+					run("trackVisibility.set", {{"hidden", hidden}});
+				}
 				for (const auto& [id, destination] : destinations)
 				{
 					if (sources == "mute")

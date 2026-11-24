@@ -789,10 +789,15 @@ namespace gnubase::engine::settings
 					"The Freeze Channel Options dialog's Tail Size in seconds (reference manual p. 992), which Freeze "
 					"Selected Tracks (with Current Settings) freezes with too: track.freeze's tail.",
 					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 60}}, 30},
+				{"render.freezeInserts",
+					"The Freeze Channel Options dialog's Include Inserts for Instrument Tracks (reference manual "
+					"p. 992), which Freeze Selected Tracks (with Current Settings) freezes with too: track.freeze's "
+					"includeInserts.",
+					Json{{"type", "boolean"}}, true},
 				{"render.options",
 					"The Render Tracks and Render Selection dialogs' options (reference manual pp. 1471-1477), which "
 					"Render (with Current Settings) renders with too: track.renderInPlace's mode, processing, tail, "
-					"sampleFormat, sourceTracks and name.",
+					"sampleFormat, sourceTracks, hideSourceTracks, sourceEvents and name.",
 					Json{{"type", "object"}, {"additionalProperties", false},
 						{"properties",
 							{{"mode", {{"type", "string"}, {"enum", {"oneEvent", "separateEvents", "blockEvents"}}}},
@@ -802,6 +807,8 @@ namespace gnubase::engine::settings
 								{"sampleFormat",
 									{{"type", "string"}, {"enum", {"int16", "int24", "int32", "float32", "float64"}}}},
 								{"sourceTracks", {{"type", "string"}, {"enum", {"keep", "mute", "disable", "remove"}}}},
+								{"hideSourceTracks", {{"type", "boolean"}}},
+								{"sourceEvents", {{"type", "string"}, {"enum", {"keep", "mute"}}}},
 								{"name", {{"type", "string"}, {"minLength", 1}}}}}},
 					Json::object()},
 				{"transport.cycleFollowsMarkers",

@@ -53,18 +53,22 @@ sample a 24-bit file doesn't hold as silence, or at the range's end.
 
 ## Freeze
 
-- **`track.freeze`** renders each audio and instrument track from the project's start to the end of its last event
-  or note (on an instrument track also those of the MIDI tracks that play it) at `inserts`, with a tail of up to 30 s
-  by default, into a 32-bit float WAV file named after the track in the `Freeze` folder next to the project file
-  (p. 220), or for a project without a file in the folder its recordings go to. Then the track is frozen: `Track::frozen`
-  holds the file, its sample rate, channels and length, saved in the project's GNUbase entry. One undo step.
+- **`track.freeze`** renders each audio and instrument track from the project's start to the end of its last event or
+  note (on an instrument track also those of the MIDI tracks that play it) at `inserts`, with a tail of up to 30 s by
+  default, into a 32-bit float WAV file named after the track in the `Freeze` folder next to the project file (p. 220),
+  or for a project without a file in the folder its recordings go to. Then the track is frozen: `Track::frozen` holds
+  the file, its sample rate, channels and length, saved in the project's GNUbase entry. One undo step.
+- **`includeInserts: false`** (Include Inserts for Instrument Tracks off, p. 992) renders an instrument track at
+  `source`: the file holds the instrument only, and `frozen.inserts` is false. The frozen track then plays its pre
+  section and plugin slots on the file, with their automation, so they stay editable and the track null-tests against
+  the live render (tested). An audio track's file holds its slots in any case.
 - **A frozen track** (`compile` in `rendersnapshot.cpp`) plays its file from the project's start as an audio track's
   event, with the media file and event ids of its channel and track, instead of its events, parts and instrument,
-  without its plugin slots, its pre section and auto fades, and without the automation of its instrument, plugins and
-  MIDI. Its strip's other sections, fader, pan, mute and sends play as before, with their automation (p. 220: level,
-  panning, EQ and sends can still be changed). So it null-tests against the live render: the test renders a project
-  with a frozen audio track and an instrument track, each with an insert and strip settings, and compares it with the
-  live render, before freezing and after unfreezing.
+  without its plugin slots, its pre section (both only if the file holds them) and auto fades, and without the
+  automation of its instrument, MIDI and what the file holds. Its strip's other sections, fader, pan, mute and sends
+  play as before, with their automation (p. 220: level, panning, EQ and sends can still be changed). So it null-tests
+  against the live render: the test renders a project with a frozen audio track and an instrument track, each with an
+  insert and strip settings, and compares it with the live render, before freezing and after unfreezing.
 - **A frozen track neither monitors nor records** (p. 220: its controls are locked): its input would play past the
   freeze file, and its takes wouldn't play. Nor do the MIDI tracks that play a frozen instrument track, whose notes
   the freeze file plays (`lockedByFreeze` in `renderinplace.h`). Freezing turns their monitor and record enable
@@ -123,6 +127,9 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
   track gets the fader, pan and sends; `completeSignalPath` renders at `output`, so a mono track panned on a stereo
   bus gives a stereo track, with no settings of its own.
 - `sourceTracks` (p. 1473): `keep` (the default), `mute`, `disable` or `remove` the tracks it rendered.
+  `hideSourceTracks` (p. 1473) hides them in the project window, unless they are removed, with `trackVisibility.set`,
+  whose changes are settings, not undo steps: undoing the render leaves them hidden. `sourceEvents: mute` (p. 1476,
+  default `keep`) mutes the selected events and parts in the render's undo step, so it needs `events` (tested).
 - The new event holds the global transposition it was rendered with (#1368, [transpose.md](transpose.md)), and gets
   the root key and Global Transpose that a recorded event gets (p. 420): without transpose events the project root
   key, if it has one, and Follow, so that changing the project root key afterwards shifts it by the step from the old
@@ -136,19 +143,22 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 
 - Edit > Render in Place > Render (with Current Settings) (`track.renderSelected`) and Edit > Freeze/Unfreeze >
   Selected Tracks (with Current Settings) (`track.freezeSelected`). Both use the options of the dialogs below, the user
-  settings `render.options` (empty, the commands' defaults, at first) and `render.freezeTail` (30 s); freezing works
+  settings `render.options` (empty, the commands' defaults, at first), `render.freezeTail` (30 s) and
+  `render.freezeInserts` (on); freezing works
   on the selected audio and instrument tracks and unfreezes them when every one is frozen. A frozen track's row has
   `.frozen`.
 - Edit > Render in Place > Render Settings... (`track.renderSettings`, pp. 1471-1477) opens Render Selection for
   selected events and parts or a selection range, else Render Tracks (`render-settings.rml`), with Mode, Processing,
-  Tail Size in seconds, Bit Depth, Use Custom Name and Name, and in Render Tracks Source Tracks. Render saves them in
-  `render.options` and renders. A selection never changes its tracks: Render Selection has no Source Tracks, and
-  Render (with Current Settings) leaves out the saved one for a selection.
+  Tail Size in seconds, Bit Depth, Use Custom Name and Name, in Render Tracks Source Tracks and Hide Source Tracks,
+  and in Render Selection of events and parts Source Events. Render saves them in `render.options` and renders. A
+  selection never changes its tracks: Render Selection has no Source Tracks and Hide Source Tracks, and Render (with
+  Current Settings) leaves out the saved ones for a selection, and the saved Source Events for anything but selected
+  events and parts (tested).
 - Edit > Freeze/Unfreeze > Selected Tracks... (`track.freezeSelectedSettings`, p. 992), which is also Freeze/Unfreeze
   Selected Tracks in the track list's context menu (pp. 219-220, [track-list.md](track-list.md)), opens Freeze Channel
-  Options (`freeze-options.rml`) with Tail Size for the selected tracks that aren't frozen, saves it in
-  `render.freezeTail` and freezes them; when every one is frozen it unfreezes them, as there are no unfreeze options
-  yet.
+  Options (`freeze-options.rml`) with Tail Size and Include Inserts for Instrument Tracks for the selected tracks that
+  aren't frozen, saves them in `render.freezeTail` and `render.freezeInserts` and freezes them; when every one is frozen
+  it unfreezes them, as there are no unfreeze options yet.
 - Render renders what the event display selects (pp. 1474-1477): the selected audio events, audio parts and MIDI parts
   on audio and instrument tracks (`events`, each on its own track); without them, the selection range on its audio and
   instrument tracks (`start` and `end`); without that, the selected tracks. It is enabled while any of them is
@@ -157,15 +167,15 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 
 ## Not yet
 
-- The dialogs' Tail Mode in bars and beats, File Path, Mix down to One Audio File, Hide Source Tracks and Keep/Mute
-  Source Events (pp. 1473, 1476), Include Inserts for Instrument Tracks (p. 992), Unload Instruments When Frozen
-  (p. 993) and the Unfreeze Channel Options dialog; Render Tracks for MIDI tracks (pp. 1471, 1474), which Render
-  skips; Freeze Channel in the inspector and the mixer, and the lit freeze buttons.
+- The dialogs' Tail Mode in bars and beats, File Path and Mix down to One Audio File (pp. 1473, 1476), Mute Source
+  Events for a selection range, Unload Instruments When Frozen (p. 993) and the Unfreeze Channel Options dialog; Render
+  Tracks for MIDI tracks (pp. 1471, 1474), which Render skips; Freeze Channel in the inspector and the mixer, and the
+  lit freeze buttons.
 - Locking a frozen track's events, parts and controls (p. 220); edits of them play once the track is unfrozen.
 - Complete Signal Path + Master FX, and groups and effect returns in the complete signal path; copying the track's
   automation to the new track.
-- Freezing only the instrument (p. 991) or the inserts before a given slot (p. 548), freezing external instruments
-  and effects, and removing freeze files when unfreezing.
+- Freezing external instruments and effects, and removing freeze files when unfreezing (p. 993), which the undo of
+  the unfreeze would need again.
 - Plugin delay compensation (#71): a freeze file rendered at `inserts` holds its slots' latency, so once latency is
   compensated it has to play earlier by the latency of the slots it replaces.
 - A frozen track's pre section and cut filters glide from their old settings over the first block after freezing.
@@ -176,7 +186,9 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 background-job tests hold jobs at progress while another client edits: protected edits and transactions are refused,
 unrelated edits and events outside the range succeed, completion adds one undo step, and cancellation or failure unlocks
 without a project change. The mixdown snapshot test edits and removes the exported source while the job runs and
-compares the result with the starting audio. `tests/tracklist_tests.cpp` renders a selected MIDI part, a selection
+compares the result with the starting audio. An instrument track frozen without its inserts null-tests against the
+live render, plays its slot on the freeze file and keeps `inserts` in the project file; Mute Source Events and Hide
+Source Tracks are checked with their undo. `tests/tracklist_tests.cpp` renders a selected MIDI part, a selection
 range and, with neither, the selected track through the Edit menu's Render, and checks that the render and freeze
 dialogs' options reach the commands, are saved for the commands with current settings, and leave a selection's tracks
 as they are. `tests/mixdown_ui_tests.cpp` uses the real app's automation API to check the rendering state class,
