@@ -162,12 +162,20 @@ namespace gnubase::engine
 			RecordSetup setup;
 			setup.project = m_project->openedRevision();
 			setup.format = recordFormat(project);
-			if (setup.format.broadcast) // the preferences' strings (reference manual p. 1615); the recorder cuts them
+			// The preferences' strings (reference manual p. 1615); the recorder cuts them for the bext chunk.
+			const FileText text{m_settings->get(settings::g_audioBroadcastDescription),
+				m_settings->get(settings::g_audioBroadcastAuthor),
+				m_settings->get(settings::g_audioBroadcastReference)};
+			if (setup.format.broadcast)
 			{
-				setup.format.broadcast->description = m_settings->get(settings::g_audioBroadcastDescription);
-				setup.format.broadcast->originator = m_settings->get(settings::g_audioBroadcastAuthor);
-				setup.format.broadcast->originatorReference = m_settings->get(settings::g_audioBroadcastReference);
+				setup.format.broadcast->description = text.description;
+				setup.format.broadcast->originator = text.author;
+				setup.format.broadcast->originatorReference = text.reference;
 			}
+			if (setup.format.text)
+				setup.format.text = text;
+			if (m_settings->get(settings::g_audioWaveOver4GB) == "split")
+				setup.format.rf64 = Rf64::Never;
 			const std::string& file = m_project->file();
 			setup.folder = file.empty() ? recordings : mediaFolderFor(std::filesystem::u8path(file));
 			// With the chord track record-enabled, MIDI and instrument tracks that only monitor play in chord events

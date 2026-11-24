@@ -446,17 +446,22 @@ namespace gnubase::engine::settings
 					"after the post-roll if it's on (see transport.set), unless it cycles.",
 					Json{{"type", "boolean"}}, false, true},
 				{"audio.broadcastDescription",
-					"The description in the Broadcast Wave chunk of recorded Broadcast Wave files, cut to 256 bytes; "
-					"empty for the track's name.",
+					"The description in the Broadcast Wave chunk of recorded Broadcast Wave files, cut to 256 bytes, "
+					"and in the text of recorded Wave and AIFF files; empty for the track's name.",
 					Json{{"type", "string"}}, "", true},
 				{"audio.broadcastAuthor",
 					"The author (originator) in the Broadcast Wave chunk of recorded Broadcast Wave files, cut to 32 "
-					"bytes.",
+					"bytes, and in the text of recorded Wave and AIFF files.",
 					Json{{"type", "string"}}, "GNUbase", true},
 				{"audio.broadcastReference",
 					"The reference (originator reference) in the Broadcast Wave chunk of recorded Broadcast Wave "
-					"files, cut to 32 bytes.",
+					"files, cut to 32 bytes, and in the text of recorded Wave and AIFF files.",
 					Json{{"type", "string"}}, "", true},
+				{"audio.waveOver4GB",
+					"When recording Wave files larger than 4 GB: rf64 (the default) makes such a file RF64, which "
+					"only applications that support RF64 open; split goes on in a new file, as file systems such as "
+					"FAT32 need. AIFF files are always split at 4 GB.",
+					Json{{"type", "string"}, {"enum", {"rf64", "split"}}}, "rf64", true},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", g_lowestSampleRate}, {"maximum", g_highestSampleRate}},
 					48000.0},

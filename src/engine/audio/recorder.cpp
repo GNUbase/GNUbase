@@ -141,6 +141,8 @@ namespace gnubase::engine
 			broadcast.timeReference = static_cast<uint64_t>(std::llround(project.setup.startTime * project.sampleRate));
 			options.broadcast = broadcast;
 		}
+		else if (options.format != AudioFormat::Flac)
+			options.text = FileText{}; // the same strings in a Wave or AIFF file's text chunks (p. 1615)
 		return options;
 	}
 
@@ -726,14 +728,14 @@ namespace gnubase::engine
 						(error ? error.message() : std::string("a file of that name is there")));
 			}
 			// One listing for all tracks.
-			std::set<std::string> taken = hasFolder ? takenNames(m_current.folder) : std::set<std::string>{};
+			m_taken = hasFolder ? takenNames(m_current.folder) : std::set<std::string>{};
 			const std::vector<RecordTrack> none;
 			for (const RecordTrack& track : hasFolder ? m_current.tracks : none)
 			{
 				try
 				{
 					const std::string path = createFreeFile(m_current.folder,
-						fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)), taken)
+						fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)), m_taken)
 												 .u8string();
 					WriteOptions options = m_current.format;
 					options.channels = static_cast<int>(track.ports.size());
@@ -745,7 +747,9 @@ namespace gnubase::engine
 						broadcast.originator = cut(broadcast.originator, 32);
 						broadcast.originatorReference = cut(broadcast.originatorReference, 32);
 					}
-					m_files.push_back({track, path, m_createWriter(path, options)});
+					if (options.text && options.text->description.empty())
+						options.text->description = track.name;
+					m_files.push_back({track, path, m_createWriter(path, options), options});
 				}
 				catch (const std::exception& error)
 				{
@@ -776,8 +780,9 @@ namespace gnubase::engine
 	void Recorder::write(const float* samples, uint32_t frames)
 	{
 		const auto channels = static_cast<size_t>(m_channels);
-		for (File& file : m_files)
+		for (size_t index = 0, count = m_files.size(); index < count; ++index) // not the files that a full one adds
 		{
+			File& file = m_files[index];
 			if (file.end >= 0)
 				continue;
 			const std::vector<int>& ports = file.track.ports;
@@ -791,6 +796,12 @@ namespace gnubase::engine
 			{
 				file.writer->write(m_trackSamples.data(), frames);
 			}
+			catch (const AudioFileFull&)
+			{
+				// A Wave file without RF64 or an AIFF file at 4 GB goes on in the next file (Split Files, p. 1615).
+				file.end = m_written;
+				goOn(index, frames);
+			}
 			catch (const std::exception& error)
 			{
 				// The file ends there, and what it holds still lands (#580); the other tracks record on.
@@ -799,6 +810,30 @@ namespace gnubase::engine
 			}
 		}
 		m_written += frames;
+	}
+
+	void Recorder::goOn(size_t index, uint32_t frames)
+	{
+		// Once in 4 GB, so it creates the file with the lock held.
+		File& full = m_files[index];
+		File next{full.track, {}, {}, full.options, m_written};
+		if (next.options.broadcast)
+			next.options.broadcast->timeReference += static_cast<uint64_t>(m_written - full.start);
+		try
+		{
+			full.writer->close();
+			next.path = createFreeFile(
+				m_current.folder, fs::u8path(fileName(full.track.name) + extensionOf(m_current.format.format)), m_taken)
+							.u8string();
+			next.writer = m_createWriter(next.path, next.options);
+			next.writer->write(m_trackSamples.data(), frames);
+		}
+		catch (const std::exception& error)
+		{
+			fail("can't go on recording track " + full.track.name + " in a new file: " + error.what());
+			return;
+		}
+		m_files.push_back(std::move(next)); // full is no longer valid
 	}
 
 	void Recorder::end()
@@ -816,12 +851,16 @@ namespace gnubase::engine
 				fail("can't write " + file.path + ": " + error.what());
 				continue;
 			}
+			// The parts of the takes in this file.
 			Json takes = Json::array();
+			const time::Samples fileEnd = file.end < 0 ? m_written : file.end;
 			for (const Take& take : m_takes)
 			{
-				const time::Samples length = file.end < 0 ? take.length : std::min(take.length, file.end - take.offset);
-				if (length > 0)
-					takes.push_back({{"position", take.position}, {"offset", take.offset}, {"length", length}});
+				const time::Samples from = std::max(take.offset, file.start);
+				const time::Samples to = std::min(take.offset + take.length, fileEnd);
+				if (to > from)
+					takes.push_back({{"position", take.position + (from - take.offset)}, {"offset", from - file.start},
+						{"length", to - from}});
 			}
 			tracks.push_back({{"track", file.track.track}, {"path", file.path}, {"takes", std::move(takes)}});
 		}

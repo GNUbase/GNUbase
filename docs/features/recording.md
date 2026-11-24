@@ -56,16 +56,25 @@ transport's record state and the record mode setting.
   field's 256 or 32 bytes between two UTF-8 characters; then the local date and time the recording started, and as its time reference
   the position of the file's first frame (pre-recorded input included) plus the project's start time, in samples since
   midnight. The time reference doesn't wrap at midnight: a file that starts past 24 h counts on, as the 64-bit field
-  allows, and a pre-record that reaches back before 0:00:00 gives 0. File names are cut to 200 bytes in the same way, so
+  allows, and a pre-record that reaches back before 0:00:00 gives 0. Wave and AIFF files carry the same three strings
+  as text (p. 1615: "not only Broadcast Wave files"), the description again the track name while it's empty: a Wave
+  file in its LIST INFO chunk as ICMT, IART and ISRC, an AIFF file as its NAME, AUTH and ANNO chunks (`FileText`);
+  an empty string is left out. File names are cut to 200 bytes in the same way, so
   a long track name still fits the file systems' 255. A file is complete once the recording ends; after a crash the
   frames written so far are in it, as the reference describes (p. 347): until a WAV or AIFF file is closed, its RIFF or
   FORM size and its data or SSND size are 0xFFFFFFFF, which readers take as "up to the end of the file", and a FLAC
   file's STREAMINFO has no sample count, for which the FLAC reader counts the frames that decode. A writer opens its
-  file for others to read along. A Wave file that outgrows 4 GB becomes RF64 when it is closed. An AIFF file can't
-  hold more than 4 GB: a write that would pass that, or that fails otherwise, ends the file there. The recording
-  fails for it once (`recording.failed`), the other tracks record on, and the file still lands, with its takes ending
+  file for others to read along. A Wave file larger than 4 GB (p. 1615) becomes RF64 when it is closed, or with the
+  preference `audio.waveOver4GB` `split` (Record > Audio, When Recording Wave Files Larger than 4GB: Split Files)
+  goes on in a new file, named as a second file of the track (`Audio 1-2.wav`), which FAT32 needs. An AIFF file can't
+  be RF64, so it is always split at 4 GB. The writer refuses the write that would pass 4 GB with `AudioFileFull`, and
+  the recorder writes that block into the next file; each file lands with the parts of the takes in it, as events of
+  their own, so a take that the split cuts becomes two events that meet (#580). A Broadcast Wave file's time
+  reference counts on from the file before. A write that fails otherwise ends the file there. The recording fails
+  for it once (`recording.failed`), the other tracks record on, and the file still lands, with its takes ending
   where the file ends (#580). Tests: `tests/audiofile_tests.cpp` (a file that was never closed),
-  `tests/recording_tests.cpp` (formats, the Broadcast Wave chunk and the time reference).
+  `tests/recording_tests.cpp` (formats, the Broadcast Wave chunk and the time reference, the text of Wave and AIFF
+  files, a full file that goes on in the next one).
 - **Takes.** A file holds everything recorded from the start of the recording to its end. Each run of consecutive
   project positions is a take: a cycle lap, or what was recorded between punching in and out (`transport.record` with
   `record: false` or a punch out at the right locator ends a recording, and recording again or a punch in at the left
@@ -123,9 +132,8 @@ transport's record state and the record mode setting.
 ## Not yet
 
 Record folders per track (p. 343); the common record modes (Punch In/Out, Re-Record, starting at the left locator or
-the selection, p. 339); punch points apart from the locators (p. 319); drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); the Broadcast Wave strings in Wave and
-AIFF files and as the defaults of an export's Broadcast Wave chunk, and the choice between splitting Wave files over
-4 GB and RF64 (p. 1615); recording the output of a bus or channel (p. 345);
+the selection, p. 339); punch points apart from the locators (p. 319); drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); stacking the laps of a cycle recording
+that a split puts into two files onto lanes together; recording the output of a bus or channel (p. 345);
 adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash; the Max. Record
 Time window of its own (Studio > More Options, p. 356), which the status line field stands for, and with record
 folders per track the time of the fullest disk.

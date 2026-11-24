@@ -24,8 +24,10 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -144,11 +146,17 @@ namespace gnubase::engine
 
 		bool operator==(const RecordSetup& other) const
 		{
-			const auto timeReference = [](const WriteOptions& options)
-			{ return options.broadcast ? std::optional(options.broadcast->timeReference) : std::nullopt; };
+			const auto strings = [](const WriteOptions& options)
+			{
+				const BroadcastInfo broadcast = options.broadcast.value_or(BroadcastInfo{});
+				const FileText text = options.text.value_or(FileText{});
+				return std::make_tuple(options.broadcast.has_value(), broadcast.description, broadcast.originator,
+					broadcast.originatorReference, broadcast.timeReference, options.text.has_value(), text.description,
+					text.author, text.reference, options.rf64);
+			};
 			return project == other.project && folder == other.folder && format.format == other.format.format &&
 				format.sampleFormat == other.format.sampleFormat && format.sampleRate == other.format.sampleRate &&
-				timeReference(format) == timeReference(other.format) && mode == other.mode &&
+				strings(format) == strings(other.format) && mode == other.mode &&
 				preRecordFrames == other.preRecordFrames && tracks == other.tracks && midiTracks == other.midiTracks &&
 				midiMode == other.midiMode && midiCycleMode == other.midiCycleMode && midiFilter == other.midiFilter &&
 				snapToBars == other.snapToBars && catchFrames == other.catchFrames &&
@@ -247,13 +255,15 @@ namespace gnubase::engine
 			uint64_t setup = 0; // the latest setup when it was sent (m_setupCount)
 		};
 
-		// A file being written.
+		// A file being written. A full one (AudioFileFull, at 4 GB) goes on in a file of its own (#580).
 		struct File
 		{
 			RecordTrack track;
 			std::string path;
 			std::unique_ptr<AudioFileWriter> writer;
-			time::Samples end = -1; // where a write failed, as at an AIFF file's 4 GB: the file ends there, or -1
+			WriteOptions options;
+			time::Samples start = 0; // the recording's frame that is its first (m_written)
+			time::Samples end = -1;  // where it was full or a write failed: the file ends there, or -1
 		};
 
 		struct Take
@@ -299,6 +309,8 @@ namespace gnubase::engine
 		void handle(const Chunk& chunk);
 		void begin(const Chunk& chunk);
 		void write(const float* samples, uint32_t frames);
+		// m_files[index] is full: the frames in m_trackSamples go into a new file for its track.
+		void goOn(size_t index, uint32_t frames);
 		void end();
 		void keepHistory(const Chunk& chunk);
 		void fail(const std::string& reason);
@@ -361,6 +373,7 @@ namespace gnubase::engine
 		RecordSetup m_current;     // the recording's
 		bool m_recording = false;
 		std::vector<File> m_files;
+		std::set<std::string> m_taken; // the names taken in the folder (createFreeFile)
 		std::vector<Take> m_takes;
 		bool m_cycled = false;             // a take began a cycle lap
 		time::Samples m_written = 0;       // frames in each file

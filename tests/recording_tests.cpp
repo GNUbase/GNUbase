@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -375,6 +376,42 @@ TEST_CASE(
 	CHECK(info.description == "Session one");
 	CHECK(info.originator == author.substr(0, 32));
 	CHECK(info.originatorReference == "REF-0042");
+}
+
+TEST_CASE("Wave and AIFF recordings carry the description, author and reference as text (#580)", "[integration]")
+{
+	// The text of the first chunk with this id: a WAV size is little-endian and its text ends with a null character,
+	// an AIFF size is big-endian.
+	const auto chunkText = [](const std::string& path, const std::string& id, bool bigEndian)
+	{
+		std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+		const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+		const size_t at = bytes.find(id);
+		if (at == std::string::npos)
+			return std::string("(none)");
+		size_t size = 0;
+		for (size_t i = 0; i < 4; ++i)
+			size |= size_t{static_cast<unsigned char>(bytes[at + 4 + i])} << (8 * (bigEndian ? 3 - i : i));
+		const std::string text = bytes.substr(at + 8, size);
+		return text.substr(0, text.find('\0'));
+	};
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "track.set", {{"track", setup.track}, {"name", "Lead vocals"}});
+	run(client, "settings.set", {{"values", {{"audio.broadcastReference", "REF-0042"}}}});
+	const bool aiff = GENERATE(false, true);
+	run(client, "project.set", {{"recordFileType", aiff ? "aiff" : "wav"}, {"recordBitDepth", "int24"}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	const std::string path = pathOf(client, events[0]);
+	CHECK(AudioFileReader::open(path)->info().frames > 0);
+	CHECK(chunkText(path, aiff ? "NAME" : "ICMT", aiff) == "Lead vocals"); // the description, empty in the settings
+	CHECK(chunkText(path, aiff ? "AUTH" : "IART", aiff) == "GNUbase");
+	CHECK(chunkText(path, aiff ? "ANNO" : "ISRC", aiff) == "REF-0042");
 }
 
 TEST_CASE("a Broadcast Wave recording's time reference includes the pre-recorded input", "[integration]")
@@ -1407,28 +1444,32 @@ TEST_CASE("a recording that adds nothing leaves the project unmodified (#546)", 
 	CHECK(!modified());
 }
 
-TEST_CASE("a file that can't take more, as an AIFF file at 4 GB, ends its take there and still lands (#580)", "[unit]")
+namespace
 {
-	using namespace std::chrono_literals;
-	namespace engine = gnubase::engine;
-	// Writes the first 100 frames, then refuses more, as AIFF does at 4 GB.
-	class Full final : public engine::AudioFileWriter
+	// Writes the first 100 frames, then fails: as a full disk, or as AIFF and WAV without RF64 at 4 GB.
+	template <typename Error> class Full final : public gnubase::engine::AudioFileWriter
 	{
 	public:
-		explicit Full(std::unique_ptr<engine::AudioFileWriter> writer) : m_writer(std::move(writer)) {}
+		explicit Full(std::unique_ptr<gnubase::engine::AudioFileWriter> writer) : m_writer(std::move(writer)) {}
 		void write(const float* buffer, size_t frames) override
 		{
 			if (m_frames + frames > 100)
-				throw engine::AudioFileError("AIFF files can't be larger than 4 GB");
+				throw Error("the file is full");
 			m_writer->write(buffer, frames);
 			m_frames += frames;
 		}
 		void close() override { m_writer->close(); }
 
 	private:
-		std::unique_ptr<engine::AudioFileWriter> m_writer;
+		std::unique_ptr<gnubase::engine::AudioFileWriter> m_writer;
 		size_t m_frames = 0;
 	};
+}
+
+TEST_CASE("a file that a write fails for ends its take there and still lands (#580)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
 	const gnubase::test::TempDir dir;
 	std::mutex mutex;
 	std::condition_variable changed;
@@ -1449,7 +1490,7 @@ TEST_CASE("a file that can't take more, as an AIFF file at 4 GB, ends its take t
 			{
 				std::unique_ptr<engine::AudioFileWriter> writer = engine::AudioFileWriter::create(path, options);
 				if (path.find("Full") != std::string::npos)
-					writer = std::make_unique<Full>(std::move(writer));
+					writer = std::make_unique<Full<engine::AudioFileError>>(std::move(writer));
 				return writer;
 			});
 		recorder.prepare(1, g_blockFrames);
@@ -1464,7 +1505,7 @@ TEST_CASE("a file that can't take more, as an AIFF file at 4 GB, ends its take t
 		REQUIRE(changed.wait_for(lock, 5s, [&] { return finished.is_object(); }));
 	}
 	REQUIRE(failures.size() == 1);
-	CHECK_THAT(failures[0], ContainsSubstring("4 GB"));
+	CHECK_THAT(failures[0], ContainsSubstring("the file is full"));
 	const Json& tracks = finished.at("tracks");
 	REQUIRE(tracks.size() == 2);
 	for (const Json& track : tracks)
@@ -1476,5 +1517,53 @@ TEST_CASE("a file that can't take more, as an AIFF file at 4 GB, ends its take t
 		CHECK(takes[0].at("position") == 0);
 		CHECK(takes[0].at("length") == (full ? 1 : 4) * g_blockFrames); // the block that didn't fit isn't in it
 		CHECK(channelOf(track.at("path").get<std::string>(), 0).size() == (full ? 1 : 4) * g_blockFrames);
+	}
+}
+
+TEST_CASE("a full file, as a Wave file without RF64 or an AIFF file at 4 GB, goes on in a new file (#580)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::vector<std::string> failures;
+	Json finished;
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				const std::scoped_lock lock(mutex);
+				if (name == "recording.failed")
+					failures.push_back(data.at("reason").get<std::string>());
+				else
+					finished = data;
+				changed.notify_all();
+			},
+			[](const std::string& path, const engine::WriteOptions& options)
+			{ return std::make_unique<Full<engine::AudioFileFull>>(engine::AudioFileWriter::create(path, options)); });
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(dir.path()));
+		engine::PlayedPositions played(size_t{8} * g_blockFrames);
+		for (uint64_t index = 0; index < 3; ++index)
+			processBlock(recorder, played, index, true);
+		processBlock(recorder, played, 3, false);
+		std::unique_lock lock(mutex);
+		REQUIRE(changed.wait_for(lock, 5s, [&] { return finished.is_object(); }));
+	}
+	CHECK(failures.empty());
+	// Each file takes one block: the take goes on in the next file, at the next position.
+	const Json& tracks = finished.at("tracks");
+	REQUIRE(tracks.size() == 3);
+	const char* const names[] = {"Audio.wav", "Audio-2.wav", "Audio-3.wav"};
+	for (size_t i = 0; i < tracks.size(); ++i)
+	{
+		INFO("file " << i);
+		const Json& track = tracks[i];
+		CHECK(track.at("track") == 1);
+		CHECK(std::filesystem::u8path(track.at("path").get<std::string>()).filename().u8string() == names[i]);
+		CHECK(track.at("takes") ==
+			Json::array({{{"position", i * g_blockFrames}, {"offset", 0}, {"length", g_blockFrames}}}));
+		CHECK(channelOf(track.at("path").get<std::string>(), 0).size() == g_blockFrames);
 	}
 }
