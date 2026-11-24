@@ -3275,6 +3275,8 @@ namespace gnubase::engine
 		// The events of two copies of a group, which were alike, paired: each of from's with the one of to's in the
 		// same place in the order of what they share. The position from the part's start is in its track's time base,
 		// which can differ between the copies, so it orders as a number after the rest, as rebasing keeps the order.
+		// The slice information and the quantize origin are left out, as the copies don't keep them alike: only the
+		// part that was sliced keeps the first, and a save keeps the second only in the event's own time base.
 		std::map<ObjectId, ObjectId> pairedEvents(const std::map<ObjectId, AudioEvent>& fromEvents,
 			const AudioPart& from, const std::map<ObjectId, AudioEvent>& toEvents, const AudioPart& to)
 		{
@@ -3290,6 +3292,8 @@ namespace gnubase::engine
 						shared.part = 0;
 						shared.crossfade.from = 0;
 						shared.position = {};
+						noSliceOrigin(shared);
+						shared.quantizeOrigin.reset();
 						keys.emplace_back(toJson(shared).dump(), position, id);
 					}
 				std::sort(keys.begin(), keys.end());

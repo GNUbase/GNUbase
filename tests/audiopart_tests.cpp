@@ -98,6 +98,15 @@ namespace
 			return events;
 		}
 
+		// The ids of a part's audio events, by position.
+		std::vector<Json> ids(const Json& part)
+		{
+			std::vector<Json> ids;
+			for (const Json& event : eventsIn(part))
+				ids.push_back(event.at("id"));
+			return ids;
+		}
+
 		const RenderChannel& channel(int64_t onTrack)
 		{
 			const RenderSnapshot& snapshot = engine.renderSnapshots().acquire();
@@ -424,6 +433,72 @@ TEST_CASE("shared copies of an audio part on tracks of different time bases pair
 		CHECK(events[i].at("id") == ids[i]);
 	CHECK(events[1].at("volume") == -6.0);
 	CHECK(events[2].at("volume") == 0.0);
+}
+
+TEST_CASE(
+	"shared copies of an audio part pair their events without the slice information only the original keeps", "[unit]")
+{
+	// A loop in a part sliced at 2 seconds into its clip, and its second slice copied to an earlier place in the part.
+	// The copy has the slice's clip section but, as the user's own, not what the Reset of the Slice Rules needs, and
+	// the part's shared copy has none of that at all.
+	Fixture f;
+	const int64_t audio = f.track("audio");
+	const int64_t loop = f.audioEvent(audio, g_second, 3 * g_second);
+	const Json part = f.call("event.toPart", {{"events", {loop}}}).at("events").at(0);
+	f.call("clip.setHitpoints",
+		{{"clip", f.clip}, {"hitpoints", {{{"position", 2 * g_second}, {"peak", -3.0}, {"intensity", 1.0}}}}});
+	f.call("quantize.slice", {{"events", {loop}}});
+	const std::vector<Json> slices = f.eventsIn(part);
+	REQUIRE(slices.size() == 2);
+	REQUIRE(slices[1].at("slicedFrom") == loop);
+	f.call("event.copy", {{"events", {slices[1].at("id")}}, {"delta", -(3 * g_second) / 2}});
+	REQUIRE(f.eventsIn(part).size() == 3);
+	const Json copy =
+		f.call("event.copy", {{"events", {part}}, {"delta", 10 * g_second}, {"shared", true}}).at("events").at(0);
+	const std::vector<Json> ids = f.ids(copy);
+	REQUIRE(ids.size() == 3);
+
+	// An edit in the original leaves each of the copy's events with its id at its place.
+	f.call("audioEvent.set", {{"event", loop}, {"volume", -6.0}});
+	CHECK(f.ids(copy) == ids);
+	CHECK(f.eventsIn(copy).at(0).at("volume") == -6.0);
+}
+
+TEST_CASE("shared copies of an audio part pair their events without the quantize origin a save keeps in one time base",
+	"[integration]")
+{
+	// A musical original with one clip section used twice, the later one quantized from a 32nd note late onto beat 3,
+	// and a shared copy on a linear track. A save keeps the quantize origin only in the event's own time base, so the
+	// copy's is gone after a load.
+	const gnubase::test::TempDir dir;
+	Fixture f;
+	const int64_t musical =
+		f.call("track.add", {{"type", "audio"}, {"timeBase", "musical"}}).at("track").at("id").get<int64_t>();
+	const int64_t linear = f.track("audio");
+	const int64_t early = f.audioEvent(musical, g_ticksPerQuarter, g_second / 4);
+	const int64_t late = f.audioEvent(musical, (3 * g_ticksPerQuarter) + (g_ticksPerQuarter / 8), g_second / 4);
+	const Json part = f.call("event.toPart", {{"events", {early, late}}}).at("events").at(0);
+	f.call("quantize.set", {{"preset", "1/4"}});
+	f.call("quantize.apply", {{"events", {late}}});
+	REQUIRE(f.audio(late).at("position") == 3 * g_ticksPerQuarter);
+	REQUIRE(f.audio(late).contains("quantizeOrigin"));
+	const Json copy =
+		f.call("event.copy", {{"events", {part}}, {"delta", 10 * g_second}, {"track", linear}, {"shared", true}})
+			.at("events")
+			.at(0);
+	const std::string file = (dir.path() / "quantized.dawproject").u8string();
+	f.call("project.save", {{"path", file}, {"embedMedia", false}});
+	f.call("project.new");
+	f.call("project.load", {{"path", file}});
+	REQUIRE(f.audio(late).contains("quantizeOrigin"));
+	const std::vector<Json> ids = f.ids(copy);
+	REQUIRE(ids.size() == 2);
+	REQUIRE_FALSE(f.audio(ids[1]).contains("quantizeOrigin"));
+
+	// An edit in the original leaves each of the copy's events with its id at its place.
+	f.call("audioEvent.set", {{"event", early}, {"volume", -6.0}});
+	CHECK(f.ids(copy) == ids);
+	CHECK(f.eventsIn(copy).at(0).at("volume") == -6.0);
 }
 
 TEST_CASE("event.fillLoop and track.duplicate keep shared copies of audio parts in their group", "[unit]")
