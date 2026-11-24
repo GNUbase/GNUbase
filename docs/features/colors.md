@@ -16,7 +16,8 @@ its track's.
 - **The color set** (pp. 115–118) is the project's list of named colors that colors are picked from: `colors` in
   `project.get`, at least one `{name, color}`. New projects have the factory set of 16 colors
   (`project.factoryColors`). `project.set` `colors` replaces the set, one undo step, and `project.changed` announces
-  it.
+  it. `project.new` gives a new project the user setting `editing.defaultColors` (p. 118), a set as `project.set`
+  takes it, or the factory set while it's empty, as it is at first; a template keeps its own.
 - **Colors for new tracks** (pp. 214, 1621): the user setting `editing.autoTrackColor` chooses the color `track.add`
   gives a track when no `color` is given: `default` (the default color, the default), `previous` (the color of the
   track above it in the list: the one before it among its siblings, or the last track inside that one if it's a
@@ -79,19 +80,22 @@ its track's.
   and Duplicate add colors that replace none). The list follows the picker as it changes. The mouse over a missing
   color highlights its replacement (`.replacement`). Apply sends `project.set` `colors` and gives the tracks, events
   and parts in a missing color the one replacing it, one undo step (`history.transaction`, "Change project"); Cancel
-  drops the changes.
+  drops the changes. The Options tab (p. 118): Save Color Set as Default (`#colors-save-default`) saves the set being
+  edited, not yet applied, in `editing.defaultColors` for new projects; Reset Color Set to Default
+  (`#colors-reset-default`) puts that set, or the factory set while none is saved, in place of the set being edited.
 - **Styling.** The swatches and the color strip get `background-color` from code because the color is user data
   (CLAUDE.md, UI conventions); `tests/stylerules_tests.cpp` lists those files, and checks the documents' Lua too.
 
 ## Not yet
 
-The Options tab (saving a set as the default for new projects, selecting colors by name; p. 118), colorizing track
+The Options tab's Select Colors by Name (p. 118), colorizing track
 controls and mixer channels with their track's color (p. 1621, with the mixer, #106, and the inspector, #89), and the
 MIDI editors' event colors menu (p. 1133).
 
 ## Checks
 
-- `tests/color_tests.cpp`: `event.set` colors audio events and parts, also locked ones, null follows the track again,
+- `tests/color_tests.cpp`: `editing.defaultColors` for `project.new`, a bad color refused and empty for the factory
+  set; `event.set` colors audio events and parts, also locked ones, null follows the track again,
   split pieces keep it, undo, bad colors and the empty string refused; the factory set, `project.set` `colors` with
   its event, undo and redo, and refused sets; every `editing.autoTrackColor` mode, `lastApplied` across `project.new`,
   a given color winning, and a folder's color with `editing.applyFolderColor`; Dissolve Part and Bounce MIDI keeping
@@ -101,10 +105,11 @@ MIDI editors' event colors menu (p. 1133).
   left of the name and the inspector's Basics header, for that one track, also of an inspector in a window of its
   own; the color tool's button, its strip and wheel, and its Ctrl-click pane coloring a part; the setup dialog's
   remove, duplicate, recolor, insert, rename, reset color, apply, reset to factory settings and cancel, and its
-  presets: 8 basic colors with unique names, tints in both sort orders, 128 colors, 16 in one tint as the factory
-  set and 24 applied; the missing project colors of 8 basic colors, the mouse over one highlighting its replacement,
-  and Apply replacing them in tracks and parts but not other colors, undone in one step; a color recolored in the
-  picker listed as missing and replaced in its track by its new color.
+  options: Save Color Set as Default saving the edited set, which the next new project gets, and Reset Color Set to
+  Default taking it; its presets: 8 basic colors with unique names, tints in both sort orders, 128 colors, 16 in one
+  tint as the factory set and 24 applied; the missing project colors of 8 basic colors, the mouse over one
+  highlighting its replacement, and Apply replacing them in tracks and parts but not other colors, undone in one step;
+  a color recolored in the picker listed as missing and replaced in its track by its new color.
 - `tests/eventediting_tests.cpp`: the color tool coloring an event and the selection, Alt taking an event's own
   color, its track's, or none from a track with the default color, the wheel's steps and Ctrl asking for the pane.
 - `tests/canvas_tests.cpp`: an event with a color of its own is filled with it, outlined by `stroke-color`, or by

@@ -172,6 +172,30 @@ TEST_CASE("a project has a color set that project.set changes, with undo", "[uni
 	CHECK(run(client, "project.get").at("colors") == colors);
 }
 
+TEST_CASE("editing.defaultColors is the color set of new projects", "[unit]")
+{
+	// Save Color Set as Default in the project colors setup's Options tab (reference manual p. 118).
+	Engine engine;
+	Client client(engine);
+	const Json factory = run(client, "project.factoryColors").at("colors");
+	CHECK(run(client, "settings.get", {{"key", "editing.defaultColors"}}).at("value") == Json::array());
+
+	const Json colors = {{{"name", "Drums"}, {"color", "#ff0000"}}, {{"name", "Bass"}, {"color", "#00ff00"}}};
+	run(client, "settings.set", {{"key", "editing.defaultColors"}, {"value", colors}});
+	CHECK(run(client, "project.get").at("colors") == factory); // the open project keeps its set
+	run(client, "project.new");
+	CHECK(run(client, "project.get").at("colors") == colors);
+
+	CHECK_THAT(reject(client, "settings.set",
+				   {{"key", "editing.defaultColors"}, {"value", {{{"name", "X"}, {"color", "#fff"}}}}}),
+		ContainsSubstring("editing.defaultColors"));
+
+	// An empty set is the factory set again.
+	run(client, "settings.set", {{"key", "editing.defaultColors"}, {"value", Json::array()}});
+	run(client, "project.new");
+	CHECK(run(client, "project.get").at("colors") == factory);
+}
+
 TEST_CASE("editing.autoTrackColor colors new tracks", "[unit]")
 {
 	Engine engine;
@@ -678,6 +702,47 @@ TEST_CASE("the project colors setup dialog renames colors and resets one to its 
 	CHECK(colors[1] == factory[1]);
 	CHECK(colors[2].at("name") == "Kick");
 	CHECK(colors[2].at("color") == factory[2].at("color"));
+}
+
+TEST_CASE("the project colors setup dialog's options save the set as the default and reset to it", "[ui]")
+{
+	ProjectWindow window;
+	const auto open = [&window] { return !window.elements("#project-colors-dialog").empty(); };
+	const auto colorsSetup = [&]
+	{
+		window.app.keys().run("project.colorsSetup", Json::object(), window.app.main(), nullptr);
+		REQUIRE(window.app.waitUntil(open));
+	};
+	const auto defaultColors = [&window]
+	{ return window.app.call("settings.get", {{"key", "editing.defaultColors"}}).at("value"); };
+	const Json factory = window.app.call("project.factoryColors").at("colors");
+
+	// Save Color Set as Default (reference manual p. 118) saves the set being edited, not the project's.
+	colorsSetup();
+	window.click("#project-colors > listitem[value=\"1\"]");
+	window.click("#color-remove");
+	window.click("#colors-options-tab");
+	window.click("#colors-save-default");
+	Json saved = factory;
+	saved.erase(0);
+	CHECK(defaultColors() == saved);
+	window.click("#colors-cancel");
+	REQUIRE(window.app.waitUntil([&] { return !open(); }));
+	CHECK(window.project().at("colors") == factory);
+
+	// New projects get it.
+	window.app.call("project.new");
+	CHECK(window.project().at("colors") == saved);
+
+	// Reset Color Set to Default takes it in place of the set being edited.
+	window.app.call("project.set", {{"colors", factory}});
+	colorsSetup();
+	window.click("#colors-options-tab");
+	window.click("#colors-reset-default");
+	CHECK(window.elements("#project-colors > listitem").size() == saved.size());
+	window.click("#colors-apply");
+	REQUIRE(window.app.waitUntil([&] { return !open(); }));
+	CHECK(window.project().at("colors") == saved);
 }
 
 TEST_CASE("the project colors setup dialog's presets make sets of 8 to 32 basic colors in tints", "[ui]")

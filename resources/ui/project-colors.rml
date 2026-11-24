@@ -10,6 +10,8 @@
      set lacks, each replaced by the color it was changed to in place (picker, Reset Color), else by the edited set's
      nearest color, which the mouse over it highlights. Apply sends project.set and gives the tracks, events and parts
      in a missing color the one replacing it, one undo step (history.transaction); Cancel drops the changes. The
+     Options tab (p. 118) saves the set being edited as the one of new projects (the user setting
+     editing.defaultColors) and resets it to that one, or to the factory set while none is saved. The
      swatches show the colors, which are user data: the one place in Lua that sets background-color
      (tests/stylerules_tests.cpp). -->
 <rml>
@@ -276,6 +278,18 @@
 			dialog.show(document)
 		end
 
+		-- Save Color Set as Default: new projects get the set being edited (editing.defaultColors).
+		function dialog.saveDefault()
+			gnubase.settings.set{key = "editing.defaultColors", value = copy(colors)}
+		end
+
+		-- Reset Color Set to Default: the saved default, or the factory set while none is saved.
+		function dialog.resetDefault(document)
+			local saved = copy(gnubase.settings.get{key = "editing.defaultColors"}.value)
+			colors = #saved > 0 and saved or copy(factory)
+			dialog.show(document)
+		end
+
 		-- "#rrggbb" between a and b, at t from 0 (a) to 1 (b).
 		local function mix(a, b, t)
 			local result = "#"
@@ -431,6 +445,17 @@
 				<div id="preset-colors"/>
 				<div class="row">Missing Current Project Colors</div>
 				<div id="missing-colors"/>
+			</panel>
+			<tab id="colors-options-tab">Options</tab>
+			<panel>
+				<div class="row">Color Set Options</div>
+				<div class="row">
+					<button id="colors-save-default" onclick="ProjectColors.saveDefault()">Save Color Set as Default</button>
+				</div>
+				<div class="row">
+					<button id="colors-reset-default" onclick="ProjectColors.resetDefault(document)">
+						Reset Color Set to Default</button>
+				</div>
 			</panel>
 		</tabset>
 		<div class="row">

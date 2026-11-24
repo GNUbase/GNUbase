@@ -4291,9 +4291,9 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.new", 1,
 				"Replaces the project with an empty one that has a stereo input and output bus, or the busses of the "
-				"user's bus presets named Default (see bus.savePreset), or with template, a copy of the project "
-				"template of that name (see project.templates), and clears the undo history. The new project has no "
-				"file until it is saved.",
+				"user's bus presets named Default (see bus.savePreset) and the color set editing.defaultColors, or "
+				"with template, a copy of the project template of that name (see project.templates), and clears the "
+				"undo history. The new project has no file until it is saved.",
 				objectSchema({{"template", stringSchema}}), noResult, false},
 			[this](CommandContext& context)
 			{
@@ -4303,6 +4303,10 @@ namespace gnubase::engine
 					return Json::object();
 				}
 				Project project = newProject();
+				// The user's default color set (editing.defaultColors), else the factory set.
+				if (const Json colors = context.call("settings.get", {{"key", "editing.defaultColors"}}).at("value");
+					!colors.empty())
+					project.colors = colorsFromJson(colors);
 				for (const BusDirection direction : {BusDirection::Input, BusDirection::Output})
 					if (const Json presets = userPresets(direction, context); presets.contains("Default"))
 					{
