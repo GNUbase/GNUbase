@@ -41,9 +41,9 @@ namespace gnubase::ui
 			const char* command;
 			const char* parameters;
 		};
-		constexpr std::array<Kept, 9> g_kept = {{{"file.save", "{}"}, {"transport.toggle", R"({"setting": "record"})"},
+		constexpr std::array<Kept, 10> g_kept = {{{"file.save", "{}"}, {"transport.toggle", R"({"setting": "record"})"},
 			{"transport.toggle", "{}"}, {"transport.locate", R"({"target": "leftLocator"})"}, {"edit.delete", "{}"},
-			{"sampleEditor.delete", "{}"}, {"transport.toggle", R"({"setting": "cycle"})"},
+			{"sampleEditor.delete", "{}"}, {"keyEditor.delete", "{}"}, {"transport.toggle", R"({"setting": "cycle"})"},
 			{"window.transportPanel", "{}"}, {"window.onScreenKeyboard", "{}"}}};
 
 		bool black(int key)

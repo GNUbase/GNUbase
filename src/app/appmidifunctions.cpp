@@ -2,7 +2,8 @@
 // The MIDI menu in the app (#133, docs/features/midi-functions.md, reference manual pp. 1118-1131): MIDI > Functions
 // on an editor's selected notes or the project window's selected MIDI parts, as quantizing takes them, Bounce MIDI, and
 // the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part, Velocity, Delete Notes and Restrict Polyphony, and
-// the rule editor and project input transformer (#178).
+// the rule editor and project input transformer (#178), and the key editor's key commands that transpose and delete its
+// selected notes (#679).
 #include "app/appui.h"
 #include "engine/media/backup.h"
 
@@ -11,6 +12,7 @@
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
+#include "ui/keyeditor.h"
 
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/StringUtilities.h>
@@ -383,5 +385,50 @@ namespace gnubase::app
 						"history.transaction", {{"description", "Bounce MIDI"}, {"commands", std::move(commands)}});
 			}});
 		m_keys.enableWhen("midi.bounceMidi", hasParts);
+
+		// The key editor's keys for its selected notes (#679, reference manual p. 1214), key commands of its focus
+		// zone that the Key Commands dialog binds to other keys: each acts on the editor whose zone the keys were
+		// pressed in, the editor window's, the lower zone's or an in-place editor.
+		const auto keyEditorOf = [this](const Rml::Element* zone) -> ui::KeyEditor*
+		{
+			for (ui::MidiEditor* editor : {editorWindow(), lowerZoneEditor()})
+				if (ui::KeyEditor* keys = editor != nullptr ? editor->keyEditor() : nullptr;
+					keys != nullptr && zone != nullptr && keys->zone() == zone)
+					return keys;
+			if (m_inPlace)
+				for (const uint64_t track : m_inPlace->tracks())
+					if (ui::KeyEditor* keys = m_inPlace->keyEditor(track); keys != nullptr && keys->zone() == zone)
+						return keys;
+			return nullptr;
+		};
+		struct NoteKeys
+		{
+			const char* id;
+			const char* description;
+			int semitones; // 0: delete
+			const char* keys;
+		};
+		for (const NoteKeys& command :
+			{NoteKeys{"keyEditor.transposeUp", "Transposes the key editor's selected notes up by a semitone.", 1, "Up"},
+				NoteKeys{"keyEditor.transposeDown", "Transposes the key editor's selected notes down by a semitone.",
+					-1, "Down"},
+				NoteKeys{"keyEditor.transposeOctaveUp", "Transposes the key editor's selected notes up by an octave.",
+					12, "Shift+Up"},
+				NoteKeys{"keyEditor.transposeOctaveDown",
+					"Transposes the key editor's selected notes down by an octave.", -12, "Shift+Down"},
+				NoteKeys{"keyEditor.delete", "Deletes the key editor's selected notes.", 0, "Delete"}})
+		{
+			m_keys.add({command.id, command.description,
+				[keyEditorOf, semitones = command.semitones](ui::Window& /*window*/, Rml::Element* zone)
+				{
+					ui::KeyEditor* keys = keyEditorOf(zone);
+					if (keys != nullptr && semitones != 0)
+						keys->transpose(semitones);
+					else if (keys != nullptr)
+						keys->removeSelected();
+				}});
+			m_keys.bind({command.keys, command.id, Json::object(), "keyEditor"});
+		}
+		m_keys.bind({"Backspace", "keyEditor.delete", Json::object(), "keyEditor"});
 	}
 }

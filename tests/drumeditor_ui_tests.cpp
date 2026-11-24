@@ -492,6 +492,42 @@ TEST_CASE("with Show Note Length the object selection tool and the drumstick res
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().empty(); }));
 }
 
+TEST_CASE("the drumstick's delete drag over notes of two parts has the undo step's name of one part's", "[ui]")
+{
+	// #2014: one part's notes go as a lone note.remove, two parts' in a history.transaction of the same name.
+	Fixture f;
+	const auto track = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	f.app.call("track.set", {{"track", track}, {"drumMap", f.map}});
+	const auto part = f.app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	const auto note = [](int64_t position)
+	{ return Json{{"position", position}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}}; };
+	f.app.call("note.add", {{"part", f.part}, {"notes", {note(0), note(g_sixteenth)}}});
+	f.app.call("note.add", {{"part", part}, {"notes", {note(2 * g_sixteenth)}}});
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", {f.part, part}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 3; }));
+	f.scroll(37);
+	f.click(of(".key-tool[key-tool=draw]"));
+	// Drags from the first note to the sixteenths given; returns the undo step's name, after undoing it.
+	const auto drag = [&f](double to, size_t left)
+	{
+		const auto position = f.app.call("history.get").at("position").get<size_t>();
+		f.app.ui().drag(f.window, f.at(0.0, 36), f.at(to, 36));
+		f.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == left; }));
+		const Json history = f.app.call("history.get");
+		REQUIRE(history.at("position") == position + 1);
+		const std::string action = history.at("steps").at(position).at("action").get<std::string>();
+		f.app.call("history.undo");
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 3; }));
+		return action;
+	};
+	CHECK(drag(1.5, 1) == "Remove notes"); // the first part's two notes
+	CHECK(drag(3.5, 0) == "Remove notes"); // and the other part's
+}
+
 TEST_CASE("the drumstick's click deletes only the note clicked, and a drag also when released outside", "[ui]")
 {
 	Fixture f;
