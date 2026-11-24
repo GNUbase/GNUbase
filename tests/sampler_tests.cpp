@@ -1163,9 +1163,9 @@ namespace
 			clip = run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id").get<ObjectId>();
 		}
 
-		Engine engine;
-		Client client{engine};
 		gnubase::test::TempDir folder;
+		Engine engine{gnubase::audio::makeBackends(), folder.path() / "settings"}; // for track presets
+		Client client{engine};
 		fs::path file;
 		ObjectId clip = 0;
 	};
@@ -1376,6 +1376,26 @@ TEST_CASE("a file that a sampler loads goes into the pool folder Sampler Tracks"
 		channels.begin(), channels.end(), [](const Json& channel) { return channel.at("instrument") == "sampler"; });
 	REQUIRE(sampler != channels.end());
 	CHECK(folderOf(sampler->at("sample")).value("name", std::string()) == "Sampler Tracks");
+
+	// A track preset loaded onto a sampler track of a new project, and the tracks of a preset added to one.
+	const auto samplerFolder = [&]
+	{
+		const Json project = run(client, "project.get");
+		for (const Json& channel : project.at("channels"))
+			if (channel.at("instrument") == "sampler")
+				return folderOf(channel.at("sample")).value("name", std::string());
+		return std::string();
+	};
+	run(client, "project.new");
+	const auto saved = run(client, "sampler.create", {{"path", session.file.u8string()}}).at("track").at("id");
+	run(client, "track.savePreset", {{"tracks", Json::array({saved})}, {"name", "Sine"}});
+	run(client, "project.new");
+	const auto empty = run(client, "sampler.create").at("track").at("id");
+	run(client, "track.loadPreset", {{"tracks", Json::array({empty})}, {"name", "Sine"}});
+	CHECK(samplerFolder() == "Sampler Tracks");
+	run(client, "project.new");
+	run(client, "track.addFromPreset", {{"name", "Sine"}});
+	CHECK(samplerFolder() == "Sampler Tracks");
 }
 
 TEST_CASE("sampler.normalize sets the sample gain so that the peak reaches the level", "[integration]")

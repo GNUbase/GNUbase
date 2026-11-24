@@ -182,8 +182,9 @@ namespace gnubase::engine
 				"track.add places it with parent and index, playing into output as track.add's does. " +
 					sectionText +
 					" Without a sample it starts empty. The sample's start and end are the sampler's Start and End "
-					"parameters, shares of the clip. Emits track.added and channel.changed. Returns the track and its "
-					"channel.",
+					"parameters, shares of the clip. Emits track.added and channel.changed, and for path media.added, "
+					"clip.added, clip.changed and, when it makes the folder, poolFolder.added. Returns the track and "
+					"its channel.",
 				objectSchema({{"event", integer}, {"clip", integer}, {"path", {{"type", "string"}}}, {"start", integer},
 					{"end", integer}, {"name", {{"type", "string"}}}, {"parent", integer}, {"index", integer},
 					{"output", integer}}),
@@ -215,7 +216,9 @@ namespace gnubase::engine
 					sectionText +
 					" Its settings go back to their defaults, unless keepSettings (Lock Parameter Settings, p. 715) "
 					"keeps those that aren't the sample's: all but the root key, start, end, the fades and the loop's "
-					"start, end and crossfade. Emits channel.changed. Returns the track and its channel.",
+					"start, end and crossfade. Emits channel.changed, and for path media.added, clip.added, "
+					"clip.changed "
+					"and, when it makes the folder, poolFolder.added. Returns the track and its channel.",
 				objectSchema({{"track", integer}, {"event", integer}, {"clip", integer}, {"path", {{"type", "string"}}},
 								 {"start", integer}, {"end", integer}, {"keepSettings", {{"type", "boolean"}}}},
 					{"track"}),

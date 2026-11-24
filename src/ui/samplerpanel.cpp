@@ -711,7 +711,7 @@ namespace gnubase::ui
 					for (const Json& channel : result.value.at("channels"))
 						columns.push_back({channel.at("min").get<std::vector<int16_t>>(),
 							channel.at("max").get<std::vector<int16_t>>()});
-					waveform->setPeaks({static_cast<double>(from), static_cast<double>(to)}, std::move(columns));
+					waveform->setPeaks({static_cast<double>(from), static_cast<double>(to - from)}, std::move(columns));
 				}
 				if (std::exchange(m_again, false) || media != m_media)
 					ask();

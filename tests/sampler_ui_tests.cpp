@@ -10,13 +10,16 @@
 #include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
 #include "ui/automation.h"
+#include "ui/canvas.h"
 #include "ui/docking.h"
 #include "ui/enginebinding.h"
 #include "ui/rmlui.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/ElementDocument.h>
 
 #include <SDL3/SDL.h>
 
@@ -68,6 +71,31 @@ namespace
 		Json elements(const std::string& selector) { return app.ui().dom(std::nullopt, selector, 0).at("elements"); }
 
 		Json box(const std::string& selector) { return elements(selector).at(0).at("box"); }
+
+		// The display's waveform in the main window.
+		ui::Waveform* wave()
+		{
+			Rml::Context& context = app.main().context();
+			for (int i = 0; i < context.GetNumDocuments(); ++i)
+				if (auto* found = dynamic_cast<ui::Waveform*>(context.GetDocument(i)->QuerySelector(".sampler-wave")))
+					return found;
+			return nullptr;
+		}
+
+		// The waveform's peaks span the frames it shows, from its start for its scale's width.
+		bool peaksSpanShown()
+		{
+			ui::Waveform* shown = wave();
+			if (shown == nullptr || shown->channels().empty() || shown->GetContext() == nullptr)
+				return false;
+			const auto start = shown->GetAttribute<double>("start", -1.0);
+			const double end = start +
+				(shown->GetAttribute<double>("scale", 0.0) * shown->GetClientWidth() /
+					shown->GetContext()->GetDensityIndependentPixelRatio());
+			const ui::TimeSpan& span = shown->span();
+			return span.start <= start && span.start > start - 1.0 && span.end() >= end - 1e-6 &&
+				span.end() < end + 1.0;
+		}
 
 		bool has(const std::string& selector, const std::string& name)
 		{
@@ -320,6 +348,8 @@ TEST_CASE("the display's ruler shows the sample's time in the format chosen, and
 	slide("#sampler-horizontal-zoom", 0.3);
 	REQUIRE(f.app.waitUntil([&] { return std::stod(attribute(".sampler-ruler", "scale")) < full / 2; }));
 	CHECK(std::stod(attribute(".sampler-ruler", "start")) > 0.0);
+	REQUIRE(f.app.waitUntil([&] { return f.peaksSpanShown(); }));
+	CHECK(f.wave()->span().length < 24000.0 / 2);
 	const auto centre = [&](const std::string& marker)
 	{
 		const Json box = f.box(".sampler-marker[marker=\"" + marker + "\"]");
@@ -339,11 +369,39 @@ TEST_CASE("the display's ruler shows the sample's time in the format chosen, and
 	slide("#sampler-scroll", -1.0);
 	REQUIRE(f.app.waitUntil([&] { return std::stod(attribute(".sampler-ruler", "start")) == 0.0; }));
 	CHECK(f.has(".sampler-marker[marker=\"Start\"]", "out-of-view"));
+	REQUIRE(f.app.waitUntil([&] { return f.peaksSpanShown() && f.wave()->span().start == 0.0; }));
 
 	// The vertical zoom raises the waveform's gain.
 	CHECK(std::stod(attribute(".sampler-wave", "gain")) == 1.0);
 	slide("#sampler-vertical-zoom", 0.3, true);
 	REQUIRE(f.app.waitUntil([&] { return std::stod(attribute(".sampler-wave", "gain")) > 1.0; }));
+
+	// Another sample shows whole again, at the gain of 1.
+	f.app.call("sampler.load", {{"track", f.track}, {"path", f.other.u8string()}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return std::stod(attribute(".sampler-ruler", "start")) == 0.0 &&
+				std::abs(std::stod(attribute(".sampler-ruler", "scale")) - full) < full * 1e-6 &&
+				std::stod(attribute(".sampler-wave", "gain")) == 1.0;
+		}));
+	REQUIRE(f.app.waitUntil([&] { return f.peaksSpanShown() && f.wave()->span().length == 24000.0; }));
+}
+
+TEST_CASE("the display's ruler shows the format of the user setting", "[ui]")
+{
+	// Reference manual p. 717 (#1122): Bars+Beats set with settings.set shows on the ruler and in its drop-down.
+	Fixture f;
+	f.app.call("settings.set", {{"key", "ui.samplerPanel"}, {"value", {{"rulerFormat", "barsBeats"}}}});
+	f.open();
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json ruler = f.elements(".sampler-ruler");
+			const Json format = f.elements("#sampler-ruler-format");
+			return ruler.size() == 1 && ruler[0].at("attributes").value("format", std::string()) == "barsBeats" &&
+				format.size() == 1 && format[0].at("attributes").value("value", std::string()) == "barsBeats";
+		}));
 }
 
 TEST_CASE("the markers of the fades and the loop crossfade set their lengths", "[ui]")
