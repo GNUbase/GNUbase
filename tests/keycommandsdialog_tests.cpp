@@ -298,6 +298,9 @@ TEST_CASE("the key commands list every command a key can run with its default ke
 	CHECK(entryOf(commands, "arranger.trigger", {{"number", 1}}).at("keys") == Json::array());
 	CHECK_FALSE(entryOf(commands, "arranger.trigger", {{"number", 9}}).is_null());
 	CHECK(entryOf(commands, "arranger.trigger", {{"number", 10}}).is_null());
+	// Lock Record and Unlock Record (p. 356) too (#645).
+	CHECK(entryOf(commands, "transport.set", {{"lockRecord", true}}).at("keys") == Json::array());
+	CHECK(entryOf(commands, "transport.set", {{"lockRecord", false}}).at("keys") == Json::array());
 	keys.customize(Json::array({{{"command", "arranger.trigger"}, {"parameters", {{"number", 2}}}, {"keys", {"F8"}}}}),
 		Json::array());
 	CHECK(keys.keysFor("arranger.trigger", {{"number", 2}}) == Strings{"F8"});

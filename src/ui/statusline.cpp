@@ -37,13 +37,18 @@ namespace gnubase::ui
 
 	void StatusLine::update()
 	{
-		// Only while it is shown, and one question at a time: each measures the disk (#645).
-		if (!m_recordTime || !m_recordTime->IsVisible(true) || m_binding.waiting("recording.remainingTime") > 0)
+		// Only while it is shown, and one question at a time: each measures the disk (#645). Per status line, so that
+		// the Max. Record Time window and the project window's both follow.
+		if (!m_recordTime || !m_recordTime->IsVisible(true) || m_asking)
 			return;
+		m_asking = true;
 		m_binding.sendQuietly("recording.remainingTime", engine::Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				if (!alive.expired() && result.ok())
+				if (alive.expired())
+					return;
+				m_asking = false;
+				if (result.ok())
 					showRecordTime(result.value);
 			});
 	}

@@ -201,6 +201,7 @@ namespace gnubase::engine
 	{
 		m_position = position;
 		m_start = position;
+		m_lapAt = -1;
 		m_inPreRoll = false;
 		m_arranger.entering = true;
 	}
@@ -211,6 +212,7 @@ namespace gnubase::engine
 	{
 		m_start = from >= 0 ? from : startWithoutPreRoll(m_settings, m_position);
 		m_position = withPreRoll(m_settings, m_start);
+		m_lapAt = -1;
 		m_inPreRoll = m_position < m_start; // the pre-roll plays toward the start
 		m_playing = true;
 		m_stopAt = -1;
@@ -498,7 +500,8 @@ namespace gnubase::engine
 				until(m_settings.right);
 			if (m_stopAt >= 0)
 				until(m_stopAt);
-			m_segments[m_block.segmentCount++] = {offset, length, m_position, m_recording};
+			m_segments[m_block.segmentCount++] = {offset, length, m_position, m_recording, m_position == m_lapAt};
+			m_lapAt = -1;
 			m_block.recording = m_block.recording || m_recording;
 			offset += length;
 			m_position += length;
@@ -531,6 +534,7 @@ namespace gnubase::engine
 			else if (jumps)
 			{
 				m_position = m_settings.left;
+				m_lapAt = m_position;
 				m_inPreRoll = false; // the cycle jumped: playback isn't rolling in anymore
 			}
 		}
@@ -552,10 +556,13 @@ namespace gnubase::engine
 		for (size_t s = 0; s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
+			if (segment.lap)
+				++m_lap;
 			for (uint32_t i = 0; i < segment.frames; ++i)
 			{
 				m_positions[(start + segment.offset + i) % size] = segment.position + i;
 				m_recording[(start + segment.offset + i) % size] = segment.recording ? 1 : 0;
+				m_laps[(start + segment.offset + i) % size] = m_lap;
 			}
 		}
 		m_end = static_cast<int64_t>(start + frames);
@@ -567,6 +574,11 @@ namespace gnubase::engine
 		if (frame < 0 || frame >= m_end || frame < m_end - size)
 			return -1;
 		return m_positions[static_cast<size_t>(frame % size)];
+	}
+
+	uint32_t PlayedPositions::lapAt(int64_t frame) const noexcept
+	{
+		return at(frame) >= 0 ? m_laps[static_cast<size_t>(frame % static_cast<int64_t>(m_laps.size()))] : m_lap;
 	}
 
 	time::Samples PlayedPositions::recordedAt(int64_t frame) const noexcept
