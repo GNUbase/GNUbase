@@ -1109,7 +1109,9 @@ namespace gnubase::ui
 						{{"position", std::max<int64_t>(0, m_time.tempo.toSamples(row->start, m_time.sampleRate))}});
 			}
 			else
+			{
 				click(*target, ctrl);
+			}
 			break;
 		case Rml::EventId::Dblclick:
 			if (rowOf(target) != nullptr && closest(target, "list-audition", m_root.get()) != nullptr)
