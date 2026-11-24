@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The Render Tracks and Render Selection dialog (docs/features/render-in-place.md, reference manual pp. 1471-1477):
      ui::TrackList opens it with Edit > Render in Place > Render Settings, titled Render Selection for selected events
-     and parts or a selection range, else Render Tracks, with the options of the user setting render.options. Render
+     and parts or a selection range, else Render Tracks, with the options of the user setting render.options: Source
+     Tracks and Hide Source Tracks only in Render Tracks, Source Events only for selected events and parts. Render
      saves them there, for Render (with Current Settings) too, and renders with track.renderInPlace. -->
 <rml>
 <head>
@@ -88,6 +89,17 @@
 				<option value="mute">Mute Source Tracks</option>
 				<option value="disable">Disable Source Tracks</option>
 				<option value="remove">Remove Source Tracks</option>
+			</select>
+		</div>
+		<div class="row" id="render-hide-row">
+			<label for="render-hide">Hide Source Tracks</label>
+			<input type="checkbox" id="render-hide"/>
+		</div>
+		<div class="row" id="render-source-events-row">
+			<label for="render-source-events">Source Events</label>
+			<select id="render-source-events">
+				<option value="keep" selected="">Keep Source Events Unchanged</option>
+				<option value="mute">Mute Source Events</option>
 			</select>
 		</div>
 		<div class="row buttons">

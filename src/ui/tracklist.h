@@ -92,7 +92,7 @@ namespace gnubase::ui
 		// track.duplicateSelected, track.disableSelected, track.enableSelected, track.toggleFolding (the selected
 		// folders), track.foldAll, track.unfoldAll and track.flipFolding; track.freezeSelected (freezes the selected
 		// audio and instrument tracks, or unfreezes them if every one is frozen), track.freezeSelectedSettings (the
-		// same, asking for the Tail Size first in the document's freeze-options.rml), track.renderSelected (renders
+		// same, asking for its options first in the document's freeze-options.rml), track.renderSelected (renders
 		// them in place, or the event display's selected events and parts or selection range) and track.renderSettings
 		// (the same, asking for the options first in the document's render-settings.rml); and for folder tracks
 		// track.enableSelectedGroupChannels, track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
@@ -236,7 +236,8 @@ namespace gnubase::ui
 		void closedChordDialog(Rml::Event& event);
 		// Render in place and freeze (docs/features/render-in-place.md): the Render Tracks or Render Selection dialog
 		// (render-settings.rml) for target, track.renderInPlace's tracks and selection, or Freeze Channel Options
-		// (freeze-options.rml) for target's tracks, filled from options, render.options or render.freezeTail.
+		// (freeze-options.rml) for target's tracks, filled from options, render.options or track.freeze's tail and
+		// includeInserts (render.freezeTail, render.freezeInserts).
 		void openRenderDialog(const char* file, engine::Json target, const engine::Json& options);
 		void closedRenderDialog(Rml::Event& event);
 		// Runs the commands as one undo step; done, if any, gets its result.

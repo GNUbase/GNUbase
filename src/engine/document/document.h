@@ -845,12 +845,16 @@ namespace gnubase::engine
 		double sampleRate = 48000.0;
 		int channels = 2;
 		time::Samples length = 0; // in the file's sample frames
+		// Whether the file holds the pre section and the plugin slots. Without them (an instrument track frozen
+		// without Include Inserts for Instrument Tracks, p. 992) it holds the instrument, and the track plays its pre
+		// section and slots on it.
+		bool inserts = true;
 	};
 
 	inline bool operator==(const Freeze& a, const Freeze& b)
 	{
-		return std::tie(a.path, a.sampleRate, a.channels, a.length) ==
-			std::tie(b.path, b.sampleRate, b.channels, b.length);
+		return std::tie(a.path, a.sampleRate, a.channels, a.length, a.inserts) ==
+			std::tie(b.path, b.sampleRate, b.channels, b.length, b.inserts);
 	}
 
 	// A track version (#165, reference manual pp. 230-237): one of the sets of events and parts an audio, instrument

@@ -447,14 +447,16 @@ namespace gnubase::engine
 			snapshot.media.push_back(std::move(media));
 		}
 
-		// What still plays on a frozen track: the fader, pan and mute, and the strip's sections after the plugin slots;
-		// its freeze file has the rest.
-		bool afterFreeze(const AutomationTarget& target)
+		// What still plays on a frozen track: the fader, pan and mute, and the strip's sections after the plugin slots,
+		// and with a file without them the pre section and the slots too; its freeze file has the rest.
+		bool afterFreeze(const AutomationTarget& target, const Freeze& frozen)
 		{
 			switch (target.type)
 			{
+			case AutomationTargetType::Plugin:
+				return !frozen.inserts;
 			case AutomationTargetType::Strip:
-				return !isPreSection(target.parameter);
+				return !frozen.inserts || !isPreSection(target.parameter);
 			case AutomationTargetType::Volume:
 			case AutomationTargetType::Pan:
 			case AutomationTargetType::PanLeft:
@@ -467,8 +469,9 @@ namespace gnubase::engine
 		}
 
 		// A frozen track's channel plays its freeze file from the project's start, as an audio track's event, without
-		// the pre section and plugin slots that it was rendered through (RenderPoint::Inserts). The media file and the
-		// event take the ids of the channel and the track, which nothing else has.
+		// the pre section and plugin slots that it was rendered through (RenderPoint::Inserts), or through them if it
+		// was rendered before them (RenderPoint::Source, Freeze::inserts). The media file and the event take the ids of
+		// the channel and the track, which nothing else has.
 		void freeze(const Track& track, const Freeze& frozen, RenderSnapshot& snapshot, RenderChannel& channel)
 		{
 			channel.type = TrackType::Audio;
@@ -478,10 +481,13 @@ namespace gnubase::engine
 			channel.midiThru = false;
 			channel.padThru = false;
 			channel.autoFades = AutoFades();
-			channel.sections.gain = 0.0;
-			channel.sections.phase = false;
-			channel.sections.lowCut.on = false;
-			channel.sections.highCut.on = false;
+			if (frozen.inserts)
+			{
+				channel.sections.gain = 0.0;
+				channel.sections.phase = false;
+				channel.sections.lowCut.on = false;
+				channel.sections.highCut.on = false;
+			}
 			if (!track.enabled)
 				return;
 			RenderAudioEvent event;
@@ -799,7 +805,7 @@ namespace gnubase::engine
 			for (const ObjectId id : channel.slots)
 			{
 				const Slot& slot = project.slots.at(id);
-				if (!track.frozen)
+				if (!track.frozen || !track.frozen->inserts)
 					render.slots.push_back(
 						{slot.id, slot.plugin, slot.bypass, slot.active, slot.parameters, slot.state});
 			}
@@ -991,7 +997,7 @@ namespace gnubase::engine
 			const Track& track = project.trackById.at(lane.track);
 			const bool vca = track.type == TrackType::Vca && lane.target.type == AutomationTargetType::Volume;
 			if (!lane.read || lane.points.empty() || (channel == trackChannel.end() && !vca) ||
-				(track.frozen && !afterFreeze(lane.target)))
+				(track.frozen && !afterFreeze(lane.target, *track.frozen)))
 				continue;
 			std::vector<const AutomationPoint*> sorted;
 			sorted.reserve(lane.points.size());

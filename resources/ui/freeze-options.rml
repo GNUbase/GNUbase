@@ -1,8 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The Freeze Channel Options dialog (docs/features/render-in-place.md, reference manual p. 992): ui::TrackList opens
      it with Edit > Freeze/Unfreeze > Selected Tracks for the selected audio and instrument tracks that aren't frozen,
-     with the Tail Size of the user setting render.freezeTail. OK saves it there, for Selected Tracks (with Current
-     Settings) too, and freezes them with track.freeze. -->
+     with the Tail Size and Include Inserts for Instrument Tracks of the user settings render.freezeTail and
+     render.freezeInserts. OK saves them there, for Selected Tracks (with Current Settings) too, and freezes them with
+     track.freeze. -->
 <rml>
 <head>
 	<title>Freeze Channel Options</title>
@@ -41,6 +42,10 @@
 		<div class="row">
 			<label for="freeze-tail">Tail Size (Seconds)</label>
 			<valuefield id="freeze-tail" value="30" min="0" max="60" step="0.5" decimals="1"/>
+		</div>
+		<div class="row">
+			<label for="freeze-inserts">Include Inserts for Instrument Tracks</label>
+			<input type="checkbox" id="freeze-inserts" checked=""/>
 		</div>
 		<div class="row buttons">
 			<button result="cancel">Cancel</button>

@@ -49,6 +49,27 @@ namespace gnubase::ui
 			Rml::EventId::Click, Rml::EventId::Mousescroll, Rml::EventId::Change};
 		constexpr std::array<Rml::EventId, 2> g_documentEvents = {Rml::EventId::Mousemove, Rml::EventId::Mouseup};
 
+		// The render settings dialog's selects and track.renderInPlace's options they set.
+		constexpr std::array<std::pair<const char*, const char*>, 5> g_renderSelects = {
+			{{"render-mode", "mode"}, {"render-processing", "processing"}, {"render-format", "sampleFormat"},
+				{"render-source", "sourceTracks"}, {"render-source-events", "sourceEvents"}}};
+
+		// track.renderInPlace's parameters for what Render renders (target) with options (render.options): a
+		// selection leaves its tracks as they are, and only selected events and parts can be muted (reference manual
+		// pp. 1473, 1476).
+		Json renderParameters(Json target, const Json& options)
+		{
+			target.update(options);
+			if (target.contains("events") || target.contains("start"))
+			{
+				target.erase("sourceTracks");
+				target.erase("hideSourceTracks");
+			}
+			if (!target.contains("events"))
+				target.erase("sourceEvents");
+			return target;
+		}
+
 		// A parameter's name in the parameter selector: with its instrument's or plugin's name.
 		std::string parameterName(const Json& target)
 		{
@@ -440,7 +461,8 @@ namespace gnubase::ui
 				}},
 		};
 		// Freeze and render in place (docs/features/render-in-place.md): the dialogs' options are the user settings
-		// render.freezeTail and render.options, which the commands with current settings use too.
+		// render.freezeTail, render.freezeInserts and render.options, which the commands with current settings use
+		// too.
 		const auto renderable = [this]
 		{
 			std::vector<uint64_t> tracks;
@@ -469,21 +491,36 @@ namespace gnubase::ui
 					.push_back(track);
 			return std::make_pair(unfrozen, frozen);
 		};
-		m_actions["track.freezeSelected"] = [this, freezable, withSetting]
+		// track.freeze's tail and includeInserts from the user settings.
+		const auto withFreezeOptions = [withSetting](std::function<void(const Json&)> then)
+		{
+			withSetting("render.freezeTail",
+				[withSetting, then = std::move(then)](const Json& tail)
+				{
+					withSetting("render.freezeInserts",
+						[tail, then](const Json& inserts) { then({{"tail", tail}, {"includeInserts", inserts}}); });
+				});
+		};
+		m_actions["track.freezeSelected"] = [this, freezable, withFreezeOptions]
 		{
 			auto [unfrozen, frozen] = freezable();
 			if (!unfrozen.empty())
-				withSetting("render.freezeTail", [this, tracks = std::move(unfrozen)](const Json& tail)
-					{ m_binding.send("track.freeze", {{"tracks", tracks}, {"tail", tail}}); });
+				withFreezeOptions(
+					[this, tracks = std::move(unfrozen)](const Json& options)
+					{
+						Json parameters = options;
+						parameters["tracks"] = tracks;
+						m_binding.send("track.freeze", parameters);
+					});
 			else if (!frozen.empty())
 				m_binding.send("track.unfreeze", {{"tracks", frozen}});
 		};
-		m_actions["track.freezeSelectedSettings"] = [this, freezable, withSetting]
+		m_actions["track.freezeSelectedSettings"] = [this, freezable, withFreezeOptions]
 		{
 			auto [unfrozen, frozen] = freezable();
 			if (!unfrozen.empty())
-				withSetting("render.freezeTail", [this, tracks = std::move(unfrozen)](const Json& tail)
-					{ openRenderDialog("freeze-options.rml", {{"tracks", tracks}}, tail); });
+				withFreezeOptions([this, tracks = std::move(unfrozen)](const Json& options)
+					{ openRenderDialog("freeze-options.rml", {{"tracks", tracks}}, options); });
 			else if (!frozen.empty())
 				m_binding.send("track.unfreeze", {{"tracks", frozen}});
 		};
@@ -531,15 +568,8 @@ namespace gnubase::ui
 		m_actions["track.renderSelected"] = [this, renderTarget, withSetting]
 		{
 			if (Json target = renderTarget(); !target.is_null())
-				withSetting("render.options",
-					[this, target = std::move(target)](const Json& options)
-					{
-						Json parameters = target;
-						parameters.update(options);
-						if (parameters.contains("events") || parameters.contains("start"))
-							parameters.erase("sourceTracks"); // a selection leaves its tracks as they are
-						m_binding.send("track.renderInPlace", parameters);
-					});
+				withSetting("render.options", [this, target = std::move(target)](const Json& options)
+					{ m_binding.send("track.renderInPlace", renderParameters(target, options)); });
 		};
 		m_actions["track.renderSettings"] = [this, renderTarget, withSetting]
 		{
@@ -2487,19 +2517,27 @@ namespace gnubase::ui
 			logging::warning("The track list can't open the dialog {}", path);
 			return;
 		}
-		if (Rml::Element* tail = dialog->GetElementById("freeze-tail"); tail != nullptr && options.is_number())
-			tail->SetAttribute("value", options.get<double>());
+		if (Rml::Element* tail = dialog->GetElementById("freeze-tail"); tail != nullptr && options.contains("tail"))
+			tail->SetAttribute("value", options.at("tail").get<double>());
+		if (Rml::Element* inserts = dialog->GetElementById("freeze-inserts");
+			inserts != nullptr && !options.value("includeInserts", true))
+			inserts->RemoveAttribute("checked");
 		if (dialog->GetElementById("render-settings-dialog") != nullptr)
 		{
-			// A selection renders without changing its tracks: Render Selection has no Source Tracks (p. 1476).
+			// A selection renders without changing its tracks: Render Selection has no Source Tracks and Hide Source
+			// Tracks, and Source Events only for selected events and parts, which it mutes (pp. 1473, 1476).
 			const bool selection = target.contains("events") || target.contains("start");
 			if (Rml::Element* title = dialog->GetElementById("render-settings-title"); title != nullptr && selection)
 				title->SetInnerRML("Render Selection");
-			if (Rml::Element* source = dialog->GetElementById("render-source-row"); source != nullptr && selection)
-				source->GetParentNode()->RemoveChild(source);
-			for (const auto& [id, key] :
-				{std::make_pair("render-mode", "mode"), std::make_pair("render-processing", "processing"),
-					std::make_pair("render-format", "sampleFormat"), std::make_pair("render-source", "sourceTracks")})
+			for (const auto& [row, removed] :
+				{std::make_pair("render-source-row", selection), std::make_pair("render-hide-row", selection),
+					std::make_pair("render-source-events-row", !target.contains("events"))})
+				if (Rml::Element* found = dialog->GetElementById(row); found != nullptr && removed)
+					found->GetParentNode()->RemoveChild(found);
+			if (Rml::Element* hide = dialog->GetElementById("render-hide");
+				hide != nullptr && options.value("hideSourceTracks", false))
+				hide->SetAttribute("checked", "");
+			for (const auto& [id, key] : g_renderSelects)
 				if (auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(dialog->GetElementById(id));
 					select != nullptr && options.contains(key))
 					select->SetValue(options.at(key).get<std::string>());
@@ -2534,16 +2572,20 @@ namespace gnubase::ui
 		if (const Rml::Element* tail = dialog->GetElementById("freeze-tail"))
 		{
 			const auto seconds = tail->GetAttribute<double>("value", 30.0);
+			const Rml::Element* inserts = dialog->GetElementById("freeze-inserts");
+			const bool included = inserts == nullptr || inserts->HasAttribute("checked");
 			m_binding.send("settings.set", {{"key", "render.freezeTail"}, {"value", seconds}});
+			m_binding.send("settings.set", {{"key", "render.freezeInserts"}, {"value", included}});
 			parameters["tail"] = seconds;
+			parameters["includeInserts"] = included;
 			m_binding.send("track.freeze", parameters);
 			return;
 		}
-		for (const auto& [id, key] :
-			{std::make_pair("render-mode", "mode"), std::make_pair("render-processing", "processing"),
-				std::make_pair("render-format", "sampleFormat"), std::make_pair("render-source", "sourceTracks")})
+		for (const auto& [id, key] : g_renderSelects)
 			if (const auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(dialog->GetElementById(id)))
 				options[key] = select->GetValue();
+		if (const Rml::Element* hide = dialog->GetElementById("render-hide"))
+			options["hideSourceTracks"] = hide->HasAttribute("checked");
 		if (const Rml::Element* tail = dialog->GetElementById("render-tail"))
 			options["tail"] = tail->GetAttribute<double>("value", 0.0);
 		const Rml::Element* custom = dialog->GetElementById("render-custom-name");
@@ -2552,10 +2594,7 @@ namespace gnubase::ui
 		if (custom != nullptr && custom->HasAttribute("checked") && name != nullptr && !name->GetValue().empty())
 			options["name"] = name->GetValue();
 		m_binding.send("settings.set", {{"key", "render.options"}, {"value", options}});
-		parameters.update(options);
-		if (parameters.contains("events") || parameters.contains("start"))
-			parameters.erase("sourceTracks");
-		m_binding.send("track.renderInPlace", parameters);
+		m_binding.send("track.renderInPlace", renderParameters(parameters, options));
 	}
 
 	void TrackList::removeTracks(const std::vector<uint64_t>& tracks)
