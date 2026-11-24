@@ -260,6 +260,7 @@ namespace gnubase::ui
 		{
 			// The drawn points replace those between the first and the last of them.
 			std::vector<engine::VolumePoint> drawn;
+			drawn.reserve(m_drawnCurve.size());
 			for (const auto& [x, y] : m_drawnCurve)
 				drawn.push_back(pointAt(x, volumeFraction(*shown, y)));
 			std::stable_sort(drawn.begin(), drawn.end(), byPosition);
