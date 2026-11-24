@@ -643,7 +643,9 @@ TEST_CASE("Close Gaps time stretches only the selected slice audio and preserves
 			CHECK(job.at("result").at("channels")[0].at("pitch").get<double>() == Catch::Approx(440).margin(2));
 		}
 		else
+		{
 			CHECK(event == before.at("audioEvents")[1]);
+		}
 	CHECK(f.call("history.get").at("steps").size() == steps + 1);
 	f.call("history.undo");
 	CHECK(f.call("project.get") == before);
@@ -669,7 +671,7 @@ TEST_CASE("Close Gaps time stretch follows musical warping and rolls back failed
 	CHECK_THAT(f.fails("event.closeGaps", {{"events", {f.event, second, third}}, {"mode", "timeStretch"}}),
 		ContainsSubstring("ratio"));
 	CHECK(f.call("project.get") == before);
-	CHECK(std::filesystem::is_empty(f.dir.path() / "Audio"));
+	CHECK(std::filesystem::directory_iterator(f.dir.path() / "Audio") == std::filesystem::directory_iterator{});
 	f.call("event.closeGaps", {{"events", {f.event, second}}, {"mode", "timeStretch"}});
 	const Json after = f.call("project.get");
 	CHECK(after.at("audioEvents")[0].at("length") == 48000);

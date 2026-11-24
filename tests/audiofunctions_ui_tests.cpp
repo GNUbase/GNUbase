@@ -302,7 +302,7 @@ TEST_CASE("Detect Silence zooms and scrolls its waveform without changing analys
 	// Using the native horizontal scrollbar must not audition the audio beneath it.
 	app.ui().click(audioWindow(app),
 		{"", 0,
-			ui::Point{static_cast<int>(view.at("x").get<double>() + view.at("width").get<double>() / 2),
+			ui::Point{static_cast<int>(view.at("x").get<double>() + (view.at("width").get<double>() / 2)),
 				static_cast<int>(view.at("y").get<double>() + view.at("height").get<double>() - 2)}},
 		ui::MouseButton::Left, 1, {});
 	const Json scrollLog = app.call("engine.commandLog").at("commands");
@@ -323,9 +323,9 @@ TEST_CASE("Detect Silence zooms and scrolls its waveform without changing analys
 			previewed = true;
 			const auto& parameters = entry.at("parameters");
 			const double fraction =
-				(view.at("x").get<double>() + view.at("width").get<double>() / 2 - wave.at("x").get<double>()) /
+				(view.at("x").get<double>() + (view.at("width").get<double>() / 2) - wave.at("x").get<double>()) /
 				wave.at("width").get<double>();
-			CHECK(std::abs(parameters.at("position").get<double>() - (12000 + fraction * (120000 - 1))) < 1000);
+			CHECK(std::abs(parameters.at("position").get<double>() - (12000 + (fraction * (120000 - 1)))) < 1000);
 			CHECK(parameters.at("end") == 132000);
 			CHECK(parameters.at("sections").size() == 2);
 		}

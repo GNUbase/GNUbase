@@ -279,7 +279,7 @@ namespace gnubase::engine
 				writer->write(buffer.data(), count);
 			}
 			writer->close();
-			MediaFile rendered{
+			const MediaFile rendered{
 				project.newId(), path.u8string(), media.sampleRate, static_cast<int>(channels), outputFrames};
 			project.media[rendered.id] = rendered;
 			context.emit("media.added", {{"media", toJson(rendered)}});
