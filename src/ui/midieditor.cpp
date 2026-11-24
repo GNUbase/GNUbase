@@ -416,7 +416,7 @@ namespace gnubase::ui
 		if (shown == "list")
 		{
 			added->SetClass("list-editor", true);
-			m_list = std::make_unique<ListEditor>(m_binding, *added, m_name);
+			m_list = std::make_unique<ListEditor>(m_binding, *added, m_name, m_playbackPosition);
 		}
 		else if (shown == "pattern")
 		{
