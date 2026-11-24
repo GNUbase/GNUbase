@@ -826,16 +826,16 @@ TEST_CASE("updateSoloNotes asks the editor views for the soloed notes once", "[u
 	// #1838: it compared the source's answer with the project's and then asked again to publish it.
 	engine::ProjectModel model;
 	int calls = 0;
-	const std::vector<std::pair<engine::ObjectId, engine::ObjectId>> soloed = {{1, 2}};
+	using SoloNotes = std::vector<std::pair<engine::ObjectId, engine::ObjectId>>;
 	model.setSoloNotesSource(
-		[&]
+		[&calls]
 		{
 			++calls;
-			return soloed;
+			return SoloNotes{{1, 2}};
 		});
 	model.updateSoloNotes();
 	CHECK(calls == 1);
-	CHECK(model.project().soloNotes == soloed);
+	CHECK(model.project().soloNotes == SoloNotes{{1, 2}});
 	model.updateSoloNotes(); // unchanged: only the comparison
 	CHECK(calls == 2);
 }
