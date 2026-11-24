@@ -232,7 +232,8 @@ namespace gnubase::ui
 			control->RemoveAttribute("checked");
 		else if (value.is_number())
 			control->SetAttribute("value", widgets::format(value.get<float>()));
-		else if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControl*>(control); select && value.is_string())
+		else if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControl*>(control);
+			select != nullptr && value.is_string())
 			select->SetValue(value.get<std::string>());
 		m_showing = false;
 		if (value.is_number())
@@ -351,8 +352,9 @@ namespace gnubase::ui
 			const std::string key = std::string("meter.") + g_thresholds.at(i).first;
 			const auto reference = m_thresholds.find(key + "Reference");
 			const auto tolerance = m_thresholds.find(key + "Tolerance");
-			shown.emplace_back(values.at(i) && reference != m_thresholds.end() && tolerance != m_thresholds.end() &&
-						*values.at(i) > reference->second + tolerance->second
+			const std::optional<double>& value = values.at(i);
+			shown.emplace_back(value.has_value() && reference != m_thresholds.end() &&
+						tolerance != m_thresholds.end() && value.value_or(0.0) > reference->second + tolerance->second
 					? "over"
 					: "");
 		}
