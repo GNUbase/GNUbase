@@ -268,3 +268,73 @@ test.case("the editor selects steps and removes the selected ones", function()
 	test.equal(steps()[1].repeats, 2)
 	test.equal(steps()[2].event, a.id)
 end)
+
+test.case("the editor moves and copies steps dragged and takes events dropped", function()
+	test.cleanup(function()
+		if #ui.windows().windows > 1 then ui.command{command = "window.arranger"} end
+	end)
+	gnubase.track.add{type = "arranger", timeBase = "linear"}
+	local a = gnubase.arranger.add{position = 0, ["end"] = 48000}.event
+	local b = gnubase.arranger.add{position = 48000, ["end"] = 96000}.event
+	local c = gnubase.arranger.add{position = 96000, ["end"] = 144000}.event
+	gnubase.arranger.setChain{steps = {{event = a.id}, {event = b.id}, {event = c.id}}}
+	for _ = 1, 50 do
+		if arrangerWindow() == nil then break end
+		pcall(ui.wait, {selector = "#no-such-element", seconds = 0.05})
+	end
+	ui.command{command = "window.arranger"}
+	local window = openedWindow()
+	test.ok(window)
+	-- The names of the chain's steps, and those the list shows once it shows them.
+	local function order()
+		local names = {[a.id] = "A", [b.id] = "B", [c.id] = "C"}
+		local result = ""
+		for _, step in ipairs(steps()) do result = result .. names[step.event] end
+		return result
+	end
+	local function shown()
+		local result = ""
+		for _, element in ipairs(ui.dom{window = window, selector = "#chain-steps .name", depth = 0}.elements) do
+			result = result .. (element.attributes.value or "")
+		end
+		return result
+	end
+	local function becomes(names)
+		for _ = 1, 50 do
+			if order() == names and shown() == names then break end
+			pcall(ui.wait, {window = window, selector = "#no-such-element", seconds = 0.05})
+		end
+		test.equal(order(), names)
+		test.equal(shown(), names)
+	end
+	becomes("ABC")
+	-- A point in an element, a fraction of the way down.
+	local function at(selector, fraction)
+		local box = ui.dom{window = window, selector = selector, depth = 0}.elements[1].box
+		return {x = math.floor(box.x + box.width / 2), y = math.floor(box.y + box.height * fraction)}
+	end
+	local function drag(from, to, modifiers)
+		ui.drag{window = window, from = from, to = to, modifiers = modifiers} -- an empty table would be an object
+	end
+
+	-- Reference manual pp. 409-410: on a step's lower half the step dragged goes after it, on its upper half before it,
+	-- and with Alt it is copied.
+	drag(at("#step-0 .repeats", 0.5), at("#step-2 .repeats", 0.75))
+	becomes("BCA")
+	drag(at("#step-2 .repeats", 0.5), at("#step-0 .repeats", 0.25), {"alt"})
+	becomes("ABCA")
+	-- The selected steps move together when one of them is dragged; a press on one keeps the others selected.
+	ui.click{window = window, selector = "#step-0 .repeats"}
+	ui.click{window = window, selector = "#step-2 .repeats", modifiers = {"ctrl"}}
+	drag(at("#step-2 .repeats", 0.5), at("#step-3 .repeats", 0.75))
+	becomes("BAAC")
+	-- An event dropped from the Arranger Events list goes in where it is dropped.
+	drag(at("#event-" .. c.id .. " .name", 0.5), at("#step-1 .repeats", 0.25))
+	becomes("BCAAC")
+	-- A release on the step pressed is a click: it selects that step alone.
+	ui.click{window = window, selector = "#step-0 .repeats"}
+	ui.click{window = window, selector = "#step-1 .repeats", modifiers = {"ctrl"}}
+	ui.click{window = window, selector = "#step-1 .repeats"}
+	test.equal(#ui.dom{window = window, selector = "#chain-steps .selected", depth = 0}.elements, 1)
+	test.equal(order(), "BCAAC")
+end)
