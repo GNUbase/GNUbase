@@ -1105,9 +1105,13 @@ TEST_CASE("the inspector's Retrospective Recording menu inserts the track's buff
 						{{"position", now + to}, {"bytes", {0x80, pitch, 0}}}}}});
 		window.call("audio.render", {{"frames", frames}});
 	};
+	// Insert as Cycle Recording is enabled once the track's buffer says it holds two cycle laps (#2067).
+	const std::string cycleDisabled = "#inspector-retrospective-menu menuitem.retrospective-cycle[disabled]";
 	const auto choose = [&](const std::string& item)
 	{
 		window.click(".inspector .inspector-retrospective");
+		if (item == "retrospective-cycle")
+			REQUIRE(window.app.waitUntil([&] { return elements(window.app, cycleDisabled).empty(); }));
 		window.click("#inspector-retrospective-menu menuitem." + item);
 	};
 	const auto pitches = [&]
@@ -1130,6 +1134,12 @@ TEST_CASE("the inspector's Retrospective Recording menu inserts the track's buff
 	play(62, 100, 1000, 2000);
 	choose("retrospective-linear");
 	REQUIRE(window.app.waitUntil([&] { return pitches() == std::vector<std::vector<int64_t>>{{62}}; }));
+	// Without input from cycle laps it stays disabled.
+	play(63, 100, 1000, 2000);
+	window.click(".inspector .inspector-retrospective");
+	CHECK(window.call("midi.getRetrospective", {{"track", track}}).at("cycleLaps") == 0);
+	REQUIRE(window.app.waitUntil([&] { return elements(window.app, cycleDisabled).size() == 1; }));
+	window.click("#inspector-retrospective-menu menuitem.retrospective-empty");
 
 	// Insert as Cycle Recording: a part per lap.
 	window.call("transport.set", {{"left", 0}, {"right", 20000}, {"cycle", true}});

@@ -1526,9 +1526,23 @@ namespace gnubase::ui
 					? target
 					: target->Closest(".inspector-retrospective");
 				button != nullptr && m_retrospectiveMenu)
+			{
+				// Insert as Cycle Recording only for input from two or more cycle laps (p. 355, #2067).
+				if (Rml::Element* item = m_retrospectiveMenu->QuerySelector(".retrospective-cycle"); item != nullptr)
+				{
+					item->SetAttribute("disabled", "");
+					if (m_track != 0)
+						m_binding.send("midi.getRetrospective", {{"track", m_track}},
+							[item = item->GetObserverPtr()](const engine::Result& result)
+							{
+								if (item && result.ok() && result.value.at("cycleLaps").get<size_t>() > 1)
+									item->RemoveAttribute("disabled");
+							});
+				}
 				openMenu(*m_retrospectiveMenu.get(),
 					{button->GetAbsoluteLeft(), button->GetAbsoluteTop() + button->GetOffsetHeight()});
-			if (m_track != 0 &&
+			}
+			if (m_track != 0 && !target->HasAttribute("disabled") &&
 				(target->IsClassSet("retrospective-linear") || target->IsClassSet("retrospective-cycle")))
 				m_binding.send("midi.insertRetrospective",
 					{{"track", m_track}, {"cycle", target->IsClassSet("retrospective-cycle")}}, whenRefused());
