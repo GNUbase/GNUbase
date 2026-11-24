@@ -17,6 +17,14 @@
 #include <string>
 #include <utility>
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#include <commctrl.h>
+#endif
+
 namespace gnubase::ui
 {
 	namespace
@@ -236,6 +244,7 @@ namespace gnubase::ui
 			throw sdlError("SDL cannot start its video subsystem");
 		m_dialogEvent = SDL_RegisterEvents(1);
 		m_wakeEvent = SDL_RegisterEvents(1);
+		m_menuBarEvent = SDL_RegisterEvents(1);
 	}
 
 	SdlWindowSystem::~SdlWindowSystem()
@@ -322,6 +331,53 @@ namespace gnubase::ui
 		const WindowId id = SDL_GetWindowID(window);
 		m_textInputs[id] = std::make_unique<SdlTextInput>(window);
 		return id;
+	}
+
+#ifdef _WIN32
+	namespace
+	{
+		// Show Menu Bar's id in a window's system menu: below 0xF000, the system's own, with the low four bits
+		// clear, which Windows uses itself.
+		constexpr UINT_PTR g_showMenuBar = 0x4D10;
+
+		// Sees Show Menu Bar picked in the system menu, which Windows sends to the window rather than posting it,
+		// and passes it on as an SDL event of the type in data, for the window whose SDL id is window.
+		LRESULT CALLBACK systemMenuProc(
+			HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR window, DWORD_PTR data)
+		{
+			if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == g_showMenuBar)
+			{
+				SDL_Event event{};
+				event.type = static_cast<Uint32>(data);
+				event.user.windowID = static_cast<SDL_WindowID>(window);
+				if (!SDL_PushEvent(&event))
+					logging::warning("Cannot pass Show Menu Bar on: {}", SDL_GetError());
+				return 0;
+			}
+			if (message == WM_NCDESTROY)
+				RemoveWindowSubclass(hwnd, systemMenuProc, window);
+			return DefSubclassProc(hwnd, message, wParam, lParam);
+		}
+	}
+#endif
+
+	void SdlWindowSystem::setMenuBarShown([[maybe_unused]] WindowId window, [[maybe_unused]] bool shown)
+	{
+#ifdef _WIN32
+		// Show Menu Bar in the title bar's context menu, the system menu (reference manual p. 55).
+		auto* hwnd = static_cast<HWND>(SDL_GetPointerProperty(
+			SDL_GetWindowProperties(sdlWindow(window)), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+		HMENU menu = hwnd != nullptr ? GetSystemMenu(hwnd, FALSE) : nullptr;
+		if (menu == nullptr)
+			return;
+		if (GetMenuState(menu, g_showMenuBar, MF_BYCOMMAND) == static_cast<UINT>(-1))
+		{
+			AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+			AppendMenuW(menu, MF_STRING, g_showMenuBar, L"Show Menu Bar");
+			SetWindowSubclass(hwnd, systemMenuProc, window, m_menuBarEvent);
+		}
+		CheckMenuItem(menu, g_showMenuBar, MF_BYCOMMAND | (shown ? MF_CHECKED : MF_UNCHECKED));
+#endif
 	}
 
 	void SdlWindowSystem::destroyWindow(WindowId window)
@@ -534,6 +590,8 @@ namespace gnubase::ui
 	{
 		if (event.type == m_wakeEvent && m_wakeEvent != 0)
 			return WindowEvent{WindowEventKind::Wake};
+		if (event.type == m_menuBarEvent && m_menuBarEvent != 0)
+			return WindowEvent{WindowEventKind::MenuBarToggled, event.user.windowID};
 		if (event.type == m_dialogEvent)
 		{
 			const std::unique_ptr<DialogResult> result(static_cast<DialogResult*>(event.user.data1));

@@ -58,6 +58,7 @@ namespace gnubase::ui
 		FilesDropped,     // files were dragged from elsewhere and dropped on the window
 		FileDialogClosed, // a file dialog was answered, cancelled or failed
 		Wake,             // another thread asked the UI thread to wake up (wake), e.g. for work it posted
+		MenuBarToggled,   // the user picked Show Menu Bar in its title bar's context menu (setMenuBarShown)
 	};
 
 	struct WindowEvent
@@ -172,6 +173,11 @@ namespace gnubase::ui
 		// Shows the OS's file dialog without waiting for it. What the user chooses, or why the dialog failed, comes
 		// later as a FileDialogClosed event with the given id.
 		virtual void showFileDialog(uint64_t id, const FileDialog& dialog) = 0;
+
+		// Shows Show Menu Bar, checked while the window's menu bar shows, in the context menu of the window's title
+		// bar where the OS draws it with a menu of its own: Windows' system menu (reference manual p. 55). Picking it
+		// sends MenuBarToggled. Nothing elsewhere.
+		virtual void setMenuBarShown(WindowId window, bool shown) = 0;
 
 		// The next event, waiting up to timeout for one; without timeout, until one arrives. Input events are
 		// delivered to the window's input target before they are reported.

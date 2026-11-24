@@ -484,8 +484,7 @@ namespace gnubase::app
 						++it;
 					}
 				}
-				if (m_menu)
-					m_menu->update();
+				updateMenus();
 				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
 					pool->update();
 				// The cutting positions show while the quantize panel is open.
@@ -578,12 +577,10 @@ namespace gnubase::app
 					m_winding.stop(); // the keyboard focus lost: also a button held
 			});
 		// What a script's click or key changed shows in the menu before the script reads the DOM, as after a step.
-		m_shell.onInputHandled(
-			[this]
-			{
-				if (m_menu)
-					m_menu->update();
-			});
+		m_shell.onInputHandled([this] { updateMenus(); });
+		// Show Menu Bar in a window's title bar context menu (Windows, reference manual p. 55).
+		m_shell.onMenuBarToggled(
+			[this](ui::Window& window) { m_keys.run("window.menuBar", engine::Json::object(), window, nullptr); });
 		m_keys.add({"window.markers", "Opens or closes the markers window.",
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
@@ -2235,6 +2232,22 @@ namespace gnubase::app
 		return actions;
 	}
 
+	void AppUi::updateMenus()
+	{
+		if (m_menu)
+			m_menu->update();
+		for (auto it = m_windowMenus.begin(); it != m_windowMenus.end();)
+		{
+			if (m_shell.find(it->first) == nullptr)
+			{
+				it = m_windowMenus.erase(it); // the menu holds the window
+				continue;
+			}
+			it->second->update();
+			++it;
+		}
+	}
+
 	void AppUi::updateMixerWindows()
 	{
 		for (MixerWindow& shown : m_mixers)
@@ -2624,7 +2637,7 @@ namespace gnubase::app
 		spec.size = {1000, 600};
 		spec.bounds = m_docking.bounds("editor");
 		spec.hidden = m_hidden;
-		const ui::Window& window = m_shell.open(spec);
+		ui::Window& window = m_shell.open(spec);
 		m_editor.window = window.id();
 		const std::filesystem::path file = m_resources / "ui" / "editor.rml";
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
@@ -2651,6 +2664,7 @@ namespace gnubase::app
 					});
 			});
 		m_docking.attach("editorWindow", *document);
+		m_windowMenus[window.id()] = std::make_unique<ui::MainMenu>(m_keys, window, *document);
 	}
 
 	void AppUi::closeEditor(const std::string& editor)
@@ -2743,7 +2757,7 @@ namespace gnubase::app
 		spec.size = {1000, 560};
 		spec.bounds = m_docking.bounds("mixer" + std::to_string(number));
 		spec.hidden = m_hidden;
-		const ui::Window& window = m_shell.open(spec);
+		ui::Window& window = m_shell.open(spec);
 		shown.window = window.id();
 		const std::filesystem::path file = m_resources / "ui" / "mixer.rml";
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
@@ -2758,6 +2772,7 @@ namespace gnubase::app
 		shown.mixer = std::make_unique<ui::Mixer>(m_binding, m_meters, m_docking, *root,
 			"window" + std::to_string(number), ui::MixerKind::Window, mixerActions());
 		m_docking.attach("mixer" + std::to_string(number), *document);
+		m_windowMenus[window.id()] = std::make_unique<ui::MainMenu>(m_keys, window, *document);
 		m_docking.saveWindows();
 		return shown.mixer.get();
 	}

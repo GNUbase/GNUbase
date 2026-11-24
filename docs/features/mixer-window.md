@@ -71,8 +71,8 @@ control's last step answered, its strip shows the engine's value; a refused one 
   changes made before the engine answers all count; it reads its view again once the last is answered, and ignores that
   answer while a newer change is still out. The lower zone's mixer follows the project window's track visibility, and a
   window does with Sync Visibility of Project and Mixer ([track-visibility.md](track-visibility.md)).
-- **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the left zone (in a
-  window) and the strips' sections Pictures, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them, with
+- **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the menu bar and the left
+  zone (in a window; the menu bar's reduced menus are in [main-menu.md](main-menu.md), p. 55) and the strips' sections Pictures, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them, with
   Show All, Reset All and presets ([docking.md](docking.md)); the layout is the user setting
   `ui.layout`, per window (`mixer1` to `mixer4`, and `project` for the lower zone's).
 - **Order** (p. 496). A channel's name dragged onto another channel takes its place: its track moves into that

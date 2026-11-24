@@ -49,6 +49,7 @@ namespace gnubase::ui
 		void setClipboardText(const std::string& text) override;
 		void setCursor(const Cursor& cursor) override;
 		void showFileDialog(uint64_t id, const FileDialog& dialog) override;
+		void setMenuBarShown(WindowId window, bool shown) override;
 		std::optional<WindowEvent> nextEvent(std::optional<std::chrono::milliseconds> timeout) override;
 		void wake() override;
 
@@ -90,6 +91,7 @@ namespace gnubase::ui
 		std::map<std::string, std::unique_ptr<SDL_Cursor, DestroyCursor>> m_cursors; // made once per name; null: arrow
 		uint32_t m_dialogEvent = 0;      // the SDL event type that brings file dialog results to the main thread
 		uint32_t m_wakeEvent = 0;        // the SDL event type that wake pushes
+		uint32_t m_menuBarEvent = 0;     // the SDL event type for Show Menu Bar picked in a window's system menu
 		WindowId m_keyboardGained = 0;   // the window that just got the keyboard, until an event other than a key-down
 		uint64_t m_keyboardGainedAt = 0; // when, in SDL's nanoseconds
 		WindowId m_altHeldOnGaining = 0; // the window whose Alt was held as it got the keyboard, until Alt is released

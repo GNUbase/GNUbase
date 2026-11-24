@@ -349,6 +349,10 @@ namespace gnubase::ui
 			window->m_renderRequested = true;
 			dropFiles(*window, event.position, event.files);
 			break;
+		case WindowEventKind::MenuBarToggled:
+			if (m_menuBarToggled)
+				m_menuBarToggled(*window);
+			break;
 		default:
 			break;
 		}

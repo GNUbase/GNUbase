@@ -302,6 +302,7 @@ namespace gnubase::app
 		// Once a frame: lets go of the mixer windows the user closed, and the channel settings windows that follow show
 		// the first selected track (reference manual p. 499).
 		void updateMixerWindows();
+		void updateMenus(); // the project window's and the other windows' (#444)
 		// What the mixers ask of the app: pictures, Edit Channel Settings, Add Effect Track to Send, and the channel
 		// settings window going to another track, which the track list then selects.
 		ui::MixerActions mixerActions();
@@ -474,8 +475,10 @@ namespace gnubase::app
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_projectDialogs;
 		uint64_t m_resets = 0;
 		ui::Subscription m_projectReset;
-		ui::ProjectFiles m_files;                          // the File menu's project commands
-		std::unique_ptr<ui::MainMenu> m_menu;              // the project window's
+		ui::ProjectFiles m_files;             // the File menu's project commands
+		std::unique_ptr<ui::MainMenu> m_menu; // the project window's
+		// The mixer and editor windows' reduced menus (#444).
+		std::map<ui::WindowId, std::unique_ptr<ui::MainMenu>> m_windowMenus;
 		Rml::ObserverPtr<Rml::Element> m_studioSetup;      // the open studio setup dialog's document
 		Rml::ObserverPtr<Rml::Element> m_midiDevices;      // the open MIDI device manager's document
 		Rml::ObserverPtr<Rml::Element> m_projectSetup;     // the open project setup dialog's document

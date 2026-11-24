@@ -515,8 +515,10 @@ namespace gnubase::ui
 		for (const auto& [type, label] : g_types)
 			filter += std::string(R"(<menuitem type="toggle" channel-type=")") + type + R"(" checked="">)" + label +
 				"</menuitem>";
-		std::string layout =
-			m_kind == MixerKind::Window ? R"(<button type="toggle" toggle="left">Left Zone</button>)" : "";
+		// A mixer window's menu bar and left zone (reference manual pp. 55, 439).
+		std::string layout = m_kind == MixerKind::Window ? R"(<button type="toggle" toggle="menuBar">Menu Bar</button>)"
+														   R"(<button type="toggle" toggle="left">Left Zone</button>)"
+														 : "";
 		layout += R"(<div setup-presets="channel"/><button setup-preset-save="channel">Save Preset</button>)"
 				  R"(<button setup-all="channel">Show All</button><button setup-reset="channel">Reset All</button>)"
 				  R"(<div setup="channel"/>)";

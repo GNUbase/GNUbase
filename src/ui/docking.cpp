@@ -1241,6 +1241,11 @@ namespace gnubase::ui
 			applySize(*sized, find(m_layout, {"windows", window, "sizes", attribute(*sized, "resizable")}));
 		for (Rml::Element* strip : elements(*document, "[strip]"))
 			strip->SetClass("hidden", !visible(window, attribute(*strip, "strip")));
+		// Show Menu Bar in the title bar's context menu of a window with a menu bar (Windows, reference manual p. 55).
+		if (document->QuerySelector("[strip=menuBar]") != nullptr)
+			for (const Window* shown : m_shell.windows())
+				if (&shown->context() == document->GetContext())
+					m_shell.setMenuBarShown(shown->id(), visible(window, "menuBar"));
 		for (const char* strip : {"toolbar", "infoLine", "overviewLine", "statusLine", "transportBar"})
 			document->SetClass(std::string("no-") + strip, !visible(window, strip));
 		for (Rml::Element* toggle : elements(*document, "[toggle]"))

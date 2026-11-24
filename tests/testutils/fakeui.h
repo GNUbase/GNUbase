@@ -89,6 +89,7 @@ namespace gnubase::test
 		void setClipboardText(const std::string& text) override { m_clipboard = text; }
 		void setCursor(const ui::Cursor& cursor) override { m_cursor = cursor; }
 		void showFileDialog(uint64_t id, const ui::FileDialog& dialog) override { m_dialogs[id] = dialog; }
+		void setMenuBarShown(ui::WindowId /*window*/, bool /*shown*/) override {}
 		std::optional<ui::WindowEvent> nextEvent(std::optional<std::chrono::milliseconds> timeout) override;
 		void wake() override;
 
