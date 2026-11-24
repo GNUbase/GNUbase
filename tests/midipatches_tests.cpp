@@ -224,6 +224,17 @@ TEST_CASE("Export Setup writes the MIDI devices into a file, which Import Setup 
 		ContainsSubstring("program"));
 	CHECK_THAT(
 		refused(R"(<MidiDevices><Device name="A"/><Device name="A"/></MidiDevices>)"), ContainsSubstring("twice"));
+	CHECK_THAT(refused(R"(<MidiDevices><Device name="A"><Bank name="B"><Patch name="P" program="1.5"/></Bank></Device>)"
+					   "</MidiDevices>"),
+		ContainsSubstring("the program of patch P of A, 1.5, isn't a whole number"));
+	CHECK_THAT(
+		refused(R"(<MidiDevices><Device name="A"><BankAssignment channel="10" bank="x"/></Device></MidiDevices>)"),
+		ContainsSubstring("the bank of MIDI channel 10 of A, x, isn't a whole number"));
+	CHECK_THAT(refused(R"(<MidiDevices><Device name="A"><Bank name="B"/><BankAssignment channel="10" bank="1"/>)"
+					   "</Device></MidiDevices>"),
+		ContainsSubstring("bank it doesn't have"));
+	CHECK_THAT(refused("<MidiDevices><Device/></MidiDevices>"), ContainsSubstring("no name"));
+	CHECK(installed() == devices);
 }
 
 TEST_CASE("loading ignores program and bank on channels without a MIDI track", "[unit]")

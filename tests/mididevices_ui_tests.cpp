@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -229,6 +230,23 @@ TEST_CASE("the MIDI device manager exports its devices into a setup file and imp
 	CHECK(!devices(app).contains("My Synth"));
 	click(app, "#import-midi-devices button[result=cancel]");
 	REQUIRE(app.waitUntil([&] { return elements(app, "#import-midi-devices").empty(); }));
+
+	// A file that isn't a setup lists no devices, and the dialog says why.
+	const std::filesystem::path notSetup = dir.path() / "Notes.txt";
+	std::ofstream(notSetup, std::ios::binary) << "not a setup";
+	click(app, "#import-setup");
+	answer(notSetup);
+	REQUIRE(app.waitUntil(
+		[&] { return message("#import-devices-message").find("isn't a MIDI device setup") != std::string::npos; }));
+	CHECK(elements(app, "#import-devices input").empty());
+	click(app, "#import-midi-devices button[result=cancel]");
+	REQUIRE(app.waitUntil([&] { return elements(app, "#import-midi-devices").empty(); }));
+
+	// Export Setup into a folder that doesn't exist writes nothing, and the manager says why.
+	click(app, "#export-setup");
+	answer(dir.path() / "Missing" / "Studio.xml");
+	REQUIRE(app.waitUntil([&] { return message("#midi-devices-message").find("can't write") != std::string::npos; }));
+	CHECK(!std::filesystem::exists(dir.path() / "Missing"));
 	click(app, "#close");
 	REQUIRE(app.waitUntil([&] { return elements(app, "#midi-devices").empty(); }));
 }

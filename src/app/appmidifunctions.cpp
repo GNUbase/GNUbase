@@ -335,7 +335,7 @@ namespace gnubase::app
 				dialog.location = "MIDI Devices.xml";
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this](const ui::FileDialogResult& result)
+					[this, id = window.id()](const ui::FileDialogResult& result)
 					{
 						if (!result.error.empty())
 							logging::warning("The file dialog failed: {}", result.error);
@@ -344,16 +344,21 @@ namespace gnubase::app
 						std::filesystem::path file = result.files.front();
 						if (file.extension().empty())
 							file += ".xml";
-						// Why it failed goes into the manager's message, if it is still open.
+						// Why it failed goes into the manager's message if it is open, else into a notice.
 						m_binding.send("midiDevice.export", {{"path", file.u8string()}},
-							[this](const engine::Result& exported)
+							[this, id](const engine::Result& exported)
 							{
+								if (exported.ok())
+									return;
+								logging::warning("Export Setup: {}", exported.error);
 								Rml::Element* document = m_midiDevices.get();
 								Rml::Element* message = document != nullptr && document->GetParentNode() != nullptr
 									? document->GetElementById("midi-devices-message")
 									: nullptr;
-								if (!exported.ok() && message != nullptr)
+								if (message != nullptr)
 									message->SetInnerRML(Rml::StringUtilities::EncodeRml(exported.error));
+								else
+									m_files.showNotice(id, "Export Setup", exported.error);
 							});
 					});
 			}});

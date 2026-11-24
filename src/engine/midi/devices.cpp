@@ -127,8 +127,10 @@ namespace gnubase::engine::midi
 			return text.str();
 		}
 
-		// An attribute's whole number into to[key], if the element has it.
-		void readNumber(Json& to, const std::string& key, const pugi::xml_attribute& attribute)
+		// An attribute's whole number into to[key], if the element has it; subject names it in the error, e.g. "the
+		// program of patch P of A".
+		void readNumber(
+			Json& to, const std::string& key, const pugi::xml_attribute& attribute, const std::string& subject)
 		{
 			if (!attribute)
 				return;
@@ -136,7 +138,7 @@ namespace gnubase::engine::midi
 			long long number = 0;
 			const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
 			if (error != std::errc() || end != text.data() + text.size())
-				throw CommandError(key + " " + std::string(text) + " isn't a whole number");
+				throw CommandError(subject + ", " + std::string(text) + ", isn't a whole number");
 			to[key] = number;
 		}
 
@@ -168,8 +170,9 @@ namespace gnubase::engine::midi
 					for (const pugi::xml_node patchNode : bankNode.children("Patch"))
 					{
 						Json patch = {{"name", patchNode.attribute("name").value()}};
-						readNumber(patch, "program", patchNode.attribute("program"));
-						readNumber(patch, "bank", patchNode.attribute("bank"));
+						const std::string of = " of patch " + patch.at("name").get<std::string>() + " of " + name;
+						readNumber(patch, "program", patchNode.attribute("program"), "the program" + of);
+						readNumber(patch, "bank", patchNode.attribute("bank"), "the bank" + of);
 						if (const pugi::xml_attribute folder = patchNode.attribute("folder"))
 							patch["folder"] = folder.value();
 						patches.push_back(std::move(patch));
@@ -179,7 +182,11 @@ namespace gnubase::engine::midi
 				Json device = {{"banks", std::move(banks)}};
 				Json assignment = Json::object();
 				for (const pugi::xml_node assigned : node.children("BankAssignment"))
-					readNumber(assignment, assigned.attribute("channel").value(), assigned.attribute("bank"));
+				{
+					const std::string channel = assigned.attribute("channel").value();
+					readNumber(assignment, channel, assigned.attribute("bank"),
+						std::string("the bank of MIDI channel ").append(channel).append(" of ").append(name));
+				}
 				if (!assignment.empty())
 					device["bankAssignment"] = std::move(assignment);
 				byName[name] = device;
