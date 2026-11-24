@@ -14,7 +14,10 @@ The project window's status line (#407, reference manual pp. 26, 71, 129), a str
   an hour "4 min 09 s", and "-" while no track would record or the disk has no measurement yet. The status line reads
   it again every second (`StatusLine::update`, which `app::AppUi` calls with `Shell::every`), as arming tracks, the
   record format and the disk filling up, also by other programs, change it; only while the field is shown, and with
-  no question still waiting (#645). Shown again, the field follows within a second.
+  no question of its own still waiting (#645). Shown again, the field follows within a second. The Max. Record Time
+  window (Studio > More Options > Max. Record Time, `window.maxRecordTime`, p. 356) shows the same field in a window
+  of its own (`resources/ui/max-record-time.rml`, another `StatusLine`), which workspaces open and place as the other
+  windows; tests: `tests/statusline_tests.cpp`.
 - **Lost audio device.** While a device is lost, `#lost-device` shows "Audio Device Lost: " and the device's name, with
   the reason it can't be opened and the device's id in parentheses as its tooltip (`title`) (#455): the id tells devices
   of one name apart, and is left out for a device without a name, which shows its id already. Otherwise it has the

@@ -678,6 +678,7 @@
 		<menuitem id="studio-more-options">More Options
 			<menu>
 				<menuitem command="window.midiDeviceManager">MIDI Device Manager</menuitem>
+				<menuitem command="window.maxRecordTime">Max. Record Time</menuitem>
 			</menu>
 		</menuitem>
 		<menuitem command="window.studioSetup">Studio Setup...</menuitem>

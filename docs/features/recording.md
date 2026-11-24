@@ -106,16 +106,17 @@ transport's record state and the record mode setting.
   its offset after the pre-recorded frames, so resizing its start to the left brings them out. Input from before a gap
   (a lost chunk, a new device) isn't kept.
 - **Lock Record** (#104, p. 356) keeps a recording from ending by accident. `transport.set` with `lockRecord`, which
-  the Transport menu's Lock Record and Unlock Record set (the reference has key commands without default keys for
-  them; the key commands editor will bind them), turns it on and off; it stays on for later recordings until it is
-  turned off. While it is on and the transport records, `transport.stop`, `transport.toggle` and `transport.record`
+  the Transport menu's Lock Record and Unlock Record set, turns it on and off; it stays on for later recordings until
+  it is turned off. The key commands editor lists both in the transport area without default keys, as the reference
+  does (#645). While it is on and the transport records, `transport.stop`, `transport.toggle` and `transport.record`
   refuse to stop or punch out unless they get `confirmed`, and their reason says which they refused; playback that
   doesn't record stops as usual. The check reads the audio thread's state (`Transport::recordingNow`), so a stop just
   after the punch in at the left locator, before the command thread has taken it over, is refused too. The audio
   thread ignores the automatic punch out at the right locator, so with `audio.stopAfterPunchOut` playback doesn't stop
   there either. In the UI, a stop, Start/Stop or Record that the engine refused this way opens
   `resources/ui/lock-record.rml` (`app::AppUi` hears the refusal with `EngineBinding::onResult` and checks
-  `transport.get`), which asks to confirm what was refused: Stop sends `transport.stop` with `confirmed`, Punch Out
+  `transport.get`) in the window whose key, button or menu item sent the command (`KeyCommands::sentFrom`, the main
+  window for a command from elsewhere, #645), so a refusal in a mixer or editor window of its own asks there; it asks to confirm what was refused: Stop sends `transport.stop` with `confirmed`, Punch Out
   `transport.record` with `record` false and `confirmed`, so playback goes on; Cancel goes on recording. Tests:
   `tests/transport_tests.cpp` (the punch out ignored for any block size, the commands, a stop right after the punch
   in) and `tests/lockrecord_tests.cpp` (the menu and the dialog in the app's UI).
@@ -127,13 +128,12 @@ transport's record state and the record mode setting.
   as one on a network drive, doesn't hold up the engine's commands: the command starts a measurement and answers
   with the folder's last one at once; only while the folder has none yet does it wait a quarter of a second for it,
   and `seconds` and `availableBytes` are null while there is none. It starts no second measurement while one runs. Tests: `tests/statusline_tests.cpp`. The
-  status line shows it ([status-line.md](status-line.md)).
+  status line shows it, and the Max. Record Time window ([status-line.md](status-line.md)).
 
 ## Not yet
 
 Record folders per track (p. 343); the common record modes (Punch In/Out, Re-Record, starting at the left locator or
 the selection, p. 339); punch points apart from the locators (p. 319); drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); stacking the laps of a cycle recording
 that a split puts into two files onto lanes together; recording the output of a bus or channel (p. 345);
-adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash; the Max. Record
-Time window of its own (Studio > More Options, p. 356), which the status line field stands for, and with record
-folders per track the time of the fullest disk.
+adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash; with record
+folders per track, the remaining record time of the fullest disk (p. 356).

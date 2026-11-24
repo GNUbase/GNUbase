@@ -406,10 +406,13 @@ namespace gnubase::ui
 			add(binding.command, binding.parameters, about);
 		}
 		// Commands with parameters that no default key runs, for the user to give keys to: Trigger Arranger Event 1 to
-		// 9 in the arranger area (p. 411).
+		// 9 in the arranger area (p. 411), Lock Record and Unlock Record in the transport area (p. 356, #645).
 		if (const auto trigger = m_engineCommands.find("arranger.trigger"); trigger != m_engineCommands.end())
 			for (int number = 1; number <= 9; ++number)
 				add(trigger->first, Json{{"number", number}}, trigger->second.description);
+		if (const auto set = m_engineCommands.find("transport.set"); set != m_engineCommands.end())
+			for (const bool locked : {true, false})
+				add(set->first, Json{{"lockRecord", locked}}, set->second.description);
 		std::stable_sort(found.begin(), found.end(), [](const Json& a, const Json& b)
 			{ return a.at("command").get<std::string>() < b.at("command").get<std::string>(); });
 		return found;
@@ -562,7 +565,14 @@ namespace gnubase::ui
 		// After what the user did before that waits for an answer (EngineBinding::afterAwaited), e.g. an undo right
 		// after Delete on a range whose edges move to zero crossings.
 		const auto sent = std::make_shared<const std::pair<std::string, Json>>(command, parameters);
+		m_sentFrom[command] = window.id();
 		m_binding.afterAwaited([&binding = m_binding, sent] { binding.send(sent->first, sent->second); });
+	}
+
+	WindowId KeyCommands::sentFrom(const std::string& command) const
+	{
+		const auto found = m_sentFrom.find(command);
+		return found != m_sentFrom.end() ? found->second : 0;
 	}
 
 	void KeyCommands::enableWhen(
