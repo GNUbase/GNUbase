@@ -2693,6 +2693,14 @@ splitter.column .splitter-grip-horizontal
 	padding: 2dp 0;
 }
 
+/* The Note Expression section's expressions (docs/features/note-expression-setup.md): the In column, then the name. */
+.inspector .expression-in
+{
+	width: 28dp;
+	flex-shrink: 0;
+	padding-left: 4dp;
+}
+
 .inspector .arranger-row
 {
 	display: flex;

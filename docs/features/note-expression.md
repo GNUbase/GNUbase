@@ -265,8 +265,7 @@ loading cutting them there.
   and Remove Note Expression in the MIDI menu (p. 1314).
 - Parameter Selection lists the expressions the note uses and those chosen in the inspector, not all seven (p. 1309,
   #1513).
-- The inspector's Note Expression section with its input assignments, MIDI learn, value ranges and bypass (pp.
-  1300-1302, #1513).
+- What the inspector's Note Expression section doesn't have yet: [note-expression-setup.md](note-expression-setup.md).
 - The Note Expression Assignment's Preferred and Alternative rules (Expression Name Contains, Note Expression Number, As
   Recommended by Instrument, p. 1299), and renewing the assignments when the instrument or its preset changes (p. 1298,
   #1829): they choose among a plugin's own expressions and need to know which expressions an instrument has, which need

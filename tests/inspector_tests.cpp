@@ -9,6 +9,8 @@
 
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "platform/hosttime.h"
+#include "platform/midi/dummyport.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
 #include "ui/enginebinding.h"
@@ -31,6 +33,7 @@
 #include <cmath>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -71,8 +74,8 @@ namespace
 	// The project window at a dp ratio of 1 with the info line and the inspector shown.
 	struct Window
 	{
-		explicit Window(int width = 1200)
-			: app{{width, 600}}, display(app.appUi().showProject()), list(*app.appUi().trackList())
+		explicit Window(int width = 1200, std::vector<std::unique_ptr<midi::Backend>> backends = midi::makeBackends())
+			: app{{width, 600}, std::move(backends)}, display(app.appUi().showProject()), list(*app.appUi().trackList())
 		{
 			app.setDpRatio(1.0F);
 			app.appUi().docking().setVisible("project", "infoLine", true);
@@ -846,6 +849,9 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 		window.click(".inspector [row=volume] .inspector-label", ui::MouseButton::Right);
 	window.click("#inspector-setup [setup-all]");
 	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, ".inspector [section=notepad]", "hidden"); }));
+	// Escape closes the pane, which would cover the buttons below.
+	window.app.ui().key(std::nullopt, "Escape");
+	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, "#inspector-setup", "open"); }));
 
 	// Another track: the group has no input or record buttons, but switches its time base (pp. 179-180); a marker
 	// track has no channel to show.
@@ -2734,4 +2740,61 @@ TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change 
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
 	CHECK(hasClass(window.app, ".inspector [section=midiInserts]", "unavailable"));
 	CHECK(hasClass(window.app, ".inspector [section=midiSends]", "unavailable"));
+}
+
+TEST_CASE("the inspector's Note Expression section shows and changes the track's input assignments, ranges and bypass",
+	"[ui]")
+{
+	auto backend = std::make_unique<midi::DummyBackend>();
+	backend->addLoopback("Keys");
+	midi::DummyBackend& dummy = *backend;
+	std::vector<std::unique_ptr<midi::Backend>> backends;
+	backends.push_back(std::move(backend));
+	Window window(1200, std::move(backends));
+	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK_FALSE(hasClass(window.app, ".inspector [section=noteExpression]", "unavailable"));
+	for (const char* section : {"basics", "routing", "modifiers", "midiInserts", "midiSends"})
+		window.click(".inspector [section=" + std::string(section) + "] .section-header");
+	const auto setup = [&] { return window.channel(keys).at("noteExpression"); };
+	const std::string section = ".inspector [section=noteExpression] ";
+
+	window.click(section + "button[control=noteExpression-bypass]");
+	REQUIRE(window.app.waitUntil([&] { return setup().at("bypass") == true; }));
+	// Tuning selected: its range in Parameter Details, its input from the list and its range typed.
+	window.click(section + "[expression=\"2\"]");
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, section + "[expression=\"2\"]", "selected"); }));
+	CHECK(attribute(window.app, section + "valuefield[control=noteExpression-max]", "max") == "120");
+	CHECK(window.shows(section + "valuefield[control=noteExpression-min]", "-120.00"));
+	window.click(section + "select[control=noteExpression-input]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click(section + "select[control=noteExpression-input]");
+	window.type(section + "valuefield[control=noteExpression-max]", "12");
+	const Json tuning = {{"type", "tuning"}, {"input", "pitchBend"}, {"min", -120.0}, {"max", 12.0}};
+	REQUIRE(window.app.waitUntil([&] { return setup().at("inputs") == Json::array({tuning}); }));
+	CHECK(element(window.app, section + "[expression=\"2\"] .expression-in").value("text", "") == "PB");
+
+	// MIDI Learn on brightness takes the next controller the MIDI inputs receive.
+	window.click(section + "[expression=\"5\"]");
+	window.click(section + "button[control=noteExpression-learn]");
+	const std::unique_ptr<midi::Output> device = dummy.openOutput("Keys");
+	audio::MidiMessage message;
+	message.size = 3;
+	message.bytes = {0xB0, 21, 64};
+	device->send(message, hostTime() - 1000000000);
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			if (!window.call("audio.get").at("running").get<bool>())
+			{
+				window.call("audio.render", {{"frames", 128}});
+				window.call("midi.activity");
+			}
+			return setup().at("inputs").size() == 2;
+		}));
+	CHECK(setup().at("inputs").at(1) == Json{{"type", "brightness"}, {"input", "cc21"}, {"min", 0.0}, {"max", 1.0}});
+	CHECK_FALSE(hasClass(window.app, section + "button[control=noteExpression-learn]", "checked"));
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return setup().at("inputs") == Json::array({tuning}); }));
 }
