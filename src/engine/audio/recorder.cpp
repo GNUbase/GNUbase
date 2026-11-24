@@ -110,6 +110,14 @@ namespace gnubase::engine
 		}
 	}
 
+	BroadcastInfo broadcastNow(
+		const std::string& description, const std::string& author, const std::string& reference, uint64_t timeReference)
+	{
+		BroadcastInfo info{cut(description, 256), cut(author, 32), cut(reference, 32), {}, {}, timeReference};
+		std::tie(info.originationDate, info.originationTime) = originationNow();
+		return info;
+	}
+
 	WriteOptions recordFormat(const Project& project)
 	{
 		WriteOptions options;
@@ -701,7 +709,6 @@ namespace gnubase::engine
 		{
 			// The project start time plus the first frame's position, pre-recorded input included, not before midnight.
 			BroadcastInfo& broadcast = *m_current.format.broadcast;
-			std::tie(broadcast.originationDate, broadcast.originationTime) = originationNow();
 			const auto first = static_cast<time::Samples>(broadcast.timeReference) + chunk.position -
 				static_cast<time::Samples>(before);
 			broadcast.timeReference = static_cast<uint64_t>(std::max<time::Samples>(first, 0));
@@ -739,14 +746,10 @@ namespace gnubase::engine
 												 .u8string();
 					WriteOptions options = m_current.format;
 					options.channels = static_cast<int>(track.ports.size());
-					if (options.broadcast)
-					{
-						BroadcastInfo& broadcast = *options.broadcast;
-						broadcast.description =
-							cut(broadcast.description.empty() ? track.name : broadcast.description, 256);
-						broadcast.originator = cut(broadcast.originator, 32);
-						broadcast.originatorReference = cut(broadcast.originatorReference, 32);
-					}
+					if (const std::optional<BroadcastInfo> broadcast = options.broadcast)
+						options.broadcast =
+							broadcastNow(broadcast->description.empty() ? track.name : broadcast->description,
+								broadcast->originator, broadcast->originatorReference, broadcast->timeReference);
 					if (options.text && options.text->description.empty())
 						options.text->description = track.name;
 					m_files.push_back({track, path, m_createWriter(path, options), options});

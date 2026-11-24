@@ -121,6 +121,11 @@ namespace gnubase::engine
 	// sample rate. A Broadcast Wave file gets a bext chunk; the recorder fills in what belongs to each file.
 	WriteOptions recordFormat(const Project& project);
 
+	// A bext chunk made now (reference manual p. 1615): the strings cut to their fields' 256, 32 and 32 bytes between
+	// two UTF-8 characters, and the local date and time.
+	BroadcastInfo broadcastNow(const std::string& description, const std::string& author, const std::string& reference,
+		uint64_t timeReference);
+
 	// Where and how a recording that starts writes its files.
 	struct RecordSetup
 	{
