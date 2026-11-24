@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -125,6 +126,8 @@ namespace gnubase::ui
 		int64_t lengthQuantize() const;
 		const Part* partAt(int64_t ticks) const;
 
+		// The view's selected notes and controller events.
+		std::set<std::pair<uint64_t, uint64_t>> viewSelection() const;
 		// show: whether the rows show the selection at once, or when editor.changed confirms it.
 		void select(std::set<std::pair<uint64_t, uint64_t>> rows, bool show = true);
 		void setView(engine::Json parameters);
@@ -150,7 +153,8 @@ namespace gnubase::ui
 		std::vector<Part> m_parts;
 		std::vector<Row> m_rows;
 		std::set<std::pair<uint64_t, uint64_t>> m_selection; // notes and controller events: ids are unique
-		int64_t m_from = 0;                                  // the event display's time axis, project ticks
+		int m_selectionsOut = 0; // select()'s editor.set commands not answered yet: show() keeps m_selection then
+		int64_t m_from = 0;      // the event display's time axis, project ticks
 		int64_t m_to = 1;
 		std::string m_rowsRml; // the rows' elements as last set
 		bool m_ctrl = false;   // Ctrl (Cmd) held at the last key press: an edit sets every selected event's value
@@ -170,5 +174,6 @@ namespace gnubase::ui
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::optional<std::pair<uint64_t, uint64_t>> m_menuRow; // the part and note or direction of the menu
 		bool m_menuNote = false;
+		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 	};
 }
