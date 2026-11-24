@@ -257,9 +257,18 @@
 			return value == true or (type(value) == "number" and value ~= 0)
 		end
 
+		-- Shows the steps selected. The rows stay, so that a second click on one is a double click.
+		local function showSelected()
+			local each = editor.document:GetElementById("chain-steps").first_child
+			while each ~= nil do
+				each:SetClass("selected", editor.selected[math.tointeger(tonumber(each.id:sub(6)))] == true)
+				each = each.next_sibling
+			end
+		end
 		-- A click on a step selects it, with Shift from the step clicked last, with Ctrl (Cmd) adds or removes it
 		-- (p. 410); not on its buttons and its repeat mode. On the press: a button's click builds the list again, which
-		-- takes its element away before the click would reach the list.
+		-- takes its element away before the click would reach the list. A press on a step selected keeps the others,
+		-- so that a drag moves them all; its release selects it alone.
 		function editor.select(event)
 			if event.parameters.button ~= 0 then return end
 			local element = event.target_element
@@ -272,6 +281,7 @@
 			if row == nil then return end
 			local step = math.tointeger(tonumber(row.id:sub(6)))
 			local parameters = event.parameters
+			local alone = false
 			if held(parameters, "shift_key") and editor.anchor ~= nil then
 				editor.selected = {}
 				for each = math.min(step, editor.anchor), math.max(step, editor.anchor) do editor.selected[each] = true end
@@ -279,15 +289,68 @@
 				editor.selected[step] = not editor.selected[step] or nil
 				editor.anchor = step
 			else
-				editor.selected = {[step] = true}
+				alone = editor.selected[step] == true
+				if not alone then editor.selected = {[step] = true} end
 				editor.anchor = step
 			end
-			-- The rows stay, so that a second click on one is a double click.
-			local each = editor.document:GetElementById("chain-steps").first_child
-			while each ~= nil do
-				each:SetClass("selected", editor.selected[math.tointeger(tonumber(each.id:sub(6)))] == true)
-				each = each.next_sibling
+			editor.pressed = {step = step, alone = alone}
+			showSelected()
+		end
+		-- A press on an arranger event's row, not on its buttons, may drag it into the chain list.
+		function editor.pressEvent(event)
+			local element = event.target_element
+			if event.parameters.button ~= 0 or element.tag_name == "button" then return end
+			while element ~= nil and not element:IsClassSet("arranger-row") do element = element.parent_node end
+			if element ~= nil then editor.pressed = {event = math.tointeger(tonumber(element.id:sub(7)))} end
+		end
+		-- An element's top in the window: RmlUi's Lua elements have no absolute offset. Each offset parent scrolls
+		-- what it holds, as #chain-steps does its rows.
+		local function absoluteTop(element)
+			local top = element.offset_top
+			local parent = element.offset_parent
+			while parent ~= nil do
+				top = top + parent.offset_top - parent.scroll_top
+				parent = parent.offset_parent
 			end
+			return top
+		end
+		-- The release of a step or an event pressed: dropped on the chain list it goes before the step under the
+		-- mouse, or after it on its lower half, or after the last one beside them (pp. 409-410). Steps dragged move,
+		-- with Alt they are copied, the selected ones together if the one dragged is one of them.
+		function editor.release(event)
+			local pressed = editor.pressed
+			editor.pressed = nil
+			if pressed == nil or editor.document == nil then return end
+			local element = event.target_element
+			local row
+			while element ~= nil and element.id ~= "chain-steps" do
+				if element:IsClassSet("arranger-row") then row = element end
+				element = element.parent_node
+			end
+			local chain = activeChain(editor.arranger)
+			if element == nil or chain == nil then return end
+			local to = #chain.steps
+			if row ~= nil then
+				to = math.tointeger(tonumber(row.id:sub(6)))
+				if pressed.step == to then -- a click
+					if pressed.alone then
+						editor.selected = {[to] = true}
+						showSelected()
+					end
+					return
+				end
+				if event.parameters.mouse_y >= absoluteTop(row) + row.offset_height / 2 then to = to + 1 end
+			end
+			if pressed.event ~= nil then
+				gnubase.arranger.setChain{addEvents = {pressed.event}, to = to}
+				return
+			end
+			local moved = {pressed.step}
+			if editor.selected[pressed.step] then
+				moved = {}
+				for step in pairs(editor.selected) do moved[#moved + 1] = step end
+			end
+			gnubase.arranger.setChain{moveSteps = moved, to = to, copy = held(event.parameters, "alt_key")}
 		end
 
 		-- Remove Selected on the chain list's context menu removes the steps selected (p. 410).
@@ -403,7 +466,7 @@
 		end
 	</script>
 </head>
-<body onload="ArrangerEditor.load(document)" onunload="ArrangerEditor.document = nil">
+<body onload="ArrangerEditor.load(document)" onunload="ArrangerEditor.document = nil" onmouseup="ArrangerEditor.release(event)">
 	<div id="toolbar" class="toolbar">
 		<button id="arranger-mode" class="toggle" title="Activate Arranger Mode" onclick="ArrangerEditor.toggleMode()">Arranger Mode</button>
 		<button id="first-step" title="First Chain Step" onclick="ArrangerEditor.stepBy(-1000000)">|&lt;</button>
@@ -421,7 +484,7 @@
 	</div>
 	<div id="arranger-lists">
 		<div id="chain-steps" class="arranger-list" contextmenu="chain-step-menu" onmousedown="ArrangerEditor.select(event)" ondblclick="ArrangerEditor.allowRename(event)" onchange="ArrangerEditor.renameEvent(event)"/>
-		<div id="arranger-events" class="arranger-list"/>
+		<div id="arranger-events" class="arranger-list" onmousedown="ArrangerEditor.pressEvent(event)"/>
 	</div>
 	<menu id="chain-step-menu">
 		<menuitem class="remove-selected" onclick="ArrangerEditor.removeSelected()">Remove Selected</menuitem>

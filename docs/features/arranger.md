@@ -18,8 +18,10 @@ reference manual pp. 164, 404-413).
   when it loads) and a repeat mode, `normal`, `repeatForever` or `pauseAfterRepeats` (p. 407). `arranger.addChain`
   (Create New Chain, with `duplicate` Duplicate Current Chain; it becomes the active one), `arranger.setChain` (rename,
   or the whole list of steps: appending, moving, copying and removing steps and changing repeats and modes all send the
-  new list) and `arranger.removeChain` (not the last one) are undo steps. `arranger.changed` announces every change with
-  what `arranger.get` returns.
+  new list; `removeSteps` removes steps by index, and `moveSteps` with `to` moves steps, with `copy` copies them, and
+  `addEvents` inserts steps of arranger events before the step at `to` as the list was, as drag and drop does) and
+  `arranger.removeChain` (not the last one) are undo steps. `arranger.changed` announces every change with what
+  `arranger.get` returns.
 - **Settings**: `arranger.setMode` switches arranger mode (`mode`), picks the active chain (`chain`) and the jump mode
   (`jumpMode`): saved with the project, not undo steps, like virgin territory.
 
@@ -107,7 +109,15 @@ each section's event has a number after its name, how often its event came so fa
   with their accent), with Shift the steps from the one clicked last, with Ctrl (Cmd) adds or removes it. Remove Selected on the
   list's context menu (`.arranger-remove-selected` in the inspector's, `#chain-step-menu .remove-selected` in the
   editor's) removes them (`removeSteps`), disabled in the inspector without a selection. The steps are selected by
-  index, so a chain edit selects none. The editor selects on the press, as a button's click builds its list again.
+  index, so a chain edit selects none. The editor selects on the press, as a button's click builds its list again; a
+  press on a step selected keeps the others, and its release, a click, selects it alone.
+- **Drag and drop in a chain list** (pp. 409-410): in both Current Arranger Chain lists a step dragged onto another
+  step's upper half goes before it, onto its lower half after it, and beside the steps after the last one
+  (`moveSteps`); with Alt held at the release it is copied (`copy`), and if it is selected, all selected steps go,
+  in their order. An event dragged from the Arranger Events list goes in so (`addEvents`). The press is on a step's or
+  event's row, not on its buttons or repeat mode, and a release on the step pressed or outside the chain list does
+  nothing. The editor's script works out a row's top from the offset parents, as RmlUi's Lua elements have no absolute
+  offset. Events dragged from the project window don't drop there yet.
 - **Renaming arranger events in a chain list** (p. 405): in the inspector's and the arranger editor's Current Arranger
   Chain list a step's name is a disabled `textdisplay` that Alt and a double click open, and a plain double click
   doesn't; Enter renames the step's event (`arranger.set`), an empty name keeps the old one. The editor doesn't build
@@ -165,7 +175,8 @@ the cycle, chain edits during the pre-roll, while the chain plays back into the 
 them - two back to back and 129 of them -, a stop and a cycle jump ending the pre-roll, a new plan finding the step
 playing and a step waiting again by their events, a locate from a repeated step into another step's own first repeat,
 a generation that wraps the packed field, a new plan at the old one's address, and the generation of the plan the
-transport publishes with its state); the commands with undo, settings and the arranger track's removal; saving and
+transport publishes with its state); the commands with undo, settings and the arranger track's removal;
+`arranger.setChain` moving, copying and inserting steps; saving and
 loading, with a file's repeats capped to 1 to 999; the chain playback render, sample by sample against the audio of
 each section, for two block sizes; real time against offline, also with a chain edit while playing; choosing steps and
 triggering events while stopped and playing, also across a chain edit that moves the chosen step; the plan a cue walks
@@ -177,7 +188,8 @@ linearly against the chain's audio, with undo, and its notes cut at the sections
 it, with `renameEvents` numbering the events.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
 mode, a locate arrow on every row, renaming the active chain, and renaming a step's event with Alt and a double click,
-across a refresh while it is typed, and selecting steps and removing the selected ones, a chain edit selecting none.
+across a refresh while it is typed, selecting steps and removing the selected ones, a chain edit selecting none, and
+moving, copying and inserting steps by drag and drop, a click on one of the steps selected selecting it alone.
 `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide as
 its section with its name, the draw tool drawing one over the stretch dragged and, with a click, from the bar line at or
 before it to the next one, both snapped to bars; with the snap type Events, drawing from and to other arranger events'
@@ -197,7 +209,9 @@ selected on the lane, renaming, moving and resizing them, the first or both, and
 selecting steps with clicks, Shift and Ctrl, the arrow leaving the selection, and Remove Selected, disabled without a
 selection; arranger events selected deselecting a part, a marker, a time signature event and the range, a range and a
 time signature event selected deselecting them, a drag of one of two selected moving both in one undo step, and Delete
-removing them.
+removing them; the inspector's chain list moving steps dragged before or after a step, copying them with Alt, moving the
+selected ones together and inserting an event dragged from the Arranger Events list, a drag back onto the step pressed
+or out of the list doing nothing.
 `tests/theme_tests.cpp`: every theme fills a selected arranger event.
 
 Both real-time comparisons in `tests/arranger_tests.cpp` retry runs that report playback dropouts, with at most five
@@ -207,5 +221,6 @@ adopts it while B plays; an attempt that misses that stretch, or is still making
 because a busy machine held up the test, is retried like one with dropouts. It compares only a capture with the edit
 made in time and without dropouts; exhausting the attempts fails the test (#1893, #1900).
 
-Not yet: drag and drop in the chain lists, the other flatten options (Checked and All Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, and arranging
-to an external timecode.
+Not yet: dropping arranger events from the project window into a chain list, the other flatten options (Checked and
+All Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, and arranging to an external
+timecode.

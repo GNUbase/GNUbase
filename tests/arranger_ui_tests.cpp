@@ -989,3 +989,88 @@ TEST_CASE("arranger events selected on the lane deselect the rest and Delete and
 	CHECK(window.app.call("project.get").at("markers").size() == 1);
 	CHECK(window.app.call("project.get").at("midiParts").size() == 1);
 }
+
+TEST_CASE("the inspector's Current Arranger Chain list moves and copies steps dragged and takes events dropped", "[ui]")
+{
+	// Reference manual pp. 409-410: steps dragged up or down move, with Alt copy, and events dropped go in there.
+	Window window;
+	const auto add = [&window](int64_t from, int64_t to)
+	{ return window.app.call("arranger.add", {{"position", from}, {"end", to}}).at("event").at("id").get<uint64_t>(); };
+	const uint64_t a = add(0, 4 * g_quarter);
+	const uint64_t b = add(4 * g_quarter, 8 * g_quarter);
+	const uint64_t c = add(8 * g_quarter, 12 * g_quarter);
+	window.app.call("arranger.setChain", {{"steps", {{{"event", a}}, {{"event", b}}, {{"event", c}}}}});
+	const auto order = [&window]
+	{
+		const Json arranger = window.app.call("arranger.get");
+		std::vector<uint64_t> events;
+		for (const Json& chain : arranger.at("chains"))
+			if (chain.at("id") == arranger.at("chain"))
+				for (const Json& step : chain.at("steps"))
+					events.push_back(step.at("event").get<uint64_t>());
+		return events;
+	};
+	const std::string track = "listitem[type=arranger] .track-name";
+	REQUIRE(window.app.waitUntil([&] { return window.shown(track) == 1; }));
+	window.app.appUi().docking().open("inspector");
+	window.display.setTool(ui::Tool::ObjectSelection);
+	window.app.ui().click(std::nullopt, {track, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	const std::string steps = ".inspector .inspector-arranger-steps ";
+	const auto row = [&steps](int index) { return steps + "[step=\"" + std::to_string(index) + "\"]"; };
+	// The list shows the chain's steps: their names in order.
+	const auto shows = [&window, &steps, &row](const std::string& names)
+	{
+		return window.app.waitUntil(
+			[&]
+			{
+				std::string shown;
+				for (int index = 0; index < static_cast<int>(window.shown(steps + ".arranger-row")); ++index)
+					shown += window.element(row(index) + " .name").at("attributes").value("value", "");
+				return shown == names;
+			});
+	};
+	REQUIRE(shows("ABC"));
+	// A point in a row's name, a fraction of the way down.
+	const auto at = [&window](const std::string& selector, double fraction)
+	{
+		const Json box = window.box(selector + " .name");
+		return ui::Point{static_cast<int>(std::lround(box.at("x").get<double>() + (box.at("width").get<double>() / 2))),
+			static_cast<int>(std::lround(box.at("y").get<double>() + (box.at("height").get<double>() * fraction)))};
+	};
+	const auto drag = [&window](ui::Point from, ui::Point to, const std::vector<std::string>& modifiers = {})
+	{
+		window.app.ui().drag(std::nullopt, {"", 0, from}, {"", 0, to}, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// On a step's lower half the step dragged goes after it, on its upper half before it.
+	drag(at(row(0), 0.5), at(row(2), 0.75));
+	REQUIRE(window.app.waitUntil([&] { return order() == std::vector<uint64_t>{b, c, a}; }));
+	REQUIRE(shows("BCA"));
+	drag(at(row(1), 0.5), at(row(0), 0.25));
+	REQUIRE(window.app.waitUntil([&] { return order() == std::vector<uint64_t>{c, b, a}; }));
+	REQUIRE(shows("CBA"));
+	// With Alt it is copied.
+	drag(at(row(2), 0.5), at(row(0), 0.25), {"alt"});
+	REQUIRE(window.app.waitUntil([&] { return order() == std::vector<uint64_t>{a, c, b, a}; }));
+	REQUIRE(shows("ACBA"));
+	// The selected steps move together when one of them is dragged.
+	window.app.ui().click(std::nullopt, {"", 0, at(row(0), 0.5)}, ui::MouseButton::Left, 1, {});
+	window.app.ui().click(std::nullopt, {"", 0, at(row(2), 0.5)}, ui::MouseButton::Left, 1, {"ctrl"});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.hasClass(row(2), "selected"));
+	drag(at(row(2), 0.5), at(row(3), 0.75));
+	REQUIRE(window.app.waitUntil([&] { return order() == std::vector<uint64_t>{c, a, a, b}; }));
+	REQUIRE(shows("CAAB"));
+
+	// An event dropped from the Arranger Events list goes in where it is dropped.
+	const size_t undoSteps = window.app.call("history.get").at("steps").size();
+	drag(at(".inspector .inspector-arranger-events [event=\"" + std::to_string(b) + "\"]", 0.5), at(row(1), 0.25));
+	REQUIRE(window.app.waitUntil([&] { return order() == std::vector<uint64_t>{c, b, a, a, b}; }));
+	REQUIRE(shows("CBAAB"));
+	// A drag that ends on the step it started on, or outside the chain list, changes nothing.
+	drag(at(row(1), 0.25), at(row(1), 0.75));
+	drag(at(row(1), 0.5), at(".inspector .inspector-arranger-events [event=\"" + std::to_string(a) + "\"]", 0.5));
+	CHECK(window.app.call("history.get").at("steps").size() == undoSteps + 1);
+	CHECK(order() == std::vector<uint64_t>{c, b, a, a, b});
+}

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -106,6 +107,9 @@ namespace gnubase::ui
 		void dropEdits();
 		// Reads the open in-place editors into m_inPlace (editor.inPlace).
 		void readInPlace();
+		// Drops the step or arranger event pressed in the Arranger Track section's lists where the button went up:
+		// steps dragged move, with Alt copy, and events go into the chain (reference manual pp. 409-410).
+		void dropOnChain(const Rml::Event& event);
 
 		EngineBinding& m_binding;
 		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
@@ -144,6 +148,9 @@ namespace gnubase::ui
 		int m_touchedStep = -1;                                // the step right-clicked, for Remove Touched
 		std::vector<int> m_selectedSteps; // the steps selected, by index, for Remove Selected; a chain edit clears them
 		int m_stepAnchor = -1;            // the step clicked last, where Shift selects from
+		// A step or an arranger event pressed in the lists, which a release over the chain list drops there.
+		std::optional<int> m_stepPressed;
+		std::optional<uint64_t> m_eventPressed;
 		Subscription m_transportChanged;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};

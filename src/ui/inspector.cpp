@@ -658,6 +658,8 @@ namespace gnubase::ui
 		m_root->RemoveEventListener(Rml::EventId::Keydown, this, true);
 		for (const Rml::EventId id : {Rml::EventId::Dragstart, Rml::EventId::Drag, Rml::EventId::Dragend})
 			m_root->RemoveEventListener(id, this);
+		if (Rml::ElementDocument* document = m_root->GetOwnerDocument())
+			document->RemoveEventListener(Rml::EventId::Mouseup, this);
 	}
 
 	void Inspector::update(const std::vector<uint64_t>& tracks, const Json& project, uint64_t loads, uint64_t read)
@@ -1436,6 +1438,9 @@ namespace gnubase::ui
 			const char* const selector = ".inspector-arranger-steps .arranger-row";
 			return element.Matches(selector) ? &element : element.Closest(selector);
 		}
+
+		// An Arranger Events row.
+		constexpr const char* g_eventRow = ".inspector-arranger-events .arranger-row";
 	}
 
 	void Inspector::ProcessEvent(Rml::Event& event)
@@ -1447,6 +1452,24 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Mousedown:
 			m_soloHold.pressed(target);
+			// A press on a step or an arranger event, not on its buttons or repeat mode, may drag it into the chain
+			// list: the document tells of the release wherever it is.
+			m_stepPressed.reset();
+			m_eventPressed.reset();
+			if (event.GetParameter<int>("button", 0) == 0 && target->GetTagName() != "button" &&
+				target->GetTagName() != "select" && target->Closest("select") == nullptr)
+			{
+				if (const Rml::Element* row = stepRow(*target))
+					m_stepPressed = row->GetAttribute<int>("step", -1);
+				else if (const Rml::Element* item = target->Matches(g_eventRow) ? target : target->Closest(g_eventRow))
+					m_eventPressed = std::strtoull(item->GetAttribute<Rml::String>("event", "0").c_str(), nullptr, 10);
+				if (Rml::ElementDocument* document = m_root->GetOwnerDocument();
+					document != nullptr && (m_stepPressed || m_eventPressed))
+				{
+					document->RemoveEventListener(Rml::EventId::Mouseup, this); // a press without its release
+					document->AddEventListener(Rml::EventId::Mouseup, this);
+				}
+			}
 			// A right click in the Current Arranger Chain list touches the step it is on, for Remove Touched.
 			if (event.GetParameter<int>("button", 0) == 1)
 			{
@@ -1592,6 +1615,11 @@ namespace gnubase::ui
 					break;
 				}
 			break;
+		case Rml::EventId::Mouseup:
+			if (Rml::ElementDocument* document = m_root->GetOwnerDocument())
+				document->RemoveEventListener(Rml::EventId::Mouseup, this);
+			dropOnChain(event);
+			break;
 		case Rml::EventId::Change:
 			if (!m_showing && !m_dropping && target->HasAttribute("control"))
 				change(*target, event);
@@ -1616,6 +1644,47 @@ namespace gnubase::ui
 		default:
 			break;
 		}
+	}
+
+	void Inspector::dropOnChain(const Rml::Event& event)
+	{
+		const std::optional<int> step = std::exchange(m_stepPressed, std::nullopt);
+		const std::optional<uint64_t> added = std::exchange(m_eventPressed, std::nullopt);
+		Rml::Element* target = event.GetTargetElement();
+		const Rml::Element* list = target == nullptr         ? nullptr
+			: target->IsClassSet("inspector-arranger-steps") ? target
+															 : target->Closest(".inspector-arranger-steps");
+		if (list == nullptr)
+			return;
+		// On a step's upper half before it, on its lower half after it; beside the steps after the last one.
+		const int size = static_cast<int>(m_arrangerChain.value("steps", Json::array()).size());
+		int to = size;
+		if (Rml::Element* row = stepRow(*target))
+		{
+			to = row->GetAttribute<int>("step", 0);
+			if (step == to) // a click
+				return;
+			if (event.GetParameter<float>("mouse_y", 0.0F) >= row->GetAbsoluteTop() + (row->GetOffsetHeight() / 2))
+				++to;
+		}
+		Json parameters = {{"chain", m_arrangerChain.value("chain", Json())}, {"to", to}};
+		if (step)
+		{
+			// The steps selected move together if the one dragged is one of them.
+			const bool selected =
+				std::find(m_selectedSteps.begin(), m_selectedSteps.end(), *step) != m_selectedSteps.end();
+			parameters["moveSteps"] = selected ? m_selectedSteps : std::vector<int>{*step};
+			parameters["copy"] = event.GetParameter<int>("alt_key", 0) != 0;
+		}
+		else if (added)
+		{
+			parameters["addEvents"] = {*added};
+		}
+		else
+		{
+			return;
+		}
+		m_binding.send("arranger.setChain", std::move(parameters), whenRefused());
 	}
 
 	void Inspector::showDivider(int gap)
