@@ -2753,6 +2753,47 @@ TEST_CASE("without a range, cut and copy take the selected events, and Paste Rel
 }
 
 TEST_CASE(
+	"paste without a range goes onto the selected track, an audio event with its snap point at the cursor", "[unit]")
+{
+	// Reference manual p. 270 (#1910). The track list's selection, which the app gives the display.
+	std::vector<uint64_t> selected;
+	Fixture f;
+	f.display.useTrackSelection([&selected] { return selected; });
+	const Json tracks = f.call("project.get").at("tracks");
+	const auto midi = tracks[1].at("id").get<uint64_t>();
+	const auto other =
+		f.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id").get<uint64_t>();
+	// The event from 2 to 2.5 seconds snaps a quarter second in.
+	f.call("event.setSnapPoint", {{"events", {f.event}}, {"position", 108000}});
+	f.display.select({f.event});
+	f.run("edit.copy");
+	REQUIRE(f.waitUntil([&f] { return f.display.canRun("edit.paste"); }));
+	f.call("transport.locate", {{"position", 240000}});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 5.0; }));
+	selected = {other};
+	f.run("edit.paste");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 2; }));
+	CHECK(f.audioEvents()[1].at("track") == other);
+	CHECK(f.audioEvents()[1].at("position") == 228000);
+
+	// The MIDI track can't take it: it goes onto the track it came from.
+	selected = {midi, other};
+	f.run("edit.paste");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 3; }));
+	CHECK(f.audioEvents()[2].at("track") == tracks[0].at("id"));
+
+	// Paste Relative to Cursor goes onto the selected track as well, 2 seconds after the cursor at 6 seconds as the
+	// event was after it at the copy, without the snap point.
+	f.call("transport.locate", {{"position", 288000}});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 6.0; }));
+	selected = {other};
+	f.run("edit.pasteRelative");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 4; }));
+	CHECK(f.audioEvents()[3].at("track") == other);
+	CHECK(f.audioEvents()[3].at("position") == 384000);
+}
+
+TEST_CASE(
 	"a drag in the selection range moves its contents on any track, Alt copies them, Duplicate copies them after it",
 	"[unit]")
 {

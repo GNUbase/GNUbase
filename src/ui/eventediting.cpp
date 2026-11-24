@@ -519,8 +519,9 @@ namespace gnubase::ui
 					events();
 			};
 		};
-		// Paste goes to the range's start and first track, or to the project cursor on the tracks it was copied from,
-		// where it selects what it pasted.
+		// Paste goes to the range's start and first track, or to the project cursor, where it selects what it
+		// pasted: Paste onto the first selected track, an audio event with its snap point there (reference manual
+		// p. 270), Paste Time onto the tracks it was copied from.
 		const auto paste = [this](bool time)
 		{
 			return [this, time]
@@ -528,6 +529,8 @@ namespace gnubase::ui
 				Json parameters = {{"position", m_range ? m_range->start : m_cursorSample}, {"time", time}};
 				if (m_range && !m_range->tracks.empty())
 					parameters["track"] = m_range->tracks.front();
+				else if (!m_range && !time)
+					pasteOntoSelectedTrack(parameters, true);
 				edit("range.paste", std::move(parameters), !m_range);
 			};
 		};
@@ -584,7 +587,13 @@ namespace gnubase::ui
 			// Paste at Origin (reference manual p. 270): where it was copied from, onto the tracks it came from.
 			{"edit.pasteAtOrigin", [this] { edit("range.paste", {{"origin", true}}, !m_range); }},
 			// Paste Relative to Cursor (p. 270): as far from the cursor as it was when copied.
-			{"edit.pasteRelative", [this] { edit("range.paste", {{"relative", true}}, !m_range); }},
+			{"edit.pasteRelative",
+				[this]
+				{
+					Json parameters = {{"relative", true}};
+					pasteOntoSelectedTrack(parameters, false);
+					edit("range.paste", std::move(parameters), !m_range);
+				}},
 			rangeAction("edit.insertSilence", "range.insertSilence", Json::object()),
 			rangeAction("edit.splitRange", "range.split", Json::object(), false),
 			rangeAction("edit.cropRange", "range.crop", Json::object()),
@@ -756,6 +765,15 @@ namespace gnubase::ui
 			if (element->HasAttribute("focuszone"))
 				return element->GetAttribute<Rml::String>("focuszone", "") == "project";
 		return true;
+	}
+
+	void EventDisplay::pasteOntoSelectedTrack(engine::Json& parameters, bool snap) const
+	{
+		if (m_trackSelection)
+			if (const std::vector<uint64_t> tracks = m_trackSelection(); !tracks.empty())
+				parameters["selectedTrack"] = tracks.front();
+		if (snap)
+			parameters["snap"] = true;
 	}
 
 	bool EventDisplay::canRun(const std::string& action) const

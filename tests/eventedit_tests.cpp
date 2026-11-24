@@ -12,6 +12,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -1683,6 +1684,60 @@ TEST_CASE(
 	}
 }
 
+TEST_CASE(
+	"range edits that cut a MIDI part start the piece after each cut with its controller curves' values", "[unit]")
+{
+	// Reference manual p. 288 (#1910): so that the curves outside the range stay as they were, and a copy of the range
+	// starts with the values they had at its start.
+	RangeFixture f;
+	// The part lies from 2 to 4 seconds, the range from its second quarter to its fourth.
+	f.call("controller.add",
+		{{"part", f.midiPart},
+			{"controllers",
+				{{{"position", 0}, {"number", 1}, {"value", 0.25}},
+					{{"position", g_quarter / 2}, {"number", 1}, {"value", 0.5}},
+					{{"position", 2 * g_quarter}, {"number", 1}, {"value", 0.75}},
+					{{"position", 0}, {"type", "pitchBend"}, {"value", 0.625}},
+					{{"position", 0}, {"number", 7}, {"channel", 1}, {"value", 1.0}},
+					{{"position", g_quarter}, {"number", 7}, {"channel", 1}, {"value", 0.125}},
+					{{"position", 0}, {"type", "program"}, {"number", 5}}}}});
+	// A part's controllers by position, type, number, channel and value in thousandths; the part starts at a tick.
+	using Controllers = std::set<std::tuple<int64_t, std::string, int, int, int64_t>>;
+	const auto controllers = [&f](int64_t at)
+	{
+		Controllers result;
+		const Json project = f.call("project.get");
+		for (const Json& part : project.at("midiParts"))
+			if (part.at("position") == at)
+				for (const Json& c : part.at("controllers"))
+					result.emplace(c.at("position").get<int64_t>(), c.at("type").get<std::string>(),
+						c.value("number", 0), c.at("channel").get<int>(), std::llround(c.value("value", 0.0) * 1000));
+		return result;
+	};
+	// The program change isn't a curve; CC 7 on channel 2 already has an event where the range starts.
+	const Controllers inRange = {{0, "controller", 1, 0, 500}, {0, "pitchBend", 0, 0, 625},
+		{0, "controller", 7, 1, 125}, {g_quarter, "controller", 1, 0, 750}};
+	const Controllers after = {{0, "controller", 1, 0, 750}, {0, "pitchBend", 0, 0, 625}, {0, "controller", 7, 1, 125}};
+
+	f.call("range.copy", f.range());
+	f.call("range.paste", {{"position", 5 * g_second}});
+	CHECK(controllers(10 * g_quarter) == inRange);
+	f.call("history.undo");
+
+	f.call("range.delete", f.range());
+	CHECK(controllers(g_bar + (3 * g_quarter)) == after);
+	CHECK(controllers(g_bar).size() == 5); // the piece before the range keeps what it had
+	f.call("history.undo");
+	CHECK(controllers(g_bar).size() == 7);
+
+	// Crop cuts at the range's start on its own: the cropped piece starts with the curves' values, without the
+	// program change.
+	f.call("range.crop", f.range());
+	CHECK(controllers(g_bar + g_quarter) == inRange);
+	f.call("history.undo");
+	CHECK(controllers(g_bar).size() == 7);
+}
+
 TEST_CASE("range.copy without a range copies everything between the locators: global copy", "[unit]")
 {
 	RangeFixture f;
@@ -1887,6 +1942,60 @@ TEST_CASE("range.paste with relative keeps the distance the copy had from the pr
 	CHECK_THAT(f.fails("range.paste", {{"relative", true}}), ContainsSubstring("before the project start"));
 	CHECK_THAT(f.fails("range.paste", {{"relative", true}, {"position", 0}}), ContainsSubstring("not both"));
 	CHECK_THAT(f.fails("range.paste", {{"relative", true}, {"origin", true}}), ContainsSubstring("not both"));
+}
+
+TEST_CASE("range.paste with selectedTrack pastes onto it where it takes the copy, and with snap puts the first audio "
+		  "event's snap point at the position",
+	"[unit]")
+{
+	// Paste (reference manual p. 270, #1910): onto the selected track, and a copied track that the track it would land
+	// on can't take, or that finds none, onto the track it came from.
+	RangeFixture f;
+	const int64_t other = f.track("audio", "linear"); // the bottom track
+	f.call("range.copy", {{"events", {f.event}}});
+	f.call("range.paste", {{"position", 5 * g_second}, {"selectedTrack", other}});
+	CHECK(f.spans(other) == Spans{{5 * g_second, 7 * g_second}});
+	f.call("history.undo");
+	f.call("range.paste", {{"position", 5 * g_second}, {"selectedTrack", f.midiTrack}});
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}, {5 * g_second, 7 * g_second}});
+	f.call("history.undo");
+
+	// The audio event onto the bottom track, the MIDI part, with no track below it, back onto its own.
+	f.call("range.copy", {{"events", {f.event, f.midiPart}}});
+	f.call("range.paste", {{"position", 5 * g_second}, {"selectedTrack", other}});
+	CHECK(f.spans(other) == Spans{{5 * g_second, 7 * g_second}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, 4 * g_second}, {6 * g_second, 8 * g_second}});
+	f.call("history.undo");
+	CHECK_THAT(f.fails("range.paste", {{"selectedTrack", other}, {"track", other}}), ContainsSubstring("not both"));
+
+	// Its snap point half a second into the event: the event starts half a second before the position.
+	f.call("event.setSnapPoint", {{"events", {f.event}}, {"position", 3 * g_second / 2}});
+	f.call("range.copy", {{"events", {f.event}}});
+	f.call("range.paste", {{"position", 5 * g_second}, {"snap", true}});
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}, {9 * g_second / 2, 13 * g_second / 2}});
+	f.call("history.undo");
+	CHECK_THAT(f.fails("range.paste", {{"position", g_second / 4}, {"snap", true}}),
+		ContainsSubstring("before the project start"));
+	// With the copied event's clip gone, snap refuses as the paste would.
+	const int64_t clip = f.call("project.get").at("audioEvents")[0].at("clip").get<int64_t>();
+	f.call("event.remove", {{"events", {f.event}}});
+	f.call("clip.remove", {{"clip", clip}});
+	CHECK_THAT(
+		f.fails("range.paste", {{"position", 5 * g_second}, {"snap", true}}), ContainsSubstring("clip of a copied"));
+	f.call("history.undo");
+	f.call("history.undo");
+	// A range's copy pastes at its start.
+	f.call("range.copy", f.range());
+	f.call("range.paste", {{"position", 5 * g_second}, {"snap", true}});
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}, {5 * g_second, 11 * g_second / 2}});
+	f.call("history.undo");
+	// snap goes only with position or the cursor, whatever was copied.
+	for (const Json& with : {Json{{"positionTicks", g_bar}}, Json{{"origin", true}}, Json{{"relative", true}}})
+	{
+		Json parameters = with;
+		parameters["snap"] = true;
+		CHECK_THAT(f.fails("range.paste", parameters), ContainsSubstring("give snap with position"));
+	}
 }
 
 TEST_CASE(

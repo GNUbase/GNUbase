@@ -1714,7 +1714,42 @@ namespace gnubase::engine
 			return rebased(project, {time::TimeBase::Linear, at}, base).value;
 		}
 
-		// Splits the events and parts on the tracks at a position; returns the pieces after it.
+		// A range edit that cuts a MIDI part starts the piece after the cut with the value each controller curve has
+		// there, so that the curves outside the range stay as they were (reference manual p. 288): the value of the
+		// curve's last event before the cut, unless the piece has an event of that curve at its start. Program changes,
+		// SysEx and articulations aren't curves.
+		void continueControllers(Project& project, const MidiPart& before, MidiPart& after)
+		{
+			const auto curve = [](const Controller& controller) -> std::optional<std::tuple<ControllerType, int, int>>
+			{
+				if (controller.type == ControllerType::Control || controller.type == ControllerType::PolyPressure)
+					return std::make_tuple(controller.type, int{controller.channel}, int{controller.number});
+				if (controller.type == ControllerType::PitchBend || controller.type == ControllerType::ChannelPressure)
+					return std::make_tuple(controller.type, int{controller.channel}, 0);
+				return std::nullopt;
+			};
+			std::map<std::tuple<ControllerType, int, int>, const Controller*> last;
+			for (const auto& [id, controller] : before.controllers)
+				if (const auto key = curve(controller))
+				{
+					const Controller*& found = last[*key];
+					if (found == nullptr || found->position <= controller.position)
+						found = &controller;
+				}
+			for (const auto& [id, controller] : after.controllers)
+				if (const auto key = curve(controller); key && controller.position == 0)
+					last.erase(*key);
+			for (const auto& [key, controller] : last)
+			{
+				Controller added = *controller;
+				added.id = project.newId();
+				added.position = 0;
+				after.controllers[added.id] = std::move(added);
+			}
+		}
+
+		// Splits the events and parts on the tracks at a position; returns the pieces after it. A MIDI part's piece
+		// after the cut goes on with its controller curves (continueControllers).
 		std::vector<Item> splitTracks(Project& project, const std::vector<ObjectId>& tracks, time::Samples at,
 			bool splitNotes, bool locked, CommandContext& context)
 		{
@@ -1722,6 +1757,8 @@ namespace gnubase::engine
 			for (const Item& item : itemsOn(project, tracks, locked))
 				if (const Item right = splitAt(project, item, at, splitNotes, context))
 				{
+					if (right.part != nullptr)
+						continueControllers(project, *item.part, *right.part);
 					announce(project, context, item, "changed");
 					announce(project, context, right, "added");
 					added.push_back(right);
@@ -2303,7 +2340,9 @@ namespace gnubase::engine
 			for (const ObjectId id : project.trackOrder())
 				if (tracks.count(id) != 0)
 					range.tracks.push_back(id);
-			return copyRange(scratch, range, true);
+			RangeClipboard clipboard = copyRange(scratch, range, true);
+			clipboard.events = true;
+			return clipboard;
 		}
 
 		// The id of the transpose track, 0 for none. Its events are project.transpose, one list for the project.
@@ -2566,6 +2605,8 @@ namespace gnubase::engine
 				{
 					if (const Item right = splitAt(project, kept, range.start, range.splitNotes, context))
 					{
+						if (right.part != nullptr)
+							continueControllers(project, *kept.part, *right.part);
 						removeItem(project, kept, right.id(), context);
 						kept = right;
 					}
@@ -2829,6 +2870,18 @@ namespace gnubase::engine
 			return {at, std::nullopt};
 		}
 
+		// Whether a track's type takes what a clipboard holds from one of the tracks it was copied from (checkTrack).
+		bool takes(const Project& project, const RangeClipboard& clipboard, ObjectId source, ObjectId track)
+		{
+			const TrackType type = project.trackById.at(track).type;
+			const auto from = [source](const auto& copied) { return copied.track == source; };
+			const bool audio = std::any_of(clipboard.audioEvents.begin(), clipboard.audioEvents.end(), from) ||
+				std::any_of(clipboard.audioParts.begin(), clipboard.audioParts.end(), from);
+			const bool midi = std::any_of(clipboard.midiParts.begin(), clipboard.midiParts.end(), from);
+			return (!audio || type == TrackType::Audio) &&
+				(!midi || type == TrackType::Midi || type == TrackType::Instrument);
+		}
+
 		Json pasteRange(Project& project, CommandContext& context, const RangeClipboard* stored)
 		{
 			if (stored == nullptr)
@@ -2851,15 +2904,43 @@ namespace gnubase::engine
 			else if (!given)
 				fallback = context.call("transport.get").at("position").get<time::Samples>() +
 					(relative ? clipboard.start - clipboard.cursor : 0);
-			const Destination to = destinationFrom(project, parameters, fallback);
+			Destination to = destinationFrom(project, parameters, fallback);
+			// Paste (p. 270): a clipboard of events lands with its first audio event's snap point at the position.
+			const bool snapped = parameters.value("snap", false);
+			require(!snapped || (!parameters.contains("positionTicks") && !origin && !relative),
+				"give snap with position or the project cursor");
+			if (snapped && clipboard.events)
+			{
+				const AudioEvent* first = nullptr;
+				for (const AudioEvent& event : clipboard.audioEvents)
+					if (event.part == 0)
+					{
+						// As pasteClipboard refuses it, before the event's span needs the clip.
+						require(project.clips.count(event.clip) != 0, "the clip of a copied audio event is gone");
+						if (first == nullptr || eventSpan(project, event).start < eventSpan(project, *first).start)
+							first = &event;
+					}
+				if (first != nullptr)
+				{
+					time::Samples snap = eventSpan(project, *first).start;
+					if (first->snapPoint && *first->snapPoint >= first->offset &&
+						*first->snapPoint < first->offset + first->length)
+						snap += std::llround(
+							eventSamples(project, *first, static_cast<double>(*first->snapPoint - first->offset)));
+					to.at -= snap - clipboard.start;
+					require(to.at >= 0, "position must not be before the project start");
+				}
+			}
 			const time::Samples at = to.at;
-			// Onto the tracks it came from, or from track on down.
+			// Onto the tracks it came from, or from track (or selectedTrack, Paste) on down.
 			std::vector<ObjectId> tracks = clipboard.tracks;
-			if (parameters.contains("track"))
+			const bool selected = parameters.contains("selectedTrack");
+			require(!(selected && parameters.contains("track")), "give track or selectedTrack, not both");
+			if (parameters.contains("track") || selected)
 			{
 				// The lanes the project window shows, one for each copied lane: a folded folder's stands for the tracks
 				// in it, which take the copied tracks of a folded folder's lane in their order (#1978).
-				const auto first = parameters.at("track").get<ObjectId>();
+				const auto first = parameters.at(selected ? "selectedTrack" : "track").get<ObjectId>();
 				const std::vector<std::vector<ObjectId>> lanes = shownLanes(project, {first});
 				const auto [top, place] = laneOf(lanes, first);
 				const std::string refused = "there aren't enough tracks from track " + std::to_string(first) +
@@ -2870,8 +2951,20 @@ namespace gnubase::engine
 					const auto shift = lane == 0
 						? static_cast<std::ptrdiff_t>(place) - static_cast<std::ptrdiff_t>(clipboard.lanes[0].second)
 						: 0;
-					tracks[i] = landingTrack(lanes, static_cast<std::ptrdiff_t>(top + lane),
-						static_cast<std::ptrdiff_t>(copied) + shift, refused);
+					const auto toLane = static_cast<std::ptrdiff_t>(top + lane);
+					const auto toPlace = static_cast<std::ptrdiff_t>(copied) + shift;
+					// With selectedTrack a copied track that finds no track there, or one that can't take what was
+					// copied from it, goes onto the track it came from (p. 270).
+					const bool found = toLane < static_cast<std::ptrdiff_t>(lanes.size()) && toPlace >= 0 &&
+						toPlace < static_cast<std::ptrdiff_t>(lanes[static_cast<size_t>(toLane)].size());
+					if (selected &&
+						(!found ||
+							!takes(project, clipboard, tracks[i],
+								lanes[static_cast<size_t>(toLane)][static_cast<size_t>(toPlace)])))
+						require(project.trackById.count(tracks[i]) != 0,
+							"track " + std::to_string(tracks[i]) + " that the range was copied from is gone");
+					else
+						tracks[i] = landingTrack(lanes, toLane, toPlace, refused);
 				}
 			}
 			else
@@ -3708,7 +3801,11 @@ namespace gnubase::engine
 			{"range.split", 1,
 				"Splits the audio events and MIDI parts on " + range +
 					" at its edges; a range of no length splits at its start. Locked events stay whole; splitNotes "
-					"cuts notes across an edge in two, as event.split does. Returns the new events after the splits.",
+					"cuts notes across an edge in two, as event.split does. The piece of a MIDI part after a cut "
+					"starts with the value each controller curve (control change, poly pressure, pitch bend, channel "
+					"pressure) has there, so the curves stay as they were (reference manual p. 288); this holds for "
+					"every range command that cuts, but event.split doesn't add them. Returns the new events after the "
+					"splits.",
 				schema(rangeParameters, {}), eventsResult(), false},
 			"Split Range", splitRange);
 
@@ -3836,10 +3933,16 @@ namespace gnubase::engine
 				"everything on musical tracks moves by the same ticks, keeping its distance from that on every track. "
 				"Audio events and MIDI parts come as unlocked real copies; automation replaces the curve where it "
 				"lands, on a lane of the same parameter. time (Paste Time) first makes room as long as the copied "
-				"range, as range.insertSilence does. A clipboard copied at another sample rate than the project's is "
-				"refused. Returns the new events.",
+				"range, as range.insertSilence does. Paste (p. 270) goes onto the selected track: selectedTrack, "
+				"instead of track, pastes from it on as track does, but a copied track that finds no track there, or "
+				"one that can't take what was copied from it, goes onto the track it came from. With snap a "
+				"clipboard of events (range.copy with events) lands with the snap point of its first audio event that "
+				"isn't in a part, or that event's start, at position or the cursor; snap with positionTicks, origin or "
+				"relative is refused. A clipboard copied at another sample rate than the project's is refused. "
+				"Returns the new events.",
 				schema({{"position", integer()}, {"positionTicks", integer()}, {"origin", boolean()},
-						   {"relative", boolean()}, {"track", integer()}, {"time", boolean()}},
+						   {"relative", boolean()}, {"track", integer()}, {"selectedTrack", integer()},
+						   {"snap", boolean()}, {"time", boolean()}},
 					{}),
 				eventsResult(), false},
 			"Paste", [this](Project& project, CommandContext& context)

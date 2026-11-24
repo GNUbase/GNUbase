@@ -1918,6 +1918,9 @@ namespace gnubase::app
 		m_eventDisplay->onImportFailed([this](const std::string& error) { m_files.showError(m_main.id(), error); });
 		// A double click on a part opens it where the preference says (p. 1603).
 		m_eventDisplay->onOpenEditor([this](uint64_t part) { openEditor(doubleClickEditor(), {part}); });
+		// Paste goes onto the selected track (reference manual p. 270).
+		m_eventDisplay->useTrackSelection(
+			[this] { return m_trackList ? m_trackList->selection() : std::vector<uint64_t>(); });
 		// The quantize panel lists the tracks of the selected audio events with hitpoints (#1344).
 		m_eventDisplay->onSelectionShown(
 			[this]
