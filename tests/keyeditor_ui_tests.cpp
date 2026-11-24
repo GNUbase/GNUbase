@@ -24,6 +24,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -1355,6 +1357,124 @@ TEST_CASE("the split tool splits the selected notes of every part at one positio
 	// One undo step takes back both parts' splits.
 	f.app.call("history.undo");
 	CHECK(pieces() == before);
+}
+
+TEST_CASE("a gesture's undo step has the same name over notes of one part and of two", "[ui]")
+{
+	// #2014: one part's edit goes as its lone note.* command, several parts' in a history.transaction, which takes the
+	// name the engine gives the lone command's step.
+	Fixture f({1200, 800}, "instrument");
+	const uint64_t first = f.add({{0, 60, g_quarter}}).at(0);
+	const uint64_t track = f.app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t part = f.app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+	const uint64_t second =
+		f.app
+			.call("note.add",
+				{{"part", part},
+					{"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}}}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	// Both tracks have a map with an attribute, for the info line's articulations pop-up menu.
+	const Json map = f.app
+						 .call("articulationMap.add",
+							 {{"name", "Strings"}, {"groups", {"Length"}},
+								 {"articulations", {{{"name", "Staccato"}, {"type", "attribute"}, {"group", 0}}}}})
+						 .at("map")
+						 .at("id");
+	for (const uint64_t each : {f.track, track})
+		f.app.call("track.set", {{"track", each}, {"articulationMap", map}});
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", {f.part, part}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 2; }));
+	f.scroll(62);
+	// The notes' boxes, rounded, to wait for the display to show the notes as they were after an undo.
+	const auto boxes = [&f]
+	{
+		std::vector<std::pair<long, long>> found;
+		for (const Json& each : f.elements(".key-note"))
+			found.emplace_back(
+				std::lround(each.at("box").at("x").get<double>()), std::lround(each.at("box").at("y").get<double>()));
+		std::sort(found.begin(), found.end());
+		return found;
+	};
+	const auto shown = boxes();
+
+	// The gesture on the first note, selected alone or with the second one: a click in the empty grid gives the note
+	// display the keyboard focus, then the view selects them, so that the gesture's press is no double click. Returns
+	// the gesture's undo step's name, after undoing it.
+	const auto name = [&](bool both, const std::function<void()>& gesture)
+	{
+		f.tool("objectSelection");
+		f.click(f.at(12.5, 70));
+		REQUIRE(f.app.waitUntil([&] { return f.selection().empty(); }));
+		Json selection = {{{"part", f.part}, {"note", first}}};
+		if (both)
+			selection.push_back({{"part", part}, {"note", second}});
+		f.app.call("editor.set", {{"editor", "window"}, {"selection", selection}});
+		REQUIRE(f.app.waitUntil([&] { return f.selection().size() == (both ? 2U : 1U); }));
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.selected").size() == (both ? 2U : 1U); }));
+		REQUIRE(f.app.waitUntil([&] { return f.has(".key-editor-info", "multiple") == both; }));
+		const auto position = f.app.call("history.get").at("position").get<size_t>();
+		gesture();
+		REQUIRE(f.app.waitUntil([&] { return f.app.call("history.get").at("position") == position + 1; }));
+		const Json history = f.app.call("history.get");
+		const std::string action = history.at("steps").at(position).at("action").get<std::string>();
+		f.app.call("history.undo");
+		REQUIRE(f.app.waitUntil([&] { return boxes() == shown; }));
+		return action;
+	};
+	const auto same = [&](const std::string& expected, const std::function<void()>& gesture)
+	{
+		INFO(expected);
+		CHECK(name(false, gesture) == expected);
+		CHECK(name(true, gesture) == expected);
+	};
+	// A move or resize in the editor sets the notes' values (note.set); a move onto another in-place editor moves them
+	// there (note.move, "Move notes", tests/inplaceeditor_ui_tests.cpp).
+	same("Change notes", [&] { f.drag(f.at(2, 60), f.at(6, 60)); });
+	same("Change notes", [&] { f.drag(f.at(3.9, 60), f.at(6, 60)); });
+	same("Remove notes", [&] { f.app.ui().key(f.window, "Delete"); });
+	same("Change notes", [&] { f.app.ui().key(f.window, "Up"); });
+	same("Split notes",
+		[&]
+		{
+			f.tool("split");
+			f.click(f.at(2, 60));
+		});
+	// Articulations typed on the info line and chosen from its pop-up menu.
+	same("Change notes",
+		[&]
+		{
+			f.click(of(".key-editor-info textdisplay[field=articulations]"), 2);
+			f.app.ui().key(f.window, "Mod+A");
+			f.app.ui().text(f.window, "Staccato");
+			f.app.ui().key(f.window, "Enter");
+		});
+	same("Change notes",
+		[&]
+		{
+			f.click(of(".key-editor-info button.articulation-menu"));
+			const std::string staccato = "#key-articulations-menu menuitem[articulation=Staccato]";
+			REQUIRE(f.app.waitUntil(
+				[&]
+				{
+					const Json found = f.elements(staccato);
+					return !found.empty() && found.at(0).at("visible") == true;
+				}));
+			f.click(of(staccato));
+		});
+	// The erase tool's click deletes the note clicked alone; its drag is the drum editor's drumstick
+	// (tests/drumeditor_ui_tests.cpp).
+	CHECK(name(true,
+			  [&]
+			  {
+				  f.tool("erase");
+				  f.click(of(noteSelector(first)));
+			  }) == "Remove notes");
 }
 
 TEST_CASE("a right click in the note display opens the toolbox, by the setting and modifiers", "[ui]")

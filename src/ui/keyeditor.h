@@ -290,7 +290,8 @@ namespace gnubase::ui
 		void showLanes();
 		void setView(engine::Json parameters);
 		// Sends note.* commands, each {command, parameters}: one alone, several in a history.transaction. done, unless
-		// empty, runs with the result.
+		// empty, runs with the result. The description is the engine's name for the commands' undo step, such as
+		// "Move notes", so that a gesture's step has one name whether it changes one part or several (#2014).
 		void edit(const std::string& description, engine::Json commands,
 			std::function<void(const engine::Result&)> done = {});
 		// Whether the project shown may lack an edit that the expression editor sent: one is out, or the last one that

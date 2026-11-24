@@ -138,6 +138,11 @@ lower zone, Delete deletes the notes, not the project window's selected events.
 | Glue | A click glues the note to the next one of its pitch; the first one's values stay, the next one's expression joins its own (`note.glue`) | p. 1215 |
 | Mute | On the Articulations lane, a click mutes a direction or attribute, or unmutes it ([articulation-maps.md](articulation-maps.md), #1684); in the note display nothing yet, as notes have no mute (#679) | pp. 1193, 1289 |
 
+- **Undo steps.** A gesture sends each part's `note.*` command, the commands of several parts in one
+  `history.transaction` named as the engine names the lone command's step, so that the step has the same name either
+  way (#2014): "Change notes" for a move or resize in the editor, transposing, trimming and the articulations, "Move
+  notes" for a move onto another in-place editor, "Remove notes" for Delete, Backspace, the erase tool and the
+  drumstick, "Split notes" and "Glue notes".
 - **Gestures that leave the editor.** While a press in the note display or on the keyboard's left part goes on, the grid
   or the keyboard's left part is an RmlUi drag element (`.key-editor.in-gesture`): its drag events come wherever the
   mouse is, also outside the window, where the platform captures the mouse while the button is held and nothing is
