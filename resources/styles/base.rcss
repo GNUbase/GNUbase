@@ -21,6 +21,19 @@ body
 	cursor: tool-play;
 }
 
+#ds-view
+{
+	margin: 8dp 12dp 0 12dp;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+
+#ds-zoom
+{
+	width: 160dp;
+	margin-left: 12dp;
+}
+
 #ds-wave, #ds-sections-display
 {
 	position: absolute;

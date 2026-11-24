@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Audio analysis controls shared by the audio function dialogs. */
+#ds-waveform
+{
+	display: flex;
+	margin: 8dp 12dp 0 12dp;
+}
+
+#ds-view
+{
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+}
+
+#ds-zoom
+{
+	width: 24dp;
+	height: 100dp;
+	flex-shrink: 0;
+}

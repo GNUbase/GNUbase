@@ -82,6 +82,8 @@ namespace gnubase::engine
 				m_info.sampleRate = m_wav.sampleRate;
 				m_info.channels = m_wav.channels;
 				m_info.frames = static_cast<time::Samples>(m_wav.totalPCMFrameCount);
+				if (m_wav.fmt.formatTag == DR_WAVE_FORMAT_EXTENSIBLE)
+					m_info.channelMask = m_wav.fmt.channelMask;
 				for (drwav_uint32 i = 0; i < m_wav.metadataCount; ++i)
 					if (m_wav.pMetadata[i].type == drwav_metadata_type_bext)
 					{

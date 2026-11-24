@@ -8,16 +8,20 @@
 #include "engine/document/hitpoints.h"
 
 #include "engine/analysis/onsets.h"
+#include "engine/audio/playback.h"
 #include "engine/audiofile/audiofile.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
+#include "engine/document/warp.h"
 #include "engine/engine.h"
 #include "engine/jobs/jobs.h"
+#include "engine/media/backup.h"
 #include "engine/time/tempomap.h"
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <set>
@@ -198,6 +202,109 @@ namespace gnubase::engine
 
 	namespace
 	{
+		// Files belong to this edit until every pair succeeds. Undo keeps successful renders for redo.
+		struct SliceFiles
+		{
+			std::vector<std::filesystem::path> paths;
+			bool keep = false;
+			~SliceFiles()
+			{
+				if (!keep)
+					for (const auto& path : paths)
+					{
+						std::error_code ignored;
+						std::filesystem::remove(path, ignored);
+					}
+			}
+		};
+
+		void stretchSlice(Project& project, AudioEvent& event, time::Samples duration,
+			const std::filesystem::path& folder, SliceFiles& files, CommandContext& context)
+		{
+			const Clip source = project.clips.at(event.clip);
+			const MediaFile& media = project.media.at(source.media);
+			const auto map = warpMap(project, event);
+			const auto edges = warpedClipEdges(source, media.length, map);
+			const GainRamp fadeIn{edges.start, edges.fadeInEnd, source.fadeIn.shape, false};
+			const GainRamp fadeOut{edges.fadeOutStart, edges.end, source.fadeOut.shape, true};
+			auto reader = AudioFileReader::open(media.path);
+			const auto preset = dsp::stretchPresetFromString(source.warp.preset).value_or(dsp::StretchPreset::Quality);
+			if (warped(source))
+				reader = std::make_unique<dsp::WarpReader>(std::move(reader), map, preset);
+			else
+				reader->seek(event.offset);
+			const auto inputFrames = warped(source) ? reader->info().frames : event.length;
+			const auto outputFrames =
+				std::llround(static_cast<double>(duration) * media.sampleRate / project.sampleRate);
+			dsp::StretchSettings settings;
+			settings.ratio = static_cast<double>(outputFrames) / static_cast<double>(inputFrames);
+			settings.sampleRate = media.sampleRate;
+			settings.preset = preset;
+			require(settings.ratio >= dsp::g_minStretchRatio && settings.ratio <= dsp::g_maxStretchRatio,
+				"the stretch ratio must be between 0.1 and 10");
+			const auto channels = static_cast<size_t>(reader->info().channels);
+			std::vector<std::vector<float>> input(channels, std::vector<float>(static_cast<size_t>(inputFrames)));
+			constexpr size_t block = 4096;
+			std::vector<float> buffer(block * channels);
+			for (time::Samples at = 0; at < inputFrames;)
+			{
+				const size_t got =
+					reader->read(buffer.data(), static_cast<size_t>(std::min<time::Samples>(block, inputFrames - at)));
+				require(got != 0, "file ends before the slice");
+				for (size_t i = 0; i < got; ++i)
+				{
+					const auto frame = at + static_cast<time::Samples>(i);
+					const double gain = (edges.fadeInEnd > edges.start ? fadeIn.gainAt(frame) : 1.0) *
+						(edges.end > edges.fadeOutStart ? fadeOut.gainAt(frame) : 1.0);
+					for (size_t c = 0; c < channels; ++c)
+						input[c][static_cast<size_t>(frame)] = buffer[(i * channels) + c] * static_cast<float>(gain);
+				}
+				at += static_cast<time::Samples>(got);
+			}
+			const auto output = dsp::stretch(input, settings);
+			std::filesystem::create_directories(folder);
+			const auto path = createFreeFile(folder, "Closed Gap.wav");
+			files.paths.push_back(path);
+			WriteOptions options;
+			options.sampleFormat = SampleFormat::Float32;
+			options.sampleRate = media.sampleRate;
+			options.channels = static_cast<int>(channels);
+			const auto writer = AudioFileWriter::create(path.u8string(), options);
+			for (size_t at = 0; at < output.front().size(); at += block)
+			{
+				const size_t count = std::min(block, output.front().size() - at);
+				for (size_t i = 0; i < count; ++i)
+					for (size_t c = 0; c < channels; ++c)
+						buffer[(i * channels) + c] = output[c][at + i];
+				writer->write(buffer.data(), count);
+			}
+			writer->close();
+			const MediaFile rendered{
+				project.newId(), path.u8string(), media.sampleRate, static_cast<int>(channels), outputFrames};
+			project.media[rendered.id] = rendered;
+			context.emit("media.added", {{"media", toJson(rendered)}});
+			Clip clip;
+			clip.id = project.newId();
+			clip.media = rendered.id;
+			clip.name = source.name + " Flattened";
+			clip.folder = source.folder;
+			project.clips[clip.id] = clip;
+			context.emit("clip.added", {{"clip", toJson(clip)}});
+			const auto moved = [&map, &settings](time::Samples frame)
+			{ return std::llround(dsp::warpTarget(map, static_cast<double>(frame)) * settings.ratio); };
+			for (auto& point : event.volumeCurve)
+				point.position = moved(point.position);
+			if (event.snapPoint)
+				event.snapPoint = moved(*event.snapPoint);
+			event.clip = clip.id;
+			event.offset = 0;
+			event.length = outputFrames;
+			event.quantizeOrigin.reset();
+			event.sliceOrigin.reset();
+			event.slicedFrom = 0;
+			context.emit("audioEvent.changed", {{"event", toJson(event)}});
+		}
+
 		void registerSliceEdits(ProjectModel& model, Engine& engine)
 		{
 			const Json ids = {{"type", "array"}, {"items", {{"type", "integer"}}}};
@@ -209,13 +316,17 @@ namespace gnubase::engine
 					"10, from 0.1 to 500), limited to half the next slice's played length. Touching slices are "
 					"crossfaded too; existing overlaps and the last slice stay. Fails atomically for locked events "
 					"or parts, frozen tracks, or insufficient source audio. One undo step; returns changed events. "
-					"Time Stretch mode is not implemented.",
-					objectSchema(
-						{{"events", ids}, {"length", {{"type", "number"}, {"minimum", 0.1}, {"maximum", 500}}}},
+					"mode timeStretch instead renders each gapped slice's current audio, preserving pitch, into a "
+					"new clip up to the next start (offline stretch ratio 0.1 to 10); no crossfade. Other events of "
+					"the source clip stay unchanged. Undo before changing tempo again. Rendering runs on the command "
+					"thread; failed edits remove their files, undo retains them for redo. Discards slice and quantize "
+					"origins that belonged to the old clip. mode defaults to crossfade.",
+					objectSchema({{"events", ids}, {"length", {{"type", "number"}, {"minimum", 0.1}, {"maximum", 500}}},
+									 {"mode", {{"type", "string"}, {"enum", {"crossfade", "timeStretch"}}}}},
 						{"events"}),
 					objectSchema({{"events", ids}}, {"events"}), false},
 				"Close gaps",
-				[&model](Project& project, CommandContext& context)
+				[&model, &engine](Project& project, CommandContext& context)
 				{
 					std::vector<ObjectId> events;
 					std::set<ObjectId> seen;
@@ -240,11 +351,13 @@ namespace gnubase::engine
 					};
 					std::sort(events.begin(), events.end(), [&](ObjectId a, ObjectId b) { return key(a) < key(b); });
 					std::set<ObjectId> changed;
+					SliceFiles files;
+					const bool stretch = context.parameters().value("mode", std::string("crossfade")) == "timeStretch";
 					const auto length = std::max<time::Samples>(
 						1, std::llround(context.parameters().value("length", 10.0) * project.sampleRate / 1000.0));
 					for (size_t i = 1; i < events.size(); ++i)
 					{
-						const AudioEvent& a = project.audioEvents.at(events[i - 1]);
+						AudioEvent& a = project.audioEvents.at(events[i - 1]);
 						const AudioEvent& b = project.audioEvents.at(events[i]);
 						if (a.track != b.track || a.part != b.part || a.lane != b.lane)
 							continue;
@@ -252,6 +365,18 @@ namespace gnubase::engine
 						const EventSpan next = eventSpan(project, b);
 						if (first.end > next.start || first.start >= next.start)
 							continue;
+						if (stretch)
+						{
+							if (first.end == next.start)
+								continue;
+							const auto folder = model.file().empty()
+								? unsavedMediaFolder(engine.settingsDirectory())
+								: mediaFolderFor(std::filesystem::u8path(model.file()));
+							require(!folder.empty(), "there is no folder to render into: save the project first");
+							stretchSlice(project, a, next.start - first.start, folder, files, context);
+							changed.insert(a.id);
+							continue;
+						}
 						const auto overlap = std::min(length, (next.end - next.start) / 2);
 						require(overlap > 0, "not enough audio for a crossfade");
 						const auto end = next.start + overlap;
@@ -269,6 +394,7 @@ namespace gnubase::engine
 						changed.insert(a.id);
 						changed.insert(b.id);
 					}
+					files.keep = true;
 					return Json{{"events", changed}};
 				});
 			model.addEdit(engine,

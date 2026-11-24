@@ -8,6 +8,7 @@
 #include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -607,6 +609,79 @@ TEST_CASE("Delete Overlaps respects part boundaries and rejects invalid or locke
 	CHECK(f.call("project.get") == locked);
 }
 
+TEST_CASE("Close Gaps time stretches only the selected slice audio and preserves pitch and undo", "[integration]")
+{
+	Fixture f;
+	// A sustained note makes a pitch-preserving stretch distinguishable from slowing its playback rate.
+	test::Audio tone;
+	tone.samples.resize(192000);
+	for (size_t i = 0; i < tone.samples.size(); ++i)
+		tone.samples[i] =
+			static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979323846 * 440.0 * static_cast<double>(i) / 48000.0));
+	test::writeWav(f.file, tone);
+	f.call("project.save", {{"path", (f.dir.path() / "stretch.dawproject").u8string()}});
+	f.call("audioEvent.set", {{"event", f.event}, {"offset", 48000}, {"length", 24000}});
+	const auto second =
+		f.call("audioEvent.add",
+			 {{"track", f.track}, {"clip", f.clip}, {"position", 144000}, {"offset", 168000}, {"length", 24000}})
+			.at("event")
+			.at("id");
+	f.call("event.toPart", {{"events", {f.event, second}}});
+	const Json before = f.call("project.get");
+	const size_t steps = f.call("history.get").at("steps").size();
+	const Json result = f.call("event.closeGaps", {{"events", {second, f.event}}, {"mode", "timeStretch"}});
+	CHECK(result.at("events") == Json::array({f.event}));
+	const Json after = f.call("project.get");
+	CHECK(after.at("clips").back().at("name") == before.at("clips")[0].at("name").get<std::string>() + " Flattened");
+	for (const auto& event : after.at("audioEvents"))
+		if (event.at("id") == f.event)
+		{
+			CHECK(event.at("position") == 96000);
+			CHECK(event.at("length") == 48000);
+			CHECK(event.at("offset") == 0);
+			CHECK(event.at("clip") != f.clip);
+			const Json job = f.waitForJob(f.call("clip.estimatePitch", {{"clip", event.at("clip")}}));
+			REQUIRE(job.at("state") == "done");
+			CHECK(job.at("result").at("channels")[0].at("pitch").get<double>() == Catch::Approx(440).margin(2));
+		}
+		else
+		{
+			CHECK(event == before.at("audioEvents")[1]);
+		}
+	CHECK(f.call("history.get").at("steps").size() == steps + 1);
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+	f.call("history.redo");
+	CHECK(f.call("project.get") == after);
+}
+
+TEST_CASE("Close Gaps time stretch follows musical warping and rolls back failed pairs", "[integration]")
+{
+	Fixture f;
+	f.call("project.save", {{"path", (f.dir.path() / "stretch.dawproject").u8string()}});
+	f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 60}, {"musical", true}});
+	f.call("audioEvent.set", {{"event", f.event}, {"offset", 168000}, {"length", 24000}});
+	const auto second =
+		f.call("audioEvent.add", {{"track", f.track}, {"clip", f.clip}, {"position", 144000}, {"length", 24000}})
+			.at("event")
+			.at("id");
+	const auto third =
+		f.call("audioEvent.add", {{"track", f.track}, {"clip", f.clip}, {"position", 960000}, {"length", 24000}})
+			.at("event")
+			.at("id");
+	const Json before = f.call("project.get");
+	CHECK_THAT(f.fails("event.closeGaps", {{"events", {f.event, second, third}}, {"mode", "timeStretch"}}),
+		ContainsSubstring("ratio"));
+	CHECK(f.call("project.get") == before);
+	CHECK(std::filesystem::directory_iterator(f.dir.path() / "Audio") == std::filesystem::directory_iterator{});
+	f.call("event.closeGaps", {{"events", {f.event, second}}, {"mode", "timeStretch"}});
+	const Json after = f.call("project.get");
+	CHECK(after.at("audioEvents")[0].at("length") == 48000);
+	CHECK(after.at("audioEvents")[0].at("offset") == 0);
+	CHECK(after.at("audioEvents")[1] == before.at("audioEvents")[1]);
+	CHECK(f.clipJson() == before.at("clips")[0]);
+}
+
 TEST_CASE("Close Gaps crossfades selected slices without moving their starts", "[integration]")
 {
 	Fixture f;
@@ -920,5 +995,56 @@ TEST_CASE("detecting hitpoints runs as a job, which can be cancelled and fails w
 		CHECK_THAT(f.fails("clip.setHitpoint", {{"clip", gone}, {"position", 100}, {"moveTo", 50}}),
 			ContainsSubstring("can't read"));
 		CHECK(f.call("project.get").at("clips") == before);
+	}
+}
+
+TEST_CASE("Reset Slices cannot restore old clip bounds after Close Gaps time stretch", "[integration]")
+{
+	Fixture f;
+	f.call("project.save", {{"path", (f.dir.path() / "stretch.dawproject").u8string()}});
+	f.call("audioEvent.set", {{"event", f.event}, {"position", 97000}, {"offset", 12000}, {"length", 168000}});
+	Json points = Json::array();
+	for (const int64_t frame : {48000, 96000, 144000})
+		points.push_back({{"position", frame}, {"peak", 0.0}, {"intensity", 1.0}});
+	f.call("clip.setHitpoints", {{"clip", f.clip}, {"hitpoints", points}});
+	const Json slices = f.call("quantize.slice", {{"events", {f.event}}, {"offset", 0.0}}).at("events");
+	REQUIRE(slices.size() == 4);
+	f.call("quantize.set", {{"preset", "1/8"}});
+	f.call("quantize.apply", {{"events", slices}});
+	const Json sliced = f.call("project.get").at("audioEvents");
+	REQUIRE(sliced[0].contains("sliceOrigin"));
+	REQUIRE(sliced[1].contains("slicedFrom"));
+	REQUIRE(sliced[0].contains("quantizeOrigin"));
+	for (size_t i = 0; i < 3; ++i)
+		f.call(
+			"audioEvent.set", {{"event", sliced[i].at("id")}, {"length", sliced[i].at("length").get<int64_t>() / 2}});
+	const Json before = f.call("project.get");
+	const Json changed = f.call("event.closeGaps", {{"events", slices}, {"mode", "timeStretch"}}).at("events");
+	REQUIRE(changed.size() == 3);
+	const Json stretched = f.call("project.get");
+	for (const auto& event : stretched.at("audioEvents"))
+		if (std::find(changed.begin(), changed.end(), event.at("id")) != changed.end())
+		{
+			CHECK(!event.contains("quantizeOrigin"));
+			CHECK(!event.contains("sliceOrigin"));
+			CHECK(!event.contains("slicedFrom"));
+		}
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+	f.call("history.redo");
+	CHECK(f.call("project.get") == stretched);
+	f.call("quantize.resetSlices", {{"events", slices}});
+	const Json reset = f.call("project.get");
+	std::map<int64_t, int64_t> mediaLengths;
+	for (const auto& media : reset.at("media"))
+		mediaLengths[media.at("id").get<int64_t>()] = media.at("length").get<int64_t>();
+	std::map<int64_t, int64_t> clipLengths;
+	for (const auto& clip : reset.at("clips"))
+		clipLengths[clip.at("id").get<int64_t>()] = mediaLengths.at(clip.at("media").get<int64_t>());
+	for (const auto& event : reset.at("audioEvents"))
+	{
+		CHECK(event.at("offset").get<int64_t>() >= 0);
+		CHECK(event.at("offset").get<int64_t>() + event.at("length").get<int64_t>() <=
+			clipLengths.at(event.at("clip").get<int64_t>()));
 	}
 }

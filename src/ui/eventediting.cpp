@@ -760,6 +760,20 @@ namespace gnubase::ui
 
 	bool EventDisplay::canRun(const std::string& action) const
 	{
+		if (action == "audio.closeGapsCrossfade" || action == "audio.closeGapsTimeStretch" ||
+			action == "audio.deleteOverlaps")
+		{
+			if (!selectedAudio().empty())
+				return true;
+			if (m_project.contains("audioEvents"))
+				for (const Json& event : m_project.at("audioEvents"))
+				{
+					const auto part = event.value("part", uint64_t{0});
+					if (part != 0 && std::binary_search(m_selection.begin(), m_selection.end(), part))
+						return true;
+				}
+			return false;
+		}
 		if (action == "edit.paste" || action == "edit.pasteTime" || action == "edit.pasteAtOrigin" ||
 			action == "edit.pasteRelative")
 			return m_copied;
