@@ -229,6 +229,12 @@ namespace gnubase::ui
 		// Called with the error when the engine refuses an import of audio or MIDI files (audioFile.import,
 		// midiFile.import), e.g. by the app, which shows it in a dialog (#1976); otherwise it is only logged.
 		void onImportFailed(std::function<void(const std::string&)> listener) { m_importFailed = std::move(listener); }
+		// The selected tracks, top to bottom, e.g. the track list's, which the app gives: Paste and Paste Relative to
+		// Cursor without a range paste onto the first of them (range.paste selectedTrack, reference manual p. 270).
+		void useTrackSelection(std::function<std::vector<uint64_t>()> selection)
+		{
+			m_trackSelection = std::move(selection);
+		}
 
 		// Auto-scroll (reference manual pp. 316-317). Suspended when editing: a click in the event display while
 		// playing suspends it until playback stops or auto-scroll is switched on again.
@@ -679,6 +685,8 @@ namespace gnubase::ui
 		void showSelection();
 		// Sends an event.* command for the selection; with selectResult, the events it returns become the selection.
 		void edit(const std::string& command, engine::Json parameters, bool selectResult = false);
+		// Adds range.paste's selectedTrack, the first of useTrackSelection's tracks, and with snap its snap.
+		void pasteOntoSelectedTrack(engine::Json& parameters, bool snap) const;
 		void selectWhere(const std::function<bool(const Shown&)>& selected);
 		// Group Editing of folder tracks (#1579, reference manual p. 274): each track's outermost folder with Group
 		// Editing on, for the tracks that have one; the events and parts with those of their folder's other tracks
@@ -991,6 +999,8 @@ namespace gnubase::ui
 		uint64_t m_read = 0;
 		ChannelSteps m_channelSteps; // channel.changed until their step's history.changed (#1881)
 		std::function<void()> m_layoutListener;
+		// useTrackSelection
+		std::function<std::vector<uint64_t>()> m_trackSelection;
 		std::function<void()> m_addTrack;                       // onAddTrack
 		std::function<void(uint64_t)> m_openEditor;             // onOpenEditor
 		std::function<void(const std::string&)> m_importFailed; // onImportFailed

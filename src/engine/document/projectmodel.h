@@ -109,6 +109,7 @@ namespace gnubase::engine
 		double sampleRate = 0.0;             // the project's when it was copied, which its samples count in
 		time::Samples cursor = 0;            // the project cursor when it was copied, for range.paste relative
 		std::vector<ObjectId> tracks;        // the tracks it was copied from, from top to bottom
+		bool events = false;                 // copied as events (range.copy with events), not as a range
 		std::vector<AudioEvent> audioEvents; // with those of the audio parts
 		std::vector<AudioPart> audioParts;
 		std::vector<MidiPart> midiParts;
