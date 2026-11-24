@@ -78,9 +78,11 @@ control's last step answered, its strip shows the engine's value; a refused one 
   answer while a newer change is still out. The lower zone's mixer follows the project window's track visibility, and a
   window does with Sync Visibility of Project and Mixer ([track-visibility.md](track-visibility.md)).
 - **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the left zone (in a
-  window) and the strips' sections Pictures, Routing, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them, with
-  Show All, Reset All and presets ([docking.md](docking.md)); the layout is the user setting
-  `ui.layout`, per window (`mixer1` to `mixer4`, and `project` for the lower zone's).
+  window) and the strips' sections Pictures, Routing, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders
+  them, with Show All, Reset All and presets ([docking.md](docking.md)). In a window it also shows and hides the menu
+  bar, GNUbase's own addition for platforms whose title bar has no Show Menu Bar item (p. 55; the reduced menus are in
+  [main-menu.md](main-menu.md)). The layout is the user setting `ui.layout`, per window (`mixer1` to `mixer4`, and
+  `project` for the lower zone's).
 - **Routing** (pp. 471-473): Input Routing picks an audio track's input bus, Output Routing where a channel plays: an
   output bus, or a group or effect channel whose audio doesn't come back to it (`routesTo`), for a MIDI track an
   instrument; No Bus or Not Connected disconnects. Each sends `channel.set` with `input` or `output`; the lists are the

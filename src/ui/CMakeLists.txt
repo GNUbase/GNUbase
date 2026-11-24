@@ -145,4 +145,7 @@ add_library(gnubase-ui STATIC
 target_link_libraries(gnubase-ui
 	PUBLIC gnubase-engine RmlUi::RmlUi
 	PRIVATE Freetype::Freetype gnubase-ui-thirdparty lunasvg::lunasvg SDL3::SDL3)
+if(WIN32)
+	target_link_libraries(gnubase-ui PRIVATE comctl32) # SetWindowSubclass, for the system menu's Show Menu Bar
+endif()
 gnubase_target_defaults(gnubase-ui)

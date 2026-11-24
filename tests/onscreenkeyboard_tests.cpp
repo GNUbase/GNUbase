@@ -12,9 +12,13 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <SDL3/SDL_events.h>
+#include <SDL3/SDL_keycode.h>
+#include <SDL3/SDL_scancode.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -278,4 +282,102 @@ TEST_CASE("notes played on the on-screen keyboard with the computer keyboard and
 	REQUIRE(octave.size() == 1);
 	CHECK(app.appUi().keyboard()->note(0) == 12 * (std::stoi(octave) + 2));
 	CHECK(dragTo("#velocity", 0.0F) == "1");
+}
+
+TEST_CASE("the on-screen keyboard plays computer keys by their places, labels them as the layout has them and keeps "
+		  "its octave",
+	"[ui]")
+{
+	using namespace Rml::Input;
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.ui().key(std::nullopt, "Alt+K");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().keyboard() != nullptr; }));
+
+	// Each key shows what the layout has at its computer key's place (reference manual p. 333): the lowest, Z's.
+	const std::string label = app.shell().keyLabel(KI_Z);
+	Rml::Element* lowest = keyElement(app, 0).QuerySelector(".key-label");
+	REQUIRE(lowest != nullptr);
+	CHECK(lowest->GetInnerRML() == (label.empty() ? "Z" : label));
+	// After a keymap change the keys show what the window system then reports: here a stale label goes.
+	lowest->SetInnerRML("?");
+	SDL_Event keymap{};
+	keymap.type = SDL_EVENT_KEYMAP_CHANGED;
+	REQUIRE(SDL_PushEvent(&keymap));
+	REQUIRE(app.waitUntil(
+		[&app, lowest]
+		{
+			const std::string now = app.shell().keyLabel(KI_Z);
+			return lowest->GetInnerRML() == (now.empty() ? "Z" : now);
+		}));
+
+	// A German layout's Y, at a US keyboard's Z, plays the lowest key, not the upper row's Y (key 21), and its release
+	// ends it (#691).
+	app.shell().unusedKey(app.main(), ui::KeyPress{KI_Y, 0, KI_Z});
+	CHECK(keyElement(app, 0).IsClassSet("pressed"));
+	CHECK(!keyElement(app, 21).IsClassSet("pressed"));
+	app.shell().keyReleased(app.main(), ui::KeyPress{KI_Y, 0, KI_Z});
+	CHECK(!keyElement(app, 0).IsClassSet("pressed"));
+	// A key that the layout's key codes don't name, such as a French layout's 2 (é), plays by its place too.
+	app.shell().unusedKey(app.main(), ui::KeyPress{KI_UNKNOWN, 0, KI_2});
+	CHECK(keyElement(app, 13).IsClassSet("pressed"));
+	app.shell().keyReleased(app.main(), ui::KeyPress{KI_UNKNOWN, 0, KI_2});
+	CHECK(!keyElement(app, 13).IsClassSet("pressed"));
+	// Keys outside the two rows play nothing, whatever the layout has there: a French layout's M at a US keyboard's
+	// semicolon is not the US M (key 11). The Z pressed after it shows that the window has handled both.
+	const auto sdlKey = [&app](SDL_EventType type, SDL_Keycode key, SDL_Scancode place)
+	{
+		SDL_Event event{};
+		event.type = type;
+		event.key.windowID = app.main().id();
+		event.key.key = key;
+		event.key.scancode = place;
+		event.key.down = type == SDL_EVENT_KEY_DOWN;
+		REQUIRE(SDL_PushEvent(&event));
+	};
+	sdlKey(SDL_EVENT_KEY_DOWN, SDLK_M, SDL_SCANCODE_SEMICOLON);
+	sdlKey(SDL_EVENT_KEY_DOWN, SDLK_Z, SDL_SCANCODE_Z);
+	REQUIRE(app.waitUntil([&app] { return keyElement(app, 0).IsClassSet("pressed"); }));
+	CHECK(!keyElement(app, 11).IsClassSet("pressed"));
+	sdlKey(SDL_EVENT_KEY_UP, SDLK_M, SDL_SCANCODE_SEMICOLON);
+	sdlKey(SDL_EVENT_KEY_UP, SDLK_Z, SDL_SCANCODE_Z);
+	REQUIRE(app.waitUntil([&app] { return !keyElement(app, 0).IsClassSet("pressed"); }));
+	// M without a place, as from ui::Automation, counts as typed on a US keyboard.
+	app.shell().unusedKey(app.main(), ui::KeyPress{KI_M, 0});
+	CHECK(keyElement(app, 11).IsClassSet("pressed"));
+	app.shell().keyReleased(app.main(), ui::KeyPress{KI_M, 0});
+	CHECK(!keyElement(app, 11).IsClassSet("pressed"));
+
+	// The octave and velocity are user settings, which last across restarts.
+	Rml::ElementDocument& document = *keyElement(app, 0).GetOwnerDocument();
+	REQUIRE(document.GetElementById("octave") != nullptr);
+	document.GetElementById("octave")->DispatchEvent(Rml::EventId::Change, {{"value", Rml::Variant(5.0F)}});
+	REQUIRE(document.GetElementById("velocity") != nullptr);
+	document.GetElementById("velocity")->DispatchEvent(Rml::EventId::Change, {{"value", Rml::Variant(80.0F)}});
+	// Saved once the change ends, as a slider's drag does when the mouse button goes up, not for each step.
+	const auto writes = [&app]
+	{
+		const Json log = app.call("engine.commandLog").at("commands");
+		return std::count_if(log.begin(), log.end(),
+			[](const Json& entry)
+			{
+				return entry.at("command") == "settings.set" &&
+					entry.at("parameters").value("key", std::string()) == "ui.onScreenKeyboard";
+			});
+	};
+	render(app);
+	CHECK(writes() == 0);
+	document.DispatchEvent(Rml::EventId::Mouseup, {{"button", Rml::Variant(0)}});
+	const Json saved = {{"octave", 5}, {"velocity", 80}};
+	REQUIRE(app.waitUntil(
+		[&app, &saved] { return app.call("settings.get", {{"key", "ui.onScreenKeyboard"}}).at("value") == saved; }));
+	CHECK(writes() == 1);
+	app.restart();
+	app.appUi().showProject();
+	app.ui().key(std::nullopt, "Alt+K");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().keyboard() != nullptr; }));
+	CHECK(app.appUi().keyboard()->note(0) == 84);
+	const Json velocity = app.ui().dom(app.appUi().keyboardWindow(), "#velocity-value", 0).at("elements");
+	REQUIRE(velocity.size() == 1);
+	CHECK(velocity[0].value("text", std::string()) == "80");
 }

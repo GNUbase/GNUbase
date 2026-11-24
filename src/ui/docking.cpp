@@ -841,9 +841,11 @@ namespace gnubase::ui
 	bool Docking::sectionHidden(const std::string& window, const std::string& set, const std::string& id) const
 	{
 		// The saved hidden list counts for the sections the saved set knows, those its order or its hidden list
-		// names; one it doesn't know yet, new since it was saved, has its default.
-		if (const Json* hidden = find(m_layout, {"windows", window, "sections", set, "hidden"});
-			hidden != nullptr && hidden->is_array())
+		// names; one it doesn't know yet, new since it was saved, has its default, and so has one its default list
+		// names, which was kept in the order while the window didn't know it.
+		if (const Json* hidden = find(m_layout, {"windows", window, "sections", set, "hidden"}); hidden != nullptr &&
+			hidden->is_array() &&
+			!contains(strings(find(m_layout, {"windows", window, "sections", set, "default"})), id))
 		{
 			const std::vector<std::string> names = strings(hidden);
 			if (contains(names, id) ||
@@ -887,7 +889,7 @@ namespace gnubase::ui
 			return;
 		// Every hidden one, so that the defaults no longer count, and the order, so that a later set can tell which
 		// sections this one had; with those the window doesn't know. Without a saved hidden list those still have
-		// their defaults, which the window doesn't know either: they leave the order, so that they keep them.
+		// their defaults, which the window doesn't know either: the default list names them, so that they keep them.
 		const std::vector<std::string> order = sections(window, set);
 		std::vector<std::string> list;
 		for (const std::string& name : order)
@@ -896,10 +898,17 @@ namespace gnubase::ui
 		const auto known = [&](const std::string& name) { return section(window, set, name) != nullptr; };
 		Json& json = sectionsJson(window, set);
 		const Json* savedHidden = find(json, {"hidden"});
-		json["order"] = savedHidden != nullptr && savedHidden->is_array()
-			? keepUnknown(order, find(json, {"order"}), known)
-			: order;
-		json["hidden"] = keepUnknown(list, find(json, {"hidden"}), known);
+		std::vector<std::string> defaults;
+		for (const std::string& name :
+			strings(find(json, {savedHidden != nullptr && savedHidden->is_array() ? "default" : "order"})))
+			if (!known(name))
+				defaults.push_back(name);
+		json["order"] = keepUnknown(order, find(json, {"order"}), known);
+		json["hidden"] = keepUnknown(list, savedHidden, known);
+		if (defaults.empty())
+			json.erase("default");
+		else
+			json["default"] = defaults;
 		save();
 		apply();
 	}
@@ -943,6 +952,7 @@ namespace gnubase::ui
 				Json& json = sectionsJson(window, set);
 				json["order"] = preset.value("order", Json::array());
 				json["hidden"] = preset.value("hidden", Json::array());
+				json.erase("default");
 				save();
 				apply();
 				return;
@@ -1231,6 +1241,11 @@ namespace gnubase::ui
 			applySize(*sized, find(m_layout, {"windows", window, "sizes", attribute(*sized, "resizable")}));
 		for (Rml::Element* strip : elements(*document, "[strip]"))
 			strip->SetClass("hidden", !visible(window, attribute(*strip, "strip")));
+		// Show Menu Bar in the title bar's context menu of a window with a menu bar (Windows, reference manual p. 55).
+		if (document->QuerySelector("[strip=menuBar]") != nullptr)
+			for (const Window* shown : m_shell.windows())
+				if (&shown->context() == document->GetContext())
+					m_shell.setMenuBarShown(shown->id(), visible(window, "menuBar"));
 		for (const char* strip : {"toolbar", "infoLine", "overviewLine", "statusLine", "transportBar"})
 			document->SetClass(std::string("no-") + strip, !visible(window, strip));
 		for (Rml::Element* toggle : elements(*document, "[toggle]"))

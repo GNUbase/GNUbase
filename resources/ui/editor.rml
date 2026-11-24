@@ -3,7 +3,8 @@
      (docs/features/docking.md) with the left zone, whose Visibility tab lists the tracks whose parts it can show and
      whose Inspector has the Global Tracks section, and the main zone, which ui::MidiEditor fills with its toolbar, the
      global tracks and the parts (#midi-editor). app::AppUi opens and closes it as the engine's editor view window
-     opens and closes (editor.open, editor.close). -->
+     opens and closes (editor.open, editor.close). Its menu bar has the reduced menus of a window other than the project
+     window (reference manual p. 55, docs/features/main-menu.md), hidden until the user shows it. -->
 <rml>
 <head>
 	<title>Editor</title>
@@ -28,6 +29,11 @@
 	</style>
 </head>
 <body class="docking">
+	<menubar id="menu-bar" strip="menuBar" default="hidden">
+		<button menu="file-menu">File</button>
+		<button menu="edit-menu">Edit</button>
+		<button menu="window-menu">Window</button>
+	</menubar>
 	<div class="zones">
 		<div id="left-zone" zone="left" focuszone="left" size="200"/>
 		<splitter for="left"/>
@@ -35,5 +41,29 @@
 			<div id="midi-editor"/>
 		</div>
 	</div>
+
+	<menu id="file-menu">
+		<menuitem command="file.save">Save</menuitem>
+		<menuitem command="file.saveAs">Save As...</menuitem>
+		<menuseparator/>
+		<menuitem command="file.quit">Quit</menuitem>
+	</menu>
+	<menu id="edit-menu">
+		<menuitem command="history.undo">Undo</menuitem>
+		<menuitem command="history.redo">Redo</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.cut">Cut</menuitem>
+		<menuitem command="edit.copy">Copy</menuitem>
+		<menuitem command="edit.paste">Paste</menuitem>
+		<menuitem command="edit.delete">Delete</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.selectAll">Select All</menuitem>
+		<menuitem command="edit.selectNone">Select None</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.quantize">Quantize</menuitem>
+	</menu>
+	<menu id="window-menu">
+		<menuitem command="window.windows">Windows...</menuitem>
+	</menu>
 </body>
 </rml>

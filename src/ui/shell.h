@@ -221,6 +221,16 @@ namespace gnubase::ui
 		// actions have run, e.g. so that the main menu's items show what the input changed before a script reads the
 		// DOM (ui/mainmenu.h). The window system's input arrives in a step, whose eachStep tasks run after it.
 		void onInputHandled(std::function<void()> handler) { m_inputHandled = std::move(handler); }
+
+		// Show Menu Bar in a window's title bar context menu: the handler runs when the user picks it, and
+		// setMenuBarShown shows it, checked or not (WindowSystem::setMenuBarShown).
+		void onMenuBarToggled(std::function<void(Window&)> handler) { m_menuBarToggled = std::move(handler); }
+		void setMenuBarShown(WindowId id, bool shown) { m_windows.setMenuBarShown(id, shown); }
+
+		// What the keyboard layout has at a physical key's place (WindowSystem::keyLabel), and a handler that runs
+		// when the layout changed, and with it what keyLabel gives.
+		std::string keyLabel(Rml::Input::KeyIdentifier position) const { return m_windows.keyLabel(position); }
+		void onKeymapChanged(std::function<void()> handler) { m_keymapChanged = std::move(handler); }
 		// Runs that handler; ui::Automation calls it after each input.
 		void inputHandled();
 
@@ -287,5 +297,7 @@ namespace gnubase::ui
 		std::function<void()> m_inputHandled;
 		std::function<void(Window&)> m_closeRequest;
 		std::function<void(Window&)> m_quitRequest;
+		std::function<void(Window&)> m_menuBarToggled;
+		std::function<void()> m_keymapChanged;
 	};
 }
