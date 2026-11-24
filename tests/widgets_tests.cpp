@@ -716,18 +716,30 @@ TEST_CASE("a menu taller than the window scrolls, and a submenu opens on the sid
 	CHECK(events.clicks.at("blue") == 1);
 }
 
-TEST_CASE("a click right after a submenu opened on the side where it fits lands on its item (#2063)", "[ui]")
+TEST_CASE("input right after a submenu opened on the side where it fits lands on its item (#2063)", "[ui]")
 {
 	// The submenu shows right of its item, as its stylesheet places it, and moves left of it in the update after. A
-	// click on its item at once, with nothing read in between, lands where the item is then, as a user's would.
+	// click, move or drop on its item at once, with nothing read in between, lands where the item is then, as a
+	// user's would. Each section opens the menu and the submenu again, so the submenu has just moved.
 	test::UiApp app({640, 60});
 	const Events events(app.show("popups.rml"));
 	app.ui().click(std::nullopt, at("#corner"), ui::MouseButton::Right, 1, {});
 	REQUIRE(visible(app, "#track-menu"));
 	app.ui().move(std::nullopt, at("#color"));
-	click(app, "#blue");
-	CHECK(events.clicks.count("blue") == 1);
-	CHECK_FALSE(visible(app, "#track-menu"));
+	SECTION("click")
+	{
+		click(app, "#blue");
+		CHECK(events.clicks.count("blue") == 1);
+		CHECK_FALSE(visible(app, "#track-menu"));
+	}
+	SECTION("move")
+	{
+		CHECK(app.ui().move(std::nullopt, at("#blue")).at("element").at("id") == "blue");
+	}
+	SECTION("drop")
+	{
+		CHECK(app.ui().drop(std::nullopt, at("#blue"), {"take.wav"}).at("element").at("id") == "blue");
+	}
 }
 
 TEST_CASE("an open menu whose items change moves inside the window, from where it opened until input came", "[ui]")
