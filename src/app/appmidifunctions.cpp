@@ -324,6 +324,64 @@ namespace gnubase::app
 					});
 				return Json::object();
 			});
+		// The MIDI device manager's Export Setup and Import Setup (pp. 1110, 1115, docs/features/midi-devices.md): the
+		// OS's file dialog, then midiDevice.export, or the Import MIDI Devices dialog with the file's devices.
+		m_keys.add({"midiDevice.exportSetup",
+			"Exports the installed MIDI devices into a MIDI device setup file that the user chooses.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				ui::FileDialog dialog;
+				dialog.kind = ui::FileDialogKind::Save;
+				dialog.title = "Export Setup";
+				dialog.filters = {{"MIDI device setups", "xml"}};
+				dialog.location = "MIDI Devices.xml";
+				dialog.parent = window.id();
+				m_shell.showFileDialog(dialog,
+					[this, id = window.id()](const ui::FileDialogResult& result)
+					{
+						if (!result.error.empty())
+							logging::warning("The file dialog failed: {}", result.error);
+						if (result.files.empty())
+							return;
+						std::filesystem::path file = result.files.front();
+						if (file.extension().empty())
+							file += ".xml";
+						// Why it failed goes into the manager's message if it is open, else into a notice.
+						m_binding.send("midiDevice.export", {{"path", file.u8string()}},
+							[this, id](const engine::Result& exported)
+							{
+								if (exported.ok())
+									return;
+								logging::warning("Export Setup: {}", exported.error);
+								Rml::Element* document = m_midiDevices.get();
+								Rml::Element* message = document != nullptr && document->GetParentNode() != nullptr
+									? document->GetElementById("midi-devices-message")
+									: nullptr;
+								if (message != nullptr)
+									message->SetInnerRML(Rml::StringUtilities::EncodeRml(exported.error));
+								else
+									m_files.showNotice(id, "Export Setup", exported.error);
+							});
+					});
+			}});
+		m_keys.add({"midiDevice.importSetup",
+			"Imports the MIDI devices that the user chooses from a MIDI device setup file that the user chooses.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				ui::FileDialog dialog;
+				dialog.title = "Import Setup";
+				dialog.filters = {{"MIDI device setups", "xml"}, {"All files", "*"}};
+				dialog.parent = window.id();
+				m_shell.showFileDialog(dialog,
+					[this, id = window.id()](const ui::FileDialogResult& result)
+					{
+						if (!result.error.empty())
+							logging::warning("The file dialog failed: {}", result.error);
+						ui::Window* found = m_shell.find(id);
+						if (!result.files.empty() && found != nullptr)
+							openDialog(*found, "import-midi-devices.rml", {{"path", result.files.front().u8string()}});
+					});
+			}});
 		m_keys.add({"project.inputTransformer",
 			"Opens the project input transformer, which changes what MIDI input plays on the tracks that use it.",
 			[this](ui::Window& window, Rml::Element* /*zone*/)
