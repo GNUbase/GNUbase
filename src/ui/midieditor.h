@@ -90,6 +90,9 @@ namespace gnubase::ui
 		KeyEditor* keyEditor() { return m_keys.get(); }
 		// Runs when the drum editor's Map menu chooses Drum Map Setup (KeyEditor::setDrumMapSetup).
 		void setDrumMapSetup(std::function<void()> open);
+		// What the list editor's auditioning column reads the playback position from (ListEditor), before the list
+		// editor shows.
+		void setPlaybackPosition(std::function<int64_t()> read) { m_playbackPosition = std::move(read); }
 		// The list editor, of an EditorPart::Editor while it shows the list editor.
 		ListEditor* listEditor() { return m_list.get(); }
 		// The audio part editor, of an EditorPart::Editor while it shows audio parts.
@@ -145,6 +148,7 @@ namespace gnubase::ui
 		EditorPart m_part;
 		std::function<void()> m_moved;
 		std::function<void()> m_drumMapSetup;
+		std::function<int64_t()> m_playbackPosition;
 		engine::Json m_project = engine::Json::object();
 		uint64_t m_read = 0; // EngineBinding::handed() when m_project came
 		engine::Json m_view = engine::Json::object();

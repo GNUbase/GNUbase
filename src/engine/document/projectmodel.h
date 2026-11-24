@@ -181,6 +181,12 @@ namespace gnubase::engine
 		{
 			m_soloNotesSource = std::move(source);
 		}
+		// Runs after every change of the project: an edit, an undo or redo, another project opened. For view state kept
+		// outside the project, such as the editor views (editors.cpp), to announce what the change did to it.
+		void setChangeFollower(std::function<void(CommandContext& context)> follower)
+		{
+			m_changeFollower = std::move(follower);
+		}
 		// Sets Project::soloNotes from the source, for the editor views when they change: Solo Instrument changes
 		// what plays, not the project, so it publishes a render snapshot but leaves the project as saved and auto
 		// saved as it was. Only on the command thread.
@@ -319,6 +325,7 @@ namespace gnubase::engine
 		// what automation.copy copied, for automation.paste
 		std::optional<AutomationClipboard> m_automationClipboard;
 		std::function<std::vector<std::pair<ObjectId, ObjectId>>()> m_soloNotesSource;
+		std::function<void(CommandContext& context)> m_changeFollower;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
 }

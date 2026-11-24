@@ -49,6 +49,10 @@ namespace gnubase::engine
 			bool open = false;
 			uint64_t project = 0; // the project it belongs to (ProjectModel::openedRevision)
 			std::vector<ObjectId> parts;
+			// Whether editor.changed last announced it open, and its parts: parts keeps removed ones, and an in-place
+			// editor stays open with its removed track, as they come back with an undo.
+			bool announcedOpen = false;
+			std::vector<ObjectId> announced;
 			ObjectId activePart = 0;
 			std::string editingMode = "allParts";
 			bool keepContents = false;
@@ -639,6 +643,26 @@ namespace gnubase::engine
 	{
 		auto views = std::make_shared<Views>();
 		model.setSoloNotesSource([views, &model] { return soloNotes(*views, model); });
+		// A change of the project that changes an open editor's parts (removes or adds them, brings them back or
+		// orders them anew) or closes it, as a new project does, announces the editor's view, so that clients that
+		// follow events learn of it (#625).
+		model.setChangeFollower(
+			[views, &model](CommandContext& context)
+			{
+				for (auto& [editor, stored] : *views)
+				{
+					if (!stored.open)
+						continue;
+					const EditorView view = current(*views, model, editor);
+					if (view.open == stored.announcedOpen && view.parts == stored.announced)
+						continue;
+					if (stored.project != model.openedRevision())
+						stored = view; // another project
+					stored.announcedOpen = view.open;
+					stored.announced = view.parts;
+					context.emit("editor.changed", viewJson(model.project(), editor, view));
+				}
+			});
 		// The names, so that MCP clients and Lua see them: lower, window or inPlace:<track> (#131). At most inPlace:
 		// and the 20 digits of a 64-bit track id, so that the pattern never has to match a long string (#1059, #1159).
 		const Json editorSchema = {
@@ -755,7 +779,9 @@ namespace gnubase::engine
 			"makes a double click on a note open the expression editor instead of deleting it, and expressionType is "
 			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. "
 			"acousticFeedback: the editor plays a note while it is moved or drawn (pp. 1192, 1259). View state: no "
-			"undo steps, not saved, and a new or loaded project closes the editors.";
+			"undo steps, not saved, and a new or loaded project closes the editors. An edit, undo or redo that "
+			"changes an open editor's parts (removes, adds, brings back or reorders them) or closes it, and a "
+			"project that closes it, emit editor.changed with its view.";
 		const auto editorOnly = [&](Json properties = Json::object())
 		{
 			properties["editor"] = editorSchema;
@@ -768,6 +794,8 @@ namespace gnubase::engine
 			stored = view;
 			stored.project = model.openedRevision();
 			dropUneditable(model.project(), stored);
+			stored.announcedOpen = stored.open;
+			stored.announced = ordered(model.project(), stored.parts);
 			Json result = viewJson(model.project(), editor, stored);
 			model.updateSoloNotes();
 			context.emit("editor.changed", result);

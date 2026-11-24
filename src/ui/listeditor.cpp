@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <tuple>
+#include <utility>
 
 namespace gnubase::ui
 {
@@ -214,8 +215,10 @@ namespace gnubase::ui
 		}
 	}
 
-	ListEditor::ListEditor(EngineBinding& binding, Rml::Element& root, std::string view)
-		: m_binding(binding), m_root(root.GetObserverPtr()), m_name(std::move(view))
+	ListEditor::ListEditor(
+		EngineBinding& binding, Rml::Element& root, std::string view, std::function<int64_t()> playbackPosition)
+		: m_binding(binding), m_root(root.GetObserverPtr()), m_name(std::move(view)),
+		  m_playbackPosition(std::move(playbackPosition))
 	{
 		std::string tools;
 		for (const auto& [tool, title] : g_tools)
@@ -226,8 +229,8 @@ namespace gnubase::ui
 			filters += std::string(R"(<button class="list-filter" event-type=")") + type + R"(" title="Hide )" + label +
 				R"(">)" + label + "</button>";
 		// The header, and the empty row under the events that drawing can start in, have the rows' columns.
-		std::string header = R"(<span class="list-type">Type</span>)";
-		std::string spacers = R"(<span class="list-type"/>)";
+		std::string header = R"(<span class="list-audition"/><span class="list-type">Type</span>)";
+		std::string spacers = R"(<span class="list-audition"/><span class="list-type"/>)";
 		for (const auto& [field, label] : g_fields)
 		{
 			header += std::string(R"(<span class="list-cell" field=")") + field + R"(">)" + label + "</span>";
@@ -276,6 +279,31 @@ namespace gnubase::ui
 			root.AddEventListener(event, this);
 		// Before a text display takes Enter: Ctrl (Cmd) with it sets every selected event to the value (p. 1255).
 		root.AddEventListener(Rml::EventId::Keydown, this, true);
+		root.AddEventListener(Rml::EventId::Dblclick, this);
+		// The auditioning column follows the project cursor, and while playing the playback position.
+		m_subscriptions.push_back(
+			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
+		m_binding.send("transport.get", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					followTransport(result.value);
+			});
+	}
+
+	void ListEditor::followTransport(const Json& status)
+	{
+		m_cursor = status.at("position").get<int64_t>();
+		showCursor();
+		if (!status.at("playing").get<bool>() || !m_playbackPosition)
+			m_position.reset();
+		else if (!m_position)
+			m_position = m_binding.watch<int64_t>(m_root.get(), m_playbackPosition,
+				[this](const int64_t& sample)
+				{
+					m_cursor = sample;
+					return showCursor();
+				});
 	}
 
 	ListEditor::~ListEditor()
@@ -286,6 +314,7 @@ namespace gnubase::ui
 			for (const Rml::EventId event : g_events)
 				root->RemoveEventListener(event, this);
 			root->RemoveEventListener(Rml::EventId::Keydown, this, true);
+			root->RemoveEventListener(Rml::EventId::Dblclick, this);
 		}
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
 			if (Rml::Element* element = menu.get())
@@ -547,13 +576,17 @@ namespace gnubase::ui
 		const std::vector<const Row*> selection = selectedRows();
 		const Row* first = selection.empty() ? nullptr : selection.front();
 		std::string rml;
+		std::vector<time::Ticks> starts;
 		for (const Row& row : m_rows)
 		{
 			if (!shown(row, first))
 				continue;
+			starts.push_back(row.start);
 			rml += R"(<div class="list-row)" + std::string(row.editable ? "" : " inactive") + R"(" part=")" +
 				std::to_string(row.part) + (row.isNote() ? R"(" note=")" : R"(" controller=")") +
-				std::to_string(row.id) + R"(" type=")" + row.type + R"("><span class="list-type">)" +
+				std::to_string(row.id) + R"(" type=")" + row.type +
+				R"("><span class="list-audition"><svg class="icon list-audition-arrow" )"
+				R"(src="../icons/transport-play.svg"/></span><span class="list-type">)" +
 				typeLabel(row.type) + "</span>";
 			for (const auto& [field, name] : g_fields)
 			{
@@ -582,7 +615,9 @@ namespace gnubase::ui
 		{
 			rows->SetInnerRML(rml);
 			m_rowsRml = rml;
+			m_atCursor = -1;
 		}
+		m_starts = std::move(starts); // the starts change without the rows' RML when an event moves in its place
 		const auto range = static_cast<double>(m_to - m_from);
 		for (int i = 0; i < rows->GetNumChildren(); ++i)
 		{
@@ -609,8 +644,29 @@ namespace gnubase::ui
 				value->SetProperty(Rml::PropertyId::Width, percent(width * 100.0));
 			}
 		}
+		showCursor();
 		if (Rml::Context* context = root->GetContext())
 			context->RequestNextUpdate(0);
+	}
+
+	bool ListEditor::showCursor()
+	{
+		Rml::Element* root = m_root.get();
+		const Rml::Element* rows = root != nullptr ? root->QuerySelector(".list-editor-rows") : nullptr;
+		if (rows == nullptr)
+			return false;
+		// The rows shown are in playback order: the last one that starts at the cursor or before it.
+		const time::Ticks cursor = m_time.tempo.toTicks(m_cursor, m_time.sampleRate);
+		const int at =
+			static_cast<int>(std::upper_bound(m_starts.begin(), m_starts.end(), cursor) - m_starts.begin()) - 1;
+		if (at == m_atCursor)
+			return false;
+		if (Rml::Element* old = rows->GetChild(m_atCursor))
+			old->SetClass("at-cursor", false);
+		if (Rml::Element* row = rows->GetChild(at))
+			row->SetClass("at-cursor", true);
+		m_atCursor = at;
+		return true;
 	}
 
 	const ListEditor::Row* ListEditor::rowOf(Rml::Element* element) const
@@ -990,6 +1046,7 @@ namespace gnubase::ui
 			break;
 		}
 		case Rml::EventId::Mousedown:
+			m_doubleClicked = false;
 			if (event.GetParameter("button", 0) == 1 && event.GetCurrentElement() == m_root.get())
 			{
 				// After the document's popup behavior opened the menu (capture phase): the open menu moves inside the
@@ -1041,7 +1098,27 @@ namespace gnubase::ui
 				render();
 			break;
 		case Rml::EventId::Click:
-			click(*target, ctrl);
+			// A click in the auditioning column moves the cursor to the event's start, a double click also starts or
+			// stops playback (p. 1251). The click that ends a double click comes after its dblclick, and doesn't locate
+			// again: playback that it started would jump back to the event.
+			if (const Row* row = rowOf(target);
+				row != nullptr && closest(target, "list-audition", m_root.get()) != nullptr)
+			{
+				if (!std::exchange(m_doubleClicked, false))
+					m_binding.send("transport.locate",
+						{{"position", std::max<int64_t>(0, m_time.tempo.toSamples(row->start, m_time.sampleRate))}});
+			}
+			else
+			{
+				click(*target, ctrl);
+			}
+			break;
+		case Rml::EventId::Dblclick:
+			if (rowOf(target) != nullptr && closest(target, "list-audition", m_root.get()) != nullptr)
+			{
+				m_binding.send("transport.toggle");
+				m_doubleClicked = true;
+			}
 			break;
 		case Rml::EventId::Change:
 			if (target->GetId() == "list-insert-velocity")
@@ -1115,7 +1192,7 @@ namespace gnubase::ui
 		m_gesture = Gesture::None;
 		const Rml::Element* root = m_root.get();
 		Rml::Element* target = event.GetTargetElement();
-		if (closest(target, "list-editor-body", root) == nullptr)
+		if (closest(target, "list-editor-body", root) == nullptr || closest(target, "list-audition", root) != nullptr)
 			return;
 		const bool modified = event.GetParameter("shift_key", 0) != 0 || event.GetParameter("ctrl_key", 0) != 0 ||
 			event.GetParameter("meta_key", 0) != 0;
