@@ -3273,21 +3273,24 @@ namespace gnubase::engine
 		}
 
 		// The events of two copies of a group, which were alike, paired: each of from's with the one of to's in the
-		// same place in the order of what they share.
+		// same place in the order of what they share. The position from the part's start is in its track's time base,
+		// which can differ between the copies, so it orders as a number after the rest, as rebasing keeps the order.
 		std::map<ObjectId, ObjectId> pairedEvents(const std::map<ObjectId, AudioEvent>& fromEvents,
 			const AudioPart& from, const std::map<ObjectId, AudioEvent>& toEvents, const AudioPart& to)
 		{
 			const auto sorted = [](const std::map<ObjectId, AudioEvent>& events, const AudioPart& part)
 			{
-				std::vector<std::pair<std::string, ObjectId>> keys;
+				std::vector<std::tuple<std::string, int64_t, ObjectId>> keys;
 				for (const auto& [id, event] : events)
 					if (event.part == part.id)
 					{
 						AudioEvent shared = sharedOf(events, event, part);
+						const int64_t position = shared.position.value;
 						shared.id = 0;
 						shared.part = 0;
 						shared.crossfade.from = 0;
-						keys.emplace_back(toJson(shared).dump(), id);
+						shared.position = {};
+						keys.emplace_back(toJson(shared).dump(), position, id);
 					}
 				std::sort(keys.begin(), keys.end());
 				return keys;
@@ -3296,7 +3299,7 @@ namespace gnubase::engine
 			const auto toKeys = sorted(toEvents, to);
 			std::map<ObjectId, ObjectId> pairs;
 			for (size_t i = 0; i < std::min(fromKeys.size(), toKeys.size()); ++i)
-				pairs[fromKeys[i].second] = toKeys[i].second;
+				pairs[std::get<2>(fromKeys[i])] = std::get<2>(toKeys[i]);
 			return pairs;
 		}
 

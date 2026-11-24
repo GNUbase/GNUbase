@@ -4,6 +4,7 @@
 // the event display.
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/time/tempomap.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -26,6 +27,7 @@ using gnubase::engine::RenderChannel;
 using gnubase::engine::RenderSnapshot;
 using gnubase::test::readZip;
 using gnubase::test::writeZip;
+using gnubase::time::g_ticksPerQuarter;
 
 namespace
 {
@@ -391,6 +393,37 @@ TEST_CASE("shared copies of an audio part keep their events' ids, places in the 
 	CHECK(played(second).front > place);
 	CHECK(played(copySecond).front == place);
 	CHECK(played(after).front > played(copySecond).front);
+}
+
+TEST_CASE("shared copies of an audio part on tracks of different time bases pair their events by place", "[unit]")
+{
+	// A musical original with one clip's hit used twice, at 1 and 5 beats from the part's start, and a shared copy on a
+	// linear track: there, at 120 BPM, the places are 24000 and 120000 samples, whose digits sort the other way.
+	Fixture f;
+	const int64_t musical =
+		f.call("track.add", {{"type", "audio"}, {"timeBase", "musical"}}).at("track").at("id").get<int64_t>();
+	const int64_t linear = f.track("audio");
+	const int64_t start = f.audioEvent(musical, 0, g_second / 4);
+	const int64_t one = f.audioEvent(musical, g_ticksPerQuarter, g_second / 2);
+	const int64_t five = f.audioEvent(musical, 5 * g_ticksPerQuarter, g_second / 2);
+	const Json part = f.call("event.toPart", {{"events", {start, one, five}}}).at("events").at(0);
+	const Json copy =
+		f.call("event.copy", {{"events", {part}}, {"delta", 10 * g_second}, {"track", linear}, {"shared", true}})
+			.at("events")
+			.at(0);
+	std::vector<Json> ids;
+	for (const Json& event : f.eventsIn(copy))
+		ids.push_back(event.at("id"));
+	REQUIRE(ids.size() == 3);
+
+	// An edit in the original leaves each of the copy's events with its id at its place.
+	f.call("audioEvent.set", {{"event", one}, {"volume", -6.0}});
+	const std::vector<Json> events = f.eventsIn(copy);
+	REQUIRE(events.size() == 3);
+	for (size_t i = 0; i < events.size(); ++i)
+		CHECK(events[i].at("id") == ids[i]);
+	CHECK(events[1].at("volume") == -6.0);
+	CHECK(events[2].at("volume") == 0.0);
 }
 
 TEST_CASE("event.fillLoop and track.duplicate keep shared copies of audio parts in their group", "[unit]")
