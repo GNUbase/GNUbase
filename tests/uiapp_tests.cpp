@@ -149,6 +149,24 @@ TEST_CASE("UI tests run GNUbase's UI on the dummy device, with its fonts and the
 	}
 }
 
+TEST_CASE("macOS release builds draw without Metal's validation layer, debug builds with it", "[ui]")
+{
+	// The validation layer costs CPU time for every command, and the virtual GPU of CI's macOS runners aborts large
+	// frames with it, such as the inspector's tests with an in-place editor (#2063). The variable must be set before
+	// the first Metal device, which the UI's renderer creates.
+	const test::UiApp app;
+	const char* layer = std::getenv("MTL_DEBUG_LAYER");
+#ifdef __APPLE__
+#ifdef NDEBUG
+	CHECK(std::string(layer != nullptr ? layer : "") == "0");
+#else
+	CHECK(std::string(layer != nullptr ? layer : "") == "1");
+#endif
+#else
+	CHECK(layer == nullptr); // only SDL_GPU's Metal driver sets it
+#endif
+}
+
 TEST_CASE("UI tests click through GNUbase's UI and read it back, as MCP's UI tools do", "[ui]")
 {
 	test::UiApp app;

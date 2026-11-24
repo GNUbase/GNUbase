@@ -164,6 +164,10 @@ filters, so they work too.
   `GpuRenderer` and the renderer take another count). A device without that count takes the next larger one it has:
   Mesa's lavapipe has four but not two. The UI tests ask for four, which every API has, with the same sample positions
   everywhere, and which Mesa used for the references.
+- **Validation.** SDL_GPU's debug mode stays on, with SDL's own checks of every call. On macOS it also turns on Metal's
+  API validation layer, which release builds keep off (`MTL_DEBUG_LAYER=0`, unless it is set already): it costs CPU
+  time for every command, and with it the virtual GPU of CI's macOS runners aborts large frames (#2063). Debug builds
+  keep it on.
 - **Shaders.** One HLSL source per shader in `ext/RmlUi/Backends/RmlUi_SDL_GPU`, compiled ahead of time into SPIR-V,
   DXIL and MSL and committed as C arrays in `ShadersCompiledSPV.h`, as upstream does. Building GNUbase needs no shader
   tools, and every platform runs the same compiled shaders. Compiling them at build time instead would mean building

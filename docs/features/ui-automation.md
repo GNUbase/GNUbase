@@ -40,28 +40,30 @@ elements, and mouse and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guid
   aims at an element (move, click, press, release, drag, wheel, drop). After scrolling, the centre must be inside both
   its clipping region and the window, including their boundaries as RmlUi's hit test does; otherwise the call fails
   before sending input, with an error naming the selector (#1810). This includes targets cut off by `overflow: hidden`,
-  oversized elements whose centres remain clipped, and elements outside the window without a scrolling container. A drag
-  takes both its ends where they are once both are scrolled into view, so scrolling to the end can't move the start from
-  under the mouse, and fails when they can't both be in view, e.g. two items of a list further apart than it shows. A
-  start that can't be shown on its own fails with the same hidden-centre error as a click, without blaming the other
-  end. A failed drag leaves any containers it scrolled at their last attempted positions (#1813); a double click is two
-  clicks, which RmlUi recognises by their timing, with the UI updated between them as frames would be, so a first click
-  that opens a field leaves the second to the field. RmlUi's clock stands still for them, so they are one double click
-  however long those frames take in a slow build or on a busy machine; elements that time double clicks of their own
-  (the marker, signature and transposition tracks) do so on that clock too. A clock that a test froze stays frozen. A
-  drag presses at the start, moves in eight steps and releases at the end, so RmlUi sends `dragstart`, `drag` and
-  `dragdrop`. A press and a release can also come on their own (`Automation::press` and `release`, `ui_click`'s `action`
-  `down` and `up`): the button stays down in between, while moves and other calls run, e.g. a settings change halfway
-  through a drag, and time passes as it does between the calls. Wheel turns are in lines, positive to the right and
-  down. A file drop hands files to the element under the target as the window system hands the user's drops from the
-  OS's file manager (`ui::dropFiles`: a `filedrop` event with the files, their count and the point), e.g. audio files on
-  the event display to import them. Clicks, presses, moves, drags and wheel turns can hold modifiers, e.g. Shift for a
-  fine drag. Keys are pressed and released with modifiers; they don't type text, which `ui_text` sends as text input, as
-  the OS's text input does after a key press. A key that no element uses runs its key command, as the user's does
-  ([key-commands.md](key-commands.md)). Each input tool answers with the element under the mouse or with the focus, so a
-  client sees what it hit. After each input, outside the shell's steps, the shell's input handler runs
-  (`Shell::inputHandled`): the app updates its main menu's items there, so the DOM that `ui_dom` reads next shows what
-  the input changed ([main-menu.md](main-menu.md)). It runs once per input, after the input's listeners;
+  oversized elements whose centres remain clipped, and elements outside the window without a scrolling container. Each
+  input updates the window first, aims at the element as it is after that update and sends the input with nothing in
+  between, so an element that moves in that update (a submenu moving to the side where it fits) gets the input where it
+  is now (#2063). A drag takes both its ends where they are once both are scrolled into view, so scrolling to the end
+  can't move the start from under the mouse, and fails when they can't both be in view, e.g. two items of a list further
+  apart than it shows. A start that can't be shown on its own fails with the same hidden-centre error as a click,
+  without blaming the other end. A failed drag leaves any containers it scrolled at their last attempted positions
+  (#1813); a double click is two clicks, which RmlUi recognises by their timing, with the UI updated between them as
+  frames would be, so a first click that opens a field leaves the second to the field. RmlUi's clock stands still for
+  them, so they are one double click however long those frames take in a slow build or on a busy machine; elements that
+  time double clicks of their own (the marker, signature and transposition tracks) do so on that clock too. A clock that
+  a test froze stays frozen. A drag presses at the start, moves in eight steps and releases at the end, so RmlUi sends
+  `dragstart`, `drag` and `dragdrop`. A press and a release can also come on their own (`Automation::press` and
+  `release`, `ui_click`'s `action` `down` and `up`): the button stays down in between, while moves and other calls run,
+  e.g. a settings change halfway through a drag, and time passes as it does between the calls. Wheel turns are in lines,
+  positive to the right and down. A file drop hands files to the element under the target as the window system hands the
+  user's drops from the OS's file manager (`ui::dropFiles`: a `filedrop` event with the files, their count and the
+  point), e.g. audio files on the event display to import them. Clicks, presses, moves, drags and wheel turns can hold
+  modifiers, e.g. Shift for a fine drag. Keys are pressed and released with modifiers; they don't type text, which
+  `ui_text` sends as text input, as the OS's text input does after a key press. A key that no element uses runs its key
+  command, as the user's does ([key-commands.md](key-commands.md)). Each input tool answers with the element under the
+  mouse or with the focus, so a client sees what it hit. After each input, outside the shell's steps, the shell's input
+  handler runs (`Shell::inputHandled`): the app updates its main menu's items there, so the DOM that `ui_dom` reads next
+  shows what the input changed ([main-menu.md](main-menu.md)). It runs once per input, after the input's listeners;
   `tests/mainmenu_tests.cpp` checks that for every input.
 - **Closing and quitting.** The window system's requests come from outside RmlUi, so input can't make them: `ui_close`
   asks to close a window as its title bar's close button or Alt+F4 does (`Shell::requestClose`): a panel's own window
@@ -75,7 +77,8 @@ elements, and mouse and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guid
   given text), or that none is, for at most 60 seconds.
 - **Tests.** `tests/uiapp_tests.cpp` checks in the app's UI that the reading tools draw neither the main window nor a
   mixer window, and that a move in the mixer window draws it and not the main window; `tests/shell_tests.cpp` that
-  quietly posted work draws only the windows it asks for. `tests/uitools_tests.cpp` checks scrolling targets into
-  view, rejecting hidden centres without sending input, centres on hit-testable boundaries (including a target's
-  child), errors for unshowable drag starts and the scroll position left by a failed drag. `tests/window_tests.cpp`
-  checks automation on real windows.
+  quietly posted work draws only the windows it asks for. `tests/uitools_tests.cpp` checks scrolling targets into view,
+  rejecting hidden centres without sending input, centres on hit-testable boundaries (including a target's child),
+  errors for unshowable drag starts and the scroll position left by a failed drag. `tests/widgets_tests.cpp` checks that
+  a click, a move and a drop right after a submenu moved to the side where it fits land on its item (#2063).
+  `tests/window_tests.cpp` checks automation on real windows.

@@ -24,7 +24,9 @@ permissions:
 
 jobs:
   ui-macos-arm64:
-    timeout-minutes: 60
+    # Without a compiler cache every run builds from scratch: 49 and 58 minutes of building on 2026-11-24 (#2063), so the
+    # old 60 min limit cancelled a run before its tests, which take another 15.
+    timeout-minutes: 120
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
