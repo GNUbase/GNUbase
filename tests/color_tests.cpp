@@ -7,6 +7,7 @@
 #include "engine/document/document.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
 #include "ui/docking.h"
@@ -194,6 +195,23 @@ TEST_CASE("editing.defaultColors is the color set of new projects", "[unit]")
 	run(client, "settings.set", {{"key", "editing.defaultColors"}, {"value", Json::array()}});
 	run(client, "project.new");
 	CHECK(run(client, "project.get").at("colors") == factory);
+}
+
+TEST_CASE("a template keeps its own color set over editing.defaultColors", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Json own = {{{"name", "Strings"}, {"color", "#123456"}}};
+	run(client, "project.set", {{"colors", own}});
+	run(client, "project.saveTemplate", {{"name", "Orchestra"}});
+
+	const Json colors = {{{"name", "Drums"}, {"color", "#ff0000"}}, {{"name", "Bass"}, {"color", "#00ff00"}}};
+	run(client, "settings.set", {{"key", "editing.defaultColors"}, {"value", colors}});
+	run(client, "project.new", {{"template", "Orchestra"}});
+	CHECK(run(client, "project.get").at("colors") == own);
+	run(client, "project.new");
+	CHECK(run(client, "project.get").at("colors") == colors);
 }
 
 TEST_CASE("editing.autoTrackColor colors new tracks", "[unit]")
@@ -716,6 +734,18 @@ TEST_CASE("the project colors setup dialog's options save the set as the default
 	const auto defaultColors = [&window]
 	{ return window.app.call("settings.get", {{"key", "editing.defaultColors"}}).at("value"); };
 	const Json factory = window.app.call("project.factoryColors").at("colors");
+
+	// Reset Color Set to Default with no default saved gives the factory set back.
+	colorsSetup();
+	window.click("#project-colors > listitem[value=\"1\"]");
+	window.click("#color-remove");
+	REQUIRE(window.elements("#project-colors > listitem").size() == factory.size() - 1);
+	window.click("#colors-options-tab");
+	window.click("#colors-reset-default");
+	CHECK(window.elements("#project-colors > listitem").size() == factory.size());
+	window.click("#colors-apply");
+	REQUIRE(window.app.waitUntil([&] { return !open(); }));
+	CHECK(window.project().at("colors") == factory);
 
 	// Save Color Set as Default (reference manual p. 118) saves the set being edited, not the project's.
 	colorsSetup();
