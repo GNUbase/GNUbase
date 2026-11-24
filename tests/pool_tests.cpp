@@ -1307,6 +1307,40 @@ TEST_CASE("media.relink skips an entry with length whose file went or changed, a
 			  .at("relinked") == Json::array({b}));
 }
 
+TEST_CASE("media.relink refuses a file without sample frames for a used media file", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "a.wav", 4800, 1);
+	writeFile(song.library / "short.wav", 4795, 1);
+	writeFile(song.library / "empty.wav", 0, 1);
+	const uint64_t clip = song.clip(song.library / "a.wav");
+	const uint64_t media = song.mediaOf(clip);
+	const auto track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	run(song.client, "audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}});
+	const auto entry = [&song, media](const std::string& file)
+	{ return Json{{"media", media}, {"path", utf8(song.library / file)}}; };
+	const Json before = run(song.client, "project.get");
+	const size_t steps0 = steps(song.client);
+
+	// Alone, and after a shorter file for the same media file in the same call: refused, nothing changes.
+	CHECK_THAT(reject(song.client, "media.relink", {{"files", Json::array({entry("empty.wav")})}}),
+		ContainsSubstring("no sample frames"));
+	CHECK_THAT(reject(song.client, "media.relink", {{"files", Json::array({entry("short.wav"), entry("empty.wav")})}}),
+		ContainsSubstring("no sample frames"));
+	const Json after = run(song.client, "project.get");
+	CHECK(after.at("media") == before.at("media"));
+	CHECK(after.at("audioEvents") == before.at("audioEvents"));
+	CHECK(steps(song.client) == steps0);
+
+	// An entry with length is skipped instead.
+	Json checked = entry("empty.wav");
+	checked["length"] = 0;
+	const Json skipped = run(song.client, "media.relink", {{"files", Json::array({checked})}});
+	CHECK(skipped.at("relinked").empty());
+	CHECK(skipped.at("skipped") == Json::array({media}));
+	CHECK(byId(run(song.client, "project.get").at("media"), media).at("length") == 4800);
+}
+
 TEST_CASE("a job's final command leaves a project opened while the job runs alone", "[integration]")
 {
 	// Another version of the song, with the same media files at the same paths, is opened while a job runs for the

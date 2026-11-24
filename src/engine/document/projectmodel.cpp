@@ -2742,12 +2742,13 @@ namespace gnubase::engine
 					continue;
 				}
 				if (checked &&
-					(info.sampleRate != media.sampleRate || info.channels != media.channels ||
+					(info.frames <= 0 || info.sampleRate != media.sampleRate || info.channels != media.channels ||
 						info.frames != entry.at("length").get<int64_t>()))
 				{
 					skipped.push_back(id);
 					continue;
 				}
+				require(info.frames > 0, path + " has no sample frames");
 				require(info.sampleRate == media.sampleRate && info.channels == media.channels,
 					path + " has " + std::to_string(info.channels) + " channels at " +
 						std::to_string(std::llround(info.sampleRate)) + " Hz, media file " + idText(id) + " " +
@@ -2757,7 +2758,7 @@ namespace gnubase::engine
 				// A file within media.locate's tolerance has another length than project.xml gave (#506); what played
 				// past a shorter file's end is trimmed, so that the events stay within their clips.
 				const time::Samples length = withinLongest(project, time::TimeBase::Linear, info.frames, "length");
-				if (length > 0 && length < media.length)
+				if (length < media.length)
 					shortened.insert(id);
 				media.length = length;
 				context.emit("media.changed", {{"media", toJson(media)}});
@@ -4817,10 +4818,12 @@ namespace gnubase::engine
 		add(engine,
 			{"media.relink", 1,
 				"Points media files at other files, such as copies, as one undo step. Each new file must be an audio "
-				"file with the media file's sample rate and channel count; the media file takes its length, and the "
+				"file with sample frames and the media file's sample rate and channel count; the media file takes its "
+				"length, and the "
 				"clip fades and audio events that play past a shorter file's end are trimmed to it. An entry "
 				"with from applies only if the media file is still there and still points at from; one with length "
-				"only if its new file can be read, fits and has that many sample frames; otherwise it is skipped. With "
+				"only if its new file can be read, fits and has that many sample frames (not none); otherwise it is "
+				"skipped. With "
 				"project, every entry is skipped unless that project is still open (project.revision's project). "
 				"Returns the media files it relinked and the ones it skipped.",
 				objectSchema({{"files",
