@@ -251,6 +251,12 @@ namespace gnubase::engine
 			for (auto& [id, event] : project.audioEvents)
 				tracks[event.track].emplace_back(eventSpan(project, event), &event);
 			std::vector<ObjectId> events;
+			// New crossfades are the default crossfade (the user setting editing.defaultCrossfade).
+			const Json made = context.call("settings.get", {{"key", "editing.defaultCrossfade"}}).at("value");
+			Crossfade fresh;
+			fresh.mode = crossfadeModeFromName(made.at("mode").get<std::string>()).value_or(fresh.mode);
+			fresh.shape = fadeShapeFromName(made.at("shape").get<std::string>()).value_or(fresh.shape);
+			fresh.outShape = fadeShapeFromName(made.at("outShape").get<std::string>()).value_or(fresh.outShape);
 			for (auto& [track, row] : tracks)
 			{
 				std::sort(row.begin(), row.end(), [](const auto& a, const auto& b)
@@ -274,7 +280,7 @@ namespace gnubase::engine
 								other.crossfade = Crossfade();
 								changed(other, context);
 							}
-						to.crossfade = Crossfade();
+						to.crossfade = fresh;
 						to.crossfade.from = from.id;
 						if (!range)
 							changed(to, context);
@@ -629,7 +635,8 @@ namespace gnubase::engine
 		addEdit(engine,
 			{"event.crossfade", 1,
 				"Crossfades audio events with the overlapping ones next to them on their tracks, with the default "
-				"settings of crossfade.set: several events with each other where one starts inside the one before it "
+				"crossfade (the user setting editing.defaultCrossfade) over the whole overlap: several events with "
+				"each other where one starts inside the one before it "
 				"and ends after it, one event with the events on either side of it like that. Crossfades there already "
 				"stay as they are. Returns the events that fade in.",
 				object({{"events", ids}}, {"events"}), eventsResult, false},

@@ -478,6 +478,16 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
 					"default", true},
+				{"editing.defaultCrossfade",
+					"The default crossfade (reference manual p. 392): its mode and the shapes of its fade in and fade "
+					"out, which event.crossfade gives new crossfades; the crossfade editor's As Default sets it.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"mode", {{"type", "string"}, {"enum", crossfadeModeNames()}}},
+								{"shape", {{"type", "string"}, {"enum", fadeShapeNames()}}},
+								{"outShape", {{"type", "string"}, {"enum", fadeShapeNames()}}}}},
+						{"required", {"mode", "shape", "outShape"}}, {"additionalProperties", false}},
+					Json{{"mode", "equalGain"}, {"shape", "linear"}, {"outShape", "linear"}}},
 				{"editing.defaultFadeIn",
 					"The default fade in (reference manual p. 385): its shape and length in seconds, which Apply "
 					"Standard Fade In gives the selected audio events; the fade dialog's As Default sets it.",
