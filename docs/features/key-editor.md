@@ -18,7 +18,7 @@ saved, and a new project closes the editors.
 | `moveInsert`, `recordPitch`, `recordVelocity`, `recordReleaseVelocity`, `keepNotes` | The Step/MIDI Input section's switches | p. 1197 |
 | `insertVelocity` | The velocity of drawn notes and of input that doesn't record it (0-1, default 100/127) | p. 1195 |
 | `lengthQuantize` | The length of new notes: a note value (`1/16`, `1/8T`, `1/4.`) or `link`, the quantize grid's | p. 1196 |
-| `acousticFeedback` | Acoustic Feedback: the editor plays a note while it is moved, at the pitch it is dragged to, and a note while it is drawn, until the mouse is released, on the active track's instrument as a key of the keyboard does (off by default) | pp. 1192, 1259 |
+| `acousticFeedback` | Acoustic Feedback: the editor plays a note while it is moved, at the pitch it is dragged to, a note while it is drawn, and a note whose velocity a drag or the draw tool on the velocity lane edits, at the velocity under the mouse (controller-lanes.md), until the mouse is released, on the active track's instrument as a key of the keyboard does (off by default) | pp. 1192, 1259 |
 | `showExpression`, `expressionDoubleClick`, `expressionType` | Show Note Expression Data, Double-Click Opens Note Expression Editor and the expression the expression editor edits ([note-expression.md](note-expression.md)) | pp. 1303, 1308-1309 |
 
 `editor.set` changes them; `editor.get` and `editor.changed` report them.
@@ -182,12 +182,11 @@ the step input cursor and lengthening a held chord; the Mute tool on notes (note
 Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note
 display (it draws on the controller lanes); the selection rectangle, the trim tool's drag across several notes and the
 draw tool's modifiers for velocity, pitch and position; transposing and deleting as key commands that the Key Commands
-dialog can bind to other keys; the nudge buttons, Solo Editor, Record in Editor, Acoustic Feedback for velocity edits,
-pitch visibility, the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout;
-horizontal zoom and scrolling; the key at the mouse's pitch lit while the mouse moves in the note display (p. 1204);
-drum map names in the key editor and articulation names; Add to Chord Track, Match with Chord Track, Create Chord
-Events and the chord insert tools; quantizing from the toolbar (#132) and the Length section's functions (#133); the
-key editor's context menu.
+dialog can bind to other keys; the nudge buttons, Solo Editor, Record in Editor, pitch visibility, the Scale Assistant,
+Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom and scrolling; the key
+at the mouse's pitch lit while the mouse moves in the note display (p. 1204); drum map names in the key editor and
+articulation names; Add to Chord Track, Match with Chord Track, Create Chord Events and the chord insert tools;
+quantizing from the toolbar (#132) and the Length section's functions (#133); the key editor's context menu.
 
 ## Checks
 

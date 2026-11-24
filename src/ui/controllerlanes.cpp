@@ -1035,6 +1035,7 @@ namespace gnubase::ui
 	void ControllerLanes::cancel()
 	{
 		listen(false);
+		endFeedback();
 		m_gesture = Gesture::None;
 	}
 
@@ -1083,16 +1084,7 @@ namespace gnubase::ui
 					item.id == idAttribute(*element, notes ? "note" : "controller"))
 					m_pressed = item;
 		if (notes && !m_pressed)
-		{
-			// Bars are thin: a press in a cell of the quantize grid takes the note that starts there nearest to it.
-			const int64_t from = cell(m_pressedAt.first, grid());
-			for (const Item& item : items(shown))
-				if (item.editable && item.start >= from && item.start < from + grid() &&
-					(!m_pressed ||
-						std::abs(static_cast<double>(item.start) - m_pressedAt.first) <
-							std::abs(static_cast<double>(m_pressed->start) - m_pressedAt.first)))
-					m_pressed = item;
-		}
+			m_pressed = noteNear(shown, m_pressedAt.first);
 		m_painted.clear();
 		if (m_tool == "objectSelection")
 		{
@@ -1119,11 +1111,13 @@ namespace gnubase::ui
 				pressed.selected = true;
 			}
 			m_gesture = Gesture::Value;
+			feedback(m_pressed, pressed.value);
 		}
 		else if (m_tool == "draw" || (m_tool == "line" && m_lineMode == "paint"))
 		{
 			m_gesture = Gesture::Paint;
 			m_painted.emplace_back(std::llround(m_pressedAt.first), m_pressedAt.second);
+			feedback(m_pressed, m_pressedAt.second);
 		}
 		else if (m_tool == "line")
 		{
@@ -1139,16 +1133,63 @@ namespace gnubase::ui
 
 	void ControllerLanes::drag(Rml::Event& event)
 	{
-		if (m_gesture == Gesture::Paint)
+		if (m_gesture == Gesture::Value && m_pressed)
+		{
+			feedback(m_pressed, m_pressed->value + at(event, m_lane).second - m_pressedAt.second);
+		}
+		else if (m_gesture == Gesture::Paint)
 		{
 			const auto [ticks, value] = at(event, m_lane);
 			m_painted.emplace_back(std::llround(ticks), value);
+			if (m_lane < m_lanes.size())
+				feedback(noteNear(m_lanes[m_lane], ticks), value);
 		}
+	}
+
+	std::optional<ControllerLanes::Item> ControllerLanes::noteNear(const Lane& lane, double ticks) const
+	{
+		std::optional<Item> nearest;
+		const int64_t from = cell(ticks, grid());
+		for (const Item& item : items(lane))
+			if (item.editable && item.start >= from && item.start < from + grid() &&
+				(!nearest ||
+					std::abs(static_cast<double>(item.start) - ticks) <
+						std::abs(static_cast<double>(nearest->start) - ticks)))
+				nearest = item;
+		return nearest;
+	}
+
+	void ControllerLanes::feedback(const std::optional<Item>& note, double value)
+	{
+		if (!m_feedback || !note || m_lane >= m_lanes.size() || m_lanes[m_lane].type != "velocity" ||
+			!m_view.value("acousticFeedback", false))
+			return;
+		for (const Part& part : m_parts)
+		{
+			if (part.id != note->part)
+				continue;
+			for (const Json& each : part.json.at("notes"))
+				if (each.at("id") == note->id)
+				{
+					const std::pair<int, int> now = {each.at("pitch").get<int>(),
+						std::clamp(static_cast<int>(std::lround(std::clamp(value, 0.0, 1.0) * 127.0)), 1, 127)};
+					if (m_sounding != now)
+						m_feedback(now.first, now.second);
+					m_sounding = now;
+				}
+		}
+	}
+
+	void ControllerLanes::endFeedback()
+	{
+		if (std::exchange(m_sounding, std::nullopt) && m_feedback)
+			m_feedback(std::nullopt, 0);
 	}
 
 	void ControllerLanes::release(Rml::Event& event)
 	{
 		listen(false);
+		endFeedback();
 		const Gesture gesture = std::exchange(m_gesture, Gesture::None);
 		if (gesture == Gesture::None || m_lane >= m_lanes.size())
 			return;

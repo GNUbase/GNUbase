@@ -105,8 +105,8 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
 
 Tracked in #1766: the setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
 ([docking.md](docking.md)); the keyboard in the track list's column; the toolbar's Indicate Transpositions and Event
-Colors (the key editor has none yet), and Acoustic Feedback for velocity edits (the toolbar's Acoustic Feedback plays
-the notes moved and drawn, [key-editor.md](key-editor.md)).
+Colors (the key editor has none yet). The toolbar's Acoustic Feedback is the key editor's, velocity edits on the
+velocity lane included ([key-editor.md](key-editor.md)).
 
 ## Checks
 

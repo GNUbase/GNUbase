@@ -217,6 +217,45 @@ TEST_CASE("the velocity lane shows the notes' velocities as bars that the tools 
 	CHECK(f.note(ids[3]).at("velocity").get<double>() == Approx(0.75).margin(0.03));
 }
 
+TEST_CASE("with Acoustic Feedback a velocity edit plays its note at the velocity set", "[ui]")
+{
+	// Reference manual p. 1259 (#1766): a drag on a velocity bar plays the note at the velocity under the mouse until
+	// the release, the draw tool the note it paints; off, nothing plays.
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({4, 8});
+	test::NoteProbe sound(f.app, f.track);
+	f.app.call("editor.set", {{"editor", "window"}, {"acousticFeedback", true}});
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(".key-input[setting=acousticFeedback].checked").empty(); }));
+	const auto midi = [](double velocity) { return static_cast<int>(std::lround(velocity * 127.0)); };
+
+	f.app.ui().press(f.window, f.at(0, 4.1, 0.5), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 60, midi(0.5)}}));
+	f.app.ui().move(f.window, f.at(0, 4.1, 0.75));
+	f.app.ui().release(f.window, f.at(0, 4.1, 0.75), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("velocity").get<double>() > 0.7; }));
+	const int set = midi(f.note(ids[0]).at("velocity").get<double>());
+	CHECK(sound.plays({{0x90, 60, midi(0.5)}, {0x80, 60, 0}, {0x90, 60, set}, {0x80, 60, 0}}));
+
+	sound.clear();
+	f.tool("draw");
+	f.app.ui().press(f.window, f.at(0, 8.1, 1.0), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 60, 127}}));
+	f.app.ui().release(f.window, f.at(0, 8.1, 1.0), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(sound.plays({{0x90, 60, 127}, {0x80, 60, 0}}));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).at("velocity").get<double>() > 0.95; }));
+
+	f.app.call("editor.set", {{"editor", "window"}, {"acousticFeedback", false}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-input[setting=acousticFeedback].checked").empty(); }));
+	sound.clear();
+	f.drag(f.at(0, 4.1, 0.25), f.at(0, 4.1, 0.25));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("velocity").get<double>() < 0.3; }));
+	CHECK(sound.plays({}));
+}
+
 TEST_CASE(
 	"the lanes' buttons lie inside their header and the footer, in every theme and with the keyboard focus", "[ui]")
 {

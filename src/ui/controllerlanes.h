@@ -8,6 +8,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -60,6 +61,13 @@ namespace gnubase::ui
 		// The key editor's tool by name (keyToolName) and the line tool's mode: line, parabola, sine, triangle, square
 		// or paint.
 		void setTool(std::string tool, std::string lineMode);
+		// Acoustic Feedback for velocity edits (reference manual p. 1259): while the view has acousticFeedback on, a
+		// gesture on the velocity lane calls it with the pitch and MIDI velocity of the note it edits, whenever they
+		// change, and with no pitch once it ends. The key editor plays them as its own feedback.
+		void setFeedback(std::function<void(std::optional<int> pitch, int velocity)> feedback)
+		{
+			m_feedback = std::move(feedback);
+		}
 
 	private:
 		struct Part
@@ -109,6 +117,11 @@ namespace gnubase::ui
 		// gesture goes on, or stops hearing them.
 		void listen(bool on);
 		void drag(Rml::Event& event);
+		// The editable note that starts nearest to the ticks in their cell of the quantize grid: bars are thin.
+		std::optional<Item> noteNear(const Lane& lane, double ticks) const;
+		// Sounds the note at the velocity lane's value (setFeedback), or with no note nothing new.
+		void feedback(const std::optional<Item>& note, double value);
+		void endFeedback();
 		void release(Rml::Event& event);
 		void menuItem(Rml::Element& menu, Rml::Element& item);
 		void openPresetDialog();
@@ -210,5 +223,7 @@ namespace gnubase::ui
 		std::optional<Item> m_pressed;
 		bool m_snapOff = false;
 		std::vector<std::pair<int64_t, double>> m_painted; // positions and values, as painted
+		std::function<void(std::optional<int>, int)> m_feedback;
+		std::optional<std::pair<int, int>> m_sounding; // the pitch and velocity the feedback plays
 	};
 }
