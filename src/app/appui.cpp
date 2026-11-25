@@ -1244,24 +1244,8 @@ namespace gnubase::app
 			m_keys.add({command.id, command.description,
 				[this, id = std::string(command.id)](ui::Window& window, Rml::Element* zone)
 				{
-					const char* audioFunction = nullptr;
-					if (id == "audio.detectSilence")
-						audioFunction = "detect-silence.rml";
-					else if (id == "audio.spectrumAnalyzer")
-						audioFunction = "spectrum-analyzer.rml";
-					else if (id == "audio.statistics")
-						audioFunction = "statistics.rml";
-					if (audioFunction != nullptr)
-					{
-						if (id != "audio.detectSilence" && poolAudioTarget(window, zone))
-						{
-							if (const auto pool = m_pool.lock(); pool && !pool->analysisClips().empty())
-								openAudioFunction(audioFunction, false, pool->analysisClips());
-						}
-						else
-							openAudioFunction(audioFunction, window.id() == m_sampleEditor.window);
+					if (runAudioFunction(id, window, zone))
 						return;
-					}
 					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
 						ui::SampleEditor::isProcessCommand(id))
 					{
@@ -3209,6 +3193,29 @@ namespace gnubase::app
 		}
 		document->Show(Rml::ModalFlag::Modal);
 		return *document;
+	}
+
+	bool AppUi::runAudioFunction(const std::string& command, ui::Window& window, Rml::Element* zone)
+	{
+		const char* file = nullptr;
+		if (command == "audio.detectSilence")
+			file = "detect-silence.rml";
+		else if (command == "audio.spectrumAnalyzer")
+			file = "spectrum-analyzer.rml";
+		else if (command == "audio.statistics")
+			file = "statistics.rml";
+		if (file == nullptr)
+			return false;
+		if (command != "audio.detectSilence" && poolAudioTarget(window, zone))
+		{
+			if (const auto pool = m_pool.lock(); pool && !pool->analysisClips().empty())
+				openAudioFunction(file, false, pool->analysisClips());
+		}
+		else
+		{
+			openAudioFunction(file, window.id() == m_sampleEditor.window);
+		}
+		return true;
 	}
 
 	void AppUi::addAudioFunctions()
