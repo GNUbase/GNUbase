@@ -374,7 +374,9 @@ namespace gnubase::ui
 				if (alive.expired())
 					return;
 				if (!result.ok())
+				{
 					showRefusal(result.error);
+				}
 				else if (slices && result.value.contains("job"))
 				{
 					const auto job = result.value.at("job").at("id").get<uint64_t>();
@@ -388,7 +390,9 @@ namespace gnubase::ui
 						});
 				}
 				else if (selectResult)
+				{
 					select(result.value.at("events").get<std::vector<uint64_t>>());
+				}
 			});
 	}
 
