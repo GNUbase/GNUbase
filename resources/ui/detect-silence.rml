@@ -257,7 +257,8 @@
 		<div class="dialog-titlebar">Detect Silence</div>
 		<div id="ds-event"/>
 		<div id="ds-waveform">
-			<div id="ds-view" onmousescroll="DetectSilence.wheel(document, event)">
+			<div id="ds-view" onmousescroll="DetectSilence.wheel(document, event)"
+				onscroll="DetectSilence.peaks(document)" onresize="DetectSilence.peaks(document)">
 				<div id="ds-display" class="ds-display">
 					<div id="ds-sections-display"/>
 					<div id="ds-wave" onmousedown="DetectSilence.press(document, event)"/>

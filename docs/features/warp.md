@@ -125,8 +125,10 @@ threads is a follow-up if real projects need it. A changed map, as after a tempo
 allocates when one opens, never on the disk thread's reads.
 
 Flattening reads through the same reader and applies the clip's fades as playback does, so a flattened event sounds
-exactly as it played (the render tests compare them, with and without fades); offline mode's better quality for it is
-a follow-up.
+exactly as it played (the render tests compare them, with and without fades); offline mode's better quality for it is a
+follow-up. Moving to the rendered clip clears `quantizeOrigin`, `sliceOrigin` and `slicedFrom`, which belong to the
+source clip. Undo restores them. Rendered files remain owned until the outermost command succeeds: a transaction failure
+or a late render-lock refusal removes them too.
 
 ## In the UI
 
@@ -169,6 +171,9 @@ between beats, as musical mode with free warp markers exports them (the import k
 lost); more disk threads for many warped events.
 
 ## Checks
+
+`tests/hitpoints_tests.cpp` checks Flatten clearing old-clip origins, Reset Slices keeping the rendered bounds,
+undo/redo, and file cleanup after transaction and render-lock rollbacks.
 
 `tests/warp_tests.cpp`: the warp reader placing clicks where a map with a ratio change puts them, also after a seek; the
 render test of musical mode following a fixed tempo and a tempo track change, with undo, and off again; bars and beats,

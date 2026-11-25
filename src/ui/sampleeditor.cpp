@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/sampleeditor.h"
 
+#include "engine/audio/fades.h"
+#include "engine/document/serialize.h"
 #include "engine/time/tempomap.h"
 #include "ui/canvas.h"
 #include "ui/cursors.h"
@@ -483,6 +485,12 @@ namespace gnubase::ui
 	{
 		if (m_view.empty() || !m_project.contains("audioEvents"))
 			return;
+		if (m_drag == Drag::VolumeCurve &&
+			(m_view.at("event") != m_event || m_view.at("media") != m_media || m_view.at("offset") != m_offset ||
+				m_view.at("eventLength") != m_eventLength || audioEvent() == nullptr ||
+				audioEvent()->at("volumeCurve") != m_curveBefore ||
+				engine::volumeGain(audioEvent()->value("volume", 0.0)) != m_curveGain))
+			m_drag = Drag::None;
 		if (m_view.at("event") != m_event || (m_drag == Drag::Draw && m_view.at("media") != m_media))
 		{
 			if (m_drag == Drag::Draw)
@@ -699,6 +707,7 @@ namespace gnubase::ui
 		if (editor == nullptr)
 			return;
 		renderDraw();
+		renderVolume();
 		setClass(editor, "empty", !hasEvent());
 		const double full = std::max(g_minScale, static_cast<double>(m_length) / std::max(1.0, displayWidth()));
 		const double scrollRoom = std::max(0.0, static_cast<double>(m_length) - (displayWidth() * m_scale));
@@ -1623,7 +1632,12 @@ namespace gnubase::ui
 		switch (m_tool)
 		{
 		case SampleTool::Draw:
-			if (m_scale / dpRatio() <= 1.0 && !m_processPending && m_processJob == 0 && !m_question)
+			if (m_scale / dpRatio() > 1.0)
+			{
+				if (frame >= m_offset && frame <= m_offset + m_eventLength)
+					pressVolume(event);
+			}
+			else if (m_scale / dpRatio() <= 1.0 && !m_processPending && m_processJob == 0 && !m_question)
 			{
 				m_drawSamples.clear();
 				m_drag = Drag::Draw;
@@ -1654,6 +1668,145 @@ namespace gnubase::ui
 			scrub(frame);
 			break;
 		}
+	}
+
+	const Json* SampleEditor::audioEvent() const
+	{
+		if (m_project.contains("audioEvents"))
+			for (const Json& event : m_project.at("audioEvents"))
+				if (event.at("id") == m_event)
+					return &event;
+		return nullptr;
+	}
+
+	void SampleEditor::pressVolume(const Rml::Event& event)
+	{
+		const Json* source = audioEvent();
+		if (source == nullptr || m_processPending || m_processJob != 0 || m_question)
+			return;
+		auto* display = m_root->QuerySelector(".se-display");
+		if (display->GetClientHeight() <= 0.0F)
+			return;
+		m_curveBefore = source->at("volumeCurve");
+		m_curveGain = engine::volumeGain(source->value("volume", 0.0));
+		m_curvePressY = event.GetParameter<float>("mouse_y", 0.0F);
+		const double fraction =
+			std::clamp(1.0 - (m_curvePressY - display->GetAbsoluteTop()) / display->GetClientHeight(), 0.0, 1.0);
+		m_curveSeed = {{"position", std::llround(m_pressed)},
+			{"volume", engine::volumeDb(fraction * g_volumeLineTop / m_curveGain)}, {"curve", 0.0}};
+		m_curvePoint.reset();
+		m_curveFreehand = modifier(event, "ctrl_key") || modifier(event, "meta_key");
+		m_curveDrawn.clear();
+		double nearest = 6.0;
+		if (!m_curveFreehand)
+			for (size_t i = 0; i < m_curveBefore.size(); ++i)
+			{
+				const Json& point = m_curveBefore[i];
+				const double at = point.at("position").get<double>();
+				const double level = std::clamp(
+					m_curveGain * engine::volumeGain(point.at("volume").get<double>()) / g_volumeLineTop, 0.0, 1.0);
+				const double y = display->GetAbsoluteTop() + (1.0 - level) * display->GetClientHeight();
+				const double distance =
+					std::max(std::abs(at - m_pressed) / m_scale, std::abs(y - m_curvePressY) / dpRatio());
+				if (at >= m_offset && at <= m_offset + m_eventLength && distance <= nearest)
+				{
+					nearest = distance;
+					m_curvePoint = i;
+					m_curveSeed = point;
+				}
+			}
+		m_drag = Drag::VolumeCurve;
+		moveVolume(event);
+	}
+
+	void SampleEditor::moveVolume(const Rml::Event& event, bool release)
+	{
+		auto* display = m_root->QuerySelector(".se-display");
+		if (display->GetClientHeight() <= 0.0F)
+			return;
+		const double y = event.GetParameter<float>("mouse_y", 0.0F);
+		const auto frame = std::clamp<int64_t>(std::llround(frameAt(event)), m_offset, m_offset + m_eventLength);
+		if (m_curveFreehand && !m_curveDrawn.empty() && !release && std::abs(frame - m_drawLast) / m_scale < 4.0)
+			return;
+		m_curvePoints = m_curveBefore;
+		if (m_curveFreehand)
+		{
+			const double fraction =
+				std::clamp(1.0 - (y - display->GetAbsoluteTop()) / display->GetClientHeight(), 0.0, 1.0);
+			if (!m_curveDrawn.empty())
+				for (auto point = m_curveDrawn.lower_bound(std::min(frame, m_drawLast));
+					point != m_curveDrawn.end() && point->first <= std::max(frame, m_drawLast);)
+					if (point->first != m_drawLast)
+						point = m_curveDrawn.erase(point);
+					else
+						++point;
+			m_curveDrawn[frame] = engine::volumeDb(fraction * g_volumeLineTop / m_curveGain);
+			m_drawLast = frame;
+			m_curvePoints.erase(std::remove_if(m_curvePoints.begin(), m_curvePoints.end(),
+									[&](const Json& point)
+									{
+										return point.at("position") >= m_curveDrawn.begin()->first &&
+											point.at("position") <= m_curveDrawn.rbegin()->first;
+									}),
+				m_curvePoints.end());
+			for (const auto& [position, volume] : m_curveDrawn)
+				m_curvePoints.push_back({{"position", position}, {"volume", volume}, {"curve", 0.0}});
+		}
+		else
+		{
+			Json point = m_curveSeed;
+			point["position"] =
+				std::clamp<int64_t>(std::llround(m_curveSeed.at("position").get<double>() + frameAt(event) - m_pressed),
+					m_offset, m_offset + m_eventLength);
+			const double from =
+				m_curveGain * engine::volumeGain(m_curveSeed.at("volume").get<double>()) / g_volumeLineTop;
+			const double fraction =
+				std::clamp(from - (y - m_curvePressY) / display->GetClientHeight(), 0.0, std::max(from, 1.0));
+			if (fraction != from)
+				point["volume"] = engine::volumeDb(fraction * g_volumeLineTop / m_curveGain);
+			if (m_curvePoint)
+				m_curvePoints[*m_curvePoint] = std::move(point);
+			else
+				m_curvePoints.push_back(std::move(point));
+		}
+		std::stable_sort(m_curvePoints.begin(), m_curvePoints.end(),
+			[](const Json& a, const Json& b) { return a.at("position") < b.at("position"); });
+		renderVolume();
+	}
+
+	void SampleEditor::renderVolume()
+	{
+		auto* display = m_root ? m_root->QuerySelector(".se-display") : nullptr;
+		if (display == nullptr)
+			return;
+		auto* lines = dynamic_cast<FadeLines*>(display->QuerySelector(".se-volume-curve"));
+		if (lines == nullptr)
+		{
+			lines = dynamic_cast<FadeLines*>(
+				display->AppendChild(display->GetOwnerDocument()->CreateElement("fade-lines")));
+			if (lines == nullptr)
+				return;
+			lines->SetClass("se-volume-curve", true);
+		}
+		const Json* source = audioEvent();
+		FadeLines::Lane lane;
+		lane.height = display->GetClientHeight() / dpRatio();
+		if (hasEvent() && source != nullptr)
+		{
+			VolumeLine volume;
+			volume.start = static_cast<double>(m_offset);
+			volume.end = static_cast<double>(m_offset + m_eventLength);
+			volume.offset = m_offset;
+			volume.rate = 1.0;
+			volume.gain = engine::volumeGain(source->value("volume", 0.0));
+			volume.points = engine::gainPoints(
+				engine::volumeCurveFromJson(m_drag == Drag::VolumeCurve ? m_curvePoints : source->at("volumeCurve")));
+			volume.handles = true;
+			lane.volumes.push_back(std::move(volume));
+		}
+		lines->SetAttribute("start", m_start);
+		lines->SetAttribute("scale", m_scale);
+		lines->setLanes({std::move(lane)});
 	}
 
 	void SampleEditor::drawSamples(const Rml::Event& event)
@@ -1748,6 +1901,10 @@ namespace gnubase::ui
 		{
 			drawSamples(event);
 		}
+		else if (m_drag == Drag::VolumeCurve)
+		{
+			moveVolume(event);
+		}
 		else if (m_drag == Drag::Scrub)
 		{
 			scrub(m_dragged);
@@ -1760,6 +1917,8 @@ namespace gnubase::ui
 
 	void SampleEditor::release(Rml::Event& event)
 	{
+		if (m_drag == Drag::VolumeCurve)
+			moveVolume(event, true);
 		const Drag drag = std::exchange(m_drag, Drag::None);
 		if (drag == Drag::None || !hasEvent() || !m_root)
 			return;
@@ -1770,6 +1929,12 @@ namespace gnubase::ui
 		}
 		if (drag == Drag::Overview)
 			return;
+		if (drag == Drag::VolumeCurve)
+		{
+			if (m_curvePoints != m_curveBefore)
+				m_binding.send("audioEvent.setVolumeCurve", {{"event", m_event}, {"points", m_curvePoints}});
+			return;
+		}
 		if (drag == Drag::Draw)
 		{
 			drawSamples(event);

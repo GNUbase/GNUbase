@@ -870,7 +870,8 @@ namespace gnubase::engine
 				"event play a new clip of it from its start, with its volume curve and snap point where its audio "
 				"is. It then no longer follows tempo changes or warp edits. Events of clips that aren't warped stay; "
 				"fails if none is. Emits media.added, clip.added and audioEvent.changed. Returns the events "
-				"flattened and their new media files and clips.",
+				"flattened and their new media files and clips. Clears slice and quantize origins from the old clip. "
+				"A failed outer transaction or late render-lock check also removes the rendered files.",
 				objectSchema({{"events", ids}, {"preset", preset}}, {"events"}),
 				objectSchema({{"events", ids}, {"media", ids}, {"clips", ids}}, {"events", "media", "clips"}), false},
 			"Flatten real-time processing",
@@ -888,17 +889,6 @@ namespace gnubase::engine
 				Json flattened = Json::array();
 				Json media = Json::array();
 				Json clips = Json::array();
-				// A failure undoes the command: the files rendered before it go too.
-				std::vector<fs::path> written;
-				const auto fail = [&written](const char* message)
-				{
-					for (const fs::path& each : written)
-					{
-						std::error_code error;
-						fs::remove(each, error);
-					}
-					throw CommandError(message);
-				};
 				for (const ObjectId id : events)
 				{
 					AudioEvent& event = project.audioEvents.at(id);
@@ -909,7 +899,12 @@ namespace gnubase::engine
 							.value_or(dsp::StretchPreset::Quality);
 					const fs::path path = newFile(folder, source.name + " Flattened");
 					MediaFile file;
-					written.push_back(path);
+					context.onFailure(
+						[path]
+						{
+							std::error_code ignored;
+							fs::remove(path, ignored);
+						});
 					try
 					{
 						const AudioFileInfo info = renderWarped(mediaOf(project, source), source, map, algorithm, path);
@@ -917,15 +912,15 @@ namespace gnubase::engine
 					}
 					catch (const AudioFileError& error)
 					{
-						fail(error.what());
+						throw CommandError(error.what());
 					}
 					catch (const std::invalid_argument& error)
 					{
-						fail(error.what());
+						throw CommandError(error.what());
 					}
 					catch (const fs::filesystem_error& error)
 					{
-						fail(error.what());
+						throw CommandError(error.what());
 					}
 					project.media[file.id] = file;
 					context.emit("media.added", {{"media", toJson(file)}});
@@ -947,6 +942,9 @@ namespace gnubase::engine
 					event.clip = clip.id;
 					event.offset = 0;
 					event.length = file.length;
+					event.quantizeOrigin.reset();
+					event.sliceOrigin.reset();
+					event.slicedFrom = 0;
 					project.clips[clip.id] = clip;
 					context.emit("clip.added", {{"clip", toJson(clip)}});
 					context.emit("audioEvent.changed", {{"event", toJson(event)}});

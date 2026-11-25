@@ -477,7 +477,8 @@ namespace gnubase::engine::dsp
 		}
 	}
 
-	std::vector<std::vector<float>> stretch(const std::vector<std::vector<float>>& input, StretchSettings settings)
+	std::vector<std::vector<float>> stretch(const std::vector<std::vector<float>>& input, StretchSettings settings,
+		const std::function<void()>& checkCancelled)
 	{
 		rt::assertNotRealtime("dsp::stretch");
 		settings.channels = static_cast<int>(input.size());
@@ -486,11 +487,13 @@ namespace gnubase::engine::dsp
 		const auto length = static_cast<size_t>(stretchedLength(static_cast<int64_t>(frames), settings.ratio));
 		for (std::vector<float>& channel : output)
 			channel.reserve(length);
-		const auto open = [&input, frames]
+		const auto open = [&input, frames, &checkCancelled]
 		{
 			return Source(
-				[&input, frames, position = size_t{0}](float* const* channels, size_t count) mutable
+				[&input, frames, &checkCancelled, position = size_t{0}](float* const* channels, size_t count) mutable
 				{
+					if (checkCancelled)
+						checkCancelled();
 					count = std::min(count, frames - position);
 					for (size_t channel = 0; channel < input.size(); ++channel)
 						std::copy_n(
@@ -500,8 +503,10 @@ namespace gnubase::engine::dsp
 				});
 		};
 		run(settings, static_cast<int64_t>(frames), open,
-			[&output](const float* const* channels, size_t count)
+			[&output, &checkCancelled](const float* const* channels, size_t count)
 			{
+				if (checkCancelled)
+					checkCancelled();
 				for (size_t channel = 0; channel < output.size(); ++channel)
 					output[channel].insert(output[channel].end(), channels[channel], channels[channel] + count);
 			});

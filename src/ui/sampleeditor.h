@@ -72,6 +72,7 @@ namespace gnubase::ui
 			None,
 			Range,
 			Draw,
+			VolumeCurve,
 			SnapPoint,
 			Play,
 			Scrub,
@@ -88,6 +89,10 @@ namespace gnubase::ui
 		void release(Rml::Event& event);
 		void drawSamples(const Rml::Event& event);
 		void renderDraw();
+		const engine::Json* audioEvent() const;
+		void pressVolume(const Rml::Event& event);
+		void moveVolume(const Rml::Event& event, bool release = false);
+		void renderVolume();
 
 		void requestProject();
 		void requestView();
@@ -182,6 +187,14 @@ namespace gnubase::ui
 		std::map<int64_t, float> m_drawSamples;
 		int m_drawChannel = 0;
 		int64_t m_drawLast = 0;
+		engine::Json m_curveBefore;
+		engine::Json m_curvePoints;
+		engine::Json m_curveSeed;
+		std::optional<size_t> m_curvePoint;
+		std::map<int64_t, double> m_curveDrawn;
+		double m_curvePressY = 0.0;
+		double m_curveGain = 1.0;
+		bool m_curveFreehand = false;
 		TimeContext m_time;
 		double m_gain = 1.0;
 		std::vector<std::array<double, 3>> m_zoomUndo;

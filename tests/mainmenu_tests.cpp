@@ -1061,13 +1061,12 @@ TEST_CASE("Audio Advanced edits hitpoint slices in the selected audio part", "[u
 		const Json before = app.call("project.get");
 		const size_t steps = app.call("history.get").at("steps").size();
 		const Json clicked = app.ui().click(std::nullopt, {item, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
-		// Wait for the offline renders on the command thread before waiting for the UI's model update.
-		const Json after = app.call("project.get");
 		const bool edited =
 			app.waitUntil([&] { return display.project().at("audioEvents")[0].at("length") == each.expected; });
 		INFO(clicked.dump());
 		INFO(app.call("engine.commandLog").dump());
 		REQUIRE(edited);
+		const Json after = app.call("project.get");
 		for (size_t i = 0; i < 3; ++i)
 		{
 			CHECK(after.at("audioEvents")[i].at("part") == part);

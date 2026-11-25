@@ -1064,3 +1064,102 @@ TEST_CASE("the Warp section, Free Warp and Flatten warp the clip", "[ui]")
 	CHECK(f.lastParameters("event.flatten").at("events") == Json::array({f.event}));
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("audioEvents").at(0).at("clip") != f.clip; }));
 }
+
+TEST_CASE("sample editor Draw edits a volume curve at coarse zoom in one undo step", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.tool("draw");
+	REQUIRE(f.editor().scale() / f.dpRatio() > 1.0);
+	const auto curve = [&] { return f.app.call("project.get").at("audioEvents")[0].at("volumeCurve"); };
+	const auto point = [&](double frame, double fraction)
+	{
+		const Json area = f.box(".se-display");
+		return ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(f.x(frame))),
+				static_cast<int>(
+					std::lround(area.at("y").get<double>() + area.at("height").get<double>() * (1 - fraction)))}};
+	};
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	f.click(point(2200, 0.25));
+	REQUIRE(f.app.waitUntil([&] { return curve().size() == 1; }));
+	const Json first = curve();
+	CHECK(std::abs(first[0].at("position").get<double>() - 2200) <= f.editor().scale());
+	CHECK(first[0].at("volume").get<double>() == Catch::Approx(-6.0412).margin(0.2));
+	Rml::ElementDocument* document = f.app.shell().find(f.window)->context().GetDocument(0);
+	REQUIRE(document != nullptr);
+	REQUIRE(f.app.waitUntil([&] { return document->QuerySelector(".se-volume-curve") != nullptr; }));
+	const auto* line = dynamic_cast<ui::FadeLines*>(document->QuerySelector(".se-volume-curve"));
+	REQUIRE(line != nullptr);
+	REQUIRE(line->lanes().size() == 1);
+	const auto waitForCurve = [&](const Json& expected)
+	{
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				// The preview can already match; wait for the project read after its edit too.
+				if (f.app.appUi().binding().waiting() != 0)
+					return false;
+				const auto& points = line->lanes()[0].volumes[0].points;
+				if (points.size() != expected.size())
+					return false;
+				for (size_t i = 0; i < points.size(); ++i)
+					if (points[i].position != expected[i].at("position").get<int64_t>())
+						return false;
+				return true;
+			}));
+	};
+	waitForCurve(first);
+	f.drag(point(first[0].at("position").get<double>(), 0.25), point(3200, 0.5));
+	REQUIRE(f.app.waitUntil([&] { return curve().size() == 1 && curve() != first; }));
+	const Json moved = curve();
+	waitForCurve(moved);
+	CHECK(std::abs(moved[0].at("position").get<double>() - 3200) <= 2 * f.editor().scale());
+	CHECK(moved[0].at("volume").get<double>() == Catch::Approx(-0.0206).margin(0.2));
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return curve() == first; }));
+	waitForCurve(first);
+	f.app.call("history.redo");
+	REQUIRE(f.app.waitUntil([&] { return curve() == moved; }));
+	waitForCurve(moved);
+	f.app.ui().press(f.window, point(1800, 0.2), ui::MouseButton::Left, {"ctrl"});
+	for (const auto& [frame, value] : std::vector<std::pair<double, double>>{{2400, 0.3}, {2800, 0.4}, {3800, 0.6}})
+		f.app.ui().move(f.window, point(frame, value), {"ctrl"});
+	f.app.ui().release(f.window, point(3800, 0.6), ui::MouseButton::Left, {"ctrl"});
+	REQUIRE(f.app.waitUntil([&] { return curve().size() >= 4; }));
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 3);
+	for (const Json& item : curve())
+	{
+		CHECK(item.at("position").get<int64_t>() >= 1000);
+		CHECK(item.at("position").get<int64_t>() <= 5000);
+	}
+	const Json drawn = curve();
+	waitForCurve(drawn);
+	const size_t drawnSteps = f.app.call("history.get").at("steps").size();
+	f.click(point(drawn[0].at("position").get<double>(), 0.2));
+	CHECK(curve() == drawn);
+	CHECK(f.app.call("history.get").at("steps").size() == drawnSteps);
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return curve() == moved; }));
+	waitForCurve(moved);
+	f.app.call("history.redo");
+	REQUIRE(f.app.waitUntil([&] { return curve() == drawn; }));
+	waitForCurve(drawn);
+	CHECK(f.app.call("job.list").at("jobs").empty());
+	CHECK(f.app.call("project.get").at("media").size() == 1);
+	// The rest of the clip is visible, but cannot add points outside the edited event.
+	f.click(point(7500, 0.5));
+	CHECK(curve() == drawn);
+	// A curve replaced by another client during a stroke cancels that gesture.
+	f.app.ui().press(f.window, point(2000, 0.3), ui::MouseButton::Left, {"meta"});
+	const Json external = Json::array({{{"position", 2600}, {"volume", -12.0}, {"curve", 0.5}}});
+	f.app.call("audioEvent.setVolumeCurve", {{"event", f.event}, {"points", external}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return line->lanes()[0].volumes[0].points.size() == 1 &&
+				line->lanes()[0].volumes[0].points[0].position == 2600;
+		}));
+	f.app.ui().release(f.window, point(4000, 0.8), ui::MouseButton::Left, {"meta"});
+	CHECK(curve() == external);
+}

@@ -280,6 +280,16 @@ namespace
 			return test::waitForJob(client, started.at("job").at("id").get<uint64_t>());
 		}
 
+		Json stretch(const Json& events)
+		{
+			const Json started = call("event.closeGaps", {{"events", events}, {"mode", "timeStretch"}});
+			REQUIRE(started.contains("job"));
+			const Json finished = waitForJob(started);
+			INFO(finished.dump());
+			REQUIRE(finished.at("state") == "done");
+			return finished.at("result");
+		}
+
 		// Detects the clip's hitpoints and returns the job's result: clip.setHitpoints' with them.
 		Json detect(int64_t id = 0)
 		{
@@ -629,7 +639,7 @@ TEST_CASE("Close Gaps time stretches only the selected slice audio and preserves
 	f.call("event.toPart", {{"events", {f.event, second}}});
 	const Json before = f.call("project.get");
 	const size_t steps = f.call("history.get").at("steps").size();
-	const Json result = f.call("event.closeGaps", {{"events", {second, f.event}}, {"mode", "timeStretch"}});
+	const Json result = f.stretch(Json::array({second, f.event}));
 	CHECK(result.at("events") == Json::array({f.event}));
 	const Json after = f.call("project.get");
 	CHECK(after.at("clips").back().at("name") == before.at("clips")[0].at("name").get<std::string>() + " Flattened");
@@ -670,11 +680,13 @@ TEST_CASE("Close Gaps time stretch follows musical warping and rolls back failed
 			.at("event")
 			.at("id");
 	const Json before = f.call("project.get");
-	CHECK_THAT(f.fails("event.closeGaps", {{"events", {f.event, second, third}}, {"mode", "timeStretch"}}),
-		ContainsSubstring("ratio"));
+	const Json failed =
+		f.waitForJob(f.call("event.closeGaps", {{"events", {f.event, second, third}}, {"mode", "timeStretch"}}));
+	CHECK(failed.at("state") == "failed");
+	CHECK_THAT(failed.at("error").get<std::string>(), ContainsSubstring("ratio"));
 	CHECK(f.call("project.get") == before);
 	CHECK(std::filesystem::directory_iterator(f.dir.path() / "Audio") == std::filesystem::directory_iterator{});
-	f.call("event.closeGaps", {{"events", {f.event, second}}, {"mode", "timeStretch"}});
+	f.stretch(Json::array({f.event, second}));
 	const Json after = f.call("project.get");
 	CHECK(after.at("audioEvents")[0].at("length") == 48000);
 	CHECK(after.at("audioEvents")[0].at("offset") == 0);
@@ -1019,7 +1031,7 @@ TEST_CASE("Reset Slices cannot restore old clip bounds after Close Gaps time str
 		f.call(
 			"audioEvent.set", {{"event", sliced[i].at("id")}, {"length", sliced[i].at("length").get<int64_t>() / 2}});
 	const Json before = f.call("project.get");
-	const Json changed = f.call("event.closeGaps", {{"events", slices}, {"mode", "timeStretch"}}).at("events");
+	const Json changed = f.stretch(slices).at("events");
 	REQUIRE(changed.size() == 3);
 	const Json stretched = f.call("project.get");
 	for (const auto& event : stretched.at("audioEvents"))
@@ -1046,5 +1058,135 @@ TEST_CASE("Reset Slices cannot restore old clip bounds after Close Gaps time str
 		CHECK(event.at("offset").get<int64_t>() >= 0);
 		CHECK(event.at("offset").get<int64_t>() + event.at("length").get<int64_t>() <=
 			clipLengths.at(event.at("clip").get<int64_t>()));
+	}
+}
+
+TEST_CASE("Close Gaps time stretch is a cancellable job that rejects stale results", "[integration]")
+{
+	Fixture f;
+	f.call("project.save", {{"path", (f.dir.path() / "stretch.dawproject").u8string()}});
+	f.call("audioEvent.set", {{"event", f.event}, {"length", 24000}});
+	const Json second =
+		f.call("audioEvent.add", {{"track", f.track}, {"clip", f.clip}, {"position", 144000}, {"length", 24000}})
+			.at("event")
+			.at("id");
+	const Json before = f.call("project.get");
+	Json expected = before;
+	std::string state = "done";
+	CHECK_THAT(f.fails("history.transaction",
+				   {{"description", "no async edits"},
+					   {"commands",
+						   {{{"command", "event.closeGaps"},
+							   {"parameters", {{"events", {f.event, second}}, {"mode", "timeStretch"}}}}}}}),
+		ContainsSubstring("transaction"));
+	const Json finished =
+		test::whileHeld(f.engine, f.client, "event.closeGaps", {{"events", {f.event, second}}, {"mode", "timeStretch"}},
+			[&](uint64_t job)
+			{
+				CHECK(f.call("project.get") == before);
+				f.call("transport.locate", {{"position", 1234}});
+				SECTION("cancel")
+				{
+					f.call("job.cancel", {{"job", job}});
+					state = "cancelled";
+				}
+				SECTION("edit")
+				{
+					f.call("audioEvent.set", {{"event", f.event}, {"volume", -6.0}});
+					expected = f.call("project.get");
+					state = "failed";
+				}
+				SECTION("undo")
+				{
+					f.call("history.undo");
+					expected = f.call("project.get");
+					state = "failed";
+				}
+				SECTION("replace project")
+				{
+					f.call("project.new");
+					expected = f.call("project.get");
+					state = "failed";
+				}
+				SECTION("success")
+				{
+				}
+			});
+	CHECK(finished.at("state") == state);
+	if (state != "done")
+	{
+		CHECK(f.call("project.get") == expected);
+		if (std::filesystem::exists(f.dir.path() / "Audio"))
+			for (const auto& entry : std::filesystem::directory_iterator(f.dir.path() / "Audio"))
+				CHECK(entry.path().extension() != ".wav");
+	}
+	else
+		CHECK(finished.at("result").at("events") == Json::array({f.event}));
+}
+
+TEST_CASE("Flatten discards slice origins and removes files after an outer rollback", "[integration]")
+{
+	Fixture f;
+	f.call("project.save", {{"path", (f.dir.path() / "flatten.dawproject").u8string()}});
+	f.call("audioEvent.set", {{"event", f.event}, {"position", 97000}, {"offset", 12000}, {"length", 168000}});
+	f.call("clip.setHitpoints",
+		{{"clip", f.clip}, {"hitpoints", {{{"position", 48000}, {"peak", 0.0}, {"intensity", 1.0}}}}});
+	const Json slices = f.call("quantize.slice", {{"events", {f.event}}, {"offset", 0.0}}).at("events");
+	f.call("quantize.apply", {{"events", slices}});
+	f.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 120}, {"musical", true}});
+	f.call("audioEvent.set", {{"event", f.event}, {"length", 18000}});
+	const Json before = f.call("project.get");
+	SECTION("render lock rollback")
+	{
+		f.call("audio.setDevice", {{"blockSize", 256}, {"inputChannels", 0}});
+		const Json finished =
+			test::whileHeld(f.engine, f.client, "track.renderInPlace", {{"tracks", {f.track}}, {"tail", 0}},
+				[&](uint64_t job)
+				{
+					CHECK_THAT(f.fails("event.flatten", {{"events", slices}}), ContainsSubstring("being rendered"));
+					const Json closed =
+						f.waitForJob(f.call("event.closeGaps", {{"events", slices}, {"mode", "timeStretch"}}));
+					CHECK(closed.at("state") == "failed");
+					CHECK_THAT(closed.at("error").get<std::string>(), ContainsSubstring("being rendered"));
+					CHECK(f.call("project.get") == before);
+					for (const auto& entry : std::filesystem::directory_iterator(f.dir.path() / "Audio"))
+					{
+						CHECK(entry.path().filename().u8string().find("Flattened") == std::string::npos);
+						CHECK(entry.path().filename().u8string().find("Closed Gap") == std::string::npos);
+					}
+					f.call("job.cancel", {{"job", job}});
+				});
+		CHECK(finished.at("state") == "cancelled");
+	}
+	SECTION("outer rollback")
+	{
+		f.fails("history.transaction",
+			{{"description", "rollback flatten"},
+				{"commands",
+					{{{"command", "event.flatten"}, {"parameters", {{"events", slices}}}},
+						{{"command", "audioEvent.set"}, {"parameters", {{"event", -1}, {"volume", -6}}}}}}});
+		CHECK(f.call("project.get") == before);
+		for (const auto& entry : std::filesystem::directory_iterator(f.dir.path() / "Audio"))
+			CHECK(entry.path().extension() != ".wav");
+	}
+	SECTION("origins and undo")
+	{
+		REQUIRE(before.at("audioEvents")[0].contains("quantizeOrigin"));
+		REQUIRE(before.at("audioEvents")[0].contains("sliceOrigin"));
+		REQUIRE(before.at("audioEvents")[1].contains("slicedFrom"));
+		f.call("event.flatten", {{"events", slices}});
+		const Json flattened = f.call("project.get");
+		for (const auto& event : flattened.at("audioEvents"))
+		{
+			CHECK(!event.contains("quantizeOrigin"));
+			CHECK(!event.contains("sliceOrigin"));
+			CHECK(!event.contains("slicedFrom"));
+		}
+		f.call("quantize.resetSlices", {{"events", slices}});
+		CHECK(f.call("project.get") == flattened);
+		f.call("history.undo");
+		CHECK(f.call("project.get") == before);
+		f.call("history.redo");
+		CHECK(f.call("project.get") == flattened);
 	}
 }

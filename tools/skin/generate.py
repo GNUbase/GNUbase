@@ -1093,7 +1093,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".se-overview-view", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent"]}),
         (".se-overview-snap, .se-snap-point", {"background-color": c["accent2"]}),
         (".se-half-axis", {"background-color": c["textMuted"] + "66"}),
-        (".se-draw-stroke", {"color": c["accent2"], "stroke-color": c["accent2"],
+        (".se-draw-stroke, .se-volume-curve", {"color": c["accent2"], "stroke-color": c["accent2"],
                              "stroke-width": f"{widths['focus']}dp"}),
         (".se-outside", {"background-color": c["background"] + "99"}),
         (".se-region-shown", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent2"],

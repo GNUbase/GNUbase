@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -128,7 +129,9 @@ namespace gnubase::engine::dsp
 
 	// Stretches whole channels (equal lengths) and returns stretchedLength frames per channel, aligned with the
 	// input: offline mode compensates internally, real-time mode is padded and trimmed by its latency. Not real-time.
-	std::vector<std::vector<float>> stretch(const std::vector<std::vector<float>>& input, StretchSettings settings);
+	// checkCancelled, if given, runs between blocks in both the study and processing passes.
+	std::vector<std::vector<float>> stretch(const std::vector<std::vector<float>>& input, StretchSettings settings,
+		const std::function<void()>& checkCancelled = {});
 
 	// Stretches the audio file at input into a 32-bit float WAV file at output and returns what was written; channels
 	// and sample rate come from the file. The file is written as output + ".partial" and renamed to output once
