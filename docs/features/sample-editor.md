@@ -179,6 +179,12 @@ themes.
   handles in the waveform; dragging either sends one `clip.setRegion` edit on release, bounded by the clip and the other
   edge. A click without dragging leaves it unchanged.
 
+Dragging a row out of the sample editor into an audio lane of the project window creates an event of that region
+(reference manual p. 626), using the same clip and its region's start and length. The drop follows the destination's
+snap setting, lane and time base. Captured coordinates are mapped between the windows' desktop bounds and client pixel
+sizes, including different display scales. One undo removes the new event; the original event and region stay intact.
+Escape, a removed region, a release inside the editor, or a drop outside audio lanes creates nothing.
+
 `resources/styles/sampleeditor.rcss` lays it out; the themes color it (`tools/skin/generate.py`).
 
 ## Not yet
@@ -186,11 +192,16 @@ themes.
 The editor in the lower zone and its inspector in the left zone; Keep Editor Contents and following the project window's
 selection; several events at once (Clip Editing Mode, Clip Display Mode, Activate Clip for Editing); the grid and
 snapping to it; Solo Editor, Audition, auto-scroll, the independent track loop and the toolbar's context menu; positions
-in the project's time format on the info line, and typing them; dragging regions into the project window; the clip's
-snap point when opened from the pool. Hooks for other tickets: offline processing (#141) and making a sampler track of
-the range; what warping doesn't have yet is in [warp.md](warp.md).
+in the project's time format on the info line, and typing them; the clip's snap point when opened from the pool. Hooks
+for other tickets: offline processing (#141) and making a sampler track of the range; what warping doesn't have yet is
+in [warp.md](warp.md).
 
 ## Checks
+
+- `tests/sampleeditor_ui_tests.cpp`: region drags between native windows create bounded events on linear and musical
+  tracks at the drop position, including beat-grid snapping and take lane 1, preserving the clip and region with
+  undo/redo. MIDI lanes, releases outside the project lanes, Escape and a region removed during the drag create no
+  events.
 
 - `tests/sampleeditor_ui_tests.cpp`: coarse Draw adds and drags volume points, Ctrl draws several in one undo step,
   points stay inside the event, the overlay reflects the curve, undo/redo restore it and the audio file stays intact. An

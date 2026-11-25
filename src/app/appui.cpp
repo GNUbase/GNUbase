@@ -210,8 +210,8 @@ namespace gnubase::app
 			{"audio.closeGapsTimeStretch", "Closes gaps between selected audio events with time stretch.", nullptr},
 			{"audio.deleteOverlaps", "Deletes overlaps between selected audio events.", nullptr},
 			{"audio.detectSilence", "Opens the Detect Silence dialog for the selected audio events.", nullptr},
-			{"audio.spectrumAnalyzer", "Opens the Spectrum Analyzer for the selected audio event.", nullptr},
-			{"audio.statistics", "Opens the Statistics window for the selected audio events.", nullptr},
+			{"audio.spectrumAnalyzer", "Opens the Spectrum Analyzer for selected audio events or pool clips.", nullptr},
+			{"audio.statistics", "Opens Statistics for selected audio events or pool clips.", nullptr},
 			// Sampler tracks (docs/features/sampler-track.md).
 			{"audio.createSamplerTrack", "Creates a sampler track that plays the first selected audio event.", nullptr},
 			// Warping (docs/features/warp.md).
@@ -1242,20 +1242,10 @@ namespace gnubase::app
 		for (const ProjectCommand& command : g_projectCommands)
 		{
 			m_keys.add({command.id, command.description,
-				[this, id = std::string(command.id)](ui::Window& window, Rml::Element*)
+				[this, id = std::string(command.id)](ui::Window& window, Rml::Element* zone)
 				{
-					const char* audioFunction = nullptr;
-					if (id == "audio.detectSilence")
-						audioFunction = "detect-silence.rml";
-					else if (id == "audio.spectrumAnalyzer")
-						audioFunction = "spectrum-analyzer.rml";
-					else if (id == "audio.statistics")
-						audioFunction = "statistics.rml";
-					if (audioFunction != nullptr)
-					{
-						openAudioFunction(audioFunction, window.id() == m_sampleEditor.window);
+					if (runAudioFunction(id, window, zone))
 						return;
-					}
 					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
 						ui::SampleEditor::isProcessCommand(id))
 					{
@@ -1276,8 +1266,13 @@ namespace gnubase::app
 			// Those that only edit the selection range wait for one, and paste for something copied
 			// (EventDisplay::canRun).
 			m_keys.enableWhen(command.id,
-				[this, id = std::string(command.id)](ui::Window& window, Rml::Element*)
+				[this, id = std::string(command.id)](ui::Window& window, Rml::Element* zone)
 				{
+					if ((id == "audio.spectrumAnalyzer" || id == "audio.statistics") && poolAudioTarget(window, zone))
+					{
+						const auto pool = m_pool.lock();
+						return pool && !pool->analysisClips().empty();
+					}
 					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
 						ui::SampleEditor::isProcessCommand(id))
 						return m_sampleEditor.editor->canProcess();
@@ -1306,6 +1301,7 @@ namespace gnubase::app
 			}
 		}
 		m_keys.bind({"Backspace", "edit.delete", engine::Json::object(), "project"});
+		addAudioFunctions();
 		m_keys.bind({"Backspace", "sampleEditor.delete", engine::Json::object(), "sampleEditor"});
 		for (const ProjectCommand& command : g_trackCommands)
 		{
@@ -2685,6 +2681,8 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_sampleEditor.editor = std::make_unique<ui::SampleEditor>(m_binding, *root);
+		m_sampleEditor.editor->onRegionDrop(
+			[this](const engine::Json& region, float x, float y) { dropSampleRegion(region, x, y); });
 		// The quantize functions of the sample editor's toolbar (p. 367), on the event it edits (quantizeTarget).
 		if (Rml::Element* quantize = document->GetElementById("toolbar-quantize"))
 			m_sampleEditor.quantize =
@@ -3197,7 +3195,86 @@ namespace gnubase::app
 		return *document;
 	}
 
-	void AppUi::openAudioFunction(const std::string& file, bool sampleEditor)
+	bool AppUi::runAudioFunction(const std::string& command, ui::Window& window, Rml::Element* zone)
+	{
+		const char* file = nullptr;
+		if (command == "audio.detectSilence")
+			file = "detect-silence.rml";
+		else if (command == "audio.spectrumAnalyzer")
+			file = "spectrum-analyzer.rml";
+		else if (command == "audio.statistics")
+			file = "statistics.rml";
+		if (file == nullptr)
+			return false;
+		if (command != "audio.detectSilence" && poolAudioTarget(window, zone))
+		{
+			if (const auto pool = m_pool.lock(); pool && !pool->analysisClips().empty())
+				openAudioFunction(file, false, pool->analysisClips());
+		}
+		else
+		{
+			openAudioFunction(file, window.id() == m_sampleEditor.window);
+		}
+		return true;
+	}
+
+	void AppUi::addAudioFunctions()
+	{
+		m_keys.add({"audio.divideAtHitpoints", "Divides the selected folder's audio events at hitpoints.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				if (m_trackList && m_trackList->selection().size() == 1)
+					m_binding.send("track.divideAtHitpoints", {{"track", m_trackList->selection().front()}},
+						[this](const engine::Result& result)
+						{
+							if (!result.ok() && m_eventDisplay)
+								m_eventDisplay->showRefusal(result.error);
+						});
+			}});
+		m_keys.enableWhen("audio.divideAtHitpoints",
+			[this](ui::Window&, Rml::Element*)
+			{
+				if (!m_trackList || !m_eventDisplay || m_trackList->selection().size() != 1)
+					return false;
+				for (const auto& track : m_eventDisplay->project().at("tracks"))
+					if (track.at("id") == m_trackList->selection().front())
+						return track.at("type") == "folder" && track.value("groupEditing", false);
+				return false;
+			});
+	}
+
+	bool AppUi::poolAudioTarget(ui::Window& window, Rml::Element* zone)
+	{
+		if (const ui::Window* pool = m_docking.windowOf("pool"))
+			return pool->id() == window.id();
+		return window.id() == m_main.id() && zone != nullptr &&
+			zone->GetAttribute<Rml::String>("focuszone", "") == "lower" && m_docking.showing("pool");
+	}
+
+	void AppUi::dropSampleRegion(const engine::Json& region, float x, float y)
+	{
+		const ui::Window* source = m_shell.find(m_sampleEditor.window);
+		if (source == nullptr || !m_eventDisplay)
+			return;
+		const ui::Size pixels = source->pixelSize();
+		const double mouseX = x;
+		const double mouseY = y;
+		if (pixels.width <= 0 || pixels.height <= 0 ||
+			(mouseX >= 0 && mouseY >= 0 && mouseX < pixels.width && mouseY < pixels.height))
+			return;
+		const ui::Rect from = m_shell.bounds(source->id());
+		const ui::Rect to = m_shell.bounds(m_main.id());
+		const ui::Size targetPixels = m_main.pixelSize();
+		if (to.width <= 0 || to.height <= 0)
+			return;
+		const double screenX = from.x + (mouseX * from.width / pixels.width);
+		const double screenY = from.y + (mouseY * from.height / pixels.height);
+		const auto targetX = static_cast<float>((screenX - to.x) * targetPixels.width / to.width);
+		const auto targetY = static_cast<float>((screenY - to.y) * targetPixels.height / to.height);
+		m_eventDisplay->dropRegion(region, targetX, targetY);
+	}
+
+	void AppUi::openAudioFunction(const std::string& file, bool sampleEditor, const std::string& clips)
 	{
 		AudioFunctionWindow& shown = m_audioFunctions[file];
 		if (shown.document && shown.document->GetParentNode() != nullptr && m_shell.find(shown.window) != nullptr)
@@ -3213,14 +3290,14 @@ namespace gnubase::app
 				events = std::to_string(m_sampleEditor.editor->event());
 			range = m_sampleEditor.editor->analysisRange();
 		}
-		else if (m_eventDisplay)
+		else if (clips.empty() && m_eventDisplay)
 		{
 			const auto& selection = m_eventDisplay->selection();
 			for (const engine::Json& event : m_eventDisplay->project().at("audioEvents"))
 				if (std::find(selection.begin(), selection.end(), event.at("id").get<uint64_t>()) != selection.end())
 					events += event.at("id").dump() + " ";
 		}
-		if (events.empty())
+		if (events.empty() && clips.empty())
 			return;
 		ui::WindowSpec spec;
 		spec.title = "Statistics";
@@ -3239,6 +3316,7 @@ namespace gnubase::app
 			return;
 		}
 		document->SetAttribute("events", events);
+		document->SetAttribute("clips", clips);
 		if (sampleEditor && range.second > range.first)
 		{
 			document->SetAttribute("start", std::to_string(range.first));

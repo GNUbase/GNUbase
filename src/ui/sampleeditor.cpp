@@ -67,8 +67,8 @@ namespace gnubase::ui
 
 		// What the editor listens to in its root element, and in its document: drags that leave the root, and the
 		// window's size.
-		constexpr std::array<Rml::EventId, 4> g_rootEvents = {
-			Rml::EventId::Mousedown, Rml::EventId::Click, Rml::EventId::Dblclick, Rml::EventId::Change};
+		constexpr std::array<Rml::EventId, 6> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Click,
+			Rml::EventId::Dblclick, Rml::EventId::Change, Rml::EventId::Dragstart, Rml::EventId::Dragend};
 		constexpr std::array<Rml::EventId, 3> g_documentEvents = {
 			Rml::EventId::Mousemove, Rml::EventId::Mouseup, Rml::EventId::Resize};
 		// And in the capture phase: the keys and the focus leaving a region's field, before the field takes them.
@@ -1204,6 +1204,8 @@ namespace gnubase::ui
 				editRegion(*cell);
 			break;
 		case Rml::EventId::Keydown:
+			if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_ESCAPE)
+				m_draggedRegion = nullptr;
 			if (m_editing && target == m_editing.get())
 			{
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
@@ -1220,6 +1222,24 @@ namespace gnubase::ui
 			break;
 		case Rml::EventId::Mousedown:
 			press(event, *target);
+			break;
+		case Rml::EventId::Dragstart:
+			m_draggedRegion = nullptr;
+			if (const Rml::Element* row = withAttribute(target, "region", m_root.get()))
+				if (const Json* selected = region(std::stoull(attribute(*row, "region"))))
+				{
+					m_draggedRegion = *selected;
+					m_draggedRegion["clip"] = m_view.at("clip");
+				}
+			break;
+		case Rml::EventId::Dragend:
+			if (!m_draggedRegion.is_null() && m_regionDrop && m_view.at("clip") == m_draggedRegion.at("clip"))
+				if (const Json* selected = region(m_draggedRegion.at("id").get<uint64_t>()); selected != nullptr &&
+					selected->at("start") == m_draggedRegion.at("start") &&
+					selected->at("end") == m_draggedRegion.at("end"))
+					m_regionDrop(m_draggedRegion, event.GetParameter<float>("mouse_x", 0.0F),
+						event.GetParameter<float>("mouse_y", 0.0F));
+			m_draggedRegion = nullptr;
 			break;
 		case Rml::EventId::Mousemove:
 			showPointer(event, *target);

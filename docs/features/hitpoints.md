@@ -94,6 +94,13 @@ restores those origins along with the original clip.
 
 ## In the UI
 
+Audio > Hitpoints > Divide Audio Events at Hitpoints is enabled for one selected folder with Group Editing on (reference
+manual p. 642). The UI command `audio.divideAtHitpoints` sends `track.divideAtHitpoints`, which gathers audio events in
+that folder and its nested folders and delegates to `quantize.slice`: equal track priorities, a 20 ms merge range and
+zero slice offset. Every enclosed track is cut at the same project positions in one undo step. Locked events stay whole,
+and MIDI parts and tracks outside the folder stay unchanged. Engine refusals appear in the project window's edit-refused
+notification. The engine command returns `events` and `positions` through MCP and Lua too.
+
 Audio > Advanced has Close Gaps (Crossfade), Close Gaps (Time Stretch) and Delete Overlaps, the UI commands
 `audio.closeGapsCrossfade`, `audio.closeGapsTimeStretch` and `audio.deleteOverlaps`. They run `event.closeGaps` with the
 corresponding mode or `event.deleteOverlaps` on selected audio events and all events inside audio parts selected in the
@@ -136,12 +143,17 @@ display's gestures edit hitpoints instead of the tool's (pp. 636, 639-640):
 
 Automatic detection when audio is imported or recorded (the Editing - Audio preference, which can start the same job)
 and the hitpoints of the selected event in the project window; the Beats filter and warp markers, which need the clip's
-musical definition and warping (#144); Tab to the next slice; Alt+N and Alt+B to locate to hitpoints; Divide Audio
-Events at Hitpoints for folder tracks; the MIDI notes' destinations First Selected Track in the UI (the engine takes
-`track`), which replaces the parts of earlier conversions, and Project Clipboard. The detection is checked on
-synthesized loops only; recorded drum loops with hand-annotated onsets (room sound, bleed, flams) are yet to come.
+musical definition and warping (#144); Tab to the next slice; Alt+N and Alt+B to locate to hitpoints; the MIDI notes'
+destinations First Selected Track in the UI (the engine takes `track`), which replaces the parts of earlier conversions,
+and Project Clipboard. The detection is checked on synthesized loops only; recorded drum loops with hand-annotated
+onsets (room sound, bleed, flams) are yet to come.
 
 ## Checks
+
+- `tests/hitpoints_tests.cpp`: folder division includes nested audio, preserves outside tracks, rejects non-folders and
+  folders without Group Editing, and supports undo/redo. `tests/mainmenu_tests.cpp` drives its Audio > Hitpoints entry,
+  disabled without Group Editing, and undoes the split. A folder without hitpoints shows the engine's refusal in
+  `#edit-refused` and keeps its events unchanged.
 
 - `tests/mainmenu_tests.cpp`: a time-stretch job needing a ratio above 10 shows its error in `#edit-refused`, both after
   its command's result and when it finished before the UI handled that result; the project and undo history stay

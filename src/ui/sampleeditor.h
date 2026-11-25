@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -61,6 +62,11 @@ namespace gnubase::ui
 		static bool isProcessCommand(const std::string& command);
 		bool canProcess() const;
 		void process(const std::string& operation);
+		// A region dragged out of this window, with the release in its client pixels (reference manual p. 626).
+		void onRegionDrop(std::function<void(const engine::Json&, float, float)> drop)
+		{
+			m_regionDrop = std::move(drop);
+		}
 
 		// The display's view: the clip frame at its left edge and frames per dp.
 		double start() const { return m_start; }
@@ -201,6 +207,8 @@ namespace gnubase::ui
 		std::vector<std::array<double, 3>> m_zoomRedo;
 		int m_zoomGesture = 0;
 		std::string m_regionEdge;
+		engine::Json m_draggedRegion;
+		std::function<void(const engine::Json&, float, float)> m_regionDrop;
 		const std::string m_closeEvent;
 	};
 }

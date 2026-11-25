@@ -8,9 +8,12 @@
 #define STB_VORBIS_HEADER_ONLY
 #include <stb_vorbis.c> // NOLINT(bugprone-suspicious-include): stb_vorbis is one .c file; only its declarations
 
+#include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstdint>
 #include <cstring>
+#include <string_view>
 #include <utility>
 
 namespace gnubase::engine
@@ -125,14 +128,69 @@ namespace gnubase::engine
 		public:
 			FlacReader(detail::File file, const std::string& path) : m_file(std::move(file))
 			{
-				m_flac =
-					drflac_open(readFile, seekFile<drflac_seek_origin>, tellFile<drflac_int64>, m_file.get(), nullptr);
+				m_flac = drflac_open_with_metadata([](void* source, void* buffer, size_t bytes)
+					{ return readFile(static_cast<FlacReader*>(source)->m_file.get(), buffer, bytes); },
+					[](void* source, int offset, drflac_seek_origin origin)
+					{ return seekFile(static_cast<FlacReader*>(source)->m_file.get(), offset, origin); },
+					[](void* source, drflac_int64* position)
+					{ return tellFile(static_cast<FlacReader*>(source)->m_file.get(), position); },
+					[](void* source, drflac_metadata* metadata)
+					{
+						if (metadata->type != DRFLAC_METADATA_BLOCK_TYPE_VORBIS_COMMENT)
+							return;
+						drflac_vorbis_comment_iterator iterator;
+						drflac_init_vorbis_comment_iterator(&iterator, metadata->data.vorbis_comment.commentCount,
+							metadata->data.vorbis_comment.pComments);
+						drflac_uint32 length = 0;
+						while (const char* comment = drflac_next_vorbis_comment(&iterator, &length))
+						{
+							constexpr std::string_view key = "WAVEFORMATEXTENSIBLE_CHANNEL_MASK=";
+							std::string_view field(comment, length);
+							if (field.size() < key.size() ||
+								!std::equal(key.begin(), key.end(), field.begin(),
+									[](char expected, char actual)
+									{
+										return expected ==
+											(actual >= 'a' && actual <= 'z' ? actual - 'a' + 'A' : actual);
+									}))
+								continue;
+							field.remove_prefix(key.size());
+							if (field.substr(0, 2) == "0x" || field.substr(0, 2) == "0X")
+								field.remove_prefix(2);
+							uint32_t mask = 0;
+							const auto [end, error] =
+								std::from_chars(field.data(), field.data() + field.size(), mask, 16);
+							if (error == std::errc() && end == field.data() + field.size())
+							{
+								static_cast<FlacReader*>(source)->m_info.channelMask = mask;
+								static_cast<FlacReader*>(source)->m_channelMaskPresent = true;
+							}
+						}
+					},
+					this, nullptr);
 				if (m_flac == nullptr)
 					throw AudioFileError("can't read " + path + ": not a valid FLAC file");
 				m_info.format = AudioFormat::Flac;
 				m_info.sampleFormat = integerFormat(m_flac->bitsPerSample);
 				m_info.sampleRate = m_flac->sampleRate;
 				m_info.channels = m_flac->channels;
+				// RFC 9639, 9.1.3: default assignments; a valid mask can leave trailing channels unassigned.
+				constexpr std::array<uint32_t, 8> masks{4, 3, 7, 0x33, 0x37, 0x3f, 0x70f, 0x63f};
+				if (m_info.channels >= 1 && m_info.channels <= 8)
+				{
+					uint32_t mask = masks[static_cast<size_t>(m_info.channels - 1)];
+					int assigned = 0;
+					for (uint32_t bits = m_info.channelMask; bits != 0; bits &= bits - 1)
+						++assigned;
+					if (m_channelMaskPresent && assigned <= m_info.channels)
+						mask = m_info.channelMask;
+					std::array<uint32_t, 8> speakers{};
+					size_t channel = 0;
+					for (uint32_t bit = 1; bit != 0 && channel < speakers.size(); bit <<= 1)
+						if ((mask & bit) != 0)
+							speakers[channel++] = bit;
+					m_info.channelSpeakers = speakers;
+				}
 				if (m_flac->totalPCMFrameCount == 0)
 				{
 					// STREAMINFO doesn't know, as in a recording cut short by a crash (#581): count what decodes, which
@@ -162,6 +220,7 @@ namespace gnubase::engine
 		private:
 			detail::File m_file;
 			drflac* m_flac = nullptr;
+			bool m_channelMaskPresent = false;
 		};
 
 		class Mp3Reader final : public AudioFileReader
@@ -222,6 +281,12 @@ namespace gnubase::engine
 				m_info.sampleRate = info.sample_rate;
 				m_info.channels = info.channels;
 				m_info.frames = stb_vorbis_stream_length_in_samples(m_vorbis);
+				// Vorbis I, section 4.3.9: preserve the decoder's order, whose LFE is last, unlike WAVE's.
+				constexpr std::array<std::array<uint32_t, 8>, 8> speakers{
+					{{4}, {1, 2}, {1, 4, 2}, {1, 2, 0x10, 0x20}, {1, 4, 2, 0x10, 0x20}, {1, 4, 2, 0x10, 0x20, 8},
+						{1, 4, 2, 0x200, 0x400, 0x100, 8}, {1, 4, 2, 0x200, 0x400, 0x10, 0x20, 8}}};
+				if (info.channels >= 1 && info.channels <= 8)
+					m_info.channelSpeakers = speakers[static_cast<size_t>(info.channels - 1)];
 			}
 
 			~VorbisReader() override { stb_vorbis_close(m_vorbis); }

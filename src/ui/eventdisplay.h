@@ -214,6 +214,8 @@ namespace gnubase::ui
 		// ticks, for something dropped there such as a chord pad (docs/features/chord-pads.md); none outside the
 		// lanes.
 		std::optional<std::pair<uint64_t, int64_t>> trackAt(float x, float y) const;
+		// Creates an event of a sample-editor region on the audio lane under the release, in window pixels.
+		void dropRegion(const engine::Json& region, float x, float y);
 		// Folder tracks' data blocks (reference manual p. 226, docs/features/folder-tracks.md): per lane, the events
 		// and parts of the tracks inside a folder's lane, by the user setting ui.folderData (always, never, or
 		// hideWhenExpanded: while the folder is folded); empty for the other lanes.

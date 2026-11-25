@@ -622,6 +622,40 @@ namespace gnubase::engine
 		const Json number = {{"type", "number"}};
 		const Json boolean = {{"type", "boolean"}};
 		const Json ids = {{"type", "array"}, {"items", integer}};
+		model.addEdit(engine,
+			{"track.divideAtHitpoints", 1,
+				"Divides the audio events inside a folder with Group Editing enabled, including nested folders "
+				"(reference manual p. 642). Uses quantize.slice with its default equal track priorities, 20 ms "
+				"merge range and zero offset, cutting all enclosed audio tracks at the same project positions. "
+				"MIDI parts and tracks outside the folder stay unchanged; locked events stay whole. Returns the "
+				"events including their slices, and the cutting positions in project samples, as one undo step.",
+				objectSchema({{"track", integer}}, {"track"}),
+				objectSchema({{"events", ids}, {"positions", ids}}, {"events", "positions"}), false},
+			"Divide folder at hitpoints",
+			[&model](Project& project, CommandContext& context)
+			{
+				const auto id = context.parameters().at("track").get<ObjectId>();
+				const auto folder = project.trackById.find(id);
+				require(folder != project.trackById.end() && folder->second.type == TrackType::Folder,
+					"track isn't a folder");
+				require(folder->second.groupEditing, "enable Group Editing on the folder first");
+				std::set<ObjectId> tracks;
+				std::vector<ObjectId> pending{id};
+				while (!pending.empty())
+				{
+					const ObjectId track = pending.back();
+					pending.pop_back();
+					if (!tracks.insert(track).second)
+						continue;
+					const auto& children = project.trackById.at(track).children;
+					pending.insert(pending.end(), children.begin(), children.end());
+				}
+				Json events = Json::array();
+				for (const auto& [event, audio] : project.audioEvents)
+					if (tracks.count(audio.track) != 0)
+						events.push_back(event);
+				return model.runEdit("quantize.slice", project, {{"events", events}}, context);
+			});
 		const Json hitpointSchema = objectSchema({{"position", integer}, {"peak", number}, {"intensity", number},
 													 {"locked", boolean}, {"disabled", boolean}, {"active", boolean}},
 			{"position", "peak", "intensity", "locked", "disabled", "active"});

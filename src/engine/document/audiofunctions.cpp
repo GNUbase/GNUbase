@@ -587,10 +587,11 @@ namespace gnubase::engine
 					"averageRms, the RMS of every sample, and maxRms, the highest RMS of 50 ms windows 10 ms apart, "
 					"both in dB as AES17 has it, where a full-scale sine reads 0 dB. The levels are linear and in "
 					"dBFS (Db; minSampleDb and maxSampleDb of the samples' absolute values); null for silence. "
-					"maxRmsAllChannels is the highest maxRms. loudness (EBU R 128, using the file's WAV speaker mask "
-					"when its bit count matches the channels, otherwise the default channel format for that count; "
-					"front weight 1, surround weight 1.41, LFE excluded; unknown "
-					"formats weight every channel 1): maxMomentary (400 ms) and maxShortTerm (3 s) in LUFS, ungated; "
+					"maxRmsAllChannels is the highest maxRms. loudness (EBU R 128) uses WAV masks whose bit count "
+					"matches the channels, FLAC masks or its standard layout, and Vorbis source speaker order. Other "
+					"files use the default channel format for their count. Front weight 1, surround weight 1.41, LFE "
+					"excluded; unassigned speakers and unknown formats weight every channel 1. "
+					"maxMomentary (400 ms) and maxShortTerm (3 s) in LUFS, ungated; "
 					"integrated in "
 					"LUFS (ITU-R BS.1770); range in LU (EBU Tech 3342); maxTruePeak in dBTP; null for silence or "
 					"audio shorter than their windows. Reads the clip's file.",
@@ -621,24 +622,32 @@ namespace gnubase::engine
 						weights[c] = 1.41;
 				}
 				const uint32_t mask = reader->info().channelMask;
+				auto channelSpeakers = reader->info().channelSpeakers.value_or(std::array<uint32_t, 8>{});
+				bool speakersKnown = reader->info().channelSpeakers.has_value();
 				size_t maskChannels = 0;
 				for (uint32_t bits = mask; bits != 0; bits &= bits - 1)
 					++maskChannels;
 				if (mask != 0 && maskChannels == channelCount)
 				{
+					speakersKnown = true;
 					size_t channel = 0;
 					for (uint32_t bit = 1; bit != 0 && channel < weights.size(); bit <<= 1)
 						if ((mask & bit) != 0)
 						{
-							// LFE; back left/right/center and side left/right; all other speakers have unit weight.
-							double weight = 1.0;
-							if (bit == 0x8)
-								weight = 0.0;
-							else if ((bit & 0x730) != 0)
-								weight = 1.41;
-							weights[channel++] = weight;
+							channelSpeakers[channel++] = bit;
 						}
 				}
+				if (speakersKnown)
+					for (size_t channel = 0; channel < std::min(channelCount, weights.size()); ++channel)
+					{
+						const uint32_t bit = channelSpeakers[channel];
+						// LFE; back left/right/center and side left/right; all other speakers have unit weight.
+						weights[channel] = 1.0;
+						if (bit == 0x8)
+							weights[channel] = 0.0;
+						else if ((bit & 0x730) != 0)
+							weights[channel] = 1.41;
+					}
 				int64_t frames = 0;
 				// The loudness meter's channels of interleaved frames, or silence without them.
 				const auto measure = [&](const float* samples, size_t count, bool measuring)

@@ -586,6 +586,96 @@ TEST_CASE("clip.statistics uses an extensible WAV speaker mask instead of the ch
 	}
 }
 
+TEST_CASE("clip.statistics uses the default FLAC speaker layout without a mask tag", "[integration]")
+{
+	Fixture f;
+	const auto path = f.dir.path() / "default-layout.flac";
+	const test::Audio audio = make(1.0, 7, [](int c, double t) { return c == 3 ? sine(1000.0, 0.25, t) : 0.0; });
+	engine::WriteOptions options;
+	options.format = engine::AudioFormat::Flac;
+	options.channels = 7;
+	{
+		const auto writer = engine::AudioFileWriter::create(path.u8string(), options);
+		writer->write(audio.samples.data(), audio.frames());
+	}
+	const auto media = f.call("media.add", {{"path", path.u8string()}}).at("media").at("id");
+	const auto clip = f.call("clip.add", {{"media", media}}).at("clip").at("id");
+	const Json measured = f.call("clip.statistics", {{"clip", clip}});
+	CHECK(measured.at("loudness").at("integrated").is_null());
+	CHECK(number(measured.at("channels")[3].at("truePeak")) == Approx(0.25).margin(0.002));
+}
+
+TEST_CASE("clip.statistics respects the Vorbis channel order for LFE", "[integration]")
+{
+	Fixture f;
+	const auto path = std::filesystem::path(GNUBASE_TEST_DATA_DIR) / "surround-lfe.ogg";
+	const auto media = f.call("media.add", {{"path", path.u8string()}}).at("media").at("id");
+	const auto clip = f.call("clip.add", {{"media", media}}).at("clip").at("id");
+	const Json measured = f.call("clip.statistics", {{"clip", clip}});
+	CHECK(measured.at("loudness").at("integrated").is_null());
+	CHECK(number(measured.at("channels")[5].at("truePeak")) > 0.2);
+	CHECK(number(measured.at("channels")[3].at("peak")) == Approx(0.0).margin(1e-5));
+}
+
+TEST_CASE("clip.statistics reads FLAC speaker masks from comments", "[integration]")
+{
+	Fixture f;
+	const double reference = number(f.statistics(make(1.0, 1, [](int, double t) { return sine(1000.0, 0.25, t); }))
+			.at("loudness")
+			.at("integrated"));
+	for (const std::string tag : {"0x0000000f", "0X0000000F", "0x00000107", "invalid", "0x3", "0x0"})
+		for (const std::string key : {"WAVEFORMATEXTENSIBLE_CHANNEL_MASK=", "waveformatextensible_channel_mask="})
+		{
+			CAPTURE(tag);
+			const auto path = f.dir.path() / "speakers.flac";
+			const test::Audio audio =
+				make(1.0, 4, [](int c, double t) { return c == 3 ? sine(1000.0, 0.25, t) : 0.0; });
+			engine::WriteOptions options;
+			options.format = engine::AudioFormat::Flac;
+			options.channels = 4;
+			{
+				const auto writer = engine::AudioFileWriter::create(path.u8string(), options);
+				writer->write(audio.samples.data(), audio.frames());
+			}
+			std::ifstream input(path, std::ios::binary);
+			std::string original((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+			input.close();
+			REQUIRE(original.size() > 42);
+			std::string comment;
+			const auto integer = [&comment](uint32_t value)
+			{
+				for (int i = 0; i < 4; ++i)
+					comment.push_back(static_cast<char>((value >> (8 * i)) & 0xff));
+			};
+			integer(0); // empty vendor
+			integer(1);
+			const std::string field = key + tag;
+			integer(static_cast<uint32_t>(field.size()));
+			comment += field;
+			const char last = static_cast<char>((static_cast<unsigned char>(original[4]) & 0x80) | 4);
+			original[4] = static_cast<char>(static_cast<unsigned char>(original[4]) & 0x7f);
+			std::ofstream output(path, std::ios::binary | std::ios::trunc);
+			output.write(original.data(), 42);
+			output.put(last);
+			output.put(0);
+			output.put(0);
+			output.put(static_cast<char>(comment.size()));
+			output << comment;
+			output.write(original.data() + 42, static_cast<std::streamsize>(original.size() - 42));
+			output.close();
+			const auto media = f.call("media.add", {{"path", path.u8string()}}).at("media").at("id");
+			const auto clip = f.call("clip.add", {{"media", media}}).at("clip").at("id");
+			const Json measured = f.call("clip.statistics", {{"clip", clip}});
+			const bool lfe = tag == "0x0000000f" || tag == "0X0000000F";
+			CHECK(measured.at("loudness").at("integrated").is_null() == lfe);
+			if (!lfe)
+				CHECK(number(measured.at("loudness").at("integrated")) ==
+					Approx(reference + (tag == "invalid" || tag == "0x00000107" ? 10.0 * std::log10(1.41) : 0.0))
+						.margin(0.05));
+			CHECK(number(measured.at("channels")[3].at("truePeak")) == Approx(0.25).margin(0.002));
+		}
+}
+
 TEST_CASE("clip.estimatePitch finds a fundamental beneath louder harmonics and measures a clip range", "[integration]")
 {
 	Fixture f;

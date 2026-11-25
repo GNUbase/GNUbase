@@ -152,7 +152,8 @@ namespace gnubase::ui
 	}
 
 	PoolPanel::PoolPanel(EngineBinding& binding, Rml::Element& element, Run run, std::function<bool()> shown)
-		: m_binding(binding), m_run(std::move(run)), m_shown(std::move(shown)),
+		: m_binding(binding), m_run(std::move(run)), m_shown(std::move(shown)), m_closeEvent(g_dialogCloseEvent),
+		  m_treeEvent(g_treeToggleEvent),
 		  // Not after a step that changed only channels' levels and sends, such as a fader drag's (#1881): the Used
 		  // column counts the clips of sampler tracks and drum pads, which other channel-only steps change, e.g. Reset
 		  // Pad.
@@ -233,7 +234,7 @@ namespace gnubase::ui
 	PoolPanel::~PoolPanel()
 	{
 		if (m_question)
-			m_question->RemoveEventListener(g_dialogCloseEvent, this);
+			m_question->RemoveEventListener(m_closeEvent, this);
 		if (Rml::Element* menu = m_attributes.get())
 		{
 			menu->RemoveEventListener(Rml::EventId::Change, this);
@@ -247,7 +248,7 @@ namespace gnubase::ui
 			m_root->RemoveEventListener(id, this);
 		m_root->RemoveEventListener(Rml::EventId::Blur, this, true);
 		m_root->RemoveEventListener(Rml::EventId::Focus, this, true);
-		m_root->RemoveEventListener(g_treeToggleEvent, this);
+		m_root->RemoveEventListener(m_treeEvent, this);
 	}
 
 	void PoolPanel::prepareArchive()
@@ -580,6 +581,15 @@ namespace gnubase::ui
 					showMessage(
 						result.ok() ? std::string() : std::string(action) + " failed: " + result.error, !result.ok());
 			});
+	}
+
+	std::string PoolPanel::analysisClips() const
+	{
+		std::string clips;
+		for (const std::string& value : selection())
+			if (value.front() == 'c')
+				clips += value.substr(1) + " ";
+		return clips;
 	}
 
 	std::vector<std::string> PoolPanel::selection() const
