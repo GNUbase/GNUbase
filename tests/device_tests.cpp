@@ -1609,7 +1609,11 @@ TEST_CASE("the JACK backend keeps the device contract and plays a project over a
 	if (!backend)
 		SKIP("no PipeWire daemon with its JACK layer runs here");
 	auto hardware = std::make_unique<TestClient>(library, "gnubase-test-hardware", true);
+	const uint32_t found = hardware->bufferSize();
 	checkDeviceContract(*backend);
+	// The contract opens the device at every block size. The graph may still run at the last one for a cycle or two
+	// after the device cleared its request, which would reset the next device as another client's size would.
+	REQUIRE(waitUntil([&hardware, found] { return hardware->bufferSize() == found; }));
 	checkJackResets(*backend, false);
 	checkJackOwnBufferSize(*backend, library, true);
 	checkJackRateChange(*backend);
