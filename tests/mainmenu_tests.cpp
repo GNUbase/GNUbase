@@ -6,6 +6,7 @@
 // and Show Menu Bar is in a window's title bar context menu on Windows (#444).
 #include "engine/engine.h"
 #include "testutils/fakeui.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
@@ -1080,5 +1081,61 @@ TEST_CASE("Audio Advanced edits hitpoint slices in the selected audio part", "[u
 		CHECK(app.call("project.get") == before);
 		app.call("history.redo");
 		CHECK(app.call("project.get") == after);
+	}
+}
+
+TEST_CASE("Audio Advanced reports a failed Close Gaps time stretch job", "[ui]")
+{
+	for (const bool finishBeforeResult : {false, true})
+	{
+		CAPTURE(finishBeforeResult);
+		const test::TempDir dir;
+		test::Audio audio;
+		audio.samples.assign(48000, 0.25F);
+		const auto file = dir.path() / "slices.wav";
+		test::writeWav(file, audio);
+		test::UiApp app({1000, 760});
+		auto& display = app.appUi().showProject();
+		app.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+		const Json track = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+		const Json media = app.call("media.add", {{"path", file.u8string()}}).at("media").at("id");
+		const Json clip = app.call("clip.add", {{"media", media}}).at("clip").at("id");
+		std::vector<uint64_t> events;
+		for (const int64_t position : {0, 48000})
+			events.push_back(
+				app.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", position}, {"length", 1000}})
+					.at("event")
+					.at("id")
+					.get<uint64_t>());
+		REQUIRE(app.waitUntil([&] { return display.project().at("audioEvents").size() == 2; }));
+		display.select(events);
+		click(app, "#menu-bar button[menu=audio-menu]");
+		app.ui().move(std::nullopt, {"#audio-advanced-submenu", 0, std::nullopt});
+		const std::string item = "menuitem[command=audio.closeGapsTimeStretch]";
+		REQUIRE(app.waitUntil([&] { return shown(app, item); }));
+		const Json before = app.call("project.get");
+		const Json history = app.call("history.get");
+		test::HeldJob held(app.engine(), "event.closeGaps");
+		app.ui().click(std::nullopt, {item, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		REQUIRE(held.waitUntilHeld());
+		if (finishBeforeResult)
+		{
+			// No UI update until the job has failed: its command result is still waiting.
+			CHECK(app.appUi().binding().waiting("event.closeGaps") == 1);
+		}
+		else
+		{
+			REQUIRE(app.waitUntil([&] { return app.appUi().binding().waiting() == 0; }));
+			CHECK(!shown(app, "#edit-refused"));
+		}
+		CHECK(held.release());
+		engine::Client observer(app.engine());
+		const Json finished = test::waitForJob(observer, held.job());
+		REQUIRE(finished.at("state") == "failed");
+		CHECK_THAT(finished.at("error").get<std::string>(), ContainsSubstring("ratio"));
+		REQUIRE(app.waitUntil([&] { return shown(app, "#edit-refused"); }));
+		CHECK_THAT(element(app, "#edit-refused").value("text", std::string()), ContainsSubstring("ratio"));
+		CHECK(app.call("project.get") == before);
+		CHECK(app.call("history.get") == history);
 	}
 }

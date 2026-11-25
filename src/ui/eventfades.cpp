@@ -336,8 +336,18 @@ namespace gnubase::ui
 			});
 	}
 
+	void EventDisplay::finishSliceJob(const Json& job)
+	{
+		if (job.at("state") == "running" || m_sliceJobs.erase(job.at("id").get<uint64_t>()) == 0)
+			return;
+		if (job.at("state") == "failed")
+			showRefusal(job.at("error").get<std::string>());
+	}
+
 	void EventDisplay::addFadeActions()
 	{
+		m_subscriptions.push_back(
+			m_binding.on("job.finished", [this](const engine::Event& event) { finishSliceJob(event.data.at("job")); }));
 		// range.fades on the selection range, if there is one.
 		const auto onRange = [this](const char* fade)
 		{

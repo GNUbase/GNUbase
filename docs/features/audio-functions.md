@@ -113,11 +113,10 @@ analysis, so Mute Gaps requires Analyze again, or Auto.
 
 The Zoom slider to the right of the waveform and Ctrl/Cmd+wheel enlarge it horizontally from 1 to 16 times. Wheel zoom
 keeps the clip position under the pointer in place, within the available scroll range. A scrollbar or the unmodified
-wheel scrolls it. Peaks are requested only for the visible clip range, with at most 256 columns per channel; zooming,
-scrolling and resizing refresh that range. Measured sections share the same timeline and stay unchanged. Threshold
-handles stay at the waveform's beginning and end, and preview starts at the clip frame under the pointer, including the
-scroll offset. Zoom applies to the captured event or sample-editor range and does not change the analyzed or processed
-range.
+wheel scrolls it. Peaks are requested only for the visible clip range, with at most 256 columns per channel; zooming and
+scrolling refresh that range. Measured sections share the same timeline and stay unchanged. Threshold handles stay at
+the waveform's beginning and end, and preview starts at the clip frame under the pointer, including the scroll offset.
+Zoom applies to the captured event or sample-editor range and does not change the analyzed or processed range.
 
 The sample editor's Process section opens all three functions for its event and captures its range, or the event's range
 without a selection, independently of the project selection. Detect Silence's Process passes `start` and `end` clip

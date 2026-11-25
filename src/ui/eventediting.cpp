@@ -368,12 +368,25 @@ namespace gnubase::ui
 	void EventDisplay::edit(const std::string& command, Json parameters, bool selectResult)
 	{
 		m_binding.send(command, std::move(parameters),
-			[this, selectResult, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			[this, selectResult, slices = command == "event.closeGaps", alive = std::weak_ptr<bool>(m_alive)](
+				const engine::Result& result)
 			{
 				if (alive.expired())
 					return;
 				if (!result.ok())
 					showRefusal(result.error);
+				else if (slices && result.value.contains("job"))
+				{
+					const auto job = result.value.at("job").at("id").get<uint64_t>();
+					m_sliceJobs.insert(job);
+					// The job can finish before its command's result reaches the UI.
+					m_binding.send("job.get", {{"job", job}},
+						[this, alive](const engine::Result& status)
+						{
+							if (!alive.expired() && status.ok())
+								finishSliceJob(status.value.at("job"));
+						});
+				}
 				else if (selectResult)
 					select(result.value.at("events").get<std::vector<uint64_t>>());
 			});

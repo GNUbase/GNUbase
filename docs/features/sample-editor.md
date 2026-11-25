@@ -122,17 +122,17 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 | Tool | Gesture | Reference |
 |---|---|---|
 | Range Selection | A drag selects a range, with Snap to Zero Crossing at zero crossings; Shift and a click moves its nearer end; a click deselects | p. 635 |
-| Draw | At coarse zoom, edits the event volume curve; at one sample per pixel or closer, draws replacement samples in the pressed channel, interpolating between pointer positions | pp. 630, 634-635 |
+| Draw | At coarse zoom, edits the event volume curve; at one sample per pixel or closer, draws replacement samples in the pressed channel, interpolating between pointer positions | pp. 399-400 (volume curves), 634-635 (samples) |
 | Zoom | A click zooms in around the frame clicked, with Alt out, at most to the whole clip | p. 630 |
 | Play | Auditions the clip with its fades from the frame pressed until the release, also outside the event and past its end (`audition.start` with the `clip`, [audition.md](audition.md)) | p. 630 |
 | Scrub | A drag scrubs the clip (`audition.scrub` with the `clip`) and moves the project cursor to where the frame plays | p. 634 |
 
-At coarse zoom, Draw adds a volume point with a click and moves a point pressed within 6 dp. Ctrl/Cmd and a drag draw
-several points, replacing the curve between the stroke's ends. Positions stay inside the event in clip frames; release
-sends one `audioEvent.setVolumeCurve` edit. A `fade-lines.se-volume-curve` overlay shows the event's volume and curve,
-including its bends and point handles, from silence at the bottom to +6 dB at the top. It follows horizontal zoom and
-scroll, independently of waveform magnification. Undo/redo and edits from other clients update the line. The fine-zoom
-sample drawing keeps its processing job and selection behavior.
+At coarse zoom, Draw (reference manual, pp. 399-400) adds a volume point with a click and moves a point pressed within 6
+dp. Ctrl/Cmd and a drag draw several points, replacing the curve between the stroke's ends. Positions stay inside the
+event in clip frames; release sends one `audioEvent.setVolumeCurve` edit. A `fade-lines.se-volume-curve` overlay shows
+the event's volume and curve, including its bends and point handles, from silence at the bottom to +6 dB at the top. It
+follows horizontal zoom and scroll, independently of waveform magnification. Undo/redo and edits from other clients
+update the line. The fine-zoom sample drawing keeps its processing job and selection behavior.
 
 While drawing, `curve.se-draw-stroke` overlays the collected samples in the pressed channel's waveform lane, following
 horizontal scroll and zoom and vertical waveform zoom. It draws only between the stroke's endpoints, with a handle for
