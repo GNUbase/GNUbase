@@ -12,7 +12,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -127,14 +126,13 @@ namespace gnubase::ui
 		if (lane >= m_laneTypes.size() || m_laneTypes[lane] != "audio")
 			return;
 		const uint64_t track = m_laneTracks[lane];
-		const double seconds = std::max(0.0, snapped(m_view.start + across * m_view.scale));
+		const double seconds = std::max(0.0, snapped(m_view.start + (across * m_view.scale)));
 		const Json& tracks = m_project.at("tracks");
 		const auto target =
 			std::find_if(tracks.begin(), tracks.end(), [track](const Json& item) { return item.at("id") == track; });
 		if (target == tracks.end())
 			return;
-		const int64_t position =
-			target->at("timeBase") == "musical" ? std::llround(m_time.tempo.toTicks(seconds)) : samples(seconds);
+		const int64_t position = target->at("timeBase") == "musical" ? m_time.tempo.toTicks(seconds) : samples(seconds);
 		edit("audioEvent.add",
 			{{"track", track}, {"clip", region.at("clip")}, {"position", position}, {"offset", region.at("start")},
 				{"length", region.at("end").get<int64_t>() - region.at("start").get<int64_t>()},

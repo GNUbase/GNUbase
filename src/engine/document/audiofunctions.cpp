@@ -642,7 +642,11 @@ namespace gnubase::engine
 					{
 						const uint32_t bit = channelSpeakers[channel];
 						// LFE; back left/right/center and side left/right; all other speakers have unit weight.
-						weights[channel] = bit == 0x8 ? 0.0 : ((bit & 0x730) != 0 ? 1.41 : 1.0);
+						weights[channel] = 1.0;
+						if (bit == 0x8)
+							weights[channel] = 0.0;
+						else if ((bit & 0x730) != 0)
+							weights[channel] = 1.41;
 					}
 				int64_t frames = 0;
 				// The loudness meter's channels of interleaved frames, or silence without them.

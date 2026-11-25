@@ -1306,43 +1306,7 @@ namespace gnubase::app
 			}
 		}
 		m_keys.bind({"Backspace", "edit.delete", engine::Json::object(), "project"});
-		m_keys.add({"audio.divideAtHitpoints", "Divides the selected folder's audio events at hitpoints.",
-			[this](ui::Window&, Rml::Element*)
-			{
-				if (m_trackList && m_trackList->selection().size() == 1)
-					m_binding.send("track.divideAtHitpoints", {{"track", m_trackList->selection().front()}},
-						[this](const engine::Result& result)
-						{
-							if (!result.ok() && m_eventDisplay)
-								m_eventDisplay->showRefusal(result.error);
-						});
-			}});
-		m_keys.enableWhen("audio.divideAtHitpoints",
-			[this](ui::Window&, Rml::Element*)
-			{
-				if (!m_trackList || !m_eventDisplay || m_trackList->selection().size() != 1)
-					return false;
-				for (const auto& track : m_eventDisplay->project().at("tracks"))
-					if (track.at("id") == m_trackList->selection().front())
-						return track.at("type") == "folder" && track.value("groupEditing", false);
-				return false;
-			});
-		for (const auto& [id, file] : {std::pair{"pool.spectrumAnalyzer", "spectrum-analyzer.rml"},
-				 std::pair{"pool.statistics", "statistics.rml"}})
-		{
-			m_keys.add(
-				{id, "Analyzes the selected pool clips.", [this, file = std::string(file)](ui::Window&, Rml::Element*)
-					{
-						if (const auto pool = m_pool.lock(); pool && !pool->analysisClips().empty())
-							openAudioFunction(file, false, pool->analysisClips());
-					}});
-			m_keys.enableWhen(id,
-				[this](ui::Window&, Rml::Element*)
-				{
-					const auto pool = m_pool.lock();
-					return pool && !pool->analysisClips().empty();
-				});
-		}
+		addAudioFunctions();
 		m_keys.bind({"Backspace", "sampleEditor.delete", engine::Json::object(), "sampleEditor"});
 		for (const ProjectCommand& command : g_trackCommands)
 		{
@@ -3236,23 +3200,67 @@ namespace gnubase::app
 		return *document;
 	}
 
+	void AppUi::addAudioFunctions()
+	{
+		m_keys.add({"audio.divideAtHitpoints", "Divides the selected folder's audio events at hitpoints.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				if (m_trackList && m_trackList->selection().size() == 1)
+					m_binding.send("track.divideAtHitpoints", {{"track", m_trackList->selection().front()}},
+						[this](const engine::Result& result)
+						{
+							if (!result.ok() && m_eventDisplay)
+								m_eventDisplay->showRefusal(result.error);
+						});
+			}});
+		m_keys.enableWhen("audio.divideAtHitpoints",
+			[this](ui::Window&, Rml::Element*)
+			{
+				if (!m_trackList || !m_eventDisplay || m_trackList->selection().size() != 1)
+					return false;
+				for (const auto& track : m_eventDisplay->project().at("tracks"))
+					if (track.at("id") == m_trackList->selection().front())
+						return track.at("type") == "folder" && track.value("groupEditing", false);
+				return false;
+			});
+		for (const auto& [id, file] : {std::pair{"pool.spectrumAnalyzer", "spectrum-analyzer.rml"},
+				 std::pair{"pool.statistics", "statistics.rml"}})
+		{
+			m_keys.add(
+				{id, "Analyzes the selected pool clips.", [this, file = std::string(file)](ui::Window&, Rml::Element*)
+					{
+						if (const auto pool = m_pool.lock(); pool && !pool->analysisClips().empty())
+							openAudioFunction(file, false, pool->analysisClips());
+					}});
+			m_keys.enableWhen(id,
+				[this](ui::Window&, Rml::Element*)
+				{
+					const auto pool = m_pool.lock();
+					return pool && !pool->analysisClips().empty();
+				});
+		}
+	}
+
 	void AppUi::dropSampleRegion(const engine::Json& region, float x, float y)
 	{
 		const ui::Window* source = m_shell.find(m_sampleEditor.window);
 		if (source == nullptr || !m_eventDisplay)
 			return;
 		const ui::Size pixels = source->pixelSize();
-		if (pixels.width <= 0 || pixels.height <= 0 || (x >= 0 && y >= 0 && x < pixels.width && y < pixels.height))
+		const double mouseX = x;
+		const double mouseY = y;
+		if (pixels.width <= 0 || pixels.height <= 0 ||
+			(mouseX >= 0 && mouseY >= 0 && mouseX < pixels.width && mouseY < pixels.height))
 			return;
 		const ui::Rect from = m_shell.bounds(source->id());
 		const ui::Rect to = m_shell.bounds(m_main.id());
 		const ui::Size targetPixels = m_main.pixelSize();
 		if (to.width <= 0 || to.height <= 0)
 			return;
-		const auto targetX =
-			static_cast<float>((from.x + x * from.width / pixels.width - to.x) * targetPixels.width / to.width);
-		const auto targetY =
-			static_cast<float>((from.y + y * from.height / pixels.height - to.y) * targetPixels.height / to.height);
+		const double screenX = from.x + (mouseX * from.width / pixels.width);
+		const double screenY = from.y + (mouseY * from.height / pixels.height);
+		const auto targetX = static_cast<float>((screenX - to.x) * targetPixels.width / to.width);
+		const auto targetY = static_cast<float>((screenY - to.y) * targetPixels.height / to.height);
 		m_eventDisplay->dropRegion(region, targetX, targetY);
 	}
 

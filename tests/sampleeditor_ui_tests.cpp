@@ -223,7 +223,7 @@ TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
 	REQUIRE(f.app.waitUntil([&] { return !f.elements(row).empty(); }));
 	const ui::Rect screen = f.app.shell().displays().front().usable;
 	f.app.shell().setBounds(
-		f.app.main().id(), {screen.x, screen.y + screen.height / 2, screen.width, screen.height / 2});
+		f.app.main().id(), {screen.x, screen.y + (screen.height / 2), screen.width, screen.height / 2});
 	f.app.shell().setBounds(f.window, {screen.x, screen.y, screen.width, screen.height / 2});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	f.app.call("snap.set", {{"on", false}});
@@ -239,11 +239,11 @@ TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
 	const double py = lanes.at("y").get<double>() + (mode == "outside" ? -20.0 : 20.0) +
 		(mode == "midi" ? f.display.trackHeight(f.track) * f.app.main().dpRatio() : 0.0);
 	const ui::Target destination{"", 0,
-		ui::Point{static_cast<int>(
-					  std::lround((projectBounds.x + px * projectBounds.width / projectPixels.width - editorBounds.x) *
-						  editorPixels.width / editorBounds.width)),
+		ui::Point{static_cast<int>(std::lround(
+					  (projectBounds.x + (px * projectBounds.width / projectPixels.width) - editorBounds.x) *
+					  editorPixels.width / editorBounds.width)),
 			static_cast<int>(
-				std::lround((projectBounds.y + py * projectBounds.height / projectPixels.height - editorBounds.y) *
+				std::lround((projectBounds.y + (py * projectBounds.height / projectPixels.height) - editorBounds.y) *
 					editorPixels.height / editorBounds.height))}};
 	const Json before = f.app.call("project.get");
 	if (mode == "escape" || mode == "removed")
@@ -252,7 +252,9 @@ TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
 		const Json box = f.box(row);
 		f.app.ui().move(f.window, {"", 0, ui::Point{box.at("x").get<int>() - 10, box.at("y").get<int>() + 4}});
 		if (mode == "escape")
+		{
 			f.app.ui().key(f.window, "Escape");
+		}
 		else
 		{
 			f.app.call("clip.removeRegion", {{"clip", f.clip}, {"region", region}});
@@ -261,7 +263,9 @@ TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
 		f.app.ui().release(f.window, destination, ui::MouseButton::Left, {});
 	}
 	else
+	{
 		f.drag(of(row), destination);
+	}
 	if (mode == "midi" || mode == "outside" || mode == "escape" || mode == "removed")
 	{
 		REQUIRE(f.app.waitUntil([&] { return f.app.appUi().binding().waiting() == 0; }));
@@ -277,13 +281,13 @@ TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
 	CHECK(added.at("length") == 1500);
 	const float actualX = static_cast<float>(
 		(editorBounds.x +
-			destination.point.value_or(ui::Point{}).x * static_cast<double>(editorBounds.width) / editorPixels.width -
+			(destination.point.value_or(ui::Point{}).x * static_cast<double>(editorBounds.width) / editorPixels.width) -
 			projectBounds.x) *
 		projectPixels.width / projectBounds.width);
 	const double seconds = f.display.view().start +
-		(actualX - lanes.at("x").get<double>()) * f.display.view().scale /
-			f.app.main().context().GetDensityIndependentPixelRatio();
-	const auto expected = std::llround(mode == "musical" ? f.display.time().tempo.toTicks(seconds) : seconds * 48000.0);
+		((actualX - lanes.at("x").get<double>()) * f.display.view().scale /
+			f.app.main().context().GetDensityIndependentPixelRatio());
+	const auto expected = mode == "musical" ? f.display.time().tempo.toTicks(seconds) : std::llround(seconds * 48000.0);
 	CHECK(added.at("position").get<int64_t>() == expected);
 	CHECK(after.at("clips") == before.at("clips"));
 	f.app.call("history.undo");

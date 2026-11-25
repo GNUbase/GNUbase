@@ -222,7 +222,7 @@ namespace
 TEST_CASE("pool audio functions analyze unused clips without creating project events", "[ui]")
 {
 	const std::string function = GENERATE("statistics", "spectrumAnalyzer");
-	test::TempDir dir;
+	const test::TempDir dir;
 	test::UiApp app({720, 640});
 	app.appUi().showProject();
 	const auto path = dir.path() / "pool.wav";
