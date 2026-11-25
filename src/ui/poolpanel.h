@@ -41,6 +41,8 @@ namespace gnubase::ui
 
 		// Reads the pool if it changed while the panel didn't show and it shows now.
 		void update();
+		// Selected clip ids for the audio functions, excluding folder rows.
+		std::string analysisClips() const;
 
 		// Shows in the message line (#pool-message, with the class error for a failure) what a pool command did:
 		// pool.removeUnused, media.locate, media.removeMissing, media.conform or media.prepareArchive, wherever in the
@@ -97,8 +99,9 @@ namespace gnubase::ui
 		Run m_run;
 		std::function<bool()> m_shown;
 		Rml::ObserverPtr<Rml::Element> m_root;
-		Rml::ObserverPtr<Rml::Element> m_view;           // the <listview>
-		Rml::ObserverPtr<Rml::Element> m_attributes;     // the View/Attributes menu, in the document's body
+		Rml::ObserverPtr<Rml::Element> m_view;       // the <listview>
+		Rml::ObserverPtr<Rml::Element> m_attributes; // the View/Attributes menu, in the document's body
+		Rml::ObserverPtr<Rml::Element> m_analysis;
 		engine::Json m_columns = engine::Json::object(); // which columns show, every one of ui.poolColumns
 		engine::Json m_pool = engine::Json::object();
 		bool m_stale = true;                       // the pool changed since it was last read

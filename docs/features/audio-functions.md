@@ -50,10 +50,15 @@ if the document changes meanwhile.
   windows 10 ms apart, both as AES17 has them (a full-scale sine is 0 dB). Loudness and true peak come from the loudness
   meter ([metering.md](metering.md)), which the audio is fed through offline: maximum momentary and short-term loudness,
   integrated loudness, loudness range and the true peak per channel, 4 times oversampled, of up to 8 channels; channels
-  beyond have their sample peak as true peak. Loudness uses a WAVEFORMATEXTENSIBLE speaker mask from the file when its
-  set bits match the channel count; otherwise it uses the default [channel format](channel-formats.md) for that count.
-  Front speakers weigh 1, back and side surrounds 1.41 and LFE 0. LFE still contributes to true peak and its channel
-  statistics. Files without a usable mask or a known channel count keep unit weights for the first eight channels.
+  beyond have their sample peak as true peak. Loudness uses WAVEFORMATEXTENSIBLE speaker masks from WAV when their set
+  bits match the channel count. FLAC reads the case-insensitive Vorbis comment field specified in [RFC
+  9639](https://www.rfc-editor.org/rfc/rfc9639.html#section-8.6.2), or its standard layout without a usable tag. FLAC
+  masks can leave trailing channels unassigned, including every channel with a zero mask; these have unit weight. Vorbis
+  uses its source speaker order for one to eight channels ([Vorbis I, section
+  4.3.9](https://www.xiph.org/vorbis/doc/Vorbis_I_spec.html)), preserving that order in decoded audio. Front speakers
+  weigh 1, back and side surrounds 1.41 and LFE 0. LFE still contributes to true peak and its channel statistics. Files
+  without a usable layout use the default [channel format](channel-formats.md) for their count, or unit weights for the
+  first eight channels when the count is unknown.
 - **Pitch** (`analysis::PitchEstimator`, also used by Statistics): scans each channel in fixed memory, averaging samples
   down to about 12 kHz and keeping the loudest 2048-sample window by its energy without DC. Cumulative mean normalized
   squared differences identify the first periodic minimum; interpolation estimates its frequency, from 40 to 2000 Hz.
@@ -71,6 +76,11 @@ window with its captured selection. Their Lua works through the engine API. Clos
 window; replacing the project closes all three. Each window follows its job's progress without waiting on the UI thread,
 shows failures, and cancels pending work when closed. A new Analyze or Auto request cancels the previous job and ignores
 its later results. Statistics analyzes selected events successively, showing each table as it finishes.
+
+The pool's Audio Functions menu opens Spectrum Analyzer and Statistics for the selected clips, including unused clips.
+It captures whole clips independently of the project event selection, without creating events or undo steps. Statistics
+shows one table per selected clip; Spectrum Analyzer shows the first clip. The UI commands are `pool.spectrumAnalyzer`
+and `pool.statistics`. Existing analysis windows keep their captured sources when raised again.
 
 ```
 #detect-silence-dialog          detect-silence.rml
@@ -128,10 +138,16 @@ preview can also use clip ranges outside the event.
 
 ## Not yet
 
-Entry points from the pool; polyphonic pitch estimation. Speaker masks are read from extensible WAV files; other file
-formats use the channel-count fallback.
+Detect Silence from the pool; polyphonic pitch estimation; speaker-layout metadata from AIFF files. Formats without a
+usable layout retain the channel-count fallback.
 
 ## Checks
+
+- `tests/audiofunctions_ui_tests.cpp`: the pool menu analyzes an unused clip through Statistics and Spectrum Analyzer
+  without changing the project or creating an event.
+- `tests/audiofunctions_tests.cpp`: FLAC masks including LFE and back-center, case-insensitive names and values, invalid
+  values, unassigned channels and the default seven-channel layout; the synthetic `tests/data/surround-lfe.ogg` verifies
+  Vorbis LFE exclusion while its true peak remains measured in the source channel order.
 
 - `tests/audiofunctions_ui_tests.cpp`: waveform zoom and scroll preserve section counts, scale section geometry and
   preview the frame under the pointer with Mute Gaps; scrollbar clicks do not audition, and threshold handles stay

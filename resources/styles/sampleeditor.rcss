@@ -443,6 +443,7 @@
 
 .se-region
 {
+	drag: drag;
 	display: flex;
 	flex-direction: row;
 	height: 20dp;

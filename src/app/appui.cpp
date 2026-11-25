@@ -1306,6 +1306,43 @@ namespace gnubase::app
 			}
 		}
 		m_keys.bind({"Backspace", "edit.delete", engine::Json::object(), "project"});
+		m_keys.add({"audio.divideAtHitpoints", "Divides the selected folder's audio events at hitpoints.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				if (m_trackList && m_trackList->selection().size() == 1)
+					m_binding.send("track.divideAtHitpoints", {{"track", m_trackList->selection().front()}},
+						[this](const engine::Result& result)
+						{
+							if (!result.ok() && m_eventDisplay)
+								m_eventDisplay->showRefusal(result.error);
+						});
+			}});
+		m_keys.enableWhen("audio.divideAtHitpoints",
+			[this](ui::Window&, Rml::Element*)
+			{
+				if (!m_trackList || !m_eventDisplay || m_trackList->selection().size() != 1)
+					return false;
+				for (const auto& track : m_eventDisplay->project().at("tracks"))
+					if (track.at("id") == m_trackList->selection().front())
+						return track.at("type") == "folder" && track.value("groupEditing", false);
+				return false;
+			});
+		for (const auto& [id, file] : {std::pair{"pool.spectrumAnalyzer", "spectrum-analyzer.rml"},
+				 std::pair{"pool.statistics", "statistics.rml"}})
+		{
+			m_keys.add(
+				{id, "Analyzes the selected pool clips.", [this, file = std::string(file)](ui::Window&, Rml::Element*)
+					{
+						if (const auto pool = m_pool.lock(); pool && !pool->analysisClips().empty())
+							openAudioFunction(file, false, pool->analysisClips());
+					}});
+			m_keys.enableWhen(id,
+				[this](ui::Window&, Rml::Element*)
+				{
+					const auto pool = m_pool.lock();
+					return pool && !pool->analysisClips().empty();
+				});
+		}
 		m_keys.bind({"Backspace", "sampleEditor.delete", engine::Json::object(), "sampleEditor"});
 		for (const ProjectCommand& command : g_trackCommands)
 		{
@@ -2685,6 +2722,8 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_sampleEditor.editor = std::make_unique<ui::SampleEditor>(m_binding, *root);
+		m_sampleEditor.editor->onRegionDrop(
+			[this](const engine::Json& region, float x, float y) { dropSampleRegion(region, x, y); });
 		// The quantize functions of the sample editor's toolbar (p. 367), on the event it edits (quantizeTarget).
 		if (Rml::Element* quantize = document->GetElementById("toolbar-quantize"))
 			m_sampleEditor.quantize =
@@ -3197,7 +3236,27 @@ namespace gnubase::app
 		return *document;
 	}
 
-	void AppUi::openAudioFunction(const std::string& file, bool sampleEditor)
+	void AppUi::dropSampleRegion(const engine::Json& region, float x, float y)
+	{
+		const ui::Window* source = m_shell.find(m_sampleEditor.window);
+		if (source == nullptr || !m_eventDisplay)
+			return;
+		const ui::Size pixels = source->pixelSize();
+		if (pixels.width <= 0 || pixels.height <= 0 || (x >= 0 && y >= 0 && x < pixels.width && y < pixels.height))
+			return;
+		const ui::Rect from = m_shell.bounds(source->id());
+		const ui::Rect to = m_shell.bounds(m_main.id());
+		const ui::Size targetPixels = m_main.pixelSize();
+		if (to.width <= 0 || to.height <= 0)
+			return;
+		const auto targetX =
+			static_cast<float>((from.x + x * from.width / pixels.width - to.x) * targetPixels.width / to.width);
+		const auto targetY =
+			static_cast<float>((from.y + y * from.height / pixels.height - to.y) * targetPixels.height / to.height);
+		m_eventDisplay->dropRegion(region, targetX, targetY);
+	}
+
+	void AppUi::openAudioFunction(const std::string& file, bool sampleEditor, const std::string& clips)
 	{
 		AudioFunctionWindow& shown = m_audioFunctions[file];
 		if (shown.document && shown.document->GetParentNode() != nullptr && m_shell.find(shown.window) != nullptr)
@@ -3213,14 +3272,14 @@ namespace gnubase::app
 				events = std::to_string(m_sampleEditor.editor->event());
 			range = m_sampleEditor.editor->analysisRange();
 		}
-		else if (m_eventDisplay)
+		else if (clips.empty() && m_eventDisplay)
 		{
 			const auto& selection = m_eventDisplay->selection();
 			for (const engine::Json& event : m_eventDisplay->project().at("audioEvents"))
 				if (std::find(selection.begin(), selection.end(), event.at("id").get<uint64_t>()) != selection.end())
 					events += event.at("id").dump() + " ";
 		}
-		if (events.empty())
+		if (events.empty() && clips.empty())
 			return;
 		ui::WindowSpec spec;
 		spec.title = "Statistics";
@@ -3239,6 +3298,7 @@ namespace gnubase::app
 			return;
 		}
 		document->SetAttribute("events", events);
+		document->SetAttribute("clips", clips);
 		if (sampleEditor && range.second > range.first)
 		{
 			document->SetAttribute("start", std::to_string(range.first));

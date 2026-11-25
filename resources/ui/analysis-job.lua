@@ -1,5 +1,35 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- A dialog owns one analysis job. Replacing it or closing the dialog cancels it; only its latest result is shown.
+-- Capture pool clips as whole-clip sources, or the selected project events with their optional editor range.
+function analysisSources(document)
+	local wanted, sources = {}, {}
+	local pool = tostring(document:GetAttribute("clips") or "")
+	for id in (pool ~= "" and pool or tostring(document:GetAttribute("events") or "")):gmatch("%d+") do
+		wanted[tonumber(id)] = true
+	end
+	local project = gnubase.project.get()
+	local clips, media = {}, {}
+	for _, item in ipairs(project.media) do media[item.id] = item end
+	for _, clip in ipairs(project.clips) do
+		clips[clip.id] = clip
+		if pool ~= "" and wanted[clip.id] then
+			sources[#sources + 1] = {clip = clip.id, media = clip.media, name = clip.name,
+				offset = 0, length = media[clip.media].length}
+		end
+	end
+	if pool == "" then
+		for _, event in ipairs(project.audioEvents) do
+			if wanted[event.id] then
+				event.name, event.media = clips[event.clip].name, clips[event.clip].media
+				local start, finish = tonumber(document:GetAttribute("start")), tonumber(document:GetAttribute("end"))
+				if start and finish then event.offset, event.length = start, finish - start end
+				sources[#sources + 1] = event
+			end
+		end
+	end
+	return sources
+end
+
 function createAnalysisJob(message)
 	local pending, complete
 	local function cancel()

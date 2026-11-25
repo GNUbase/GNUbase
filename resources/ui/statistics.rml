@@ -137,25 +137,8 @@
 		end
 
 		function dialog.load(document)
-			local wanted = {}
-			for id in tostring(document:GetAttribute("events") or ""):gmatch("%d+") do
-				wanted[tonumber(id)] = true
-			end
-			local project = gnubase.project.get()
-			local names = {}
-			for _, clip in ipairs(project.clips) do
-				names[clip.id] = clip.name
-			end
 			local tables = {}
-			local events = {}
-			for _, event in ipairs(project.audioEvents) do
-				if wanted[event.id] then
-					local start = tonumber(document:GetAttribute("start"))
-					local finish = tonumber(document:GetAttribute("end"))
-					if start and finish then event.offset, event.length = start, finish - start end
-					events[#events + 1] = event
-				end
-			end
+			local events = analysisSources(document)
 			local index = 1
 			dialog.job = createAnalysisJob(function(text)
 				document:GetElementById("st-tables").inner_rml = table.concat(tables) .. escape(text)
@@ -165,7 +148,7 @@
 				if not event then return end
 				dialog.job.start(gnubase.clip.statistics,
 					{clip = event.clip, start = event.offset, ["end"] = event.offset + event.length}, function(ok, result)
-						tables[#tables + 1] = ok and tableOf(names[event.clip] or "", result) or
+						tables[#tables + 1] = ok and tableOf(event.name, result) or
 							('<div class="st-event">' .. escape(tostring(result)) .. "</div>")
 						document:GetElementById("st-tables").inner_rml = table.concat(tables)
 						index = index + 1

@@ -15,6 +15,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
@@ -216,6 +217,49 @@ namespace
 			ui::Point{static_cast<int>(std::lround(graph.at("x").get<double>() + ((index - 0.5) * width))),
 				static_cast<int>(std::lround(graph.at("y").get<double>() + (graph.at("height").get<double>() / 2.0)))}};
 	}
+}
+
+TEST_CASE("pool audio functions analyze unused clips without creating project events", "[ui]")
+{
+	const std::string function = GENERATE("statistics", "spectrumAnalyzer");
+	test::TempDir dir;
+	test::UiApp app({720, 640});
+	app.appUi().showProject();
+	const auto path = dir.path() / "pool.wav";
+	test::writeWav(path, {std::vector<float>(48000, 0.25f), 1, 48000});
+	const Json media = app.call("media.add", {{"path", path.u8string()}}).at("media").at("id");
+	const Json clip = app.call("clip.add", {{"media", media}, {"name", "Unused clip"}}).at("clip").at("id");
+	app.keys().run("window.pool", Json::object(), app.main(), nullptr);
+	const std::string row = "#pool listitem[value=c" + clip.dump() + "]";
+	REQUIRE(app.waitUntil([&] { return !app.ui().dom(std::nullopt, row, 0).at("elements").empty(); }));
+	app.ui().click(std::nullopt, {row + " span.used", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(app.keys().canRun("pool." + function, app.main(), nullptr));
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return !app.ui()
+						.dom(std::nullopt, "#pool-analysis", 0)
+						.at("elements")[0]
+						.at("attributes")
+						.contains("disabled");
+		}));
+	const Json before = app.call("project.get");
+	app.ui().click(std::nullopt, {"#pool-analysis", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	step(app);
+	app.ui().click(std::nullopt, {"menuitem[pool-function='pool." + function + "']", 0, std::nullopt},
+		ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&] { return audioWindow(app) != app.main().id(); }));
+	CHECK(!app.ui().dom(app.main().id(), "#pool-analysis-menu", 0).at("elements")[0].at("visible").get<bool>());
+	if (function == "statistics")
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				const Json names = elements(app, ".st-name");
+				return !names.empty() && names[0].value("text", "") == "Unused clip";
+			}));
+	else
+		REQUIRE(app.waitUntil([&] { return !elements(app, ".sa-bar").empty(); }));
+	CHECK(app.call("project.get") == before);
 }
 
 TEST_CASE("Detect Silence draws peaks and previews with threshold handles and Mute Gaps", "[ui]")

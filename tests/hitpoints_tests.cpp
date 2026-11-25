@@ -25,6 +25,55 @@ using Catch::Matchers::ContainsSubstring;
 using namespace gnubase;
 using engine::Json;
 
+TEST_CASE("folder hitpoint division slices nested audio together and leaves outside tracks alone", "[integration]")
+{
+	engine::Engine engine;
+	engine::Client client(engine, "folder division test");
+	const auto call = [&](const std::string& command, const Json& parameters)
+	{
+		const auto result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	const auto folder = call("track.add", {{"type", "folder"}}).at("track").at("id");
+	const auto nested = call("track.add", {{"type", "folder"}, {"parent", folder}}).at("track").at("id");
+	const auto inside =
+		call("track.add", {{"type", "audio"}, {"parent", nested}, {"timeBase", "linear"}}).at("track").at("id");
+	const auto outside = call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const auto sibling =
+		call("track.add", {{"type", "audio"}, {"parent", folder}, {"timeBase", "linear"}}).at("track").at("id");
+	const auto media =
+		call("media.add", {{"path", "missing-loop.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media")
+			.at("id");
+	const auto clip = call("clip.add", {{"media", media}}).at("clip").at("id");
+	call("clip.setHitpoints",
+		{{"clip", clip}, {"hitpoints", Json::array({{{"position", 12000}, {"peak", -3}, {"intensity", 1}}})}});
+	for (const auto& track : {inside, outside})
+		call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}});
+	const auto noHitpoints = call("clip.add", {{"media", media}}).at("clip").at("id");
+	call("audioEvent.add", {{"track", sibling}, {"clip", noHitpoints}, {"position", 0}});
+	CHECK(!client.call("track.divideAtHitpoints", {{"track", outside}}).ok());
+	CHECK(!client.call("track.divideAtHitpoints", {{"track", folder}}).ok());
+	call("track.set", {{"track", folder}, {"groupEditing", true}});
+	const Json before = call("project.get", Json::object());
+	const Json result = call("track.divideAtHitpoints", {{"track", folder}});
+	CHECK(result.at("positions") == Json::array({12000}));
+	CHECK(result.at("events").size() == 4);
+	const Json after = call("project.get", Json::object());
+	CHECK(after.at("audioEvents").size() == 5);
+	for (const Json& event : after.at("audioEvents"))
+		if (event.at("track") == outside)
+			CHECK(event.at("length") == 48000);
+		else
+			CHECK((event.at("length") == 12000 || event.at("length") == 36000));
+	call("history.undo", Json::object());
+	CHECK(call("project.get", Json::object()).at("audioEvents") == before.at("audioEvents"));
+	call("history.redo", Json::object());
+	CHECK(call("project.get", Json::object()).at("audioEvents") == after.at("audioEvents"));
+}
+
 TEST_CASE("runEdit validates nested edits and synchronizes shared parts before the next edit", "[unit]")
 {
 	engine::Engine engine;

@@ -130,13 +130,7 @@
 		end
 
 		function dialog.load(document)
-			local first = tonumber(tostring(document:GetAttribute("events") or ""):match("%d+"))
-			local event = nil
-			for _, each in ipairs(gnubase.project.get().audioEvents) do
-				if each.id == first then
-					event = each
-				end
-			end
+			local event = analysisSources(document)[1]
 			if event == nil then
 				document:Close()
 				return

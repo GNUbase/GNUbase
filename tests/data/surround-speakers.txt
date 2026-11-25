@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+surround-lfe.ogg is a generated one-second, six-channel signal at 48 kHz with a 1 kHz sine of amplitude 0.25 in
+LFE only. It checks the Vorbis source order, where LFE is channel six, independently of WAVE's channel order.
+Generated with FFmpeg and its libvorbis encoder, without source recordings:
+
+ffmpeg -f lavfi -i 'aevalsrc=0|0|0|0.25*sin(2*PI*1000*t)|0|0:s=48000:d=1:c=5.1' -c:a libvorbis -q:a 4 -threads 1 \
+  -map_metadata -1 surround-lfe.ogg

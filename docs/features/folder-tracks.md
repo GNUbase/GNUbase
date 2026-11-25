@@ -37,6 +37,8 @@ manual pp. 160–161, 221–226). Adding, nesting, moving and folding folders is
   channel, `track.changed` for recolored tracks, besides `track.moved` and `track.changed`.
 - **DAWproject:** a folder is a track with child tracks; one with a group channel has a channel that the tracks
   inside are routed to, as before (`dawproject.cpp`).
+- **Hitpoint division:** `track.divideAtHitpoints` slices the audio events in a folder with Group Editing enabled,
+  including nested folders, at shared cutting positions in one undo step. See [hitpoints.md](hitpoints.md).
 
 ## In the UI
 
@@ -72,6 +74,8 @@ and a folder's data blocks following an event drag (they move on the drop).
 
 ## Checks
 
+- `tests/hitpoints_tests.cpp` checks recursive folder division and undo/redo; `tests/mainmenu_tests.cpp` drives its
+  Audio > Hitpoints entry, as described in [hitpoints.md](hitpoints.md).
 - `tests/document_tests.cpp`: moving tracks into and out of folders with and without a group channel, nested ones,
   MIDI tracks and undo; turning a group channel on and off, with nested folders, automation and outside routes;
   channels routed by hand and disconnected ones keeping their routing; `track.add` with `tracks`, refusing marker

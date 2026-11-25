@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -112,6 +113,32 @@ namespace gnubase::ui
 							openImportOptions(import, options, saved);
 					});
 			});
+	}
+
+	void EventDisplay::dropRegion(const Json& region, float x, float y)
+	{
+		if (!alive())
+			return;
+		const double across = dpFrom(*m_lanes, x);
+		const double down = (y - m_lanes->GetAbsoluteTop()) / dpRatio();
+		if (across < 0.0 || down < 0.0 || across >= width() || down >= height())
+			return;
+		const size_t lane = laneAt(down + m_view.top);
+		if (lane >= m_laneTypes.size() || m_laneTypes[lane] != "audio")
+			return;
+		const uint64_t track = m_laneTracks[lane];
+		const double seconds = std::max(0.0, snapped(m_view.start + across * m_view.scale));
+		const Json& tracks = m_project.at("tracks");
+		const auto target =
+			std::find_if(tracks.begin(), tracks.end(), [track](const Json& item) { return item.at("id") == track; });
+		if (target == tracks.end())
+			return;
+		const int64_t position =
+			target->at("timeBase") == "musical" ? std::llround(m_time.tempo.toTicks(seconds)) : samples(seconds);
+		edit("audioEvent.add",
+			{{"track", track}, {"clip", region.at("clip")}, {"position", position}, {"offset", region.at("start")},
+				{"length", region.at("end").get<int64_t>() - region.at("start").get<int64_t>()},
+				{"lane", std::max(m_laneTakes[lane], 0)}});
 	}
 
 	void EventDisplay::dropFiles(Rml::Event& event)

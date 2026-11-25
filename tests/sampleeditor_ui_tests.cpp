@@ -202,6 +202,96 @@ namespace
 	};
 }
 
+TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
+{
+	const std::string mode = GENERATE("linear", "musical", "midi", "outside", "escape", "removed");
+	Fixture f;
+	if (mode == "musical")
+	{
+		f.app.setDpRatio(1.5F);
+		f.app.call("track.set", {{"track", f.track}, {"timeBase", "musical"}});
+	}
+	if (mode == "midi")
+		f.app.call("track.add", {{"type", "midi"}});
+	const auto region =
+		f.app.call("clip.addRegion", {{"clip", f.clip}, {"name", "Excerpt"}, {"start", 2000}, {"end", 3500}})
+			.at("region")
+			.at("id")
+			.get<uint64_t>();
+	f.open();
+	const std::string row = ".se-region[region='" + std::to_string(region) + "']";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(row).empty(); }));
+	const ui::Rect screen = f.app.shell().displays().front().usable;
+	f.app.shell().setBounds(
+		f.app.main().id(), {screen.x, screen.y + screen.height / 2, screen.width, screen.height / 2});
+	f.app.shell().setBounds(f.window, {screen.x, screen.y, screen.width, screen.height / 2});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.call("snap.set", {{"on", false}});
+	REQUIRE(f.app.waitUntil([&] { return !f.display.snap().on; }));
+	const auto& project = f.app.main();
+	const ui::Rect projectBounds = f.app.shell().bounds(project.id());
+	const ui::Rect editorBounds = f.app.shell().bounds(f.window);
+	const ui::Size editorPixels = f.app.shell().find(f.window)->pixelSize();
+	const ui::Size projectPixels = project.pixelSize();
+	// Captured mouse input stays in the source window's coordinates, including outside its client area.
+	const Json lanes = f.app.ui().dom(project.id(), ".events", 0).at("elements").at(0).at("box");
+	const double px = lanes.at("x").get<double>() + 40.0;
+	const double py = lanes.at("y").get<double>() + (mode == "outside" ? -20.0 : 20.0) +
+		(mode == "midi" ? f.display.trackHeight(f.track) * f.app.main().dpRatio() : 0.0);
+	const ui::Target destination{"", 0,
+		ui::Point{static_cast<int>(
+					  std::lround((projectBounds.x + px * projectBounds.width / projectPixels.width - editorBounds.x) *
+						  editorPixels.width / editorBounds.width)),
+			static_cast<int>(
+				std::lround((projectBounds.y + py * projectBounds.height / projectPixels.height - editorBounds.y) *
+					editorPixels.height / editorBounds.height))}};
+	const Json before = f.app.call("project.get");
+	if (mode == "escape" || mode == "removed")
+	{
+		f.app.ui().press(f.window, of(row), ui::MouseButton::Left, {});
+		const Json box = f.box(row);
+		f.app.ui().move(f.window, {"", 0, ui::Point{box.at("x").get<int>() - 10, box.at("y").get<int>() + 4}});
+		if (mode == "escape")
+			f.app.ui().key(f.window, "Escape");
+		else
+		{
+			f.app.call("clip.removeRegion", {{"clip", f.clip}, {"region", region}});
+			REQUIRE(f.app.waitUntil([&] { return f.elements(row).empty(); }));
+		}
+		f.app.ui().release(f.window, destination, ui::MouseButton::Left, {});
+	}
+	else
+		f.drag(of(row), destination);
+	if (mode == "midi" || mode == "outside" || mode == "escape" || mode == "removed")
+	{
+		REQUIRE(f.app.waitUntil([&] { return f.app.appUi().binding().waiting() == 0; }));
+		CHECK(f.app.call("project.get").at("audioEvents") == before.at("audioEvents"));
+		return;
+	}
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("audioEvents").size() == 2; }));
+	const Json after = f.app.call("project.get");
+	const Json added = after.at("audioEvents").back();
+	CHECK(added.at("clip") == f.clip);
+	CHECK(added.at("track") == f.track);
+	CHECK(added.at("offset") == 2000);
+	CHECK(added.at("length") == 1500);
+	const float actualX = static_cast<float>(
+		(editorBounds.x +
+			destination.point.value_or(ui::Point{}).x * static_cast<double>(editorBounds.width) / editorPixels.width -
+			projectBounds.x) *
+		projectPixels.width / projectBounds.width);
+	const double seconds = f.display.view().start +
+		(actualX - lanes.at("x").get<double>()) * f.display.view().scale /
+			f.app.main().context().GetDensityIndependentPixelRatio();
+	const auto expected = std::llround(mode == "musical" ? f.display.time().tempo.toTicks(seconds) : seconds * 48000.0);
+	CHECK(added.at("position").get<int64_t>() == expected);
+	CHECK(after.at("clips") == before.at("clips"));
+	f.app.call("history.undo");
+	CHECK(f.app.call("project.get").at("audioEvents") == before.at("audioEvents"));
+	f.app.call("history.redo");
+	CHECK(f.app.call("project.get").at("audioEvents") == after.at("audioEvents"));
+}
+
 TEST_CASE("the sample editor Process menu and key commands edit the selected clip range", "[ui]")
 {
 	const std::string operation = GENERATE("cut", "copy", "paste", "delete", "insertSilence");

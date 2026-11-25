@@ -49,6 +49,34 @@ using namespace gnubase;
 using Catch::Matchers::ContainsSubstring;
 using engine::Json;
 
+TEST_CASE("Audio Hitpoints divides the selected folder with Group Editing enabled", "[ui]")
+{
+	test::UiApp app({1200, 800});
+	auto& display = app.appUi().showProject();
+	const auto folder = app.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
+	const auto track = app.call("track.add", {{"type", "audio"}, {"parent", folder}}).at("track").at("id");
+	const auto media =
+		app.call("media.add", {{"path", "missing-loop.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media")
+			.at("id");
+	const auto clip = app.call("clip.add", {{"media", media}}).at("clip").at("id");
+	app.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}});
+	app.call("clip.setHitpoints",
+		{{"clip", clip}, {"hitpoints", Json::array({{{"position", 12000}, {"peak", -3}, {"intensity", 1}}})}});
+	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 2; }));
+	app.appUi().trackList()->select({folder});
+	CHECK(!app.keys().canRun("audio.divideAtHitpoints", app.main(), nullptr));
+	app.call("track.set", {{"track", folder}, {"groupEditing", true}});
+	REQUIRE(app.waitUntil([&] { return app.keys().canRun("audio.divideAtHitpoints", app.main(), nullptr); }));
+	app.ui().click(std::nullopt, {"#menu-bar button[menu=audio-menu]", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	app.ui().move(std::nullopt, {"#audio-hitpoints-submenu", 0, std::nullopt});
+	app.ui().click(
+		std::nullopt, {"menuitem[command='audio.divideAtHitpoints']", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&] { return display.project().at("audioEvents").size() == 2; }));
+	app.call("history.undo");
+	CHECK(app.call("project.get").at("audioEvents").size() == 1);
+}
+
 namespace
 {
 	Json elements(test::UiApp& app, const std::string& selector)

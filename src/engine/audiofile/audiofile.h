@@ -3,6 +3,7 @@
 
 #include "engine/time/tempomap.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -78,6 +79,8 @@ namespace gnubase::engine
 		time::Samples frames = 0;
 		std::optional<BroadcastInfo> broadcast; // WAV files with a bext chunk
 		uint32_t channelMask = 0; // WAVEFORMATEXTENSIBLE speaker bits, in ascending bit order; 0 when unspecified
+		// Speaker bits in source order, e.g. Vorbis; a zero entry is unassigned. Absent when no layout is known.
+		std::optional<std::array<uint32_t, 8>> channelSpeakers;
 	};
 
 	class AudioFileError : public std::runtime_error

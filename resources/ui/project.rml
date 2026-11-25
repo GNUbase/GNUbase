@@ -490,6 +490,11 @@
 				<menuitem command="audio.pasteWarpMarkers">Paste Warp Markers to Selected Events</menuitem>
 			</menu>
 		</menuitem>
+		<menuitem id="audio-hitpoints-submenu">Hitpoints
+			<menu>
+				<menuitem command="audio.divideAtHitpoints">Divide Audio Events at Hitpoints</menuitem>
+			</menu>
+		</menuitem>
 		<menuitem command="audio.spectrumAnalyzer">Spectrum Analyzer</menuitem>
 		<menuitem command="audio.statistics">Statistics</menuitem>
 		<!-- Sampler tracks (reference manual p. 711, docs/features/sampler-track.md) -->
