@@ -152,7 +152,8 @@ onsets (room sound, bleed, flams) are yet to come.
 
 - `tests/hitpoints_tests.cpp`: folder division includes nested audio, preserves outside tracks, rejects non-folders and
   folders without Group Editing, and supports undo/redo. `tests/mainmenu_tests.cpp` drives its Audio > Hitpoints entry,
-  disabled without Group Editing, and undoes the split.
+  disabled without Group Editing, and undoes the split. A folder without hitpoints shows the engine's refusal in
+  `#edit-refused` and keeps its events unchanged.
 
 - `tests/mainmenu_tests.cpp`: a time-stretch job needing a ratio above 10 shows its error in `#edit-refused`, both after
   its command's result and when it finished before the UI handled that result; the project and undo history stay

@@ -192,8 +192,7 @@ namespace gnubase::ui
 						  R"(<button id="pool-attributes" menu="pool-attributes-menu">View/Attributes</button>)";
 		for (const Button& button : g_buttons)
 			rml += std::string(R"(<button id=")") + button.id + R"(">)" + button.label + "</button>";
-		rml += R"(<button id="pool-analysis" menu="pool-analysis-menu">Audio Functions</button>)"
-			   R"(</div><div class="pool-status"><div id="pool-message" class="pool-message"/>)"
+		rml += R"(</div><div class="pool-status"><div id="pool-message" class="pool-message"/>)"
 			   R"(<button id="pool-stop">Stop</button></div><div id="pool-info" class="pool-info"/>)"
 			   R"(<div class="pool-header"><span class="name">Media</span><span class="used">Used</span>)"
 			   R"(<span class="status">Status</span><span class="key">Key</span><span class="info">Info</span>)"
@@ -221,13 +220,6 @@ namespace gnubase::ui
 			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
 			menu->AddEventListener(Rml::EventId::Change, this);
 			m_attributes = menu->GetObserverPtr();
-			const Rml::ElementPtr analysis = document->CreateElement("div");
-			analysis->SetInnerRML(R"(<menu id="pool-analysis-menu">)"
-								  R"(<menuitem pool-function="pool.spectrumAnalyzer">Spectrum Analyzer</menuitem>)"
-								  R"(<menuitem pool-function="pool.statistics">Statistics</menuitem></menu>)");
-			Rml::Element* functions = document->AppendChild(analysis->RemoveChild(analysis->GetFirstChild()));
-			functions->AddEventListener(Rml::EventId::Click, this);
-			m_analysis = functions->GetObserverPtr();
 		}
 		showColumns(Json::object());
 		m_binding.send("settings.get", {{"key", "ui.poolColumns"}},
@@ -241,12 +233,6 @@ namespace gnubase::ui
 
 	PoolPanel::~PoolPanel()
 	{
-		if (m_analysis)
-		{
-			m_analysis->RemoveEventListener(Rml::EventId::Click, this);
-			if (Rml::Element* parent = m_analysis->GetParentNode())
-				parent->RemoveChild(m_analysis.get());
-		}
 		if (m_question)
 			m_question->RemoveEventListener(m_closeEvent, this);
 		if (Rml::Element* menu = m_attributes.get())
@@ -393,14 +379,6 @@ namespace gnubase::ui
 		Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr)
 			return;
-		if (event == Rml::EventId::Click && event.GetCurrentElement() == m_analysis.get())
-		{
-			while (target != nullptr && target != m_analysis.get() && !target->HasAttribute("pool-function"))
-				target = target->GetParentNode();
-			if (target != nullptr && target->HasAttribute("pool-function") && !analysisClips().empty())
-				m_run(target->GetAttribute<Rml::String>("pool-function", ""));
-			return;
-		}
 		const bool field = target->GetTagName() == "input";
 		if (event == Rml::EventId::Click && target->GetTagName() == "button")
 		{
@@ -471,14 +449,6 @@ namespace gnubase::ui
 
 	void PoolPanel::update()
 	{
-		if (Rml::Element* button = m_root ? m_root->GetElementById("pool-analysis") : nullptr)
-		{
-			const bool disabled = analysisClips().empty();
-			if (disabled && !button->HasAttribute("disabled"))
-				button->SetAttribute("disabled", "");
-			else if (!disabled && button->HasAttribute("disabled"))
-				button->RemoveAttribute("disabled");
-		}
 		if (m_stale && m_shown())
 			request();
 	}

@@ -108,9 +108,9 @@ the pool and conforming files to the project's sample rate. The engine commands 
 
 ## Pool panel
 
-- **Audio Functions.** The toolbar's menu opens Statistics or Spectrum Analyzer for selected clips, including unused
-  clips, independently of project selection. It creates no events or undo steps; see
-  [audio-functions.md](audio-functions.md).
+- **Audio analysis.** Audio > Statistics and Audio > Spectrum Analyzer use selected clips, including unused clips, when
+  the pool has focus in the lower zone. The same commands target its clips in a floating pool window, independently of
+  project selection. They create no events or undo steps; see [audio-functions.md](audio-functions.md).
 - **Opening it.** Media > Open Pool Window and Ctrl+P (Cmd+P on macOS; the reference's key, p. 1567) run the UI command
   `window.pool`, which shows the panel Pool in the project window's lower zone; like every panel it can open in a
   window of its own ([docking.md](docking.md)), which the command then brings to the front with the focus.
@@ -181,8 +181,9 @@ clips.
 
 ## Checks
 
-`tests/audiofunctions_ui_tests.cpp` opens Statistics and Spectrum Analyzer from the pool's Audio Functions menu on an
-unused clip without creating project events or changing the document. See [audio-functions.md](audio-functions.md).
+`tests/audiofunctions_ui_tests.cpp` opens Statistics and Spectrum Analyzer through the Audio menu in the pool's zone and
+the same commands in its floating window. It analyzes a whole unused clip independently of the selected project event,
+without changing the document. See [audio-functions.md](audio-functions.md).
 
 `tests/pool_tests.cpp` checks the engine: `pool.get`'s use counts, missing and external files and totals; folders
 and `clip.set` as undo steps, their checks, and kept through saving and loading; `poolFolderOutside` on its own, and

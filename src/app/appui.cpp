@@ -210,8 +210,8 @@ namespace gnubase::app
 			{"audio.closeGapsTimeStretch", "Closes gaps between selected audio events with time stretch.", nullptr},
 			{"audio.deleteOverlaps", "Deletes overlaps between selected audio events.", nullptr},
 			{"audio.detectSilence", "Opens the Detect Silence dialog for the selected audio events.", nullptr},
-			{"audio.spectrumAnalyzer", "Opens the Spectrum Analyzer for the selected audio event.", nullptr},
-			{"audio.statistics", "Opens the Statistics window for the selected audio events.", nullptr},
+			{"audio.spectrumAnalyzer", "Opens the Spectrum Analyzer for selected audio events or pool clips.", nullptr},
+			{"audio.statistics", "Opens Statistics for selected audio events or pool clips.", nullptr},
 			// Sampler tracks (docs/features/sampler-track.md).
 			{"audio.createSamplerTrack", "Creates a sampler track that plays the first selected audio event.", nullptr},
 			// Warping (docs/features/warp.md).
@@ -1242,7 +1242,7 @@ namespace gnubase::app
 		for (const ProjectCommand& command : g_projectCommands)
 		{
 			m_keys.add({command.id, command.description,
-				[this, id = std::string(command.id)](ui::Window& window, Rml::Element*)
+				[this, id = std::string(command.id)](ui::Window& window, Rml::Element* zone)
 				{
 					const char* audioFunction = nullptr;
 					if (id == "audio.detectSilence")
@@ -1253,7 +1253,13 @@ namespace gnubase::app
 						audioFunction = "statistics.rml";
 					if (audioFunction != nullptr)
 					{
-						openAudioFunction(audioFunction, window.id() == m_sampleEditor.window);
+						if (id != "audio.detectSilence" && poolAudioTarget(window, zone))
+						{
+							if (const auto pool = m_pool.lock(); pool && !pool->analysisClips().empty())
+								openAudioFunction(audioFunction, false, pool->analysisClips());
+						}
+						else
+							openAudioFunction(audioFunction, window.id() == m_sampleEditor.window);
 						return;
 					}
 					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
@@ -1276,8 +1282,13 @@ namespace gnubase::app
 			// Those that only edit the selection range wait for one, and paste for something copied
 			// (EventDisplay::canRun).
 			m_keys.enableWhen(command.id,
-				[this, id = std::string(command.id)](ui::Window& window, Rml::Element*)
+				[this, id = std::string(command.id)](ui::Window& window, Rml::Element* zone)
 				{
+					if ((id == "audio.spectrumAnalyzer" || id == "audio.statistics") && poolAudioTarget(window, zone))
+					{
+						const auto pool = m_pool.lock();
+						return pool && !pool->analysisClips().empty();
+					}
 					if (window.id() == m_sampleEditor.window && m_sampleEditor.editor &&
 						ui::SampleEditor::isProcessCommand(id))
 						return m_sampleEditor.editor->canProcess();
@@ -3223,22 +3234,14 @@ namespace gnubase::app
 						return track.at("type") == "folder" && track.value("groupEditing", false);
 				return false;
 			});
-		for (const auto& [id, file] : {std::pair{"pool.spectrumAnalyzer", "spectrum-analyzer.rml"},
-				 std::pair{"pool.statistics", "statistics.rml"}})
-		{
-			m_keys.add(
-				{id, "Analyzes the selected pool clips.", [this, file = std::string(file)](ui::Window&, Rml::Element*)
-					{
-						if (const auto pool = m_pool.lock(); pool && !pool->analysisClips().empty())
-							openAudioFunction(file, false, pool->analysisClips());
-					}});
-			m_keys.enableWhen(id,
-				[this](ui::Window&, Rml::Element*)
-				{
-					const auto pool = m_pool.lock();
-					return pool && !pool->analysisClips().empty();
-				});
-		}
+	}
+
+	bool AppUi::poolAudioTarget(ui::Window& window, Rml::Element* zone)
+	{
+		if (const ui::Window* pool = m_docking.windowOf("pool"))
+			return pool->id() == window.id();
+		return window.id() == m_main.id() && zone != nullptr &&
+			zone->GetAttribute<Rml::String>("focuszone", "") == "lower" && m_docking.showing("pool");
 	}
 
 	void AppUi::dropSampleRegion(const engine::Json& region, float x, float y)

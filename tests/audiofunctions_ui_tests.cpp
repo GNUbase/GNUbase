@@ -219,37 +219,53 @@ namespace
 	}
 }
 
-TEST_CASE("pool audio functions analyze unused clips without creating project events", "[ui]")
+TEST_CASE("Audio menu analysis uses the pool selection in its zone and window", "[ui]")
 {
 	const std::string function = GENERATE("statistics", "spectrumAnalyzer");
+	const bool floating = GENERATE(false, true);
+	CAPTURE(function, floating);
 	const test::TempDir dir;
-	test::UiApp app({720, 640});
-	app.appUi().showProject();
+	test::UiApp app({1000, 700});
 	const auto path = dir.path() / "pool.wav";
 	test::writeWav(path, {std::vector<float>(48000, 0.25f), 1, 48000});
+	showEvent(app, addEvent(app, path, 1, 24000));
 	const Json media = app.call("media.add", {{"path", path.u8string()}}).at("media").at("id");
 	const Json clip = app.call("clip.add", {{"media", media}, {"name", "Unused clip"}}).at("clip").at("id");
 	app.keys().run("window.pool", Json::object(), app.main(), nullptr);
+	ui::WindowId poolWindow = app.main().id();
+	if (floating)
+	{
+		app.appUi().docking().setFloating("pool", true);
+		REQUIRE(app.waitUntil([&] { return app.appUi().docking().windowOf("pool") != nullptr; }));
+		poolWindow = app.appUi().docking().windowOf("pool")->id();
+	}
 	const std::string row = "#pool listitem[value=c" + clip.dump() + "]";
-	REQUIRE(app.waitUntil([&] { return !app.ui().dom(std::nullopt, row, 0).at("elements").empty(); }));
-	app.ui().click(std::nullopt, {row + " span.used", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
-	REQUIRE(app.keys().canRun("pool." + function, app.main(), nullptr));
-	REQUIRE(app.waitUntil(
-		[&]
-		{
-			return !app.ui()
-						.dom(std::nullopt, "#pool-analysis", 0)
-						.at("elements")[0]
-						.at("attributes")
-						.contains("disabled");
-		}));
+	REQUIRE(app.waitUntil([&] { return !app.ui().dom(poolWindow, row, 0).at("elements").empty(); }));
+	Rml::Element* zone = floating ? nullptr : app.main().context().GetDocument(0)->GetElementById("lower-zone");
+	CHECK(!app.keys().canRun("audio." + function, *app.shell().find(poolWindow), zone));
+	app.ui().click(poolWindow, {row + " span.used", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	const Json before = app.call("project.get");
-	app.ui().click(std::nullopt, {"#pool-analysis", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
-	step(app);
-	app.ui().click(std::nullopt, {"menuitem[pool-function='pool." + function + "']", 0, std::nullopt},
-		ui::MouseButton::Left, 1, {});
+	if (floating)
+	{
+		REQUIRE(app.keys().canRun("audio." + function, *app.shell().find(poolWindow), nullptr));
+		app.keys().bind({"Mod+Alt+U", "audio." + function});
+		app.ui().key(poolWindow, "Mod+Alt+U");
+	}
+	else
+	{
+		app.ui().click(
+			std::nullopt, {"#menu-bar button[menu=audio-menu]", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		const std::string item = "menuitem[command='audio." + function + "']";
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				const Json found = app.ui().dom(std::nullopt, item, 0).at("elements");
+				return !found.empty() && found[0].at("visible").get<bool>() &&
+					!found[0].at("attributes").contains("disabled");
+			}));
+		app.ui().click(std::nullopt, {item, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	}
 	REQUIRE(app.waitUntil([&] { return audioWindow(app) != app.main().id(); }));
-	CHECK(!app.ui().dom(app.main().id(), "#pool-analysis-menu", 0).at("elements")[0].at("visible").get<bool>());
 	if (function == "statistics")
 		REQUIRE(app.waitUntil(
 			[&]
@@ -259,6 +275,10 @@ TEST_CASE("pool audio functions analyze unused clips without creating project ev
 			}));
 	else
 		REQUIRE(app.waitUntil([&] { return !elements(app, ".sa-bar").empty(); }));
+	const Rml::ElementDocument* document = app.shell().find(audioWindow(app))->context().GetDocument(0);
+	REQUIRE(document != nullptr);
+	CHECK(document->GetAttribute<Rml::String>("clips", "") == clip.dump() + " ");
+	CHECK(document->GetAttribute<Rml::String>("events", "").empty());
 	CHECK(app.call("project.get") == before);
 }
 

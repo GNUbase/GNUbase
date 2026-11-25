@@ -204,7 +204,7 @@ namespace
 
 TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
 {
-	const std::string mode = GENERATE("linear", "musical", "midi", "outside", "escape", "removed");
+	const std::string mode = GENERATE("linear", "musical", "midi", "outside", "escape", "removed", "snapped", "lane");
 	Fixture f;
 	if (mode == "musical")
 	{
@@ -213,6 +213,8 @@ TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
 	}
 	if (mode == "midi")
 		f.app.call("track.add", {{"type", "midi"}});
+	if (mode == "lane")
+		f.app.call("event.set", {{"events", {f.event}}, {"lane", 1}});
 	const auto region =
 		f.app.call("clip.addRegion", {{"clip", f.clip}, {"name", "Excerpt"}, {"start", 2000}, {"end", 3500}})
 			.at("region")
@@ -226,8 +228,13 @@ TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
 		f.app.main().id(), {screen.x, screen.y + (screen.height / 2), screen.width, screen.height / 2});
 	f.app.shell().setBounds(f.window, {screen.x, screen.y, screen.width, screen.height / 2});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	f.app.call("snap.set", {{"on", false}});
-	REQUIRE(f.app.waitUntil([&] { return !f.display.snap().on; }));
+	f.app.call("snap.set", {{"on", mode == "snapped"}, {"type", "grid"}, {"grid", "beat"}});
+	REQUIRE(f.app.waitUntil([&] { return f.display.snap().on == (mode == "snapped"); }));
+	if (mode == "lane")
+	{
+		f.display.showLanes(f.track, true);
+		REQUIRE(f.app.waitUntil([&] { return f.display.laneTakes() == std::vector<int>{-1, 0, 1}; }));
+	}
 	const auto& project = f.app.main();
 	const ui::Rect projectBounds = f.app.shell().bounds(project.id());
 	const ui::Rect editorBounds = f.app.shell().bounds(f.window);
@@ -237,7 +244,8 @@ TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
 	const Json lanes = f.app.ui().dom(project.id(), ".events", 0).at("elements").at(0).at("box");
 	const double px = lanes.at("x").get<double>() + 40.0;
 	const double py = lanes.at("y").get<double>() + (mode == "outside" ? -20.0 : 20.0) +
-		(mode == "midi" ? f.display.trackHeight(f.track) * f.app.main().dpRatio() : 0.0);
+		(mode == "midi" ? f.display.trackHeight(f.track) * f.app.main().dpRatio() : 0.0) +
+		(mode == "lane" ? f.display.laneTops()[2] * f.app.main().dpRatio() : 0.0);
 	const ui::Target destination{"", 0,
 		ui::Point{static_cast<int>(std::lround(
 					  (projectBounds.x + (px * projectBounds.width / projectPixels.width) - editorBounds.x) *
@@ -279,6 +287,7 @@ TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
 	CHECK(added.at("track") == f.track);
 	CHECK(added.at("offset") == 2000);
 	CHECK(added.at("length") == 1500);
+	CHECK(added.at("lane") == (mode == "lane" ? 1 : 0));
 	const float actualX = static_cast<float>(
 		(editorBounds.x +
 			(destination.point.value_or(ui::Point{}).x * static_cast<double>(editorBounds.width) / editorPixels.width) -
@@ -287,7 +296,10 @@ TEST_CASE("sample editor regions drag across windows into audio tracks", "[ui]")
 	const double seconds = f.display.view().start +
 		((actualX - lanes.at("x").get<double>()) * f.display.view().scale /
 			f.app.main().context().GetDensityIndependentPixelRatio());
-	const auto expected = mode == "musical" ? f.display.time().tempo.toTicks(seconds) : std::llround(seconds * 48000.0);
+	const double snapped = f.display.snapped(seconds);
+	if (mode == "snapped")
+		CHECK(snapped != seconds);
+	const auto expected = mode == "musical" ? f.display.time().tempo.toTicks(snapped) : std::llround(snapped * 48000.0);
 	CHECK(added.at("position").get<int64_t>() == expected);
 	CHECK(after.at("clips") == before.at("clips"));
 	f.app.call("history.undo");

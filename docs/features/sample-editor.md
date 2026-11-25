@@ -199,8 +199,9 @@ in [warp.md](warp.md).
 ## Checks
 
 - `tests/sampleeditor_ui_tests.cpp`: region drags between native windows create bounded events on linear and musical
-  tracks at the drop position, preserving the clip and region with undo/redo. MIDI lanes, releases outside the project
-  lanes, Escape and a region removed during the drag create no events.
+  tracks at the drop position, including beat-grid snapping and take lane 1, preserving the clip and region with
+  undo/redo. MIDI lanes, releases outside the project lanes, Escape and a region removed during the drag create no
+  events.
 
 - `tests/sampleeditor_ui_tests.cpp`: coarse Draw adds and drags volume points, Ctrl draws several in one undo step,
   points stay inside the event, the overlay reflects the curve, undo/redo restore it and the audio file stays intact. An

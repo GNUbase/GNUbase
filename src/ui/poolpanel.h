@@ -101,9 +101,8 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_root;
 		const std::string m_closeEvent;
 		const std::string m_treeEvent;
-		Rml::ObserverPtr<Rml::Element> m_view;       // the <listview>
-		Rml::ObserverPtr<Rml::Element> m_attributes; // the View/Attributes menu, in the document's body
-		Rml::ObserverPtr<Rml::Element> m_analysis;
+		Rml::ObserverPtr<Rml::Element> m_view;           // the <listview>
+		Rml::ObserverPtr<Rml::Element> m_attributes;     // the View/Attributes menu, in the document's body
 		engine::Json m_columns = engine::Json::object(); // which columns show, every one of ui.poolColumns
 		engine::Json m_pool = engine::Json::object();
 		bool m_stale = true;                       // the pool changed since it was last read

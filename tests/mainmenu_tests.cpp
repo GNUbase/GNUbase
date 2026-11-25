@@ -25,6 +25,7 @@
 #include <RmlUi/Core/SystemInterface.h>
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -51,6 +52,7 @@ using engine::Json;
 
 TEST_CASE("Audio Hitpoints divides the selected folder with Group Editing enabled", "[ui]")
 {
+	const bool hitpoints = GENERATE(false, true);
 	test::UiApp app({1200, 800});
 	auto& display = app.appUi().showProject();
 	const auto folder = app.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
@@ -61,17 +63,30 @@ TEST_CASE("Audio Hitpoints divides the selected folder with Group Editing enable
 			.at("id");
 	const auto clip = app.call("clip.add", {{"media", media}}).at("clip").at("id");
 	app.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}});
-	app.call("clip.setHitpoints",
-		{{"clip", clip}, {"hitpoints", Json::array({{{"position", 12000}, {"peak", -3}, {"intensity", 1}}})}});
+	if (hitpoints)
+		app.call("clip.setHitpoints",
+			{{"clip", clip}, {"hitpoints", Json::array({{{"position", 12000}, {"peak", -3}, {"intensity", 1}}})}});
 	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 2; }));
 	app.appUi().trackList()->select({folder});
 	CHECK(!app.keys().canRun("audio.divideAtHitpoints", app.main(), nullptr));
 	app.call("track.set", {{"track", folder}, {"groupEditing", true}});
 	REQUIRE(app.waitUntil([&] { return app.keys().canRun("audio.divideAtHitpoints", app.main(), nullptr); }));
+	const Json before = app.call("project.get").at("audioEvents");
 	app.ui().click(std::nullopt, {"#menu-bar button[menu=audio-menu]", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	app.ui().move(std::nullopt, {"#audio-hitpoints-submenu", 0, std::nullopt});
 	app.ui().click(
 		std::nullopt, {"menuitem[command='audio.divideAtHitpoints']", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	if (!hitpoints)
+	{
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				const Json found = app.ui().dom(std::nullopt, "#edit-refused", 0).at("elements");
+				return !found.empty() && found[0].value("text", "").find("detect them first") != std::string::npos;
+			}));
+		CHECK(app.call("project.get").at("audioEvents") == before);
+		return;
+	}
 	REQUIRE(app.waitUntil([&] { return display.project().at("audioEvents").size() == 2; }));
 	app.call("history.undo");
 	CHECK(app.call("project.get").at("audioEvents").size() == 1);

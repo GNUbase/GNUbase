@@ -490,6 +490,7 @@
 				<menuitem command="audio.pasteWarpMarkers">Paste Warp Markers to Selected Events</menuitem>
 			</menu>
 		</menuitem>
+		<!-- Hitpoints (reference manual p. 642, docs/features/hitpoints.md) -->
 		<menuitem id="audio-hitpoints-submenu">Hitpoints
 			<menu>
 				<menuitem command="audio.divideAtHitpoints">Divide Audio Events at Hitpoints</menuitem>

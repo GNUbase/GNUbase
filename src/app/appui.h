@@ -396,6 +396,7 @@ namespace gnubase::app
 			const std::vector<std::pair<std::string, std::string>>& attributes = {});
 		void openAudioFunction(const std::string& file, bool sampleEditor = false, const std::string& clips = {});
 		void addAudioFunctions();
+		bool poolAudioTarget(ui::Window& window, Rml::Element* zone);
 		void dropSampleRegion(const engine::Json& region, float x, float y);
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track);

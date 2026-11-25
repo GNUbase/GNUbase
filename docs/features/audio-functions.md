@@ -77,10 +77,11 @@ window; replacing the project closes all three. Each window follows its job's pr
 shows failures, and cancels pending work when closed. A new Analyze or Auto request cancels the previous job and ignores
 its later results. Statistics analyzes selected events successively, showing each table as it finishes.
 
-The pool's Audio Functions menu opens Spectrum Analyzer and Statistics for the selected clips, including unused clips.
-It captures whole clips independently of the project event selection, without creating events or undo steps. Statistics
-shows one table per selected clip; Spectrum Analyzer shows the first clip. The UI commands are `pool.spectrumAnalyzer`
-and `pool.statistics`. Existing analysis windows keep their captured sources when raised again.
+Audio > Spectrum Analyzer and Audio > Statistics capture the pool's selected whole clips, including unused clips, when
+the pool has focus in the lower zone. The same commands, `audio.spectrumAnalyzer` and `audio.statistics`, target the
+pool selection in its own window. They are disabled there without selected clips. In the project zone they use selected
+events instead. Analysis creates no events or undo steps; Statistics shows one table per clip and Spectrum Analyzer
+shows the first clip. Existing analysis windows keep their captured sources when raised again.
 
 ```
 #detect-silence-dialog          detect-silence.rml
@@ -143,8 +144,9 @@ usable layout retain the channel-count fallback.
 
 ## Checks
 
-- `tests/audiofunctions_ui_tests.cpp`: the pool menu analyzes an unused clip through Statistics and Spectrum Analyzer
-  without changing the project or creating an event.
+- `tests/audiofunctions_ui_tests.cpp`: the Audio menu in the pool's zone and the same commands in its floating window
+  analyze a whole unused clip through Statistics and Spectrum Analyzer, independently of the selected project event,
+  without changing the project.
 - `tests/audiofunctions_tests.cpp`: FLAC masks including LFE and back-center, case-insensitive names and values, invalid
   values, unassigned channels and the default seven-channel layout; the synthetic `tests/data/surround-lfe.ogg` verifies
   Vorbis LFE exclusion while its true peak remains measured in the source channel order.
