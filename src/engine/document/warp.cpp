@@ -900,7 +900,7 @@ namespace gnubase::engine
 					const fs::path path = newFile(folder, source.name + " Flattened");
 					MediaFile file;
 					context.onFailure(
-						[path]
+						[path = path]
 						{
 							std::error_code ignored;
 							fs::remove(path, ignored);

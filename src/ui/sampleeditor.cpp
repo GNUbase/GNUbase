@@ -1634,7 +1634,7 @@ namespace gnubase::ui
 		case SampleTool::Draw:
 			if (m_scale / dpRatio() > 1.0)
 			{
-				if (frame >= m_offset && frame <= m_offset + m_eventLength)
+				if (frame >= static_cast<double>(m_offset) && frame <= static_cast<double>(m_offset + m_eventLength))
 					pressVolume(event);
 			}
 			else if (m_scale / dpRatio() <= 1.0 && !m_processPending && m_processJob == 0 && !m_question)
@@ -1691,7 +1691,7 @@ namespace gnubase::ui
 		m_curveGain = engine::volumeGain(source->value("volume", 0.0));
 		m_curvePressY = event.GetParameter<float>("mouse_y", 0.0F);
 		const double fraction =
-			std::clamp(1.0 - (m_curvePressY - display->GetAbsoluteTop()) / display->GetClientHeight(), 0.0, 1.0);
+			std::clamp(1.0 - ((m_curvePressY - display->GetAbsoluteTop()) / display->GetClientHeight()), 0.0, 1.0);
 		m_curveSeed = {{"position", std::llround(m_pressed)},
 			{"volume", engine::volumeDb(fraction * g_volumeLineTop / m_curveGain)}, {"curve", 0.0}};
 		m_curvePoint.reset();
@@ -1705,10 +1705,11 @@ namespace gnubase::ui
 				const double at = point.at("position").get<double>();
 				const double level = std::clamp(
 					m_curveGain * engine::volumeGain(point.at("volume").get<double>()) / g_volumeLineTop, 0.0, 1.0);
-				const double y = display->GetAbsoluteTop() + (1.0 - level) * display->GetClientHeight();
+				const double y = display->GetAbsoluteTop() + ((1.0 - level) * display->GetClientHeight());
 				const double distance =
 					std::max(std::abs(at - m_pressed) / m_scale, std::abs(y - m_curvePressY) / dpRatio());
-				if (at >= m_offset && at <= m_offset + m_eventLength && distance <= nearest)
+				if (at >= static_cast<double>(m_offset) && at <= static_cast<double>(m_offset + m_eventLength) &&
+					distance <= nearest)
 				{
 					nearest = distance;
 					m_curvePoint = i;
@@ -1726,20 +1727,23 @@ namespace gnubase::ui
 			return;
 		const double y = event.GetParameter<float>("mouse_y", 0.0F);
 		const auto frame = std::clamp<int64_t>(std::llround(frameAt(event)), m_offset, m_offset + m_eventLength);
-		if (m_curveFreehand && !m_curveDrawn.empty() && !release && std::abs(frame - m_drawLast) / m_scale < 4.0)
+		if (m_curveFreehand && !m_curveDrawn.empty() && !release &&
+			static_cast<double>(std::abs(frame - m_drawLast)) / m_scale < 4.0)
 			return;
 		m_curvePoints = m_curveBefore;
 		if (m_curveFreehand)
 		{
 			const double fraction =
-				std::clamp(1.0 - (y - display->GetAbsoluteTop()) / display->GetClientHeight(), 0.0, 1.0);
+				std::clamp(1.0 - ((y - display->GetAbsoluteTop()) / display->GetClientHeight()), 0.0, 1.0);
 			if (!m_curveDrawn.empty())
+			{
 				for (auto point = m_curveDrawn.lower_bound(std::min(frame, m_drawLast));
 					point != m_curveDrawn.end() && point->first <= std::max(frame, m_drawLast);)
 					if (point->first != m_drawLast)
 						point = m_curveDrawn.erase(point);
 					else
 						++point;
+			}
 			m_curveDrawn[frame] = engine::volumeDb(fraction * g_volumeLineTop / m_curveGain);
 			m_drawLast = frame;
 			m_curvePoints.erase(std::remove_if(m_curvePoints.begin(), m_curvePoints.end(),
@@ -1761,7 +1765,7 @@ namespace gnubase::ui
 			const double from =
 				m_curveGain * engine::volumeGain(m_curveSeed.at("volume").get<double>()) / g_volumeLineTop;
 			const double fraction =
-				std::clamp(from - (y - m_curvePressY) / display->GetClientHeight(), 0.0, std::max(from, 1.0));
+				std::clamp(from - ((y - m_curvePressY) / display->GetClientHeight()), 0.0, std::max(from, 1.0));
 			if (fraction != from)
 				point["volume"] = engine::volumeDb(fraction * g_volumeLineTop / m_curveGain);
 			if (m_curvePoint)

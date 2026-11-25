@@ -378,7 +378,7 @@ namespace gnubase::engine
 						clip.name = source.name + " Flattened";
 						clip.folder = source.folder;
 						const Json& file = item.at("media");
-						MediaFile rendered{project.newId(), file.at("path").get<std::string>(),
+						const MediaFile rendered{project.newId(), file.at("path").get<std::string>(),
 							file.at("sampleRate").get<double>(), file.at("channels").get<int>(),
 							file.at("length").get<time::Samples>()};
 						project.media[rendered.id] = rendered;
@@ -459,8 +459,9 @@ namespace gnubase::engine
 						const auto revision = context.call("project.revision").at("revision").get<uint64_t>();
 						context.markUnchanged();
 						return engine.startJob("event.closeGaps",
-							[project, events, folder, revision](JobContext& job) mutable
-							{ return stretchGaps(std::move(project), events, folder, revision, job); });
+							[snapshot = std::make_shared<Project>(project), events, folder = folder, revision](
+								JobContext& job)
+							{ return stretchGaps(std::move(*snapshot), events, folder, revision, job); });
 					}
 					const auto length = std::max<time::Samples>(
 						1, std::llround(context.parameters().value("length", 10.0) * project.sampleRate / 1000.0));

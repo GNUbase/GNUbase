@@ -1121,7 +1121,9 @@ TEST_CASE("Close Gaps time stretch is a cancellable job that rejects stale resul
 				CHECK(entry.path().extension() != ".wav");
 	}
 	else
+	{
 		CHECK(finished.at("result").at("events") == Json::array({f.event}));
+	}
 }
 
 TEST_CASE("Flatten discards slice origins and removes files after an outer rollback", "[integration]")

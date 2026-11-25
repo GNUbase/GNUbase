@@ -1078,7 +1078,7 @@ TEST_CASE("sample editor Draw edits a volume curve at coarse zoom in one undo st
 		return ui::Target{"", 0,
 			ui::Point{static_cast<int>(std::lround(f.x(frame))),
 				static_cast<int>(
-					std::lround(area.at("y").get<double>() + area.at("height").get<double>() * (1 - fraction)))}};
+					std::lround(area.at("y").get<double>() + (area.at("height").get<double>() * (1 - fraction))))}};
 	};
 	const size_t steps = f.app.call("history.get").at("steps").size();
 	f.click(point(2200, 0.25));
@@ -1101,12 +1101,9 @@ TEST_CASE("sample editor Draw edits a volume curve at coarse zoom in one undo st
 				if (f.app.appUi().binding().waiting() != 0)
 					return false;
 				const auto& points = line->lanes()[0].volumes[0].points;
-				if (points.size() != expected.size())
-					return false;
-				for (size_t i = 0; i < points.size(); ++i)
-					if (points[i].position != expected[i].at("position").get<int64_t>())
-						return false;
-				return true;
+				return std::equal(points.begin(), points.end(), expected.begin(), expected.end(),
+					[](const auto& point, const Json& value)
+					{ return point.position == value.at("position").get<int64_t>(); });
 			}));
 	};
 	waitForCurve(first);
