@@ -634,3 +634,20 @@ TEST_CASE("media.stretch never writes over a file of the project", "[integration
 			entry.is_regular_file() && entry.path().filename().u8string().find(".gbpeaks") == std::string::npos ? 1 : 0;
 	CHECK(files == 3); // take, take stretched, other
 }
+
+TEST_CASE("offline stretching checks cancellation between blocks", "[unit]")
+{
+	const int cancelAt = GENERATE(1, 4, 20);
+	const std::vector<std::vector<float>> input(1, std::vector<float>(48000, 0.5F));
+	StretchSettings settings;
+	settings.ratio = 1.5;
+	int blocks = 0;
+	CHECK_THROWS_WITH(stretch(input, settings,
+						  [&]
+						  {
+							  if (++blocks == cancelAt)
+								  throw std::runtime_error("cancel stretch");
+						  }),
+		"cancel stretch");
+	CHECK(blocks == cancelAt);
+}

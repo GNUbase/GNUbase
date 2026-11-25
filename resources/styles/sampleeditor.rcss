@@ -45,7 +45,7 @@
 	bottom: 0;
 }
 
-.se-draw-stroke
+.se-draw-stroke, .se-volume-curve
 {
 	display: block;
 	position: absolute;
@@ -482,4 +482,10 @@
 .sample-editor.no-overview .se-overview, .sample-editor.no-regions .se-regions, .sample-editor .off
 {
 	display: none;
+}
+
+.se-volume-curve
+{
+	top: 0;
+	height: 100%;
 }

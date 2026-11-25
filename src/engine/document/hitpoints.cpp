@@ -202,7 +202,7 @@ namespace gnubase::engine
 
 	namespace
 	{
-		// Files belong to this edit until every pair succeeds. Undo keeps successful renders for redo.
+		// The job owns its files until the completion command succeeds, including its render-lock checks.
 		struct SliceFiles
 		{
 			std::vector<std::filesystem::path> paths;
@@ -219,7 +219,7 @@ namespace gnubase::engine
 		};
 
 		void stretchSlice(Project& project, AudioEvent& event, time::Samples duration,
-			const std::filesystem::path& folder, SliceFiles& files, CommandContext& context)
+			const std::filesystem::path& folder, SliceFiles& files, CommandContext& context, JobContext& job)
 		{
 			const Clip source = project.clips.at(event.clip);
 			const MediaFile& media = project.media.at(source.media);
@@ -248,6 +248,7 @@ namespace gnubase::engine
 			std::vector<float> buffer(block * channels);
 			for (time::Samples at = 0; at < inputFrames;)
 			{
+				job.checkCancelled();
 				const size_t got =
 					reader->read(buffer.data(), static_cast<size_t>(std::min<time::Samples>(block, inputFrames - at)));
 				require(got != 0, "file ends before the slice");
@@ -261,7 +262,7 @@ namespace gnubase::engine
 				}
 				at += static_cast<time::Samples>(got);
 			}
-			const auto output = dsp::stretch(input, settings);
+			const auto output = dsp::stretch(input, settings, [&job] { job.checkCancelled(); });
 			std::filesystem::create_directories(folder);
 			const auto path = createFreeFile(folder, "Closed Gap.wav");
 			files.paths.push_back(path);
@@ -272,6 +273,7 @@ namespace gnubase::engine
 			const auto writer = AudioFileWriter::create(path.u8string(), options);
 			for (size_t at = 0; at < output.front().size(); at += block)
 			{
+				job.checkCancelled();
 				const size_t count = std::min(block, output.front().size() - at);
 				for (size_t i = 0; i < count; ++i)
 					for (size_t c = 0; c < channels; ++c)
@@ -305,11 +307,103 @@ namespace gnubase::engine
 			context.emit("audioEvent.changed", {{"event", toJson(event)}});
 		}
 
+		Json stretchGaps(Project project, const std::vector<ObjectId>& events, const std::filesystem::path& folder,
+			uint64_t revision, JobContext& job)
+		{
+			SliceFiles files;
+			Json renders = Json::array();
+			const Json empty = Json::object();
+			CommandContext context(empty); // Only the captured project changes on this thread.
+			job.progress(0.0, "Closing gaps");
+			for (size_t i = 1; i < events.size(); ++i)
+			{
+				job.checkCancelled();
+				AudioEvent& a = project.audioEvents.at(events[i - 1]);
+				const AudioEvent& b = project.audioEvents.at(events[i]);
+				const EventSpan first = eventSpan(project, a);
+				const EventSpan next = eventSpan(project, b);
+				if (a.track == b.track && a.part == b.part && a.lane == b.lane && first.end < next.start)
+				{
+					stretchSlice(project, a, next.start - first.start, folder, files, context, job);
+					renders.push_back(
+						{{"event", a.id}, {"media", toJson(project.media.at(project.clips.at(a.clip).media))},
+							{"volumeCurve", toJson(a.volumeCurve)},
+							{"snapPoint", a.snapPoint ? Json(*a.snapPoint) : Json(nullptr)}});
+				}
+				job.progress(static_cast<double>(i) / static_cast<double>(events.size()), "Closing gaps");
+			}
+			job.checkCancelled();
+			Json result =
+				job.command("event.applyClosedGaps", {{"revision", revision}, {"renders", std::move(renders)}});
+			files.keep = true;
+			return result;
+		}
+
 		void registerSliceEdits(ProjectModel& model, Engine& engine)
 		{
 			const Json ids = {{"type", "array"}, {"items", {{"type", "integer"}}}};
+			const Json integer = {{"type", "integer"}};
+			const Json number = {{"type", "number"}};
+			const Json media = objectSchema({{"id", integer}, {"path", {{"type", "string"}}}, {"sampleRate", number},
+												{"channels", integer}, {"length", integer}},
+				{"path", "sampleRate", "channels", "length"});
+			const Json points = {{"type", "array"},
+				{"items",
+					objectSchema({{"position", integer}, {"volume", number}, {"curve", number}},
+						{"position", "volume", "curve"})}};
+			const Json render = objectSchema({{"event", integer}, {"media", media}, {"volumeCurve", points},
+												 {"snapPoint", {{"type", {"integer", "null"}}}}},
+				{"event", "media", "volumeCurve", "snapPoint"});
 			model.addEdit(engine,
-				{"event.closeGaps", 1,
+				{"event.applyClosedGaps", 1,
+					"Internal completion for Close Gaps (Time Stretch). Applies renders only at the captured project "
+					"revision, as one undo step; engine-posted work only. Each render identifies an event, its new "
+					"media, volumeCurve and nullable snapPoint. Emits media.added, clip.added and audioEvent.changed; "
+					"returns the changed events. Clients use event.closeGaps with mode timeStretch.",
+					objectSchema({{"revision", integer}, {"renders", {{"type", "array"}, {"items", render}}}},
+						{"revision", "renders"}),
+					objectSchema({{"events", ids}}, {"events"}), false},
+				"Close gaps",
+				[](Project& project, CommandContext& context)
+				{
+					require(context.internal(), "only a Close Gaps job can apply its result");
+					require(context.call("project.revision").at("revision") == context.parameters().at("revision"),
+						"project changed meanwhile; close gaps again");
+					Json changed = Json::array();
+					for (const Json& item : context.parameters().at("renders"))
+					{
+						AudioEvent& event = project.audioEvents.at(item.at("event").get<ObjectId>());
+						Clip clip;
+						const Clip& source = project.clips.at(event.clip);
+						clip.name = source.name + " Flattened";
+						clip.folder = source.folder;
+						const Json& file = item.at("media");
+						const MediaFile rendered{project.newId(), file.at("path").get<std::string>(),
+							file.at("sampleRate").get<double>(), file.at("channels").get<int>(),
+							file.at("length").get<time::Samples>()};
+						project.media[rendered.id] = rendered;
+						clip.id = project.newId();
+						clip.media = rendered.id;
+						project.clips[clip.id] = clip;
+						event.clip = clip.id;
+						event.offset = 0;
+						event.length = rendered.length;
+						event.volumeCurve = volumeCurveFromJson(item.at("volumeCurve"));
+						event.snapPoint = item.at("snapPoint").is_null()
+							? std::nullopt
+							: std::optional<time::Samples>(item.at("snapPoint").get<time::Samples>());
+						event.quantizeOrigin.reset();
+						event.sliceOrigin.reset();
+						event.slicedFrom = 0;
+						context.emit("media.added", {{"media", toJson(rendered)}});
+						context.emit("clip.added", {{"clip", toJson(clip)}});
+						context.emit("audioEvent.changed", {{"event", toJson(event)}});
+						changed.push_back(event.id);
+					}
+					return Json{{"events", std::move(changed)}};
+				});
+			model.addEdit(engine,
+				{"event.closeGaps", 2,
 					"Close Gaps (Crossfade), reference manual p. 643: extends each selected audio slice's end "
 					"through a gap into the next selected slice in the same track, part and lane, then crossfades "
 					"them. Starts and clip offsets stay in place. length is the crossfade in milliseconds (default "
@@ -318,13 +412,17 @@ namespace gnubase::engine
 					"or parts, frozen tracks, or insufficient source audio. One undo step; returns changed events. "
 					"mode timeStretch instead renders each gapped slice's current audio, preserving pitch, into a "
 					"new clip up to the next start (offline stretch ratio 0.1 to 10); no crossfade. Other events of "
-					"the source clip stay unchanged. Undo before changing tempo again. Rendering runs on the command "
-					"thread; failed edits remove their files, undo retains them for redo. Discards slice and quantize "
+					"the source clip stay unchanged. Undo before changing tempo again. timeStretch returns a "
+					"cancellable "
+					"job with progress; its result contains the changed events. Rendering runs off the command thread "
+					"and fails if the project changed meanwhile. timeStretch cannot be part of a transaction. Failed "
+					"or cancelled jobs remove their files; undo retains successful files for redo. Discards slice and "
+					"quantize "
 					"origins that belonged to the old clip. mode defaults to crossfade.",
 					objectSchema({{"events", ids}, {"length", {{"type", "number"}, {"minimum", 0.1}, {"maximum", 500}}},
 									 {"mode", {{"type", "string"}, {"enum", {"crossfade", "timeStretch"}}}}},
 						{"events"}),
-					objectSchema({{"events", ids}}, {"events"}), false},
+					objectSchema({{"events", ids}, {"job", Jobs::schema()}}), false},
 				"Close gaps",
 				[&model, &engine](Project& project, CommandContext& context)
 				{
@@ -351,8 +449,20 @@ namespace gnubase::engine
 					};
 					std::sort(events.begin(), events.end(), [&](ObjectId a, ObjectId b) { return key(a) < key(b); });
 					std::set<ObjectId> changed;
-					SliceFiles files;
-					const bool stretch = context.parameters().value("mode", std::string("crossfade")) == "timeStretch";
+					if (context.parameters().value("mode", std::string("crossfade")) == "timeStretch")
+					{
+						require(!context.nested(), "timeStretch cannot be part of a transaction");
+						const auto folder = model.file().empty()
+							? unsavedMediaFolder(engine.settingsDirectory())
+							: mediaFolderFor(std::filesystem::u8path(model.file()));
+						require(!folder.empty(), "there is no folder to render into: save the project first");
+						const auto revision = context.call("project.revision").at("revision").get<uint64_t>();
+						context.markUnchanged();
+						return engine.startJob("event.closeGaps",
+							[snapshot = std::make_shared<Project>(project), events, folder = folder, revision](
+								JobContext& job)
+							{ return stretchGaps(std::move(*snapshot), events, folder, revision, job); });
+					}
 					const auto length = std::max<time::Samples>(
 						1, std::llround(context.parameters().value("length", 10.0) * project.sampleRate / 1000.0));
 					for (size_t i = 1; i < events.size(); ++i)
@@ -365,18 +475,6 @@ namespace gnubase::engine
 						const EventSpan next = eventSpan(project, b);
 						if (first.end > next.start || first.start >= next.start)
 							continue;
-						if (stretch)
-						{
-							if (first.end == next.start)
-								continue;
-							const auto folder = model.file().empty()
-								? unsavedMediaFolder(engine.settingsDirectory())
-								: mediaFolderFor(std::filesystem::u8path(model.file()));
-							require(!folder.empty(), "there is no folder to render into: save the project first");
-							stretchSlice(project, a, next.start - first.start, folder, files, context);
-							changed.insert(a.id);
-							continue;
-						}
 						const auto overlap = std::min(length, (next.end - next.start) / 2);
 						require(overlap > 0, "not enough audio for a crossfade");
 						const auto end = next.start + overlap;
@@ -394,7 +492,6 @@ namespace gnubase::engine
 						changed.insert(a.id);
 						changed.insert(b.id);
 					}
-					files.keep = true;
 					return Json{{"events", changed}};
 				});
 			model.addEdit(engine,

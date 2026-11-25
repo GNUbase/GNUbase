@@ -685,6 +685,8 @@ namespace gnubase::ui
 		void showSelection();
 		// Sends an event.* command for the selection; with selectResult, the events it returns become the selection.
 		void edit(const std::string& command, engine::Json parameters, bool selectResult = false);
+		void finishSliceJob(const engine::Json& job); // reports a Close Gaps job's failure once
+
 		// Adds range.paste's selectedTrack, the first of useTrackSelection's tracks, and with snap its snap.
 		void pasteOntoSelectedTrack(engine::Json& parameters, bool snap) const;
 		void selectWhere(const std::function<bool(const Shown&)>& selected);
@@ -1134,6 +1136,7 @@ namespace gnubase::ui
 		Rml::Element* m_contextMenu = nullptr;
 		Rml::Element* m_notification = nullptr;
 		Rml::Element* m_refusal = nullptr;  // #edit-refused
+		std::set<uint64_t> m_sliceJobs;     // Close Gaps jobs started by this display
 		bool m_toolboxOnRightClick = false; // ui.toolboxOnRightClick
 		bool m_toolboxKnown = false;        // changed since it was asked for
 		bool m_notifies = true;             // ui.toolSwitchNotification

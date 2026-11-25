@@ -81,11 +81,16 @@ and Lua.
 rendered from its current audio, including its warp and clip fades, then stretched offline without shifting pitch to end
 at the next selected start. The result is a new clip named after the source with Flattened appended and a float WAV in
 the project media folder, or the recording folder for an unsaved project. Other events of the source clip stay
-unchanged. The stretch ratio must be from 0.1 to 10; touching and overlapping slices stay unchanged. Rendering runs on
-the command thread and holds the slice audio in memory. Failed edits remove their rendered files; undo keeps successful
-files for redo. Undo before changing tempo again, as the reference manual, p. 643 recommends. Moving to the rendered
-clip clears the event's slice and quantize origins from the old clip, so Reset Slices cannot restore an offset or length
-from that source onto the new clip. Undo restores those origins along with the original clip.
+unchanged. The stretch ratio must be from 0.1 to 10; touching and overlapping slices stay unchanged. Version 2 returns a
+cancellable job in time-stretch mode, with progress and the changed `events` in its result. It reads, stretches and
+writes the captured slice audio on the job thread, checking cancellation between blocks, including both stretch passes.
+The completion command `event.applyClosedGaps` accepts only engine-posted work and applies all renders in one undo step
+at the captured project revision. An edit, undo or project replacement meanwhile fails the job. Time-stretch mode cannot
+run inside a history transaction; crossfade mode remains a synchronous edit. Failed or cancelled jobs remove their
+files, including after a late render-lock refusal; undo keeps successful files for redo. Undo before changing tempo
+again, as the reference manual, p. 643 recommends. Moving to the rendered clip clears the event's slice and quantize
+origins from the old clip, so Reset Slices cannot restore an offset or length from that source onto the new clip. Undo
+restores those origins along with the original clip.
 
 ## In the UI
 
@@ -93,7 +98,10 @@ Audio > Advanced has Close Gaps (Crossfade), Close Gaps (Time Stretch) and Delet
 `audio.closeGapsCrossfade`, `audio.closeGapsTimeStretch` and `audio.deleteOverlaps`. They run `event.closeGaps` with the
 corresponding mode or `event.deleteOverlaps` on selected audio events and all events inside audio parts selected in the
 project window, filtering out selected MIDI parts. Without selected audio events or nonempty audio parts they are
-disabled. Each edit is one undo step; the selection range does not replace the event selection.
+disabled. Each edit is one undo step; the selection range does not replace the event selection. The project window
+watches the time-stretch job and shows a failed job's engine error in the edit-refused notification, including a ratio
+outside 0.1 to 10 or a project changed during rendering. It also checks jobs that finished before their command's result
+reached the UI.
 
 The sample editor's inspector has the Hitpoints section, and its display shows the hitpoints that count and the
 disabled ones.
@@ -134,6 +142,15 @@ Events at Hitpoints for folder tracks; the MIDI notes' destinations First Select
 synthesized loops only; recorded drum loops with hand-annotated onsets (room sound, bleed, flams) are yet to come.
 
 ## Checks
+
+- `tests/mainmenu_tests.cpp`: a time-stretch job needing a ratio above 10 shows its error in `#edit-refused`, both after
+  its command's result and when it finished before the UI handled that result; the project and undo history stay
+  unchanged.
+
+- `tests/hitpoints_tests.cpp`: held time-stretch jobs keep commands responsive, cancel without files, reject edits, undo
+  and project replacement, and refuse transactions. Flatten clears slice and quantize origins with undo/redo and removes
+  its renders after an outer transaction failure or a late render-lock refusal. `tests/timestretch_tests.cpp` checks
+  cancellation between offline stretch blocks.
 
 - `tests/mainmenu_tests.cpp`: all three Audio > Advanced commands on a selected part created by
   `event.fromHitpoints`, with unselected audio preserved and undo/redo.

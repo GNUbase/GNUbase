@@ -1225,7 +1225,7 @@
 	{
 		background-color: #b7bbc066;
 	}
-	.se-draw-stroke
+	.se-draw-stroke, .se-volume-curve
 	{
 		color: #7896bd;
 		stroke-color: #7896bd;

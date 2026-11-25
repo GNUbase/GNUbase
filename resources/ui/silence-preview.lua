@@ -15,6 +15,7 @@ end
 function dialog.zoom(document)
 	local zoom = tonumber(document:GetElementById("ds-zoom"):GetAttribute("value")) or 1
 	document:GetElementById("ds-display").style.width = (zoom * 100) .. "%"
+	document.context:Update()
 	dialog.peaks(document)
 end
 
@@ -29,7 +30,7 @@ function dialog.wheel(document, event)
 		local fraction = (view.scroll_left + pointer) / wave.client_width
 		value = math.max(1, math.min(16, value * (p.wheel_delta_y < 0 and 2 or 0.5)))
 		zoom:SetAttribute("value", tostring(value))
-		dialog.zoom(document)
+		document:GetElementById("ds-display").style.width = (value * 100) .. "%"
 		-- Apply the new width before the scroll range clamps the pointer's new offset.
 		document.context:Update()
 		view.scroll_left = fraction * wave.client_width - pointer
@@ -37,14 +38,21 @@ function dialog.wheel(document, event)
 		local view = document:GetElementById("ds-view")
 		view.scroll_left = view.scroll_left + (p.wheel_delta_y + p.wheel_delta_x) * view.client_width / 8
 	end
+	dialog.peaks(document)
 	event:StopPropagation()
 end
 
 function dialog.peaks(document)
 	local source = dialog.events[dialog.index]
-	local zoom = tonumber(document:GetElementById("ds-zoom"):GetAttribute("value")) or 1
+	local view = document:GetElementById("ds-view")
+	local wave = document:GetElementById("ds-wave")
+	if wave.client_width <= 0 or view.client_width <= 0 then return end
+	local first = math.max(0, math.floor(source.length * view.scroll_left / wave.client_width))
+	local last = math.min(source.length,
+		math.ceil(source.length * (view.scroll_left + view.client_width) / wave.client_width))
+	if last <= first then return end
 	local ok, result = pcall(gnubase.media.peaks,
-		{media = source.media, start = source.offset, frames = source.length, pixels = 256 * zoom})
+		{media = source.media, start = source.offset + first, frames = last - first, pixels = 256})
 	if not ok then return end -- Analysis reports missing files too.
 	local bars = {}
 	local channels = #result.channels
@@ -55,7 +63,8 @@ function dialog.peaks(document)
 			local height = (channel.max[i] - channel.min[i]) * 100 / (65534 * channels)
 			bars[#bars + 1] = string.format(
 				'<div class="ds-peak" style="left:%.4f%%;width:%.4f%%;top:%.4f%%;height:%.4f%%"/>',
-				(i - 1) * 100 / count, 100 / count, top, height)
+				(first + (i - 1) * (last - first) / count) * 100 / source.length,
+				(last - first) * 100 / (count * source.length), top, height)
 		end
 	end
 	dialog.channels = math.max(channels, 1)

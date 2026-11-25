@@ -554,6 +554,8 @@ namespace gnubase::engine
 		{
 			result.error = error.what();
 			context.m_events.clear(); // a failed command changes nothing
+			for (const auto& cleanup : context.m_failureCleanup)
+				cleanup();
 		}
 		if (!query && !context.m_unlogged && (result.ok() || !context.m_quietFailure))
 		{

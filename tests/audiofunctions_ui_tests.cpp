@@ -330,6 +330,17 @@ TEST_CASE("Detect Silence zooms and scrolls its waveform without changing analys
 	CHECK(std::abs(threshold.at("y").get<double>() - wave.at("y").get<double>() -
 			  (0.45 * wave.at("height").get<double>())) < 1);
 	CHECK(wave.at("x").get<double>() < view.at("x").get<double>());
+	const Json peaks = elements(app, ".ds-peak");
+	REQUIRE(!peaks.empty());
+	CHECK(peaks.size() <= 256);
+	for (const auto& peak : peaks)
+	{
+		const auto& box = peak.at("box");
+		CHECK(box.at("x").get<double>() >= view.at("x").get<double>() - 2);
+		CHECK(box.at("x").get<double>() + box.at("width").get<double>() <=
+			view.at("x").get<double>() + view.at("width").get<double>() + 2);
+	}
+
 	click(app, "#ds-mute-gaps");
 	click(app, "#ds-view");
 	const auto log = app.call("engine.commandLog").at("commands");
