@@ -925,6 +925,27 @@ TEST_CASE("Open/Close Editor without an audio event selected closes the sample e
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().sampleEditorWindow() == nullptr; }));
 }
 
+TEST_CASE("sample editor fine zoom shows the samples inside the visible range", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.selection(2100, 2300);
+	f.click(of("#se-zoom-menu"));
+	f.click(of("[zoom=selectionHorizontal]"));
+	auto* wave =
+		dynamic_cast<ui::Waveform*>(f.app.shell().find(f.window)->context().GetDocument(0)->QuerySelector(".se-wave"));
+	REQUIRE(wave != nullptr);
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.app.appUi().binding().waiting() == 0 && wave->span().start == 2100 && wave->span().length == 200;
+		}));
+	REQUIRE(!wave->channels().empty());
+	const auto& high = wave->channels().at(0).high;
+	REQUIRE(!high.empty());
+	CHECK(*std::max_element(high.begin(), high.end()) - *std::min_element(high.begin(), high.end()) > 20000);
+}
+
 TEST_CASE("sample editor Draw edits samples only at sample zoom and selects the corrected range", "[ui]")
 {
 	Fixture f;

@@ -7,6 +7,8 @@
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <system_error>
@@ -67,6 +69,78 @@ namespace gnubase::engine::peaks
 				throw std::invalid_argument(std::to_string(pixels) + " pixels of " + std::to_string(count) +
 					" channels are more than " + std::to_string(g_maxColumnValues) +
 					" values: ask for fewer pixels or pick channels");
+		}
+
+		// Fine zoom reads only this query's span, in fixed blocks. The pixel limit and <256 frames per pixel
+		// bound the span; no whole-file sample buffer or sample-resolution peak file is needed.
+		Columns sampleColumns(
+			const std::string& path, uint64_t start, uint64_t frames, size_t pixels, const std::vector<int>& picked)
+		{
+			const auto reader = AudioFileReader::open(path);
+			const auto channels = static_cast<size_t>(reader->info().channels);
+			std::vector<int> selected = picked;
+			if (selected.empty())
+				for (size_t channel = 0; channel < channels; ++channel)
+					selected.push_back(static_cast<int>(channel));
+			for (const int channel : selected)
+				if (channel < 0 || static_cast<size_t>(channel) >= channels)
+					throw std::invalid_argument("there is no channel " + std::to_string(channel));
+			Columns result;
+			result.factor = 1;
+			result.channels = static_cast<int>(selected.size());
+			result.pixels = pixels;
+			result.min.assign(pixels * selected.size(), 0);
+			result.max.assign(pixels * selected.size(), 0);
+			const auto length = static_cast<uint64_t>(reader->info().frames);
+			if (start >= length)
+				return result;
+			reader->seek(static_cast<time::Samples>(start));
+			constexpr size_t block = 4096;
+			std::vector<float> buffer(block * channels);
+			std::vector<float> low(selected.size());
+			std::vector<float> high(selected.size());
+			uint64_t bufferStart = start;
+			size_t buffered = 0;
+			const uint64_t limit = start + std::min(frames, length - start);
+			const auto boundary = [frames, pixels](size_t pixel)
+			{ return pixel * (frames / pixels) + pixel * (frames % pixels) / pixels; };
+			for (size_t pixel = 0; pixel < pixels; ++pixel)
+			{
+				const uint64_t begin = start + boundary(pixel);
+				const uint64_t end = std::min(limit, std::max(begin + 1, start + boundary(pixel + 1)));
+				if (begin >= limit)
+					break;
+				std::fill(low.begin(), low.end(), std::numeric_limits<float>::infinity());
+				std::fill(high.begin(), high.end(), -std::numeric_limits<float>::infinity());
+				for (uint64_t frame = begin; frame < end; ++frame)
+				{
+					if (frame >= bufferStart + buffered)
+					{
+						bufferStart += buffered;
+						buffered = reader->read(
+							buffer.data(), static_cast<size_t>(std::min<uint64_t>(block, limit - bufferStart)));
+						if (buffered == 0)
+							return result;
+					}
+					for (size_t channel = 0; channel < selected.size(); ++channel)
+					{
+						const float sample = buffer[static_cast<size_t>(frame - bufferStart) * channels +
+							static_cast<size_t>(selected[channel])];
+						low[channel] = std::min(low[channel], sample);
+						high[channel] = std::max(high[channel], sample);
+					}
+				}
+				for (size_t channel = 0; channel < selected.size(); ++channel)
+					if (low[channel] <= high[channel])
+					{
+						result.min[channel * pixels + pixel] = static_cast<int16_t>(
+							std::clamp(std::floor(static_cast<double>(low[channel]) * g_fullScale), -32767.0, 32767.0));
+						result.max[channel * pixels + pixel] = static_cast<int16_t>(
+							std::clamp(std::ceil(static_cast<double>(high[channel]) * g_fullScale), -32767.0, 32767.0));
+					}
+				result.covered = pixel + 1;
+			}
+			return result;
 		}
 
 		// Writes the peak file next to the audio file, or else into the fallback folder. Returns where, or nothing.
@@ -343,7 +417,11 @@ namespace gnubase::engine::peaks
 		if (data && count > 0)
 		{
 			checkSize(pixels, channels, data->channels);
-			source = columnSource(*data, start, count, pixels, channels);
+			if (pixels > 0 && pixels <= g_maxPixels && count / pixels < defaultLevels()[0] &&
+				result.status.state == State::Ready)
+				result.columns = sampleColumns(entry->path, start, count, pixels, channels);
+			else
+				source = columnSource(*data, start, count, pixels, channels);
 		}
 		if (source)
 			result.columns = columns(*source, start, count, pixels);
@@ -629,8 +707,10 @@ namespace gnubase::engine::peaks
 				"(default: the rest of the file), in pixels columns (up to 65536). Per channel (default: all of them; "
 				"channels picks some, numbered from 0), the smallest and largest sample of each column, from -32767 "
 				"to 32767 (full scale). Pixels times channels can be up to 262144. The columns come from the coarsest "
-				"level of the file's peaks (level: 256, 4096 or 65536 frames per peak) that has a peak per column, so "
-				"they cost the same at any length. status says whether the peaks are ready; while they are "
+				"level of the file's peaks (level: 256, 4096 or 65536 frames per peak) that has a peak per column. "
+				"Below 256 frames per column, ready files are read over the requested span in 4096-frame blocks "
+				"(level: 1), bounded to fewer than 16777216 frames by the pixel limit. status says whether the peaks "
+				"are ready; while they are "
 				"generated, only the first available frames have columns and the rest are 0. A file that changed "
 				"since its peaks were made gets new ones; media.peaksProgress and media.peaksReady report how that "
 				"goes.",

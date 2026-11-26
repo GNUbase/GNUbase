@@ -25,6 +25,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -668,7 +669,7 @@ TEST_CASE("the cache generates peaks in the background and loads the peak file n
 		// Without frames, the columns run from start to the end of the file.
 		const peaks::PeakCache::Query rest = queryOf(cache, 7, 150000, std::nullopt, 500);
 		CHECK(rest.columns.covered == 500);
-		const peaks::Columns expected = peaks::columns(written.data, 150000, 50000, 500);
+		const peaks::Columns expected = peaks::columns(build(samples, 2, {1}), 150000, 50000, 500);
 		CHECK(rest.columns.min == expected.min);
 		CHECK(rest.columns.max == expected.max);
 		CHECK(queryOf(cache, 7, 250000, std::nullopt, 10).columns.covered == 0);
@@ -1101,6 +1102,39 @@ TEST_CASE("media.peaks returns min and max columns of a media file", "[integrati
 	CHECK(again.at("generated") == false);
 }
 
+TEST_CASE("media.peaks at fine zoom contains only the samples in each column", "[integration]")
+{
+	const test::TempDir dir;
+	const auto file = dir.path() / "fine.wav";
+	constexpr uint64_t length = 12288;
+	const auto samples = testSignal(2, length, 71);
+	writeAudio(file, samples, 2);
+	Engine engine;
+	Client client(engine);
+	const Json media = run(client, "media.add", {{"path", file.u8string()}}).at("media").at("id");
+	REQUIRE(test::waitForEvent(client, "media.peaksReady", nullptr, std::chrono::seconds(20)).has_value());
+	for (const auto& [start, frames, pixels] : std::vector<std::tuple<uint64_t, uint64_t, size_t>>{{123, 23, 92},
+			 {49, 110, 220}, {255, 513, 17}, {4090, 8200, 33}, {length - 4, 12, 24}, {length + 1, 12, 24}})
+	{
+		CAPTURE(start, frames, pixels);
+		const Json result = run(client, "media.peaks",
+			{{"media", media}, {"start", start}, {"frames", frames}, {"pixels", pixels}, {"channels", {1, 0}}});
+		CHECK(result.at("level") == 1);
+		for (size_t column = 0; column < pixels; ++column)
+		{
+			const uint64_t begin = start + column * frames / pixels;
+			const uint64_t end = std::min(length, std::max(begin + 1, start + (column + 1) * frames / pixels));
+			for (size_t channel = 0; channel < 2; ++channel)
+			{
+				const auto expected = begin < length ? scan(samples, 2, static_cast<int>(1 - channel), begin, end)
+													 : std::pair<int16_t, int16_t>{0, 0};
+				CHECK(result.at("channels").at(channel).at("min").at(column) == expected.first);
+				CHECK(result.at("channels").at(channel).at("max").at(column) == expected.second);
+			}
+		}
+	}
+}
+
 TEST_CASE("media.peaks picks channels and limits pixels times channels", "[integration]")
 {
 	const test::TempDir dir;
@@ -1112,7 +1146,7 @@ TEST_CASE("media.peaks picks channels and limits pixels times channels", "[integ
 	Client client(engine);
 	const Json id = run(client, "media.add", {{"path", file.u8string()}}).at("media").at("id");
 	REQUIRE(test::waitForEvent(client, "media.peaksReady", nullptr, std::chrono::seconds(20)).has_value());
-	const peaks::Columns expected = peaks::columns(build(samples, 8, peaks::defaultLevels()), 0, 5000, 20);
+	const peaks::Columns expected = peaks::columns(build(samples, 8, {1}), 0, 5000, 20);
 
 	const Json picked = run(client, "media.peaks", {{"media", id}, {"pixels", 20}, {"channels", {7, 2}}});
 	REQUIRE(picked.at("channels").size() == 2);

@@ -117,7 +117,8 @@ first of them. Without either selected, Open/Close Editor closes it.
 
 The display's time axis is the clip's frames: `start` and `scale` (frames per dp) on the waveform, as for every canvas
 element ([canvas.md](canvas.md)). It first shows the whole clip, as Zoom Full does with clip-based zoom (p. 623).
-Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each of the two in flight.
+Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each of the two in flight. At less than 256
+frames per pixel they show the samples in each column, including when zoomed in past one pixel per sample.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -197,6 +198,9 @@ for other tickets: offline processing (#141) and making a sampler track of the r
 in [warp.md](warp.md).
 
 ## Checks
+
+`tests/sampleeditor_ui_tests.cpp` checks that a selection zoom below one sample per pixel shows the sample variation
+within its visible range instead of repeating cached block peaks.
 
 - `tests/sampleeditor_ui_tests.cpp`: region drags between native windows create bounded events on linear and musical
   tracks at the drop position, including beat-grid snapping and take lane 1, preserving the clip and region with
