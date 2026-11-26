@@ -99,6 +99,7 @@ TEST_CASE("the MCP tool catalogue lists every tool with its arguments, and the r
 	CHECK(text.find("(Lua API reference: https://gnubase.github.io/GNUbase/lua.html)") != std::string::npos);
 	CHECK(text.find("### ui\n\n#### `ui_click`\n\n") != std::string::npos);
 	CHECK(text.find("#### `project_get`\n\nEngine command `project.get`. Read-only.") != std::string::npos);
+	CHECK(text.find("#### `tempo_export`\n\nEngine command `tempo.export`.\n\n") != std::string::npos);
 	CHECK(text.find("- `type`: one of \"audio\" | \"instrument\"") != std::string::npos);
 	CHECK(text.find("Result:\n\n- `channel`: object or null, required\n- `track`: object, required") !=
 		std::string::npos);
@@ -144,6 +145,11 @@ TEST_CASE("the Lua API reference is generated from the command registry", "[unit
 	CHECK(entry.find("Only reads the project, but each call takes what it returns from a queue all clients share.") !=
 		std::string::npos);
 	CHECK(entry.find("Only reads; changes nothing.") == std::string::npos);
+	const size_t exported = generated.find("#### `gnubase.tempo.export`");
+	REQUIRE(exported != std::string::npos);
+	const std::string exportEntry = generated.substr(exported, generated.find("\n#### ", exported + 1) - exported);
+	CHECK(exportEntry.find("Writes a file without changing the project or adding an undo step.") != std::string::npos);
+	CHECK(exportEntry.find("Only reads; changes nothing.") == std::string::npos);
 	writeGenerated("lua.md", generated);
 }
 

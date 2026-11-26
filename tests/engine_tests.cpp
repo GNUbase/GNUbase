@@ -315,11 +315,23 @@ TEST_CASE("every command describes itself", "[unit]")
 	CHECK(setValue->at("parameters") == valueParameters());
 	CHECK(setValue->at("query") == false);
 	CHECK(setValue->at("consumes") == false);
+	CHECK(setValue->at("writesFiles") == false);
 	const auto capture = std::find_if(
 		commands.begin(), commands.end(), [](const Json& command) { return command.at("name") == "midi.capture"; });
 	REQUIRE(capture != commands.end());
 	CHECK(capture->at("query") == true);
 	CHECK(capture->at("consumes") == true); // takes what it returns from a queue all clients share (#350)
+	for (const char* name : {"midiDevice.export", "drumMap.export", "articulationMap.export", "pattern.export",
+			 "tempo.export", "marker.export", "midiFile.export"})
+	{
+		INFO(name);
+		const auto exported = std::find_if(
+			commands.begin(), commands.end(), [name](const Json& command) { return command.at("name") == name; });
+		REQUIRE(exported != commands.end());
+		CHECK(exported->at("query") == true);
+		CHECK(exported->at("consumes") == false);
+		CHECK(exported->at("writesFiles") == true);
+	}
 
 	std::vector<std::string> names;
 	for (const CommandInfo& info : engine.commands())

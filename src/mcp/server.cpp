@@ -87,7 +87,8 @@ namespace gnubase::mcp
 
 		bool isResource(const CommandInfo& info)
 		{
-			return info.query && !info.consumes && info.parameters.value("required", Json::array()).empty();
+			return info.query && !info.consumes && !info.writesFiles &&
+				info.parameters.value("required", Json::array()).empty();
 		}
 
 		std::string resourceUri(const CommandInfo& info)
@@ -259,7 +260,8 @@ namespace gnubase::mcp
 		for (const CommandInfo& info : m_engine.commands())
 		{
 			Json tool = {{"name", toolName(info.name)}, {"title", info.name}, {"description", info.description},
-				{"inputSchema", info.parameters}, {"annotations", {{"readOnlyHint", info.query && !info.consumes}}}};
+				{"inputSchema", info.parameters},
+				{"annotations", {{"readOnlyHint", info.query && !info.consumes && !info.writesFiles}}}};
 			if (info.consumes)
 				tool["annotations"]["idempotentHint"] = false;
 			if (info.result.value("type", Json()) == "object")

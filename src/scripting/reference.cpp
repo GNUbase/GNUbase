@@ -124,7 +124,9 @@ test cases with the MCP tool `script_run`, whose output has the report.
 				out << "\n### " << area << '\n';
 			}
 			out << "\n#### `gnubase." << info.name << "`\n\n" << info.description << '\n';
-			if (info.consumes)
+			if (info.writesFiles)
+				out << "\nWrites a file without changing the project or adding an undo step.\n";
+			else if (info.consumes)
 				out << "\nOnly reads the project, but each call takes what it returns from a queue all clients "
 					   "share.\n";
 			else if (info.query)

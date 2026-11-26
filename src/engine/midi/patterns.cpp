@@ -779,7 +779,8 @@ namespace gnubase::engine::midi
 			{"pattern.export", 1,
 				"Saves a track's patterns as a pattern preset (Save Preset, p. 932) at path: a JSON file with each "
 				"pattern's mode, steps and settings, which pattern.import loads.",
-				object({{"track", idSchema}, {"path", stringSchema}}, {"track", "path"}), Json::object(), true},
+				object({{"track", idSchema}, {"path", stringSchema}}, {"track", "path"}), Json::object(), true, false,
+				true},
 			"", exportPatterns);
 		model.addEdit(engine,
 			{"pattern.import", 1,

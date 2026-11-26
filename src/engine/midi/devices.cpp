@@ -312,7 +312,7 @@ namespace gnubase::engine::midi
 				"Export Setup (reference manual p. 1110): writes every installed MIDI device, with its banks, patches "
 				"and Bank Assignment, into a MIDI device setup file at path, XML that midiDevice.readSetup and "
 				"midiDevice.import read.",
-				pathSchema, Json::object(), true},
+				pathSchema, Json::object(), true, false, true},
 			[](CommandContext& context)
 			{
 				const std::string path = context.parameters().at("path").get<std::string>();

@@ -97,6 +97,21 @@ TEST_CASE("every engine command is a tool with its schemas", "[unit]")
 	CHECK(version->at("annotations").at("readOnlyHint") == true);
 }
 
+TEST_CASE("file-writing exports are not read-only tools", "[unit]")
+{
+	Engine engine;
+	Server server(engine);
+	const Json tools = respond(server, request(1, "tools/list")).at("result").at("tools");
+	for (const char* name : {"midiDevice_export", "drumMap_export", "articulationMap_export", "pattern_export",
+			 "tempo_export", "marker_export", "midiFile_export"})
+	{
+		INFO(name);
+		const Json* found = findTool(tools, name);
+		REQUIRE(found != nullptr);
+		CHECK(found->at("annotations").at("readOnlyHint") == false);
+	}
+}
+
 TEST_CASE("tools/call runs the command and returns its result", "[unit]")
 {
 	Engine engine;
@@ -122,6 +137,26 @@ TEST_CASE("tools/call runs the command and returns its result", "[unit]")
 	// An unknown tool is a protocol error.
 	const Json unknown = respond(server, request(4, "tools/call", {{"name", "test_nothing"}}));
 	CHECK(unknown.at("error").at("code") == -32602);
+}
+
+TEST_CASE("file-writing queries without required parameters are not resources", "[unit]")
+{
+	Engine engine;
+	bool called = false;
+	engine.registerCommand({"test.export", 1, "Writes to a default file.", gnubase::engine::CommandInfo{}.parameters,
+							   Json::object(), true, false, true},
+		[&called](gnubase::engine::CommandContext&)
+		{
+			called = true;
+			return Json::object();
+		});
+	Server server(engine);
+	const Json resources = respond(server, request(1, "resources/list")).at("result").at("resources");
+	CHECK(std::none_of(resources.begin(), resources.end(),
+		[](const Json& resource) { return resource.at("uri") == "gnubase://test.export"; }));
+	CHECK(respond(server, request(2, "resources/read", {{"uri", "gnubase://test.export"}})).at("error").at("code") ==
+		-32002);
+	CHECK(!called);
 }
 
 TEST_CASE("queries without required parameters are readable resources", "[unit]")

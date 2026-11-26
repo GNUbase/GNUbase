@@ -88,7 +88,7 @@ namespace gnubase::engine
 		{
 			return {{"name", info.name}, {"version", info.version}, {"description", info.description},
 				{"parameters", info.parameters}, {"result", info.result}, {"query", info.query},
-				{"consumes", info.consumes}};
+				{"consumes", info.consumes}, {"writesFiles", info.writesFiles}};
 		}
 	}
 

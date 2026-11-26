@@ -879,7 +879,8 @@ namespace gnubase::engine
 				"numbers the tracks in the file, 1 on. Positions and ends are in beats "
 				"(quarter notes) on musical tracks and in seconds on linear ones. Returns the number of markers.",
 				objectSchema({{"path", stringSchema}, {"tracks", {{"type", "array"}, {"items", idSchema}}}}, {"path"}),
-				{{"type", "object"}, {"properties", {{"markers", integerSchema}}}, {"required", {"markers"}}}, true},
+				{{"type", "object"}, {"properties", {{"markers", integerSchema}}}, {"required", {"markers"}}}, true,
+				false, true},
 			exportMarkers);
 		add(engine,
 			{"marker.import", 1,

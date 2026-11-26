@@ -170,7 +170,8 @@ namespace gnubase::engine
 							{"tracks", {{"type", "array"}, {"items", integer}}}, {"range", range},
 							{"markers", boolean}}},
 					{"required", {"path"}}},
-				{{"type", "object"}, {"properties", {{"tracks", integer}}}, {"required", {"tracks"}}}, true},
+				{{"type", "object"}, {"properties", {{"tracks", integer}}}, {"required", {"tracks"}}}, true, false,
+				true},
 			exportFile);
 
 		add(engine,
