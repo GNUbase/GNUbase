@@ -103,7 +103,7 @@ namespace gnubase::engine::peaks
 			size_t buffered = 0;
 			const uint64_t limit = start + std::min(frames, length - start);
 			const auto boundary = [frames, pixels](size_t pixel)
-			{ return pixel * (frames / pixels) + pixel * (frames % pixels) / pixels; };
+			{ return (pixel * (frames / pixels)) + (pixel * (frames % pixels) / pixels); };
 			for (size_t pixel = 0; pixel < pixels; ++pixel)
 			{
 				const uint64_t begin = start + boundary(pixel);
@@ -124,7 +124,7 @@ namespace gnubase::engine::peaks
 					}
 					for (size_t channel = 0; channel < selected.size(); ++channel)
 					{
-						const float sample = buffer[static_cast<size_t>(frame - bufferStart) * channels +
+						const float sample = buffer[(static_cast<size_t>(frame - bufferStart) * channels) +
 							static_cast<size_t>(selected[channel])];
 						low[channel] = std::min(low[channel], sample);
 						high[channel] = std::max(high[channel], sample);
@@ -133,9 +133,9 @@ namespace gnubase::engine::peaks
 				for (size_t channel = 0; channel < selected.size(); ++channel)
 					if (low[channel] <= high[channel])
 					{
-						result.min[channel * pixels + pixel] = static_cast<int16_t>(
+						result.min[(channel * pixels) + pixel] = static_cast<int16_t>(
 							std::clamp(std::floor(static_cast<double>(low[channel]) * g_fullScale), -32767.0, 32767.0));
-						result.max[channel * pixels + pixel] = static_cast<int16_t>(
+						result.max[(channel * pixels) + pixel] = static_cast<int16_t>(
 							std::clamp(std::ceil(static_cast<double>(high[channel]) * g_fullScale), -32767.0, 32767.0));
 					}
 				result.covered = pixel + 1;

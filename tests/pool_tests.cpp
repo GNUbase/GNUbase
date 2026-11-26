@@ -927,7 +927,9 @@ TEST_CASE("pool file changes rescale and trim clip analysis and preserve stretch
 	run(song.client, "audioEvent.setFades", {{"event", event}, {"fadeIn", {{"length", 3000}}}});
 	const Json before = run(song.client, "project.get");
 	if (conform)
+	{
 		runJob(song.client, "media.conform");
+	}
 	else
 	{
 		writeFile(song.library / "short.wav", 12000, 1, 24000);
@@ -937,7 +939,7 @@ TEST_CASE("pool file changes rescale and trim clip analysis and preserve stretch
 	const int scale = conform ? 2 : 1;
 	const Json after = run(song.client, "project.get");
 	const Json changed = byId(after.at("clips"), clip);
-	const Json warp = changed.at("warp");
+	const Json& warp = changed.at("warp");
 	CHECK(warp.at("gridStart") == 100 * scale);
 	CHECK(warp.at("tempo") == 120);
 	REQUIRE(warp.at("beats").size() == (conform ? 2 : 1));

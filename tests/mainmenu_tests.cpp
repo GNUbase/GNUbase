@@ -31,9 +31,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
-#include <future>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <regex>
 #include <stdexcept>
@@ -1142,15 +1143,15 @@ namespace
 				{
 					if (kind == "event.closeGaps" && ++state->calls == 2)
 					{
+						std::unique_lock lock(state->mutex);
 						state->job = job;
-						state->released.wait();
+						state->changed.wait(lock, [&] { return state->released; });
 					}
 				});
 		}
 		~RenderedSliceHold()
 		{
-			if (!m_released)
-				release();
+			release();
 			m_engine.setJobProgressHook({});
 		}
 		RenderedSliceHold(const RenderedSliceHold&) = delete;
@@ -1160,8 +1161,11 @@ namespace
 		uint64_t job() const { return m_state->job.load(); }
 		void release()
 		{
-			m_released = true;
-			m_state->release.set_value();
+			{
+				const std::scoped_lock lock(m_state->mutex);
+				m_state->released = true;
+			}
+			m_state->changed.notify_all();
 		}
 
 	private:
@@ -1169,12 +1173,12 @@ namespace
 		{
 			int calls = 0; // job thread only
 			std::atomic<uint64_t> job{0};
-			std::promise<void> release;
-			std::shared_future<void> released = release.get_future().share();
+			std::mutex mutex;
+			std::condition_variable changed;
+			bool released = false; // guarded by mutex
 		};
 		engine::Engine& m_engine;
 		std::shared_ptr<State> m_state = std::make_shared<State>();
-		bool m_released = false;
 	};
 }
 

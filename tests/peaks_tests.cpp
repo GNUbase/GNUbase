@@ -1122,8 +1122,8 @@ TEST_CASE("media.peaks at fine zoom contains only the samples in each column", "
 		CHECK(result.at("level") == 1);
 		for (size_t column = 0; column < pixels; ++column)
 		{
-			const uint64_t begin = start + column * frames / pixels;
-			const uint64_t end = std::min(length, std::max(begin + 1, start + (column + 1) * frames / pixels));
+			const uint64_t begin = start + (column * frames / pixels);
+			const uint64_t end = std::min(length, std::max(begin + 1, start + ((column + 1) * frames / pixels)));
 			for (size_t channel = 0; channel < 2; ++channel)
 			{
 				const auto expected = begin < length ? scan(samples, 2, static_cast<int>(1 - channel), begin, end)
