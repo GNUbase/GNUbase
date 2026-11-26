@@ -67,7 +67,8 @@ namespace gnubase::engine
 		std::string description;
 		Json parameters = Json{{"type", "object"}, {"additionalProperties", false}}; // JSON schema
 		Json result = Json::object();                                                // JSON schema
-		bool query = false; // only reads, never changes the project
+		// Never changes the project or adds an undo step; may write files when writesFiles is set.
+		bool query = false;
 		// A query whose calls take what they return from a queue all clients share (midi.capture), so a second
 		// read gets other data. MCP lists it as a tool only, not as a resource.
 		bool consumes = false;
