@@ -670,13 +670,17 @@ TEST_CASE("the lane menus change and remove lanes, select their events and apply
 	f.tool("draw");
 	f.click(f.at(1, 4.1, 0.0));
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).value("probability", 1.0) < 0.05; }));
+	const size_t applying = f.steps();
 	f.choose(".controller-lane-type[lane-menu=\"1\"]", "#controller-lane-menu menuitem[lane-action=applyProbability]");
+	f.expectStep(applying, "Apply note modifiers"); // the lone command's name, as over several parts (#2106)
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).is_null(); }));
 	CHECK_FALSE(f.note(ids[0]).is_null());
 	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1) + " .controller-bar").size() == 1; }));
 	// Reset sets it back to 100 %.
 	f.app.call("note.set", {{"part", f.part}, {"notes", {{{"id", ids[0]}, {"probability", 0.5}}}}});
+	const size_t resetting = f.steps();
 	f.choose(".controller-lane-type[lane-menu=\"1\"]", "#controller-lane-menu menuitem[lane-action=resetProbability]");
+	f.expectStep(resetting, "Change notes");
 	REQUIRE(f.app.waitUntil([&] { return !f.note(ids[0]).contains("probability"); }));
 
 	// Show/Hide Controller Lanes, and Show Velocity Lane Only.
@@ -972,8 +976,11 @@ TEST_CASE("Apply and Reset MIDI Velocity Variance change the notes of every part
 	};
 	REQUIRE(varied() == 3);
 
-	// Apply gives the notes of both parts the velocity they play with, in one history.transaction: one undo step.
+	// Apply gives the notes of both parts the velocity they play with, in one history.transaction: one undo step,
+	// named as the lone note.apply over one part is (#2106).
+	const size_t applying = f.steps();
 	f.choose(R"(.controller-lane-type[lane-menu="1"])", "#controller-lane-menu menuitem[lane-action=applyVariance]");
+	f.expectStep(applying, "Apply note modifiers");
 	REQUIRE(f.app.waitUntil([&] { return varied() == 0; }));
 	for (const double velocity : velocities())
 		CHECK(velocity >= 0.5 - 1e-4);
@@ -986,7 +993,9 @@ TEST_CASE("Apply and Reset MIDI Velocity Variance change the notes of every part
 
 	// Reset sets the variance back to 0 and keeps the velocities, also one undo step.
 	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1) + " .controller-bar").size() == 3; }));
+	const size_t resetting = f.app.call("history.get").at("position").get<size_t>(); // the undone step goes
 	f.choose(R"(.controller-lane-type[lane-menu="1"])", "#controller-lane-menu menuitem[lane-action=resetVariance]");
+	f.expectStep(resetting, "Change notes");
 	REQUIRE(f.app.waitUntil([&] { return varied() == 0; }));
 	for (const double velocity : velocities())
 		CHECK(velocity == Approx(0.5).margin(1e-4));

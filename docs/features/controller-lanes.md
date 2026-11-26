@@ -105,6 +105,7 @@ part, or else channel 0.
   use "Change notes" for one part or several. A controller value drag uses "Change controllers", painting controllers
   "Add controllers", and the line tool "Draw controller line", also when events are removed first. Deleting only
   Articulations lane directions uses "Remove controllers"; deleting attributes together with directions uses "Change
+  notes". Apply in a play probability or velocity variance lane's menu uses "Apply note modifiers", Reset "Change
   notes". A lone command still goes on its own; several go in one `history.transaction` named as the lone command's undo
   step, so a gesture keeps its name however many commands it sends.
 - **Rendering**: `show` keeps the view and the parts it shows, not the whole project, and indexes the parts and the

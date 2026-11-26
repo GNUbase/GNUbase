@@ -977,7 +977,7 @@ namespace gnubase::ui
 						{{"command", "note.set"}, {"parameters", {{"part", part.id}, {"notes", changes}}}});
 				}
 			}
-			edit(probability ? "Play probability" : "Velocity variance", std::move(commands));
+			edit(action.rfind("apply", 0) == 0 ? "Apply note modifiers" : "Change notes", std::move(commands));
 		}
 	}
 
