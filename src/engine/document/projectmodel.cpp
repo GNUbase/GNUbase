@@ -4915,8 +4915,8 @@ namespace gnubase::engine
 			{"media.relink", 1,
 				"Points media files at other files, such as copies, as one undo step. Each new file must be an audio "
 				"file with sample frames and the media file's sample rate and channel count; the media file takes its "
-				"length, and the "
-				"clip fades and audio events that play past a shorter file's end are trimmed to it. An entry "
+				"length. Clip fades, warp data, hitpoints, regions and audio events that extend past a shorter file's "
+				"end are trimmed to it or removed if they no longer fit. An entry "
 				"with from applies only if the media file is still there and still points at from; one with length "
 				"only if its new file can be read, fits and has that many sample frames (not none); otherwise it is "
 				"skipped. With "

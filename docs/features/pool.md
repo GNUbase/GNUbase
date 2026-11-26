@@ -187,7 +187,9 @@ clips.
 
 `tests/pool_tests.cpp` conforms and shortens clips with warp markers, definition edits, hitpoints and regions,
 preserving stretched event fades within `fadeRoom`, undo/redo and subsequent warp edits. Resampling to fewer frames also
-checks coincident anchors and hitpoints, anchors rounded onto clip endpoints and regions rounded to nothing.
+checks coincident anchors and hitpoints, anchors rounded onto clip endpoints and regions rounded to nothing. Markers
+created from hitpoints and then warp quantized keep their rescaled creation and quantize origins; Quantize Reset
+restores the rescaled originals, and Reset Warp Markers removes the generated markers while preserving manual ones.
 
 `tests/audiofunctions_ui_tests.cpp` opens Statistics and Spectrum Analyzer through the Audio menu in the pool's zone and
 the same commands in its floating window. It analyzes a whole unused clip independently of the selected project event,

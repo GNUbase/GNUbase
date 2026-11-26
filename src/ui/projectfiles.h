@@ -159,11 +159,13 @@ namespace gnubase::ui
 		// window that shows one already runs without; one whose window went before it started shows in the main window.
 		// Its progress closed or gone with its window, it is cancelled.
 		void backupStarted(WindowId window, const engine::Result& result);
+		// Updates a tracked job's progress and detail in its backup or render dialog, if that dialog still exists.
 		void backupProgress(uint64_t job, double progress, const std::string& detail);
 		// A backup's job ended (job.finished, or job.get for one that ended before backupStarted heard of it): if it is
 		// one of those this UI started, closes its progress and shows in its window, or in the main window if that
 		// went, why it failed, which files it couldn't read and why the backup wasn't opened, if it was to be. Other
-		// clients' backups show nothing (#944).
+		// clients' backups show nothing (#944). Failed event.closeGaps jobs show no error here: the event display
+		// reports those failures in its edit-refused notification.
 		void backupEnded(const engine::Json& job);
 		// A backup's progress closed, or unloaded with its window, before the backup ended: cancels the backup, which
 		// then shows nothing more. False if progress isn't a running backup's progress.

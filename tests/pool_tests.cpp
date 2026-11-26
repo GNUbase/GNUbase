@@ -913,13 +913,25 @@ TEST_CASE("pool file changes rescale and trim clip analysis and preserve stretch
 		{{"clip", clip},
 			{"hitpoints",
 				Json::array({{{"position", 3000}, {"peak", -3}, {"intensity", 1}, {"locked", true}},
-					{{"position", 22000}, {"peak", -6}, {"intensity", 0.5}, {"disabled", true}}})}});
+					{{"position", 22000}, {"peak", -6}, {"intensity", 0.5}}})}});
 	run(song.client, "clip.setHitpointFilter", {{"clip", clip}, {"minimumLength", 240}});
 	for (const auto& [start, end] : std::vector<std::pair<int, int>>{{4000, 16000}, {20000, 23000}})
 		run(song.client, "clip.addRegion", {{"clip", clip}, {"start", start}, {"end", end}, {"name", "Section"}});
 	const Json stretched = run(song.client, "clip.add", {{"media", media}}).at("clip").at("id");
 	run(song.client, "clip.setWarp", {{"clip", stretched}, {"musical", true}, {"tempo", 240}, {"gridStart", 20000}});
 	const Json track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const Json sourceEvent =
+		run(song.client, "audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}}).at("event").at("id");
+	run(song.client, "quantize.createWarpMarkers", {{"events", {sourceEvent}}});
+	const Json originals = byId(run(song.client, "project.get").at("clips"), clip).at("warp").at("markers");
+	REQUIRE(originals.size() == 4);
+	run(song.client, "quantize.set", {{"preset", "1/16"}, {"settings", {{"warpQuantize", true}}}});
+	run(song.client, "quantize.apply", {{"events", {sourceEvent}}});
+	const Json quantized = byId(run(song.client, "project.get").at("clips"), clip).at("warp");
+	REQUIRE(quantized.at("created") == Json::array({3000, 22000}));
+	REQUIRE(quantized.at("quantizeOrigin").at("original") == originals);
+	REQUIRE(quantized.at("markers") != originals);
+	REQUIRE(quantized.at("quantizeOrigin").at("quantized") == quantized.at("markers"));
 	const Json event = run(song.client, "audioEvent.add",
 		{{"track", track}, {"clip", stretched}, {"offset", 1000}, {"length", 2000}, {"position", 0}})
 						   .at("event")
@@ -944,8 +956,27 @@ TEST_CASE("pool file changes rescale and trim clip analysis and preserve stretch
 	CHECK(warp.at("tempo") == 120);
 	REQUIRE(warp.at("beats").size() == (conform ? 2 : 1));
 	CHECK(warp.at("beats").at(0) == Json{{"beat", 1}, {"frame", 6000 * scale}});
-	REQUIRE(warp.at("markers").size() == (conform ? 2 : 1));
-	CHECK(warp.at("markers").at(0) == Json{{"position", 8000 * scale}, {"target", 10000 * scale}});
+	const Json created = conform ? Json::array({6000, 44000}) : Json::array({3000});
+	CHECK(warp.at("created") == created);
+	Json rescaledOriginals = Json::array({{{"position", 3000 * scale}, {"target", 3750 * scale}},
+		{{"position", 8000 * scale}, {"target", 10000 * scale}}});
+	Json ownMarkers = Json::array({{{"position", 8000 * scale}, {"target", 10000 * scale}}});
+	if (conform)
+	{
+		rescaledOriginals.push_back({{"position", 40000}, {"target", 42000}});
+		rescaledOriginals.push_back({{"position", 44000}, {"target", 45000}});
+		ownMarkers.push_back({{"position", 40000}, {"target", 42000}});
+	}
+	Json rescaledQuantized = Json::array();
+	for (size_t i = 0; i < rescaledOriginals.size(); ++i)
+	{
+		const Json& marker = quantized.at("markers").at(i);
+		rescaledQuantized.push_back({{"position", marker.at("position").get<int64_t>() * scale},
+			{"target", marker.at("target").get<int64_t>() * scale}});
+	}
+	CHECK(warp.at("markers") == rescaledQuantized);
+	CHECK(warp.at("quantizeOrigin").at("original") == rescaledOriginals);
+	CHECK(warp.at("quantizeOrigin").at("quantized") == rescaledQuantized);
 	REQUIRE(changed.at("hitpoints").size() == (conform ? 2 : 1));
 	CHECK(changed.at("hitpoints").at(0).at("position") == 3000 * scale);
 	CHECK(changed.at("hitpoints").at(0).at("locked") == true);
@@ -961,6 +992,15 @@ TEST_CASE("pool file changes rescale and trim clip analysis and preserve stretch
 	CHECK(run(song.client, "project.get") == before);
 	run(song.client, "history.redo");
 	CHECK(run(song.client, "project.get") == after);
+	run(song.client, "quantize.reset", {{"events", {sourceEvent}}});
+	const Json reset = byId(run(song.client, "project.get").at("clips"), clip).at("warp");
+	CHECK(reset.at("markers") == rescaledOriginals);
+	CHECK(reset.at("created") == created);
+	CHECK(!reset.contains("quantizeOrigin"));
+	run(song.client, "quantize.resetWarpMarkers", {{"events", {sourceEvent}}});
+	const Json removed = byId(run(song.client, "project.get").at("clips"), clip).at("warp");
+	CHECK(removed.at("markers") == ownMarkers);
+	CHECK(!removed.contains("created"));
 	// The trimmed definition no longer prevents later edits.
 	run(song.client, "clip.setWarp", {{"clip", clip}, {"tempo", 121}});
 	run(song.client, "clip.setWarpMarker", {{"clip", clip}, {"position", 8000 * scale}, {"target", 10000 * scale}});
