@@ -10,6 +10,7 @@
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <pugixml.hpp>
@@ -893,6 +894,110 @@ TEST_CASE("media.conform converts files to the project's sample rate and keeps w
 	writeFile(song.library / "other.wav", 441, 1, 44100.0);
 	song.clip(song.library / "other.wav");
 	CHECK_THAT(reject(song.client, "media.conform", Json::object()), ContainsSubstring("save the project"));
+}
+
+TEST_CASE("pool file changes rescale and trim clip analysis and preserve stretched fades", "[integration]")
+{
+	const bool conform = GENERATE(false, true);
+	CAPTURE(conform);
+	SavedProject song;
+	writeFile(song.library / "source.wav", 24000, 1, 24000);
+	const uint64_t clip = song.clip(song.library / "source.wav");
+	const uint64_t media = song.mediaOf(clip);
+	run(song.client, "clip.setWarp", {{"clip", clip}, {"tempo", 120}, {"gridStart", 100}});
+	for (const auto& [beat, frame] : std::vector<std::pair<int, int>>{{1, 6000}, {2, 20000}})
+		run(song.client, "clip.adjustGrid", {{"clip", clip}, {"mode", "beat"}, {"beat", beat}, {"frame", frame}});
+	for (const auto& [position, target] : std::vector<std::pair<int, int>>{{8000, 10000}, {20000, 21000}})
+		run(song.client, "clip.addWarpMarker", {{"clip", clip}, {"position", position}, {"target", target}});
+	run(song.client, "clip.setHitpoints",
+		{{"clip", clip},
+			{"hitpoints",
+				Json::array({{{"position", 3000}, {"peak", -3}, {"intensity", 1}, {"locked", true}},
+					{{"position", 22000}, {"peak", -6}, {"intensity", 0.5}, {"disabled", true}}})}});
+	run(song.client, "clip.setHitpointFilter", {{"clip", clip}, {"minimumLength", 240}});
+	for (const auto& [start, end] : std::vector<std::pair<int, int>>{{4000, 16000}, {20000, 23000}})
+		run(song.client, "clip.addRegion", {{"clip", clip}, {"start", start}, {"end", end}, {"name", "Section"}});
+	const Json stretched = run(song.client, "clip.add", {{"media", media}}).at("clip").at("id");
+	run(song.client, "clip.setWarp", {{"clip", stretched}, {"musical", true}, {"tempo", 240}, {"gridStart", 20000}});
+	const Json track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const Json event = run(song.client, "audioEvent.add",
+		{{"track", track}, {"clip", stretched}, {"offset", 1000}, {"length", 2000}, {"position", 0}})
+						   .at("event")
+						   .at("id");
+	run(song.client, "audioEvent.setFades", {{"event", event}, {"fadeIn", {{"length", 3000}}}});
+	const Json before = run(song.client, "project.get");
+	if (conform)
+		runJob(song.client, "media.conform");
+	else
+	{
+		writeFile(song.library / "short.wav", 12000, 1, 24000);
+		run(song.client, "media.relink",
+			{{"files", Json::array({{{"media", media}, {"path", utf8(song.library / "short.wav")}}})}});
+	}
+	const int scale = conform ? 2 : 1;
+	const Json after = run(song.client, "project.get");
+	const Json changed = byId(after.at("clips"), clip);
+	const Json warp = changed.at("warp");
+	CHECK(warp.at("gridStart") == 100 * scale);
+	CHECK(warp.at("tempo") == 120);
+	REQUIRE(warp.at("beats").size() == (conform ? 2 : 1));
+	CHECK(warp.at("beats").at(0) == Json{{"beat", 1}, {"frame", 6000 * scale}});
+	REQUIRE(warp.at("markers").size() == (conform ? 2 : 1));
+	CHECK(warp.at("markers").at(0) == Json{{"position", 8000 * scale}, {"target", 10000 * scale}});
+	REQUIRE(changed.at("hitpoints").size() == (conform ? 2 : 1));
+	CHECK(changed.at("hitpoints").at(0).at("position") == 3000 * scale);
+	CHECK(changed.at("hitpoints").at(0).at("locked") == true);
+	CHECK(changed.at("hitpointFilter").at("minimumLength") == 240 * scale);
+	REQUIRE(changed.at("regions").size() == (conform ? 2 : 1));
+	CHECK(changed.at("regions").at(0).at("start") == 4000 * scale);
+	CHECK(changed.at("regions").at(0).at("end") == (conform ? 32000 : 12000));
+	const Json played = byId(after.at("audioEvents"), event);
+	CHECK(byId(after.at("clips"), stretched).at("warp").at("gridStart") == (conform ? 40000 : 11999));
+	CHECK(played.at("fadeIn").at("length") == 3000 * scale);
+	CHECK(played.at("fadeIn").at("length") <= played.at("fadeRoom"));
+	run(song.client, "history.undo");
+	CHECK(run(song.client, "project.get") == before);
+	run(song.client, "history.redo");
+	CHECK(run(song.client, "project.get") == after);
+	// The trimmed definition no longer prevents later edits.
+	run(song.client, "clip.setWarp", {{"clip", clip}, {"tempo", 121}});
+	run(song.client, "clip.setWarpMarker", {{"clip", clip}, {"position", 8000 * scale}, {"target", 10000 * scale}});
+}
+
+TEST_CASE("pool resampling drops coincident anchors and empty regions", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "source.wav", 24, 1);
+	writeFile(song.library / "resampled.wav", 4, 1, 8000);
+	const uint64_t clip = song.clip(song.library / "source.wav");
+	run(song.client, "clip.setWarp", {{"clip", clip}, {"tempo", 120}});
+	for (const auto& [beat, frame] : std::vector<std::pair<int, int>>{{1, 1}, {2, 2}, {3, 7}})
+		run(song.client, "clip.adjustGrid", {{"clip", clip}, {"mode", "beat"}, {"beat", beat}, {"frame", frame}});
+	Json hitpoints = Json::array();
+	for (const int position : {1, 2, 3, 4, 23})
+	{
+		run(song.client, "clip.addWarpMarker", {{"clip", clip}, {"position", position}});
+		hitpoints.push_back({{"position", position}, {"peak", -3}, {"intensity", 1}});
+	}
+	run(song.client, "clip.setHitpoints", {{"clip", clip}, {"hitpoints", hitpoints}});
+	for (const auto& [start, end] : std::vector<std::pair<int, int>>{{1, 2}, {3, 23}})
+		run(song.client, "clip.addRegion", {{"clip", clip}, {"start", start}, {"end", end}});
+	const Json before = run(song.client, "project.get");
+	run(song.client, "media.relinkResampled",
+		{{"files", Json::array({{{"media", song.mediaOf(clip)}, {"path", utf8(song.library / "resampled.wav")}}})}});
+	const Json changed = byId(run(song.client, "project.get").at("clips"), clip);
+	CHECK(changed.at("warp").at("beats") == Json::array({{{"beat", 3}, {"frame", 1}}}));
+	CHECK(changed.at("warp").at("markers") == Json::array({{{"position", 1}, {"target", 1}}}));
+	REQUIRE(changed.at("hitpoints").size() == 2);
+	CHECK(changed.at("hitpoints").at(0).at("position") == 0);
+	CHECK(changed.at("hitpoints").at(1).at("position") == 1);
+	REQUIRE(changed.at("regions").size() == 1);
+	CHECK(changed.at("regions").at(0).at("start") == 1);
+	CHECK(changed.at("regions").at(0).at("end") == 4);
+	run(song.client, "clip.setWarp", {{"clip", clip}, {"tempo", 121}});
+	run(song.client, "history.undo");
+	run(song.client, "history.undo");
+	CHECK(run(song.client, "project.get") == before);
 }
 
 TEST_CASE("media.conform converts a media file given twice once", "[integration]")

@@ -58,19 +58,23 @@ the pool and conforming files to the project's sample rate. The engine commands 
   is relinked with `media.relink` ([backup.md](backup.md)).
 - **`media.removeMissing`** removes the missing media files with their clips and the audio events that play them
   (`audioEvent.remove`, so crossfades from them go too), as one undo step.
-- **`media.conform`** writes each media file at another sample rate than the project's into the media folder as a
-  32-bit float WAV file at the project's rate (as `media.convert` does) and points the media file at it, the
-  reference's Convert Files with New + Replace in Pool. Clip fades, and the offsets, lengths, fades, crossfades,
-  snap points and volume curves of the events that play it, are in the file's sample frames, so they are scaled to
-  the new rate and events play the same section. A crossfade's `length` is in the frames of the event it goes into
-  and its `outLength` in those of the event it comes from, so each scales with its own file. A media file given twice in
-  `media` is conformed once; one given that is missing is refused. The originals stay on disk; it needs a saved
-  project and is one undo step. Converting runs as a job (see below); `media.relinkResampled` then points the media
-  files at the new files and scales what plays them. That command takes the new file's sample rate and length,
-  refuses a file of another channel count or without sample frames and a media file given twice (before it looks
-  at whether the entries apply, since a second one would rescale what the first did), and skips an entry whose media
-  file was removed or no longer has `from`'s path or `fromSampleRate`'s rate, and every entry if the project is no
-  longer at `projectSampleRate` or another project is open (`project`).
+- **`media.conform`** writes each media file at another sample rate than the project's into the media folder as a 32-bit
+  float WAV file at the project's rate (as `media.convert` does) and points the media file at it, the reference's
+  Convert Files with New + Replace in Pool. Clip fades, warp markers and their reset origins, grid start, edited beats,
+  hitpoints, their minimum separation and regions scale to the new file frames, as do the offsets, lengths, fades,
+  crossfades, snap points and volume curves of the events that play it. Beat numbers and clip tempo stay unchanged.
+  Event fades fit the new `fadeRoom`, including stretched events whose fades exceed their source length. Shorter relinks
+  trim region ends and drop empty regions, hitpoints and anchors outside the file. A grid start beyond the new end moves
+  to its last frame; negative grid starts rescale without being clamped to zero. Rounding collisions drop later
+  hitpoints and anchors, keeping their positions strictly increasing. A crossfade's `length` is in the frames of the
+  event it goes into and its `outLength` in those of the event it comes from, so each scales with its own file. A media
+  file given twice in `media` is conformed once; one given that is missing is refused. The originals stay on disk; it
+  needs a saved project and is one undo step. Converting runs as a job (see below); `media.relinkResampled` then points
+  the media files at the new files and scales what plays them. That command takes the new file's sample rate and length,
+  refuses a file of another channel count or without sample frames and a media file given twice (before it looks at
+  whether the entries apply, since a second one would rescale what the first did), and skips an entry whose media file
+  was removed or no longer has `from`'s path or `fromSampleRate`'s rate, and every entry if the project is no longer at
+  `projectSampleRate` or another project is open (`project`).
 - **Import.** `audioFile.import` with `clipsOnly` adds the files to the pool without tracks or events, with copy,
   convert and split channels as for any import ([file-import.md](file-import.md)).
 - **Jobs.** `media.locate` and `media.conform` would hold up every other command while they look through a large
@@ -180,6 +184,10 @@ converting to other bit depths, channels and file formats (only the sample rate 
 clips.
 
 ## Checks
+
+`tests/pool_tests.cpp` conforms and shortens clips with warp markers, definition edits, hitpoints and regions,
+preserving stretched event fades within `fadeRoom`, undo/redo and subsequent warp edits. Resampling to fewer frames also
+checks coincident anchors and hitpoints, anchors rounded onto clip endpoints and regions rounded to nothing.
 
 `tests/audiofunctions_ui_tests.cpp` opens Statistics and Spectrum Analyzer through the Audio menu in the pool's zone and
 the same commands in its floating window. It analyzes a whole unused clip independently of the selected project event,
