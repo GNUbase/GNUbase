@@ -1049,7 +1049,7 @@ TEST_CASE("pool file changes move slice and quantize reset origins in every trac
 	}
 	else
 	{
-		writeFile(song.library / "replacement.wav", fileLength, 1, 24000 * scale);
+		writeFile(song.library / "replacement.wav", fileLength, 1, 24000.0 * static_cast<double>(scale));
 		run(song.client, change == "short" ? "media.relink" : "media.relinkResampled",
 			{{"files",
 				Json::array({{{"media", song.mediaOf(clip)}, {"path", utf8(song.library / "replacement.wav")}}})}});
