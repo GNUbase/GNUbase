@@ -29,6 +29,11 @@ made by hand stays: resetting returns to the original, unquantized state (p. 367
 quantizing is part of it. Which crossfade that was is our reading of the state, not something the reference manual
 spells out.
 
+Conforming or relinking media moves both saved timings and slice origins into the new file frames, in every track
+version ([pool.md](pool.md)). Reset Quantize and the Slice Rules' Reset therefore restore the same source section after
+a sample-rate conversion, bounded by the new end after a shorter relink. Saved crossfades scale each side with its own
+source file; saved snap points and fade outs stay within the new file and the restored event's fade room.
+
 Splitting a quantized event (`event.split`) gives each piece an origin of its own, so that resetting puts both back
 where they were and they tile again: the piece after the split was as far from its original, in samples, as the split
 is from where quantizing put the event, and its original offset and length are the recorded original's, cut where the
@@ -231,6 +236,9 @@ still take whatever events are selected, of any tracks. Ctrl and a click on a se
 the whole group out of the selection (#1668).
 
 ## Checks
+
+`tests/pool_tests.cpp` checks both resets after conforming and shorter relinking, including inactive track versions,
+crossfades between files at different rates, saved snap points, stretched fade outs and empty quantize originals.
 
 `tests/audioquantize_tests.cpp`: event starts and snap points to the grid, strength, soft quantizing, reset, events
 moved since, audio parts, locked events, the catch range, errors and the origin saved with the project; splitting a
