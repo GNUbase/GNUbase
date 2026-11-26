@@ -1041,10 +1041,12 @@ TEST_CASE("pool file changes move slice and quantize reset origins in every trac
 	if (inactive)
 		run(song.client, "trackVersion.add", {{"tracks", {track}}});
 	const Json before = run(song.client, "project.get");
-	const int scale = change == "short" ? 1 : 2;
+	const int64_t scale = change == "short" ? 1 : 2;
 	const int64_t fileLength = change == "conform" ? 48000 : 12000 * scale;
 	if (change == "conform")
+	{
 		runJob(song.client, "media.conform");
+	}
 	else
 	{
 		writeFile(song.library / "replacement.wav", fileLength, 1, 24000 * scale);
@@ -1062,7 +1064,7 @@ TEST_CASE("pool file changes move slice and quantize reset origins in every trac
 	const auto movedTiming = [&](Json timing)
 	{
 		const int64_t offset = timing.at("offset").get<int64_t>() * scale;
-		const int64_t end = offset + timing.at("length").get<int64_t>() * scale;
+		const int64_t end = offset + (timing.at("length").get<int64_t>() * scale);
 		timing["offset"] = std::min(offset, fileLength - 1);
 		timing["length"] = std::max<int64_t>(std::min(end, fileLength) - timing.at("offset").get<int64_t>(), 1);
 		return timing;
@@ -1075,7 +1077,7 @@ TEST_CASE("pool file changes move slice and quantize reset origins in every trac
 	expectedSlice["timing"] = movedTiming(sliceOrigin.at("timing"));
 	expectedSlice["snapPoint"] = std::min(sliceOrigin.at("snapPoint").get<int64_t>() * scale, fileLength - 1);
 	expectedSlice["fadeOut"]["length"] =
-		std::min<int64_t>(12000 * scale, expectedSlice.at("timing").at("length").get<int64_t>() - 1000 * scale);
+		std::min<int64_t>(12000 * scale, expectedSlice.at("timing").at("length").get<int64_t>() - (1000 * scale));
 	CHECK(song.event(sliced).at("sliceOrigin") == expectedSlice);
 	run(song.client, "quantize.reset", {{"events", {quantized, next}}});
 	const Json reset = song.event(quantized);
@@ -1136,11 +1138,14 @@ TEST_CASE("pool reset origins rescale crossfades using each source event's file"
 			{{"files", Json::array({{{"media", song.mediaOf(source)}, {"path", utf8(song.library / "short.wav")}}})}});
 	}
 	else
+	{
 		runJob(song.client, "media.conform");
+	}
 	run(song.client, "trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
 	Json expected = crossfade;
 	expected["outLength"] = shorten ? 6000 : 16000;
-	expected["length"] = changedDestination ? (shorten ? 4000 : 12000) : 6000;
+	if (changedDestination)
+		expected["length"] = shorten ? 4000 : 12000;
 	if (slice)
 	{
 		CHECK(song.event(to).at("sliceOrigin").at("timing").at("crossfade") == expected);
@@ -1175,7 +1180,9 @@ TEST_CASE("pool slice origins keep stretched fade room and clamp offsets beyond 
 		{{"clip", clip}, {"hitpoints", Json::array({{{"position", offset + 500}, {"peak", -3}, {"intensity", 1}}})}});
 	REQUIRE(run(song.client, "quantize.slice", {{"events", {event}}}).at("events").size() == 2);
 	if (conform)
+	{
 		runJob(song.client, "media.conform");
+	}
 	else
 	{
 		writeFile(song.library / "short.wav", 1200, 1, 24000);
@@ -1214,7 +1221,9 @@ TEST_CASE("pool file changes keep empty quantize originals removable", "[integra
 	const Json tail = run(song.client, "event.split", {{"events", {first}}, {"positions", {20048}}}).at("events").at(0);
 	REQUIRE(song.event(tail).at("quantizeOrigin").at("original").at("length") == 0);
 	if (conform)
+	{
 		runJob(song.client, "media.conform");
+	}
 	else
 	{
 		writeFile(song.library / "short.wav", 10000, 1, 24000);
