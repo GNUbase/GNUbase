@@ -938,7 +938,11 @@ TEST_CASE("sample editor fine zoom shows the samples inside the visible range", 
 	REQUIRE(f.app.waitUntil(
 		[&]
 		{
-			return f.app.appUi().binding().waiting() == 0 && wave->span().start == 2100 && wave->span().length == 200;
+			if (wave->span().start != 2100 || wave->span().length != 200 || wave->channels().empty())
+				return false;
+			const auto& high = wave->channels().at(0).high;
+			return !high.empty() &&
+				*std::max_element(high.begin(), high.end()) - *std::min_element(high.begin(), high.end()) > 20000;
 		}));
 	REQUIRE(!wave->channels().empty());
 	const auto& high = wave->channels().at(0).high;

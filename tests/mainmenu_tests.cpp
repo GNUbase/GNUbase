@@ -1213,7 +1213,9 @@ TEST_CASE("Audio Advanced shows Close Gaps progress and Cancel until the job end
 	click(app, "menuitem[command=audio.closeGapsTimeStretch]");
 	REQUIRE(app.waitUntil([&] { return held.job() != 0; }, std::chrono::seconds(30)));
 	REQUIRE(app.waitUntil([&] { return shown(app, "#render-progress-dialog"); }));
-	REQUIRE(app.waitUntil([&] { return app.appUi().binding().waiting() == 0; }));
+	// Job events can still be waiting after every command result was handled.
+	REQUIRE(app.waitUntil([&]
+		{ return std::stod(element(app, "#render-progress").at("attributes").at("value").get<std::string>()) > 0.0; }));
 	CHECK(std::stod(element(app, "#render-progress").at("attributes").at("value").get<std::string>()) > 0.0);
 	CHECK_THAT(element(app, "#render-progress-file").at("text").get<std::string>(), ContainsSubstring("Closing gaps"));
 	CHECK_THAT(element(app, "#render-progress-message").at("text").get<std::string>(), ContainsSubstring("wait"));
@@ -1229,8 +1231,17 @@ TEST_CASE("Audio Advanced shows Close Gaps progress and Cancel until the job end
 	if (cancel)
 	{
 		click(app, "#render-progress-dialog button[result=cancel]");
-		REQUIRE(app.waitUntil([&] { return app.appUi().binding().waiting() == 0; }));
-		CHECK_THAT(app.call("engine.commandLog").dump(), ContainsSubstring("job.cancel"));
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				const Json commands = app.call("engine.commandLog").at("commands");
+				return std::any_of(commands.begin(), commands.end(),
+					[&](const Json& command)
+					{
+						return command.at("command") == "job.cancel" &&
+							command.at("parameters").at("job") == held.job();
+					});
+			}));
 	}
 	held.release();
 	engine::Client observer(app.engine());
@@ -1300,7 +1311,12 @@ TEST_CASE("Audio Advanced reports a failed Close Gaps time stretch job", "[ui]")
 		const Json finished = test::waitForJob(observer, held.job());
 		REQUIRE(finished.at("state") == "failed");
 		CHECK_THAT(finished.at("error").get<std::string>(), ContainsSubstring("ratio"));
-		REQUIRE(app.waitUntil([&] { return shown(app, "#edit-refused"); }));
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				return shown(app, "#edit-refused") &&
+					element(app, "#edit-refused").value("text", std::string()).find("ratio") != std::string::npos;
+			}));
 		CHECK_THAT(element(app, "#edit-refused").value("text", std::string()), ContainsSubstring("ratio"));
 		REQUIRE(app.waitUntil([&] { return !shown(app, "#render-progress-dialog"); }));
 		CHECK(!shown(app, "#project-error-dialog"));
