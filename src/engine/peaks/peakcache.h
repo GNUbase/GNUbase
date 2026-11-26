@@ -116,7 +116,8 @@ namespace gnubase::engine::peaks
 		// The status of a media file's peaks, or nothing for an unknown media file.
 		std::optional<Status> status(ObjectId media) const;
 
-		// Columns of a media file's peaks (see peaks::columns), and their status. frames defaults to the rest of the
+		// Columns and status: cached peaks, or sample reads below 256 frames per column once ready. Reads use fixed
+		// blocks over the span bounded by g_maxPixels. frames defaults to the rest of the
 		// file from start; channels to all of them. If its audio file changed since its peaks were made, they are
 		// generated again. Nothing for an unknown media file. Throws std::invalid_argument for a channel the file
 		// doesn't have, or for more than g_maxColumnValues columns times channels.

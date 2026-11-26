@@ -156,12 +156,13 @@ root `.sampler-panel` has the class `.empty`):
   per drag (p. 717).
 - **Ruler and zoom** (p. 717, #1122): above the display a ruler (`.sampler-ruler`) shows the part of the sample shown,
   from the sample's start and at its own rate, in the format that the arrow button at its right picks
-  (`#sampler-ruler-format`: Bars+Beats at the project's tempo and signatures, Seconds, the default, or Samples).
-  Beside the display the vertical zoom (`#sampler-vertical-zoom`) raises the waveform up to 64 times; below it the
-  scroll slider (`#sampler-scroll`) moves along the sample and the horizontal zoom (`#sampler-horizontal-zoom`) shows
-  from the whole sample down to 64 frames around the middle of what it showed, asking `media.peaks` for that part
-  only. The markers, the bars, the loop and the shades lie in the part shown, markers outside it are hidden
-  (`.out-of-view`), and drags count in it. The zoom is the panel's own, the whole sample again with another one.
+  (`#sampler-ruler-format`: Bars+Beats at the project's tempo and signatures, Seconds, the default, or Samples). Beside
+  the display the vertical zoom (`#sampler-vertical-zoom`) raises the waveform up to 64 times; below it the scroll
+  slider (`#sampler-scroll`) moves along the sample and the horizontal zoom (`#sampler-horizontal-zoom`) shows from the
+  whole sample down to 64 frames around the middle of what it showed, asking `media.peaks` for that part only. Below 256
+  frames per pixel the waveform shows sample columns rather than repeated block peaks ([peaks.md](peaks.md)). The
+  markers, the bars, the loop and the shades lie in the part shown, markers outside it are hidden (`.out-of-view`), and
+  drags count in it. The zoom is the panel's own, the whole sample again with another one.
 - **Sections** (`.sampler-section`): Playback, Pitch, Filter, Amp and Keyboard, a control per parameter of
   `processor.list`'s sampler (`[parameter]`, `#sampler-parameter-<id>`): a toggle for those that are on or off, a
   drop-down list for those with options, a value field for the others, each gesture one undo step (`parameter.set`

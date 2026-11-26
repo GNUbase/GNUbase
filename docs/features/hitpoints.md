@@ -108,7 +108,10 @@ project window, filtering out selected MIDI parts. Without selected audio events
 disabled. Each edit is one undo step; the selection range does not replace the event selection. The project window
 watches the time-stretch job and shows a failed job's engine error in the edit-refused notification, including a ratio
 outside 0.1 to 10 or a project changed during rendering. It also checks jobs that finished before their command's result
-reached the UI.
+reached the UI. While a job started in the project window runs, the shared Rendering Audio dialog shows its progress and
+detail, titled Close Gaps (Time Stretch), and asks the user to wait before editing. Cancel or closing the dialog sends
+`job.cancel`; the job removes its rendered files. Completion, cancellation and failure close the display. Jobs started
+by other clients do not open it.
 
 The sample editor's inspector has the Hitpoints section, and its display shows the hitpoints that count and the
 disabled ones.
@@ -158,6 +161,10 @@ onsets (room sound, bleed, flams) are yet to come.
 - `tests/mainmenu_tests.cpp`: a time-stretch job needing a ratio above 10 shows its error in `#edit-refused`, both after
   its command's result and when it finished before the UI handled that result; the project and undo history stay
   unchanged.
+
+- `tests/mainmenu_tests.cpp`: Close Gaps jobs held after rendering one slice show nonzero progress and detail. Cancel
+  sends `job.cancel` without changing the project or history and removes that rendered file. Completion closes the
+  display with one undoable edit, and failed jobs close it without opening a second error dialog.
 
 - `tests/hitpoints_tests.cpp`: held time-stretch jobs keep commands responsive, cancel without files, reject edits, undo
   and project replacement, and refuse transactions. Flatten clears slice and quantize origins with undo/redo and removes

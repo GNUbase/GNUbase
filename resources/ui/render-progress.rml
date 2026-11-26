@@ -31,7 +31,7 @@
 <body>
 	<dialog id="render-progress-dialog">
 		<div class="dialog-titlebar">Rendering Audio</div>
-		<div class="row">Rendering audio...</div>
+		<div class="row" id="render-progress-message">Rendering audio...</div>
 		<div class="row"><progress id="render-progress" value="0"/></div>
 		<div class="row" id="render-progress-file"></div>
 		<div class="row buttons">

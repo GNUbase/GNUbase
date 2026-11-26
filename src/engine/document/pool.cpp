@@ -134,9 +134,78 @@ namespace gnubase::engine
 			out.length = std::min(rescale(out.length), length - in.length);
 		}
 
-		// After media files were pointed at files at another sample rate: moves the clip fades, and the offsets,
-		// lengths, fades, crossfades, snap points and volume curves of the events that play them, with the new sample
-		// frames.
+		// Rounding to fewer frames can merge anchors; retain only strictly increasing positions and targets.
+		void rescaleMarkers(std::vector<WarpMarker>& markers, const Rescale& rescale)
+		{
+			WarpMarker before;
+			markers.erase(std::remove_if(markers.begin(), markers.end(),
+							  [&](WarpMarker& marker)
+							  {
+								  marker.position = rescale(marker.position);
+								  marker.target = rescale(marker.target);
+								  if (marker.position <= before.position || marker.target <= before.target ||
+									  marker.position >= rescale.length || marker.target >= rescale.length)
+									  return true;
+								  before = marker;
+								  return false;
+							  }),
+				markers.end());
+		}
+
+		void rescaleClip(Clip& clip, const Rescale& rescale)
+		{
+			rescaleFades(clip.fadeIn, clip.fadeOut, rescale, rescale.length);
+			ClipWarp& warp = clip.warp;
+			warp.gridStart = std::min(rescale(warp.gridStart), rescale.length - 1);
+			time::Samples before = warp.gridStart;
+			warp.beats.erase(std::remove_if(warp.beats.begin(), warp.beats.end(),
+								 [&](BeatEdit& beat)
+								 {
+									 beat.frame = rescale(beat.frame);
+									 if (beat.frame <= before || beat.frame >= rescale.length)
+										 return true;
+									 before = beat.frame;
+									 return false;
+								 }),
+				warp.beats.end());
+			rescaleMarkers(warp.markers, rescale);
+			if (warp.quantizeOrigin)
+			{
+				rescaleMarkers(warp.quantizeOrigin->original, rescale);
+				rescaleMarkers(warp.quantizeOrigin->quantized, rescale);
+			}
+			for (time::Samples& frame : warp.created)
+				frame = rescale(frame);
+			std::sort(warp.created.begin(), warp.created.end());
+			warp.created.erase(std::remove_if(warp.created.begin(), warp.created.end(),
+								   [&](time::Samples frame) { return frame <= 0 || frame >= rescale.length; }),
+				warp.created.end());
+			warp.created.erase(std::unique(warp.created.begin(), warp.created.end()), warp.created.end());
+			before = -1;
+			clip.hitpoints.erase(std::remove_if(clip.hitpoints.begin(), clip.hitpoints.end(),
+									 [&](Hitpoint& hitpoint)
+									 {
+										 hitpoint.position = rescale(hitpoint.position);
+										 if (hitpoint.position <= before || hitpoint.position >= rescale.length)
+											 return true;
+										 before = hitpoint.position;
+										 return false;
+									 }),
+				clip.hitpoints.end());
+			clip.hitpointFilter.minimumLength = rescale(clip.hitpointFilter.minimumLength);
+			clip.regions.erase(std::remove_if(clip.regions.begin(), clip.regions.end(),
+								   [&](ClipRegion& region)
+								   {
+									   region.start = rescale(region.start);
+									   region.end = std::min(rescale(region.end), rescale.length);
+									   return region.start >= region.end;
+								   }),
+				clip.regions.end());
+			std::sort(clip.regions.begin(), clip.regions.end(), [](const ClipRegion& a, const ClipRegion& b)
+				{ return a.start != b.start ? a.start < b.start : a.id < b.id; });
+		}
+
+		// After a conform or relink, move clip data and the events that play it to the new file frames and bounds.
 		void rescaleUses(Project& project, CommandContext& context, const std::map<ObjectId, Rescale>& rescales)
 		{
 			const auto rescaleOf = [&project, &rescales](ObjectId clip) -> const Rescale*
@@ -147,7 +216,7 @@ namespace gnubase::engine
 			for (auto& [id, clip] : project.clips)
 				if (const Rescale* rescale = rescaleOf(id))
 				{
-					rescaleFades(clip.fadeIn, clip.fadeOut, *rescale, rescale->length);
+					rescaleClip(clip, *rescale);
 					context.emit("clip.changed", {{"clip", toJson(clip)}});
 				}
 			// Crossfades' outLength is in the frames of the event they come from, so read those before changing.
@@ -169,7 +238,7 @@ namespace gnubase::engine
 						const time::Samples end = std::min((*rescale)(event.offset + event.length), rescale->length);
 						event.offset = offset;
 						event.length = std::max<time::Samples>(end - offset, 1);
-						rescaleFades(event.fadeIn, event.fadeOut, *rescale, event.length);
+						rescaleFades(event.fadeIn, event.fadeOut, *rescale, fadeRoom(project, event));
 						event.crossfade.length = std::min((*rescale)(event.crossfade.length), event.length);
 						if (event.snapPoint)
 							event.snapPoint = (*rescale)(*event.snapPoint);
@@ -1078,7 +1147,8 @@ namespace gnubase::engine
 				"Conforms media files to the project's sample rate (Convert Files with New + Replace in Pool, "
 				"reference manual pp. 759-760): writes each one at another sample rate into the media folder as a "
 				"32-bit float WAV file at the project's sample rate and points the media file at it with "
-				"media.relinkResampled, as one undo step. The clip fades, offsets, lengths, fades, crossfades, snap "
+				"media.relinkResampled, as one undo step. Clip fades, warp data, hitpoints and regions, and the event "
+				"offsets, lengths, fades, crossfades, snap "
 				"points and volume curves of what plays it move with the new sample frames, so events play the same "
 				"section. The original files stay on disk. media limits it to those media files, which must not be "
 				"missing (default: every one that isn't missing). The project must have been saved. It runs as a "
@@ -1119,8 +1189,11 @@ namespace gnubase::engine
 			{"media.relinkResampled", 1,
 				"Points media files at files of theirs at another sample rate, such as the ones media.conform writes, "
 				"as one undo step: each media file takes its new file's sample rate and length, and the clip fades, "
+				"warp data, hitpoints, their minimum separation and regions, and the event "
 				"offsets, lengths, fades, crossfades, snap points and volume curves of what plays it move with the new "
-				"sample frames, so events play the same section. Each new file must be an audio file with the media "
+				"sample frames, so events play the same section. Out-of-file anchors and hitpoints and empty regions "
+				"are dropped; region ends and grid starts are trimmed. Event fades fit their played fadeRoom. "
+				"Each new file must be an audio file with the media "
 				"file's "
 				"channel count and at least one sample frame, and each media file can be given once, whether its entry "
 				"applies or not. An entry with from applies only if the media file is still there and still points at "

@@ -350,6 +350,20 @@ TEST_CASE("the display's ruler shows the sample's time in the format chosen, and
 	CHECK(std::stod(attribute(".sampler-ruler", "start")) > 0.0);
 	REQUIRE(f.app.waitUntil([&] { return f.peaksSpanShown(); }));
 	CHECK(f.wave()->span().length < 24000.0 / 2);
+	// Below the finest cached peak level, columns follow the samples rather than repeating a block's peak.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			if (!f.peaksSpanShown())
+				return false;
+			const auto& high = f.wave()->channels().at(0).high;
+			return !high.empty() && f.wave()->span().length / static_cast<double>(high.size()) < 256 &&
+				*std::max_element(high.begin(), high.end()) - *std::min_element(high.begin(), high.end()) > 4000;
+		}));
+	const auto& high = f.wave()->channels().at(0).high;
+	REQUIRE(!high.empty());
+	CHECK(f.wave()->span().length / static_cast<double>(high.size()) < 256);
+	CHECK(*std::max_element(high.begin(), high.end()) - *std::min_element(high.begin(), high.end()) > 4000);
 	const auto centre = [&](const std::string& marker)
 	{
 		const Json box = f.box(".sampler-marker[marker=\"" + marker + "\"]");

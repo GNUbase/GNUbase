@@ -145,21 +145,18 @@ namespace gnubase::ui
 				  if (const Window* main = mainWindow())
 					  backupStarted(main->id(), engine::Result{0, {{"job", job}}, {}});
 			  })),
+		  m_sliceStarted(binding.onResult("event.closeGaps",
+			  [this](const engine::Result& result)
+			  {
+				  if (result.ok() && result.value.contains("job"))
+					  if (const Window* main = mainWindow())
+						  backupStarted(main->id(), result);
+			  })),
 		  m_jobProgress(binding.on("job.progress",
 			  [this](const engine::Event& event)
 			  {
-				  const auto backup = m_backups.find(event.data.at("job").get<uint64_t>());
-				  auto* dialog = backup != m_backups.end()
-					  ? dynamic_cast<Rml::ElementDocument*>(backup->second.progress.get())
-					  : nullptr;
-				  if (dialog == nullptr)
-					  return;
-				  if (Rml::Element* bar =
-						  dialog->GetElementById(backup->second.rendering ? "render-progress" : "backup-progress"))
-					  bar->SetAttribute("value", event.data.at("progress").get<double>());
-				  if (Rml::Element* file = dialog->GetElementById(
-						  backup->second.rendering ? "render-progress-file" : "backup-progress-file"))
-					  file->SetInnerRML(Rml::StringUtilities::EncodeRml(event.data.at("detail").get<std::string>()));
+				  backupProgress(event.data.at("job").get<uint64_t>(), event.data.at("progress").get<double>(),
+					  event.data.at("detail").get<std::string>());
 			  })),
 		  m_jobFinished(
 			  binding.on("job.finished", [this](const engine::Event& event) { backupEnded(event.data.at("job")); })),
@@ -422,6 +419,13 @@ namespace gnubase::ui
 			{
 				dialog->Show(Rml::ModalFlag::None);
 				dialog->SetAttribute("job", id);
+				if (job.at("kind") == "event.closeGaps")
+				{
+					if (Rml::Element* title = dialog->QuerySelector(".dialog-titlebar"))
+						title->SetInnerRML("Close Gaps (Time Stretch)");
+					if (Rml::Element* message = dialog->GetElementById("render-progress-message"))
+						message->SetInnerRML("Please wait until the gaps are closed before editing the project.");
+				}
 			}
 			dialog->AddEventListener(Rml::EventId::Unload, this);
 			if (Rml::Element* bar = dialog->GetElementById(backup.rendering ? "render-progress" : "backup-progress"))
@@ -431,9 +435,30 @@ namespace gnubase::ui
 		m_binding.send("job.get", {{"job", id}},
 			[this](const engine::Result& state)
 			{
-				if (state.ok() && state.value.at("job").at("state") != "running")
-					backupEnded(state.value.at("job"));
+				if (!state.ok())
+					return;
+				const Json& job = state.value.at("job");
+				if (job.at("state") != "running")
+					backupEnded(job);
+				else
+					backupProgress(job.at("id").get<uint64_t>(), job.at("progress").get<double>(),
+						job.at("detail").get<std::string>());
 			});
+	}
+
+	void ProjectFiles::backupProgress(uint64_t job, double progress, const std::string& detail)
+	{
+		const auto backup = m_backups.find(job);
+		auto* dialog =
+			backup != m_backups.end() ? dynamic_cast<Rml::ElementDocument*>(backup->second.progress.get()) : nullptr;
+		if (dialog == nullptr)
+			return;
+		if (Rml::Element* bar =
+				dialog->GetElementById(backup->second.rendering ? "render-progress" : "backup-progress"))
+			bar->SetAttribute("value", progress);
+		if (Rml::Element* file =
+				dialog->GetElementById(backup->second.rendering ? "render-progress-file" : "backup-progress-file"))
+			file->SetInnerRML(Rml::StringUtilities::EncodeRml(detail));
 	}
 
 	void ProjectFiles::backupEnded(const Json& job)
@@ -458,7 +483,9 @@ namespace gnubase::ui
 		const Json& state = job.at("state");
 		if (state == "failed")
 		{
-			showError(window, job.at("error").get<std::string>());
+			// The event display reports Close Gaps failures in its edit-refused notification.
+			if (job.at("kind") != "event.closeGaps")
+				showError(window, job.at("error").get<std::string>());
 			return;
 		}
 		if (state != "done")

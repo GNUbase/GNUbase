@@ -1,6 +1,6 @@
 # Waveform overviews
 
-Waveforms draw from **peaks**, not from the audio file (#83). The code is in `src/engine/peaks`.
+Waveforms draw from cached **peaks**, with sample columns at fine zoom (#83, #2118). The code is in `src/engine/peaks`.
 
 - A file's peaks are the smallest and largest sample per channel over blocks of 256, 4096 and 65536 frames: three levels, each built from the one before (`PeakBuilder`). They are 16-bit, with full scale at 32767; minimums round down and maximums up, so a peak always contains its samples. A one-hour stereo file at 48 kHz has about 5.7 MB of peaks.
 - **Peak files** (`<audio file name>.gbpeaks`) are stored **next to their audio file**, so they move with the project folder and need no clean-up. Where that folder can't be written (a read-only sample library), they go to the per-user cache folder (`%LOCALAPPDATA%\GNUbase\peaks`, `~/Library/Caches/GNUbase/peaks` or `~/.cache/gnubase/peaks`), named after the file plus a hash of its path. Peak files are never committed (`.gitignore`).
@@ -11,6 +11,17 @@ Waveforms draw from **peaks**, not from the audio file (#83). The code is in `sr
 - **Recording** appends to peaks as the file grows: `PeakCache::record` returns a `PeakRecorder`, whose `append` the disk thread calls with each block it writes, and whose `finish`, once the file is closed, makes the peaks ready and leaves hashing the file and writing its peak file to the cache's worker. Queries read the growing peaks meanwhile. Peaks never touch audio threads.
 
 ## Drawing
+
+Below 256 frames per column, `media.peaks` reads a ready audio file over the requested span and returns exact sample
+minimums and maximums with `level: 1`. Subsample zoom repeats each sample only over its own columns. Channels retain
+their requested order, NaNs count as silence when no other sample is present, and columns beyond the file are zero.
+Reads run on the command thread in 4096-frame blocks outside the peak cache's locks. The 65536-column limit bounds each
+fine query to fewer than 16777216 source frames; its buffers hold only a block and the output columns. Coarser queries
+and recordings continue to use the peak levels.
+
+`tests/peaks_tests.cpp` compares fine columns with direct sample scans, including subsample zoom, partial cached blocks,
+channel selection and the file end. `tests/sampler_ui_tests.cpp` and `tests/sampleeditor_ui_tests.cpp` check waveform
+variation below the finest cached level in the real views.
 
 The event display ([event-display.md](event-display.md)) draws each audio event's waveform from `media.peaks`, as one more client of the engine API (`ui::EventWaveforms`, `src/ui/eventwaveforms.h`):
 
