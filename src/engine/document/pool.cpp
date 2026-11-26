@@ -205,6 +205,52 @@ namespace gnubase::engine
 				{ return a.start != b.start ? a.start < b.start : a.id < b.id; });
 		}
 
+		void rescaleRange(time::Samples& offset, time::Samples& length, const Rescale& rescale)
+		{
+			const time::Samples end = std::min(rescale(offset + length), rescale.length);
+			offset = std::min(rescale(offset), rescale.length - 1);
+			// A split piece with none of the quantize original must still be removed by Reset Quantize.
+			if (length != 0)
+				length = std::max<time::Samples>(end - offset, 1);
+		}
+
+		// Each saved crossfade can come from a different event than the live one, including in an unchanged file.
+		bool rescaleCrossfade(Crossfade& crossfade, const Rescale* rescale, time::Samples length,
+			const std::map<ObjectId, const Rescale*>& eventRescales)
+		{
+			if (rescale != nullptr)
+				crossfade.length = std::min((*rescale)(crossfade.length), length);
+			const auto from = eventRescales.find(crossfade.from);
+			const Rescale* fromRescale = from == eventRescales.end() ? nullptr : from->second;
+			if (fromRescale != nullptr)
+				crossfade.outLength = std::min((*fromRescale)(crossfade.outLength), fromRescale->length);
+			return rescale != nullptr || fromRescale != nullptr;
+		}
+
+		bool rescaleTiming(
+			EventTiming& timing, const Rescale* rescale, const std::map<ObjectId, const Rescale*>& eventRescales)
+		{
+			if (rescale != nullptr)
+				rescaleRange(timing.offset, timing.length, *rescale);
+			return rescaleCrossfade(timing.crossfade, rescale, timing.length, eventRescales);
+		}
+
+		void rescaleSliceOrigin(
+			SliceOrigin& origin, const AudioEvent& event, const Project& project, const Rescale& rescale)
+		{
+			if (origin.snapPoint)
+				origin.snapPoint = std::min(rescale(*origin.snapPoint), rescale.length - 1);
+			// The restored whole event can have more fade room than the first slice that keeps its origin.
+			AudioEvent restored;
+			restored.clip = event.clip;
+			restored.position = origin.timing.position;
+			restored.offset = origin.timing.offset;
+			restored.length = origin.timing.length;
+			const time::Samples room = fadeRoom(project, restored);
+			origin.fadeOut.length =
+				std::min(rescale(origin.fadeOut.length), room - std::min(event.fadeIn.length, room));
+		}
+
 		// After a conform or relink, move clip data and the events that play it to the new file frames and bounds.
 		void rescaleUses(Project& project, CommandContext& context, const std::map<ObjectId, Rescale>& rescales)
 		{
@@ -228,25 +274,29 @@ namespace gnubase::engine
 				[&](AudioEvent& event)
 				{
 					const Rescale* rescale = eventRescales.at(event.id);
-					const auto from = eventRescales.find(event.crossfade.from);
-					const Rescale* fromRescale = from == eventRescales.end() ? nullptr : from->second;
-					if (rescale == nullptr && fromRescale == nullptr)
-						return;
 					if (rescale != nullptr)
 					{
-						const time::Samples offset = std::min((*rescale)(event.offset), rescale->length - 1);
-						const time::Samples end = std::min((*rescale)(event.offset + event.length), rescale->length);
-						event.offset = offset;
-						event.length = std::max<time::Samples>(end - offset, 1);
+						rescaleRange(event.offset, event.length, *rescale);
 						rescaleFades(event.fadeIn, event.fadeOut, *rescale, fadeRoom(project, event));
-						event.crossfade.length = std::min((*rescale)(event.crossfade.length), event.length);
 						if (event.snapPoint)
 							event.snapPoint = (*rescale)(*event.snapPoint);
 						for (VolumePoint& point : event.volumeCurve)
 							point.position = std::min((*rescale)(point.position), rescale->length);
 					}
-					if (fromRescale != nullptr)
-						event.crossfade.outLength = (*fromRescale)(event.crossfade.outLength);
+					bool changed = rescaleCrossfade(event.crossfade, rescale, event.length, eventRescales);
+					if (event.quantizeOrigin)
+					{
+						changed = rescaleTiming(event.quantizeOrigin->original, rescale, eventRescales) || changed;
+						changed = rescaleTiming(event.quantizeOrigin->quantized, rescale, eventRescales) || changed;
+					}
+					if (event.sliceOrigin)
+					{
+						changed = rescaleTiming(event.sliceOrigin->timing, rescale, eventRescales) || changed;
+						if (rescale != nullptr)
+							rescaleSliceOrigin(*event.sliceOrigin, event, project, *rescale);
+					}
+					if (!changed)
+						return;
 					// Only the active versions' events are the project's.
 					const auto inProject = project.audioEvents.find(event.id);
 					if (inProject != project.audioEvents.end() && &inProject->second == &event)
@@ -1150,7 +1200,8 @@ namespace gnubase::engine
 				"media.relinkResampled, as one undo step. Clip fades, warp data, hitpoints and regions, and the event "
 				"offsets, lengths, fades, crossfades, snap "
 				"points and volume curves of what plays it move with the new sample frames, so events play the same "
-				"section. The original files stay on disk. media limits it to those media files, which must not be "
+				"section. Slice origins and both quantize reset timings move too, in every track version. "
+				"The original files stay on disk. media limits it to those media files, which must not be "
 				"missing (default: every one that isn't missing). The project must have been saved. It runs as a "
 				"job, so it can't be part of a history.transaction: this returns at once, job.progress events say "
 				"which file it converts, and job.cancel stops it and removes the files it wrote. Media files whose "
@@ -1192,7 +1243,10 @@ namespace gnubase::engine
 				"warp data, hitpoints, their minimum separation and regions, and the event "
 				"offsets, lengths, fades, crossfades, snap points and volume curves of what plays it move with the new "
 				"sample frames, so events play the same section. Out-of-file anchors and hitpoints and empty regions "
-				"are dropped; region ends and grid starts are trimmed. Event fades fit their played fadeRoom. "
+				"are dropped; region ends and grid starts are trimmed. Slice origins and both quantize reset timings "
+				"move too, in every track version, and their sections and crossfades fit the new file bounds. "
+				"Saved snap points fit the file, and saved fade outs fit the restored event's fadeRoom. "
+				"Event fades fit their played fadeRoom. "
 				"Each new file must be an audio file with the media "
 				"file's "
 				"channel count and at least one sample frame, and each media file can be given once, whether its entry "

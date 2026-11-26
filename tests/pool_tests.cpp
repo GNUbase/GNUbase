@@ -1006,6 +1006,225 @@ TEST_CASE("pool file changes rescale and trim clip analysis and preserve stretch
 	run(song.client, "clip.setWarpMarker", {{"clip", clip}, {"position", 8000 * scale}, {"target", 10000 * scale}});
 }
 
+TEST_CASE("pool file changes move slice and quantize reset origins in every track version", "[integration]")
+{
+	const std::string change = GENERATE("conform", "resampled", "short");
+	const bool inactive = GENERATE(false, true);
+	CAPTURE(change, inactive);
+	SavedProject song;
+	writeFile(song.library / "source.wav", 24000, 1, 24000);
+	const uint64_t clip = song.clip(song.library / "source.wav");
+	const Json track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const auto add = [&](int64_t position, int64_t offset, int64_t length)
+	{
+		return run(song.client, "audioEvent.add",
+			{{"track", track}, {"clip", clip}, {"position", position}, {"offset", offset}, {"length", length}})
+			.at("event")
+			.at("id");
+	};
+	const Json quantized = add(1000, 3000, 18000);
+	const Json next = add(30000, 1000, 8000);
+	run(song.client, "quantize.set", {{"preset", "1/16"}});
+	run(song.client, "quantize.apply", {{"events", {quantized, next}}});
+	run(song.client, "quantize.crossfade", {{"events", {quantized, next}}, {"length", 2.0}});
+	const Json quantizeOrigin = song.event(quantized).at("quantizeOrigin");
+	REQUIRE(quantizeOrigin.at("original").at("length") != quantizeOrigin.at("quantized").at("length"));
+	const Json sliced = add(100000, 3000, 18000);
+	run(song.client, "event.setSnapPoint", {{"events", {sliced}}, {"position", 132000}});
+	run(song.client, "audioEvent.setFades",
+		{{"event", sliced}, {"fadeIn", {{"length", 1000}}}, {"fadeOut", {{"length", 12000}, {"shape", "sCurve"}}}});
+	run(song.client, "clip.setHitpoints",
+		{{"clip", clip}, {"hitpoints", Json::array({{{"position", 7000}, {"peak", -3}, {"intensity", 1}}})}});
+	const Json pieces = run(song.client, "quantize.slice", {{"events", {sliced}}}).at("events");
+	REQUIRE(pieces.size() == 2);
+	const Json sliceOrigin = song.event(sliced).at("sliceOrigin");
+	if (inactive)
+		run(song.client, "trackVersion.add", {{"tracks", {track}}});
+	const Json before = run(song.client, "project.get");
+	const int scale = change == "short" ? 1 : 2;
+	const int64_t fileLength = change == "conform" ? 48000 : 12000 * scale;
+	if (change == "conform")
+		runJob(song.client, "media.conform");
+	else
+	{
+		writeFile(song.library / "replacement.wav", fileLength, 1, 24000 * scale);
+		run(song.client, change == "short" ? "media.relink" : "media.relinkResampled",
+			{{"files",
+				Json::array({{{"media", song.mediaOf(clip)}, {"path", utf8(song.library / "replacement.wav")}}})}});
+	}
+	const Json after = run(song.client, "project.get");
+	run(song.client, "history.undo");
+	CHECK(run(song.client, "project.get") == before);
+	run(song.client, "history.redo");
+	CHECK(run(song.client, "project.get") == after);
+	if (inactive)
+		run(song.client, "trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
+	const auto movedTiming = [&](Json timing)
+	{
+		const int64_t offset = timing.at("offset").get<int64_t>() * scale;
+		const int64_t end = offset + timing.at("length").get<int64_t>() * scale;
+		timing["offset"] = std::min(offset, fileLength - 1);
+		timing["length"] = std::max<int64_t>(std::min(end, fileLength) - timing.at("offset").get<int64_t>(), 1);
+		return timing;
+	};
+	const Json original = movedTiming(quantizeOrigin.at("original"));
+	const Json changedOrigin = song.event(quantized).at("quantizeOrigin");
+	CHECK(changedOrigin.at("original") == original);
+	CHECK(changedOrigin.at("quantized") == movedTiming(quantizeOrigin.at("quantized")));
+	Json expectedSlice = sliceOrigin;
+	expectedSlice["timing"] = movedTiming(sliceOrigin.at("timing"));
+	expectedSlice["snapPoint"] = std::min(sliceOrigin.at("snapPoint").get<int64_t>() * scale, fileLength - 1);
+	expectedSlice["fadeOut"]["length"] =
+		std::min<int64_t>(12000 * scale, expectedSlice.at("timing").at("length").get<int64_t>() - 1000 * scale);
+	CHECK(song.event(sliced).at("sliceOrigin") == expectedSlice);
+	run(song.client, "quantize.reset", {{"events", {quantized, next}}});
+	const Json reset = song.event(quantized);
+	for (const auto* field : {"position", "offset", "length", "crossfade"})
+		CHECK(reset.at(field) == original.at(field));
+	run(song.client, "quantize.resetSlices", {{"events", pieces}});
+	const Json joined = song.event(sliced);
+	for (const auto* field : {"position", "offset", "length", "crossfade"})
+		CHECK(joined.at(field) == expectedSlice.at("timing").at(field));
+	CHECK(joined.at("snapPoint") == expectedSlice.at("snapPoint"));
+	CHECK(joined.at("fadeOut") == expectedSlice.at("fadeOut"));
+	CHECK(joined.at("offset").get<int64_t>() + joined.at("length").get<int64_t>() <= fileLength);
+	CHECK(joined.at("fadeIn").at("length").get<int64_t>() + joined.at("fadeOut").at("length").get<int64_t>() <=
+		joined.at("length").get<int64_t>());
+}
+
+TEST_CASE("pool reset origins rescale crossfades using each source event's file", "[integration]")
+{
+	const bool slice = GENERATE(false, true);
+	const bool changedDestination = GENERATE(false, true);
+	const bool shorten = GENERATE(false, true);
+	CAPTURE(slice, changedDestination, shorten);
+	SavedProject song;
+	writeFile(song.library / "source.wav", 24000, 1, 24000);
+	writeFile(song.library / "other.wav", 48000, 1);
+	const uint64_t source = song.clip(song.library / "source.wav");
+	const uint64_t destination = changedDestination ? source : song.clip(song.library / "other.wav");
+	const Json track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const Json from =
+		run(song.client, "audioEvent.add", {{"track", track}, {"clip", source}, {"position", 0}, {"length", 9000}})
+			.at("event")
+			.at("id");
+	const Json to = run(song.client, "audioEvent.add",
+		{{"track", track}, {"clip", destination}, {"position", 1000}, {"offset", 2000}, {"length", 18000}})
+						.at("event")
+						.at("id");
+	run(song.client, "crossfade.set", {{"from", from}, {"to", to}, {"length", 6000}, {"outLength", 8000}});
+	const Json crossfade = song.event(to).at("crossfade");
+	if (slice)
+	{
+		run(song.client, "clip.setHitpoints",
+			{{"clip", destination},
+				{"hitpoints", Json::array({{{"position", 7000}, {"peak", -3}, {"intensity", 1}}})}});
+		run(song.client, "quantize.slice", {{"events", {to}}});
+		// Only the saved origin now refers to the source file, so it must be visited independently.
+		run(song.client, "crossfade.remove", {{"event", to}});
+	}
+	else
+	{
+		run(song.client, "quantize.set", {{"preset", "1/16"}});
+		run(song.client, "quantize.apply", {{"events", {to}}});
+	}
+	run(song.client, "trackVersion.add", {{"tracks", {track}}});
+	if (shorten)
+	{
+		writeFile(song.library / "short.wav", 6000, 1, 24000);
+		run(song.client, "media.relink",
+			{{"files", Json::array({{{"media", song.mediaOf(source)}, {"path", utf8(song.library / "short.wav")}}})}});
+	}
+	else
+		runJob(song.client, "media.conform");
+	run(song.client, "trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
+	Json expected = crossfade;
+	expected["outLength"] = shorten ? 6000 : 16000;
+	expected["length"] = changedDestination ? (shorten ? 4000 : 12000) : 6000;
+	if (slice)
+	{
+		CHECK(song.event(to).at("sliceOrigin").at("timing").at("crossfade") == expected);
+		run(song.client, "quantize.resetSlices", {{"events", {to}}});
+	}
+	else
+	{
+		const Json origin = song.event(to).at("quantizeOrigin");
+		CHECK(origin.at("original").at("crossfade") == expected);
+		CHECK(origin.at("quantized").at("crossfade") == expected);
+		run(song.client, "quantize.reset", {{"events", {to}}});
+	}
+	CHECK(song.event(to).at("crossfade") == expected);
+}
+
+TEST_CASE("pool slice origins keep stretched fade room and clamp offsets beyond shorter files", "[integration]")
+{
+	const bool conform = GENERATE(false, true);
+	const int64_t offset = GENERATE(1000, 2000);
+	CAPTURE(conform, offset);
+	SavedProject song;
+	writeFile(song.library / "source.wav", 4000, 1, 24000);
+	const uint64_t clip = song.clip(song.library / "source.wav");
+	run(song.client, "clip.setWarp", {{"clip", clip}, {"musical", true}, {"tempo", 240}});
+	const Json track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const Json event = run(song.client, "audioEvent.add",
+		{{"track", track}, {"clip", clip}, {"position", 1000}, {"offset", offset}, {"length", 2000}})
+						   .at("event")
+						   .at("id");
+	run(song.client, "audioEvent.setFades", {{"event", event}, {"fadeOut", {{"length", 3000}}}});
+	run(song.client, "clip.setHitpoints",
+		{{"clip", clip}, {"hitpoints", Json::array({{{"position", offset + 500}, {"peak", -3}, {"intensity", 1}}})}});
+	REQUIRE(run(song.client, "quantize.slice", {{"events", {event}}}).at("events").size() == 2);
+	if (conform)
+		runJob(song.client, "media.conform");
+	else
+	{
+		writeFile(song.library / "short.wav", 1200, 1, 24000);
+		run(song.client, "media.relink",
+			{{"files", Json::array({{{"media", song.mediaOf(clip)}, {"path", utf8(song.library / "short.wav")}}})}});
+	}
+	run(song.client, "quantize.resetSlices", {{"events", {event}}});
+	const Json joined = song.event(event);
+	const int64_t length = conform ? 4000 : std::max<int64_t>(1200 - offset, 1);
+	CHECK(joined.at("offset") == (conform ? offset * 2 : std::min<int64_t>(offset, 1199)));
+	CHECK(joined.at("length") == length);
+	CHECK(joined.at("fadeOut").at("length") == (conform ? 6000 : length * 2));
+	CHECK(joined.at("fadeOut").at("length") <= joined.at("fadeRoom"));
+	CHECK(joined.at("snapPoint").is_null());
+}
+
+TEST_CASE("pool file changes keep empty quantize originals removable", "[integration]")
+{
+	const bool conform = GENERATE(false, true);
+	CAPTURE(conform);
+	SavedProject song;
+	writeFile(song.library / "source.wav", 24000, 1, 24000);
+	const uint64_t clip = song.clip(song.library / "source.wav");
+	const Json track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const Json first =
+		run(song.client, "audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 1000}, {"length", 10000}})
+			.at("event")
+			.at("id");
+	const Json next = run(song.client, "audioEvent.add",
+		{{"track", track}, {"clip", clip}, {"position", 21000}, {"offset", 10000}, {"length", 14000}})
+						  .at("event")
+						  .at("id");
+	run(song.client, "quantize.set", {{"preset", "1/4"}});
+	run(song.client, "quantize.apply", {{"events", {first, next}}});
+	run(song.client, "quantize.crossfade", {{"events", {first, next}}, {"length", 2.0}});
+	const Json tail = run(song.client, "event.split", {{"events", {first}}, {"positions", {20048}}}).at("events").at(0);
+	REQUIRE(song.event(tail).at("quantizeOrigin").at("original").at("length") == 0);
+	if (conform)
+		runJob(song.client, "media.conform");
+	else
+	{
+		writeFile(song.library / "short.wav", 10000, 1, 24000);
+		run(song.client, "media.relink",
+			{{"files", Json::array({{{"media", song.mediaOf(clip)}, {"path", utf8(song.library / "short.wav")}}})}});
+	}
+	CHECK(song.event(tail).at("quantizeOrigin").at("original").at("length") == 0);
+	CHECK(run(song.client, "quantize.reset", {{"events", {first, next, tail}}}).at("removed") == Json::array({tail}));
+}
+
 TEST_CASE("pool resampling drops coincident anchors and empty regions", "[integration]")
 {
 	SavedProject song;

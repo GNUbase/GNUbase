@@ -62,18 +62,22 @@ the pool and conforming files to the project's sample rate. The engine commands 
   float WAV file at the project's rate (as `media.convert` does) and points the media file at it, the reference's
   Convert Files with New + Replace in Pool. Clip fades, warp markers and their reset origins, grid start, edited beats,
   hitpoints, their minimum separation and regions scale to the new file frames, as do the offsets, lengths, fades,
-  crossfades, snap points and volume curves of the events that play it. Beat numbers and clip tempo stay unchanged.
-  Event fades fit the new `fadeRoom`, including stretched events whose fades exceed their source length. Shorter relinks
-  trim region ends and drop empty regions, hitpoints and anchors outside the file. A grid start beyond the new end moves
-  to its last frame; negative grid starts rescale without being clamped to zero. Rounding collisions drop later
-  hitpoints and anchors, keeping their positions strictly increasing. A crossfade's `length` is in the frames of the
-  event it goes into and its `outLength` in those of the event it comes from, so each scales with its own file. A media
-  file given twice in `media` is conformed once; one given that is missing is refused. The originals stay on disk; it
-  needs a saved project and is one undo step. Converting runs as a job (see below); `media.relinkResampled` then points
-  the media files at the new files and scales what plays them. That command takes the new file's sample rate and length,
-  refuses a file of another channel count or without sample frames and a media file given twice (before it looks at
-  whether the entries apply, since a second one would rescale what the first did), and skips an entry whose media file
-  was removed or no longer has `from`'s path or `fromSampleRate`'s rate, and every entry if the project is no longer at
+  crossfades, snap points and volume curves of the events that play it. The events' slice origins and both original and
+  quantized reset timings move too, in every track version, so Reset Quantize and Reset Slices restore the same audio
+  section in the new frames. Shorter files trim these saved sections and crossfade lengths to the file bounds, clamp
+  saved snap points to the last frame and fit saved fade outs into the restored event's `fadeRoom`. Empty quantize
+  originals stay empty so resetting still removes those split pieces. Beat numbers and clip tempo stay unchanged. Event
+  fades fit the new `fadeRoom`, including stretched events whose fades exceed their source length. Shorter relinks trim
+  region ends and drop empty regions, hitpoints and anchors outside the file. A grid start beyond the new end moves to
+  its last frame; negative grid starts rescale without being clamped to zero. Rounding collisions drop later hitpoints
+  and anchors, keeping their positions strictly increasing. A crossfade's `length` is in the frames of the event it goes
+  into and its `outLength` in those of the event it comes from, so each scales with its own file. A media file given
+  twice in `media` is conformed once; one given that is missing is refused. The originals stay on disk; it needs a saved
+  project and is one undo step. Converting runs as a job (see below); `media.relinkResampled` then points the media
+  files at the new files and scales what plays them. That command takes the new file's sample rate and length, refuses a
+  file of another channel count or without sample frames and a media file given twice (before it looks at whether the
+  entries apply, since a second one would rescale what the first did), and skips an entry whose media file was removed
+  or no longer has `from`'s path or `fromSampleRate`'s rate, and every entry if the project is no longer at
   `projectSampleRate` or another project is open (`project`).
 - **Import.** `audioFile.import` with `clipsOnly` adds the files to the pool without tracks or events, with copy,
   convert and split channels as for any import ([file-import.md](file-import.md)).
@@ -190,6 +194,12 @@ preserving stretched event fades within `fadeRoom`, undo/redo and subsequent war
 checks coincident anchors and hitpoints, anchors rounded onto clip endpoints and regions rounded to nothing. Markers
 created from hitpoints and then warp quantized keep their rescaled creation and quantize origins; Quantize Reset
 restores the rescaled originals, and Reset Warp Markers removes the generated markers while preserving manual ones.
+
+`tests/pool_tests.cpp` also quantizes and slices events before conforming, resampled relinking and shorter same-rate
+relinking, in active and inactive track versions. Both resets restore the rescaled sections within the file, including
+offsets beyond a shorter file's end, saved snap points and stretched fade outs. Saved crossfades scale each side with
+its own file, even when only the origin still refers to a changed source; undo/redo restore both states, and empty
+quantize originals still remove their split pieces on reset.
 
 `tests/audiofunctions_ui_tests.cpp` opens Statistics and Spectrum Analyzer through the Audio menu in the pool's zone and
 the same commands in its floating window. It analyzes a whole unused clip independently of the selected project event,
