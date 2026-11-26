@@ -800,7 +800,8 @@ TEST_CASE("the mixer and editor windows have reduced menus whose menu bars show 
 	REQUIRE(app.waitUntil([&app] { return app.appUi().mixer(1) != nullptr; }));
 	const ui::WindowId mixer = app.appUi().mixerWindow(1);
 	check(mixer);
-	// The mixer window's Set up Window Layout pane has Menu Bar too (reference manual p. 439).
+	// The mixer window's Set up Window Layout pane has Menu Bar too: GNUbase's own addition for platforms whose
+	// title bar has no Show Menu Bar item (reference manual p. 55).
 	clickIn(mixer, "#mixer-layout");
 	clickIn(mixer, "button[toggle=menuBar]");
 	REQUIRE(app.waitUntil([&] { return !shownIn(mixer, "#menu-bar"); }));
