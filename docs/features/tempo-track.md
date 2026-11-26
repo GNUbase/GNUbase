@@ -49,6 +49,10 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   An export writes next to the file and moves it over, so one that fails leaves an earlier file as it was. An import
   refuses a file whose tempos or numerators no command can make: a tempo outside 1 to 999 BPM, a numerator above 99.
 
+- **Export side effects**: `tempo.export` stays a query without an undo step, but writes a file at the path given.
+  Its `CommandInfo::writesFiles` flag keeps MCP from marking its tool read-only or listing it as a resource, as for
+  the MIDI device, drum map, articulation map, pattern, marker and MIDI file exports (#2110).
+
 ## UI
 
 - **The tempo track's lane** (`ui::TempoLane`, `src/ui/tempotrack.h`): a `ui::TempoCurve` over the tempo track's lane
@@ -144,3 +148,7 @@ one, the field following the cursor after tracks are added and removed during pl
 with the dialog's message for a tempo it can't take, and Select All Events.
 `tests/transportbar_tests.cpp`: a drag and a wheel gesture on the tempo field, in fixed tempo mode and in tempo track
 mode, each one undo step.
+
+`tests/mcp_tests.cpp` checks that file exports are not read-only tools and that a file-writing query without required
+parameters cannot be read as a resource. `tests/engine_tests.cpp` checks their query and file-writing flags, and
+`tests/coverage_tests.cpp` checks the export descriptions in the generated MCP and Lua references.

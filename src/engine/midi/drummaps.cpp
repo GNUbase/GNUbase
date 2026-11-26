@@ -420,7 +420,8 @@ namespace gnubase::engine::midi
 			{"drumMap.export", 1,
 				"Saves a drum map as a drum map file (.drm, p. 1236) at path: XML with its name, sounds and order, "
 				"which drumMap.import reads back.",
-				object({{"map", idSchema}, {"path", stringSchema}}, {"map", "path"}), Json::object(), true},
+				object({{"map", idSchema}, {"path", stringSchema}}, {"map", "path"}), Json::object(), true, false,
+				true},
 			"", exportMap);
 		model.addEdit(engine,
 			{"drumMap.import", 1,

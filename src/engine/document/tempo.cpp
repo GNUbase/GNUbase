@@ -714,7 +714,7 @@ namespace gnubase::engine
 				pathSchema,
 				{{"type", "object"}, {"properties", {{"tempoEvents", ticksSchema}, {"signatureEvents", ticksSchema}}},
 					{"required", {"tempoEvents", "signatureEvents"}}},
-				true},
+				true, false, true},
 			exportTempo);
 		add(engine,
 			{"tempo.import", 1,

@@ -1003,7 +1003,8 @@ namespace gnubase::engine::midi
 			{"articulationMap.export", 1,
 				"Saves an articulation map as an articulation map file (.articulationmap, p. 1292) at path: JSON with "
 				"the map as articulationMap.set takes it, which articulationMap.import reads back.",
-				object({{"map", idSchema}, {"path", stringSchema}}, {"map", "path"}), Json::object(), true},
+				object({{"map", idSchema}, {"path", stringSchema}}, {"map", "path"}), Json::object(), true, false,
+				true},
 			"", exportMap);
 		model.addEdit(engine,
 			{"articulationMap.import", 1,
