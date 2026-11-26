@@ -159,6 +159,7 @@ namespace gnubase::ui
 		// window that shows one already runs without; one whose window went before it started shows in the main window.
 		// Its progress closed or gone with its window, it is cancelled.
 		void backupStarted(WindowId window, const engine::Result& result);
+		void backupProgress(uint64_t job, double progress, const std::string& detail);
 		// A backup's job ended (job.finished, or job.get for one that ended before backupStarted heard of it): if it is
 		// one of those this UI started, closes its progress and shows in its window, or in the main window if that
 		// went, why it failed, which files it couldn't read and why the backup wasn't opened, if it was to be. Other
@@ -176,6 +177,7 @@ namespace gnubase::ui
 		Subscription m_saved;
 		Subscription m_reset;
 		Subscription m_jobStarted;
+		Subscription m_sliceStarted;
 		Subscription m_jobProgress;
 		Subscription m_jobFinished;
 		Subscription m_autoSaveFailed;

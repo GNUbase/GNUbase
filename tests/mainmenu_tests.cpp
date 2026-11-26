@@ -29,8 +29,10 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <optional>
 #include <regex>
@@ -1127,6 +1129,124 @@ TEST_CASE("Audio Advanced edits hitpoint slices in the selected audio part", "[u
 	}
 }
 
+namespace
+{
+	// Holds the job after its first rendered slice, so progress and cleanup are checked with a file already written.
+	class RenderedSliceHold
+	{
+	public:
+		explicit RenderedSliceHold(engine::Engine& engine) : m_engine(engine)
+		{
+			m_engine.setJobProgressHook(
+				[state = m_state](uint64_t job, const std::string& kind)
+				{
+					if (kind == "event.closeGaps" && ++state->calls == 2)
+					{
+						state->job = job;
+						state->released.wait();
+					}
+				});
+		}
+		~RenderedSliceHold()
+		{
+			if (!m_released)
+				release();
+			m_engine.setJobProgressHook({});
+		}
+		RenderedSliceHold(const RenderedSliceHold&) = delete;
+		RenderedSliceHold& operator=(const RenderedSliceHold&) = delete;
+		RenderedSliceHold(RenderedSliceHold&&) = delete;
+		RenderedSliceHold& operator=(RenderedSliceHold&&) = delete;
+		uint64_t job() const { return m_state->job.load(); }
+		void release()
+		{
+			m_released = true;
+			m_state->release.set_value();
+		}
+
+	private:
+		struct State
+		{
+			int calls = 0; // job thread only
+			std::atomic<uint64_t> job{0};
+			std::promise<void> release;
+			std::shared_future<void> released = release.get_future().share();
+		};
+		engine::Engine& m_engine;
+		std::shared_ptr<State> m_state = std::make_shared<State>();
+		bool m_released = false;
+	};
+}
+
+TEST_CASE("Audio Advanced shows Close Gaps progress and Cancel until the job ends", "[ui]")
+{
+	const bool cancel = GENERATE(false, true);
+	const test::TempDir dir;
+	test::Audio audio;
+	audio.samples.assign(48000, 0.25F);
+	const auto file = dir.path() / "slices.wav";
+	test::writeWav(file, audio);
+	test::UiApp app({1000, 760});
+	auto& display = app.appUi().showProject();
+	app.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	const Json track = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const Json media = app.call("media.add", {{"path", file.u8string()}}).at("media").at("id");
+	const Json clip = app.call("clip.add", {{"media", media}}).at("clip").at("id");
+	std::vector<uint64_t> events;
+	for (const int64_t position : {0, 24000, 48000})
+		events.push_back(
+			app.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", position}, {"length", 12000}})
+				.at("event")
+				.at("id")
+				.get<uint64_t>());
+	REQUIRE(app.waitUntil([&] { return display.project().at("audioEvents").size() == 3; }));
+	display.select(events);
+	const Json before = app.call("project.get");
+	const Json history = app.call("history.get");
+	RenderedSliceHold held(app.engine());
+	click(app, "#menu-bar button[menu=audio-menu]");
+	app.ui().move(std::nullopt, {"#audio-advanced-submenu", 0, std::nullopt});
+	click(app, "menuitem[command=audio.closeGapsTimeStretch]");
+	REQUIRE(app.waitUntil([&] { return held.job() != 0; }, std::chrono::seconds(30)));
+	REQUIRE(app.waitUntil([&] { return shown(app, "#render-progress-dialog"); }));
+	REQUIRE(app.waitUntil([&] { return app.appUi().binding().waiting() == 0; }));
+	CHECK(std::stod(element(app, "#render-progress").at("attributes").at("value").get<std::string>()) > 0.0);
+	CHECK_THAT(element(app, "#render-progress-file").at("text").get<std::string>(), ContainsSubstring("Closing gaps"));
+	CHECK_THAT(element(app, "#render-progress-message").at("text").get<std::string>(), ContainsSubstring("wait"));
+	const auto waveFiles = [&]
+	{
+		size_t files = 0;
+		for (const auto& entry : std::filesystem::recursive_directory_iterator(dir.path()))
+			if (entry.is_regular_file() && entry.path().extension() == ".wav")
+				++files;
+		return files;
+	};
+	CHECK(waveFiles() == 2); // The source and the first rendered slice.
+	if (cancel)
+	{
+		click(app, "#render-progress-dialog button[result=cancel]");
+		REQUIRE(app.waitUntil([&] { return app.appUi().binding().waiting() == 0; }));
+		CHECK_THAT(app.call("engine.commandLog").dump(), ContainsSubstring("job.cancel"));
+	}
+	held.release();
+	engine::Client observer(app.engine());
+	const Json finished = test::waitForJob(observer, held.job());
+	CHECK(finished.at("state") == (cancel ? "cancelled" : "done"));
+	REQUIRE(app.waitUntil([&] { return !shown(app, "#render-progress-dialog"); }));
+	if (cancel)
+	{
+		CHECK(app.call("project.get") == before);
+		CHECK(app.call("history.get") == history);
+		CHECK(waveFiles() == 1);
+	}
+	else
+	{
+		CHECK(app.call("project.get") != before);
+		app.call("history.undo");
+		CHECK(app.call("project.get") == before);
+	}
+}
+
 TEST_CASE("Audio Advanced reports a failed Close Gaps time stretch job", "[ui]")
 {
 	for (const bool finishBeforeResult : {false, true})
@@ -1178,6 +1298,8 @@ TEST_CASE("Audio Advanced reports a failed Close Gaps time stretch job", "[ui]")
 		CHECK_THAT(finished.at("error").get<std::string>(), ContainsSubstring("ratio"));
 		REQUIRE(app.waitUntil([&] { return shown(app, "#edit-refused"); }));
 		CHECK_THAT(element(app, "#edit-refused").value("text", std::string()), ContainsSubstring("ratio"));
+		REQUIRE(app.waitUntil([&] { return !shown(app, "#render-progress-dialog"); }));
+		CHECK(!shown(app, "#project-error-dialog"));
 		CHECK(app.call("project.get") == before);
 		CHECK(app.call("history.get") == history);
 	}
