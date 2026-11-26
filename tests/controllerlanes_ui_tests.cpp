@@ -12,6 +12,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -164,6 +165,42 @@ namespace
 
 		size_t steps() { return app.call("history.get").at("steps").size(); }
 
+		// Overlapping notes let the same lane gesture reach one part or two without changing its coordinates.
+		Json openNotes(bool both)
+		{
+			Json parts = {part};
+			if (both)
+				parts.push_back(app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}})
+						.at("part")
+						.at("id"));
+			Json selection = Json::array();
+			for (const Json& each : parts)
+			{
+				const Json note =
+					app.call("note.add",
+						   {{"part", each},
+							   {"notes",
+								   {{{"position", 4 * g_sixteenth}, {"length", 4 * g_sixteenth}, {"pitch", 60},
+									   {"velocity", 0.5}, {"releaseVelocity", 0.5}, {"probability", 0.5}}}}})
+						.at("notes")
+						.at(0)
+						.at("id");
+				selection.push_back({{"part", each}, {"note", note}});
+			}
+			app.call("editor.open", {{"editor", "window"}, {"parts", parts}});
+			app.call("editor.set", {{"editor", "window"}, {"selection", selection}});
+			REQUIRE(app.waitUntil([&] { return elements(".controller-bar.selected").size() == selection.size(); }));
+			return selection;
+		}
+
+		void expectStep(size_t before, const std::string& name)
+		{
+			REQUIRE(app.waitUntil([&] { return app.call("history.get").at("position") == before + 1; }));
+			const Json history = app.call("history.get");
+			REQUIRE(history.at("steps").size() == before + 1);
+			CHECK(history.at("steps").at(before).at("action") == name);
+		}
+
 		// The right end of the editor window's toolbar's empty space, where a click does nothing.
 		ui::Target spare()
 		{
@@ -182,6 +219,158 @@ namespace
 		uint64_t track = 0;
 		uint64_t part = 0;
 	};
+}
+
+TEST_CASE("note lane value drags and painting keep their undo name over one part and two", "[ui]")
+{
+	const bool both = GENERATE(false, true);
+	const std::string lane = GENERATE("velocity", "offVelocity", "probability", "velocityVariance");
+	const std::string tool = GENERATE("objectSelection", "draw");
+	CAPTURE(both, lane, tool);
+	Fixture f;
+	const Json selection = f.openNotes(both);
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", lane}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane[lane-kind=" + lane + "]").size() == 1; }));
+	f.tool(tool);
+	const Json before = f.app.call("project.get").at("midiParts");
+	const size_t steps = f.steps();
+	f.drag(f.at(0, 4.1, 0.25), f.at(0, 4.1, 0.75));
+	f.expectStep(steps, "Change notes");
+	const Json after = f.app.call("project.get").at("midiParts");
+	REQUIRE(after.size() == selection.size());
+	for (size_t i = 0; i < after.size(); ++i)
+		CHECK(after.at(i).at("notes") != before.at(i).at("notes"));
+	f.app.call("history.undo");
+	CHECK(f.app.call("project.get").at("midiParts") == before);
+}
+
+TEST_CASE("controller painting and lines keep their undo name with and without events to replace", "[ui]")
+{
+	const bool both = GENERATE(false, true);
+	const bool replace = GENERATE(false, true);
+	const std::string tool = GENERATE("draw", "line");
+	CAPTURE(both, replace, tool);
+	Fixture f;
+	f.openNotes(both);
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	// Two channels make the line tool remove events before controller.line, just as painting does before add.
+	if (replace)
+		f.app.call("controller.add",
+			{{"part", f.part},
+				{"controllers",
+					{{{"position", 4 * g_sixteenth}, {"number", 1}, {"channel", 2}, {"value", 0.2}},
+						{{"position", 5 * g_sixteenth}, {"number", 1}, {"channel", 3}, {"value", 0.3}}}}});
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.elements(".controller-lane[lane-kind=controller]").size() == 1 && f.shows(0); }));
+	f.tool(tool);
+	const Json before = f.app.call("project.get").at("midiParts");
+	const size_t steps = f.steps();
+	f.drag(f.at(0, 4.1, 0.25), f.at(0, 7.1, 0.75));
+	f.expectStep(steps, tool == "draw" ? "Add controllers" : "Draw controller line");
+	CHECK(f.controllers().size() == 4);
+	f.app.call("history.undo");
+	CHECK(f.app.call("project.get").at("midiParts") == before);
+}
+
+TEST_CASE("controller value drags keep their undo name over one part and two", "[ui]")
+{
+	const bool both = GENERATE(false, true);
+	CAPTURE(both);
+	Fixture f;
+	const Json notes = f.openNotes(both);
+	Json selection = Json::array();
+	for (const Json& note : notes)
+	{
+		const Json id = f.app
+							.call("controller.add",
+								{{"part", note.at("part")},
+									{"controllers", {{{"position", 4 * g_sixteenth}, {"number", 1}, {"value", 0.5}}}}})
+							.at("controllers")
+							.at(0)
+							.at("id");
+		selection.push_back({{"part", note.at("part")}, {"controller", id}});
+	}
+	f.app.call("editor.set",
+		{{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}},
+			{"controllerSelection", selection}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-step.selected").size() == selection.size(); }));
+	const Json before = f.app.call("project.get").at("midiParts");
+	const size_t steps = f.steps();
+	f.drag(f.at(0, 4.1, 0.25), f.at(0, 4.1, 0.75));
+	f.expectStep(steps, "Change controllers");
+	const Json after = f.app.call("project.get").at("midiParts");
+	for (size_t i = 0; i < after.size(); ++i)
+		CHECK(after.at(i).at("controllers") != before.at(i).at("controllers"));
+	f.app.call("history.undo");
+	CHECK(f.app.call("project.get").at("midiParts") == before);
+}
+
+TEST_CASE("Articulations lane attributes keep their undo name over one part and two", "[ui]")
+{
+	const bool both = GENERATE(false, true);
+	const std::string deleted = GENERATE("attributes", "directions", "both");
+	CAPTURE(both, deleted);
+	Fixture f;
+	const Json selection = f.openNotes(both);
+	const Json map = f.app
+						 .call("articulationMap.add",
+							 {{"name", "Strings"}, {"groups", {"Length"}},
+								 {"articulations",
+									 {{{"name", "Staccato"}, {"type", "attribute"}, {"group", 0}},
+										 {{"name", "Arco"}, {"type", "direction"}, {"group", 0}}}}})
+						 .at("map")
+						 .at("id");
+	f.app.call("track.set", {{"track", f.track}, {"articulationMap", map}});
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "articulations"}}}}});
+	const std::string row = ".controller-lane-area .articulation-row[articulation-row=\"0\"]";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(row).size() == 1; }));
+	const auto at = [&]
+	{
+		const Json box = f.box(row);
+		return ui::Target{"", 0,
+			ui::Point{f.at(0, 5, 0.5).point.value_or(ui::Point{}).x,
+				static_cast<int>(std::lround(box.at("y").get<double>() + (box.at("height").get<double>() / 2)))}};
+	};
+	f.tool("draw");
+	const size_t steps = f.steps();
+	f.click(at());
+	f.expectStep(steps, "Change notes");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".articulation-item.attribute").size() == selection.size(); }));
+	Json directions = Json::array();
+	if (deleted != "attributes")
+		for (const Json& note : selection)
+		{
+			const Json id =
+				f.app
+					.call("controller.add",
+						{{"part", note.at("part")},
+							{"controllers",
+								{{{"position", 4 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Arco"}}}}})
+					.at("controllers")
+					.at(0)
+					.at("id");
+			directions.push_back({{"part", note.at("part")}, {"controller", id}});
+		}
+	// Select the attributes through the lane to give it the keyboard focus, then select both parts' notes.
+	f.tool("objectSelection");
+	f.click(at());
+	const Json notes = deleted == "directions" ? Json::array() : selection;
+	f.app.call("editor.set", {{"editor", "window"}, {"selection", notes}, {"controllerSelection", directions}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.elements(".articulation-item.attribute.selected").size() == notes.size() &&
+				f.elements(".articulation-item.direction.selected").size() == directions.size();
+		}));
+	const Json before = f.app.call("project.get").at("midiParts");
+	const size_t beforeDelete = f.steps();
+	f.app.ui().key(f.window, "Delete");
+	f.expectStep(beforeDelete, deleted == "directions" ? "Remove controllers" : "Change notes");
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.elements(".articulation-item").size() == (deleted == "directions" ? selection.size() : 0); }));
+	CHECK(f.midiPart().at("notes").size() == 1);
+	f.app.call("history.undo");
+	CHECK(f.app.call("project.get").at("midiParts") == before);
 }
 
 TEST_CASE("the velocity lane shows the notes' velocities as bars that the tools change", "[ui]")

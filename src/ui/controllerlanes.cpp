@@ -693,6 +693,8 @@ namespace gnubase::ui
 	{
 		if (commands.empty())
 			return;
+		// Keep a lone command on its own: a one-command transaction would count even an unchanged edit as a change.
+		// Callers name transactions as the engine names the gesture's lone command, for any number of parts (#2106).
 		if (commands.size() == 1)
 			m_binding.send(commands[0].at("command").get<std::string>(), commands[0].at("parameters"));
 		else
@@ -1228,7 +1230,7 @@ namespace gnubase::ui
 		for (auto& [part, items] : changes)
 			commands.push_back({{"command", isNoteLane(shown.type) ? "note.set" : "controller.set"},
 				{"parameters", {{"part", part}, {isNoteLane(shown.type) ? "notes" : "controllers", items}}}});
-		edit("Change values", std::move(commands));
+		edit(isNoteLane(shown.type) ? "Change notes" : "Change controllers", std::move(commands));
 	}
 
 	// Painting (p. 1180): on a note lane the notes from the first point to the last take the value painted nearest
@@ -1269,7 +1271,7 @@ namespace gnubase::ui
 					changes[item.part].push_back(noteChange(shown, item.id, valueAt(item.start)));
 			for (auto& [part, items] : changes)
 				commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
-			edit("Draw values", std::move(commands));
+			edit("Change notes", std::move(commands));
 			return;
 		}
 		// The part where the paint started, wherever it ended.
@@ -1316,7 +1318,7 @@ namespace gnubase::ui
 		}
 		commands.push_back(
 			{{"command", "controller.add"}, {"parameters", {{"part", part->id}, {"controllers", added}}}});
-		edit("Draw controllers", std::move(commands));
+		edit("Add controllers", std::move(commands));
 	}
 
 	// The line tool (p. 1186): controller.line in its mode from where the drag started to where it ended, in the
@@ -1365,7 +1367,7 @@ namespace gnubase::ui
 				parameters["notes"] = notes;
 		}
 		commands.push_back({{"command", "controller.line"}, {"parameters", std::move(parameters)}});
-		edit("Draw line", std::move(commands));
+		edit("Draw controller line", std::move(commands));
 	}
 
 	const Json* ControllerLanes::laneMap() const
@@ -1663,7 +1665,7 @@ namespace gnubase::ui
 		Json commands = Json::array();
 		for (auto& [part, items] : changes)
 			commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
-		edit("Add Articulation", std::move(commands));
+		edit("Change notes", std::move(commands));
 	}
 
 	// The object selection tool on the lane (p. 1289): a click selects the direction pressed, or the note of the
@@ -1870,6 +1872,7 @@ namespace gnubase::ui
 			if (!changes.empty())
 				commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part.id}, {"notes", changes}}}});
 		}
-		edit("Delete Articulations", std::move(commands));
+		const bool changesNotes = commands.size() > directions.size();
+		edit(changesNotes ? "Change notes" : "Remove controllers", std::move(commands));
 	}
 }

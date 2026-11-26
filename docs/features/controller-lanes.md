@@ -101,6 +101,12 @@ part, or else channel 0.
   element, #864), so a drag released outside the lanes, also over a floating panel, ends there, with its effect at that
   point. A left press anywhere in the window while a drag goes on means its mouseup never came (released outside the
   window): the drag ends without its effect. Only the left button ends or cancels a drag.
+- **Undo names** (#2106): a value drag or painting on a note lane, and adding or deleting Articulations lane attributes,
+  use "Change notes" for one part or several. A controller value drag uses "Change controllers", painting controllers
+  "Add controllers", and the line tool "Draw controller line", also when events are removed first. Deleting only
+  Articulations lane directions uses "Remove controllers"; deleting attributes together with directions uses "Change
+  notes". A lone command still goes on its own; several go in one `history.transaction` named as the lone command's undo
+  step, so a gesture keeps its name however many commands it sends.
 - **Rendering**: `show` keeps the view and the parts it shows, not the whole project, and indexes the parts and the
   selection once, so each lane's items take a pass over the parts' notes or events.
 
@@ -141,8 +147,11 @@ editor's lanes.
   that one; the line tool and painting on a lane whose events are on another channel; drags released outside the lanes
   and over another document of the window, and never released (#864); a right release and press during a value drag
   ending nothing; the line tool released left of the part and over the toolbar; a value drag over the selected notes of
-  two parts as one undo step; a poly pressure lane with two selected notes; with Acoustic Feedback, a velocity drag
-  playing its note at the velocity pressed and then at the one it sets, the draw tool the note it paints, and nothing
-  with it off; Auto Select Controllers with a note moved; a preset saved with Add Preset, loaded and removed with Remove
-  Preset; events drawn on a lane playing back; a step that another event now starts with losing its width (#1580).
-  `tests/uithemes_tests.cpp`: every theme draws play probability and velocity variance bars dashed.
+  two parts as one undo step; the same undo names over one part and two for value drags and painting on all four note
+  lanes, controller value drags, adding attributes and deleting attributes, directions or both on the Articulations
+  lane, and controller painting and lines with and without events to replace; a poly pressure lane with two selected
+  notes; with Acoustic Feedback, a velocity drag playing its note at the velocity pressed and then at the one it sets,
+  the draw tool the note it paints, and nothing with it off; Auto Select Controllers with a note moved; a preset saved
+  with Add Preset, loaded and removed with Remove Preset; events drawn on a lane playing back; a step that another event
+  now starts with losing its width (#1580). `tests/uithemes_tests.cpp`: every theme draws play probability and velocity
+  variance bars dashed.
