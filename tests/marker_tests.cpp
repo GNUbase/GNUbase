@@ -624,10 +624,11 @@ TEST_CASE("range.cut and range.delete take the range out of the markers as out o
 	run(client, "range.delete", range(6, 8));
 	CHECK(cycleMarkers(client, first) == split);
 	CHECK(markerNames(client, {{"track", first}}) == std::vector<std::string>{"Verse", "Late", "Verse"});
-	const Json listed = run(client, "marker.list", {{"track", first}});
-	for (const Json& marker : listed.at("markers"))
-		if (idOf(marker) == verse)
-			CHECK(marker.at("positionSamples") == 8 * g_quarterSamples);
+	const Json listed = run(client, "marker.list", {{"track", first}}).at("markers");
+	const auto kept =
+		std::find_if(listed.begin(), listed.end(), [verse](const Json& marker) { return idOf(marker) == verse; });
+	REQUIRE(kept != listed.end());
+	CHECK(kept->at("positionSamples") == 8 * g_quarterSamples);
 	CHECK(cycleMarkers(client, second) == other);
 	CHECK(run(client, "history.get").at("steps").size() == steps + 1);
 	run(client, "history.undo");
@@ -648,10 +649,25 @@ TEST_CASE("range.cut and range.delete take the range out of the markers as out o
 		run(client, "history.undo");
 	}
 
-	// One that the range covers whole, as a double click in it selects it, goes, and the position markers in it too.
-	run(client, "range.cut", range(4, 12));
-	CHECK(markerNames(client, {{"track", first}}).empty());
+	// One that the range covers whole, as a double click in it selects it, or reaches past both of its ends, goes,
+	// and the position markers in it too.
+	for (const auto& [from, to] : std::vector<std::pair<int64_t, int64_t>>{{4, 12}, {2, 14}})
+	{
+		run(client, "range.cut", range(from, to));
+		CHECK(markerNames(client, {{"track", first}}).empty());
+		run(client, "history.undo");
+	}
+
+	// The markers in the range go before the ones across it are split, so the piece before the range gets the number
+	// of a cycle marker in it, whichever was added first.
+	run(client, "marker.add",
+		{{"track", first}, {"type", "cycle"}, {"position", 6 * g_ticksPerQuarter}, {"end", 7 * g_ticksPerQuarter}});
+	run(client, "range.cut", range(5, 8));
+	CHECK(cycleMarkers(client, first) ==
+		std::vector<Cycle>{{2, 4, 5, "Verse", "#ff0000"}, {1, 8, 12, "Verse", "#ff0000"}});
 	run(client, "history.undo");
+	run(client, "history.undo");
+	REQUIRE(cycleMarkers(client, first) == whole);
 
 	// Delete Time and Cut Time leave the markers where they are.
 	run(client, "range.cut", range(6, 8, true));

@@ -2471,24 +2471,32 @@ namespace gnubase::engine
 		// keeps its number; the piece before it gets the first free number, the same name and color.
 		void cutMarkers(Project& project, const Range& range, CommandContext& context)
 		{
-			std::vector<ObjectId> ids;
-			for (const auto& [id, marker] : project.markers)
-				if (contains(range.tracks, marker.track))
-					ids.push_back(id);
-			for (const ObjectId id : ids)
+			// The markers in the range go first, so that their numbers are free for the pieces before it.
+			std::vector<ObjectId> across;
+			for (auto entry = project.markers.begin(); entry != project.markers.end();)
 			{
-				Marker& marker = project.markers.at(id);
+				const Marker& marker = entry->second;
 				const bool cycle = marker.type == MarkerType::Cycle;
 				const time::Samples from = samples(project, marker.position);
 				const time::Samples to = cycle ? samples(project, marker.end) : from;
-				if (from >= range.start && from < range.end && to <= range.end)
+				if (contains(range.tracks, marker.track) && from >= range.start && from < range.end && to <= range.end)
 				{
-					project.markers.erase(id);
+					const ObjectId id = entry->first;
+					entry = project.markers.erase(entry);
 					context.emit("marker.removed", {{"marker", id}});
 					continue;
 				}
-				if (!cycle || to <= range.start || from >= range.end)
-					continue;
+				// Only a cycle marker can reach across an edge: a position marker that isn't in the range is outside
+				// it.
+				if (contains(range.tracks, marker.track) && to > range.start && from < range.end)
+					across.push_back(entry->first);
+				++entry;
+			}
+			for (const ObjectId id : across)
+			{
+				Marker& marker = project.markers.at(id);
+				const time::Samples from = samples(project, marker.position);
+				const time::Samples to = samples(project, marker.end);
 				const time::TimeBase base = project.trackById.at(marker.track).timeBase;
 				if (from < range.start && to > range.end)
 				{
