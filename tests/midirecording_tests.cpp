@@ -1263,3 +1263,41 @@ TEST_CASE("a locate back while playing without cycle mode starts no cycle lap (#
 	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}}),
 		ContainsSubstring("lap"));
 }
+
+TEST_CASE("each start of cycle playback after a stop begins a lap of its own (#2096)", "[integration]")
+{
+	// Input from the last lap of one pass and from the first lap of the next, within the buffer's 30 s, used to
+	// share a lap: now they are two, and Insert as Cycle Recording stacks them.
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	run(client, "transport.set", {{"left", 0}, {"right", 4 * g_beat}, {"cycle", true}});
+	const auto pass = [&](int pitch)
+	{
+		run(client, "transport.locate", {{"position", 0}});
+		const auto now = run(client, "audio.get").at("position").get<int64_t>();
+		run(client, "transport.play");
+		setup.inject({message(now + g_beat, {0x90, pitch, 100}), message(now + (2 * g_beat), {0x80, pitch, 0})});
+		run(client, "audio.render", {{"frames", 3 * g_beat}});
+		run(client, "transport.stop");
+		run(client, "audio.render", {{"frames", 64}});
+	};
+	pass(60);
+	pass(62);
+	CHECK(run(client, "midi.getRetrospective", {{"track", setup.track}}).at("cycleLaps") == 2);
+	run(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}});
+	std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 2);
+	std::sort(parts.begin(), parts.end(), [](const Json& a, const Json& b) { return a.at("lane") < b.at("lane"); });
+	for (size_t lap = 0; lap < 2; ++lap)
+	{
+		INFO("lap " << lap);
+		const auto start = parts[lap].at("position").get<int64_t>();
+		std::vector<std::vector<int64_t>> notes = notesOf(parts[lap]);
+		for (std::vector<int64_t>& each : notes)
+			each[0] += start;
+		CHECK(notes ==
+			std::vector<std::vector<int64_t>>{{g_beatTicks, g_beatTicks, 60 + (2 * static_cast<int64_t>(lap))}});
+	}
+}

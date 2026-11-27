@@ -24,7 +24,7 @@ now also keeps the app's top-level windows under `windows`, by name, next to the
 ```
 
 - **Windows** (`ui::Docking::addWindow`): `project` (the main window), `mixer1` to `mixer4`, `markers`,
-  `onScreenKeyboard`, `tempoTrack`, `arranger`, `transportPanel`, `timeDisplay` and `scriptConsole` (the script
+  `onScreenKeyboard`, `tempoTrack`, `arranger`, `transportPanel`, `timeDisplay`, `maxRecordTime` and `scriptConsole` (the script
   console, [scripts.md](scripts.md)) have `open`, `bounds` and `monitor`; `channelSettings`, `editor` and `sampleEditor`, which open and close with what they show, have only
   `bounds` and `monitor`. A window's entry gets its bounds and its monitor's name (the monitor it overlaps most) once
   it opens, moves or resizes, checked twice a second and at once when a window opens or closes through its command,

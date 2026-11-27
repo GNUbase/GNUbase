@@ -482,6 +482,45 @@ TEST_CASE("the script console is a workspace window", "[ui]")
 	REQUIRE(app.waitUntil(open));
 }
 
+TEST_CASE("a workspace opens the Max. Record Time window where it was (#2096)", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.call("workspace.add", {{"name", "Plain"}, {"type", "global"}});
+	// The window whose document is max-record-time.rml, or none.
+	const auto window = [&app]() -> std::optional<ui::WindowId>
+	{
+		const Json windows = app.ui().windows();
+		for (const Json& open : windows.at("windows"))
+			for (const Json& document : open.at("documents"))
+				if (document.at("source").get<std::string>().find("max-record-time.rml") != std::string::npos)
+					return open.at("id").get<ui::WindowId>();
+		return std::nullopt;
+	};
+	app.keys().run("window.maxRecordTime", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&window] { return window().has_value(); }));
+	const ui::WindowId opened = window().value_or(0);
+	app.shell().setBounds(opened, {150, 120, 300, 80});
+	const ui::Rect placed = app.shell().bounds(opened);
+	app.appUi().docking().saveWindows();
+	REQUIRE(app.waitUntil(
+		[&app, &placed]
+		{
+			const Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
+			const Json entry = layout.value("windows", Json::object()).value("maxRecordTime", Json::object());
+			return entry.value("open", false) &&
+				entry.value("bounds", Json::object()) ==
+				Json{{"x", placed.x}, {"y", placed.y}, {"width", placed.width}, {"height", placed.height}};
+		}));
+	app.call("workspace.add", {{"name", "Recording"}, {"type", "global"}});
+
+	app.call("workspace.activate", {{"type", "global"}, {"name", "Plain"}});
+	REQUIRE(app.waitUntil([&window] { return !window(); }));
+	app.call("workspace.activate", {{"type", "global"}, {"name", "Recording"}});
+	REQUIRE(app.waitUntil([&window] { return window().has_value(); }));
+	CHECK(app.shell().bounds(window().value_or(0)) == placed);
+}
+
 TEST_CASE("the Windows dialog's mode select and buttons are one column inside the dialog, in every theme", "[ui]")
 {
 	// The select is as wide as the buttons below it and lies inside the dialog's frame, not 160 dp beside a column as

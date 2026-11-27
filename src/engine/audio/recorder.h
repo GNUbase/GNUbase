@@ -177,6 +177,7 @@ namespace gnubase::engine
 		time::Samples position = -1; // where the transport played it, or -1 in stop mode
 		graph::ProcessEvent event;   // its offset is unused
 		uint32_t lap = 0;            // the cycle laps started when it played (PlayedPositions::lapAt)
+		uint32_t pass = 0;           // the playback passes started when it played (PlayedPositions::passAt)
 	};
 
 	// Records the input of record-enabled tracks while the transport records (docs/features/recording.md,
@@ -246,7 +247,8 @@ namespace gnubase::engine
 			uint32_t offset = 0;       // frames from the chunk's device frame
 			time::Samples played = -1; // where the transport played it, or -1
 			graph::ProcessEvent event;
-			uint32_t lap = 0; // PlayedPositions::lapAt
+			uint32_t lap = 0;  // PlayedPositions::lapAt
+			uint32_t pass = 0; // PlayedPositions::passAt
 		};
 
 		// Consecutive device frames, recorded at consecutive positions from position, or not recorded (-1).

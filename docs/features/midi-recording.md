@@ -75,7 +75,9 @@ undo step.
   from at least two laps. A lap is where the audio thread jumped from the right to the left locator: the transport marks
   the segment that starts there (`graph::TransportSegment::lap`), `PlayedPositions::lapAt` counts the laps per device
   frame, and each input event keeps its count (`RetrospectiveEvent::lap`), so a locate back while playing, with cycle
-  mode or without, starts no lap (#2067). `midi.getRetrospective` says how many events a track's buffer holds and
+  mode or without, starts no lap (#2067). Each start of playback after a stop begins a lap too, a playback pass
+  (`PlayedPositions::passAt`, `RetrospectiveEvent::pass`): it starts where playback starts, not at the left locator, and
+  the notes held when playback stopped end there (#2096). `midi.getRetrospective` says how many events a track's buffer holds and
   from how many cycle laps of playback (`cycleLaps`); the inspector's pop-up asks it when it opens and enables Insert as
   Cycle Recording only for two or more. The insert still reads the locators when it runs, not where they were when the
   input played. `midi.clearRetrospective` empties one track's buffer or all of them; the Transport menu's MIDI

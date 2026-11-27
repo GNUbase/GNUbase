@@ -235,6 +235,45 @@ TEST_CASE("WAV files become RF64 when asked, and reserve room for it otherwise",
 	CHECK(test::compareAudio(readAll(automatic), audio, 0.0f).equal);
 }
 
+TEST_CASE("WAV without RF64 and AIFF refuse a write past 4 GB, with room for the pad byte (#2096)", "[integration]")
+{
+	// A limit of 1001 bytes instead of 4 GB: mono 24-bit frames are 3 bytes, so the data size is odd every other
+	// frame, and the pad byte that closing adds must still fit.
+	const test::TempDir dir;
+	struct Limit
+	{
+		Limit() { detail::setFileSizeLimit(1001); }
+		~Limit() { detail::setFileSizeLimit(0); }
+		Limit(const Limit&) = delete;
+		Limit& operator=(const Limit&) = delete;
+		Limit(Limit&&) = delete;
+		Limit& operator=(Limit&&) = delete;
+	} const limit;
+	WriteOptions options;
+	options.channels = 1;
+	options.rf64 = Rf64::Never;
+	options.format = GENERATE(AudioFormat::Wav, AudioFormat::Aiff);
+	const std::string path = utf8(dir.path() / "full");
+	const float sample = 0.5f;
+	size_t frames = 0;
+	{
+		const auto writer = AudioFileWriter::create(path, options);
+		try
+		{
+			for (; frames < 1000; ++frames)
+				writer->write(&sample, 1);
+		}
+		catch (const AudioFileFull&) // NOLINT(bugprone-empty-catch): the file is full, as expected
+		{
+		}
+		REQUIRE(frames < 1000);
+		writer->close();
+	}
+	CHECK(std::filesystem::file_size(std::filesystem::u8path(path)) <= 1001);
+	CHECK(std::filesystem::file_size(std::filesystem::u8path(path)) > 1001 - 6); // one more frame and its pad byte
+	CHECK(AudioFileReader::open(path)->info().frames == static_cast<int64_t>(frames));
+}
+
 TEST_CASE("Ogg Vorbis and MP3 files decode to their signal", "[integration]")
 {
 	// Half a second of a 440 Hz sine at half scale on the left channel and silence on the right, at 44.1 kHz.

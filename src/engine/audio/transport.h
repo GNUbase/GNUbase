@@ -275,7 +275,8 @@ namespace gnubase::engine
 	{
 	public:
 		// Command thread: keeps the positions of the last frames frames.
-		explicit PlayedPositions(size_t frames = 0) : m_positions(frames, -1), m_recording(frames, 0), m_laps(frames, 0)
+		explicit PlayedPositions(size_t frames = 0)
+			: m_positions(frames, -1), m_recording(frames, 0), m_laps(frames, 0), m_passes(frames, 0)
 		{
 		}
 
@@ -290,12 +291,17 @@ namespace gnubase::engine
 		// Audio thread: how many cycle laps had started when the device frame played (TransportSegment::lap),
 		// counted on: input of one cycle lap has the same number, and a locate back doesn't change it (#2067).
 		uint32_t lapAt(int64_t frame) const noexcept;
+		// Audio thread: the same for the playback passes, which each start of playback after a stop begins (#2096).
+		uint32_t passAt(int64_t frame) const noexcept;
 
 	private:
 		std::vector<time::Samples> m_positions; // a ring, by device frame
 		std::vector<uint8_t> m_recording;       // the same ring: 1 where the transport recorded
 		std::vector<uint32_t> m_laps;           // the same ring: the cycle laps started up to the frame
+		std::vector<uint32_t> m_passes;         // the same ring: the playback passes started up to the frame
 		uint32_t m_lap = 0;                     // the cycle laps started so far
+		uint32_t m_pass = 0;                    // the playback passes started so far
+		bool m_playing = false;                 // the last block played
 		int64_t m_end = 0;                      // the device frame after the last one added
 	};
 }

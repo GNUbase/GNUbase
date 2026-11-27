@@ -592,7 +592,8 @@ namespace gnubase::engine
 					if (input(event) && index++ >= sent && chunk->eventCount < chunk->events.size())
 						chunk->events[chunk->eventCount++] = {channel, event.offset - offset,
 							played.at(static_cast<int64_t>(block.position + event.offset)), event,
-							played.lapAt(static_cast<int64_t>(block.position + event.offset))};
+							played.lapAt(static_cast<int64_t>(block.position + event.offset)),
+							played.passAt(static_cast<int64_t>(block.position + event.offset))};
 			sent += chunk->eventCount;
 			m_inFlight.fetch_add(1, std::memory_order_relaxed);
 			m_filled->tryPush(chunk); // there is room for every chunk
@@ -837,6 +838,12 @@ namespace gnubase::engine
 		catch (const std::exception& error)
 		{
 			fail("can't go on recording track " + full.track.name + " in a new file: " + error.what());
+			// The empty or header-only file stays out of the record folder: closed first, as Windows removes no
+			// open file (#2096).
+			next.writer.reset();
+			std::error_code ignored;
+			if (!next.path.empty())
+				fs::remove(fs::u8path(next.path), ignored);
 			return;
 		}
 		m_files.push_back(std::move(next)); // full is no longer valid
@@ -1071,7 +1078,7 @@ namespace gnubase::engine
 				std::remove_if(buffer.events.begin(), buffer.events.end(), earlier), buffer.events.end());
 			buffer.stoppedBefore = 0;
 		}
-		buffer.events.push_back({frame, input.played, input.event, input.lap});
+		buffer.events.push_back({frame, input.played, input.event, input.lap, input.pass});
 		const auto full = [&]
 		{
 			return m_next.retrospective > 0
