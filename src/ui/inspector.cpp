@@ -5,6 +5,7 @@
 #include "engine/midi/modifiers.h"
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
+#include "ui/transposetrack.h"
 #include "ui/widgets.h"
 #include "ui/widgetutils.h"
 
@@ -664,6 +665,7 @@ namespace gnubase::ui
 		root.AddEventListener(Rml::EventId::Dblclick, this, true); // before a step name's own (showArranger)
 		root.AddEventListener(Rml::EventId::Blur, this, true);     // blur doesn't bubble
 		root.AddEventListener(Rml::EventId::Keydown, this, true);  // Escape leaves the notepad
+		root.AddEventListener(g_arrangerDrop, this);               // arranger events dragged from the lane
 		for (const Rml::EventId id : {Rml::EventId::Dragstart, Rml::EventId::Drag, Rml::EventId::Dragend})
 			root.AddEventListener(id, this); // the MIDI inserts' divider
 
@@ -716,6 +718,7 @@ namespace gnubase::ui
 		m_root->RemoveEventListener(Rml::EventId::Dblclick, this, true);
 		m_root->RemoveEventListener(Rml::EventId::Blur, this, true);
 		m_root->RemoveEventListener(Rml::EventId::Keydown, this, true);
+		m_root->RemoveEventListener(g_arrangerDrop, this);
 		for (const Rml::EventId id : {Rml::EventId::Dragstart, Rml::EventId::Drag, Rml::EventId::Dragend})
 			m_root->RemoveEventListener(id, this);
 		if (Rml::ElementDocument* document = m_root->GetOwnerDocument())
@@ -1597,6 +1600,11 @@ namespace gnubase::ui
 		Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr)
 			return;
+		if (event.GetType() == g_arrangerDrop)
+		{
+			dropOnChain(event);
+			return;
+		}
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
@@ -1818,7 +1826,7 @@ namespace gnubase::ui
 		}
 	}
 
-	void Inspector::dropOnChain(const Rml::Event& event)
+	void Inspector::dropOnChain(Rml::Event& event)
 	{
 		const std::optional<int> step = std::exchange(m_stepPressed, std::nullopt);
 		const std::optional<uint64_t> added = std::exchange(m_eventPressed, std::nullopt);
@@ -1850,6 +1858,16 @@ namespace gnubase::ui
 		else if (added)
 		{
 			parameters["addEvents"] = {*added};
+		}
+		else if (event.GetType() == g_arrangerDrop) // from the lane, which leaves them where they are
+		{
+			Rml::StringList ids;
+			Rml::StringUtilities::ExpandString(ids, event.GetParameter<Rml::String>("events", ""), ' ');
+			Json events = Json::array();
+			for (const Rml::String& id : ids)
+				events.push_back(std::strtoull(id.c_str(), nullptr, 10));
+			parameters["addEvents"] = std::move(events);
+			event.StopPropagation();
 		}
 		else
 		{

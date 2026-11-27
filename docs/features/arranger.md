@@ -120,7 +120,10 @@ each section's event has a number after its name, how often its event came so fa
   in their order. An event dragged from the Arranger Events list goes in so (`addEvents`). The press is on a step's or
   event's row, not on its buttons or repeat mode, and a release on the step pressed or outside the chain list does
   nothing. The editor's script works out a row's top from the offset parents, as RmlUi's Lua elements have no absolute
-  offset. Events dragged from the project window don't drop there yet.
+  offset. An arranger event dragged from the arranger track's lane (p. 409) goes into the inspector's list so too, and
+  stays where it is on the lane; one of the events selected there brings them all, in timeline order. The lane gives
+  the element under the release the event `arrangerdrop` (`ui::g_arrangerDrop`), with the ids, and moves the events
+  only if nothing takes it. The arranger editor's list, in a window of its own, doesn't take them yet.
 - **Renaming arranger events in a chain list** (p. 405): in the inspector's and the arranger editor's Current Arranger
   Chain list a step's name is a disabled `textdisplay` that Alt and a double click open, and a plain double click
   doesn't; Enter renames the step's event (`arranger.set`), an empty name keeps the old one. The editor doesn't build
@@ -206,7 +209,9 @@ edges, the event drawn showing while the button is down, a click just after a ba
 before it drawing up to the next bar line, and a drag that starts on an event drawing over it; a drag moving an event by
 bars, the event following the mouse until the release, a double click renaming it in a field as wide as the event, an
 empty name keeping the old one, and the erase tool removing it; a click selecting an event, Ctrl adding and removing
-one, a press beside them selecting none, and drags of an end and of a start edge resizing events by bars;
+one, a press beside them selecting none, and drags of an end and of a start edge resizing events by bars; arranger events
+dragged from the lane dropping into the inspector's chain list, the selected ones in timeline order, and staying where
+they are;
 `#edit-refused` saying why the engine refused a draw within one bar; the track list's arranger controls switching
 arranger mode and the active chain and showing the event and repeat playing; Open Arranger Editor in the track list and
 on the inspector's section opening the editor and leaving it open; the inspector's section listing the steps and events,
