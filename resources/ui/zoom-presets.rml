@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- Organizes the horizontal zoom presets (docs/features/event-display.md): ui::EventDisplay opens it from the zoom
-     presets menu's Organize item and fills #zoom-presets-list with a row per preset, its name to edit and a button
-     that deletes it. OK applies the changes, Cancel drops them. -->
+<!-- Organizes the horizontal zoom presets (docs/features/event-display.md) and the controller lane presets
+     (docs/features/controller-lanes.md): ui::EventDisplay opens it from the zoom presets menu's Organize item,
+     ui::ControllerLanes from the Controller Lane Setup menu's Organize Presets, and they fill #zoom-presets-list with a
+     row per preset, its name to edit and a button that deletes it. OK applies the changes, Cancel drops them. -->
 <rml>
 <head>
 	<title>Organize Presets</title>

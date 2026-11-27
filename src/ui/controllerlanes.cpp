@@ -518,7 +518,7 @@ namespace gnubase::ui
 		placeItems();
 		showKeyLane();
 
-		// The setup menu: the presets, Add Preset, and a submenu that removes one.
+		// The setup menu: the presets, Add Preset, Organize Presets, and a submenu that removes one.
 		if (Rml::Element* menu = m_menus.size() > 2 ? m_menus[2].get() : nullptr)
 		{
 			std::string presets;
@@ -539,6 +539,7 @@ namespace gnubase::ui
 			}
 			const std::string items = presets + (presets.empty() ? "" : "<menuseparator/>") +
 				actionItem("addPreset", "Add Preset...") +
+				(removes.empty() ? "" : actionItem("organizePresets", "Organize Presets...")) +
 				(removes.empty() ? ""
 								 : R"(<menuitem id="controller-remove-preset">Remove Preset<menu>)" + removes +
 							"</menu></menuitem>");
@@ -885,9 +886,9 @@ namespace gnubase::ui
 		{
 			setView({{"showLanes", !m_view.value("showLanes", true)}});
 		}
-		else if (action == "addPreset")
+		else if (action == "addPreset" || action == "organizePresets")
 		{
-			openPresetDialog();
+			openPresetDialog(action == "addPreset" ? "controller-lane-preset.rml" : "zoom-presets.rml");
 		}
 		else if (action == "showUsed")
 		{
@@ -981,20 +982,30 @@ namespace gnubase::ui
 		}
 	}
 
-	// Add Preset (p. 1166): the dialog names the lanes shown as a preset.
-	void ControllerLanes::openPresetDialog()
+	// Add Preset (p. 1166): the dialog names the lanes shown as a preset. Organize Presets (#737): the dialog the
+	// zoom presets share, a row per preset with its name to edit and a button that deletes it.
+	void ControllerLanes::openPresetDialog(const char* file)
 	{
 		const Rml::Element* root = m_root.get();
 		if (m_dialog || root == nullptr || root->GetContext() == nullptr)
 			return;
-		const std::string path = std::filesystem::u8path(root->GetOwnerDocument()->GetSourceURL())
-									 .replace_filename("controller-lane-preset.rml")
-									 .generic_u8string();
+		const std::string path =
+			std::filesystem::u8path(root->GetOwnerDocument()->GetSourceURL()).replace_filename(file).generic_u8string();
 		Rml::ElementDocument* dialog = root->GetContext()->LoadDocument(path);
 		if (dialog == nullptr)
 		{
 			logging::warning("The controller lanes can't open the dialog {}", path);
 			return;
+		}
+		if (Rml::Element* list = dialog->GetElementById("zoom-presets-list"))
+		{
+			m_organized = m_presets;
+			std::string rows;
+			for (size_t i = 0; i < m_organized.size(); ++i)
+				rows += R"(<div class="preset" index=")" + std::to_string(i) + R"("><input type="text" value=")" +
+					Rml::StringUtilities::EncodeRml(m_organized[i].value("name", std::string())) +
+					R"("/><button>Delete</button></div>)";
+			list->SetInnerRML(rows);
 		}
 		dialog->AddEventListener(Rml::EventId::Click, this);
 		dialog->Show(Rml::ModalFlag::Modal);
@@ -1006,8 +1017,55 @@ namespace gnubase::ui
 		const Rml::Element* element = event.GetTargetElement();
 		while (element != nullptr && !element->HasAttribute("result"))
 			element = element->GetParentNode();
+		Rml::Element* list = event.GetCurrentElement()->GetElementById("zoom-presets-list");
 		if (element == nullptr || attribute(*element, "result") != "ok")
+		{
+			// A row's Delete button marks the row deleted, for the dialog's style sheet to hide it.
+			if (const Rml::Element* button = event.GetTargetElement();
+				list != nullptr && button->GetTagName() == "button")
+				if (Rml::Element* row = button->GetParentNode(); row != nullptr && row->IsClassSet("preset"))
+					row->SetClass("deleted", true);
 			return;
+		}
+		if (list != nullptr)
+		{
+			// The presets that weren't deleted, renamed as typed, from those the dialog listed.
+			Json presets = Json::array();
+			std::vector<std::string> oldNames;
+			Rml::ElementList rows;
+			list->QuerySelectorAll(rows, ".preset");
+			for (Rml::Element* row : rows)
+			{
+				const int index = row->GetAttribute<int>("index", -1);
+				if (row->IsClassSet("deleted") || index < 0 || index >= static_cast<int>(m_organized.size()))
+					continue;
+				Json preset = m_organized[static_cast<size_t>(index)];
+				oldNames.push_back(preset.value("name", std::string()));
+				if (auto* name = dynamic_cast<Rml::ElementFormControl*>(row->QuerySelector("input"));
+					name != nullptr && !name->GetValue().empty())
+					preset["name"] = name->GetValue();
+				presets.push_back(std::move(preset));
+			}
+			// Names stay unique, as the setup menu finds presets by name: a row renamed to a name another kept
+			// preset has keeps its old name, until no two share one.
+			for (bool changed = true; changed;)
+			{
+				changed = false;
+				for (size_t i = 0; i < presets.size(); ++i)
+				{
+					const std::string name = presets[i].value("name", std::string());
+					const auto same = std::count_if(presets.begin(), presets.end(),
+						[&](const Json& preset) { return preset.value("name", std::string()) == name; });
+					if (same > 1 && name != oldNames[i])
+					{
+						presets[i]["name"] = oldNames[i];
+						changed = true;
+					}
+				}
+			}
+			m_binding.send("settings.set", {{"key", "ui.controllerLanePresets"}, {"value", presets}});
+			return;
+		}
 		auto* field =
 			dynamic_cast<Rml::ElementFormControl*>(event.GetCurrentElement()->GetElementById("lane-preset-name"));
 		const std::string name = field != nullptr ? field->GetValue() : std::string();

@@ -251,9 +251,10 @@ namespace gnubase::ui
 			return rml + "</div>";
 		}
 
-		// The Note Expression section (pp. 1300-1302, #1513): its bypass, a row per expression with its input's short
-		// name (the In column), of which a click selects one, and that one's Parameter Details: its input (Input), MIDI
-		// Learn, and its range (Max. Value and Min. Value).
+		// The Note Expression section (pp. 1300-1302, #1513): its bypass, a row per expression with its visibility
+		// (#2120) and its input's short name (the In column), of which a click selects one, that one's Parameter
+		// Details: its input (Input), MIDI Learn, and its range (Max. Value and Min. Value), and the Global section's
+		// Show Additional Functions.
 		std::string noteExpressionRml()
 		{
 			std::string rml =
@@ -265,7 +266,9 @@ namespace gnubase::ui
 				std::string name = engine::g_expressionNames.at(i);
 				name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
 				rml += R"(<div class="inspector-row list-item" expression=")" + std::to_string(i) +
-					R"("><span class="expression-in"/><span>)" + name + "</span></div>";
+					R"("><button type="toggle" class="toggle" control="noteExpression-visible" title="Visibility"/>)"
+					R"(<span class="expression-in"/><span class="expression-name">)" +
+					name + "</span></div>";
 			}
 			rml += R"(<div class="inspector-list-title">Parameter Details</div>)";
 			rml += row("expressionInput", "Input", R"(<select control="noteExpression-input" title="Input"/>)");
@@ -282,7 +285,10 @@ namespace gnubase::ui
 				field += R"(. Value"/>)";
 				rml += row("expression-" + end, label, field);
 			}
-			return rml + "</div>";
+			return rml +
+				R"(<div class="inspector-list-title">Global</div><div class="inspector-buttons">)"
+				R"(<button class="inspector-expression-functions" title="Show Additional Functions">)"
+				R"(Functions</button></div></div>)";
 		}
 
 		// An expression's input as the In column shows it: PB, AT or a controller's number (p. 1304).
@@ -651,8 +657,12 @@ namespace gnubase::ui
 				R"(<menu id="inspector-retrospective-menu">)"
 				R"(<menuitem class="retrospective-linear">Insert as Linear Recording</menuitem>)"
 				R"(<menuitem class="retrospective-cycle">Insert as Cycle Recording</menuitem>)"
-				R"(<menuitem class="retrospective-empty">Empty Retrospective Record Buffer</menuitem></menu>)");
-			for (Rml::ObserverPtr<Rml::Element>* kept : {&m_stepMenu, &m_retrospectiveMenu})
+				R"(<menuitem class="retrospective-empty">Empty Retrospective Record Buffer</menuitem></menu>)"
+				R"(<menu id="inspector-expression-menu">)"
+				R"(<menuitem type="toggle" class="expression-used">Show only used Expressions</menuitem>)"
+				R"(<menuitem class="expression-all-visible">Make all Expressions visible</menuitem>)"
+				R"(<menuitem class="expression-only-edited">Make only edited Expression visible</menuitem></menu>)");
+			for (Rml::ObserverPtr<Rml::Element>* kept : {&m_stepMenu, &m_retrospectiveMenu, &m_expressionMenu})
 			{
 				Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
 				menu->AddEventListener(Rml::EventId::Click, this);
@@ -703,7 +713,7 @@ namespace gnubase::ui
 		{
 			logging::warning("The inspector cannot stop listening for MIDI input: {}", error.what());
 		}
-		for (Rml::Element* menu : {m_stepMenu.get(), m_retrospectiveMenu.get()})
+		for (Rml::Element* menu : {m_stepMenu.get(), m_retrospectiveMenu.get(), m_expressionMenu.get()})
 			if (menu != nullptr)
 			{
 				menu->RemoveEventListener(Rml::EventId::Click, this);
@@ -1184,7 +1194,16 @@ namespace gnubase::ui
 				for (const char* section : {"midiInserts", "midiSends"})
 					showMidiEffects(section, channel->at(section));
 			if (noteTrack && channel->contains("noteExpression"))
+			{
+				// The expressions that the track's notes have points of, for Show only used Expressions (p. 1302).
+				m_usedExpressions.clear();
+				for (const Json& part : m_project->value("midiParts", Json::array()))
+					if (part.at("track") == m_track)
+						for (const Json& note : part.at("notes"))
+							for (const Json& point : note.value("expressions", Json::array()))
+								m_usedExpressions.insert(point.at("type").get<std::string>());
 				showNoteExpression(channel->at("noteExpression"));
+			}
 
 			// The inserts: an overview of the slots, bypassed and deactivated ones marked.
 			std::string slots;
@@ -1328,12 +1347,30 @@ namespace gnubase::ui
 			if (index == m_expression)
 				selected = input;
 		}
+		const Json hidden = setup.value("hidden", Json::array());
 		Rml::ElementList rows;
 		m_root->QuerySelectorAll(rows, "[section=noteExpression] [expression]");
 		for (Rml::Element* row : rows)
 		{
 			const auto index = row->GetAttribute<size_t>("expression", 0);
 			setClass(*row, "selected", index == m_expression);
+			// Visibility (#2120, p. 1301), and the used expressions marked with an asterisk, the others hidden with
+			// Show only used Expressions (p. 1302).
+			const std::string type = engine::g_expressionNames.at(std::min(index, shorts.size() - 1));
+			const bool used = m_usedExpressions.count(type) != 0;
+			setClass(*row, "unavailable", m_onlyUsed && !used);
+			if (Rml::Element* visible = row->QuerySelector("[control=noteExpression-visible]"))
+			{
+				if (std::find(hidden.begin(), hidden.end(), type) == hidden.end())
+					visible->SetAttribute("checked", "");
+				else
+					visible->RemoveAttribute("checked");
+			}
+			std::string name = (used ? "*" : "") + type;
+			name[used ? 1 : 0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[used ? 1 : 0])));
+			if (Rml::Element* label = row->QuerySelector(".expression-name");
+				label != nullptr && label->GetInnerRML() != name)
+				label->SetInnerRML(name);
 			if (Rml::Element* in = row->QuerySelector(".expression-in");
 				in != nullptr && index < shorts.size() && in->GetInnerRML() != shorts.at(index))
 				in->SetInnerRML(shorts.at(index));
@@ -1349,6 +1386,13 @@ namespace gnubase::ui
 				else
 					button->RemoveAttribute("checked");
 			}
+		if (Rml::Element* item = m_expressionMenu ? m_expressionMenu->QuerySelector(".expression-used") : nullptr)
+		{
+			if (m_onlyUsed)
+				item->SetAttribute("checked", "");
+			else
+				item->RemoveAttribute("checked");
+		}
 		if (Rml::Element* input = control("input"))
 			widgets::fill(*input, expressionInputs(), selected.at("input").get<std::string>());
 		for (const char* end : {"max", "min"})
@@ -1754,6 +1798,25 @@ namespace gnubase::ui
 							{{"tracks", tracks}, {"version", up->GetAttribute<int>("version", 1)}}, whenRefused());
 					break;
 				}
+			// Show Additional Functions (p. 1302, #2120) opens its pop-up menu: Show only used Expressions shows only
+			// the rows of the expressions the track's notes have points of, the others set the visibility.
+			if (target->IsClassSet("inspector-expression-functions") && m_expressionMenu)
+				openMenu(*m_expressionMenu.get(),
+					{target->GetAbsoluteLeft(), target->GetAbsoluteTop() + target->GetOffsetHeight()});
+			if (target->IsClassSet("expression-used") && m_channel.is_object())
+			{
+				m_onlyUsed = !m_onlyUsed;
+				showNoteExpression(m_channel.at("noteExpression"));
+			}
+			if (m_track != 0 &&
+				(target->IsClassSet("expression-all-visible") || target->IsClassSet("expression-only-edited")))
+			{
+				Json hidden = Json::array();
+				for (size_t i = 0; i < engine::g_expressionNames.size(); ++i)
+					if (target->IsClassSet("expression-only-edited") && i != m_expression)
+						hidden.push_back(engine::g_expressionNames.at(i));
+				m_binding.send("noteExpression.set", {{"track", m_track}, {"hidden", hidden}}, whenRefused());
+			}
 			// A click on an expression's row selects it for Parameter Details.
 			if (const Rml::Element* row = target->HasAttribute("expression") ? target : target->Closest("[expression]");
 				row != nullptr && m_channel.is_object())
@@ -2072,6 +2135,22 @@ namespace gnubase::ui
 		{
 			m_binding.send("noteExpression.set",
 				{{"track", m_track}, {"bypass", event.GetParameter<bool>("value", false)}}, whenRefused());
+			return;
+		}
+		if (name == "noteExpression-visible")
+		{
+			// The expression of the row shown or hidden in the key editor (p. 1301, #2120).
+			const Rml::Element* row = control.Closest("[expression]");
+			const size_t index = row != nullptr ? row->GetAttribute<size_t>("expression", 0) : 0;
+			const std::string type =
+				engine::g_expressionNames.at(std::min(index, engine::g_expressionNames.size() - 1));
+			Json hidden = Json::array();
+			for (const Json& each : m_channel.at("noteExpression").value("hidden", Json::array()))
+				if (each != type)
+					hidden.push_back(each);
+			if (!event.GetParameter<bool>("value", false))
+				hidden.push_back(type);
+			m_binding.send("noteExpression.set", {{"track", m_track}, {"hidden", hidden}}, whenRefused());
 			return;
 		}
 		if (name == "noteExpression-input")

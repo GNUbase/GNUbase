@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The key editor's expression editor (#1512, docs/features/note-expression.md) while the engine's answers come late:
 // edits made before the project read of the last one arrived (#1795). tests/keyeditor_ui_tests.cpp checks its
-// gestures, tests/noteexpression_tests.cpp the engine's note.replaceExpression.
+// gestures, tests/noteexpression_tests.cpp the engine's note.replaceExpression. Also MIDI > Note Expression (#1515) and
+// the expressions the inspector hides (#2120).
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
 #include "ui/keyeditor.h"
 #include "ui/midieditor.h"
 #include "ui/shell.h"
+#include "ui/tracklist.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -269,4 +273,146 @@ TEST_CASE("an expression edit of one note that changed nothing leaves the editor
 	CHECK(binding.waiting("history.transaction") == 0);
 	f.app.call("engine.version");
 	CHECK(f.app.call("project.revision") == revision);
+}
+
+TEST_CASE("MIDI > Note Expression > Convert to Note Expression converts the editor's parts in one undo step", "[ui]")
+{
+	// #1515, reference manual p. 1316: each part's controllers that its track's setup assigns go into its notes.
+	Fixture f;
+	f.app.appUi().showProject();
+	for (const char* item :
+		{"#midi-menu #midi-note-expression-submenu", "menuitem[command=midi.convertToNoteExpression]"})
+		CHECK(f.app.ui().dom(std::nullopt, item, 0).at("elements").size() == 1);
+	const Json project = f.app.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+	{
+		f.app.call("noteExpression.set",
+			{{"track", part.at("track")},
+				{"inputs", {{{"type", "brightness"}, {"input", "cc1"}, {"min", 0.0}, {"max", 1.0}}}}});
+		f.app.call("controller.add",
+			{{"part", part.at("id")},
+				{"controllers", {{{"position", g_quarter}, {"number", 1}, {"value", 1.0}, {"channel", 0}}}}});
+	}
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	ui::Window* window = f.window ? f.app.shell().find(*f.window) : nullptr;
+	REQUIRE(window != nullptr);
+	Rml::Element* zone = window->context().GetDocument(0)->GetElementById("main-zone");
+	REQUIRE(zone != nullptr);
+	f.app.keys().run("midi.convertToNoteExpression", Json::object(), *window, zone);
+	f.app.call("engine.version");
+	const Json brightness = {{"type", "brightness"}, {"position", g_quarter}, {"value", 1.0}};
+	CHECK(f.points(0) == Json::array({f.tuning, brightness}));
+	CHECK(f.points(1) == Json::array({brightness}));
+	const Json after = f.app.call("project.get");
+	for (const Json& part : after.at("midiParts"))
+		CHECK(part.at("controllers").empty());
+	const Json history = f.app.call("history.get").at("steps");
+	REQUIRE(history.size() == steps + 1);
+	CHECK(history.back().at("action") == "Convert to note expression");
+}
+
+TEST_CASE("the key editor shows the expressions the tracks' setups hide only where the notes use them", "[ui]")
+{
+	// #2120, reference manual pp. 1301, 1309: Parameter Selection lists the expressions the selected notes have points
+	// of and the visible ones; over the notes, hidden expressions draw no lines.
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"showExpression", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-editor-notes .key-expression-step").size() == 1; }));
+	CHECK(f.elements("menuitem[expression-type]").size() == 7);
+	const Json all = {"volume", "pan", "tuning", "vibrato", "expression", "brightness", "pressure"};
+	const Json project = f.app.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+		f.app.call("noteExpression.set", {{"track", part.at("track")}, {"hidden", all}});
+	// Only tuning, which the first note uses, and nothing over the notes.
+	REQUIRE(f.app.waitUntil([&] { return f.elements("menuitem[expression-type]").size() == 1; }));
+	CHECK(f.elements("menuitem[expression-type]").at(0).at("attributes").at("expression-type") == "tuning");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-editor-notes .key-expression-step").empty(); }));
+	// The expression the editor edits stays listed, and checked, though hidden and without points.
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionType", "pan"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("menuitem[expression-type]").size() == 2; }));
+	REQUIRE(f.elements("menuitem[expression-type=pan]").size() == 1);
+	CHECK(f.elements("menuitem[expression-type=pan]").at(0).at("attributes").contains("checked"));
+	// The second track shows pan.
+	f.app.call("noteExpression.set",
+		{{"track", project.at("midiParts").at(1).at("track")}, {"hidden", Json::array({"volume", "tuning"})}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("menuitem[expression-type]").size() == 6; }));
+	CHECK(f.elements("menuitem[expression-type=volume]").empty());
+	CHECK(f.elements("menuitem[expression-type=tuning]").size() == 1);
+}
+
+TEST_CASE(
+	"the inspector's Note Expression section sets the expressions' visibility and shows only the used ones", "[ui]")
+{
+	// #2120, reference manual pp. 1301-1302: the visibility column and Show Additional Functions.
+	test::UiApp app({1200, 600});
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.appUi().docking().open("inspector");
+	app.shell().step(std::chrono::milliseconds(0));
+	const auto track =
+		app.call("track.add", {{"type", "instrument"}, {"name", "Keys"}}).at("track").at("id").get<uint64_t>();
+	const auto part = app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	app.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5},
+					{"expressions", {{{"type", "pan"}, {"position", 0}, {"value", 0.25}}}}}}}});
+	app.appUi().trackList()->select({track});
+	const std::string section = ".inspector [section=noteExpression] ";
+	const auto elements = [&](const std::string& selector)
+	{ return app.ui().dom(std::nullopt, selector, 0).at("elements"); };
+	const auto click = [&](const std::string& selector)
+	{ app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {}); };
+	const auto has = [&](const std::string& selector, const std::string& name)
+	{
+		const Json found = elements(selector);
+		const Json names = found.empty() ? Json::array() : found.at(0).value("classes", Json::array());
+		return std::find(names.begin(), names.end(), name) != names.end();
+	};
+	const auto hidden = [&]
+	{
+		const Json project = app.call("project.get");
+		for (const Json& channel : project.at("channels"))
+			if (channel.contains("noteExpression"))
+				return channel.at("noteExpression").at("hidden");
+		return Json();
+	};
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			const Json name = elements(".inspector textdisplay.inspector-name");
+			return !name.empty() && name.at(0).value("attributes", Json::object()).value("value", "") == "Keys";
+		}));
+	CHECK_FALSE(has(".inspector [section=noteExpression]", "unavailable"));
+	for (const char* other : {"basics", "routing", "modifiers", "midiInserts", "midiSends"})
+		click(".inspector [section=" + std::string(other) + "] .section-header");
+	app.shell().step(std::chrono::milliseconds(0));
+	// Pan's points make it used: marked with an asterisk. Its visibility hides it.
+	const std::string pan = section + "[expression=\"1\"] ";
+	REQUIRE(app.waitUntil([&] { return elements(pan + ".expression-name").at(0).value("text", "") == "*Pan"; }));
+	CHECK(elements(section + "[expression=\"0\"] .expression-name").at(0).value("text", "") == "Volume");
+	CHECK(has(pan + "[control=noteExpression-visible]", "checked"));
+	click(pan + "[control=noteExpression-visible]");
+	REQUIRE(app.waitUntil([&] { return hidden() == Json::array({"pan"}); }));
+	REQUIRE(app.waitUntil([&] { return !has(pan + "[control=noteExpression-visible]", "checked"); }));
+
+	// Show only used Expressions leaves pan's row only; Make only edited Expression visible, pan having been clicked,
+	// hides the others, and Make all Expressions visible none.
+	click(section + ".inspector-expression-functions");
+	click("#inspector-expression-menu .expression-used");
+	REQUIRE(app.waitUntil([&] { return has(section + "[expression=\"0\"]", "unavailable"); }));
+	CHECK_FALSE(has(section + "[expression=\"1\"]", "unavailable"));
+	click(section + ".inspector-expression-functions");
+	click("#inspector-expression-menu .expression-only-edited");
+	REQUIRE(app.waitUntil(
+		[&] { return hidden() == Json{"volume", "tuning", "vibrato", "expression", "brightness", "pressure"}; }));
+	click(section + ".inspector-expression-functions");
+	click("#inspector-expression-menu .expression-all-visible");
+	REQUIRE(app.waitUntil([&] { return hidden() == Json::array(); }));
+	click(section + ".inspector-expression-functions");
+	click("#inspector-expression-menu .expression-used");
+	REQUIRE(app.waitUntil([&] { return !has(section + "[expression=\"0\"]", "unavailable"); }));
 }

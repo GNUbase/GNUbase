@@ -1892,7 +1892,10 @@ namespace gnubase::engine
 			inputs.push_back({{"type", g_expressionNames.at(static_cast<size_t>(type))},
 				{"input", input.message ? midi::messageName(*input.message) : "none"}, {"min", input.min},
 				{"max", input.max}});
-		return {{"bypass", setup.bypass}, {"inputs", std::move(inputs)}};
+		Json hidden = Json::array();
+		for (const plugin::NoteExpression type : setup.hidden)
+			hidden.push_back(g_expressionNames.at(static_cast<size_t>(type)));
+		return {{"bypass", setup.bypass}, {"inputs", std::move(inputs)}, {"hidden", std::move(hidden)}};
 	}
 
 	NoteExpressionSetup noteExpressionFromJson(const Json& json, const NoteExpressionSetup& fallback, bool loading)
@@ -1901,16 +1904,33 @@ namespace gnubase::engine
 			throw std::invalid_argument("noteExpression must be an object");
 		NoteExpressionSetup setup = fallback;
 		read(json, "bypass", setup.bypass, "noteExpression");
-		for (const Json& item : json.value("inputs", Json::array()))
+		// An expression by its name; unknown ones are refused, or left out when loading.
+		const auto expression = [loading](const Json& named, const char* where) -> std::optional<plugin::NoteExpression>
 		{
-			const auto name = item.at("type").get<std::string>();
+			const auto name = named.get<std::string>();
 			const auto index = static_cast<size_t>(
 				std::find(g_expressionNames.begin(), g_expressionNames.end(), name) - g_expressionNames.begin());
-			if (index == g_expressionNames.size() && loading)
+			if (index < g_expressionNames.size())
+				return static_cast<plugin::NoteExpression>(index);
+			if (!loading)
+				throw std::invalid_argument(
+					std::string("noteExpression.") + where + ": there is no expression " + name);
+			return std::nullopt;
+		};
+		if (json.contains("hidden"))
+		{
+			setup.hidden.clear();
+			for (const Json& named : json.at("hidden"))
+				if (const std::optional<plugin::NoteExpression> type = expression(named, "hidden"))
+					setup.hidden.insert(*type);
+		}
+		for (const Json& item : json.value("inputs", Json::array()))
+		{
+			const std::optional<plugin::NoteExpression> known = expression(item.at("type"), "inputs");
+			if (!known)
 				continue;
-			if (index == g_expressionNames.size())
-				throw std::invalid_argument("noteExpression.inputs: there is no expression " + name);
-			const auto type = static_cast<plugin::NoteExpression>(index);
+			const plugin::NoteExpression type = *known;
+			const std::string name = g_expressionNames.at(static_cast<size_t>(type));
 			const auto found = setup.inputs.find(type);
 			ExpressionInput input = found != setup.inputs.end() ? found->second : ExpressionInput::none(type);
 			const std::string where = "noteExpression.inputs." + name;

@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -258,17 +259,20 @@ namespace gnubase::engine
 	};
 
 	// A MIDI or instrument track's note expression setup (#1513, pp. 1300-1302,
-	// docs/features/note-expression-setup.md): bypass plays its notes without their expression, and inputs has the
-	// expressions' input assignments other than ExpressionInput::none.
+	// docs/features/note-expression-setup.md): bypass plays its notes without their expression, inputs has the
+	// expressions' input assignments other than ExpressionInput::none, and hidden the expressions the inspector's
+	// visibility hides from the note expression editor and the note display (#2120, p. 1301).
 	struct NoteExpressionSetup
 	{
 		bool bypass = false;
 		// NOLINTNEXTLINE(readability-redundant-member-init): see Channel::instrumentParameters
 		std::map<plugin::NoteExpression, ExpressionInput> inputs = {};
+		// NOLINTNEXTLINE(readability-redundant-member-init): see Channel::instrumentParameters
+		std::set<plugin::NoteExpression> hidden = {};
 
 		bool operator==(const NoteExpressionSetup& other) const
 		{
-			return bypass == other.bypass && inputs == other.inputs;
+			return bypass == other.bypass && inputs == other.inputs && hidden == other.hidden;
 		}
 	};
 

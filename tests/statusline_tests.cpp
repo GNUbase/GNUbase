@@ -208,6 +208,7 @@ TEST_CASE(
 		{
 			std::unique_lock lock(disk->mutex);
 			++disk->measured;
+			disk->changed.notify_all();
 			disk->changed.wait(lock, [&disk] { return !disk->hangs; });
 			return static_cast<uintmax_t>(folder == "a" ? 1000 : 2000);
 		});
@@ -216,7 +217,9 @@ TEST_CASE(
 	CHECK(!space.measure("a", 20ms).has_value()); // nor a second measurement while the first one hangs
 	CHECK(std::chrono::steady_clock::now() - start < 5s);
 	{
-		const std::scoped_lock lock(disk->mutex);
+		// The measurement's thread may not have started yet on a busy machine: wait for it, then check there is one.
+		std::unique_lock lock(disk->mutex);
+		CHECK(disk->changed.wait_for(lock, 10s, [&disk] { return disk->measured != 0; }));
 		CHECK(disk->measured == 1);
 		disk->hangs = false;
 	}

@@ -562,12 +562,17 @@ namespace gnubase::ui
 		m_view = view;
 		m_parts.clear();
 		m_notes.clear();
+		m_hiddenExpressions.clear();
 		if (!m_project.contains("tracks") || !m_view.contains("parts"))
 			return;
 		const TimeContext time = projectTime(m_project);
 		std::map<uint64_t, const Json*> tracks;
 		for (const Json& track : m_project.at("tracks"))
 			tracks[track.at("id").get<uint64_t>()] = &track;
+		std::map<uint64_t, Json> hidden; // by channel, the expressions its setup hides
+		for (const Json& channel : m_project.value("channels", Json::array()))
+			if (channel.contains("noteExpression"))
+				hidden[channel.at("id").get<uint64_t>()] = channel.at("noteExpression").value("hidden", Json::array());
 		const Json& editable = m_view.at("editable");
 		for (const Json& id : m_view.at("parts"))
 			for (const Json& part : m_project.at("midiParts"))
@@ -581,6 +586,9 @@ namespace gnubase::ui
 					ticksOf(track, position + part.at("length").get<int64_t>(), time),
 					std::find(editable.begin(), editable.end(), id) != editable.end()};
 				m_parts.push_back(item);
+				if (const auto found = hidden.find(track.value("channel", uint64_t{0})); found != hidden.end())
+					for (const Json& type : found->second)
+						m_hiddenExpressions.emplace(item.id, type.get<std::string>());
 				for (const Json& note : part.at("notes"))
 					m_notes.push_back({item.id, note.at("id").get<uint64_t>(),
 						item.start + note.at("position").get<int64_t>(), note.at("length").get<int64_t>(),
@@ -830,8 +838,8 @@ namespace gnubase::ui
 				(note.editable ? "" : " inactive") + R"(" part=")" + std::to_string(note.part) + R"(" note=")" +
 				std::to_string(note.id) + R"(">)";
 			for (const char* type : engine::g_expressionNames)
-				rml +=
-					expression ? stepsRml(note.expressions, type, 0, note.length, note.length, pixel) : std::string();
+				if (expression && !expressionHidden(note.part, type))
+					rml += stepsRml(note.expressions, type, 0, note.length, note.length, pixel);
 			rml += "</div>";
 		}
 		// Compared with what was set last: the element's own RML has the classes set since.
@@ -1218,6 +1226,11 @@ namespace gnubase::ui
 		return {from, to};
 	}
 
+	bool KeyEditor::expressionHidden(uint64_t part, const std::string& type) const
+	{
+		return m_hiddenExpressions.count({part, type}) != 0;
+	}
+
 	void KeyEditor::renderExpression()
 	{
 		Rml::Element* root = m_root.get();
@@ -1228,12 +1241,35 @@ namespace gnubase::ui
 		m_expressionOpen = m_expressionOpen && !notes.empty(); // it edits the selected notes
 		setClass(editor, "off", !m_expressionOpen);
 		const std::string type = m_view.value("expressionType", std::string("tuning"));
+		// Parameter Selection lists the expressions the selected notes have points of, those their tracks' setups
+		// don't hide (p. 1309, #2120) and the one the editor edits.
+		std::string items;
 		for (size_t i = 0; i < engine::g_expressionNames.size(); ++i)
-			if (type == engine::g_expressionNames[i])
+		{
+			const std::string name = engine::g_expressionNames[i];
+			if (type == name)
 				setInner(editor->QuerySelector(".key-expression-type"), g_expressionLabels[i]);
+			const bool listed = name == type ||
+				std::any_of(notes.begin(), notes.end(),
+					[&](const Note* note)
+					{
+						return !expressionHidden(note->part, name) ||
+							std::any_of(note->expressions.begin(), note->expressions.end(),
+								[&](const Json& point) { return point.at("type") == name; });
+					});
+			if (listed)
+				items += R"(<menuitem type="toggle" expression-type=")" + name + R"(">)" + g_expressionLabels[i] +
+					"</menuitem>";
+		}
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
-			if (const Rml::Element* element = menu.get();
+			if (Rml::Element* element = menu.get();
 				element != nullptr && element->GetId().rfind("key-expression", 0) == 0)
+			{
+				if (items != m_expressionItems)
+				{
+					element->SetInnerRML(items);
+					m_expressionItems = items;
+				}
 				for (int i = 0; i < element->GetNumChildren(); ++i)
 					if (Rml::Element* item = element->GetChild(i);
 						(attribute(*item, "expression-type") == type) != item->HasAttribute("checked"))
@@ -1243,6 +1279,7 @@ namespace gnubase::ui
 						else
 							item->SetAttribute("checked", "");
 					}
+			}
 		if (!m_expressionOpen)
 			return;
 		// Each selected note's points, as the gesture going on changes them, on the editor's span.
