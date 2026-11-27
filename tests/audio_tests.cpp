@@ -1402,6 +1402,15 @@ TEST_CASE("audio.setDevice falls back to the backend's default device first with
 	CHECK(status.at("device").at("id") == "fake-1");
 	CHECK(status.at("running") == true);
 	CHECK(status.at("failed") == Json{{"backend", "fake"}, {"device", "fake-2"}, {"reason", "no device fake-2"}});
+	// A reset, which its driver may ask for, opens that default device again rather than trying fake-2.
+	status = run(client, "audio.reset");
+	CHECK(status.at("device").at("id") == "fake-1");
+	CHECK(status.at("failed").at("device") == "fake-2");
+
+	// A backend this build doesn't have has no default device: the dummy device plays.
+	status =
+		run(client, "audio.setDevice", {{"backend", "asio-elsewhere"}, {"device", "x"}, {"fallBackToDummy", true}});
+	CHECK(status.at("device").at("backend") == "dummy");
 
 	// At the sample rate and block size asked for; if the default device can't run at them, the dummy device can.
 	status = run(client, "audio.setDevice",

@@ -570,7 +570,17 @@ TEST_CASE(
 	openDialog(app);
 	CHECK(selected(app, "driver") == "dummy - Dummy device");
 
-	// The driver shown is the one that plays: Apply saves it, at the block size it plays with.
+	// Apply and OK without the driver list touched leave the user's choice for the next start.
+	const Json fellBack = lastRun(app, "audio.setDevice");
+	click(app, "#apply");
+	CHECK(lastRun(app, "audio.setDevice") == fellBack);
+	CHECK(app.call("audio.get").at("failed").is_object());
+	CHECK(app.call("settings.get", {{"key", "audio.backend"}}).at("value").get<std::string>().empty());
+
+	// The driver that plays picked in the list: Apply saves it, at the block size it plays with.
+	choose(app, "#driver", 1);
+	choose(app, "#driver", -1);
+	CHECK(selected(app, "driver") == "dummy - Dummy device");
 	click(app, "#apply");
 	CHECK(open(app));
 	CHECK(lastRun(app, "audio.setDevice") == Json{{"backend", "dummy"}, {"device", "dummy"}, {"remember", true}});

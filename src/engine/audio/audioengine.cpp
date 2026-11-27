@@ -1770,7 +1770,9 @@ namespace gnubase::engine
 			// is the one that failed. Then the dummy device without capture memory. Both at the sample rate and block
 			// size asked for.
 			std::vector<Json> fallbacks;
-			if (m_settings.get(settings::g_audioFallbackDevice) == "default" && !device.empty())
+			const bool known = std::any_of(m_backends.begin(), m_backends.end(),
+				[&backend](const std::unique_ptr<audio::Backend>& candidate) { return candidate->name() == backend; });
+			if (m_settings.get(settings::g_audioFallbackDevice) == "default" && !device.empty() && known)
 				fallbacks.push_back({{"backend", backend}});
 			fallbacks.push_back({{"backend", "dummy"}, {"captureSeconds", 0}});
 			for (Json& fallback : fallbacks)
@@ -1801,6 +1803,7 @@ namespace gnubase::engine
 				m_startAfterFailure = false;
 				return;
 			}
+			logging::warning("Cannot use the audio device ({} {}): {}", backend, device, error.what());
 			failing();
 			std::rethrow_exception(failure);
 		}
@@ -2593,7 +2596,8 @@ namespace gnubase::engine
 				"audio.fallbackDevice default, the backend's default device unless that is the one that failed, "
 				"otherwise or if that fails too the dummy device without capture memory; at the sampleRate and "
 				"blockSize asked for, started if start says so. failed in audio.get says what failed and why, until "
-				"another audio.setDevice replaces that fallback; audio.reset tries the device that failed again. The "
+				"another audio.setDevice replaces that fallback; while the dummy device is the fallback, audio.reset "
+				"tries the device that failed again. The "
 				"windowed app opens its device like that. remember: "
 				"once the device runs as asked (not the fallback), saves backend and device as given as the user "
 				"settings audio.backend and audio.device, which the windowed app opens when it starts, and sends "
@@ -2773,9 +2777,10 @@ namespace gnubase::engine
 			[this](CommandContext&) { return status(); });
 		engine.registerCommand(
 			{"audio.reset", 1,
-				"Opens the audio device again with the same settings and restarts it if it ran; while a fallback plays "
-				"for a device that audio.setDevice couldn't use (failed in audio.get), it tries that device again as "
-				"audio.setDevice with fallBackToDummy would. Drivers ask for this "
+				"Opens the audio device again with the same settings and restarts it if it ran; while the dummy device "
+				"plays for a device that audio.setDevice couldn't use (failed in audio.get), it tries that device "
+				"again as audio.setDevice with fallBackToDummy would, and the measurements start anew as they do "
+				"there. Drivers ask for this "
 				"when their settings change, e.g. in their control panel, or when their device goes away; the engine "
 				"then resets on its own. A device that can't be opened, e.g. because it was unplugged, or that ran "
 				"and opens but doesn't start again, is lost (lost in audio.get): the engine goes on without it and "
@@ -2794,10 +2799,11 @@ namespace gnubase::engine
 			[this, announcingFailure](CommandContext& context)
 			{
 				bool changed = false;
-				if (m_failed.is_object() && m_device && !m_lost)
+				if (m_failed.is_object() && m_dummy != nullptr && !m_lost)
 				{
-					// A fallback plays for a device that couldn't be used: try that one again, and the fallback if it
-					// still can't, running as the fallback did.
+					// The dummy device plays for a device that couldn't be used: try that one again, and the dummy
+					// device if it still can't, running as it did. A backend's default device that plays instead
+					// resets as a device does when its driver asks.
 					Json parameters = m_failedParameters;
 					parameters["fallBackToDummy"] = true;
 					parameters["start"] = m_device->running();

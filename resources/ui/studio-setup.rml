@@ -192,6 +192,7 @@
 			local device = status.device
 			local options = {}
 			setup.drivers = {}
+			setup.loadedDriver = ""
 			if device == nil then
 				options[1] = option("", "No Driver", true)
 			end
@@ -200,10 +201,14 @@
 					setup.drivers[#setup.drivers + 1] = {backend = backend.name, device = info.id}
 					local text = backend.name .. " - " .. info.name .. (info.available == false and " (unavailable)" or "")
 					local selected = device ~= nil and device.backend == backend.name and device.id == info.id
+					if selected then
+						setup.loadedDriver = tostring(#setup.drivers)
+					end
 					options[#options + 1] = option(#setup.drivers, text, selected)
 				end
 			end
-			local rml = field("Audio Driver", '<select id="driver">' .. table.concat(options) .. "</select>")
+			local rml = field("Audio Driver",
+				'<select id="driver" onchange="StudioSetup.touchDriver(document)">' .. table.concat(options) .. "</select>")
 			if device ~= nil then
 				rml = rml .. field("Input Latency", '<span id="input-latency">' ..
 					milliseconds(device.inputLatency, device.sampleRate) .. "</span>") ..
@@ -447,7 +452,16 @@
 		end
 
 		-- Reads everything from the engine and fills the pages.
+		-- The user picked another option of the Audio Driver list than the one it loaded with, maybe the loaded one
+		-- again later. The list's own change when it shows its first selection counts for nothing.
+		function setup.touchDriver(document)
+			if valueOf(document:GetElementById("driver")) ~= setup.loadedDriver then
+				setup.driverTouched = true
+			end
+		end
+
 		function setup.load(document)
+			setup.driverTouched = false
 			local devices = gnubase.audio.devices()
 			setup.status = gnubase.audio.get()
 			setup.audioPorts = gnubase.audio.ports()
@@ -666,9 +680,10 @@
 				-- Another driver: the pages showed the old device, whose settings don't apply to the new one. It runs if
 				-- the old one ran, and the app opens it again when it starts.
 				call(errors, gnubase.audio.setDevice, {backend = driver.backend, device = driver.device, remember = true})
-			elseif driver ~= nil and fallback then
-				-- The fallback that plays for the device chosen last, which couldn't be used: Apply makes it the user's
-				-- choice, with what the pages changed.
+			elseif driver ~= nil and fallback and setup.driverTouched then
+				-- The fallback that plays for the device chosen last, which couldn't be used, picked in the list: Apply
+				-- makes it the user's choice, with what the pages changed. Untouched, the choice stays for the next
+				-- start.
 				if call(errors, gnubase.audio.setDevice, {backend = driver.backend, device = driver.device,
 					remember = true}) then
 					applyAudioDevice(document, errors, gnubase.audio.get().device)

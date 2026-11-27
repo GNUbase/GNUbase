@@ -968,7 +968,7 @@ TEST_CASE("the click sounds while playing or recording, as whilePlaying and whil
 
 TEST_CASE("whilePlaying and whileRecording switch at the sample where recording punches in and out", "[integration]")
 {
-	const int blockSize = GENERATE(128, 100, 4096);
+	const int blockSize = GENERATE(17, 300, 4096); // neither locator on a block boundary
 	Session session(blockSize);
 	Client& client = session.client;
 	// 120 BPM: beats at 0, 8000, 16000 and 24000; the locators on beats, within blocks.
