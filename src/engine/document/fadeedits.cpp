@@ -145,9 +145,9 @@ namespace gnubase::engine
 
 			// A crossfade that is there already keeps what the parameters don't change; a new one without a mode is the
 			// default crossfade.
-			Crossfade crossfade = to.crossfade.from == from.id ? to.crossfade
-				: parameters.contains("mode")                  ? Crossfade()
-															   : defaultCrossfade(context);
+			Crossfade crossfade = to.crossfade;
+			if (to.crossfade.from != from.id)
+				crossfade = parameters.contains("mode") ? Crossfade() : defaultCrossfade(context);
 			crossfade.from = from.id;
 			if (parameters.contains("mode"))
 			{
