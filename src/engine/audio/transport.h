@@ -277,7 +277,9 @@ namespace gnubase::engine
 		time::Samples left = -1;    // where the cycle jumped to when the lap began: the left locator then, or -1
 		time::Samples right = -1;   // and where it jumped from: the right locator then, or -1
 		time::Samples stopped = -1; // where the pass before this one stopped, or -1
-		bool cycle = false;         // it played in cycle mode (graph::TransportBlock::cycle)
+		uint32_t stoppedLap = 0;    // the lap it stopped in, which a cycle jump after its last input began
+		time::Samples stoppedRight = -1; // and where that jump came from, or -1
+		bool cycle = false;              // it played in cycle mode (graph::TransportBlock::cycle)
 	};
 
 	// Where the transport played each of the device's last frames, so recorded input finds where it belongs: with

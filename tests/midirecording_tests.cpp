@@ -1366,3 +1366,41 @@ TEST_CASE("a note held when cycle playback stops ends where it stopped, with its
 	CHECK(notes == std::vector<std::vector<int64_t>>{{g_beatTicks, 2 * g_beatTicks, 60}});
 	CHECK(start + parts[0].at("length").get<int64_t>() == 3 * g_beatTicks);
 }
+
+TEST_CASE(
+	"a note held when cycle playback stops just after a cycle jump ends at the right locator (#2096)", "[integration]")
+{
+	// The pass cycles after its last input and stops in the next lap before any input there: the first lap's note and
+	// part end at the right locator, not where playback stopped, which lies in the next lap.
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	run(client, "transport.set", {{"left", 0}, {"right", 4 * g_beat}, {"cycle", true}});
+	run(client, "transport.locate", {{"position", 0}});
+	auto now = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "transport.play");
+	setup.inject({message(now + g_beat, {0x90, 60, 100})});
+	run(client, "audio.render", {{"frames", 6 * g_beat}});
+	run(client, "transport.stop");
+	now = run(client, "audio.get").at("position").get<int64_t>();
+	setup.inject({message(now + 10, {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "transport.locate", {{"position", 0}});
+	now = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "transport.play");
+	setup.inject({message(now + g_beat, {0x90, 62, 100}), message(now + (2 * g_beat), {0x80, 62, 0})});
+	run(client, "audio.render", {{"frames", 3 * g_beat}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}});
+	std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 2);
+	std::sort(parts.begin(), parts.end(), [](const Json& a, const Json& b) { return a.at("lane") < b.at("lane"); });
+	const auto start = parts[0].at("position").get<int64_t>();
+	std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
+	for (std::vector<int64_t>& each : notes)
+		each[0] += start;
+	CHECK(notes == std::vector<std::vector<int64_t>>{{g_beatTicks, 3 * g_beatTicks, 60}});
+	CHECK(start + parts[0].at("length").get<int64_t>() == 4 * g_beatTicks);
+}

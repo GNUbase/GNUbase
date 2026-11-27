@@ -508,8 +508,8 @@ namespace gnubase::engine
 						// it advanced less than the device frames since the input before, as with a note held past the
 						// lap's end. Only a jump that the audio thread marked as a cycle lap starts a lap (#2067), and
 						// so does a new playback pass in cycle mode, but from where it starts. A new pass ends the
-						// notes held where the pass before stopped. The locators are the ones the lap jumped between,
-						// not the ones of now (#2096).
+						// notes held where the pass before stopped, or at the right locator if it cycled after its last
+						// input. The locators are the ones the lap jumped between, not the ones of now (#2096).
 						const auto frame = static_cast<int64_t>(kept.deviceFrame);
 						const bool pass = played >= 0 && kept.lap.pass != playedLap.pass;
 						const bool back = pass || (played >= 0 && at - played < frame - playedFrame);
@@ -517,7 +517,9 @@ namespace gnubase::engine
 						if (back)
 						{
 							time::Samples end = played;
-							if (pass && kept.lap.stopped > played)
+							if (pass && kept.lap.stoppedLap != playedLap.lap && kept.lap.stoppedRight > played)
+								end = kept.lap.stoppedRight; // it cycled after its last input, then stopped
+							else if (pass && kept.lap.stopped > played)
 								end = kept.lap.stopped;
 							else if (!pass && lap && kept.lap.right > played)
 								end = kept.lap.right;
