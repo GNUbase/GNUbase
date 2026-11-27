@@ -443,6 +443,7 @@ namespace gnubase::engine
 
 		// In arranger mode the chain decides where playback goes, not the cycle.
 		const bool cycles = !arranged && m_settings.cycle && m_settings.left != m_settings.right;
+		m_block.cycle = cycles;
 		const bool punchesOut = m_settings.punchOut && !m_settings.lockRecord; // Lock Record ignores it
 		while (offset < frames)
 		{
@@ -553,11 +554,17 @@ namespace gnubase::engine
 			m_positions[(start + i) % size] = -1;
 			m_recording[(start + i) % size] = 0;
 		}
+		if (transport.segmentCount > 0 && !m_playing) // a pass starts: the one before stopped at m_played
+			m_lap = {m_lap.lap, m_lap.pass + 1, -1, -1, m_played, m_lap.lap, m_lap.right, false};
+		m_playing = transport.segmentCount > 0;
+		m_lap.cycle = transport.cycle;
 		for (size_t s = 0; s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
-			if (segment.lap)
-				++m_lap;
+			if (segment.lap) // the locators it jumped between, as they were (#2096)
+				m_lap = {m_lap.lap + 1, m_lap.pass, segment.position, m_played, m_lap.stopped, m_lap.stoppedLap,
+					m_lap.stoppedRight, m_lap.cycle};
+			m_played = segment.position + segment.frames;
 			for (uint32_t i = 0; i < segment.frames; ++i)
 			{
 				m_positions[(start + segment.offset + i) % size] = segment.position + i;
@@ -576,7 +583,7 @@ namespace gnubase::engine
 		return m_positions[static_cast<size_t>(frame % size)];
 	}
 
-	uint32_t PlayedPositions::lapAt(int64_t frame) const noexcept
+	PlayedLap PlayedPositions::lapAt(int64_t frame) const noexcept
 	{
 		return at(frame) >= 0 ? m_laps[static_cast<size_t>(frame % static_cast<int64_t>(m_laps.size()))] : m_lap;
 	}

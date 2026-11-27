@@ -1217,6 +1217,8 @@ TEST_CASE("Insert as Cycle Recording stacks what each cycle lap played as a part
 	run(client, "audio.render", {{"frames", 12 * g_beat}});
 	run(client, "transport.stop");
 	run(client, "audio.render", {{"frames", 64}});
+	// The laps keep the locators they played between, whatever the locators are by the insert (#2096).
+	run(client, "transport.set", {{"left", g_beat}, {"right", 2 * g_beat}, {"cycle", false}});
 	const Json added = run(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}});
 	CHECK(added.at("parts").size() == 3);
 	std::vector<Json> parts = setup.parts();
@@ -1262,4 +1264,143 @@ TEST_CASE("a locate back while playing without cycle mode starts no cycle lap (#
 	CHECK(kept.at("cycleLaps") == 1);
 	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}}),
 		ContainsSubstring("lap"));
+}
+
+TEST_CASE("each start of cycle playback after a stop begins a lap of its own (#2096)", "[integration]")
+{
+	// Input from the last lap of one pass and from the first lap of the next, within the buffer's 30 s, used to
+	// share a lap: now they are two, and Insert as Cycle Recording stacks them.
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	run(client, "transport.set", {{"left", 0}, {"right", 4 * g_beat}, {"cycle", true}});
+	const auto pass = [&](int pitch)
+	{
+		run(client, "transport.locate", {{"position", 0}});
+		const auto now = run(client, "audio.get").at("position").get<int64_t>();
+		run(client, "transport.play");
+		setup.inject({message(now + g_beat, {0x90, pitch, 100}), message(now + (2 * g_beat), {0x80, pitch, 0})});
+		run(client, "audio.render", {{"frames", 3 * g_beat}});
+		run(client, "transport.stop");
+		run(client, "audio.render", {{"frames", 64}});
+	};
+	pass(60);
+	pass(62);
+	CHECK(run(client, "midi.getRetrospective", {{"track", setup.track}}).at("cycleLaps") == 2);
+	run(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}});
+	std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 2);
+	std::sort(parts.begin(), parts.end(), [](const Json& a, const Json& b) { return a.at("lane") < b.at("lane"); });
+	for (size_t lap = 0; lap < 2; ++lap)
+	{
+		INFO("lap " << lap);
+		const auto start = parts[lap].at("position").get<int64_t>();
+		std::vector<std::vector<int64_t>> notes = notesOf(parts[lap]);
+		for (std::vector<int64_t>& each : notes)
+			each[0] += start;
+		CHECK(notes ==
+			std::vector<std::vector<int64_t>>{{g_beatTicks, g_beatTicks, 60 + (2 * static_cast<int64_t>(lap))}});
+	}
+}
+
+TEST_CASE("starts of playback after a stop without cycle mode start no cycle lap (#2096)", "[integration]")
+{
+	// Insert as Cycle Recording is for input captured with cycle mode on (reference manual p. 355): two linear
+	// playback passes are one lap, as a locate back is (#2067).
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	const auto pass = [&]
+	{
+		run(client, "transport.locate", {{"position", 0}});
+		const auto now = run(client, "audio.get").at("position").get<int64_t>();
+		run(client, "transport.play");
+		setup.inject({message(now + 100, {0x90, 60, 100}), message(now + 1000, {0x80, 60, 0})});
+		run(client, "audio.render", {{"frames", 2000}});
+		run(client, "transport.stop");
+		run(client, "audio.render", {{"frames", 64}});
+	};
+	pass();
+	pass();
+	const Json kept = run(client, "midi.getRetrospective", {{"track", setup.track}});
+	CHECK(kept.at("events") == 4);
+	CHECK(kept.at("cycleLaps") == 1);
+	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}}),
+		ContainsSubstring("lap"));
+}
+
+TEST_CASE("a note held when cycle playback stops ends where it stopped, with its lap (#2096)", "[integration]")
+{
+	// The note-off comes in stop mode, which Insert as Cycle Recording leaves out: the note and the lap end where
+	// playback stopped, not at the pass's last input.
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	run(client, "transport.set", {{"left", 0}, {"right", 4 * g_beat}, {"cycle", true}});
+	run(client, "transport.locate", {{"position", 0}});
+	auto now = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "transport.play");
+	setup.inject({message(now + g_beat, {0x90, 60, 100})});
+	run(client, "audio.render", {{"frames", 3 * g_beat}});
+	run(client, "transport.stop");
+	now = run(client, "audio.get").at("position").get<int64_t>();
+	setup.inject({message(now + 10, {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "transport.locate", {{"position", 0}});
+	now = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "transport.play");
+	setup.inject({message(now + g_beat, {0x90, 62, 100}), message(now + (2 * g_beat), {0x80, 62, 0})});
+	run(client, "audio.render", {{"frames", 3 * g_beat}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}});
+	std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 2);
+	std::sort(parts.begin(), parts.end(), [](const Json& a, const Json& b) { return a.at("lane") < b.at("lane"); });
+	const auto start = parts[0].at("position").get<int64_t>();
+	std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
+	for (std::vector<int64_t>& each : notes)
+		each[0] += start;
+	CHECK(notes == std::vector<std::vector<int64_t>>{{g_beatTicks, 2 * g_beatTicks, 60}});
+	CHECK(start + parts[0].at("length").get<int64_t>() == 3 * g_beatTicks);
+}
+
+TEST_CASE(
+	"a note held when cycle playback stops just after a cycle jump ends at the right locator (#2096)", "[integration]")
+{
+	// The pass cycles after its last input and stops in the next lap before any input there: the first lap's note and
+	// part end at the right locator, not where playback stopped, which lies in the next lap.
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}, {"monitor", true}});
+	run(client, "transport.set", {{"left", 0}, {"right", 4 * g_beat}, {"cycle", true}});
+	run(client, "transport.locate", {{"position", 0}});
+	auto now = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "transport.play");
+	setup.inject({message(now + g_beat, {0x90, 60, 100})});
+	run(client, "audio.render", {{"frames", 6 * g_beat}});
+	run(client, "transport.stop");
+	now = run(client, "audio.get").at("position").get<int64_t>();
+	setup.inject({message(now + 10, {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "transport.locate", {{"position", 0}});
+	now = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "transport.play");
+	setup.inject({message(now + g_beat, {0x90, 62, 100}), message(now + (2 * g_beat), {0x80, 62, 0})});
+	run(client, "audio.render", {{"frames", 3 * g_beat}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}});
+	std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 2);
+	std::sort(parts.begin(), parts.end(), [](const Json& a, const Json& b) { return a.at("lane") < b.at("lane"); });
+	const auto start = parts[0].at("position").get<int64_t>();
+	std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
+	for (std::vector<int64_t>& each : notes)
+		each[0] += start;
+	CHECK(notes == std::vector<std::vector<int64_t>>{{g_beatTicks, 3 * g_beatTicks, 60}});
+	CHECK(start + parts[0].at("length").get<int64_t>() == 4 * g_beatTicks);
 }
