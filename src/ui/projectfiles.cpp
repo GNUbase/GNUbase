@@ -28,6 +28,7 @@ namespace gnubase::ui
 		constexpr const char* g_replaced = "replaced";
 		// The document that shows an error or a notice (showError, showNotice).
 		constexpr const char* g_errorDialog = "project-error.rml";
+		constexpr const char* g_replaceFileDialog = "replace-file.rml";
 		// The result with which a backup's progress dialog closes once the backup ended.
 		constexpr const char* g_backupDone = "done";
 
@@ -336,7 +337,7 @@ namespace gnubase::ui
 			if (item.at("exists").get<bool>())
 			{
 				m_recent.push_back(item.at("file").get<std::string>());
-				names.push_back(std::filesystem::u8path(m_recent.back()).stem().u8string());
+				names.push_back(item.at("name").get<std::string>());
 			}
 		if (Rml::Element* list = dialog.GetElementById("start-recent"))
 			list->SetInnerRML(listItems(names, m_recent));
@@ -550,8 +551,9 @@ namespace gnubase::ui
 			return;
 		}
 		// One at a time, and the others wait, so that nothing the user is to answer or learn is dropped (#485).
-		m_waitingDialogs.push_back(
-			{window, file, std::string_view(file) == g_errorDialog, std::move(shown), std::move(closed)});
+		const bool error = std::string_view(file) == g_errorDialog;
+		m_waitingDialogs.push_back({window, file, error, error || std::string_view(file) == g_replaceFileDialog,
+			std::move(shown), std::move(closed)});
 		openWaiting();
 	}
 
@@ -563,8 +565,9 @@ namespace gnubase::ui
 			m_waitingDialogs.pop_front();
 			Rml::ElementDocument* dialog = loadDialog(next.window, next.file);
 			// An error or notice whose window went while it waited still shows, in the main window instead, so that
-			// the failed save it reports isn't taken for done (#985).
-			if (dialog == nullptr && next.error)
+			// the failed save it reports isn't taken for done (#985), and so does the question before Save As replaces
+			// a file, so that the save the user asked for isn't dropped without a word (#798).
+			if (dialog == nullptr && next.mainIfGone)
 				if (const Window* main = mainWindow(); main != nullptr)
 					dialog = loadDialog(main->id(), next.file);
 			if (dialog == nullptr)
@@ -663,9 +666,15 @@ namespace gnubase::ui
 		m_binding.send("project.location", Json::object(),
 			[this](const engine::Result& result)
 			{
-				if (result.ok())
-					m_file = result.value.at("file").is_string() ? result.value.at("file").get<std::string>()
-																 : std::string();
+				if (!result.ok())
+					return;
+				const auto field = [&result](const char* key)
+				{
+					const Json& value = result.value.at(key);
+					return value.is_string() ? value.get<std::string>() : std::string();
+				};
+				m_file = field("file");
+				m_autoSaveOf = field("autoSaveOf");
 			});
 	}
 
@@ -708,22 +717,26 @@ namespace gnubase::ui
 			});
 	}
 
-	void ProjectFiles::openError(WindowId window, const std::string& error, bool autoSave)
+	void ProjectFiles::openError(WindowId window, const std::string& error, bool autoSave, uint64_t failure)
 	{
 		// The dialog that asked may still be closing.
 		m_shell.post(
 			// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's std::string; out of memory only
-			[this, window, error, autoSave, worked = m_autoSaveWorked]
+			[this, window, error, autoSave, failure, worked = m_autoSaveWorked]
 			{
 				if (autoSave && worked != m_autoSaveWorked)
 					return; // an auto save succeeded or the project was saved or opened since it failed
+				// An error that waited for a dialog opens a step after the dialog closed, which may be after a newer
+				// failure's error opened (#859).
+				if (autoSave && failure != m_autoSaveFailures)
+					return;
 				const Window* showing = m_shell.find(window);
 				// A failed auto save's error doesn't open over another modal dialog, such as the fade editor, which the
 				// user works in: it waits until that closed. The project dialog that is open (m_dialog) is left to
 				// openDialog, where an auto save's error makes way or else shows at the next failure.
 				if (autoSave && showing != nullptr && otherModalOpen(showing->context(), m_dialog.get()))
 				{
-					waitForDialogs(showing->context(), window, error);
+					waitForDialogs(showing->context(), window, error, failure);
 					return;
 				}
 				// Any other error waits for the project dialog that is open.
@@ -752,10 +765,11 @@ namespace gnubase::ui
 			});
 	}
 
-	void ProjectFiles::waitForDialogs(Rml::Context& context, WindowId window, const std::string& error)
+	void ProjectFiles::waitForDialogs(
+		Rml::Context& context, WindowId window, const std::string& error, uint64_t failure)
 	{
 		dropWaitingError();
-		m_waitingError = WaitingError{window, error};
+		m_waitingError = WaitingError{window, error, failure};
 		for (int i = 0; i < context.GetNumDocuments(); ++i)
 		{
 			Rml::ElementDocument* document = context.GetDocument(i);
@@ -773,7 +787,7 @@ namespace gnubase::ui
 			return;
 		const WaitingError waiting = std::move(*m_waitingError);
 		dropWaitingError();
-		openError(waiting.window, waiting.error, true);
+		openError(waiting.window, waiting.error, true, waiting.failure);
 	}
 
 	void ProjectFiles::autoSaveWorks()
@@ -816,8 +830,10 @@ namespace gnubase::ui
 			m_autoSaveFailureShown = false;
 		if (m_autoSaveFailureShown)
 			return;
+		++m_autoSaveFailures;
 		if (const Window* main = mainWindow(); main != nullptr)
-			openError(main->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(), true);
+			openError(main->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(), true,
+				m_autoSaveFailures);
 	}
 
 	void ProjectFiles::unlessUnsaved(
@@ -963,14 +979,47 @@ namespace gnubase::ui
 		dialog.title = "Save Project As";
 		dialog.filters = projectFilters();
 		dialog.parent = window.id();
-		dialog.location =
-			m_file.empty() ? std::filesystem::path("Untitled.dawproject") : std::filesystem::u8path(m_file);
+		// A project opened from an auto save proposes the project file it was made of, which the OS's dialog asks
+		// before it replaces.
+		if (!m_file.empty())
+			dialog.location = std::filesystem::u8path(m_file);
+		else if (!m_autoSaveOf.empty())
+			dialog.location = std::filesystem::u8path(m_autoSaveOf);
+		else
+			dialog.location = "Untitled.dawproject";
 		m_shell.showFileDialog(dialog,
-			[this, done = reportFailure(window)](const FileDialogResult& chosen)
+			[this, id = window.id(), done = reportFailure(window)](const FileDialogResult& chosen)
 			{
 				if (chosen.files.empty())
 					return;
-				m_binding.send("project.save", {{"path", withProjectExtension(chosen.files.front()).u8string()}}, done);
+				const std::filesystem::path& named = chosen.files.front();
+				const std::filesystem::path file = withProjectExtension(named);
+				const Json save = {{"path", file.u8string()}};
+				// The dialog asked before it replaces the file it named, but not about the file that GNUbase makes of
+				// that name, such as Song.dawproject for "Song." or "Song", as the dialogs of Linux check the name as
+				// typed (#798).
+				std::error_code error;
+				if (file == named || !std::filesystem::exists(file, error))
+				{
+					m_binding.send("project.save", save, done);
+					return;
+				}
+				openDialog(
+					id, g_replaceFileDialog,
+					// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's std::filesystem::path; out of memory only
+					[file](Rml::ElementDocument* dialog)
+					{
+						if (Rml::Element* message =
+								dialog != nullptr ? dialog->GetElementById("replace-file-message") : nullptr)
+							message->SetInnerRML(Rml::StringUtilities::EncodeRml(
+								file.filename().u8string() + " already exists. Replace it?"));
+					},
+					// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's copy of the Json; out of memory only
+					[this, save, done](Rml::ElementDocument&, const std::string& result)
+					{
+						if (result == "ok")
+							m_binding.send("project.save", save, done);
+					});
 			});
 	}
 }

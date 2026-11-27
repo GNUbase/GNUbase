@@ -676,8 +676,7 @@ namespace gnubase::engine
 			require(fs::is_regular_file(file, error), "there is no file " + file.u8string());
 			try
 			{
-				return loadDawProject(file.u8string(),
-					(file.parent_path() / fs::u8path(file.stem().u8string() + " media")).u8string(), extract);
+				return loadDawProject(file.u8string(), extractedMediaFolderFor(file).u8string(), extract);
 			}
 			catch (const std::exception& problem)
 			{

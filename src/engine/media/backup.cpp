@@ -5,6 +5,7 @@
 #include "engine/audiofile/file.h"
 #include "engine/dawproject/dawproject.h"
 #include "engine/jobs/jobs.h"
+#include "platform/text.h"
 
 #include <algorithm>
 #include <cctype>
@@ -411,10 +412,7 @@ namespace gnubase::engine
 
 	std::string foldedName(const fs::path& name)
 	{
-		std::string text = name.u8string();
-		std::transform(text.begin(), text.end(), text.begin(),
-			[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
-		return text;
+		return text::asciiLower(name.u8string());
 	}
 
 	bool isInside(const std::string& file, const fs::path& folder)
@@ -760,6 +758,11 @@ namespace gnubase::engine
 				sameLetter))
 			name.resize(name.size() - extension.size());
 		return name.empty() ? "Untitled" : name;
+	}
+
+	fs::path extractedMediaFolderFor(const fs::path& projectFile)
+	{
+		return projectFile.parent_path() / fs::u8path(projectFileStem(projectFile) + " media");
 	}
 
 	Json backupProject(Project project, const BackupOptions& options, JobContext& job)

@@ -5,13 +5,13 @@
 #include "ui/eventdisplay.h"
 
 #include "platform/log.h"
+#include "platform/text.h"
 
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
 
 #include <algorithm>
-#include <cctype>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -28,9 +28,7 @@ namespace gnubase::ui
 
 		bool isMidiFile(const std::string& file)
 		{
-			std::string extension = std::filesystem::u8path(file).extension().u8string();
-			std::transform(extension.begin(), extension.end(), extension.begin(),
-				[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+			const std::string extension = text::asciiLower(std::filesystem::u8path(file).extension().u8string());
 			return extension == ".mid" || extension == ".midi" || extension == ".smf";
 		}
 

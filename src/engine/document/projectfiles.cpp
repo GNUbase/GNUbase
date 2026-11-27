@@ -11,11 +11,13 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <regex>
+#include <set>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -118,12 +120,55 @@ namespace gnubase::engine
 			return oldest;
 		}
 
+		// The first series of auto saves of untitled projects named name that folder doesn't have yet: name1, then
+		// name2 and so on, as the reference numbers unsaved projects (UntitledX-xx, manual pp. 134, 1608), whatever
+		// case the files are written in, so that one untitled project doesn't overwrite another one's auto saves
+		// (#635).
+		std::string freeSeries(const fs::path& folder, const std::string& name)
+		{
+			static const std::regex series(R"((\d{1,9})-\d{1,9})");
+			const std::string key = foldedName(fs::u8path(name));
+			std::set<int> taken;
+			std::error_code error;
+			for (const fs::directory_entry& entry : fs::directory_iterator(folder, error))
+			{
+				const std::string stem = foldedName(entry.path().stem());
+				std::smatch match;
+				if (foldedName(entry.path().extension()) == ".bak" && stem.size() > key.size() &&
+					stem.compare(0, key.size(), key) == 0 &&
+					std::regex_match(
+						stem.cbegin() + static_cast<std::ptrdiff_t>(key.size()), stem.cend(), match, series))
+					taken.insert(std::stoi(match[1].str()));
+			}
+			int number = 1;
+			while (taken.count(number) != 0)
+				++number;
+			return name + std::to_string(number);
+		}
+
 		// Whether a file is an auto save: a .bak in a folder Auto Saves, however the path writes them.
 		bool isAutoSave(const fs::path& file)
 		{
 			const fs::path path = file.lexically_normal();
 			return foldedName(path.extension()) == ".bak" &&
 				foldedName(path.parent_path().filename()) == foldedName(fs::u8path(g_autoSaves));
+		}
+
+		// The project file that an auto save was made of: the file next to its folder Auto Saves named as the auto save
+		// without its number, "Song.dawproject" for "Auto Saves/Song-03.bak". Empty for an auto save of an untitled
+		// project, in the settings folder's Auto Saves, and for one without a number (#635).
+		std::string projectFileOf(const fs::path& autoSave, const fs::path& settingsDirectory)
+		{
+			static const std::regex numbered(R"((.+)-\d{1,9})");
+			const fs::path file = autoSave.lexically_normal();
+			const fs::path folder = file.parent_path().parent_path();
+			const std::string stem = file.stem().u8string();
+			std::smatch match;
+			std::error_code error;
+			if ((!settingsDirectory.empty() && fs::equivalent(folder, settingsDirectory, error)) ||
+				!std::regex_match(stem, match, numbered))
+				return {};
+			return (folder / fs::u8path(match[1].str() + g_extension)).u8string();
 		}
 
 		// Why an auto save to file failed, whichever file it went to: the error without the file, which the errors of
@@ -154,6 +199,8 @@ namespace gnubase::engine
 		project.lastAppliedColor = std::move(m_project.lastAppliedColor);
 		m_project = std::move(project);
 		m_file = autoSave ? std::string() : file;
+		m_autoSaveOf = autoSave ? projectFileOf(fs::u8path(file), m_settingsDirectory) : std::string();
+		m_autoSaveSeries.clear();
 		m_history.clear();
 		m_clipboard.reset();           // it holds the old project's track and clip ids
 		m_automationClipboard.reset(); // so does this one
@@ -176,6 +223,8 @@ namespace gnubase::engine
 	void ProjectModel::saved(const std::string& file, CommandContext& context)
 	{
 		m_file = file;
+		m_autoSaveOf.clear();
+		m_autoSaveSeries.clear();
 		m_savedRevision = m_revision;
 		m_autoSavedRevision = m_revision;
 		m_lastSave = m_clock->now();
@@ -283,10 +332,13 @@ namespace gnubase::engine
 				"Saves a copy of the project if it changed since it was last saved or auto saved, as an auto save: "
 				"into the folder Auto Saves of its project folder as <name>-01.bak, <name>-02.bak and so on up to "
 				"the user setting project.autoSaveFiles, after which the oldest is overwritten. A project without a "
-				"file goes to Auto Saves in the user settings' folder, named after the project, and isn't auto saved "
-				"without one. Media files aren't copied, and the project itself stays unsaved. project.load opens an "
-				"auto save without a file and with unsaved changes, so that saving asks for a path. With due, as the "
-				"engine asks every 30 seconds, only if the user setting project.autoSave is on and "
+				"file goes to Auto Saves in the user settings' folder, named after the project and numbered in a "
+				"series of its own that no file there has yet, <name>1-01.bak, and <name>2-01.bak for the next "
+				"untitled project; it isn't auto saved without that folder. Media files aren't copied, and the project "
+				"itself stays unsaved. project.load opens an auto save without a file and with unsaved changes, so "
+				"that "
+				"saving asks for a path; project.location's autoSaveOf names the project file it was made of. With "
+				"due, as the engine asks every 30 seconds, only if the user setting project.autoSave is on and "
 				"project.autoSaveInterval minutes have passed since the project was saved, opened or auto saved, or "
 				"an auto save failed. Returns the file, or null if nothing was saved; emits project.autoSaved with "
 				"the file. If it fails, emits project.autoSaveFailed with the file, the error and repeated, although "
@@ -314,8 +366,22 @@ namespace gnubase::engine
 					return Json{{"file", nullptr}};
 				}
 				folder /= g_autoSaves;
-				const std::string name =
-					m_file.empty() ? safeFileName(m_project.name) : projectFileStem(fs::u8path(m_file));
+				std::string name;
+				if (m_file.empty())
+				{
+					// The series stays while the project is untitled and keeps its name.
+					if (const std::string projectName = safeFileName(m_project.name);
+						m_autoSaveSeries.empty() || m_autoSaveSeriesName != projectName)
+					{
+						m_autoSaveSeries = freeSeries(folder, projectName);
+						m_autoSaveSeriesName = projectName;
+					}
+					name = m_autoSaveSeries;
+				}
+				else
+				{
+					name = projectFileStem(fs::u8path(m_file));
+				}
 				const fs::path file =
 					nextAutoSave(folder, name, userSetting(context, "project.autoSaveFiles").get<int>());
 				m_lastSave = current; // also if it fails, so that a due one is tried again only after the interval
@@ -350,7 +416,9 @@ namespace gnubase::engine
 		const Json recentResult = objectSchema(
 			{{"projects",
 				{{"type", "array"},
-					{"items", objectSchema({{"file", stringSchema}, {"exists", booleanSchema}}, {"file", "exists"})}}}},
+					{"items",
+						objectSchema({{"file", stringSchema}, {"name", stringSchema}, {"exists", booleanSchema}},
+							{"file", "name", "exists"})}}}},
 			{"projects"});
 		const auto listRecent = [this]
 		{
@@ -358,15 +426,18 @@ namespace gnubase::engine
 			for (const Json& file : m_recent->value(g_recentKey))
 			{
 				std::error_code error;
+				const fs::path path = fs::u8path(file.get<std::string>());
 				projects.push_back(
-					{{"file", file}, {"exists", fs::is_regular_file(fs::u8path(file.get<std::string>()), error)}});
+					{{"file", file}, {"name", projectFileStem(path)}, {"exists", fs::is_regular_file(path, error)}});
 			}
 			return Json{{"projects", std::move(projects)}};
 		};
 		addControl(engine,
 			{"project.recent", 1,
 				"The recent projects: the project files saved (not auto saved) or opened last, the newest first, at "
-				"most 10, kept in the user settings' folder. exists says whether the file is still there.",
+				"most 10, kept in the user settings' folder. name is the file's name without the .dawproject "
+				"extension, as versions are named (see project.saveNewVersion), and exists says whether the file is "
+				"still there.",
 				objectSchema({}), recentResult, true},
 			[listRecent](CommandContext&) { return listRecent(); });
 		addControl(engine,

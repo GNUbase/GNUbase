@@ -3,6 +3,7 @@
 
 #include "engine/schema.h"
 #include "platform/log.h"
+#include "platform/text.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -55,13 +56,6 @@ namespace gnubase::ui
 			return keys;
 		}
 
-		std::string lowercase(std::string text)
-		{
-			std::transform(text.begin(), text.end(), text.begin(),
-				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-			return text;
-		}
-
 		// The number after prefix in name, e.g. 5 in "f5" with "f"; -1 if there's none.
 		int numberAfter(const std::string& name, const std::string& prefix)
 		{
@@ -75,9 +69,9 @@ namespace gnubase::ui
 
 		KeyIdentifier keyIdentifier(const std::string& name)
 		{
-			const std::string key = lowercase(name);
+			const std::string key = text::asciiLower(name);
 			for (const NamedKey& named : namedKeys())
-				if (lowercase(named.name) == key)
+				if (text::asciiLower(named.name) == key)
 					return named.key;
 			if (key.size() == 1 && key[0] >= 'a' && key[0] <= 'z')
 				return static_cast<KeyIdentifier>(KI_A + (key[0] - 'a'));
@@ -137,7 +131,7 @@ namespace gnubase::ui
 
 	int parseModifier(const std::string& name, Platform platform)
 	{
-		const std::string modifier = lowercase(name);
+		const std::string modifier = text::asciiLower(name);
 		if (modifier == "mod")
 			return platform == Platform::Mac ? KM_META : KM_CTRL;
 		if (modifier == "ctrl" || modifier == "control")

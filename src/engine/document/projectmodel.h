@@ -321,6 +321,12 @@ namespace gnubase::engine
 		// Why the last auto save failed, without its file, if it did since one succeeded or the project was saved or
 		// opened: a due auto save that fails for the same reason again is quiet.
 		std::optional<std::string> m_autoSaveFailure;
+		// The series an untitled project's auto saves are numbered in, "Untitled2" for Untitled2-01.bak, chosen at its
+		// first auto save, and the project name, as a file name, that it was chosen for; empty until then (#635).
+		std::string m_autoSaveSeries;
+		std::string m_autoSaveSeriesName;
+		// For a project opened from the auto save of a project file, that file (project.location's autoSaveOf).
+		std::string m_autoSaveOf;
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
