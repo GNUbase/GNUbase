@@ -2076,6 +2076,7 @@ TEST_CASE(
 	"a wheel gesture on the tempo field is set when the transport panel closes within its pause (#566, #569)", "[ui]")
 {
 	test::UiApp app({1024, 700});
+	app.setDpRatio(0.75F); // at 1, a 1024-pixel panel hides the tempo section, as the transport bar does (see showBar)
 	app.appUi().showProject();
 	app.ui().key(std::nullopt, "F2");
 	REQUIRE(app.appUi().transportPanel() != nullptr);
