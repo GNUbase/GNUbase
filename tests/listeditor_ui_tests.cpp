@@ -1382,6 +1382,10 @@ TEST_CASE("a program change's Main Value is its bank, typed for the selected one
 	f.type(value, "16380");
 	REQUIRE(f.app.waitUntil([&] { return bank(other) == 16383; }));
 	CHECK(bank(f.events[1]) == 16380);
+	// With Ctrl (Cmd) both take exactly the typed bank.
+	f.type(value, "7", "Ctrl+Enter");
+	REQUIRE(f.app.waitUntil([&] { return bank(other) == 7; }));
+	CHECK(bank(f.events[1]) == 7);
 	// Nothing typed takes both banks away, in one undo step.
 	const size_t before = f.steps();
 	f.click(of(value), 2);
