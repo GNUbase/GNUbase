@@ -120,7 +120,10 @@ namespace gnubase::ui
 		void exchangeFormats();
 
 		// The time display window's options, in ui.timeDisplay: Show Beat Count Only on or off, and its size, 0 to 4,
-		// changed by steps. onSize hears of the size whenever the setting says it, e.g. to size the window.
+		// changed by steps. onSize hears of a new size, e.g. to give the window that size's preset: of each resize, and
+		// of a size that the setting changes to once it was read. Not of the size read first, which the window opened
+		// at and the user may have sized it away from since, nor of the other options, such as Show Beat Count Only
+		// (#569).
 		void toggleBeatCountOnly();
 		void resize(int steps);
 		int size() const { return m_size; }
