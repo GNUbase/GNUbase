@@ -864,9 +864,12 @@ namespace gnubase::engine
 			{
 				const time::Samples from = std::max(take.offset, file.start);
 				const time::Samples to = std::min(take.offset + take.length, fileEnd);
-				if (to > from)
-					takes.push_back({{"position", take.position + (from - take.offset)}, {"offset", from - file.start},
-						{"length", to - from}});
+				if (to <= from)
+					continue;
+				takes.push_back({{"position", take.position + (from - take.offset)}, {"offset", from - file.start},
+					{"length", to - from}});
+				if (from > take.offset) // the track's previous file holds the take's start (#2102)
+					takes.back()["continues"] = true;
 			}
 			tracks.push_back({{"track", file.track.track}, {"path", file.path}, {"takes", std::move(takes)}});
 		}

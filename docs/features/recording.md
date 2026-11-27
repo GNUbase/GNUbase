@@ -67,15 +67,19 @@ transport's record state and the record mode setting.
   file for others to read along. A Wave file larger than 4 GB (p. 1615) becomes RF64 when it is closed, or with the
   preference `audio.waveOver4GB` `split` (Record > Audio, When Recording Wave Files Larger than 4GB: Split Files)
   goes on in a new file, named as a second file of the track (`Audio 1-2.wav`), which FAT32 needs. An AIFF file can't
-  be RF64, so it is always split at 4 GB. The writer refuses the write that would pass 4 GB with `AudioFileFull`, and
-  the recorder writes that block into the next file; each file lands with the parts of the takes in it, as events of
-  their own, so a take that the split cuts becomes two events that meet (#580). `recording.add` takes a track's files as
-  one recording: the record mode's cuts and the takes' lanes cover the takes of all of them. A Broadcast Wave file's time
-  reference counts on from the file before. A write that fails otherwise ends the file there. The recording fails
+  be RF64, so it is always split at 4 GB. The writer refuses the write that would pass 4 GB with `AudioFileFull`, less
+  the pad byte that closing adds to a file of odd size, and the recorder writes that block into the next file; a next
+  file that can't be created or written is removed again (#2096). Each file lands with the parts of the takes in it, as
+  events of their own, so a take that the split cuts becomes two events that meet (#580); the piece in the next file
+  says so with `continues`. `recording.add` takes a track's files as one recording: the record mode's cuts and the
+  takes' lanes cover the takes of all of them, the two pieces of a cut cycle lap share a lane, and the clips' regions
+  are numbered by lap across the files (#2102). A Broadcast Wave file's time reference counts on from the file before.
+  A write that fails otherwise ends the file there. The recording fails
   for it once (`recording.failed`), the other tracks record on, and the file still lands, with its takes ending
   where the file ends (#580). Tests: `tests/audiofile_tests.cpp` (a file that was never closed),
   `tests/recording_tests.cpp` (formats, the Broadcast Wave chunk and the time reference, the text of Wave and AIFF
-  files, a full file that goes on in the next one).
+  files, a full file that goes on in the next one, `audio.waveOver4GB` `split`, the lanes and regions of a cut lap;
+  `detail::setFileSizeLimit` lowers the 4 GB for them).
 - **Takes.** A file holds everything recorded from the start of the recording to its end. Each run of consecutive
   project positions is a take: a cycle lap, or what was recorded between punching in and out (`transport.record` with
   `record: false` or a punch out at the right locator ends a recording, and recording again or a punch in at the left

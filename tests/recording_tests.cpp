@@ -855,6 +855,42 @@ TEST_CASE("recording.add applies the audio record modes to the events a take ove
 		std::sort(lanes.begin(), lanes.end());
 		CHECK(lanes == std::vector<std::pair<int64_t, int64_t>>{{0, 0}, {400, 0}, {500, 1}, {700, 0}});
 	}
+	SECTION("a lap that the split cuts stays on one lane, and the regions follow the laps across the files (#2102)")
+	{
+		// Three laps over [0, 1000), the first file full after 1500 frames: the second lap goes on in the next file.
+		const std::string mode = GENERATE("keepHistory", "cycleHistoryReplace");
+		const Json result = run(client, "recording.add",
+			{{"mode", mode}, {"cycle", true},
+				{"tracks",
+					Json::array({{{"track", track}, {"path", file},
+									 {"takes",
+										 Json::array({{{"position", 0}, {"offset", 0}, {"length", 1000}},
+											 {{"position", 0}, {"offset", 1000}, {"length", 500}}})}},
+						{{"track", track}, {"path", file},
+							{"takes",
+								Json::array({{{"position", 500}, {"offset", 0}, {"length", 500}, {"continues", true}},
+									{{"position", 0}, {"offset", 500}, {"length", 1000}}})}}})}});
+		std::vector<std::pair<int64_t, int64_t>> lanes; // [offset, lane] of the takes' events
+		for (const Json& event : eventsOn(client, track))
+			if (event.at("id") != existing)
+				lanes.emplace_back(event.at("offset").get<int64_t>(), event.at("lane").get<int64_t>());
+		std::sort(lanes.begin(), lanes.end());
+		const int64_t first = mode == "keepHistory" ? 1 : 0; // after the existing event's lane, or in its place
+		// Offsets 0 and 1000 are the first file's, 0 and 500 the second's: lap 1, lap 2 in both files, lap 3.
+		CHECK(lanes ==
+			std::vector<std::pair<int64_t, int64_t>>{{0, first}, {0, first + 1}, {500, first + 2}, {1000, first + 1}});
+		std::vector<std::vector<std::string>> names; // the regions' names per clip
+		const Json project = run(client, "project.get");
+		for (const Json& id : result.at("clips"))
+			for (const Json& each : project.at("clips"))
+				if (each.at("id") == id)
+				{
+					names.emplace_back();
+					for (const Json& region : each.at("regions"))
+						names.back().push_back(region.at("name").get<std::string>());
+				}
+		CHECK(names == std::vector<std::vector<std::string>>{{"Take 1", "Take 2"}, {"Take 2", "Take 3"}});
+	}
 	SECTION("replace keeps only the last take where takes overlap")
 	{
 		add("replace", two);

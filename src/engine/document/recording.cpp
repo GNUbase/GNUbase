@@ -405,7 +405,9 @@ namespace gnubase::engine
 		const Json number = {{"type", "number"}};
 		const Json ids = {{"type", "array"}, {"items", integer}};
 		const Json take = {{"type", "object"}, {"additionalProperties", false},
-			{"properties", {{"position", integer}, {"offset", integer}, {"length", integer}}},
+			{"properties",
+				{{"position", integer}, {"offset", integer}, {"length", integer},
+					{"continues", {{"type", "boolean"}}}}},
 			{"required", {"position", "length"}}};
 		const Json takeIndex = {{"type", "integer"}, {"minimum", 0}};
 		const Json note = {{"type", "object"}, {"additionalProperties", false},
@@ -438,7 +440,9 @@ namespace gnubase::engine
 				"takes that overlap another take go onto lanes of their own (event.set's lane), one per take from the "
 				"lane after the highest one that the track's events where they lie are on, up to lane 1000; the last "
 				"take plays where they overlap. With cycle, the clip gets a region per take (clip.addRegion), Take 1 "
-				"on. Per MIDI or instrument track the takes (position and length) "
+				"on, numbered across the track's files. A take with continues goes on from the last take of the "
+				"track's file before, as where a split at 4 GB cut a cycle lap: the two are one lap, on one lane and "
+				"with one region number. Per MIDI or instrument track the takes (position and length) "
 				"and what was recorded, all in project samples: notes as note.add takes them and controllers as "
 				"controller.add does, with positions and lengths in project samples (a note's expression points' "
 				"too), and each with take, the index "
@@ -538,8 +542,13 @@ namespace gnubase::engine
 			ObjectId clip = 0;
 			Take take;
 			time::Samples end = 0; // project samples
+			size_t lap = 0;        // the track's laps before it: the pieces of a take that a split cut share it
 		};
-		std::vector<AudioTake> audio; // the audio tracks' takes, added once every entry's file is
+		std::vector<AudioTake> audio;         // the audio tracks' takes, added once every entry's file is
+		std::map<ObjectId, size_t> lapCounts; // per audio track, how many laps its entries hold so far
+		std::map<ObjectId, size_t> takeCount;
+		for (const Json& entry : parameters.at("tracks"))
+			takeCount[entry.at("track").get<ObjectId>()] += entry.at("takes").size();
 		for (const Json& entry : parameters.at("tracks"))
 		{
 			const auto trackId = entry.at("track").get<ObjectId>();
@@ -572,8 +581,13 @@ namespace gnubase::engine
 			const auto frames = added.at("length").get<time::Samples>();
 			const double ratio = project.sampleRate / added.at("sampleRate").get<double>();
 			std::vector<Take> takes;
+			std::vector<size_t> takeLaps;
 			for (const Json& item : entry.at("takes"))
 			{
+				size_t& lapCount = lapCounts[trackId];
+				if (!item.value("continues", false) || lapCount == 0)
+					++lapCount;
+				takeLaps.push_back(lapCount - 1);
 				const Take next{item.at("position").get<time::Samples>(), item.value("offset", time::Samples{0}),
 					item.at("length").get<time::Samples>()};
 				require(
@@ -584,18 +598,19 @@ namespace gnubase::engine
 			const ObjectId clip = run("clip.add", {{"media", added.at("id")}}).at("clip").at("id").get<ObjectId>();
 			media.push_back(added.at("id"));
 			clips.push_back(clip);
-			// A cycle recording divides its clip into regions, one per take (reference manual p. 226).
-			if (cycle && takes.size() > 1)
+			// A cycle recording divides its clip into regions, one per take (reference manual p. 226), named by lap.
+			if (cycle && takeCount[trackId] > 1)
 				for (size_t index = 0; index < takes.size(); ++index)
 					run("clip.addRegion",
 						{{"clip", clip}, {"start", takes[index].offset},
 							{"end", takes[index].offset + takes[index].length},
-							{"name", "Take " + std::to_string(index + 1)}});
+							{"name", "Take " + std::to_string(takeLaps[index] + 1)}});
 
-			for (const Take& each : takes)
-				audio.push_back({trackId, clip, each,
-					each.position +
-						static_cast<time::Samples>(std::llround(static_cast<double>(each.length) * ratio))});
+			for (size_t index = 0; index < takes.size(); ++index)
+				audio.push_back({trackId, clip, takes[index],
+					takes[index].position +
+						static_cast<time::Samples>(std::llround(static_cast<double>(takes[index].length) * ratio)),
+					takeLaps[index]});
 		}
 		// All entries of a track are one recording: a recording split into several files (#580) sends one per file,
 		// and the cuts and lanes of each file's takes must not touch the events of the others.
@@ -608,9 +623,13 @@ namespace gnubase::engine
 		if (mode != "replace")
 			for (size_t i = 0; i < audio.size(); ++i)
 				for (size_t j = i + 1; j < audio.size(); ++j)
-					if (audio[i].track == audio[j].track && audio[i].take.position < audio[j].end &&
-						audio[j].take.position < audio[i].end)
+					if (audio[i].track == audio[j].track && audio[i].lap != audio[j].lap &&
+						audio[i].take.position < audio[j].end && audio[j].take.position < audio[i].end)
 						stacked[i] = stacked[j] = true;
+		for (size_t i = 0; i < audio.size(); ++i) // a lap's pieces all stack if one does
+			for (size_t j = i + 1; j < audio.size(); ++j)
+				if (audio[i].track == audio[j].track && audio[i].lap == audio[j].lap && (stacked[i] || stacked[j]))
+					stacked[i] = stacked[j] = true;
 		std::map<ObjectId, std::pair<time::Samples, time::Samples>> stackedSpans; // per track
 		for (size_t i = 0; i < audio.size(); ++i)
 			if (stacked[i])
@@ -622,6 +641,7 @@ namespace gnubase::engine
 		std::map<ObjectId, int> lanes; // the next lane per track
 		for (const auto& [track, span] : stackedSpans)
 			lanes[track] = firstFreeLane(project, track, span.first, span.second);
+		std::map<std::pair<ObjectId, size_t>, int> lapLanes; // per track and lap
 		for (size_t i = 0; i < audio.size(); ++i)
 		{
 			const AudioTake& each = audio[i];
@@ -642,8 +662,12 @@ namespace gnubase::engine
 					{{"event", event}, {"rootKey", transposed ? std::string() : rootKeyName(project.rootKey)},
 						{"globalTranspose", transposed ? "independent" : "follow"}});
 			if (stacked[i])
-				run("event.set",
-					{{"events", Json::array({event})}, {"lane", std::min(lanes[each.track]++, g_lastLane)}});
+			{
+				const auto [lane, inserted] = lapLanes.try_emplace({each.track, each.lap}, lanes[each.track]);
+				if (inserted)
+					++lanes[each.track];
+				run("event.set", {{"events", Json::array({event})}, {"lane", std::min(lane->second, g_lastLane)}});
+			}
 			events.push_back(event);
 		}
 		// Recording chord events (#933, reference manual p. 1345): with the chord track record-enabled, the chords
