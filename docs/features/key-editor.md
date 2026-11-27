@@ -19,6 +19,7 @@ saved, and a new project closes the editors.
 | `insertVelocity` | The velocity of drawn notes and of input that doesn't record it (0-1, default 100/127) | p. 1195 |
 | `lengthQuantize` | The length of new notes: a note value (`1/16`, `1/8T`, `1/4.`) or `link`, the quantize grid's | p. 1196 |
 | `acousticFeedback` | Acoustic Feedback: the editor plays a note while it is moved, at the pitch it is dragged to, a note while it is drawn, and a note whose velocity the velocity lane edits, at the velocity a value drag sets or the draw tool paints (controller-lanes.md), until the mouse is released, on the active track's instrument as a key of the keyboard does (off by default) | pp. 1192, 1259 |
+| `indicateTranspositions`, `transpositions` | Indicate Transpositions: the note display shows each note at the pitch it plays, its part's own transpose, the root key's step and the transpose track's added as playback adds them (transpose.md). While it is on, `transpositions` gives each MIDI part the view shows as `{part, steps}`, each step `{position, semitones}` in project ticks from the part's start and where a transpose event changes it, and nothing while it is off. A note drawn gets the pitch that plays at the row under the mouse, a move changes a note's pitch by the rows dragged, and its preview and Acoustic Feedback show the transposition where it lands; the drum editor shows the notes' own pitches | pp. 419, 1260 |
 | `showExpression`, `expressionDoubleClick`, `expressionType` | Show Note Expression Data, Double-Click Opens Note Expression Editor and the expression the expression editor edits ([note-expression.md](note-expression.md)) | pp. 1303, 1308-1309 |
 
 `editor.set` changes them; `editor.get` and `editor.changed` report them.
@@ -78,6 +79,8 @@ the edits of several parts go in one `history.transaction`.
     button.key-input[setting=showExpression|expressionDoubleClick]
                                       Show Note Expression Data and Double-Click Opens Note Expression Editor
                                       (not in the drum editor); .checked while on
+    button.key-input[setting=indicateTranspositions]
+                                      Indicate Transpositions (not in the drum editor); .checked while on
   .info-line.key-editor-info          the first selected note: textdisplay[field=start|end|length|pitch|velocity|
                                       releaseVelocity|channel]; .empty without, .multiple with several selected
   .editor-parts                       an .editor-part-row[track] per track, its .editor-part[part] at their time
@@ -200,7 +203,7 @@ cursor and lengthening a held chord; the Mute tool on notes (notes have no mute 
 Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note
 display (it draws on the controller lanes); the selection rectangle, the trim tool's drag across several notes and the
 draw tool's modifiers for velocity, pitch and position; the nudge buttons, Solo Editor, Record in Editor, pitch
-visibility, the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout;
+visibility, the Scale Assistant, event colors, the status line and Set up Window Layout;
 horizontal zoom and scrolling; the key at the mouse's pitch lit while the mouse moves in the note display (p. 1204);
 drum map names in the key editor and articulation names; Add to Chord Track, Match with Chord Track, Create Chord
 Events and the chord insert tools; quantizing from the toolbar (#132) and the Length section's functions (#133); the
@@ -218,7 +221,9 @@ key editor's context menu.
   from a port outside all MIDI inputs or while input is off, and a dummy MIDI keyboard playing through `midi.activity`
   into the editor whose input went on last, then into the other one, and nothing played while both were off; chord recognition, fitting and voicings;
   `note.chord` and `note.voicing` with undo and their errors; Acoustic Feedback off at first, set as view state
-  without an undo step.
+  without an undo step; Indicate Transpositions off at first, as view state, its steps from transpose events within
+  the part (not before or after it) with the root key's step and the part's own transpose, muted transpose events and
+  an Independent part.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
   keys lit for selected notes; the piano keyboard at 1024x600, at dp ratios of 1.5 and 1: white keys of equal height
   across the keyboard, black keys narrower on their rows, the mouse on the right part of a white key beside a black key
@@ -249,4 +254,8 @@ key editor's context menu.
   earlier press selected and the history alone; the lower zone's key editor at its default size giving the note display
   more room than the controller lanes, at dp ratios 1 and 2, and the lanes whole in a lower zone of 400 dp; the editor
   window's lane keeping its 64 dp and the note display its 40%, and the in-place editor's lanes keeping their height
-  with its toolbar shown.
+  with its toolbar shown; Indicate Transpositions from the toolbar showing a note after a transpose event on the row
+  it plays at, a note drawn there getting the pitch that plays at that row, a move changing the pitch by the rows
+  dragged, and every note on its own row again once it is off; a note dragged across a transpose event shown and
+  played by Acoustic Feedback at the pitch it lands on, before and after the release; the drum editor, which keeps the
+  view's setting, without the toggle and with the notes on their own rows.
