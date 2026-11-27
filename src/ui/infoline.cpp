@@ -498,6 +498,15 @@ namespace gnubase::ui
 		return kept ? static_cast<double>(*kept) : value;
 	}
 
+	double InfoLine::gestureBase(int gesture, const std::string& field, uint64_t item, double now)
+	{
+		if (gesture == 0)
+			return now;
+		if (m_gestureBases.gesture != gesture || m_gestureBases.field != field)
+			m_gestureBases = {gesture, field, {}};
+		return m_gestureBases.numbers.emplace(item, now).first->second;
+	}
+
 	// The changes that setting the fields sends aren't the user's: with several items selected, the first one's value
 	// would reach the others (#1719).
 	void InfoLine::show()
@@ -1365,8 +1374,10 @@ namespace gnubase::ui
 		}
 		else if (field == "volume")
 		{
-			// Each event's volume from what the field would show for it while the project is behind (#1632).
-			const auto base = [this](uint64_t id) { return fieldNumber("events", "volume", id, volumeOf(id)); };
+			// Each event's volume from what the field would show for it while the project is behind (#1632), where
+			// the gesture started.
+			const auto base = [this, gesture](uint64_t id)
+			{ return gestureBase(gesture, "volume", id, fieldNumber("events", "volume", id, volumeOf(id))); };
 			const double change = number - base(first.at("id").get<uint64_t>());
 			for (const Json& event : m_events)
 				if (event.at("kind") == "audio")
@@ -1389,7 +1400,13 @@ namespace gnubase::ui
 				return static_cast<int>(std::lround(fieldNumber("events", field, event.at("id").get<uint64_t>(),
 					static_cast<double>(partValue(event, field.c_str())))));
 			};
-			const int change = typed - shownOf(first);
+			// From where the gesture started, so that one held at its limit keeps its distance to the others.
+			const auto baseOf = [this, &field, gesture, &shownOf](const Json& event)
+			{
+				return static_cast<int>(
+					gestureBase(gesture, field, event.at("id").get<uint64_t>(), static_cast<double>(shownOf(event))));
+			};
+			const int change = typed - baseOf(first);
 			for (const Json& event : m_events)
 			{
 				const bool midi = event.at("kind") == "midi";
@@ -1398,7 +1415,7 @@ namespace gnubase::ui
 				const uint64_t id = event.at("id").get<uint64_t>();
 				const int own = shownOf(event);
 				const int limit = limitOf(event);
-				const int value = std::clamp(m_absolute ? typed : own + change, -limit, limit);
+				const int value = std::clamp(m_absolute ? typed : baseOf(event) + change, -limit, limit);
 				// During a gesture the project may not have its earlier steps yet: a drag back to where it
 				// started still sends that value.
 				if (value != own || gesture != 0)

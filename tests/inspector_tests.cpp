@@ -8,6 +8,7 @@
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "engine/midi/modifiers.h"
 #include "engine/time/tempomap.h"
 #include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
@@ -2572,6 +2573,115 @@ TEST_CASE("the inspector's MIDI Modifiers section shows and changes the track's 
 	window.list.select({vox});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
 	CHECK(hasClass(window.app, ".inspector [section=modifiers]", "unavailable"));
+}
+
+TEST_CASE("Ctrl+Enter on the first part's untouched Transpose or Velocity takes its value for all", "[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t first = window.addPart(midi, 4 * g_quarter, 4 * g_quarter, "Intro");
+	const uint64_t second = window.addPart(midi, 12 * g_quarter, 8 * g_quarter, "Verse");
+	window.call("midiPart.set", {{"part", first}, {"transpose", 3}, {"velocity", -8}});
+	window.call("midiPart.set", {{"part", second}, {"transpose", -5}, {"velocity", 20}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 2; }));
+	window.display.select({second, first});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "multiple"); }));
+	for (const auto& each : std::vector<std::pair<std::string, int>>{{"transpose", 3}, {"velocity", -8}})
+	{
+		const std::string& field = each.first;
+		const int value = each.second;
+		INFO(field);
+		const std::string selector = "#info-line valuefield[field=" + field + "]";
+		REQUIRE(window.shows(selector, std::to_string(value)));
+		window.click(selector, ui::MouseButton::Left, 2);
+		window.app.ui().key(std::nullopt, "Ctrl+Enter");
+		REQUIRE(window.app.waitUntil([&] { return window.part(second).at(field) == value; }));
+		CHECK(window.part(first).at(field) == value);
+	}
+}
+
+TEST_CASE("a part held at its limit by a relative drag of the info line's Transpose ends where it started", "[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t first = window.addPart(midi, 4 * g_quarter, 4 * g_quarter, "Intro");
+	const uint64_t second = window.addPart(midi, 12 * g_quarter, 8 * g_quarter, "Verse");
+	window.call("midiPart.set", {{"part", second}, {"transpose", 120}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 2; }));
+	window.display.select({first, second});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+	const std::string field = "#info-line valuefield[field=transpose]";
+	REQUIRE(window.shows(field, "0"));
+
+	// Up until the second part is held at 127, the project arriving after each step, and back down to the start.
+	test::LateDrag drag(window.app, std::nullopt, field);
+	int steps = 0;
+	while (drag.value() < 10.0 && steps < 200)
+	{
+		drag.move(1, -1);
+		++steps;
+	}
+	REQUIRE(drag.value() >= 10.0);
+	REQUIRE(window.app.waitUntil([&] { return window.part(second).at("transpose") == 127; }));
+	drag.move(steps, 1);
+	drag.release();
+	REQUIRE(window.app.waitUntil([&] { return window.part(first).at("transpose") == 0; }));
+	CHECK(window.part(second).at("transpose") == 120);
+}
+
+TEST_CASE("the inspector's random generators keep the values they show when their target changes unit", "[ui]")
+{
+	Window window;
+	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 1; }));
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	for (const char* section : {"basics", "routing"})
+		window.click(".inspector [section=" + std::string(section) + "] .section-header");
+	const auto random = [&] { return window.channel(keys).at("modifiers").at("random")[1]; };
+	const std::string target = ".inspector select[control=modifiers-random-1-target]";
+	const std::string minimum = ".inspector valuefield[control=modifiers-random-1-minimum]";
+	const std::string maximum = ".inspector valuefield[control=modifiers-random-1-maximum]";
+	// Moves the target's choice by steps in its list: off, position, pitch, velocity, length.
+	const auto choose = [&](const char* key, int steps)
+	{
+		window.click(target);
+		for (int i = 0; i < steps; ++i)
+			window.app.ui().key(std::nullopt, key);
+		window.click(target);
+	};
+	constexpr int64_t perShown = time::g_ticksPerQuarter / 480;
+	window.call("channel.set",
+		{{"channel", window.channel(keys).at("id")},
+			{"modifiers", {{"random", {Json::object(), {{"target", "pitch"}, {"minimum", -12}, {"maximum", 12}}}}}}});
+	REQUIRE(window.shows(minimum, "-12"));
+
+	// Pitch to Position: the same numbers in ticks of 480 to a quarter note, with the limits of ticks, as one undo
+	// step.
+	const int64_t position = window.historyPosition();
+	choose("Up", 1);
+	REQUIRE(window.app.waitUntil([&] { return random().at("target") == "position"; }));
+	CHECK(random() == Json{{"target", "position"}, {"minimum", -12 * perShown}, {"maximum", 12 * perShown}});
+	CHECK(window.historyPosition() == position + 1);
+	CHECK(window.shows(minimum, "-12"));
+	CHECK(window.shows(maximum, "12"));
+	REQUIRE(window.app.waitUntil([&] { return attribute(window.app, maximum, "max") == "480"; }));
+
+	// Length is in ticks too: the values stay; its maximum goes up to a quarter note.
+	choose("Down", 3);
+	REQUIRE(window.app.waitUntil([&] { return random().at("target") == "length"; }));
+	CHECK(random().at("minimum") == -12 * perShown);
+	window.type(maximum, "480");
+	REQUIRE(window.app.waitUntil([&] { return random().at("maximum") == engine::midi::g_maxRandomTicks; }));
+
+	// Back to Velocity: the numbers shown, kept within -127 to 127, which are its limits again.
+	choose("Up", 1);
+	REQUIRE(window.app.waitUntil([&] { return random().at("target") == "velocity"; }));
+	CHECK(random() == Json{{"target", "velocity"}, {"minimum", -12}, {"maximum", 127}});
+	CHECK(window.shows(minimum, "-12"));
+	CHECK(window.shows(maximum, "127"));
+	REQUIRE(window.app.waitUntil([&] { return attribute(window.app, minimum, "min") == "-127"; }));
+	CHECK(attribute(window.app, maximum, "max") == "127");
 }
 
 TEST_CASE("a MIDI modifier or a part's transpose dragged back to where it started while the engine answers late ends "
