@@ -1003,6 +1003,7 @@ namespace gnubase::ui
 				}
 				openDialog(
 					id, "replace-file.rml",
+					// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's std::filesystem::path; out of memory only
 					[file](Rml::ElementDocument* dialog)
 					{
 						if (Rml::Element* message =
@@ -1010,6 +1011,7 @@ namespace gnubase::ui
 							message->SetInnerRML(Rml::StringUtilities::EncodeRml(
 								file.filename().u8string() + " already exists. Replace it?"));
 					},
+					// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's copy of the Json; out of memory only
 					[this, save, done](Rml::ElementDocument&, const std::string& result)
 					{
 						if (result == "ok")
