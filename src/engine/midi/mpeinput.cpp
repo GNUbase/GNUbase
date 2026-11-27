@@ -2,10 +2,10 @@
 #include "engine/midi/mpeinput.h"
 
 #include "engine/midi/midivalues.h"
+#include "platform/text.h"
 #include "plugin/events.h"
 
 #include <algorithm>
-#include <cctype>
 #include <string>
 
 namespace gnubase::engine::midi
@@ -256,9 +256,7 @@ namespace gnubase::engine::midi
 
 	const MpeDevice* detectMpeDevice(const std::string& portName)
 	{
-		std::string lower = portName;
-		std::transform(lower.begin(), lower.end(), lower.begin(),
-			[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+		const std::string lower = text::asciiLower(portName);
 		for (const MpeDevice& device : devices())
 			if (lower.find(device.match) != std::string::npos)
 				return &device;
