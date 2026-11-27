@@ -2817,6 +2817,48 @@ TEST_CASE(
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("preRoll") == true; }));
 }
 
+TEST_CASE("a wheel turn that the engine refuses leaves the display at the engine's amount, and the next turn goes on "
+		  "from there (#569)",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.appUi().docking().setSectionHidden("project", "transport", "prePostRoll", false);
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(visible(app, "#transport-bar [section=prePostRoll]"));
+	app.call("transport.set", {{"left", 48000}, {"right", 96000}, {"preRollAmount", 48000}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#pre-roll-amount") == "0.2.0.0"; }));
+
+	// A billion beats, which injected input may turn, are far more pre-roll than transport.set takes (an hour at the
+	// highest sample rate): the engine refuses it, with no transport.changed. The UI asks for the transport instead.
+	const auto refused = [&app]
+	{
+		const Json log = app.call("engine.commandLog").at("commands");
+		return std::count_if(log.begin(), log.end(),
+			[](const Json& entry) { return entry.at("command") == "transport.set" && entry.contains("error"); });
+	};
+	app.ui().wheel(std::nullopt, at("#pre-roll-amount"), 0, -1e13F);
+	REQUIRE(app.waitUntil([&refused] { return refused() == 1; }));
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const ui::EngineBinding& binding = app.appUi().binding();
+			return binding.waiting("transport.set") == 0 && binding.waiting("transport.get") == 0;
+		}));
+	CHECK(transport(app).at("preRollAmount") == 48000);
+	CHECK(shows(app, "#pre-roll-amount") == "0.2.0.0");
+	// Shown afresh in seconds, the amount the controls hold is the engine's: two beats, a second, not a billion.
+	app.call("project.set", {{"timeFormat", "seconds"}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#left-locator") == "0:00:01.000"; }));
+	CHECK(shows(app, "#pre-roll-amount") == "0:00:01.000");
+
+	// The next turn goes on from the engine's amount: a second longer.
+	app.ui().wheel(std::nullopt, at("#pre-roll-amount"), 0, -1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("preRollAmount") == 96000; }));
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#pre-roll-amount") == "0:00:02.000"; }));
+	CHECK(refused() == 1);
+}
+
 TEST_CASE(
 	"the Record button shows a recording that waits for the pre-roll, and a second press cancels it (#2039)", "[ui]")
 {
