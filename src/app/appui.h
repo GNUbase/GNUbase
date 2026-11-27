@@ -232,6 +232,8 @@ namespace gnubase::app
 		ui::TransportControls* transportBar() { return m_transportBar.get(); }
 		void toggleTransportPanel();
 		void toggleTimeDisplay();
+		void scaleTimeDisplay(float before, float after); // the UI scale changed
+		void scaleTimeDisplayBounds(const ui::Window& window, int size, float factor);
 		// window.maxRecordTime: the Max. Record Time window (resources/ui/max-record-time.rml, #645).
 		void toggleMaxRecordTime();
 		ui::Window* transportPanel() { return m_transportPanel.shown(m_shell); }
@@ -462,6 +464,7 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
+		float m_timeDisplayScaling = 1.0F; // how much the UI scale changed while the time display window was closed
 		ui::TransportPanelFit m_panelFit{m_shell, m_docking};   // the transport panel's width
 		std::unique_ptr<ui::StatusLine> m_statusLine;           // too
 		std::unique_ptr<ui::TrackList> m_trackList;             // and before the display

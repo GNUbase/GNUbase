@@ -485,7 +485,7 @@ namespace gnubase::ui
 			return false;
 		const auto& [binding, zone] = *found;
 		hold(binding.keys.key, binding.command);
-		run(binding.command, binding.parameters, window, zone);
+		start(binding.command, binding.parameters, window, zone);
 		return true;
 	}
 
@@ -510,7 +510,7 @@ namespace gnubase::ui
 		// A copy, since a command may press or release others.
 		std::vector<std::string> ending;
 		const auto ends = [&keys](const std::pair<int, std::string>& held)
-		{ return keys.key == Rml::Input::KI_UNKNOWN || held.first == keys.key; };
+		{ return keys.focusLost || held.first == keys.key; };
 		for (const auto& held : m_held)
 			if (ends(held))
 				ending.push_back(held.second);
@@ -526,6 +526,14 @@ namespace gnubase::ui
 	}
 
 	void KeyCommands::run(const std::string& command, const Json& parameters, Window& window, Rml::Element* zone)
+	{
+		start(command, parameters, window, zone);
+		// Nothing holds it: a menu item, a script or a macro's step, so it goes once, not on until a release that never
+		// comes (#566, #569).
+		release(command);
+	}
+
+	void KeyCommands::start(const std::string& command, const Json& parameters, Window& window, Rml::Element* zone)
 	{
 		if (const auto macro = m_macros.find(command); macro != m_macros.end())
 		{

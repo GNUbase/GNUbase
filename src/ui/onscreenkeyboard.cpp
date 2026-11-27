@@ -159,13 +159,14 @@ namespace gnubase::ui
 
 	void OnScreenKeyboard::release(const KeyPress& keys)
 	{
-		if (keys.key != KI_UNKNOWN || keys.position != KI_UNKNOWN)
+		if (keys.focusLost)
 		{
-			noteOff(placeOf(keys));
+			while (!m_held.empty())
+				noteOff(m_held.back().source);
 			return;
 		}
-		while (!m_held.empty())
-			noteOff(m_held.back().source);
+		if (keys.key != KI_UNKNOWN || keys.position != KI_UNKNOWN)
+			noteOff(placeOf(keys));
 	}
 
 	void OnScreenKeyboard::ProcessEvent(Rml::Event& event)
