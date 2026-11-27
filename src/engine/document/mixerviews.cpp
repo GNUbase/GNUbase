@@ -44,9 +44,12 @@ namespace gnubase::engine
 		}
 
 		// The mixer's view changed: the lower zone's and the synced window's tracks follow (#166), mixer.changed.
+		// When the tracks hide channels again in this mixer (#906), that is part of this change, not one of its own.
 		Json announce(Project& project, const std::string& mixer, CommandContext& context)
 		{
+			const auto history = project.mixerHistory[mixer];
 			followMixer(project, mixer, context);
+			project.mixerHistory[mixer] = history;
 			Json result = viewJson(project, mixer);
 			context.emit("mixer.changed", result);
 			return result;
@@ -75,6 +78,15 @@ namespace gnubase::engine
 	Json mixerViewJson(const Project& project, const std::string& mixer)
 	{
 		return viewJson(project, mixer);
+	}
+
+	void recordMixerView(Project& project, const std::string& mixer, const MixerView& before)
+	{
+		auto& [undone, redone] = project.mixerHistory[mixer];
+		undone.push_back(before);
+		if (undone.size() > g_visibilitySteps)
+			undone.erase(undone.begin());
+		redone.clear();
 	}
 
 	std::string mixerChannelType(const Project& project, ObjectId id)
@@ -169,26 +181,22 @@ namespace gnubase::engine
 						if (std::find(given.begin(), given.end(), type) != given.end())
 							view.hiddenTypes.emplace_back(type);
 				}
+				Json result = announce(project, mixer, context);
 				if (!sameView(before, view))
-				{
-					auto& [undone, redone] = project.mixerHistory[mixer];
-					undone.push_back(before);
-					if (undone.size() > g_visibilitySteps)
-						undone.erase(undone.begin());
-					redone.clear();
-				}
-				return announce(project, mixer, context);
+					recordMixerView(project, mixer, before);
+				return result;
 			});
 		for (const bool redo : {false, true})
 			model.addEdit(engine,
 				{redo ? "mixer.redoVisibility" : "mixer.undoVisibility", 1,
 					redo ? "Redo Visibility Change (reference manual p. 457): the mixer's view goes forward to the one "
-						   "mixer.undoVisibility last went back from, until mixer.set changes it again. Returns the "
-						   "view, unchanged when there is none, and emits mixer.changed when it changes."
+						   "mixer.undoVisibility last went back from, until a new visibility change. Returns the view, "
+						   "unchanged when there is none, and emits mixer.changed when it changes."
 						 : "Undo Visibility Change (reference manual p. 457): the mixer's view goes back to the one "
-						   "before its last visibility change (mixer.set changing hidden or hiddenTypes), up to 10 "
-						   "changes back. Each mixer has its own; not kept in the file. Returns the view, unchanged "
-						   "when there is none, and emits mixer.changed when it changes.",
+						   "before its last visibility change (mixer.set changing hidden or hiddenTypes, or the "
+						   "track list changing the channels of a mixer that follows it), up to 10 changes back. "
+						   "Each mixer has its own; not kept in the file. Returns the view, unchanged when there is "
+						   "none, and emits mixer.changed when it changes.",
 					{{"type", "object"}, {"properties", {{"mixer", mixerSchema}}}, {"required", {"mixer"}},
 						{"additionalProperties", false}},
 					viewSchema, false},

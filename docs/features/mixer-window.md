@@ -19,8 +19,10 @@ and panners' engine side is in [mixer.md](mixer.md).
   project in GNUbase's extra entry (`mixers` in `project.get`), empty for files from before.
 - **Undo and Redo Visibility Change** (p. 457, `mixer.undoVisibility`, `mixer.redoVisibility`): each mixer keeps the
   views before its last 10 visibility changes, `mixer.set` calls that change `hidden` or `hiddenTypes`
-  (`Project::mixerHistory`), and those it undid until the next change. Not kept in the file; with nothing to undo or
-  redo, the view stays.
+  (`Project::mixerHistory`), and those it undid until the next change. A mixer that follows the track list (below)
+  also counts each change the track list makes to its channels as one, so undo takes back exactly the last; channels
+  the track list hides again right after a `mixer.set` (a folder's tracks) are part of that set's change. Not kept in
+  the file, and a loaded project has none; with nothing to undo or redo, the view stays.
 - **Notes** (p. 497): the channel's notes (`channel.set` `notes`), which the inspector's notepad edits too
   ([inspector.md](inspector.md)). **Pictures** (p. 497): `track.set` `picture`, an image file (PNG, JPEG or SVG) that
   the mixer shows on the track's channel, or empty; a relative path is taken from the working folder and kept
@@ -78,14 +80,15 @@ control's last step answered, its strip shows the engine's value; a refused one 
 - **Visibility and filter** (pp. 442, 454–456). The channel type filter's menu has a check item per type; the agents'
   menu has Show All Channels, which shows every hidden channel again, and Undo and Redo Visibility Change. In a
   window, the left zone's Visibility tab (`Mixer::showVisibility`) has a toggle button per channel
-  (`button.mixer-visibility-item[visibility=<id>]`), checked while the mixer shows it. **Find Track/Channel**
-  (pp. 449-450) opens a selector with a search field (`input.mixer-find-search`) over the channels, hidden ones too,
-  but not those of the types the filter hides; typing narrows it to the names with the text, in any case. The channel
-  picked shows again if it was hidden, and its strip scrolls into view. The mixer has no channel selection yet, so it
-  isn't selected. Each sends `mixer.set` for its own mixer, and the mixer keeps the change at once, so that
-  changes made before the engine answers all count; it reads its view again once the last is answered, and ignores that
-  answer while a newer change is still out. The lower zone's mixer follows the project window's track visibility, and a
-  window does with Sync Visibility of Project and Mixer ([track-visibility.md](track-visibility.md)).
+  (`button.mixer-visibility-item[visibility=<id>]`), checked while the mixer shows it. Each sends `mixer.set` for its
+  own mixer, and the mixer keeps the change at once, so that changes made before the engine answers all count; it
+  reads its view again once the last is answered, and ignores that answer while a newer change is still out. The lower
+  zone's mixer follows the project window's track visibility, and a window does with Sync Visibility of Project and
+  Mixer ([track-visibility.md](track-visibility.md)).
+- **Find Track/Channel** (pp. 449-450) opens a selector with a search field (`input.mixer-find-search`) over the
+  channels, hidden ones too, but not those of the types the filter hides; typing narrows it to the names with the
+  text, in any case. The channel picked shows again if it was hidden, and its strip scrolls into view. The mixer has no
+  channel selection yet, so it isn't selected.
 - **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the left zone (in a
   window) and the strips' sections Pictures, Routing, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders
   them, with Show All, Reset All and presets ([docking.md](docking.md)). In a window it also shows and hides the menu
@@ -162,7 +165,8 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
 
 - `tests/mixerviews_tests.cpp`: each mixer's hidden channels and types, sorted and in the filter's order, kept per
   mixer, refused for unknown ids, types and mixers, not undo steps, without channels that are gone, and saved and
-  loaded; each mixer's last ten visibility changes undone and redone, without the sets that change nothing; notes
+  loaded; each mixer's last ten visibility changes undone and redone, without the sets that change nothing, and the track
+  list's changes to the lower mixer undone one at a time; notes
   and pictures as undo steps, copied with a track, saved and loaded; a picture embedded in the file and extracted next
   to it once the original is gone, kept by `media.cleanup`, and referred to relative to the file when not embedded, so
   it loads from a folder that moved.

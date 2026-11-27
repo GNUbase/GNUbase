@@ -237,3 +237,52 @@ TEST_CASE("each mixer undoes and redoes its last ten visibility changes", "[unit
 	CHECK(hidden("window2") == Json{channels[1]});
 	CHECK_THAT(f.fails("mixer.undoVisibility", {{"mixer", "window5"}}), ContainsSubstring("mixer"));
 }
+
+// #542: the lower zone's mixer follows the track list, so each change the track list makes to its channels is a
+// visibility change of its own, undone one at a time, and a set that the track list takes back at once is none.
+TEST_CASE("a mixer that follows the track list undoes and redoes its changes one at a time", "[unit]")
+{
+	Fixture f;
+	const auto [a, aChannel] = f.track("audio");
+	const auto [b, bChannel] = f.track("audio");
+	const auto tracks = [&f] { return f.call("trackVisibility.get").at("hidden"); };
+	const auto step = [&f](const std::string& command) { return f.call(command, {{"mixer", "lower"}}); };
+
+	// The filter, then a track hidden in the track list: undo takes back the track first, then the filter.
+	f.call("mixer.set", {{"mixer", "lower"}, {"hiddenTypes", {"output"}}});
+	f.call("trackVisibility.set", {{"hidden", {b}}});
+	REQUIRE(f.view("lower").at("hidden") == Json{bChannel});
+	Json view = step("mixer.undoVisibility");
+	CHECK(view.at("hidden").empty());
+	CHECK(view.at("hiddenTypes") == Json{"output"});
+	CHECK(tracks().empty());
+	view = step("mixer.undoVisibility");
+	CHECK(view.at("hiddenTypes").empty());
+
+	// Redo brings both back, the track in the track list too.
+	step("mixer.redoVisibility");
+	view = step("mixer.redoVisibility");
+	CHECK(view.at("hidden") == Json{bChannel});
+	CHECK(view.at("hiddenTypes") == Json{"output"});
+	CHECK(tracks() == Json{b});
+
+	// A change in the track list is a new change: nothing to redo after it.
+	step("mixer.undoVisibility");
+	f.call("trackVisibility.set", {{"hidden", {a}}});
+	CHECK(step("mixer.redoVisibility").at("hidden") == Json{aChannel});
+
+	// Showing the channel of a track in a hidden folder changes nothing, as the folder hides it again (#906): no step,
+	// so undo goes back to before the folder was hidden.
+	const Json band = f.call("track.add", {{"type", "folder"}, {"groupChannel", true}});
+	const uint64_t folder = band.at("track").at("id").get<uint64_t>();
+	const uint64_t group = band.at("channel").at("id").get<uint64_t>();
+	const Json inside = f.call("track.add", {{"type", "audio"}, {"parent", folder}, {"index", 0}});
+	const uint64_t insideChannel = inside.at("channel").at("id").get<uint64_t>();
+	f.call("trackVisibility.set", {{"hidden", {a, folder}}});
+	std::vector<uint64_t> hidden = {aChannel, group, insideChannel};
+	std::sort(hidden.begin(), hidden.end());
+	REQUIRE(f.view("lower").at("hidden") == hidden);
+	CHECK(f.call("mixer.set", {{"mixer", "lower"}, {"hidden", {aChannel, group}}}).at("hidden") == hidden);
+	CHECK(step("mixer.undoVisibility").at("hidden") == Json{aChannel});
+	CHECK(tracks() == Json{a});
+}

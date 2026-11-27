@@ -1515,6 +1515,11 @@ TEST_CASE("the display line's Edit Link Group Settings and a modifier double cli
 	CHECK(!has(element(app, window, line), "editing"));
 	CHECK(checked("vca"));
 	CHECK(!checked("volume"));
+	// Turning Use VCA Fader off again turns the volume back on (p. 517).
+	click(app, window, dialog + " [link=vca]");
+	CHECK(checked("volume"));
+	CHECK(!disabled("volume"));
+	CHECK(disabled("vcaFader"));
 	click(app, window, dialog + " button[result=cancel]");
 	REQUIRE(app.waitUntil([&] { return elements(app, window, dialog).empty(); }));
 	REQUIRE(app.appUi().binding().settle(std::chrono::seconds(5)));
