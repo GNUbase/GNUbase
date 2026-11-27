@@ -83,9 +83,10 @@ they are.
   hitpoints and warp), as after importing the file before: then the tracks share it, and two clips of the file that are
   the same become one (#1567). Media files the project has already, at the same path or with the same audio, are shared;
   drum maps the project has with the same name and sounds too. Media files embedded in the file are extracted next to
-  it, into `<name> media`, as `project.load` does: a file that is there with the entry's content stays as it is, write
-  time included, and so does one with other content, the entry going beside it under a numbered name. The result lists
-  the media files the import added as `media`.
+  it, into `<name> media` named as the file's versions are (`Mix v2.1 media` for `Mix v2.1`, #798), as `project.load`
+  does: a file that is there with the entry's content stays as it is, write time included, and so does one with other
+  content, the entry going beside it under a numbered name. The result lists the media files the import added as
+  `media`.
   Linear positions from a file at another sample rate are rescaled to keep their time, as `project.set` does; faders,
   send levels and volume automation above the project's fader top come down to it, from presets too. When what is
   imported ends after the project's end (its length in the project setup), the end moves to where it ends, up to the
