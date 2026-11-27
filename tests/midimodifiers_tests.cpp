@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/midi/controllerlanes.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/modifiers.h"
 #include "testutils/testutils.h"
@@ -9,7 +10,9 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <map>
 #include <set>
 #include <string>
 #include <utility>
@@ -143,6 +146,44 @@ namespace
 			result.push_back(midi::velocityToMidi1(note.velocity));
 		return result;
 	}
+
+	// The notes a part stores, as pitch and MIDI 1.0 velocity, by pitch.
+	std::vector<std::pair<int, int>> stored(const Json& part)
+	{
+		std::vector<std::pair<int, int>> notes;
+		for (const Json& note : part.at("notes"))
+			notes.emplace_back(note.at("pitch").get<int>(),
+				midi::velocityToMidi1(static_cast<uint16_t>(std::lround(note.at("velocity").get<double>() * 65535))));
+		std::sort(notes.begin(), notes.end());
+		return notes;
+	}
+
+	// Adds poly pressure events a quarter of a beat after each of these beats, for these keys.
+	void press(ModifiedTrack& track, ObjectId part, const std::vector<std::pair<int64_t, int>>& keys)
+	{
+		Json list = Json::array();
+		for (const auto& [beat, key] : keys)
+			list.push_back({{"position", (beat * g_beatTicks) + (g_beatTicks / 4)}, {"type", "polyPressure"},
+				{"number", key}, {"value", 0.5}});
+		run(track.client, "controller.add", {{"part", part}, {"controllers", std::move(list)}});
+	}
+
+	// The keys of the poly pressure the track plays, from the render snapshot, by position, then key.
+	std::vector<int> pressedKeys(ModifiedTrack& track)
+	{
+		std::vector<std::pair<int64_t, int>> keys;
+		for (const RenderChannel& render : track.engine.renderSnapshots().acquire().channels)
+			if (render.id == track.channel)
+				for (const RenderController& controller : render.controllers)
+					if (controller.type == ControllerType::PolyPressure)
+						keys.emplace_back(controller.position, controller.number);
+		std::sort(keys.begin(), keys.end());
+		std::vector<int> result;
+		result.reserve(keys.size());
+		for (const auto& key : keys)
+			result.push_back(key.second);
+		return result;
+	}
 }
 
 TEST_CASE("transpose moves notes by semitones; notes beyond 0 to 127 don't play", "[unit]")
@@ -269,6 +310,44 @@ TEST_CASE("bypass plays the notes as they are", "[unit]")
 	CHECK(midi::modifyNote(modifiers, 1, key, value));
 	CHECK(key == 68);
 	CHECK(value == 12345);
+}
+
+TEST_CASE("poly pressure presses the latest started note of its key and channel that sounds at its position", "[unit]")
+{
+	std::map<ObjectId, Note> notes;
+	const auto add = [&notes](ObjectId id, int64_t position, int64_t length, int pitch, int channel)
+	{
+		Note note;
+		note.id = id;
+		note.position = position;
+		note.length = length;
+		note.pitch = static_cast<uint8_t>(pitch);
+		note.channel = static_cast<uint8_t>(channel);
+		notes[id] = note;
+	};
+	add(1, 0, 100, 60, 0);
+	add(2, 10, 20, 60, 0); // within the first one
+	add(3, 50, 10, 60, 1);
+	add(4, 0, 100, 61, 0);
+	const midi::PressedNotes pressed(notes);
+	const auto at = [&pressed](int64_t position, int key, int channel) -> ObjectId
+	{
+		Controller pressure;
+		pressure.type = ControllerType::PolyPressure;
+		pressure.position = position;
+		pressure.number = static_cast<uint8_t>(key);
+		pressure.channel = static_cast<uint8_t>(channel);
+		const Note* note = pressed.find(pressure);
+		return note != nullptr ? note->id : 0;
+	};
+	CHECK(at(5, 60, 0) == 1);
+	CHECK(at(10, 60, 0) == 2);
+	CHECK(at(40, 60, 0) == 1); // the second one ended, the first sounds on
+	CHECK(at(100, 60, 0) == 0);
+	CHECK(at(55, 60, 1) == 3);
+	CHECK(at(15, 60, 1) == 0);
+	CHECK(at(15, 62, 0) == 0);
+	CHECK(at(99, 61, 0) == 4);
 }
 
 TEST_CASE("channel.set changes a track's MIDI modifiers, which project.get shows and undo restores", "[integration]")
@@ -563,12 +642,7 @@ TEST_CASE("glued MIDI parts keep the sound of each part's transpose and velocity
 	CHECK(glued.at("transpose") == 2);
 	CHECK(glued.at("velocity") == 10);
 	// The second part's notes have the differences to the first part's values written into them.
-	std::vector<std::pair<int, int>> stored;
-	for (const Json& note : glued.at("notes"))
-		stored.emplace_back(note.at("pitch").get<int>(),
-			midi::velocityToMidi1(static_cast<uint16_t>(std::lround(note.at("velocity").get<double>() * 65535))));
-	std::sort(stored.begin(), stored.end());
-	CHECK(stored == std::vector<std::pair<int, int>>{{59, 20}, {60, 100}, {65, 90}});
+	CHECK(stored(glued) == std::vector<std::pair<int, int>>{{59, 20}, {60, 100}, {65, 90}});
 	CHECK(pitches(track.notes()) == std::vector<int>{63, 62, 68});
 	CHECK(velocities(track.notes()) == std::vector<int>{110, 30, 100});
 
@@ -592,4 +666,103 @@ TEST_CASE("a random position doesn't pull a note the part hides beyond its end b
 	track.modify(
 		{{"random", {{{"target", "position"}, {"minimum", -g_beatTicks / 4}, {"maximum", -g_beatTicks / 4}}}}});
 	CHECK(pitches(track.notes()) == std::vector<int>{60, 62, 64});
+}
+
+TEST_CASE("glued notes that the velocity difference pushes beyond 1 to 127 are stored at the end", "[integration]")
+{
+	ModifiedTrack track;
+	track.add({{60, 100}});
+	const ObjectId louder = track.addPart(4 * g_beatTicks);
+	track.add({{62, 100}, {64, 77}}, louder);
+	const ObjectId softer = track.addPart(8 * g_beatTicks);
+	track.add({{66, 30}, {68, 51}}, softer);
+	run(track.client, "midiPart.set", {{"part", louder}, {"velocity", 50}});
+	run(track.client, "midiPart.set", {{"part", softer}, {"velocity", -50}});
+	CHECK(velocities(track.notes()) == std::vector<int>{100, 127, 127, 1, 1});
+
+	run(track.client, "event.glue", {{"events", {track.part, louder, softer}}});
+	const Json project = run(track.client, "project.get");
+	REQUIRE(project.at("midiParts").size() == 1);
+	// 150 and 127 are stored at 127, -20 and 1 at 1: a note pushed beyond the end plays at it, as before.
+	CHECK(stored(project.at("midiParts")[0]) ==
+		std::vector<std::pair<int, int>>{{60, 100}, {62, 127}, {64, 127}, {66, 1}, {68, 1}});
+	CHECK(velocities(track.notes()) == std::vector<int>{100, 127, 127, 1, 1});
+}
+
+TEST_CASE("glued MIDI parts keep their velocities' sound with a velocity compression other than 1/1", "[integration]")
+{
+	ModifiedTrack track;
+	track.add({{60, 100}});
+	const ObjectId second = track.addPart(4 * g_beatTicks);
+	track.add({{62, 100}, {64, 101}}, second);
+	run(track.client, "midiPart.set", {{"part", second}, {"velocity", -20}});
+	track.modify({{"velocityCompression", {1, 2}}});
+	// 100 and 101 compressed to 50 and 51 (rounded), then 20 softer.
+	CHECK(velocities(track.notes()) == std::vector<int>{50, 30, 31});
+
+	// The difference goes in divided by the compression, so the notes play as before.
+	run(track.client, "event.glue", {{"events", {track.part, second}}});
+	CHECK(stored(run(track.client, "project.get").at("midiParts")[0]) ==
+		std::vector<std::pair<int, int>>{{60, 100}, {62, 60}, {64, 62}});
+	CHECK(velocities(track.notes()) == std::vector<int>{50, 30, 31});
+
+	// Bypassed, the track doesn't compress: the difference goes in as it is.
+	run(track.client, "history.undo");
+	track.modify({{"bypass", true}});
+	CHECK(velocities(track.notes()) == std::vector<int>{100, 80, 81});
+	run(track.client, "event.glue", {{"events", {track.part, second}}});
+	CHECK(velocities(track.notes()) == std::vector<int>{100, 80, 81});
+}
+
+TEST_CASE("poly pressure in a modified part presses the key its note plays", "[integration]")
+{
+	ModifiedTrack track;
+	track.add({{60, 100}, {62, 100}});
+	// On the first note's key, on a key no note holds then, and on the second note's key while it sounds and after.
+	press(track, track.part, {{0, 60}, {0, 61}, {1, 62}, {2, 62}});
+	CHECK(pressedKeys(track) == std::vector<int>{60, 61, 62, 62});
+
+	// The track's and the part's transpose and a random pitch move the notes and their pressure; pressure without a
+	// note moves by the transpose alone.
+	run(track.client, "midiPart.set", {{"part", track.part}, {"transpose", 2}});
+	track.modify({{"transpose", 1}, {"random", {{{"target", "pitch"}, {"minimum", 5}, {"maximum", 5}}}}});
+	CHECK(pitches(track.notes()) == std::vector<int>{68, 70});
+	CHECK(pressedKeys(track) == std::vector<int>{64, 68, 70, 65});
+
+	// A note a range leaves out has its pressure left out too; pressure moved beyond 127 doesn't play.
+	track.modify({{"range", {{{"target", "noteFilter"}, {"maximum", 69}}}}});
+	CHECK(pitches(track.notes()) == std::vector<int>{68});
+	CHECK(pressedKeys(track) == std::vector<int>{64, 68, 65});
+	track.modify({{"transpose", 64}, {"random", {{{"target", "off"}}}}, {"range", {{{"target", "off"}}}}});
+	CHECK(pressedKeys(track) == std::vector<int>{126, 127});
+}
+
+TEST_CASE("glued MIDI parts move the other parts' poly pressure with their notes", "[integration]")
+{
+	ModifiedTrack track;
+	track.add({{60, 100}});
+	press(track, track.part, {{0, 60}});
+	const ObjectId second = track.addPart(4 * g_beatTicks);
+	track.add({{64, 100}}, second);
+	press(track, second, {{0, 64}, {1, 70}});
+	run(track.client, "midiPart.set", {{"part", second}, {"transpose", -3}});
+	CHECK(pressedKeys(track) == std::vector<int>{60, 61, 67});
+
+	run(track.client, "event.glue", {{"events", {track.part, second}}});
+	const Json glued = run(track.client, "project.get").at("midiParts")[0];
+	std::vector<int> keys;
+	for (const Json& controller : glued.at("controllers"))
+		keys.push_back(controller.at("number").get<int>());
+	std::sort(keys.begin(), keys.end());
+	CHECK(keys == std::vector<int>{60, 61, 67});
+	CHECK(pressedKeys(track) == std::vector<int>{60, 61, 67});
+
+	// Poly pressure the difference would move beyond 0 to 127: refused, and nothing changes.
+	run(track.client, "history.undo");
+	run(track.client, "midiPart.set", {{"part", track.part}, {"transpose", -60}});
+	press(track, second, {{2, 100}});
+	const Json before = run(track.client, "project.get");
+	CHECK_THAT(reject(track.client, "event.glue", {{"events", {track.part, second}}}),
+		ContainsSubstring("a poly pressure event of MIDI part"));
+	CHECK(run(track.client, "project.get") == before);
 }

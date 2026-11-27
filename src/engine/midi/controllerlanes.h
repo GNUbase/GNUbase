@@ -5,7 +5,9 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
+#include <vector>
 
 namespace gnubase::engine
 {
@@ -33,6 +35,26 @@ namespace gnubase::engine::midi
 	// audio thread.
 	bool notePlays(const Note& note, ObjectId part);
 	uint16_t playedVelocity(const Note& note, ObjectId part);
+
+	// The notes of a part by key, for its poly pressure: find gives the note whose key a poly pressure event presses,
+	// of the notes of its pitch and channel the one that sounds at its position, the latest started if several do, or
+	// null if none does. The pressure plays where that note plays, after the MIDI modifiers and the transposition
+	// (docs/features/midi-modifiers.md). The notes must outlive it.
+	class PressedNotes
+	{
+	public:
+		explicit PressedNotes(const std::map<ObjectId, Note>& notes);
+		const Note* find(const Controller& pressure) const;
+
+	private:
+		// A key's notes by start, and for each the latest end of it and those before it.
+		struct Key
+		{
+			std::vector<const Note*> notes;
+			std::vector<time::Ticks> ends;
+		};
+		std::map<uint16_t, Key> m_keys; // by channel * 128 + pitch
+	};
 
 	// Registers note.apply and controller.line.
 	void registerControllerLaneCommands(ProjectModel& model, Engine& engine);
