@@ -197,6 +197,7 @@ TEST_CASE("each mixer undoes and redoes its last ten visibility changes", "[unit
 				changes.push_back(event.data);
 		});
 	std::vector<uint64_t> channels;
+	channels.reserve(12);
 	for (int i = 0; i < 12; ++i)
 		channels.push_back(f.track("audio").second);
 	const auto hidden = [&f](const std::string& mixer) { return f.view(mixer).at("hidden"); };
