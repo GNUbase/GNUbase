@@ -1053,6 +1053,105 @@ TEST_CASE(
 	run(client, "linkGroup.add", {{"channels", {a, c}}});
 }
 
+TEST_CASE("a link group whose VCA fader is left out when a project loads links the volume again", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const auto add = [&client](const char* type)
+	{ return idOf(run(client, "track.add", {{"type", type}}), "channel"); };
+	const ObjectId vca = add("vca");
+	const ObjectId a = add("audio");
+	const ObjectId b = add("audio");
+	const ObjectId c = add("audio");
+	const ObjectId d = add("audio");
+	const ObjectId audio = add("audio");
+	run(client, "linkGroup.add", {{"channels", {a}}, {"vca", vca}});
+	for (const ObjectId channel : {b, c, d})
+		run(client, "linkGroup.add", {{"channels", {channel}}});
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	// A hand-edited entry: the second group's VCA fader is an audio channel, the third one's a channel that doesn't
+	// exist, and the fourth one's controls the first group already; none of them links the volume.
+	std::map<std::string, std::string> entries = readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	Json& groups = extension.at("project").at("linkGroups");
+	REQUIRE(groups.size() == 4);
+	groups[1]["vca"] = audio;
+	groups[2]["vca"] = 999999;
+	groups[3]["vca"] = vca;
+	for (Json& group : groups)
+		group["volume"] = false;
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	const Json loaded = run(client, "project.get").at("linkGroups");
+	REQUIRE(loaded.size() == 4);
+	CHECK(loaded[0].at("vca") == vca);
+	CHECK(loaded[0].at("volume") == false);
+	for (size_t i = 1; i < loaded.size(); ++i)
+	{
+		INFO("group " << i + 1);
+		CHECK(loaded[i].at("vca") == 0);
+		CHECK(loaded[i].at("volume") == true);
+	}
+}
+
+TEST_CASE("a VCA channel in GNUbase's entry gets no audio, routing, pan, sends or slots", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const ObjectId vca = idOf(run(client, "track.add", {{"type", "vca"}}), "channel");
+	const Json audio = run(client, "track.add", {{"type", "audio"}}).at("channel");
+	const ObjectId effect = idOf(run(client, "track.add", {{"type", "effect"}}), "channel");
+	const Json slot =
+		run(client, "plugin.insert", {{"channel", audio.at("id")}, {"plugin", "builtin:gainPan"}}).at("slot").at("id");
+	run(client, "channel.set", {{"channel", vca}, {"volume", -4.5}, {"mute", true}});
+	const Json before = withId(run(client, "project.get").at("channels"), "id", vca);
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	// A hand-edited entry gives the VCA channel audio channels, an input and an output, a pan, a send and the audio
+	// channel's slot.
+	std::map<std::string, std::string> entries = readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	Json& project = extension.at("project");
+	for (Json& channel : project.at("channels"))
+		if (channel.at("id") == vca)
+		{
+			channel["format"] = "stereo";
+			channel["input"] = audio.at("input");
+			channel["output"] = audio.at("output");
+			channel["pan"] = 0.5;
+			channel["panner"] = "combined";
+			channel["panLeft"] = 0.25;
+			channel["panBypass"] = true;
+			channel["sends"] = {{{"destination", effect}, {"on", true}, {"level", -3.0}, {"preFader", true}}};
+			channel["slots"] = {slot};
+		}
+		else if (channel.at("id") == audio.at("id"))
+			channel["slots"] = Json::array();
+	for (Json& item : project.at("slots"))
+		if (item.at("id") == slot)
+			item["channel"] = vca;
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+
+	// It loads as GNUbase made it: its fader and buttons stay, the slot goes with the rest.
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	CHECK(withId(run(client, "project.get").at("channels"), "id", vca) == before);
+	CHECK(run(client, "plugin.list", {{"channel", audio.at("id")}}).at("slots") == Json::array());
+	// It saves and loads again, with no slot left over.
+	run(client, "project.save", {{"path", file}});
+	run(client, "project.load", {{"path", file}});
+	CHECK(withId(run(client, "project.get").at("channels"), "id", vca) == before);
+}
+
 TEST_CASE("a VCA channel from another application gets no pan, sends or routing", "[integration]")
 {
 	const char* const xml = R"(<?xml version="1.0" encoding="UTF-8"?>

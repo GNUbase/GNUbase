@@ -2391,6 +2391,20 @@ namespace gnubase::engine
 			const TrackType type = track != project.trackById.end() ? track->second.type : TrackType::Folder;
 			const bool midi = type == TrackType::Midi || type == TrackType::Instrument;
 			const bool buttons = type == TrackType::Audio || midi || type == TrackType::Vca;
+			// A VCA channel has a fader and its buttons, but no audio, routing or pan, as channel.set keeps it, and
+			// so no sends or slots: a hand-edited entry's are left out, as the DAWproject import leaves out another
+			// application's (#867).
+			if (type == TrackType::Vca)
+			{
+				channel.format = ChannelFormat::None;
+				channel.input = 0;
+				channel.output = 0;
+				channel.pan = 0.0;
+				channel.panner = StereoPanner::Balance;
+				channel.panLeft = -1.0;
+				channel.panRight = 1.0;
+				channel.panBypass = false;
+			}
 			channel.monitor = buttons && item.value("monitor", false);
 			channel.recordEnable = buttons && item.value("recordEnable", false);
 			const std::string midiInput = item.value("midiInput", std::string());
@@ -2400,9 +2414,10 @@ namespace gnubase::engine
 			channel.soloDefeat = item.value("soloDefeat", false); // files from before #109 have neither
 			channel.listen =
 				(channel.format != ChannelFormat::None || type == TrackType::Vca) && item.value("listen", false);
-			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
-			channel.notes = item.value("notes", std::string());           // files from before #89 have none
-			channel.sections = sectionsFromJson(item);                    // files from before #107 have them off
+			if (type != TrackType::Vca)
+				channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
+			channel.notes = item.value("notes", std::string());               // files from before #89 have none
+			channel.sections = sectionsFromJson(item);                        // files from before #107 have them off
 			// Files from before #134 have no modifiers, nor do tracks other than MIDI and instrument tracks.
 			if (midi && item.contains("modifiers"))
 				channel.modifiers = modifiersFromJson(item.at("modifiers"));
@@ -2436,11 +2451,16 @@ namespace gnubase::engine
 			}
 			project.channels[id] = std::move(channel);
 		}
-		// Every slot is in the list of its channel, which has audio, once, and no channel lists more than it may.
+		// Every slot is in the list of its channel, which has audio, once, and no channel lists more than it may. A
+		// VCA channel's go with its list.
 		for (const Json& item : json.value("slots", Json::array()))
 		{
 			Slot slot = slotFromJson(item);
 			const auto channel = project.channels.find(slot.channel);
+			if (channel != project.channels.end())
+				if (const auto track = project.trackById.find(channel->second.track);
+					track != project.trackById.end() && track->second.type == TrackType::Vca)
+					continue;
 			if (channel == project.channels.end() || channel->second.format == ChannelFormat::None)
 				throw std::invalid_argument("slot " + std::to_string(slot.id) + " is on no channel with audio");
 			const ObjectId id = slot.id;
