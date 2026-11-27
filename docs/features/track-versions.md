@@ -43,9 +43,9 @@ and activating versions across tracks.
   backups keep and minimize their media (`forEveryAudioEvent`). A clip in musical mode without a tempo takes the
   project's at its first event on an inactive version when it has none on the active ones ([warp.md](warp.md)).
   `media.relinkResampled`, including when called by `media.conform`, rescales their audio events and crossfades.
-  `track.duplicate` copies every version with ids of its own, and the copies of a version's shared MIDI parts get a
-  group of their own as `trackVersion.duplicate` gives them (its copies of the parts that play stay in their group, as
-  those play together), `track.removeEmpty` keeps a track with more than one version, and the track list's warning
+  `track.duplicate` copies every version with ids of its own, and the copies of a version's shared MIDI and audio parts
+  get a group of their own as `trackVersion.duplicate` gives them (its copies of the parts that play stay in their
+  group, as those play together), `track.removeEmpty` keeps a track with more than one version, and the track list's warning
   before Remove Selected Tracks counts them too. A new time base or sample rate moves inactive versions' events and
   parts as it moves the active ones. A tempo change retimes notes and controllers in their linear MIDI parts, and
   separates a version's shared copies whose notes it retimes apart, as it separates those that play

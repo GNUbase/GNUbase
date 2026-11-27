@@ -92,7 +92,7 @@ were before the command; `sharedPartsOf` copies the shared audio parts' events f
 the events by part once per command, not once per shared part. A copy leaves its group where
 its events change against its edges for its own sake: when sizing its start without moving its contents or its end
 while moving them, when it is split or glued, and with `event.toRealCopy`. A range paste and a track preset make real
-copies; `track.duplicate` keeps the copied parts in their groups. A stashed track version keeps a group whose copies
+copies, in every version of a preset's track; `track.duplicate` keeps the copied parts in their groups. A stashed track version keeps a group whose copies
 all go into it, as it keeps MIDI parts' ([track-versions.md](track-versions.md)); a copy whose group has copies
 elsewhere leaves it.
 

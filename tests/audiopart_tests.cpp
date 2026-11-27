@@ -604,6 +604,27 @@ TEST_CASE("gluing, sizing the end with the contents, a range paste, a track impo
 		CHECK(group(parts[0]) == 0);
 		CHECK(group(parts[1]) == 0);
 		CHECK(group(copy) == group(part));
+
+		// So do the shared copies in a version that doesn't play.
+		f.call("trackVersion.duplicate", {{"tracks", {audio}}});
+		f.call("track.export", {{"tracks", {audio}}, {"path", file}, {"copyMedia", false}});
+		const int64_t again = f.call("track.import", {{"path", file}}).at("tracks").at(0).get<int64_t>();
+		Json versions;
+		Json active;
+		const Json project = f.call("project.get");
+		for (const Json& each : project.at("tracks"))
+			if (each.at("id") == again)
+			{
+				versions = each.at("versions");
+				active = each.at("activeVersion");
+			}
+		REQUIRE(versions.size() == 2);
+		const Json stashed = versions[0].at("id") == active ? versions[1].at("id") : versions[0].at("id");
+		f.call("trackVersion.activate", {{"tracks", {again}}, {"version", stashed}});
+		const std::vector<Json> copies = others(again, {});
+		REQUIRE(copies.size() == 2);
+		CHECK(group(copies[0]) == 0);
+		CHECK(group(copies[1]) == 0);
 	}
 	SECTION("a stashed version")
 	{

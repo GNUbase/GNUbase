@@ -417,7 +417,7 @@ TEST_CASE("As Default in the fade dialog sets the default fades, which Apply Sta
 
 TEST_CASE("As Default in the crossfade editor sets the default crossfade, which new crossfades get", "[ui]")
 {
-	// Reference manual p. 392: As Default keeps the editor's mode and curves for the crossfades made later, Recall
+	// Reference manual p. 391: As Default keeps the editor's mode and curves for the crossfades made later, Recall
 	// Default shows them again.
 	test::UiApp app({900, 700});
 	ui::EventDisplay& display = app.appUi().showProject();

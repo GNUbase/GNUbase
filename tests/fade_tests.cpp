@@ -363,7 +363,7 @@ TEST_CASE("crossfade.set makes a new crossfade without a mode the default crossf
 		{{"key", "editing.defaultCrossfade"},
 			{"value", {{"mode", "custom"}, {"shape", "sCurve"}, {"outShape", "exponential"}}}});
 
-	// New and without a mode: the default crossfade (reference manual p. 392), with the shape given over it.
+	// New and without a mode: the default crossfade (reference manual p. 391), with the shape given over it.
 	CHECK(
 		run(client, "crossfade.set", {{"from", a}, {"to", b}, {"shape", "logarithmic"}}).at("event").at("crossfade") ==
 		Json{{"from", a}, {"mode", "custom"}, {"shape", "logarithmic"}, {"outShape", "exponential"}, {"length", 0},

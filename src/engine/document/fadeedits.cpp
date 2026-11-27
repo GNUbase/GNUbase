@@ -120,7 +120,7 @@ namespace gnubase::engine
 		}
 
 		// New crossfades are the default crossfade (the user setting editing.defaultCrossfade, reference manual p.
-		// 392).
+		// 391).
 		Crossfade defaultCrossfade(CommandContext& context)
 		{
 			const Json made = context.call("settings.get", {{"key", "editing.defaultCrossfade"}}).at("value");

@@ -753,7 +753,7 @@ TEST_CASE("Close Gaps crossfades selected slices without moving their starts", "
 			.at("event")
 			.at("id");
 	f.call("event.toPart", {{"events", {f.event, second}}});
-	// The crossfade is the default crossfade (reference manual p. 392).
+	// The crossfade is the default crossfade (reference manual p. 391).
 	f.call("settings.set",
 		{{"key", "editing.defaultCrossfade"},
 			{"value", {{"mode", "equalPower"}, {"shape", "equalPower"}, {"outShape", "equalPower"}}}});
