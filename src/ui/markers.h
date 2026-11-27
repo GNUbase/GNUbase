@@ -237,7 +237,7 @@ namespace gnubase::ui
 		// The markers listed: the active marker track's, in the order the list shows them.
 		const std::vector<MarkerItem>& markers() const { return m_listed; }
 		// The ids of the selected markers. setSelection selects those of the markers listed; onSelect is told of the
-		// user's changes.
+		// user's changes, and of markers that leave it because the window doesn't list them any more.
 		std::vector<uint64_t> selection() const;
 		void setSelection(const std::vector<uint64_t>& markers);
 		void onSelect(std::function<void(const std::vector<uint64_t>&)> handler) { m_onSelect = std::move(handler); }
