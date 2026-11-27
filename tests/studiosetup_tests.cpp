@@ -576,6 +576,12 @@ TEST_CASE(
 	CHECK(lastRun(app, "audio.setDevice") == fellBack);
 	CHECK(app.call("audio.get").at("failed").is_object());
 	CHECK(app.call("settings.get", {{"key", "audio.backend"}}).at("value").get<std::string>().empty());
+	click(app, "#ok");
+	CHECK(closed(app));
+	CHECK(lastRun(app, "audio.setDevice") == fellBack);
+	CHECK(app.call("audio.get").at("failed").is_object());
+	CHECK(app.call("settings.get", {{"key", "audio.backend"}}).at("value").get<std::string>().empty());
+	openDialog(app);
 
 	// The driver that plays picked in the list: Apply saves it, at the block size it plays with.
 	choose(app, "#driver", 1);

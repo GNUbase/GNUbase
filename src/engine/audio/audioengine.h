@@ -248,8 +248,9 @@ namespace gnubase::engine
 		void rebuild();
 		// audio.setDevice with these parameters: opens the device, starts it if asked or if the one it replaces ran,
 		// falls back to the backend's default device (audio.fallbackDevice default) or the dummy device and saves the
-		// choice as the user's if asked (start, fallBackToDummy, remember).
-		void replaceDevice(CommandContext& context, Json parameters);
+		// choice as the user's if asked (start, fallBackToDummy, remember). dummy: what the dummy device opens with if
+		// it falls back to it, by default without capture memory at the sample rate and block size asked for.
+		void replaceDevice(CommandContext& context, Json parameters, const Json& dummy = nullptr);
 		// keepMeasurement: a reset, which keeps the loudness measurement if the sample rate stays.
 		void setDevice(const Json& parameters, bool keepMeasurement = false);
 		void openDummy(const Json& parameters);
@@ -433,7 +434,7 @@ namespace gnubase::engine
 		Json m_failed = nullptr;
 		Json m_failedParameters = nullptr;
 		// The last audio.setDevice failed and left no running device although it was to run one: the next one
-		// starts unless told otherwise. audio.start and audio.stop decide anew.
+		// starts unless told otherwise. audio.stop and an audio.start that succeeds decide anew.
 		bool m_startAfterFailure = false;
 		std::unique_ptr<audio::Device> m_device;
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device

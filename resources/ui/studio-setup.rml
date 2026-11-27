@@ -451,7 +451,6 @@
 			document:GetElementById("studio-setup-message").inner_rml = escape(table.concat(messages, "; "))
 		end
 
-		-- Reads everything from the engine and fills the pages.
 		-- The user picked another option of the Audio Driver list than the one it loaded with, maybe the loaded one
 		-- again later. The list's own change when it shows its first selection counts for nothing.
 		function setup.touchDriver(document)
@@ -460,6 +459,7 @@
 			end
 		end
 
+		-- Reads everything from the engine and fills the pages.
 		function setup.load(document)
 			setup.driverTouched = false
 			local devices = gnubase.audio.devices()

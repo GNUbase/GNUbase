@@ -1718,7 +1718,7 @@ namespace gnubase::engine
 		m_waitingForDevice = false;
 	}
 
-	void AudioEngine::replaceDevice(CommandContext& context, Json parameters)
+	void AudioEngine::replaceDevice(CommandContext& context, Json parameters, const Json& dummy)
 	{
 		const bool remember = parameters.value("remember", false);
 		const bool fallBack = parameters.value("fallBackToDummy", false);
@@ -1768,7 +1768,7 @@ namespace gnubase::engine
 			closeDevice(); // one that opened but didn't start
 			// With the fallback device default, the backend's default device first, as for a lost device, unless it
 			// is the one that failed. Then the dummy device without capture memory. Both at the sample rate and block
-			// size asked for.
+			// size asked for, unless the dummy device's parameters are given.
 			std::vector<Json> fallbacks;
 			const bool known = std::any_of(m_backends.begin(), m_backends.end(),
 				[&backend](const std::unique_ptr<audio::Backend>& candidate) { return candidate->name() == backend; });
@@ -1781,6 +1781,11 @@ namespace gnubase::engine
 					fallback["sampleRate"] = parameters.at("sampleRate");
 				if (parameters.value("blockSize", int64_t{0}) > 0)
 					fallback["blockSize"] = parameters.at("blockSize");
+			}
+			if (dummy.is_object())
+				fallbacks.back() = dummy;
+			for (const Json& fallback : fallbacks)
+			{
 				try
 				{
 					setDevice(fallback);
@@ -2779,8 +2784,8 @@ namespace gnubase::engine
 			{"audio.reset", 1,
 				"Opens the audio device again with the same settings and restarts it if it ran; while the dummy device "
 				"plays for a device that audio.setDevice couldn't use (failed in audio.get), it tries that device "
-				"again as audio.setDevice with fallBackToDummy would, and the measurements start anew as they do "
-				"there. Drivers ask for this "
+				"again as audio.setDevice with fallBackToDummy would, and the dummy device again with its own settings "
+				"if it still can't be used; the measurements start anew as they do there. Drivers ask for this "
 				"when their settings change, e.g. in their control panel, or when their device goes away; the engine "
 				"then resets on its own. A device that can't be opened, e.g. because it was unplugged, or that ran "
 				"and opens but doesn't start again, is lost (lost in audio.get): the engine goes on without it and "
@@ -2802,12 +2807,15 @@ namespace gnubase::engine
 				if (m_failed.is_object() && m_dummy != nullptr && !m_lost)
 				{
 					// The dummy device plays for a device that couldn't be used: try that one again, and the dummy
-					// device if it still can't, running as it did. A backend's default device that plays instead
-					// resets as a device does when its driver asks.
+					// device if it still can't, running as it did and with its own settings, which audio.set may
+					// have changed meanwhile. A backend's default device that plays instead resets as a device does
+					// when its driver asks.
 					Json parameters = m_failedParameters;
 					parameters["fallBackToDummy"] = true;
 					parameters["start"] = m_device->running();
-					announcingFailure([this, &context, &parameters] { replaceDevice(context, std::move(parameters)); });
+					const Json dummy = m_parameters;
+					announcingFailure([this, &context, &parameters, &dummy]
+						{ replaceDevice(context, std::move(parameters), dummy); });
 					changed = true;
 				}
 				else
@@ -2968,8 +2976,8 @@ namespace gnubase::engine
 			{"audio.start", 1,
 				"Starts the audio device; the dummy device processes one block per block duration (simulated real "
 				"time) until stopped. While the device is lost (see audio.reset), it starts once it returns (restart "
-				"in lost), and audio.changed announces that. If it fails, e.g. as there is no device, the next "
-				"audio.setDevice starts its device.",
+				"in lost), and audio.changed announces that. If it fails, e.g. as there is no device, a start that a "
+				"failed audio.setDevice left pending stays: the next audio.setDevice still starts its device.",
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{

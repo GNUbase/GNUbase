@@ -1451,6 +1451,13 @@ TEST_CASE("audio.reset tries the device that failed again while a fallback plays
 	CHECK(status.at("device").at("backend") == "dummy");
 	CHECK(status.at("running") == true);
 	CHECK(status.at("failed").at("device") == "fake-1");
+	// What audio.set changed on the fallback meanwhile, e.g. in Studio Setup, stays when it opens again.
+	CHECK(run(client, "audio.set", {{"blockSize", 256}}).at("device").at("blockSize") == 256);
+	status = run(client, "audio.reset");
+	CHECK(status.at("device").at("backend") == "dummy");
+	CHECK(status.at("device").at("blockSize") == 256);
+	CHECK(status.at("running") == true);
+	CHECK(status.at("failed").at("device") == "fake-1");
 
 	// Back: it opens with what it was asked to open with and runs as the fallback did, and failed ends.
 	driver->connected = true;
