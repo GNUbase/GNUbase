@@ -77,8 +77,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   next untitled project, the first series that no file in the folder has yet, in any case (#635). So one untitled
   project, or one opened from an auto save, never overwrites another one's auto saves, which may be the ones the user
   wants to recover, also after a restart. The series stays while the project is untitled and keeps its name; a new or
-  opened project, or a new name, starts another. Without a settings folder an untitled project isn't auto saved. Auto
-  saves don't copy media and don't save the project: it stays modified, and its file stays as it is.
+  opened project, or a new name, starts another. Old series stay until the user deletes
+  them, and two GNUbase processes that share a settings folder can pick the same free series. Without a settings
+  folder an untitled project isn't auto saved. Auto saves don't copy media and don't save the project: it stays
+  modified, and its file stays as it is.
   The engine's clock (`engine/clock.h`) ticks every 30 seconds on a thread of its own, and each tick
   posts `project.autoSave` with `due`; that saves only when the user setting `project.autoSave` is on (the default)
   and `project.autoSaveInterval` minutes (15) have passed since the last save, opening or auto save, and stays out of
@@ -102,10 +104,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   `Auto Saves/Auto Saves`. `project.location`'s `autoSaveOf` names the project file it was made of, next to
   `Auto Saves` and named as the auto save without its number (null for an untitled project's auto save), and Save
   proposes that file, where the OS's dialog asks before it replaces it (#635). Saving it as the project's file makes
-  that its file and project folder again. The reference manual doesn't say what opening an auto save does; it calls auto saves copies of the
-  project file (pp. 134, 1608), and going on as the project file next to `Auto Saves` would overwrite that file on Save
-  with what may be an older copy that the user only wanted to look at. A `.bak` elsewhere isn't an auto save and opens
-  as the project's file.
+  that its file and project folder again. The reference manual doesn't say what opening an auto save does; it calls auto
+  saves copies of the project file (pp. 134, 1608), and going on as the project file next to `Auto Saves` would
+  overwrite that file on Save with what may be an older copy that the user only wanted to look at. A `.bak` elsewhere
+  isn't an auto save and opens as the project's file.
 - **Project folder.** The folder of the project's file. GNUbase puts the media folder `Audio` ([backup.md](backup.md))
   and `Auto Saves` into it; the other folders of the reference (Edits, Images) come with their features. Track
   pictures go into the project's media folder, as freeze files do ([mixer-window.md](mixer-window.md)).
@@ -166,11 +168,11 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   of those dialogs closed or hid (GNUbase's own dialogs unload as they close, but a Lua script can hide one through
   RmlUi's plugin), unless an auto save succeeded or the project was saved or opened meanwhile, which makes it out of
   date, or a newer failure's error opened meanwhile, also one that reached the UI in the step that closed the dialog,
-  which the error that waited, opening a step later, mustn't replace (#859). Modal dialogs in other windows, such as a panel's own window, don't keep it away. If another project
-  dialog, such as the start screen, is open, the error shows at the next failure instead. The other File menu
-  commands that read or write files use the dialog too: File > Export > Selected Tracks shows the engine's refusal
-  in it, and under the title Export Selected Tracks (`ProjectFiles::showNotice`) the tracks an export that worked
-  left out ([track-presets.md](track-presets.md)).
+  which the error that waited, opening a step later, mustn't replace (#859). Modal dialogs in other windows, such as a
+  panel's own window, don't keep it away. If another project dialog, such as the start screen, is open, the error shows
+  at the next failure instead. The other File menu commands that read or write files use the dialog too: File > Export >
+  Selected Tracks shows the engine's refusal in it, and under the title Export Selected Tracks
+  (`ProjectFiles::showNotice`) the tracks an export that worked left out ([track-presets.md](track-presets.md)).
 - **One dialog at a time.** The project dialogs open one at a time, and one that comes while another is open waits
   for it and opens once it closed or went with its window, in the order they came (#485): the unsaved changes question
   of a project opened through File > Open's key in a panel's own window, MCP or Lua while the start screen or Save as
@@ -217,34 +219,36 @@ question opens once, in the window where it was asked.
 as for `übung-01` next to `Übung`, and of a file saved under a name with a dot), revert, auto save rotation, opening
 auto saves (also of untitled projects and of projects whose file is gone, and under paths in other case or with `.`),
 the project file they were made of, and where their media and next auto saves go, each untitled project's series of
-auto saves, also after a restart and next to a series in other case, the engine's own auto saves once the interval passed and failing ones with
-their events and log entries, also when the reason or only the file changes (`Engine::advanceClock` moves the clock
-forward and returns once its tick ran, so no test waits), recent projects across restarts and their names, the media folder a load extracts into, versions and auto saves of
-a file named `...` (where it can be made), and templates (one named as a device, where it can be a file); and in the
-app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot, of one ending in a dot,
-of one of only dots and spaces and of one with the extension in upper case, asking before it replaces a file the dialog
-didn't name, and of a device name where it can be a file, not on Windows 10) and Save New Version after each through file dialogs, Open and Revert with
-the unsaved changes dialog, Save asking for a file after Open of an auto save and proposing the project file it was made of, quitting through the main window's close
-button and the OS's quit request with and without unsaved changes, SDL's close and quit requests for the last window and
-more requests while the question is open asking one question (the same document stays open) that Cancel and Discard
-answer, a question asked in a panel's own window that closes with it leaving the next quit request to ask again, the
-start screen's buttons and double clicks, Save as Template and Back up Project, and the error dialog for a failed save
-and backup, and for failed auto saves: once per reason and again after File > Save, in place of the open error when the
-reason changes, at the next failure if another project dialog kept it from showing, once the auto fades dialog and the
-studio setup over it closed or a modal document hid, without another failure, not in place of a newer failure's error
-that came in the step the dialog closed, before or after it, nor when the app ends while it waits, but not after an auto save succeeded or the project was saved or
+auto saves, also after a restart and next to a series in other case, the engine's own auto saves once the interval
+passed and failing ones with their events and log entries, also when the reason or only the file changes
+(`Engine::advanceClock` moves the clock forward and returns once its tick ran, so no test waits), recent projects across
+restarts and their names, the media folder a load extracts into, versions and auto saves of a file named `...` (where it
+can be made), and templates (one named as a device, where it can be a file); and in the app's UI (`test::UiApp`,
+[ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot, of one ending in a dot, of one of only dots and
+spaces and of one with the extension in upper case, asking before it replaces a file the dialog didn't name, and of a
+device name where it can be a file, not on Windows 10) and Save New Version after each through file dialogs, Open and
+Revert with the unsaved changes dialog, Save asking for a file after Open of an auto save and proposing the project file
+it was made of, quitting through the main window's close button and the OS's quit request with and without unsaved
+changes, SDL's close and quit requests for the last window and more requests while the question is open asking one
+question (the same document stays open) that Cancel and Discard answer, a question asked in a panel's own window that
+closes with it leaving the next quit request to ask again, the start screen's buttons and double clicks, Save as
+Template and Back up Project, and the error dialog for a failed save and backup, and for failed auto saves: once per
+reason and again after File > Save, in place of the open error when the reason changes, at the next failure if another
+project dialog kept it from showing, once the auto fades dialog and the studio setup over it closed or a modal document
+hid, without another failure, not in place of a newer failure's error that came in the step the dialog closed, before or
+after it, nor when the app ends while it waits, but not after an auto save succeeded or the project was saved or
 reverted meanwhile, nor when a success follows the failure before the UI heard of either, not kept away by a modal
 dialog in a panel's own window, again after the unsaved changes question or a failed save's error took its place, the
 unsaved changes question and a failed save's error waiting for the start screen and Save as Template and opening in the
 order they came, an open dialog that goes with its window letting the next one open, a question that waited not asking
 once the project was saved meanwhile, an error whose window closed while it waited showing in the main window, a quit
 request dropping the questions and start screens that wait so that its own question is next, a quit question that waits
-behind an error and goes with its window leaving the next quit request to ask again, a quit question that opens after
-a newer question came still answering, so that Cancel there leaves quitting working, a quit question cancelled before
-the engine answered its second look letting the next quit request ask (the engine held by a test command), and with the
-quit question: the error makes way for it, an auto save failing while it is open leaves it open, and the error shows at
-the next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`,
-`tests/lua/ui/dialog.lua` the unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp`
-`ui::closeDialog`. `tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.
+behind an error and goes with its window leaving the next quit request to ask again, a quit question that opens after a
+newer question came still answering, so that Cancel there leaves quitting working, a quit question cancelled before the
+engine answered its second look letting the next quit request ask (the engine held by a test command), and with the quit
+question: the error makes way for it, an auto save failing while it is open leaves it open, and the error shows at the
+next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`, `tests/lua/ui/dialog.lua`
+the unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp` `ui::closeDialog`.
+`tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.
 
 Project object ids stay within Lua's positive integer range. A load refuses ids at or above 9223372036854775807, or a next-id counter above it, with a clear error; the last signed integer is reserved for that counter. Allocation also refuses to pass that limit, so a project cannot create ids that scripts would receive as negative values.

@@ -1858,7 +1858,7 @@ namespace gnubase::ui
 		{
 			// The search narrows the parameters to those whose name has the text, in any case.
 			// Matched against the names, not the items' RML, where & < > are entities.
-			const std::string text = text::asciiLower(target->GetAttribute<Rml::String>("value", ""));
+			const std::string search = text::asciiLower(target->GetAttribute<Rml::String>("value", ""));
 			const Json* targets = m_display.automationTargets(track);
 			for (int i = 0; i < m_parameterMenu->GetNumChildren(); ++i)
 				if (Rml::Element* item = m_parameterMenu->GetChild(i); item->IsClassSet("automation-target"))
@@ -1866,7 +1866,7 @@ namespace gnubase::ui
 					const auto index = static_cast<size_t>(item->GetAttribute<int>("target-index", 0));
 					const std::string name =
 						targets != nullptr && index < targets->size() ? parameterName(targets->at(index)) : "";
-					setClass(*item, "hidden", text::asciiLower(name).find(text) == std::string::npos);
+					setClass(*item, "hidden", text::asciiLower(name).find(search) == std::string::npos);
 				}
 			return;
 		}

@@ -665,13 +665,13 @@ namespace gnubase::ui
 			{
 				if (!result.ok())
 					return;
-				const auto text = [&result](const char* key)
+				const auto field = [&result](const char* key)
 				{
 					const Json& value = result.value.at(key);
 					return value.is_string() ? value.get<std::string>() : std::string();
 				};
-				m_file = text("file");
-				m_autoSaveOf = text("autoSaveOf");
+				m_file = field("file");
+				m_autoSaveOf = field("autoSaveOf");
 			});
 	}
 
