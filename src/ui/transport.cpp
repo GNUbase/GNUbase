@@ -125,8 +125,8 @@ namespace gnubase::ui
 		if (Rml::ElementDocument* document = root.GetOwnerDocument())
 			m_document = document->GetObserverPtr();
 		listen(true);
-		m_subscriptions.push_back(
-			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
+		m_subscriptions.push_back(m_binding.on(
+			"transport.changed", [this](const engine::Event& event) { followTransport(event.data, event.request); }));
 		// Not after a step that changed only channels, which it doesn't show (#1881).
 		for (const char* event : {"history.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event,
@@ -159,7 +159,7 @@ namespace gnubase::ui
 				if (const auto formats = values.find(g_formatsKey); formats != values.end())
 					followFormats(*formats);
 				if (const auto options = values.find(g_timeDisplayKey); options != values.end())
-					followTimeDisplay(*options);
+					followTimeDisplay(*options, event.request);
 				if (const auto mode = values.find(g_tapModeKey); mode != values.end())
 					followTapMode(*mode);
 			}));
@@ -172,7 +172,7 @@ namespace gnubase::ui
 				if (alive.expired())
 					return;
 				if (result.ok())
-					followTransport(result.value);
+					followTransport(result.value, result.request);
 				answered();
 			});
 		m_binding.send("settings.get", {{"key", g_formatsKey}},
@@ -188,7 +188,7 @@ namespace gnubase::ui
 			[this, alive](const engine::Result& result)
 			{
 				if (!alive.expired() && result.ok())
-					followTimeDisplay(result.value.at("value"));
+					followTimeDisplay(result.value.at("value"), result.request);
 			});
 		m_binding.send("settings.get", {{"key", g_tapModeKey}},
 			[this, alive](const engine::Result& result)
@@ -226,6 +226,7 @@ namespace gnubase::ui
 	TransportControls::~TransportControls()
 	{
 		release();
+		endTempoGesture(false); // the tempo it reached is set, although its fields go (#566, #569)
 		listen(false);
 	}
 
@@ -315,22 +316,33 @@ namespace gnubase::ui
 
 	void TransportControls::saveTimeDisplay()
 	{
-		m_binding.send("settings.set",
+		m_sentDisplay = m_binding.send("settings.set",
 			{{"key", g_timeDisplayKey}, {"value", {{"beatCountOnly", m_beatCountOnly}, {"size", m_size}}}});
 		show();
 	}
 
-	void TransportControls::followTimeDisplay(const Json& options)
+	// An answer or an echo of something older than the newest change sent leaves what the next change goes on from
+	// as it is, until the engine's answer to that change comes (#569).
+	bool TransportControls::older(engine::RequestId request, engine::RequestId sent)
 	{
-		if (!options.is_object())
+		return request != 0 && request < sent;
+	}
+
+	void TransportControls::followTimeDisplay(const Json& options, engine::RequestId request)
+	{
+		if (!options.is_object() || older(request, m_sentDisplay))
 			return;
+		const int before = m_size;
 		if (const auto beats = options.find("beatCountOnly"); beats != options.end() && beats->is_boolean())
 			m_beatCountOnly = beats->get<bool>();
 		if (const auto size = options.find("size"); size != options.end() && size->is_number_integer())
 			m_size = std::clamp(size->get<int>(), 0, g_largestSize);
 		show();
-		if (m_sized)
+		// The window takes its size's preset when the size changed, not for another option, and not for the size the
+		// window was opened at: it may have been sized by the user since (#569).
+		if (m_sized && m_size != before && std::exchange(m_displayRead, true))
 			m_sized(m_size);
+		m_displayRead = true;
 	}
 
 	void TransportControls::followFormats(const Json& formats)
@@ -406,8 +418,10 @@ namespace gnubase::ui
 			std::exchange(m_shown, {})();
 	}
 
-	void TransportControls::followTransport(const Json& status)
+	void TransportControls::followTransport(const Json& status, engine::RequestId request)
 	{
+		if (older(request, m_sentTransport))
+			return;
 		m_status = status;
 		m_position = status.at("position").get<int64_t>();
 		if (status.at("playing").get<bool>() && !m_playback)
@@ -468,7 +482,7 @@ namespace gnubase::ui
 			{
 				release();
 				m_holding = attribute(*button, "command");
-				m_run(m_holding, Json::object());
+				(m_start ? m_start : m_run)(m_holding, Json::object());
 			}
 			return;
 		}
@@ -605,14 +619,25 @@ namespace gnubase::ui
 
 	void TransportControls::wheel(Rml::Element& element, float delta)
 	{
-		// Up is later, by as many steps as the wheel turned, at least one. A scroll sideways, as touchpads and tilt
-		// wheels send, has no vertical delta and moves nothing. More than a billion steps, which only injected input
-		// sends, are a billion: that many fit a long, and that many beats in ticks fit 64 bits (#457).
+		// Up is later, by as many whole steps as the wheel turned: the fractions that a high-resolution wheel or a
+		// touchpad sends add up, per display and direction, until they make one (#566, #569). A scroll sideways, as
+		// touchpads and tilt wheels send, has no vertical delta and moves nothing. More than a billion steps, which
+		// only injected input sends, are a billion: that many fit a long, and that many beats in ticks fit 64 bits
+		// (#457).
 		if (!(std::abs(delta) > 0.0F)) // also NaN
 			return;
-		long steps = std::lround(std::clamp(-delta, -1e9F, 1e9F));
+		const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+		const double turned = std::clamp(-delta, -1e9F, 1e9F);
+		if (m_wheelOn != &element || now - m_wheelAt >= g_wheelPause || (m_wheelRest * turned) < 0.0)
+			m_wheelRest = 0.0;
+		m_wheelOn = &element;
+		m_wheelAt = now;
+		m_wheelRest += turned;
+		const double whole = std::trunc(m_wheelRest);
+		m_wheelRest -= whole;
+		const long steps = std::lround(whole);
 		if (steps == 0)
-			steps = delta < 0.0F ? 1 : -1;
+			return;
 		const std::string time = attribute(element, "time");
 		const double rate = m_time.sampleRate;
 		const double left = static_cast<double>(m_status.value("left", int64_t{0})) / rate;
@@ -647,23 +672,42 @@ namespace gnubase::ui
 		case TimeFormat::Samples:
 			break;
 		}
-		// The next turn goes on from here, even before transport.changed says so.
+		// The next turn goes on from here, even before transport.changed says so, and not from where an older turn's
+		// transport.changed says (#569).
 		if (time == "position")
 		{
 			m_position = samples(to);
-			m_binding.send("transport.locate", {{"position", m_position}});
+			sendTransport("transport.locate", {{"position", m_position}});
 		}
 		else if (isAmount(time))
 		{
 			m_status[time] = samples(std::max(to - amountStart(time), 0.0));
-			m_binding.send("transport.set", {{time, m_status[time]}});
+			sendTransport("transport.set", {{time, m_status[time]}});
 		}
 		else
 		{
 			const std::string locator = time == "left" ? "left" : "right";
 			m_status[locator] = samples(time == "length" ? std::max(to, left) : to);
-			m_binding.send("transport.set", {{locator, m_status[locator]}});
+			sendTransport("transport.set", {{locator, m_status[locator]}});
 		}
+	}
+
+	void TransportControls::sendTransport(const std::string& command, const Json& parameters)
+	{
+		m_sentTransport = m_binding.send(command, parameters,
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || result.ok())
+					return;
+				// A refused change has no transport.changed: show what the transport has instead of the turn.
+				m_sentTransport = 0;
+				m_binding.send("transport.get", Json::object(),
+					[this, alive](const engine::Result& status)
+					{
+						if (!alive.expired() && status.ok())
+							followTransport(status.value, status.request);
+					});
+			});
 	}
 
 	void TransportControls::wheelTempo()
@@ -682,7 +726,7 @@ namespace gnubase::ui
 				});
 	}
 
-	void TransportControls::endTempoGesture()
+	void TransportControls::endTempoGesture(bool read)
 	{
 		m_gesture = Gesture::None;
 		m_wheelPause.reset();
@@ -692,9 +736,11 @@ namespace gnubase::ui
 			m_sent = tempo;
 			const auto [command, parameters] = currentTempoCommand(m_time, m_tempoTrackActive, m_position, *tempo);
 			m_binding.send(command, parameters);
-			requestProject();
+			if (read)
+				requestProject();
 		}
-		show();
+		if (read)
+			show();
 	}
 
 	void TransportControls::tap()
@@ -869,21 +915,29 @@ namespace gnubase::ui
 		return changed;
 	}
 
-	void Winding::start(double seconds)
+	void Winding::start(const std::string& id, double seconds)
 	{
-		m_step = seconds;
+		stop(id);
+		m_winds.emplace_back(id, seconds);
 		m_last = Clock::now() + g_windDelay;
 		m_binding.send("transport.locate", {{"by", seconds}});
 	}
 
+	void Winding::stop(const std::string& id)
+	{
+		const auto ends = [&id](const std::pair<std::string, double>& wind) { return wind.first == id; };
+		m_winds.erase(std::remove_if(m_winds.begin(), m_winds.end(), ends), m_winds.end());
+	}
+
 	bool Winding::step()
 	{
-		if (m_step == 0.0)
+		if (m_winds.empty())
 			return false;
 		const Clock::time_point now = Clock::now();
 		if (now > m_last)
 		{
-			const double wound = std::chrono::duration<double>(now - m_last).count() * g_windSpeed * m_step;
+			const double wound =
+				std::chrono::duration<double>(now - m_last).count() * g_windSpeed * m_winds.back().second;
 			m_last = now;
 			m_binding.send("transport.locate", {{"by", wound}});
 		}

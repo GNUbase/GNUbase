@@ -125,11 +125,15 @@ namespace gnubase::ui
 		// The binding that press would run for the keys in the window now, with its zone, or nullopt.
 		std::optional<KeyBinding> bound(Window& window, const KeyPress& keys) const;
 		// The key went up: ends the commands that its presses run while it is held (UiCommand::release), whatever
-		// the modifiers are now. KI_UNKNOWN ends every one, as when the window lost the keyboard focus.
+		// the modifiers are now. focusLost ends every one, as when the window lost the keyboard focus.
 		void released(const KeyPress& keys);
 
-		// Runs a command as a key would, e.g. for a menu item.
+		// Runs a command once, e.g. for a menu item or a script: one that runs while held (UiCommand::release) runs and
+		// ends at once, as a key pressed and released at once does.
 		void run(const std::string& command, const engine::Json& parameters, Window& window, Rml::Element* zone);
+		// Runs a command as its key going down does: one that runs while held goes on until release, e.g. for a button
+		// that is held and released.
+		void start(const std::string& command, const engine::Json& parameters, Window& window, Rml::Element* zone);
 		// Ends a command that runs while held, as its key going up would, e.g. for a button released.
 		void release(const std::string& command);
 		// The window that run last sent the engine command from, for a dialog about its result, or 0 if none.

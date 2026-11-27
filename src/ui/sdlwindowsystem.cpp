@@ -771,7 +771,7 @@ namespace gnubase::ui
 				input.keyUp =
 					KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), 0, positionOf(event.key.scancode)};
 			else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) // a key held then goes up elsewhere
-				input.keyUp = KeyPress{Rml::Input::KI_UNKNOWN, 0};
+				input.keyUp = KeyPress{Rml::Input::KI_UNKNOWN, 0, Rml::Input::KI_UNKNOWN, true};
 			return input;
 		}
 		if (const std::optional<WindowEventKind> kind = kindOf(event.type))

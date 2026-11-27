@@ -55,7 +55,7 @@ namespace gnubase::ui
 		// Keyboard, by default Mod+S, Num*, Space, Num1, Delete and Backspace, Num/, F2 and Alt+K. A command the user
 		// gave another key keeps that key, and its old one plays or does nothing. Returns whether it took the key.
 		bool press(const KeyPress& keys, const std::optional<KeyBinding>& bound);
-		// The key went up: ends its note. KI_UNKNOWN ends every note, as when the window lost the keyboard focus.
+		// The key went up: ends its note. focusLost ends every note, as when the window lost the keyboard focus.
 		void release(const KeyPress& keys);
 
 		// Labels the keys again with what label gives, as after the keyboard layout changed (Shell::onKeymapChanged).

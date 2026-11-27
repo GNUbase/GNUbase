@@ -219,8 +219,8 @@ namespace gnubase::ui
 					format != event.data.end() && m_project.is_object())
 					m_project["timeFormat"] = *format;
 			}));
-		m_subscriptions.push_back(
-			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
+		m_subscriptions.push_back(m_binding.on(
+			"transport.changed", [this](const engine::Event& event) { followTransport(event.data, event.request); }));
 		m_subscriptions.push_back(
 			m_binding.on("chordPads.changed", [this](const engine::Event& event) { followChordPads(event.data); }));
 		m_binding.send("chordPads.get", Json::object(),
@@ -301,7 +301,7 @@ namespace gnubase::ui
 			[this, alive](const engine::Result& result)
 			{
 				if (!alive.expired() && result.ok())
-					followTransport(result.value);
+					followTransport(result.value, result.request);
 			});
 		m_binding.send("settings.get", {{"key", "ui.zoomPresets"}},
 			[this, alive](const engine::Result& result)
@@ -957,8 +957,11 @@ namespace gnubase::ui
 		showPointer();
 	}
 
-	void EventDisplay::followTransport(const Json& status)
+	void EventDisplay::followTransport(const Json& status, engine::RequestId request)
 	{
+		// The cursor that a nudge moved goes on from where it is, not from where an older nudge's echo says (#569).
+		if (request != 0 && request < m_nudged)
+			return;
 		setCursor(status.at("position").get<int64_t>());
 		m_left = status.value("left", m_left);
 		m_right = status.value("right", m_right);
