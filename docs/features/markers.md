@@ -156,8 +156,8 @@ Marker Tracks and Off set `ui.markerLines`.
 - **Columns** (p. 429): a click on a header sorts by its column, a second one the other way round, the position always
   second (`.sorted` and `.descending` on the header, with a `.sort-arrow` in it that the themes draw: up for the
   ascending order); dragging a header moves its column, dragging the line between two headers resizes the column on
-  its left, and a press within reach of the line between the locate column and the first column is a press on the first
-  column. The locate column stays first. The Columns menu (`#marker-columns-menu`, items `#column-<name>`) hides and
+  its left, and a press on the first column within reach of its left edge sorts and drags that column (a press on the
+  locate side of that line does nothing). The locate column stays first. The Columns menu (`#marker-columns-menu`, items `#column-<name>`) hides and
   shows every column but Position (p. 429: Locate and Position can't be hidden); the Locate column has no item. Their
   order, hidden columns, widths and sorting are the user setting `ui.markerColumns` (`order`, `hidden`, `widths`,
   `sort`, `descending`), whose changes from MCP or Lua apply at once. End and Length put the position markers, which

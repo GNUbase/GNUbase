@@ -824,6 +824,8 @@ namespace gnubase::ui
 	{
 		if (m_rebuilding)
 			return; // the rows are replaced: the field loses the focus without an edit
+		const bool edited = field.HasAttribute("edited");
+		field.RemoveAttribute("edited"); // whatever happens now, the next time starts without an edit
 		const uint64_t id = rowMarker(&field);
 		const auto marker =
 			std::find_if(m_listed.begin(), m_listed.end(), [id](const MarkerItem& each) { return each.id == id; });
@@ -858,7 +860,7 @@ namespace gnubase::ui
 		};
 		// A field that was typed in, also to its own value, gives that to the other selected markers; one left without
 		// an edit changes nothing.
-		const bool typed = field.HasAttribute("edited") && markers.size() > 1;
+		const bool typed = edited && markers.size() > 1;
 		if (cell->IsClassSet("description"))
 		{
 			if (value == marker->name && !typed)
@@ -877,7 +879,14 @@ namespace gnubase::ui
 				return;
 			}
 			if (number != marker->number)
+			{
 				change(*marker, {{"number", number}});
+			}
+			else if (value != std::to_string(number))
+			{
+				show(); // the same number written another way
+				return;
+			}
 		}
 		else if (cell->IsClassSet("position") || cell->IsClassSet("end"))
 		{
@@ -893,7 +902,10 @@ namespace gnubase::ui
 			// The time it has, written another way ("2" for "2.1.1.0"), changes nothing.
 			const Json to = m_markers.position(*track, *seconds);
 			if (to == m_markers.position(*track, end ? marker->end : marker->start))
+			{
+				show(); // the field shows the time as it is written
 				return;
+			}
 			change(*marker, {{end ? "end" : "position", to}});
 		}
 		else if (cell->IsClassSet("length"))
@@ -911,6 +923,11 @@ namespace gnubase::ui
 				if (const Json to = m_markers.position(*track, each->start + *length);
 					each->cycle && to != m_markers.position(*track, each->end))
 					change(*each, {{"end", to}});
+			}
+			if (changes.empty() && value != formatLength(m_format, marker->start, marker->end, context))
+			{
+				show(); // the same length written another way
+				return;
 			}
 		}
 		if (changes.empty())

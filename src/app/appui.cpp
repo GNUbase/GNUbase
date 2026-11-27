@@ -2082,9 +2082,14 @@ namespace gnubase::app
 				m_markerLines->setSelection(selection);
 				if (selection.empty() || m_eventDisplay == nullptr)
 					return;
-				// The project window selects events or markers, as when a marker is clicked in it (#606).
+				// The project window selects events, markers, arranger or time signature events, as when a marker is
+				// clicked in it (#606).
 				if (!m_eventDisplay->selection().empty())
 					m_eventDisplay->select({});
+				if (m_arrangerLane)
+					m_arrangerLane->deselect();
+				if (m_signatureLane)
+					m_signatureLane->row().setSelection({});
 				if (!m_eventDisplay->selectedPoints().empty())
 					m_eventDisplay->selectPoints({}); // as the markers' onSelect does (#2011)
 			});

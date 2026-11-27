@@ -152,7 +152,8 @@ namespace gnubase::engine::settings
 				{"properties",
 					{{"order", {{"type", "array"}, {"items", column}}},
 						{"hidden", {{"type", "array"}, {"items", hideable}}}, {"widths", widths}, {"sort", column},
-						{"descending", {{"type", "boolean"}}}}}};
+						{"descending", {{"type", "boolean"}}}}},
+				{"additionalProperties", false}};
 		}
 	}
 

@@ -1321,6 +1321,13 @@ TEST_CASE("the markers window hides and shows its columns, all but Locate and Po
 				.call("settings.set", {{"key", "ui.markerColumns"}, {"value", {{"hidden", {column}}}}});
 		CHECK(!refused.ok());
 	}
+	// A member the setting doesn't have, such as a misspelled one, is refused too, in the object and in the widths.
+	for (const Json& value : {Json{{"hiden", {"type"}}}, Json{{"widths", {{"volume", 40}}}}})
+	{
+		const engine::Result refused =
+			engine::Client(app.engine()).call("settings.set", {{"key", "ui.markerColumns"}, {"value", value}});
+		CHECK(!refused.ok());
+	}
 	app.call("settings.set", {{"key", "ui.markerColumns"}, {"value", {{"hidden", {"number", "number"}}}}});
 	REQUIRE(app.waitUntil(
 		[&document] { return headerOrder(document) == Columns{"type", "position", "end", "length", "description"}; }));
@@ -1360,6 +1367,43 @@ TEST_CASE("a description or length typed into one of several selected rows goes 
 	CHECK(markerField(app, 0, "end") == 2 * g_quarter);
 }
 
+TEST_CASE("a field left without an edit changes nothing, after the row's own text was typed into it (#564)", "[ui]")
+{
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	app.call("marker.add", {{"position", 0}, {"name", "One"}});
+	app.call("marker.add", {{"position", 4 * g_quarter}, {"name", "Two"}});
+	app.call("marker.add", {{"position", 8 * g_quarter}, {"name", "Three"}});
+	ui::MarkersWindow& markers = openMarkers(app, 3);
+	const ui::WindowId window = app.appUi().markersWindow();
+	const size_t steps = app.call("history.get").at("steps").size();
+
+	// With only the row selected, its own text typed into it changes nothing, and the field leaves with no edit.
+	app.ui().click(window, at("#marker-rows .type", 1), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&markers] { return markers.selection().size() == 1; }));
+	app.ui().click(window, at("#marker-rows .description input", 1), ui::MouseButton::Left, 1, {});
+	app.ui().key(window, "Mod+A");
+	app.ui().text(window, "Two");
+	const Rml::Element* input = markersDocument(app).QuerySelector("#marker-rows tr:nth-child(2) .description input");
+	REQUIRE(input != nullptr);
+	CHECK(input->HasAttribute("edited"));
+	app.ui().key(window, "Enter");
+	CHECK(!input->HasAttribute("edited")); // the commit took what was typed, whether it sent a change or not
+	settle(app);
+	CHECK(app.call("history.get").at("steps").size() == steps);
+
+	// Several rows selected, the field focused and left without typing: still nothing.
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#marker-rows .type", 2), ui::MouseButton::Left, 1, {"shift"});
+	REQUIRE(app.waitUntil([&markers] { return markers.selection().size() == 3; }));
+	app.ui().click(window, at("#marker-rows .description input", 1), ui::MouseButton::Left, 1, {});
+	app.ui().key(window, "Enter");
+	settle(app);
+	CHECK(markerList(app)[0].at("name") == "One");
+	CHECK(markerList(app)[2].at("name") == "Three");
+	CHECK(app.call("history.get").at("steps").size() == steps);
+}
+
 TEST_CASE("a position typed in another notation of the time it has sends no change (#564)", "[ui]")
 {
 	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
@@ -1373,6 +1417,7 @@ TEST_CASE("a position typed in another notation of the time it has sends no chan
 	openMarkers(app, 1);
 	Rml::ElementDocument& document = markersDocument(app);
 	REQUIRE(field(document, 0, "position") == "2.1.1.0");
+	REQUIRE(field(document, 0, "length") == "1.0.0.0");
 	engine::Client holder(app.engine(), "holder");
 	holder.send("test.hold");
 	REQUIRE(holds.waitEntered(1));
@@ -1380,7 +1425,15 @@ TEST_CASE("a position typed in another notation of the time it has sends no chan
 	// Bar 2 is 2.1.1.0, and the end 3.1.1.0 is 3 as well; the changes that are none are not sent, a real one is.
 	edit(app, 0, "position", "2");
 	edit(app, 0, "end", "3");
+	edit(app, 0, "length", "1.0");
 	CHECK(app.appUi().binding().waiting("marker.set") == 0);
+	// The fields show the times as they are written again.
+	REQUIRE(app.waitUntil(
+		[&document]
+		{
+			return field(document, 0, "position") == "2.1.1.0" && field(document, 0, "end") == "3.1.1.0" &&
+				field(document, 0, "length") == "1.0.0.0";
+		}));
 	edit(app, 0, "end", "4");
 	CHECK(app.appUi().binding().waiting("marker.set") == 1);
 	holds.release(1);
@@ -1477,6 +1530,45 @@ TEST_CASE(
 	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&lines, intro] { return lines.selection() == std::vector<uint64_t>{intro}; }));
 	CHECK(display.selection().empty());
+}
+
+TEST_CASE("markers selected in the markers window deselect the arranger and time signature events too (#606)", "[ui]")
+{
+	test::UiApp app;
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "marker"}});
+	const uint64_t intro = addMarker(app, {{"position", g_quarter}, {"name", "Intro"}});
+	app.call("track.add", {{"type", "signature"}});
+	app.call("signature.add", {{"bar", 4}, {"numerator", 3}, {"denominator", 4}});
+	app.call("track.add", {{"type", "arranger"}});
+	app.call("arranger.add", {{"position", 0}, {"end", 4 * g_quarter}});
+	openMarkers(app, 1);
+	const ui::WindowId window = app.appUi().markersWindow();
+	ui::SignatureRow& signatures = app.appUi().signatureLane()->row();
+	const ui::MarkerLines& lines = *app.appUi().markerLines();
+	const auto selectedArranger = [&app]
+	{
+		Rml::Context& context = app.main().context();
+		Rml::ElementList found;
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			context.GetDocument(i)->QuerySelectorAll(found, ".arranger-lane-event.selected");
+		return found.size();
+	};
+	REQUIRE(app.waitUntil(
+		[&app] { return app.ui().dom(std::nullopt, ".arranger-lane-event", 0).at("elements").size() == 1; }));
+
+	// An arranger event selected on its lane, then a marker in the markers window: the event is deselected.
+	app.ui().click(std::nullopt, at(".arranger-lane-event"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&selectedArranger] { return selectedArranger() == 1; }));
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&lines, intro] { return lines.selection() == std::vector<uint64_t>{intro}; }));
+	CHECK(selectedArranger() == 0);
+
+	// The same for a time signature event.
+	signatures.setSelection({4});
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {"ctrl"});
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {"ctrl"});
+	REQUIRE(app.waitUntil([&signatures] { return signatures.selection().empty(); }));
 }
 
 TEST_CASE("File > Export and File > Import > Markers write and read the marker file chosen", "[ui]")
