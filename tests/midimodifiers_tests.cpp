@@ -749,6 +749,20 @@ TEST_CASE("poly pressure in a modified part presses the key its note plays", "[i
 		{{"channel", track.channel}, {"midiSends", {{"pre", true}, {"slots", {{{"effect", "transformer"}}}}}}});
 	CHECK(pressedKeys(track, true) == std::vector<int>{62, 63, 64, 64});
 	CHECK(pressedKeys(track) == std::vector<int>{64, 68, 70, 65});
+	// They get the part's other controllers from the same list, a CC among them.
+	run(track.client, "controller.add",
+		{{"part", track.part},
+			{"controllers", {{{"position", g_beatTicks}, {"type", "controller"}, {"number", 7}, {"value", 0.5}}}}});
+	const auto sendsGetCc = [&track]
+	{
+		for (const RenderChannel& render : track.engine.renderSnapshots().acquire().channels)
+			if (render.id == track.channel)
+				return std::any_of(render.preControllers.begin(), render.preControllers.end(),
+					[](const RenderController& controller)
+					{ return controller.type == ControllerType::Control && controller.number == 7; });
+		return false;
+	};
+	CHECK(sendsGetCc());
 
 	// A note a range leaves out has its pressure left out too; pressure moved beyond 127 doesn't play.
 	track.modify({{"range", {{{"target", "noteFilter"}, {"maximum", 69}}}}});
@@ -786,6 +800,41 @@ TEST_CASE("glued MIDI parts move the other parts' poly pressure with their notes
 	CHECK_THAT(reject(track.client, "event.glue", {{"events", {track.part, second}}}),
 		ContainsSubstring("a poly pressure event of MIDI part"));
 	CHECK(run(track.client, "project.get") == before);
+}
+
+TEST_CASE("glued poly pressure moves by the difference at its note's position, which the octave-range fold can change",
+	"[integration]")
+{
+	ModifiedTrack track;
+	track.add({{60, 100}});
+	const ObjectId second = track.addPart(4 * g_beatTicks);
+	track.add({{64, 100}}, second);
+	// Pressure on the note's key and on a key no note holds, a quarter of a beat after the note starts.
+	press(track, second, {{0, 64}, {0, 61}});
+	run(track.client, "midiPart.set", {{"part", second}, {"transpose", 6}});
+	// Global transpose 0 where the note starts and 2 from an eighth of a beat later, before the pressure. Folded
+	// into 7 semitones either way, the second part plays 6 at the note and 8 - 12 = -4 at the pressure, the first
+	// part 0 and 2: the parts' difference is 6 at the note and -6 at the pressure.
+	run(track.client, "transpose.add", {{"position", 0}, {"value", 0}});
+	run(track.client, "transpose.add", {{"position", (4 * g_beatTicks) + (g_beatTicks / 8)}, {"value", 2}});
+	run(track.client, "transpose.setTrack", {{"keepInOctave", true}});
+	CHECK(pitches(track.notes()) == std::vector<int>{60, 70});
+	// The note's pressure presses the key it plays, 70; the other moves by the transposition there, 61 - 4.
+	CHECK(pressedKeys(track) == std::vector<int>{57, 70});
+
+	run(track.client, "event.glue", {{"events", {track.part, second}}});
+	const Json glued = run(track.client, "project.get").at("midiParts")[0];
+	std::vector<int> keys;
+	for (const Json& controller : glued.at("controllers"))
+		keys.push_back(controller.at("number").get<int>());
+	std::sort(keys.begin(), keys.end());
+	// The note's pressure gets the difference at the note, 6, and keeps its key; the other the one at its own
+	// position, -6.
+	CHECK(keys == std::vector<int>{55, 70});
+	std::vector<int> played = pitches(track.notes());
+	std::sort(played.begin(), played.end());
+	CHECK(played == std::vector<int>{60, 70});
+	CHECK(pressedKeys(track) == std::vector<int>{57, 70});
 }
 
 TEST_CASE("poly pressure on a track with a MIDI channel of its own presses its note on any channel", "[integration]")
