@@ -75,7 +75,10 @@ start of the chain's first event on, every track's events, parts and automation 
 each step's event as often as it repeats, one after the other, copied as range copies do ([range-editing.md]
 (range-editing.md)). What lies before stays, and so do locked events. Without `keepTrack` (Keep Arranger Track) the
 arranger track goes; with it, it has an event per section where it now is and one chain that plays them in order.
-Range copies keep the order in which audio events stack, so overlapping events play as before.
+Range copies keep the order in which audio events stack, so overlapping events play as before. The parts an event's
+repeats bring, from its second section on, are shared copies of those its first section brought, MIDI and audio parts
+alike ([parts-and-events.md](parts-and-events.md)); with `realCopies` (Make Real Event Copies, p. 408) each is a part of
+its own.
 MIDI notes that cross a section's edges are cut there, and so are those that cross the chain's start, as range splits
 with `splitNotes` cut them; with `dontSplit` (Don't Split Events, p. 408) a section has only the notes that start and
 end in it, and what lies before keeps its notes whole. With `keepTrack` and `renameEvents` (Rename Arranger Events)
@@ -117,7 +120,10 @@ each section's event has a number after its name, how often its event came so fa
   in their order. An event dragged from the Arranger Events list goes in so (`addEvents`). The press is on a step's or
   event's row, not on its buttons or repeat mode, and a release on the step pressed or outside the chain list does
   nothing. The editor's script works out a row's top from the offset parents, as RmlUi's Lua elements have no absolute
-  offset. Events dragged from the project window don't drop there yet.
+  offset. An arranger event dragged from the arranger track's lane (p. 409) goes into the inspector's list so too, and
+  stays where it is on the lane; one of the events selected there brings them all, in timeline order. The lane gives
+  the element under the release the event `arrangerdrop` (`ui::g_arrangerDrop`), with the ids, and moves the events
+  only if nothing takes it. The arranger editor's list, in a window of its own, doesn't take them yet.
 - **Renaming arranger events in a chain list** (p. 405): in the inspector's and the arranger editor's Current Arranger
   Chain list a step's name is a disabled `textdisplay` that Alt and a double click open, and a plain double click
   doesn't; Enter renames the step's event (`arranger.set`), an empty name keeps the old one. The editor doesn't build
@@ -162,7 +168,11 @@ each section's event has a number after its name, how often its event came so fa
   an empty name keeps the old one; its drop-down lists are filled through the select's own API, as setting their
   `inner_rml` would add the options to those they have), Create New Chain, Duplicate Current Chain, Remove Current Chain and Flatten Chain, and the
   chain step buttons, which are disabled while they can't work (arranger mode off or an empty chain; First and Last
-  Repeat also need a step of the chain playing). The Current Arranger Chain list has a row per step, with its locate
+  Repeat also need a step of the chain playing). The toolbar wraps onto more rows when the window is narrow.
+  Flatten Options (Flatten with Options & Preferences, pp. 408, 410) shows the flatten options in place of the lists:
+  Keep Arranger Track, Rename Arranger Events (only with Keep Arranger Track), Make Real Event Copies and Don't Split
+  Events (`keepTrack`, `renameEvents`, `realCopies`, `dontSplit`), with Flatten and Go Back. Flatten Chain flattens
+  with them too; Go Back and closing the editor keep them while GNUbase runs. The Current Arranger Chain list has a row per step, with its locate
   arrow (a button that plays from the step's event, shown on every row, p. 410), its repeats and its mode, and a button
   that removes it; the Arranger Events list has a row per event in timeline order, whose arrow triggers it and whose
   Append button adds it to the chain. The row of the step or event playing is `.current`, highlighted by the theme.
@@ -185,11 +195,13 @@ triggering events by their number in timeline order;
 `transport.play` ending a repeat forever loop, keeping a triggered event and starting from the left locator with the
 start mode cycleStart, and `transport.get` reporting no step while the plan doesn't play; flattening, played back
 linearly against the chain's audio, with undo, and its notes cut at the sections' edges, without `dontSplit` and with
-it, with `renameEvents` numbering the events.
+it, with `renameEvents` numbering the events, and an event's repeats as shared copies of its parts or with
+`realCopies` real ones.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
 mode, a locate arrow on every row, renaming the active chain, and renaming a step's event with Alt and a double click,
 across a refresh while it is typed, selecting steps and removing the selected ones, a chain edit selecting none, and
-moving, copying and inserting steps by drag and drop, a click on one of the steps selected selecting it alone.
+moving, copying and inserting steps by drag and drop, a click on one of the steps selected selecting it alone, and
+flattening with the flatten options, which Go Back and closing the editor keep.
 `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide as
 its section with its name, the draw tool drawing one over the stretch dragged and, with a click, from the bar line at or
 before it to the next one, both snapped to bars; with the snap type Events, drawing from and to other arranger events'
@@ -197,7 +209,9 @@ edges, the event drawn showing while the button is down, a click just after a ba
 before it drawing up to the next bar line, and a drag that starts on an event drawing over it; a drag moving an event by
 bars, the event following the mouse until the release, a double click renaming it in a field as wide as the event, an
 empty name keeping the old one, and the erase tool removing it; a click selecting an event, Ctrl adding and removing
-one, a press beside them selecting none, and drags of an end and of a start edge resizing events by bars;
+one, a press beside them selecting none, and drags of an end and of a start edge resizing events by bars; arranger events
+dragged from the lane dropping into the inspector's chain list, the selected ones in timeline order, and staying where
+they are;
 `#edit-refused` saying why the engine refused a draw within one bar; the track list's arranger controls switching
 arranger mode and the active chain and showing the event and repeat playing; Open Arranger Editor in the track list and
 on the inspector's section opening the editor and leaving it open; the inspector's section listing the steps and events,
@@ -221,6 +235,5 @@ adopts it while B plays; an attempt that misses that stretch, or is still making
 because a busy machine held up the test, is retried like one with dropouts. It compares only a capture with the edit
 made in time and without dropouts; exhausting the attempts fails the test (#1893, #1900).
 
-Not yet: dropping arranger events from the project window into a chain list, the other flatten options (Checked and
-All Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, and arranging to an external
-timecode.
+Not yet: dropping arranger events into the arranger editor's chain list, the other flatten options (Checked and All
+Chains, New Project), and arranging to an external timecode.

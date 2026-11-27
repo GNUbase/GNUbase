@@ -141,6 +141,18 @@ namespace
 
 		Json view() { return app.call("editor.get", {{"editor", "window"}}); }
 
+		// Whether the note is shown on the pitch's row (at() takes the time too, which the row doesn't depend on).
+		bool on(uint64_t id, double sixteenths, int pitch)
+		{
+			const Json found = elements(noteSelector(id));
+			if (found.empty())
+				return false;
+			const auto y = static_cast<double>(at(sixteenths, pitch).point.value_or(ui::Point{}).y);
+			const Json shown = found.at(0).at("box");
+			return shown.at("y").get<double>() <= y &&
+				y <= shown.at("y").get<double>() + shown.at("height").get<double>();
+		}
+
 		// Pixels of the editor window's layout in desktop coordinates, which setBounds takes: at a monitor scale of 2,
 		// as on a HiDPI Mac, half as many (#1746).
 		int desktop(double pixels)
@@ -2613,4 +2625,106 @@ TEST_CASE("the drum editor and the in-place editor color notes through their eve
 	f.app.call("editor.set", {{"editor", view}, {"activePart", f.part}});
 	REQUIRE(f.app.waitUntil([&] { return color(editor, first[0]) == "#2040e0"; }));
 	CHECK(color(editor, own).empty());
+}
+
+TEST_CASE("Indicate Transpositions shows the notes at the pitches they play", "[ui]")
+{
+	// Indicate Transpositions in the toolbar (#1766, reference manual pp. 419, 1260): a note after a transpose event
+	// of 3 semitones shows 3 rows up; a drawn note gets the pitch that plays at the row under the mouse, and a move
+	// changes the pitch by the rows dragged.
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {2 * g_quarter, 60, g_quarter}});
+	f.app.call("transpose.add", {{"position", 2 * g_quarter}, {"value", 3}});
+	f.settle(); // off, the notes stay on their own rows
+	f.scroll(63);
+	CHECK(f.on(ids[0], 0.5, 60));
+	CHECK(f.on(ids[1], 8.5, 60));
+	const auto on = [&f](uint64_t id, double sixteenths, int pitch) { return f.on(id, sixteenths, pitch); };
+	f.click(of(".key-input[setting=indicateTranspositions]"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == true; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=indicateTranspositions]", "checked"); }));
+	f.scroll(63);
+	CHECK(f.app.waitUntil([&] { return on(ids[0], 0.5, 60) && on(ids[1], 8.5, 63); }));
+
+	f.tool("draw");
+	f.click(f.at(12.5, 66));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
+	CHECK(f.partNotes()[2].at("pitch") == 63);
+	const auto drawn = f.partNotes()[2].at("id").get<uint64_t>();
+	CHECK(f.app.waitUntil([&] { return on(drawn, 12.5, 66); }));
+
+	f.tool("objectSelection");
+	f.drag(f.at(8.5, 63), f.at(8.5, 64));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).at("pitch") == 61; }));
+	CHECK(f.app.waitUntil([&] { return on(ids[1], 8.5, 64); }));
+
+	// Off, every note is on its own row again.
+	f.click(of(".key-input[setting=indicateTranspositions]"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == false; }));
+	f.settle();
+	CHECK(on(ids[0], 0.5, 60));
+	CHECK(on(ids[1], 8.5, 61));
+	CHECK(on(drawn, 12.5, 63));
+}
+
+TEST_CASE("with Indicate Transpositions a note moved across a transpose event shows and plays where it lands", "[ui]")
+{
+	// A note dragged to a time after a transpose event of 3 semitones plays 3 semitones up there: the preview shows it
+	// on that row and Acoustic Feedback plays that pitch, as after the release, while its pitch stays (#1766).
+	Fixture f({1200, 800}, "instrument");
+	f.probe();
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_sixteenth}});
+	f.app.call("transpose.add", {{"position", 2 * g_quarter}, {"value", 3}});
+	f.app.call("editor.set", {{"editor", "window"}, {"indicateTranspositions", true}, {"acousticFeedback", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == true; }));
+	f.scroll(63);
+	REQUIRE(f.app.waitUntil([&] { return f.on(ids[0], 0.5, 60); }));
+
+	const double before = f.box(noteSelector(ids[0])).at("x").get<double>();
+	f.app.ui().press(f.window, f.at(0.5, 60), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.plays({{0x90, 60, 100}}));
+	f.app.ui().move(f.window, f.at(4.5, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.box(noteSelector(ids[0])).at("x").get<double>() > before + 1.5; }));
+	CHECK(f.on(ids[0], 4.5, 60));
+	f.app.ui().move(f.window, f.at(8.5, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.app.waitUntil([&] { return f.on(ids[0], 8.5, 63); }));
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}, {0x90, 63, 100}}));
+
+	f.app.ui().release(f.window, f.at(8.5, 60), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("position") == 2 * g_quarter; }));
+	CHECK(f.note(ids[0]).at("pitch") == 60);
+	CHECK(f.app.waitUntil([&] { return f.on(ids[0], 8.5, 63); }));
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}, {0x90, 63, 100}, {0x80, 63, 0}}));
+}
+
+TEST_CASE("the drum editor shows the notes on their own rows with Indicate Transpositions on", "[ui]")
+{
+	// The view keeps Indicate Transpositions when the content changes to the drum editor, which has no toggle for it
+	// and shows every note on its sound's row (#1766).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 38, g_sixteenth}, {2 * g_quarter, 38, g_sixteenth}});
+	f.app.call("transpose.add", {{"position", 2 * g_quarter}, {"value", 3}});
+	f.click(of(".key-input[setting=indicateTranspositions]"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == true; }));
+	REQUIRE(f.app.waitUntil([&] { return f.on(ids[1], 8.5, 41); }));
+
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "drum"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 2; }));
+	CHECK(f.view().at("indicateTranspositions") == true);
+	CHECK_FALSE(f.view().at("transpositions").empty());
+	CHECK(f.elements(".key-input[setting=indicateTranspositions]").empty());
+	f.scroll(38);
+	const auto onSound = [&](uint64_t id, int pitch)
+	{
+		const Json note = f.box(noteSelector(id));
+		const Json row = f.box(".drum-sound[pitch=\"" + std::to_string(pitch) + "\"]");
+		const double center = note.at("y").get<double>() + (note.at("height").get<double>() / 2.0);
+		return row.at("y").get<double>() <= center &&
+			center <= row.at("y").get<double>() + row.at("height").get<double>();
+	};
+	CHECK(f.app.waitUntil([&] { return onSound(ids[0], 38) && onSound(ids[1], 38); }));
 }

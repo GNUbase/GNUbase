@@ -5,6 +5,7 @@
 #include "engine/midi/modifiers.h"
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
+#include "ui/transposetrack.h"
 #include "ui/widgets.h"
 #include "ui/widgetutils.h"
 
@@ -664,6 +665,7 @@ namespace gnubase::ui
 		root.AddEventListener(Rml::EventId::Dblclick, this, true); // before a step name's own (showArranger)
 		root.AddEventListener(Rml::EventId::Blur, this, true);     // blur doesn't bubble
 		root.AddEventListener(Rml::EventId::Keydown, this, true);  // Escape leaves the notepad
+		root.AddEventListener(g_arrangerDrop, this);               // arranger events dragged from the lane
 		for (const Rml::EventId id : {Rml::EventId::Dragstart, Rml::EventId::Drag, Rml::EventId::Dragend})
 			root.AddEventListener(id, this); // the MIDI inserts' divider
 
@@ -716,6 +718,7 @@ namespace gnubase::ui
 		m_root->RemoveEventListener(Rml::EventId::Dblclick, this, true);
 		m_root->RemoveEventListener(Rml::EventId::Blur, this, true);
 		m_root->RemoveEventListener(Rml::EventId::Keydown, this, true);
+		m_root->RemoveEventListener(g_arrangerDrop, this);
 		for (const Rml::EventId id : {Rml::EventId::Dragstart, Rml::EventId::Drag, Rml::EventId::Dragend})
 			m_root->RemoveEventListener(id, this);
 		if (Rml::ElementDocument* document = m_root->GetOwnerDocument())
@@ -1597,6 +1600,11 @@ namespace gnubase::ui
 		Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr)
 			return;
+		if (event.GetType() == g_arrangerDrop)
+		{
+			dropOnChain(event);
+			return;
+		}
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
@@ -1818,7 +1826,7 @@ namespace gnubase::ui
 		}
 	}
 
-	void Inspector::dropOnChain(const Rml::Event& event)
+	void Inspector::dropOnChain(Rml::Event& event)
 	{
 		const std::optional<int> step = std::exchange(m_stepPressed, std::nullopt);
 		const std::optional<uint64_t> added = std::exchange(m_eventPressed, std::nullopt);
@@ -1850,6 +1858,16 @@ namespace gnubase::ui
 		else if (added)
 		{
 			parameters["addEvents"] = {*added};
+		}
+		else if (event.GetType() == g_arrangerDrop) // from the lane, which leaves them where they are
+		{
+			Rml::StringList ids;
+			Rml::StringUtilities::ExpandString(ids, event.GetParameter<Rml::String>("events", ""), ' ');
+			Json events = Json::array();
+			for (const Rml::String& id : ids)
+				events.push_back(std::strtoull(id.c_str(), nullptr, 10));
+			parameters["addEvents"] = std::move(events);
+			event.StopPropagation();
 		}
 		else
 		{
@@ -2167,9 +2185,32 @@ namespace gnubase::ui
 		if (path.size() == 3 && path[2] == "target")
 		{
 			const auto target = event.GetParameter<Rml::String>("value", "");
-			if (current.at(key).at(index).at("target") == target)
+			const Json& before = current.at(key).at(index);
+			if (before.at("target") == target)
 				return;
 			pair[index]["target"] = target;
+			// A generator going from pitches or velocities to ticks or back keeps the numbers it shows, as far as
+			// they fit, rather than values in the other unit: Pitch -12 to 12 would show as Position 0 to 0 (#870).
+			// Its values go with every new target, from the channel shown: keys stepping through the open list send a
+			// target for each step, before the channel has the steps before, and the last one sent decides.
+			if (key == "random")
+			{
+				const bool from = showsTicks(before);
+				const bool to = showsTicks(Json{{"target", target}});
+				const int64_t limit = to ? engine::midi::g_maxRandomTicks / g_ticksPerShownTick : 127;
+				for (const char* field : {"minimum", "maximum"})
+				{
+					const auto value = before.at(field).get<int64_t>();
+					if (from == to)
+					{
+						pair[index][field] = value;
+						continue;
+					}
+					const int64_t shown = std::clamp<int64_t>(
+						to ? value : std::llround(static_cast<double>(value) / g_ticksPerShownTick), -limit, limit);
+					pair[index][field] = to ? shown * g_ticksPerShownTick : shown;
+				}
+			}
 			sendChannel({{"modifiers", {{key, std::move(pair)}}}});
 			return;
 		}

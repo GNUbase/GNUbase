@@ -1103,6 +1103,65 @@ TEST_CASE(
 	CHECK(renamed[2].at("name") == "A 2");
 }
 
+TEST_CASE("flatten makes an event's repeats shared copies, or with realCopies real ones", "[integration]")
+{
+	// Make Real Event Copies (reference manual p. 408): without it the parts an event's sections bring are shared
+	// copies of those its first section brought, MIDI and audio parts alike; with it each is a part of its own.
+	constexpr int64_t q = gnubase::time::g_ticksPerQuarter;
+	Engine engine;
+	Client client{engine};
+	const ObjectId midi = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}), "track");
+	const ObjectId part =
+		idOf(run(client, "midiPart.add", {{"track", midi}, {"position", 4 * q}, {"length", 4 * q}}), "part");
+	run(client, "note.add",
+		{{"part", part}, {"notes", {{{"position", q}, {"length", q}, {"pitch", 60}, {"velocity", 0.8}}}}});
+	const int64_t second = static_cast<int64_t>(run(client, "project.get").at("sampleRate").get<double>());
+	// An audio part of an audio event in A, at 120 bpm.
+	const gnubase::test::TempDir dir;
+	const ObjectId media = idOf(run(client, "media.add", {{"path", writeRamp(dir, second, "ramp")}}), "media");
+	const ObjectId clip = idOf(run(client, "clip.add", {{"media", media}}), "clip");
+	const ObjectId event =
+		idOf(run(client, "audioEvent.add",
+				 {{"track", audio}, {"clip", clip}, {"position", 5 * second / 2}, {"length", second / 2}}),
+			"event");
+	run(client, "event.toPart", {{"events", {event}}});
+	const ObjectId a = idOf(run(client, "arranger.add", {{"position", 4 * q}, {"end", 8 * q}}), "event");
+	const ObjectId b = idOf(run(client, "arranger.add", {{"position", 8 * q}, {"end", 12 * q}}), "event");
+	run(client, "arranger.setChain", {{"steps", {{{"event", a}, {"repeats", 2}}, {{"event", b}}, {{"event", a}}}}});
+	// The shared group of each kind of part, in timeline order.
+	const auto groups = [&client](const char* kind)
+	{
+		std::vector<std::pair<int64_t, ObjectId>> found;
+		const Json project = run(client, "project.get");
+		for (const Json& each : project.at(kind))
+			found.emplace_back(each.at("position").get<int64_t>(), each.at("shared").get<ObjectId>());
+		std::sort(found.begin(), found.end());
+		std::vector<ObjectId> shared(found.size());
+		std::transform(found.begin(), found.end(), shared.begin(), [](const auto& each) { return each.second; });
+		return shared;
+	};
+
+	run(client, "arranger.flatten");
+	const std::vector<ObjectId> parts = groups("midiParts");
+	REQUIRE(parts.size() == 3); // A, A and A again: B has no part
+	CHECK(parts[0] != 0);
+	CHECK(parts[1] == parts[0]);
+	CHECK(parts[2] == parts[0]);
+	const Json project = run(client, "project.get");
+	CHECK(project.at("midiParts")[0].at("notes") == project.at("midiParts")[1].at("notes")); // with the same ids
+	const std::vector<ObjectId> audioParts = groups("audioParts");
+	REQUIRE(audioParts.size() == 3);
+	CHECK(audioParts[0] != 0);
+	CHECK(audioParts[1] == audioParts[0]);
+	CHECK(audioParts[0] != parts[0]);
+
+	run(client, "history.undo");
+	run(client, "arranger.flatten", {{"realCopies", true}});
+	CHECK(groups("midiParts") == std::vector<ObjectId>{0, 0, 0});
+	CHECK(groups("audioParts") == std::vector<ObjectId>{0, 0, 0});
+}
+
 TEST_CASE("transport.play while playing ends a Repeat Forever loop", "[integration]")
 {
 	const gnubase::test::TempDir dir;

@@ -9,6 +9,7 @@
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
+#include "ui/widgets.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -24,6 +25,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -56,6 +58,19 @@ namespace
 	std::string utf8(const fs::path& path)
 	{
 		return path.u8string();
+	}
+
+	// Whether a file of that name can be made: on Windows 10 a name that Windows keeps for a device is the device also
+	// with an extension (NUL.dawproject), and Windows drops the dots at the end of a name ("..." is its folder), so
+	// that the cases for such names only run where they are files (#798).
+	bool canBeFile(const fs::path& file)
+	{
+		std::ofstream(file) << "x";
+		std::error_code error;
+		const bool plain = fs::is_regular_file(file, error);
+		if (plain) // never anything else: on Windows, "..." would name the folder
+			fs::remove(file, error);
+		return plain;
 	}
 
 	bool modified(Client& client)
@@ -284,11 +299,12 @@ TEST_CASE(
 	Client client(engine);
 	run(client, "settings.set", {{"key", "project.autoSaveFiles"}, {"value", 2}});
 
-	// An untitled project goes to the settings folder's Auto Saves, named after the project.
+	// An untitled project goes to the settings folder's Auto Saves, named after the project and the number of its
+	// series (see the next test).
 	CHECK(run(client, "project.autoSave").at("file").is_null()); // nothing changed
 	run(client, "track.add", {{"type", "audio"}});
-	CHECK(
-		run(client, "project.autoSave").at("file") == utf8(dir.path() / "settings" / "Auto Saves" / "Untitled-01.bak"));
+	CHECK(run(client, "project.autoSave").at("file") ==
+		utf8(dir.path() / "settings" / "Auto Saves" / "Untitled1-01.bak"));
 	CHECK(run(client, "project.autoSave").at("file").is_null()); // nothing changed since
 	CHECK(modified(client));                                     // an auto save doesn't save the project
 
@@ -323,6 +339,55 @@ TEST_CASE(
 	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null());
 }
 
+TEST_CASE("each untitled project auto saves in a series of its own, which the next one leaves alone", "[integration]")
+{
+	// As the reference numbers unsaved projects one by one (UntitledX-xx, manual pp. 134, 1608), so that working on one
+	// doesn't overwrite the auto saves of another, which may be the one the user wants to recover (#635).
+	const test::TempDir dir;
+	const fs::path autoSaves = dir.path() / "settings" / "Auto Saves";
+	const auto autoSave = [](Client& client)
+	{
+		run(client, "track.add", {{"type", "audio"}});
+		return run(client, "project.autoSave").at("file").get<std::string>();
+	};
+	{
+		Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+		Client client(engine);
+		run(client, "settings.set", {{"key", "project.autoSaveFiles"}, {"value", 2}});
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled1-01.bak"));
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled1-02.bak"));
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled1-01.bak")); // its own series takes turns
+
+		run(client, "project.new");
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled2-01.bak"));
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled2-02.bak"));
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled2-01.bak"));
+
+		// Renamed, it starts a series of its new name.
+		run(client, "project.set", {{"name", "Demo"}});
+		CHECK(autoSave(client) == utf8(autoSaves / "Demo1-01.bak"));
+	}
+	const std::string first = test::readText(autoSaves / "Untitled1-01.bak");
+	const std::string second = test::readText(autoSaves / "Untitled1-02.bak");
+
+	// After a restart, and for a project opened from an auto save, the series on disk stay as they are, also one whose
+	// name is in other case, as the file systems of Windows and macOS don't tell it apart.
+	fs::copy_file(autoSaves / "Untitled1-02.bak", autoSaves / "UNTITLED3-04.BAK");
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	CHECK(autoSave(client) == utf8(autoSaves / "Untitled4-01.bak"));
+	run(client, "project.load", {{"path", utf8(autoSaves / "Untitled1-01.bak")}});
+	CHECK(autoSave(client) == utf8(autoSaves / "Untitled5-01.bak"));
+	CHECK(test::readText(autoSaves / "Untitled1-01.bak") == first);
+	CHECK(test::readText(autoSaves / "Untitled1-02.bak") == second);
+
+	// Saved, it auto saves next to its file; untitled again, it starts a new series.
+	run(client, "project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	CHECK(autoSave(client) == utf8(dir.path() / "Auto Saves" / "Song-01.bak"));
+	run(client, "project.new");
+	CHECK(autoSave(client) == utf8(autoSaves / "Untitled6-01.bak"));
+}
+
 TEST_CASE("auto saves are named after the project file as its versions are", "[integration]")
 {
 	// After the whole name of a file without the .dawproject extension, so that "Mix v2.1" and "Mix v2.2" don't share
@@ -339,6 +404,60 @@ TEST_CASE("auto saves are named after the project file as its versions are", "[i
 		run(client, "project.save", {{"path", utf8(dir.path() / fs::u8path(name))}});
 		run(client, "track.add", {{"type", "audio"}});
 		CHECK(run(client, "project.autoSave").at("file") == utf8(dir.path() / "Auto Saves" / fs::u8path(autoSave)));
+	}
+}
+
+TEST_CASE("a project file named only of dots has the versions and auto saves of Untitled", "[integration]")
+{
+	// projectFileStem's fallback for a name with nothing left once the dots at its end go (#798). Linux and macOS
+	// keep such a name; Windows can't make the file.
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "...";
+	if (!canBeFile(file))
+	{
+		WARN("A file can't be named \"...\" here: the fallback isn't checked.");
+		return;
+	}
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	run(client, "project.save", {{"path", utf8(file)}});
+	run(client, "track.add", {{"type", "audio"}});
+	CHECK(run(client, "project.autoSave").at("file") == utf8(dir.path() / "Auto Saves" / "Untitled-01.bak"));
+	CHECK(run(client, "project.saveNewVersion").at("file") == utf8(dir.path() / "Untitled-01.dawproject"));
+}
+
+TEST_CASE(
+	"a loaded project's media folder and its name among the recent projects are named after its file", "[integration]")
+{
+	// As its versions, auto saves and backups are (#764, #798): after the whole name without the .dawproject extension
+	// and the dots and spaces after it, so that "Mix v2.1" and "Mix v2.2" don't share "Mix v2 media".
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	test::writeWav(dir.path() / "take.wav", {std::vector<float>(480, 0.25f), 1, 48000});
+	const Json media = run(client, "media.add", {{"path", utf8(dir.path() / "take.wav")}}).at("media").at("id");
+	run(client, "clip.add", {{"media", media}});
+	for (const char* named : {"Mix v2.1", "Mix v2.2"})
+	{
+		const std::string name = named;
+		INFO(name);
+		const fs::path file = dir.path() / fs::u8path(name);
+		run(client, "project.save", {{"path", utf8(file)}}); // with the media in it
+		run(client, "project.load", {{"path", utf8(file)}});
+		CHECK(fs::is_directory(dir.path() / fs::u8path(name + " media")));
+		const Json projects = run(client, "project.recent").at("projects");
+		REQUIRE(!projects.empty());
+		CHECK(projects[0].at("file") == utf8(fs::absolute(file)));
+		CHECK(projects[0].at("name") == name);
+	}
+	CHECK(!fs::exists(dir.path() / "Mix v2 media"));
+	const fs::path take = dir.path() / "Take.DAWPROJECT ";
+	if (canBeFile(take))
+	{
+		run(client, "project.save", {{"path", utf8(take)}});
+		run(client, "project.load", {{"path", utf8(take)}});
+		CHECK(fs::is_directory(dir.path() / "Take media"));
+		CHECK(run(client, "project.recent").at("projects")[0].at("name") == "Take");
 	}
 }
 
@@ -368,6 +487,9 @@ TEST_CASE("a project opened from an auto save goes on untitled, outside Auto Sav
 		const Json location = run(client, "project.location");
 		CHECK(location.at("file").is_null());
 		CHECK(location.at("mediaFolder").is_null()); // so media aren't copied to Auto Saves/Audio
+		// The project file next to Auto Saves, which Save proposes (#635).
+		CHECK(location.at("autoSaveOf") ==
+			utf8(fs::absolute(path == otherCase ? dir.path() / "Other" / "Other.dawproject" : file)));
 		CHECK(modified(client));
 		CHECK_THAT(reject(client, "project.save"), ContainsSubstring("no file"));
 		CHECK_THAT(reject(client, "project.revert"), ContainsSubstring("no file"));
@@ -376,28 +498,32 @@ TEST_CASE("a project opened from an auto save goes on untitled, outside Auto Sav
 
 	// Its next auto saves go where those of untitled projects go, not to Auto Saves/Auto Saves.
 	run(client, "track.add", {{"type", "audio"}});
-	CHECK(
-		run(client, "project.autoSave").at("file") == utf8(dir.path() / "settings" / "Auto Saves" / "Untitled-01.bak"));
+	CHECK(run(client, "project.autoSave").at("file") ==
+		utf8(dir.path() / "settings" / "Auto Saves" / "Untitled1-01.bak"));
 	CHECK(!fs::exists(autoSave.parent_path() / "Auto Saves"));
 
 	// Saving it as the project file makes that its file again, with its folders.
 	run(client, "project.save", {{"path", utf8(file)}});
 	CHECK(run(client, "project.location").at("folder") == utf8(fs::absolute(file.parent_path())));
+	CHECK(run(client, "project.location").at("autoSaveOf").is_null());
 	CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(file))});
 	run(client, "track.add", {{"type", "audio"}});
 	CHECK(run(client, "project.autoSave").at("file") == utf8(dir.path() / "Song" / "Auto Saves" / "Song-02.bak"));
 
-	// The auto save of a project that never had a file, and one whose project file is gone, open untitled too.
+	// The auto save of a project that never had a file, and one whose project file is gone, open untitled too: the
+	// first belongs to no project file, the second still to the one it was made of.
 	run(client, "project.new");
 	run(client, "track.add", {{"type", "midi"}});
-	const fs::path untitled = dir.path() / "settings" / "Auto Saves" / "Untitled-02.bak";
+	const fs::path untitled = dir.path() / "settings" / "Auto Saves" / "Untitled2-01.bak";
 	REQUIRE(run(client, "project.autoSave").at("file") == utf8(untitled));
 	fs::remove(file);
 	for (const fs::path& path : {untitled, autoSave})
 	{
 		INFO(utf8(path));
 		run(client, "project.load", {{"path", utf8(path)}});
-		CHECK(run(client, "project.location").at("file").is_null());
+		const Json location = run(client, "project.location");
+		CHECK(location.at("file").is_null());
+		CHECK(location.at("autoSaveOf") == (path == autoSave ? Json(utf8(fs::absolute(file))) : Json()));
 		CHECK(modified(client));
 	}
 	CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(file))});
@@ -407,6 +533,7 @@ TEST_CASE("a project opened from an auto save goes on untitled, outside Auto Sav
 	fs::copy_file(autoSave, copy);
 	run(client, "project.load", {{"path", utf8(copy)}});
 	CHECK(run(client, "project.location").at("file") == utf8(fs::absolute(copy)));
+	CHECK(run(client, "project.location").at("autoSaveOf").is_null());
 }
 
 TEST_CASE("the engine auto saves a changed project on its own once the interval passed", "[integration]")
@@ -703,10 +830,17 @@ TEST_CASE("templates are projects in the settings folder that new projects start
 	CHECK_THAT(reject(client, "project.new", {{"template", "../x"}}), ContainsSubstring("name"));
 	// A template named as a device on Windows, which earlier builds saved and Linux, macOS and Windows 11 keep as a
 	// file, still opens, although no template can be saved under such a name any more.
-	fs::copy_file(fs::u8path(saved.at("file").get<std::string>()),
-		dir.path() / "settings" / "Project Templates" / "Aux.dawproject");
-	run(client, "project.new", {{"template", "Aux"}});
-	CHECK(trackCount(client) == 2);
+	const fs::path device = dir.path() / "settings" / "Project Templates" / "Aux.dawproject";
+	if (canBeFile(device))
+	{
+		fs::copy_file(fs::u8path(saved.at("file").get<std::string>()), device);
+		run(client, "project.new", {{"template", "Aux"}});
+		CHECK(trackCount(client) == 2);
+	}
+	else
+	{
+		WARN("Aux.dawproject is a device here, as on Windows 10: the template of that name isn't checked.");
+	}
 }
 
 TEST_CASE("without a settings folder there are no templates, recent projects or untitled auto saves", "[integration]")
@@ -875,8 +1009,9 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 
 	// Dots and spaces at the end go before the extension is checked, which Windows drops anyway, so that a name ending
 	// in the extension and then a dot or a space gets it once (#706).
+	// A name of only dots and spaces is Untitled.
 	const std::vector<std::pair<std::string, std::string>> typed{{"Final.dawproject.", "Final.dawproject"},
-		{"Live.DAWPROJECT ", "Live.DAWPROJECT"}, {"Demo . .", "Demo.dawproject"}};
+		{"Live.DAWPROJECT ", "Live.DAWPROJECT"}, {"Demo . .", "Demo.dawproject"}, {". .", "Untitled.dawproject"}};
 	for (const auto& [name, saved] : typed)
 	{
 		INFO(name);
@@ -888,8 +1023,45 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 	}
 	CHECK(!fs::exists(dir.path() / "Final.dawproject.dawproject"));
 
+	// A file that the name becomes and the dialog didn't name, which the dialog didn't ask about, as the dialogs of
+	// Linux check the name as typed: GNUbase asks before it replaces it (#798). Cancel keeps it.
+	const std::string untitled = utf8(fs::absolute(dir.path() / "Untitled.dawproject"));
+	const std::string final = utf8(fs::absolute(dir.path() / "Final.dawproject"));
+	const auto finalSaved = fs::last_write_time(dir.path() / "Final.dawproject");
+	fileMenu(app, "file.saveAs");
+	answer(app, {dir.path() / "Final.dawproject."});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#replace-file-dialog"); }));
+	CHECK_THAT(
+		elements(app, "#replace-file-message")[0].at("text").get<std::string>(), ContainsSubstring("Final.dawproject"));
+	click(app, "#replace-file-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#replace-file-dialog"); }));
+	CHECK(location(app) == untitled);
+	// Compared into a bool: Catch2 can't print a file time where libc++ counts it in __int128 (macOS).
+	const bool finalKept = fs::last_write_time(dir.path() / "Final.dawproject") == finalSaved;
+	CHECK(finalKept);
+	// Replace saves, also for a name without the extension.
+	for (const char* name : {"Final.", "Final"})
+	{
+		INFO(name);
+		fileMenu(app, "file.saveAs");
+		answer(app, {dir.path() / name});
+		click(app, "#replace-file");
+		REQUIRE(app.waitUntil([&app, &final] { return location(app) == final; }));
+		app.call("project.save", {{"path", untitled}});
+	}
+	// The file the dialog named is the dialog's to ask about.
+	fileMenu(app, "file.saveAs");
+	answer(app, {dir.path() / "Final.dawproject"});
+	REQUIRE(app.waitUntil([&app, &final] { return location(app) == final; }));
+	CHECK(elements(app, "#replace-file-dialog").empty());
+
 	// A name that Windows keeps for a device is the user's to choose: with the extension it is a file like any other on
-	// Linux, macOS and Windows 11 (on Windows 10 it is still the device, and this fails).
+	// Linux, macOS and Windows 11. On Windows 10 it is still the device.
+	if (!canBeFile(dir.path() / "NUL.dawproject"))
+	{
+		WARN("NUL.dawproject is a device here, as on Windows 10: Save As of a device name isn't checked.");
+		return;
+	}
 	fileMenu(app, "file.saveAs");
 	answer(app, {dir.path() / "NUL"});
 	const std::string device = utf8(fs::absolute(dir.path() / "NUL.dawproject"));
@@ -993,6 +1165,34 @@ namespace
 	{
 		const Json message = elements(app, "#project-error-message");
 		return message.size() == 1 ? message[0].at("text").get<std::string>() : std::string();
+	}
+
+	// Closes the main window's document with the element of that id, as its buttons would (ui::closeDialog); false if
+	// there is none. For tasks that the shell runs, where a failed REQUIRE would throw through the shell's step.
+	bool closeDocumentOf(test::UiApp& app, const std::string& id)
+	{
+		Rml::Context& context = app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (const Rml::Element* element = context.GetDocument(i)->GetElementById(id))
+				return gnubase::ui::closeDialog(*element->GetOwnerDocument(), "cancel");
+		return false;
+	}
+
+	// A project whose auto saves fail, as a file is in the place of Auto Saves, with the auto fades dialog open and
+	// the error of a failed auto save waiting for it. Returns Auto Saves.
+	fs::path errorWaitsForAutoFades(test::UiApp& app, const test::TempDir& dir)
+	{
+		const fs::path autoSaves = dir.path() / "Auto Saves";
+		app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+		app.call("track.add", {{"type", "audio"}});
+		std::ofstream(autoSaves) << "not a folder";
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
+		app.keys().run("project.autoFades", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#auto-fades"); }));
+		app.engine().advanceClock(g_pastInterval);
+		handleEarlierEvents(app);
+		CHECK(elements(app, "#project-error-dialog").empty());
+		return autoSaves;
 	}
 }
 
@@ -1151,6 +1351,99 @@ TEST_CASE("a failed auto save's error waits while other modal dialogs are open, 
 	CHECK(elements(app, "#project-error-dialog").empty());
 }
 
+TEST_CASE("a failed auto save's error that waits shows once the modal dialog that kept it away hides", "[ui]")
+{
+	// GNUbase's own dialogs unload as they close (ui::closeDialog), but a Lua script can hide one through RmlUi's
+	// plugin instead (#859).
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	app.call("track.add", {{"type", "audio"}});
+	std::ofstream(dir.path() / "Auto Saves") << "not a folder";
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
+	Rml::ElementDocument* modal =
+		app.main().context().LoadDocumentFromMemory("<rml><head></head><body id=\"hiding-dialog\"></body></rml>");
+	REQUIRE(modal != nullptr);
+	modal->Show(Rml::ModalFlag::Modal);
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	modal->Hide();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(errorMessage(app), ContainsSubstring("auto saved"));
+	closeError(app);
+	modal->Close();
+}
+
+TEST_CASE(
+	"a failed auto save's error that waits doesn't take the place of a newer one's that came as the dialog closed",
+	"[ui]")
+{
+	// The dialog closes from a task the shell runs, and the next failure, for another reason, reaches the UI in the
+	// same step: the error that waited opens a step after the newer one, which it mustn't replace (#859).
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	Client client(app.engine());
+	const test::TempDir dir;
+	const fs::path autoSaves = errorWaitsForAutoFades(app, dir);
+	fs::remove(autoSaves);
+	blockSaving(autoSaves / "Song-01.bak");
+	const std::string newer = reject(client, "project.autoSave");
+	bool closed = false;
+	app.shell().post([&app, &closed] { closed = closeDocumentOf(app, "auto-fades"); });
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK(closed);
+	handleEarlierEvents(app);
+	CHECK_THAT(errorMessage(app), ContainsSubstring(newer));
+	CHECK(elements(app, "#project-error-dialog").size() == 1);
+	closeError(app);
+}
+
+TEST_CASE("a failed auto save's error that opens drops the one that waits", "[ui]")
+{
+	// The next failure, for another reason, reaches the UI in the step that closes the dialog, before it closes: its
+	// error opens first, and the older one that waited doesn't show after it (#848, #859).
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	Client client(app.engine());
+	const test::TempDir dir;
+	const fs::path autoSaves = errorWaitsForAutoFades(app, dir);
+	fs::remove(autoSaves);
+	blockSaving(autoSaves / "Song-01.bak");
+	const std::string newer = reject(client, "project.autoSave");
+	// A task of every step, after the one that hands on the engine's events (ui/enginebinding.h), which the shell
+	// registered first. Shared, as the shell keeps the task until it goes.
+	const auto armed = std::make_shared<bool>(true);
+	const auto closed = std::make_shared<bool>(false);
+	app.shell().eachStep(
+		[&app, armed, closed]
+		{
+			if (*armed)
+				*closed = closeDocumentOf(app, "auto-fades");
+			*armed = false;
+			return false;
+		});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK(*closed);
+	handleEarlierEvents(app);
+	CHECK_THAT(errorMessage(app), ContainsSubstring(newer));
+	CHECK(elements(app, "#project-error-dialog").size() == 1);
+	closeError(app);
+}
+
+TEST_CASE("the app ends while a failed auto save's error waits for a dialog", "[ui]")
+{
+	// The auto fades dialog unloads as the shell closes its windows, after ProjectFiles went, which stopped listening
+	// to it (#859).
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	errorWaitsForAutoFades(app, dir);
+	CHECK(shown(app, "#auto-fades"));
+}
+
 TEST_CASE("a failed auto save's error that waits for a dialog is dropped once auto save works or the project was saved "
 		  "or opened",
 	"[ui]")
@@ -1303,8 +1596,11 @@ TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[u
 	click(app, "#discard-changes");
 	REQUIRE(app.waitUntil([&app] { return disabled(app, "menuitem[command=\"file.revert\"]"); }));
 	CHECK(location(app).is_null());
+	// It proposes the project file the auto save was made of (#635), which the OS's dialog asks before it replaces.
 	fileMenu(app, "file.save");
-	CHECK(answer(app, {}).kind == gnubase::ui::FileDialogKind::Save);
+	const gnubase::ui::FileDialog save = answer(app, {});
+	CHECK(save.kind == gnubase::ui::FileDialogKind::Save);
+	CHECK(utf8(save.location) == utf8(fs::absolute(file)));
 	CHECK(location(app).is_null());
 	// Compared into a bool: Catch2 can't print a file time where libc++ counts it in __int128 (macOS).
 	const bool autoSaveUntouched = fs::last_write_time(autoSave) == autoSaved;
@@ -1680,6 +1976,52 @@ TEST_CASE("an error whose window closed while it waited shows in the main window
 	closeError(app);
 }
 
+TEST_CASE("Save As asks before it replaces a file in the main window once the window it was asked in closed", "[ui]")
+{
+	// Else the save the user asked for would be dropped without a word (#798).
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path final = dir.path() / "Final.dawproject";
+	const fs::path other = dir.path() / "Other.dawproject";
+	app.call("project.save", {{"path", utf8(final)}});
+	app.call("project.save", {{"path", utf8(other)}});
+	gnubase::ui::Window& panel = panelWindow(app);
+	const gnubase::ui::WindowId panelId = panel.id();
+	const auto closePanel = [&app, panelId]
+	{
+		app.ui().close(panelId, false);
+		REQUIRE(app.waitUntil([&app, panelId] { return app.shell().find(panelId) == nullptr; }));
+	};
+
+	SECTION("before the file dialog answers")
+	{
+		app.keys().run("file.saveAs", Json::object(), panel, nullptr);
+		REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+		closePanel();
+		answer(app, {dir.path() / "Final."});
+	}
+	SECTION("while the question waits for the start screen")
+	{
+		app.appUi().openStartScreen();
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+		app.keys().run("file.saveAs", Json::object(), panel, nullptr);
+		answer(app, {dir.path() / "Final"});
+		settle(app);
+		CHECK(elements(app, "#replace-file-dialog").empty());
+		closePanel();
+		click(app, "#start-screen button[result=cancel]");
+	}
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json found = app.ui().dom(app.main().id(), "#replace-file-dialog", 0).at("elements");
+			return found.size() == 1 && found[0].at("visible").get<bool>();
+		}));
+	click(app, "#replace-file");
+	REQUIRE(app.waitUntil([&app, &final] { return location(app) == utf8(fs::absolute(final)); }));
+}
+
 TEST_CASE("a question that waited doesn't ask once the project was saved meanwhile", "[ui]")
 {
 	test::UiApp app({900, 640});
@@ -1906,6 +2248,13 @@ TEST_CASE("the start screen creates projects, from templates too, and opens rece
 	app.appUi().openStartScreen();
 	click(app, "#open-other");
 	CHECK(answer(app, {}).kind == gnubase::ui::FileDialogKind::Open);
+
+	// Named as the engine names them, after the whole name of a file without the extension (#798).
+	app.call("project.save", {{"path", utf8(dir.path() / "Mix v2.1")}});
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#start-recent listitem").size() == 2; }));
+	CHECK(elements(app, "#start-recent listitem")[0].at("text") == "Mix v2.1");
+	click(app, "#start-screen button[result=cancel]");
 }
 
 TEST_CASE("File > Save as Template and Back up Project", "[ui]")

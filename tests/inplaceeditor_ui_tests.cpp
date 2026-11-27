@@ -1391,3 +1391,29 @@ TEST_CASE("an in-place editor joins a dense note's expression steps by its pixel
 	f.settle(2);
 	CHECK(linesFit() > before * 1.5);
 }
+
+TEST_CASE("an in-place editor's toolbar has Indicate Transpositions", "[ui]")
+{
+	// Indicate Transpositions in the in-place editor's toolbar (#1766, reference manual p. 1260): the part follows a
+	// project root key of D from its own C, so its notes show 2 rows up.
+	Fixture f;
+	f.app.call("project.set", {{"rootKey", "D"}});
+	f.app.call("midiPart.set", {{"part", f.part}, {"rootKey", "C"}});
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", true}});
+	f.settle(2);
+	f.click(f.triangle());
+	f.click(f.editor() + " .key-input[setting=indicateTranspositions]");
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == true; }));
+	f.scroll(63);
+	const auto on = [&f](uint64_t id, int64_t ticks, int pitch)
+	{
+		const Json found = f.elements(f.note(id));
+		if (found.empty())
+			return false;
+		const auto y = static_cast<double>(f.at(ticks, pitch).point.value_or(ui::Point{}).y);
+		const Json shown = found.at(0).at("box");
+		return shown.at("y").get<double>() <= y && y <= shown.at("y").get<double>() + shown.at("height").get<double>();
+	};
+	CHECK(
+		f.app.waitUntil([&] { return on(f.notes[0], g_bar + 10, 62) && on(f.notes[1], g_bar + g_quarter + 10, 66); }));
+}

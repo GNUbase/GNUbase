@@ -107,6 +107,11 @@ namespace gnubase::engine
 	// then without the extension .dawproject in any case. "Song.dawproject." is "Song", "Song v2.1" stays as it is.
 	std::string projectFileStem(const std::filesystem::path& file);
 
+	// Where project.load extracts the media embedded in a project file by default, and media.cleanup looks for those
+	// that nothing uses: "<name> media" next to it, named as its versions are (projectFileStem), "Song media" for
+	// "Song.dawproject" and "Song.dawproject." (#798).
+	std::filesystem::path extractedMediaFolderFor(const std::filesystem::path& projectFile);
+
 	struct BackupOptions
 	{
 		std::string folder;               // an empty or new folder

@@ -33,6 +33,8 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
 - **Editing** (p. 72). A double click edits a display or the volume as text, Enter takes it; mute and lock are toggles.
   The edit goes to every selected event or part, relative to its own value: a new start moves them all by as much
   as the first one moves, a new end or length resizes them all by as much (`event.move`, `event.resize` at the end).
+  A drag, wheel turns or a held arrow key on the volume, transpose or velocity go from each one's value where the
+  gesture started, so that one held at its limit on the way keeps its distance to the others on the way back.
   With Ctrl (Cmd) held when Enter takes the value, every one gets the value typed: the same start, end, length or
   volume, also when it is the first one's own value. Names go to every selected part, audio and MIDI alike (`event.set`), the volume to every selected audio event
   (`audioEvent.set`, -144 to 6 dB), mute and lock to all (`event.set`). Each edit is one `history.transaction`, so one
@@ -63,10 +65,13 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   class `markers` and shows the first selected marker in timeline order: its description (`field=name`, labelled
   Description) and position (`field=start`, labelled Position), and for a cycle marker its end and length; volume,
   mute and lock are `.unavailable`. Edits go to every selected marker as one `history.transaction` of `marker.set`s, as for
-  events: relative to the first one's value, or with Ctrl+Enter the same value for all. A new position keeps a cycle
-  marker's length; end and length change the cycle markers. The project window selects events or markers:
-  selecting an event deselects the markers (`AppUi`, `MarkerLines::deselect`), a marker clicked deselects the events.
-  A selection that names only markers the project no longer has shows `.empty`, until the marker lines drop them.
+  events: relative to the first one's value, or with Ctrl+Enter the same value for all. A new position sends only
+  `position`, so that a cycle marker keeps its length in its track's time base, also across a tempo change; end and
+  length change the cycle markers, a length typed with Ctrl+Enter counted from each marker's own start. The project
+  window selects events or markers: selecting an event deselects the markers (`AppUi`, `MarkerLines::deselect`), a
+  marker clicked deselects the events. Markers that go from the selection, such as removed ones, don't bring the info
+  line back to the markers from an event shown. A selection that names only markers the project no longer has shows
+  `.empty`, until the marker lines drop them.
 - **Arranger events** (p. 405). The arranger events selected on the arranger track's lane show the same way, with the
   class `arranger`: name (labelled Name), start, end and length, edited with `arranger.set`
   ([arranger.md](arranger.md)).
@@ -243,9 +248,10 @@ instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the
   selected parts, start, length (relative and with Ctrl+Enter absolute, also with the first part's own value, after
   which an edit taken by leaving the field is relative again) and end edits with undo, name, mute and lock for every
   selected part, changes from another client, an audio event's volume, an untouched Ctrl+Enter on it giving three events
-  the first one's in one undo step, the parts' transpose and velocity (relative, kept in range, with Ctrl+Enter, undo,
-  hidden for audio events), and asking only while it shows; a marker selected on the marker track with each field
-  edited, two markers changed relatively and with Ctrl+Enter in one undo step, and an event selected after it, the setup
+  the first one's in one undo step, a volume drag that holds one event at 6 dB and comes back, the parts' transpose and
+  velocity (relative, kept in range, with Ctrl+Enter, also on the first part's own value, undo, a drag that holds one
+  at its limit and comes back, hidden for audio events), and asking only while it shows; a marker selected on the
+  marker track with each field edited, two markers changed relatively and with Ctrl+Enter in one undo step, and an event selected after it, the setup
   pane naming the fields as the info line does; a marker clicked again after a part, Ctrl+Enter on the first marker's
   own position with a part shown before, a selection naming removed markers, and an untouched Ctrl+Enter on the position
   of three markers giving them the first one's in one undo step; a note selected in an in-place editor with its fields

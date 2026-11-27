@@ -110,6 +110,7 @@
 		<button id="add-cycle-marker" title="Add Cycle Marker">Add Cycle Marker</button>
 		<button id="remove-marker" title="Remove Marker">Remove</button>
 		<button id="marker-functions" menu="marker-functions-menu" title="Functions">Functions</button>
+		<button id="marker-columns" menu="marker-columns-menu" title="Show or Hide Columns">Columns</button>
 		<button id="marker-auto-scroll" type="toggle" title="Auto-Scroll with Project Cursor">Auto-Scroll</button>
 		<button id="marker-settings" menu="marker-settings-menu" title="Marker Settings">Settings</button>
 	</div>
@@ -126,6 +127,13 @@
 		<menuitem id="move-to-cursor">Move Markers to Cursor</menuitem>
 		<menuitem id="reassign-position-ids">Reassign Position Marker IDs</menuitem>
 		<menuitem id="reassign-cycle-ids">Reassign Cycle Marker IDs</menuitem>
+	</menu>
+	<menu id="marker-columns-menu">
+		<menuitem id="column-number" type="toggle" checked="checked">ID</menuitem>
+		<menuitem id="column-type" type="toggle" checked="checked">Type</menuitem>
+		<menuitem id="column-end" type="toggle" checked="checked">End</menuitem>
+		<menuitem id="column-length" type="toggle" checked="checked">Length</menuitem>
+		<menuitem id="column-description" type="toggle" checked="checked">Description</menuitem>
 	</menu>
 	<menu id="marker-settings-menu">
 		<menuitem id="show-marker-ids" type="toggle">Show Marker IDs on Marker Track</menuitem>

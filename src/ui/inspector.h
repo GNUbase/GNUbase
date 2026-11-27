@@ -117,8 +117,9 @@ namespace gnubase::ui
 		// Reads the open in-place editors into m_inPlace (editor.inPlace).
 		void readInPlace();
 		// Drops the step or arranger event pressed in the Arranger Track section's lists where the button went up:
-		// steps dragged move, with Alt copy, and events go into the chain (reference manual pp. 409-410).
-		void dropOnChain(const Rml::Event& event);
+		// steps dragged move, with Alt copy, and events go into the chain (reference manual pp. 409-410), as do
+		// arranger events dragged from the lane (g_arrangerDrop, p. 409).
+		void dropOnChain(Rml::Event& event);
 
 		EngineBinding& m_binding;
 		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)

@@ -52,12 +52,19 @@ display at 150 % (#1450).
   step at once (1 second, 4 for the fast ones), as a click or a key pressed and released does, and while their button
   or key stays down wind on after 0.3 seconds at four steps a second until it goes up (`ui::Winding`, which sends
   `transport.locate` `by` each frame). A key ends winding when it goes up, whatever modifiers are still down, and so
-  does the window losing the keyboard focus ([key-commands.md](key-commands.md)).
+  does the window losing the keyboard focus ([key-commands.md](key-commands.md)). Each key or button winds as its own:
+  one that goes up leaves the others that are still down winding, the one pressed last first, and the focus lost also
+  ends the buttons held. Run from a menu item or a script (`KeyCommands::run`), they step once and don't wind on.
 - **The mouse wheel** changes a display's value: up for later, by a beat in Bars+Beats, a frame in Timecode and fps
   (User), a second in Seconds and Samples, never before the project start or past the largest project position. On
   the locator range it moves the right locator, not before the left one; on the pre-roll and post-roll amounts it
   changes the amount, not below 0. A display being edited ignores the wheel, a scroll sideways moves nothing, and a
-  turn moves at most a billion steps (#457).
+  turn moves at most a billion steps (#457). A touchpad or a high-resolution wheel sends small fractions of a notch:
+  they add up, for each display and direction, and make a step when they reach a whole one; a pause of a second
+  forgets them. The next turn goes on from the position the last one set, also when the transport.changed of an older
+  turn reaches the display first: the displays leave what an answer or event of a request older than their newest
+  change says (#569). Nudge Cursor and Increase and Decrease Window Size do the same. A wheel gesture on the tempo
+  field is set when its controls go within the pause, e.g. the panel closing (#566).
 - **Displays** (`time`) show the project cursor, a locator, the locator range or the pre-roll and post-roll amounts
   (`preRollAmount`, `postRollAmount`: lengths measured from the left and the right locator) in the time format of
   their slot (`format`: `primary`, `secondary`, `timeDisplay`). While playing they read the playback position once a
@@ -142,10 +149,14 @@ the same pane for its own sections (Set up Transport Panel, p. 295). Both are ke
   project cursor in large digits, in the format of the slot `timeDisplay`, which its context menu picks. The main
   menu's Studio menu will run it. The context menu also has Show Beat Count Only (`timeDisplay.beatCountOnly`): the
   beat in its bar, "1" to "4" in 4/4, for a visual metronome; and Increase and Decrease Window Size
-  (`timeDisplay.increaseSize`, `timeDisplay.decreaseSize`): five sizes, from 320 by 80 to 1280 by 320, 480 by 120 by
+  (`timeDisplay.increaseSize`, `timeDisplay.decreaseSize`): five sizes, from 320 by 80 to 1280 by 320 dp, 480 by 120 by
   default. Both are the user setting `ui.timeDisplay` (`beatCountOnly`, `size` 0 to 4), so the window opens as it
   was. The display has the state class `.size-0` to `.size-4`; the theme sizes its digits for each, from its token
-  `timeDisplaySizes` ([themes.md](themes.md)).
+  `timeDisplaySizes` ([themes.md](themes.md)). The window sizes are in dp, so that the digits fit at every UI scale:
+  `AppUi` sizes the window with the window's dp ratio and the pixels of a coordinate of the window system, opens it at
+  the saved size, and follows `ui.scale` (`Shell::onUiScale`): a window at a preset's size goes to that size at the
+  new scale, one that the user sized keeps its proportions. A new size from `ui.timeDisplay`, not another option such
+  as Show Beat Count Only, sets the size; a window with saved bounds opens with them (#566, #569).
 
 ## Key commands
 

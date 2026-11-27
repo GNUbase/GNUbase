@@ -1537,11 +1537,18 @@ TEST_CASE("a host process exits when the engine dies, even while a plugin blocks
 	std::filesystem::remove(file);
 	platform::ChildProcess engine =
 		platform::ChildProcess::start(GNUBASE_PLUGINHOST, {"--play-engine", file.u8string()});
-	REQUIRE(eventually([&] { return std::filesystem::exists(file); }, 20000ms));
+	// Read until the id is there: on Windows, opening the file can fail for a moment after it appears (a scanner
+	// may hold it), which read nothing here once.
 	uint32_t host = 0;
-	std::ifstream(file) >> host;
-	std::filesystem::remove(file);
-	REQUIRE(host != 0);
+	REQUIRE(eventually(
+		[&]
+		{
+			std::ifstream(file) >> host;
+			return host != 0;
+		},
+		20000ms));
+	std::error_code ignored;
+	std::filesystem::remove(file, ignored);
 	CHECK(platform::processExists(host));
 
 	engine.kill();

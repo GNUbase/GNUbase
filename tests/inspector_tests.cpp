@@ -8,6 +8,7 @@
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "engine/midi/modifiers.h"
 #include "engine/time/tempomap.h"
 #include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
@@ -594,6 +595,48 @@ TEST_CASE("the project window selects events or markers, and the info line shows
 	// Only showMarkers' branch for markers the project doesn't have sets both.
 	CHECK(window.app.waitUntil(
 		[&] { return hasClass(window.app, "#info-line", "markers") && hasClass(window.app, "#info-line", "empty"); }));
+}
+
+TEST_CASE(
+	"the info line moves cycle markers by position alone, and parses a typed length at each marker (#599)", "[ui]")
+{
+	Window window;
+	const uint64_t track = window.addTrack({{"type", "marker"}, {"timeBase", "musical"}});
+	// 120 BPM for two bars, 60 BPM after, so that a time in seconds isn't the same stretch in beats everywhere.
+	window.call("tempo.add", {{"position", 8 * g_quarter}, {"bpm", 60.0}, {"ramp", false}});
+	const auto add = [&window, track](int64_t position, int64_t end, const char* name)
+	{
+		return window
+			.call("marker.add",
+				{{"track", track}, {"type", "cycle"}, {"position", position}, {"end", end}, {"name", name}})
+			.at("marker")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t early = add(0, 4 * g_quarter, "Early");
+	const uint64_t late = add(12 * g_quarter, 16 * g_quarter, "Late");
+	const auto marker = [&window](uint64_t id) { return window.find("markers", id); };
+	const ui::MarkerLines& lines = *window.app.appUi().markerLines();
+	const auto select = [&window, &lines](const std::vector<uint64_t>& ids, const char* first)
+	{
+		window.app.appUi().markerLines()->setSelection(ids);
+		window.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(window.shows("#info-line textdisplay[field=name]", first));
+		REQUIRE(lines.selection() == ids);
+	};
+
+	// A new position alone: the marker keeps its length in beats, though 4 beats across the tempo change are not as
+	// many seconds as before.
+	select({early}, "Early");
+	window.type("#info-line textdisplay[field=start]", "2.3.1.0");
+	REQUIRE(window.app.waitUntil([&] { return marker(early).at("position") == 6 * g_quarter; }));
+	CHECK(marker(early).at("end") == 10 * g_quarter);
+
+	// Ctrl+Enter on the length gives every selected cycle marker the length typed, counted from its own start.
+	select({early, late}, "Early");
+	window.type("#info-line textdisplay[field=length]", "0.2.0.0", "Ctrl+Enter");
+	REQUIRE(window.app.waitUntil([&] { return marker(late).at("end") == 14 * g_quarter; }));
+	CHECK(marker(early).at("end") == 8 * g_quarter);
 }
 
 TEST_CASE("an untouched Ctrl+Enter on a marker's start gives every selected marker the first one's position", "[ui]")
@@ -2572,6 +2615,163 @@ TEST_CASE("the inspector's MIDI Modifiers section shows and changes the track's 
 	window.list.select({vox});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
 	CHECK(hasClass(window.app, ".inspector [section=modifiers]", "unavailable"));
+}
+
+TEST_CASE("Ctrl+Enter on the first part's untouched Transpose or Velocity takes its value for all", "[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t first = window.addPart(midi, 4 * g_quarter, 4 * g_quarter, "Intro");
+	const uint64_t second = window.addPart(midi, 12 * g_quarter, 8 * g_quarter, "Verse");
+	window.call("midiPart.set", {{"part", first}, {"transpose", 3}, {"velocity", -8}});
+	window.call("midiPart.set", {{"part", second}, {"transpose", -5}, {"velocity", 20}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 2; }));
+	window.display.select({second, first});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "multiple"); }));
+	for (const auto& each : std::vector<std::pair<std::string, int>>{{"transpose", 3}, {"velocity", -8}})
+	{
+		const std::string& field = each.first;
+		const int value = each.second;
+		INFO(field);
+		const std::string selector = "#info-line valuefield[field=" + field + "]";
+		REQUIRE(window.shows(selector, std::to_string(value)));
+		window.click(selector, ui::MouseButton::Left, 2);
+		window.app.ui().key(std::nullopt, "Ctrl+Enter");
+		REQUIRE(window.app.waitUntil([&] { return window.part(second).at(field) == value; }));
+		CHECK(window.part(first).at(field) == value);
+	}
+}
+
+TEST_CASE("a part held at its limit by a relative drag of the info line's Transpose ends where it started", "[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t first = window.addPart(midi, 4 * g_quarter, 4 * g_quarter, "Intro");
+	const uint64_t second = window.addPart(midi, 12 * g_quarter, 8 * g_quarter, "Verse");
+	window.call("midiPart.set", {{"part", second}, {"transpose", 120}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 2; }));
+	window.display.select({first, second});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+	const std::string field = "#info-line valuefield[field=transpose]";
+	REQUIRE(window.shows(field, "0"));
+
+	// Up until the second part is held at 127, the project arriving after each step, and back down to the start.
+	test::LateDrag drag(window.app, std::nullopt, field);
+	int steps = 0;
+	while (drag.value() < 10.0 && steps < 200)
+	{
+		drag.move(1, -1);
+		++steps;
+	}
+	REQUIRE(drag.value() >= 10.0);
+	REQUIRE(window.app.waitUntil([&] { return window.part(second).at("transpose") == 127; }));
+	drag.move(steps, 1);
+	drag.release();
+	REQUIRE(window.app.waitUntil([&] { return window.part(first).at("transpose") == 0; }));
+	CHECK(window.part(second).at("transpose") == 120);
+}
+
+TEST_CASE("an audio event held at 6 dB by a relative drag of the info line's volume ends where it started", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto add = [&](int64_t position)
+	{
+		return window
+			.call("audioEvent.add",
+				{{"track", audio}, {"clip", clip.at("id")}, {"position", position}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t first = add(0);
+	const uint64_t second = add(48000);
+	window.call("audioEvent.set", {{"event", second}, {"volume", 5.0}});
+	const auto volume = [&](uint64_t id) { return window.find("audioEvents", id).at("volume").get<double>(); };
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 2; }));
+	window.display.select({first, second});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "multiple"); }));
+	const std::string field = "#info-line valuefield[field=volume]";
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			const std::string shown = attribute(window.app, field, "value");
+			return !shown.empty() && std::stod(shown) == 0.0;
+		}));
+
+	// Up until the second event is held at 6 dB, the project arriving after each step, and back down to the start.
+	test::LateDrag drag(window.app, std::nullopt, field);
+	int steps = 0;
+	while (drag.value() < 2.0 && steps < 200)
+	{
+		drag.move(1, -1);
+		++steps;
+	}
+	REQUIRE(drag.value() >= 2.0);
+	REQUIRE(window.app.waitUntil([&] { return volume(second) == 6.0; }));
+	drag.move(steps, 1);
+	drag.release();
+	REQUIRE(window.app.waitUntil([&] { return volume(first) == 0.0; }));
+	CHECK(volume(second) == 5.0);
+}
+
+TEST_CASE("the inspector's random generators keep the values they show when their target changes unit", "[ui]")
+{
+	Window window;
+	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 1; }));
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	for (const char* section : {"basics", "routing"})
+		window.click(".inspector [section=" + std::string(section) + "] .section-header");
+	const auto random = [&] { return window.channel(keys).at("modifiers").at("random")[1]; };
+	const std::string target = ".inspector select[control=modifiers-random-1-target]";
+	const std::string minimum = ".inspector valuefield[control=modifiers-random-1-minimum]";
+	const std::string maximum = ".inspector valuefield[control=modifiers-random-1-maximum]";
+	// Moves the target's choice by steps in its list: off, position, pitch, velocity, length.
+	const auto choose = [&](const char* key, int steps)
+	{
+		window.click(target);
+		for (int i = 0; i < steps; ++i)
+			window.app.ui().key(std::nullopt, key);
+		window.click(target);
+	};
+	constexpr int64_t perShown = time::g_ticksPerQuarter / 480;
+	window.call("channel.set",
+		{{"channel", window.channel(keys).at("id")},
+			{"modifiers", {{"random", {Json::object(), {{"target", "pitch"}, {"minimum", -12}, {"maximum", 12}}}}}}});
+	REQUIRE(window.shows(minimum, "-12"));
+
+	// Pitch to Position: the same numbers in ticks of 480 to a quarter note, with the limits of ticks, as one undo
+	// step.
+	const int64_t position = window.historyPosition();
+	choose("Up", 1);
+	REQUIRE(window.app.waitUntil([&] { return random().at("target") == "position"; }));
+	CHECK(random() == Json{{"target", "position"}, {"minimum", -12 * perShown}, {"maximum", 12 * perShown}});
+	CHECK(window.historyPosition() == position + 1);
+	CHECK(window.shows(minimum, "-12"));
+	CHECK(window.shows(maximum, "12"));
+	REQUIRE(window.app.waitUntil([&] { return attribute(window.app, maximum, "max") == "480"; }));
+
+	// Length is in ticks too: the values stay; its maximum goes up to a quarter note.
+	choose("Down", 3);
+	REQUIRE(window.app.waitUntil([&] { return random().at("target") == "length"; }));
+	CHECK(random().at("minimum") == -12 * perShown);
+	window.type(maximum, "480");
+	REQUIRE(window.app.waitUntil([&] { return random().at("maximum") == engine::midi::g_maxRandomTicks; }));
+
+	// Back to Velocity: the numbers shown, kept within -127 to 127, which are its limits again.
+	choose("Up", 1);
+	REQUIRE(window.app.waitUntil([&] { return random().at("target") == "velocity"; }));
+	CHECK(random() == Json{{"target", "velocity"}, {"minimum", -12}, {"maximum", 127}});
+	CHECK(window.shows(minimum, "-12"));
+	CHECK(window.shows(maximum, "127"));
+	REQUIRE(window.app.waitUntil([&] { return attribute(window.app, minimum, "min") == "-127"; }));
+	CHECK(attribute(window.app, maximum, "max") == "127");
 }
 
 TEST_CASE("a MIDI modifier or a part's transpose dragged back to where it started while the engine answers late ends "

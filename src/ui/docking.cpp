@@ -885,8 +885,30 @@ namespace gnubase::ui
 	void Docking::setSectionHidden(
 		const std::string& window, const std::string& set, const std::string& id, bool hidden)
 	{
+		if (changeSection(window, set, id, hidden))
+		{
+			save();
+			apply();
+		}
+	}
+
+	void Docking::showAllSections(const std::string& window, const std::string& set)
+	{
+		// One save for all, not one for each section (#566).
+		bool changed = false;
+		for (const std::string& id : sections(window, set))
+			changed = changeSection(window, set, id, false) || changed;
+		if (changed)
+		{
+			save();
+			apply();
+		}
+	}
+
+	bool Docking::changeSection(const std::string& window, const std::string& set, const std::string& id, bool hidden)
+	{
 		if (section(window, set, id) == nullptr)
-			return;
+			return false;
 		// Every hidden one, so that the defaults no longer count, and the order, so that a later set can tell which
 		// sections this one had; with those the window doesn't know. Without a saved hidden list those still have
 		// their defaults, which the window doesn't know either: the default list names them, so that they keep them.
@@ -909,8 +931,7 @@ namespace gnubase::ui
 			json.erase("default");
 		else
 			json["default"] = defaults;
-		save();
-		apply();
+		return true;
 	}
 
 	void Docking::resetSections(const std::string& window, const std::string& set)
@@ -1682,12 +1703,8 @@ namespace gnubase::ui
 			}
 			else if (const Rml::Element* all = closestWith(target, "setup-all"); all != nullptr && !window.empty())
 			{
-				later(
-					[this, window = std::move(window), set = attribute(*all, "setup-all")]
-					{
-						for (const std::string& id : sections(window, set))
-							setSectionHidden(window, set, id, false);
-					});
+				later([this, window = std::move(window), set = attribute(*all, "setup-all")]
+					{ showAllSections(window, set); });
 			}
 			else if (const Rml::Element* button = closestWith(target, "id");
 				button != nullptr && button->GetId() == "dock")

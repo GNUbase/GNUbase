@@ -356,7 +356,9 @@ namespace gnubase::ui
 						R"(<span class="separator"/>)"
 						R"(<button class="key-input" setting="showExpression" title="Show Note Expression Data">)"
 						R"(Expression</button><button class="key-input" setting="expressionDoubleClick")"
-						R"( title="Double-Click Opens Note Expression Editor">Edit Expression</button>)")) +
+						R"( title="Double-Click Opens Note Expression Editor">Edit Expression</button>)"
+						R"(<button class="key-input" setting="indicateTranspositions" title="Indicate Transpositions">)"
+						R"(Transpositions</button>)")) +
 			(drum ? R"(<span class="separator"/><button id="drum-map" menu="drum-map-menu)" + m_menuSuffix +
 						R"(" title="Drum Map"/>)"
 						R"(<button class="key-input" setting="pitchVisibility" title="Pitch Visibility On/Off">)"
@@ -912,7 +914,7 @@ namespace gnubase::ui
 		root->QuerySelectorAll(keys, ".key-editor-key");
 		std::vector<bool> lit(g_pitches, false);
 		for (const Note* note : selectedNotes())
-			lit[static_cast<size_t>(note->pitch)] = true;
+			lit[static_cast<size_t>(shownPitch(*note))] = true;
 		for (Rml::Element* key : keys)
 			setClass(key, "selected", lit[static_cast<size_t>(std::stoi(attribute(*key, "pitch")))]);
 
@@ -1085,7 +1087,7 @@ namespace gnubase::ui
 		int low = g_pitches;
 		int high = -1;
 		for (const Note& note : m_notes)
-			if (const int row = m_rowOf.at(static_cast<size_t>(note.pitch)); row >= 0)
+			if (const int row = m_rowOf.at(static_cast<size_t>(shownPitch(note))); row >= 0)
 			{
 				low = std::min(low, row);
 				high = std::max(high, row);
@@ -1124,7 +1126,7 @@ namespace gnubase::ui
 						++next; // without an element (render)
 					if (next < m_notes.size())
 					{
-						place(child, m_notes[next].start, m_notes[next].length, m_notes[next].pitch);
+						place(child, m_notes[next].start, m_notes[next].length, shownPitch(m_notes[next]));
 						++next;
 					}
 				}
@@ -1220,7 +1222,7 @@ namespace gnubase::ui
 		for (const Note* each : selection)
 			if (std::make_pair(each->part, each->id) == m_expressionNote)
 				centered = each;
-		const double row = m_rowOf.at(static_cast<size_t>(centered->pitch));
+		const double row = m_rowOf.at(static_cast<size_t>(shownPitch(*centered)));
 		double height = grid != nullptr ? grid->GetBox().GetSize(Rml::BoxArea::Border).y : 0.0;
 		// The rows' height as the pitch zoom sets it, which the layout has not caught up with yet (setPitchZoom).
 		if (Rml::Element* first = grid != nullptr ? grid->QuerySelector(".key-editor-row") : nullptr)
@@ -1618,8 +1620,34 @@ namespace gnubase::ui
 		Json notes = Json::array();
 		for (const int64_t start : starts)
 			notes.push_back({{"position", start - part.start}, {"length", std::max<int64_t>(length, 1)},
-				{"pitch", pitch}, {"velocity", inserted}});
+				// Shown at the pitch it plays with Indicate Transpositions, under the mouse.
+				{"pitch", std::clamp(pitch - transposition(part.id, start), 0, g_pitches - 1)},
+				{"velocity", inserted}});
 		m_binding.send("note.add", {{"part", part.id}, {"notes", notes}});
+	}
+
+	int KeyEditor::transposition(uint64_t part, int64_t ticks) const
+	{
+		const auto found = m_view.find("transpositions");
+		if (m_drum || found == m_view.end())
+			return 0;
+		for (const Json& each : *found)
+		{
+			if (each.at("part") != part)
+				continue;
+			const Json& steps = each.at("steps");
+			int semitones = steps.empty() ? 0 : steps.front().at("semitones").get<int>();
+			for (const Json& step : steps)
+				if (step.at("position").get<int64_t>() <= ticks)
+					semitones = step.at("semitones").get<int>();
+			return semitones;
+		}
+		return 0;
+	}
+
+	int KeyEditor::shownPitch(const Note& note) const
+	{
+		return std::clamp(note.pitch + transposition(note.part, note.start), 0, g_pitches - 1);
 	}
 
 	int KeyEditor::shifted(int pitch, int rows) const
@@ -2055,7 +2083,7 @@ namespace gnubase::ui
 			// Near an end the press resizes, elsewhere it moves (pp. 1213-1214); Acoustic Feedback plays the note.
 			m_gesture = edgeGesture(target, event);
 			if (m_view.value("acousticFeedback", false))
-				sound(pressed->pitch);
+				sound(shownPitch(*pressed)); // as it plays, also with Indicate Transpositions
 			if (!selected(*pressed))
 				select({{pressed->part, pressed->id}});
 			return;
@@ -2333,10 +2361,15 @@ namespace gnubase::ui
 			? m_rowOf.at(static_cast<size_t>(pitch)) - m_rowOf.at(static_cast<size_t>(m_pressedAt.second))
 			: 0;
 		const int64_t dt = delta(m_gesture, ticks, rows);
+		// With Indicate Transpositions a note dragged to another time plays with the transposition there, as after the
+		// release: the preview and the feedback show the pitch it lands on.
+		const auto landed = [this](const Note& note, int64_t start, int pitch)
+		{ return std::clamp(pitch + transposition(note.part, start), 0, g_pitches - 1); };
 		// Acoustic Feedback: the pressed note at the pitch it is dragged to.
-		if (const int now = shifted(m_pressed->pitch, rows); m_view.value("acousticFeedback", false) &&
-			m_gesture == Gesture::Move && now >= 0 && m_sounding && m_sounding->second != now)
-			sound(now);
+		if (const int to = shifted(m_pressed->pitch, rows);
+			m_view.value("acousticFeedback", false) && m_gesture == Gesture::Move && to >= 0 && m_sounding)
+			if (const int now = landed(*m_pressed, m_pressed->start + dt, to); m_sounding->second != now)
+				sound(now);
 		for (int i = 0; i < notes->GetNumChildren(); ++i)
 		{
 			Rml::Element* element = notes->GetChild(i);
@@ -2344,13 +2377,21 @@ namespace gnubase::ui
 			if (shown == nullptr || !selected(*shown))
 				continue;
 			if (m_gesture == Gesture::Move)
+			{
+				const int to = shifted(shown->pitch, rows);
 				place(*element, shown->start + dt, shown->length,
-					shifted(shown->pitch, rows) >= 0 ? shifted(shown->pitch, rows) : shown->pitch);
+					landed(*shown, shown->start + dt, to >= 0 ? to : shown->pitch));
+			}
 			else if (m_gesture == Gesture::ResizeEnd)
-				place(*element, shown->start, std::max<int64_t>(shown->length + dt, 1), shown->pitch);
+			{
+				place(*element, shown->start, std::max<int64_t>(shown->length + dt, 1), shownPitch(*shown));
+			}
 			else
-				place(*element, shown->start + std::min(dt, shown->length - 1),
-					shown->length - std::min(dt, shown->length - 1), shown->pitch);
+			{
+				const int64_t moved = std::min(dt, shown->length - 1);
+				place(*element, shown->start + moved, shown->length - moved,
+					landed(*shown, shown->start + moved, shown->pitch));
+			}
 		}
 	}
 

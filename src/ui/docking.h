@@ -136,6 +136,8 @@ namespace gnubase::ui
 		void moveSection(
 			const std::string& window, const std::string& set, const std::string& id, const std::string& before);
 		void setSectionHidden(const std::string& window, const std::string& set, const std::string& id, bool hidden);
+		// Show All: every section of the set, saving the layout once.
+		void showAllSections(const std::string& window, const std::string& set);
 		std::vector<std::string> sections(const std::string& window, const std::string& set) const; // in order
 		// Reset All: the set's default order and hidden sections. reset hears of every Reset All, also of a set that
 		// had them already, e.g. to fit the window to its sections again (#1612).
@@ -267,6 +269,9 @@ namespace gnubase::ui
 		// window it was.
 		void reload(Rml::ElementDocument& old, Rml::ElementDocument& loaded);
 		void save();
+		// Hides or shows a section in the layout, without saving or applying it; false if the window has no such
+		// section.
+		bool changeSection(const std::string& window, const std::string& set, const std::string& id, bool hidden);
 		// Opens, closes and places the app's windows as ui.layout says.
 		void applyWindows();
 		// Save Preset's dialog for the set, in the context of the setup pane's document; its close event saves it.

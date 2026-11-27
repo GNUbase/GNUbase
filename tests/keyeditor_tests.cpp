@@ -421,6 +421,45 @@ TEST_CASE("the key editor's Acoustic Feedback is view state and off at first", "
 	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"acousticFeedback", "on"}}).empty());
 }
 
+TEST_CASE("Indicate Transpositions gives the transposition the parts' notes play with", "[unit]")
+{
+	// Indicate Transpositions (#1766, reference manual pp. 419, 1260): off at first, without transpositions.
+	Fixture f;
+	CHECK(f.view().at("indicateTranspositions") == false);
+	CHECK(f.view().at("transpositions") == Json::array());
+	const int64_t revision = f.call("project.revision").at("revision").get<int64_t>();
+	const auto steps = [&f]
+	{
+		const Json shown = f.call("editor.set", {{"editor", "window"}, {"indicateTranspositions", true}});
+		REQUIRE(shown.at("transpositions").size() == 1);
+		CHECK(shown.at("transpositions").at(0).at("part") == f.part);
+		return shown.at("transpositions").at(0).at("steps");
+	};
+	const auto step = [](int64_t position, int semitones)
+	{ return Json{{"position", position}, {"semitones", semitones}}; };
+	CHECK(steps() == Json::array({step(4 * g_quarter, 0)}));
+	CHECK(f.call("project.revision").at("revision").get<int64_t>() == revision); // no undo step
+
+	// A transpose event within the part, one before it and one after it; the root key's step and the part's own
+	// transpose add to them.
+	f.call("transpose.add", {{"position", 6 * g_quarter}, {"value", 3}});
+	f.call("transpose.add", {{"position", 0}, {"value", -1}});
+	f.call("transpose.add", {{"position", 8 * g_quarter}, {"value", 7}});
+	CHECK(steps() == Json::array({step(4 * g_quarter, -1), step(6 * g_quarter, 3)}));
+	f.call("project.set", {{"rootKey", "D"}});
+	f.call("midiPart.set", {{"part", f.part}, {"rootKey", "C"}, {"transpose", 12}});
+	CHECK(steps() == Json::array({step(4 * g_quarter, 13), step(6 * g_quarter, 17)}));
+	// Muted transpose events leave the rest, which no longer changes within the part.
+	f.call("transpose.setTrack", {{"mute", true}});
+	CHECK(steps() == Json::array({step(4 * g_quarter, 14)}));
+	f.call("midiPart.set", {{"part", f.part}, {"globalTranspose", "independent"}});
+	CHECK(steps() == Json::array({step(4 * g_quarter, 12)}));
+
+	f.call("editor.set", {{"editor", "window"}, {"indicateTranspositions", false}});
+	CHECK(f.view().at("transpositions") == Json::array());
+	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"indicateTranspositions", "on"}}).empty());
+}
+
 TEST_CASE("the note expression settings of the key editor are view state", "[unit]")
 {
 	Fixture f;

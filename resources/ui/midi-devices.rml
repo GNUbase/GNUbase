@@ -82,6 +82,12 @@
 			flex: 1;
 		}
 
+		/* Presets are dragged onto a bank, folder or preset to move them there. */
+		#patch-banks listitem.preset
+		{
+			drag: drag-drop;
+		}
+
 		#bank-assignment span
 		{
 			display: flex;
@@ -131,36 +137,86 @@
 			return text
 		end
 
-		-- The selected device's banks, with their folders and patches, as a tree.
+		-- A folder's path, with / between nested folders, without empty parts; "" is the bank itself.
+		local function normal(path)
+			local parts = {}
+			for part in tostring(path or ""):gmatch("[^/]+") do
+				parts[#parts + 1] = part
+			end
+			return table.concat(parts, "/")
+		end
+
+		local function parent(path)
+			return path:match("^(.*)/[^/]*$") or ""
+		end
+
+		-- Whether path is folder or inside it.
+		local function inside(path, folder)
+			return path == folder or path:sub(1, #folder + 1) == folder .. "/"
+		end
+
+		-- A bank's folders as a tree. Each folder lists its subfolders and its own presets (as one group) in the order
+		-- they first appear in the bank's patches, then the folders that New Folder made (bank.folders), which may be
+		-- empty. Also returns the folders' paths, in order: a folder row's value is its index there.
+		local function tree(bank)
+			local root, paths = {entries = {}, children = {}}, {}
+			local function node(path)
+				local current = root
+				for name in normal(path):gmatch("[^/]+") do
+					local child = current.children[name]
+					if child == nil then
+						paths[#paths + 1] = (current.path and current.path .. "/" or "") .. name
+						child = {name = name, path = paths[#paths], index = #paths, entries = {}, children = {}}
+						current.children[name] = child
+						current.entries[#current.entries + 1] = child
+					end
+					current = child
+				end
+				return current
+			end
+			for p, patch in ipairs(bank.patches) do
+				local folder = node(patch.folder)
+				if folder.patches == nil then
+					folder.patches = {}
+					folder.entries[#folder.entries + 1] = folder.patches
+				end
+				folder.patches[#folder.patches + 1] = p
+			end
+			for _, path in ipairs(bank.folders or {}) do
+				node(path)
+			end
+			return root, paths
+		end
+
+		-- The selected device's banks, with their folders and patches, as a tree. Presets are dragged onto a bank,
+		-- folder or preset to move them there.
 		local function showPatches(document)
 			local device = manager.devices[selectedName(document)]
 			local rows = {}
-			local function row(level, value, text)
-				rows[#rows + 1] = '<listitem level="' .. level .. '" value="' .. value .. '" expanded="">' .. text ..
-					"</listitem>"
+			local function row(level, value, text, class)
+				rows[#rows + 1] = '<listitem level="' .. level .. '" value="' .. value .. '" expanded=""' ..
+					(class and ' class="' .. class .. '"' or "") .. ">" .. text .. "</listitem>"
 			end
+			local function folder(b, bank, node, level)
+				for _, entry in ipairs(node.entries) do
+					if entry.path ~= nil then
+						row(level, "folder" .. b .. "-" .. entry.index, escape(entry.name))
+						folder(b, bank, entry, level + 1)
+					else
+						for _, p in ipairs(entry) do
+							local patch = bank.patches[p]
+							row(level, "patch" .. b .. "-" .. p, '<span class="patch-name">' .. escape(patch.name) ..
+								'</span><span class="patch-program">' .. numbers(patch) .. "</span>", "preset")
+						end
+					end
+				end
+			end
+			manager.folders = {}
 			for b, bank in ipairs(device and device.banks or {}) do
 				row(0, "bank" .. b, escape(bank.name))
-				local groups, order = {}, {}
-				for p, patch in ipairs(bank.patches) do
-					local folder = patch.folder or ""
-					if groups[folder] == nil then
-						groups[folder] = {}
-						order[#order + 1] = folder
-					end
-					groups[folder][#groups[folder] + 1] = p
-				end
-				for _, folder in ipairs(order) do
-					if folder ~= "" then
-						row(1, "folder" .. b .. "-" .. groups[folder][1], escape(folder))
-					end
-					for _, p in ipairs(groups[folder]) do
-						local patch = bank.patches[p]
-						row(folder == "" and 1 or 2, "patch" .. b .. "-" .. p,
-							'<span class="patch-name">' .. escape(patch.name) ..
-							'</span><span class="patch-program">' .. numbers(patch) .. "</span>")
-					end
-				end
+				local root
+				root, manager.folders[b] = tree(bank)
+				folder(b, bank, root, 1)
 			end
 			document:GetElementById("patch-banks").inner_rml = table.concat(rows)
 			document:GetElementById("patch-banks"):SetAttribute("value", "")
@@ -262,12 +318,20 @@
 				device.bankAssignment = result.device.bankAssignment
 			end
 		end
+		-- What a row's value names: the device, the bank, the preset (patch rows), the kind of row, the bank's and
+		-- the preset's index, and the folder that a folder row is, or the one a preset is in ("" for the bank).
+		local function item(device, key)
+			local kind, b, p = tostring(key or ""):match("^(%a+)(%d+)%-?(%d*)$")
+			b, p = tonumber(b), tonumber(p)
+			local bank = device and device.banks[b]
+			local patch = kind == "patch" and bank and bank.patches[p] or nil
+			local folder = kind == "folder" and (manager.folders[b] or {})[p] or normal(patch and patch.folder)
+			return device, bank, patch, kind, b, p, folder
+		end
+
 		local function selection(document)
-			local device = manager.devices[selectedName(document)]
-			local key = tostring(document:GetElementById("patch-banks"):GetAttribute("value") or "")
-			local kind, b, p = key:match("^(%a+)(%d+)%-?(%d*)$")
-			local bank = device and device.banks[tonumber(b)]
-			return device, bank, bank and bank.patches[tonumber(p)], kind, tonumber(b), tonumber(p)
+			return item(manager.devices[selectedName(document)],
+				document:GetElementById("patch-banks"):GetAttribute("value"))
 		end
 
 		local function enable(document, id, enabled)
@@ -281,13 +345,14 @@
 
 		-- Selection fills the editor; Enable Edit protects both the controls and their handlers.
 		function manager.edit(document)
-			local device, bank, patch, kind = selection(document)
+			local device, bank, patch, kind, _, _, folder = selection(document)
 			local editing = document:GetElementById("enable-edit"):HasAttribute("checked")
 			local item = kind == "patch" and patch or kind == "bank" and bank or nil
-			if kind == "folder" and patch ~= nil then
-				item = {name = patch.folder}
+			if kind == "folder" and folder ~= "" then
+				item = {name = folder:match("[^/]*$")}
 			end
 			enable(document, "create-bank", editing and device ~= nil)
+			enable(document, "new-folder", editing and bank ~= nil)
 			enable(document, "new-preset", editing and bank ~= nil)
 			enable(document, "multiple-presets", editing and bank ~= nil)
 			enable(document, "preset-count", editing and bank ~= nil)
@@ -301,28 +366,80 @@
 			end
 		end
 
-		function manager.change(document, action)
+		-- Changes the selected device's banks at the selection, or for a move the dragged preset to the row target:
+		-- action is bank, folder, preset, multiple, remove, apply or move.
+		function manager.change(document, action, target)
 			if not document:GetElementById("enable-edit"):HasAttribute("checked") then
 				return
 			end
 			local name = selectedName(document)
-			local _, _, _, kind, b, p = selection(document)
+			local _, _, _, kind, b, p, folder = selection(document)
+			if action == "move" then
+				_, _, _, kind, b, p = item(manager.devices[name], manager.dragged)
+			end
 			local function value(id)
 				return tostring(document:GetElementById(id):GetAttribute("value") or "")
 			end
 			busy = true -- Engine events arrive during the call; reload once the edit has completed.
-			local ok, result = pcall(function()
+			local ok, result, made = pcall(function()
 				local device = gnubase.settings.get{key = "midi.devices"}.value[name]
 				assert(device ~= nil, "Select an installed device")
 				local bank = device.banks[b]
-				local key = ""
+				local key, made = "", nil -- made: a folder to select once the device is shown again
 				if action == "bank" then
 					device.banks[#device.banks + 1] = {name = "New Bank", patches = {}}
 					key = "bank" .. #device.banks
 				else
 					assert(bank ~= nil, "Select a bank")
-					local patch = bank.patches[p]
-					if action == "preset" or action == "multiple" then
+					local patch = kind == "patch" and bank.patches[p] or nil
+					if action == "folder" then
+						-- New Folder (p. 1111): in the selected bank or folder, or in the selected preset's folder.
+						local taken = {}
+						for _, path in ipairs(manager.folders[b] or {}) do
+							taken[path] = true
+						end
+						local function path(number)
+							return (folder ~= "" and folder .. "/" or "") .. "New Folder" ..
+								(number > 1 and " " .. number or "")
+						end
+						local number = 1
+						while taken[path(number)] do
+							number = number + 1
+						end
+						made = path(number)
+						bank.folders = bank.folders or {}
+						bank.folders[#bank.folders + 1] = made
+					elseif action == "move" then
+						-- Drag and drop (p. 1111): a preset into the bank or folder dropped on, or before the preset
+						-- dropped on, in its folder.
+						assert(patch ~= nil, "Drag a preset")
+						local _, to, before, toKind, toB, toP, toFolder = item(device, target)
+						assert(to ~= nil, "Drop the preset on a bank, folder or preset")
+						key = "patch" .. b .. "-" .. p
+						if before ~= patch then
+							local from = normal(patch.folder)
+							table.remove(bank.patches, p)
+							patch.folder = toFolder ~= "" and toFolder or nil
+							local at = #to.patches + 1
+							if toKind == "patch" then
+								at = toP - ((toB == b and toP > p) and 1 or 0)
+							end
+							table.insert(to.patches, at, patch)
+							key = "patch" .. toB .. "-" .. at
+							-- A folder stays until it is removed, also once its last preset has been moved out.
+							local kept = from == ""
+							for _, other in ipairs(bank.patches) do
+								kept = kept or inside(normal(other.folder), from)
+							end
+							for _, path in ipairs(bank.folders or {}) do
+								kept = kept or inside(normal(path), from)
+							end
+							if not kept then
+								bank.folders = bank.folders or {}
+								bank.folders[#bank.folders + 1] = from
+							end
+						end
+					elseif action == "preset" or action == "multiple" then
 						local count = 1
 						if action == "multiple" then
 							count = tonumber(value("preset-count"))
@@ -334,7 +451,7 @@
 							bank.patches[#bank.patches + 1] = {
 								name = action == "multiple" and (patch and patch.name or "Preset") .. " " .. i or "New Preset",
 								program = first + i - 1, bank = action == "multiple" and patch and patch.bank or nil,
-								folder = patch and patch.folder or nil}
+								folder = folder ~= "" and folder or nil}
 						end
 						key = "patch" .. b .. "-" .. #bank.patches
 					elseif action == "remove" then
@@ -347,23 +464,27 @@
 						elseif kind == "patch" and patch ~= nil then
 							table.remove(bank.patches, p)
 							key = "bank" .. b
-						elseif kind == "folder" and patch ~= nil then
+						elseif kind == "folder" and folder ~= "" then -- with the folders and presets inside it
 							for i = #bank.patches, 1, -1 do
-								if bank.patches[i].folder == patch.folder then
+								if inside(normal(bank.patches[i].folder), folder) then
 									table.remove(bank.patches, i)
+								end
+							end
+							for i = #(bank.folders or {}), 1, -1 do
+								if inside(normal(bank.folders[i]), folder) then
+									table.remove(bank.folders, i)
 								end
 							end
 							key = "bank" .. b
 						end
 					elseif action == "apply" then
-						local item = kind == "patch" and patch or kind == "bank" and bank or nil
-						if kind == "folder" and patch ~= nil then
-							item = {name = patch.folder}
+						local selected = kind == "patch" and patch or kind == "bank" and bank or nil
+						if kind == "folder" and folder ~= "" then
+							selected = {}
 						end
-						assert(item ~= nil, "Select a bank or preset")
+						assert(selected ~= nil, "Select a bank or preset")
 						assert(value("patch-name"):find("%S"), "Enter a name")
-						local oldName = item.name
-						item.name = value("patch-name")
+						selected.name = value("patch-name")
 						if kind == "patch" then
 							local program, number = tonumber(value("patch-program")), tonumber(value("patch-bank"))
 							assert(program and program % 1 == 0 and program >= 1 and program <= 128,
@@ -375,31 +496,57 @@
 							patch.folder = value("patch-folder") ~= "" and value("patch-folder") or nil
 						end
 						key = kind == "patch" and "patch" .. b .. "-" .. p or "bank" .. b
-						if kind == "folder" then
-							for _, candidate in ipairs(bank.patches) do
-								if candidate.folder == oldName then
-									candidate.folder = item.name
-								end
+						if kind == "folder" then -- renamed: the folders and presets inside it move along
+							assert(not selected.name:find("/"), "A folder's name can't contain /")
+							made = (parent(folder) ~= "" and parent(folder) .. "/" or "") .. selected.name
+							local function renamed(path)
+								path = normal(path)
+								return inside(path, folder) and made .. path:sub(#folder + 1) or nil
 							end
-							for i, candidate in ipairs(bank.patches) do
-								if candidate.folder == item.name then
-									key = "folder" .. b .. "-" .. i
-									break
-								end
+							for _, candidate in ipairs(bank.patches) do
+								candidate.folder = renamed(candidate.folder) or candidate.folder
+							end
+							for i, path in ipairs(bank.folders or {}) do
+								bank.folders[i] = renamed(path) or path
 							end
 						end
 					end
 				end
 				gnubase.midiDevice.set{name = name, banks = device.banks, bankAssignment = device.bankAssignment or {}}
-				return key
+				return key, made
 			end)
 			busy = false
 			report(document, ok and "" or tostring(result))
 			if ok then
 				manager.load(document, name)
+				for index, path in ipairs(made and manager.folders[b] or {}) do
+					if path == made then
+						result = "folder" .. b .. "-" .. index
+					end
+				end
 				document:GetElementById("patch-banks"):SetAttribute("value", result)
 				manager.edit(document)
 			end
+		end
+
+		-- Drag and drop: the preset row that a drag starts on, and the row it ends on.
+		local function rowValue(element)
+			while element ~= nil and element.tag_name ~= "listitem" do
+				element = element.parent_node
+			end
+			return element and element:GetAttribute("value")
+		end
+
+		function manager.drag(event)
+			manager.dragged = rowValue(event.target_element)
+		end
+
+		function manager.drop(document, event)
+			local target = rowValue(event.target_element)
+			if manager.dragged ~= nil and target ~= nil then
+				manager.change(document, "move", target)
+			end
+			manager.dragged = nil
 		end
 
 		function manager.key(document, event)
@@ -460,13 +607,15 @@
 			</div>
 			<div class="patches">
 				<listview id="patch-banks" title="Patch Banks" onchange="MidiDevices.edit(document)"
-					onkeydown="MidiDevices.key(document, event)"/>
+					onkeydown="MidiDevices.key(document, event)" ondragstart="MidiDevices.drag(event)"
+					ondragdrop="MidiDevices.drop(document, event)"/>
 				<div class="row">
 					<label><input type="checkbox" class="checkbox" id="enable-edit"
 						onchange="MidiDevices.edit(document)"/>Enable Edit</label>
 				</div>
 				<div class="row">
 					<button id="create-bank" disabled onclick="MidiDevices.change(document, 'bank')">Create Bank</button>
+					<button id="new-folder" disabled onclick="MidiDevices.change(document, 'folder')">New Folder</button>
 					<button id="new-preset" disabled onclick="MidiDevices.change(document, 'preset')">New Preset</button>
 					<button id="remove-patch" disabled onclick="MidiDevices.change(document, 'remove')">Remove</button>
 				</div>

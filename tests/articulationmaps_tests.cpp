@@ -942,6 +942,20 @@ TEST_CASE("sends before the modifiers get the sound slots' key switches", "[unit
 	CHECK(channel.preNotes[0].start == 24000 - 1);
 	CHECK(channel.preNotes[1].pitch == 60);
 	CHECK_FALSE(channel.preNotes[1].keySwitch);
+
+	// And the slots' controllers: a Staccato note's controller 32 at 64.
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 2 * g_quarter}, {"length", 60}, {"pitch", 61}, {"velocity", 0.5},
+					{"articulations", {"Staccato"}}}}}});
+	const engine::RenderChannel staccato = f.rendered();
+	CHECK(std::any_of(staccato.preControllers.begin(), staccato.preControllers.end(),
+		[](const engine::RenderController& controller)
+		{
+			return controller.type == engine::ControllerType::Control && controller.number == 32 &&
+				controller.value == engine::midi::controllerFromMidi1(64);
+		}));
 }
 
 TEST_CASE("Merge MIDI in Loop takes the directions in effect where the range starts", "[unit]")

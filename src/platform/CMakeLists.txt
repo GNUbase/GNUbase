@@ -27,6 +27,7 @@ add_library(gnubase-platform STATIC
 	rt/triplebuffer.h
 	rt/workerpool.cpp rt/workerpool.h
 	sharedmemory.cpp sharedmemory.h
+	text.h
 	thread.cpp thread.h)
 if(WIN32)
 	target_sources(gnubase-platform PRIVATE

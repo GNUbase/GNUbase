@@ -171,9 +171,11 @@ namespace gnubase::ui
 
 	void Shell::setUiScale(float scale)
 	{
-		m_uiScale = scale;
+		const float before = std::exchange(m_uiScale, scale);
 		for (auto& [id, window] : m_open)
 			refresh(*window);
+		if (m_uiScaleChanged && scale != before)
+			m_uiScaleChanged(before, scale);
 	}
 
 	void Shell::setTheme(const std::string& name)

@@ -2,10 +2,10 @@
 #include "engine/jobs/jobs.h"
 
 #include "engine/engine.h"
+#include "platform/text.h"
 
 #include <algorithm>
 #include <atomic>
-#include <cctype>
 #include <future>
 #include <system_error>
 #include <thread>
@@ -24,9 +24,7 @@ namespace gnubase::engine
 			std::string text = std::filesystem::absolute(folder, error).lexically_normal().generic_u8string();
 			while (text.size() > 1 && text.back() == '/')
 				text.pop_back();
-			std::transform(text.begin(), text.end(), text.begin(),
-				[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
-			return text;
+			return text::asciiLower(std::move(text));
 		}
 
 		// Whether inner is outer or inside it; both comparable.

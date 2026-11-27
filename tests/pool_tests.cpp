@@ -360,6 +360,30 @@ TEST_CASE("pool.removeUnused removes the clips that no event uses and the files 
 	CHECK(run(song.client, "project.get").at("media").size() == 3);
 }
 
+TEST_CASE("media.cleanup looks in the media folder that a load of the project file extracts into", "[integration]")
+{
+	// Named after the file as its versions are (#798): Mix v2.1 media for a file Mix v2.1, not Mix v2 media, which is
+	// Mix v2.dawproject's.
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	writeFile(dir.path() / "library" / "take.wav", 480);
+	run(client, "media.add", {{"path", utf8(dir.path() / "library" / "take.wav")}});
+	const fs::path file = dir.path() / "Mix v2.1";
+	run(client, "project.save", {{"path", utf8(file)}});
+	run(client, "project.load", {{"path", utf8(file)}}); // extracts it into Mix v2.1 media
+	gnubase::test::settlePeaks(client);
+	const fs::path left = dir.path() / "Mix v2.1 media" / "audio" / "2-take.wav";
+	writeFile(left, 240);
+	writeFile(dir.path() / "Mix v2 media" / "audio" / "take.wav", 240);
+	std::vector<std::string> files;
+	const Json result = run(client, "media.cleanup");
+	for (const Json& path : result.at("files"))
+		if (fs::u8path(path.get<std::string>()).extension() == ".wav")
+			files.push_back(path.get<std::string>());
+	CHECK(files == std::vector<std::string>{utf8(left)});
+}
+
 TEST_CASE(
 	"media.cleanup removes the files of the media folders that neither the project nor its file uses", "[integration]")
 {

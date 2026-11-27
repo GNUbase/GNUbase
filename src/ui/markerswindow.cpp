@@ -14,7 +14,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cmath>
 #include <sstream>
 #include <string>
@@ -33,6 +32,12 @@ namespace gnubase::ui
 		// The columns after the locate column, in their usual order, and their headers.
 		constexpr std::array<const char*, 6> g_columns = {"number", "type", "position", "end", "length", "description"};
 		constexpr std::array<const char*, 6> g_headers = {"ID", "Type", "Position", "End", "Length", "Description"};
+
+		// The columns that can be hidden: all but the position (and the locate column, which is none of them).
+		bool hideable(const std::string& column)
+		{
+			return column != "position";
+		}
 
 		// The user settings the window follows.
 		constexpr std::array<const char*, 5> g_settings = {"ui.markerColumns", "ui.markersAutoScroll",
@@ -85,11 +90,49 @@ namespace gnubase::ui
 			return std::find(g_columns.begin(), g_columns.end(), name) != g_columns.end();
 		}
 
-		std::string lower(std::string value)
+		// A letter in lower case: those of ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic, which have capital and
+		// small forms in pairs (no locale is needed). Anything else stays.
+		char32_t lowerCase(char32_t c)
 		{
-			std::transform(value.begin(), value.end(), value.begin(),
-				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-			return value;
+			const bool pairs = (c >= 0x100 && c <= 0x137 && c != 0x130) || (c >= 0x14A && c <= 0x177);
+			const bool oddPairs = (c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E);
+			if ((c >= 'A' && c <= 'Z') || (c >= 0xC0 && c <= 0xDE && c != 0xD7) || (c >= 0x391 && c <= 0x3A9) ||
+				(c >= 0x410 && c <= 0x42F))
+				return c + 0x20;
+			if (c >= 0x400 && c <= 0x40F)
+				return c + 0x50;
+			if (c == 0x178)
+				return 0xFF;
+			return (pairs && (c % 2) == 0) || (oddPairs && (c % 2) == 1) ? c + 1 : c;
+		}
+
+		// The code points of a UTF-8 text in lower case, to compare descriptions without regard to case; bytes that
+		// aren't UTF-8 count as the characters they stand for in Latin-1.
+		std::u32string lower(const std::string& value)
+		{
+			std::u32string folded;
+			for (size_t i = 0; i < value.size();)
+			{
+				const auto lead = static_cast<unsigned char>(value[i]);
+				size_t length = 1;
+				if (lead >= 0xF0)
+					length = 4;
+				else if (lead >= 0xE0)
+					length = 3;
+				else if (lead >= 0xC0)
+					length = 2;
+				char32_t c = length == 1 ? lead : (lead & (0xFFU >> (length + 1)));
+				size_t used = 1;
+				for (; used < length && i + used < value.size() &&
+					(static_cast<unsigned char>(value[i + used]) & 0xC0U) == 0x80U;
+					++used)
+					c = (c << 6) | (static_cast<unsigned char>(value[i + used]) & 0x3FU);
+				if (used != length)
+					c = lead; // not a whole sequence
+				folded.push_back(lowerCase(c));
+				i += used == length ? length : 1;
+			}
+			return folded;
 		}
 
 		// The order of two markers in a column, as -1, 0 or 1.
@@ -151,12 +194,16 @@ namespace gnubase::ui
 			columns.sort = sort->get<std::string>();
 		const auto descending = value.find("descending");
 		columns.descending = descending != value.end() && descending->is_boolean() && descending->get<bool>();
+		if (const auto hidden = value.find("hidden"); hidden != value.end() && hidden->is_array())
+			for (const char* column : g_columns)
+				if (hideable(column) && std::find(hidden->begin(), hidden->end(), Json(column)) != hidden->end())
+					columns.hidden.emplace_back(column);
 		return columns;
 	}
 
 	Json MarkersWindow::Columns::json() const
 	{
-		return {{"order", order}, {"widths", widths}, {"sort", sort}, {"descending", descending}};
+		return {{"order", order}, {"hidden", hidden}, {"widths", widths}, {"sort", sort}, {"descending", descending}};
 	}
 
 	MarkersWindow::MarkersWindow(engine::Engine& engine, EngineBinding& binding, Rml::ElementDocument& document)
@@ -286,6 +333,7 @@ namespace gnubase::ui
 				return; // as shown: the answer to the window's own change
 			m_columns = std::move(columns);
 			showHead();
+			showColumnMenu();
 			show();
 			return;
 		}
@@ -335,7 +383,8 @@ namespace gnubase::ui
 	}
 
 	// The header: the locate column, then the others in their order, the one the list is sorted by with .sorted (and
-	// .descending), at the widths the user gave them.
+	// .descending) and an arrow (.sort-arrow, which the style sheets turn to its direction), at the widths the user
+	// gave them.
 	void MarkersWindow::showHead()
 	{
 		if (!alive() || m_head == nullptr)
@@ -343,6 +392,8 @@ namespace gnubase::ui
 		std::string cells = R"(<td class="locate"/>)";
 		for (const std::string& column : m_columns.order)
 		{
+			if (m_columns.hides(column))
+				continue;
 			const auto index =
 				static_cast<size_t>(std::find(g_columns.begin(), g_columns.end(), column) - g_columns.begin());
 			std::string classes = column;
@@ -354,6 +405,8 @@ namespace gnubase::ui
 			cells += column;
 			cells += R"(">)";
 			cells += g_headers[index];
+			if (column == m_columns.sort)
+				cells += R"(<span class="sort-arrow"/>)";
 			cells += "</td>";
 		}
 		m_head->SetInnerRML(cells);
@@ -366,12 +419,25 @@ namespace gnubase::ui
 		}
 	}
 
+	// The Columns menu's items are on for the columns shown.
+	void MarkersWindow::showColumnMenu()
+	{
+		if (!alive())
+			return;
+		for (const char* column : g_columns)
+			if (hideable(column))
+				setChecked(m_document->GetElementById(std::string("column-") + column), !m_columns.hides(column));
+	}
+
 	void MarkersWindow::show()
 	{
 		m_listed = m_markers.of(m_markers.active);
 		std::stable_sort(m_listed.begin(), m_listed.end(),
 			[this](const MarkerItem& a, const MarkerItem& b)
 			{
+				// Position markers have no end or length: after the cycle markers, whichever way the list is sorted.
+				if ((m_columns.sort == "end" || m_columns.sort == "length") && a.cycle != b.cycle)
+					return a.cycle;
 				const int order = compare(m_columns.sort, a, b);
 				if (order != 0)
 					return m_columns.descending ? order > 0 : order < 0;
@@ -406,6 +472,8 @@ namespace gnubase::ui
 			rows += R"(<td class="locate"><svg class="icon locate-arrow" src="../icons/transport-play.svg"/></td>)";
 			for (const std::string& column : m_columns.order)
 			{
+				if (m_columns.hides(column))
+					continue;
 				if (column == "number")
 					rows += field(column, std::to_string(marker.number));
 				else if (column == "type")
@@ -429,6 +497,10 @@ namespace gnubase::ui
 		if (m_list != nullptr)
 			m_list->SetAttribute("value", value);
 		showCursor();
+		// Markers that are not listed any more are not selected: with Sync Selection the project window follows, as it
+		// does when the user changes the selection.
+		if (m_onSelect && selection().size() != selected.size())
+			m_onSelect(selection());
 	}
 
 	bool MarkersWindow::setCursor(int64_t sample)
@@ -503,6 +575,10 @@ namespace gnubase::ui
 			{
 				commit(*target);
 			}
+			else if (target != nullptr && target->GetTagName() == "input" && inside(target, m_rows) && !m_rebuilding)
+			{
+				target->SetAttribute("edited", ""); // text was typed
+			}
 			break;
 		case Rml::EventId::Blur:
 			if (target != nullptr && target->GetTagName() == "input" && inside(target, m_rows))
@@ -538,7 +614,8 @@ namespace gnubase::ui
 	}
 
 	// Where a press at x on the header grabs it: the column it moves or, within reach of the line between two headers,
-	// the column on the line's left, which it resizes. Nothing outside the column headers.
+	// the column on the line's left, which it resizes. The locate column has no line to grab: a press next to it is a
+	// press on the first column. Nothing outside the column headers.
 	std::optional<MarkersWindow::HeaderDrag> MarkersWindow::grab(Rml::Element* target, float x) const
 	{
 		Rml::Element* cell = closest(target, "td");
@@ -553,12 +630,13 @@ namespace gnubase::ui
 		{
 			drag.resize = true;
 		}
-		else if (x - left <= g_reach * ratio)
+		else if (Rml::Element* previous = cell->GetPreviousSibling();
+			x - left <= g_reach * ratio && previous != nullptr && previous->HasAttribute("column"))
 		{
 			drag.resize = true;
-			cell = cell->GetPreviousSibling();
+			cell = previous;
 		}
-		if (cell == nullptr || !cell->HasAttribute("column"))
+		if (!cell->HasAttribute("column"))
 			return std::nullopt;
 		drag.column = cell->GetAttribute<Rml::String>("column", "");
 		drag.width = cell->GetBox().GetSize(Rml::BoxArea::Content).x / ratio;
@@ -661,7 +739,7 @@ namespace gnubase::ui
 	{
 		if (target == nullptr)
 			return;
-		const auto on = [target](const char* id)
+		const auto on = [target](const std::string& id)
 		{
 			for (const Rml::Element* element = target; element != nullptr; element = element->GetParentNode())
 				if (element->GetId() == id)
@@ -672,8 +750,32 @@ namespace gnubase::ui
 		for (const auto& [id, setting] : g_toggles)
 			if (on(id))
 			{
-				// The toggle turns itself; the setting, once changed, turns it to the setting.
-				m_binding.send("settings.set", {{"key", setting}, {"value", !m_flags.at(setting)}});
+				// The toggle turns itself after this listener: the setting becomes what it will show, so that two
+				// clicks before the engine answers end as the toggle does. If the engine refuses, the toggle goes back
+				// to the setting.
+				const Rml::Element* toggle = m_document->GetElementById(id);
+				const bool checked = toggle != nullptr ? !toggle->HasAttribute("checked") : !m_flags.at(setting);
+				m_binding.send("settings.set", {{"key", setting}, {"value", checked}},
+					[this, id = std::string(id), key = std::string(setting), token = std::weak_ptr<bool>(m_alive)](
+						const engine::Result& result)
+					{
+						if (!token.expired() && !result.ok() && alive())
+							setChecked(m_document->GetElementById(id), m_flags.at(key));
+					});
+				return;
+			}
+		for (const char* column : g_columns)
+			if (const std::string id = std::string("column-") + column; hideable(column) && on(id))
+			{
+				// The item turns itself after this listener: the column shows if the item was off.
+				const Rml::Element* item = m_document->GetElementById(id);
+				const bool shown = item != nullptr && !item->HasAttribute("checked");
+				std::vector<std::string> hidden;
+				for (const char* each : g_columns)
+					if (hideable(each) && (std::string(each) == column ? !shown : m_columns.hides(each)))
+						hidden.emplace_back(each);
+				m_columns.hidden = std::move(hidden);
+				saveColumns();
 				return;
 			}
 		if (on("add-position-marker"))
@@ -722,6 +824,8 @@ namespace gnubase::ui
 	{
 		if (m_rebuilding)
 			return; // the rows are replaced: the field loses the focus without an edit
+		const bool edited = field.HasAttribute("edited");
+		field.RemoveAttribute("edited"); // whatever happens now, the next time starts without an edit
 		const uint64_t id = rowMarker(&field);
 		const auto marker =
 			std::find_if(m_listed.begin(), m_listed.end(), [id](const MarkerItem& each) { return each.id == id; });
@@ -754,9 +858,12 @@ namespace gnubase::ui
 			parameters["marker"] = item.id;
 			changes.push_back(std::move(parameters));
 		};
+		// A field that was typed in, also to its own value, gives that to the other selected markers; one left without
+		// an edit changes nothing.
+		const bool typed = edited && markers.size() > 1;
 		if (cell->IsClassSet("description"))
 		{
-			if (value == marker->name)
+			if (value == marker->name && !typed)
 				return;
 			for (const MarkerItem* each : markers)
 				if (each->name != value)
@@ -772,7 +879,14 @@ namespace gnubase::ui
 				return;
 			}
 			if (number != marker->number)
+			{
 				change(*marker, {{"number", number}});
+			}
+			else if (value != std::to_string(number))
+			{
+				show(); // the same number written another way
+				return;
+			}
 		}
 		else if (cell->IsClassSet("position") || cell->IsClassSet("end"))
 		{
@@ -785,11 +899,18 @@ namespace gnubase::ui
 				show();
 				return;
 			}
-			change(*marker, {{end ? "end" : "position", m_markers.position(*track, *seconds)}});
+			// The time it has, written another way ("2" for "2.1.1.0"), changes nothing.
+			const Json to = m_markers.position(*track, *seconds);
+			if (to == m_markers.position(*track, end ? marker->end : marker->start))
+			{
+				show(); // the field shows the time as it is written
+				return;
+			}
+			change(*marker, {{end ? "end" : "position", to}});
 		}
 		else if (cell->IsClassSet("length"))
 		{
-			if (value == formatLength(m_format, marker->start, marker->end, context))
+			if (value == formatLength(m_format, marker->start, marker->end, context) && !typed)
 				return;
 			for (const MarkerItem* each : markers)
 			{
@@ -799,8 +920,14 @@ namespace gnubase::ui
 					show();
 					return;
 				}
-				if (each->cycle)
-					change(*each, {{"end", m_markers.position(*track, each->start + *length)}});
+				if (const Json to = m_markers.position(*track, each->start + *length);
+					each->cycle && to != m_markers.position(*track, each->end))
+					change(*each, {{"end", to}});
+			}
+			if (changes.empty() && value != formatLength(m_format, marker->start, marker->end, context))
+			{
+				show(); // the same length written another way
+				return;
 			}
 		}
 		if (changes.empty())

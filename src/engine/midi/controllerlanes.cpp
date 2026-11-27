@@ -12,7 +12,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -290,6 +292,44 @@ namespace gnubase::engine::midi
 			return note.velocity;
 		const double varied = note.velocity * (1.0 + (note.velocityVariance * chance(part, note.id, 2)));
 		return static_cast<uint16_t>(std::clamp<int64_t>(std::llround(varied), 0, static_cast<int64_t>(g_maxVelocity)));
+	}
+
+	PressedNotes::PressedNotes(const std::map<ObjectId, Note>& notes, bool anyChannel) : m_anyChannel(anyChannel)
+	{
+		for (const auto& [id, note] : notes)
+			m_keys[keyOf(note.channel, note.pitch)].notes.push_back(&note);
+		for (auto& [index, key] : m_keys)
+		{
+			std::stable_sort(key.notes.begin(), key.notes.end(),
+				[](const Note* a, const Note* b) { return a->position < b->position; });
+			key.ends.reserve(key.notes.size());
+			for (const Note* note : key.notes)
+				key.ends.push_back(std::max(note->position + note->length, key.ends.empty() ? 0 : key.ends.back()));
+		}
+	}
+
+	const Note* PressedNotes::find(const Controller& pressure) const
+	{
+		const auto found = m_keys.find(keyOf(pressure.channel, pressure.number));
+		if (found == m_keys.end())
+			return nullptr;
+		const Key& key = found->second;
+		// The notes started by then, the latest first, until none of those before can still sound.
+		auto i = static_cast<size_t>(std::upper_bound(key.notes.begin(), key.notes.end(), pressure.position,
+										 [](time::Ticks at, const Note* note) { return at < note->position; }) -
+			key.notes.begin());
+		while (i > 0 && key.ends[i - 1] > pressure.position)
+		{
+			--i;
+			if (key.notes[i]->position + key.notes[i]->length > pressure.position)
+				return key.notes[i];
+		}
+		return nullptr;
+	}
+
+	uint16_t PressedNotes::keyOf(uint8_t channel, uint8_t pitch) const noexcept
+	{
+		return static_cast<uint16_t>(((m_anyChannel ? 0 : channel % 16) * 128) + (pitch % 128));
 	}
 
 	void registerControllerLaneCommands(ProjectModel& model, Engine& engine)

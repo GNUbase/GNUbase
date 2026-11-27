@@ -4350,7 +4350,9 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.load", 1,
 				"Replaces the project with a DAWproject file and clears the undo history. Media files embedded in "
-				"it are extracted to mediaFolder, by default a folder named after the file next to it. With "
+				"it are extracted to mediaFolder, by default the folder <name> media next to it, "
+				"named after the file as its versions are (see project.saveNewVersion): Song media for Song.dawproject "
+				"and Song.dawproject., Mix v2.1 media for Mix v2.1. With "
 				"revision, it loads only if the project is still at that revision (see project.revision), and fails "
 				"otherwise, so that no change made meanwhile is lost. An auto save (see project.autoSave) opens "
 				"without a file and with unsaved changes, and isn't a recent project. A sample rate outside the "
@@ -4369,8 +4371,7 @@ namespace gnubase::engine
 							std::to_string(parameters.at("revision").get<uint64_t>()));
 				const std::string path = parameters.at("path").get<std::string>();
 				const std::filesystem::path file = std::filesystem::u8path(path);
-				const std::string folder = parameters.value("mediaFolder",
-					(file.parent_path() / std::filesystem::u8path(file.stem().u8string() + " media")).u8string());
+				const std::string folder = parameters.value("mediaFolder", extractedMediaFolderFor(file).u8string());
 				Project project;
 				std::vector<std::string> warnings;
 				try
@@ -5320,20 +5321,23 @@ namespace gnubase::engine
 				"file, and the media folder in it where media.add with copy and media.prepareArchive put audio files, "
 				"all null for a project that has no file yet; and name, which project.backup names the backup by "
 				"default: the project file's name without the .dawproject extension, or else the project's name, "
-				"either made a name that files can have on every platform.",
+				"either made a name that files can have on every platform; and autoSaveOf, for a project opened from "
+				"an auto save (see project.autoSave) of a project file, that file, next to the folder Auto Saves and "
+				"named as the auto save without its number, which may be gone: null otherwise, also for an auto save "
+				"of an untitled project. Save proposes it.",
 				objectSchema(Json::object()),
 				objectSchema({{"file", nullableString}, {"folder", nullableString}, {"mediaFolder", nullableString},
-								 {"name", stringSchema}},
-					{"file", "folder", "mediaFolder", "name"}),
+								 {"name", stringSchema}, {"autoSaveOf", nullableString}},
+					{"file", "folder", "mediaFolder", "name", "autoSaveOf"}),
 				true},
 			[this](Project&, CommandContext&)
 			{
 				if (m_file.empty())
-					return Json{
-						{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}, {"name", backupName()}};
+					return Json{{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr},
+						{"name", backupName()}, {"autoSaveOf", m_autoSaveOf.empty() ? Json() : Json(m_autoSaveOf)}};
 				const std::filesystem::path file = std::filesystem::u8path(m_file);
 				return Json{{"file", m_file}, {"folder", file.parent_path().u8string()},
-					{"mediaFolder", mediaFolderFor(file).u8string()}, {"name", backupName()}};
+					{"mediaFolder", mediaFolderFor(file).u8string()}, {"name", backupName()}, {"autoSaveOf", nullptr}};
 			});
 
 		const Json integerSchema = {{"type", "integer"}};

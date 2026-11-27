@@ -67,12 +67,16 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
 - **Mouse** on a marker track's lane (pp. 424-425): a click selects the marker under the mouse (its label, a position
   marker's line within 4 dp, a cycle marker's start or end within 4 dp, or the cycle marker it is in) and Ctrl-click
   adds or removes it, its label getting `.selected`, and the info line shows and edits the selected markers
-  ([inspector.md](inspector.md), p. 430); selecting a marker deselects the events and selecting an event the markers.
+  ([inspector.md](inspector.md), p. 430); selecting a marker deselects the events and selecting an event the markers,
+  also when the markers are selected in the markers window with Sync Selection. This differs from the reference
+  (pp. 424-425, 430), where markers are selected in the project window like other events: here the project window
+  selects events or markers, so that Delete and the other edits act on one kind, and a Ctrl-click on a marker
+  deselects the events as one on an event deselects the markers.
   With the object selection tool:
   - **Moving.** A drag of a selected position marker, or of a cycle marker by its label or upper border (the top 8 dp
-    of the lane, away from its handles), moves the selected markers, shown where they go while dragging; dropped on another marker track's
-    lane, they go onto that track (`marker.set` `track`, where a marker whose number is taken gets the first free one),
-    also dragged straight there to keep their position.
+    of the lane, away from its handles), moves the selected markers, shown where they go while dragging; dropped on
+    another marker track's lane, they go onto that track (`marker.set` `track`, where a marker whose number is taken
+    gets the first free one), also dragged straight there to keep their position.
     One undo step, a `history.transaction` of `marker.set`s.
   - **Resizing.** A drag at a cycle marker's start or end handle, within 4 dp of it at any height of the lane, its
     upper border too, moves that edge.
@@ -147,17 +151,30 @@ Marker Tracks and Off set `ui.markerLines`.
   Enter locates to the selected marker.
 - **Several markers at once** (p. 430): a description or a length typed into a row of a selection of several gives it
   to all the selected markers (the length to the cycle markers among them), in one undo step (`history.transaction`).
-  The reference does this with checkbox attributes, which markers here don't have.
+  The reference does this with checkbox attributes, which markers here don't have. A field counts as edited when text
+  was typed into it, also to the row's own value, which then goes to the others; one left without an edit changes
+  nothing. A time typed in another notation of the time a marker has ("2" for "2.1.1.0") changes nothing either.
 - **Columns** (p. 429): a click on a header sorts by its column, a second one the other way round, the position always
-  second (`.sorted` and `.descending` on the header); dragging a header moves its column, dragging the line between
-  two headers resizes the column on its left. The locate column stays first. Their order, widths and sorting are the
-  user setting `ui.markerColumns`, whose changes from MCP or Lua apply at once.
+  second (`.sorted` and `.descending` on the header, with a `.sort-arrow` in it that the themes draw: up for the
+  ascending order); dragging a header moves its column, dragging the line between two headers resizes the column on
+  its left, and a press on the first column within reach of its left edge sorts and drags that column (a press on the
+  locate side of that line does nothing). The locate column stays first. The Columns menu (`#marker-columns-menu`, items `#column-<name>`) hides and
+  shows every column but Position (p. 429: Locate and Position can't be hidden); the Locate column has no item. Their
+  order, hidden columns, widths and sorting are the user setting `ui.markerColumns` (`order`, `hidden`, `widths`,
+  `sort`, `descending`), whose changes from MCP or Lua apply at once. End and Length put the position markers, which
+  have neither, after the cycle markers in both directions; descriptions sort without regard to case, also of Latin-1,
+  Latin Extended-A, Greek and Cyrillic letters.
 - **Auto-Scroll with Project Cursor** (`#marker-auto-scroll`, p. 427), the user setting `ui.markersAutoScroll` (on by
   default): when the arrow moves to another marker, the list scrolls as little as it takes to show its row.
 - **Marker settings** (`#marker-settings`, p. 428): Show Marker IDs on Marker Track (`ui.markerIds`), Cycle Follows
   When Locating to Markers (`transport.cycleFollowsMarkers`) and Sync Selection (`ui.markersSyncSelection`, on by
   default), with which the markers window and the project window's marker events select the same markers
-  (`app::AppUi` gives each one's selection to the other), except while recording. When it starts syncing (the window opens, recording stops, the setting is turned on) the window takes the project window's selection.
+  (`app::AppUi` gives each one's selection to the other), except while recording. When it starts syncing (the window
+  opens, recording stops, the setting is turned on) the window takes the project window's selection. Each toggle sends
+  the state it turns to, so that two clicks before the engine answers end as the toggle shows, and goes back to the
+  setting if the engine refuses the change. The window lists only the active marker track's markers, so its selection
+  is of those: a click replaces the project window's selection of markers, also of other marker tracks, and so does
+  switching the active marker track, which drops the selected markers it no longer lists.
 - Add Marker (`#add-position-marker`) adds a position marker at the cursor, Add Cycle Marker one at the locators,
   Remove the selected markers. The Functions menu moves the selected markers to the cursor in one undo step
   (`history.transaction` of `marker.set`s; cycle markers keep their length) and reassigns the position or cycle
@@ -212,8 +229,7 @@ of 10 marker tracks; `tests/markers_ui_tests.cpp` the File menu's items through 
 edits send no project reads for it, and reopening lists the current markers. A mouse target test places both marker
 overlays above ordinary event lanes and checks that mouse input reaches those lanes.
 
-Not yet: hiding columns;
-marker lines in the key editor; locking marker tracks; importing markers from wave files.
+Not yet: marker lines in the key editor; locking marker tracks; importing markers from wave files.
 
 CSV files preserve empty marker tracks with a Type Track row: Track Number, Track and Time Base identify the track, and all marker fields are empty. Such rows do not add to the returned marker count. The importer also detects semicolon-separated headers and accepts decimal commas for Position and End in those sheets; comma-separated files retain decimal points. Quoting, embedded separators, quotes and line ends keep their usual CSV meaning.
 

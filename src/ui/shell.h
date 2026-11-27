@@ -121,6 +121,12 @@ namespace gnubase::ui
 
 		// The user's UI scale (the user setting ui.scale, #53), on top of each monitor's scale.
 		void setUiScale(float scale);
+		// Runs handler after the UI scale changed, with the scale before and after, e.g. to size windows that have a
+		// size in dp (#566).
+		void onUiScale(std::function<void(float before, float after)> handler)
+		{
+			m_uiScaleChanged = std::move(handler);
+		}
 		float uiScale() const { return m_uiScale; }
 
 		// The theme (ui/themes.h): its rules, inside "@media (theme: <name>)", apply in every window, also in windows
@@ -208,7 +214,7 @@ namespace gnubase::ui
 		void unusedKey(Window& window, const KeyPress& keys);
 
 		// Runs handler for every key released in a window, e.g. for key commands that run while their key is held;
-		// a key of KI_UNKNOWN is every key, as when the window lost the keyboard focus.
+		// a key with focusLost is every key, as when the window lost the keyboard focus.
 		void onKeyReleased(std::function<void(Window&, const KeyPress&)> handler)
 		{
 			m_keyReleased = std::move(handler);
@@ -296,6 +302,7 @@ namespace gnubase::ui
 		std::function<void(Window&, const KeyPress&)> m_keyReleased;
 		std::function<void()> m_inputHandled;
 		std::function<void(Window&)> m_closeRequest;
+		std::function<void(float, float)> m_uiScaleChanged;
 		std::function<void(Window&)> m_quitRequest;
 		std::function<void(Window&)> m_menuBarToggled;
 		std::function<void()> m_keymapChanged;

@@ -3,6 +3,7 @@
 // real engine, and the markers window and the marker key commands in the app's UI.
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/commandholds.h"
 #include "testutils/fakeui.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
@@ -26,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <optional>
 #include <string>
@@ -1001,7 +1003,14 @@ TEST_CASE("the markers window scrolls to the locate arrow, and Page Up and Page 
 	app.ui().key(window, "PageDown");
 	REQUIRE(app.waitUntil([&selected] { return selected() > 1; }));
 	const int page = selected();
-	CHECK(page < 30);
+	// One row less than the body rows the list shows: its header row doesn't count.
+	document.UpdateDocument();
+	Rml::Element* head = document.QuerySelector("#marker-list thead");
+	REQUIRE(head != nullptr);
+	const float rowHeight = markerRows(document)[0]->GetOffsetHeight();
+	const int shown = static_cast<int>((list->GetClientHeight() - head->GetOffsetHeight()) / rowHeight);
+	REQUIRE(shown > 2);
+	CHECK(page == shown - 1);
 	CHECK(inView(markerRows(document)[static_cast<size_t>(page)]));
 	app.ui().key(window, "PageDown");
 	REQUIRE(app.waitUntil([&selected, page] { return selected() == 2 * page; }));
@@ -1173,6 +1182,393 @@ TEST_CASE("the marker settings: marker ids on the marker track, cycle follows an
 	REQUIRE(app.waitUntil([&lines, intro] { return lines.selection() == std::vector<uint64_t>{intro}; }));
 	const ui::MarkersWindow& reopened = openMarkers(app, 2);
 	REQUIRE(app.waitUntil([&reopened, intro] { return reopened.selection() == std::vector<uint64_t>{intro}; }));
+}
+
+TEST_CASE("the markers window's toggles send their own state, also two clicks before the engine answers, and go back "
+		  "when it refuses (#563)",
+	"[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	test::UiApp app;
+	const test::ReleaseHolds releaseHolds{holds};
+	app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	app.call("track.add", {{"type", "marker"}});
+	openMarkers(app, 0);
+	const ui::WindowId window = app.appUi().markersWindow();
+	Rml::ElementDocument& document = markersDocument(app);
+	const auto checked = [&document](const char* id) { return document.GetElementById(id)->HasAttribute("checked"); };
+	const auto answered = [&app]
+	{ return app.waitUntil([&app] { return app.appUi().binding().waiting("settings.set") == 0; }); };
+	REQUIRE(app.waitUntil([&checked] { return checked("marker-auto-scroll"); }));
+
+	// Two clicks before the engine answers the first one turn the setting off and on again, as the toggle shows.
+	engine::Client holder(app.engine(), "holder");
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	app.ui().click(window, at("#marker-auto-scroll"), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#marker-auto-scroll"), ui::MouseButton::Left, 1, {});
+	holds.release(1);
+	REQUIRE(answered());
+	settle(app);
+	CHECK(setting(app, "ui.markersAutoScroll") == true);
+	CHECK(checked("marker-auto-scroll"));
+
+	// A setting the engine refuses (here the settings file can't be written) leaves the toggle as the setting is.
+	const std::filesystem::path folder = app.engine().settingsDirectory();
+	REQUIRE(!folder.empty());
+	std::filesystem::remove_all(folder);
+	std::ofstream(folder) << "not a folder";
+	app.ui().click(window, at("#marker-auto-scroll"), ui::MouseButton::Left, 1, {});
+	REQUIRE(answered());
+	settle(app);
+	CHECK(setting(app, "ui.markersAutoScroll") == true);
+	CHECK(checked("marker-auto-scroll"));
+}
+
+TEST_CASE(
+	"the markers window sorts by a click at the left edge of its first column, and arrows the sorted header (#563)",
+	"[ui]")
+{
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	addMarker(app, {{"position", 2 * g_quarter}, {"name", "B"}});
+	addMarker(app, {{"position", 4 * g_quarter}, {"name", "A"}});
+	openMarkers(app, 2);
+	const ui::WindowId window = app.appUi().markersWindow();
+	Rml::ElementDocument& document = markersDocument(app);
+	const auto arrows = [&document]
+	{
+		Rml::ElementList found;
+		document.QuerySelectorAll(found, "#marker-head .sort-arrow");
+		return found;
+	};
+
+	// The header the list is sorted by has the arrow, only that one.
+	REQUIRE(arrows().size() == 1);
+	CHECK(document.QuerySelector("#marker-head td.position .sort-arrow") != nullptr);
+
+	// A press next to the locate column, within reach of the line between it and the first column, is a press on the
+	// first column: it sorts, and a second click turns the order around.
+	for (const bool descending : {false, true})
+	{
+		document.UpdateDocument();
+		Rml::Element* number = document.QuerySelector("#marker-head td.number");
+		REQUIRE(number != nullptr);
+		app.ui().click(window, pointIn(*number, 1.0F), ui::MouseButton::Left, 1, {});
+		REQUIRE(app.waitUntil(
+			[&app, descending]
+			{
+				const Json columns = setting(app, "ui.markerColumns");
+				return columns.value("sort", "") == "number" && columns.value("descending", false) == descending;
+			}));
+		Rml::Element* sorted = document.QuerySelector("#marker-head td.number");
+		REQUIRE(sorted != nullptr);
+		CHECK(sorted->IsClassSet("descending") == descending);
+		CHECK(arrows().size() == 1);
+		CHECK(sorted->QuerySelector(".sort-arrow") != nullptr);
+	}
+}
+
+TEST_CASE("the markers window hides and shows its columns, all but Locate and Position (#563, #564)", "[ui]")
+{
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	addMarker(app, {{"position", 2 * g_quarter}, {"name", "B"}});
+	addMarker(app, {{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 6 * g_quarter}, {"name", "A"}});
+	openMarkers(app, 2);
+	const ui::WindowId window = app.appUi().markersWindow();
+	Rml::ElementDocument& document = markersDocument(app);
+	const auto checked = [&document](const char* id) { return document.GetElementById(id)->HasAttribute("checked"); };
+	using Columns = std::vector<std::string>;
+	const Columns all = {"number", "type", "position", "end", "length", "description"};
+	CHECK(headerOrder(document) == all);
+	CHECK(checked("column-description"));
+
+	// A column turned off in the Columns menu leaves the header and the rows, and is kept in the setting.
+	app.ui().click(window, at("#marker-columns"), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#column-description"), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#marker-columns"), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#column-type"), ui::MouseButton::Left, 1, {});
+	const Columns shown = {"number", "position", "end", "length"};
+	REQUIRE(app.waitUntil([&document, &shown] { return headerOrder(document) == shown; }));
+	CHECK(field(document, 1, "description") == std::nullopt);
+	CHECK(markerRows(document)[0]->QuerySelector(".type") == nullptr);
+	CHECK(field(document, 1, "position").has_value());
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			return setting(app, "ui.markerColumns").value("hidden", Json::array()) ==
+				Json::array({"type", "description"});
+		}));
+	CHECK(!checked("column-description"));
+	CHECK(!checked("column-type"));
+	CHECK(checked("column-end"));
+
+	// The same in the menu turns it on again, in its place.
+	app.ui().click(window, at("#marker-columns"), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#column-type"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&document] { return headerOrder(document) == Columns{"number", "type", "position", "end", "length"}; }));
+
+	// The setting from MCP or Lua applies at once, also to the menu, a column named twice counting once. The Position
+	// column can't be hidden, nor can a column be hidden that isn't one.
+	for (const char* column : {"position", "volume"})
+	{
+		const engine::Result refused =
+			engine::Client(app.engine())
+				.call("settings.set", {{"key", "ui.markerColumns"}, {"value", {{"hidden", {column}}}}});
+		CHECK(!refused.ok());
+	}
+	// A member the setting doesn't have, such as a misspelled one, is refused too, in the object and in the widths.
+	for (const Json& value : {Json{{"hiden", {"type"}}}, Json{{"widths", {{"volume", 40}}}}})
+	{
+		const engine::Result refused =
+			engine::Client(app.engine()).call("settings.set", {{"key", "ui.markerColumns"}, {"value", value}});
+		CHECK(!refused.ok());
+	}
+	app.call("settings.set", {{"key", "ui.markerColumns"}, {"value", {{"hidden", {"number", "number"}}}}});
+	REQUIRE(app.waitUntil(
+		[&document] { return headerOrder(document) == Columns{"type", "position", "end", "length", "description"}; }));
+	REQUIRE(app.waitUntil([&checked] { return !checked("column-number") && checked("column-description"); }));
+	CHECK(document.QuerySelector("#marker-columns-menu #column-position") == nullptr);
+
+	// Hidden columns stay hidden when the window opens again.
+	app.ui().key(window, "Mod+M");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().markers() == nullptr; }));
+	openMarkers(app, 2);
+	Rml::ElementDocument& reopened = markersDocument(app);
+	REQUIRE(app.waitUntil([&reopened] { return headerOrder(reopened).front() == "type"; }));
+	CHECK(headerOrder(reopened).size() == 5);
+}
+
+TEST_CASE("a description or length typed into one of several selected rows goes to the others even if it is the "
+		  "row's own (#564)",
+	"[ui]")
+{
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	app.call("marker.add", {{"type", "cycle"}, {"position", 0}, {"end", 2 * g_quarter}, {"name", "One"}});
+	app.call("marker.add", {{"position", 4 * g_quarter}, {"name", "Two"}});
+	app.call("marker.add", {{"type", "cycle"}, {"position", 8 * g_quarter}, {"end", 9 * g_quarter}, {"name", "Three"}});
+	ui::MarkersWindow& markers = openMarkers(app, 3);
+	const ui::WindowId window = app.appUi().markersWindow();
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#marker-rows .type", 2), ui::MouseButton::Left, 1, {"shift"});
+	REQUIRE(app.waitUntil([&markers] { return markers.selection().size() == 3; }));
+
+	edit(app, 0, "description", "One");
+	REQUIRE(app.waitUntil(
+		[&app] { return markerList(app)[1].at("name") == "One" && markerList(app)[2].at("name") == "One"; }));
+	REQUIRE(markers.selection().size() == 3);
+	edit(app, 0, "length", "0.2.0.0");
+	REQUIRE(app.waitUntil([&app] { return markerField(app, 2, "end") == 10 * g_quarter; }));
+	CHECK(markerField(app, 0, "end") == 2 * g_quarter);
+}
+
+TEST_CASE("a field left without an edit changes nothing, after the row's own text was typed into it (#564)", "[ui]")
+{
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	app.call("marker.add", {{"position", 0}, {"name", "One"}});
+	app.call("marker.add", {{"position", 4 * g_quarter}, {"name", "Two"}});
+	app.call("marker.add", {{"position", 8 * g_quarter}, {"name", "Three"}});
+	ui::MarkersWindow& markers = openMarkers(app, 3);
+	const ui::WindowId window = app.appUi().markersWindow();
+	const size_t steps = app.call("history.get").at("steps").size();
+
+	// With only the row selected, its own text typed into it changes nothing, and the field leaves with no edit.
+	app.ui().click(window, at("#marker-rows .type", 1), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&markers] { return markers.selection().size() == 1; }));
+	app.ui().click(window, at("#marker-rows .description input", 1), ui::MouseButton::Left, 1, {});
+	app.ui().key(window, "Mod+A");
+	app.ui().text(window, "Two");
+	const Rml::Element* input = markersDocument(app).QuerySelector("#marker-rows tr:nth-child(2) .description input");
+	REQUIRE(input != nullptr);
+	CHECK(input->HasAttribute("edited"));
+	app.ui().key(window, "Enter");
+	CHECK(!input->HasAttribute("edited")); // the commit took what was typed, whether it sent a change or not
+	settle(app);
+	CHECK(app.call("history.get").at("steps").size() == steps);
+
+	// Several rows selected, the field focused and left without typing: still nothing.
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#marker-rows .type", 2), ui::MouseButton::Left, 1, {"shift"});
+	REQUIRE(app.waitUntil([&markers] { return markers.selection().size() == 3; }));
+	app.ui().click(window, at("#marker-rows .description input", 1), ui::MouseButton::Left, 1, {});
+	app.ui().key(window, "Enter");
+	settle(app);
+	CHECK(markerList(app)[0].at("name") == "One");
+	CHECK(markerList(app)[2].at("name") == "Three");
+	CHECK(app.call("history.get").at("steps").size() == steps);
+}
+
+TEST_CASE("a position typed in another notation of the time it has sends no change (#564)", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	test::UiApp app;
+	const test::ReleaseHolds releaseHolds{holds};
+	app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	app.call("track.add", {{"type", "marker"}});
+	app.call("marker.add", {{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 8 * g_quarter}});
+	openMarkers(app, 1);
+	Rml::ElementDocument& document = markersDocument(app);
+	REQUIRE(field(document, 0, "position") == "2.1.1.0");
+	REQUIRE(field(document, 0, "length") == "1.0.0.0");
+	engine::Client holder(app.engine(), "holder");
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+
+	// Bar 2 is 2.1.1.0, and the end 3.1.1.0 is 3 as well; the changes that are none are not sent, a real one is.
+	edit(app, 0, "position", "2");
+	edit(app, 0, "end", "3");
+	edit(app, 0, "length", "1.0");
+	CHECK(app.appUi().binding().waiting("marker.set") == 0);
+	// The fields show the times as they are written again.
+	REQUIRE(app.waitUntil(
+		[&document]
+		{
+			return field(document, 0, "position") == "2.1.1.0" && field(document, 0, "end") == "3.1.1.0" &&
+				field(document, 0, "length") == "1.0.0.0";
+		}));
+	edit(app, 0, "end", "4");
+	CHECK(app.appUi().binding().waiting("marker.set") == 1);
+	holds.release(1);
+	REQUIRE(app.waitUntil([&app] { return markerField(app, 0, "end") == 12 * g_quarter; }));
+}
+
+TEST_CASE("the markers window sorts empty cells last and descriptions without regard to the case of non-ASCII "
+		  "letters (#564)",
+	"[ui]")
+{
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	const uint64_t position = addMarker(app,
+		{{"position", 2 * g_quarter},
+			{"name",
+				"\xC3\xA9"
+				"a"}});
+	const uint64_t longer = addMarker(app,
+		{{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 10 * g_quarter},
+			{"name",
+				"\xC3\x89"
+				"b"}});
+	const uint64_t shorter =
+		addMarker(app, {{"type", "cycle"}, {"position", 6 * g_quarter}, {"end", 8 * g_quarter}, {"name", "Z"}});
+	openMarkers(app, 3);
+	const ui::WindowId window = app.appUi().markersWindow();
+	Rml::ElementDocument& document = markersDocument(app);
+	using Ids = std::vector<uint64_t>;
+
+	// End and Length: the cycle markers by them, in either direction, and the position marker, which has none, after.
+	app.ui().click(window, at("#marker-head td.end"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&document, position, longer, shorter] { return rowOrder(document) == Ids{shorter, longer, position}; }));
+	app.ui().click(window, at("#marker-head td.end"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&document, position, longer, shorter] { return rowOrder(document) == Ids{longer, shorter, position}; }));
+	app.ui().click(window, at("#marker-head td.length"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&document, position, longer, shorter] { return rowOrder(document) == Ids{shorter, longer, position}; }));
+
+	// Descriptions: an accented capital letter sorts with its small one, as the ASCII ones do.
+	app.ui().click(window, at("#marker-head td.description"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&document, position, longer, shorter] { return rowOrder(document) == Ids{shorter, position, longer}; }));
+}
+
+TEST_CASE(
+	"with Sync Selection the project window follows the markers window when the marker track changes (#564)", "[ui]")
+{
+	test::UiApp app;
+	app.appUi().showProject();
+	const auto first = app.call("track.add", {{"type", "marker"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t intro = addMarker(app, {{"position", g_quarter}, {"name", "Intro"}});
+	app.call("track.add", {{"type", "marker"}});
+	const uint64_t other = addMarker(app, {{"position", 2 * g_quarter}, {"name", "Other"}});
+	app.call("marker.activateTrack", {{"track", first}});
+	openMarkers(app, 1);
+	const ui::WindowId window = app.appUi().markersWindow();
+	REQUIRE(app.appUi().markerLines() != nullptr);
+	const ui::MarkerLines& lines = *app.appUi().markerLines();
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&lines, intro] { return lines.selection() == std::vector<uint64_t>{intro}; }));
+
+	// Its marker is not listed any more: neither window has it selected.
+	app.call("marker.activateTrack", {{"track", app.call("project.get").at("tracks").back().at("id")}});
+	REQUIRE(app.waitUntil([&app, other] { return app.appUi().markers()->markers().front().id == other; }));
+	REQUIRE(app.waitUntil([&lines] { return lines.selection().empty(); }));
+	CHECK(app.appUi().markers()->selection().empty());
+}
+
+TEST_CASE(
+	"markers selected in the markers window with Sync Selection deselect the project window's events (#606)", "[ui]")
+{
+	test::UiApp app;
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.call("track.add", {{"type", "marker"}});
+	const uint64_t intro = addMarker(app, {{"position", g_quarter}, {"name", "Intro"}});
+	const auto midi = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t part =
+		app.call("midiPart.add", {{"track", midi}, {"position", 0}, {"length", 4 * g_quarter}, {"name", "Part"}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	openMarkers(app, 1);
+	const ui::WindowId window = app.appUi().markersWindow();
+	REQUIRE(app.waitUntil([&display] { return display.project().at("midiParts").size() == 1; }));
+	REQUIRE(app.appUi().markerLines() != nullptr);
+	const ui::MarkerLines& lines = *app.appUi().markerLines();
+	display.select({part});
+	REQUIRE(display.selection() == std::vector<uint64_t>{part});
+
+	// A marker selected in the markers window selects it in the project window, where the events are deselected: the
+	// project window selects events or markers, so that Delete and the other edits act on one kind.
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&lines, intro] { return lines.selection() == std::vector<uint64_t>{intro}; }));
+	CHECK(display.selection().empty());
+}
+
+TEST_CASE("markers selected in the markers window deselect the arranger and time signature events too (#606)", "[ui]")
+{
+	test::UiApp app;
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "marker"}});
+	const uint64_t intro = addMarker(app, {{"position", g_quarter}, {"name", "Intro"}});
+	app.call("track.add", {{"type", "signature"}});
+	app.call("signature.add", {{"bar", 4}, {"numerator", 3}, {"denominator", 4}});
+	app.call("track.add", {{"type", "arranger"}});
+	app.call("arranger.add", {{"position", 0}, {"end", 4 * g_quarter}});
+	openMarkers(app, 1);
+	const ui::WindowId window = app.appUi().markersWindow();
+	ui::SignatureRow& signatures = app.appUi().signatureLane()->row();
+	const ui::MarkerLines& lines = *app.appUi().markerLines();
+	const auto selectedArranger = [&app]
+	{
+		Rml::Context& context = app.main().context();
+		Rml::ElementList found;
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			context.GetDocument(i)->QuerySelectorAll(found, ".arranger-lane-event.selected");
+		return found.size();
+	};
+	REQUIRE(app.waitUntil(
+		[&app] { return app.ui().dom(std::nullopt, ".arranger-lane-event", 0).at("elements").size() == 1; }));
+
+	// An arranger event selected on its lane, then a marker in the markers window: the event is deselected.
+	app.ui().click(std::nullopt, at(".arranger-lane-event"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&selectedArranger] { return selectedArranger() == 1; }));
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&lines, intro] { return lines.selection() == std::vector<uint64_t>{intro}; }));
+	CHECK(selectedArranger() == 0);
+
+	// The same for a time signature event.
+	signatures.setSelection({4});
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {"ctrl"});
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {"ctrl"});
+	REQUIRE(app.waitUntil([&signatures] { return signatures.selection().empty(); }));
 }
 
 TEST_CASE("File > Export and File > Import > Markers write and read the marker file chosen", "[ui]")

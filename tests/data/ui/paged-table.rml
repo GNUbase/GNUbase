@@ -1,0 +1,35 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- A table in a list view with more rows than it shows, at known heights, for the Page Up and Page Down test of
+     tests/widgets_tests.cpp. -->
+<rml>
+<head>
+	<title>Paged table</title>
+	<style>
+		body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+		#paged { width: 200dp; height: 200dp; overflow-y: auto; }
+		td { height: 20dp; }
+		thead td { height: 30dp; }
+	</style>
+</head>
+<body>
+	<listview id="paged">
+		<table>
+			<thead><tr><td>Name</td></tr></thead>
+			<tbody>
+				<tr id="row-1" value="1"><td>One</td></tr>
+				<tr id="row-2" value="2"><td>Two</td></tr>
+				<tr id="row-3" value="3"><td>Three</td></tr>
+				<tr id="row-4" value="4"><td>Four</td></tr>
+				<tr id="row-5" value="5"><td>Five</td></tr>
+				<tr id="row-6" value="6"><td>Six</td></tr>
+				<tr id="row-7" value="7"><td>Seven</td></tr>
+				<tr id="row-8" value="8"><td>Eight</td></tr>
+				<tr id="row-9" value="9"><td>Nine</td></tr>
+				<tr id="row-10" value="10"><td>Ten</td></tr>
+				<tr id="row-11" value="11"><td>Eleven</td></tr>
+				<tr id="row-12" value="12"><td>Twelve</td></tr>
+			</tbody>
+		</table>
+	</listview>
+</body>
+</rml>

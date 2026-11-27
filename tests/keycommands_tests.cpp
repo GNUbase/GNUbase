@@ -380,12 +380,26 @@ TEST_CASE("a command that runs while its key is held ends when the key goes up",
 	CHECK(pressed == 2);
 	CHECK(released == 2);
 	app.ui().key(std::nullopt, "Shift+F5", ui::KeyAction::Down);
+	CHECK(pressed == 3);
+	// A key that RmlUi can't map, such as a letter of another layout or a media key, is KI_UNKNOWN too, and ends
+	// nothing (#569).
 	app.shell().keyReleased(app.main(), ui::KeyPress{Rml::Input::KI_UNKNOWN, 0});
+	CHECK(released == 2);
+	ui::KeyPress lost;
+	lost.focusLost = true;
+	app.shell().keyReleased(app.main(), lost);
 	CHECK(released == 3);
 
-	// A button that runs it ends it the same way.
-	keys.run("test.hold", Json::object(), app.main(), nullptr);
-	keys.release("test.hold");
+	// A button that starts it ends it the same way.
+	keys.start("test.hold", Json::object(), app.main(), nullptr);
 	CHECK(pressed == 4);
+	CHECK(released == 3);
+	keys.release("test.hold");
 	CHECK(released == 4);
+
+	// Run without a key or button to end it, as a menu item or a script runs it, it runs once: run, then release
+	// (#566, #569).
+	keys.run("test.hold", Json::object(), app.main(), nullptr);
+	CHECK(pressed == 5);
+	CHECK(released == 5);
 }
