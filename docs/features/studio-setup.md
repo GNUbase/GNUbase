@@ -44,10 +44,16 @@ MCP and Lua scripts can do all it does.
   running if the old one ran ([audio-devices.md](audio-devices.md), #712), the device's settings with `audio.set`, ports with `audio.setPort`
   and `midi.setPort`. Multi-processing changes while the device stands, so the dialog stops a running device for it
   and starts it again. Apply reads everything again from the engine and shows the errors of commands that failed; OK
-  closes the dialog unless one failed. While the dummy device plays because the device chosen last couldn't be used
-  at startup (`failed` in `audio.get`), the message line says which and why. Reset at the bottom opens the device again (`audio.reset`), as the reference's
-  Reset does; the Reset above a ports table restores the system names and makes every port visible, sent with Apply
-  or OK.
+  closes the dialog unless one failed. While a fallback plays because the device chosen last couldn't be used, at
+  startup or when another driver was picked (`failed` in `audio.get`), the message line says which, why and what plays
+  instead: the dummy device, or the backend's default device with the fallback device `default`
+  ([audio-devices.md](audio-devices.md)). The driver list then shows the fallback's driver. Apply or OK with that
+  driver picked in the list makes the fallback the user's choice: `audio.setDevice` with `remember`, then `audio.set`
+  with what the pages changed. Only once the list was touched, though: an OK only to read the message leaves the
+  choice for the next start, and `failed` stays. Reset at the bottom opens the device again (`audio.reset`), as the
+  reference's Reset does; while the dummy device plays for the device that failed, it tries that device again and
+  opens the dummy device again with its own settings if it still can't be used. The Reset above a ports table
+  restores the system names and makes every port visible, sent with Apply or OK.
 - **`audio.set`** changes some of the device's settings and keeps the others, including the dummy device's own
   (channels, latencies, loopback, input): the dialog changes the sample rate without losing what a test set up. The
   device opens again, runs on if it ran, and if it can't open with the new settings it opens with the old ones and
@@ -93,7 +99,10 @@ MCP and Lua scripts can do all it does.
   drops a change, Apply changes multi-processing while the device runs, a bad record shift keeps the dialog open with
   the message, and Reset reopens the device. With a fake audio backend (`test::UiApp` takes audio backends as it takes
   MIDI backends), Apply switches to its device's driver with `audio.setDevice`, and OK sends no `audio.set` for a device
-  without a current clock source until the user picks one. Running the command again keeps the one open dialog.
+  without a current clock source until the user picks one. The message line says why the device chosen last can't be
+  used and names the fallback that plays instead, the dummy device or the backend's default device; Apply and OK leave
+  the fallback alone until the driver list is touched, and then Apply saves it as the user's choice at the block size
+  it plays with. Running the command again keeps the one open dialog.
   `tests/audio_tests.cpp` checks `audio.set` and `audio.setPort`, and that port settings survive an engine restart with
   the same settings folder, wait for an unplugged MIDI port and a device that is not open, and follow `settings.reset`;
   that two engines on one settings folder each change a port and the file keeps both; that a later GNUbase's members of

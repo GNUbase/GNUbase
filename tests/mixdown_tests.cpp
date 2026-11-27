@@ -223,6 +223,19 @@ TEST_CASE("a mixdown exports the main mix without the listen dim and the listen 
 	CHECK(firstDifference(readFile(path).samples, expected) == -1);
 }
 
+TEST_CASE("a mixdown has no click, though the metronome switch is on", "[integration]")
+{
+	Session exported;
+	exported.addTrack("Ramp", 1000);
+	run(exported.client, "transport.set", {{"metronome", true}});
+	const std::string path = exported.exportedFile({{"start", 0}, {"end", 6000}, {"sampleFormat", "float32"}});
+	CHECK(run(exported.client, "transport.get").at("metronome") == true);
+
+	Session offline;
+	offline.addTrack("Ramp", 1000);
+	CHECK(firstDifference(readFile(path).samples, rendered(offline, 0, 6000)) == -1);
+}
+
 TEST_CASE("a mixdown exports the locator range, and a file per channel", "[integration]")
 {
 	Session project;

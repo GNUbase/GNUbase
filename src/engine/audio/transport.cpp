@@ -308,6 +308,10 @@ namespace gnubase::engine
 				}
 				return;
 			}
+			// A count-in that the command thread starts again (a locate, a new pre-roll) after it ended here but
+			// before it saw that (sync): playback started as the count-in planned, and the record start waits.
+			if (m_playing && request.countIn.length > 0)
+				return;
 			if (!m_playing && request.countIn.length > 0)
 			{
 				m_countingIn = true;

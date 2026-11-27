@@ -561,6 +561,51 @@ TEST_CASE("the studio setup dialog says why the device chosen last can't be used
 	CHECK(element(app, "#studio-setup-message").value("text", "").empty());
 }
 
+TEST_CASE(
+	"the studio setup dialog's Apply makes the fallback that plays for a device that failed the user's choice", "[ui]")
+{
+	test::UiApp app({900, 640}, keyboard(), fakeInterface());
+	app.call(
+		"audio.setDevice", {{"backend", "fake"}, {"device", "fake-9"}, {"blockSize", 128}, {"fallBackToDummy", true}});
+	openDialog(app);
+	CHECK(selected(app, "driver") == "dummy - Dummy device");
+
+	// Apply and OK without the driver list touched leave the user's choice for the next start.
+	const Json fellBack = lastRun(app, "audio.setDevice");
+	click(app, "#apply");
+	CHECK(lastRun(app, "audio.setDevice") == fellBack);
+	CHECK(app.call("audio.get").at("failed").is_object());
+	CHECK(app.call("settings.get", {{"key", "audio.backend"}}).at("value").get<std::string>().empty());
+	click(app, "#ok");
+	CHECK(closed(app));
+	CHECK(lastRun(app, "audio.setDevice") == fellBack);
+	CHECK(app.call("audio.get").at("failed").is_object());
+	CHECK(app.call("settings.get", {{"key", "audio.backend"}}).at("value").get<std::string>().empty());
+	openDialog(app);
+
+	// The driver that plays picked in the list: Apply saves it, at the block size it plays with.
+	choose(app, "#driver", 1);
+	choose(app, "#driver", -1);
+	CHECK(selected(app, "driver") == "dummy - Dummy device");
+	click(app, "#apply");
+	CHECK(open(app));
+	CHECK(lastRun(app, "audio.setDevice") == Json{{"backend", "dummy"}, {"device", "dummy"}, {"remember", true}});
+	const Json status = app.call("audio.get");
+	CHECK(status.at("failed").is_null());
+	CHECK(status.at("device").at("blockSize") == 128);
+	CHECK(app.call("settings.get", {{"key", "audio.backend"}}).at("value") == "dummy");
+	CHECK(element(app, "#studio-setup-message").value("text", "").empty());
+
+	// With the fallback device default, the message names the backend's default device that plays instead.
+	app.call("settings.set", {{"key", "audio.fallbackDevice"}, {"value", "default"}});
+	app.call("audio.setDevice", {{"backend", "fake"}, {"device", "fake-9"}, {"fallBackToDummy", true}});
+	click(app, "#cancel");
+	openDialog(app);
+	CHECK(element(app, "#studio-setup-message").value("text", "") ==
+		"Cannot use fake - fake-9: no device fake-9; fake - Fake interface plays instead");
+	click(app, "#cancel");
+}
+
 TEST_CASE("the studio setup dialog leaves the clock source alone when the device reports none as current", "[ui]")
 {
 	test::UiApp app({900, 640}, keyboard(), fakeInterface());

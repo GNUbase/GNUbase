@@ -192,6 +192,7 @@
 			local device = status.device
 			local options = {}
 			setup.drivers = {}
+			setup.loadedDriver = ""
 			if device == nil then
 				options[1] = option("", "No Driver", true)
 			end
@@ -200,10 +201,14 @@
 					setup.drivers[#setup.drivers + 1] = {backend = backend.name, device = info.id}
 					local text = backend.name .. " - " .. info.name .. (info.available == false and " (unavailable)" or "")
 					local selected = device ~= nil and device.backend == backend.name and device.id == info.id
+					if selected then
+						setup.loadedDriver = tostring(#setup.drivers)
+					end
 					options[#options + 1] = option(#setup.drivers, text, selected)
 				end
 			end
-			local rml = field("Audio Driver", '<select id="driver">' .. table.concat(options) .. "</select>")
+			local rml = field("Audio Driver",
+				'<select id="driver" onchange="StudioSetup.touchDriver(document)">' .. table.concat(options) .. "</select>")
 			if device ~= nil then
 				rml = rml .. field("Input Latency", '<span id="input-latency">' ..
 					milliseconds(device.inputLatency, device.sampleRate) .. "</span>") ..
@@ -423,14 +428,20 @@
 				"element:GetAttribute('value'))\">" .. table.concat(inputs) .. "</select>") .. table.concat(fields)
 		end
 
-		-- Why the device chosen last can't be used while the dummy device plays instead (failed in audio.get), or nil.
+		-- Why the device chosen last can't be used while a fallback plays instead (failed in audio.get), or nil: the
+		-- dummy device, or the backend's default device with the fallback device default.
 		local function failure(status)
 			local failed = status.failed
 			if failed == nil then
 				return nil
 			end
+			local device = status.device
+			local instead = "the dummy device"
+			if device ~= nil and device.backend ~= "dummy" then
+				instead = device.backend .. " - " .. (device.name ~= "" and device.name or device.id)
+			end
 			return "Cannot use " .. failed.backend .. (failed.device ~= "" and " - " .. failed.device or "") .. ": " ..
-				failed.reason .. "; the dummy device plays instead"
+				failed.reason .. "; " .. instead .. " plays instead"
 		end
 
 		-- Shows the errors of commands that failed, and why the device chosen last can't be used.
@@ -440,8 +451,17 @@
 			document:GetElementById("studio-setup-message").inner_rml = escape(table.concat(messages, "; "))
 		end
 
+		-- The user picked another option of the Audio Driver list than the one it loaded with, maybe the loaded one
+		-- again later. The list's own change when it shows its first selection counts for nothing.
+		function setup.touchDriver(document)
+			if valueOf(document:GetElementById("driver")) ~= setup.loadedDriver then
+				setup.driverTouched = true
+			end
+		end
+
 		-- Reads everything from the engine and fills the pages.
 		function setup.load(document)
+			setup.driverTouched = false
 			local devices = gnubase.audio.devices()
 			setup.status = gnubase.audio.get()
 			setup.audioPorts = gnubase.audio.ports()
@@ -655,10 +675,19 @@
 			local errors = {}
 			local device = setup.status.device
 			local driver = setup.drivers[tonumber(valueOf(document:GetElementById("driver")))]
+			local fallback = setup.status.failed ~= nil
 			if driver ~= nil and (device == nil or driver.backend ~= device.backend or driver.device ~= device.id) then
 				-- Another driver: the pages showed the old device, whose settings don't apply to the new one. It runs if
 				-- the old one ran, and the app opens it again when it starts.
 				call(errors, gnubase.audio.setDevice, {backend = driver.backend, device = driver.device, remember = true})
+			elseif driver ~= nil and fallback and setup.driverTouched then
+				-- The fallback that plays for the device chosen last, which couldn't be used, picked in the list: Apply
+				-- makes it the user's choice, with what the pages changed. Untouched, the choice stays for the next
+				-- start.
+				if call(errors, gnubase.audio.setDevice, {backend = driver.backend, device = driver.device,
+					remember = true}) then
+					applyAudioDevice(document, errors, gnubase.audio.get().device)
+				end
 			elseif device ~= nil then
 				applyAudioDevice(document, errors, device)
 			end

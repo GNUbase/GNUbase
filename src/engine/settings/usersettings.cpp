@@ -440,7 +440,8 @@ namespace gnubase::engine::settings
 					"The device that plays while the chosen audio device is lost, until it returns: none, default (the "
 					"lost device's backend's default device, or the dummy device if that doesn't open), or dummy (the "
 					"dummy device: no sound, but the transport moves and the project plays on). The engine switches "
-					"back once the lost device returns.",
+					"back once the lost device returns. With default, a device that the windowed app can't open when "
+					"it starts gives way to its backend's default device too, instead of the dummy device.",
 					Json{{"type", "string"}, {"enum", {"none", "default", "dummy"}}}, "none"},
 				{"audio.preRecordSeconds",
 					"Audio pre-record: how many seconds of input from before recording starts go into the files of "

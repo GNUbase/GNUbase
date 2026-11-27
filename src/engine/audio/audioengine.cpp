@@ -1720,9 +1720,8 @@ namespace gnubase::engine
 		m_waitingForDevice = false;
 	}
 
-	void AudioEngine::replaceDevice(CommandContext& context)
+	void AudioEngine::replaceDevice(CommandContext& context, Json parameters, const Json& dummy)
 	{
-		Json parameters = context.parameters();
 		const bool remember = parameters.value("remember", false);
 		const bool fallBack = parameters.value("fallBackToDummy", false);
 		const bool running = m_device ? m_device->running() : m_lost && m_lost->restart;
@@ -1742,13 +1741,16 @@ namespace gnubase::engine
 		const std::string device = parameters.value("device", std::string());
 		const uint64_t closed = m_closed;
 		// A failure leaves no device, or one that doesn't run: the next device runs if this one was to, so that a
-		// driver that failed in Studio Setup doesn't stop playback for good. And failed only describes the dummy
-		// device that plays instead while it does.
+		// driver that failed in Studio Setup doesn't stop playback for good. And failed only describes the fallback
+		// that plays instead while it does.
 		const auto failing = [this, start, closed]
 		{
 			m_startAfterFailure = start && !(m_device && m_device->running());
 			if (m_closed != closed)
+			{
 				m_failed = nullptr;
+				m_failedParameters = nullptr;
+			}
 		};
 		try
 		{
@@ -1764,33 +1766,56 @@ namespace gnubase::engine
 				throw;
 			}
 			const std::exception_ptr failure = std::current_exception();
-			logging::warning("Cannot use the audio device ({} {}), playing on the dummy device instead: {}", backend,
-				device, error.what());
 			Json failed = {{"backend", backend}, {"device", device}, {"reason", error.what()}};
 			closeDevice(); // one that opened but didn't start
-			// The dummy device without capture memory, at the sample rate and block size asked for.
-			Json dummy = {{"backend", "dummy"}, {"captureSeconds", 0}};
-			if (parameters.contains("sampleRate"))
-				dummy["sampleRate"] = parameters.at("sampleRate");
-			if (parameters.value("blockSize", int64_t{0}) > 0)
-				dummy["blockSize"] = parameters.at("blockSize");
-			try
+			// With the fallback device default, the backend's default device first, as for a lost device, unless it
+			// is the one that failed. Then the dummy device without capture memory. Both at the sample rate and block
+			// size asked for, unless the dummy device's parameters are given.
+			std::vector<Json> fallbacks;
+			const bool known = std::any_of(m_backends.begin(), m_backends.end(),
+				[&backend](const std::unique_ptr<audio::Backend>& candidate) { return candidate->name() == backend; });
+			if (m_settings.get(settings::g_audioFallbackDevice) == "default" && !device.empty() && known)
+				fallbacks.push_back({{"backend", backend}});
+			fallbacks.push_back({{"backend", "dummy"}, {"captureSeconds", 0}});
+			for (Json& fallback : fallbacks)
 			{
-				setDevice(dummy);
-				if (start)
-					startDevice();
+				if (parameters.contains("sampleRate"))
+					fallback["sampleRate"] = parameters.at("sampleRate");
+				if (parameters.value("blockSize", int64_t{0}) > 0)
+					fallback["blockSize"] = parameters.at("blockSize");
 			}
-			catch (const std::exception& fallbackError)
+			if (dummy.is_object())
+				fallbacks.back() = dummy;
+			for (const Json& fallback : fallbacks)
 			{
-				logging::warning("Cannot play on the dummy device either: {}", fallbackError.what());
-				failing();
-				std::rethrow_exception(failure);
+				try
+				{
+					setDevice(fallback);
+					if (start)
+						startDevice();
+				}
+				catch (const std::exception& fallbackError)
+				{
+					logging::warning("Cannot play on the fallback device ({}) either: {}",
+						fallback.at("backend").get<std::string>(), fallbackError.what());
+					closeDevice();
+					continue;
+				}
+				const std::string instead =
+					m_backend == "dummy" ? std::string("the dummy device") : m_backend + " " + m_device->info().id;
+				logging::warning("Cannot use the audio device ({} {}), playing on {} instead: {}", backend, device,
+					instead, error.what());
+				m_failed = std::move(failed);
+				m_failedParameters = std::move(parameters);
+				m_startAfterFailure = false;
+				return;
 			}
-			m_failed = std::move(failed);
-			m_startAfterFailure = false;
-			return;
+			logging::warning("Cannot use the audio device ({} {}): {}", backend, device, error.what());
+			failing();
+			std::rethrow_exception(failure);
 		}
 		m_failed = nullptr;
+		m_failedParameters = nullptr;
 		m_startAfterFailure = false;
 		if (remember)
 			m_engine->setSettings(context, {{"audio.backend", chosen}, {"audio.device", device}});
@@ -2574,10 +2599,13 @@ namespace gnubase::engine
 				"start again), or if the last audio.setDevice failed to run one it was to start. Another backend's "
 				"device is closed before the new one opens, since drivers often allow only one; if opening fails, "
 				"there is no device, and if starting fails, the device stays open and stopped. With fallBackToDummy, "
-				"a device that can't be opened or started is replaced by the dummy device without capture memory, at "
-				"the sampleRate and blockSize asked for, started if start says so, and failed in audio.get says what "
-				"failed and why, until another device replaces that dummy device; the windowed app opens its device "
-				"like that. remember: "
+				"a device that can't be opened or started is replaced by a fallback: with the user setting "
+				"audio.fallbackDevice default, the backend's default device unless that is the one that failed, "
+				"otherwise or if that fails too the dummy device without capture memory; at the sampleRate and "
+				"blockSize asked for, started if start says so. failed in audio.get says what failed and why, until "
+				"another audio.setDevice replaces that fallback; while the dummy device is the fallback, audio.reset "
+				"tries the device that failed again. The "
+				"windowed app opens its device like that. remember: "
 				"once the device runs as asked (not the fallback), saves backend and device as given as the user "
 				"settings audio.backend and audio.device, which the windowed app opens when it starts, and sends "
 				"settings.changed.\n"
@@ -2606,7 +2634,7 @@ namespace gnubase::engine
 				deviceSchema, statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
 			{
-				announcingFailure([this, &context] { replaceDevice(context); });
+				announcingFailure([this, &context] { replaceDevice(context, context.parameters()); });
 				Json result = status();
 				context.emit("audio.changed", result);
 				announceSlots(&context);
@@ -2756,7 +2784,10 @@ namespace gnubase::engine
 			[this](CommandContext&) { return status(); });
 		engine.registerCommand(
 			{"audio.reset", 1,
-				"Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this "
+				"Opens the audio device again with the same settings and restarts it if it ran; while the dummy device "
+				"plays for a device that audio.setDevice couldn't use (failed in audio.get), it tries that device "
+				"again as audio.setDevice with fallBackToDummy would, and the dummy device again with its own settings "
+				"if it still can't be used; the measurements start anew as they do there. Drivers ask for this "
 				"when their settings change, e.g. in their control panel, or when their device goes away; the engine "
 				"then resets on its own. A device that can't be opened, e.g. because it was unplugged, or that ran "
 				"and opens but doesn't start again, is lost (lost in audio.get): the engine goes on without it and "
@@ -2775,7 +2806,24 @@ namespace gnubase::engine
 			[this, announcingFailure](CommandContext& context)
 			{
 				bool changed = false;
-				announcingFailure([this, &changed] { changed = reset(); });
+				if (m_failed.is_object() && m_dummy != nullptr && !m_lost)
+				{
+					// The dummy device plays for a device that couldn't be used: try that one again, and the dummy
+					// device if it still can't, running as it did and with its own settings, which audio.set may
+					// have changed meanwhile. A backend's default device that plays instead resets as a device does
+					// when its driver asks.
+					Json parameters = m_failedParameters;
+					parameters["fallBackToDummy"] = true;
+					parameters["start"] = m_device->running();
+					const Json dummy = m_parameters;
+					announcingFailure([this, &context, &parameters, &dummy]
+						{ replaceDevice(context, std::move(parameters), dummy); });
+					changed = true;
+				}
+				else
+				{
+					announcingFailure([this, &changed] { changed = reset(); });
+				}
 				Json result = status();
 				if (changed)
 					context.emit("audio.changed", result);
@@ -2930,13 +2978,14 @@ namespace gnubase::engine
 			{"audio.start", 1,
 				"Starts the audio device; the dummy device processes one block per block duration (simulated real "
 				"time) until stopped. While the device is lost (see audio.reset), it starts once it returns (restart "
-				"in lost), and audio.changed announces that.",
+				"in lost), and audio.changed announces that. If it fails, e.g. as there is no device, a start that a "
+				"failed audio.setDevice left pending stays: the next audio.setDevice still starts its device.",
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
-				m_startAfterFailure = false;
 				if (m_lost && !m_device)
 				{
+					m_startAfterFailure = false;
 					if (!m_lost->restart)
 					{
 						m_lost->restart = true;
@@ -2944,9 +2993,11 @@ namespace gnubase::engine
 					}
 					return status();
 				}
+				// One that fails leaves a pending start as it was: the caller asked for the device to run.
 				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
 				require(!m_device->running(), "the audio device is already running");
 				startDevice();
+				m_startAfterFailure = false;
 				if (m_lost)
 					m_lost->restart = true; // a fallback runs
 				Json result = status();
@@ -3680,7 +3731,8 @@ namespace gnubase::engine
 			"(the default), overwrite, keepLast, stacked or mixStacked. lockRecord: Lock Record, which "
 			"keeps a recording from stopping or punching out by accident: transport.stop, transport.record and "
 			"transport.toggle stop it or punch out only with confirmed, and recording ignores the punch out at "
-			"the right locator; it stays on until it is set off.",
+			"the right locator; it stays on until it is set off. A count-in isn't a recording yet: they end it "
+			"without confirmed.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
 				"left": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},
 				"right": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},

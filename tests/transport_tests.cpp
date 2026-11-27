@@ -423,6 +423,28 @@ TEST_CASE("cycle recording with punch in and out records every lap, nothing befo
 	CHECK(transport.advance(blockSize).playing);
 }
 
+TEST_CASE("a count-in that the command thread restarts after it ended doesn't punch in", "[unit]")
+{
+	// The audio thread ended the count-in, but the command thread hasn't seen it yet (no update): a locate or a new
+	// pre-roll sends the count-in again, which the playing transport ignores.
+	Transport transport;
+	TransportSettings settings;
+	settings.preRoll = true;
+	settings.preRollAmount = 1000;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(5000));
+	graph::CountIn countIn;
+	countIn.length = 600;
+	REQUIRE(transport.record(true, countIn));
+	CHECK(recordedPositions(transport, 800, 100).empty()); // the count-in, then the pre-roll from 4000
+	CHECK(transport.countingIn());
+	REQUIRE(transport.record(true, countIn));
+	CHECK(recordedPositions(transport, 1000, 100) == range(5000, 5200)); // at the cursor, not in the pre-roll
+	REQUIRE(transport.sync());
+	CHECK(!transport.countingIn());
+	CHECK(transport.recording());
+}
+
 TEST_CASE("pre-roll starts playback before the cursor, and recording from stop at the cursor", "[unit]")
 {
 	const uint32_t blockSize = GENERATE(32u, 100u, 257u);
