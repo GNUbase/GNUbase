@@ -142,13 +142,18 @@ namespace gnubase::engine::settings
 		{
 			const Json column = {
 				{"type", "string"}, {"enum", {"number", "type", "position", "end", "length", "description"}}};
+			// The columns but the position, which can't be hidden.
+			const Json hideable = {{"type", "string"}, {"enum", {"number", "type", "end", "length", "description"}}};
+			const Json width = {{"type", "number"}, {"minimum", 16}, {"maximum", 2000}};
+			Json widths = {{"type", "object"}, {"properties", Json::object()}, {"additionalProperties", false}};
+			for (const char* name : {"number", "type", "position", "end", "length", "description"})
+				widths["properties"][name] = width;
 			return {{"type", "object"},
 				{"properties",
 					{{"order", {{"type", "array"}, {"items", column}}},
-						{"widths",
-							{{"type", "object"},
-								{"additionalProperties", {{"type", "number"}, {"minimum", 16}, {"maximum", 2000}}}}},
-						{"sort", column}, {"descending", {{"type", "boolean"}}}}}};
+						{"hidden", {{"type", "array"}, {"items", hideable}}}, {"widths", widths}, {"sort", column},
+						{"descending", {{"type", "boolean"}}}}},
+				{"additionalProperties", false}};
 		}
 	}
 
@@ -910,8 +915,9 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"}, {"enum", Json::array({"active", "all", "off"})}}, "active", true},
 				{"ui.markerColumns",
 					"The markers window's columns: order, the columns after the locate column in order (number, "
-					"type, position, end, length, description); widths, each one's width in dp; sort, the column the "
-					"list is sorted by, and descending. What it leaves out has its default.",
+					"type, position, end, length, description); hidden, those left out (all but the position); "
+					"widths, each one's width in dp; sort, the column the list is sorted by, and descending. What "
+					"it leaves out has its default.",
 					markerColumnsSchema(), Json::object()},
 				{"ui.markerIds", "Whether marker events on the marker tracks show their marker ids.",
 					Json{{"type", "boolean"}}, true},
