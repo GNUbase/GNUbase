@@ -201,7 +201,7 @@ it, with `renameEvents` numbering the events, and an event's repeats as shared c
 mode, a locate arrow on every row, renaming the active chain, and renaming a step's event with Alt and a double click,
 across a refresh while it is typed, selecting steps and removing the selected ones, a chain edit selecting none, and
 moving, copying and inserting steps by drag and drop, a click on one of the steps selected selecting it alone, and
-flattening with the flatten options, which Go Back keeps.
+flattening with the flatten options, which Go Back and closing the editor keep.
 `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide as
 its section with its name, the draw tool drawing one over the stretch dragged and, with a click, from the bar line at or
 before it to the next one, both snapped to bars; with the snap type Events, drawing from and to other arranger events'
@@ -235,6 +235,5 @@ adopts it while B plays; an attempt that misses that stretch, or is still making
 because a busy machine held up the test, is retried like one with dropouts. It compares only a capture with the edit
 made in time and without dropouts; exhausting the attempts fails the test (#1893, #1900).
 
-Not yet: dropping arranger events from the project window into a chain list, the other flatten options (Checked and
-All Chains, New Project, Make Real Event Copies) and a dialog for them in the editor, and arranging to an external
-timecode.
+Not yet: dropping arranger events into the arranger editor's chain list, the other flatten options (Checked and All
+Chains, New Project), and arranging to an external timecode.

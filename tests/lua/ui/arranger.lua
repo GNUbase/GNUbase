@@ -380,6 +380,22 @@ test.case("the editor flattens with the flatten options it keeps", function()
 	end
 	test.ok(not attribute("#flatten-dont-split", "checked"))
 
+	-- So does closing the editor: opened again, it shows them checked, with Rename Arranger Events enabled.
+	ui.command{command = "window.arranger"}
+	pcall(ui.wait, {selector = "#no-such-element", seconds = 0.1})
+	test.equal(arrangerWindow(), nil)
+	ui.command{command = "window.arranger"}
+	window = openedWindow()
+	test.ok(window)
+	ui.wait{window = window, selector = "#step-0"}
+	ui.click{window = window, selector = "#flatten-with-options"}
+	ui.wait{window = window, selector = "#flatten-keep-track"}
+	for _, id in ipairs({"#flatten-keep-track", "#flatten-rename", "#flatten-real-copies"}) do
+		test.ok(attribute(id, "checked"), id .. " stays checked after closing the editor")
+	end
+	test.ok(not attribute("#flatten-dont-split", "checked"))
+	test.ok(not attribute("#flatten-rename", "disabled"))
+
 	-- Flatten: the arranger track stays with A 1 and A 2, and the parts are real copies, none shared.
 	ui.click{window = window, selector = "#flatten-now"}
 	local events = gnubase.arranger.get().events
