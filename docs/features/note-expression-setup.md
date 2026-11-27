@@ -48,7 +48,10 @@ channel's `noteExpression` in `src/engine/document/document.h`).
 - **Convert to Note Expression** (p. 1316, #1515): `noteExpression.convert` turns a part's controller events whose
   message the setup assigns into points of the notes that sound at them on their channel, over the expression's range,
   and removes them from the part, one undo step ("Convert to note expression"). An event that no note sounds at stays,
-  so that nothing is lost, as the reference's release phases keep it.
+  so that nothing is lost, as the reference's release phases keep it. MIDI > Note Expression > Convert to Note
+  Expression (`midi.convertToNoteExpression`, `src/app/appmidifunctions.cpp`) runs it on the parts the MIDI menu's
+  functions take: an editor's (those with selected notes, else all it edits) or the project window's selected ones,
+  several in one undo step.
 
 `tests/noteexpression_tests.cpp` checks `noteExpression.set` with `project.get`, what a call leaves out, an expression
 back at its default leaving the list, saving and loading, undo, the refusals and a file's values loaded clamped, and
@@ -56,6 +59,7 @@ that a bypassed track's note plays without its expression and plays it again wit
 plays a controller assigned to two expressions as the expression of the notes it holds, with and without the bypass,
 records an assigned controller into the notes that sound, and that `noteExpression.convert` turns a part's assigned
 controllers into its notes' points, leaves the others and those no note sounds at, and undoes in one step.
+`tests/noteexpression_ui_tests.cpp` checks Convert to Note Expression in the MIDI menu on an editor's two parts.
 
 ## Not yet
 
@@ -64,4 +68,4 @@ controllers into its notes' points, leaves the others and those no note sounds a
   (#2120).
 - Loading and saving input assignments as presets (p. 1304, #2120); Record MIDI as Note Expression, Overdub Note Exp. and
   its Latch Buffer (p. 1302): recording into the notes of the parts that play, which the input doesn't hold (#1515);
-  Convert to Note Expression in the MIDI menu, and its release phases (p. 1316, #1515).
+  the release phases of Convert to Note Expression (p. 1316, #1515).

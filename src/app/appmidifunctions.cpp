@@ -444,6 +444,24 @@ namespace gnubase::app
 			}});
 		m_keys.enableWhen("midi.bounceMidi", hasParts);
 
+		// MIDI > Note Expression > Convert to Note Expression (p. 1316, #1515): the parts quantizing takes, an editor's
+		// or the project window's selected ones, in one undo step.
+		m_keys.add({"midi.convertToNoteExpression",
+			"Turns the controller events of the edited or selected MIDI parts whose message their track's note "
+			"expression setup assigns into the expression of the notes that sound at them.",
+			[this, targetOf](ui::Window& window, Rml::Element* zone)
+			{
+				Json commands = Json::array();
+				for (const auto& [part, notes] : targetOf(window, zone, false).first.parts)
+					commands.push_back({{"command", "noteExpression.convert"}, {"parameters", {{"part", part}}}});
+				if (commands.size() == 1)
+					m_binding.send("noteExpression.convert", commands[0].at("parameters"));
+				else if (!commands.empty())
+					m_binding.send("history.transaction",
+						{{"description", "Convert to note expression"}, {"commands", std::move(commands)}});
+			}});
+		m_keys.enableWhen("midi.convertToNoteExpression", hasTarget);
+
 		// The key editor's keys for its selected notes (#679, reference manual p. 1214), key commands of its focus
 		// zone that the Key Commands dialog binds to other keys: each acts on the editor whose zone the keys were
 		// pressed in, the editor window's, the lower zone's or an in-place editor.

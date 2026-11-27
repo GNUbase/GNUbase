@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The key editor's expression editor (#1512, docs/features/note-expression.md) while the engine's answers come late:
 // edits made before the project read of the last one arrived (#1795). tests/keyeditor_ui_tests.cpp checks its
-// gestures, tests/noteexpression_tests.cpp the engine's note.replaceExpression.
+// gestures, tests/noteexpression_tests.cpp the engine's note.replaceExpression. Also MIDI > Note Expression (#1515) and
+// the expressions the inspector hides (#2120).
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
@@ -11,6 +12,8 @@
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -269,4 +272,39 @@ TEST_CASE("an expression edit of one note that changed nothing leaves the editor
 	CHECK(binding.waiting("history.transaction") == 0);
 	f.app.call("engine.version");
 	CHECK(f.app.call("project.revision") == revision);
+}
+
+TEST_CASE("MIDI > Note Expression > Convert to Note Expression converts the editor's parts in one undo step", "[ui]")
+{
+	// #1515, reference manual p. 1316: each part's controllers that its track's setup assigns go into its notes.
+	Fixture f;
+	f.app.appUi().showProject();
+	for (const char* item : {"#midi-menu #midi-note-expression-submenu", "menuitem[command=midi.convertToNoteExpression]"})
+		CHECK(f.app.ui().dom(std::nullopt, item, 0).at("elements").size() == 1);
+	const Json project = f.app.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+	{
+		f.app.call("noteExpression.set",
+			{{"track", part.at("track")},
+				{"inputs", {{{"type", "brightness"}, {"input", "cc1"}, {"min", 0.0}, {"max", 1.0}}}}});
+		f.app.call("controller.add",
+			{{"part", part.at("id")},
+				{"controllers", {{{"position", g_quarter}, {"number", 1}, {"value", 1.0}, {"channel", 0}}}}});
+	}
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	ui::Window* window = f.window ? f.app.shell().find(*f.window) : nullptr;
+	REQUIRE(window != nullptr);
+	Rml::Element* zone = window->context().GetDocument(0)->GetElementById("main-zone");
+	REQUIRE(zone != nullptr);
+	f.app.keys().run("midi.convertToNoteExpression", Json::object(), *window, zone);
+	f.app.call("engine.version");
+	const Json brightness = {{"type", "brightness"}, {"position", g_quarter}, {"value", 1.0}};
+	CHECK(f.points(0) == Json::array({f.tuning, brightness}));
+	CHECK(f.points(1) == Json::array({brightness}));
+	const Json after = f.app.call("project.get");
+	for (const Json& part : after.at("midiParts"))
+		CHECK(part.at("controllers").empty());
+	const Json history = f.app.call("history.get").at("steps");
+	REQUIRE(history.size() == steps + 1);
+	CHECK(history.back().at("action") == "Convert to note expression");
 }

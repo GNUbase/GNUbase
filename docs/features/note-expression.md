@@ -271,10 +271,11 @@ loading cutting them there.
   #1829): they choose among a plugin's own expressions and need to know which expressions an instrument has, which need
   #1516; with the seven common ones and MIDI PolyPressure the assignment is what the page sets. More known MPE
   devices, which are detected by their port's name only.
-- Overdubbing note expression and Convert to Note Expression in the MIDI menu (pp. 1316-1318, #1515; recording the
-  assigned controllers and `noteExpression.convert` are in [note-expression-setup.md](note-expression-setup.md)), with
-  the toolbar switch that records expression for a selected note from MIDI input (pp. 1303,
-  1308) and the dialog that sets which MIDI messages record as expression (pp. 1314-1315).
+- Overdubbing note expression and the release phases of Convert to Note Expression (pp. 1316-1318, #1515; recording
+  the assigned controllers, `noteExpression.convert` and its MIDI menu item are in
+  [note-expression-setup.md](note-expression-setup.md)), with the toolbar switch that records expression for a selected
+  note from MIDI input (pp. 1303, 1308) and the dialog that sets which MIDI messages record as expression (pp.
+  1314-1315).
 - A plugin's own expressions with their names and ranges (VST3 custom note expressions), CLAP and MIDI 2.0 per-note
   controllers in the adapters, MPE output that allocates channels for notes that share one and a pitch range other
   than 48, chasing expression after a jump into a note, per-note expression in DAWproject's own note content, and the
