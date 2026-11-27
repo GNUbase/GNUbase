@@ -933,7 +933,10 @@ namespace gnubase::engine
 					}
 					for (auto& track : groups)
 						track.front() = {start, end, track.front().events};
-					render->mixdown = folder / fs::u8path(parameters.value("name", std::string("Mixdown")) + ".wav");
+					// A file in folder, whatever the name has in it: "AC/DC" is no subfolder, "../Mix" no path out of
+					// it.
+					render->mixdown =
+						folder / fs::u8path(safeFileName(parameters.value("name", std::string("Mixdown"))) + ".wav");
 					render->sampleFormat = parameters.value("sampleFormat", std::string("float32"));
 					render->sampleRate = project.sampleRate;
 				}

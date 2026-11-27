@@ -1658,8 +1658,10 @@ TEST_CASE("render in place takes its tail in bars and renders into a folder of i
 		return path;
 	};
 	// At 120 BPM, a bar of 4/4 is 2 s: 0.01 bars are 20 ms, 960 samples at 48 kHz.
-	const std::string bars = rendered({{"tailBars", 0.01}, {"folder", project.folder.path().u8string()}});
-	CHECK(fs::u8path(bars).parent_path() == project.folder.path());
+	const fs::path renders = project.folder.path() / "Renders";
+	REQUIRE(!fs::exists(renders));
+	const std::string bars = rendered({{"tailBars", 0.01}, {"folder", renders.u8string()}});
+	CHECK(fs::u8path(bars).parent_path() == renders);
 	CHECK(samplesOf(bars).size() == 2 * (1000 + 960));
 	CHECK(firstDifference(samplesOf(bars), samplesOf(rendered({{"tail", 0.02}}))) == -1);
 	// A bar of 3/4 is 1.5 s.
@@ -1707,9 +1709,16 @@ TEST_CASE("render in place mixes tracks down to one audio file (#760)", "[integr
 	const std::string path = mediaPath(project, result.at("media").at(0));
 	CHECK(fs::u8path(path).filename() == "Both.wav");
 	CHECK(firstDifference(samplesOf(path), sum) == -1);
-	// The tracks' own renders are gone: they took the names after those of the renders above.
-	CHECK(!fs::exists(audio / "One-2.wav"));
-	CHECK(!fs::exists(audio / "Two-2.wav"));
+	// The tracks' own renders are gone: only the renders above and the mixdown are left.
+	const auto wavs = [&audio]
+	{
+		std::set<std::string> names;
+		for (const auto& entry : fs::directory_iterator(audio))
+			if (entry.path().extension() == ".wav")
+				names.insert(entry.path().filename().u8string());
+		return names;
+	};
+	CHECK(wavs() == std::set<std::string>{"Both.wav", "One.wav", "Two.wav"});
 	const Json state = run(project.client, "project.get");
 	for (const Json& event : state.at("audioEvents"))
 		if (event.at("id") == result.at("events").at(0))
@@ -1718,6 +1727,22 @@ TEST_CASE("render in place mixes tracks down to one audio file (#760)", "[integr
 	CHECK(nullTest(project.mainMix(), live) < 1e-6f);
 	run(project.client, "history.undo");
 	CHECK(run(project.client, "project.get").at("tracks").size() == 2);
+
+	// In an integer format, the sum is rounded to it; the name becomes a file name in the folder.
+	const Json int24 = run(project.client, "track.renderInPlace",
+		{{"tracks", {one.track, two.track}}, {"processing", "completeSignalPath"}, {"mixdown", true},
+			{"sampleFormat", "int24"}, {"name", "AC/DC: live"}});
+	CHECK(project.track(int24.at("tracks").at(0).get<ObjectId>()).at("name") == "AC/DC: live (Rendered)");
+	const std::string rounded = mediaPath(project, int24.at("media").at(0));
+	CHECK(fs::u8path(rounded) == audio / "AC_DC_ live.wav");
+	CHECK(AudioFileReader::open(rounded)->info().sampleFormat == SampleFormat::Int24);
+	const std::vector<float> samples = samplesOf(rounded);
+	REQUIRE(samples.size() == sum.size());
+	float error = 0.0f;
+	for (size_t i = 0; i < sum.size(); ++i)
+		error = std::max(error, std::abs(samples[i] - sum[i]));
+	CHECK(error <= 1.0f / 8388608.0f); // half a step of 24 bits, and rounding of the float sum
+	run(project.client, "history.undo");
 
 	const Json both = {one.track, two.track};
 	CHECK_THAT(reject(project.client, "track.renderInPlace",
