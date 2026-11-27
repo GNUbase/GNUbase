@@ -481,6 +481,19 @@ TEST_CASE("the note expression settings of the key editor are view state", "[uni
 	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"expressionType", "loudness"}}).empty());
 }
 
+TEST_CASE("the MIDI editors' event colors are view state", "[unit]")
+{
+	// The Event Colors menu (reference manual pp. 1133-1134): the theme's note colors at first, Part or Sound Slot.
+	Fixture f;
+	CHECK(f.view().at("eventColors") == "default");
+	const int64_t revision = f.call("project.revision").at("revision").get<int64_t>();
+	CHECK(f.call("editor.set", {{"editor", "window"}, {"eventColors", "part"}}).at("eventColors") == "part");
+	CHECK(f.call("editor.set", {{"editor", "window"}, {"eventColors", "soundSlot"}}).at("eventColors") == "soundSlot");
+	CHECK(f.view().at("eventColors") == "soundSlot");
+	CHECK(f.call("project.revision").at("revision").get<int64_t>() == revision); // no undo step
+	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"eventColors", "rainbow"}}).empty());
+}
+
 TEST_CASE("notes played on the MIDI inputs go into step input as chords once all their keys are up", "[unit]")
 {
 	// Reference manual pp. 1219-1220: editor.played, as midi.activity posts it.

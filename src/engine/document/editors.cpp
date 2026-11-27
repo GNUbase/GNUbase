@@ -89,8 +89,9 @@ namespace gnubase::engine
 			bool soundSlotsLane = true;
 			std::set<int> collapsedGroups;
 			bool autoSelectControllers = false;
-			bool acousticFeedback = false;                                  // Acoustic Feedback (pp. 1192, 1259)
-			bool indicateTranspositions = false;                            // Indicate Transpositions (pp. 419, 1260)
+			bool acousticFeedback = false;       // Acoustic Feedback (pp. 1192, 1259)
+			bool indicateTranspositions = false; // Indicate Transpositions (pp. 419, 1260)
+			std::string eventColors = "default"; // the Event Colors menu (pp. 1133-1134): default, part or soundSlot
 			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection; // each a part and a controller event of it
 			// The attributes selected of selected notes on the Articulations lane (#1688, p. 1289), by part and note;
 			// a selected note without them has all its attributes selected.
@@ -459,7 +460,7 @@ namespace gnubase::engine
 				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection},
 				{"showExpression", view.showExpression}, {"expressionDoubleClick", view.expressionDoubleClick},
 				{"expressionType", view.expressionType}, {"acousticFeedback", view.acousticFeedback},
-				{"indicateTranspositions", view.indicateTranspositions},
+				{"eventColors", view.eventColors}, {"indicateTranspositions", view.indicateTranspositions},
 				{"transpositions", transpositions(project, view)}};
 		}
 
@@ -744,6 +745,7 @@ namespace gnubase::engine
 		const Json idSchema = {{"type", "integer"}};
 		const Json boolean = {{"type", "boolean"}};
 		const Json gridTypeSchema = {{"type", "string"}, {"enum", {"quantize", "zoom", "drumMap"}}};
+		const Json eventColorsSchema = {{"type", "string"}, {"enum", {"default", "part", "soundSlot"}}};
 		const Json visibleSoundsSchema = {{"type", "string"}, {"enum", {"all", "withEvents", "inUse"}}};
 		const Json expressionTypeSchema = {
 			{"type", "string"}, {"enum", std::vector<std::string>(g_expressionNames.begin(), g_expressionNames.end())}};
@@ -779,7 +781,7 @@ namespace gnubase::engine
 			{"autoSelectControllers", boolean}, {"pitchVisibility", boolean}, {"reverseSounds", boolean},
 			{"visibleSounds", visibleSoundsSchema}, {"soloInstrument", boolean}, {"showNoteLength", boolean},
 			{"gridType", gridTypeSchema}, {"showExpression", boolean}, {"expressionDoubleClick", boolean},
-			{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean},
+			{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean}, {"eventColors", eventColorsSchema},
 			{"indicateTranspositions", boolean}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
@@ -793,7 +795,7 @@ namespace gnubase::engine
 					"content", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soundNames",
 					"soloInstrument", "showNoteLength", "gridType", "lanes", "showLanes", "soundSlotsLane",
 					"collapsedGroups", "autoSelectControllers", "controllerSelection", "eventSelection",
-					"showExpression", "expressionDoubleClick", "expressionType", "acousticFeedback",
+					"showExpression", "expressionDoubleClick", "expressionType", "acousticFeedback", "eventColors",
 					"indicateTranspositions", "transpositions"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		viewSchema["properties"]["soundsInUse"] = {{"type", {"array", "null"}}, {"items", idSchema}};
@@ -860,7 +862,10 @@ namespace gnubase::engine
 			"makes a double click on a note open the expression editor instead of deleting it, and expressionType is "
 			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. "
 			"acousticFeedback: the editor plays a note while it is moved or drawn, and a note whose velocity the "
-			"velocity lane edits (pp. 1192, 1259). indicateTranspositions (Indicate Transpositions, pp. 419, 1260) "
+			"velocity lane edits (pp. 1192, 1259). eventColors, the notes' colors (pp. 1133-1134): default, the "
+			"style sheets', part, their part's color, its own or else its track's, or soundSlot, the color of the "
+			"sound slot of the track's articulation map that each note plays. "
+			"indicateTranspositions (Indicate Transpositions, pp. 419, 1260) "
 			"shows the notes at the pitches they play: transpositions then gives, for each MIDI part shown, steps "
 			"{position, semitones}, from the part's start and where a transpose event changes it, in project ticks: "
 			"the semitones its notes from there on play transposed by, its own transpose, the root key's step and "
@@ -982,7 +987,7 @@ namespace gnubase::engine
 					{"controllerSelection", controllerSelectionSchema}, {"eventSelection", idsSchema},
 					{"showExpression", boolean}, {"expressionDoubleClick", boolean},
 					{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean},
-					{"indicateTranspositions", boolean}}),
+					{"eventColors", eventColorsSchema}, {"indicateTranspositions", boolean}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -1175,6 +1180,7 @@ namespace gnubase::engine
 				view.expressionDoubleClick = parameters.value("expressionDoubleClick", view.expressionDoubleClick);
 				view.expressionType = parameters.value("expressionType", view.expressionType);
 				view.acousticFeedback = parameters.value("acousticFeedback", view.acousticFeedback);
+				view.eventColors = parameters.value("eventColors", view.eventColors);
 				view.indicateTranspositions = parameters.value("indicateTranspositions", view.indicateTranspositions);
 				const bool autoSelectTurnsOn = parameters.value("autoSelectControllers", view.autoSelectControllers) &&
 					!view.autoSelectControllers;

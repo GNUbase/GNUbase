@@ -270,6 +270,8 @@ namespace gnubase::ui
 		void editSound(int pitch, const std::string& field, const std::string& text);
 		void place(Rml::Element& element, int64_t start, int64_t length, int pitch) const;
 		std::string partsRml() const;
+		void noteColors(const std::string& colors, const engine::Json& part, const engine::Json& track,
+			const std::map<uint64_t, const engine::Json*>& maps);
 
 		// The note display's point under the mouse: project ticks and pitch.
 		std::pair<double, int> at(const Rml::Event& event) const;
@@ -352,7 +354,10 @@ namespace gnubase::ui
 		std::optional<std::pair<int64_t, int64_t>> m_range; // setTimeRange's
 		const time::TempoMap* m_tempo = nullptr;            // and its tempo map
 		bool m_scrolled = false;
-		std::string m_notesRml;                                         // the notes' elements as last set
+		std::string m_notesRml; // the notes' elements as last set
+		// The notes' colors that the Event Colors menu chooses (pp. 1133-1134), by part and note: none for the style
+		// sheets' color.
+		std::map<std::pair<uint64_t, uint64_t>, std::string> m_noteColors;
 		std::string m_expressionRml;                                    // the expression editor's lines as last set
 		std::set<std::pair<uint64_t, std::string>> m_hiddenExpressions; // by part, as its track's setup hides them
 		std::string m_expressionItems;                                  // Parameter Selection's items as last set

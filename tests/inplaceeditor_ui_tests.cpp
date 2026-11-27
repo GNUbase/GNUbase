@@ -259,6 +259,8 @@ TEST_CASE("the in-place editor edits notes as the key editor does, and the event
 		[](const Json& each) { return each.at("pitch") == 62 && each.at("position") == 2 * g_quarter; }));
 
 	// With the toolbar shown, the draw tool draws a note at the snapped time.
+	// The toolbar wraps to three rows in Linux CI's 1024 pixels wide window: a taller lane keeps rows for the notes.
+	f.display.setTrackHeight(f.track, 300);
 	f.click(f.triangle());
 	f.click(f.editor() + " .key-tool[key-tool=draw]");
 	REQUIRE(f.has(f.editor() + " .key-tool[key-tool=draw]", "checked"));
@@ -1034,6 +1036,8 @@ TEST_CASE("with Acoustic Feedback an in-place editor plays the notes it moves an
 	f.scroll(61);
 
 	// The toolbar's button turns it on.
+	// The toolbar wraps to three rows in Linux CI's 1024 pixels wide window: a taller lane keeps rows for the notes.
+	f.display.setTrackHeight(f.track, 300);
 	f.click(f.triangle());
 	f.click(f.editor() + " .key-input[setting=acousticFeedback]");
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("acousticFeedback") == true; }));
@@ -1220,6 +1224,8 @@ TEST_CASE(
 	f.display.zoomIn(); // once: after a second step the note lies outside the 1024 pixels wide window of Linux CI
 	f.settle(2);
 	f.display.select({otherPart});
+	// The toolbar wraps to three rows in Linux CI's 1024 pixels wide window: a taller lane keeps rows for the notes.
+	f.display.setTrackHeight(f.track, 300);
 	f.click(f.triangle());
 	f.settle(2);
 	f.scroll(60);
