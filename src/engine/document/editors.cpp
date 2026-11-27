@@ -89,7 +89,8 @@ namespace gnubase::engine
 			bool soundSlotsLane = true;
 			std::set<int> collapsedGroups;
 			bool autoSelectControllers = false;
-			bool acousticFeedback = false;                                  // Acoustic Feedback (pp. 1192, 1259)
+			bool acousticFeedback = false;       // Acoustic Feedback (pp. 1192, 1259)
+			std::string eventColors = "default"; // the Event Colors menu (pp. 1133-1134): default, part or soundSlot
 			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection; // each a part and a controller event of it
 			// The attributes selected of selected notes on the Articulations lane (#1688, p. 1289), by part and note;
 			// a selected note without them has all its attributes selected.
@@ -418,7 +419,8 @@ namespace gnubase::engine
 				{"collapsedGroups", view.collapsedGroups}, {"autoSelectControllers", view.autoSelectControllers},
 				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection},
 				{"showExpression", view.showExpression}, {"expressionDoubleClick", view.expressionDoubleClick},
-				{"expressionType", view.expressionType}, {"acousticFeedback", view.acousticFeedback}};
+				{"expressionType", view.expressionType}, {"acousticFeedback", view.acousticFeedback},
+				{"eventColors", view.eventColors}};
 		}
 
 		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
@@ -673,6 +675,7 @@ namespace gnubase::engine
 		const Json idSchema = {{"type", "integer"}};
 		const Json boolean = {{"type", "boolean"}};
 		const Json gridTypeSchema = {{"type", "string"}, {"enum", {"quantize", "zoom", "drumMap"}}};
+		const Json eventColorsSchema = {{"type", "string"}, {"enum", {"default", "part", "soundSlot"}}};
 		const Json visibleSoundsSchema = {{"type", "string"}, {"enum", {"all", "withEvents", "inUse"}}};
 		const Json expressionTypeSchema = {
 			{"type", "string"}, {"enum", std::vector<std::string>(g_expressionNames.begin(), g_expressionNames.end())}};
@@ -708,7 +711,8 @@ namespace gnubase::engine
 			{"autoSelectControllers", boolean}, {"pitchVisibility", boolean}, {"reverseSounds", boolean},
 			{"visibleSounds", visibleSoundsSchema}, {"soloInstrument", boolean}, {"showNoteLength", boolean},
 			{"gridType", gridTypeSchema}, {"showExpression", boolean}, {"expressionDoubleClick", boolean},
-			{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean}};
+			{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean},
+			{"eventColors", eventColorsSchema}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -721,7 +725,7 @@ namespace gnubase::engine
 					"content", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soundNames",
 					"soloInstrument", "showNoteLength", "gridType", "lanes", "showLanes", "soundSlotsLane",
 					"collapsedGroups", "autoSelectControllers", "controllerSelection", "eventSelection",
-					"showExpression", "expressionDoubleClick", "expressionType", "acousticFeedback"}}};
+					"showExpression", "expressionDoubleClick", "expressionType", "acousticFeedback", "eventColors"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		viewSchema["properties"]["soundsInUse"] = {{"type", {"array", "null"}}, {"items", idSchema}};
 		viewSchema["properties"]["soundNames"] = {
@@ -781,7 +785,9 @@ namespace gnubase::engine
 			"makes a double click on a note open the expression editor instead of deleting it, and expressionType is "
 			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. "
 			"acousticFeedback: the editor plays a note while it is moved or drawn, and a note whose velocity the "
-			"velocity lane edits (pp. 1192, 1259). View state: no "
+			"velocity lane edits (pp. 1192, 1259). eventColors, the notes' colors (pp. 1133-1134): default, the "
+			"style sheets', part, their part's color, its own or else its track's, or soundSlot, the color of the "
+			"sound slot of the track's articulation map that each note plays. View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors. An edit, undo or redo that "
 			"changes an open editor's parts (removes, adds, brings back or reorders them) or closes it, and a "
 			"project that closes it, emit editor.changed with its view.";
@@ -893,7 +899,8 @@ namespace gnubase::engine
 					{"soundSlotsLane", boolean}, {"collapsedGroups", groupsSchema}, {"autoSelectControllers", boolean},
 					{"controllerSelection", controllerSelectionSchema}, {"eventSelection", idsSchema},
 					{"showExpression", boolean}, {"expressionDoubleClick", boolean},
-					{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean}}),
+					{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean},
+					{"eventColors", eventColorsSchema}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -1086,6 +1093,7 @@ namespace gnubase::engine
 				view.expressionDoubleClick = parameters.value("expressionDoubleClick", view.expressionDoubleClick);
 				view.expressionType = parameters.value("expressionType", view.expressionType);
 				view.acousticFeedback = parameters.value("acousticFeedback", view.acousticFeedback);
+				view.eventColors = parameters.value("eventColors", view.eventColors);
 				const bool autoSelectTurnsOn = parameters.value("autoSelectControllers", view.autoSelectControllers) &&
 					!view.autoSelectControllers;
 				if (parameters.contains("autoSelectControllers"))
