@@ -273,20 +273,19 @@ and crossfading two tracks, with undo, from any slice, with a slice split by han
 slicing the slices again, with a locked slice, with the event's fade out and on a track whose time base changed since
 slicing, also across a save and a load, and after the event's audio part moved or its start was sized with the contents,
 also onto a musical track across a save and a load; copies of slices with no origin, and a duplicated or imported track
-resetting its own; a duplicated version and an imported track resetting quantized and crossfaded events and slices of a
-crossfaded event to the crossfades from the copies of their events; the Warp Marker Creation Rules' Reset keeping the
-user's own marker, after warp quantizing and across
-a save and a load, with a locked event, and leaving a marker added where a removed one was; warp quantizing a selection
-range, rendered, with a range the event doesn't reach, a second range and its errors; the cutting positions where Slice
-then cuts, none without hitpoints, and no undo step. `tests/audioquantize_ui_tests.cpp` drives the app with
-`ui::Automation`: Edit > Quantize and Reset Quantize on a selected audio event, the sample editor toolbar's Apply
-Quantize on the event it edits, Warp Quantize On/Off, the panel's Slice, Apply, Crossfade, Nudge Crossfade, Open
-Crossfade Editor and Create on two tracks, the Hitpoint Tracks following the selection and a track at priority 0 leaving
-its hitpoints out of Slice and of Create, the priorities forgotten in a new project, and Create Groove Quantize Preset
-from a selected audio event, logged when it is refused, and from the event a selection range reaches; the panel's two
-Reset buttons after Slice and Apply and after Create, Edit > Quantize on a selection range with Warp Quantize on, and
-with it off logging the refusal, Reset Quantize on a selection range leaving an event outside it as it is, and with
-Group Editing on every track of the folder, and the cutting positions following the selection, the zoom and Warp
-Quantize On/Off, and going with the panel. `tests/eventediting_tests.cpp` selects MIDI and audio parts with Group
-Editing, not one on another lane, by the outermost folder with Group Editing, and takes a group out with Ctrl and a
-click.
+resetting its own; a duplicated track, a duplicated version and an imported track resetting quantized and crossfaded
+events and slices of a crossfaded event to the crossfades from the copies of their events; the Warp Marker Creation
+Rules' Reset keeping the user's own marker, after warp quantizing and across a save and a load, with a locked event, and
+leaving a marker added where a removed one was; warp quantizing a selection range, rendered, with a range the event
+doesn't reach, a second range and its errors; the cutting positions where Slice then cuts, none without hitpoints, and
+no undo step. `tests/audioquantize_ui_tests.cpp` drives the app with `ui::Automation`: Edit > Quantize and Reset
+Quantize on a selected audio event, the sample editor toolbar's Apply Quantize on the event it edits, Warp Quantize
+On/Off, the panel's Slice, Apply, Crossfade, Nudge Crossfade, Open Crossfade Editor and Create on two tracks, the
+Hitpoint Tracks following the selection and a track at priority 0 leaving its hitpoints out of Slice and of Create, the
+priorities forgotten in a new project, and Create Groove Quantize Preset from a selected audio event, logged when it is
+refused, and from the event a selection range reaches; the panel's two Reset buttons after Slice and Apply and after
+Create, Edit > Quantize on a selection range with Warp Quantize on, and with it off logging the refusal, Reset Quantize
+on a selection range leaving an event outside it as it is, and with Group Editing on every track of the folder, and the
+cutting positions following the selection, the zoom and Warp Quantize On/Off, and going with the panel.
+`tests/eventediting_tests.cpp` selects MIDI and audio parts with Group Editing, not one on another lane, by the
+outermost folder with Group Editing, and takes a group out with Ctrl and a click.

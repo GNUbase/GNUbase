@@ -1708,11 +1708,7 @@ namespace gnubase::engine
 				event.id = events.at(event.id);
 				event.front = 0;
 				event.track = copy.id;
-				const auto from = events.find(event.crossfade.from);
-				event.crossfade.from = from == events.end() ? 0 : from->second;
-				// The copies' slices reset into the copy of their event, not into the original track's (#1668).
-				const auto sliced = events.find(event.slicedFrom);
-				event.slicedFrom = sliced == events.end() ? 0 : sliced->second;
+				remapCopiedEvent(event, events);
 				const auto part = audioParts.find(event.part);
 				event.part = part == audioParts.end() ? 0 : part->second;
 				project.audioEvents[event.id] = event;

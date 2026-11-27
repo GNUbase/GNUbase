@@ -1869,7 +1869,7 @@ TEST_CASE("A copied track resets its quantized events to crossfades from the cop
 	run(client, "quantize.crossfade", {{"events", events}});
 	REQUIRE(crossfadeOf(client, third).at("from") == second);
 
-	const std::string how = GENERATE(as<std::string>{}, "trackVersion.duplicate", "track.import");
+	const std::string how = GENERATE(as<std::string>{}, "track.duplicate", "trackVersion.duplicate", "track.import");
 	CAPTURE(how);
 	const ObjectId track = copyOf(client, dir, loop.track, how);
 	const std::vector<ObjectId> copies = idsOn(client, track);
@@ -1902,7 +1902,7 @@ TEST_CASE("A copied track resets its slices to the crossfade from the copy of th
 	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
 	REQUIRE(run(client, "quantize.slice", {{"events", {second}}}).at("events").size() == 3);
 
-	const std::string how = GENERATE(as<std::string>{}, "trackVersion.duplicate", "track.import");
+	const std::string how = GENERATE(as<std::string>{}, "track.duplicate", "trackVersion.duplicate", "track.import");
 	CAPTURE(how);
 	const ObjectId track = copyOf(client, dir, loop.track, how);
 	const std::vector<ObjectId> copies = idsOn(client, track);
