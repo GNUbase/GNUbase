@@ -129,11 +129,16 @@ TEST_CASE("MIDI device banks are replaced through the engine without changing ot
 	Client client(engine);
 	run(client, "midiDevice.install", {{"name", "Synth"}});
 	const Json other = run(client, "midiDevice.install", {{"name", "Other"}, {"template", "gm"}}).at("device");
-	const Json banks = {{{"name", "Custom"}, {"patches", Json::array()}}};
+	// Folders that New Folder made are kept even while they are empty, nested ones with / in their paths.
+	const Json banks = {{{"name", "Custom"}, {"patches", Json::array()}, {"folders", {"Keys", "Keys/Pianos"}}}};
 	CHECK(run(client, "midiDevice.set", {{"name", "Synth"}, {"banks", banks}}).at("device") ==
 		Json{{"name", "Synth"}, {"banks", banks}});
 	CHECK(!client.call("midiDevice.set", {{"name", "Missing"}, {"banks", banks}}).ok());
 	CHECK(!client.call("midiDevice.set", {{"name", "Synth"}, {"banks", {{{"name", "Broken"}}}}}).ok());
+	CHECK(!client
+			.call("midiDevice.set",
+				{{"name", "Synth"}, {"banks", {{{"name", "Broken"}, {"patches", Json::array()}, {"folders", {1}}}}}})
+			.ok());
 	CHECK(run(client, "settings.get", {{"key", "midi.devices"}}).at("value").at("Synth").at("banks") == banks);
 	run(client, "midiDevice.set", {{"name", "Synth"}, {"banks", Json::array()}});
 	const Json devices = run(client, "settings.get", {{"key", "midi.devices"}}).at("value");
@@ -174,7 +179,7 @@ TEST_CASE("Export Setup writes the MIDI devices into a file, which Import Setup 
 							{"patches",
 								{{{"name", "Piano & <Strings>"}, {"program", 0}, {"bank", 300}, {"folder", "Keys"}},
 									{{"name", "Lead"}, {"program", 127}}}}},
-		{{"name", "Drums"}, {"patches", {{{"name", "Kit"}, {"program", 8}}}}}};
+		{{"name", "Drums"}, {"patches", {{{"name", "Kit"}, {"program", 8}}}}, {"folders", {"Kits", "Kits/Rock"}}}};
 	Json devices;
 	{
 		Engine engine;
