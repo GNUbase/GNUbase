@@ -240,6 +240,10 @@ namespace gnubase::engine
 		// expressions; empty otherwise.
 		std::vector<RenderNote> preNotes;
 		std::vector<RenderExpression> preExpressions;
+		// Those channels: their controller events as the parts play them without the modifiers, whose poly pressure
+		// presses the keys of preNotes, sorted as controllers (preCompiled); empty and false otherwise.
+		std::vector<RenderController> preControllers;
+		bool preCompiled = false;
 		// MIDI and instrument channels: the rules of their input transformer's modules that are on, the track's or
 		// the project's, in order; empty for none.
 		std::vector<midi::LogicalRules> inputTransformer;

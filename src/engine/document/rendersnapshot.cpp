@@ -274,6 +274,13 @@ namespace gnubase::engine
 			};
 			if (slotNotes != nullptr && articulations != nullptr && !slots.empty())
 				addSlotNotes(project, part, start, end, *articulations, slots, map, soloed, *slotNotes);
+			// For the part's poly pressure, if it has any: the notes by key, and where each note that plays goes, its
+			// pitch and channel.
+			const bool pressures = std::any_of(part.controllers.begin(), part.controllers.end(),
+				[](const auto& each) { return each.second.type == ControllerType::PolyPressure; });
+			const std::map<ObjectId, Note> none;
+			const midi::PressedNotes pressedNotes(pressures ? part.notes : none, trackChannel.has_value());
+			std::map<ObjectId, std::pair<uint8_t, uint8_t>> pressed;
 			for (const auto& [id, note] : part.notes)
 			{
 				// Notes the part hides beyond its end don't play, wherever a random position would move them.
@@ -314,6 +321,8 @@ namespace gnubase::engine
 					slot != nullptr ? std::min(milliseconds(project, slot->attack), noteStart) : time::Samples{0};
 				channel.notes.push_back({noteStart - early, toSamples(project, noteEnd) - early, pitch, velocity,
 					playedChannel(note, sound, slot, trackChannel), false, 0});
+				if (pressures)
+					pressed[id] = {pitch, channel.notes.back().channel};
 				for (const ExpressionPoint& point : note.expressions)
 				{
 					if (channel.expressionBypass || start + position + point.position >= noteEnd)
@@ -326,10 +335,34 @@ namespace gnubase::engine
 				}
 			}
 			for (const auto& [id, controller] : part.controllers)
-				if (controller.position < end - start && controller.type != ControllerType::Articulation)
-					channel.controllers.push_back({toSamples(project, start + controller.position), controller.type,
-						controller.number, controller.value,
-						static_cast<uint8_t>(trackChannel.value_or(controller.channel)), controller.data, index});
+			{
+				if (controller.position >= end - start || controller.type == ControllerType::Articulation)
+					continue;
+				uint8_t number = controller.number;
+				auto midiChannel = static_cast<uint8_t>(trackChannel.value_or(controller.channel));
+				// Poly pressure presses the key of its note wherever the note plays, and goes nowhere if the note
+				// doesn't play, as live input's does (#870). Pressure without a note moves by the transposition.
+				if (controller.type == ControllerType::PolyPressure)
+				{
+					if (const Note* note = pressedNotes.find(controller))
+					{
+						const auto found = pressed.find(note->id);
+						if (found == pressed.end())
+							continue;
+						std::tie(number, midiChannel) = found->second;
+					}
+					else
+					{
+						const int key = number + modifiers.transpose +
+							globalTranspose(project, part, toSamples(project, start + controller.position));
+						if (key < 0 || key > 127)
+							continue;
+						number = static_cast<uint8_t>(key);
+					}
+				}
+				channel.controllers.push_back({toSamples(project, start + controller.position), controller.type, number,
+					controller.value, midiChannel, controller.data, index});
+			}
 		}
 
 		// MPE's initial values: a note on a MIDI channel gets the initial value of each of tuning, pressure and
@@ -982,6 +1015,13 @@ namespace gnubase::engine
 			channel.preNotes.insert(channel.preNotes.end(), unmodified.notes.begin(), unmodified.notes.end());
 			channel.preExpressions.insert(
 				channel.preExpressions.end(), unmodified.expressions.begin(), unmodified.expressions.end());
+			// Their poly pressure as the notes there play (#870), pointing at the part as the channel's do.
+			channel.preCompiled = true;
+			for (RenderController& controller : unmodified.controllers)
+			{
+				controller.part = static_cast<int32_t>(channel.midiParts.size() - 1);
+				channel.preControllers.push_back(std::move(controller));
+			}
 		}
 		// The sound slots' output events, across each track's parts; the MIDI sends before the modifiers get its
 		// key switches too.
@@ -989,10 +1029,16 @@ namespace gnubase::engine
 		{
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(track))];
 			const size_t from = channel.notes.size();
+			const size_t fromControllers = channel.controllers.size();
 			addOutputEvents(project, notes, channel);
 			if (preNotes(channel))
+			{
 				channel.preNotes.insert(channel.preNotes.end(),
 					channel.notes.begin() + static_cast<std::ptrdiff_t>(from), channel.notes.end());
+				channel.preControllers.insert(channel.preControllers.end(),
+					channel.controllers.begin() + static_cast<std::ptrdiff_t>(fromControllers),
+					channel.controllers.end());
+			}
 		}
 
 		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel
@@ -1064,8 +1110,9 @@ namespace gnubase::engine
 						return std::make_tuple(a.start, !a.keySwitch, a.keySwitch ? 0 : a.pitch) <
 							std::make_tuple(b.start, !b.keySwitch, b.keySwitch ? 0 : b.pitch);
 					});
-			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
-				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
+			for (std::vector<RenderController>* controllers : {&channel.controllers, &channel.preControllers})
+				std::stable_sort(controllers->begin(), controllers->end(),
+					[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
 			addInitialExpressions(channel.notes, channel.expressions);
 			addInitialExpressions(channel.preNotes, channel.preExpressions);
 			for (std::vector<RenderExpression>* expressions : {&channel.expressions, &channel.preExpressions})
@@ -1085,9 +1132,10 @@ namespace gnubase::engine
 				parts.push_back(channel.midiParts[byStart[i]]);
 			}
 			channel.midiParts = std::move(parts);
-			for (RenderController& controller : channel.controllers)
-				if (controller.part >= 0)
-					controller.part = moved[static_cast<size_t>(controller.part)];
+			for (std::vector<RenderController>* controllers : {&channel.controllers, &channel.preControllers})
+				for (RenderController& controller : *controllers)
+					if (controller.part >= 0)
+						controller.part = moved[static_cast<size_t>(controller.part)];
 		}
 		return snapshot;
 	}

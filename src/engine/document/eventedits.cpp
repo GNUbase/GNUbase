@@ -13,10 +13,13 @@
 #include "engine/document/trackvisibility.h"
 #include "engine/document/warp.h"
 #include "engine/engine.h"
+#include "engine/midi/controllerlanes.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/patterns.h"
+#include "engine/midi/trackchannel.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -1279,25 +1282,58 @@ namespace gnubase::engine
 				// glued part keeps the first one's, and the notes of the others get the difference of what the two
 				// parts play them with: their own transposes with global transposition, which Keep Transpose in
 				// Octave Range folds as one sum (#896), so the difference is what the parts play at each note's
-				// position. A note the difference would move beyond 0 to 127 can't keep its pitch, so the glue is
-				// refused.
-				const auto playedShift = [&](const MidiPart& other, const Note& note)
+				// position. Their poly pressure moves with the note it presses, as playback moves it (#870), or by
+				// the difference at its own position. A note or poly pressure the difference would move beyond 0 to
+				// 127 can't keep its pitch, so the glue is refused.
+				const auto playedShift = [&](const MidiPart& other, time::Ticks position)
 				{
 					const time::Samples at =
-						project.tempo.toSamples(ticks(project, other.position) + note.position, project.sampleRate);
+						project.tempo.toSamples(ticks(project, other.position) + position, project.sampleRate);
 					return globalTranspose(project, other, at) - globalTranspose(project, part, at);
+				};
+				const bool anyChannel = midi::trackMidiChannel(project, part.track).has_value();
+				const auto pressureShift =
+					[&](const MidiPart& other, const midi::PressedNotes& notes, const Controller& pressure)
+				{
+					const Note* pressed = notes.find(pressure);
+					return playedShift(other, pressed != nullptr ? pressed->position : pressure.position);
 				};
 				for (size_t i = 1; i < items.size(); ++i)
 				{
 					const MidiPart& other = *items[i].part;
-					for (const auto& [id, note] : notesOf(other))
+					const std::map<ObjectId, Note> notes = notesOf(other);
+					const midi::PressedNotes pressed(notes, anyChannel);
+					const auto refuse = [&](int pitch, int transpose, const char* what)
 					{
-						const int transpose = playedShift(other, note);
-						require(note.pitch + transpose >= 0 && note.pitch + transpose <= 127,
-							"a note of MIDI part " + std::to_string(other.id) +
+						require(pitch + transpose >= 0 && pitch + transpose <= 127,
+							std::string(what) + " of MIDI part " + std::to_string(other.id) +
 								" would be transposed beyond 0 to 127 by the difference of what the parts play with");
-					}
+					};
+					for (const auto& [id, note] : notes)
+						refuse(note.pitch, playedShift(other, note.position), "a note");
+					for (const auto& [id, controller] : other.controllers)
+						if (controller.type == ControllerType::PolyPressure)
+							refuse(
+								controller.number, pressureShift(other, pressed, controller), "a poly pressure event");
 				}
+				// The other parts' velocities as the first one's plays them: the track compresses a stored velocity
+				// before it adds the part's (unless its modifiers are bypassed), so the difference goes in divided by
+				// the compression, which keeps the sound for the compression set now, as near as its steps allow. In
+				// MIDI 1.0 velocities, as the modifiers work; the stored velocity stays from 1 to 127, so a note whose
+				// stored velocity would have to go beyond that is stored at the end and plays softer or louder.
+				const midi::Modifiers& modifiers =
+					project.channels.at(project.trackById.at(part.track).channel).modifiers;
+				const std::array<int, 2> compression =
+					modifiers.bypass ? std::array<int, 2>{1, 1} : modifiers.velocityCompression;
+				const auto gluedVelocity = [&compression](uint16_t velocity, int difference)
+				{
+					// As midi::modifyNote rounds it.
+					const int64_t played = std::llround(static_cast<double>(midi::velocityToMidi1(velocity)) *
+											   compression[0] / compression[1]) +
+						difference;
+					const int64_t stored = std::llround(static_cast<double>(played) * compression[1] / compression[0]);
+					return midi::velocityFromMidi1(static_cast<uint8_t>(std::clamp<int64_t>(stored, 1, 127)));
+				};
 				detach(project, part);
 				if (!continues && part.pattern != 0)
 				{
@@ -1318,17 +1354,16 @@ namespace gnubase::engine
 					end = std::max(end, other.position.value + other.length);
 					const time::Ticks offset = ticks(project, other.position) - start;
 					const int velocity = other.velocity - part.velocity;
-					for (const auto& [id, each] : notesOf(other))
+					const std::map<ObjectId, Note> notes = notesOf(other);
+					const midi::PressedNotes pressed(notes, anyChannel);
+					for (const auto& [id, each] : notes)
 					{
-						const int transpose = playedShift(other, each);
 						Note note = each;
 						note.id = project.newId();
 						note.position += offset;
-						note.pitch = static_cast<uint8_t>(note.pitch + transpose);
-						// As the velocity shift plays it: in MIDI 1.0 velocities, from 1 to 127.
-						if (velocity != 0)
-							note.velocity = midi::velocityFromMidi1(static_cast<uint8_t>(
-								std::clamp(midi::velocityToMidi1(note.velocity) + velocity, 1, 127)));
+						note.pitch = static_cast<uint8_t>(note.pitch + playedShift(other, each.position));
+						if (velocity != 0) // else it keeps its 16 bits
+							note.velocity = gluedVelocity(note.velocity, velocity);
 						part.notes[note.id] = note;
 					}
 					for (const auto& [id, each] : other.controllers)
@@ -1336,6 +1371,8 @@ namespace gnubase::engine
 						Controller controller = each;
 						controller.id = project.newId();
 						controller.position += offset;
+						if (each.type == ControllerType::PolyPressure)
+							controller.number = static_cast<uint8_t>(each.number + pressureShift(other, pressed, each));
 						part.controllers[controller.id] = std::move(controller);
 					}
 				}
@@ -3759,10 +3796,11 @@ namespace gnubase::engine
 				"end, with all their notes and controllers; it keeps its transpose and velocity, and the notes of the "
 				"others get the difference of the transpose and velocity their part plays them with — the transpose at "
 				"each note's position, as Keep Transpose in Octave Range folds a part's own transpose into the global "
-				"transposition it plays with — so that they play as before as far as velocities from 1 to 127 allow "
-				"(refused if that would transpose a note beyond 0 to 127). Pattern events that continue the first "
-				"one's pattern, as the pieces of a split do, stay that "
-				"pattern event; otherwise the pattern events' steps become notes of the glued part, as they played. "
+				"transposition it plays with, and the velocity divided by the track's velocity compression — so that "
+				"they play as before as far as velocities from 1 to 127 allow; their poly pressure moves with the note "
+				"it presses (refused if that would transpose a note or poly pressure beyond 0 to 127). Pattern events "
+				"that continue the first one's pattern, as the pieces of a split do, stay that pattern event; "
+				"otherwise the pattern events' steps become notes of the glued part, as they played. "
 				"Refused for audio events that continue each other but follow global transpose differently, by their "
 				"root key or Global Transpose, or transpose differently by their own transpose, and for MIDI parts "
 				"that follow global transpose differently: the glued event or part keeps the first one's, so the "

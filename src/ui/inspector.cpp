@@ -2185,9 +2185,32 @@ namespace gnubase::ui
 		if (path.size() == 3 && path[2] == "target")
 		{
 			const auto target = event.GetParameter<Rml::String>("value", "");
-			if (current.at(key).at(index).at("target") == target)
+			const Json& before = current.at(key).at(index);
+			if (before.at("target") == target)
 				return;
 			pair[index]["target"] = target;
+			// A generator going from pitches or velocities to ticks or back keeps the numbers it shows, as far as
+			// they fit, rather than values in the other unit: Pitch -12 to 12 would show as Position 0 to 0 (#870).
+			// Its values go with every new target, from the channel shown: keys stepping through the open list send a
+			// target for each step, before the channel has the steps before, and the last one sent decides.
+			if (key == "random")
+			{
+				const bool from = showsTicks(before);
+				const bool to = showsTicks(Json{{"target", target}});
+				const int64_t limit = to ? engine::midi::g_maxRandomTicks / g_ticksPerShownTick : 127;
+				for (const char* field : {"minimum", "maximum"})
+				{
+					const auto value = before.at(field).get<int64_t>();
+					if (from == to)
+					{
+						pair[index][field] = value;
+						continue;
+					}
+					const int64_t shown = std::clamp<int64_t>(
+						to ? value : std::llround(static_cast<double>(value) / g_ticksPerShownTick), -limit, limit);
+					pair[index][field] = to ? shown * g_ticksPerShownTick : shown;
+				}
+			}
 			sendChannel({{"modifiers", {{key, std::move(pair)}}}});
 			return;
 		}
