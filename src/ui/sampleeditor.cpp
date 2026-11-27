@@ -69,8 +69,8 @@ namespace gnubase::ui
 		// window's size.
 		constexpr std::array<Rml::EventId, 6> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Click,
 			Rml::EventId::Dblclick, Rml::EventId::Change, Rml::EventId::Dragstart, Rml::EventId::Dragend};
-		constexpr std::array<Rml::EventId, 3> g_documentEvents = {
-			Rml::EventId::Mousemove, Rml::EventId::Mouseup, Rml::EventId::Resize};
+		constexpr std::array<Rml::EventId, 5> g_documentEvents = {Rml::EventId::Mousemove, Rml::EventId::Mouseup,
+			Rml::EventId::Resize, Rml::EventId::Keydown, Rml::EventId::Keyup};
 		// And in the capture phase: the keys and the focus leaving a region's field, before the field takes them.
 		constexpr std::array<Rml::EventId, 2> g_captureEvents = {Rml::EventId::Keydown, Rml::EventId::Blur};
 
@@ -959,15 +959,13 @@ namespace gnubase::ui
 
 	// Free Warp removes the marker clicked with a modifier key, under an eraser (pp. 654, 656); Edit Hitpoints inserts
 	// one with Alt, under the pencil, and disables or enables the line clicked with Shift, under a cross (p. 640).
-	void SampleEditor::showPointer(const Rml::Event& event, Rml::Element& target)
+	void SampleEditor::showPointer(HeldModifiers keys, Rml::Element& target)
 	{
 		Rml::Element* root = m_root.get();
 		Rml::Element* editor = root != nullptr ? root->QuerySelector(".sample-editor") : nullptr;
 		if (editor == nullptr || m_drag != Drag::None)
 			return;
-		const bool shift = modifier(event, "shift_key");
-		const bool alt = modifier(event, "alt_key");
-		const bool ctrl = modifier(event, "ctrl_key") || modifier(event, "meta_key");
+		const auto [ctrl, alt, shift] = keys;
 		const Rml::Element* hitpoint = withClass(&target, "se-hitpoint", root);
 		std::string pointer;
 		if (m_freeWarp && (shift || alt || ctrl) && withClass(&target, "se-warp-marker", root) != nullptr)
@@ -1204,6 +1202,14 @@ namespace gnubase::ui
 				editRegion(*cell);
 			break;
 		case Rml::EventId::Keydown:
+		case Rml::EventId::Keyup:
+			// Modifier keys going down and up anywhere in the window change the pointer while the mouse rests (#1857).
+			// The document hears them; the root hears key downs before its fields do.
+			if (Rml::Context* context = m_root.get()->GetContext(); context != nullptr)
+				if (Rml::Element* hovered = context->GetHoverElement())
+					showPointer(heldModifiers(event), *hovered);
+			if (event.GetId() == Rml::EventId::Keyup || event.GetCurrentElement() != m_root.get())
+				break;
 			if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_ESCAPE)
 				m_draggedRegion = nullptr;
 			if (m_editing && target == m_editing.get())
@@ -1242,7 +1248,7 @@ namespace gnubase::ui
 			m_draggedRegion = nullptr;
 			break;
 		case Rml::EventId::Mousemove:
-			showPointer(event, *target);
+			showPointer(heldModifiers(event), *target);
 			move(event);
 			break;
 		case Rml::EventId::Mouseup:

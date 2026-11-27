@@ -159,6 +159,10 @@ namespace gnubase::ui
 		}
 		for (const Rml::EventId event : g_events)
 			root.AddEventListener(event, this);
+		// Modifier keys going down and up anywhere in the window change the pointer while the mouse rests (#1857).
+		document->AddEventListener(Rml::EventId::Keydown, this);
+		document->AddEventListener(Rml::EventId::Keyup, this);
+		m_keys = document->GetObserverPtr();
 	}
 
 	PatternEditor::~PatternEditor()
@@ -167,6 +171,11 @@ namespace gnubase::ui
 		if (Rml::Element* root = m_root.get())
 			for (const Rml::EventId event : g_events)
 				root->RemoveEventListener(event, this);
+		if (Rml::Element* document = m_keys.get())
+		{
+			document->RemoveEventListener(Rml::EventId::Keydown, this);
+			document->RemoveEventListener(Rml::EventId::Keyup, this);
+		}
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
 			if (Rml::Element* element = menu.get())
 			{
@@ -602,7 +611,7 @@ namespace gnubase::ui
 		case Rml::EventId::Mousemove:
 			// Over the steps, the draw tool's pointer where a press draws: the draw tool's, or with Alt (p. 924).
 			if (Rml::Element* root = m_root.get())
-				setPointer(*root, m_tool == "draw" || event.GetParameter("alt_key", 0) != 0 ? "draw" : "");
+				setPointer(*root, m_tool == "draw" || heldModifiers(event).alt ? "draw" : "");
 			drag(event);
 			break;
 		case Rml::EventId::Mouseup:
@@ -630,7 +639,13 @@ namespace gnubase::ui
 			}
 			break;
 		case Rml::EventId::Keydown:
+		case Rml::EventId::Keyup:
 		{
+			// Alt going down or up while the mouse rests, which the document hears from anywhere in the window.
+			if (Rml::Element* root = m_root.get())
+				setPointer(*root, m_tool == "draw" || heldModifiers(event).alt ? "draw" : "");
+			if (event.GetId() == Rml::EventId::Keyup || event.GetCurrentElement() == m_keys.get())
+				break;
 			const auto key = static_cast<Rml::Input::KeyIdentifier>(event.GetParameter<int>("key_identifier", 0));
 			if ((key == Rml::Input::KI_DELETE || key == Rml::Input::KI_BACK) && !m_selection.empty() &&
 				m_pattern.is_object())

@@ -6,6 +6,7 @@
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Input.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -288,4 +289,23 @@ TEST_CASE("Edit Hitpoints shows the pencil where Alt inserts a hitpoint and a cr
 	CHECK(pointer(f.at(second, 30.0), {"alt"}) == "resize");
 	// The handle locks it with or without Shift.
 	CHECK(pointer(f.at(second, 3.0), {"shift"}) == "resize");
+
+	// The keys going down and up while the mouse rests change it at once (#1857), also before the key event's
+	// modifiers say so.
+	CHECK(pointer(f.at(second, 20.0)) == "resize");
+	Rml::Context& context = f.app.shell().find(f.window)->context();
+	const auto shown = [&f]
+	{
+		f.app.shell().step(std::chrono::milliseconds(0));
+		return f.app.ui().windows().at("cursor").get<std::string>();
+	};
+	context.ProcessKeyDown(Rml::Input::KI_LSHIFT, 0);
+	CHECK(shown() == "crosshair");
+	context.ProcessKeyUp(Rml::Input::KI_LSHIFT, Rml::Input::KM_SHIFT);
+	CHECK(shown() == "resize");
+	CHECK(pointer(f.at(26000)) == "tool-play");
+	context.ProcessKeyDown(Rml::Input::KI_LMENU, Rml::Input::KM_ALT);
+	CHECK(shown() == "tool-draw");
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, 0);
+	CHECK(shown() == "tool-play");
 }

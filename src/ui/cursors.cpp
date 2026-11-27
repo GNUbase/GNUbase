@@ -7,6 +7,8 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/Input.h>
 #include <lunasvg.h>
 
 #include <algorithm>
@@ -128,5 +130,38 @@ namespace gnubase::ui
 			document->UpdateDocument();
 		if (Rml::Context* context = element.GetContext())
 			context->RequestNextUpdate(0);
+	}
+
+	// ponytail: a key going up counts as up, also while the other Shift (Alt, Ctrl) key is still down, until the next
+	// event; the event display tracks each key (EventDisplay::heldKeys) for that.
+	HeldModifiers heldModifiers(const Rml::Event& event)
+	{
+		const auto held = [&event](const char* name) { return event.GetParameter(name, 0) != 0; };
+		HeldModifiers keys{held("ctrl_key") || held("meta_key"), held("alt_key"), held("shift_key")};
+		const bool down = event.GetId() == Rml::EventId::Keydown;
+		if (!down && event.GetId() != Rml::EventId::Keyup)
+			return keys;
+		switch (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN))
+		{
+		case Rml::Input::KI_LCONTROL:
+		case Rml::Input::KI_RCONTROL:
+		case Rml::Input::KI_LMETA:
+		case Rml::Input::KI_RMETA:
+		case Rml::Input::KI_LWIN:
+		case Rml::Input::KI_RWIN:
+			keys.ctrl = down;
+			break;
+		case Rml::Input::KI_LMENU:
+		case Rml::Input::KI_RMENU:
+			keys.alt = down;
+			break;
+		case Rml::Input::KI_LSHIFT:
+		case Rml::Input::KI_RSHIFT:
+			keys.shift = down;
+			break;
+		default:
+			break;
+		}
+		return keys;
 	}
 }

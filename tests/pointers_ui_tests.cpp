@@ -10,8 +10,11 @@
 #include "ui/docking.h"
 #include "ui/keyeditor.h"
 #include "ui/midieditor.h"
+#include "ui/shell.h"
 #include "ui/tracklist.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Input.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
@@ -216,6 +219,16 @@ TEST_CASE("a note's ends in the key editor show the resize pointer, unless Shift
 	CHECK(over(x + width - 2, y, {"shift"}).empty());
 	CHECK(over(x + width - 3, y, {"ctrl"}).empty());
 	CHECK(over(x + width - 2, y) == "resize");
+	// And those going down and up while the mouse rests (#1857), also before the key event's modifiers say so.
+	Rml::Context& context = app.shell().find(window)->context();
+	context.ProcessKeyDown(Rml::Input::KI_LSHIFT, Rml::Input::KM_SHIFT);
+	CHECK(pointer(app).empty());
+	context.ProcessKeyUp(Rml::Input::KI_LSHIFT, 0);
+	CHECK(pointer(app) == "resize");
+	context.ProcessKeyDown(Rml::Input::KI_LCONTROL, 0);
+	CHECK(pointer(app).empty());
+	context.ProcessKeyUp(Rml::Input::KI_LCONTROL, Rml::Input::KM_CTRL);
+	CHECK(pointer(app) == "resize");
 	// The draw tool draws there.
 	app.ui().click(window, at(".key-tool[key-tool=draw]"), ui::MouseButton::Left, 1, {});
 	CHECK(over(x + width - 2, y) == "tool-draw");

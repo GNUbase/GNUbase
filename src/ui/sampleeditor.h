@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/engine.h"
+#include "ui/cursors.h"
 #include "ui/enginebinding.h"
 #include "ui/timeformat.h"
 
@@ -113,7 +114,7 @@ namespace gnubase::ui
 		void renderWarp();
 		void pressWarp(Rml::Event& event, Rml::Element& target);
 		// The pointer for what a press with the modifiers held does there (docs/features/pointers.md).
-		void showPointer(const Rml::Event& event, Rml::Element& target);
+		void showPointer(HeldModifiers keys, Rml::Element& target);
 		void changed(Rml::Event& event, Rml::Element& target);
 		void ask(bool overview);
 		void zoom(double factor, double around);

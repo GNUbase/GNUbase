@@ -12,6 +12,7 @@
 namespace Rml
 {
 	class Element;
+	class Event;
 }
 
 // GNUbase's own mouse pointers (#469): SVG files that the style sheets name with RmlUi's cursor property.
@@ -53,4 +54,15 @@ namespace gnubase::ui
 	// for another update: RmlUi takes the pointer for the element under the mouse from its style as the last update
 	// left it, so the pointer then changes at once, also while the mouse doesn't move.
 	void setPointer(Rml::Element& element, const std::string& pointer);
+
+	// The modifier keys held after a mouse or key event, Ctrl with Cmd (Meta). A modifier key going down or up counts
+	// at once, whether or not the event's modifiers say so yet: editors whose pointer depends on the modifiers show the
+	// new one while the mouse rests (#1857).
+	struct HeldModifiers
+	{
+		bool ctrl = false;
+		bool alt = false;
+		bool shift = false;
+	};
+	HeldModifiers heldModifiers(const Rml::Event& event);
 }
