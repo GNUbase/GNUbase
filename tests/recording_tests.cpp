@@ -1703,5 +1703,6 @@ TEST_CASE("a next file that can't be written is removed, and the full one still 
 	const Json& tracks = finished.at("tracks");
 	REQUIRE(tracks.size() == 1);
 	CHECK(tracks[0].at("takes") == Json::array({{{"position", 0}, {"offset", 0}, {"length", g_blockFrames}}}));
-	CHECK_FALSE(std::filesystem::exists(dir.path() / "Audio-2.wav"));
+	// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+	CHECK(!std::filesystem::exists(dir.path() / "Audio-2.wav"));
 }
