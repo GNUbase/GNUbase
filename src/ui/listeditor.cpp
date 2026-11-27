@@ -812,7 +812,9 @@ namespace gnubase::ui
 				{"parameters", {{"part", key.first}, {note ? "notes" : "controllers", items}}}});
 		}
 		if (commands.size() == 1)
+		{
 			m_binding.send(commands[0].at("command").get<std::string>(), commands[0].at("parameters"));
+		}
 		else if (!commands.empty())
 		{
 			// Every command of a gesture does the same: add, remove or set.

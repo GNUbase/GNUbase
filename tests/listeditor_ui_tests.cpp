@@ -1277,7 +1277,8 @@ TEST_CASE("list editor gestures keep their undo name over one part and two", "[u
 		{"delete", "notes"}, {"delete", "controllers"}, {"delete", "events"}, {"resize", "notes"}}));
 	CAPTURE(both, gesture, kind);
 	Fixture f;
-	std::string first = row(kind == "controllers" ? "controller" : "note", kind == "controllers" ? f.events[0] : f.low);
+	const std::string first =
+		row(kind == "controllers" ? "controller" : "note", kind == "controllers" ? f.events[0] : f.low);
 	std::string second = kind == "notes" ? row("note", f.high) : row("controller", f.events[kind == "events" ? 0 : 1]);
 	if (both)
 	{
@@ -1307,9 +1308,13 @@ TEST_CASE("list editor gestures keep their undo name over one part and two", "[u
 		}));
 	const size_t before = f.steps();
 	if (gesture == "type")
+	{
 		f.type(first + " textdisplay[field=channel]", "2");
+	}
 	else if (gesture == "delete")
+	{
 		f.app.ui().key(f.window, "Delete");
+	}
 	else if (gesture == "values")
 	{
 		const std::string from = first + " .list-value-lane";
