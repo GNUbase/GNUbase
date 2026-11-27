@@ -67,7 +67,11 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
 - **Mouse** on a marker track's lane (pp. 424-425): a click selects the marker under the mouse (its label, a position
   marker's line within 4 dp, a cycle marker's start or end within 4 dp, or the cycle marker it is in) and Ctrl-click
   adds or removes it, its label getting `.selected`, and the info line shows and edits the selected markers
-  ([inspector.md](inspector.md), p. 430); selecting a marker deselects the events and selecting an event the markers.
+  ([inspector.md](inspector.md), p. 430); selecting a marker deselects the events and selecting an event the markers,
+  also when the markers are selected in the markers window with Sync Selection. This differs from the reference
+  (pp. 424-425, 430), where markers are selected in the project window like other events: here the project window
+  selects events or markers, so that Delete and the other edits act on one kind, and a Ctrl-click on a marker
+  deselects the events as one on an event deselects the markers.
   With the object selection tool:
   - **Moving.** A drag of a selected position marker, or of a cycle marker by its label or upper border (the top 8 dp
     of the lane, away from its handles), moves the selected markers, shown where they go while dragging; dropped on

@@ -1451,6 +1451,34 @@ TEST_CASE(
 	CHECK(app.appUi().markers()->selection().empty());
 }
 
+TEST_CASE(
+	"markers selected in the markers window with Sync Selection deselect the project window's events (#606)", "[ui]")
+{
+	test::UiApp app;
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.call("track.add", {{"type", "marker"}});
+	const uint64_t intro = addMarker(app, {{"position", g_quarter}, {"name", "Intro"}});
+	const auto midi = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t part =
+		app.call("midiPart.add", {{"track", midi}, {"position", 0}, {"length", 4 * g_quarter}, {"name", "Part"}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	openMarkers(app, 1);
+	const ui::WindowId window = app.appUi().markersWindow();
+	REQUIRE(app.waitUntil([&display] { return display.project().at("midiParts").size() == 1; }));
+	REQUIRE(app.appUi().markerLines() != nullptr);
+	const ui::MarkerLines& lines = *app.appUi().markerLines();
+	display.select({part});
+	REQUIRE(display.selection() == std::vector<uint64_t>{part});
+
+	// A marker selected in the markers window selects it in the project window, where the events are deselected: the
+	// project window selects events or markers, so that Delete and the other edits act on one kind.
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&lines, intro] { return lines.selection() == std::vector<uint64_t>{intro}; }));
+	CHECK(display.selection().empty());
+}
+
 TEST_CASE("File > Export and File > Import > Markers write and read the marker file chosen", "[ui]")
 {
 	test::UiApp app{{1000, 700}};
