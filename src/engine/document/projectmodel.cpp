@@ -4371,10 +4371,7 @@ namespace gnubase::engine
 							std::to_string(parameters.at("revision").get<uint64_t>()));
 				const std::string path = parameters.at("path").get<std::string>();
 				const std::filesystem::path file = std::filesystem::u8path(path);
-				// Named as versions, auto saves and backups are, so that "Mix v2.1" and "Mix v2.2" don't share one
-				// (#798).
-				const std::string folder = parameters.value("mediaFolder",
-					(file.parent_path() / std::filesystem::u8path(projectFileStem(file) + " media")).u8string());
+				const std::string folder = parameters.value("mediaFolder", extractedMediaFolderFor(file).u8string());
 				Project project;
 				std::vector<std::string> warnings;
 				try

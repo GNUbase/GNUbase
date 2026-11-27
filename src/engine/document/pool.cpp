@@ -719,7 +719,7 @@ namespace gnubase::engine
 			if (!projectFile.empty())
 			{
 				const fs::path file = fs::u8path(projectFile);
-				folders.push_back(file.parent_path() / fs::u8path(file.stem().u8string() + " media"));
+				folders.push_back(extractedMediaFolderFor(file));
 				if (fs::exists(file, error) || error)
 					useFile(file);
 			}

@@ -760,6 +760,11 @@ namespace gnubase::engine
 		return name.empty() ? "Untitled" : name;
 	}
 
+	fs::path extractedMediaFolderFor(const fs::path& projectFile)
+	{
+		return projectFile.parent_path() / fs::u8path(projectFileStem(projectFile) + " media");
+	}
+
 	Json backupProject(Project project, const BackupOptions& options, JobContext& job)
 	{
 		const fs::path folder = fs::absolute(pathOf(options.folder));
