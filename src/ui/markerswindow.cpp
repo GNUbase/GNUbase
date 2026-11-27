@@ -114,7 +114,13 @@ namespace gnubase::ui
 			for (size_t i = 0; i < value.size();)
 			{
 				const auto lead = static_cast<unsigned char>(value[i]);
-				const size_t length = lead >= 0xF0 ? 4 : (lead >= 0xE0 ? 3 : (lead >= 0xC0 ? 2 : 1));
+				size_t length = 1;
+				if (lead >= 0xF0)
+					length = 4;
+				else if (lead >= 0xE0)
+					length = 3;
+				else if (lead >= 0xC0)
+					length = 2;
 				char32_t c = length == 1 ? lead : (lead & (0xFFU >> (length + 1)));
 				size_t used = 1;
 				for (; used < length && i + used < value.size() &&
