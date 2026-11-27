@@ -782,6 +782,23 @@ TEST_CASE("controller lane presets save the lanes shown and bring them back", "[
 	f.choose("#controller-lane-setup", "#controller-setup-menu menuitem[lane-preset=Expressive]");
 	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 3; }));
 	CHECK(f.lanes()[2] == Json{{"type", "controller"}, {"number", 11}});
+
+	// Organize Presets (#737, p. 1166) renames the first preset and deletes the second.
+	const Json expressive = presets().at(0);
+	f.app.call("settings.set",
+		{{"key", "ui.controllerLanePresets"},
+			{"value", Json::array({expressive, {{"name", "Plain"}, {"lanes", {{{"type", "velocity"}}}}}})}});
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#controller-setup-menu menuitem[lane-preset=Plain]").empty(); }));
+	f.choose("#controller-lane-setup", "#controller-setup-menu menuitem[lane-action=organizePresets]");
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#zoom-presets-list .preset").size() == 2; }));
+	f.click(of("#zoom-presets-list .preset input"));
+	f.app.ui().key(f.window, "Mod+A");
+	f.app.ui().text(f.window, "Soft");
+	f.click(of("#zoom-presets-list .preset[index=\"1\"] button"));
+	f.click(of("#zoom-presets-dialog button[result=ok]"));
+	REQUIRE(f.app.waitUntil([&] { return presets().size() == 1; }));
+	CHECK(presets().at(0).at("name") == "Soft");
+	CHECK(presets().at(0).at("lanes") == expressive.at("lanes"));
 }
 
 TEST_CASE("controller lanes that are gone before the presets' answer comes leave the answer alone", "[ui]")

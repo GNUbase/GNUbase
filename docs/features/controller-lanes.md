@@ -40,7 +40,8 @@ key editor's tools edit; lane presets, the line tool's modes and Auto Select Con
 | `autoSelectControllers` | Selecting notes selects the controller events from their start to their end | p. 1188 |
 | `controllerSelection` | The selected controller events, each `{part, controller}`, of the editable parts; removed ones leave it, closing the editor clears it | p. 1188 |
 
-**Lane presets** are the user setting `ui.controllerLanePresets`, each a name and its lanes (p. 1166).
+**Lane presets** are the user setting `ui.controllerLanePresets`, each a name and its lanes (p. 1166). Organize
+Presets (#737) renames and deletes them in the dialog the zoom presets have, `zoom-presets.rml`.
 
 ## In the UI
 
@@ -69,7 +70,8 @@ track, the lanes keep their height.
                                       named controllers and all 128 in Continuous Controllers; Show Used
                                       Controllers, Show Velocity Lane Only, Show/Hide Controller Lanes
     #controller-lane-setup            Controller Lane Setup, menu #controller-setup-menu: the presets, Add
-                                      Preset... (controller-lane-preset.rml), Remove Preset
+                                      Preset... (controller-lane-preset.rml), Organize Presets...,
+                                      Remove Preset
 ```
 
 Code places and sizes the bars and steps in percent of their area; `resources/styles/controllerlanes.rcss` lays the
@@ -119,7 +121,7 @@ Controller Events (pp. 1159, 1181); the pitchbend lane's semitone grid, Grid Set
 dialog, RPN and NRPN controllers (p. 1165); the poly pressure lane's pitch menu and editing its events with
 Ctrl+Alt (pp. 1179-1180); the context menu's Cut, Copy, Paste and Paste at Origin, and pasting notes as modulation
 (pp. 1160, 1180); the rhombus for controllers with automation and the value at the project cursor (pp. 1161, 1166);
-the divider between the note display and the lanes (p. 1158); renaming presets in an Organize Presets dialog; a
+the divider between the note display and the lanes (p. 1158); a
 channel per lane; a velocity variance and play probability chosen anew on each cycle pass; MIDI file export,
 Merge MIDI in Loop and Freeze MIDI Modifiers applying them; the line tool's modifier keys and its use in the note
 display; the selection rectangle on lanes; the info line for controller events. The drum editor
@@ -153,6 +155,6 @@ editor's lanes.
   lane, and controller painting and lines with and without events to replace; a poly pressure lane with two selected
   notes; with Acoustic Feedback, a velocity drag playing its note at the velocity pressed and then at the one it sets,
   the draw tool the note it paints, and nothing with it off; Auto Select Controllers with a note moved; a preset saved
-  with Add Preset, loaded and removed with Remove Preset; events drawn on a lane playing back; a step that another event
-  now starts with losing its width (#1580). `tests/uithemes_tests.cpp`: every theme draws play probability and velocity
+  with Add Preset, loaded, removed with Remove Preset, renamed and deleted with Organize Presets; events drawn on a
+  lane playing back; a step that another event now starts with losing its width (#1580). `tests/uithemes_tests.cpp`: every theme draws play probability and velocity
   variance bars dashed.
