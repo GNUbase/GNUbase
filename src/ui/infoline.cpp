@@ -318,6 +318,13 @@ namespace gnubase::ui
 			const std::vector<uint64_t>& items = ofArranger ? arranger : markers;
 			if (!(ofArranger ? arrangerChanged : markersChanged) || (items.empty() && m_arranger != ofArranger))
 				continue;
+			// Markers that only went from the selection, such as removed ones, don't bring the info line back to the
+			// markers from the event the user selected last.
+			const std::vector<uint64_t>& before = ofArranger ? m_arrangerSelection : m_markerSelection;
+			if (!m_showsMarkers && !items.empty() &&
+				std::all_of(items.begin(), items.end(),
+					[&before](uint64_t id) { return std::find(before.begin(), before.end(), id) != before.end(); }))
+				continue;
 			m_showsMarkers = !items.empty();
 			m_arranger = ofArranger;
 			if (m_showsMarkers)
@@ -734,19 +741,18 @@ namespace gnubase::ui
 		const auto cycle =
 			std::find_if(m_markers.begin(), m_markers.end(), [](const MarkerItem& m) { return m.cycle; });
 		Json commands = Json::array();
-		const auto set = [&commands, &project, command, key](const MarkerItem& marker, double start, double end)
+		const auto trackOf = [&project](const MarkerItem& marker)
 		{
-			const auto track = std::find_if(project.tracks.begin(), project.tracks.end(),
+			return std::find_if(project.tracks.begin(), project.tracks.end(),
 				[&marker](const ProjectMarkers::Track& each) { return each.id == marker.track; });
-			if (track == project.tracks.end() || start < 0.0 || (marker.cycle && end <= start))
-				return;
-			Json parameters = {{key, marker.id}};
-			if (start != marker.start)
-				parameters["position"] = project.position(*track, start);
-			if (marker.cycle && (end != marker.end || start != marker.start))
-				parameters["end"] = project.position(*track, end);
-			if (parameters.size() > 1)
-				commands.push_back({{"command", command}, {"parameters", std::move(parameters)}});
+		};
+		// A cycle marker's new end, which keeps its start.
+		const auto resize = [&commands, &project, &trackOf, command, key](const MarkerItem& marker, double end)
+		{
+			const auto track = trackOf(marker);
+			if (track != project.tracks.end() && marker.cycle && end > marker.start && end != marker.end)
+				commands.push_back(
+					{{"command", command}, {"parameters", {{key, marker.id}, {"end", project.position(*track, end)}}}});
 		};
 		if (field == "name")
 		{
@@ -758,11 +764,18 @@ namespace gnubase::ui
 		else if (field == "start")
 		{
 			if (const std::optional<double> typed = parseTime(m_format, text, context))
+			{
+				// Only the position is sent, so that a cycle marker keeps its length in its track's time base. The
+				// markers are in timeline order, so that none of them goes before the start when the first one doesn't.
 				for (const MarkerItem& marker : m_markers)
 				{
 					const double start = m_absolute ? *typed : marker.start + (*typed - first.start);
-					set(marker, start, start + (marker.end - marker.start));
+					if (const auto track = trackOf(marker);
+						track != project.tracks.end() && start >= 0.0 && start != marker.start)
+						commands.push_back({{"command", command},
+							{"parameters", {{key, marker.id}, {"position", project.position(*track, start)}}}});
 				}
+			}
 		}
 		else if ((field == "end" || field == "length") && cycle != m_markers.end())
 		{
@@ -779,13 +792,23 @@ namespace gnubase::ui
 			}
 			if (length)
 				for (const MarkerItem& marker : m_markers)
-					if (marker.cycle)
+				{
+					if (!marker.cycle)
+						continue;
+					if (!m_absolute)
 					{
-						const double change = *length - (cycle->end - cycle->start);
-						const double to = m_absolute ? *length : marker.end - marker.start + change;
-						set(marker, marker.start,
-							field == "end" && m_absolute ? cycle->start + *length : marker.start + to);
+						resize(marker, marker.end + (*length - (cycle->end - cycle->start)));
 					}
+					else if (field == "end")
+					{
+						resize(marker, cycle->start + *length);
+					}
+					else if (const std::optional<double> own = parseLength(m_format, text, marker.start, context))
+					{
+						// A length in bars and beats isn't the same stretch of seconds at every marker.
+						resize(marker, marker.start + *own);
+					}
+				}
 		}
 		if (commands.empty())
 		{

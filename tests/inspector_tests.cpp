@@ -596,6 +596,48 @@ TEST_CASE("the project window selects events or markers, and the info line shows
 		[&] { return hasClass(window.app, "#info-line", "markers") && hasClass(window.app, "#info-line", "empty"); }));
 }
 
+TEST_CASE(
+	"the info line moves cycle markers by position alone, and parses a typed length at each marker (#599)", "[ui]")
+{
+	Window window;
+	const uint64_t track = window.addTrack({{"type", "marker"}, {"timeBase", "musical"}});
+	// 120 BPM for two bars, 60 BPM after, so that a time in seconds isn't the same stretch in beats everywhere.
+	window.call("tempo.add", {{"position", 8 * g_quarter}, {"bpm", 60.0}, {"ramp", false}});
+	const auto add = [&window, track](int64_t position, int64_t end, const char* name)
+	{
+		return window
+			.call("marker.add",
+				{{"track", track}, {"type", "cycle"}, {"position", position}, {"end", end}, {"name", name}})
+			.at("marker")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t early = add(0, 4 * g_quarter, "Early");
+	const uint64_t late = add(12 * g_quarter, 16 * g_quarter, "Late");
+	const auto marker = [&window](uint64_t id) { return window.find("markers", id); };
+	const ui::MarkerLines& lines = *window.app.appUi().markerLines();
+	const auto select = [&window, &lines](const std::vector<uint64_t>& ids, const char* first)
+	{
+		window.app.appUi().markerLines()->setSelection(ids);
+		window.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(window.shows("#info-line textdisplay[field=name]", first));
+		REQUIRE(lines.selection() == ids);
+	};
+
+	// A new position alone: the marker keeps its length in beats, though 4 beats across the tempo change are not as
+	// many seconds as before.
+	select({early}, "Early");
+	window.type("#info-line textdisplay[field=start]", "2.3.1.0");
+	REQUIRE(window.app.waitUntil([&] { return marker(early).at("position") == 6 * g_quarter; }));
+	CHECK(marker(early).at("end") == 10 * g_quarter);
+
+	// Ctrl+Enter on the length gives every selected cycle marker the length typed, counted from its own start.
+	select({early, late}, "Early");
+	window.type("#info-line textdisplay[field=length]", "0.2.0.0", "Ctrl+Enter");
+	REQUIRE(window.app.waitUntil([&] { return marker(late).at("end") == 14 * g_quarter; }));
+	CHECK(marker(early).at("end") == 8 * g_quarter);
+}
+
 TEST_CASE("an untouched Ctrl+Enter on a marker's start gives every selected marker the first one's position", "[ui]")
 {
 	Window window;

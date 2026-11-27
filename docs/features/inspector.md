@@ -63,10 +63,13 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   class `markers` and shows the first selected marker in timeline order: its description (`field=name`, labelled
   Description) and position (`field=start`, labelled Position), and for a cycle marker its end and length; volume,
   mute and lock are `.unavailable`. Edits go to every selected marker as one `history.transaction` of `marker.set`s, as for
-  events: relative to the first one's value, or with Ctrl+Enter the same value for all. A new position keeps a cycle
-  marker's length; end and length change the cycle markers. The project window selects events or markers:
-  selecting an event deselects the markers (`AppUi`, `MarkerLines::deselect`), a marker clicked deselects the events.
-  A selection that names only markers the project no longer has shows `.empty`, until the marker lines drop them.
+  events: relative to the first one's value, or with Ctrl+Enter the same value for all. A new position sends only
+  `position`, so that a cycle marker keeps its length in its track's time base, also across a tempo change; end and
+  length change the cycle markers, a length typed with Ctrl+Enter counted from each marker's own start. The project
+  window selects events or markers: selecting an event deselects the markers (`AppUi`, `MarkerLines::deselect`), a
+  marker clicked deselects the events. Markers that go from the selection, such as removed ones, don't bring the info
+  line back to the markers from an event shown. A selection that names only markers the project no longer has shows
+  `.empty`, until the marker lines drop them.
 - **Arranger events** (p. 405). The arranger events selected on the arranger track's lane show the same way, with the
   class `arranger`: name (labelled Name), start, end and length, edited with `arranger.set`
   ([arranger.md](arranger.md)).
