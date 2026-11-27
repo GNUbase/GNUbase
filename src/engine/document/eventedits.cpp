@@ -2979,6 +2979,37 @@ namespace gnubase::engine
 			return {{"events", idsOf(pasteClipboard(project, clipboard, tracks, at, to.tick, context))}};
 		}
 
+		// Makes the parts of a section pasted again shared copies of those its first paste made, one by one: the same
+		// clipboard pastes the same items in the same order. A MIDI part takes the first one's notes and controllers,
+		// with their ids; an audio part's events are already alike.
+		void shareWith(
+			Project& project, const std::vector<Item>& first, const std::vector<Item>& again, CommandContext& context)
+		{
+			for (size_t i = 0; i < std::min(first.size(), again.size()); ++i)
+			{
+				if (first[i].part != nullptr && again[i].part != nullptr)
+				{
+					if (first[i].part->shared == 0)
+						first[i].part->shared = project.newId();
+					again[i].part->shared = first[i].part->shared;
+					again[i].part->notes = first[i].part->notes;
+					again[i].part->controllers = first[i].part->controllers;
+				}
+				else if (first[i].audioPart != nullptr && again[i].audioPart != nullptr)
+				{
+					if (first[i].audioPart->shared == 0)
+						first[i].audioPart->shared = project.newId();
+					again[i].audioPart->shared = first[i].audioPart->shared;
+				}
+				else
+				{
+					continue;
+				}
+				announce(project, context, first[i], "changed");
+				announce(project, context, again[i], "changed");
+			}
+		}
+
 		// Flatten Chain (#167, reference manual pp. 407-411): from the start of the chain's first event on, the project
 		// becomes what the chain plays, every step's event repeated, one after the other. What lies before stays.
 		// Returns where the flattened chain starts and ends, in samples. The notes that cross a section's edges are cut
@@ -3031,6 +3062,10 @@ namespace gnubase::engine
 			time::Samples at = start;
 			std::vector<ArrangerEvent> placed;
 			std::map<ObjectId, int> count; // of each event's sections so far
+			// What each event's first section pasted, whose shared copies its other sections' parts become without
+			// realCopies (Make Real Event Copies, p. 408).
+			const bool real = parameters.value("realCopies", false);
+			std::map<ObjectId, std::vector<Item>> firstPasted;
 			for (const Section& section : sections)
 			{
 				RangeClipboard copied = copyRange(original, {section.start, section.end, tracks, !dontSplit}, true);
@@ -3044,7 +3079,9 @@ namespace gnubase::engine
 							note = note->second.position + note->second.length > end ? part.notes.erase(note)
 																					 : std::next(note);
 					}
-				pasteClipboard(project, copied, tracks, at, std::nullopt, context);
+				const std::vector<Item> pasted = pasteClipboard(project, copied, tracks, at, std::nullopt, context);
+				if (const auto [first, isFirst] = firstPasted.try_emplace(section.event->id, pasted); !real && !isFirst)
+					shareWith(project, first->second, pasted, context);
 				const time::TimeBase base = section.event->position.base;
 				const int number = ++count[section.event->id];
 				placed.push_back(
@@ -3997,7 +4034,9 @@ namespace gnubase::engine
 				"Flatten Chain (#167): makes the project play the arranger chain (default: the active one) linearly. "
 				"From the start of the chain's first event on, every track's events, parts and automation are "
 				"replaced by the chain's sections, each step's event as often as it repeats, one after the other; "
-				"what lies before stays, and so do locked events. Copies are real copies. MIDI notes that cross a "
+				"what lies before stays, and so do locked events. The parts of an event's repeats are shared copies "
+				"of those of its first section, or with realCopies (Make Real Event Copies) real copies. MIDI notes "
+				"that cross a "
 				"section's edges are cut there; with dontSplit (Don't Split Events) a section has only the notes "
 				"that start and end in it. Without keepTrack (Keep Arranger Track) the arranger track goes; with it, "
 				"it has an event per section where it now is and one chain that plays them in order, and with "
@@ -4005,7 +4044,7 @@ namespace gnubase::engine
 				"its event came so far (A 1, B 1, A 2). One undo step. Returns where the flattened chain starts and "
 				"ends, in samples.",
 				schema({{"chain", integer()}, {"keepTrack", boolean()}, {"dontSplit", boolean()},
-						   {"renameEvents", boolean()}},
+						   {"renameEvents", boolean()}, {"realCopies", boolean()}},
 					{}),
 				schema({{"start", integer()}, {"end", integer()}}, {"start", "end"}), false},
 			"Flatten arranger chain",

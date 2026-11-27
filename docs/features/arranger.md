@@ -75,7 +75,10 @@ start of the chain's first event on, every track's events, parts and automation 
 each step's event as often as it repeats, one after the other, copied as range copies do ([range-editing.md]
 (range-editing.md)). What lies before stays, and so do locked events. Without `keepTrack` (Keep Arranger Track) the
 arranger track goes; with it, it has an event per section where it now is and one chain that plays them in order.
-Range copies keep the order in which audio events stack, so overlapping events play as before.
+Range copies keep the order in which audio events stack, so overlapping events play as before. The parts an event's
+repeats bring, from its second section on, are shared copies of those its first section brought, MIDI and audio parts
+alike ([parts-and-events.md](parts-and-events.md)); with `realCopies` (Make Real Event Copies, p. 408) each is a part of
+its own.
 MIDI notes that cross a section's edges are cut there, and so are those that cross the chain's start, as range splits
 with `splitNotes` cut them; with `dontSplit` (Don't Split Events, p. 408) a section has only the notes that start and
 end in it, and what lies before keeps its notes whole. With `keepTrack` and `renameEvents` (Rename Arranger Events)
@@ -185,7 +188,8 @@ triggering events by their number in timeline order;
 `transport.play` ending a repeat forever loop, keeping a triggered event and starting from the left locator with the
 start mode cycleStart, and `transport.get` reporting no step while the plan doesn't play; flattening, played back
 linearly against the chain's audio, with undo, and its notes cut at the sections' edges, without `dontSplit` and with
-it, with `renameEvents` numbering the events.
+it, with `renameEvents` numbering the events, and an event's repeats as shared copies of its parts or with
+`realCopies` real ones.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
 mode, a locate arrow on every row, renaming the active chain, and renaming a step's event with Alt and a double click,
 across a refresh while it is typed, selecting steps and removing the selected ones, a chain edit selecting none, and
