@@ -232,6 +232,7 @@ namespace gnubase::app
 		ui::TransportControls* transportBar() { return m_transportBar.get(); }
 		void toggleTransportPanel();
 		void toggleTimeDisplay();
+		void scaleTimeDisplay(float before, float after); // the UI scale changed
 		// window.maxRecordTime: the Max. Record Time window (resources/ui/max-record-time.rml, #645).
 		void toggleMaxRecordTime();
 		ui::Window* transportPanel() { return m_transportPanel.shown(m_shell); }

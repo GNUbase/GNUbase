@@ -1515,25 +1515,7 @@ namespace gnubase::app
 			m_keys.bind({wind.keys, wind.id});
 		}
 		m_shell.eachStep([this] { return m_winding.step(); });
-		// The time display window grows and shrinks with the UI scale, as its digits do (#566): a window at the size of
-		// one of its presets stays at that one, one the user sized keeps its proportions.
-		m_shell.onUiScale(
-			[this](float before, float after)
-			{
-				const ui::Window* window = timeDisplay();
-				if (window == nullptr || !m_timeDisplay.controls || !(before > 0.0F))
-					return;
-				ui::Rect bounds = m_shell.bounds(window->id());
-				const int size = m_timeDisplay.controls->size();
-				const float ratioBefore = window->dpRatio() * before / after;
-				ui::Size sized = timeDisplaySize(m_shell, *window, size, window->dpRatio());
-				if (!(bounds.size() == timeDisplaySize(m_shell, *window, size, ratioBefore)))
-					sized = {static_cast<int>(std::lround(static_cast<float>(bounds.width) * after / before)),
-						static_cast<int>(std::lround(static_cast<float>(bounds.height) * after / before))};
-				bounds.width = sized.width;
-				bounds.height = sized.height;
-				m_shell.setBounds(window->id(), bounds);
-			});
+		m_shell.onUiScale([this](float before, float after) { scaleTimeDisplay(before, after); });
 		// The MIDI editors render before their layout and keep their width when their window or zone resizes: their
 		// expression lines follow the width the update of their own window gave them (#1671), not the box another
 		// window's update finds before theirs is laid out again (#1768). The in-place editors' setTimeRange does so as
@@ -1913,6 +1895,25 @@ namespace gnubase::app
 		document->Show();
 		m_maxRecordTime = std::make_unique<ui::StatusLine>(m_binding, *document);
 		m_docking.saveWindows();
+	}
+
+	// The time display window grows and shrinks with the UI scale, as its digits do (#566): a window at the size of one
+	// of its presets stays at that one, one the user sized keeps its proportions.
+	void AppUi::scaleTimeDisplay(float before, float after)
+	{
+		const ui::Window* window = timeDisplay();
+		if (window == nullptr || !m_timeDisplay.controls || !(before > 0.0F))
+			return;
+		ui::Rect bounds = m_shell.bounds(window->id());
+		const int size = m_timeDisplay.controls->size();
+		const float ratioBefore = window->dpRatio() * before / after;
+		ui::Size sized = timeDisplaySize(m_shell, *window, size, window->dpRatio());
+		if (!(bounds.size() == timeDisplaySize(m_shell, *window, size, ratioBefore)))
+			sized = {static_cast<int>(std::lround(static_cast<float>(bounds.width) * after / before)),
+				static_cast<int>(std::lround(static_cast<float>(bounds.height) * after / before))};
+		bounds.width = sized.width;
+		bounds.height = sized.height;
+		m_shell.setBounds(window->id(), bounds);
 	}
 
 	void AppUi::toggleTimeDisplay()

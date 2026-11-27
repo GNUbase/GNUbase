@@ -226,7 +226,14 @@ namespace gnubase::ui
 	TransportControls::~TransportControls()
 	{
 		release();
-		endTempoGesture(false); // the tempo it reached is set, although its fields go (#566, #569)
+		try
+		{
+			endTempoGesture(false); // the tempo it reached is set, although its fields go (#566, #569)
+		}
+		catch (const std::exception& error)
+		{
+			logging::warning("The transport controls couldn't set the tempo of their gesture: {}", error.what());
+		}
 		listen(false);
 	}
 

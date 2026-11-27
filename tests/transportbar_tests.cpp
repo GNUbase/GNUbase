@@ -1698,7 +1698,7 @@ TEST_CASE("each held Rewind or Forward key and button winds as its own, and a ke
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") > 2 * 48000; }));
 	app.shell().keyReleased(app.main(), ui::KeyPress{Rml::Input::KI_UNKNOWN, 0});
 	const int64_t unmapped = position(app);
-	REQUIRE(waitFor(app, [unmapped](const Json& state) { return state.at("position") > unmapped + (2 * 48000); }));
+	REQUIRE(waitFor(app, [unmapped](const Json& state) { return state.at("position") > unmapped + 96000; }));
 
 	// Rewind held with the mouse winds back; its button going up leaves Num+ winding on (#566).
 	app.ui().move(std::nullopt, at("#rewind"));
@@ -1707,7 +1707,7 @@ TEST_CASE("each held Rewind or Forward key and button winds as its own, and a ke
 	REQUIRE(waitFor(app, [forward](const Json& state) { return state.at("position") < forward - 48000; }));
 	mouseButton(app, false);
 	const int64_t lowest = position(app);
-	REQUIRE(waitFor(app, [lowest](const Json& state) { return state.at("position") > lowest + (2 * 48000); }));
+	REQUIRE(waitFor(app, [lowest](const Json& state) { return state.at("position") > lowest + 96000; }));
 	app.ui().key(std::nullopt, "Num+", ui::KeyAction::Up);
 	stopped(app);
 
@@ -1724,7 +1724,7 @@ TEST_CASE("each held Rewind or Forward key and button winds as its own, and a ke
 	app.ui().key(std::nullopt, "Num+", ui::KeyAction::Down);
 	mouseButton(app, false);
 	const int64_t started = position(app);
-	REQUIRE(waitFor(app, [started](const Json& state) { return state.at("position") > started + (2 * 48000); }));
+	REQUIRE(waitFor(app, [started](const Json& state) { return state.at("position") > started + 96000; }));
 	app.ui().key(std::nullopt, "Num+", ui::KeyAction::Up);
 	stopped(app);
 }
