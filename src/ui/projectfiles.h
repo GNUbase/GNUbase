@@ -205,7 +205,7 @@ namespace gnubase::ui
 		std::optional<WaitingError> m_waitingError;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_keptAwayBy;
 		uint64_t m_autoSaveWorked = 0; // how often autoSaveWorks ran, so that openError knows an error is out of date
-		uint64_t m_autoSaveFailures =
-			0; // the failed auto saves whose error is to show, so that openError knows a newer one
+		// How many failed auto saves had an error to show, so that openError knows a newer one came (#859).
+		uint64_t m_autoSaveFailures = 0;
 	};
 }
