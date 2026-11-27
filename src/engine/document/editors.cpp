@@ -639,11 +639,51 @@ namespace gnubase::engine
 				note.releaseVelocity = velocityValue(played.releaseVelocity);
 			return note;
 		}
+
+		// Whether notes played on the MIDI inputs go into the editor: its step or MIDI input is on.
+		bool takesInput(const EditorView& view)
+		{
+			return view.open && (view.stepInput || view.midiInput) && !showsAudio(view);
+		}
+
+		// Notes played on the MIDI inputs into the key editors (editor.played, #679): the keys down, and the notes of
+		// the chord they play, which goes in once they are all up.
+		struct LiveInput
+		{
+			bool listening = false; // midi.activityListen is on for the key editors
+			std::string editor;     // the editor whose step or MIDI input went on last
+			std::set<int> down;
+			Json chord = Json::array();
+		};
+
+		// The editor that notes played go into: the one whose step or MIDI input went on last, else the first that
+		// takes input; empty for none.
+		std::string inputEditor(const LiveInput& live, const Views& views, const ProjectModel& model)
+		{
+			if (!live.editor.empty() && takesInput(current(views, model, live.editor)))
+				return live.editor;
+			for (const auto& each : views)
+				if (takesInput(current(views, model, each.first)))
+					return each.first;
+			return {};
+		}
+
+		// Listens to the MIDI inputs (midi.activityListen) while an editor takes input; each start begins afresh.
+		void listen(LiveInput& live, bool on, CommandContext& context)
+		{
+			if (on == live.listening)
+				return;
+			live.listening = on;
+			live.down.clear();
+			live.chord = Json::array();
+			context.call("midi.activityListen", {{"on", on}, {"listener", "keyEditor"}, {"post", "editor.played"}});
+		}
 	}
 
 	void registerEditorCommands(ProjectModel& model, Engine& engine)
 	{
 		auto views = std::make_shared<Views>();
+		auto live = std::make_shared<LiveInput>();
 		model.setSoloNotesSource([views, &model] { return soloNotes(*views, model); });
 		// A change of the project that changes an open editor's parts (removes or adds them, brings them back or
 		// orders them anew) or closes it, as a new project does, announces the editor's view, so that clients that
@@ -797,15 +837,20 @@ namespace gnubase::engine
 			return Json{{"type", "object"}, {"properties", properties}, {"required", {"editor"}},
 				{"additionalProperties", false}};
 		};
-		const auto store = [views, &model](const std::string& editor, const EditorView& view, CommandContext& context)
+		const auto store = [views, live, &model](
+							   const std::string& editor, const EditorView& view, CommandContext& context)
 		{
 			EditorView& stored = (*views)[editor];
+			const bool took = stored.project == model.openedRevision() && takesInput(stored);
 			stored = view;
 			stored.project = model.openedRevision();
 			dropUneditable(model.project(), stored);
 			stored.announcedOpen = stored.open;
 			stored.announced = ordered(model.project(), stored.parts);
 			Json result = viewJson(model.project(), editor, stored);
+			if (takesInput(stored) && !took)
+				live->editor = editor;
+			listen(*live, !inputEditor(*live, *views, model).empty(), context);
 			model.updateSoloNotes();
 			context.emit("editor.changed", result);
 			return result;
@@ -1329,6 +1374,64 @@ namespace gnubase::engine
 				Json notes = changed;
 				notes.insert(notes.end(), added.begin(), added.end());
 				return Json{{"part", partId}, {"notes", notes}};
+			});
+
+		const Json bytesSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
+		engine.registerCommand(
+			{"editor.played", 1,
+				"MIDI input played into the key editors' step and MIDI input (reference manual pp. 1219-1220), as "
+				"midi.activity takes it: the engine runs it with what the MIDI inputs receive while an editor's step "
+				"or MIDI input is on (midi.activityListen with post). received: messages, each with its bytes and "
+				"whether its port belongs to all MIDI inputs (inAllInputs, by default true); only those of ports "
+				"that do count, and only their notes. The keys pressed until all of them are up again are one chord: "
+				"then editor.input runs with its notes, each with its note-on velocity and its note-off velocity "
+				"(0.5 for a note-on of velocity 0), in the editor whose step or MIDI input went on last, or else the "
+				"first one with it on. Returns the chords it sent, each the notes as editor.input takes them.",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"received"}},
+					{"properties",
+						{{"received",
+							{{"type", "array"},
+								{"items",
+									{{"type", "object"}, {"required", {"bytes"}},
+										{"properties", {{"bytes", bytesSchema}, {"inAllInputs", boolean}}}}}}}}}},
+				{{"type", "object"}, {"required", {"chords"}}, {"properties", {{"chords", {{"type", "array"}}}}}},
+				false},
+			[views, live, &model, &engine](CommandContext& context)
+			{
+				context.leaveOutOfLog();
+				const std::string editor = inputEditor(*live, *views, model);
+				listen(*live, !editor.empty(), context);
+				Json chords = Json::array();
+				for (const Json& each : context.parameters().at("received"))
+				{
+					const Json& bytes = each.at("bytes");
+					if (editor.empty() || !each.value("inAllInputs", true) || bytes.size() < 3)
+						continue;
+					const int status = bytes.at(0).get<int>() & 0xF0;
+					const int pitch = bytes.at(1).get<int>() & 0x7F;
+					const int velocity = bytes.at(2).get<int>() & 0x7F;
+					if (status == 0x90 && velocity > 0)
+					{
+						const bool fresh = std::none_of(live->chord.begin(), live->chord.end(),
+							[pitch](const Json& note) { return note.at("pitch") == pitch; });
+						live->down.insert(pitch);
+						if (fresh)
+							live->chord.push_back({{"pitch", pitch}, {"velocity", velocity / 127.0}});
+					}
+					else if ((status == 0x80 || status == 0x90) && live->down.erase(pitch) != 0)
+					{
+						for (Json& note : live->chord)
+							if (note.at("pitch") == pitch)
+								note["releaseVelocity"] = status == 0x80 ? velocity / 127.0 : 0.5;
+						if (live->down.empty())
+						{
+							engine.post("editor.input", {{"editor", editor}, {"notes", live->chord}});
+							chords.push_back(live->chord);
+							live->chord = Json::array();
+						}
+					}
+				}
+				return Json{{"chords", chords}};
 			});
 	}
 }

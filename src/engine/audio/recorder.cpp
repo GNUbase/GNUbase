@@ -837,6 +837,12 @@ namespace gnubase::engine
 		catch (const std::exception& error)
 		{
 			fail("can't go on recording track " + full.track.name + " in a new file: " + error.what());
+			// The empty or header-only file stays out of the record folder: closed first, as Windows removes no
+			// open file (#2096).
+			next.writer.reset();
+			std::error_code ignored;
+			if (!next.path.empty())
+				fs::remove(fs::u8path(next.path), ignored);
 			return;
 		}
 		m_files.push_back(std::move(next)); // full is no longer valid
@@ -864,9 +870,12 @@ namespace gnubase::engine
 			{
 				const time::Samples from = std::max(take.offset, file.start);
 				const time::Samples to = std::min(take.offset + take.length, fileEnd);
-				if (to > from)
-					takes.push_back({{"position", take.position + (from - take.offset)}, {"offset", from - file.start},
-						{"length", to - from}});
+				if (to <= from)
+					continue;
+				takes.push_back({{"position", take.position + (from - take.offset)}, {"offset", from - file.start},
+					{"length", to - from}});
+				if (from > take.offset) // the track's previous file holds the take's start (#2102)
+					takes.back()["continues"] = true;
 			}
 			tracks.push_back({{"track", file.track.track}, {"path", file.path}, {"takes", std::move(takes)}});
 		}
