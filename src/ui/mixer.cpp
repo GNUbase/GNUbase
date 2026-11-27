@@ -49,6 +49,22 @@ namespace gnubase::ui
 		constexpr float g_meterEnd = 0.001f;       // -60 dB, where a channel meter's bar ends
 		constexpr int g_sends = 8;                 // engine::g_maxSends
 		constexpr const char* g_addEffect = "add"; // a send destination list's Add Effect Track to Send
+		// The channel meters' +3 dB digital scale (reference manual pp. 467-468, 1614): -60 to +3 dB, and the marks
+		// beside its bars.
+		constexpr int g_meterMin = -60;
+		constexpr int g_meterMax = 3;
+		constexpr std::array<int, 8> g_meterMarks = {0, -6, -12, -18, -24, -30, -40, -50};
+
+		// The scale's marks, each placed at its level's height on the bars.
+		std::string meterScale()
+		{
+			std::string rml = R"(<div class="mixer-meter-scale">)";
+			for (const int mark : g_meterMarks)
+				rml += R"(<span style="top: )" +
+					std::to_string(100.0 * (g_meterMax - mark) / (g_meterMax - g_meterMin)) + R"(%">)" +
+					std::to_string(mark) + "</span>";
+			return rml + "</div>";
+		}
 
 		std::string encode(const std::string& text)
 		{
@@ -920,7 +936,7 @@ namespace gnubase::ui
 			if (audio || vca || midi)
 			{
 				rml += std::string(R"(<div class="mixer-level">)") +
-					(midi ? "" : R"(<fader min="-60" max="6" default="0" step="0.1"/>)") +
+					(midi ? "" : R"(<fader min="-60" max="6" default="0" step="0.1"/>)") + meterScale() +
 					R"(<div class="mixer-meter" contextmenu="mixer-meter-menu"/></div>)"
 					R"(<div class="mixer-readouts"><span class="mixer-volume"/>)"
 					R"(<span class="mixer-peak" title="Meter Peak Level"/></div>)";
@@ -995,7 +1011,8 @@ namespace gnubase::ui
 			{
 				std::string rml;
 				for (int c = 0; c < channels; ++c)
-					rml += R"(<meter min="-60" max="6"/>)";
+					rml += "<meter min=\"" + std::to_string(g_meterMin) + "\" max=\"" + std::to_string(g_meterMax) +
+						"\"/>";
 				bars->SetInnerRML(rml);
 			}
 			for (int c = 0; c < channels; ++c)

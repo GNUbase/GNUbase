@@ -19,6 +19,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -230,6 +231,41 @@ TEST_CASE("the mixer's channel meters and the meter display read the same frames
 			const Json bars = app.ui().dom(std::nullopt, midiStrip + ".mixer-meter meter", 0).at("elements");
 			return bars.size() == 1 && bars[0].at("attributes").value("value", std::string()) == "0.0";
 		}));
+}
+
+TEST_CASE("a channel meter's bars are on the +3 dB digital scale, with its marks beside them", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const auto channel = app.call("track.add", {{"type", "audio"}}).at("channel").at("id").get<uint64_t>();
+	app.call("channel.set", {{"channel", channel}, {"monitor", true}});
+	app.appUi().docking().open("mixer");
+	const std::string strip = ".mixer-channel[channel=" + std::to_string(channel) + "] ";
+	const auto mixer = [&app, &strip](const std::string& selector)
+	{ return app.ui().dom(std::nullopt, strip + selector, 0).at("elements"); };
+	app.call("audio.render", {{"frames", 4800}});
+	REQUIRE(app.waitUntil([&mixer] { return mixer(".mixer-meter meter").size() == 2; }));
+
+	// The channel meters use the +3 dB digital scale (reference manual pp. 467-468, 1614): -60 to +3 dB.
+	const Json bar = mixer(".mixer-meter meter").at(0);
+	CHECK(bar.at("attributes").at("min") == "-60");
+	CHECK(bar.at("attributes").at("max") == "3");
+	const Json marks = mixer(".mixer-meter-scale span");
+	std::vector<std::string> texts;
+	for (const Json& mark : marks)
+		texts.push_back(mark.value("text", std::string()));
+	CHECK(texts == std::vector<std::string>{"0", "-6", "-12", "-18", "-24", "-30", "-40", "-50"});
+	// Each mark's middle is at its level's height on the bar: 0 dB 3 dB under its top, -30 dB 33 dB under it.
+	const Json& box = bar.at("box");
+	const auto height = [&box](double db)
+	{ return box.at("y").get<double>() + (box.at("height").get<double>() * (3.0 - db) / 63.0); };
+	const auto middle = [](const Json& mark)
+	{ return mark.at("box").at("y").get<double>() + (mark.at("box").at("height").get<double>() / 2.0); };
+	CHECK(std::abs(middle(marks.at(0)) - height(0.0)) < 1.5);
+	CHECK(std::abs(middle(marks.at(5)) - height(-30.0)) < 1.5);
 }
 
 TEST_CASE("a channel meter's Global Meter Settings menu holds its peaks for a time, forever or not at all, and resets "
