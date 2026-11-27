@@ -519,7 +519,9 @@ namespace gnubase::ui
 			  R"(<button id="mixer-filter" menu="mixer-filter-menu" title="Set Channel Type Filter">)"
 			  R"(Channel Types</button>)"
 			  R"(<button id="mixer-agents" menu="mixer-agents-menu" )"
-			  R"(title="Set Channel Visibility Agents">Visibility</button>)";
+			  R"(title="Set Channel Visibility Agents">Visibility</button>)"
+			  R"(<button id="mixer-find" menu="mixer-find-menu" class="icon-only" title="Find Track/Channel">)"
+			  R"(<svg class="icon" src="../icons/general-search.svg"/></button>)";
 		if (!settings)
 			for (const auto& [state, label] : g_states)
 			{
@@ -558,7 +560,11 @@ namespace gnubase::ui
 		// The channel settings window has the Functions menu (pp. 461, 503) instead of the filter and the agents.
 		std::vector<std::pair<std::string, std::string>> menus = {
 			{R"(<menu id="mixer-filter-menu">)", filter},
-			{R"(<menu id="mixer-agents-menu">)", R"(<menuitem agent="showAll">Show All Channels</menuitem>)"},
+			{R"(<menu id="mixer-agents-menu">)",
+				R"(<menuitem agent="showAll">Show All Channels</menuitem><menuseparator/>)"
+				R"(<menuitem agent="undo">Undo Visibility Change</menuitem>)"
+				R"(<menuitem agent="redo">Redo Visibility Change</menuitem>)"},
+			{R"(<menu id="mixer-find-menu">)", ""}, // showFindMenu fills it
 		};
 		if (settings)
 			menus = {{R"(<menu id="settings-functions-menu">)",
@@ -819,6 +825,7 @@ namespace gnubase::ui
 				if (Rml::Element* item = menu->QuerySelector(std::string("[channel-type=") + type + "]"))
 					setChecked(*item, m_hiddenTypes.count(type) == 0);
 		showVisibilityList();
+		scrollToRevealed();
 		if (Rml::Context* context = strips->GetContext())
 			context->RequestNextUpdate(0);
 	}
@@ -1368,6 +1375,64 @@ namespace gnubase::ui
 		m_binding.send("track.move", {{"track", from->track}, {"parent", parent}, {"index", index}});
 	}
 
+	void Mixer::showFindMenu()
+	{
+		const auto menu = std::find_if(m_menus.begin(), m_menus.end(),
+			[](const Rml::ObserverPtr<Rml::Element>& each) { return each && each->GetId() == "mixer-find-menu"; });
+		if (menu == m_menus.end())
+			return;
+		std::string rml = R"(<input type="text" class="mixer-find-search" placeholder="Search"/>)";
+		for (const MixerChannel& channel : m_channels)
+			if (m_hiddenTypes.count(channel.type) == 0)
+				rml +=
+					R"(<menuitem find=")" + std::to_string(channel.id) + R"(">)" + encode(channel.name) + "</menuitem>";
+		(*menu)->SetInnerRML(rml);
+	}
+
+	void Mixer::find(const std::string& text)
+	{
+		const auto lower = [](std::string name)
+		{
+			std::transform(name.begin(), name.end(), name.begin(),
+				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			return name;
+		};
+		const auto menu = std::find_if(m_menus.begin(), m_menus.end(),
+			[](const Rml::ObserverPtr<Rml::Element>& each) { return each && each->GetId() == "mixer-find-menu"; });
+		if (menu == m_menus.end())
+			return;
+		for (int i = 0; i < (*menu)->GetNumChildren(); ++i)
+			if (Rml::Element* item = (*menu)->GetChild(i); item->HasAttribute("find"))
+			{
+				// Matched against the names, not the items' RML, where & < > are entities.
+				const uint64_t id = idAttribute(*item, "find");
+				const auto channel = std::find_if(
+					m_channels.begin(), m_channels.end(), [id](const MixerChannel& each) { return each.id == id; });
+				item->SetClass("hidden",
+					channel == m_channels.end() || lower(channel->name).find(lower(text)) == std::string::npos);
+			}
+	}
+
+	void Mixer::reveal(uint64_t channel)
+	{
+		if (m_hidden.count(channel) != 0)
+			setHidden(channel, false);
+		m_revealing = channel;
+		scrollToRevealed();
+	}
+
+	void Mixer::scrollToRevealed()
+	{
+		const auto strip = m_stripOf.find(m_revealing);
+		if (strip == m_stripOf.end())
+			return;
+		if (Rml::ElementDocument* document = strip->second->GetOwnerDocument())
+			document->UpdateDocument(); // lays out a strip just made
+		strip->second->ScrollIntoView({Rml::ScrollAlignment::Nearest, Rml::ScrollAlignment::Nearest,
+			Rml::ScrollBehavior::Instant, Rml::ScrollParentage::Closest});
+		m_revealing = 0;
+	}
+
 	void Mixer::showLinkMenu(uint64_t channel)
 	{
 		const auto menu = std::find_if(m_menus.begin(), m_menus.end(),
@@ -1446,6 +1511,10 @@ namespace gnubase::ui
 			else if (target->HasAttribute("visibility"))
 			{
 				setHidden(idAttribute(*target, "visibility"), !event.GetParameter("value", true));
+			}
+			else if (target->IsClassSet("mixer-find-search"))
+			{
+				find(event.GetParameter<Rml::String>("value", ""));
 			}
 			else if (attribute(*target, "function") == "follow")
 			{
@@ -1553,9 +1622,17 @@ namespace gnubase::ui
 				m_hidden.clear();
 				sendView({{"hidden", Json::array()}});
 			}
+			else if (const std::string agent = attribute(*target, "agent"); agent == "undo" || agent == "redo")
+			{
+				m_binding.send(agent == "undo" ? "mixer.undoVisibility" : "mixer.redoVisibility", {{"mixer", m_view}});
+			}
 			else if (target->HasAttribute("link"))
 			{
 				link(attribute(*target, "link"));
+			}
+			else if (target->HasAttribute("find"))
+			{
+				reveal(idAttribute(*target, "find"));
 			}
 			else if (attribute(*target, "function") == "copy" && !target->HasAttribute("disabled"))
 			{
@@ -1617,6 +1694,9 @@ namespace gnubase::ui
 				closest(target, "mixer-channel-name", m_root.get()) != nullptr ? channelOf(target) : nullptr;
 			m_dragged = channel != nullptr ? channel->id : 0;
 			m_soloHold.pressed(target);
+			if (target->GetId() == "mixer-find" ||
+				(target->GetParentNode() != nullptr && target->GetParentNode()->GetId() == "mixer-find"))
+				showFindMenu(); // before the popup behavior opens it on the click
 			// The press fills the display line's menu, which the popup behavior opens on the click, as the list
 			// editor's menus do.
 			if (Rml::Element* line = closest(target, "mixer-link", m_root.get());

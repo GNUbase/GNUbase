@@ -35,6 +35,41 @@ namespace gnubase::engine
 			json["mixer"] = mixer;
 			return json;
 		}
+
+		constexpr size_t g_visibilitySteps = 10; // Undo Visibility Change undoes up to 10 (reference manual p. 457)
+
+		bool sameView(const MixerView& a, const MixerView& b)
+		{
+			return a.hidden == b.hidden && a.hiddenTypes == b.hiddenTypes;
+		}
+
+		// The mixer's view changed: the lower zone's and the synced window's tracks follow (#166), mixer.changed.
+		Json announce(Project& project, const std::string& mixer, CommandContext& context)
+		{
+			followMixer(project, mixer, context);
+			Json result = viewJson(project, mixer);
+			context.emit("mixer.changed", result);
+			return result;
+		}
+
+		// Undo or Redo Visibility Change: the mixer's view goes back to the one before its last change, or forward
+		// to the one it last undid. Nothing changes when there is none.
+		ProjectModel::Handler visibilityStep(bool redo)
+		{
+			return [redo](Project& project, CommandContext& context)
+			{
+				const std::string mixer = context.parameters().at("mixer").get<std::string>();
+				auto& [undone, redone] = project.mixerHistory[mixer];
+				std::vector<MixerView>& from = redo ? redone : undone;
+				if (from.empty())
+					return viewJson(project, mixer);
+				MixerView& view = project.mixers[mixer];
+				(redo ? undone : redone).push_back(view);
+				view = from.back();
+				from.pop_back();
+				return announce(project, mixer, context);
+			};
+		}
 	}
 
 	Json mixerViewJson(const Project& project, const std::string& mixer)
@@ -114,6 +149,7 @@ namespace gnubase::engine
 				const Json& parameters = context.parameters();
 				const std::string mixer = parameters.at("mixer").get<std::string>();
 				MixerView& view = project.mixers[mixer];
+				const MixerView before = view;
 				if (parameters.contains("hidden"))
 				{
 					auto hidden = parameters.at("hidden").get<std::vector<ObjectId>>();
@@ -133,11 +169,30 @@ namespace gnubase::engine
 						if (std::find(given.begin(), given.end(), type) != given.end())
 							view.hiddenTypes.emplace_back(type);
 				}
-				followMixer(project, mixer, context); // the lower zone's and the synced window's tracks follow (#166)
-				Json result = viewJson(project, mixer);
-				context.emit("mixer.changed", result);
-				return result;
+				if (!sameView(before, view))
+				{
+					auto& [undone, redone] = project.mixerHistory[mixer];
+					undone.push_back(before);
+					if (undone.size() > g_visibilitySteps)
+						undone.erase(undone.begin());
+					redone.clear();
+				}
+				return announce(project, mixer, context);
 			});
+		for (const bool redo : {false, true})
+			model.addEdit(engine,
+				{redo ? "mixer.redoVisibility" : "mixer.undoVisibility", 1,
+					redo ? "Redo Visibility Change (reference manual p. 457): the mixer's view goes forward to the one "
+						   "mixer.undoVisibility last went back from, until mixer.set changes it again. Returns the "
+						   "view, unchanged when there is none, and emits mixer.changed when it changes."
+						 : "Undo Visibility Change (reference manual p. 457): the mixer's view goes back to the one "
+						   "before its last visibility change (mixer.set changing hidden or hiddenTypes), up to 10 "
+						   "changes back. Each mixer has its own; not kept in the file. Returns the view, unchanged "
+						   "when there is none, and emits mixer.changed when it changes.",
+					{{"type", "object"}, {"properties", {{"mixer", mixerSchema}}}, {"required", {"mixer"}},
+						{"additionalProperties", false}},
+					viewSchema, false},
+				redo ? "Redo visibility change" : "Undo visibility change", visibilityStep(redo));
 		registerTrackVisibilityCommands(model, engine);
 		registerTrackLayoutCommands(model, engine);
 	}

@@ -24,6 +24,13 @@
 	margin-right: 4dp;
 }
 
+menu input.mixer-find-search
+{
+	display: block;
+	width: 200dp;
+	margin: 2dp 4dp;
+}
+
 .mixer-toolbar .spacer
 {
 	flex: 1 1 0;

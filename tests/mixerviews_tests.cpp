@@ -183,3 +183,56 @@ TEST_CASE("a track's picture goes with its project file", "[unit]")
 	CHECK(std::filesystem::u8path(tracks.at(0).at("picture").get<std::string>()) == missing);
 	CHECK(test::readText(std::filesystem::u8path(tracks.at(1).at("picture").get<std::string>())) == "another picture");
 }
+
+TEST_CASE("each mixer undoes and redoes its last ten visibility changes", "[unit]")
+{
+	Fixture f;
+	std::mutex mutex;
+	std::vector<Json> changes;
+	const engine::Listener listener(f.engine,
+		[&](const engine::Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "mixer.changed")
+				changes.push_back(event.data);
+		});
+	std::vector<uint64_t> channels;
+	for (int i = 0; i < 12; ++i)
+		channels.push_back(f.track("audio").second);
+	const auto hidden = [&f](const std::string& mixer) { return f.view(mixer).at("hidden"); };
+	const auto undo = [&f](const std::string& mixer)
+	{ return f.call("mixer.undoVisibility", {{"mixer", mixer}}).at("hidden"); };
+
+	// Nothing to undo or redo yet: the view stays.
+	CHECK(undo("window1").empty());
+	CHECK(f.call("mixer.redoVisibility", {{"mixer", "window1"}}).at("hidden").empty());
+	CHECK(changes.empty());
+
+	// Hidden channels and the type filter are visibility changes; a set that changes nothing isn't one.
+	f.call("mixer.set", {{"mixer", "window1"}, {"hidden", {channels[0]}}});
+	f.call("mixer.set", {{"mixer", "window1"}, {"hiddenTypes", {"output"}}});
+	f.call("mixer.set", {{"mixer", "window1"}, {"hidden", {channels[0]}}});
+	f.call("mixer.set", {{"mixer", "lower"}, {"hidden", {channels[1]}}}); // the other mixers have their own
+	CHECK(f.call("mixer.undoVisibility", {{"mixer", "window1"}}).at("hiddenTypes").empty());
+	CHECK(undo("window1") == Json::array());
+	CHECK(undo("window1") == Json::array()); // nothing more
+	CHECK(hidden("lower") == Json{channels[1]});
+	{
+		const std::scoped_lock lock(mutex);
+		REQUIRE(changes.size() == 6);
+		CHECK(changes.back() == f.view("window1"));
+	}
+
+	// Redo brings them back, until a new change.
+	CHECK(f.call("mixer.redoVisibility", {{"mixer", "window1"}}).at("hidden") == Json{channels[0]});
+	f.call("mixer.set", {{"mixer", "window1"}, {"hidden", {channels[2]}}});
+	CHECK(f.call("mixer.redoVisibility", {{"mixer", "window1"}}).at("hidden") == Json{channels[2]});
+
+	// Ten changes back at most.
+	for (const uint64_t channel : channels)
+		f.call("mixer.set", {{"mixer", "window2"}, {"hidden", {channel}}});
+	for (int i = 0; i < 12; ++i)
+		undo("window2");
+	CHECK(hidden("window2") == Json{channels[1]});
+	CHECK_THAT(f.fails("mixer.undoVisibility", {{"mixer", "window5"}}), ContainsSubstring("mixer"));
+}

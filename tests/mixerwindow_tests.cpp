@@ -383,6 +383,13 @@ TEST_CASE("each mixer window and the lower zone's mixer hide channels of their o
 	click(app, first, "#mixer-agents");
 	click(app, first, "#mixer-agents-menu menuitem[agent=showAll]");
 	REQUIRE(app.waitUntil([&] { return strips(app, first) == all; }));
+	// Undo Visibility Change (p. 457) takes it back, Redo Visibility Change does it again.
+	click(app, first, "#mixer-agents");
+	click(app, first, "#mixer-agents-menu menuitem[agent=undo]");
+	REQUIRE(app.waitUntil([&] { return strips(app, first) == std::vector<uint64_t>{input, guitar.channel, output}; }));
+	click(app, first, "#mixer-agents");
+	click(app, first, "#mixer-agents-menu menuitem[agent=redo]");
+	REQUIRE(app.waitUntil([&] { return strips(app, first) == all; }));
 
 	// The lower zone's mixer (pp. 434-436): Alt+F3 and Studio > Mixer in Project Window show it, with a view of its
 	// own; again hides the zone.
@@ -411,6 +418,50 @@ TEST_CASE("each mixer window and the lower zone's mixer hide channels of their o
 	// A window the user closed lets go of its mixer: the ui::Mixer goes.
 	app.shell().close(*second);
 	REQUIRE(app.waitUntil([&] { return app.appUi().mixer(2) == nullptr; }));
+}
+
+TEST_CASE("Find Track/Channel lists the channels, narrows them as typed and shows the one picked", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	for (int i = 1; i <= 24; ++i)
+		addTrack(app, "audio", "Track " + std::to_string(i));
+	const Added drums = addTrack(app, "audio", "Drums");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 27; }));
+	app.call("mixer.set", {{"mixer", "window1"}, {"hidden", {drums.channel}}, {"hiddenTypes", {"input"}}});
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 25; }));
+	const auto scrolled = [&]
+	{
+		Rml::Element* channels = findElement(app, window, ".mixer-channels");
+		REQUIRE(channels != nullptr);
+		return channels->GetScrollLeft();
+	};
+	REQUIRE(scrolled() == 0.0F);
+
+	// The selector lists the channels, hidden ones too, but not those of the types the filter hides (reference manual
+	// pp. 449-450).
+	click(app, window, "#mixer-find");
+	REQUIRE(app.waitUntil([&] { return has(element(app, window, "#mixer-find-menu"), "open"); }));
+	CHECK(elements(app, window, "#mixer-find-menu menuitem").size() == 26);
+	// Typing narrows it, in any case.
+	click(app, window, "#mixer-find-menu .mixer-find-search");
+	app.ui().text(window, "dRU");
+	app.shell().step(std::chrono::milliseconds(0));
+	std::vector<std::string> found;
+	for (const Json& item : elements(app, window, "#mixer-find-menu menuitem"))
+		if (!has(item, "hidden"))
+			found.push_back(item.at("text").get<std::string>());
+	CHECK(found == std::vector<std::string>{"Drums"});
+
+	// The channel picked shows, hidden or outside the view.
+	click(app, window, "#mixer-find-menu menuitem[find=" + std::to_string(drums.channel) + "]");
+	REQUIRE(app.waitUntil([&] { return app.call("mixer.get", {{"mixer", "window1"}}).at("hidden").empty(); }));
+	REQUIRE(app.waitUntil([&] { return scrolled() > 0.0F; }));
+	click(app, window, "#mixer-find");
+	REQUIRE(app.waitUntil([&] { return has(element(app, window, "#mixer-find-menu"), "open"); }));
+	click(app, window, "#mixer-find-menu menuitem", 0);
+	REQUIRE(app.waitUntil([&] { return scrolled() == 0.0F; }));
 }
 
 TEST_CASE("another project drops the notes being typed in a mixer channel's notepad", "[ui]")

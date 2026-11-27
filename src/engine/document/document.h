@@ -1698,6 +1698,9 @@ namespace gnubase::engine
 		std::vector<std::pair<ObjectId, ObjectId>> soloNotes; // each a part and a note of it
 		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
 		std::map<std::string, MixerView> mixers;
+		// Undo and Redo Visibility Change (reference manual p. 457), by mixer: the views before its last visibility
+		// changes (first) and those it undid (second), the newest last. Not part of undo or the file.
+		std::map<std::string, std::pair<std::vector<MixerView>, std::vector<MixerView>>> mixerHistory;
 		// What the track list hides (#166). A setting, not part of undo.
 		TrackVisibility trackVisibility;
 		// The track heights and folded folders (#491). Settings, not part of undo.

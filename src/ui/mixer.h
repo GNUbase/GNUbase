@@ -106,13 +106,14 @@ namespace gnubase::ui
 	// follows the project whichever client changes it. view is the mixer's name in mixer.get and mixer.set (lower,
 	// window1 to window4), which keep what it hides: the toolbar's channel type filter (#mixer-filter-menu) and
 	// visibility agents (#mixer-agents-menu) change it, and in a window the Visibility tab of the left zone, which
-	// showVisibility fills. Each strip (.mixer-channel, with the channel's id in channel and its type in type) is a
-	// container of the docking system's set of sections "channel": the picture, the notepad and the fader, which the
-	// Set up Window Layout pane (#mixer-layout-pane) shows, hides and reorders. A channel name dragged onto another
-	// channel moves its track there with track.move; busses keep their places. Each strip of a track's channel has
-	// Edit Channel Settings (button.mixer-edit), and its sends' destination lists Add Effect Track to Send. An audio
-	// channel's strip has its meter next to the fader (.mixer-meter, a <meter> per audio channel with the peak since
-	// the last frame and its peak mark, read once a frame through the meter reader) and its peak level under it
+	// showVisibility fills. Find Track/Channel (#mixer-find, its selector #mixer-find-menu) shows a channel. Each strip
+	// (.mixer-channel, with the channel's id in channel and its type in type) is a container of the docking system's
+	// set of sections "channel": the picture, the notepad and the fader, which the Set up Window Layout pane
+	// (#mixer-layout-pane) shows, hides and reorders. A channel name dragged onto another channel moves its track there
+	// with track.move; busses keep their places. Each strip of a track's channel has Edit Channel Settings
+	// (button.mixer-edit), and its sends' destination lists Add Effect Track to Send. An audio channel's strip has its
+	// meter next to the fader (.mixer-meter, a <meter> per audio channel with the peak since the last frame and its
+	// peak mark, read once a frame through the meter reader) and its peak level under it
 	// (.mixer-peak, reference manual p. 468), which a click resets, every channel's (meter.reset channels).
 	//
 	// As the channel settings window's (MixerKind::ChannelSettings, view unused) it shows one track's channel, with the
@@ -181,6 +182,13 @@ namespace gnubase::ui
 		// The display line's pop-up menu (reference manual p. 459), filled for the channel as it opens; link does what
 		// its item says.
 		void showLinkMenu(uint64_t channel);
+		// Find Track/Channel (reference manual pp. 449-450): fills its selector with a search field and the channels
+		// that the type filter doesn't hide; find narrows it to the names with the text, reveal shows the channel
+		// picked, again if it was hidden, and scrolls its strip into view once it is there.
+		void showFindMenu();
+		void find(const std::string& text);
+		void reveal(uint64_t channel);
+		void scrollToRevealed();
 		void link(const std::string& item);
 
 		EngineBinding& m_binding;
@@ -213,6 +221,7 @@ namespace gnubase::ui
 		uint64_t m_dragged = 0;     // the channel whose name a mouse button went down on
 		int m_viewSends = 0;        // its mixer.set commands not answered yet
 		uint64_t m_linkChannel = 0; // the channel whose display line's menu opened last
+		uint64_t m_revealing = 0;   // the channel Find Track/Channel picked, until its strip is in view
 		bool m_updating = false;    // while the strips show the project's values
 		bool m_dropping = false;    // while another project drops the notes being typed
 		SoloHold m_soloHold;
