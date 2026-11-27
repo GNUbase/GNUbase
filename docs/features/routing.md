@@ -25,7 +25,8 @@ in [busses.md](busses.md) and [folder-tracks.md](folder-tracks.md), the fader in
   Tracks that can't be routed are left out, as the reference routes those that can: tracks without an audio channel
   (MIDI, marker and ruler tracks, VCA tracks, folders without a group channel) and, without `send`, tracks whose eight
   sends all have a destination. A selected folder stands for its group channel, not for the tracks inside it, which
-  are routed only when they are selected themselves. Routing that would close a loop refuses the whole command.
+  are routed only when they are selected themselves. Tracks whose routing would close a loop are left out too, such
+  as the group channel of the project's Group or FX folder that the new track goes into.
 - **The project's Group, FX and VCA folders** (pp. 150-152, 154). `track.add` `projectFolder` puts a group, effect or
   VCA track into the first folder at the top level named Group, FX or VCA, which it adds at the end of the project if there is none, in
   the same undo step. The folder is found by its name, so after it is renamed the next such track gets a new one.
@@ -67,7 +68,10 @@ in [busses.md](busses.md) and [folder-tracks.md](folder-tracks.md), the fader in
   channel isn't heard because another is soloed or its track is disabled. With the setting, the mute button sets the
   send's gain to 0 when the graph is built, and the setting changing rebuilds it; mute automation, which plays on the
   audio thread, mutes the tap itself: the fader scales it by its mute, frame by frame, so the pre-fader sends glide out
-  and in with the channel from the automation's sample on.
+  and in with the channel from the automation's sample on. A graph built after the setting changed glides from how far
+  the last one muted the tap (`ChannelState::preSendsMuted`) to its own over its first block (`MutedTap`), so the
+  pre-fader sends of a channel that mute automation holds muted glide out or in, as the send's gain does for the mute
+  button.
 - **Wider sends.** A send in a wider format than its destination is converted while the destination sums its inputs,
   like an output ([channel-formats.md](channel-formats.md)): a stereo channel's send into a mono effect channel merges
   L and R at -3.01 dB each.
@@ -80,9 +84,10 @@ up Window Layout), with a row per send: its on switch, its destination (a drop-d
 other group and effect channels, without those whose audio comes back to the channel, which the engine would refuse as
 a loop: `ui::routesTo`), Pre for a pre-fader send and a knob for its level, whose drag is one undo step
 (#716). They send `channel.set` and show the engine's values after every undo step, as the strip's other sections do
-([channel-strip.md](channel-strip.md)). Ctrl-click on a send's knob sets the default send level. The knob goes from
--60 dB, or the default send level if that is lower, to the project's maximum volume, as the fader does, so Ctrl-click
-gives a send the level `track.add` gives it. The destination list
+([channel-strip.md](channel-strip.md)). Ctrl-click on a send's knob sets the default send level, also one below the
+knob's range, so it gives a send the level `track.add` gives it. The knob goes from -60 dB to the project's maximum
+volume, as the fader does, whatever the default send level is, so a drag changes the level as fast; a knob whose send
+is below -60 dB stands at its lowest level, and a drag or the wheel takes it on from there. The destination list
 ends with Add Effect Track to Send (p. 554), which opens the add track dialog's effect page for that send, as in the
 channel settings window ([channel-settings.md](channel-settings.md)). Output lists in the inspector and the add track
 dialog offer effect channels too; the inspector's leaves out the channels that would close a loop, as the destination
@@ -108,15 +113,16 @@ context menu, where the reference has it.
   the channel is muted, sends glide over a block when they come on, change level or get another destination (out of the
   old one, into the new one from silence), a send gliding out of a destination that now plays into its channel stops at
   once, and solo keeps the effect channels a soloed track sends to; outputs into effect channels; Mute Pre-Send when
-  Mute with the mute button, with mute automation at two block sizes, and switched while the channel is muted; a stereo
+  Mute with the mute button, with mute automation at two block sizes on a stereo channel, a channel with a plugin slot
+  and a mono one with a panner, and switched while the mute button or mute automation mutes the channel; a stereo
   send into a mono effect channel; `track.add`'s `tracks` and `send` for group and effect tracks, the tracks it leaves
-  out, its undo, and `projectFolder`.
+  out (also with `send`, and those whose routing would close a loop), its undo, and `projectFolder`.
 - `tests/dawproject_tests.cpp` saves and loads sends, and reads them and outputs into effect channels from
   `project.xml` alone.
 - `tests/mixerwindow_tests.cpp`: the Sends section picks a destination, switches a send on and before the fader,
   turns its level with the wheel, gives it the default send level with Ctrl-click, above +6 dB and below -60 dB too,
-  and shows another client's change; the destination lists leave out the channels whose audio comes back, through
+  where the knob still starts at -60 dB, and shows another client's change; the destination lists leave out the channels whose audio comes back, through
   sends and outputs, also after another client's change to another strip's channel.
 - `tests/inspector_tests.cpp`: the output list leaves out the channels whose audio comes back.
-- `tests/addtrack_tests.cpp`: Group and Effect Track to Selected Tracks through the dialog, and Group Track to
-  Selected Tracks with a Count of 2 and Keep Dialog Open.
+- `tests/addtrack_tests.cpp`: Group and Effect Track to Selected Tracks through the dialog, Group Track to Selected
+  Tracks with a Count of 2 and Keep Dialog Open, and Effect Track to Selected Tracks with a Count of 2.

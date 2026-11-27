@@ -417,8 +417,8 @@ namespace gnubase::engine::settings
 					"The level at which listening channels play on the monitoring bus, in dB from -144 to 12.",
 					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0},
 				{"audio.mutePreSends",
-					"Mute Pre-Send when Mute: a channel's mute button also mutes its pre-fader sends (reference "
-					"manual p. 1623); off, they play on while it is muted.",
+					"Mute Pre-Send when Mute: muting a channel, with its mute button or its mute automation, also "
+					"mutes its pre-fader sends (reference manual p. 1623); off, they play on while it is muted.",
 					Json{{"type", "boolean"}}, false, true},
 				{"audio.portSettings",
 					"How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system "

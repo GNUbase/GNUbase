@@ -319,6 +319,32 @@ TEST_CASE("Group and Effect Track to Selected Tracks route the selected tracks i
 	click(app, "#add-track-cancel");
 	REQUIRE(app.waitUntil([&app] { return !open(app); }));
 
+	// Count 2 on Effect Track to Selected Tracks: their next free sends go to the first of the new effect tracks
+	// only.
+	Json channels = Json::array();
+	project = app.call("project.get");
+	for (const Json& track : project.at("tracks"))
+		channels.push_back(track.at("channel"));
+	app.keys().run("track.addEffectToSelected", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return open(app); }));
+	setCount(app, 2);
+	click(app, "#add-track-confirm");
+	REQUIRE(app.waitUntil([&app] { return !open(app); }));
+	std::vector<Json> added; // their tracks, in the order they were added
+	project = app.call("project.get");
+	for (const Json& track : project.at("tracks"))
+		if (std::find(channels.begin(), channels.end(), track.at("channel")) == channels.end())
+			added.push_back(track);
+	std::sort(added.begin(), added.end(), [](const Json& a, const Json& b) { return a.at("id") < b.at("id"); });
+	REQUIRE(added.size() == 2);
+	CHECK(added[0].at("type") == "effect");
+	for (const Json& selected : {first, second})
+	{
+		const Json sends = channel(selected).at("sends");
+		CHECK(sends[1].at("destination") == added[0].at("channel"));
+		CHECK(sends[2].at("destination") == 0);
+	}
+
 	// VCA Track to Selected Tracks (p. 517): a VCA fader that controls a new link group of their channels, here in
 	// the project's VCA folder (p. 154).
 	app.keys().run("track.addVcaToSelected", Json::object(), app.main(), nullptr);

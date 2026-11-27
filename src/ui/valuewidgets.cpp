@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -106,9 +107,10 @@ namespace gnubase::ui
 				switch (event.GetId())
 				{
 				case Rml::EventId::Mousedown:
+					// The default may lie outside min and max: a send knob's is the default send level (#861).
 					if (event.GetParameter("button", 0) == 0 &&
 						(event.GetParameter("ctrl_key", false) || event.GetParameter("meta_key", false)))
-						change(number(*this, "default", minimum()));
+						change(number(*this, "default", minimum()), false);
 					break;
 				case Rml::EventId::Dragstart:
 					m_last = position(event);
@@ -168,11 +170,16 @@ namespace gnubase::ui
 				return range == 0.0F ? 0.0F : std::clamp((value() - minimum()) / range, 0.0F, 1.0F);
 			}
 
-			// Sets the value, within min and max, and tells about it if it changed.
-			void change(float to)
+			// Sets the value, within min and max unless within is false, and tells about it if it changed. A value
+			// outside them shows at the nearer end, from where a drag, the wheel or a key changes it: a change within
+			// them to that end isn't one.
+			void change(float to, bool within = true)
 			{
-				to = std::clamp(to, std::min(minimum(), maximum()), std::max(minimum(), maximum()));
-				if (to == value() && HasAttribute("value"))
+				if (within)
+					to = std::clamp(to, std::min(minimum(), maximum()), std::max(minimum(), maximum()));
+				const float current =
+					within ? value() : number(*this, "value", std::numeric_limits<float>::quiet_NaN());
+				if (to == current && HasAttribute("value"))
 					return;
 				m_dragged = format(to);
 				m_held.reset(); // what the mouse does now comes after it

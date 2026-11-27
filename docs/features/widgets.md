@@ -45,7 +45,9 @@ Widgets with a number share their behaviour (reference manual p. 1598, "Editing 
 - **Fine adjust.** With Shift held, drags, wheel turns and arrow keys change the value ten times more finely.
 - **Wheel and keys.** One wheel line or arrow key (Up and Right for more) changes it by a step. Over a widget the wheel
   turns it rather than scrolling what's around it. The widgets take the focus when clicked, and with Tab.
-- **Reset.** Ctrl-click (Cmd-click on macOS) sets the default.
+- **Reset.** Ctrl-click (Cmd-click on macOS) sets the default, which may lie outside `min` and `max`, as a send knob's
+  default send level below -60 dB does ([routing.md](routing.md)). A value outside them shows at the nearer end, and a
+  drag, the wheel or a key changes it from there.
 - **Gestures.** `change` also sends `gesture`, an integer: the changes of one drag, of wheel turns until the mouse
   leaves the widget, of an arrow key until it is released, and a typed value each have one, and the next gesture of any
   widget has a higher one. Documents make a gesture one undo step with it (`EngineBinding::sendStep`,
