@@ -1919,6 +1919,46 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-4", window); }));
 }
 
+TEST_CASE(
+	"the mouse wheel steps a timecode display by a frame at the project's frame rate, also a pull-down one (#576)",
+	"[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+
+	// From one second on, where each frame rate shows another frame, so that the test knows the display has read the
+	// project's. 29.97: a frame is 1.001/30 s, 1601.6 samples at 48 kHz, rounded to a whole sample.
+	app.call("transport.locate", {{"position", 48000}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "00:00:01:00"; }));
+	app.call("project.set", {{"frameRate", "29.97"}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "00:00:00:29"; }));
+	app.ui().wheel(std::nullopt, at("#secondary-time"), 0, -1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000 + 1602; }));
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "00:00:01:00"; }));
+	app.ui().wheel(std::nullopt, at("#secondary-time"), 0, 1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "00:00:00:29"; }));
+
+	// The other pull-down rates too, and a rate without it.
+	for (const auto& [rate, frames, pullDown] : {std::tuple{"23.976", 24, true}, std::tuple{"24.975", 25, true},
+			 std::tuple{"29.97dfps", 30, true}, std::tuple{"59.94", 60, true}, std::tuple{"30", 30, false}})
+	{
+		INFO(rate);
+		const std::string before = shows(app, "#secondary-time");
+		app.call("project.set", {{"frameRate", rate}});
+		REQUIRE(app.waitUntil([&app, &before] { return shows(app, "#secondary-time") != before; }));
+		const std::string home = shows(app, "#secondary-time");
+		const int64_t frame = std::llround(48000.0 + (48000.0 * (pullDown ? 1.001 : 1.0) / frames));
+		app.ui().wheel(std::nullopt, at("#secondary-time"), 0, -1);
+		const bool reached = waitFor(app, [frame](const Json& state) { return state.at("position") == frame; });
+		INFO("expected " << frame << ", at " << position(app) << ", display " << shows(app, "#secondary-time"));
+		REQUIRE(reached);
+		app.call("transport.locate", {{"position", 48000}});
+		REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+		REQUIRE(app.waitUntil([&app, &home] { return shows(app, "#secondary-time") == home; }));
+	}
+}
+
 TEST_CASE("positions typed or wheeled past the largest project position stop there (#457)", "[ui]")
 {
 	test::UiApp app({1024, 700});
