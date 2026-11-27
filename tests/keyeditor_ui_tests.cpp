@@ -17,6 +17,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Factory.h>
+#include <RmlUi/Core/Property.h>
 #include <RmlUi/Core/StyleSheetContainer.h>
 #include <catch2/catch_test_macros.hpp>
 
@@ -2489,4 +2490,61 @@ TEST_CASE("the editor window's key editor and the in-place editor keep their con
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(height(editor + " .controller-lane") >= 63.5);
 	CHECK(height(editor + " .controller-lane-list") >= 63.5);
+}
+
+TEST_CASE("the event colors menu colors the notes by their part's color, its own or else its track's", "[ui]")
+{
+	// The Event Colors menu's Part (reference manual pp. 1133-1134): notes in the color of their part, which is its
+	// own or its track's; selected notes keep the style sheets' look, and Default gives every note the theme's again.
+	Fixture f;
+	const std::vector<uint64_t> first = f.add({{0, 60, g_quarter}, {g_quarter, 62, g_quarter}});
+	f.app.call("track.set", {{"track", f.track}, {"color", "#2040e0"}});
+	const auto other = f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}})
+						   .at("part")
+						   .at("id")
+						   .get<uint64_t>();
+	const uint64_t own =
+		f.app
+			.call("note.add",
+				{{"part", other},
+					{"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}}}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("event.set", {{"events", {other}}, {"color", "#c04020"}});
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", {f.part, other}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 3; }));
+	const auto color = [&](uint64_t note)
+	{
+		const Json found = f.elements(noteSelector(note));
+		return found.empty() ? std::string("none") : found.at(0).at("attributes").value("color", std::string());
+	};
+	CHECK(f.elements(".key-note[color]").empty());
+
+	f.click(of("#key-event-colors"));
+	f.click(of("#key-event-colors-menu menuitem[event-colors=part]"));
+	REQUIRE(f.app.waitUntil([&] { return color(own) == "#c04020"; }));
+	CHECK(f.view().at("eventColors") == "part");
+	CHECK(color(first[0]) == "#2040e0");
+	CHECK(color(first[1]) == "#2040e0");
+	CHECK(f.elements("#key-event-colors-menu menuitem[event-colors=part][checked]").size() == 1);
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Element* shown = nullptr;
+	for (int i = 0; i < window->context().GetNumDocuments() && shown == nullptr; ++i)
+		shown = window->context().GetDocument(i)->QuerySelector(noteSelector(own));
+	REQUIRE(shown != nullptr);
+	REQUIRE(shown->GetLocalProperty("background-color") != nullptr);
+	CHECK(shown->GetLocalProperty("background-color")->Get<Rml::Colourb>() == Rml::Colourb(0xc0, 0x40, 0x20, 255));
+
+	// A selected note shows as selected, without the color; the others keep theirs.
+	f.app.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", first[0]}}}}});
+	REQUIRE(f.app.waitUntil([&] { return color(first[0]).empty(); }));
+	CHECK(color(first[1]) == "#2040e0");
+
+	f.click(of("#key-event-colors"));
+	f.click(of("#key-event-colors-menu menuitem[event-colors=default]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note[color]").empty(); }));
+	CHECK(f.view().at("eventColors") == "default");
 }

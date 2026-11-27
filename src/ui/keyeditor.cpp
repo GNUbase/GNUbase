@@ -2,6 +2,7 @@
 #include "ui/keyeditor.h"
 
 #include "engine/document/document.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/tempomap.h"
@@ -347,7 +348,8 @@ namespace gnubase::ui
 			R"(<button id="key-length-quantize" menu="key-length-menu)" + m_menuSuffix +
 			R"(" title="Length Quantize"/>)"
 			R"(<valuefield id="key-insert-velocity" min="1" max="127" default="100" step="1" decimals="0")"
-			R"( title="Insert Velocity"/>)" +
+			R"( title="Insert Velocity"/><button id="key-event-colors" menu="key-event-colors-menu)" +
+			m_menuSuffix + R"(" title="Event Colors"/>)" +
 			// Show Note Expression Data and Double-Click Opens Note Expression Editor (pp. 1303, 1308).
 			(drum ? std::string()
 				  : std::string(
@@ -425,8 +427,14 @@ namespace gnubase::ui
 						R"("><menuitem type="toggle" gm-names="false">No Names</menuitem>)"
 						R"(<menuitem type="toggle" gm-names="true">GM Default</menuitem></menu>)"
 				  : R"(<menu id="key-expression-menu)" + m_menuSuffix + R"(">)" + expressions + "</menu>") +
+			// The Event Colors menu (pp. 1133-1134).
+			R"(<menu id="key-event-colors-menu)" + m_menuSuffix +
+			R"("><menuitem type="toggle" event-colors="default">Default</menuitem>)"
+			R"(<menuitem type="toggle" event-colors="part">Part</menuitem>)"
+			R"(<menuitem type="toggle" event-colors="soundSlot">Sound Slot</menuitem></menu>)"
 			// The info line's attributes (renderInfo), the last menu.
-			R"(<menu id="key-articulations-menu)" + m_menuSuffix + R"("/>)");
+			R"(<menu id="key-articulations-menu)" +
+			m_menuSuffix + R"("/>)");
 		while (holder->HasChildNodes())
 		{
 			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
@@ -567,6 +575,12 @@ namespace gnubase::ui
 		for (const Json& track : m_project.at("tracks"))
 			tracks[track.at("id").get<uint64_t>()] = &track;
 		const Json& editable = m_view.at("editable");
+		m_noteColors.clear();
+		const std::string colors = m_view.value("eventColors", std::string("default"));
+		std::map<uint64_t, const Json*> maps;
+		if (const auto found = m_project.find("articulationMaps"); found != m_project.end())
+			for (const Json& map : *found)
+				maps[map.at("id").get<uint64_t>()] = &map;
 		for (const Json& id : m_view.at("parts"))
 			for (const Json& part : m_project.at("midiParts"))
 			{
@@ -579,6 +593,7 @@ namespace gnubase::ui
 					ticksOf(track, position + part.at("length").get<int64_t>(), time),
 					std::find(editable.begin(), editable.end(), id) != editable.end()};
 				m_parts.push_back(item);
+				noteColors(colors, part, track, maps);
 				for (const Json& note : part.at("notes"))
 					m_notes.push_back({item.id, note.at("id").get<uint64_t>(),
 						item.start + note.at("position").get<int64_t>(), note.at("length").get<int64_t>(),
@@ -772,6 +787,32 @@ namespace gnubase::ui
 		}
 	}
 
+	// The colors of a part's notes for the Event Colors menu (pp. 1133-1134, 1269): part, the part's own color or else
+	// its track's; soundSlot, the color of the slot of its track's articulation map that each note plays.
+	void KeyEditor::noteColors(
+		const std::string& colors, const Json& part, const Json& track, const std::map<uint64_t, const Json*>& maps)
+	{
+		const auto id = part.at("id").get<uint64_t>();
+		if (colors == "part")
+		{
+			Json own = part.value("color", Json());
+			if (!own.is_string())
+				own = track.value("color", Json());
+			if (!own.is_string() || own.get<std::string>().empty())
+				return;
+			for (const Json& note : part.at("notes"))
+				m_noteColors[{id, note.at("id").get<uint64_t>()}] = own.get<std::string>();
+			return;
+		}
+		const auto map = maps.find(track.value("articulationMap", uint64_t{0}));
+		if (colors != "soundSlot" || map == maps.end())
+			return;
+		const Json& slots = map->second->at("slots");
+		for (const auto& [note, slot] : engine::midi::soundSlots(*map->second, part))
+			if (slot < slots.size() && !slots.at(slot).value("color", std::string()).empty())
+				m_noteColors[{id, note}] = slots.at(slot).at("color").get<std::string>();
+	}
+
 	// The parts by track, a row per track in the editor's order (the reference's track display, p. 1154): each part
 	// at its time, .active and .editable as MidiEditor's view says.
 	std::string KeyEditor::partsRml() const
@@ -842,7 +883,26 @@ namespace gnubase::ui
 		if (notes != nullptr)
 			for (int i = 0; i < notes->GetNumChildren(); ++i)
 				if (const Note* found = noteOf(notes->GetChild(i)))
-					setClass(notes->GetChild(i), "selected", selected(*found));
+				{
+					Rml::Element* shown = notes->GetChild(i);
+					setClass(shown, "selected", selected(*found));
+					// Selected and inactive notes keep the style sheets' look.
+					const auto color = m_noteColors.find({found->part, found->id});
+					const std::string wanted =
+						color == m_noteColors.end() || selected(*found) || !found->editable ? "" : color->second;
+					if (attribute(*shown, "color") == wanted)
+						continue;
+					if (wanted.empty())
+					{
+						shown->RemoveAttribute("color");
+						shown->RemoveProperty(Rml::PropertyId::BackgroundColor);
+					}
+					else
+					{
+						shown->SetAttribute("color", wanted);
+						shown->SetProperty("background-color", wanted); // the part's or slot's color, user data
+					}
+				}
 		placeItems();
 
 		if (m_drum)
@@ -960,6 +1020,26 @@ namespace gnubase::ui
 			// width.
 			setClass(root, "named-keys", any);
 		}
+		const std::string colors = m_view.value("eventColors", std::string("default"));
+		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
+			if (Rml::Element* element = menu.get())
+			{
+				Rml::ElementList items;
+				element->QuerySelectorAll(items, "menuitem[event-colors]");
+				for (Rml::Element* item : items)
+				{
+					const bool chosen = attribute(*item, "event-colors") == colors;
+					if (chosen)
+						setInner(root->QuerySelector("#key-event-colors"), item->GetInnerRML());
+					if (chosen != item->HasAttribute("checked"))
+					{
+						if (chosen)
+							item->SetAttribute("checked", "");
+						else
+							item->RemoveAttribute("checked");
+					}
+				}
+			}
 		// The drum editor's grid type (p. 1227).
 		const std::string gridType = m_view.value("gridType", std::string("quantize"));
 		const char* gridLabel = "Use Quantize";
@@ -1723,6 +1803,10 @@ namespace gnubase::ui
 		else if (target.HasAttribute("expression-type"))
 		{
 			setView({{"expressionType", attribute(target, "expression-type")}});
+		}
+		else if (target.HasAttribute("event-colors"))
+		{
+			setView({{"eventColors", attribute(target, "event-colors")}});
 		}
 		else if (target.HasAttribute("grid-type"))
 		{

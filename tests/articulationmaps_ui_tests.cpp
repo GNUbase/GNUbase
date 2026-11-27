@@ -1909,3 +1909,30 @@ TEST_CASE("the list editor's Attributes cells open the menu for the row clicked,
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK_FALSE(f.shown(menu));
 }
+
+TEST_CASE("the event colors menu's Sound Slot colors the notes by the slot they play", "[ui]")
+{
+	// Reference manual pp. 1134, 1269: each note in the color of the sound slot it plays, the theme's for a slot
+	// without one.
+	Editor f;
+	f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 8 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	f.app.call("note.set", {{"part", f.part}, {"notes", {{{"id", f.notes[0]}, {"articulations", {"Staccato"}}}}}});
+	const auto color = [&f](uint64_t note)
+	{
+		const Json found = f.elements(".key-note[note=\"" + std::to_string(note) + "\"]");
+		return found.empty() ? std::string("none") : found.at(0).at("attributes").value("color", std::string());
+	};
+	REQUIRE(f.app.waitUntil([&f] { return f.slot(f.notes[0]) == "Staccato" && f.slot(f.notes[2]) == "Pizzicato"; }));
+	CHECK(color(f.notes[1]).empty());
+	f.click(of("#key-event-colors"));
+	f.click(of("#key-event-colors-menu menuitem[event-colors=soundSlot]"));
+	REQUIRE(f.app.waitUntil([&] { return color(f.notes[1]) == "#2040a0"; }));
+	CHECK(color(f.notes[2]) == "#c04020");
+	CHECK(color(f.notes[0]).empty());
+	// The slot follows the note's articulations.
+	f.app.call("note.set", {{"part", f.part}, {"notes", {{{"id", f.notes[0]}, {"articulations", Json::array()}}}}});
+	REQUIRE(f.app.waitUntil([&] { return color(f.notes[0]) == "#2040a0"; }));
+}

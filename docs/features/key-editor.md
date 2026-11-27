@@ -180,6 +180,9 @@ the notes, not the project window's selected events.
   right click without a modifier key; off, a right click with one. A click on a tool chooses it. The other right click
   opens nothing yet, as the key editor has no context menu: the grid's `contextmenu` or `modifiercontextmenu` is
   empty. A right click doesn't change the selection.
+- **Event Colors** (pp. 1133-1134, [colors.md](colors.md)): the toolbar's `#key-event-colors` opens
+  `#key-event-colors-menu`, which sets the view's `eventColors`: Default (the style sheets' note colors), Part or Sound
+  Slot. The drum editor and the in-place editor have it too.
 - **Clicking a part** in the row of parts activates it, as `MidiEditor` handles clicks on `[part]` (p. 1152); a click
   on a note activates its part too.
 
@@ -190,7 +193,7 @@ the step input cursor and lengthening a held chord; the Mute tool on notes (note
 Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note
 display (it draws on the controller lanes); the selection rectangle, the trim tool's drag across several notes and the
 draw tool's modifiers for velocity, pitch and position; the nudge buttons, Solo Editor, Record in Editor, pitch
-visibility, the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout;
+visibility, the Scale Assistant, Indicate Transpositions, the status line and Set up Window Layout;
 horizontal zoom and scrolling; the key at the mouse's pitch lit while the mouse moves in the note display (p. 1204);
 drum map names in the key editor and articulation names; Add to Chord Track, Match with Chord Track, Create Chord
 Events and the chord insert tools; quantizing from the toolbar (#132) and the Length section's functions (#133); the
@@ -204,7 +207,7 @@ key editor's context menu.
   replacing and keeping existing notes, Move Insert Mode (also by a note longer than a step) and a cursor outside the
   part, the channel of a note that stays and notes ending at the part's end; MIDI input with and without Record Pitch,
   a chord, Keep Existing Notes and no selection; the undo step's name; chord recognition, fitting and voicings;
-  `note.chord` and `note.voicing` with undo and their errors; Acoustic Feedback off at first, set as view state
+  `note.chord` and `note.voicing` with undo and their errors; Acoustic Feedback and the event colors as view state
   without an undo step.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
   keys lit for selected notes; the piano keyboard at 1024x600, at dp ratios of 1.5 and 1: white keys of equal height
@@ -236,4 +239,5 @@ key editor's context menu.
   earlier press selected and the history alone; the lower zone's key editor at its default size giving the note display
   more room than the controller lanes, at dp ratios 1 and 2, and the lanes whole in a lower zone of 400 dp; the editor
   window's lane keeping its 64 dp and the note display its 40%, and the in-place editor's lanes keeping their height
-  with its toolbar shown.
+  with its toolbar shown; the Event Colors menu's Part, notes in their part's own color or else their track's, a
+  selected note without it, and Default.
