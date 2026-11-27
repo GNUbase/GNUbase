@@ -1368,8 +1368,8 @@ TEST_CASE("the object selection tool shows a pointing hand over pitchbend events
 TEST_CASE("the tools show their pointers on the controller lanes where a press does what they do", "[ui]")
 {
 	// Reference manual pp. 1180-1181, 1186: the draw and line tools add events on the lanes, the erase tool removes
-	// controller events but leaves the notes' bars; on the Articulations lane the draw tool adds articulations to their
-	// rows, the erase and mute tools act on articulations.
+	// controller events but leaves the notes' bars. Pp. 1288-1289: on the Articulations lane the draw tool adds
+	// articulations to their rows, the erase and mute tools act on articulations.
 	Fixture f;
 	f.add({4});
 	const Json map =

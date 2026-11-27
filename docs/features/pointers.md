@@ -20,7 +20,7 @@ tool in [tools.md](tools.md).
 | The drum editor's note display with the drumstick | `tool-drumstick` | p. 1224 |
 | A note's ends where a press resizes it: the object selection tool's without Shift or Ctrl (Cmd), the drumstick's with Show Note Length | `resize` | pp. 1213-1214, 1242 |
 | Pitchbend events in the controller display, with the object selection tool | `pointer` | p. 1176 |
-| The controller display, by the tool of the key, drum or in-place editor: the lanes with the draw and line tools, controller events with the erase tool, articulations with the erase and mute tools and the Articulations lane's rows with the draw tool | `tool-draw`, `tool-line`, `tool-erase`, `tool-mute` | pp. 1180-1181, 1186 |
+| The controller display, by the tool of the key, drum or in-place editor: every lane but the Articulations lane with the draw and line tools, controller events with the erase tool, articulations with the erase and mute tools and the Articulations lane's rows with the draw tool | `tool-draw`, `tool-line`, `tool-erase`, `tool-mute` | pp. 1176, 1180-1181, 1186, 1288-1289 |
 | The list editor's event display with the draw tool, its rows with the erase tool | `tool-draw`, `tool-erase` | |
 | The pattern editor's steps with the draw tool, or with Alt and the step selection tool | `tool-draw` | p. 924 |
 | Edit Hitpoints with Alt away from a hitpoint, and on a hitpoint's line with Shift | `tool-draw`, `crosshair` | p. 640 |
