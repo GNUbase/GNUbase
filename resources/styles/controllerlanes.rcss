@@ -76,6 +76,32 @@
 	cursor: pointer;
 }
 
+/* The tools' pointers where a press on the lanes does what the tool does (#2123), by the tool of the key, drum or
+   in-place editor around them: the draw and line tools add events on every lane but the Articulations lane (reference
+   manual pp. 1180-1181, 1186), the erase tool removes controller events, not the notes' bars. On the Articulations
+   lane the draw tool adds articulations to their rows and removes them, the erase and mute tools act on them. */
+.key-editor[tool=draw] .controller-lane:not([lane-kind=articulations]) .controller-lane-area,
+.key-editor[tool=draw] .articulation-row[articulation-row],
+.key-editor[tool=draw] .articulation-item:not(.inactive)
+{
+	cursor: tool-draw;
+}
+
+.key-editor[tool=line] .controller-lane:not([lane-kind=articulations]) .controller-lane-area
+{
+	cursor: tool-line;
+}
+
+.key-editor[tool=erase] .controller-step:not(.inactive), .key-editor[tool=erase] .articulation-item:not(.inactive)
+{
+	cursor: tool-erase;
+}
+
+.key-editor[tool=mute] .articulation-item:not(.inactive)
+{
+	cursor: tool-mute;
+}
+
 /* The Articulations lane (docs/features/articulation-maps.md): as tall as its rows, the sound slots lane and a row
    per articulation, with the lane's name and the articulations' names beside them. Code places the slots,
    directions and attributes in percent of the area's width; a reset (.reset) is as wide as this gives it. */

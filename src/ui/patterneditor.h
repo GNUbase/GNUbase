@@ -120,6 +120,7 @@ namespace gnubase::ui
 		engine::Json m_sent;     // the pattern as the last pattern.set left it, as far as known; null if it was refused
 		uint64_t m_answered = 0; // when its answer was handed on, 0 while it is on its way
 		Rml::ObserverPtr<Rml::Element> m_document;
+		Rml::ObserverPtr<Rml::Element> m_keys; // the document, for the modifier keys while the mouse rests (#1857)
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 	};

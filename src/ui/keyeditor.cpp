@@ -447,6 +447,9 @@ namespace gnubase::ui
 			root.AddEventListener(event, this);
 		document->AddEventListener(Rml::EventId::Mouseup, this);
 		document->AddEventListener(Rml::EventId::Mouseout, this);
+		// Modifier keys going down and up anywhere in the window change the pointer while the mouse rests (#1857).
+		document->AddEventListener(Rml::EventId::Keydown, this);
+		document->AddEventListener(Rml::EventId::Keyup, this);
 		// In the capture phase: a press anywhere in the document ends a lost gesture before anything hears it.
 		document->AddEventListener(Rml::EventId::Mousedown, this, true);
 		m_document = document->GetObserverPtr();
@@ -505,6 +508,8 @@ namespace gnubase::ui
 		{
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
 			document->RemoveEventListener(Rml::EventId::Mouseout, this);
+			document->RemoveEventListener(Rml::EventId::Keydown, this);
+			document->RemoveEventListener(Rml::EventId::Keyup, this);
 			document->RemoveEventListener(Rml::EventId::Mousedown, this, true);
 		}
 		if (Rml::Element* root = m_root.get())
@@ -1937,8 +1942,16 @@ namespace gnubase::ui
 			dragDuringGesture();
 			break;
 		case Rml::EventId::Mousemove:
-			showPointer(event);
+			m_mouseX = event.GetParameter("mouse_x", 0.0F);
+			showPointer(*target, m_mouseX, heldModifiers(event));
 			drag(event);
+			break;
+		case Rml::EventId::Keydown:
+		case Rml::EventId::Keyup:
+			// The key's target is the focus; the pointer is for the element under the mouse.
+			if (Rml::Context* context = m_root.get()->GetContext())
+				if (Rml::Element* hovered = context->GetHoverElement())
+					showPointer(*hovered, m_mouseX, heldModifiers(event));
 			break;
 		case Rml::EventId::Drag:
 			m_dragged = true;
@@ -2118,7 +2131,7 @@ namespace gnubase::ui
 				return;
 			}
 			// Near an end the press resizes, elsewhere it moves (pp. 1213-1214); Acoustic Feedback plays the note.
-			m_gesture = edgeGesture(target, event);
+			m_gesture = edgeGesture(target, event.GetParameter("mouse_x", 0.0F));
 			if (m_view.value("acousticFeedback", false))
 				sound(shownPitch(*pressed)); // as it plays, also with Indicate Transpositions
 			if (!selected(*pressed))
@@ -2130,7 +2143,8 @@ namespace gnubase::ui
 			// deletes the note clicked, and with Show Note Length resizes it at its ends instead (p. 1242).
 			if (pressed != nullptr && m_drum)
 			{
-				const Gesture edge = diamonds() ? Gesture::Move : edgeGesture(target, event);
+				const Gesture edge =
+					diamonds() ? Gesture::Move : edgeGesture(target, event.GetParameter("mouse_x", 0.0F));
 				m_gesture = edge == Gesture::Move ? Gesture::Erase : edge;
 				if (m_gesture != Gesture::Erase && !selected(*pressed))
 					select({{pressed->part, pressed->id}});
@@ -2222,7 +2236,7 @@ namespace gnubase::ui
 		}
 	}
 
-	KeyEditor::Gesture KeyEditor::edgeGesture(Rml::Element* target, const Rml::Event& event) const
+	KeyEditor::Gesture KeyEditor::edgeGesture(Rml::Element* target, float mouseX) const
 	{
 		const Rml::Element* root = m_root.get();
 		Rml::Element* box = withAttribute(target, "note", root);
@@ -2232,7 +2246,7 @@ namespace gnubase::ui
 			root->GetContext() != nullptr ? root->GetContext()->GetDensityIndependentPixelRatio() : 1.0F;
 		const Rml::Vector2f origin = box->GetAbsoluteOffset(Rml::BoxArea::Border);
 		const float width = box->GetBox().GetSize(Rml::BoxArea::Border).x;
-		const float x = event.GetParameter("mouse_x", 0.0F) - origin.x;
+		const float x = mouseX - origin.x;
 		const float edge = g_edge * ratio;
 		if (width > 3 * edge && x >= width - edge)
 			return Gesture::ResizeEnd;
@@ -2241,7 +2255,7 @@ namespace gnubase::ui
 		return Gesture::Move;
 	}
 
-	void KeyEditor::showPointer(Rml::Event& event)
+	void KeyEditor::showPointer(Rml::Element& target, float mouseX, HeldModifiers keys)
 	{
 		Rml::Element* root = m_root.get();
 		Rml::Element* grid = root != nullptr ? root->QuerySelector(".key-editor-grid") : nullptr;
@@ -2249,13 +2263,11 @@ namespace gnubase::ui
 			return;
 		// As press decides: the object selection tool resizes unless Shift or Ctrl (Cmd) adds the note to the
 		// selection, the drumstick resizes with Show Note Length.
-		Rml::Element* target = event.GetTargetElement();
-		const Note* note = grid->Contains(target) ? noteOf(target) : nullptr;
-		const bool adds = event.GetParameter("shift_key", 0) != 0 || event.GetParameter("ctrl_key", 0) != 0 ||
-			event.GetParameter("meta_key", 0) != 0;
+		const Note* note = grid->Contains(&target) ? noteOf(&target) : nullptr;
+		const bool adds = keys.shift || keys.ctrl;
 		const bool resizes = note != nullptr && note->editable && !m_expressionOpen &&
 			((m_tool == KeyTool::ObjectSelection && !adds) || (m_tool == KeyTool::Draw && m_drum && !diamonds())) &&
-			edgeGesture(target, event) != Gesture::Move;
+			edgeGesture(&target, mouseX) != Gesture::Move;
 		setPointer(*grid, resizes ? "resize" : "");
 	}
 

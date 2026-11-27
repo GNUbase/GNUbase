@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/engine.h"
+#include "ui/cursors.h"
 #include "ui/enginebinding.h"
 
 #include <RmlUi/Core/EventListener.h>
@@ -182,10 +183,10 @@ namespace gnubase::ui
 		// one undo step. A part that gives only controller events sends a note.move with no notes.
 		void moveToInPlace(const Rml::Event& event, Rml::Element& grid, uint64_t track);
 		// What a press on a note's box starts: a resize near its ends, else a move.
-		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
-		// The note display's pointer for where the mouse is (docs/features/pointers.md): resize where a press resizes
-		// a note, else the tool's.
-		void showPointer(Rml::Event& event);
+		Gesture edgeGesture(Rml::Element* target, float mouseX) const;
+		// The note display's pointer for where the mouse is (docs/features/pointers.md), over the element at the x in
+		// the window, with the modifiers held: resize where a press resizes a note, else the tool's.
+		void showPointer(Rml::Element& target, float mouseX, HeldModifiers keys);
 		// Starts drawing a note at the snapped position under the press, as the draw tool's press does.
 		void startDraw(double ticks);
 		// Takes the drawn note out of the grid, into m_removedDrawn.
@@ -387,7 +388,8 @@ namespace gnubase::ui
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::string m_lineMode = "line"; // the line tool's (#128)
 		std::unique_ptr<ControllerLanes> m_lanes;
-		bool m_expressionOpen = false;                  // the expression editor (p. 1308)
+		float m_mouseX = 0.0F;         // the last mouse move's x in the window, for showPointer while the mouse rests
+		bool m_expressionOpen = false; // the expression editor (p. 1308)
 		std::pair<uint64_t, uint64_t> m_expressionNote; // the note double-clicked to open it: part, id
 		float m_expressionWide = 0.0F;       // the grid's width placeExpression placed it for, which fitLines follows
 		std::map<int64_t, double> m_painted; // the draw tool's points in it, project ticks
