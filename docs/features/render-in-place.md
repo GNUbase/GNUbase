@@ -108,7 +108,17 @@ project's media folder, named after the track or `name`, and puts it as one even
 track below the track, named after it with "(Rendered)", in its folder, time base and output. One undo step.
 
 - The range is `start` to `end` (a range selection, p. 1474), or from the start of the track's first event or note
-  to the end of its last; `tail` adds seconds after it (default 0).
+  to the end of its last; `tail` adds seconds after it (default 0), or `tailBars` bars (Tail Mode in bars and beats,
+  p. 1473): of the time signature where the range ends, at the tempo there and after, so 0.5 is two beats of 4/4.
+- `folder` (File Path, p. 1473) renders into that folder, an absolute path, instead of the media folder; it is made if
+  it isn't there.
+- `mixdown` (Mix down to One Audio File, p. 1473) renders several tracks into one file on one new audio track below
+  the first, named `name` or "Mixdown" with "(Rendered)": each track renders alone from the start of the earliest range
+  to the end of the latest, in 32-bit float, and the job sums the files in the tracks' order into the file, in
+  `sampleFormat` (integer formats rounded, without dither), as long as the longest, then removes them. The source
+  options apply to every track. It renders the complete signal path only, so it needs `completeSignalPath`, `oneEvent`
+  and tracks that play through one output, whose format the file has (tested: the file is the sum of the tracks'
+  renders, and the main mix stays as it was with the sources muted).
 - `mode` (pp. 1472, 1475): `oneEvent` (the default) combines the input into one file; `separateEvents` writes a file per
   audio event, audio part or MIDI part; `blockEvents` combines adjacent or overlapping events and parts into one file
   per block. All files of a source go onto one destination track, in time order, each at its source range's start. Parts
@@ -167,10 +177,13 @@ track below the track, named after it with "(Rendered)", in its folder, time bas
 
 ## Not yet
 
-- The dialogs' Tail Mode in bars and beats, File Path and Mix down to One Audio File (pp. 1473, 1476), Mute Source
-  Events for a selection range, Unload Instruments When Frozen (p. 993) and the Unfreeze Channel Options dialog; Render
-  Tracks for MIDI tracks (pp. 1471, 1474), which Render skips; Freeze Channel in the inspector and the mixer, and the
-  lit freeze buttons.
+- The dialogs' Tail Mode, File Path and Mix down to One Audio File (pp. 1473, 1476), which `track.renderInPlace` has
+  as `tailBars`, `folder` and `mixdown`; Mix down to One Audio File with Channel Settings, whose new track can't take
+  the fader and pan of several tracks; Mute Source Events for a selection range; the Unfreeze Channel Options dialog;
+  Render Tracks for MIDI tracks (pp. 1471, 1474), which Render skips; Freeze Channel in the inspector and the mixer,
+  and the lit freeze buttons.
+- Unload Instruments When Frozen (p. 993) as an option: a frozen track's channel has no instrument in the render
+  snapshot, so its built-in instrument isn't made and lets go of its samples in any case.
 - Locking a frozen track's events, parts and controls (p. 220); edits of them play once the track is unfrozen.
 - Complete Signal Path + Master FX, and groups and effect returns in the complete signal path; copying the track's
   automation to the new track.
@@ -188,7 +201,9 @@ unrelated edits and events outside the range succeed, completion adds one undo s
 without a project change. The mixdown snapshot test edits and removes the exported source while the job runs and
 compares the result with the starting audio. An instrument track frozen without its inserts null-tests against the
 live render, plays its slot on the freeze file and keeps `inserts` in the project file; Mute Source Events and Hide
-Source Tracks are checked with their undo. `tests/tracklist_tests.cpp` renders a selected MIDI part, a selection
+Source Tracks are checked with their undo. A tail in bars is as long as the same tail in seconds in 4/4 and follows a
+3/4 signature, a folder of its own gets the file, and a mixdown is the sum of the tracks' complete signal paths, on
+one track, without the tracks' own files. `tests/tracklist_tests.cpp` renders a selected MIDI part, a selection
 range and, with neither, the selected track through the Edit menu's Render, and checks that the render and freeze
 dialogs' options reach the commands, are saved for the commands with current settings, and leave a selection's tracks
 as they are. `tests/mixdown_ui_tests.cpp` uses the real app's automation API to check the rendering state class,

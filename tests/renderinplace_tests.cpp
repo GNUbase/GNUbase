@@ -1627,6 +1627,115 @@ TEST_CASE("render in place refuses what it can't render", "[integration]")
 	CHECK(tracks() == 3);
 }
 
+namespace
+{
+	// The path of a media file of the project.
+	std::string mediaPath(Session& project, const Json& id)
+	{
+		std::string path;
+		const Json state = run(project.client, "project.get");
+		for (const Json& media : state.at("media"))
+			if (media.at("id") == id)
+				path = media.at("path").get<std::string>();
+		REQUIRE(!path.empty());
+		return path;
+	}
+}
+
+TEST_CASE("render in place takes its tail in bars and renders into a folder of its own (#760)", "[integration]")
+{
+	Session project;
+	const Session::Track audio = project.addTrack("Ramp");
+	// The ramp plays on past the range, so the tail is as long as it is asked to be.
+	const auto rendered = [&project, &audio](Json parameters)
+	{
+		parameters["tracks"] = {audio.track};
+		parameters["start"] = 2000;
+		parameters["end"] = 3000;
+		const Json result = run(project.client, "track.renderInPlace", parameters);
+		const std::string path = mediaPath(project, result.at("media").at(0));
+		run(project.client, "history.undo");
+		return path;
+	};
+	// At 120 BPM, a bar of 4/4 is 2 s: 0.01 bars are 20 ms, 960 samples at 48 kHz.
+	const std::string bars = rendered({{"tailBars", 0.01}, {"folder", project.folder.path().u8string()}});
+	CHECK(fs::u8path(bars).parent_path() == project.folder.path());
+	CHECK(samplesOf(bars).size() == 2 * (1000 + 960));
+	CHECK(firstDifference(samplesOf(bars), samplesOf(rendered({{"tail", 0.02}}))) == -1);
+	// A bar of 3/4 is 1.5 s.
+	run(project.client, "signature.add", {{"bar", 0}, {"numerator", 3}, {"denominator", 4}});
+	CHECK(samplesOf(rendered({{"tailBars", 0.01}})).size() == 2 * (1000 + 720));
+
+	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"tail", 1}, {"tailBars", 1}}),
+		ContainsSubstring("not both"));
+	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"folder", "relative"}}),
+		ContainsSubstring("absolute"));
+}
+
+TEST_CASE("render in place mixes tracks down to one audio file (#760)", "[integration]")
+{
+	Session project;
+	const Session::Track one = project.addTrack("One");
+	const Session::Track two = project.addTrack("Two", 1);
+	run(project.client, "channel.set", {{"channel", two.channel}, {"volume", -6.0}, {"pan", -0.5}});
+	run(project.client, "audioEvent.add", {{"track", two.track}, {"clip", project.clip}, {"position", 3000}});
+	run(project.client, "audio.render", {{"frames", 4096}});
+	const std::vector<float> live = project.mainMix();
+	// Each track's complete signal path over the range of both, from 1000 to the end of Two's second event.
+	const auto alone = [&project](ObjectId track)
+	{
+		const Json result = run(project.client, "track.renderInPlace",
+			{{"tracks", {track}}, {"processing", "completeSignalPath"}, {"start", 1000}, {"end", 9000}});
+		std::vector<float> samples = samplesOf(mediaPath(project, result.at("media").at(0)));
+		run(project.client, "history.undo");
+		return samples;
+	};
+	std::vector<float> sum = alone(one.track);
+	const std::vector<float> second = alone(two.track);
+	REQUIRE(sum.size() == second.size());
+	for (size_t i = 0; i < sum.size(); ++i)
+		sum[i] += second[i];
+	const fs::path audio = project.media.path() / "Audio";
+	REQUIRE(fs::exists(audio / "One.wav"));
+
+	const Json result = run(project.client, "track.renderInPlace",
+		{{"tracks", {one.track, two.track}}, {"processing", "completeSignalPath"}, {"mixdown", true},
+			{"sourceTracks", "mute"}, {"name", "Both"}});
+	REQUIRE(result.at("tracks").size() == 1);
+	REQUIRE(result.at("events").size() == 1);
+	CHECK(project.track(result.at("tracks").at(0).get<ObjectId>()).at("name") == "Both (Rendered)");
+	const std::string path = mediaPath(project, result.at("media").at(0));
+	CHECK(fs::u8path(path).filename() == "Both.wav");
+	CHECK(firstDifference(samplesOf(path), sum) == -1);
+	// The tracks' own renders are gone: they took the names after those of the renders above.
+	CHECK(!fs::exists(audio / "One-2.wav"));
+	CHECK(!fs::exists(audio / "Two-2.wav"));
+	const Json state = run(project.client, "project.get");
+	for (const Json& event : state.at("audioEvents"))
+		if (event.at("id") == result.at("events").at(0))
+			CHECK(event.at("position") == 1000);
+	run(project.client, "audio.render", {{"frames", 4096}}); // both mutes glide there
+	CHECK(nullTest(project.mainMix(), live) < 1e-6f);
+	run(project.client, "history.undo");
+	CHECK(run(project.client, "project.get").at("tracks").size() == 2);
+
+	const Json both = {one.track, two.track};
+	CHECK_THAT(reject(project.client, "track.renderInPlace",
+				   {{"tracks", {one.track}}, {"processing", "completeSignalPath"}, {"mixdown", true}}),
+		ContainsSubstring("several tracks"));
+	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", both}, {"mixdown", true}}),
+		ContainsSubstring("complete signal path"));
+	CHECK_THAT(
+		reject(project.client, "track.renderInPlace",
+			{{"tracks", both}, {"processing", "completeSignalPath"}, {"mixdown", true}, {"mode", "separateEvents"}}),
+		ContainsSubstring("oneEvent"));
+	const Json group = run(project.client, "track.add", {{"type", "group"}});
+	run(project.client, "channel.set", {{"channel", two.channel}, {"output", group.at("channel").at("id")}});
+	CHECK_THAT(reject(project.client, "track.renderInPlace",
+				   {{"tracks", both}, {"processing", "completeSignalPath"}, {"mixdown", true}}),
+		ContainsSubstring("one output"));
+}
+
 TEST_CASE("a frozen instrument track's MIDI send to another instrument track stays out of the graph", "[integration]")
 {
 	Session project;

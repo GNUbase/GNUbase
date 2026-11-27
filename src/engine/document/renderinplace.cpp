@@ -17,10 +17,12 @@
 #include <set>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -212,6 +214,64 @@ namespace gnubase::engine
 			return track.name.empty() ? "Track " + std::to_string(track.id) : track.name;
 		}
 
+		// The tail in seconds after a range that ends at end: tail, or tailBars bars of the signature there, at the
+		// tempo there and after (Tail Mode, reference manual p. 1473).
+		double tailAfter(const Project& project, const Json& parameters, time::Samples end)
+		{
+			if (!parameters.contains("tailBars"))
+				return parameters.value("tail", 0.0);
+			const double seconds = static_cast<double>(end) / project.sampleRate;
+			const double tick = project.tempo.toTicksExact(seconds);
+			const time::TimeSignature signature = project.signatures.signatureAt(static_cast<time::Ticks>(tick));
+			const double bar = static_cast<double>(time::g_ticksPerQuarter) * 4.0 * signature.numerator /
+				static_cast<double>(signature.denominator);
+			return project.tempo.toSecondsExact(tick + (parameters.at("tailBars").get<double>() * bar)) - seconds;
+		}
+
+		// Mix down to One Audio File (reference manual p. 1473): sums the files, rendered from one start, into a new
+		// file in format, as long as the longest. Integer formats round without dither.
+		Json mixFiles(
+			const std::vector<std::string>& paths, const fs::path& path, const std::string& format, double rate)
+		{
+			constexpr std::array<std::pair<const char*, SampleFormat>, 5> formats = {
+				{{"int16", SampleFormat::Int16}, {"int24", SampleFormat::Int24}, {"int32", SampleFormat::Int32},
+					{"float32", SampleFormat::Float32}, {"float64", SampleFormat::Float64}}};
+			std::vector<std::unique_ptr<AudioFileReader>> readers;
+			readers.reserve(paths.size());
+			for (const std::string& file : paths)
+				readers.push_back(AudioFileReader::open(file));
+			const int channels = readers.front()->info().channels;
+			for (const auto& reader : readers)
+				require(reader->info().channels == channels, "the tracks to mix down put out different formats");
+			WriteOptions options;
+			for (const auto& [name, value] : formats)
+				if (format == name)
+					options.sampleFormat = value;
+			options.sampleRate = rate;
+			options.channels = channels;
+			const auto writer = AudioFileWriter::create(path.u8string(), options);
+			constexpr size_t chunk = 4096;
+			const auto width = static_cast<size_t>(channels);
+			std::vector<float> sum(chunk * width);
+			std::vector<float> read(chunk * width);
+			time::Samples frames = 0;
+			for (size_t got = chunk; got == chunk;)
+			{
+				got = 0;
+				std::fill(sum.begin(), sum.end(), 0.0f);
+				for (const auto& reader : readers) // in the tracks' order, so the sum is the same every time
+				{
+					const size_t n = reader->read(read.data(), chunk);
+					for (size_t i = 0; i < n * width; ++i)
+						sum[i] += read[i];
+					got = std::max(got, n);
+				}
+				writer->write(sum.data(), got);
+				frames += static_cast<time::Samples>(got);
+			}
+			writer->close();
+			return {{"path", path.u8string()}, {"frames", frames}};
+		}
 	}
 
 	bool lockedByFreeze(const Project& project, const Channel& channel)
@@ -242,6 +302,10 @@ namespace gnubase::engine
 		std::vector<Json> files;
 		Json input;
 		std::set<ObjectId> inputObjects;
+		// Mix down to One Audio File: the files go into one of this name (a free one), and then away; or empty.
+		fs::path mixdown;
+		std::string sampleFormat;
+		double sampleRate = 0.0;
 		uint64_t job = 0;
 		std::atomic<bool> ready{false};
 	};
@@ -498,6 +562,17 @@ namespace gnubase::engine
 							render->files.push_back(std::move(file));
 						}
 						job.checkCancelled();
+						if (!render->mixdown.empty())
+						{
+							const std::vector<std::string> parts = written;
+							const fs::path path =
+								createFreeFile(render->mixdown.parent_path(), render->mixdown.filename());
+							written.push_back(path.u8string());
+							Json mixed = mixFiles(parts, path, render->sampleFormat, render->sampleRate);
+							removeFiles(parts);
+							written = {path.u8string()};
+							render->files = {std::move(mixed)};
+						}
 						render->ready.store(true, std::memory_order_release);
 						return job.command("track.finishRender", {{"token", token}});
 					}
@@ -720,7 +795,13 @@ namespace gnubase::engine
 				"destination track. events optionally limits the input to audio event, audio part and MIDI part ids "
 				"on the selected tracks, excluding other material even where it overlaps or plays in the tail. "
 				"start/end clips those event ranges. Event selection and separate/block modes require unfrozen "
-				"tracks. Affected tracks and rendered events are locked until the job ends.",
+				"tracks. Affected tracks and rendered events are locked until the job ends. tailBars (Tail Mode in "
+				"bars and beats, p. 1473; 0 to 16) gives the tail in bars of the time signature at the range's "
+				"end instead of tail. folder (File Path) renders into that folder, an absolute path, instead of the "
+				"media folder. mixdown true (Mix down to One Audio File) sums the tracks' renders from the start "
+				"of the earliest range to the end of the latest into one file on one new track, named name and "
+				"(Rendered), or Mixdown (Rendered), below the first track; it needs several tracks that play "
+				"through one output, completeSignalPath and oneEvent.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"tracks", ids}, {"events", {{"type", "array"}, {"items", integer}, {"minItems", 1}}},
@@ -732,7 +813,9 @@ namespace gnubase::engine
 							{"sourceTracks", {{"type", "string"}, {"enum", {"keep", "mute", "disable", "remove"}}}},
 							{"hideSourceTracks", {{"type", "boolean"}}},
 							{"sourceEvents", {{"type", "string"}, {"enum", {"keep", "mute"}}}},
-							{"name", {{"type", "string"}, {"minLength", 1}}}}},
+							{"name", {{"type", "string"}, {"minLength", 1}}},
+							{"tailBars", {{"type", "number"}, {"minimum", 0}, {"maximum", 16}}},
+							{"folder", {{"type", "string"}, {"minLength", 1}}}, {"mixdown", {{"type", "boolean"}}}}},
 					{"required", {"tracks"}}},
 				{{"type", "object"}, {"properties", {{"job", Jobs::schema()}}}, {"required", {"job"}}}, false},
 			[this, &engine](CommandContext& context)
@@ -747,6 +830,29 @@ namespace gnubase::engine
 				if (parameters.contains("start"))
 					require(parameters.at("end").get<time::Samples>() > parameters.at("start").get<time::Samples>(),
 						"the range is empty: end must be after start");
+				require(!parameters.contains("tail") || !parameters.contains("tailBars"),
+					"give tail or tailBars, not both");
+				require(!parameters.contains("folder") ||
+						fs::u8path(parameters.at("folder").get<std::string>()).is_absolute(),
+					"folder must be an absolute path");
+				const bool mixdown = parameters.value("mixdown", false);
+				if (mixdown)
+				{
+					require(tracks.size() > 1, "mixdown needs several tracks");
+					require(parameters.value("processing", std::string()) == "completeSignalPath",
+						"mixdown renders the complete signal path: give processing completeSignalPath");
+					require(parameters.value("mode", std::string("oneEvent")) == "oneEvent",
+						"mixdown makes one event: mode must be oneEvent");
+					const auto output = [&project](ObjectId id)
+					{
+						const auto track = project.trackById.find(id);
+						return track == project.trackById.end() ? ObjectId{0}
+																: project.channels.at(track->second.channel).output;
+					};
+					for (const ObjectId id : tracks)
+						require(
+							output(id) == output(tracks.front()), "mixdown needs tracks that play through one output");
+				}
 				if (parameters.contains("events"))
 				{
 					require(!parameters.at("events").empty(), "events must not be empty");
@@ -806,11 +912,31 @@ namespace gnubase::engine
 					require(span.end > *span.start, "the range is empty: end must be after start");
 					groups.push_back({{*span.start, span.end, {}}});
 				}
-				const fs::path folder =
-					m_file.empty() ? unsavedMediaFolder(m_settingsDirectory) : mediaFolderFor(fs::u8path(m_file));
+				fs::path folder;
+				if (parameters.contains("folder"))
+					folder = fs::u8path(parameters.at("folder").get<std::string>());
+				else
+					folder =
+						m_file.empty() ? unsavedMediaFolder(m_settingsDirectory) : mediaFolderFor(fs::u8path(m_file));
 				require(!folder.empty(), "there is no folder to render into: save the project first");
 				auto render = std::make_shared<TrackRender>();
 				render->parameters = parameters;
+				if (mixdown)
+				{
+					// Every track from one start to one end, so that their files add up sample by sample.
+					time::Samples start = groups.front().front().start;
+					time::Samples end = groups.front().front().end;
+					for (const auto& track : groups)
+					{
+						start = std::min(start, track.front().start);
+						end = std::max(end, track.front().end);
+					}
+					for (auto& track : groups)
+						track.front() = {start, end, track.front().events};
+					render->mixdown = folder / fs::u8path(parameters.value("name", std::string("Mixdown")) + ".wav");
+					render->sampleFormat = parameters.value("sampleFormat", std::string("float32"));
+					render->sampleRate = project.sampleRate;
+				}
 				for (size_t i = 0; i < tracks.size(); ++i)
 				{
 					const Track& track = project.trackById.at(tracks[i]);
@@ -820,10 +946,12 @@ namespace gnubase::engine
 						render->starts.push_back(group.start);
 						render->ends.push_back(group.end);
 						Json request = {{"folder", folder.u8string()},
-							{"name", parameters.value("name", fileNameOf(track))}, {"channels", {track.channel}},
-							{"start", group.start}, {"end", group.end}, {"point", point},
-							{"tail", parameters.value("tail", 0.0)},
-							{"sampleFormat", parameters.value("sampleFormat", std::string("float32"))}};
+							{"name", mixdown ? fileNameOf(track) : parameters.value("name", fileNameOf(track))},
+							{"channels", {track.channel}}, {"start", group.start}, {"end", group.end}, {"point", point},
+							{"tail", tailAfter(project, parameters, group.end)},
+							{"sampleFormat",
+								mixdown ? std::string("float32")
+										: parameters.value("sampleFormat", std::string("float32"))}};
 						if (split)
 							request["renderEvents"] = group.events;
 						render->work.push_back(engine.prepareMixdown(request));
@@ -903,7 +1031,7 @@ namespace gnubase::engine
 				const std::string mode = parameters.value("processing", std::string("channelSettings"));
 				std::vector<Span> spans;
 				std::vector<std::string> written;
-				for (size_t i = 0; i < tracks.size(); ++i)
+				for (size_t i = 0; i < files.size(); ++i)
 				{
 					spans.push_back({render->starts[i], render->ends[i]});
 					written.push_back(files[i].at("path").get<std::string>());
@@ -918,14 +1046,16 @@ namespace gnubase::engine
 				Json events = Json::array();
 				std::map<ObjectId, ObjectId> destinations;
 
-				for (size_t i = 0; i < tracks.size(); ++i)
+				for (size_t i = 0; i < files.size(); ++i)
 				{
 					const Track& source = project.trackById.at(tracks[i]);
 					const Channel from = project.channels.at(source.channel);
 					const std::vector<ObjectId>& siblings =
 						source.parent == 0 ? project.tracks : project.trackById.at(source.parent).children;
 					const Json mediaFile = run("media.add", {{"path", written[i]}}).at("media");
-					Json trackParameters = {{"type", "audio"}, {"name", source.name + " (Rendered)"},
+					const std::string name =
+						!render->mixdown.empty() ? parameters.value("name", std::string("Mixdown")) : source.name;
+					Json trackParameters = {{"type", "audio"}, {"name", name + " (Rendered)"},
 						{"timeBase", timeBaseName(source.timeBase)}, {"parent", source.parent},
 						{"index",
 							std::distance(siblings.begin(), std::find(siblings.begin(), siblings.end(), source.id)) +
@@ -994,6 +1124,9 @@ namespace gnubase::engine
 						context.emit("plugin.added", {{"slot", describeSlot(project, slot)}});
 				}
 
+				if (!render->mixdown.empty()) // the source options apply to every track mixed down
+					for (const ObjectId id : tracks)
+						destinations.emplace(id, destinations.begin()->second);
 				// The source options (reference manual pp. 1473, 1476), the events before their tracks can go.
 				if (parameters.value("sourceEvents", std::string("keep")) == "mute")
 					run("event.set", {{"events", parameters.at("events")}, {"mute", true}});
