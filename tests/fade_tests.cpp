@@ -349,6 +349,35 @@ TEST_CASE("crossfades join overlapping events on a track", "[unit]")
 	CHECK_THAT(reject(client, "crossfade.remove", {{"event", a}}), ContainsSubstring("has no crossfade"));
 }
 
+TEST_CASE("crossfade.set makes a new crossfade without a mode the default crossfade", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 10000, one));
+	const ObjectId a = session.addEvent(track, clip, 0, 3000);
+	const ObjectId b = session.addEvent(track, clip, 2000, 3000);
+	const ObjectId c = session.addEvent(track, clip, 4000, 3000);
+	run(client, "settings.set",
+		{{"key", "editing.defaultCrossfade"},
+			{"value", {{"mode", "custom"}, {"shape", "sCurve"}, {"outShape", "exponential"}}}});
+
+	// New and without a mode: the default crossfade (reference manual p. 392), with the shape given over it.
+	CHECK(
+		run(client, "crossfade.set", {{"from", a}, {"to", b}, {"shape", "logarithmic"}}).at("event").at("crossfade") ==
+		Json{{"from", a}, {"mode", "custom"}, {"shape", "logarithmic"}, {"outShape", "exponential"}, {"length", 0},
+			{"outLength", 0}});
+	// A mode given is that mode's own, and a crossfade there already keeps what it has.
+	CHECK(run(client, "crossfade.set", {{"from", b}, {"to", c}, {"mode", "equalGain"}}).at("event").at("crossfade") ==
+		Json{{"from", b}, {"mode", "equalGain"}, {"shape", "linear"}, {"outShape", "linear"}, {"length", 0},
+			{"outLength", 0}});
+	CHECK(run(client, "crossfade.set", {{"from", b}, {"to", c}, {"length", 100}})
+			  .at("event")
+			  .at("crossfade")
+			  .at("mode") == "equalGain");
+}
+
 TEST_CASE("auto fade settings belong to the project or to an audio track", "[unit]")
 {
 	Session session;

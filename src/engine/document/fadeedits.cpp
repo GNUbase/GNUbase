@@ -119,6 +119,18 @@ namespace gnubase::engine
 				}
 		}
 
+		// New crossfades are the default crossfade (the user setting editing.defaultCrossfade, reference manual p.
+		// 392).
+		Crossfade defaultCrossfade(CommandContext& context)
+		{
+			const Json made = context.call("settings.get", {{"key", "editing.defaultCrossfade"}}).at("value");
+			Crossfade fresh;
+			fresh.mode = crossfadeModeFromName(made.at("mode").get<std::string>()).value_or(fresh.mode);
+			fresh.shape = fadeShapeFromName(made.at("shape").get<std::string>()).value_or(fresh.shape);
+			fresh.outShape = fadeShapeFromName(made.at("outShape").get<std::string>()).value_or(fresh.outShape);
+			return fresh;
+		}
+
 		Json setCrossfade(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -131,8 +143,11 @@ namespace gnubase::engine
 			require(out.start < in.start && in.start < out.end && out.end <= in.end,
 				"event " + idText(to.id) + " must start inside event " + idText(from.id) + " and end after it");
 
-			// A crossfade that is there already keeps what the parameters don't change.
-			Crossfade crossfade = to.crossfade.from == from.id ? to.crossfade : Crossfade();
+			// A crossfade that is there already keeps what the parameters don't change; a new one without a mode is the
+			// default crossfade.
+			Crossfade crossfade = to.crossfade.from == from.id ? to.crossfade
+				: parameters.contains("mode")                  ? Crossfade()
+															   : defaultCrossfade(context);
 			crossfade.from = from.id;
 			if (parameters.contains("mode"))
 			{
@@ -251,12 +266,7 @@ namespace gnubase::engine
 			for (auto& [id, event] : project.audioEvents)
 				tracks[event.track].emplace_back(eventSpan(project, event), &event);
 			std::vector<ObjectId> events;
-			// New crossfades are the default crossfade (the user setting editing.defaultCrossfade).
-			const Json made = context.call("settings.get", {{"key", "editing.defaultCrossfade"}}).at("value");
-			Crossfade fresh;
-			fresh.mode = crossfadeModeFromName(made.at("mode").get<std::string>()).value_or(fresh.mode);
-			fresh.shape = fadeShapeFromName(made.at("shape").get<std::string>()).value_or(fresh.shape);
-			fresh.outShape = fadeShapeFromName(made.at("outShape").get<std::string>()).value_or(fresh.outShape);
+			const Crossfade fresh = defaultCrossfade(context);
 			for (auto& [track, row] : tracks)
 			{
 				std::sort(row.begin(), row.end(), [](const auto& a, const auto& b)
@@ -581,7 +591,8 @@ namespace gnubase::engine
 				"Crossfades from an audio event into the next one on its track, where they overlap: to must start "
 				"inside from and end after it. Both play there; from fades out up to its end over outLength (from's "
 				"clip frames), to fades in from its start over length (to's clip frames); 0, the default, is the whole "
-				"overlap, so the crossfade is symmetric. mode equalGain (default): the fade out mirrors the fade in "
+				"overlap, so the crossfade is symmetric. A new crossfade without mode is the default crossfade (the "
+				"user setting editing.defaultCrossfade). mode equalGain: the fade out mirrors the fade in "
 				"(shape linear, exponential, logarithmic or sCurve), so their gains add up to 1; equalPower: quarter "
 				"sines whose power adds up to 1; custom: shape and outShape of their own. An event fades out into one "
 				"event only. Changing a crossfade keeps what isn't given. After an edit that moves the events apart, "

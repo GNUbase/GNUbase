@@ -881,9 +881,15 @@ TEST_CASE("Reset Quantize keeps a crossfade the event had before quantizing", "[
 	run(client, "quantize.set", {{"preset", "1/4"}});
 	const Json events = Json::array({first, second, third});
 	run(client, "quantize.apply", {{"events", events}});
+	// The crossfade the step makes is the default crossfade (reference manual p. 392).
+	run(client, "settings.set",
+		{{"key", "editing.defaultCrossfade"},
+			{"value", {{"mode", "custom"}, {"shape", "sCurve"}, {"outShape", "exponential"}}}});
 	run(client, "quantize.crossfade", {{"events", events}});
 	REQUIRE(crossfadeOf(client, second).at("mode") == "equalPower");
 	REQUIRE(crossfadeOf(client, third).at("from") == second);
+	CHECK(crossfadeOf(client, third).at("mode") == "custom");
+	CHECK(crossfadeOf(client, third).at("shape") == "sCurve");
 
 	SECTION("reset puts the hand-made crossfade back and removes the one the step made")
 	{

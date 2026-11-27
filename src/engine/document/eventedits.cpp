@@ -3354,14 +3354,27 @@ namespace gnubase::engine
 			return event;
 		}
 
+		// The events of the shared audio parts by part, in id order: one pass over the events for all parts.
+		using EventsByPart = std::map<ObjectId, std::vector<const AudioEvent*>>;
+		EventsByPart byPart(const std::map<ObjectId, AudioEvent>& events, const std::map<ObjectId, AudioPart>& parts)
+		{
+			EventsByPart found;
+			if (std::none_of(parts.begin(), parts.end(), [](const auto& part) { return part.second.shared != 0; }))
+				return found; // most projects: no pass over the events after every command
+			for (const auto& [id, event] : events)
+				if (const auto part = parts.find(event.part); part != parts.end() && part->second.shared != 0)
+					found[event.part].push_back(&event);
+			return found;
+		}
+
 		// What the shared copies of an audio part share: its events by id.
-		// ponytail: a pass over every audio event per shared part; index them by part if that ever shows.
-		std::vector<AudioEvent> contentsOf(const std::map<ObjectId, AudioEvent>& events, const AudioPart& part)
+		std::vector<AudioEvent> contentsOf(
+			const std::map<ObjectId, AudioEvent>& events, const EventsByPart& index, const AudioPart& part)
 		{
 			std::vector<AudioEvent> contents;
-			for (const auto& [id, event] : events)
-				if (event.part == part.id)
-					contents.push_back(sharedOf(events, event, part));
+			if (const auto found = index.find(part.id); found != index.end())
+				for (const AudioEvent* event : found->second)
+					contents.push_back(sharedOf(events, *event, part));
 			return contents;
 		}
 
@@ -3485,6 +3498,8 @@ namespace gnubase::engine
 		// The first part of each group whose contents changed is what the group now holds.
 		std::map<ObjectId, const AudioPart*> audioSources;
 		std::map<ObjectId, int> audioMembers;
+		const EventsByPart wasIn = byPart(before.audioEvents, before.audioParts);
+		const EventsByPart isIn = byPart(project.audioEvents, project.audioParts);
 		for (const auto& [id, part] : project.audioParts)
 		{
 			if (part.shared == 0)
@@ -3493,7 +3508,7 @@ namespace gnubase::engine
 			const auto old = before.audioParts.find(id);
 			if (old != before.audioParts.end() && old->second.shared == part.shared &&
 				audioSources.count(part.shared) == 0 &&
-				contentsOf(before.audioEvents, old->second) != contentsOf(project.audioEvents, part))
+				contentsOf(before.audioEvents, wasIn, old->second) != contentsOf(project.audioEvents, isIn, part))
 				audioSources[part.shared] = &part;
 		}
 		for (auto& [id, part] : project.audioParts)
