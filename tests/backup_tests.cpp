@@ -682,7 +682,8 @@ TEST_CASE("media can be copied into the project folder when they are added", "[i
 	const std::string file = utf8(project / "Song.dawproject");
 	run(song.client, "project.save", {{"path", file}, {"embedMedia", false}});
 	CHECK(run(song.client, "project.location") ==
-		Json{{"file", file}, {"folder", utf8(project)}, {"mediaFolder", utf8(project / "Audio")}, {"name", "Song"}});
+		Json{{"file", file}, {"folder", utf8(project)}, {"mediaFolder", utf8(project / "Audio")}, {"name", "Song"},
+			{"autoSaveOf", nullptr}});
 	// The file is added at once where it is, and copied by a job, which then points the media file at the copy.
 	const Json added = run(song.client, "media.add", {{"path", utf8(elsewhere / "take.wav")}, {"copy", true}});
 	const ObjectId media = idOf(added, "media");
@@ -725,7 +726,8 @@ TEST_CASE("media can be copied into the project folder when they are added", "[i
 
 	run(song.client, "project.new");
 	CHECK(run(song.client, "project.location") ==
-		Json{{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}, {"name", "Untitled"}});
+		Json{{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}, {"name", "Untitled"},
+			{"autoSaveOf", nullptr}});
 }
 
 TEST_CASE("media.prepareArchive copies only the media files given", "[integration]")
