@@ -28,6 +28,7 @@ namespace gnubase::ui
 		constexpr const char* g_replaced = "replaced";
 		// The document that shows an error or a notice (showError, showNotice).
 		constexpr const char* g_errorDialog = "project-error.rml";
+		constexpr const char* g_replaceFileDialog = "replace-file.rml";
 		// The result with which a backup's progress dialog closes once the backup ended.
 		constexpr const char* g_backupDone = "done";
 
@@ -550,8 +551,9 @@ namespace gnubase::ui
 			return;
 		}
 		// One at a time, and the others wait, so that nothing the user is to answer or learn is dropped (#485).
-		m_waitingDialogs.push_back(
-			{window, file, std::string_view(file) == g_errorDialog, std::move(shown), std::move(closed)});
+		const bool error = std::string_view(file) == g_errorDialog;
+		m_waitingDialogs.push_back({window, file, error, error || std::string_view(file) == g_replaceFileDialog,
+			std::move(shown), std::move(closed)});
 		openWaiting();
 	}
 
@@ -563,8 +565,9 @@ namespace gnubase::ui
 			m_waitingDialogs.pop_front();
 			Rml::ElementDocument* dialog = loadDialog(next.window, next.file);
 			// An error or notice whose window went while it waited still shows, in the main window instead, so that
-			// the failed save it reports isn't taken for done (#985).
-			if (dialog == nullptr && next.error)
+			// the failed save it reports isn't taken for done (#985), and so does the question before Save As replaces
+			// a file, so that the save the user asked for isn't dropped without a word (#798).
+			if (dialog == nullptr && next.mainIfGone)
 				if (const Window* main = mainWindow(); main != nullptr)
 					dialog = loadDialog(main->id(), next.file);
 			if (dialog == nullptr)
@@ -1002,7 +1005,7 @@ namespace gnubase::ui
 					return;
 				}
 				openDialog(
-					id, "replace-file.rml",
+					id, g_replaceFileDialog,
 					// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's std::filesystem::path; out of memory only
 					[file](Rml::ElementDocument* dialog)
 					{

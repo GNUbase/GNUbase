@@ -1976,6 +1976,52 @@ TEST_CASE("an error whose window closed while it waited shows in the main window
 	closeError(app);
 }
 
+TEST_CASE("Save As asks before it replaces a file in the main window once the window it was asked in closed", "[ui]")
+{
+	// Else the save the user asked for would be dropped without a word (#798).
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path final = dir.path() / "Final.dawproject";
+	const fs::path other = dir.path() / "Other.dawproject";
+	app.call("project.save", {{"path", utf8(final)}});
+	app.call("project.save", {{"path", utf8(other)}});
+	gnubase::ui::Window& panel = panelWindow(app);
+	const gnubase::ui::WindowId panelId = panel.id();
+	const auto closePanel = [&app, panelId]
+	{
+		app.ui().close(panelId, false);
+		REQUIRE(app.waitUntil([&app, panelId] { return app.shell().find(panelId) == nullptr; }));
+	};
+
+	SECTION("before the file dialog answers")
+	{
+		app.keys().run("file.saveAs", Json::object(), panel, nullptr);
+		REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+		closePanel();
+		answer(app, {dir.path() / "Final."});
+	}
+	SECTION("while the question waits for the start screen")
+	{
+		app.appUi().openStartScreen();
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+		app.keys().run("file.saveAs", Json::object(), panel, nullptr);
+		answer(app, {dir.path() / "Final"});
+		settle(app);
+		CHECK(elements(app, "#replace-file-dialog").empty());
+		closePanel();
+		click(app, "#start-screen button[result=cancel]");
+	}
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json found = app.ui().dom(app.main().id(), "#replace-file-dialog", 0).at("elements");
+			return found.size() == 1 && found[0].at("visible").get<bool>();
+		}));
+	click(app, "#replace-file");
+	REQUIRE(app.waitUntil([&app, &final] { return location(app) == utf8(fs::absolute(final)); }));
+}
+
 TEST_CASE("a question that waited doesn't ask once the project was saved meanwhile", "[ui]")
 {
 	test::UiApp app({900, 640});

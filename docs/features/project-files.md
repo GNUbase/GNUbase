@@ -179,7 +179,9 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   Template is open, and the error of a save or backup that fails meanwhile. A waiting dialog whose window went is
   skipped, which for the unsaved changes question of a quit means the next quit request asks again. An error or notice
   whose window went while it waited shows in the main window instead, so that the failure it reports isn't taken for
-  done (#985). Only a failed auto save's error doesn't wait, as above.
+  done (#985), and so does the question before Save As replaces a file, also when Save As was asked for in a window
+  that went before its file dialog answered, so that the save the user asked for isn't dropped without a word (#798).
+  Only a failed auto save's error doesn't wait, as above.
 - The UI knows the project's file from `project.saved` and, after `project.reset`, from `project.location`.
 - **Dialogs for objects of the project close** when a new or loaded project replaces it (`project.reset`, #1464):
   object ids are per project, so OK would act on whatever has those ids in the new project, or be refused.
@@ -225,8 +227,9 @@ passed and failing ones with their events and log entries, also when the reason 
 restarts and their names, the media folder a load extracts into, versions and auto saves of a file named `...` (where it
 can be made), and templates (one named as a device, where it can be a file); and in the app's UI (`test::UiApp`,
 [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot, of one ending in a dot, of one of only dots and
-spaces and of one with the extension in upper case, asking before it replaces a file the dialog didn't name, and of a
-device name where it can be a file, not on Windows 10) and Save New Version after each through file dialogs, Open and
+spaces and of one with the extension in upper case, asking before it replaces a file the dialog didn't name, also in
+the main window once the window it was asked in went, and of a device name where it can be a file, not on Windows 10)
+and Save New Version after each through file dialogs, Open and
 Revert with the unsaved changes dialog, Save asking for a file after Open of an auto save and proposing the project file
 it was made of, quitting through the main window's close button and the OS's quit request with and without unsaved
 changes, SDL's close and quit requests for the last window and more requests while the question is open asking one
