@@ -86,8 +86,10 @@ the port's entry in `midi.portSettings` keeps what differs from the preset, so i
 (#1749), the audio thread queues what the open inputs receive (up to 256 messages, without system real-time messages
 such as clock and active sensing, 0xF8 to 0xFF) for `midi.activity`, which the engine runs itself at most ten times a
 second while input arrives and a device processes blocks (the audio engine's cue thread notices it); it takes the
-messages with their ports and announces them as the event `midi.activity`, which the Note Expression Input page shows.
-Its runs stay out of the command log. Each `listener` (the dialog's is `studioSetup`, calls without one share one) turns
+messages with their ports and announces them as the event `midi.activity`, which the Note Expression Input page
+shows. A listener that gives `post` has each run with input also post them to that
+command, as the key editors do for step and MIDI input (`editor.played`, [key-editor.md](key-editor.md)). Its runs stay
+out of the command log. Each `listener` (the dialog's is `studioSetup`, calls without one share one) turns
 it on and off for itself, and it is on while any has it on, so the dialog closing leaves a script's or an MCP session's
 on, and their off leaves the dialog's (#1832). Turning `midi.activityListen` on while no listener has it on, and
 starting a device, drop what was queued before, so nothing old is announced as new; a second listener turning it on

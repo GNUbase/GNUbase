@@ -663,9 +663,13 @@ namespace gnubase::engine
 				"calls share one. It is on while any listener has it on, so turning it off for one leaves the "
 				"others' (#1832). Off by default; turning it on while no listener has it on starts afresh, without "
 				"what "
-				"came before, and a second listener's on keeps what the first one still reads.",
+				"came before, and a second listener's on keeps what the first one still reads. post names a command "
+				"that each run of midi.activity with input then posts with it as {received}, each message also with "
+				"inAllInputs, whether its port belongs to all MIDI inputs, while the listener has it on: the key "
+				"editors' step and MIDI input take the notes played so (editor.played, #679).",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["on"],
-					"properties": {"on": {"type": "boolean"}, "listener": {"type": "string"}}})"),
+					"properties": {"on": {"type": "boolean"}, "listener": {"type": "string"},
+					"post": {"type": "string"}}})"),
 				Json::object(), false},
 			[this](CommandContext& context)
 			{
@@ -673,7 +677,7 @@ namespace gnubase::engine
 				const bool was = !m_activityListeners.empty();
 				const std::string listener = context.parameters().value("listener", std::string());
 				if (context.parameters().at("on").get<bool>())
-					m_activityListeners.insert(listener);
+					m_activityListeners[listener] = context.parameters().value("post", std::string());
 				else
 					m_activityListeners.erase(listener);
 				if (!was && !m_activityListeners.empty())
@@ -793,11 +797,12 @@ namespace gnubase::engine
 				Json::parse(R"({"type": "object", "properties": {"received": {"type": "array"},
 					"dropped": {"type": "integer"}}, "required": ["received", "dropped"]})"),
 				false},
-			[this](CommandContext& context)
+			[this, &engine](CommandContext& context)
 			{
 				listOnce();
 				context.leaveOutOfLog();
 				Json received = Json::array();
+				Json posted = Json::array(); // for the listeners' post: also whether the port is in all MIDI inputs
 				Received entry;
 				while (m_activity.tryPop(entry))
 				{
@@ -808,11 +813,18 @@ namespace gnubase::engine
 					const std::vector<uint8_t> bytes(
 						entry.message.bytes.begin(), entry.message.bytes.begin() + entry.message.size);
 					received.push_back({{"backend", port->backend->name()}, {"id", port->info.id}, {"bytes", bytes}});
+					posted.push_back(received.back());
+					posted.back()["inAllInputs"] = inAllInputs(*port);
 				}
 				Json result = {{"received", std::move(received)},
 					{"dropped", m_activityDropped.exchange(0, std::memory_order_relaxed)}};
 				if (!result.at("received").empty())
+				{
 					context.emit("midi.activity", result);
+					for (const auto& listener : m_activityListeners)
+						if (!listener.second.empty())
+							engine.post(listener.second, {{"received", posted}});
+				}
 				return result;
 			});
 	}
