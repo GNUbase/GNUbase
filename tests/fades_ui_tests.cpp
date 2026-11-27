@@ -341,6 +341,44 @@ TEST_CASE("the fade dialog gives every selected event the fades it shows, as one
 	CHECK(eventOf(app, events.first).at("fadeOut") == Json{{"length", 72000}, {"shape", "linear"}});
 }
 
+TEST_CASE("Apply in the fade dialog leaves it open, and Restore puts back what it showed and the events had", "[ui]")
+{
+	test::UiApp app({900, 700});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const Events events(app);
+	app.call("audioEvent.setFades", {{"event", events.first}, {"fadeIn", {{"length", 2400}, {"shape", "sCurve"}}}});
+	REQUIRE(app.waitUntil([&display] { return display.project().at("audioEvents").size() == 2; }));
+	display.select({events.first, events.second});
+	const Json first = eventOf(app, events.first);
+	const Json second = eventOf(app, events.second);
+	run(app, "audio.fadeEditor", "#fade-editor");
+
+	// Before Apply, Restore puts back what the dialog showed when it opened (reference manual p. 386).
+	choose(app, "#fade-in-shape", 1); // Equal Power
+	type(app, "#fade-out-length", "125");
+	click(app, "#fade-editor-restore");
+	CHECK(element(app, "#fade-in-shape").at("value") == "sCurve");
+	CHECK(element(app, "#fade-out-length").at("value") == "0.0");
+
+	// Apply gives every event the fades shown and leaves the dialog open.
+	click(app, "#fade-apply-length");
+	type(app, "#fade-out-length", "125");
+	click(app, "#fade-editor-apply");
+	CHECK(open(app, "#fade-editor"));
+	CHECK(eventOf(app, events.second).at("fadeIn") == Json{{"length", 2400}, {"shape", "sCurve"}});
+	CHECK(eventOf(app, events.second).at("fadeOut") == Json{{"length", 6000}, {"shape", "linear"}});
+
+	// After it, Restore gives the events back the fades they had when the dialog opened, as one undo step.
+	click(app, "#fade-editor-restore");
+	CHECK(eventOf(app, events.first) == first);
+	CHECK(eventOf(app, events.second) == second);
+	CHECK(app.call("history.get").at("steps").back().at("action") == "Restore fades");
+	CHECK_FALSE(checked(app, "#fade-apply-length"));
+	CHECK(element(app, "#fade-out-length").at("value") == "0.0");
+	click(app, "#fade-editor-cancel");
+	closes(app, "#fade-editor");
+}
+
 TEST_CASE("As Default in the fade dialog sets the default fades, which Apply Standard Fade In and Out give", "[ui]")
 {
 	// Reference manual pp. 385-387: the default fades take the dialog's shapes and lengths, with Apply Length off too.

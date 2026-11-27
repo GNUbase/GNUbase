@@ -4,7 +4,9 @@
      (audio.fadeEditor). Its Lua shows the first event's fades when the dialog shows; OK gives every event the curves
      and, with Apply Length (off at first, p. 386), the lengths in milliseconds, as one undo step (history.transaction
      of audioEvent.setFades): a length left as shown is the first event's exactly, not rounded to the 0.1 ms shown.
-     Cancel drops them. As Default (p. 387) makes the shapes and lengths shown the default fades (the user settings
+     Cancel drops them. Apply gives them as OK does and leaves the dialog open; Restore (p. 386) shows what it showed
+     when it opened again, and gives the events back the fades they had then if Apply changed them, as one undo step.
+     As Default (p. 387) makes the shapes and lengths shown the default fades (the user settings
      editing.defaultFadeIn and editing.defaultFadeOut) that Apply Standard Fade In and Out give, and leaves the dialog
      open. -->
 <rml>
@@ -13,7 +15,7 @@
 	<style>
 		dialog
 		{
-			width: 420dp;
+			width: 520dp;
 		}
 
 		#fade-editor-fields
@@ -55,7 +57,8 @@
 		}
 	</style>
 	<script>
-		-- The dialog's state, in the UI's Lua: each event's length and its clip's frames per millisecond.
+		-- The dialog's state, in the UI's Lua: each event's length, its clip's frames per millisecond and its fades when
+		-- the dialog opened, and whether Apply changed them since.
 		FadeEditor = {}
 		local dialog = FadeEditor
 
@@ -111,7 +114,7 @@
 				if wanted[event.id] then
 					-- A warped event's fades fit into what it plays for (fadeRoom).
 					dialog.events[#dialog.events + 1] = {id = event.id, length = event.fadeRoom or event.length,
-						rate = framesPerMs(project, event)}
+						rate = framesPerMs(project, event), fadeIn = event.fadeIn, fadeOut = event.fadeOut}
 					first = first or {event = event, rate = framesPerMs(project, event)}
 				end
 			end
@@ -119,6 +122,14 @@
 				document:Close()
 				return
 			end
+			dialog.first = first
+			dialog.applied = false
+			dialog.show(document)
+		end
+
+		-- Shows the first event's fades as they were when the dialog opened.
+		function dialog.show(document)
+			local first = dialog.first
 			local function ms(fade)
 				return string.format("%.1f", fade.length / first.rate)
 			end
@@ -161,12 +172,13 @@
 			problem(document, ok and "" or tostring(failure))
 		end
 
-		function dialog.ok(document)
+		-- Gives every event the fades shown, as one undo step; whether it could.
+		local function apply(document)
 			local applyLength = document:GetElementById("fade-apply-length"):HasAttribute("checked")
 			local inMs, outMs = lengths(document)
 			if applyLength and (inMs == nil or outMs == nil) then
 				problem(document, "Lengths must be milliseconds, 0 or more")
-				return
+				return false
 			end
 			local commands = {}
 			for _, event in ipairs(dialog.events) do
@@ -181,11 +193,38 @@
 					parameters = {event = event.id, fadeIn = fadeIn, fadeOut = fadeOut}}
 			end
 			local ok, failure = pcall(gnubase.history.transaction, {description = "Change fades", commands = commands})
-			if ok then
+			problem(document, ok and "" or tostring(failure))
+			return ok
+		end
+
+		function dialog.ok(document)
+			if apply(document) then
 				document:Close()
-			else
-				problem(document, tostring(failure))
 			end
+		end
+
+		function dialog.apply(document)
+			if apply(document) then
+				dialog.applied = true
+			end
+		end
+
+		function dialog.restore(document)
+			if dialog.applied then
+				local commands = {}
+				for _, event in ipairs(dialog.events) do
+					commands[#commands + 1] = {command = "audioEvent.setFades",
+						parameters = {event = event.id, fadeIn = event.fadeIn, fadeOut = event.fadeOut}}
+				end
+				local ok, failure = pcall(gnubase.history.transaction, {description = "Restore fades", commands = commands})
+				if not ok then
+					problem(document, tostring(failure))
+					return
+				end
+				dialog.applied = false
+			end
+			dialog.show(document)
+			problem(document, "")
 		end
 	</script>
 </head>
@@ -195,8 +234,10 @@
 		<div id="fade-editor-fields"/>
 		<div class="row">
 			<div id="fade-editor-message"/>
+			<button id="fade-editor-restore" onclick="FadeEditor.restore(document)">Restore</button>
 			<button id="fade-editor-default" onclick="FadeEditor.asDefault(document)">As Default</button>
 			<button id="fade-editor-cancel" result="cancel">Cancel</button>
+			<button id="fade-editor-apply" onclick="FadeEditor.apply(document)">Apply</button>
 			<button id="fade-editor-ok" class="primary" onclick="FadeEditor.ok(document)">OK</button>
 		</div>
 	</dialog>
