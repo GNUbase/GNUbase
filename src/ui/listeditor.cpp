@@ -34,7 +34,8 @@ namespace gnubase::ui
 		constexpr int64_t g_minVelocity = 1; // a note on with velocity 0 is a note off
 		constexpr double g_maxController = 4294967295.0;
 		constexpr int64_t g_bendCenter = 8192;
-		constexpr float g_edge = 6.0F; // dp at a note's end where the object selection tool resizes it
+		constexpr int64_t g_maxBank = 16383; // MIDI's bank select: 14 bits
+		constexpr float g_edge = 6.0F;       // dp at a note's end where the object selection tool resizes it
 
 		// What the root hears in the bubble phase.
 		constexpr std::array<Rml::EventId, 6> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
@@ -383,6 +384,8 @@ namespace gnubase::ui
 					row.number = controller.value("number", 0);
 					row.value = controller.value("value", 0.0);
 					row.channel = controller.value("channel", 0);
+					if (controller.contains("bank"))
+						row.bank = controller.at("bank").get<int>();
 					row.data = controller.value("data", std::vector<int>());
 					row.articulation = controller.value("articulation", std::string());
 					row.reset = controller.value("reset", false);
@@ -465,6 +468,8 @@ namespace gnubase::ui
 				return std::lround(row.value * g_maxVelocity);
 			if (type == "controller" || type == "polyPressure")
 				return toMidi1(row.value);
+			if (type == "program" && row.bank)
+				return *row.bank;
 		}
 		if (field == "secondary" && type == "note")
 			return std::lround(row.release * g_maxVelocity);
@@ -591,7 +596,7 @@ namespace gnubase::ui
 			for (const auto& [field, name] : g_fields)
 			{
 				const bool editable = row.editable &&
-					(number(row, field) ||
+					(number(row, field) || (field == std::string("value") && row.type == "program") ||
 						(field == std::string("attributes") &&
 							(row.type == "sysEx" || row.type == "articulation" || row.isNote())));
 				const bool menu =
@@ -859,6 +864,11 @@ namespace gnubase::ui
 			}
 			return;
 		}
+		if (field == "value" && edited.type == "program")
+		{
+			editBank(edited, typed);
+			return;
+		}
 		const std::optional<int64_t> typedValue = parse(field, typed, edited);
 		const std::optional<int64_t> was = number(edited, field);
 		if (!typedValue || !was)
@@ -903,6 +913,34 @@ namespace gnubase::ui
 			else
 				change["number"] = std::clamp<int64_t>(value, 0, 127);
 			changes[{row->part, row->isNote() ? "note.set" : "controller.set"}].push_back(change);
+		}
+		edit(std::move(changes));
+	}
+
+	// A program change's bank, typed into its Main Value: for a selected one, every selected program change takes it,
+	// by as much as the typed one where both have a bank, with Ctrl (Cmd) the same; nothing typed takes the banks away.
+	void ListEditor::editBank(const Row& edited, const std::string& typed)
+	{
+		const std::optional<int64_t> bank = parse("value", typed, edited);
+		if (!bank && !Rml::StringUtilities::StripWhitespace(typed).empty())
+			return;
+		std::vector<const Row*> rows = {&edited};
+		if (selected(edited))
+			rows = selectedRows();
+		std::map<std::pair<uint64_t, std::string>, Json> changes;
+		for (const Row* row : rows)
+		{
+			if (!row->editable || row->type != "program")
+				continue;
+			Json value = nullptr;
+			if (bank)
+			{
+				int64_t to = *bank;
+				if (!m_ctrl && edited.bank && row->bank)
+					to = *row->bank + (*bank - *edited.bank);
+				value = std::clamp<int64_t>(to, 0, g_maxBank);
+			}
+			changes[{row->part, "controller.set"}].push_back({{"id", row->id}, {"bank", value}});
 		}
 		edit(std::move(changes));
 	}

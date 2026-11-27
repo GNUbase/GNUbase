@@ -1343,3 +1343,48 @@ TEST_CASE("list editor gestures keep their undo name over one part and two", "[u
 		verb = "Remove ";
 	CHECK(history.at("steps").at(before).at("action") == verb + kind);
 }
+
+// #719: the list editor edits a program change's bank select, which has no column of its own in the reference manual's
+// list (p. 1253, where a program change's Main Value is unused).
+TEST_CASE("a program change's Main Value is its bank, typed for the selected ones and taken away when empty", "[ui]")
+{
+	Fixture f;
+	const std::string program = row("controller", f.events[1]);
+	const std::string value = program + " textdisplay[field=value]";
+	const auto bank = [&](uint64_t id) { return f.event("controllers", id).value("bank", Json()); };
+	// Without a bank the cell is empty, but it takes one.
+	CHECK(f.cell(program, "value").empty());
+	CHECK_FALSE(f.elements(value).at(0).at("attributes").contains("disabled"));
+	f.type(value, "3");
+	REQUIRE(f.app.waitUntil([&] { return bank(f.events[1]) == 3 && f.cell(program, "value") == "3"; }));
+	// With another one selected that has bank 10 they keep their distance, and the bank goes no higher than 16383.
+	const auto other =
+		f.app
+			.call("controller.add",
+				{{"part", f.part},
+					{"controllers", {{{"position", g_quarter}, {"type", "program"}, {"number", 7}, {"bank", 10}}}}})
+			.at("controllers")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.cell(row("controller", other), "value") == "10"; }));
+	f.click(of(program + " .list-type"));
+	f.click(of(row("controller", other) + " .list-type"), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("controllerSelection").size() == 2; }));
+	f.type(value, "5");
+	REQUIRE(f.app.waitUntil([&] { return bank(other) == 12; }));
+	CHECK(bank(f.events[1]) == 5);
+	f.type(value, "16380");
+	REQUIRE(f.app.waitUntil([&] { return bank(other) == 16383; }));
+	CHECK(bank(f.events[1]) == 16380);
+	// Nothing typed takes both banks away, in one undo step.
+	const size_t before = f.steps();
+	f.click(of(value), 2);
+	f.app.ui().key(f.window, "Mod+A");
+	f.app.ui().key(f.window, "Backspace");
+	f.app.ui().key(f.window, "Enter");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return bank(other).is_null() && bank(f.events[1]).is_null(); }));
+	CHECK(f.steps() == before + 1);
+	CHECK(f.app.waitUntil([&] { return f.cell(program, "value").empty(); }));
+}
