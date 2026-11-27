@@ -274,6 +274,39 @@ TEST_CASE("recording through the dummy device matches its input sample-exactly",
 	CHECK(eventsOn(client, setup.track).empty());
 }
 
+TEST_CASE(
+	"a recording after a count-in starts where playback starts, with the input's first frame after it", "[integration]")
+{
+	// A sine whose phase tells the device's frames apart: 441 Hz is three quarters of a cycle on after 1.75 s.
+	const Json input = {{"processor", "sine"}, {"parameters", {{"Frequency", 441.0}, {"Level", 0.5}}}};
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", input}});
+	Client& client = setup.client;
+	run(client, "metronome.set",
+		{{"countIn",
+			{{"enabled", true}, {"signature", "custom"},
+				{"customSignature", {{"numerator", 7}, {"denominator", 8}}}}}});
+	run(client, "transport.locate", {{"position", 1000}});
+	CHECK(run(client, "transport.record").at("countingIn") == true);
+	constexpr int64_t countIn = 84000; // a bar of 7/8 at 120 BPM: 1.75 s
+	run(client, "audio.render", {{"frames", countIn + 4800}});
+	setup.stop();
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("position") == 1000);
+	CHECK(events[0].at("length") == 4800);
+	const std::vector<float> samples = channelOf(pathOf(client, events[0]), 0);
+	REQUIRE(samples.size() == 4800);
+	for (const int64_t f : {int64_t{0}, int64_t{1}, int64_t{4799}})
+	{
+		const double cycles = static_cast<double>(countIn + f) * 441.0 / 48000.0;
+		const double expected = 0.5 * std::sin(2.0 * 3.14159265358979323846 * (cycles - std::floor(cycles)));
+		INFO("frame " << f);
+		CHECK(std::abs(samples[static_cast<size_t>(f)] - expected) < 1e-4);
+	}
+	CHECK(samples[0] < -0.49f); // not the input's first frame, which is 0
+}
+
 TEST_CASE("recordings are written in the project setup's record file type and bit depth", "[integration]")
 {
 	using gnubase::engine::AudioFormat;

@@ -3715,7 +3715,8 @@ namespace gnubase::engine
 			"(the default), overwrite, keepLast, stacked or mixStacked. lockRecord: Lock Record, which "
 			"keeps a recording from stopping or punching out by accident: transport.stop, transport.record and "
 			"transport.toggle stop it or punch out only with confirmed, and recording ignores the punch out at "
-			"the right locator; it stays on until it is set off.",
+			"the right locator; it stays on until it is set off. A count-in isn't a recording yet: they end it "
+			"without confirmed.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
 				"left": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},
 				"right": {"type": ["integer", "string"], "minimum": 0, "maximum": 281474976710656},

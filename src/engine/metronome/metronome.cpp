@@ -101,6 +101,17 @@ namespace gnubase::engine::metronome
 		AudioFileReader::open(path);
 	}
 
+	void SoundLibrary::keepOnly(const std::vector<std::pair<std::string, double>>& used)
+	{
+		for (auto decoded = m_decoded.begin(); decoded != m_decoded.end();)
+		{
+			if (std::find(used.begin(), used.end(), decoded->first) == used.end())
+				decoded = m_decoded.erase(decoded);
+			else
+				++decoded;
+		}
+	}
+
 	SoundLibrary::Stamp SoundLibrary::stamp(const std::string& path)
 	{
 		const std::optional<peaks::SourceStamp> found = peaks::sizeAndTime(std::filesystem::u8path(path));
@@ -128,12 +139,14 @@ namespace gnubase::engine::metronome
 		}
 
 		config->audio = settings.audio;
+		std::vector<std::pair<std::string, double>> used; // the files these settings play
 		for (size_t accent = 0; accent < g_accents; ++accent)
 		{
 			const Sample& sample = settings.samples[accent];
 			std::shared_ptr<const Sound>& sound = config->sounds[accent];
 			if (settings.sounds == Sounds::Samples && !sample.path.empty())
 			{
+				used.emplace_back(sample.path, deviceRate);
 				try
 				{
 					sound = sounds.sample(sample.path, dsp::dbToGain(settings.level + sample.level), deviceRate);
@@ -148,6 +161,7 @@ namespace gnubase::engine::metronome
 				sound = SoundLibrary::beep(
 					settings.beeps[accent], dsp::dbToGain(settings.level + settings.beeps[accent].level), deviceRate);
 		}
+		sounds.keepOnly(used); // a file or rate the settings left would stay decoded for the whole session
 
 		config->midi = settings.midi;
 		config->channel = static_cast<uint8_t>(std::clamp(settings.channel, 1, 16) - 1);
