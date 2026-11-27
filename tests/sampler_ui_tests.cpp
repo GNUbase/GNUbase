@@ -757,6 +757,42 @@ TEST_CASE("Read Automation in the sampler panel's toolbar reads all of the track
 	REQUIRE(f.app.waitUntil([&] { return !f.elements("#sampler-read[checked]").empty(); }));
 }
 
+TEST_CASE("Read Automation in the sampler panel shows the engine's state again when the engine refuses it", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
+	f.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(f.app.engine(), "holder");
+	f.open();
+	f.app.call("automationLane.add", {{"track", f.track}, {"target", {{"type", "volume"}}}, {"read", false}});
+	const uint64_t pan =
+		f.app.call("automationLane.add", {{"track", f.track}, {"target", {{"type", "pan"}}}, {"read", false}})
+			.at("lane")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#sampler-read").at(0).at("attributes").contains("disabled"); }));
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+
+	// A lane goes before the click's transaction, which then sets a lane that no longer exists.
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	holder.send("automationLane.remove", {{"lane", pan}});
+	f.click("#sampler-read");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("history.transaction") != 0);
+	holds.release(1);
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("history.transaction") == 0; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has("#sampler-message", "error"); }));
+	CHECK(f.app.waitUntil([&] { return f.elements("#sampler-read[checked]").empty(); }));
+	const Json project = f.app.call("project.get");
+	for (const Json& lane : project.at("automation"))
+		CHECK(!lane.at("read").get<bool>());
+}
+
 TEST_CASE("a change in a value field and a drag of its marker are two undo steps", "[ui]")
 {
 	Fixture f;

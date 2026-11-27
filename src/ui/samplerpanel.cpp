@@ -1122,8 +1122,16 @@ namespace gnubase::ui
 					commands.push_back(
 						{{"command", "automationLane.set"}, {"parameters", {{"lane", lane}, {"read", read}}}});
 				if (!commands.empty())
-					m_binding.send(
-						"history.transaction", {{"description", "Read Automation"}, {"commands", std::move(commands)}});
+					m_binding.send("history.transaction",
+						{{"description", "Read Automation"}, {"commands", std::move(commands)}},
+						[this, alive = std::weak_ptr<bool>(m_alive), track = m_track](const engine::Result& result)
+						{
+							if (alive.expired() || track != m_track)
+								return;
+							showMessage(result.ok() ? "" : "Read Automation failed: " + result.error);
+							if (!result.ok())
+								show(); // the toggle shows the engine's state again: a refusal brings no project read
+						});
 				return;
 			}
 			if (!m_showing && target != nullptr && target->GetId() == "sampler-zero")
