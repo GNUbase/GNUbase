@@ -151,8 +151,10 @@ Marker Tracks and Off set `ui.markerLines`.
   second (`.sorted` and `.descending` on the header, with a `.sort-arrow` in it that the themes draw: up for the
   ascending order); dragging a header moves its column, dragging the line between two headers resizes the column on
   its left, and a press within reach of the line between the locate column and the first column is a press on the first
-  column. The locate column stays first. Their order, widths and sorting are the
-  user setting `ui.markerColumns`, whose changes from MCP or Lua apply at once.
+  column. The locate column stays first. The Columns menu (`#marker-columns-menu`, items `#column-<name>`) hides and
+  shows every column but Position (p. 429: Locate and Position can't be hidden); the Locate column has no item. Their
+  order, hidden columns, widths and sorting are the user setting `ui.markerColumns` (`order`, `hidden`, `widths`,
+  `sort`, `descending`), whose changes from MCP or Lua apply at once.
 - **Auto-Scroll with Project Cursor** (`#marker-auto-scroll`, p. 427), the user setting `ui.markersAutoScroll` (on by
   default): when the arrow moves to another marker, the list scrolls as little as it takes to show its row.
 - **Marker settings** (`#marker-settings`, p. 428): Show Marker IDs on Marker Track (`ui.markerIds`), Cycle Follows
@@ -215,7 +217,7 @@ of 10 marker tracks; `tests/markers_ui_tests.cpp` the File menu's items through 
 edits send no project reads for it, and reopening lists the current markers. A mouse target test places both marker
 overlays above ordinary event lanes and checks that mouse input reaches those lanes.
 
-Not yet: cutting a range that covers a cycle marker whole or reaches out of it (#1190); hiding columns;
+Not yet: cutting a range that covers a cycle marker whole or reaches out of it (#1190);
 marker lines in the key editor; locking marker tracks; importing markers from wave files.
 
 CSV files preserve empty marker tracks with a Type Track row: Track Number, Track and Time Base identify the track, and all marker fields are empty. Such rows do not add to the returned marker count. The importer also detects semicolon-separated headers and accepts decimal commas for Position and End in those sheets; comma-separated files retain decimal points. Quoting, embedded separators, quotes and line ends keep their usual CSV meaning.

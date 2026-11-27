@@ -1271,6 +1271,71 @@ TEST_CASE(
 	}
 }
 
+TEST_CASE("the markers window hides and shows its columns, all but Locate and Position (#563, #564)", "[ui]")
+{
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	addMarker(app, {{"position", 2 * g_quarter}, {"name", "B"}});
+	addMarker(app, {{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 6 * g_quarter}, {"name", "A"}});
+	openMarkers(app, 2);
+	const ui::WindowId window = app.appUi().markersWindow();
+	Rml::ElementDocument& document = markersDocument(app);
+	const auto checked = [&document](const char* id) { return document.GetElementById(id)->HasAttribute("checked"); };
+	using Columns = std::vector<std::string>;
+	const Columns all = {"number", "type", "position", "end", "length", "description"};
+	CHECK(headerOrder(document) == all);
+	CHECK(checked("column-description"));
+
+	// A column turned off in the Columns menu leaves the header and the rows, and is kept in the setting.
+	app.ui().click(window, at("#marker-columns"), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#column-description"), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#marker-columns"), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#column-type"), ui::MouseButton::Left, 1, {});
+	const Columns shown = {"number", "position", "end", "length"};
+	REQUIRE(app.waitUntil([&document, &shown] { return headerOrder(document) == shown; }));
+	CHECK(field(document, 1, "description") == std::nullopt);
+	CHECK(markerRows(document)[0]->QuerySelector(".type") == nullptr);
+	CHECK(field(document, 1, "position").has_value());
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			return setting(app, "ui.markerColumns").value("hidden", Json::array()) ==
+				Json::array({"type", "description"});
+		}));
+	CHECK(!checked("column-description"));
+	CHECK(!checked("column-type"));
+	CHECK(checked("column-end"));
+
+	// The same in the menu turns it on again, in its place.
+	app.ui().click(window, at("#marker-columns"), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#column-type"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&document] { return headerOrder(document) == Columns{"number", "type", "position", "end", "length"}; }));
+
+	// The setting from MCP or Lua applies at once, also to the menu, a column named twice counting once. The Position
+	// column can't be hidden, nor can a column be hidden that isn't one.
+	for (const char* column : {"position", "volume"})
+	{
+		const engine::Result refused =
+			engine::Client(app.engine())
+				.call("settings.set", {{"key", "ui.markerColumns"}, {"value", {{"hidden", {column}}}}});
+		CHECK(!refused.ok());
+	}
+	app.call("settings.set", {{"key", "ui.markerColumns"}, {"value", {{"hidden", {"number", "number"}}}}});
+	REQUIRE(app.waitUntil(
+		[&document] { return headerOrder(document) == Columns{"type", "position", "end", "length", "description"}; }));
+	REQUIRE(app.waitUntil([&checked] { return !checked("column-number") && checked("column-description"); }));
+	CHECK(document.QuerySelector("#marker-columns-menu #column-position") == nullptr);
+
+	// Hidden columns stay hidden when the window opens again.
+	app.ui().key(window, "Mod+M");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().markers() == nullptr; }));
+	openMarkers(app, 2);
+	Rml::ElementDocument& reopened = markersDocument(app);
+	REQUIRE(app.waitUntil([&reopened] { return headerOrder(reopened).front() == "type"; }));
+	CHECK(headerOrder(reopened).size() == 5);
+}
+
 TEST_CASE("File > Export and File > Import > Markers write and read the marker file chosen", "[ui]")
 {
 	test::UiApp app{{1000, 700}};

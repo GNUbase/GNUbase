@@ -34,6 +34,12 @@ namespace gnubase::ui
 		constexpr std::array<const char*, 6> g_columns = {"number", "type", "position", "end", "length", "description"};
 		constexpr std::array<const char*, 6> g_headers = {"ID", "Type", "Position", "End", "Length", "Description"};
 
+		// The columns that can be hidden: all but the position (and the locate column, which is none of them).
+		bool hideable(const std::string& column)
+		{
+			return column != "position";
+		}
+
 		// The user settings the window follows.
 		constexpr std::array<const char*, 5> g_settings = {"ui.markerColumns", "ui.markersAutoScroll",
 			"ui.markersSyncSelection", "ui.markerIds", "transport.cycleFollowsMarkers"};
@@ -151,12 +157,16 @@ namespace gnubase::ui
 			columns.sort = sort->get<std::string>();
 		const auto descending = value.find("descending");
 		columns.descending = descending != value.end() && descending->is_boolean() && descending->get<bool>();
+		if (const auto hidden = value.find("hidden"); hidden != value.end() && hidden->is_array())
+			for (const char* column : g_columns)
+				if (hideable(column) && std::find(hidden->begin(), hidden->end(), Json(column)) != hidden->end())
+					columns.hidden.emplace_back(column);
 		return columns;
 	}
 
 	Json MarkersWindow::Columns::json() const
 	{
-		return {{"order", order}, {"widths", widths}, {"sort", sort}, {"descending", descending}};
+		return {{"order", order}, {"hidden", hidden}, {"widths", widths}, {"sort", sort}, {"descending", descending}};
 	}
 
 	MarkersWindow::MarkersWindow(engine::Engine& engine, EngineBinding& binding, Rml::ElementDocument& document)
@@ -286,6 +296,7 @@ namespace gnubase::ui
 				return; // as shown: the answer to the window's own change
 			m_columns = std::move(columns);
 			showHead();
+			showColumnMenu();
 			show();
 			return;
 		}
@@ -344,6 +355,8 @@ namespace gnubase::ui
 		std::string cells = R"(<td class="locate"/>)";
 		for (const std::string& column : m_columns.order)
 		{
+			if (m_columns.hides(column))
+				continue;
 			const auto index =
 				static_cast<size_t>(std::find(g_columns.begin(), g_columns.end(), column) - g_columns.begin());
 			std::string classes = column;
@@ -367,6 +380,16 @@ namespace gnubase::ui
 			if (width != m_columns.widths.end())
 				cell->SetProperty(Rml::PropertyId::Width, Rml::Property(width->get<float>(), Rml::Unit::DP));
 		}
+	}
+
+	// The Columns menu's items are on for the columns shown.
+	void MarkersWindow::showColumnMenu()
+	{
+		if (!alive())
+			return;
+		for (const char* column : g_columns)
+			if (hideable(column))
+				setChecked(m_document->GetElementById(std::string("column-") + column), !m_columns.hides(column));
 	}
 
 	void MarkersWindow::show()
@@ -409,6 +432,8 @@ namespace gnubase::ui
 			rows += R"(<td class="locate"><svg class="icon locate-arrow" src="../icons/transport-play.svg"/></td>)";
 			for (const std::string& column : m_columns.order)
 			{
+				if (m_columns.hides(column))
+					continue;
 				if (column == "number")
 					rows += field(column, std::to_string(marker.number));
 				else if (column == "type")
@@ -666,7 +691,7 @@ namespace gnubase::ui
 	{
 		if (target == nullptr)
 			return;
-		const auto on = [target](const char* id)
+		const auto on = [target](const std::string& id)
 		{
 			for (const Rml::Element* element = target; element != nullptr; element = element->GetParentNode())
 				if (element->GetId() == id)
@@ -689,6 +714,20 @@ namespace gnubase::ui
 						if (!token.expired() && !result.ok() && alive())
 							setChecked(m_document->GetElementById(id), m_flags.at(key));
 					});
+				return;
+			}
+		for (const char* column : g_columns)
+			if (const std::string id = std::string("column-") + column; hideable(column) && on(id))
+			{
+				// The item turns itself after this listener: the column shows if the item was off.
+				const Rml::Element* item = m_document->GetElementById(id);
+				const bool shown = item != nullptr && !item->HasAttribute("checked");
+				std::vector<std::string> hidden;
+				for (const char* each : g_columns)
+					if (hideable(each) && (std::string(each) == column ? !shown : m_columns.hides(each)))
+						hidden.emplace_back(each);
+				m_columns.hidden = std::move(hidden);
+				saveColumns();
 				return;
 			}
 		if (on("add-position-marker"))
