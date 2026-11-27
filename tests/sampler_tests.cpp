@@ -1279,6 +1279,27 @@ TEST_CASE("sampler.create makes a sampler track from a clip, an event's section 
 	CHECK(run(client, "project.get").at("tracks").size() == tracks - 1);
 }
 
+TEST_CASE("sampler.create takes the track's MIDI input", "[integration]")
+{
+	// The Add Track dialog's Input Routing (reference manual p. 144): all MIDI inputs by default.
+	Session session;
+	Client& client = session.client;
+	CHECK(run(client, "sampler.create").at("channel").at("midiInput") == "all");
+	const Json none = run(client, "sampler.create", {{"midiInput", "none"}});
+	CHECK(none.at("channel").at("midiInput") == "none");
+	const auto channel = none.at("channel").at("id");
+	const Json project = run(client, "project.get");
+	for (const Json& each : project.at("channels"))
+		if (each.at("id") == channel)
+			CHECK(each.at("midiInput") == "none");
+	CHECK(run(client, "sampler.create", {{"midiInput", "chordPads"}}).at("channel").at("midiInput") == "chordPads");
+	CHECK_THAT(reject(client, "sampler.create", {{"midiInput", "keys"}}), ContainsSubstring("midiInput"));
+	// One undo step with the track.
+	const size_t tracks = run(client, "project.get").at("tracks").size();
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("tracks").size() == tracks - 1);
+}
+
 TEST_CASE("sampler.load swaps the sample, resetting the settings unless they are kept", "[integration]")
 {
 	Session session;

@@ -206,6 +206,7 @@ namespace gnubase::ui
 			R"(<div class="sampler-panel empty" id="sampler-panel">)"
 			R"(<div class="sampler-hint">Select a sampler track</div>)"
 			R"(<div class="sampler-toolbar">)"
+			R"(<button id="sampler-read" type="toggle" title="Read Automation" disabled="">Read</button>)"
 			R"(<span id="sampler-received" class="sampler-received" title="Event Received Indicator"/>)"
 			R"(<button id="sampler-zero" type="toggle" title="Snap to Zero Crossing">Zero</button>)"
 			R"(<button id="sampler-import" title="Import Audio File">Import</button>)"
@@ -434,6 +435,16 @@ namespace gnubase::ui
 			for (const Json& item : channel->value("instrumentParameters", Json::array()))
 				values[item.at("parameter").get<uint32_t>()] = item.at("value").get<double>();
 		m_values = std::move(values);
+		m_lanes.clear();
+		m_reading = true;
+		if (const auto lanes = project.find("automation"); channel != nullptr && lanes != project.end())
+			for (const Json& lane : *lanes)
+				if (lane.at("track") == track)
+				{
+					m_lanes.push_back(lane.at("id").get<uint64_t>());
+					m_reading = m_reading && lane.at("read").get<bool>();
+				}
+		m_reading = m_reading && !m_lanes.empty();
 		uint64_t media = 0;
 		int64_t length = 0;
 		std::string file = "No sample";
@@ -488,6 +499,15 @@ namespace gnubase::ui
 			}
 		}
 		setChecked(find("sampler-lock"), m_lock);
+		setChecked(find("sampler-read"), m_reading);
+		if (Rml::Element* read = find("sampler-read");
+			read != nullptr && read->HasAttribute("disabled") != m_lanes.empty())
+		{
+			if (m_lanes.empty())
+				read->SetAttribute("disabled", "");
+			else
+				read->RemoveAttribute("disabled");
+		}
 		setChecked(find("sampler-zero"), m_snapToZero);
 		if (Rml::Element* format = find("sampler-ruler-format"))
 			widgets::fill(
@@ -1091,6 +1111,27 @@ namespace gnubase::ui
 			{
 				m_lock = event.GetParameter<bool>("value", false);
 				saveSettings();
+				return;
+			}
+			if (!m_showing && target != nullptr && target->GetId() == "sampler-read" && m_track != 0)
+			{
+				// Every automation lane of the track reads, or none does, as the track list's button does (p. 712).
+				const bool read = event.GetParameter<bool>("value", false);
+				Json commands = Json::array();
+				for (const uint64_t lane : m_lanes)
+					commands.push_back(
+						{{"command", "automationLane.set"}, {"parameters", {{"lane", lane}, {"read", read}}}});
+				if (!commands.empty())
+					m_binding.send("history.transaction",
+						{{"description", "Read Automation"}, {"commands", std::move(commands)}},
+						[this, alive = std::weak_ptr<bool>(m_alive), track = m_track](const engine::Result& result)
+						{
+							if (alive.expired() || track != m_track)
+								return;
+							showMessage(result.ok() ? "" : "Read Automation failed: " + result.error);
+							if (!result.ok())
+								show(); // the toggle shows the engine's state again: a refusal brings no project read
+						});
 				return;
 			}
 			if (!m_showing && target != nullptr && target->GetId() == "sampler-zero")
