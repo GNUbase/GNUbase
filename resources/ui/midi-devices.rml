@@ -417,6 +417,7 @@
 						assert(to ~= nil, "Drop the preset on a bank, folder or preset")
 						key = "patch" .. b .. "-" .. p
 						if before ~= patch then
+							local from = normal(patch.folder)
 							table.remove(bank.patches, p)
 							patch.folder = toFolder ~= "" and toFolder or nil
 							local at = #to.patches + 1
@@ -425,6 +426,18 @@
 							end
 							table.insert(to.patches, at, patch)
 							key = "patch" .. toB .. "-" .. at
+							-- A folder stays until it is removed, also once its last preset has been moved out.
+							local kept = from == ""
+							for _, other in ipairs(bank.patches) do
+								kept = kept or inside(normal(other.folder), from)
+							end
+							for _, path in ipairs(bank.folders or {}) do
+								kept = kept or inside(normal(path), from)
+							end
+							if not kept then
+								bank.folders = bank.folders or {}
+								bank.folders[#bank.folders + 1] = from
+							end
 						end
 					elseif action == "preset" or action == "multiple" then
 						local count = 1

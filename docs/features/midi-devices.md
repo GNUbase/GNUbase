@@ -50,7 +50,8 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   theirs in the selected folder too. Folders nest: the tree shows a folder's subfolders and presets in the order they
   first appear in the bank's patches, then its folders without presets. Renaming a folder (a name without `/`) takes the
   folders and presets inside it along, and removing it removes them. A preset dragged onto a bank or a folder goes to
-  its end, one dragged onto a preset goes before it, into that preset's bank and folder.
+  its end, one dragged onto a preset goes before it, into that preset's bank and folder. The folder it leaves stays,
+  also once it has no preset left.
 - **Bank Assignment** (pp. 1109, 1111). A device with several banks can give a MIDI channel one of them:
   `bankAssignment`, the bank's index in `banks` by the channel's number from `"1"` to `"16"`, which `midiDevice.set`
   replaces (a channel it leaves out uses all banks) and keeps by index when it is left out, dropping indices past the
