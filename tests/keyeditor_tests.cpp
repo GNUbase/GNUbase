@@ -486,17 +486,22 @@ TEST_CASE("a MIDI keyboard plays into the key editor whose step or MIDI input we
 	midi::DummyBackend* backend = nullptr;
 	Fixture f(dummyMidi(&backend));
 	backend->addLoopback("Keys");
+	backend->addLoopback("Surface"); // a control surface, outside all MIDI inputs
 	f.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
 	f.call("midi.ports"); // opens the inputs
+	f.call("midi.setPort", {{"id", "Surface"}, {"input", true}, {"inAllInputs", false}});
 	const std::unique_ptr<midi::Output> keys = backend->openOutput("Keys");
-	const auto send = [&keys](uint8_t status, uint8_t pitch, uint8_t velocity)
+	const std::unique_ptr<midi::Output> surface = backend->openOutput("Surface");
+	const auto sendTo = [](midi::Output& output, uint8_t status, uint8_t pitch, uint8_t velocity)
 	{
 		audio::MidiMessage message;
 		message.size = 3;
 		message.bytes = {status, pitch, velocity};
 		constexpr HostTime second = 1000000000;
-		keys->send(message, hostTime() - second);
+		output.send(message, hostTime() - second);
 	};
+	const auto send = [&keys, &sendTo](uint8_t status, uint8_t pitch, uint8_t velocity)
+	{ sendTo(*keys, status, pitch, velocity); };
 	// Renders until the condition holds: offline the test runs midi.activity, which the engine runs itself while a
 	// device runs; it posts editor.played, which posts editor.input.
 	const auto until = [&f](const std::function<bool()>& condition)
@@ -535,6 +540,18 @@ TEST_CASE("a MIDI keyboard plays into the key editor whose step or MIDI input we
 	send(0x80, 50, 0);
 	f.call("audio.render", {{"frames", 64}});
 	f.call("editor.set", {{"editor", "window"}, {"midiInput", true}});
+	// The control surface's notes go nowhere either: had they gone in, the selected note would get 55, not 52.
+	sendTo(*surface, 0x90, 55, 100);
+	sendTo(*surface, 0x80, 55, 0);
+	bool surfaceReceived = false; // in before the keys' note, so that it would go into the selected note first
+	for (int tries = 0; tries < 2000 && !surfaceReceived; ++tries)
+	{
+		f.call("audio.render", {{"frames", 64}});
+		surfaceReceived = !f.call("midi.activity").at("received").empty();
+		if (!surfaceReceived)
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	CHECK(surfaceReceived);
 	send(0x90, 52, 100);
 	send(0x80, 52, 0);
 	CHECK(until([&f, &ids] { return f.pitches({ids[1]}) == std::vector<int>{52}; }));
