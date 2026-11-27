@@ -73,8 +73,12 @@ namespace gnubase::engine::midi
 						{"program", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
 						{"bank", {{"type", "integer"}, {"minimum", 0}, {"maximum", g_maxBank}}}}},
 				{"required", {"name", "program"}}};
+			// folders: the folders that the bank lists even without patches (New Folder, reference manual p. 1111),
+			// as paths with / between nested folders, as a patch's folder.
 			const Json bank = {{"type", "object"},
-				{"properties", {{"name", {{"type", "string"}}}, {"patches", {{"type", "array"}, {"items", patch}}}}},
+				{"properties",
+					{{"name", {{"type", "string"}}}, {"patches", {{"type", "array"}, {"items", patch}}},
+						{"folders", {{"type", "array"}, {"items", {{"type", "string"}}}}}}},
 				{"required", {"name", "patches"}}};
 			return {{"type", "array"}, {"items", bank}};
 		}
@@ -90,7 +94,7 @@ namespace gnubase::engine::midi
 
 		// Export Setup and Import Setup (reference manual pp. 1110, 1115): MIDI devices in an XML file of GNUbase's,
 		// <MidiDevices> with a <Device name> each, its <Bank name>s with their <Patch name program bank folder>s and
-		// its <BankAssignment channel bank>s. Programs and banks count from 0, as in midi.devices.
+		// <Folder name>s and its <BankAssignment channel bank>s. Programs and banks count from 0, as in midi.devices.
 		std::string writeSetup(const Json& devices)
 		{
 			pugi::xml_document document;
@@ -113,6 +117,8 @@ namespace gnubase::engine::midi
 						if (patch.contains("folder"))
 							patchNode.append_attribute("folder") = patch.at("folder").get<std::string>().c_str();
 					}
+					for (const Json& folder : bank.value("folders", Json::array()))
+						bankNode.append_child("Folder").append_attribute("name") = folder.get<std::string>().c_str();
 				}
 				const Json assignment = device.value("bankAssignment", Json::object());
 				for (const auto& [channel, bank] : assignment.items())
@@ -177,7 +183,10 @@ namespace gnubase::engine::midi
 							patch["folder"] = folder.value();
 						patches.push_back(std::move(patch));
 					}
-					banks.push_back({{"name", bankNode.attribute("name").value()}, {"patches", std::move(patches)}});
+					Json bank = {{"name", bankNode.attribute("name").value()}, {"patches", std::move(patches)}};
+					for (const pugi::xml_node folder : bankNode.children("Folder"))
+						bank["folders"].push_back(folder.attribute("name").value());
+					banks.push_back(std::move(bank));
 				}
 				Json device = {{"banks", std::move(banks)}};
 				Json assignment = Json::object();
@@ -261,7 +270,9 @@ namespace gnubase::engine::midi
 		engine.registerCommand(
 			{"midiDevice.set", 1,
 				"Replaces an installed MIDI device's patch banks (reference manual pp. 1111-1114). Each bank has a "
-				"name and patches; each patch has a name, program (0 to 127), optional bank (0 to 16383) and folder. "
+				"name, patches and optional folders; each patch has a name, program (0 to 127), optional bank (0 to "
+				"16383) and folder, a path with / between nested folders. folders lists folders that the bank keeps "
+				"even while no patch is in them (New Folder). "
 				"bankAssignment, the Bank Assignment (p. 1109), replaces the bank that MIDI channels use, by index "
 				"in banks, keyed by the channel's number from \"1\" to \"16\": the program selector of a MIDI track "
 				"on such a channel (Any is 1) offers only that bank's patches. Without it the device keeps its "

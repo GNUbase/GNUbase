@@ -690,7 +690,9 @@ namespace gnubase::engine::settings
 					"The installed MIDI devices (midiDevice.install), by name: each has banks and an optional "
 					"bankAssignment. Each bank has a name and patches, each patch a name, a program (0 to 127), an "
 					"optional bank (0 to 16383, sent as bank select MSB and LSB) and an optional folder it is listed "
-					"in. bankAssignment gives MIDI channels \"1\" to \"16\" a bank by its index (midiDevice.set). A "
+					"in, a path with / between nested folders; a bank's optional folders are folders it keeps even "
+					"while they are empty. bankAssignment gives MIDI channels \"1\" to \"16\" a bank by its index "
+					"(midiDevice.set). A "
 					"MIDI track that names a device (channel.set device) chooses its program and bank by patch.",
 					midi::devicesSchema(), Json::object()},
 				{"midi.importAutomation",
