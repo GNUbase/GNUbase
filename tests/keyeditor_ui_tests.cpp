@@ -2409,15 +2409,16 @@ TEST_CASE("the expression editor stays centered on its note as the pitches zoom"
 }
 
 TEST_CASE("the lower zone's key editor at its default size gives the note display more room than the controller lanes, "
-		  "at dp ratios 1 and 2",
+		  "at dp ratios 1 and 1.5",
 	"[ui]")
 {
 	// The lower zone at its default 240 dp, with the Velocity lane and the footer below the note display: the lanes
 	// give way first, down to their footer, and their list scrolls (#1775). The window is 1024 x 768 pixels, as large
-	// as CI's Linux screen lets it be: at a dp ratio of 1 the toolbar is one row, the note display the larger part of
-	// the editor, and in a lower zone of 400 dp the lanes keep their whole height; at 2, 512 x 384 dp, the toolbar
-	// wraps and leaves less than the note display's 40% and the lanes, so the lanes are down to their footer.
-	for (const float ratio : {1.0F, 2.0F})
+	// as CI's Linux screen lets it be: at a dp ratio of 1 the toolbar is two rows, the note display the larger part of
+	// the editor, and in a lower zone of 400 dp the lanes keep their whole height; at 1.5, 683 x 512 dp, the toolbar
+	// wraps to three rows and leaves less than the note display's 40% and the lanes, so the lanes are down to their
+	// footer. At 2, 512 x 384 dp, it wraps to five rows and leaves the editor no room for the footer.
+	for (const float ratio : {1.0F, 1.5F})
 	{
 		INFO("dp ratio " << ratio);
 		const auto px = [ratio](double dp) { return dp * ratio; };
