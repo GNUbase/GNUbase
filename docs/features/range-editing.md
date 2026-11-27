@@ -18,7 +18,7 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
 |---|---|---|
 | `range.split` | Splits the events and parts at the range's edges (at its start for a range of no length) | p. 293 |
 | `range.crop` | Cuts the events and parts that cross an edge to the range; those inside or outside stay | pp. 293-294 |
-| `range.delete` | Deletes what is in the range, and the part of the cycle markers it lies in; `time` (Delete Time) closes the gap | pp. 292, 425 |
+| `range.delete` | Deletes what is in the range, markers too; `time` (Delete Time) closes the gap | pp. 292, 425 |
 | `range.insertSilence` | Moves what lies after the range's start, cut there, on by the range's length | pp. 292-293 |
 | `range.copy` | Copies the range to the range clipboard; without a range everything between the locators (Global Copy); with `events` those events and parts whole | p. 292 |
 | `range.cut` | `range.copy`, then `range.delete`; `time` (Cut Time) closes the gap; with `events` it copies and removes those | pp. 292, 425 |
@@ -92,9 +92,9 @@ changes nothing if it fails; `range.copy` changes nothing in the project at all.
   finds no track there, or one of a type that can't take what was copied from it, goes onto the track it came from.
   With `snap` a clipboard of events lands so that the snap point of its first audio event (not one in a part), or that
   event's start, lies at the position; a range's copy pastes at its start as without it.
-- **Cycle markers.** Without `time`, `range.delete` and `range.cut` take the range out of a cycle marker on a marker
-  track in the range that it lies in (p. 425): shortened, or split in two ([markers.md](markers.md)). Other markers
-  stay.
+- **Markers.** Without `time`, `range.delete` and `range.cut` take the range out of the markers on the marker tracks
+  in the range as out of events (p. 425, #1190): the markers in it go, and a cycle marker across an edge is shortened,
+  or split in two, the piece after the range keeping its id and number ([markers.md](markers.md)).
 - **Moving** (`range.move`) cuts what lies in the range at its edges and moves it to `position`, in one undo step and
   leaving the clipboard as it is. What moves keeps its id, so an editor open on a moved part keeps it, a crossfade
   between two moved events stays, also one between an audio part's event and an event outside the part when both move,
