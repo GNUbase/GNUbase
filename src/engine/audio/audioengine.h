@@ -246,9 +246,10 @@ namespace gnubase::engine
 
 		Json mixdown(const Json& parameters, const Json& project, JobContext* job);
 		void rebuild();
-		// audio.setDevice: opens the device, starts it if asked or if the one it replaces ran, falls back to the dummy
-		// device and saves the choice as the user's if asked (start, fallBackToDummy, remember).
-		void replaceDevice(CommandContext& context);
+		// audio.setDevice with these parameters: opens the device, starts it if asked or if the one it replaces ran,
+		// falls back to the backend's default device (audio.fallbackDevice default) or the dummy device and saves the
+		// choice as the user's if asked (start, fallBackToDummy, remember).
+		void replaceDevice(CommandContext& context, Json parameters);
 		// keepMeasurement: a reset, which keeps the loudness measurement if the sample rate stays.
 		void setDevice(const Json& parameters, bool keepMeasurement = false);
 		void openDummy(const Json& parameters);
@@ -427,9 +428,10 @@ namespace gnubase::engine
 		std::vector<std::unique_ptr<audio::Backend>> m_backends;
 		std::string m_backend; // the device's
 		Json m_parameters;     // what audio.setDevice opened the device with
-		// The device the last audio.setDevice couldn't open or start, so the dummy device plays instead
-		// (fallBackToDummy): its backend, id and the reason. Null if it opened.
+		// The device the last audio.setDevice couldn't open or start, so a fallback plays instead (fallBackToDummy):
+		// its backend, id and the reason. Null if it opened. And the parameters it was to open with, for audio.reset.
 		Json m_failed = nullptr;
+		Json m_failedParameters = nullptr;
 		// The last audio.setDevice failed and left no running device although it was to run one: the next one
 		// starts unless told otherwise. audio.start and audio.stop decide anew.
 		bool m_startAfterFailure = false;

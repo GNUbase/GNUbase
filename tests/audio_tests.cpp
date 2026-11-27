@@ -1294,6 +1294,13 @@ TEST_CASE(
 	driver->connected = true;
 	CHECK(run(client, "audio.setDevice", {{"backend", "fake"}}).at("running") == true);
 
+	// An audio.start that fails because the failed switch left no device keeps that: the caller asked for it to run.
+	driver->connected = false;
+	reject(client, "audio.setDevice", {{"backend", "fake"}});
+	CHECK_THAT(reject(client, "audio.start"), ContainsSubstring("there is no audio device"));
+	driver->connected = true;
+	CHECK(run(client, "audio.setDevice", {{"backend", "fake"}}).at("running") == true);
+
 	// audio.stop decides anew: after a failure while stopped, the next device stays stopped.
 	run(client, "audio.stop");
 	driver->connected = false;
@@ -1380,6 +1387,77 @@ TEST_CASE("audio.setDevice falls back to the dummy device if asked to, and audio
 	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
 }
 
+TEST_CASE("audio.setDevice falls back to the backend's default device first with the fallback device default",
+	"[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "default"}});
+
+	// An unplugged interface plays on its backend's default device instead, as a lost one does.
+	Json status = run(client, "audio.setDevice",
+		{{"backend", "fake"}, {"device", "fake-2"}, {"fallBackToDummy", true}, {"start", true}});
+	CHECK(status.at("device").at("backend") == "fake");
+	CHECK(status.at("device").at("id") == "fake-1");
+	CHECK(status.at("running") == true);
+	CHECK(status.at("failed") == Json{{"backend", "fake"}, {"device", "fake-2"}, {"reason", "no device fake-2"}});
+
+	// At the sample rate and block size asked for; if the default device can't run at them, the dummy device can.
+	status = run(client, "audio.setDevice",
+		{{"backend", "fake"}, {"device", "fake-2"}, {"blockSize", 128}, {"fallBackToDummy", true}});
+	CHECK(status.at("device").at("id") == "fake-1");
+	CHECK(status.at("device").at("blockSize") == 128);
+	status = run(client, "audio.setDevice",
+		{{"backend", "fake"}, {"device", "fake-2"}, {"sampleRate", 96000}, {"fallBackToDummy", true}});
+	CHECK(status.at("device").at("backend") == "dummy");
+	CHECK(status.at("device").at("sampleRate") == 96000.0);
+	CHECK(status.at("failed").at("device") == "fake-2");
+
+	// The default device that failed itself isn't tried twice; the dummy device plays.
+	driver->connected = false;
+	status = run(client, "audio.setDevice", {{"backend", "fake"}, {"fallBackToDummy", true}});
+	CHECK(status.at("device").at("backend") == "dummy");
+	CHECK(status.at("failed").at("reason") == "fake-1 is not connected");
+
+	// With the dummy device as the fallback device, or none, the dummy device plays as fallBackToDummy says.
+	driver->connected = true;
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "none"}});
+	status = run(client, "audio.setDevice", {{"backend", "fake"}, {"device", "fake-2"}, {"fallBackToDummy", true}});
+	CHECK(status.at("device").at("backend") == "dummy");
+	run(client, "audio.stop");
+}
+
+TEST_CASE("audio.reset tries the device that failed again while a fallback plays for it", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	driver->connected = false;
+	run(client, "audio.setDevice",
+		{{"backend", "fake"}, {"device", "fake-1"}, {"blockSize", 128}, {"fallBackToDummy", true}, {"start", true}});
+
+	// Still gone: the fallback plays again, running as before, and failed stays.
+	Json status = run(client, "audio.reset");
+	CHECK(status.at("device").at("backend") == "dummy");
+	CHECK(status.at("running") == true);
+	CHECK(status.at("failed").at("device") == "fake-1");
+
+	// Back: it opens with what it was asked to open with and runs as the fallback did, and failed ends.
+	driver->connected = true;
+	status = run(client, "audio.reset");
+	CHECK(status.at("device").at("id") == "fake-1");
+	CHECK(status.at("device").at("blockSize") == 128);
+	CHECK(status.at("running") == true);
+	CHECK(status.at("failed").is_null());
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("device").is_object() && data.at("device").at("id") == "fake-1"; }));
+
+	// Without a failure, audio.reset opens the device it has again, as before.
+	CHECK(run(client, "audio.reset").at("device").at("id") == "fake-1");
+	run(client, "audio.stop");
+}
+
 TEST_CASE("an empty backend is the platform's default backend, or the preferred one if the engine lacks it", "[unit]")
 {
 	Engine engine(fakeBackends(std::make_shared<FakeDriver>()));
@@ -1441,11 +1519,9 @@ TEST_CASE("audio.setDevice with remember saves the device for the next start as 
 		CHECK(run(client, "settings.get", {{"key", "audio.device"}}).at("value").get<std::string>().empty());
 		CHECK(run(client, "settings.get", {{"key", "audio.backend"}}).at("value") == "fake");
 
-		// remember, start and fallBackToDummy belong to the command, not to the device's settings that audio.reset
-		// reopens it with.
-		run(client, "audio.setDevice", {{"backend", "fake"}, {"remember", true}, {"start", false}});
-		CHECK(run(client, "audio.reset").at("device").at("backend") == "fake");
-		CHECK_THAT(reject(client, "audio.set", {{"remember", true}}), ContainsSubstring("remember"));
+		// remember, start and fallBackToDummy belong to the command, not to the device's settings.
+		for (const char* key : {"remember", "start", "fallBackToDummy"})
+			CHECK_THAT(reject(client, "audio.set", {{key, true}}), ContainsSubstring(key));
 	}
 	Engine engine(fakeBackends(std::make_shared<FakeDriver>()), dir.path());
 	Client client(engine);

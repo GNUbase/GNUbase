@@ -326,19 +326,21 @@ namespace
 		{
 			if (!config.device.empty() && config.device != "fake-1")
 				throw gnubase::audio::DeviceError("no device " + config.device);
+			// Unlike the dummy device, the driver runs at 44100 Hz and blocks of 512 frames unless asked otherwise.
 			gnubase::audio::DeviceFormat format;
-			format.sampleRate = config.sampleRate == 0.0 ? format.sampleRate : config.sampleRate;
-			format.blockSize = config.blockSize == 0 ? format.blockSize : config.blockSize;
+			format.sampleRate = config.sampleRate == 0.0 ? 44100.0 : config.sampleRate;
+			format.blockSize = config.blockSize == 0 ? 512 : config.blockSize;
 			return std::make_unique<FakeDevice>(format);
 		}
 	};
 
-	// The fake interface's backend, the preferred one, and the dummy device's.
-	std::vector<std::unique_ptr<gnubase::audio::Backend>> fakeBackends()
+	// The fake interface's backend, the preferred one, and the dummy device's unless told otherwise.
+	std::vector<std::unique_ptr<gnubase::audio::Backend>> fakeBackends(bool dummy = true)
 	{
 		std::vector<std::unique_ptr<gnubase::audio::Backend>> backends;
 		backends.push_back(std::make_unique<FakeBackend>());
-		backends.push_back(std::make_unique<gnubase::audio::DummyBackend>());
+		if (dummy)
+			backends.push_back(std::make_unique<gnubase::audio::DummyBackend>());
 		return backends;
 	}
 
@@ -378,6 +380,10 @@ TEST_CASE("the windowed app starts the device the user chose last, so Play moves
 		CHECK(status.at("device").at("backend") == "fake");
 		CHECK(status.at("running") == true);
 		CHECK(status.at("failed").is_null());
+		// Without --sample-rate and --block-size: the project's sample rate, which the driver supports, and the
+		// driver's block size.
+		CHECK(status.at("device").at("sampleRate") == 48000.0);
+		CHECK(status.at("device").at("blockSize") == 512);
 		call(client, "transport.play");
 		CHECK(moves(client));
 
@@ -457,17 +463,65 @@ TEST_CASE("the windowed app starts on the dummy device if the device chosen last
 		CHECK(status.at("failed").at("backend") == "coreaudio-elsewhere");
 	}
 
+	// With the fallback device default, an unplugged interface plays on its backend's default device instead.
+	{
+		gnubase::engine::Client client(*engine);
+		call(client, "settings.set", {{"key", "audio.backend"}, {"value", "fake"}});
+		call(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "default"}});
+	}
+	engine.reset();
+	engine = start(Options{}, errors);
+	CHECK_THAT(errors, ContainsSubstring("cannot use the audio device (fake fake-2), playing on fake fake-1 instead"));
+	{
+		gnubase::engine::Client client(*engine);
+		const Json status = call(client, "audio.get");
+		CHECK(status.at("device").at("id") == "fake-1");
+		CHECK(status.at("running") == true);
+		CHECK(status.at("failed").at("device") == "fake-2");
+		call(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "none"}});
+		call(client, "settings.set", {{"key", "audio.backend"}, {"value", "coreaudio-elsewhere"}});
+	}
+
 	// --audio wins over the user's choice, and isn't saved.
 	engine.reset();
 	Options options;
 	options.audio = "fake";
 	engine = start(options, errors);
 	CHECK(errors.empty());
+	{
+		gnubase::engine::Client client(*engine);
+		const Json status = call(client, "audio.get");
+		CHECK(status.at("device").at("id") == "fake-1");
+		CHECK(status.at("running") == true);
+		CHECK(call(client, "settings.get", {{"key", "audio.backend"}}).at("value") == "coreaudio-elsewhere");
+	}
+
+	// A backend given with --audio that can't be used falls back like a saved one.
+	engine.reset();
+	options.audio = "asio-from-another-pc";
+	engine = start(options, errors);
+	CHECK_THAT(errors, ContainsSubstring("cannot use the audio device (asio-from-another-pc ), playing on the dummy"));
 	gnubase::engine::Client client(*engine);
 	const Json status = call(client, "audio.get");
-	CHECK(status.at("device").at("id") == "fake-1");
+	CHECK(status.at("device").at("backend") == "dummy");
 	CHECK(status.at("running") == true);
-	CHECK(call(client, "settings.get", {{"key", "audio.backend"}}).at("value") == "coreaudio-elsewhere");
+	CHECK(status.at("failed").at("backend") == "asio-from-another-pc");
+}
+
+TEST_CASE("the windowed app doesn't start if not even the dummy device opens", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	gnubase::engine::Engine engine(fakeBackends(false), dir.path());
+	{
+		gnubase::engine::Client client(engine);
+		call(client, "settings.set", {{"key", "audio.backend"}, {"value", "fake"}});
+		call(client, "settings.set", {{"key", "audio.device"}, {"value", "fake-2"}}); // unplugged
+	}
+	std::ostringstream err;
+	CHECK(!setUpWindowedEngine(engine, Options{}, err)); // so the app exits with g_exitSetup
+	CHECK_THAT(err.str(), ContainsSubstring("gnubase: cannot set up the audio device: no device fake-2"));
+	gnubase::engine::Client client(engine);
+	CHECK(call(client, "audio.get").at("device").is_null());
 }
 
 TEST_CASE("headless runs and tests open the dummy device stopped, whatever the user chose", "[integration]")

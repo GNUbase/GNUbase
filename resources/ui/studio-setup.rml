@@ -423,14 +423,20 @@
 				"element:GetAttribute('value'))\">" .. table.concat(inputs) .. "</select>") .. table.concat(fields)
 		end
 
-		-- Why the device chosen last can't be used while the dummy device plays instead (failed in audio.get), or nil.
+		-- Why the device chosen last can't be used while a fallback plays instead (failed in audio.get), or nil: the
+		-- dummy device, or the backend's default device with the fallback device default.
 		local function failure(status)
 			local failed = status.failed
 			if failed == nil then
 				return nil
 			end
+			local device = status.device
+			local instead = "the dummy device"
+			if device ~= nil and device.backend ~= "dummy" then
+				instead = device.backend .. " - " .. (device.name ~= "" and device.name or device.id)
+			end
 			return "Cannot use " .. failed.backend .. (failed.device ~= "" and " - " .. failed.device or "") .. ": " ..
-				failed.reason .. "; the dummy device plays instead"
+				failed.reason .. "; " .. instead .. " plays instead"
 		end
 
 		-- Shows the errors of commands that failed, and why the device chosen last can't be used.
@@ -655,10 +661,18 @@
 			local errors = {}
 			local device = setup.status.device
 			local driver = setup.drivers[tonumber(valueOf(document:GetElementById("driver")))]
+			local fallback = setup.status.failed ~= nil
 			if driver ~= nil and (device == nil or driver.backend ~= device.backend or driver.device ~= device.id) then
 				-- Another driver: the pages showed the old device, whose settings don't apply to the new one. It runs if
 				-- the old one ran, and the app opens it again when it starts.
 				call(errors, gnubase.audio.setDevice, {backend = driver.backend, device = driver.device, remember = true})
+			elseif driver ~= nil and fallback then
+				-- The fallback that plays for the device chosen last, which couldn't be used: Apply makes it the user's
+				-- choice, with what the pages changed.
+				if call(errors, gnubase.audio.setDevice, {backend = driver.backend, device = driver.device,
+					remember = true}) then
+					applyAudioDevice(document, errors, gnubase.audio.get().device)
+				end
 			elseif device ~= nil then
 				applyAudioDevice(document, errors, device)
 			end
