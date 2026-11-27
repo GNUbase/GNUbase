@@ -190,6 +190,12 @@ namespace gnubase::ui
 		void reveal(uint64_t channel);
 		void scrollToRevealed();
 		void link(const std::string& item);
+		// The Link Group Settings dialog (link-group-settings.rml, reference manual pp. 457-459) for a link group,
+		// filled from it; OK sends what it shows with linkGroup.set. showLinkSettings enables its fields for Use VCA
+		// Fader, which turns the volume off and, when vcaChanged, on again without it (p. 517).
+		void openLinkSettings(uint64_t group);
+		void showLinkSettings(bool vcaChanged);
+		void linkSettingsEvent(Rml::Event& event);
 
 		EngineBinding& m_binding;
 		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
@@ -222,8 +228,10 @@ namespace gnubase::ui
 		int m_viewSends = 0;        // its mixer.set commands not answered yet
 		uint64_t m_linkChannel = 0; // the channel whose display line's menu opened last
 		uint64_t m_revealing = 0;   // the channel Find Track/Channel picked, until its strip is in view
-		bool m_updating = false;    // while the strips show the project's values
-		bool m_dropping = false;    // while another project drops the notes being typed
+		Rml::ObserverPtr<Rml::Element> m_linkDialog; // link-group-settings.rml while open
+		uint64_t m_linkDialogGroup = 0;              // the group it is for
+		bool m_updating = false;                     // while the strips show the project's values
+		bool m_dropping = false;                     // while another project drops the notes being typed
 		SoloHold m_soloHold;
 		double m_defaultSendLevel = 0.0; // the user setting audio.defaultSendLevel
 		// The Global Meter Settings (reference manual p. 467): meter.holdPeaks, meter.holdForever, meter.peakHoldTime;

@@ -1338,7 +1338,7 @@ TEST_CASE("the display line's menu moves a channel between link groups, unlinks 
 	app.ui().key(window, "Escape");
 
 	// Included in Link Group moves the channel into another group (p. 460).
-	openMenu(bass, 1);
+	openMenu(bass, 2);
 	click(app, window, "#mixer-link-menu menuitem[link=\"" + std::to_string(solo) + "\"]");
 	REQUIRE(app.waitUntil([&] { return groups().at(1).at("channels") == Json::array({keys.channel, bass.channel}); }));
 	CHECK(groups().at(0).at("channels") == Json::array({guitar.channel}));
@@ -1356,7 +1356,7 @@ TEST_CASE("the display line's menu moves a channel between link groups, unlinks 
 			.value("attributes", Json::object())
 			.contains("checked");
 	};
-	openMenu(bass, 1);
+	openMenu(bass, 2);
 	CHECK(checked(std::to_string(solo)));
 	CHECK(!checked("0"));
 	const auto before = sets();
@@ -1364,7 +1364,7 @@ TEST_CASE("the display line's menu moves a channel between link groups, unlinks 
 	REQUIRE(app.appUi().binding().settle(std::chrono::seconds(5)));
 	CHECK(sets() == before);
 	// None takes it out of its group (p. 461), which goes with its last channel.
-	openMenu(guitar, 1);
+	openMenu(guitar, 2);
 	click(app, window, "#mixer-link-menu menuitem[link=\"0\"]");
 	REQUIRE(app.waitUntil([&] { return groups().size() == 1; }));
 	REQUIRE(app.waitUntil([&] { return lineText(guitar).empty() && lineText(bass) == "1 Solo"; }));
@@ -1435,6 +1435,90 @@ TEST_CASE("a VCA strip has a fader and buttons and picks the link group it contr
 	// What another client changes shows.
 	app.call("linkGroup.set", {{"group", group}, {"vca", 0}});
 	REQUIRE(app.waitUntil([&] { return element(app, window, select).at("attributes").at("value") == "0"; }));
+}
+
+TEST_CASE("the display line's Edit Link Group Settings and a modifier double click open the Link Group Settings dialog",
+	"[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added bass = addTrack(app, "audio", "Bass");
+	const Added vca = addTrack(app, "vca", "Band");
+	app.call("linkGroup.add", {{"channels", {guitar.channel, bass.channel}}, {"name", "Rhythm"}});
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 5; }));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	const auto group = [&] { return app.call("project.get").at("linkGroups").at(0); };
+	const std::string line = strip(bass.channel) + " .mixer-link";
+	REQUIRE(
+		app.waitUntil([&] { return element(app, window, line).at("attributes").value("value", "") == "1 Rhythm"; }));
+	const std::string dialog = "#link-group-settings-dialog";
+	const auto field = [&](const std::string& link) { return element(app, window, dialog + " [link=" + link + "]"); };
+	const auto checked = [&](const std::string& link) { return field(link).at("attributes").contains("checked"); };
+	const auto disabled = [&](const std::string& link) { return field(link).at("attributes").contains("disabled"); };
+
+	// The display line's menu opens it for the line's group (reference manual p. 459), with what the group links.
+	clock->advance(1.0);
+	click(app, window, line);
+	REQUIRE(app.waitUntil([&] { return has(element(app, window, "#mixer-link-menu"), "open"); }));
+	click(app, window, "#mixer-link-menu menuitem[link=settings]");
+	REQUIRE(app.waitUntil([&] { return elements(app, window, dialog).size() == 1; }));
+	CHECK(field("name").at("attributes").at("value") == "Rhythm");
+	CHECK(checked("volume"));
+	CHECK(checked("sends"));
+	CHECK(!checked("pan"));
+	CHECK(!checked("vca"));
+	CHECK(disabled("vcaFader"));
+
+	// Use VCA Fader turns the volume off (p. 517) and picks the VCA fader; OK sends what the dialog shows.
+	click(app, window, dialog + " [link=pan]");
+	click(app, window, dialog + " [link=mute]");
+	click(app, window, dialog + " [link=vca]");
+	CHECK(disabled("volume"));
+	CHECK(!disabled("vcaFader"));
+	CHECK(field("vcaFader").at("attributes").at("value") == std::to_string(vca.channel));
+	click(app, window, dialog + " [link=name]");
+	app.ui().key(window, "Mod+A");
+	app.ui().text(window, "Band");
+	click(app, window, dialog + " button[result=ok]");
+	REQUIRE(app.waitUntil([&] { return group().at("vca") == vca.channel; }));
+	const Json linked = group();
+	CHECK(linked.at("name") == "Band");
+	CHECK(linked.at("pan") == true);
+	CHECK(linked.at("mute") == true);
+	CHECK(linked.at("volume") == false);
+	CHECK(linked.at("sends") == true);
+	CHECK(linked.at("eq") == false);
+	REQUIRE(app.waitUntil([&] { return elements(app, window, dialog).empty(); }));
+	// The mixer has the change too: the VCA strip picks the group.
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return element(app, window, strip(vca.channel) + " .mixer-vca-group").at("attributes").at("value") ==
+				linked.at("id").dump();
+		}));
+
+	// A double click with a modifier key opens it too, instead of typing the name; Cancel changes nothing.
+	const auto sets = [&]
+	{
+		const Json commands = app.call("engine.commandLog").at("commands");
+		return std::count_if(commands.begin(), commands.end(),
+			[](const Json& command) { return command.at("command") == "linkGroup.set"; });
+	};
+	const auto before = sets();
+	clock->advance(1.0);
+	app.ui().click(window, {line, 0, std::nullopt}, ui::MouseButton::Left, 2, {"ctrl"});
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(app.waitUntil([&] { return elements(app, window, dialog).size() == 1; }));
+	CHECK(!has(element(app, window, line), "editing"));
+	CHECK(checked("vca"));
+	CHECK(!checked("volume"));
+	click(app, window, dialog + " button[result=cancel]");
+	REQUIRE(app.waitUntil([&] { return elements(app, window, dialog).empty(); }));
+	REQUIRE(app.appUi().binding().settle(std::chrono::seconds(5)));
+	CHECK(sets() == before);
 }
 
 TEST_CASE("a mixer step the engine refuses shows the engine's value again and leaves no undo step", "[ui]")

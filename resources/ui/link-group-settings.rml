@@ -1,0 +1,73 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Link Group Settings dialog (reference manual pp. 457-459, docs/features/link-groups.md): ui::Mixer opens it for
+     a link group with the display line's Edit Link Group Settings and with a double click and a modifier key on the
+     line, filled from the group. Each field's link attribute names what it sets in linkGroup.set, which OK sends; Use
+     VCA Fader (vca) enables Select VCA Fader (vcaFader) and turns the volume off, as a group with a VCA fader doesn't
+     link it (p. 517). Inserts, Automation Read/Write, Routing and Selection aren't linked yet. -->
+<rml>
+<head>
+	<title>Link Group Settings</title>
+	<style>
+		dialog
+		{
+			width: 320dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			flex: 1;
+		}
+
+		#link-group-name, #link-group-vca-fader
+		{
+			width: 160dp;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="link-group-settings-dialog">
+		<div class="dialog-titlebar">Link Group Settings</div>
+		<div class="row"><label for="link-group-name">Link Group Name</label>
+			<input type="text" id="link-group-name" link="name"/></div>
+		<div class="row"><label for="link-group-vca">Use VCA Fader</label>
+			<input type="checkbox" id="link-group-vca" link="vca"/></div>
+		<div class="row"><label for="link-group-vca-fader">Select VCA Fader</label>
+			<select id="link-group-vca-fader" link="vcaFader"/></div>
+		<div class="row"><label for="link-group-volume">Volume</label>
+			<input type="checkbox" id="link-group-volume" link="volume"/></div>
+		<div class="row"><label for="link-group-pan">Pan</label>
+			<input type="checkbox" id="link-group-pan" link="pan"/></div>
+		<div class="row"><label for="link-group-eq">EQ</label>
+			<input type="checkbox" id="link-group-eq" link="eq"/></div>
+		<div class="row"><label for="link-group-dynamics">Dynamics (Compressor, Gate, etc.)</label>
+			<input type="checkbox" id="link-group-dynamics" link="dynamics"/></div>
+		<div class="row"><label for="link-group-sends">Sends</label>
+			<input type="checkbox" id="link-group-sends" link="sends"/></div>
+		<div class="row"><label for="link-group-mute">Mute/Solo/Listen</label>
+			<input type="checkbox" id="link-group-mute" link="mute"/></div>
+		<div class="row"><label for="link-group-record">Record Enable/Monitor</label>
+			<input type="checkbox" id="link-group-record" link="record"/></div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
