@@ -71,7 +71,7 @@ in [busses.md](busses.md) and [folder-tracks.md](folder-tracks.md), the fader in
   and in with the channel from the automation's sample on. A graph built after the setting changed glides from how far
   the last one muted the tap (`ChannelState::preSendsMuted`) to its own over its first block (`MutedTap`), so the
   pre-fader sends of a channel that mute automation holds muted glide out or in, as the send's gain does for the mute
-  button.
+  button; a channel's first tap, as when a send becomes pre-fader, starts at its own.
 - **Wider sends.** A send in a wider format than its destination is converted while the destination sums its inputs,
   like an output ([channel-formats.md](channel-formats.md)): a stereo channel's send into a mono effect channel merges
   L and R at -3.01 dB each.
@@ -114,15 +114,16 @@ context menu, where the reference has it.
   old one, into the new one from silence), a send gliding out of a destination that now plays into its channel stops at
   once, and solo keeps the effect channels a soloed track sends to; outputs into effect channels; Mute Pre-Send when
   Mute with the mute button, with mute automation at two block sizes on a stereo channel, a channel with a plugin slot
-  and a mono one with a panner, and switched while the mute button or mute automation mutes the channel; a stereo
-  send into a mono effect channel; `track.add`'s `tracks` and `send` for group and effect tracks, the tracks it leaves
+  and a mono one with a panner, switched while the mute button or mute automation mutes the channel, and a send that
+  becomes pre-fader under mute automation; a stereo send into a mono effect channel; `track.add`'s `tracks` and `send` for group and effect tracks, the tracks it leaves
   out (also with `send`, and those whose routing would close a loop), its undo, and `projectFolder`.
 - `tests/dawproject_tests.cpp` saves and loads sends, and reads them and outputs into effect channels from
   `project.xml` alone.
 - `tests/mixerwindow_tests.cpp`: the Sends section picks a destination, switches a send on and before the fader,
   turns its level with the wheel, gives it the default send level with Ctrl-click, above +6 dB and below -60 dB too,
-  where the knob still starts at -60 dB, and shows another client's change; the destination lists leave out the channels whose audio comes back, through
-  sends and outputs, also after another client's change to another strip's channel.
+  where the knob still starts at -60 dB, and shows another client's change; the destination lists leave out the
+  channels whose audio comes back, through sends and outputs, also after another client's change to another strip's
+  channel.
 - `tests/inspector_tests.cpp`: the output list leaves out the channels whose audio comes back.
 - `tests/addtrack_tests.cpp`: Group and Effect Track to Selected Tracks through the dialog, Group Track to Selected
   Tracks with a Count of 2 and Keep Dialog Open, and Effect Track to Selected Tracks with a Count of 2.

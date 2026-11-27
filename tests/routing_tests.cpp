@@ -622,6 +622,33 @@ TEST_CASE("Mute Pre-Send when Mute switched on or off under mute automation glid
 	CHECK(wrong == 0);
 }
 
+TEST_CASE("Mute Pre-Send when Mute: a send that becomes pre-fader under mute automation stays silent", "[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	const bool added = GENERATE(false, true);
+	INFO("block size " << blockSize << (added ? ", a new send" : ", a post-fader send switched to pre-fader"));
+	const auto block = static_cast<int64_t>(blockSize);
+	Sends mixer(blockSize);
+	run(mixer.client, "settings.set", {{"key", "audio.mutePreSends"}, {"value", true}});
+	mixer.set({{"monitor", true}});
+	if (!added)
+		mixer.set({{"sends", {{{"send", 1}, {"destination", mixer.effect}, {"on", true}, {"level", -6.0}}}}});
+	automateMute(mixer, {{0, 1.0}});
+	run(mixer.client, "transport.play");
+	// Muted by then, its 5 ms glide (240 frames) over; the channel had no pre-fader tap to mute.
+	run(mixer.client, "audio.render", {{"frames", 6 * block}});
+	sendPreFader(mixer);
+	run(mixer.client, "audio.render", {{"frames", 2 * block}});
+	const std::vector<float> output = mixer.output(8 * block);
+	size_t wrong = 0;
+	size_t first = 0;
+	for (auto i = static_cast<size_t>(6 * block); i < output.size(); ++i)
+		if (output[i] != 0.0f && wrong++ == 0)
+			first = i;
+	INFO(wrong << " frames not silent, the first at " << first << ": " << output[first]);
+	CHECK(wrong == 0);
+}
+
 TEST_CASE("a send wider than its destination is converted like an output", "[integration]")
 {
 	// A stereo track's pre-fader send into a mono effect channel: L and R merge at -3.01 dB each, and the mono

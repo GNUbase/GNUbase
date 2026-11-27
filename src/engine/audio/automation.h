@@ -346,7 +346,8 @@ namespace gnubase::engine
 		// the mute button mutes through the fader)
 		float outputGain = -1.0f;
 		// Audio thread: how far the fader's mute muted the pre-fader sends in the last block, 1 with Mute Pre-Send
-		// when Mute and 0 without (MutedTap), -1 before the first block; a new graph glides from it to its setting.
+		// when Mute and 0 without (MutedTap), -1 before the first block and while the channel has no pre-fader
+		// sends; a new graph glides from it to its setting.
 		float preSendsMuted = -1.0f;
 		// Audio thread: the fader's automation events of the block, from a channel's source node to its fader node
 		// when plugin slots are between them; the source node always runs first.

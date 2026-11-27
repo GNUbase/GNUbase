@@ -1515,12 +1515,13 @@ namespace gnubase::engine
 			std::memcpy(unpanned[static_cast<size_t>(c)], context.audio[c], context.frames * sizeof(float));
 		}
 		m_faderOut.clear();
-		// Mute Pre-Send when Mute switched since the last graph glides over this graph's first block.
+		// Mute Pre-Send when Mute switched since the last graph glides over this graph's first block. A channel
+		// without pre-fader sends has no tap to glide from: its first tap starts at the setting.
 		const float follows = m_tapFollowsMute ? 1.0f : 0.0f;
 		const float from = m_state->preSendsMuted < 0.0f ? follows : m_state->preSendsMuted;
 		const MutedTap muted{from == 0.0f && follows == 0.0f ? nullptr : m_tap.get(), from, follows};
 		if (context.frames > 0)
-			m_state->preSendsMuted = follows;
+			m_state->preSendsMuted = m_tap ? follows : -1.0f;
 		m_state->fader->process(
 			{context.audio, context.channels, context.frames, events, m_faderOut, context.transport}, m_panning, muted,
 			m_unpanned.get());
