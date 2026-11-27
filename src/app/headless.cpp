@@ -93,11 +93,17 @@ namespace gnubase::app
 			logging::error("Cannot set up the audio device: {}", result.error);
 			return false;
 		}
-		if (const engine::Json& failed = result.value.at("failed"); !failed.is_null())
-			err << "gnubase: cannot use the audio device (" << failed.at("backend").get<std::string>() << ' '
-				<< failed.at("device").get<std::string>()
-				<< "), playing on the dummy device instead: " << failed.at("reason").get<std::string>() << '\n';
 		const engine::Json& device = result.value.at("device");
+		if (const engine::Json& failed = result.value.at("failed"); !failed.is_null())
+		{
+			// The fallback: the dummy device, or with the fallback device default the backend's default device.
+			const std::string instead = device.at("backend") == "dummy"
+				? std::string("the dummy device")
+				: device.at("backend").get<std::string>() + ' ' + device.at("id").get<std::string>();
+			err << "gnubase: cannot use the audio device (" << failed.at("backend").get<std::string>() << ' '
+				<< failed.at("device").get<std::string>() << "), playing on " << instead
+				<< " instead: " << failed.at("reason").get<std::string>() << '\n';
+		}
 		logging::info("Audio on {} {}", device.at("backend").get<std::string>(), device.at("id").get<std::string>());
 		return loadProject(client, options, err);
 	}

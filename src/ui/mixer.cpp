@@ -4,6 +4,7 @@
 #include "engine/analysis/analysis.h"
 #include "engine/document/channelformat.h"
 #include "ui/docking.h"
+#include "ui/widgets.h"
 #include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
@@ -20,6 +21,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
 #include <iomanip>
 #include <locale>
 #include <optional>
@@ -535,7 +537,9 @@ namespace gnubase::ui
 			  R"(<button id="mixer-filter" menu="mixer-filter-menu" title="Set Channel Type Filter">)"
 			  R"(Channel Types</button>)"
 			  R"(<button id="mixer-agents" menu="mixer-agents-menu" )"
-			  R"(title="Set Channel Visibility Agents">Visibility</button>)";
+			  R"(title="Set Channel Visibility Agents">Visibility</button>)"
+			  R"(<button id="mixer-find" menu="mixer-find-menu" class="icon-only" title="Find Track/Channel">)"
+			  R"(<svg class="icon" src="../icons/general-search.svg"/></button>)";
 		if (!settings)
 			for (const auto& [state, label] : g_states)
 			{
@@ -574,7 +578,11 @@ namespace gnubase::ui
 		// The channel settings window has the Functions menu (pp. 461, 503) instead of the filter and the agents.
 		std::vector<std::pair<std::string, std::string>> menus = {
 			{R"(<menu id="mixer-filter-menu">)", filter},
-			{R"(<menu id="mixer-agents-menu">)", R"(<menuitem agent="showAll">Show All Channels</menuitem>)"},
+			{R"(<menu id="mixer-agents-menu">)",
+				R"(<menuitem agent="showAll">Show All Channels</menuitem><menuseparator/>)"
+				R"(<menuitem agent="undo">Undo Visibility Change</menuitem>)"
+				R"(<menuitem agent="redo">Redo Visibility Change</menuitem>)"},
+			{R"(<menu id="mixer-find-menu">)", ""}, // showFindMenu fills it
 		};
 		if (settings)
 			menus = {{R"(<menu id="settings-functions-menu">)",
@@ -704,6 +712,13 @@ namespace gnubase::ui
 	Mixer::~Mixer()
 	{
 		leaveNotes(); // e.g. its window closing with F3
+		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_linkDialog.get()))
+		{
+			// Nothing changes the group any more: the dialog goes too.
+			dialog->RemoveEventListener(g_dialogCloseEvent, this);
+			dialog->RemoveEventListener(Rml::EventId::Change, this);
+			closeDialog(*dialog, "cancel");
+		}
 		if (Rml::Element* window = m_window.get())
 			window->RemoveEventListener(Rml::EventId::Mouseup, this);
 		if (Rml::Element* root = m_root.get())
@@ -835,6 +850,7 @@ namespace gnubase::ui
 				if (Rml::Element* item = menu->QuerySelector(std::string("[channel-type=") + type + "]"))
 					setChecked(*item, m_hiddenTypes.count(type) == 0);
 		showVisibilityList();
+		scrollToRevealed();
 		if (Rml::Context* context = strips->GetContext())
 			context->RequestNextUpdate(0);
 	}
@@ -1385,6 +1401,64 @@ namespace gnubase::ui
 		m_binding.send("track.move", {{"track", from->track}, {"parent", parent}, {"index", index}});
 	}
 
+	void Mixer::showFindMenu()
+	{
+		const auto menu = std::find_if(m_menus.begin(), m_menus.end(),
+			[](const Rml::ObserverPtr<Rml::Element>& each) { return each && each->GetId() == "mixer-find-menu"; });
+		if (menu == m_menus.end())
+			return;
+		std::string rml = R"(<input type="text" class="mixer-find-search" placeholder="Search"/>)";
+		for (const MixerChannel& channel : m_channels)
+			if (m_hiddenTypes.count(channel.type) == 0)
+				rml +=
+					R"(<menuitem find=")" + std::to_string(channel.id) + R"(">)" + encode(channel.name) + "</menuitem>";
+		(*menu)->SetInnerRML(rml);
+	}
+
+	void Mixer::find(const std::string& text)
+	{
+		const auto lower = [](std::string name)
+		{
+			std::transform(name.begin(), name.end(), name.begin(),
+				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			return name;
+		};
+		const auto menu = std::find_if(m_menus.begin(), m_menus.end(),
+			[](const Rml::ObserverPtr<Rml::Element>& each) { return each && each->GetId() == "mixer-find-menu"; });
+		if (menu == m_menus.end())
+			return;
+		for (int i = 0; i < (*menu)->GetNumChildren(); ++i)
+			if (Rml::Element* item = (*menu)->GetChild(i); item->HasAttribute("find"))
+			{
+				// Matched against the names, not the items' RML, where & < > are entities.
+				const uint64_t id = idAttribute(*item, "find");
+				const auto channel = std::find_if(
+					m_channels.begin(), m_channels.end(), [id](const MixerChannel& each) { return each.id == id; });
+				item->SetClass("hidden",
+					channel == m_channels.end() || lower(channel->name).find(lower(text)) == std::string::npos);
+			}
+	}
+
+	void Mixer::reveal(uint64_t channel)
+	{
+		if (m_hidden.count(channel) != 0)
+			setHidden(channel, false);
+		m_revealing = channel;
+		scrollToRevealed();
+	}
+
+	void Mixer::scrollToRevealed()
+	{
+		const auto strip = m_stripOf.find(m_revealing);
+		if (strip == m_stripOf.end())
+			return;
+		if (Rml::ElementDocument* document = strip->second->GetOwnerDocument())
+			document->UpdateDocument(); // lays out a strip just made
+		strip->second->ScrollIntoView({Rml::ScrollAlignment::Nearest, Rml::ScrollAlignment::Nearest,
+			Rml::ScrollBehavior::Instant, Rml::ScrollParentage::Closest});
+		m_revealing = 0;
+	}
+
 	void Mixer::showLinkMenu(uint64_t channel)
 	{
 		const auto menu = std::find_if(m_menus.begin(), m_menus.end(),
@@ -1398,9 +1472,10 @@ namespace gnubase::ui
 			return R"(<menuitem type="toggle" link=")" + link + '"' + (checked ? R"( checked="")" : "") + ">" +
 				encode(label) + "</menuitem>";
 		};
-		// Edit Link Group Settings waits for the Link Group Settings dialog; Unlink Selected Channels unlinks the
-		// line's group, as the mixer has no channel selection yet.
-		std::string rml = group != nullptr ? R"(<menuitem link="unlink">Unlink Selected Channels</menuitem>)" : "";
+		// Unlink Selected Channels unlinks the line's group, as the mixer has no channel selection yet.
+		std::string rml = group != nullptr ? R"(<menuitem link="unlink">Unlink Selected Channels</menuitem>)"
+											 R"(<menuitem link="settings">Edit Link Group Settings</menuitem>)"
+										   : "";
 		rml += "<menuitem>Included in Link Group: " +
 			encode(group != nullptr ? group->at("name").get<std::string>() : "<None>") + "<menu>" +
 			item("0", "None", group == nullptr);
@@ -1427,6 +1502,12 @@ namespace gnubase::ui
 	void Mixer::link(const std::string& item)
 	{
 		const Json* group = linkGroup(m_project, m_linkChannel, "channels").first;
+		if (item == "settings")
+		{
+			if (group != nullptr)
+				openLinkSettings(group->at("id").get<uint64_t>());
+			return;
+		}
 		if (item == "unlink" || item == "0")
 		{
 			if (group == nullptr)
@@ -1448,8 +1529,123 @@ namespace gnubase::ui
 			}
 	}
 
+	void Mixer::openLinkSettings(uint64_t id)
+	{
+		const Json groups = m_project.value("linkGroups", Json::array());
+		const auto group =
+			std::find_if(groups.begin(), groups.end(), [id](const Json& each) { return each.at("id") == id; });
+		if (m_linkDialog || group == groups.end() || !m_root || m_root->GetContext() == nullptr)
+			return;
+		const std::string path = std::filesystem::u8path(m_root->GetOwnerDocument()->GetSourceURL())
+									 .replace_filename("link-group-settings.rml")
+									 .generic_u8string();
+		Rml::ElementDocument* dialog = m_root->GetContext()->LoadDocument(path);
+		if (dialog == nullptr)
+			return;
+		m_linkDialog = dialog->GetObserverPtr();
+		m_linkDialogGroup = id;
+		const auto field = [dialog](const std::string& link) { return dialog->QuerySelector("[link=" + link + "]"); };
+		if (auto* name = dynamic_cast<Rml::ElementFormControl*>(field("name")))
+			name->SetValue(group->at("name").get<std::string>());
+		// The VCA faders that can control the group: not those in it (p. 515).
+		const Json& channels = group->at("channels");
+		widgets::Options faders;
+		for (const MixerChannel& channel : m_channels)
+			if (channel.type == "vca" &&
+				std::find(channels.begin(), channels.end(), Json(channel.id)) == channels.end())
+				faders.emplace_back(std::to_string(channel.id), channel.name);
+		const auto vca = group->at("vca").get<uint64_t>();
+		std::string fader = vca != 0 ? std::to_string(vca) : std::string();
+		if (fader.empty() && !faders.empty())
+			fader = faders.front().first;
+		if (Rml::Element* select = field("vcaFader"))
+			widgets::fill(*select, faders, fader);
+		for (const std::string link : {"vca", "volume", "pan", "eq", "dynamics", "sends", "mute", "record"})
+			if (Rml::Element* box = field(link))
+			{
+				if (link == "vca" ? vca != 0 : group->value(link, false))
+					box->SetAttribute("checked", "");
+				else
+					box->RemoveAttribute("checked");
+				if (link == "vca" && faders.empty())
+					box->SetAttribute("disabled", "");
+			}
+		showLinkSettings(false);
+		dialog->AddEventListener(g_dialogCloseEvent, this);
+		dialog->AddEventListener(Rml::EventId::Change, this);
+		dialog->Show(Rml::ModalFlag::Modal);
+	}
+
+	void Mixer::showLinkSettings(bool vcaChanged)
+	{
+		Rml::Element* dialog = m_linkDialog.get();
+		const Rml::Element* vca = dialog != nullptr ? dialog->QuerySelector("[link=vca]") : nullptr;
+		if (vca == nullptr)
+			return;
+		const bool on = vca->HasAttribute("checked");
+		const auto enable = [](Rml::Element* element, bool enabled)
+		{
+			if (element == nullptr)
+				return;
+			if (enabled)
+				element->RemoveAttribute("disabled");
+			else
+				element->SetAttribute("disabled", "");
+		};
+		enable(dialog->QuerySelector("[link=vcaFader]"), on);
+		Rml::Element* volume = dialog->QuerySelector("[link=volume]");
+		enable(volume, !on);
+		if (volume != nullptr && vcaChanged)
+		{
+			if (on)
+				volume->RemoveAttribute("checked");
+			else
+				volume->SetAttribute("checked", "");
+		}
+	}
+
+	void Mixer::linkSettingsEvent(Rml::Event& event)
+	{
+		Rml::Element* dialog = m_linkDialog.get();
+		if (event.GetType() != g_dialogCloseEvent)
+		{
+			if (const Rml::Element* target = event.GetTargetElement();
+				target != nullptr && attribute(*target, "link") == "vca")
+				showLinkSettings(true);
+			return;
+		}
+		dialog->RemoveEventListener(g_dialogCloseEvent, this);
+		dialog->RemoveEventListener(Rml::EventId::Change, this);
+		m_linkDialog.reset();
+		if (event.GetParameter<Rml::String>("result", "") != "ok")
+			return;
+		const auto field = [dialog](const std::string& link) { return dialog->QuerySelector("[link=" + link + "]"); };
+		const auto checked = [&field](const std::string& link)
+		{
+			const Rml::Element* box = field(link);
+			return box != nullptr && box->HasAttribute("checked");
+		};
+		Json parameters = {{"group", m_linkDialogGroup}};
+		if (const auto* name = dynamic_cast<Rml::ElementFormControl*>(field("name"));
+			name != nullptr && !name->GetValue().empty())
+			parameters["name"] = name->GetValue();
+		const auto* fader = dynamic_cast<Rml::ElementFormControl*>(field("vcaFader"));
+		const bool vca = checked("vca") && fader != nullptr && !fader->GetValue().empty();
+		parameters["vca"] = vca ? std::stoull(fader->GetValue()) : 0;
+		for (const char* link : {"pan", "eq", "dynamics", "sends", "mute", "record"})
+			parameters[link] = checked(link);
+		if (!vca)
+			parameters["volume"] = checked("volume");
+		m_binding.send("linkGroup.set", std::move(parameters));
+	}
+
 	void Mixer::ProcessEvent(Rml::Event& event)
 	{
+		if (m_linkDialog && event.GetCurrentElement() == m_linkDialog.get())
+		{
+			linkSettingsEvent(event);
+			return;
+		}
 		Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr)
 			return;
@@ -1463,6 +1659,10 @@ namespace gnubase::ui
 			else if (target->HasAttribute("visibility"))
 			{
 				setHidden(idAttribute(*target, "visibility"), !event.GetParameter("value", true));
+			}
+			else if (target->IsClassSet("mixer-find-search"))
+			{
+				find(event.GetParameter<Rml::String>("value", ""));
 			}
 			else if (attribute(*target, "function") == "follow")
 			{
@@ -1570,9 +1770,17 @@ namespace gnubase::ui
 				m_hidden.clear();
 				sendView({{"hidden", Json::array()}});
 			}
+			else if (const std::string agent = attribute(*target, "agent"); agent == "undo" || agent == "redo")
+			{
+				m_binding.send(agent == "undo" ? "mixer.undoVisibility" : "mixer.redoVisibility", {{"mixer", m_view}});
+			}
 			else if (target->HasAttribute("link"))
 			{
 				link(attribute(*target, "link"));
+			}
+			else if (target->HasAttribute("find"))
+			{
+				reveal(idAttribute(*target, "find"));
 			}
 			else if (attribute(*target, "function") == "copy" && !target->HasAttribute("disabled"))
 			{
@@ -1623,6 +1831,20 @@ namespace gnubase::ui
 			}
 			break;
 		case Rml::EventId::Dblclick:
+			// A double click with a modifier key on the display line opens the Link Group Settings dialog (p. 459)
+			// instead of typing the group's name, the text display's default action.
+			if (Rml::Element* line = closest(target, "mixer-link", m_root.get()); line != nullptr &&
+				(held(event, "ctrl_key") || held(event, "meta_key") || held(event, "alt_key") ||
+					held(event, "shift_key")))
+			{
+				if (const MixerChannel* channel = channelOf(line))
+					if (const Json* group = linkGroup(m_project, channel->id, "channels").first)
+					{
+						event.StopPropagation();
+						openLinkSettings(group->at("id").get<uint64_t>());
+					}
+				break;
+			}
 			if (closest(target, "mixer-picture", m_root.get()) != nullptr)
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->track != 0)
 					if (m_actions.choosePicture)
@@ -1634,6 +1856,9 @@ namespace gnubase::ui
 				closest(target, "mixer-channel-name", m_root.get()) != nullptr ? channelOf(target) : nullptr;
 			m_dragged = channel != nullptr ? channel->id : 0;
 			m_soloHold.pressed(target);
+			if (target->GetId() == "mixer-find" ||
+				(target->GetParentNode() != nullptr && target->GetParentNode()->GetId() == "mixer-find"))
+				showFindMenu(); // before the popup behavior opens it on the click
 			// The press fills the display line's menu, which the popup behavior opens on the click, as the list
 			// editor's menus do.
 			if (Rml::Element* line = closest(target, "mixer-link", m_root.get());

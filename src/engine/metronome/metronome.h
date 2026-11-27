@@ -58,6 +58,11 @@ namespace gnubase::engine::metronome
 		// Opens a file the way sample() does, without keeping it. Throws std::exception if it can't be read.
 		static void check(const std::string& path);
 
+		// Drops the decoded files other than these, by path and sample rate: those the settings no longer use.
+		void keepOnly(const std::vector<std::pair<std::string, double>>& used);
+		// How many files the library keeps decoded, each at a sample rate.
+		size_t decodedCount() const { return m_decoded.size(); }
+
 		// What tells whether a file changed: its time and size, or nothing if it isn't there.
 		struct Stamp
 		{

@@ -185,14 +185,15 @@ first.
 - **Overlay** (p. 1303). With Show Note Expression Data each point of a note is a line over the note box, from the point
   to the type's next one (or the note's end) at its value, as playback holds a value until the next point. The values go
   from the box's bottom to its top: tuning from -48 to 48 semitones, MPE's pitch range (values beyond show at the edge),
-  volume from 0 to 4 and the others from 0 to 1. A step narrower than a pixel of the note display joins the next ones
-  until it is as wide, at the last one's value, so that a recorded note with a point every few milliseconds is a line
-  per pixel at most, not hundreds of elements (#1671). The lines are built again when a pixel has a quarter more or
-  fewer ticks than they were built with: after an editor's first layout, as the editor window or the lower zone
-  resizes and as the project window zooms, but not on every frame of a scroll across a tempo change, which changes the
-  in-place editor's ticks per pixel a little (#1716). The quarter counts once the window's update has laid the lines
-  out with the ticks they were built for; before that, as when the lines first show, they are built again for any
-  other ticks. They are built for the box the last layout gave the notes, which need not be the window's: the editor
+  volume from 0 to 4 and the others from 0 to 1. Expressions that the note's track hides (#2120,
+  [note-expression-setup.md](note-expression-setup.md)) have no lines. A step narrower than a pixel of the note display
+  joins the next ones until it is as wide, at the last one's value, so that a recorded note with a point every few
+  milliseconds is a line per pixel at most, not hundreds of elements (#1671). The lines are built again when a pixel has
+  a quarter more or fewer ticks than they were built with: after an editor's first layout, as the editor window or the
+  lower zone resizes and as the project window zooms, but not on every frame of a scroll across a tempo change, which
+  changes the in-place editor's ticks per pixel a little (#1716). The quarter counts once the window's update has laid
+  the lines out with the ticks they were built for; before that, as when the lines first show, they are built again for
+  any other ticks. They are built for the box the last layout gave the notes, which need not be the window's: the editor
   window's first layout, before the left zone has its size, gives the notes about a tenth more room (#1768). Each
   editor's lines follow the update of its own window. The drum editor shows no overlay, as it has neither the buttons
   nor the expression editor, also with Show Note Length.
@@ -205,20 +206,21 @@ first.
   notes' time behind it and join their steps by the note display's coarser pixels, and only where it would end past
   the note display's right edge it moves left to stay inside (#1713), so that an in-place editor's keeps still as the
   project window scrolls (#1746); a window or zone that changes its width places it again. Its button at the top left
-  is Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point where it clicks, and a drag
-  draws points along the way where the value changes (not one per mouse position), replacing those of the expression in
-  the range it went over; at the right edge it draws at the last note's last tick. With
-  Shift, tuning goes in semitone steps (Vertical Snap). The erase tool deletes the points of the expression it is
-  dragged over, a click those within a few dp: it is GNUbase's own, standing in until points can be selected and deleted
-  with Edit > Delete as the reference manual does (pp. 1310-1311). An edit reaches every selected note at the time where
-  it happens, each note's points from its own start, and is one undo step, named "Change note expression" as the
-  engine names a lone `note.replaceExpression`, also when it changes notes of several parts (#1831). It sends each note
-  the gesture reached only the range it swept and the points it drew there, not the note's whole list: the editor
-  reads the whole project after every change and shows the reads in order, so an edit made before the read of the one
-  before it arrived starts from the project as it was before that one, and the whole list would send that one's points
-  back (#1795). While the project shown may lack an edit of the editor's (one is out, or the last one that changed
-  points was answered after the read of the project shown), a note that the gesture reached goes also when the
-  editor's copy has no change there, as the edit before may have drawn a point there. Otherwise an edit that changes
+  is Parameter Selection, a menu of the expressions that the selected notes have points of or their tracks' note
+  expression setups show (p. 1309, [note-expression-setup.md](note-expression-setup.md)), all seven by default. In it
+  the draw tool draws a point where it clicks, and a drag draws points along the way where the value changes (not one
+  per mouse position), replacing those of the expression in the range it went over; at the right edge it draws at the
+  last note's last tick. With Shift, tuning goes in semitone steps (Vertical Snap). The erase tool deletes the points
+  of the expression it is dragged over, a click those within a few dp: it is GNUbase's own, standing in until points can
+  be selected and deleted with Edit > Delete as the reference manual does (pp. 1310-1311). An edit reaches every
+  selected note at the time where it happens, each note's points from its own start, and is one undo step, named "Change
+  note expression" as the engine names a lone `note.replaceExpression`, also when it changes notes of several parts
+  (#1831). It sends each note the gesture reached only the range it swept and the points it drew there, not the note's
+  whole list: the editor reads the whole project after every change and shows the reads in order, so an edit made before
+  the read of the one before it arrived starts from the project as it was before that one, and the whole list would send
+  that one's points back (#1795). While the project shown may lack an edit of the editor's (one is out, or the last one
+  that changed points was answered after the read of the project shown), a note that the gesture reached goes also when
+  the editor's copy has no change there, as the edit before may have drawn a point there. Otherwise an edit that changes
   nothing stays in the editor, so that it doesn't count as a change of the project, as a `history.transaction` of
   several parts would. An edit that changed nothing brings no read, and the project shown lacks nothing of it, so it
   doesn't keep the editor behind (#1831). A gesture follows the mouse outside the window and ends where the button
@@ -265,18 +267,17 @@ loading cutting them there.
   Double-Click Opens Note Expression Editor (p. 1308); the overlay's display size slider and Acoustic Feedback (p.
   1303), a color per expression in the overlay, which draws all of them alike, and Trim Note Expression to Note Length
   and Remove Note Expression in the MIDI menu (p. 1314).
-- Parameter Selection lists the expressions the note uses and those chosen in the inspector, not all seven (p. 1309,
-  #2120).
 - What the inspector's Note Expression section doesn't have yet: [note-expression-setup.md](note-expression-setup.md).
 - The Note Expression Assignment's Preferred and Alternative rules (Expression Name Contains, Note Expression Number, As
   Recommended by Instrument, p. 1299), and renewing the assignments when the instrument or its preset changes (p. 1298,
   #1829): they choose among a plugin's own expressions and need to know which expressions an instrument has, which need
   #1516; with the seven common ones and MIDI PolyPressure the assignment is what the page sets. More known MPE
   devices, which are detected by their port's name only.
-- Overdubbing note expression and Convert to Note Expression in the MIDI menu (pp. 1316-1318, #1515; recording the
-  assigned controllers and `noteExpression.convert` are in [note-expression-setup.md](note-expression-setup.md)), with
-  the toolbar switch that records expression for a selected note from MIDI input (pp. 1303,
-  1308) and the dialog that sets which MIDI messages record as expression (pp. 1314-1315).
+- Overdubbing note expression and the release phases of Convert to Note Expression (pp. 1316-1318, #1515; recording
+  the assigned controllers, `noteExpression.convert` and its MIDI menu item are in
+  [note-expression-setup.md](note-expression-setup.md)), with the toolbar switch that records expression for a selected
+  note from MIDI input (pp. 1303, 1308) and the dialog that sets which MIDI messages record as expression (pp.
+  1314-1315).
 - A plugin's own expressions with their names and ranges (VST3 custom note expressions), CLAP and MIDI 2.0 per-note
   controllers in the adapters, MPE output that allocates channels for notes that share one and a pitch range other
   than 48, chasing expression after a jump into a note, per-note expression in DAWproject's own note content, and the

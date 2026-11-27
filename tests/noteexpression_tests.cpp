@@ -999,14 +999,16 @@ TEST_CASE("noteExpression.set sets a track's bypass and input assignments, which
 {
 	Setup setup;
 	Client& client = setup.client;
-	CHECK(setupOf(client, setup.channel) == Json{{"bypass", false}, {"inputs", Json::array()}});
+	CHECK(setupOf(client, setup.channel) ==
+		Json{{"bypass", false}, {"inputs", Json::array()}, {"hidden", Json::array()}});
 
 	events(client);
 	const Json set = run(client, "noteExpression.set",
 		{{"track", setup.track}, {"bypass", true},
 			{"inputs", {input("tuning", "pitchBend", -12.0, 12.0), input("brightness", "cc74", 0.25, 0.75)}}});
 	const Json expected = {{"bypass", true},
-		{"inputs", {input("tuning", "pitchBend", -12.0, 12.0), input("brightness", "cc74", 0.25, 0.75)}}};
+		{"inputs", {input("tuning", "pitchBend", -12.0, 12.0), input("brightness", "cc74", 0.25, 0.75)}},
+		{"hidden", Json::array()}};
 	CHECK(set == Json{{"track", setup.track}, {"noteExpression", expected}});
 	// Clients that follow events, like the inspector, see the new setup.
 	const std::vector<Json> changes = events(client)["channel.changed"];
@@ -1023,7 +1025,8 @@ TEST_CASE("noteExpression.set sets a track's bypass and input assignments, which
 				{{{"type", "brightness"}, {"max", 1.0}}, {{"type", "tuning"}, {"input", "none"}, {"min", -120.0}},
 					{{"type", "tuning"}, {"max", 120.0}}, {{"type", "pressure"}, {"input", "aftertouch"}}}}});
 	const Json changed = {{"bypass", true},
-		{"inputs", {input("brightness", "cc74", 0.25, 1.0), input("pressure", "aftertouch", 0.0, 1.0)}}};
+		{"inputs", {input("brightness", "cc74", 0.25, 1.0), input("pressure", "aftertouch", 0.0, 1.0)}},
+		{"hidden", Json::array()}};
 	CHECK(setupOf(client, setup.channel) == changed);
 
 	// Saved and loaded with the project.
@@ -1033,7 +1036,8 @@ TEST_CASE("noteExpression.set sets a track's bypass and input assignments, which
 	run(client, "history.undo");
 	CHECK(setupOf(client, setup.channel) == expected);
 	run(client, "history.undo");
-	CHECK(setupOf(client, setup.channel) == Json{{"bypass", false}, {"inputs", Json::array()}});
+	CHECK(setupOf(client, setup.channel) ==
+		Json{{"bypass", false}, {"inputs", Json::array()}, {"hidden", Json::array()}});
 }
 
 TEST_CASE(
@@ -1047,10 +1051,38 @@ TEST_CASE(
 			each["noteExpression"] = {{"bypass", true},
 				{"inputs",
 					{input("volume", "cc7", -1.0, 9.0), input("wobble", "cc1", 0.0, 1.0),
-						input("pan", "cc200", 0.0, 0.5)}}};
+						input("pan", "cc200", 0.0, 0.5)}},
+				{"hidden", {"wobble", "tuning"}}};
 	const Project loaded = projectFromJson(json);
 	CHECK(toJson(loaded.channels.at(setup.channel)).at("noteExpression") ==
-		Json{{"bypass", true}, {"inputs", {input("volume", "cc7", 0.0, 4.0), input("pan", "none", 0.0, 0.5)}}});
+		Json{{"bypass", true}, {"inputs", {input("volume", "cc7", 0.0, 4.0), input("pan", "none", 0.0, 0.5)}},
+			{"hidden", Json::array({"tuning"})}});
+}
+
+TEST_CASE("noteExpression.set hides expressions from the editors, which the project keeps", "[integration]")
+{
+	// The inspector's visibility (#2120, reference manual p. 1301): hidden lists them in the expressions' order.
+	Setup setup;
+	Client& client = setup.client;
+	events(client);
+	run(client, "noteExpression.set", {{"track", setup.track}, {"hidden", {"vibrato", "pan"}}});
+	const auto hidden = [&] { return setupOf(client, setup.channel).at("hidden"); };
+	CHECK(hidden() == Json{"pan", "vibrato"});
+	CHECK(run(client, "history.get").at("steps").back().at("action") == "Change note expression setup");
+	// The editors read the notes again after it: not only channel.changed.
+	CHECK(events(client)["noteExpression.changed"].size() == 1);
+	// A call without it keeps it; saved and loaded with the project.
+	run(client, "noteExpression.set", {{"track", setup.track}, {"bypass", true}});
+	CHECK(hidden() == Json{"pan", "vibrato"});
+	CHECK(events(client)["noteExpression.changed"].empty());
+	const Project loaded = projectFromJson(run(client, "project.get"));
+	CHECK(toJson(loaded.channels.at(setup.channel)).at("noteExpression").at("hidden") == Json{"pan", "vibrato"});
+	CHECK_THAT(reject(client, "noteExpression.set", {{"track", setup.track}, {"hidden", {"pan", "wobble"}}}),
+		ContainsSubstring("hidden"));
+	run(client, "noteExpression.set", {{"track", setup.track}, {"hidden", Json::array()}});
+	CHECK(hidden() == Json::array());
+	run(client, "history.undo");
+	CHECK(hidden() == Json{"pan", "vibrato"});
 }
 
 TEST_CASE("noteExpression.set refuses what it can't do and changes nothing then", "[integration]")
@@ -1072,7 +1104,8 @@ TEST_CASE("noteExpression.set refuses what it can't do and changes nothing then"
 	CHECK_THAT(reject(client, "noteExpression.set",
 				   {{"track", setup.track}, {"inputs", {{{"type", "tuning"}, {"min", -121.0}}}}}),
 		ContainsSubstring("min must be -120 to 120"));
-	CHECK(setupOf(client, setup.channel) == Json{{"bypass", false}, {"inputs", Json::array()}});
+	CHECK(setupOf(client, setup.channel) ==
+		Json{{"bypass", false}, {"inputs", Json::array()}, {"hidden", Json::array()}});
 	CHECK(run(client, "project.revision") == revision);
 }
 

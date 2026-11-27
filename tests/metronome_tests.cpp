@@ -13,6 +13,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -186,6 +187,7 @@ TEST_CASE("metronome.set changes the given settings, checks them and is no undo 
 					{"customSignature", {{"numerator", 7}, {"denominator", 8}}}}},
 			{"patterns", {{{"numerator", 4}, {"denominator", 4}, {"accents", {1, 0, 3, 4}}}}}});
 	CHECK(set == run(client, "metronome.get"));
+	CHECK(test::waitForEvent(client, "metronome.changed", [&set](const Json& data) { return data == set; }));
 	CHECK(set.at("whilePlaying") == false);
 	CHECK(set.at("whileRecording") == true);
 	CHECK(set.at("audio").at("outputs") == Json::array({output}));
@@ -207,6 +209,8 @@ TEST_CASE("metronome.set changes the given settings, checks them and is no undo 
 	run(client, "metronome.setPattern", {{"numerator", 6}, {"denominator", 8}, {"accents", {1, 0, 0, 2, 0, 0}}});
 	run(client, "metronome.setPattern", {{"numerator", 3}, {"denominator", 4}, {"accents", {1, 2, 2}}});
 	Json patterns = run(client, "metronome.get").at("patterns");
+	CHECK(test::waitForEvent(
+		client, "metronome.changed", [&patterns](const Json& data) { return data.at("patterns") == patterns; }));
 	REQUIRE(patterns.size() == 3);
 	CHECK(patterns[0].at("numerator") == 3);
 	CHECK(patterns[1].at("numerator") == 4);
@@ -542,6 +546,18 @@ TEST_CASE("the transport reports a count-in, and record off, a locate or Lock Re
 		CHECK(state() == State{false, false, false});
 		CHECK(framesOf(onsets(capture(client, 0, 25000))) == std::vector<int64_t>{0, 4000});
 	}
+	SECTION("record and play change nothing while it counts in")
+	{
+		run(client, "transport.record");
+		run(client, "audio.render", {{"frames", 5000}});
+		CHECK(run(client, "transport.record").at("countingIn") == true);
+		CHECK(run(client, "transport.play").at("countingIn") == true);
+		CHECK(state() == State{true, true, true});
+		run(client, "audio.render", {{"frames", 12000}});
+		CHECK(state() == State{false, true, true});
+		CHECK(run(client, "transport.get").at("position") == 28000 + 1000); // the count-in still took its bar
+		CHECK(framesOf(onsets(capture(client, 0, 16000))) == std::vector<int64_t>{0, 4000, 8000, 12000});
+	}
 	SECTION("Lock Record doesn't keep it from stopping: nothing is recorded yet")
 	{
 		run(client, "transport.set", {{"lockRecord", true}});
@@ -734,6 +750,22 @@ TEST_CASE("the audio click plays through the chosen output busses", "[integratio
 		CHECK(std::all_of(main.begin() + 16000, main.end(), [](float s) { return s == 0.0f; }));
 		CHECK(framesOf(onsets(capture(client, 2, 32000))) == std::vector<int64_t>{16000, 24000});
 	}
+	SECTION("several busses at once, the main mix among them")
+	{
+		ObjectId main = 0;
+		const Json project = run(client, "project.get");
+		for (const Json& bus : project.at("busses"))
+			if (bus.at("direction") == "output" && bus.at("id").get<ObjectId>() != click && main == 0)
+				main = bus.at("id").get<ObjectId>();
+		REQUIRE(main != 0);
+		run(client, "metronome.set", {{"audio", {{"outputs", {click, main}}}}});
+		run(client, "audio.render", {{"frames", 16000}});
+		const std::vector<float> first = capture(client, 0, 32000);
+		const std::vector<float> second = capture(client, 2, 32000);
+		CHECK(framesOf(onsets(first)) == std::vector<int64_t>{0, 8000, 16000, 24000});
+		CHECK(framesOf(onsets(second)) == std::vector<int64_t>{16000, 24000});
+		CHECK(std::equal(first.begin() + 16000, first.end(), second.begin() + 16000)); // the same click on both
+	}
 	SECTION("a removed bus: the main mix again, and the settings can still change")
 	{
 		run(client, "metronome.set", {{"audio", {{"outputs", {click}}}}});
@@ -806,6 +838,23 @@ TEST_CASE("sample files are click sounds; a missing one plays the beep", "[integ
 	CHECK(std::abs(out[8000 + 100] - (0.25f * 0.70794578f)) < 0.02f);
 	CHECK(out[8000 + 300] == 0.0f);
 
+	// A file that changes on disk is read again.
+	run(client, "transport.stop");
+	test::Audio louder = ramp;
+	for (float& sample : louder.samples)
+		sample *= 2.0f;
+	louder.samples.resize(50);
+	test::writeWav(rampFile, louder);
+	std::filesystem::last_write_time(rampFile, std::filesystem::last_write_time(rampFile) + std::chrono::seconds(2));
+	run(client, "metronome.set", {{"audio", {{"level", 0.0}}}}); // any change compiles the click again
+	run(client, "transport.locate", {{"position", 0}});
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 8000}});
+	const std::vector<float> changed = capture(client, 0, 24000);
+	for (size_t i = 0; i < 50; ++i)
+		CHECK(std::abs(changed[16000 + i] - static_cast<float>(louder.samples[i] * gain)) < 1e-6f);
+	CHECK(changed[16000 + 50] == 0.0f);
+
 	// A sample that is gone when the project loads plays the beep.
 	const std::string project = (dir.path() / "song.dawproject").u8string();
 	run(client, "project.save", {{"path", project}});
@@ -815,11 +864,44 @@ TEST_CASE("sample files are click sounds; a missing one plays the beep", "[integ
 	run(client, "transport.locate", {{"position", 0}});
 	run(client, "transport.play");
 	run(client, "audio.render", {{"frames", 8000}});
-	const std::vector<float> again = capture(client, 0, 24000);
-	const std::vector<Onset> clicks = onsets(std::vector<float>(again.begin() + 16000, again.end()));
+	const std::vector<float> again = capture(client, 0, 32000);
+	const std::vector<Onset> clicks = onsets(std::vector<float>(again.begin() + 24000, again.end()));
 	REQUIRE(clicks.size() == 1);
 	CHECK(clicks[0].frame == 0);
-	CHECK(std::abs(again[16000 + 400]) > 0.0f); // the beep lasts 50 ms, the ramp 100 frames
+	CHECK(std::abs(again[24000 + 400]) > 0.0f); // the beep lasts 50 ms, the ramp 100 frames
+}
+
+TEST_CASE("the sound library keeps only the sample files that the settings play", "[unit]")
+{
+	const test::TempDir dir;
+	test::Audio audio;
+	audio.sampleRate = static_cast<int>(g_rate);
+	audio.samples.assign(100, 0.5f);
+	const std::filesystem::path first = dir.path() / "first.wav";
+	const std::filesystem::path second = dir.path() / "second.wav";
+	test::writeWav(first, audio);
+	test::writeWav(second, audio);
+	metronome::SoundLibrary sounds;
+	metronome::MetronomeSettings settings;
+	settings.sounds = metronome::Sounds::Samples;
+	settings.samples[0].path = first.u8string();
+	settings.samples[1].path = second.u8string();
+	settings.samples[2].path = first.u8string(); // decoded once
+	const auto compile = [&settings, &sounds](double deviceRate)
+	{
+		metronome::compile(
+			settings, gnubase::time::TempoMap(120.0), gnubase::time::SignatureMap{}, g_rate, deviceRate, sounds);
+	};
+	compile(g_rate);
+	CHECK(sounds.decodedCount() == 2);
+	compile(2 * g_rate); // another device's rate
+	CHECK(sounds.decodedCount() == 2);
+	settings.samples[1].path.clear();
+	compile(2 * g_rate);
+	CHECK(sounds.decodedCount() == 1);
+	settings.sounds = metronome::Sounds::Beeps;
+	compile(2 * g_rate);
+	CHECK(sounds.decodedCount() == 0);
 }
 
 TEST_CASE("clicks are the same however a range is split", "[unit]")
@@ -882,6 +964,29 @@ TEST_CASE("the click sounds while playing or recording, as whilePlaying and whil
 	run(client, "metronome.set", {{"whileRecording", true}, {"whilePlaying", false}});
 	CHECK(clicks("transport.play") == 0);
 	CHECK(clicks("transport.record") == 2);
+}
+
+TEST_CASE("whilePlaying and whileRecording switch at the sample where recording punches in and out", "[integration]")
+{
+	const int blockSize = GENERATE(17, 300, 4096); // neither locator on a block boundary
+	Session session(blockSize);
+	Client& client = session.client;
+	// 120 BPM: beats at 0, 8000, 16000 and 24000; the locators on beats, within blocks.
+	run(client, "transport.set",
+		{{"metronome", true}, {"left", 8000}, {"right", 16000}, {"punchIn", true}, {"punchOut", true}});
+	const auto clicks = [&client](int64_t from)
+	{
+		run(client, "transport.locate", {{"position", 0}});
+		run(client, "transport.record");
+		run(client, "audio.render", {{"frames", 28000}});
+		run(client, "transport.stop");
+		const std::vector<float> all = capture(client, 0, from + 28000);
+		return framesOf(onsets(std::vector<float>(all.begin() + from, all.end())));
+	};
+	run(client, "metronome.set", {{"whilePlaying", false}});
+	CHECK(clicks(0) == std::vector<int64_t>{8000}); // recording ends at 16000
+	run(client, "metronome.set", {{"whilePlaying", true}, {"whileRecording", false}});
+	CHECK(clicks(28000) == std::vector<int64_t>{0, 16000, 24000});
 }
 
 TEST_CASE("only recording from stop counts in", "[integration]")

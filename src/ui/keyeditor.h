@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -237,6 +238,8 @@ namespace gnubase::ui
 		// shows their points of the view's expressionType.
 		void renderExpression();
 		std::pair<int64_t, int64_t> expressionSpan() const;
+		// Whether the note expression setup of a part's track hides an expression (#2120, p. 1301).
+		bool expressionHidden(uint64_t part, const std::string& type) const;
 		// The draw tool's points or the erase tool's sweep at the mouse in the expression editor.
 		void paint(const Rml::Event& event);
 		// Ends its gesture: the selected notes it reached get the points it drew in the range it swept, as
@@ -355,7 +358,9 @@ namespace gnubase::ui
 		// The notes' colors that the Event Colors menu chooses (pp. 1133-1134), by part and note: none for the style
 		// sheets' color.
 		std::map<std::pair<uint64_t, uint64_t>, std::string> m_noteColors;
-		std::string m_expressionRml; // the expression editor's lines as last set
+		std::string m_expressionRml;                                    // the expression editor's lines as last set
+		std::set<std::pair<uint64_t, std::string>> m_hiddenExpressions; // by part, as its track's setup hides them
+		std::string m_expressionItems;                                  // Parameter Selection's items as last set
 
 		Gesture m_gesture = Gesture::None;
 		std::pair<double, int> m_pressedAt;
