@@ -429,6 +429,8 @@ namespace gnubase::engine
 		bool noteOff(uint16_t index, uint32_t offset, graph::EventBuffer& out) noexcept;
 		// Notes it can't end for a full buffer end as soon as there is room.
 		void endAll(uint32_t offset, graph::EventBuffer& out) noexcept;
+		// Ends a note its input holds; if the buffer is full, at the start of the next block (m_inputEnds).
+		void endInput(uint16_t index, uint32_t offset, graph::EventBuffer& out) noexcept;
 		// Finds the controller events to chase at a position; sendChased sends them, false if the buffer filled first.
 		// Stopped, it takes the events at the position too. heardAgain: only those of the tracks heard again in this
 		// block, of a soloed-out or disabled one's every kind, of one muted by its button only the kinds its channel
@@ -479,9 +481,13 @@ namespace gnubase::engine
 		graph::EventBuffer m_direct;                      // see direct
 		std::shared_ptr<graph::EventBuffer> m_stripChase; // see stripChase
 		std::array<bool, g_notes> m_inputHeld{};          // notes its input sent a note-on for and no note-off since
-		std::array<bool, g_notes> m_thruDown{};           // the keys MIDI thru holds (thru)
-		std::array<bool, size_t{16} * 3> m_thruPedals{};  // the pedals it holds, per channel (graph::holdsNotes)
-		bool m_thruHolds = false;                         // any of them
+		// Held notes of its input that a second note-on for their key had to end in a block without room: they end at
+		// the start of the next block, unless something else ended them first. m_inputEnding: any of them.
+		std::array<bool, g_notes> m_inputEnds{};
+		bool m_inputEnding = false;
+		std::array<bool, g_notes> m_thruDown{};          // the keys MIDI thru holds (thru)
+		std::array<bool, size_t{16} * 3> m_thruPedals{}; // the pedals it holds, per channel (graph::holdsNotes)
+		bool m_thruHolds = false;                        // any of them
 		// Notes the inserts above the divider played a note-on for and no note-off since, before the modifiers.
 		std::array<bool, g_notes> m_inputPlayed{};
 		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out, or no

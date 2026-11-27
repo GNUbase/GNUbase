@@ -452,6 +452,32 @@ TEST_CASE("a full event buffer delays note-offs to a later block instead of drop
 	}
 }
 
+TEST_CASE("a held live note that a second note-on for its key ends in a full block ends in the next one", "[unit]")
+{
+	const auto transposed = [](int semitones)
+	{
+		auto sequence = std::make_unique<MidiSequence>();
+		sequence->modifiers.transpose = semitones;
+		return sequence;
+	};
+	auto played = std::make_shared<MidiSequencer>();
+	played->setSequence(transposed(12));
+	Player player(played, 16);
+	// The audio engine fills the input for each block.
+	played->input().add(noteOnEvent(2, 60));
+	player.play(16);
+	played->input().clear();
+	// The key is still held when the transpose changes: its next note-on goes elsewhere, so the first note must end,
+	// but incoming events fill the block. It ends where the next block starts.
+	played->setSequence(transposed(5));
+	fillInput(player);
+	played->input().add(noteOnEvent(4, 60));
+	player.play(16);
+	played->input().clear();
+	player.play(16);
+	CHECK(notesIn(player.heard) == std::vector<Heard>{on(2, 72), off(32, 72)});
+}
+
 namespace
 {
 	// An instrument in a graph that notes what reaches it and which keys it holds.

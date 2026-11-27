@@ -1003,6 +1003,13 @@ namespace gnubase::engine
 			}
 			moveAddOns(sequence.articulations, sequence.inputChannel, 0, out);
 		}
+		if (m_inputEnding)
+		{
+			m_inputEnding = false;
+			for (uint16_t index = 0; index < g_notes; ++index)
+				if (std::exchange(m_inputEnds[index], false) && m_inputHeld[index])
+					endInput(index, 0, out);
+		}
 		for (graph::ProcessEvent event : m_input)
 		{
 			// The bypass leaves out the input's expression where it plays; the track still records it.
@@ -1017,9 +1024,8 @@ namespace gnubase::engine
 			}
 			auto ends = static_cast<uint16_t>(g_notes);
 			const bool plays = modifyInput(sequence, transport.position + event.offset, event, ends);
-			// Still held if the buffer was full: then a stop ends it.
-			if (ends != g_notes && out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, ends, event.offset)))
-				m_inputHeld[ends] = false;
+			if (ends != g_notes)
+				endInput(ends, event.offset, out);
 			if (!plays)
 				continue;
 			out.add(event);
@@ -1654,6 +1660,18 @@ namespace gnubase::engine
 		std::move(position + 1, last, position);
 		--m_soundingCount;
 		return true;
+	}
+
+	void MidiSequencer::endInput(uint16_t index, uint32_t offset, graph::EventBuffer& out) noexcept
+	{
+		if (out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, index, offset)))
+		{
+			m_inputHeld[index] = false;
+			return;
+		}
+		// No room: still held, it ends in the next block, as endAll's notes do (#870).
+		m_inputEnds[index] = true;
+		m_inputEnding = true;
 	}
 
 	void MidiSequencer::endAll(uint32_t offset, graph::EventBuffer& out) noexcept
