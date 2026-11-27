@@ -9,6 +9,7 @@
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
+#include "ui/widgets.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -24,6 +25,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -1052,6 +1054,34 @@ namespace
 		const Json message = elements(app, "#project-error-message");
 		return message.size() == 1 ? message[0].at("text").get<std::string>() : std::string();
 	}
+
+	// Closes the main window's document with the element of that id, as its buttons would (ui::closeDialog); false if
+	// there is none. For tasks that the shell runs, where a failed REQUIRE would throw through the shell's step.
+	bool closeDocumentOf(test::UiApp& app, const std::string& id)
+	{
+		Rml::Context& context = app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (const Rml::Element* element = context.GetDocument(i)->GetElementById(id))
+				return gnubase::ui::closeDialog(*element->GetOwnerDocument(), "cancel");
+		return false;
+	}
+
+	// A project whose auto saves fail, as a file is in the place of Auto Saves, with the auto fades dialog open and
+	// the error of a failed auto save waiting for it. Returns Auto Saves.
+	fs::path errorWaitsForAutoFades(test::UiApp& app, const test::TempDir& dir)
+	{
+		const fs::path autoSaves = dir.path() / "Auto Saves";
+		app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+		app.call("track.add", {{"type", "audio"}});
+		std::ofstream(autoSaves) << "not a folder";
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
+		app.keys().run("project.autoFades", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#auto-fades"); }));
+		app.engine().advanceClock(g_pastInterval);
+		handleEarlierEvents(app);
+		CHECK(elements(app, "#project-error-dialog").empty());
+		return autoSaves;
+	}
 }
 
 TEST_CASE("an auto save that fails shows its error once, and again when it fails for another reason", "[ui]")
@@ -1207,6 +1237,99 @@ TEST_CASE("a failed auto save's error waits while other modal dialogs are open, 
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#auto-fades").empty(); }));
 	handleEarlierEvents(app);
 	CHECK(elements(app, "#project-error-dialog").empty());
+}
+
+TEST_CASE("a failed auto save's error that waits shows once the modal dialog that kept it away hides", "[ui]")
+{
+	// GNUbase's own dialogs unload as they close (ui::closeDialog), but a Lua script can hide one through RmlUi's
+	// plugin instead (#859).
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	app.call("track.add", {{"type", "audio"}});
+	std::ofstream(dir.path() / "Auto Saves") << "not a folder";
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
+	Rml::ElementDocument* modal =
+		app.main().context().LoadDocumentFromMemory("<rml><head></head><body id=\"hiding-dialog\"></body></rml>");
+	REQUIRE(modal != nullptr);
+	modal->Show(Rml::ModalFlag::Modal);
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	modal->Hide();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(errorMessage(app), ContainsSubstring("auto saved"));
+	closeError(app);
+	modal->Close();
+}
+
+TEST_CASE(
+	"a failed auto save's error that waits doesn't take the place of a newer one's that came as the dialog closed",
+	"[ui]")
+{
+	// The dialog closes from a task the shell runs, and the next failure, for another reason, reaches the UI in the
+	// same step: the error that waited opens a step after the newer one, which it mustn't replace (#859).
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	Client client(app.engine());
+	const test::TempDir dir;
+	const fs::path autoSaves = errorWaitsForAutoFades(app, dir);
+	fs::remove(autoSaves);
+	blockSaving(autoSaves / "Song-01.bak");
+	const std::string newer = reject(client, "project.autoSave");
+	bool closed = false;
+	app.shell().post([&app, &closed] { closed = closeDocumentOf(app, "auto-fades"); });
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK(closed);
+	handleEarlierEvents(app);
+	CHECK_THAT(errorMessage(app), ContainsSubstring(newer));
+	CHECK(elements(app, "#project-error-dialog").size() == 1);
+	closeError(app);
+}
+
+TEST_CASE("a failed auto save's error that opens drops the one that waits", "[ui]")
+{
+	// The next failure, for another reason, reaches the UI in the step that closes the dialog, before it closes: its
+	// error opens first, and the older one that waited doesn't show after it (#848, #859).
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	Client client(app.engine());
+	const test::TempDir dir;
+	const fs::path autoSaves = errorWaitsForAutoFades(app, dir);
+	fs::remove(autoSaves);
+	blockSaving(autoSaves / "Song-01.bak");
+	const std::string newer = reject(client, "project.autoSave");
+	// A task of every step, after the one that hands on the engine's events (ui/enginebinding.h), which the shell
+	// registered first. Shared, as the shell keeps the task until it goes.
+	const auto armed = std::make_shared<bool>(true);
+	const auto closed = std::make_shared<bool>(false);
+	app.shell().eachStep(
+		[&app, armed, closed]
+		{
+			if (*armed)
+				*closed = closeDocumentOf(app, "auto-fades");
+			*armed = false;
+			return false;
+		});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK(*closed);
+	handleEarlierEvents(app);
+	CHECK_THAT(errorMessage(app), ContainsSubstring(newer));
+	CHECK(elements(app, "#project-error-dialog").size() == 1);
+	closeError(app);
+}
+
+TEST_CASE("the app ends while a failed auto save's error waits for a dialog", "[ui]")
+{
+	// The auto fades dialog unloads as the shell closes its windows, after ProjectFiles went, which stopped listening
+	// to it (#859).
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	errorWaitsForAutoFades(app, dir);
+	CHECK(shown(app, "#auto-fades"));
 }
 
 TEST_CASE("a failed auto save's error that waits for a dialog is dropped once auto save works or the project was saved "

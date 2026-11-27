@@ -714,22 +714,26 @@ namespace gnubase::ui
 			});
 	}
 
-	void ProjectFiles::openError(WindowId window, const std::string& error, bool autoSave)
+	void ProjectFiles::openError(WindowId window, const std::string& error, bool autoSave, uint64_t failure)
 	{
 		// The dialog that asked may still be closing.
 		m_shell.post(
 			// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's std::string; out of memory only
-			[this, window, error, autoSave, worked = m_autoSaveWorked]
+			[this, window, error, autoSave, failure, worked = m_autoSaveWorked]
 			{
 				if (autoSave && worked != m_autoSaveWorked)
 					return; // an auto save succeeded or the project was saved or opened since it failed
+				// An error that waited for a dialog opens a step after the dialog closed, which may be after a newer
+				// failure's error opened (#859).
+				if (autoSave && failure != m_autoSaveFailures)
+					return;
 				const Window* showing = m_shell.find(window);
 				// A failed auto save's error doesn't open over another modal dialog, such as the fade editor, which the
 				// user works in: it waits until that closed. The project dialog that is open (m_dialog) is left to
 				// openDialog, where an auto save's error makes way or else shows at the next failure.
 				if (autoSave && showing != nullptr && otherModalOpen(showing->context(), m_dialog.get()))
 				{
-					waitForDialogs(showing->context(), window, error);
+					waitForDialogs(showing->context(), window, error, failure);
 					return;
 				}
 				// Any other error waits for the project dialog that is open.
@@ -758,10 +762,11 @@ namespace gnubase::ui
 			});
 	}
 
-	void ProjectFiles::waitForDialogs(Rml::Context& context, WindowId window, const std::string& error)
+	void ProjectFiles::waitForDialogs(
+		Rml::Context& context, WindowId window, const std::string& error, uint64_t failure)
 	{
 		dropWaitingError();
-		m_waitingError = WaitingError{window, error};
+		m_waitingError = WaitingError{window, error, failure};
 		for (int i = 0; i < context.GetNumDocuments(); ++i)
 		{
 			Rml::ElementDocument* document = context.GetDocument(i);
@@ -779,7 +784,7 @@ namespace gnubase::ui
 			return;
 		const WaitingError waiting = std::move(*m_waitingError);
 		dropWaitingError();
-		openError(waiting.window, waiting.error, true);
+		openError(waiting.window, waiting.error, true, waiting.failure);
 	}
 
 	void ProjectFiles::autoSaveWorks()
@@ -822,8 +827,10 @@ namespace gnubase::ui
 			m_autoSaveFailureShown = false;
 		if (m_autoSaveFailureShown)
 			return;
+		++m_autoSaveFailures;
 		if (const Window* main = mainWindow(); main != nullptr)
-			openError(main->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(), true);
+			openError(main->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(), true,
+				m_autoSaveFailures);
 	}
 
 	void ProjectFiles::unlessUnsaved(

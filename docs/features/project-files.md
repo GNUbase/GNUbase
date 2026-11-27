@@ -159,8 +159,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   closes it and shows its own error at once. If a modal dialog of the main window that isn't a project dialog, such as
   the fade editor, the auto fades dialog or the studio setup, is open when the auto save fails, the error doesn't open
   over it, so that it doesn't come between the user and a dialog they work in: it waits and shows as soon as the last
-  of those dialogs closed, unless an auto save succeeded or the project was saved or opened meanwhile, which makes it
-  out of date. Modal dialogs in other windows, such as a panel's own window, don't keep it away. If another project
+  of those dialogs closed or hid (GNUbase's own dialogs unload as they close, but a Lua script can hide one through
+  RmlUi's plugin), unless an auto save succeeded or the project was saved or opened meanwhile, which makes it out of
+  date, or a newer failure's error opened meanwhile, also one that reached the UI in the step that closed the dialog,
+  which the error that waited, opening a step later, mustn't replace (#859). Modal dialogs in other windows, such as a panel's own window, don't keep it away. If another project
   dialog, such as the start screen, is open, the error shows at the next failure instead. The other File menu
   commands that read or write files use the dialog too: File > Export > Selected Tracks shows the engine's refusal
   in it, and under the title Export Selected Tracks (`ProjectFiles::showNotice`) the tracks an export that worked
@@ -223,7 +225,8 @@ answer, a question asked in a panel's own window that closes with it leaving the
 start screen's buttons and double clicks, Save as Template and Back up Project, and the error dialog for a failed save
 and backup, and for failed auto saves: once per reason and again after File > Save, in place of the open error when the
 reason changes, at the next failure if another project dialog kept it from showing, once the auto fades dialog and the
-studio setup over it closed, without another failure, but not after an auto save succeeded or the project was saved or
+studio setup over it closed or a modal document hid, without another failure, not in place of a newer failure's error
+that came in the step the dialog closed, before or after it, nor when the app ends while it waits, but not after an auto save succeeded or the project was saved or
 reverted meanwhile, nor when a success follows the failure before the UI heard of either, not kept away by a modal
 dialog in a panel's own window, again after the unsaved changes question or a failed save's error took its place, the
 unsaved changes question and a failed save's error waiting for the start screen and Save as Template and opening in the

@@ -75,6 +75,7 @@ namespace gnubase::ui
 		{
 			WindowId window = 0;
 			std::string error;
+			uint64_t failure = 0; // m_autoSaveFailures when the UI heard of it
 		};
 		struct WaitingDialog
 		{
@@ -117,12 +118,13 @@ namespace gnubase::ui
 		// Shows the error in project-error.rml in the window once the event that asked is done. A failed auto save's
 		// error (autoSave) takes the place of an earlier one's but doesn't open over any other modal dialog in the
 		// window: it waits for them to close (waitForDialogs). It counts as shown only once it opened and while no
-		// other dialog took its place.
-		void openError(WindowId window, const std::string& error, bool autoSave);
+		// other dialog took its place. failure is the auto save's number (m_autoSaveFailures): its error doesn't open
+		// once a newer failure came, which shows its own (#859).
+		void openError(WindowId window, const std::string& error, bool autoSave, uint64_t failure = 0);
 		// Keeps a failed auto save's error for the window until the modal dialogs in the context other than m_dialog,
 		// which keep it from opening, closed: they tell ProcessEvent when one hides or unloads. It replaces the error
 		// that waited before.
-		void waitForDialogs(Rml::Context& context, WindowId window, const std::string& error);
+		void waitForDialogs(Rml::Context& context, WindowId window, const std::string& error, uint64_t failure);
 		// Opens the error that waited, if any, once the dialog that closed is gone; it waits again for dialogs that
 		// are still open.
 		void showWaitingError();
@@ -203,5 +205,7 @@ namespace gnubase::ui
 		std::optional<WaitingError> m_waitingError;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_keptAwayBy;
 		uint64_t m_autoSaveWorked = 0; // how often autoSaveWorks ran, so that openError knows an error is out of date
+		uint64_t m_autoSaveFailures =
+			0; // the failed auto saves whose error is to show, so that openError knows a newer one
 	};
 }
