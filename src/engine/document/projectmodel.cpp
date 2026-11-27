@@ -4350,7 +4350,9 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.load", 1,
 				"Replaces the project with a DAWproject file and clears the undo history. Media files embedded in "
-				"it are extracted to mediaFolder, by default a folder named after the file next to it. With "
+				"it are extracted to mediaFolder, by default the folder <name> media next to it, "
+				"named after the file as its versions are (see project.saveNewVersion): Song media for Song.dawproject "
+				"and Song.dawproject., Mix v2.1 media for Mix v2.1. With "
 				"revision, it loads only if the project is still at that revision (see project.revision), and fails "
 				"otherwise, so that no change made meanwhile is lost. An auto save (see project.autoSave) opens "
 				"without a file and with unsaved changes, and isn't a recent project. A sample rate outside the "
@@ -4369,8 +4371,10 @@ namespace gnubase::engine
 							std::to_string(parameters.at("revision").get<uint64_t>()));
 				const std::string path = parameters.at("path").get<std::string>();
 				const std::filesystem::path file = std::filesystem::u8path(path);
+				// Named as versions, auto saves and backups are, so that "Mix v2.1" and "Mix v2.2" don't share one
+				// (#798).
 				const std::string folder = parameters.value("mediaFolder",
-					(file.parent_path() / std::filesystem::u8path(file.stem().u8string() + " media")).u8string());
+					(file.parent_path() / std::filesystem::u8path(projectFileStem(file) + " media")).u8string());
 				Project project;
 				std::vector<std::string> warnings;
 				try

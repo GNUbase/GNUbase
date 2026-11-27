@@ -416,7 +416,9 @@ namespace gnubase::engine
 		const Json recentResult = objectSchema(
 			{{"projects",
 				{{"type", "array"},
-					{"items", objectSchema({{"file", stringSchema}, {"exists", booleanSchema}}, {"file", "exists"})}}}},
+					{"items",
+						objectSchema({{"file", stringSchema}, {"name", stringSchema}, {"exists", booleanSchema}},
+							{"file", "name", "exists"})}}}},
 			{"projects"});
 		const auto listRecent = [this]
 		{
@@ -424,15 +426,18 @@ namespace gnubase::engine
 			for (const Json& file : m_recent->value(g_recentKey))
 			{
 				std::error_code error;
+				const fs::path path = fs::u8path(file.get<std::string>());
 				projects.push_back(
-					{{"file", file}, {"exists", fs::is_regular_file(fs::u8path(file.get<std::string>()), error)}});
+					{{"file", file}, {"name", projectFileStem(path)}, {"exists", fs::is_regular_file(path, error)}});
 			}
 			return Json{{"projects", std::move(projects)}};
 		};
 		addControl(engine,
 			{"project.recent", 1,
 				"The recent projects: the project files saved (not auto saved) or opened last, the newest first, at "
-				"most 10, kept in the user settings' folder. exists says whether the file is still there.",
+				"most 10, kept in the user settings' folder. name is the file's name without the .dawproject "
+				"extension, as versions are named (see project.saveNewVersion), and exists says whether the file is "
+				"still there.",
 				objectSchema({}), recentResult, true},
 			[listRecent](CommandContext&) { return listRecent(); });
 		addControl(engine,

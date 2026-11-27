@@ -1,0 +1,42 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Asks before Save As replaces a file the file dialog didn't name (docs/features/project-files.md): ui::ProjectFiles
+     opens it when the name chosen becomes another file's once the .dawproject extension is added or the dots and
+     spaces at its end go, such as Song.dawproject for "Song." or "Song", and saves only if it closes with Replace (the
+     result ok). The message names the file. -->
+<rml>
+<head>
+	<title>Replace File</title>
+	<style>
+		dialog
+		{
+			width: 360dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="replace-file-dialog">
+		<div class="dialog-titlebar">Replace File</div>
+		<div class="row" id="replace-file-message">The file already exists. Replace it?</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button id="replace-file" class="primary" result="ok">Replace</button>
+		</div>
+	</dialog>
+</body>
+</rml>

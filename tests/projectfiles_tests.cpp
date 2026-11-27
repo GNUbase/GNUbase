@@ -60,6 +60,19 @@ namespace
 		return path.u8string();
 	}
 
+	// Whether a file of that name can be made: on Windows 10 a name that Windows keeps for a device is the device also
+	// with an extension (NUL.dawproject), and Windows drops the dots at the end of a name ("..." is its folder), so
+	// that the cases for such names only run where they are files (#798).
+	bool canBeFile(const fs::path& file)
+	{
+		std::ofstream(file) << "x";
+		std::error_code error;
+		const bool plain = fs::is_regular_file(file, error);
+		if (plain) // never anything else: on Windows, "..." would name the folder
+			fs::remove(file, error);
+		return plain;
+	}
+
 	bool modified(Client& client)
 	{
 		return run(client, "project.revision").at("modified").get<bool>();
@@ -391,6 +404,60 @@ TEST_CASE("auto saves are named after the project file as its versions are", "[i
 		run(client, "project.save", {{"path", utf8(dir.path() / fs::u8path(name))}});
 		run(client, "track.add", {{"type", "audio"}});
 		CHECK(run(client, "project.autoSave").at("file") == utf8(dir.path() / "Auto Saves" / fs::u8path(autoSave)));
+	}
+}
+
+TEST_CASE("a project file named only of dots has the versions and auto saves of Untitled", "[integration]")
+{
+	// projectFileStem's fallback for a name with nothing left once the dots at its end go (#798). Linux and macOS
+	// keep such a name; Windows can't make the file.
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "...";
+	if (!canBeFile(file))
+	{
+		WARN("A file can't be named \"...\" here: the fallback isn't checked.");
+		return;
+	}
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	run(client, "project.save", {{"path", utf8(file)}});
+	run(client, "track.add", {{"type", "audio"}});
+	CHECK(run(client, "project.autoSave").at("file") == utf8(dir.path() / "Auto Saves" / "Untitled-01.bak"));
+	CHECK(run(client, "project.saveNewVersion").at("file") == utf8(dir.path() / "Untitled-01.dawproject"));
+}
+
+TEST_CASE(
+	"a loaded project's media folder and its name among the recent projects are named after its file", "[integration]")
+{
+	// As its versions, auto saves and backups are (#764, #798): after the whole name without the .dawproject extension
+	// and the dots and spaces after it, so that "Mix v2.1" and "Mix v2.2" don't share "Mix v2 media".
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	test::writeWav(dir.path() / "take.wav", {std::vector<float>(480, 0.25f), 1, 48000});
+	const Json media = run(client, "media.add", {{"path", utf8(dir.path() / "take.wav")}}).at("media").at("id");
+	run(client, "clip.add", {{"media", media}});
+	for (const char* named : {"Mix v2.1", "Mix v2.2"})
+	{
+		const std::string name = named;
+		INFO(name);
+		const fs::path file = dir.path() / fs::u8path(name);
+		run(client, "project.save", {{"path", utf8(file)}}); // with the media in it
+		run(client, "project.load", {{"path", utf8(file)}});
+		CHECK(fs::is_directory(dir.path() / fs::u8path(name + " media")));
+		const Json projects = run(client, "project.recent").at("projects");
+		REQUIRE(!projects.empty());
+		CHECK(projects[0].at("file") == utf8(fs::absolute(file)));
+		CHECK(projects[0].at("name") == name);
+	}
+	CHECK(!fs::exists(dir.path() / "Mix v2 media"));
+	const fs::path take = dir.path() / "Take.DAWPROJECT ";
+	if (canBeFile(take))
+	{
+		run(client, "project.save", {{"path", utf8(take)}});
+		run(client, "project.load", {{"path", utf8(take)}});
+		CHECK(fs::is_directory(dir.path() / "Take media"));
+		CHECK(run(client, "project.recent").at("projects")[0].at("name") == "Take");
 	}
 }
 
@@ -763,10 +830,17 @@ TEST_CASE("templates are projects in the settings folder that new projects start
 	CHECK_THAT(reject(client, "project.new", {{"template", "../x"}}), ContainsSubstring("name"));
 	// A template named as a device on Windows, which earlier builds saved and Linux, macOS and Windows 11 keep as a
 	// file, still opens, although no template can be saved under such a name any more.
-	fs::copy_file(fs::u8path(saved.at("file").get<std::string>()),
-		dir.path() / "settings" / "Project Templates" / "Aux.dawproject");
-	run(client, "project.new", {{"template", "Aux"}});
-	CHECK(trackCount(client) == 2);
+	const fs::path device = dir.path() / "settings" / "Project Templates" / "Aux.dawproject";
+	if (canBeFile(device))
+	{
+		fs::copy_file(fs::u8path(saved.at("file").get<std::string>()), device);
+		run(client, "project.new", {{"template", "Aux"}});
+		CHECK(trackCount(client) == 2);
+	}
+	else
+	{
+		WARN("Aux.dawproject is a device here, as on Windows 10: the template of that name isn't checked.");
+	}
 }
 
 TEST_CASE("without a settings folder there are no templates, recent projects or untitled auto saves", "[integration]")
@@ -935,8 +1009,9 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 
 	// Dots and spaces at the end go before the extension is checked, which Windows drops anyway, so that a name ending
 	// in the extension and then a dot or a space gets it once (#706).
+	// A name of only dots and spaces is Untitled.
 	const std::vector<std::pair<std::string, std::string>> typed{{"Final.dawproject.", "Final.dawproject"},
-		{"Live.DAWPROJECT ", "Live.DAWPROJECT"}, {"Demo . .", "Demo.dawproject"}};
+		{"Live.DAWPROJECT ", "Live.DAWPROJECT"}, {"Demo . .", "Demo.dawproject"}, {". .", "Untitled.dawproject"}};
 	for (const auto& [name, saved] : typed)
 	{
 		INFO(name);
@@ -948,8 +1023,45 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 	}
 	CHECK(!fs::exists(dir.path() / "Final.dawproject.dawproject"));
 
+	// A file that the name becomes and the dialog didn't name, which the dialog didn't ask about, as the dialogs of
+	// Linux check the name as typed: GNUbase asks before it replaces it (#798). Cancel keeps it.
+	const std::string untitled = utf8(fs::absolute(dir.path() / "Untitled.dawproject"));
+	const std::string final = utf8(fs::absolute(dir.path() / "Final.dawproject"));
+	const auto finalSaved = fs::last_write_time(dir.path() / "Final.dawproject");
+	fileMenu(app, "file.saveAs");
+	answer(app, {dir.path() / "Final.dawproject."});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#replace-file-dialog"); }));
+	CHECK_THAT(
+		elements(app, "#replace-file-message")[0].at("text").get<std::string>(), ContainsSubstring("Final.dawproject"));
+	click(app, "#replace-file-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#replace-file-dialog"); }));
+	CHECK(location(app) == untitled);
+	// Compared into a bool: Catch2 can't print a file time where libc++ counts it in __int128 (macOS).
+	const bool finalKept = fs::last_write_time(dir.path() / "Final.dawproject") == finalSaved;
+	CHECK(finalKept);
+	// Replace saves, also for a name without the extension.
+	for (const char* name : {"Final.", "Final"})
+	{
+		INFO(name);
+		fileMenu(app, "file.saveAs");
+		answer(app, {dir.path() / name});
+		click(app, "#replace-file");
+		REQUIRE(app.waitUntil([&app, &final] { return location(app) == final; }));
+		app.call("project.save", {{"path", untitled}});
+	}
+	// The file the dialog named is the dialog's to ask about.
+	fileMenu(app, "file.saveAs");
+	answer(app, {dir.path() / "Final.dawproject"});
+	REQUIRE(app.waitUntil([&app, &final] { return location(app) == final; }));
+	CHECK(elements(app, "#replace-file-dialog").empty());
+
 	// A name that Windows keeps for a device is the user's to choose: with the extension it is a file like any other on
-	// Linux, macOS and Windows 11 (on Windows 10 it is still the device, and this fails).
+	// Linux, macOS and Windows 11. On Windows 10 it is still the device.
+	if (!canBeFile(dir.path() / "NUL.dawproject"))
+	{
+		WARN("NUL.dawproject is a device here, as on Windows 10: Save As of a device name isn't checked.");
+		return;
+	}
 	fileMenu(app, "file.saveAs");
 	answer(app, {dir.path() / "NUL"});
 	const std::string device = utf8(fs::absolute(dir.path() / "NUL.dawproject"));
@@ -2090,6 +2202,13 @@ TEST_CASE("the start screen creates projects, from templates too, and opens rece
 	app.appUi().openStartScreen();
 	click(app, "#open-other");
 	CHECK(answer(app, {}).kind == gnubase::ui::FileDialogKind::Open);
+
+	// Named as the engine names them, after the whole name of a file without the extension (#798).
+	app.call("project.save", {{"path", utf8(dir.path() / "Mix v2.1")}});
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#start-recent listitem").size() == 2; }));
+	CHECK(elements(app, "#start-recent listitem")[0].at("text") == "Mix v2.1");
+	click(app, "#start-screen button[result=cancel]");
 }
 
 TEST_CASE("File > Save as Template and Back up Project", "[ui]")

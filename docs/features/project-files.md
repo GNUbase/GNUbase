@@ -44,8 +44,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   digits aren't versions. Only `.dawproject`, in any case, is taken for the extension: a file `Song v2.1` that
   `project.save` saved as named gets `Song v2.1-01.dawproject`. Dots and spaces at the end of the name, which Windows
   drops and `project.save` keeps on Linux and macOS, go before the extension is taken off, so `Song.dawproject.` gets
-  `Song-01.dawproject` (#706; `projectFileStem` in `engine/media/backup.h`, which auto saves and backups are named
-  with too). Files in the folder count as versions whatever case
+  `Song-01.dawproject` (#706; `projectFileStem` in `engine/media/backup.h`, which auto saves, backups, the recent
+  projects and the folder `<name> media` that `project.load` extracts embedded media into are named with too, so that
+  `Mix v2.1` and `Mix v2.2` don't share `Mix v2 media`, #798). A name of nothing but dots and spaces, which Linux and
+  macOS keep, is `Untitled`. Files in the folder count as versions whatever case
   their name and extension are written in (`song-03.DAWPROJECT`), since the file systems of Windows and macOS don't tell
   them apart and the next version would otherwise overwrite one. That comparison folds ASCII letters only, while those
   file systems fold other letters too (`übung-05` is `Übung-05` there) and macOS also takes the ways Unicode can write
@@ -55,7 +57,9 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 - **Recent projects.** Every file saved (not auto saved) or opened becomes the first of the recent projects, at most 10,
   kept in `recent-projects.json` in the settings folder ([settings.md](settings.md)), so they are the user's, not the
   project's, and several GNUbase processes add to the list without losing each other's entries (`Store::modify`).
-  `project.recent` lists them with whether each file is still there; `project.forgetRecent` removes one, or all.
+  `project.recent` lists them with their names, which the start screen shows, and whether each file is still there;
+  `project.forgetRecent` removes one, or all. A name is the one versions take (`projectFileStem`): `Mix v2.1` for a
+  file `Mix v2.1`, `Song` for `Song.dawproject.` (#798).
 - **Templates.** `project.saveTemplate` saves the project as `Project Templates/<name>.dawproject` in the settings
   folder; `project.templates` lists them by name, and `project.new` with `template` starts from one. Templates refer to
   their media where they are instead of copying them (the reference asks to remove the clips from the pool first). The
@@ -116,7 +120,7 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 | New Project | `file.new` | Mod+N | opens the start screen |
 | Open... | `file.open` | Mod+O | an open dialog for a DAWproject file, then `project.load` |
 | Save | `file.save` | Mod+S | `project.save`, or Save As for a project without a file |
-| Save As... | `file.saveAs` | Mod+Shift+S | a save dialog, then `project.save` with the path (`.dawproject` added unless the name ends with it, in any case: `Song v1.2` is saved as `Song v1.2.dawproject`, `Mix.DAWPROJECT` as it is; dots and spaces at the end of the name go first, as Windows drops them and the dialogs of Linux return a name as typed: `Song.` and `Song.dawproject.` as `Song.dawproject`). A name that Windows keeps for a device, such as `NUL`, is saved as the user chose it: with the extension it is a file like any other on Linux, macOS and Windows 11 |
+| Save As... | `file.saveAs` | Mod+Shift+S | a save dialog, then `project.save` with the path (`.dawproject` added unless the name ends with it, in any case: `Song v1.2` is saved as `Song v1.2.dawproject`, `Mix.DAWPROJECT` as it is; dots and spaces at the end of the name go first, as Windows drops them and the dialogs of Linux return a name as typed: `Song.` and `Song.dawproject.` as `Song.dawproject`). A name of nothing but dots and spaces is `Untitled.dawproject`. A name that Windows keeps for a device, such as `NUL`, is saved as the user chose it: with the extension it is a file like any other on Linux, macOS and Windows 11. If the file saved to isn't the one the dialog named and is there, GNUbase asks before it replaces it (`replace-file.rml`, #798), as the dialogs of Linux ask about the name as typed: `Song.` or `Song` next to `Song.dawproject` |
 | Back up Project... | `file.backup` | | a folder dialog, then the Back up Project Options dialog, then `project.backup` into it ([backup.md](backup.md)) |
 | Save as Template... | `file.saveTemplate` | | the Save as Template dialog (`save-template.rml`) for the name, then `project.saveTemplate` |
 | Save New Version | `file.saveNewVersion` | Mod+Alt+S | `project.saveNewVersion`, or Save As for a project without a file |
@@ -215,9 +219,11 @@ auto saves (also of untitled projects and of projects whose file is gone, and un
 the project file they were made of, and where their media and next auto saves go, each untitled project's series of
 auto saves, also after a restart and next to a series in other case, the engine's own auto saves once the interval passed and failing ones with
 their events and log entries, also when the reason or only the file changes (`Engine::advanceClock` moves the clock
-forward and returns once its tick ran, so no test waits), recent projects across restarts, and templates; and in the
-app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot, of one ending in a dot
-and of one with the extension in upper case) and Save New Version after each through file dialogs, Open and Revert with
+forward and returns once its tick ran, so no test waits), recent projects across restarts and their names, the media folder a load extracts into, versions and auto saves of
+a file named `...` (where it can be made), and templates (one named as a device, where it can be a file); and in the
+app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot, of one ending in a dot,
+of one of only dots and spaces and of one with the extension in upper case, asking before it replaces a file the dialog
+didn't name, and of a device name where it can be a file, not on Windows 10) and Save New Version after each through file dialogs, Open and Revert with
 the unsaved changes dialog, Save asking for a file after Open of an auto save and proposing the project file it was made of, quitting through the main window's close
 button and the OS's quit request with and without unsaved changes, SDL's close and quit requests for the last window and
 more requests while the question is open asking one question (the same document stays open) that Cancel and Discard

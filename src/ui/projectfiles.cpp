@@ -336,7 +336,7 @@ namespace gnubase::ui
 			if (item.at("exists").get<bool>())
 			{
 				m_recent.push_back(item.at("file").get<std::string>());
-				names.push_back(std::filesystem::u8path(m_recent.back()).stem().u8string());
+				names.push_back(item.at("name").get<std::string>());
 			}
 		if (Rml::Element* list = dialog.GetElementById("start-recent"))
 			list->SetInnerRML(listItems(names, m_recent));
@@ -985,11 +985,36 @@ namespace gnubase::ui
 		else
 			dialog.location = "Untitled.dawproject";
 		m_shell.showFileDialog(dialog,
-			[this, done = reportFailure(window)](const FileDialogResult& chosen)
+			[this, id = window.id(), done = reportFailure(window)](const FileDialogResult& chosen)
 			{
 				if (chosen.files.empty())
 					return;
-				m_binding.send("project.save", {{"path", withProjectExtension(chosen.files.front()).u8string()}}, done);
+				const std::filesystem::path& named = chosen.files.front();
+				const std::filesystem::path file = withProjectExtension(named);
+				const Json save = {{"path", file.u8string()}};
+				// The dialog asked before it replaces the file it named, but not about the file that GNUbase makes of
+				// that name, such as Song.dawproject for "Song." or "Song", as the dialogs of Linux check the name as
+				// typed (#798).
+				std::error_code error;
+				if (file == named || !std::filesystem::exists(file, error))
+				{
+					m_binding.send("project.save", save, done);
+					return;
+				}
+				openDialog(
+					id, "replace-file.rml",
+					[file](Rml::ElementDocument* dialog)
+					{
+						if (Rml::Element* message =
+								dialog != nullptr ? dialog->GetElementById("replace-file-message") : nullptr)
+							message->SetInnerRML(Rml::StringUtilities::EncodeRml(
+								file.filename().u8string() + " already exists. Replace it?"));
+					},
+					[this, save, done](Rml::ElementDocument&, const std::string& result)
+					{
+						if (result == "ok")
+							m_binding.send("project.save", save, done);
+					});
 			});
 	}
 }
