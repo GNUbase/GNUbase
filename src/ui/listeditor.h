@@ -140,7 +140,7 @@ namespace gnubase::ui
 		// show: whether the rows show the selection at once, or when editor.changed confirms it.
 		void select(std::set<std::pair<uint64_t, uint64_t>> rows, bool show = true);
 		void setView(engine::Json parameters);
-		void edit(const std::string& description, std::map<std::pair<uint64_t, std::string>, engine::Json> changes);
+		void edit(std::map<std::pair<uint64_t, std::string>, engine::Json> changes);
 		void editField(const Row& edited, const std::string& field, const std::string& typed);
 		void add(int64_t start, int64_t length);
 		void erase(const Row& row);

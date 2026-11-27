@@ -101,6 +101,12 @@ doesn't have (#1580).
 - **Value display** (pp. 1252, 1255): a press and a drag set the value of every event they cross from the mouse's
   place in the bar, in one undo step; a velocity is at least 1. While the drag goes on only the bars change, and the
   rows are built once per project and view the editor is given, with the project's time context read once for them.
+- **Undo names** (#2138): an edit's undo step is named as the engine names its command, "Change notes" or "Change
+  controllers" for typed values, a value display drag, a move and a resize, "Add notes" or "Add controllers" for a copy,
+  "Remove notes" or "Remove controllers" for Delete and Backspace, and "Change events", "Add events" or "Remove events"
+  when notes and controller events go together. A lone command still goes on its own, so that an edit that changes
+  nothing counts as no change; several, for events of several parts or notes and controller events together, go in one
+  `history.transaction` of that name, so a gesture keeps its name however many commands it sends.
 - **Gestures** (#722, #835). A move, a draw or a value display drag ends where the left button goes up, also outside
   the list editor: the editor hears the mouseup in its whole document while the gesture goes on. Past the window's
   edge RmlUi has no element to send the mouseup to, but while a gesture goes on the editor's body is an RmlUi drag
@@ -154,7 +160,8 @@ which share the editor window.
   that moves both; the erase tool erasing in the event display; Focus on Event Channels with a SysEx event selected;
   Delete deleting a selected note and controller event in one undo step, and Backspace a SysEx message, but not while a
   value is typed; Alt and a drag copying a selected note and controller event in one undo step; a drag at a note's end
-  resizing both selected notes in one undo step; a click without a drag at the end of a note off the grid, and an
+  resizing both selected notes in one undo step; typed values, a value display drag, a move, a copy and Delete keeping
+  their undo names over notes, controller events and both, of one part and of two, and a resize over notes; a click without a drag at the end of a note off the grid, and an
   Alt-click and a click on the SysEx message off it, changing nothing; the auditioning column's arrow at the event at
   or before the cursor, a click there locating to an event, a double click starting and stopping playback, and the arrow
   following the playback position.
