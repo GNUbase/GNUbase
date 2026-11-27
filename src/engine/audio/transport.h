@@ -273,9 +273,11 @@ namespace gnubase::engine
 		// The cycle laps started so far, counted on: input of one cycle lap has the same number, and a locate back
 		// doesn't change it (#2067).
 		uint32_t lap = 0;
-		uint32_t pass = 0;        // the same for the playback passes, which each start after a stop begins (#2096)
-		time::Samples left = -1;  // where the cycle jumped to when the lap began: the left locator then, or -1
-		time::Samples right = -1; // and where it jumped from: the right locator then, or -1
+		uint32_t pass = 0;          // the same for the playback passes, which each start after a stop begins (#2096)
+		time::Samples left = -1;    // where the cycle jumped to when the lap began: the left locator then, or -1
+		time::Samples right = -1;   // and where it jumped from: the right locator then, or -1
+		time::Samples stopped = -1; // where the pass before this one stopped, or -1
+		bool cycle = false;         // it played in cycle mode (graph::TransportBlock::cycle)
 	};
 
 	// Where the transport played each of the device's last frames, so recorded input finds where it belongs: with

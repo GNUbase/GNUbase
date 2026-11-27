@@ -115,6 +115,14 @@ namespace gnubase::engine
 			}
 			return count;
 		}
+
+		// Input that played in now starts a cycle lap after input that played in before: a cycle jump between
+		// them, or a new playback pass when both passes played in cycle mode (reference manual p. 355: cycle
+		// recording is input captured with cycle mode on, so linear passes are one lap).
+		bool startsLap(const PlayedLap& before, const PlayedLap& now) noexcept
+		{
+			return now.pass != before.pass ? before.cycle && now.cycle : now.lap != before.lap;
+		}
 	}
 
 	graph::ProcessEvent MidiTap::toEvent(const audio::MidiMessage& message, uint32_t offset) noexcept
@@ -456,9 +464,8 @@ namespace gnubase::engine
 				"only the input from playback, as stacked parts on lanes of their own, one per cycle lap, all but the "
 				"last muted (recording.add's cycleMode stacked); laps after the first start at the left locator, and "
 				"those playback left end at the right one, as the locators were when the lap played. Each start of "
-				"playback after a stop begins a lap too, "
-				"where it starts, and the lap before it ends where playback stopped. It needs input from at least "
-				"two laps. Returns what "
+				"playback in cycle mode after a stop in cycle mode begins a lap too, where it starts, and the lap "
+				"before it ends where playback stopped. It needs input from at least two laps. Returns what "
 				"recording.add returns.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
 					"properties": {"track": {"type": "integer"}, "cycle": {"type": "boolean"}}})"),
@@ -500,24 +507,29 @@ namespace gnubase::engine
 						// jumped from. The position advances one sample per device frame, so it jumped back also when
 						// it advanced less than the device frames since the input before, as with a note held past the
 						// lap's end. Only a jump that the audio thread marked as a cycle lap starts a lap (#2067), and
-						// so does a new playback pass, but from where it starts: its notes end where playback stopped.
-						// The locators are the ones the lap jumped between, not the ones of now (#2096).
+						// so does a new playback pass in cycle mode, but from where it starts. A new pass ends the
+						// notes held where the pass before stopped. The locators are the ones the lap jumped between,
+						// not the ones of now (#2096).
 						const auto frame = static_cast<int64_t>(kept.deviceFrame);
 						const bool pass = played >= 0 && kept.lap.pass != playedLap.pass;
 						const bool back = pass || (played >= 0 && at - played < frame - playedFrame);
-						const bool lap = !pass && played >= 0 && kept.lap.lap != playedLap.lap;
+						const bool lap = played >= 0 && startsLap(playedLap, kept.lap);
 						if (back)
 						{
-							const time::Samples end = lap && kept.lap.right > played ? kept.lap.right : played;
+							time::Samples end = played;
+							if (pass && kept.lap.stopped > played)
+								end = kept.lap.stopped;
+							else if (!pass && lap && kept.lap.right > played)
+								end = kept.lap.right;
 							builder.endNotes(end);
 							if (cycle)
 								laps.back().second = std::max(laps.back().second, end);
 						}
-						if (cycle && (lap || pass || laps.empty()))
+						if (cycle && (lap || laps.empty()))
 						{
 							builder.setTake(laps.size());
 							const time::Samples begin =
-								lap && kept.lap.left >= 0 && kept.lap.left < at ? kept.lap.left : at;
+								lap && !pass && kept.lap.left >= 0 && kept.lap.left < at ? kept.lap.left : at;
 							laps.emplace_back(begin, at + 1);
 						}
 						if (cycle)
@@ -575,7 +587,8 @@ namespace gnubase::engine
 				"What the retrospective buffer of a MIDI or instrument track holds (reference manual pp. 353-355): "
 				"events, how many input events it kept, and cycleLaps, from how many cycle laps of playback its input "
 				"came, as midi.insertRetrospective with cycle counts them: Insert as Cycle Recording needs two or "
-				"more (p. 355). A locate back during playback starts no lap; a start of playback after a stop does.",
+				"more (p. 355). A locate back during playback starts no lap, nor does a start of playback after a stop "
+				"unless both passes played in cycle mode.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
 					"properties": {"track": {"type": "integer"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"events": {"type": "integer"},
@@ -588,9 +601,9 @@ namespace gnubase::engine
 				size_t laps = 0;
 				PlayedLap last;
 				for (const RetrospectiveEvent& kept : events)
-					if (kept.position >= 0 && (laps == 0 || kept.lap.lap != last.lap || kept.lap.pass != last.pass))
+					if (kept.position >= 0)
 					{
-						++laps;
+						laps += laps == 0 || startsLap(last, kept.lap) ? 1 : 0;
 						last = kept.lap;
 					}
 				return Json{{"events", events.size()}, {"cycleLaps", laps}};
