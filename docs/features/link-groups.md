@@ -21,9 +21,8 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
   (unlink; a VCA fader that controlled the group stays) are undo steps; removing a track takes its channel out of
   its group, as do turning a folder's group channel off (`track.set` `groupChannel` false) and Remove Empty Tracks
   (`track.removeEmpty`), and a VCA track that goes leaves its group without one, which links the volume again
-  (p. 518). A group
-  whose last channel goes, to another group or with its track, goes too (`linkGroup.removed`), as linking needs a
-  channel; its VCA fader stays and controls nothing.
+  (p. 518). A group whose last channel goes, to another group or with its track, goes too (`linkGroup.removed`), as
+  linking needs a channel; its VCA fader stays and controls nothing.
 - **What a group links** (p. 458): `volume` (on by default) moves the other channels' faders by as much as one moved,
   stopping at their ends; `pan` likewise (both commands below through `followLinkedMove` in
   `src/engine/document/document.cpp`, so the rules can't drift apart); `mute` passes mute, solo, solo defeat and listen
@@ -110,4 +109,5 @@ display line menu's Edit Link Group Settings and a double click with a modifier 
 - `tests/dawproject_tests.cpp`: VCA fader loops in a file are left out; groups whose VCA fader is an audio channel, a
   channel that isn't there or one that controls an earlier group lose it and link the volume again; another
   application's VCA channel loses its pan, sends and destination, and one in a hand-edited GNUbase entry its audio
-  channels, routing, pan, sends and slots.
+  channels, routing, pan, sends and slots; a project with a VCA track's volume automation loads from GNUbase's
+  entry, link groups and all.

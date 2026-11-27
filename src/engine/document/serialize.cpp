@@ -1534,7 +1534,9 @@ namespace gnubase::engine
 			case AutomationTargetType::Pan:
 			case AutomationTargetType::PanLeft:
 			case AutomationTargetType::PanRight:
-				fits = project.channels.at(track.channel).format != ChannelFormat::None;
+				// A VCA fader has a volume without audio, as automationLane.add allows.
+				fits = project.channels.at(track.channel).format != ChannelFormat::None ||
+					(track.type == TrackType::Vca && lane.target.type == AutomationTargetType::Volume);
 				minimum = lane.target.type == AutomationTargetType::Volume ? g_minChannelVolume : -1.0;
 				maximum = lane.target.type == AutomationTargetType::Volume ? project.maxVolume : 1.0;
 				break;

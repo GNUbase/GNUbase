@@ -1111,6 +1111,8 @@ TEST_CASE("a VCA channel in GNUbase's entry gets no audio, routing, pan, sends o
 	const Json slot =
 		run(client, "plugin.insert", {{"channel", audio.at("id")}, {"plugin", "builtin:gainPan"}}).at("slot").at("id");
 	run(client, "channel.set", {{"channel", vca}, {"volume", -4.5}, {"mute", true}});
+	// The link group, which only GNUbase's entry has, shows that the project loads from it, not from project.xml.
+	run(client, "linkGroup.add", {{"channels", {audio.at("id")}}, {"vca", vca}});
 	const Json before = withId(run(client, "project.get").at("channels"), "id", vca);
 	const std::string file = utf8(dir.path() / "song.dawproject");
 	run(client, "project.save", {{"path", file}});
@@ -1146,12 +1148,37 @@ TEST_CASE("a VCA channel in GNUbase's entry gets no audio, routing, pan, sends o
 	// It loads as GNUbase made it: its fader and buttons stay, the slot goes with the rest.
 	run(client, "project.new");
 	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get").at("linkGroups").size() == 1);
 	CHECK(withId(run(client, "project.get").at("channels"), "id", vca) == before);
 	CHECK(run(client, "plugin.list", {{"channel", audio.at("id")}}).at("slots") == Json::array());
 	// It saves and loads again, with no slot left over.
 	run(client, "project.save", {{"path", file}});
 	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get").at("linkGroups").size() == 1);
 	CHECK(withId(run(client, "project.get").at("channels"), "id", vca) == before);
+}
+
+TEST_CASE("a VCA track's volume automation loads from GNUbase's entry", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const Json vca = run(client, "track.add", {{"type", "vca"}});
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}}), "channel");
+	run(client, "linkGroup.add", {{"channels", {audio}}, {"vca", idOf(vca, "channel")}});
+	const ObjectId lane = idOf(
+		run(client, "automationLane.add", {{"track", idOf(vca, "track")}, {"target", {{"type", "volume"}}}}), "lane");
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
+	const Json before = run(client, "project.get");
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	// Not from project.xml, which has no link groups.
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	const Json after = run(client, "project.get");
+	CHECK(after.at("linkGroups") == before.at("linkGroups"));
+	CHECK(after.at("automation") == before.at("automation"));
 }
 
 TEST_CASE("a VCA channel from another application gets no pan, sends or routing", "[integration]")
