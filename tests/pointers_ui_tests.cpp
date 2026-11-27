@@ -240,3 +240,53 @@ TEST_CASE("a mixer channel's name, which a drag moves, shows the pointing hand, 
 	app.ui().move(mixer, at(fader));
 	CHECK(pointer(app).empty());
 }
+
+TEST_CASE("the controller lanes show the tools' pointers in the drum and the in-place editors too", "[ui]")
+{
+	// tests/controllerlanes_ui_tests.cpp checks each tool on the key editor's lanes; the style sheets choose by the
+	// tool of the .key-editor around them, which the drum and the in-place editors are as well.
+	test::UiApp app({1200, 800});
+	app.setDpRatio(1.0F);
+	const uint64_t track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const Json part =
+		app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", 4 * time::g_ticksPerQuarter}})
+			.at("part");
+	const Json lanes = {{{"type", "velocity"}}, {{"type", "controller"}, {"number", 1}}};
+	SECTION("the drum editor, whose draw tool is the drumstick in the note display")
+	{
+		app.call("track.set", {{"track", track}, {"drumMap", app.call("project.get").at("drumMaps").at(0).at("id")}});
+		app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part.at("id")})}});
+		REQUIRE(app.waitUntil([&app] { return app.appUi().editorWindow() != nullptr; }));
+		const ui::WindowId window = app.appUi().editorWindowId();
+		app.call("editor.set", {{"editor", "window"}, {"lanes", lanes}});
+		const std::string area = ".drum-editor .controller-lane[lane-kind=controller] .controller-lane-area";
+		REQUIRE(app.waitUntil([&] { return app.ui().dom(window, area, 0).at("elements").size() == 1; }));
+		app.ui().click(window, at(".key-tool[key-tool=draw]"), ui::MouseButton::Left, 1, {});
+		app.ui().move(window, at(area));
+		CHECK(pointer(app) == "tool-draw");
+		app.ui().click(window, at(".key-tool[key-tool=line]"), ui::MouseButton::Left, 1, {});
+		app.ui().move(window, at(area));
+		CHECK(pointer(app) == "tool-line");
+	}
+	SECTION("the in-place editor")
+	{
+		app.appUi().showProject();
+		app.appUi().trackList()->select({track});
+		app.call("editor.inPlace", {{"tracks", {track}}, {"open", true}});
+		app.call("editor.set", {{"editor", "inPlace:" + std::to_string(track)}, {"lanes", lanes}});
+		const std::string editor = ".in-place-editor[track=\"" + std::to_string(track) + "\"]";
+		const std::string area = editor + " .controller-lane[lane-kind=controller] .controller-lane-area";
+		REQUIRE(app.waitUntil([&] { return app.ui().dom(std::nullopt, area, 0).at("elements").size() == 1; }));
+		// The toolbar shows with the triangle in the track's row (reference manual p. 1259).
+		app.ui().click(std::nullopt,
+			at(".track-list listitem[value=\"" + std::to_string(track) + "\"] .in-place-toolbar-toggle"),
+			ui::MouseButton::Left, 1, {});
+		app.shell().step(std::chrono::milliseconds(0));
+		app.ui().click(std::nullopt, at(editor + " .key-tool[key-tool=draw]"), ui::MouseButton::Left, 1, {});
+		app.ui().move(std::nullopt, at(area));
+		CHECK(pointer(app) == "tool-draw");
+		app.ui().click(std::nullopt, at(editor + " .key-tool[key-tool=erase]"), ui::MouseButton::Left, 1, {});
+		app.ui().move(std::nullopt, at(area));
+		CHECK(pointer(app).empty()); // no controller event there to erase
+	}
+}

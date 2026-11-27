@@ -20,6 +20,7 @@ tool in [tools.md](tools.md).
 | The drum editor's note display with the drumstick | `tool-drumstick` | p. 1224 |
 | A note's ends where a press resizes it: the object selection tool's without Shift or Ctrl (Cmd), the drumstick's with Show Note Length | `resize` | pp. 1213-1214, 1242 |
 | Pitchbend events in the controller display, with the object selection tool | `pointer` | p. 1176 |
+| The controller display, by the tool of the key, drum or in-place editor: the lanes with the draw and line tools, controller events with the erase tool, articulations with the erase and mute tools and the Articulations lane's rows with the draw tool | `tool-draw`, `tool-line`, `tool-erase`, `tool-mute` | pp. 1180-1181, 1186 |
 | The list editor's event display with the draw tool, its rows with the erase tool | `tool-draw`, `tool-erase` | |
 | The pattern editor's steps with the draw tool, or with Alt and the step selection tool | `tool-draw` | p. 924 |
 | Edit Hitpoints with Alt away from a hitpoint, and on a hitpoint's line with Shift | `tool-draw`, `crosshair` | p. 640 |
@@ -40,7 +41,7 @@ and at a note's ends through the automation API and reads the pointer as MCP's `
 keeps its pointer outside it until release; `tests/sampleeditor_ui_tests.cpp` does so for the snap point and Free Warp,
 `tests/hitpoints_ui_tests.cpp` for Edit Hitpoints' modifiers, `tests/audioparteditor_ui_tests.cpp` for the audio part
 editor's tools, `tests/drumeditor_ui_tests.cpp` for the drumstick, `tests/controllerlanes_ui_tests.cpp` for pitchbend
-events, `tests/listeditor_ui_tests.cpp` and `tests/patterneditor_ui_tests.cpp` for those editors' tools. `tests/svg_tests.cpp` checks that every `cursor`
+events and the tools on the lanes (`tests/pointers_ui_tests.cpp` in the drum and in-place editors), `tests/listeditor_ui_tests.cpp` and `tests/patterneditor_ui_tests.cpp` for those editors' tools. `tests/svg_tests.cpp` checks that every `cursor`
 name in the style sheets and documents is one of the OS's pointers or one of GNUbase's with a picture and a hotspot.
 
 **Not yet** (left in #1857): drag and drop's not-allowed and copy pointers; modifier keys that change the editors'
