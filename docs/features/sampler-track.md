@@ -11,7 +11,7 @@ sampler is a GNUbase processor and runs inside the engine (architecture rule 3).
 
 | Command | What it does | Reference |
 |---|---|---|
-| `sampler.create` | A new sampler track with a pool clip (`clip`), an audio event's clip (`event`) or an audio file (`path`), which goes into the pool as a clip in the same undo step, into the pool folder Sampler Tracks, made when the first file comes (p. 710), from `start` to `end` in clip frames (default: the event's section or the whole clip), or empty without any; named `name`, or Sampler 01, Sampler 02 and so on, the first number no track's name has; placed and routed with `parent`, `index` and `output` as `track.add` does | pp. 143-144, 710-711 |
+| `sampler.create` | A new sampler track with a pool clip (`clip`), an audio event's clip (`event`) or an audio file (`path`), which goes into the pool as a clip in the same undo step, into the pool folder Sampler Tracks, made when the first file comes (p. 710), from `start` to `end` in clip frames (default: the event's section or the whole clip), or empty without any; named `name`, or Sampler 01, Sampler 02 and so on, the first number no track's name has; placed and routed with `parent`, `index` and `output` as `track.add` does, and taking its MIDI from `midiInput` as `channel.set`'s (`all`, the default, `chordPads` or `none`; the Add Track dialog's Input Routing, p. 144) | pp. 143-144, 710-711 |
 | `sampler.load` | Loads another sample, the same way, into a sampler track while it plays (hot swap). Its settings go back to their defaults, or with `keepSettings` (Lock Parameter Settings) only those of the sample: root key, start, end, the fades, loop start, end and crossfade | pp. 710, 715-716 |
 | `sampler.normalize` | Sets the Sample gain so that the highest peak between start and end reaches `level` dBFS (default 0); refused for a silent sample or a missing file | pp. 715, 735 |
 | `sampler.zeroCrossings` | A query for Snap to Zero Crossing: moves `positions`, shares of the sample as Start and End are (counted from its end with Reverse), each to the nearest frame within 50 ms where the sum of its channels changes sign, the frame of the two there that is nearer to zero; a position without one near stays | p. 713 |
@@ -100,23 +100,26 @@ with fades and the slices' MIDI phrase, the pitch and filter envelopes and a mul
 Sample, Hot Swap Preview Sample that restores the sample before, the sampler panel's own undo history and A/B
 settings, loading by dragging an event or a MIDI part onto the panel, and transferring the sample to another
 instrument, which needs a plugin wrapper extension for samples. Key commands for the display's zoom, the toolbar's
-Read/Write Automation and preset section, and the Add Track dialog's Input Routing and Event Type, which no page of it
-has yet ([add-track.md](add-track.md)), are open too (#1122).
+Write Automation (with the write modes, #122) and preset section, and the Add Track dialog's Event Type, which needs
+pattern events ([add-track.md](add-track.md)), are open too (#1122).
 
 ## In the UI
 
 Create Sampler Track is in the Audio menu (`audio.createSamplerTrack`), for the first selected audio event, and in the
 sample editor's Range section (`#se-create-sampler`), for the selection range or else the whole event (p. 711). Add
 Sampler Track in the Project menu and the track list's context menu (`project.addSamplerTrack`, pp. 143-144, 711)
-opens the Add Track dialog on its Sampler page, with Output Routing, Name and Count, which adds empty sampler tracks
-with `sampler.create` ([add-track.md](add-track.md)). The Instrument page offers the Sampler among the instruments too.
+opens the Add Track dialog on its Sampler page, with Input Routing (All MIDI Inputs, Chord Pads or Not Connected),
+Output Routing, Name and Count, which adds empty sampler tracks with `sampler.create` ([add-track.md](add-track.md)).
+The Instrument page offers the Sampler among the instruments too.
 
 **The sampler panel** (`ui::SamplerPanel`, `src/ui/samplerpanel.h`, pp. 712-717, 730) is a panel of the lower zone,
 Sampler, that Project > Show Sampler (`window.sampler`) shows; like every panel it can open in a window of its own
 ([docking.md](docking.md)). It shows the first selected track while that is a sampler track, else only a hint (the
 root `.sampler-panel` has the class `.empty`):
 
-- **Toolbar** (pp. 712-716): the event received indicator (`#sampler-received`), Snap to Zero Crossing
+- **Toolbar** (pp. 712-716): Read Automation (`#sampler-read`, p. 712), on while every automation lane of the track
+  reads and disabled without lanes, which turns them all on or off in one undo step as the track list's button does
+  ([track-list.md](track-list.md)), the event received indicator (`#sampler-received`), Snap to Zero Crossing
   (`#sampler-zero`), Import Audio File (`#sampler-import`, a file dialog, then `sampler.load` with `path`), the clip's
   name (`#sampler-file`), the Normalization Level (`#sampler-level`, -96 to 0 dBFS, p. 735), Normalize Sample
   (`#sampler-normalize`, `sampler.normalize` with that `level`), Lock Parameter Settings (`#sampler-lock`), which
@@ -218,4 +221,5 @@ Controllers, which also forgets the held keys, and `sampler.zeroCrossings`, reve
 playback and recording from stop answer only after the held read is released.
 #1122 then added to `tests/sampler_tests.cpp` the pool folder Sampler Tracks that files loaded into samplers, and
 imported samplers' samples, go into, and to `tests/sampler_ui_tests.cpp` the ruler with its format and the zoom
-sliders, with a marker's drag while zoomed in.
+sliders, with a marker's drag while zoomed in. Then `sampler.create`'s `midiInput` went into `tests/sampler_tests.cpp`,
+and the Add Track dialog's Input Routing and the toolbar's Read Automation into `tests/sampler_ui_tests.cpp`.

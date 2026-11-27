@@ -699,6 +699,13 @@ TEST_CASE("Add Sampler Track opens the add track dialog on its Sampler page", "[
 	REQUIRE(f.app.waitUntil([&] { return !f.elements("#add-track-dialog").empty(); }));
 	CHECK(f.elements("#track-types").at(0).at("attributes").at("value") == "sampler");
 	CHECK(f.elements("#track-instrument").empty());
+	// Input Routing (p. 144): All MIDI Inputs, then Chord Pads and Not Connected.
+	CHECK(f.elements("#track-midi-input").at(0).value("value", "") == "all");
+	f.click("#track-midi-input");
+	f.app.ui().key(std::nullopt, "Down");
+	f.app.ui().key(std::nullopt, "Down");
+	f.click("#track-midi-input");
+	REQUIRE(f.elements("#track-midi-input").at(0).value("value", "") == "none");
 	f.click("#add-track-confirm");
 	REQUIRE(f.app.waitUntil([&] { return f.elements("#add-track-dialog").empty(); }));
 	const Json project = f.app.call("project.get");
@@ -709,7 +716,45 @@ TEST_CASE("Add Sampler Track opens the add track dialog on its Sampler page", "[
 	CHECK(added.at("type") == "instrument");
 	for (const Json& each : project.at("channels"))
 		if (each.at("id") == added.at("channel"))
+		{
 			CHECK(each.at("instrument") == "sampler");
+			CHECK(each.at("midiInput") == "none");
+		}
+}
+
+TEST_CASE("Read Automation in the sampler panel's toolbar reads all of the track's automation lanes", "[ui]")
+{
+	Fixture f;
+	f.open();
+	// Without lanes there is nothing to read.
+	const auto disabled = [&] { return f.elements("#sampler-read").at(0).at("attributes").contains("disabled"); };
+	CHECK(disabled());
+	const auto lanes = [&]
+	{
+		std::vector<bool> read;
+		const Json project = f.app.call("project.get");
+		for (const Json& lane : project.at("automation"))
+			if (lane.at("track") == f.track)
+				read.push_back(lane.at("read").get<bool>());
+		return read;
+	};
+	f.app.call("automationLane.add", {{"track", f.track}, {"target", {{"type", "volume"}}}});
+	f.app.call("automationLane.add", {{"track", f.track}, {"target", {{"type", "pan"}}}, {"read", false}});
+	REQUIRE(f.app.waitUntil([&] { return !disabled(); }));
+	CHECK(f.elements("#sampler-read[checked]").empty()); // not every lane reads
+
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	f.click("#sampler-read");
+	REQUIRE(f.app.waitUntil([&] { return lanes() == std::vector<bool>{true, true}; }));
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#sampler-read[checked]").empty(); }));
+	f.click("#sampler-read");
+	REQUIRE(f.app.waitUntil([&] { return lanes() == std::vector<bool>{false, false}; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#sampler-read[checked]").empty(); }));
+
+	// A lane read elsewhere shows.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#sampler-read[checked]").empty(); }));
 }
 
 TEST_CASE("a change in a value field and a drag of its marker are two undo steps", "[ui]")

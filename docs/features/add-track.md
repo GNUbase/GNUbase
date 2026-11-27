@@ -20,7 +20,7 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
 |---|---|---|
 | Audio | Audio Inputs, Configuration, Output Routing, Name, Count | `input`, `format`, `output`, `name` |
 | Instrument | Instrument (the built-in instruments of `processor.list`), Output Routing, Name, Count | `instrument`, `output`, `name` |
-| Sampler | Output Routing, Name, Count (p. 144): sampler tracks, added with `sampler.create` instead of `track.add` | `output`, `name` |
+| Sampler | Input Routing (All MIDI Inputs, Chord Pads, Not Connected), Output Routing, Name, Count (p. 144): sampler tracks, added with `sampler.create` instead of `track.add` | `midiInput`, `output`, `name` |
 | Drum | Output Routing, Name, Count (p. 146): drum tracks, added with `drum.create` instead of `track.add` ([drum-track.md](drum-track.md)) | `output`, `name` |
 | MIDI | Output Routing (the instrument tracks' channels), Name, Count | `output`, `name` |
 | Group, Effect | Configuration, Output Routing, Add to Project 'Group' / 'FX' Folder, Name, Count | `format`, `output`, `projectFolder`, `name` |
@@ -94,8 +94,8 @@ them).
 The track color (the default color until the color picker joins the dialog), the reference's other track types
 (the video track with its ticket; the arranger, transpose and chord tracks are there, once
 per project, [arranger.md](arranger.md), [transpose.md](transpose.md), [chord-track.md](chord-track.md)), an
-instrument or effect plugin chosen on the page (M05), MIDI inputs and MIDI 2.0 output groups, the event type
-(pattern events), and track presets.
+instrument or effect plugin chosen on the page (M05), MIDI inputs on the other pages and MIDI 2.0 output groups, the
+event type (pattern events), and track presets.
 
 ## Checks
 
