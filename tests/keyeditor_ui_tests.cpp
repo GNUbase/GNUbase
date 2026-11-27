@@ -2548,3 +2548,69 @@ TEST_CASE("the event colors menu colors the notes by their part's color, its own
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note[color]").empty(); }));
 	CHECK(f.view().at("eventColors") == "default");
 }
+
+TEST_CASE("the drum editor and the in-place editor color notes through their event colors menu", "[ui]")
+{
+	// The drum editor and the in-place editor have the Event Colors menu too (reference manual pp. 1133-1134), the
+	// in-place editor's with its suffix. Notes of a part that isn't editable, as with Active Part, keep the style
+	// sheets' look.
+	Fixture f;
+	const std::vector<uint64_t> first = f.add({{0, 60, g_quarter}});
+	f.app.call("track.set", {{"track", f.track}, {"color", "#2040e0"}});
+	const auto other = f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}})
+						   .at("part")
+						   .at("id")
+						   .get<uint64_t>();
+	const uint64_t own =
+		f.app
+			.call("note.add",
+				{{"part", other},
+					{"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}}}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("event.set", {{"events", {other}}, {"color", "#c04020"}});
+	const auto color = [&](const std::string& scope, uint64_t note)
+	{
+		const Json found = f.elements(scope + noteSelector(note));
+		return found.empty() ? std::string("none") : found.at(0).at("attributes").value("color", std::string());
+	};
+
+	// The drum editor.
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", {f.part, other}}});
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "drum"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 2; }));
+	f.click(of("#key-event-colors"));
+	f.click(of("#key-event-colors-menu menuitem[event-colors=part]"));
+	REQUIRE(f.app.waitUntil([&] { return color("", own) == "#c04020"; }));
+	CHECK(f.view().at("eventColors") == "part");
+	CHECK(color("", first[0]) == "#2040e0");
+
+	// The in-place editor, showing the active part only: the other part's notes keep the style sheets' look.
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.appUi().showProject();
+	f.window = f.app.main().id();
+	const std::string view = "inPlace:" + std::to_string(f.track);
+	const std::string editor = ".in-place-editor[track=\"" + std::to_string(f.track) + "\"] ";
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", true}});
+	f.app.call("editor.set", {{"editor", view}, {"editingMode", "activePart"}, {"activePart", other}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(editor + ".key-note").size() == 2; }));
+	const std::string triangle =
+		".track-list listitem[value=\"" + std::to_string(f.track) + "\"] .in-place-toolbar-toggle";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(triangle).at(0).at("visible") == true; }));
+	f.click(of(triangle));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(editor + "#key-event-colors").at(0).at("visible") == true; }));
+	CHECK(f.elements(editor + ".key-note[color]").empty());
+	f.click(of(editor + "#key-event-colors"));
+	f.click(of("#key-event-colors-menu-inPlace-" + std::to_string(f.track) + " menuitem[event-colors=part]"));
+	REQUIRE(f.app.waitUntil([&] { return color(editor, own) == "#c04020"; }));
+	CHECK(f.app.call("editor.get", {{"editor", view}}).at("eventColors") == "part");
+	CHECK(color(editor, first[0]).empty());
+
+	// Activating the first part gives its notes their track's color and takes the other part's away.
+	f.app.call("editor.set", {{"editor", view}, {"activePart", f.part}});
+	REQUIRE(f.app.waitUntil([&] { return color(editor, first[0]) == "#2040e0"; }));
+	CHECK(color(editor, own).empty());
+}

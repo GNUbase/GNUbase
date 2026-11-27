@@ -119,8 +119,9 @@ list editor's event colors.
   highlighting its replacement, and Apply replacing them in tracks and parts but not other colors, undone in one step;
   a color recolored in the picker listed as missing and replaced in its track by its new color.
 - `tests/keyeditor_tests.cpp`: `eventColors` as view state, refused values; `tests/keyeditor_ui_tests.cpp`: the
-  Event Colors menu's Part and Default, a selected note keeping its look; `tests/articulationmaps_ui_tests.cpp`: Sound
-  Slot, a slot without a color, and the slot following a note's attributes.
+  Event Colors menu's Part and Default, a selected note keeping its look, the drum and in-place editors' menus and the
+  notes of a part that isn't editable keeping their look; `tests/articulationmaps_ui_tests.cpp`: Sound Slot, a slot
+  without a color, and the slot following a note's attributes.
 - `tests/eventediting_tests.cpp`: the color tool coloring an event and the selection, Alt taking an event's own
   color, its track's, or none from a track with the default color, the wheel's steps and Ctrl asking for the pane.
 - `tests/canvas_tests.cpp`: an event with a color of its own is filled with it, outlined by `stroke-color`, or by
