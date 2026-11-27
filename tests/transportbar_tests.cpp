@@ -2344,7 +2344,7 @@ TEST_CASE("the time display window opens at the saved size, and a window the use
 	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
 	CHECK(app.appUi().timeDisplay() == nullptr);
 	app.shell().setUiScale(0.75F);
-	ui::Window& scaled = openTimeDisplay(app);
+	const ui::Window& scaled = openTimeDisplay(app);
 	CHECK(app.shell().bounds(scaled.id()).size() == ui::Size{200, 50});
 	setTimeDisplaySize(app, 1);
 	ui::Rect atPreset = app.shell().bounds(scaled.id());
