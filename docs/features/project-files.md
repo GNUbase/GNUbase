@@ -68,8 +68,13 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   `project.autoSaveFiles` (5), after which the oldest is overwritten. The name is the one versions take: `Song` for
   `Song.dawproject` and `Song.dawproject.`, and the whole name of a file without the extension, so that `Mix v2.1` and
   `Mix v2.2` don't share their auto saves. A project without a file goes to `Auto Saves` in
-  the settings folder, named after the project; without a settings folder it isn't auto saved. Auto saves don't copy
-  media and don't save the project: it stays modified, and its file stays as it is.
+  the settings folder, named after the project and numbered in a series of its own, as the reference numbers unsaved
+  projects (`UntitledX-xx`, pp. 134, 1608): `Untitled1-01.bak`, `Untitled1-02.bak`, and `Untitled2-01.bak` for the
+  next untitled project, the first series that no file in the folder has yet, in any case (#635). So one untitled
+  project, or one opened from an auto save, never overwrites another one's auto saves, which may be the ones the user
+  wants to recover, also after a restart. The series stays while the project is untitled and keeps its name; a new or
+  opened project, or a new name, starts another. Without a settings folder an untitled project isn't auto saved. Auto
+  saves don't copy media and don't save the project: it stays modified, and its file stays as it is.
   The engine's clock (`engine/clock.h`) ticks every 30 seconds on a thread of its own, and each tick
   posts `project.autoSave` with `due`; that saves only when the user setting `project.autoSave` is on (the default)
   and `project.autoSaveInterval` minutes (15) have passed since the last save, opening or auto save, and stays out of
@@ -90,8 +95,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   recent project (#484). So Save asks for a path instead of overwriting the auto save, there is nothing to revert to,
   `project.location` has no folder and no media folder (media aren't copied to `Auto Saves/Audio`), and its next auto
   saves go to the settings folder's `Auto Saves` like those of other untitled projects instead of
-  `Auto Saves/Auto Saves`. Saving it as the project's file, after the user chose one, makes that its file and project
-  folder again. The reference manual doesn't say what opening an auto save does; it calls auto saves copies of the
+  `Auto Saves/Auto Saves`. `project.location`'s `autoSaveOf` names the project file it was made of, next to
+  `Auto Saves` and named as the auto save without its number (null for an untitled project's auto save), and Save
+  proposes that file, where the OS's dialog asks before it replaces it (#635). Saving it as the project's file makes
+  that its file and project folder again. The reference manual doesn't say what opening an auto save does; it calls auto saves copies of the
   project file (pp. 134, 1608), and going on as the project file next to `Auto Saves` would overwrite that file on Save
   with what may be an older copy that the user only wanted to look at. A `.bak` elsewhere isn't an auto save and opens
   as the project's file.
@@ -202,13 +209,14 @@ question opens once, in the window where it was asked.
 `tests/projectfiles_tests.cpp` covers the engine commands with an engine whose settings folder is temporary: save and
 `modified`, save new version numbering (also next to versions in other case, also where only the file system folds it,
 as for `übung-01` next to `Übung`, and of a file saved under a name with a dot), revert, auto save rotation, opening
-auto saves (also of untitled projects and of projects whose file is gone, and under paths in other case or with `.`) and
-where their media and next auto saves go, the engine's own auto saves once the interval passed and failing ones with
+auto saves (also of untitled projects and of projects whose file is gone, and under paths in other case or with `.`),
+the project file they were made of, and where their media and next auto saves go, each untitled project's series of
+auto saves, also after a restart and next to a series in other case, the engine's own auto saves once the interval passed and failing ones with
 their events and log entries, also when the reason or only the file changes (`Engine::advanceClock` moves the clock
 forward and returns once its tick ran, so no test waits), recent projects across restarts, and templates; and in the
 app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot, of one ending in a dot
 and of one with the extension in upper case) and Save New Version after each through file dialogs, Open and Revert with
-the unsaved changes dialog, Save asking for a file after Open of an auto save, quitting through the main window's close
+the unsaved changes dialog, Save asking for a file after Open of an auto save and proposing the project file it was made of, quitting through the main window's close
 button and the OS's quit request with and without unsaved changes, SDL's close and quit requests for the last window and
 more requests while the question is open asking one question (the same document stays open) that Cancel and Discard
 answer, a question asked in a panel's own window that closes with it leaving the next quit request to ask again, the

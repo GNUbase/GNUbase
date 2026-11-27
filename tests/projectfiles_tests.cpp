@@ -284,11 +284,12 @@ TEST_CASE(
 	Client client(engine);
 	run(client, "settings.set", {{"key", "project.autoSaveFiles"}, {"value", 2}});
 
-	// An untitled project goes to the settings folder's Auto Saves, named after the project.
+	// An untitled project goes to the settings folder's Auto Saves, named after the project and the number of its
+	// series (see the next test).
 	CHECK(run(client, "project.autoSave").at("file").is_null()); // nothing changed
 	run(client, "track.add", {{"type", "audio"}});
-	CHECK(
-		run(client, "project.autoSave").at("file") == utf8(dir.path() / "settings" / "Auto Saves" / "Untitled-01.bak"));
+	CHECK(run(client, "project.autoSave").at("file") ==
+		utf8(dir.path() / "settings" / "Auto Saves" / "Untitled1-01.bak"));
 	CHECK(run(client, "project.autoSave").at("file").is_null()); // nothing changed since
 	CHECK(modified(client));                                     // an auto save doesn't save the project
 
@@ -321,6 +322,55 @@ TEST_CASE(
 	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null()); // just loaded
 	run(client, "settings.set", {{"key", "project.autoSave"}, {"value", false}});
 	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null());
+}
+
+TEST_CASE("each untitled project auto saves in a series of its own, which the next one leaves alone", "[integration]")
+{
+	// As the reference numbers unsaved projects one by one (UntitledX-xx, manual pp. 134, 1608), so that working on one
+	// doesn't overwrite the auto saves of another, which may be the one the user wants to recover (#635).
+	const test::TempDir dir;
+	const fs::path autoSaves = dir.path() / "settings" / "Auto Saves";
+	const auto autoSave = [](Client& client)
+	{
+		run(client, "track.add", {{"type", "audio"}});
+		return run(client, "project.autoSave").at("file").get<std::string>();
+	};
+	{
+		Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+		Client client(engine);
+		run(client, "settings.set", {{"key", "project.autoSaveFiles"}, {"value", 2}});
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled1-01.bak"));
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled1-02.bak"));
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled1-01.bak")); // its own series takes turns
+
+		run(client, "project.new");
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled2-01.bak"));
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled2-02.bak"));
+		CHECK(autoSave(client) == utf8(autoSaves / "Untitled2-01.bak"));
+
+		// Renamed, it starts a series of its new name.
+		run(client, "project.set", {{"name", "Demo"}});
+		CHECK(autoSave(client) == utf8(autoSaves / "Demo1-01.bak"));
+	}
+	const std::string first = test::readText(autoSaves / "Untitled1-01.bak");
+	const std::string second = test::readText(autoSaves / "Untitled1-02.bak");
+
+	// After a restart, and for a project opened from an auto save, the series on disk stay as they are, also one whose
+	// name is in other case, as the file systems of Windows and macOS don't tell it apart.
+	fs::copy_file(autoSaves / "Untitled1-02.bak", autoSaves / "UNTITLED3-04.BAK");
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	CHECK(autoSave(client) == utf8(autoSaves / "Untitled4-01.bak"));
+	run(client, "project.load", {{"path", utf8(autoSaves / "Untitled1-01.bak")}});
+	CHECK(autoSave(client) == utf8(autoSaves / "Untitled5-01.bak"));
+	CHECK(test::readText(autoSaves / "Untitled1-01.bak") == first);
+	CHECK(test::readText(autoSaves / "Untitled1-02.bak") == second);
+
+	// Saved, it auto saves next to its file; untitled again, it starts a new series.
+	run(client, "project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	CHECK(autoSave(client) == utf8(dir.path() / "Auto Saves" / "Song-01.bak"));
+	run(client, "project.new");
+	CHECK(autoSave(client) == utf8(autoSaves / "Untitled6-01.bak"));
 }
 
 TEST_CASE("auto saves are named after the project file as its versions are", "[integration]")
@@ -368,6 +418,9 @@ TEST_CASE("a project opened from an auto save goes on untitled, outside Auto Sav
 		const Json location = run(client, "project.location");
 		CHECK(location.at("file").is_null());
 		CHECK(location.at("mediaFolder").is_null()); // so media aren't copied to Auto Saves/Audio
+		// The project file next to Auto Saves, which Save proposes (#635).
+		CHECK(location.at("autoSaveOf") ==
+			utf8(fs::absolute(path == otherCase ? dir.path() / "Other" / "Other.dawproject" : file)));
 		CHECK(modified(client));
 		CHECK_THAT(reject(client, "project.save"), ContainsSubstring("no file"));
 		CHECK_THAT(reject(client, "project.revert"), ContainsSubstring("no file"));
@@ -376,28 +429,32 @@ TEST_CASE("a project opened from an auto save goes on untitled, outside Auto Sav
 
 	// Its next auto saves go where those of untitled projects go, not to Auto Saves/Auto Saves.
 	run(client, "track.add", {{"type", "audio"}});
-	CHECK(
-		run(client, "project.autoSave").at("file") == utf8(dir.path() / "settings" / "Auto Saves" / "Untitled-01.bak"));
+	CHECK(run(client, "project.autoSave").at("file") ==
+		utf8(dir.path() / "settings" / "Auto Saves" / "Untitled1-01.bak"));
 	CHECK(!fs::exists(autoSave.parent_path() / "Auto Saves"));
 
 	// Saving it as the project file makes that its file again, with its folders.
 	run(client, "project.save", {{"path", utf8(file)}});
 	CHECK(run(client, "project.location").at("folder") == utf8(fs::absolute(file.parent_path())));
+	CHECK(run(client, "project.location").at("autoSaveOf").is_null());
 	CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(file))});
 	run(client, "track.add", {{"type", "audio"}});
 	CHECK(run(client, "project.autoSave").at("file") == utf8(dir.path() / "Song" / "Auto Saves" / "Song-02.bak"));
 
-	// The auto save of a project that never had a file, and one whose project file is gone, open untitled too.
+	// The auto save of a project that never had a file, and one whose project file is gone, open untitled too: the
+	// first belongs to no project file, the second still to the one it was made of.
 	run(client, "project.new");
 	run(client, "track.add", {{"type", "midi"}});
-	const fs::path untitled = dir.path() / "settings" / "Auto Saves" / "Untitled-02.bak";
+	const fs::path untitled = dir.path() / "settings" / "Auto Saves" / "Untitled2-01.bak";
 	REQUIRE(run(client, "project.autoSave").at("file") == utf8(untitled));
 	fs::remove(file);
 	for (const fs::path& path : {untitled, autoSave})
 	{
 		INFO(utf8(path));
 		run(client, "project.load", {{"path", utf8(path)}});
-		CHECK(run(client, "project.location").at("file").is_null());
+		const Json location = run(client, "project.location");
+		CHECK(location.at("file").is_null());
+		CHECK(location.at("autoSaveOf") == (path == autoSave ? Json(utf8(fs::absolute(file))) : Json()));
 		CHECK(modified(client));
 	}
 	CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(file))});
@@ -407,6 +464,7 @@ TEST_CASE("a project opened from an auto save goes on untitled, outside Auto Sav
 	fs::copy_file(autoSave, copy);
 	run(client, "project.load", {{"path", utf8(copy)}});
 	CHECK(run(client, "project.location").at("file") == utf8(fs::absolute(copy)));
+	CHECK(run(client, "project.location").at("autoSaveOf").is_null());
 }
 
 TEST_CASE("the engine auto saves a changed project on its own once the interval passed", "[integration]")
@@ -1303,8 +1361,11 @@ TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[u
 	click(app, "#discard-changes");
 	REQUIRE(app.waitUntil([&app] { return disabled(app, "menuitem[command=\"file.revert\"]"); }));
 	CHECK(location(app).is_null());
+	// It proposes the project file the auto save was made of (#635), which the OS's dialog asks before it replaces.
 	fileMenu(app, "file.save");
-	CHECK(answer(app, {}).kind == gnubase::ui::FileDialogKind::Save);
+	const gnubase::ui::FileDialog save = answer(app, {});
+	CHECK(save.kind == gnubase::ui::FileDialogKind::Save);
+	CHECK(utf8(save.location) == utf8(fs::absolute(file)));
 	CHECK(location(app).is_null());
 	// Compared into a bool: Catch2 can't print a file time where libc++ counts it in __int128 (macOS).
 	const bool autoSaveUntouched = fs::last_write_time(autoSave) == autoSaved;

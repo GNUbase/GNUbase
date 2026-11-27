@@ -109,7 +109,7 @@ namespace gnubase::ui
 		Window* mainWindow();
 		// Closes the open dialog, if any, with the result.
 		void closeDialog(const std::string& result);
-		// Asks the engine for the project's file (project.location).
+		// Asks the engine for the project's file, and for the file an auto save was made of (project.location).
 		void readLocation();
 		// A command's done that shows its error in a dialog in the window if it failed (project-error.rml), so that a
 		// failed save isn't taken for done, and which media files a save found missing (missingMedia).
@@ -176,6 +176,8 @@ namespace gnubase::ui
 		Shell& m_shell;
 		std::filesystem::path m_folder;
 		std::string m_file; // the project's file (project.location), empty for none
+		// For a project opened from an auto save, the project file it was made of, which Save proposes (#635).
+		std::string m_autoSaveOf;
 		Subscription m_saved;
 		Subscription m_reset;
 		Subscription m_jobStarted;

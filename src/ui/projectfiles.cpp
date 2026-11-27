@@ -663,9 +663,15 @@ namespace gnubase::ui
 		m_binding.send("project.location", Json::object(),
 			[this](const engine::Result& result)
 			{
-				if (result.ok())
-					m_file = result.value.at("file").is_string() ? result.value.at("file").get<std::string>()
-																 : std::string();
+				if (!result.ok())
+					return;
+				const auto text = [&result](const char* key)
+				{
+					const Json& value = result.value.at(key);
+					return value.is_string() ? value.get<std::string>() : std::string();
+				};
+				m_file = text("file");
+				m_autoSaveOf = text("autoSaveOf");
 			});
 	}
 
@@ -963,8 +969,14 @@ namespace gnubase::ui
 		dialog.title = "Save Project As";
 		dialog.filters = projectFilters();
 		dialog.parent = window.id();
-		dialog.location =
-			m_file.empty() ? std::filesystem::path("Untitled.dawproject") : std::filesystem::u8path(m_file);
+		// A project opened from an auto save proposes the project file it was made of, which the OS's dialog asks
+		// before it replaces.
+		if (!m_file.empty())
+			dialog.location = std::filesystem::u8path(m_file);
+		else if (!m_autoSaveOf.empty())
+			dialog.location = std::filesystem::u8path(m_autoSaveOf);
+		else
+			dialog.location = "Untitled.dawproject";
 		m_shell.showFileDialog(dialog,
 			[this, done = reportFailure(window)](const FileDialogResult& chosen)
 			{
