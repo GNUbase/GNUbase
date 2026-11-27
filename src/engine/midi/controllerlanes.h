@@ -39,11 +39,12 @@ namespace gnubase::engine::midi
 	// The notes of a part by key, for its poly pressure: find gives the note whose key a poly pressure event presses,
 	// of the notes of its pitch and channel the one that sounds at its position, the latest started if several do, or
 	// null if none does. The pressure plays where that note plays, after the MIDI modifiers and the transposition
-	// (docs/features/midi-modifiers.md). The notes must outlive it.
+	// (docs/features/midi-modifiers.md). anyChannel, for a track with a MIDI channel of its own, which plays both on
+	// it: of its pitch on any channel. The notes must outlive it.
 	class PressedNotes
 	{
 	public:
-		explicit PressedNotes(const std::map<ObjectId, Note>& notes);
+		PressedNotes(const std::map<ObjectId, Note>& notes, bool anyChannel);
 		const Note* find(const Controller& pressure) const;
 
 	private:
@@ -53,7 +54,10 @@ namespace gnubase::engine::midi
 			std::vector<const Note*> notes;
 			std::vector<time::Ticks> ends;
 		};
-		std::map<uint16_t, Key> m_keys; // by channel * 128 + pitch
+		uint16_t keyOf(uint8_t channel, uint8_t pitch) const noexcept;
+
+		bool m_anyChannel = false;
+		std::map<uint16_t, Key> m_keys; // by channel * 128 + pitch, channel 0 with m_anyChannel
 	};
 
 	// Registers note.apply and controller.line.

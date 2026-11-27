@@ -16,6 +16,7 @@
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/patterns.h"
+#include "engine/midi/trackchannel.h"
 
 #include <algorithm>
 #include <array>
@@ -1290,6 +1291,7 @@ namespace gnubase::engine
 						project.tempo.toSamples(ticks(project, other.position) + position, project.sampleRate);
 					return globalTranspose(project, other, at) - globalTranspose(project, part, at);
 				};
+				const bool anyChannel = midi::trackMidiChannel(project, part.track).has_value();
 				const auto pressureShift =
 					[&](const MidiPart& other, const midi::PressedNotes& notes, const Controller& pressure)
 				{
@@ -1300,7 +1302,7 @@ namespace gnubase::engine
 				{
 					const MidiPart& other = *items[i].part;
 					const std::map<ObjectId, Note> notes = notesOf(other);
-					const midi::PressedNotes pressed(notes);
+					const midi::PressedNotes pressed(notes, anyChannel);
 					const auto refuse = [&](int pitch, int transpose, const char* what)
 					{
 						require(pitch + transpose >= 0 && pitch + transpose <= 127,
@@ -1316,8 +1318,9 @@ namespace gnubase::engine
 				}
 				// The other parts' velocities as the first one's plays them: the track compresses a stored velocity
 				// before it adds the part's (unless its modifiers are bypassed), so the difference goes in divided by
-				// the compression, which keeps the sound for the compression set now. In MIDI 1.0 velocities, as the
-				// modifiers work, kept from 1 to 127: a note pushed beyond that plays at the end.
+				// the compression, which keeps the sound for the compression set now, as near as its steps allow. In
+				// MIDI 1.0 velocities, as the modifiers work; the stored velocity stays from 1 to 127, so a note whose
+				// stored velocity would have to go beyond that is stored at the end and plays softer or louder.
 				const midi::Modifiers& modifiers =
 					project.channels.at(project.trackById.at(part.track).channel).modifiers;
 				const std::array<int, 2> compression =
@@ -1352,7 +1355,7 @@ namespace gnubase::engine
 					const time::Ticks offset = ticks(project, other.position) - start;
 					const int velocity = other.velocity - part.velocity;
 					const std::map<ObjectId, Note> notes = notesOf(other);
-					const midi::PressedNotes pressed(notes);
+					const midi::PressedNotes pressed(notes, anyChannel);
 					for (const auto& [id, each] : notes)
 					{
 						Note note = each;
@@ -3699,9 +3702,8 @@ namespace gnubase::engine
 				"transposition it plays with, and the velocity divided by the track's velocity compression — so that "
 				"they play as before as far as velocities from 1 to 127 allow; their poly pressure moves with the note "
 				"it presses (refused if that would transpose a note or poly pressure beyond 0 to 127). Pattern events "
-				"that continue the first "
-				"one's pattern, as the pieces of a split do, stay that "
-				"pattern event; otherwise the pattern events' steps become notes of the glued part, as they played. "
+				"that continue the first one's pattern, as the pieces of a split do, stay that pattern event; "
+				"otherwise the pattern events' steps become notes of the glued part, as they played. "
 				"Refused for audio events that continue each other but follow global transpose differently, by their "
 				"root key or Global Transpose, or transpose differently by their own transpose, and for MIDI parts "
 				"that follow global transpose differently: the glued event or part keeps the first one's, so the "

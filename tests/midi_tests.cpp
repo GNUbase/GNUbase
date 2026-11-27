@@ -460,22 +460,23 @@ TEST_CASE("a held live note that a second note-on for its key ends in a full blo
 		sequence->modifiers.transpose = semitones;
 		return sequence;
 	};
+	const auto block = GENERATE(as<uint32_t>(), 8, 16, 64);
 	auto played = std::make_shared<MidiSequencer>();
 	played->setSequence(transposed(12));
-	Player player(played, 16);
+	Player player(played, block);
 	// The audio engine fills the input for each block.
 	played->input().add(noteOnEvent(2, 60));
-	player.play(16);
+	player.play(block);
 	played->input().clear();
 	// The key is still held when the transpose changes: its next note-on goes elsewhere, so the first note must end,
 	// but incoming events fill the block. It ends where the next block starts.
 	played->setSequence(transposed(5));
 	fillInput(player);
 	played->input().add(noteOnEvent(4, 60));
-	player.play(16);
+	player.play(block);
 	played->input().clear();
-	player.play(16);
-	CHECK(notesIn(player.heard) == std::vector<Heard>{on(2, 72), off(32, 72)});
+	player.play(block);
+	CHECK(notesIn(player.heard) == std::vector<Heard>{on(2, 72), off(2 * static_cast<int64_t>(block), 72)});
 }
 
 namespace

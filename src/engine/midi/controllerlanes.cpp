@@ -294,10 +294,10 @@ namespace gnubase::engine::midi
 		return static_cast<uint16_t>(std::clamp<int64_t>(std::llround(varied), 0, static_cast<int64_t>(g_maxVelocity)));
 	}
 
-	PressedNotes::PressedNotes(const std::map<ObjectId, Note>& notes)
+	PressedNotes::PressedNotes(const std::map<ObjectId, Note>& notes, bool anyChannel) : m_anyChannel(anyChannel)
 	{
 		for (const auto& [id, note] : notes)
-			m_keys[static_cast<uint16_t>(((note.channel % 16) * 128) + (note.pitch % 128))].notes.push_back(&note);
+			m_keys[keyOf(note.channel, note.pitch)].notes.push_back(&note);
 		for (auto& [index, key] : m_keys)
 		{
 			std::stable_sort(key.notes.begin(), key.notes.end(),
@@ -310,8 +310,7 @@ namespace gnubase::engine::midi
 
 	const Note* PressedNotes::find(const Controller& pressure) const
 	{
-		const auto found =
-			m_keys.find(static_cast<uint16_t>(((pressure.channel % 16) * 128) + (pressure.number % 128)));
+		const auto found = m_keys.find(keyOf(pressure.channel, pressure.number));
 		if (found == m_keys.end())
 			return nullptr;
 		const Key& key = found->second;
@@ -326,6 +325,11 @@ namespace gnubase::engine::midi
 				return key.notes[i];
 		}
 		return nullptr;
+	}
+
+	uint16_t PressedNotes::keyOf(uint8_t channel, uint8_t pitch) const noexcept
+	{
+		return static_cast<uint16_t>(((m_anyChannel ? 0 : channel % 16) * 128) + (pitch % 128));
 	}
 
 	void registerControllerLaneCommands(ProjectModel& model, Engine& engine)

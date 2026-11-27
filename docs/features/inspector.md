@@ -245,9 +245,10 @@ instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the
   selected parts, start, length (relative and with Ctrl+Enter absolute, also with the first part's own value, after
   which an edit taken by leaving the field is relative again) and end edits with undo, name, mute and lock for every
   selected part, changes from another client, an audio event's volume, an untouched Ctrl+Enter on it giving three events
-  the first one's in one undo step, the parts' transpose and velocity (relative, kept in range, with Ctrl+Enter, also on
-  the first part's own value, undo, a drag that holds one at its limit and comes back, hidden for audio events), and asking only while it shows; a marker selected on the marker track with each field
-  edited, two markers changed relatively and with Ctrl+Enter in one undo step, and an event selected after it, the setup
+  the first one's in one undo step, a volume drag that holds one event at 6 dB and comes back, the parts' transpose and
+  velocity (relative, kept in range, with Ctrl+Enter, also on the first part's own value, undo, a drag that holds one
+  at its limit and comes back, hidden for audio events), and asking only while it shows; a marker selected on the
+  marker track with each field edited, two markers changed relatively and with Ctrl+Enter in one undo step, and an event selected after it, the setup
   pane naming the fields as the info line does; a marker clicked again after a part, Ctrl+Enter on the first marker's
   own position with a part shown before, a selection naming removed markers, and an untouched Ctrl+Enter on the position
   of three markers giving them the first one's in one undo step; a note selected in an in-place editor with its fields

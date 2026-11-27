@@ -181,6 +181,9 @@ namespace gnubase::engine
 		// points (RenderChannel).
 		std::vector<RenderNote> preNotes;
 		std::vector<RenderExpression> preExpressions;
+		// Their controller events, if preCompiled; else those sends get controllers (RenderChannel).
+		std::vector<RenderController> preControllers;
+		bool preCompiled = false;
 		// Filled in by setSequence: the inserts that play, in order, then the sends that play. The first inputCount
 		// inserts are above the divider: they play the track's input alone, before the rest (MidiSequencer::process).
 		std::vector<RunningEffect> effects;

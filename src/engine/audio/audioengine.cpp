@@ -938,6 +938,8 @@ namespace gnubase::engine
 			sequence->sends = channel.midiSends;
 			sequence->preNotes = channel.preNotes;
 			sequence->preExpressions = channel.preExpressions;
+			sequence->preControllers = channel.preControllers;
+			sequence->preCompiled = channel.preCompiled;
 			for (size_t s = 0; s < channel.midiSendOutputs.size(); ++s)
 				if (const int output = channel.midiSendOutputs[s]; output >= 0)
 					sequence->sendOutputs[s] = snapshot.channels[static_cast<size_t>(output)].id;

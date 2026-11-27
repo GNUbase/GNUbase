@@ -2629,6 +2629,54 @@ TEST_CASE("a part held at its limit by a relative drag of the info line's Transp
 	CHECK(window.part(second).at("transpose") == 120);
 }
 
+TEST_CASE("an audio event held at 6 dB by a relative drag of the info line's volume ends where it started", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto add = [&](int64_t position)
+	{
+		return window
+			.call("audioEvent.add",
+				{{"track", audio}, {"clip", clip.at("id")}, {"position", position}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t first = add(0);
+	const uint64_t second = add(48000);
+	window.call("audioEvent.set", {{"event", second}, {"volume", 5.0}});
+	const auto volume = [&](uint64_t id) { return window.find("audioEvents", id).at("volume").get<double>(); };
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 2; }));
+	window.display.select({first, second});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "multiple"); }));
+	const std::string field = "#info-line valuefield[field=volume]";
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			const std::string shown = attribute(window.app, field, "value");
+			return !shown.empty() && std::stod(shown) == 0.0;
+		}));
+
+	// Up until the second event is held at 6 dB, the project arriving after each step, and back down to the start.
+	test::LateDrag drag(window.app, std::nullopt, field);
+	int steps = 0;
+	while (drag.value() < 2.0 && steps < 200)
+	{
+		drag.move(1, -1);
+		++steps;
+	}
+	REQUIRE(drag.value() >= 2.0);
+	REQUIRE(window.app.waitUntil([&] { return volume(second) == 6.0; }));
+	drag.move(steps, 1);
+	drag.release();
+	REQUIRE(window.app.waitUntil([&] { return volume(first) == 0.0; }));
+	CHECK(volume(second) == 5.0);
+}
+
 TEST_CASE("the inspector's random generators keep the values they show when their target changes unit", "[ui]")
 {
 	Window window;

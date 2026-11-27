@@ -483,7 +483,7 @@ namespace gnubase::engine
 			auto unmodified = std::make_unique<MidiSequence>();
 			unmodified->notes = sequence->preNotes;
 			unmodified->expressions = sequence->preExpressions;
-			unmodified->controllers = sequence->controllers;
+			unmodified->controllers = sequence->preCompiled ? sequence->preControllers : sequence->controllers;
 			unmodified->chase = sequence->chase;
 			// The input on the track's MIDI channel, through the drum map's input mapping or Live Input and the
 			// articulation map's remote triggers, as the parts' notes in preNotes go through both maps.

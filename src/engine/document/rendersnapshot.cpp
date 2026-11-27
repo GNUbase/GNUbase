@@ -279,7 +279,7 @@ namespace gnubase::engine
 			const bool pressures = std::any_of(part.controllers.begin(), part.controllers.end(),
 				[](const auto& each) { return each.second.type == ControllerType::PolyPressure; });
 			const std::map<ObjectId, Note> none;
-			const midi::PressedNotes pressedNotes(pressures ? part.notes : none);
+			const midi::PressedNotes pressedNotes(pressures ? part.notes : none, trackChannel.has_value());
 			std::map<ObjectId, std::pair<uint8_t, uint8_t>> pressed;
 			for (const auto& [id, note] : part.notes)
 			{
@@ -1015,6 +1015,13 @@ namespace gnubase::engine
 			channel.preNotes.insert(channel.preNotes.end(), unmodified.notes.begin(), unmodified.notes.end());
 			channel.preExpressions.insert(
 				channel.preExpressions.end(), unmodified.expressions.begin(), unmodified.expressions.end());
+			// Their poly pressure as the notes there play (#870), pointing at the part as the channel's do.
+			channel.preCompiled = true;
+			for (RenderController& controller : unmodified.controllers)
+			{
+				controller.part = static_cast<int32_t>(channel.midiParts.size() - 1);
+				channel.preControllers.push_back(std::move(controller));
+			}
 		}
 		// The sound slots' output events, across each track's parts; the MIDI sends before the modifiers get its
 		// key switches too.
@@ -1022,10 +1029,16 @@ namespace gnubase::engine
 		{
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(track))];
 			const size_t from = channel.notes.size();
+			const size_t fromControllers = channel.controllers.size();
 			addOutputEvents(project, notes, channel);
 			if (preNotes(channel))
+			{
 				channel.preNotes.insert(channel.preNotes.end(),
 					channel.notes.begin() + static_cast<std::ptrdiff_t>(from), channel.notes.end());
+				channel.preControllers.insert(channel.preControllers.end(),
+					channel.controllers.begin() + static_cast<std::ptrdiff_t>(fromControllers),
+					channel.controllers.end());
+			}
 		}
 
 		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel
@@ -1097,8 +1110,9 @@ namespace gnubase::engine
 						return std::make_tuple(a.start, !a.keySwitch, a.keySwitch ? 0 : a.pitch) <
 							std::make_tuple(b.start, !b.keySwitch, b.keySwitch ? 0 : b.pitch);
 					});
-			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
-				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
+			for (std::vector<RenderController>* controllers : {&channel.controllers, &channel.preControllers})
+				std::stable_sort(controllers->begin(), controllers->end(),
+					[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
 			addInitialExpressions(channel.notes, channel.expressions);
 			addInitialExpressions(channel.preNotes, channel.preExpressions);
 			for (std::vector<RenderExpression>* expressions : {&channel.expressions, &channel.preExpressions})
@@ -1118,9 +1132,10 @@ namespace gnubase::engine
 				parts.push_back(channel.midiParts[byStart[i]]);
 			}
 			channel.midiParts = std::move(parts);
-			for (RenderController& controller : channel.controllers)
-				if (controller.part >= 0)
-					controller.part = moved[static_cast<size_t>(controller.part)];
+			for (std::vector<RenderController>* controllers : {&channel.controllers, &channel.preControllers})
+				for (RenderController& controller : *controllers)
+					if (controller.part >= 0)
+						controller.part = moved[static_cast<size_t>(controller.part)];
 		}
 		return snapshot;
 	}
