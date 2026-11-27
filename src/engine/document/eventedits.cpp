@@ -2502,6 +2502,66 @@ namespace gnubase::engine
 			return gap;
 		}
 
+		// Takes a range out of the markers on the marker tracks among its tracks as deleteRange takes it out of events
+		// (#1190, reference manual p. 425): the markers in it go, a cycle marker that reaches across one of its edges
+		// gets shorter, and one that it lies inside is split in two. The piece after the range is the marker itself and
+		// keeps its number; the piece before it gets the first free number, the same name and color.
+		void cutMarkers(Project& project, const Range& range, CommandContext& context)
+		{
+			// The markers in the range go first, so that their numbers are free for the pieces before it.
+			std::vector<ObjectId> across;
+			for (auto entry = project.markers.begin(); entry != project.markers.end();)
+			{
+				const Marker& marker = entry->second;
+				const bool cycle = marker.type == MarkerType::Cycle;
+				const time::Samples from = samples(project, marker.position);
+				const time::Samples to = cycle ? samples(project, marker.end) : from;
+				if (contains(range.tracks, marker.track) && from >= range.start && from < range.end && to <= range.end)
+				{
+					const ObjectId id = entry->first;
+					entry = project.markers.erase(entry);
+					context.emit("marker.removed", {{"marker", id}});
+					continue;
+				}
+				// Only a cycle marker can reach across an edge: a position marker that isn't in the range is outside
+				// it.
+				if (contains(range.tracks, marker.track) && to > range.start && from < range.end)
+					across.push_back(entry->first);
+				++entry;
+			}
+			for (const ObjectId id : across)
+			{
+				Marker& marker = project.markers.at(id);
+				const time::Samples from = samples(project, marker.position);
+				const time::Samples to = samples(project, marker.end);
+				const time::TimeBase base = project.trackById.at(marker.track).timeBase;
+				if (from < range.start && to > range.end)
+				{
+					Marker before = marker;
+					before.id = project.newId();
+					before.end = {base, inBase(project, range.start, base)};
+					keepMinimumLength(project, before);
+					before.number = 1;
+					while (std::any_of(project.markers.begin(), project.markers.end(),
+						[&before](const auto& entry)
+						{
+							const Marker& other = entry.second;
+							return other.track == before.track && other.type == before.type &&
+								other.number == before.number;
+						}))
+						++before.number;
+					project.markers[before.id] = before;
+					context.emit("marker.added", {{"marker", toJson(before)}});
+				}
+				if (from < range.start && to <= range.end)
+					marker.end = {base, inBase(project, range.start, base)};
+				else
+					marker.position = {base, inBase(project, range.end, base)};
+				keepMinimumLength(project, marker);
+				context.emit("marker.changed", {{"marker", toJson(marker)}});
+			}
+		}
+
 		// Deletes what lies in a range; close (Delete Time) moves what comes after it back by its length (closing).
 		void deleteRange(Project& project, const Range& range, bool close, CommandContext& context)
 		{
@@ -3866,12 +3926,11 @@ namespace gnubase::engine
 					"back by its length, in ticks on musical tracks, and the transpose events in the range go with it, "
 					"those after it moving back too, and the transposition in force at its end goes on from its "
 					"start, unless the transpose track is locked. Locked events stay. Without "
-					"time it also takes the range out of the cycle markers that it lies in, on the marker tracks among "
-					"its tracks (reference manual p. 425): a cycle marker that starts or ends where the range does "
-					"gets shorter, and one that reaches past both of its edges is split in two, the part after the "
-					"range a new cycle marker with the first free number and the same name and color. Position markers "
-					"stay, and so do cycle markers that the range covers whole or reaches out of; with time every "
-					"marker stays.",
+					"time it also takes the range out of the markers on the marker tracks among its tracks, as out of "
+					"events (reference manual p. 425): the position and cycle markers in it go, a cycle marker that "
+					"reaches across one of its edges gets shorter, and one that reaches across both is split in two. "
+					"The piece after the range keeps the marker's id and number, the piece before it is a new cycle "
+					"marker with the first free number and the same name and color. With time every marker stays.",
 				schema(withTime, {}), {{"type", "object"}}, false},
 			"Delete",
 			[](Project& project, CommandContext& context)
@@ -3880,7 +3939,7 @@ namespace gnubase::engine
 				const bool closes = context.parameters().value("time", false);
 				deleteRange(project, range, closes, context);
 				if (!closes)
-					cutCycleMarkers(project, range.start, range.end, range.tracks, context);
+					cutMarkers(project, range, context);
 				return Json::object();
 			});
 
@@ -3920,8 +3979,8 @@ namespace gnubase::engine
 			{"range.cut", 1,
 				"Copies " + range +
 					" to the range clipboard as range.copy does, then deletes it as range.delete does; time (Cut Time) "
-					"closes the gap. Without time it cuts the range out of the cycle markers that it lies in as "
-					"range.delete does; markers don't go to the clipboard. Locked events stay where they are and "
+					"closes the gap. Without time it takes the range out of the markers as range.delete does; markers "
+					"don't go to the clipboard. Locked events stay where they are and "
 					"aren't copied." +
 					named +
 					" It removes them as event.remove does, and refuses locked ones. Returns how many events and "
@@ -3949,7 +4008,7 @@ namespace gnubase::engine
 				clipboard.cursor = cursorOf(context);
 				deleteRange(project, cut, closes, context);
 				if (!closes)
-					cutCycleMarkers(project, cut.start, cut.end, cut.tracks, context);
+					cutMarkers(project, cut, context);
 				Json result = clipboardInfo(clipboard);
 				m_clipboard = std::make_shared<const RangeClipboard>(std::move(clipboard));
 				context.emit("rangeClipboard.changed", result);

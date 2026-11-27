@@ -101,13 +101,14 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
   a new range with Shift, p. 288), and so do its other clicks and drags (Shift and a drag outside the range adds to it). **Delete** (and
   Backspace) removes the selected markers (`marker.remove`), which the project window selects instead of events; a
   range selected deselects the markers, so that Delete deletes what was selected last.
-- **Cutting a range in a cycle marker** (p. 425): with a range selected in a cycle marker, Ctrl+X (`range.cut`) or
-  Delete (`range.delete`) takes the range out of it, as they take it out of events: a cycle marker on a marker track
-  in the range that starts or ends with the range gets shorter, and one that the range lies inside otherwise is split
-  in two, the part after the range a new cycle marker with the first free number, the same name and color. Position
-  markers stay. So do cycle markers that the range covers whole, as a double click in one selects it, or reaches out
-  of; whether those should lose their part too is open in #1190. Delete Time and Cut Time (`time`) leave every marker
-  where it is, as they did before; markers don't go to the range clipboard.
+- **Cutting a range in a cycle marker** (p. 425, #1190): with a range selected in a cycle marker, Ctrl+X
+  (`range.cut`) or Delete (`range.delete`) takes the range out of the markers on the marker tracks in the range, as
+  they take it out of events: a cycle marker that reaches across one of its edges gets shorter, and one that the range
+  lies inside is split in two. The piece after the range keeps the marker's id and number, the piece before it is a new
+  cycle marker with the first free number, the same name and color. Markers in the range go, position markers and
+  cycle markers that the range covers whole, as a double click in one selects it; a position marker at the range's end
+  stays, as an event that starts there does. Delete Time and Cut Time (`time`) leave every marker where it is; markers
+  don't go to the range clipboard.
 - The event display tells it about every change of the view (`EventDisplay::onViewChanged`); the marker elements are
   its own, in its event area, so the display's code doesn't know about markers.
 
@@ -172,10 +173,11 @@ watch. It sends no project reads after it closes; opening it again reads the cur
 ## Checks
 
 `tests/marker_tests.cpp` covers the engine's commands, `marker.put` among them, and `range.cut` and `range.delete`
-cutting a range out of a cycle marker: split, shortened at either end, left whole when the range covers it or reaches
-out of it or with `time`, on the range's tracks only, in one undo step that redo repeats; two cycle markers around the
-range on one track both split, their new parts numbered one after the other; and a cycle marker on a linear marker
-track split in samples. `tests/markers_ui_tests.cpp`: on the fake window system, marker lines for the active track,
+taking a range out of the markers: a cycle marker split, the piece after the range keeping its id and number,
+shortened when the range reaches across or ends at either of its ends, removed with the position markers when the
+range covers it, left whole with `time`, on the range's tracks only, in one undo step that redo repeats; a position
+marker at the range's end staying; two cycle markers around the range on one track both split, the pieces before it
+numbered one after the other; and a cycle marker on a linear marker track split in samples. `tests/markers_ui_tests.cpp`: on the fake window system, marker lines for the active track,
 every track and none as the setting changes, behind the events and on the display's timeline; marker events and labels
 on the marker tracks' lanes, following vertical zoom; Alt-click adding a marker only on a marker track and off cycle
 markers, a double click setting the locators and Alt zooming. In the app's UI (`test::UiApp`): Mod+M opening and closing
@@ -210,7 +212,7 @@ of 10 marker tracks; `tests/markers_ui_tests.cpp` the File menu's items through 
 edits send no project reads for it, and reopening lists the current markers. A mouse target test places both marker
 overlays above ordinary event lanes and checks that mouse input reaches those lanes.
 
-Not yet: cutting a range that covers a cycle marker whole or reaches out of it (#1190); hiding columns;
+Not yet: hiding columns;
 marker lines in the key editor; locking marker tracks; importing markers from wave files.
 
 CSV files preserve empty marker tracks with a Type Track row: Track Number, Track and Time Base identify the track, and all marker fields are empty. Such rows do not add to the returned marker count. The importer also detects semicolon-separated headers and accepts decimal commas for Position and End in those sheets; comma-separated files retain decimal points. Quoting, embedded separators, quotes and line ends keep their usual CSV meaning.

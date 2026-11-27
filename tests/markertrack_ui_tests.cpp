@@ -754,10 +754,12 @@ TEST_CASE("Delete deletes a range selected between markers after a marker was se
 	REQUIRE(app.waitUntil([&] { return display.range() && display.range()->end == 6 * g_quarterSamples; }));
 	REQUIRE(app.waitUntil([&] { return app.appUi().markerLines()->selection().empty(); }));
 
-	// Delete deletes the range's part, and the markers stay.
+	// Delete deletes the range with its part: the marker at its start goes too (#1190), the one at its end stays.
 	app.ui().key(std::nullopt, "Delete");
 	REQUIRE(app.waitUntil([&] { return app.call("project.get").at("midiParts").empty(); }));
-	CHECK(list().size() == 2);
+	const Json left = list();
+	REQUIRE(left.size() == 1);
+	CHECK(left.at(0).at("positionSamples") == 6 * g_quarterSamples);
 }
 
 TEST_CASE("a range dragged in a cycle marker on the marker track's lane and Mod+X leave two cycle markers", "[ui]")
