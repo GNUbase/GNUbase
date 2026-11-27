@@ -2490,3 +2490,45 @@ TEST_CASE("the editor window's key editor and the in-place editor keep their con
 	CHECK(height(editor + " .controller-lane") >= 63.5);
 	CHECK(height(editor + " .controller-lane-list") >= 63.5);
 }
+
+TEST_CASE("Indicate Transpositions shows the notes at the pitches they play", "[ui]")
+{
+	// Indicate Transpositions in the toolbar (#1766, reference manual pp. 419, 1260): a note after a transpose event
+	// of 3 semitones shows 3 rows up; a drawn note gets the pitch that plays at the row under the mouse, and a move
+	// changes the pitch by the rows dragged.
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {2 * g_quarter, 60, g_quarter}});
+	f.app.call("transpose.add", {{"position", 2 * g_quarter}, {"value", 3}});
+	f.settle(); // off, the notes stay on their own rows
+	const auto on = [&f](uint64_t id, double sixteenths, int pitch)
+	{
+		const Json found = f.elements(noteSelector(id));
+		if (found.empty())
+			return false;
+		const auto y = static_cast<double>(f.at(sixteenths, pitch).point.value_or(ui::Point{}).y);
+		const Json shown = found.at(0).at("box");
+		return shown.at("y").get<double>() <= y && y <= shown.at("y").get<double>() + shown.at("height").get<double>();
+	};
+	f.click(of(".key-input[setting=indicateTranspositions]"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == true; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=indicateTranspositions]", "checked"); }));
+	f.scroll(63);
+	CHECK(f.app.waitUntil([&] { return on(ids[0], 0.5, 60) && on(ids[1], 8.5, 63); }));
+
+	f.tool("draw");
+	f.click(f.at(12.5, 66));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
+	CHECK(f.partNotes()[2].at("pitch") == 63);
+	const auto drawn = f.partNotes()[2].at("id").get<uint64_t>();
+	CHECK(f.app.waitUntil([&] { return on(drawn, 12.5, 66); }));
+
+	f.tool("objectSelection");
+	f.drag(f.at(8.5, 63), f.at(8.5, 64));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).at("pitch") == 61; }));
+	CHECK(f.app.waitUntil([&] { return on(ids[1], 8.5, 64); }));
+
+	// Off, every note is on its own row again.
+	f.click(of(".key-input[setting=indicateTranspositions]"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("indicateTranspositions") == false; }));
+	f.settle();
+}

@@ -281,6 +281,11 @@ namespace gnubase::ui
 		static int64_t soundSnap(const engine::Json& map, int pitch); // a drum sound's snap, in ticks
 		// The length of new notes of the pitch: with Drum-Map Link its sound's snap.
 		int64_t lengthQuantize(int pitch) const;
+		// Indicate Transpositions (#1766, reference manual pp. 419, 1260): the semitones the view's transpositions give
+		// a part's notes at the ticks, 0 while it is off and in the drum editor. The note display shows each note at
+		// its pitch shown, which a drawn note's pitch has under the mouse; edits move the pitch by the rows dragged.
+		int transposition(uint64_t part, int64_t ticks) const;
+		int shownPitch(const Note& note) const;
 		// The pitch rows away from pitch in the display's order, or -1 beyond its ends.
 		int shifted(int pitch, int rows) const;
 		const Note* note(uint64_t part, uint64_t id) const;

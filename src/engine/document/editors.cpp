@@ -90,6 +90,7 @@ namespace gnubase::engine
 			std::set<int> collapsedGroups;
 			bool autoSelectControllers = false;
 			bool acousticFeedback = false;                                  // Acoustic Feedback (pp. 1192, 1259)
+			bool indicateTranspositions = false;                            // Indicate Transpositions (pp. 419, 1260)
 			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection; // each a part and a controller event of it
 			// The attributes selected of selected notes on the Articulations lane (#1688, p. 1289), by part and note;
 			// a selected note without them has all its attributes selected.
@@ -384,6 +385,45 @@ namespace gnubase::engine
 			return names;
 		}
 
+		time::Ticks partStart(const Project& project, const MidiPart& part)
+		{
+			return time::toTicks(part.position, project.tempo, project.sampleRate);
+		}
+
+		time::Ticks partEnd(const Project& project, const MidiPart& part)
+		{
+			return time::toTicks(time::Position{part.position.base, part.position.value + part.length}, project.tempo,
+				project.sampleRate);
+		}
+
+		// Indicate Transpositions (#1766, reference manual pp. 419, 1260): for each MIDI part the view shows, the
+		// transposition its notes play with (globalTranspose) from its start and from each transpose event after it,
+		// in project ticks; empty while it is off.
+		Json transpositions(const Project& project, const EditorView& view)
+		{
+			Json parts = Json::array();
+			if (!view.indicateTranspositions)
+				return parts;
+			for (const ObjectId id : view.parts)
+			{
+				const auto found = project.midiParts.find(id);
+				if (found == project.midiParts.end())
+					continue;
+				const MidiPart& part = found->second;
+				const time::Ticks start = partStart(project, part);
+				const time::Ticks end = partEnd(project, part);
+				const auto at = [&](time::Ticks ticks)
+				{ return globalTranspose(project, part, project.tempo.toSamples(ticks, project.sampleRate)); };
+				Json steps = Json::array({{{"position", start}, {"semitones", at(start)}}});
+				for (const TransposeEvent& event : project.transpose.events)
+					if (const time::Ticks ticks = time::toTicks(event.position, project.tempo, project.sampleRate);
+						ticks > start && ticks < end && at(ticks) != steps.back().at("semitones"))
+						steps.push_back({{"position", ticks}, {"semitones", at(ticks)}});
+				parts.push_back({{"part", id}, {"steps", steps}});
+			}
+			return parts;
+		}
+
 		Json viewJson(const Project& project, const std::string& editor, const EditorView& view)
 		{
 			const ObjectId activeTrack = trackOf(project, view.activePart);
@@ -418,7 +458,9 @@ namespace gnubase::engine
 				{"collapsedGroups", view.collapsedGroups}, {"autoSelectControllers", view.autoSelectControllers},
 				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection},
 				{"showExpression", view.showExpression}, {"expressionDoubleClick", view.expressionDoubleClick},
-				{"expressionType", view.expressionType}, {"acousticFeedback", view.acousticFeedback}};
+				{"expressionType", view.expressionType}, {"acousticFeedback", view.acousticFeedback},
+				{"indicateTranspositions", view.indicateTranspositions},
+				{"transpositions", transpositions(project, view)}};
 		}
 
 		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
@@ -562,17 +604,6 @@ namespace gnubase::engine
 				"list editor or the drum editor");
 		}
 
-		time::Ticks partStart(const Project& project, const MidiPart& part)
-		{
-			return time::toTicks(part.position, project.tempo, project.sampleRate);
-		}
-
-		time::Ticks partEnd(const Project& project, const MidiPart& part)
-		{
-			return time::toTicks(time::Position{part.position.base, part.position.value + part.length}, project.tempo,
-				project.sampleRate);
-		}
-
 		// The length of new notes of a pitch on a track: the length quantize's, with link the quantize grid's
 		// (p. 1219), with drumMap the snap of the pitch's sound in the track's drum map (Drum-Map Link, p. 1240), or
 		// without a map the quantize grid's.
@@ -708,7 +739,8 @@ namespace gnubase::engine
 			{"autoSelectControllers", boolean}, {"pitchVisibility", boolean}, {"reverseSounds", boolean},
 			{"visibleSounds", visibleSoundsSchema}, {"soloInstrument", boolean}, {"showNoteLength", boolean},
 			{"gridType", gridTypeSchema}, {"showExpression", boolean}, {"expressionDoubleClick", boolean},
-			{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean}};
+			{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean},
+			{"indicateTranspositions", boolean}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -721,9 +753,16 @@ namespace gnubase::engine
 					"content", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soundNames",
 					"soloInstrument", "showNoteLength", "gridType", "lanes", "showLanes", "soundSlotsLane",
 					"collapsedGroups", "autoSelectControllers", "controllerSelection", "eventSelection",
-					"showExpression", "expressionDoubleClick", "expressionType", "acousticFeedback"}}};
+					"showExpression", "expressionDoubleClick", "expressionType", "acousticFeedback",
+					"indicateTranspositions", "transpositions"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		viewSchema["properties"]["soundsInUse"] = {{"type", {"array", "null"}}, {"items", idSchema}};
+		const Json integer = {{"type", "integer"}};
+		const Json stepSchema = {{"type", "object"}, {"required", {"position", "semitones"}},
+			{"properties", {{"position", integer}, {"semitones", integer}}}};
+		const Json transpositionSchema = {{"type", "object"}, {"required", {"part", "steps"}},
+			{"properties", {{"part", idSchema}, {"steps", {{"type", "array"}, {"items", stepSchema}}}}}};
+		viewSchema["properties"]["transpositions"] = {{"type", "array"}, {"items", transpositionSchema}};
 		viewSchema["properties"]["soundNames"] = {
 			{"type", {"array", "null"}}, {"items", {{"type", "string"}}}, {"minItems", 128}, {"maxItems", 128}};
 		const std::string viewText =
@@ -781,7 +820,11 @@ namespace gnubase::engine
 			"makes a double click on a note open the expression editor instead of deleting it, and expressionType is "
 			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. "
 			"acousticFeedback: the editor plays a note while it is moved or drawn, and a note whose velocity the "
-			"velocity lane edits (pp. 1192, 1259). View state: no "
+			"velocity lane edits (pp. 1192, 1259). indicateTranspositions (Indicate Transpositions, pp. 419, 1260) "
+			"shows the notes at the pitches they play: transpositions then gives, for each MIDI part shown, steps "
+			"{position, semitones}, from the part's start and where a transpose event changes it, in project ticks: "
+			"the semitones its notes from there on play transposed by, its own transpose, the root key's step and "
+			"the transpose track's (transpose.add) as playback adds them; empty while it is off. View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors. An edit, undo or redo that "
 			"changes an open editor's parts (removes, adds, brings back or reorders them) or closes it, and a "
 			"project that closes it, emit editor.changed with its view.";
@@ -893,7 +936,8 @@ namespace gnubase::engine
 					{"soundSlotsLane", boolean}, {"collapsedGroups", groupsSchema}, {"autoSelectControllers", boolean},
 					{"controllerSelection", controllerSelectionSchema}, {"eventSelection", idsSchema},
 					{"showExpression", boolean}, {"expressionDoubleClick", boolean},
-					{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean}}),
+					{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean},
+					{"indicateTranspositions", boolean}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -1086,6 +1130,7 @@ namespace gnubase::engine
 				view.expressionDoubleClick = parameters.value("expressionDoubleClick", view.expressionDoubleClick);
 				view.expressionType = parameters.value("expressionType", view.expressionType);
 				view.acousticFeedback = parameters.value("acousticFeedback", view.acousticFeedback);
+				view.indicateTranspositions = parameters.value("indicateTranspositions", view.indicateTranspositions);
 				const bool autoSelectTurnsOn = parameters.value("autoSelectControllers", view.autoSelectControllers) &&
 					!view.autoSelectControllers;
 				if (parameters.contains("autoSelectControllers"))
