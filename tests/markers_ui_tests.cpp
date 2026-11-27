@@ -1336,6 +1336,121 @@ TEST_CASE("the markers window hides and shows its columns, all but Locate and Po
 	CHECK(headerOrder(reopened).size() == 5);
 }
 
+TEST_CASE("a description or length typed into one of several selected rows goes to the others even if it is the "
+		  "row's own (#564)",
+	"[ui]")
+{
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	app.call("marker.add", {{"type", "cycle"}, {"position", 0}, {"end", 2 * g_quarter}, {"name", "One"}});
+	app.call("marker.add", {{"position", 4 * g_quarter}, {"name", "Two"}});
+	app.call("marker.add", {{"type", "cycle"}, {"position", 8 * g_quarter}, {"end", 9 * g_quarter}, {"name", "Three"}});
+	ui::MarkersWindow& markers = openMarkers(app, 3);
+	const ui::WindowId window = app.appUi().markersWindow();
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#marker-rows .type", 2), ui::MouseButton::Left, 1, {"shift"});
+	REQUIRE(app.waitUntil([&markers] { return markers.selection().size() == 3; }));
+
+	edit(app, 0, "description", "One");
+	REQUIRE(app.waitUntil(
+		[&app] { return markerList(app)[1].at("name") == "One" && markerList(app)[2].at("name") == "One"; }));
+	REQUIRE(markers.selection().size() == 3);
+	edit(app, 0, "length", "0.2.0.0");
+	REQUIRE(app.waitUntil([&app] { return markerField(app, 2, "end") == 10 * g_quarter; }));
+	CHECK(markerField(app, 0, "end") == 2 * g_quarter);
+}
+
+TEST_CASE("a position typed in another notation of the time it has sends no change (#564)", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	test::UiApp app;
+	const test::ReleaseHolds releaseHolds{holds};
+	app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	app.call("track.add", {{"type", "marker"}});
+	app.call("marker.add", {{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 8 * g_quarter}});
+	openMarkers(app, 1);
+	Rml::ElementDocument& document = markersDocument(app);
+	REQUIRE(field(document, 0, "position") == "2.1.1.0");
+	engine::Client holder(app.engine(), "holder");
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+
+	// Bar 2 is 2.1.1.0, and the end 3.1.1.0 is 3 as well; the changes that are none are not sent, a real one is.
+	edit(app, 0, "position", "2");
+	edit(app, 0, "end", "3");
+	CHECK(app.appUi().binding().waiting("marker.set") == 0);
+	edit(app, 0, "end", "4");
+	CHECK(app.appUi().binding().waiting("marker.set") == 1);
+	holds.release(1);
+	REQUIRE(app.waitUntil([&app] { return markerField(app, 0, "end") == 12 * g_quarter; }));
+}
+
+TEST_CASE("the markers window sorts empty cells last and descriptions without regard to the case of non-ASCII "
+		  "letters (#564)",
+	"[ui]")
+{
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	const uint64_t position = addMarker(app,
+		{{"position", 2 * g_quarter},
+			{"name",
+				"\xC3\xA9"
+				"a"}});
+	const uint64_t longer = addMarker(app,
+		{{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 10 * g_quarter},
+			{"name",
+				"\xC3\x89"
+				"b"}});
+	const uint64_t shorter =
+		addMarker(app, {{"type", "cycle"}, {"position", 6 * g_quarter}, {"end", 8 * g_quarter}, {"name", "Z"}});
+	openMarkers(app, 3);
+	const ui::WindowId window = app.appUi().markersWindow();
+	Rml::ElementDocument& document = markersDocument(app);
+	using Ids = std::vector<uint64_t>;
+
+	// End and Length: the cycle markers by them, in either direction, and the position marker, which has none, after.
+	app.ui().click(window, at("#marker-head td.end"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&document, position, longer, shorter] { return rowOrder(document) == Ids{shorter, longer, position}; }));
+	app.ui().click(window, at("#marker-head td.end"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&document, position, longer, shorter] { return rowOrder(document) == Ids{longer, shorter, position}; }));
+	app.ui().click(window, at("#marker-head td.length"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&document, position, longer, shorter] { return rowOrder(document) == Ids{shorter, longer, position}; }));
+
+	// Descriptions: an accented capital letter sorts with its small one, as the ASCII ones do.
+	app.ui().click(window, at("#marker-head td.description"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil(
+		[&document, position, longer, shorter] { return rowOrder(document) == Ids{shorter, position, longer}; }));
+}
+
+TEST_CASE(
+	"with Sync Selection the project window follows the markers window when the marker track changes (#564)", "[ui]")
+{
+	test::UiApp app;
+	app.appUi().showProject();
+	const auto first = app.call("track.add", {{"type", "marker"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t intro = addMarker(app, {{"position", g_quarter}, {"name", "Intro"}});
+	app.call("track.add", {{"type", "marker"}});
+	const uint64_t other = addMarker(app, {{"position", 2 * g_quarter}, {"name", "Other"}});
+	app.call("marker.activateTrack", {{"track", first}});
+	openMarkers(app, 1);
+	const ui::WindowId window = app.appUi().markersWindow();
+	REQUIRE(app.appUi().markerLines() != nullptr);
+	const ui::MarkerLines& lines = *app.appUi().markerLines();
+	app.ui().click(window, at("#marker-rows .type", 0), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&lines, intro] { return lines.selection() == std::vector<uint64_t>{intro}; }));
+
+	// Its marker is not listed any more: neither window has it selected.
+	app.call("marker.activateTrack", {{"track", app.call("project.get").at("tracks").back().at("id")}});
+	REQUIRE(app.waitUntil([&app, other] { return app.appUi().markers()->markers().front().id == other; }));
+	REQUIRE(app.waitUntil([&lines] { return lines.selection().empty(); }));
+	CHECK(app.appUi().markers()->selection().empty());
+}
+
 TEST_CASE("File > Export and File > Import > Markers write and read the marker file chosen", "[ui]")
 {
 	test::UiApp app{{1000, 700}};

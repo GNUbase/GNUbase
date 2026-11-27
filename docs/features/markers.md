@@ -146,7 +146,9 @@ Marker Tracks and Off set `ui.markerLines`.
   Enter locates to the selected marker.
 - **Several markers at once** (p. 430): a description or a length typed into a row of a selection of several gives it
   to all the selected markers (the length to the cycle markers among them), in one undo step (`history.transaction`).
-  The reference does this with checkbox attributes, which markers here don't have.
+  The reference does this with checkbox attributes, which markers here don't have. A field counts as edited when text
+  was typed into it, also to the row's own value, which then goes to the others; one left without an edit changes
+  nothing. A time typed in another notation of the time a marker has ("2" for "2.1.1.0") changes nothing either.
 - **Columns** (p. 429): a click on a header sorts by its column, a second one the other way round, the position always
   second (`.sorted` and `.descending` on the header, with a `.sort-arrow` in it that the themes draw: up for the
   ascending order); dragging a header moves its column, dragging the line between two headers resizes the column on
@@ -154,7 +156,9 @@ Marker Tracks and Off set `ui.markerLines`.
   column. The locate column stays first. The Columns menu (`#marker-columns-menu`, items `#column-<name>`) hides and
   shows every column but Position (p. 429: Locate and Position can't be hidden); the Locate column has no item. Their
   order, hidden columns, widths and sorting are the user setting `ui.markerColumns` (`order`, `hidden`, `widths`,
-  `sort`, `descending`), whose changes from MCP or Lua apply at once.
+  `sort`, `descending`), whose changes from MCP or Lua apply at once. End and Length put the position markers, which
+  have neither, after the cycle markers in both directions; descriptions sort without regard to case, also of Latin-1,
+  Latin Extended-A, Greek and Cyrillic letters.
 - **Auto-Scroll with Project Cursor** (`#marker-auto-scroll`, p. 427), the user setting `ui.markersAutoScroll` (on by
   default): when the arrow moves to another marker, the list scrolls as little as it takes to show its row.
 - **Marker settings** (`#marker-settings`, p. 428): Show Marker IDs on Marker Track (`ui.markerIds`), Cycle Follows
@@ -163,7 +167,9 @@ Marker Tracks and Off set `ui.markerLines`.
   (`app::AppUi` gives each one's selection to the other), except while recording. When it starts syncing (the window
   opens, recording stops, the setting is turned on) the window takes the project window's selection. Each toggle sends
   the state it turns to, so that two clicks before the engine answers end as the toggle shows, and goes back to the
-  setting if the engine refuses the change.
+  setting if the engine refuses the change. The window lists only the active marker track's markers, so its selection
+  is of those: a click replaces the project window's selection of markers, also of other marker tracks, and so does
+  switching the active marker track, which drops the selected markers it no longer lists.
 - Add Marker (`#add-position-marker`) adds a position marker at the cursor, Add Cycle Marker one at the locators,
   Remove the selected markers. The Functions menu moves the selected markers to the cursor in one undo step
   (`history.transaction` of `marker.set`s; cycle markers keep their length) and reassigns the position or cycle

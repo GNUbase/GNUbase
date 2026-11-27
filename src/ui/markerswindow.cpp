@@ -14,7 +14,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cmath>
 #include <sstream>
 #include <string>
@@ -91,11 +90,43 @@ namespace gnubase::ui
 			return std::find(g_columns.begin(), g_columns.end(), name) != g_columns.end();
 		}
 
-		std::string lower(std::string value)
+		// A letter in lower case: those of ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic, which have capital and
+		// small forms in pairs (no locale is needed). Anything else stays.
+		char32_t lowerCase(char32_t c)
 		{
-			std::transform(value.begin(), value.end(), value.begin(),
-				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-			return value;
+			const bool pairs = (c >= 0x100 && c <= 0x137 && c != 0x130) || (c >= 0x14A && c <= 0x177);
+			const bool oddPairs = (c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E);
+			if ((c >= 'A' && c <= 'Z') || (c >= 0xC0 && c <= 0xDE && c != 0xD7) || (c >= 0x391 && c <= 0x3A9) ||
+				(c >= 0x410 && c <= 0x42F))
+				return c + 0x20;
+			if (c >= 0x400 && c <= 0x40F)
+				return c + 0x50;
+			if (c == 0x178)
+				return 0xFF;
+			return (pairs && (c % 2) == 0) || (oddPairs && (c % 2) == 1) ? c + 1 : c;
+		}
+
+		// The code points of a UTF-8 text in lower case, to compare descriptions without regard to case; bytes that
+		// aren't UTF-8 count as the characters they stand for in Latin-1.
+		std::u32string lower(const std::string& value)
+		{
+			std::u32string folded;
+			for (size_t i = 0; i < value.size();)
+			{
+				const auto lead = static_cast<unsigned char>(value[i]);
+				const size_t length = lead >= 0xF0 ? 4 : (lead >= 0xE0 ? 3 : (lead >= 0xC0 ? 2 : 1));
+				char32_t c = length == 1 ? lead : (lead & (0xFFU >> (length + 1)));
+				size_t used = 1;
+				for (; used < length && i + used < value.size() &&
+					(static_cast<unsigned char>(value[i + used]) & 0xC0U) == 0x80U;
+					++used)
+					c = (c << 6) | (static_cast<unsigned char>(value[i + used]) & 0x3FU);
+				if (used != length)
+					c = lead; // not a whole sequence
+				folded.push_back(lowerCase(c));
+				i += used == length ? length : 1;
+			}
+			return folded;
 		}
 
 		// The order of two markers in a column, as -1, 0 or 1.
@@ -398,6 +429,9 @@ namespace gnubase::ui
 		std::stable_sort(m_listed.begin(), m_listed.end(),
 			[this](const MarkerItem& a, const MarkerItem& b)
 			{
+				// Position markers have no end or length: after the cycle markers, whichever way the list is sorted.
+				if ((m_columns.sort == "end" || m_columns.sort == "length") && a.cycle != b.cycle)
+					return a.cycle;
 				const int order = compare(m_columns.sort, a, b);
 				if (order != 0)
 					return m_columns.descending ? order > 0 : order < 0;
@@ -457,6 +491,10 @@ namespace gnubase::ui
 		if (m_list != nullptr)
 			m_list->SetAttribute("value", value);
 		showCursor();
+		// Markers that are not listed any more are not selected: with Sync Selection the project window follows, as it
+		// does when the user changes the selection.
+		if (m_onSelect && selection().size() != selected.size())
+			m_onSelect(selection());
 	}
 
 	bool MarkersWindow::setCursor(int64_t sample)
@@ -530,6 +568,10 @@ namespace gnubase::ui
 				event.GetParameter<bool>("linebreak", false))
 			{
 				commit(*target);
+			}
+			else if (target != nullptr && target->GetTagName() == "input" && inside(target, m_rows) && !m_rebuilding)
+			{
+				target->SetAttribute("edited", ""); // text was typed
 			}
 			break;
 		case Rml::EventId::Blur:
@@ -808,9 +850,12 @@ namespace gnubase::ui
 			parameters["marker"] = item.id;
 			changes.push_back(std::move(parameters));
 		};
+		// A field that was typed in, also to its own value, gives that to the other selected markers; one left without
+		// an edit changes nothing.
+		const bool typed = field.HasAttribute("edited") && markers.size() > 1;
 		if (cell->IsClassSet("description"))
 		{
-			if (value == marker->name)
+			if (value == marker->name && !typed)
 				return;
 			for (const MarkerItem* each : markers)
 				if (each->name != value)
@@ -839,11 +884,15 @@ namespace gnubase::ui
 				show();
 				return;
 			}
-			change(*marker, {{end ? "end" : "position", m_markers.position(*track, *seconds)}});
+			// The time it has, written another way ("2" for "2.1.1.0"), changes nothing.
+			const Json to = m_markers.position(*track, *seconds);
+			if (to == m_markers.position(*track, end ? marker->end : marker->start))
+				return;
+			change(*marker, {{end ? "end" : "position", to}});
 		}
 		else if (cell->IsClassSet("length"))
 		{
-			if (value == formatLength(m_format, marker->start, marker->end, context))
+			if (value == formatLength(m_format, marker->start, marker->end, context) && !typed)
 				return;
 			for (const MarkerItem* each : markers)
 			{
@@ -853,8 +902,9 @@ namespace gnubase::ui
 					show();
 					return;
 				}
-				if (each->cycle)
-					change(*each, {{"end", m_markers.position(*track, each->start + *length)}});
+				if (const Json to = m_markers.position(*track, each->start + *length);
+					each->cycle && to != m_markers.position(*track, each->end))
+					change(*each, {{"end", to}});
 			}
 		}
 		if (changes.empty())
