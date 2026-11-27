@@ -13,6 +13,7 @@
 
 #include <RmlUi/Core/Context.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -1263,4 +1264,136 @@ TEST_CASE("the auditioning column points at the event at the cursor, locates to 
 		}));
 	f.click(of(row("note", f.low) + " .list-audition"), 2);
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("playing") == false; }));
+}
+
+// #2138: a gesture's undo step has one name, whether it reaches one part, one command on its own, or two, a
+// history.transaction, and one of its own for notes and controller events together.
+TEST_CASE("list editor gestures keep their undo name over one part and two", "[ui][slow]")
+{
+	const bool both = GENERATE(false, true);
+	const auto [gesture, kind] = GENERATE(table<std::string, std::string>({{"type", "notes"}, {"type", "controllers"},
+		{"type", "events"}, {"values", "notes"}, {"values", "controllers"}, {"values", "events"}, {"move", "notes"},
+		{"move", "controllers"}, {"move", "events"}, {"copy", "notes"}, {"copy", "controllers"}, {"copy", "events"},
+		{"delete", "notes"}, {"delete", "controllers"}, {"delete", "events"}, {"resize", "notes"}}));
+	CAPTURE(both, gesture, kind);
+	Fixture f;
+	const std::string first =
+		row(kind == "controllers" ? "controller" : "note", kind == "controllers" ? f.events[0] : f.low);
+	std::string second = kind == "notes" ? row("note", f.high) : row("controller", f.events[kind == "events" ? 0 : 1]);
+	if (both)
+	{
+		const auto other = f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}})
+							   .at("part")
+							   .at("id")
+							   .get<uint64_t>();
+		const bool note = kind == "notes";
+		const Json added = note
+			? f.app.call("note.add",
+				  {{"part", other},
+					  {"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 67}, {"velocity", 50.0 / 127.0}}}}})
+			: f.app.call("controller.add",
+				  {{"part", other}, {"controllers", {{{"position", 0}, {"number", 7}, {"value", controller(30)}}}}});
+		second =
+			row(note ? "note" : "controller", added.at(note ? "notes" : "controllers").at(0).at("id").get<uint64_t>());
+		f.app.call("editor.open", {{"editor", "window"}, {"parts", {f.part, other}}});
+		REQUIRE(f.app.waitUntil([&] { return !f.elements(second).empty(); }));
+	}
+	f.click(of(first + " .list-type"));
+	f.click(of(second + " .list-type"), 1, {"shift"});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json view = f.view();
+			return view.at("selection").size() + view.at("controllerSelection").size() == 2;
+		}));
+	const size_t before = f.steps();
+	if (gesture == "type")
+	{
+		f.type(first + " textdisplay[field=channel]", "2");
+	}
+	else if (gesture == "delete")
+	{
+		f.app.ui().key(f.window, "Delete");
+	}
+	else if (gesture == "values")
+	{
+		const std::string from = first + " .list-value-lane";
+		const std::string to = second + " .list-value-lane";
+		f.press(f.xAt(from, 0.75), f.middle(from));
+		f.moveTo(f.xAt(to, 0.25), f.middle(to));
+		f.context().ProcessMouseButtonUp(0, 0);
+	}
+	else
+	{
+		// A quarter of the event display later, from the first event, or from its end to resize it.
+		const Json shown = f.box(first + " .list-event");
+		const double x = shown.at("x").get<double>();
+		const double width = shown.at("width").get<double>();
+		const int from =
+			static_cast<int>(std::lround(gesture == "resize" ? x + width - 2 : x + std::min(width / 2, 10.0)));
+		const int y = f.middle(first + " .list-event");
+		const auto quarter =
+			static_cast<int>(std::lround(f.box(first + " .list-event-lane").at("width").get<double>() / 4));
+		f.app.ui().drag(f.window, Fixture::point(from, y), Fixture::point(from + quarter, y),
+			gesture == "copy" ? std::vector<std::string>{"alt"} : std::vector<std::string>{});
+	}
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("history.get").at("position") == before + 1; }));
+	const Json history = f.app.call("history.get");
+	REQUIRE(history.at("steps").size() == before + 1);
+	std::string verb = "Change ";
+	if (gesture == "copy")
+		verb = "Add ";
+	else if (gesture == "delete")
+		verb = "Remove ";
+	CHECK(history.at("steps").at(before).at("action") == verb + kind);
+}
+
+// #719: the list editor edits a program change's bank select, which has no column of its own in the reference manual's
+// list (p. 1253, where a program change's Main Value is unused).
+TEST_CASE("a program change's Main Value is its bank, typed for the selected ones and taken away when empty", "[ui]")
+{
+	Fixture f;
+	const std::string program = row("controller", f.events[1]);
+	const std::string value = program + " textdisplay[field=value]";
+	const auto bank = [&](uint64_t id) { return f.event("controllers", id).value("bank", Json()); };
+	// Without a bank the cell is empty, but it takes one.
+	CHECK(f.cell(program, "value").empty());
+	CHECK_FALSE(f.elements(value).at(0).at("attributes").contains("disabled"));
+	f.type(value, "3");
+	REQUIRE(f.app.waitUntil([&] { return bank(f.events[1]) == 3 && f.cell(program, "value") == "3"; }));
+	// With another one selected that has bank 10 they keep their distance, and the bank goes no higher than 16383.
+	const auto other =
+		f.app
+			.call("controller.add",
+				{{"part", f.part},
+					{"controllers", {{{"position", g_quarter}, {"type", "program"}, {"number", 7}, {"bank", 10}}}}})
+			.at("controllers")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.cell(row("controller", other), "value") == "10"; }));
+	f.click(of(program + " .list-type"));
+	f.click(of(row("controller", other) + " .list-type"), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("controllerSelection").size() == 2; }));
+	f.type(value, "5");
+	REQUIRE(f.app.waitUntil([&] { return bank(other) == 12; }));
+	CHECK(bank(f.events[1]) == 5);
+	f.type(value, "16380");
+	REQUIRE(f.app.waitUntil([&] { return bank(other) == 16383; }));
+	CHECK(bank(f.events[1]) == 16380);
+	// With Ctrl (Cmd) both take exactly the typed bank.
+	f.type(value, "7", "Ctrl+Enter");
+	REQUIRE(f.app.waitUntil([&] { return bank(other) == 7; }));
+	CHECK(bank(f.events[1]) == 7);
+	// Nothing typed takes both banks away, in one undo step.
+	const size_t before = f.steps();
+	f.click(of(value), 2);
+	f.app.ui().key(f.window, "Mod+A");
+	f.app.ui().key(f.window, "Backspace");
+	f.app.ui().key(f.window, "Enter");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return bank(other).is_null() && bank(f.events[1]).is_null(); }));
+	CHECK(f.steps() == before + 1);
+	CHECK(f.app.waitUntil([&] { return f.cell(program, "value").empty(); }));
 }
