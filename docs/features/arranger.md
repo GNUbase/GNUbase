@@ -165,7 +165,11 @@ each section's event has a number after its name, how often its event came so fa
   an empty name keeps the old one; its drop-down lists are filled through the select's own API, as setting their
   `inner_rml` would add the options to those they have), Create New Chain, Duplicate Current Chain, Remove Current Chain and Flatten Chain, and the
   chain step buttons, which are disabled while they can't work (arranger mode off or an empty chain; First and Last
-  Repeat also need a step of the chain playing). The Current Arranger Chain list has a row per step, with its locate
+  Repeat also need a step of the chain playing). The toolbar wraps onto more rows when the window is narrow.
+  Flatten Options (Flatten with Options & Preferences, pp. 408, 410) shows the flatten options in place of the lists:
+  Keep Arranger Track, Rename Arranger Events (only with Keep Arranger Track), Make Real Event Copies and Don't Split
+  Events (`keepTrack`, `renameEvents`, `realCopies`, `dontSplit`), with Flatten and Go Back. Flatten Chain flattens
+  with them too; Go Back and closing the editor keep them while GNUbase runs. The Current Arranger Chain list has a row per step, with its locate
   arrow (a button that plays from the step's event, shown on every row, p. 410), its repeats and its mode, and a button
   that removes it; the Arranger Events list has a row per event in timeline order, whose arrow triggers it and whose
   Append button adds it to the chain. The row of the step or event playing is `.current`, highlighted by the theme.
@@ -193,7 +197,8 @@ it, with `renameEvents` numbering the events, and an event's repeats as shared c
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
 mode, a locate arrow on every row, renaming the active chain, and renaming a step's event with Alt and a double click,
 across a refresh while it is typed, selecting steps and removing the selected ones, a chain edit selecting none, and
-moving, copying and inserting steps by drag and drop, a click on one of the steps selected selecting it alone.
+moving, copying and inserting steps by drag and drop, a click on one of the steps selected selecting it alone, and
+flattening with the flatten options, which Go Back keeps.
 `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide as
 its section with its name, the draw tool drawing one over the stretch dragged and, with a click, from the bar line at or
 before it to the next one, both snapped to bars; with the snap type Events, drawing from and to other arranger events'
