@@ -326,6 +326,33 @@ TEST_CASE("recordings are written in the project setup's record file type and bi
 	}
 }
 
+TEST_CASE("audio.waveOver4GB split records Wave files without RF64, which go on in a new file (#2096)", "[integration]")
+{
+	// Files of at most 10000 bytes instead of 4 GB: 2000 stereo 32-bit float frames need two.
+	struct Limit
+	{
+		Limit() { gnubase::engine::detail::setFileSizeLimit(10000); }
+		~Limit() { gnubase::engine::detail::setFileSizeLimit(0); }
+		Limit(const Limit&) = delete;
+		Limit& operator=(const Limit&) = delete;
+		Limit(Limit&&) = delete;
+		Limit& operator=(Limit&&) = delete;
+	} const limit;
+	const std::string choice = GENERATE("rf64", "split");
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "audio.waveOver4GB"}, {"value", choice}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 2000}});
+	REQUIRE(setup.stop().is_object());
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == (choice == "split" ? 2 : 1));
+	size_t frames = 0;
+	for (const Json& event : events)
+		frames += channelOf(pathOf(client, event), 0).size();
+	CHECK(frames == 2000);
+}
+
 TEST_CASE("Broadcast Wave recordings describe the track and where the file starts", "[integration]")
 {
 	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
@@ -854,6 +881,42 @@ TEST_CASE("recording.add applies the audio record modes to the events a take ove
 			lanes.emplace_back(event.at("position").get<int64_t>(), event.at("lane").get<int64_t>());
 		std::sort(lanes.begin(), lanes.end());
 		CHECK(lanes == std::vector<std::pair<int64_t, int64_t>>{{0, 0}, {400, 0}, {500, 1}, {700, 0}});
+	}
+	SECTION("a lap that the split cuts stays on one lane, and the regions follow the laps across the files (#2102)")
+	{
+		// Three laps over [0, 1000), the first file full after 1500 frames: the second lap goes on in the next file.
+		const std::string mode = GENERATE("keepHistory", "cycleHistoryReplace");
+		const Json result = run(client, "recording.add",
+			{{"mode", mode}, {"cycle", true},
+				{"tracks",
+					Json::array({{{"track", track}, {"path", file},
+									 {"takes",
+										 Json::array({{{"position", 0}, {"offset", 0}, {"length", 1000}},
+											 {{"position", 0}, {"offset", 1000}, {"length", 500}}})}},
+						{{"track", track}, {"path", file},
+							{"takes",
+								Json::array({{{"position", 500}, {"offset", 0}, {"length", 500}, {"continues", true}},
+									{{"position", 0}, {"offset", 500}, {"length", 1000}}})}}})}});
+		std::vector<std::pair<int64_t, int64_t>> lanes; // [offset, lane] of the takes' events
+		for (const Json& event : eventsOn(client, track))
+			if (event.at("id") != existing)
+				lanes.emplace_back(event.at("offset").get<int64_t>(), event.at("lane").get<int64_t>());
+		std::sort(lanes.begin(), lanes.end());
+		const int64_t first = mode == "keepHistory" ? 1 : 0; // after the existing event's lane, or in its place
+		// Offsets 0 and 1000 are the first file's, 0 and 500 the second's: lap 1, lap 2 in both files, lap 3.
+		CHECK(lanes ==
+			std::vector<std::pair<int64_t, int64_t>>{{0, first}, {0, first + 1}, {500, first + 2}, {1000, first + 1}});
+		std::vector<std::vector<std::string>> names; // the regions' names per clip
+		const Json project = run(client, "project.get");
+		for (const Json& id : result.at("clips"))
+			for (const Json& each : project.at("clips"))
+				if (each.at("id") == id)
+				{
+					names.emplace_back();
+					for (const Json& region : each.at("regions"))
+						names.back().push_back(region.at("name").get<std::string>());
+				}
+		CHECK(names == std::vector<std::vector<std::string>>{{"Take 1", "Take 2"}, {"Take 2", "Take 3"}});
 	}
 	SECTION("replace keeps only the last take where takes overlap")
 	{
@@ -1461,14 +1524,17 @@ TEST_CASE("a recording that adds nothing leaves the project unmodified (#546)", 
 
 namespace
 {
-	// Writes the first 100 frames, then fails: as a full disk, or as AIFF and WAV without RF64 at 4 GB.
+	// Writes the first 100 frames, or limit, then fails: as a full disk, or as AIFF and WAV without RF64 at 4 GB.
 	template <typename Error> class Full final : public gnubase::engine::AudioFileWriter
 	{
 	public:
-		explicit Full(std::unique_ptr<gnubase::engine::AudioFileWriter> writer) : m_writer(std::move(writer)) {}
+		explicit Full(std::unique_ptr<gnubase::engine::AudioFileWriter> writer, size_t limit = 100)
+			: m_writer(std::move(writer)), m_limit(limit)
+		{
+		}
 		void write(const float* buffer, size_t frames) override
 		{
-			if (m_frames + frames > 100)
+			if (m_frames + frames > m_limit)
 				throw Error("the file is full");
 			m_writer->write(buffer, frames);
 			m_frames += frames;
@@ -1477,6 +1543,7 @@ namespace
 
 	private:
 		std::unique_ptr<gnubase::engine::AudioFileWriter> m_writer;
+		size_t m_limit;
 		size_t m_frames = 0;
 	};
 }
@@ -1558,7 +1625,10 @@ TEST_CASE("a full file, as a Wave file without RF64 or an AIFF file at 4 GB, goe
 			[](const std::string& path, const engine::WriteOptions& options)
 			{ return std::make_unique<Full<engine::AudioFileFull>>(engine::AudioFileWriter::create(path, options)); });
 		recorder.prepare(1, g_blockFrames);
-		recorder.setup(recordInto(dir.path()));
+		engine::RecordSetup setup = recordInto(dir.path());
+		setup.format.broadcast = engine::BroadcastInfo{};
+		setup.format.broadcast->timeReference = 1000;
+		recorder.setup(setup);
 		engine::PlayedPositions played(size_t{8} * g_blockFrames);
 		for (uint64_t index = 0; index < 3; ++index)
 			processBlock(recorder, played, index, true);
@@ -1567,7 +1637,8 @@ TEST_CASE("a full file, as a Wave file without RF64 or an AIFF file at 4 GB, goe
 		REQUIRE(changed.wait_for(lock, 5s, [&] { return finished.is_object(); }));
 	}
 	CHECK(failures.empty());
-	// Each file takes one block: the take goes on in the next file, at the next position.
+	// Each file takes one block: the take goes on in the next file, at the next position, and says so (#2102). The
+	// Broadcast Wave time reference counts on from the file before (#2096).
 	const Json& tracks = finished.at("tracks");
 	REQUIRE(tracks.size() == 3);
 	const char* const names[] = {"Audio.wav", "Audio-2.wav", "Audio-3.wav"};
@@ -1576,9 +1647,62 @@ TEST_CASE("a full file, as a Wave file without RF64 or an AIFF file at 4 GB, goe
 		INFO("file " << i);
 		const Json& track = tracks[i];
 		CHECK(track.at("track") == 1);
-		CHECK(std::filesystem::u8path(track.at("path").get<std::string>()).filename().u8string() == names[i]);
-		CHECK(track.at("takes") ==
-			Json::array({{{"position", i * g_blockFrames}, {"offset", 0}, {"length", g_blockFrames}}}));
-		CHECK(channelOf(track.at("path").get<std::string>(), 0).size() == g_blockFrames);
+		const std::string path = track.at("path").get<std::string>();
+		CHECK(std::filesystem::u8path(path).filename().u8string() == names[i]);
+		Json take = {{"position", i * g_blockFrames}, {"offset", 0}, {"length", g_blockFrames}};
+		if (i > 0)
+			take["continues"] = true;
+		CHECK(track.at("takes") == Json::array({take}));
+		CHECK(channelOf(path, 0).size() == g_blockFrames);
+		CHECK(engine::AudioFileReader::open(path)->info().broadcast.value_or(engine::BroadcastInfo{}).timeReference ==
+			1000 + (i * g_blockFrames));
 	}
+}
+
+TEST_CASE("a next file that can't be written is removed, and the full one still lands (#2096)", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::vector<std::string> failures;
+	Json finished;
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				const std::scoped_lock lock(mutex);
+				if (name == "recording.failed")
+					failures.push_back(data.at("reason").get<std::string>());
+				else
+					finished = data;
+				changed.notify_all();
+			},
+			[](const std::string& path, const engine::WriteOptions& options)
+			{
+				std::unique_ptr<engine::AudioFileWriter> writer = engine::AudioFileWriter::create(path, options);
+				// The next file has its header, but its first write fails, as on a full disk.
+				if (path.find("Audio-2") != std::string::npos)
+					return std::unique_ptr<engine::AudioFileWriter>(
+						std::make_unique<Full<engine::AudioFileError>>(std::move(writer), 0));
+				return std::unique_ptr<engine::AudioFileWriter>(
+					std::make_unique<Full<engine::AudioFileFull>>(std::move(writer)));
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(dir.path()));
+		engine::PlayedPositions played(size_t{8} * g_blockFrames);
+		for (uint64_t index = 0; index < 3; ++index)
+			processBlock(recorder, played, index, true);
+		processBlock(recorder, played, 3, false);
+		std::unique_lock lock(mutex);
+		REQUIRE(changed.wait_for(lock, 5s, [&] { return finished.is_object(); }));
+	}
+	REQUIRE(failures.size() == 1);
+	CHECK_THAT(failures[0], ContainsSubstring("in a new file"));
+	const Json& tracks = finished.at("tracks");
+	REQUIRE(tracks.size() == 1);
+	CHECK(tracks[0].at("takes") == Json::array({{{"position", 0}, {"offset", 0}, {"length", g_blockFrames}}}));
+	// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+	CHECK(!std::filesystem::exists(dir.path() / "Audio-2.wav"));
 }
