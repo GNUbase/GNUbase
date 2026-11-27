@@ -799,6 +799,26 @@ TEST_CASE("controller lane presets save the lanes shown and bring them back", "[
 	REQUIRE(f.app.waitUntil([&] { return presets().size() == 1; }));
 	CHECK(presets().at(0).at("name") == "Soft");
 	CHECK(presets().at(0).at("lanes") == expressive.at("lanes"));
+
+	// A preset renamed to the name of another that is kept keeps its old name: the setup menu finds presets by name.
+	f.app.call("settings.set",
+		{{"key", "ui.controllerLanePresets"},
+			{"value",
+				Json::array({presets().at(0), {{"name", "Plain"}, {"lanes", {{{"type", "velocity"}}}}},
+					{{"name", "Other"}, {"lanes", {{{"type", "velocity"}}}}}})}});
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#controller-setup-menu menuitem[lane-preset=Other]").empty(); }));
+	f.choose("#controller-lane-setup", "#controller-setup-menu menuitem[lane-action=organizePresets]");
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#zoom-presets-list .preset").size() == 3; }));
+	f.click(of("#zoom-presets-list .preset[index=\"1\"] input"));
+	f.app.ui().key(f.window, "Mod+A");
+	f.app.ui().text(f.window, "Soft");
+	f.click(of("#zoom-presets-list .preset[index=\"2\"] input"));
+	f.app.ui().key(f.window, "Mod+A");
+	f.app.ui().text(f.window, "Third");
+	f.click(of("#zoom-presets-dialog button[result=ok]"));
+	REQUIRE(f.app.waitUntil([&] { return presets().size() == 3 && presets().at(2).at("name") == "Third"; }));
+	CHECK(presets().at(0).at("name") == "Soft");
+	CHECK(presets().at(1).at("name") == "Plain");
 }
 
 TEST_CASE("controller lanes that are gone before the presets' answer comes leave the answer alone", "[ui]")

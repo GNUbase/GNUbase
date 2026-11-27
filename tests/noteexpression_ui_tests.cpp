@@ -327,6 +327,11 @@ TEST_CASE("the key editor shows the expressions the tracks' setups hide only whe
 	REQUIRE(f.app.waitUntil([&] { return f.elements("menuitem[expression-type]").size() == 1; }));
 	CHECK(f.elements("menuitem[expression-type]").at(0).at("attributes").at("expression-type") == "tuning");
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-editor-notes .key-expression-step").empty(); }));
+	// The expression the editor edits stays listed, and checked, though hidden and without points.
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionType", "pan"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("menuitem[expression-type]").size() == 2; }));
+	REQUIRE(f.elements("menuitem[expression-type=pan]").size() == 1);
+	CHECK(f.elements("menuitem[expression-type=pan]").at(0).at("attributes").contains("checked"));
 	// The second track shows pan.
 	f.app.call("noteExpression.set",
 		{{"track", project.at("midiParts").at(1).at("track")}, {"hidden", Json::array({"volume", "tuning"})}});

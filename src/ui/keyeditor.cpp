@@ -1239,21 +1239,22 @@ namespace gnubase::ui
 		m_expressionOpen = m_expressionOpen && !notes.empty(); // it edits the selected notes
 		setClass(editor, "off", !m_expressionOpen);
 		const std::string type = m_view.value("expressionType", std::string("tuning"));
-		// Parameter Selection lists the expressions the selected notes have points of and those their tracks' setups
-		// don't hide (p. 1309, #2120).
+		// Parameter Selection lists the expressions the selected notes have points of, those their tracks' setups
+		// don't hide (p. 1309, #2120) and the one the editor edits.
 		std::string items;
 		for (size_t i = 0; i < engine::g_expressionNames.size(); ++i)
 		{
 			const std::string name = engine::g_expressionNames[i];
 			if (type == name)
 				setInner(editor->QuerySelector(".key-expression-type"), g_expressionLabels[i]);
-			const bool listed = std::any_of(notes.begin(), notes.end(),
-				[&](const Note* note)
-				{
-					return !expressionHidden(note->part, name) ||
-						std::any_of(note->expressions.begin(), note->expressions.end(),
-							[&](const Json& point) { return point.at("type") == name; });
-				});
+			const bool listed = name == type ||
+				std::any_of(notes.begin(), notes.end(),
+					[&](const Note* note)
+					{
+						return !expressionHidden(note->part, name) ||
+							std::any_of(note->expressions.begin(), note->expressions.end(),
+								[&](const Json& point) { return point.at("type") == name; });
+					});
 			if (listed)
 				items += R"(<menuitem type="toggle" expression-type=")" + name + R"(">)" + g_expressionLabels[i] +
 					"</menuitem>";

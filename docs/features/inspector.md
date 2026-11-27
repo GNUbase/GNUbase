@@ -126,9 +126,13 @@ one it has the class `empty` and says "No Track Selected".
     [section=midiSends]            the same with midiSends-, button[control=midiSends-pre] and per slot
                                    select[control=midiSends-0-output]
     [section=noteExpression]       MIDI and instrument tracks: button[control=noteExpression-bypass], a row per
-                                   expression [expression=0..6] (.selected) with its .expression-in,
+                                   expression [expression=0..6] (.selected, .unavailable when Show only used
+                                   Expressions hides it) with button[control=noteExpression-visible], .expression-in
+                                   and .expression-name (an asterisk before the used ones),
                                    select[control=noteExpression-input], button[control=noteExpression-learn],
-                                   valuefield[control=noteExpression-max] and [control=noteExpression-min]
+                                   valuefield[control=noteExpression-max] and [control=noteExpression-min],
+                                   button.inspector-expression-functions, which opens #inspector-expression-menu
+                                   (.expression-used, .expression-all-visible, .expression-only-edited)
     [section=chords]               MIDI and instrument tracks with a chord track: select[control=followChords]
     [section=articulations]        MIDI and instrument tracks: select[control=articulationMap],
                                    button.inspector-articulation-setup
@@ -186,8 +190,10 @@ one it has the class `empty` and says "No Track Selected".
   and `midiSends`. An effect chosen is on and its control panel opens (p. 1105). A drag, wheel turns or a held arrow
   key on a value are one undo step.
 - **Note Expression** (pp. 1300-1304, [note-expression-setup.md](note-expression-setup.md)): Bypass, the expressions
-  with their inputs' short names in the In column, and the selected one's Parameter Details: Input, MIDI Learn and its
-  Max. and Min. Value, sent with `noteExpression.set`.
+  with their visibility in the key editor and their inputs' short names in the In column, the selected one's Parameter
+  Details: Input, MIDI Learn and its Max. and Min. Value, and Show Additional Functions: Show only used Expressions,
+  Make all Expressions visible and Make only edited Expression visible, sent with `noteExpression.set` (`hidden` for
+  the visibility).
 - **Chords** (pp. 1338-1340, [chord-track.md](chord-track.md)): MIDI and instrument tracks' Follow Chord Track
   (`chord.follow` `mode`), with Single Voice its voice and master, This Track's Voicings and Live Input, while the
   project has a chord track.

@@ -1031,6 +1031,7 @@ namespace gnubase::ui
 		{
 			// The presets that weren't deleted, renamed as typed, from those the dialog listed.
 			Json presets = Json::array();
+			std::vector<std::string> oldNames;
 			Rml::ElementList rows;
 			list->QuerySelectorAll(rows, ".preset");
 			for (Rml::Element* row : rows)
@@ -1039,10 +1040,28 @@ namespace gnubase::ui
 				if (row->IsClassSet("deleted") || index < 0 || index >= static_cast<int>(m_organized.size()))
 					continue;
 				Json preset = m_organized[static_cast<size_t>(index)];
+				oldNames.push_back(preset.value("name", std::string()));
 				if (auto* name = dynamic_cast<Rml::ElementFormControl*>(row->QuerySelector("input"));
 					name != nullptr && !name->GetValue().empty())
 					preset["name"] = name->GetValue();
 				presets.push_back(std::move(preset));
+			}
+			// Names stay unique, as the setup menu finds presets by name: a row renamed to a name another kept
+			// preset has keeps its old name, until no two share one.
+			for (bool changed = true; changed;)
+			{
+				changed = false;
+				for (size_t i = 0; i < presets.size(); ++i)
+				{
+					const std::string name = presets[i].value("name", std::string());
+					const auto same = std::count_if(presets.begin(), presets.end(),
+						[&](const Json& preset) { return preset.value("name", std::string()) == name; });
+					if (same > 1 && name != oldNames[i])
+					{
+						presets[i]["name"] = oldNames[i];
+						changed = true;
+					}
+				}
 			}
 			m_binding.send("settings.set", {{"key", "ui.controllerLanePresets"}, {"value", presets}});
 			return;
