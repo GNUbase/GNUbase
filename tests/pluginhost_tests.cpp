@@ -115,6 +115,42 @@ namespace
 		std::atomic<int> valueRescans{0};
 	};
 
+	// An engine side whose answer to a parameter rescan takes until `released`: the plugin's refresh, which calls it,
+	// holds the plugin's calls until then, a slow call that ends when the test says so.
+	class HeldRescanHost final : public plugin::Host, public plugin::HostParams
+	{
+	public:
+		void requestRestart() override {}
+		void requestProcess() override {}
+		void requestCallback() override {}
+		void* extension(std::string_view id) override { return plugin::provide<plugin::HostParams>(this, id); }
+		void rescanParams(uint32_t /*what*/) override
+		{
+			held = true;
+			while (!released)
+				std::this_thread::sleep_for(1ms);
+		}
+		void requestParamFlush() override {}
+
+		// Releases the host when it goes out of scope.
+		class Release
+		{
+		public:
+			explicit Release(HeldRescanHost& host) noexcept : m_host(host) {}
+			~Release() { m_host.released = true; }
+			Release(const Release&) = delete;
+			Release& operator=(const Release&) = delete;
+			Release(Release&&) = delete;
+			Release& operator=(Release&&) = delete;
+
+		private:
+			HeldRescanHost& m_host;
+		};
+
+		std::atomic<bool> held{false};
+		std::atomic<bool> released{false};
+	};
+
 	std::unique_ptr<plugin::Plugin> localPlugin(const std::string& id, plugin::Host& host)
 	{
 		std::unique_ptr<plugin::Plugin> local = testformat::createTestPlugin(id, host);
@@ -1374,43 +1410,61 @@ TEST_CASE("late blocks before a pause or a new start don't count towards the han
 TEST_CASE("a plugin that answers no block for the hang timeout fails, and so do the other plugins of its host",
 	"[integration]")
 {
+	// The other plugin processes offline, so a loaded machine never makes its blocks late: its blocks wait 10 s for
+	// the host, and a silent one shows that it never went out.
+	constexpr auto hang = 300ms;
 	plugins::HostManager::Options options = testOptions();
 	options.deadlines.realtimeMinimum = 20ms;
 	options.deadlines.realtimeMaximum = 20ms;
-	options.deadlines.hang = 300ms;
+	options.deadlines.hang = hang;
 	plugins::HostManager manager(options);
 	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:hang", "", "GNUbase"});
 	const plugin::remote::RemotePlugin& plugin = *remote;
 	SlotGraph hanging(std::move(remote), plugin::ProcessMode::Realtime);
-	SlotGraph other(createRemote(manager, {"test:hang", "", "GNUbase"}), plugin::ProcessMode::Realtime);
+	SlotGraph other(createRemote(manager, {"test:hang", "", "GNUbase"}), plugin::ProcessMode::Offline);
 	REQUIRE(manager.hosts().size() == 1); // the same vendor: the same process
 	Noise noise;
 	const std::vector<float> input = noise.block(128);
 	CHECK(!silent(other.render(input)));
 
-	// Its blocks are silent, but until the hang timeout it hasn't failed, and the other plugin goes on.
+	// Its blocks are silent, but until the hang timeout it hasn't failed, and the other plugin goes on. A machine that
+	// doesn't run this thread for the hang timeout during the first block makes it fail at once.
 	const auto start = std::chrono::steady_clock::now();
 	CHECK(silent(hanging.render(input, {parameter(0, g_hang, 1.0)})));
-	CHECK(plugin.failure() == plugin::remote::Failure::None);
-	CHECK(!silent(other.render(input)));
-	CHECK(!other.slot().failed());
-	while (plugin.failure() == plugin::remote::Failure::None && std::chrono::steady_clock::now() - start < 5s)
+	const auto firstEnd = std::chrono::steady_clock::now();
+	if (plugin.failure() == plugin::remote::Failure::None)
 	{
+		// It only fails at a block of its own, so its host isn't hung meanwhile.
+		CHECK(!silent(other.render(input)));
+		CHECK(!other.slot().failed());
+	}
+	else
+	{
+		CHECK(firstEnd - start >= hang);
+	}
+
+	// It fails at the first block that ends the hang timeout after its first late block went out, unless the blocks
+	// pause for that long, which starts a new run of late blocks. Each block goes out between the start and the end of
+	// its render.
+	auto previousStart = start;
+	bool unbroken = true; // no pause of the hang timeout between two blocks
+	while (plugin.failure() == plugin::remote::Failure::None && std::chrono::steady_clock::now() - start < 30s)
+	{
+		const auto blockStart = std::chrono::steady_clock::now();
 		CHECK(silent(hanging.render(input)));
+		unbroken = unbroken && std::chrono::steady_clock::now() - previousStart < hang;
+		previousStart = blockStart;
+		if (plugin.failure() == plugin::remote::Failure::None)
+			CHECK_FALSE((unbroken && blockStart - firstEnd >= hang));
 		std::this_thread::sleep_for(1ms);
 	}
-	const auto elapsed = std::chrono::steady_clock::now() - start;
 	CHECK(plugin.failure() == plugin::remote::Failure::Deadline);
-	CHECK(elapsed >= 300ms);
-	CHECK(elapsed < 1300ms);
+	CHECK(std::chrono::steady_clock::now() - start >= hang);
 
-	// Then its host is hung: later blocks don't wait for it, nor for the other plugins of its process.
-	auto next = std::chrono::steady_clock::now();
+	// Then its host is hung: later blocks don't wait for it, nor for the other plugins of its process. The other
+	// plugin's block is silent although its instance in the host answers: it never went out.
 	CHECK(silent(hanging.render(input)));
-	CHECK(std::chrono::steady_clock::now() - next < 100ms);
-	next = std::chrono::steady_clock::now();
 	CHECK(silent(other.render(input)));
-	CHECK(std::chrono::steady_clock::now() - next < 100ms);
 	CHECK(other.slot().failed());
 
 	std::vector<plugins::PluginFailure> failures;
@@ -1495,36 +1549,36 @@ TEST_CASE("a host whose main thread is busy with a slow call still gets new plug
 TEST_CASE(
 	"a process mode change during a slow call of the same plugin applies when the plugin activates", "[integration]")
 {
+	// The slow call is a refresh that waits for the engine's answer to a parameter rescan, which takes until the test
+	// lets it go: the change comes while the refresh holds the plugin's calls, whatever the machine's load.
 	plugins::HostManager::Options options = testOptions();
 	options.deadlines.query = 200ms;
-	options.deadlines.job = 2s;
 	plugins::HostManager manager(options);
-	const std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:stall", "", "GNUbase"});
+	HeldRescanHost engineHost;
+	const std::unique_ptr<plugin::remote::RemotePlugin> remote =
+		manager.load({"test:stall", "", "GNUbase"}, &engineHost).get();
+	REQUIRE(remote);
+	const HeldRescanHost::Release release(engineHost); // before the plugin goes, if the test ends early
 	plugin::remote::RemotePlugin& plugin = *remote;
 	REQUIRE(savedValue(plugin, "test:stall", g_offline) == 0.0);
-	flush(plugin, {paramEvent(g_stall, 600.0)});
-	const std::vector<uint8_t> state = stateOf(plugin); // with the stall: loading it takes 600 ms
+	// A stall of 1 ms that ends with a values rescan: the job thread refreshes the plugin.
+	flush(plugin, {paramEvent(g_rescan, 1.0), paramEvent(g_stall, 1.0)});
+	REQUIRE(eventually([&] { return engineHost.held.load(); }, 30000ms));
 
-	std::atomic<bool> loading{false};
-	std::atomic<bool> loaded{false};
-	std::thread load(
+	// The change doesn't wait for the refresh, and isn't lost: the plugin gets it before it activates. It returns while
+	// the refresh still holds the plugin, since only the test ends that; the guard ends it if the change waits.
+	std::atomic<bool> changed{false};
+	std::atomic<bool> returned{false};
+	std::thread change(
 		[&]
 		{
-			loading = true;
-			loaded = plugin::extension<plugin::State>(plugin)->loadState(
-				state.data(), state.size(), plugin::StateContext::Project);
+			changed = plugin.setProcessMode(plugin::ProcessMode::Offline);
+			returned = true;
 		});
-	const gnubase::test::StopAndJoin joinLoad(load);
-	REQUIRE(eventually([&] { return loading.load(); }));
-	std::this_thread::sleep_for(100ms); // the load holds the plugin's calls now
-
-	// The change doesn't wait for the load, and isn't lost: the plugin gets it before it activates.
-	const auto start = std::chrono::steady_clock::now();
-	CHECK(plugin.setProcessMode(plugin::ProcessMode::Offline));
-	CHECK(std::chrono::steady_clock::now() - start < 450ms);
-	joinLoad.join();
-	CHECK(loaded);
-	flush(plugin, {paramEvent(g_stall, 0.0)}); // so reading its state back doesn't stall
+	const gnubase::test::StopAndJoin releaseAndJoin(engineHost.released, change);
+	CHECK(eventually([&] { return returned.load(); }, 30000ms));
+	releaseAndJoin.join();
+	CHECK(changed);
 	CHECK(savedValue(plugin, "test:stall", g_offline) == 0.0);
 	REQUIRE(plugin.activate(g_sampleRate, 1, g_maxFrames));
 	CHECK(savedValue(plugin, "test:stall", g_offline) == 1.0);
