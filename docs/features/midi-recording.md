@@ -79,8 +79,8 @@ undo step.
   (`PlayedPositions::passAt`, `RetrospectiveEvent::pass`): it starts where playback starts, not at the left locator, and
   the notes held when playback stopped end there (#2096). `midi.getRetrospective` says how many events a track's buffer holds and
   from how many cycle laps of playback (`cycleLaps`); the inspector's pop-up asks it when it opens and enables Insert as
-  Cycle Recording only for two or more. The insert still reads the locators when it runs, not where they were when the
-  input played. `midi.clearRetrospective` empties one track's buffer or all of them; the Transport menu's MIDI
+  Cycle Recording only for two or more. The laps' locators are the ones each lap jumped between, which the audio
+  thread keeps with it (`PlayedLap`), not the ones when the insert runs (#2096). `midi.clearRetrospective` empties one track's buffer or all of them; the Transport menu's MIDI
   Retrospective Recording > Empty All Buffers runs it for all (p. 356). The Retrospective Recording button among the
   inspector's top buttons of a MIDI or instrument track opens its pop-up menu (pp. 354-356): Insert as Linear Recording,
   Insert as Cycle Recording and Empty Retrospective Record Buffer, for that track (`tests/inspector_tests.cpp`).

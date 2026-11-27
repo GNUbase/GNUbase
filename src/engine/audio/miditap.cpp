@@ -455,7 +455,8 @@ namespace gnubase::engine
 				"recording of the chord track: it makes no chord events. cycle: Insert as Cycle Recording (p. 355): "
 				"only the input from playback, as stacked parts on lanes of their own, one per cycle lap, all but the "
 				"last muted (recording.add's cycleMode stacked); laps after the first start at the left locator, and "
-				"those playback left end at the right one. Each start of playback after a stop begins a lap too, "
+				"those playback left end at the right one, as the locators were when the lap played. Each start of "
+				"playback after a stop begins a lap too, "
 				"where it starts, and the lap before it ends where playback stopped. It needs input from at least "
 				"two laps. Returns what "
 				"recording.add returns.",
@@ -473,7 +474,6 @@ namespace gnubase::engine
 				const MidiRecordFilter filter = MidiRecordFilter::fromJson(m_settings.value("midi.recordFilter"));
 				const double ratio = m_snapshots.latest().sampleRate / m_device->format().sampleRate;
 				const time::Samples cursor = m_transport.position();
-				const TransportSettings& locators = m_transport.settings();
 				const bool cycle = context.parameters().value("cycle", false);
 				std::vector<std::pair<time::Samples, time::Samples>> laps; // cycle: each lap's start and end
 				MidiTakeBuilder builder;
@@ -481,8 +481,7 @@ namespace gnubase::engine
 				int64_t stopped = -1;      // the device frame of the first input in stop mode
 				time::Samples played = -1; // where the last input during playback played
 				int64_t playedFrame = 0;   // and its device frame
-				uint32_t playedLap = 0;    // and its cycle lap
-				uint32_t playedPass = 0;   // and its playback pass
+				PlayedLap playedLap;       // and its cycle lap and playback pass
 				for (const RetrospectiveEvent& kept : events)
 				{
 					time::Samples at = kept.position;
@@ -502,14 +501,14 @@ namespace gnubase::engine
 						// it advanced less than the device frames since the input before, as with a note held past the
 						// lap's end. Only a jump that the audio thread marked as a cycle lap starts a lap (#2067), and
 						// so does a new playback pass, but from where it starts: its notes end where playback stopped.
+						// The locators are the ones the lap jumped between, not the ones of now (#2096).
 						const auto frame = static_cast<int64_t>(kept.deviceFrame);
-						const bool pass = played >= 0 && kept.pass != playedPass;
+						const bool pass = played >= 0 && kept.lap.pass != playedLap.pass;
 						const bool back = pass || (played >= 0 && at - played < frame - playedFrame);
-						const bool lap = !pass && played >= 0 && kept.lap != playedLap;
+						const bool lap = !pass && played >= 0 && kept.lap.lap != playedLap.lap;
 						if (back)
 						{
-							const time::Samples end =
-								lap && locators.cycle && locators.right > played ? locators.right : played;
+							const time::Samples end = lap && kept.lap.right > played ? kept.lap.right : played;
 							builder.endNotes(end);
 							if (cycle)
 								laps.back().second = std::max(laps.back().second, end);
@@ -518,7 +517,7 @@ namespace gnubase::engine
 						{
 							builder.setTake(laps.size());
 							const time::Samples begin =
-								lap && locators.cycle && locators.left < at ? locators.left : at;
+								lap && kept.lap.left >= 0 && kept.lap.left < at ? kept.lap.left : at;
 							laps.emplace_back(begin, at + 1);
 						}
 						if (cycle)
@@ -526,7 +525,6 @@ namespace gnubase::engine
 						played = at;
 						playedFrame = frame;
 						playedLap = kept.lap;
-						playedPass = kept.pass;
 					}
 					if (!filter.records(kept.event))
 						continue;
@@ -588,14 +586,12 @@ namespace gnubase::engine
 				const std::vector<RetrospectiveEvent> events =
 					m_recorder.retrospective(midiChannel(context.parameters().at("track")));
 				size_t laps = 0;
-				uint32_t last = 0;
-				uint32_t lastPass = 0;
+				PlayedLap last;
 				for (const RetrospectiveEvent& kept : events)
-					if (kept.position >= 0 && (laps == 0 || kept.lap != last || kept.pass != lastPass))
+					if (kept.position >= 0 && (laps == 0 || kept.lap.lap != last.lap || kept.lap.pass != last.pass))
 					{
 						++laps;
 						last = kept.lap;
-						lastPass = kept.pass;
 					}
 				return Json{{"events", events.size()}, {"cycleLaps", laps}};
 			});

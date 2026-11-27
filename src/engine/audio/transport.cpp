@@ -554,19 +554,19 @@ namespace gnubase::engine
 			m_recording[(start + i) % size] = 0;
 		}
 		if (transport.segmentCount > 0 && !m_playing)
-			++m_pass;
+			m_lap = {m_lap.lap, m_lap.pass + 1, -1, -1};
 		m_playing = transport.segmentCount > 0;
 		for (size_t s = 0; s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
-			if (segment.lap)
-				++m_lap;
+			if (segment.lap) // the locators it jumped between, as they were (#2096)
+				m_lap = {m_lap.lap + 1, m_lap.pass, segment.position, m_played};
+			m_played = segment.position + segment.frames;
 			for (uint32_t i = 0; i < segment.frames; ++i)
 			{
 				m_positions[(start + segment.offset + i) % size] = segment.position + i;
 				m_recording[(start + segment.offset + i) % size] = segment.recording ? 1 : 0;
 				m_laps[(start + segment.offset + i) % size] = m_lap;
-				m_passes[(start + segment.offset + i) % size] = m_pass;
 			}
 		}
 		m_end = static_cast<int64_t>(start + frames);
@@ -580,14 +580,9 @@ namespace gnubase::engine
 		return m_positions[static_cast<size_t>(frame % size)];
 	}
 
-	uint32_t PlayedPositions::lapAt(int64_t frame) const noexcept
+	PlayedLap PlayedPositions::lapAt(int64_t frame) const noexcept
 	{
 		return at(frame) >= 0 ? m_laps[static_cast<size_t>(frame % static_cast<int64_t>(m_laps.size()))] : m_lap;
-	}
-
-	uint32_t PlayedPositions::passAt(int64_t frame) const noexcept
-	{
-		return at(frame) >= 0 ? m_passes[static_cast<size_t>(frame % static_cast<int64_t>(m_passes.size()))] : m_pass;
 	}
 
 	time::Samples PlayedPositions::recordedAt(int64_t frame) const noexcept

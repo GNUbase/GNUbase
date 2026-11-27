@@ -267,6 +267,17 @@ namespace gnubase::engine
 		rt::SeqLockPair<int64_t, int64_t> m_arrangerShared;
 	};
 
+	// The cycle lap and the playback pass that a device frame played in (PlayedPositions::lapAt).
+	struct PlayedLap
+	{
+		// The cycle laps started so far, counted on: input of one cycle lap has the same number, and a locate back
+		// doesn't change it (#2067).
+		uint32_t lap = 0;
+		uint32_t pass = 0;        // the same for the playback passes, which each start after a stop begins (#2096)
+		time::Samples left = -1;  // where the cycle jumped to when the lap began: the left locator then, or -1
+		time::Samples right = -1; // and where it jumped from: the right locator then, or -1
+	};
+
 	// Where the transport played each of the device's last frames, so recorded input finds where it belongs: with
 	// the audio that went out the record offset before it came in (the device's input and output latency, see
 	// docs/features/latency-and-monitoring.md). Kept per frame, so input lines up across cycle jumps, locates, starts
@@ -275,10 +286,7 @@ namespace gnubase::engine
 	{
 	public:
 		// Command thread: keeps the positions of the last frames frames.
-		explicit PlayedPositions(size_t frames = 0)
-			: m_positions(frames, -1), m_recording(frames, 0), m_laps(frames, 0), m_passes(frames, 0)
-		{
-		}
+		explicit PlayedPositions(size_t frames = 0) : m_positions(frames, -1), m_recording(frames, 0), m_laps(frames) {}
 
 		// Audio thread: the frames from device frame start on played where transport says.
 		void add(uint64_t start, uint32_t frames, const graph::TransportBlock& transport) noexcept;
@@ -288,19 +296,16 @@ namespace gnubase::engine
 		time::Samples at(int64_t frame) const noexcept;
 		// Audio thread: the same, but -1 also if the transport didn't record then.
 		time::Samples recordedAt(int64_t frame) const noexcept;
-		// Audio thread: how many cycle laps had started when the device frame played (TransportSegment::lap),
-		// counted on: input of one cycle lap has the same number, and a locate back doesn't change it (#2067).
-		uint32_t lapAt(int64_t frame) const noexcept;
-		// Audio thread: the same for the playback passes, which each start of playback after a stop begins (#2096).
-		uint32_t passAt(int64_t frame) const noexcept;
+		// Audio thread: the cycle lap (TransportSegment::lap) and the playback pass that the device frame played in,
+		// with the locators the lap jumped between, or the current ones if the frame isn't kept.
+		PlayedLap lapAt(int64_t frame) const noexcept;
 
 	private:
 		std::vector<time::Samples> m_positions; // a ring, by device frame
 		std::vector<uint8_t> m_recording;       // the same ring: 1 where the transport recorded
-		std::vector<uint32_t> m_laps;           // the same ring: the cycle laps started up to the frame
-		std::vector<uint32_t> m_passes;         // the same ring: the playback passes started up to the frame
-		uint32_t m_lap = 0;                     // the cycle laps started so far
-		uint32_t m_pass = 0;                    // the playback passes started so far
+		std::vector<PlayedLap> m_laps;          // the same ring: the lap and pass of the frame
+		PlayedLap m_lap;                        // the current ones
+		time::Samples m_played = -1;            // the position after the last frame that played
 		bool m_playing = false;                 // the last block played
 		int64_t m_end = 0;                      // the device frame after the last one added
 	};

@@ -1217,6 +1217,8 @@ TEST_CASE("Insert as Cycle Recording stacks what each cycle lap played as a part
 	run(client, "audio.render", {{"frames", 12 * g_beat}});
 	run(client, "transport.stop");
 	run(client, "audio.render", {{"frames", 64}});
+	// The laps keep the locators they played between, whatever the locators are by the insert (#2096).
+	run(client, "transport.set", {{"left", g_beat}, {"right", 2 * g_beat}, {"cycle", false}});
 	const Json added = run(client, "midi.insertRetrospective", {{"track", setup.track}, {"cycle", true}});
 	CHECK(added.at("parts").size() == 3);
 	std::vector<Json> parts = setup.parts();
