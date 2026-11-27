@@ -604,6 +604,27 @@ TEST_CASE("gluing, sizing the end with the contents, a range paste, a track impo
 		CHECK(group(parts[0]) == 0);
 		CHECK(group(parts[1]) == 0);
 		CHECK(group(copy) == group(part));
+
+		// So do the shared copies in a version that doesn't play.
+		f.call("trackVersion.duplicate", {{"tracks", {audio}}});
+		f.call("track.export", {{"tracks", {audio}}, {"path", file}, {"copyMedia", false}});
+		const int64_t again = f.call("track.import", {{"path", file}}).at("tracks").at(0).get<int64_t>();
+		Json versions;
+		Json active;
+		const Json project = f.call("project.get");
+		for (const Json& each : project.at("tracks"))
+			if (each.at("id") == again)
+			{
+				versions = each.at("versions");
+				active = each.at("activeVersion");
+			}
+		REQUIRE(versions.size() == 2);
+		const Json stashed = versions[0].at("id") == active ? versions[1].at("id") : versions[0].at("id");
+		f.call("trackVersion.activate", {{"tracks", {again}}, {"version", stashed}});
+		const std::vector<Json> copies = others(again, {});
+		REQUIRE(copies.size() == 2);
+		CHECK(group(copies[0]) == 0);
+		CHECK(group(copies[1]) == 0);
 	}
 	SECTION("a stashed version")
 	{
@@ -616,6 +637,44 @@ TEST_CASE("gluing, sizing the end with the contents, a range paste, a track impo
 		f.call("audioEvent.set", {{"event", f.eventsIn(part).at(0).at("id")}, {"volume", -6.0}});
 		CHECK(f.eventsIn(copy).at(0).at("volume") == 0.0);
 	}
+}
+
+TEST_CASE(
+	"a version keeps the shared audio parts that all go into it, and its duplicate gets a group of its own", "[unit]")
+{
+	Fixture f;
+	const int64_t audio = f.track("audio");
+	const Json part =
+		f.call("event.toPart", {{"events", {f.audioEvent(audio, g_second, g_second)}}}).at("events").at(0);
+	const Json copy =
+		f.call("event.copy", {{"events", {part}}, {"delta", 4 * g_second}, {"shared", true}}).at("events").at(0);
+	const Json group = f.part(part).at("shared");
+	REQUIRE(group != 0);
+
+	// Both copies go into the stashed version and come back as one group, edited together as MIDI parts are.
+	f.call("trackVersion.add", {{"tracks", {audio}}});
+	f.call("trackVersion.activate", {{"tracks", {audio}}, {"version", 1}});
+	CHECK(f.part(part).at("shared") == group);
+	CHECK(f.part(copy).at("shared") == group);
+	f.call("audioEvent.set", {{"event", f.eventsIn(part).at(0).at("id")}, {"volume", -6.0}});
+	CHECK(f.eventsIn(copy).at(0).at("volume") == -6.0);
+
+	// A duplicate version's copies are a group of their own, apart from the original's.
+	f.call("trackVersion.duplicate", {{"tracks", {audio}}});
+	std::vector<Json> duplicates;
+	const Json project = f.call("project.get");
+	for (const Json& each : project.at("audioParts"))
+		if (each.at("track") == audio)
+			duplicates.push_back(each.at("id"));
+	REQUIRE(duplicates.size() == 2);
+	const Json own = f.part(duplicates[0]).at("shared");
+	CHECK(own != 0);
+	CHECK(own != group);
+	CHECK(f.part(duplicates[1]).at("shared") == own);
+	f.call("audioEvent.set", {{"event", f.eventsIn(duplicates[0]).at(0).at("id")}, {"volume", -3.0}});
+	CHECK(f.eventsIn(duplicates[1]).at(0).at("volume") == -3.0);
+	f.call("trackVersion.activate", {{"tracks", {audio}}, {"version", 1}});
+	CHECK(f.eventsIn(copy).at(0).at("volume") == -6.0);
 }
 
 TEST_CASE("a dissolved muted part leaves its events muted, as they played", "[unit]")

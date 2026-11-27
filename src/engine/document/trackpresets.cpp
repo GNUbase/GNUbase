@@ -159,6 +159,9 @@ namespace gnubase::engine
 				for (TrackVersion& version : track.versions)
 				{
 					version = copyVersion(m_to, version, track.id);
+					// Real copies, as the active version's audio parts (copyEvents) and MIDI parts (copyPart) come in.
+					for (AudioPart& part : version.audioParts)
+						part.shared = 0;
 					for (AudioEvent& event : version.audioEvents)
 						event.clip = clip(event.clip);
 					for (MidiPart& part : version.midiParts)

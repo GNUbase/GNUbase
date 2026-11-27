@@ -504,8 +504,10 @@ namespace gnubase::engine::settings
 								{"required", Json::array({"name", "color"})}, {"additionalProperties", false}}}},
 					Json::array()},
 				{"editing.defaultCrossfade",
-					"The default crossfade (reference manual p. 392): its mode and the shapes of its fade in and fade "
-					"out, which event.crossfade gives new crossfades; the crossfade editor's As Default sets it.",
+					"The default crossfade (reference manual p. 391): its mode and the shapes of its fade in and fade "
+					"out, which new crossfades get (event.crossfade, and crossfade.set without a mode, as audio "
+					"quantize and "
+					"closing gaps use it); the crossfade editor's As Default sets it.",
 					Json{{"type", "object"},
 						{"properties",
 							{{"mode", {{"type", "string"}, {"enum", crossfadeModeNames()}}},

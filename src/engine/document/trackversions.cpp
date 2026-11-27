@@ -85,8 +85,9 @@ namespace gnubase::engine
 		}
 
 		// Moves the track's events and parts out of the project into its active version, which holds them while
-		// another one is active. A MIDI part whose shared copies all go with it stays one of them; one whose group
-		// still has copies elsewhere stops being a copy of them, since only the parts that play are edited together.
+		// another one is active. A MIDI or audio part whose shared copies all go with it stays one of them; one whose
+		// group still has copies elsewhere stops being a copy of them, since only the parts that play are edited
+		// together.
 		void stash(Project& project, Track& track, CommandContext& context)
 		{
 			TrackVersion& version = active(track);
@@ -108,26 +109,28 @@ namespace gnubase::engine
 			take(project.audioEvents, version.audioEvents, "audioEvent", "event");
 			take(project.audioParts, version.audioParts, "audioPart", "part");
 			take(project.midiParts, version.midiParts, "midiPart", "part");
-			const auto elsewhere = [&project, &version](ObjectId group)
+			// Whether a group has copies outside the version: in the project or in another version.
+			const auto elsewhere = [&project, &version](ObjectId group, auto projectParts, auto versionParts)
 			{
-				if (std::any_of(project.midiParts.begin(), project.midiParts.end(),
-						[group](const auto& entry) { return entry.second.shared == group; }))
-					return true;
+				const auto inGroup = [group](const auto& part) { return part.shared == group; };
+				for (const auto& entry : project.*projectParts)
+					if (inGroup(entry.second))
+						return true;
 				for (const auto& [trackId, other] : project.trackById)
 					for (const TrackVersion& otherVersion : other.versions)
 						if (&otherVersion != &version &&
-							std::any_of(otherVersion.midiParts.begin(), otherVersion.midiParts.end(),
-								[group](const MidiPart& part) { return part.shared == group; }))
+							std::any_of(
+								(otherVersion.*versionParts).begin(), (otherVersion.*versionParts).end(), inGroup))
 							return true;
 				return false;
 			};
 			for (MidiPart& part : version.midiParts)
-				if (part.shared != 0 && elsewhere(part.shared))
+				if (part.shared != 0 && elsewhere(part.shared, &Project::midiParts, &TrackVersion::midiParts))
 					detach(project, part);
-			// A stashed audio part's copies elsewhere don't keep its events alike: it leaves their group.
-			// ponytail: copies within the version leave it too; keep them shared like MIDI parts' if that matters.
+			// An audio part's copies elsewhere don't keep its events alike while it is stashed: it leaves their group.
 			for (AudioPart& part : version.audioParts)
-				part.shared = 0;
+				if (part.shared != 0 && elsewhere(part.shared, &Project::audioParts, &TrackVersion::audioParts))
+					part.shared = 0;
 		}
 
 		// Makes a version of the track active: its events and parts go into the project. The active one's must be
@@ -324,11 +327,20 @@ namespace gnubase::engine
 		TrackVersion copy;
 		copy.id = version.id;
 		copy.name = version.name;
+		// A version's shared copies get a group of their own: two versions never play together, so a group across
+		// them is none, and the first switch would take the copies apart anyway.
+		std::map<ObjectId, ObjectId> groups; // a copied group -> the copy's own
+		const auto groupOf = [&project, &groups](ObjectId shared)
+		{
+			if (shared != 0 && groups.find(shared) == groups.end())
+				groups[shared] = project.newId();
+			return shared == 0 ? 0 : groups.at(shared);
+		};
 		std::map<ObjectId, ObjectId> parts;
 		for (AudioPart part : version.audioParts)
 		{
 			part.track = track;
-			part.shared = 0;
+			part.shared = groupOf(part.shared);
 			parts[part.id] = project.newId();
 			part.id = parts.at(part.id);
 			copy.audioParts.push_back(std::move(part));
@@ -350,10 +362,7 @@ namespace gnubase::engine
 			event.part = part == parts.end() ? 0 : part->second;
 		}
 		copy.audioEvents = std::move(events);
-		// A version's shared copies get a group of their own: two versions never play together, so a group across
-		// them is none, and the first switch would take the copies apart anyway. The copies of a group keep sharing
-		// their notes and controllers, with each other and with nothing else.
-		std::map<ObjectId, ObjectId> groups;                    // a copied group -> the copy's own
+		// The copies of a MIDI group keep sharing their notes and controllers, with each other and with nothing else.
 		std::map<ObjectId, std::map<ObjectId, ObjectId>> notes; // per new group: the ids its copies share
 		std::map<ObjectId, std::map<ObjectId, ObjectId>> controllers;
 		for (MidiPart part : version.midiParts)
@@ -368,9 +377,7 @@ namespace gnubase::engine
 			}
 			else
 			{
-				if (groups.find(part.shared) == groups.end())
-					groups[part.shared] = project.newId();
-				part.shared = groups.at(part.shared);
+				part.shared = groupOf(part.shared);
 				renumberShared(project, part, notes[part.shared], controllers[part.shared]);
 			}
 			copy.midiParts.push_back(std::move(part));
