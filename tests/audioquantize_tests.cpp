@@ -246,6 +246,38 @@ namespace
 	{
 		return run(client, "history.get").at("steps").back().at("action").get<std::string>();
 	}
+
+	// The track with copies of a track's events, made as how says: the track's duplicate, the track itself after
+	// duplicating its version, or the track imported from a project file it is saved in.
+	ObjectId copyOf(engine::Client& client, const test::TempDir& dir, ObjectId track, const std::string& how)
+	{
+		if (how == "track.duplicate")
+			return run(client, how, {{"track", track}}).at("track").at("id").get<ObjectId>();
+		if (how == "trackVersion.duplicate")
+		{
+			run(client, how, {{"tracks", {track}}});
+			return track;
+		}
+		const std::string file = (dir.path() / "copied.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		return run(client, "track.import", {{"path", file}}).at("tracks").at(0).get<ObjectId>();
+	}
+
+	// The ids of a track's audio events, by position.
+	std::vector<ObjectId> idsOn(engine::Client& client, ObjectId track)
+	{
+		std::vector<std::pair<int64_t, ObjectId>> events;
+		const Json project = run(client, "project.get");
+		for (const Json& event : project.at("audioEvents"))
+			if (event.at("track") == track)
+				events.emplace_back(event.at("position").get<int64_t>(), event.at("id").get<ObjectId>());
+		std::sort(events.begin(), events.end());
+		std::vector<ObjectId> ids;
+		ids.reserve(events.size());
+		for (const auto& [position, id] : events)
+			ids.push_back(id);
+		return ids;
+	}
 }
 
 TEST_CASE("quantizing audio events moves their snap points to the grid", "[integration]")
@@ -1815,6 +1847,76 @@ TEST_CASE("Copies of slices have no slice origin of their own, but a duplicated 
 		CHECK(result.at("removed").size() == 4);
 		CHECK(eventsOn(client, loop.track) == whole);
 	}
+}
+
+TEST_CASE("A copied track resets its quantized events to crossfades from the copies of their events", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// The first event crossfades into the second by hand, and the quantize panel's Crossfade step crossfades the
+	// second into the third. A copy's quantize origins name the copies of the events (#2136), so resetting the copy
+	// puts its hand-made crossfade back, from the copy of the first event, and removes the one the step made.
+	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	const ObjectId first = loop.add(client, 1000, 0, 30000);
+	const ObjectId second = loop.add(client, 25000, 24000, 30000);
+	const ObjectId third = loop.add(client, 49000, 48000, 30000);
+	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
+	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Json events = Json::array({first, second, third});
+	run(client, "quantize.apply", {{"events", events}});
+	run(client, "quantize.crossfade", {{"events", events}});
+	REQUIRE(crossfadeOf(client, third).at("from") == second);
+
+	const std::string how = GENERATE(as<std::string>{}, "trackVersion.duplicate", "track.import");
+	CAPTURE(how);
+	const ObjectId track = copyOf(client, dir, loop.track, how);
+	const std::vector<ObjectId> copies = idsOn(client, track);
+	REQUIRE(copies.size() == 3);
+	for (const ObjectId copy : copies)
+		REQUIRE((copy != first && copy != second && copy != third));
+	run(client, "quantize.reset", {{"events", copies}});
+	CHECK(eventsOn(client, track) == before);
+	const Json kept = crossfadeOf(client, copies.at(1));
+	REQUIRE(kept.is_object());
+	CHECK(kept.at("from") == copies.at(0));
+	CHECK(kept.at("mode") == "equalPower");
+	CHECK(!crossfadeOf(client, copies.at(2)).is_object());
+}
+
+TEST_CASE("A copied track resets its slices to the crossfade from the copy of the event before", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// The first event crossfades into the second, which quantize.slice then cuts: its slice origin keeps the
+	// crossfade. A copy's slice origin names the copy of the first event (#2136), so the Reset of the Slice Rules on
+	// the copy puts the crossfade back from there.
+	const std::vector<int64_t> played{6200, 25600, 47300, 72800};
+	const Track loop = addTrack(client, dir, "loop", clicks(played, 4 * g_quarter));
+	setHitpoints(client, loop.clip, played);
+	const ObjectId first = loop.add(client, 0, 0, 40000);
+	const ObjectId second = loop.add(client, 36000, 36000, 60000);
+	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
+	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
+	REQUIRE(run(client, "quantize.slice", {{"events", {second}}}).at("events").size() == 3);
+
+	const std::string how = GENERATE(as<std::string>{}, "trackVersion.duplicate", "track.import");
+	CAPTURE(how);
+	const ObjectId track = copyOf(client, dir, loop.track, how);
+	const std::vector<ObjectId> copies = idsOn(client, track);
+	REQUIRE(copies.size() == 4);
+	for (const ObjectId copy : copies)
+		REQUIRE(copy != first);
+	run(client, "quantize.resetSlices", {{"events", copies}});
+	CHECK(eventsOn(client, track) == before);
+	const std::vector<ObjectId> reset = idsOn(client, track);
+	REQUIRE(reset.size() == 2);
+	const Json kept = crossfadeOf(client, reset.at(1));
+	REQUIRE(kept.is_object());
+	CHECK(kept.at("from") == reset.at(0));
+	CHECK(kept.at("mode") == "equalPower");
 }
 
 TEST_CASE("Reset of the Warp Marker Creation Rules removes the markers Create made", "[integration]")

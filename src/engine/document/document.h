@@ -665,6 +665,27 @@ namespace gnubase::engine
 		return {frontOf(event), event.rank, event.id};
 	}
 
+	// Points a copy of an audio event at the copies of the events it names: the event its crossfade comes from, also
+	// in its quantize and slice origins (#2136), and the event its slices reset into (#1668). copies maps the copied
+	// events' ids to their copies'; an event it doesn't map isn't copied, and the copy names none (0).
+	inline void remapCopiedEvent(AudioEvent& event, const std::map<ObjectId, ObjectId>& copies)
+	{
+		const auto remap = [&copies](ObjectId& id)
+		{
+			const auto copy = copies.find(id);
+			id = copy == copies.end() ? 0 : copy->second;
+		};
+		remap(event.crossfade.from);
+		remap(event.slicedFrom);
+		if (event.quantizeOrigin)
+		{
+			remap(event.quantizeOrigin->original.crossfade.from);
+			remap(event.quantizeOrigin->quantized.crossfade.from);
+		}
+		if (event.sliceOrigin)
+			remap(event.sliceOrigin->timing.crossfade.from);
+	}
+
 	// A container of audio events on an audio track (#471, reference manual p. 250). Its events are the audio events
 	// whose part it is; they play only within it.
 	struct AudioPart
