@@ -97,6 +97,12 @@ namespace gnubase::engine
 		using AudioFileError::AudioFileError;
 	};
 
+	namespace detail
+	{
+		// For tests: the size in bytes that AIFF and WAV without RF64 may reach instead of 4 GB, or 0 for 4 GB.
+		void setFileSizeLimit(uint64_t bytes);
+	}
+
 	// Reads an audio file as 32-bit float sample frames with the channels interleaved.
 	class AudioFileReader
 	{

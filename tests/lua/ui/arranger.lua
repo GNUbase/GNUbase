@@ -338,3 +338,72 @@ test.case("the editor moves and copies steps dragged and takes events dropped", 
 	test.equal(#ui.dom{window = window, selector = "#chain-steps .selected", depth = 0}.elements, 1)
 	test.equal(order(), "BCAAC")
 end)
+
+test.case("the editor flattens with the flatten options it keeps", function()
+	test.cleanup(function()
+		if #ui.windows().windows > 1 then ui.command{command = "window.arranger"} end
+	end)
+	-- A MIDI part as long as A, a second at 120 bpm, which the chain plays twice.
+	gnubase.track.add{type = "arranger", timeBase = "linear"}
+	local midi = gnubase.track.add{type = "midi"}.track
+	gnubase.midiPart.add{track = midi.id, position = 0, length = 960}
+	local a = gnubase.arranger.add{position = 0, ["end"] = 48000}.event
+	gnubase.arranger.setChain{steps = {{event = a.id, repeats = 2}}}
+	ui.command{command = "window.arranger"}
+	local window = openedWindow()
+	test.ok(window)
+	ui.wait{window = window, selector = "#step-0"}
+
+	local function attribute(selector, name)
+		local element = ui.dom{window = window, selector = selector, depth = 0}.elements[1]
+		return element ~= nil and element.attributes ~= nil and element.attributes[name] ~= nil
+	end
+
+	-- Flatten (with Options & Preferences) shows the options in place of the lists (p. 408); Rename Arranger Events
+	-- needs Keep Arranger Track.
+	ui.click{window = window, selector = "#flatten-with-options"}
+	ui.wait{window = window, selector = "#flatten-keep-track"}
+	ui.wait{window = window, selector = "#chain-steps", visible = false}
+	test.ok(attribute("#flatten-rename", "disabled"))
+	ui.click{window = window, selector = "#flatten-keep-track"}
+	test.ok(not attribute("#flatten-rename", "disabled"))
+	ui.click{window = window, selector = "#flatten-rename"}
+	ui.click{window = window, selector = "#flatten-real-copies"}
+
+	-- Go Back keeps them (p. 410).
+	ui.click{window = window, selector = "#flatten-back"}
+	ui.wait{window = window, selector = "#step-0"}
+	ui.click{window = window, selector = "#flatten-with-options"}
+	ui.wait{window = window, selector = "#flatten-keep-track"}
+	for _, id in ipairs({"#flatten-keep-track", "#flatten-rename", "#flatten-real-copies"}) do
+		test.ok(attribute(id, "checked"), id .. " stays checked")
+	end
+	test.ok(not attribute("#flatten-dont-split", "checked"))
+
+	-- So does closing the editor: opened again, it shows them checked, with Rename Arranger Events enabled.
+	ui.command{command = "window.arranger"}
+	pcall(ui.wait, {selector = "#no-such-element", seconds = 0.1})
+	test.equal(arrangerWindow(), nil)
+	ui.command{command = "window.arranger"}
+	window = openedWindow()
+	test.ok(window)
+	ui.wait{window = window, selector = "#step-0"}
+	ui.click{window = window, selector = "#flatten-with-options"}
+	ui.wait{window = window, selector = "#flatten-keep-track"}
+	for _, id in ipairs({"#flatten-keep-track", "#flatten-rename", "#flatten-real-copies"}) do
+		test.ok(attribute(id, "checked"), id .. " stays checked after closing the editor")
+	end
+	test.ok(not attribute("#flatten-dont-split", "checked"))
+	test.ok(not attribute("#flatten-rename", "disabled"))
+
+	-- Flatten: the arranger track stays with A 1 and A 2, and the parts are real copies, none shared.
+	ui.click{window = window, selector = "#flatten-now"}
+	local events = gnubase.arranger.get().events
+	test.equal(#events, 2)
+	test.equal(events[1].name, "A 1")
+	test.equal(events[2].name, "A 2")
+	local parts = gnubase.project.get().midiParts
+	test.equal(#parts, 2)
+	for _, part in ipairs(parts) do test.equal(part.shared, 0) end
+	ui.wait{window = window, selector = "#flatten-keep-track", visible = false}
+end)

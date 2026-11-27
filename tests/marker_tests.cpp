@@ -593,16 +593,17 @@ TEST_CASE("cycle markers set the locators, and markers bound range selections", 
 	CHECK_THAT(reject(client, "marker.range", {{"position", 21 * g_quarterSamples}}), ContainsSubstring("after"));
 }
 
-TEST_CASE("range.cut and range.delete cut a range out of a cycle marker that it lies in", "[unit]")
+TEST_CASE("range.cut and range.delete take the range out of the markers as out of events", "[unit]")
 {
 	Engine engine;
 	Client client(engine);
-	// On marker track 1 the cycle marker Verse from quarter 4 to 12, red, and a position marker at 6; on marker track
-	// 2 a cycle marker from 4 to 12 too.
+	// On marker track 1 the cycle marker Verse from quarter 4 to 12, red, and the position markers Drop at 6 and Late
+	// at 8; on marker track 2 a cycle marker from 4 to 12 too.
 	const ObjectId first = addMarkerTrack(client);
 	const ObjectId verse = idOf(addCycle(client, 4, 12, "Verse"));
 	run(client, "marker.set", {{"marker", verse}, {"color", "#ff0000"}});
 	addPosition(client, 6, "Drop");
+	addPosition(client, 8, "Late");
 	const ObjectId second = addMarkerTrack(client);
 	addCycle(client, 4, 12, "Other");
 	const auto range = [first](int64_t from, int64_t to, bool time = false)
@@ -611,45 +612,72 @@ TEST_CASE("range.cut and range.delete cut a range out of a cycle marker that it 
 			{"start", from * g_quarterSamples}, {"end", to * g_quarterSamples}, {"tracks", {first}}, {"time", time}};
 	};
 	const std::vector<Cycle> whole = {{1, 4, 12, "Verse", "#ff0000"}};
+	const std::vector<Cycle> split = {{2, 4, 6, "Verse", "#ff0000"}, {1, 8, 12, "Verse", "#ff0000"}};
 	const std::vector<Cycle> other = {{1, 4, 12, "Other", ""}};
 	REQUIRE(cycleMarkers(client, first) == whole);
 
-	// A range inside it splits it in two, in one undo step: the second part is cycle marker 2, the first free number,
-	// with the same name and color. Position markers stay, and so do the markers of tracks outside the range.
+	// A range inside it splits it in two, in one undo step (reference manual p. 425): the piece after the range is
+	// the marker itself and keeps its number, the piece before it gets the first free number, with the same name and
+	// color. The position markers in the range go; one at its end stays, as an event starting there does. The
+	// markers of tracks outside the range stay.
 	const size_t steps = run(client, "history.get").at("steps").size();
 	run(client, "range.delete", range(6, 8));
-	CHECK(cycleMarkers(client, first) ==
-		std::vector<Cycle>{{1, 4, 6, "Verse", "#ff0000"}, {2, 8, 12, "Verse", "#ff0000"}});
-	CHECK(markerNames(client, {{"track", first}}) == std::vector<std::string>{"Verse", "Drop", "Verse"});
+	CHECK(cycleMarkers(client, first) == split);
+	CHECK(markerNames(client, {{"track", first}}) == std::vector<std::string>{"Verse", "Late", "Verse"});
+	const Json listed = run(client, "marker.list", {{"track", first}}).at("markers");
+	const auto kept =
+		std::find_if(listed.begin(), listed.end(), [verse](const Json& marker) { return idOf(marker) == verse; });
+	REQUIRE(kept != listed.end());
+	CHECK(kept->at("positionSamples") == 8 * g_quarterSamples);
 	CHECK(cycleMarkers(client, second) == other);
 	CHECK(run(client, "history.get").at("steps").size() == steps + 1);
 	run(client, "history.undo");
 	CHECK(cycleMarkers(client, first) == whole);
+	CHECK(markerNames(client, {{"track", first}}) == std::vector<std::string>{"Verse", "Drop", "Late"});
 	run(client, "history.redo");
-	CHECK(cycleMarkers(client, first) ==
-		std::vector<Cycle>{{1, 4, 6, "Verse", "#ff0000"}, {2, 8, 12, "Verse", "#ff0000"}});
+	CHECK(cycleMarkers(client, first) == split);
 	run(client, "history.undo");
 
-	// One that starts or ends with it gets shorter; range.cut cuts as range.delete deletes.
-	run(client, "range.cut", range(4, 6));
-	CHECK(cycleMarkers(client, first) == std::vector<Cycle>{{1, 6, 12, "Verse", "#ff0000"}});
-	run(client, "history.undo");
-	run(client, "range.delete", range(10, 12));
-	CHECK(cycleMarkers(client, first) == std::vector<Cycle>{{1, 4, 10, "Verse", "#ff0000"}});
-	run(client, "history.undo");
-
-	// A range that covers it whole, as a double click in it selects it, or crosses one of its ends leaves it; so does
-	// Delete Time or Cut Time, which leave markers where they are.
-	for (const Json& parameters : {range(4, 12), range(2, 6), range(10, 14), range(6, 8, true)})
+	// One that the range crosses an end of, or starts or ends with, gets shorter; range.cut cuts as range.delete
+	// deletes.
+	for (const auto& [from, to, left] : std::vector<std::tuple<int64_t, int64_t, Cycle>>{
+			 {4, 6, {1, 6, 12, "Verse", "#ff0000"}}, {2, 6, {1, 6, 12, "Verse", "#ff0000"}},
+			 {10, 12, {1, 4, 10, "Verse", "#ff0000"}}, {10, 14, {1, 4, 10, "Verse", "#ff0000"}}})
 	{
-		run(client, parameters.at("time") ? "range.cut" : "range.delete", parameters);
-		CHECK(cycleMarkers(client, first) == whole);
+		run(client, "range.cut", range(from, to));
+		CHECK(cycleMarkers(client, first) == std::vector<Cycle>{left});
+		run(client, "history.undo");
 	}
+
+	// One that the range covers whole, as a double click in it selects it, or reaches past both of its ends, goes,
+	// and the position markers in it too.
+	for (const auto& [from, to] : std::vector<std::pair<int64_t, int64_t>>{{4, 12}, {2, 14}})
+	{
+		run(client, "range.cut", range(from, to));
+		CHECK(markerNames(client, {{"track", first}}).empty());
+		run(client, "history.undo");
+	}
+
+	// The markers in the range go before the ones across it are split, so the piece before the range gets the number
+	// of a cycle marker in it, whichever was added first.
+	run(client, "marker.add",
+		{{"track", first}, {"type", "cycle"}, {"position", 6 * g_ticksPerQuarter}, {"end", 7 * g_ticksPerQuarter}});
+	run(client, "range.cut", range(5, 8));
+	CHECK(cycleMarkers(client, first) ==
+		std::vector<Cycle>{{2, 4, 5, "Verse", "#ff0000"}, {1, 8, 12, "Verse", "#ff0000"}});
+	run(client, "history.undo");
+	run(client, "history.undo");
+	REQUIRE(cycleMarkers(client, first) == whole);
+
+	// Delete Time and Cut Time leave the markers where they are.
+	run(client, "range.cut", range(6, 8, true));
+	CHECK(cycleMarkers(client, first) == whole);
+	CHECK(markerNames(client, {{"track", first}}).size() == 3);
 
 	// Without tracks the range is on every track.
 	run(client, "range.delete", {{"start", 6 * g_quarterSamples}, {"end", 8 * g_quarterSamples}});
-	CHECK(cycleMarkers(client, first).size() == 2);
-	CHECK(cycleMarkers(client, second) == std::vector<Cycle>{{1, 4, 6, "Other", ""}, {2, 8, 12, "Other", ""}});
+	CHECK(cycleMarkers(client, first) == split);
+	CHECK(cycleMarkers(client, second) == std::vector<Cycle>{{2, 4, 6, "Other", ""}, {1, 8, 12, "Other", ""}});
 }
 
 TEST_CASE("a range cuts every cycle marker on a track that it lies in, also on a linear marker track", "[unit]")
@@ -664,7 +692,7 @@ TEST_CASE("a range cuts every cycle marker on a track that it lies in, also on a
 	};
 
 	// The cycle markers Verse from quarter 4 to 12 and Song from 2 to 14 on one track, numbered 1 and 2: a range from
-	// 6 to 8 lies in both and splits both, and the parts after it get the first free numbers one after the other.
+	// 6 to 8 lies in both and splits both, and the pieces before it get the first free numbers one after the other.
 	const ObjectId musical = addMarkerTrack(client);
 	addCycle(client, 4, 12, "Verse");
 	addCycle(client, 2, 14, "Song");
@@ -672,11 +700,11 @@ TEST_CASE("a range cuts every cycle marker on a track that it lies in, also on a
 	run(client, "range.delete", range);
 	CHECK(byNumber(musical) ==
 		std::vector<Cycle>{
-			{1, 4, 6, "Verse", ""}, {2, 2, 6, "Song", ""}, {3, 8, 12, "Verse", ""}, {4, 8, 14, "Song", ""}});
+			{1, 8, 12, "Verse", ""}, {2, 8, 14, "Song", ""}, {3, 4, 6, "Verse", ""}, {4, 2, 6, "Song", ""}});
 	run(client, "history.undo");
 	CHECK(byNumber(musical) == std::vector<Cycle>{{1, 4, 12, "Verse", ""}, {2, 2, 14, "Song", ""}});
 
-	// On a linear marker track the cycle marker's parts are in samples, and stay where they are when the tempo
+	// On a linear marker track the cycle marker's pieces are in samples, and stay where they are when the tempo
 	// changes.
 	const ObjectId linear = addMarkerTrack(client, {{"timeBase", "linear"}});
 	addMarker(client,
@@ -684,7 +712,7 @@ TEST_CASE("a range cuts every cycle marker on a track that it lies in, also on a
 			{"name", "Linear"}});
 	run(client, "range.cut",
 		{{"start", 6 * g_quarterSamples}, {"end", 8 * g_quarterSamples}, {"tracks", {musical, linear}}});
-	CHECK(byNumber(linear) == std::vector<Cycle>{{1, 4, 6, "Linear", ""}, {2, 8, 12, "Linear", ""}});
+	CHECK(byNumber(linear) == std::vector<Cycle>{{1, 8, 12, "Linear", ""}, {2, 4, 6, "Linear", ""}});
 	const Json markers = run(client, "marker.list", {{"track", linear}}).at("markers");
 	REQUIRE(markers.size() == 2);
 	CHECK(markers[0].at("position") == 4 * g_quarterSamples);
@@ -694,7 +722,7 @@ TEST_CASE("a range cuts every cycle marker on a track that it lies in, also on a
 	CHECK(byNumber(musical).size() == 4);
 	run(client, "project.set", {{"tempoTrackActive", true}});
 	run(client, "tempo.add", {{"position", 0}, {"bpm", 97.3}, {"ramp", false}});
-	CHECK(byNumber(linear) == std::vector<Cycle>{{1, 4, 6, "Linear", ""}, {2, 8, 12, "Linear", ""}});
+	CHECK(byNumber(linear) == std::vector<Cycle>{{1, 8, 12, "Linear", ""}, {2, 4, 6, "Linear", ""}});
 }
 
 TEST_CASE("marker.put puts position marker N at the cursor, moving it or adding it", "[unit]")

@@ -90,6 +90,7 @@ namespace gnubase::engine
 			std::set<int> collapsedGroups;
 			bool autoSelectControllers = false;
 			bool acousticFeedback = false;                                  // Acoustic Feedback (pp. 1192, 1259)
+			bool indicateTranspositions = false;                            // Indicate Transpositions (pp. 419, 1260)
 			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection; // each a part and a controller event of it
 			// The attributes selected of selected notes on the Articulations lane (#1688, p. 1289), by part and note;
 			// a selected note without them has all its attributes selected.
@@ -384,6 +385,45 @@ namespace gnubase::engine
 			return names;
 		}
 
+		time::Ticks partStart(const Project& project, const MidiPart& part)
+		{
+			return time::toTicks(part.position, project.tempo, project.sampleRate);
+		}
+
+		time::Ticks partEnd(const Project& project, const MidiPart& part)
+		{
+			return time::toTicks(time::Position{part.position.base, part.position.value + part.length}, project.tempo,
+				project.sampleRate);
+		}
+
+		// Indicate Transpositions (#1766, reference manual pp. 419, 1260): for each MIDI part the view shows, the
+		// transposition its notes play with (globalTranspose) from its start and from each transpose event after it,
+		// in project ticks; empty while it is off.
+		Json transpositions(const Project& project, const EditorView& view)
+		{
+			Json parts = Json::array();
+			if (!view.indicateTranspositions)
+				return parts;
+			for (const ObjectId id : view.parts)
+			{
+				const auto found = project.midiParts.find(id);
+				if (found == project.midiParts.end())
+					continue;
+				const MidiPart& part = found->second;
+				const time::Ticks start = partStart(project, part);
+				const time::Ticks end = partEnd(project, part);
+				const auto at = [&](time::Ticks ticks)
+				{ return globalTranspose(project, part, project.tempo.toSamples(ticks, project.sampleRate)); };
+				Json steps = Json::array({{{"position", start}, {"semitones", at(start)}}});
+				for (const TransposeEvent& event : project.transpose.events)
+					if (const time::Ticks ticks = time::toTicks(event.position, project.tempo, project.sampleRate);
+						ticks > start && ticks < end && at(ticks) != steps.back().at("semitones"))
+						steps.push_back({{"position", ticks}, {"semitones", at(ticks)}});
+				parts.push_back({{"part", id}, {"steps", steps}});
+			}
+			return parts;
+		}
+
 		Json viewJson(const Project& project, const std::string& editor, const EditorView& view)
 		{
 			const ObjectId activeTrack = trackOf(project, view.activePart);
@@ -418,7 +458,9 @@ namespace gnubase::engine
 				{"collapsedGroups", view.collapsedGroups}, {"autoSelectControllers", view.autoSelectControllers},
 				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection},
 				{"showExpression", view.showExpression}, {"expressionDoubleClick", view.expressionDoubleClick},
-				{"expressionType", view.expressionType}, {"acousticFeedback", view.acousticFeedback}};
+				{"expressionType", view.expressionType}, {"acousticFeedback", view.acousticFeedback},
+				{"indicateTranspositions", view.indicateTranspositions},
+				{"transpositions", transpositions(project, view)}};
 		}
 
 		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
@@ -562,17 +604,6 @@ namespace gnubase::engine
 				"list editor or the drum editor");
 		}
 
-		time::Ticks partStart(const Project& project, const MidiPart& part)
-		{
-			return time::toTicks(part.position, project.tempo, project.sampleRate);
-		}
-
-		time::Ticks partEnd(const Project& project, const MidiPart& part)
-		{
-			return time::toTicks(time::Position{part.position.base, part.position.value + part.length}, project.tempo,
-				project.sampleRate);
-		}
-
 		// The length of new notes of a pitch on a track: the length quantize's, with link the quantize grid's
 		// (p. 1219), with drumMap the snap of the pitch's sound in the track's drum map (Drum-Map Link, p. 1240), or
 		// without a map the quantize grid's.
@@ -637,11 +668,51 @@ namespace gnubase::engine
 				note.releaseVelocity = velocityValue(played.releaseVelocity);
 			return note;
 		}
+
+		// Whether notes played on the MIDI inputs go into the editor: its step or MIDI input is on.
+		bool takesInput(const EditorView& view)
+		{
+			return view.open && (view.stepInput || view.midiInput) && !showsAudio(view);
+		}
+
+		// Notes played on the MIDI inputs into the key editors (editor.played, #679): the keys down, and the notes of
+		// the chord they play, which goes in once they are all up.
+		struct LiveInput
+		{
+			bool listening = false; // midi.activityListen is on for the key editors
+			std::string editor;     // the editor whose step or MIDI input went on last
+			std::set<int> down;
+			Json chord = Json::array();
+		};
+
+		// The editor that notes played go into: the one whose step or MIDI input went on last, else the first that
+		// takes input; empty for none.
+		std::string inputEditor(const LiveInput& live, const Views& views, const ProjectModel& model)
+		{
+			if (!live.editor.empty() && takesInput(current(views, model, live.editor)))
+				return live.editor;
+			for (const auto& each : views)
+				if (takesInput(current(views, model, each.first)))
+					return each.first;
+			return {};
+		}
+
+		// Listens to the MIDI inputs (midi.activityListen) while an editor takes input; each start begins afresh.
+		void listen(LiveInput& live, bool on, CommandContext& context)
+		{
+			if (on == live.listening)
+				return;
+			live.listening = on;
+			live.down.clear();
+			live.chord = Json::array();
+			context.call("midi.activityListen", {{"on", on}, {"listener", "keyEditor"}, {"post", "editor.played"}});
+		}
 	}
 
 	void registerEditorCommands(ProjectModel& model, Engine& engine)
 	{
 		auto views = std::make_shared<Views>();
+		auto live = std::make_shared<LiveInput>();
 		model.setSoloNotesSource([views, &model] { return soloNotes(*views, model); });
 		// A change of the project that changes an open editor's parts (removes or adds them, brings them back or
 		// orders them anew) or closes it, as a new project does, announces the editor's view, so that clients that
@@ -708,7 +779,8 @@ namespace gnubase::engine
 			{"autoSelectControllers", boolean}, {"pitchVisibility", boolean}, {"reverseSounds", boolean},
 			{"visibleSounds", visibleSoundsSchema}, {"soloInstrument", boolean}, {"showNoteLength", boolean},
 			{"gridType", gridTypeSchema}, {"showExpression", boolean}, {"expressionDoubleClick", boolean},
-			{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean}};
+			{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean},
+			{"indicateTranspositions", boolean}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -721,9 +793,16 @@ namespace gnubase::engine
 					"content", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soundNames",
 					"soloInstrument", "showNoteLength", "gridType", "lanes", "showLanes", "soundSlotsLane",
 					"collapsedGroups", "autoSelectControllers", "controllerSelection", "eventSelection",
-					"showExpression", "expressionDoubleClick", "expressionType", "acousticFeedback"}}};
+					"showExpression", "expressionDoubleClick", "expressionType", "acousticFeedback",
+					"indicateTranspositions", "transpositions"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		viewSchema["properties"]["soundsInUse"] = {{"type", {"array", "null"}}, {"items", idSchema}};
+		const Json integer = {{"type", "integer"}};
+		const Json stepSchema = {{"type", "object"}, {"required", {"position", "semitones"}},
+			{"properties", {{"position", integer}, {"semitones", integer}}}};
+		const Json transpositionSchema = {{"type", "object"}, {"required", {"part", "steps"}},
+			{"properties", {{"part", idSchema}, {"steps", {{"type", "array"}, {"items", stepSchema}}}}}};
+		viewSchema["properties"]["transpositions"] = {{"type", "array"}, {"items", transpositionSchema}};
 		viewSchema["properties"]["soundNames"] = {
 			{"type", {"array", "null"}}, {"items", {{"type", "string"}}}, {"minItems", 128}, {"maxItems", 128}};
 		const std::string viewText =
@@ -781,7 +860,11 @@ namespace gnubase::engine
 			"makes a double click on a note open the expression editor instead of deleting it, and expressionType is "
 			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. "
 			"acousticFeedback: the editor plays a note while it is moved or drawn, and a note whose velocity the "
-			"velocity lane edits (pp. 1192, 1259). View state: no "
+			"velocity lane edits (pp. 1192, 1259). indicateTranspositions (Indicate Transpositions, pp. 419, 1260) "
+			"shows the notes at the pitches they play: transpositions then gives, for each MIDI part shown, steps "
+			"{position, semitones}, from the part's start and where a transpose event changes it, in project ticks: "
+			"the semitones its notes from there on play transposed by, its own transpose, the root key's step and "
+			"the transpose track's (transpose.add) as playback adds them; empty while it is off. View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors. An edit, undo or redo that "
 			"changes an open editor's parts (removes, adds, brings back or reorders them) or closes it, and a "
 			"project that closes it, emit editor.changed with its view.";
@@ -791,15 +874,20 @@ namespace gnubase::engine
 			return Json{{"type", "object"}, {"properties", properties}, {"required", {"editor"}},
 				{"additionalProperties", false}};
 		};
-		const auto store = [views, &model](const std::string& editor, const EditorView& view, CommandContext& context)
+		const auto store = [views, live, &model](
+							   const std::string& editor, const EditorView& view, CommandContext& context)
 		{
 			EditorView& stored = (*views)[editor];
+			const bool took = stored.project == model.openedRevision() && takesInput(stored);
 			stored = view;
 			stored.project = model.openedRevision();
 			dropUneditable(model.project(), stored);
 			stored.announcedOpen = stored.open;
 			stored.announced = ordered(model.project(), stored.parts);
 			Json result = viewJson(model.project(), editor, stored);
+			if (takesInput(stored) && !took)
+				live->editor = editor;
+			listen(*live, !inputEditor(*live, *views, model).empty(), context);
 			model.updateSoloNotes();
 			context.emit("editor.changed", result);
 			return result;
@@ -893,7 +981,8 @@ namespace gnubase::engine
 					{"soundSlotsLane", boolean}, {"collapsedGroups", groupsSchema}, {"autoSelectControllers", boolean},
 					{"controllerSelection", controllerSelectionSchema}, {"eventSelection", idsSchema},
 					{"showExpression", boolean}, {"expressionDoubleClick", boolean},
-					{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean}}),
+					{"expressionType", expressionTypeSchema}, {"acousticFeedback", boolean},
+					{"indicateTranspositions", boolean}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -1086,6 +1175,7 @@ namespace gnubase::engine
 				view.expressionDoubleClick = parameters.value("expressionDoubleClick", view.expressionDoubleClick);
 				view.expressionType = parameters.value("expressionType", view.expressionType);
 				view.acousticFeedback = parameters.value("acousticFeedback", view.acousticFeedback);
+				view.indicateTranspositions = parameters.value("indicateTranspositions", view.indicateTranspositions);
 				const bool autoSelectTurnsOn = parameters.value("autoSelectControllers", view.autoSelectControllers) &&
 					!view.autoSelectControllers;
 				if (parameters.contains("autoSelectControllers"))
@@ -1321,6 +1411,64 @@ namespace gnubase::engine
 				Json notes = changed;
 				notes.insert(notes.end(), added.begin(), added.end());
 				return Json{{"part", partId}, {"notes", notes}};
+			});
+
+		const Json bytesSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
+		engine.registerCommand(
+			{"editor.played", 1,
+				"MIDI input played into the key editors' step and MIDI input (reference manual pp. 1219-1220), as "
+				"midi.activity takes it: the engine runs it with what the MIDI inputs receive while an editor's step "
+				"or MIDI input is on (midi.activityListen with post). received: messages, each with its bytes and "
+				"whether its port belongs to all MIDI inputs (inAllInputs, by default true); only those of ports "
+				"that do count, and only their notes. The keys pressed until all of them are up again are one chord: "
+				"then editor.input runs with its notes, each with its note-on velocity and its note-off velocity "
+				"(0.5 for a note-on of velocity 0), in the editor whose step or MIDI input went on last, or else the "
+				"first one with it on. Returns the chords it sent, each the notes as editor.input takes them.",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"received"}},
+					{"properties",
+						{{"received",
+							{{"type", "array"},
+								{"items",
+									{{"type", "object"}, {"required", {"bytes"}},
+										{"properties", {{"bytes", bytesSchema}, {"inAllInputs", boolean}}}}}}}}}},
+				{{"type", "object"}, {"required", {"chords"}}, {"properties", {{"chords", {{"type", "array"}}}}}},
+				false},
+			[views, live, &model, &engine](CommandContext& context)
+			{
+				context.leaveOutOfLog();
+				const std::string editor = inputEditor(*live, *views, model);
+				listen(*live, !editor.empty(), context);
+				Json chords = Json::array();
+				for (const Json& each : context.parameters().at("received"))
+				{
+					const Json& bytes = each.at("bytes");
+					if (editor.empty() || !each.value("inAllInputs", true) || bytes.size() < 3)
+						continue;
+					const int status = bytes.at(0).get<int>() & 0xF0;
+					const int pitch = bytes.at(1).get<int>() & 0x7F;
+					const int velocity = bytes.at(2).get<int>() & 0x7F;
+					if (status == 0x90 && velocity > 0)
+					{
+						const bool fresh = std::none_of(live->chord.begin(), live->chord.end(),
+							[pitch](const Json& note) { return note.at("pitch") == pitch; });
+						live->down.insert(pitch);
+						if (fresh)
+							live->chord.push_back({{"pitch", pitch}, {"velocity", velocity / 127.0}});
+					}
+					else if ((status == 0x80 || status == 0x90) && live->down.erase(pitch) != 0)
+					{
+						for (Json& note : live->chord)
+							if (note.at("pitch") == pitch)
+								note["releaseVelocity"] = status == 0x80 ? velocity / 127.0 : 0.5;
+						if (live->down.empty())
+						{
+							engine.post("editor.input", {{"editor", editor}, {"notes", live->chord}});
+							chords.push_back(live->chord);
+							live->chord = Json::array();
+						}
+					}
+				}
+				return Json{{"chords", chords}};
 			});
 	}
 }

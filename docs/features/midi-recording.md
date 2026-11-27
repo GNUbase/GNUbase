@@ -75,10 +75,15 @@ undo step.
   from at least two laps. A lap is where the audio thread jumped from the right to the left locator: the transport marks
   the segment that starts there (`graph::TransportSegment::lap`), `PlayedPositions::lapAt` counts the laps per device
   frame, and each input event keeps its count (`RetrospectiveEvent::lap`), so a locate back while playing, with cycle
-  mode or without, starts no lap (#2067). `midi.getRetrospective` says how many events a track's buffer holds and
+  mode or without, starts no lap (#2067). Each start of playback after a stop is a playback pass (`PlayedLap::pass`),
+  which ends the notes held where the pass before stopped (`PlayedLap::stopped`), or at the right locator if that pass
+  cycled after its last input (`PlayedLap::stoppedLap`, `PlayedLap::stoppedRight`). A pass begins a lap too when it and
+  the pass before played in cycle mode (`graph::TransportBlock::cycle`, `PlayedLap::cycle`), from where playback starts,
+  not at the left locator, and the lap before ends where playback stopped; linear passes are one lap, as Insert as
+  Cycle Recording is for input captured with cycle mode on (#2096). `midi.getRetrospective` says how many events a track's buffer holds and
   from how many cycle laps of playback (`cycleLaps`); the inspector's pop-up asks it when it opens and enables Insert as
-  Cycle Recording only for two or more. The insert still reads the locators when it runs, not where they were when the
-  input played. `midi.clearRetrospective` empties one track's buffer or all of them; the Transport menu's MIDI
+  Cycle Recording only for two or more. The laps' locators are the ones each lap jumped between, which the audio
+  thread keeps with it (`PlayedLap`), not the ones when the insert runs (#2096). `midi.clearRetrospective` empties one track's buffer or all of them; the Transport menu's MIDI
   Retrospective Recording > Empty All Buffers runs it for all (p. 356). The Retrospective Recording button among the
   inspector's top buttons of a MIDI or instrument track opens its pop-up menu (pp. 354-356): Insert as Linear Recording,
   Insert as Cycle Recording and Empty Retrospective Record Buffer, for that track (`tests/inspector_tests.cpp`).

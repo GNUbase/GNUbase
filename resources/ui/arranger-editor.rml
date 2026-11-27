@@ -6,6 +6,7 @@
 <head>
 	<title>Arranger</title>
 	<style>
+		/* The toolbar wraps onto more rows in a narrow window, and the lists take the rest. */
 		body
 		{
 			position: absolute;
@@ -13,23 +14,17 @@
 			top: 0;
 			right: 0;
 			bottom: 0;
+			display: flex;
+			flex-direction: column;
 		}
 
 		#toolbar
 		{
-			position: absolute;
-			left: 0;
-			top: 0;
-			right: 0;
-			height: 32dp;
-			box-sizing: border-box;
+			flex-shrink: 0;
+			height: auto;
 			padding: 4dp;
-			display: flex;
-		}
-
-		#toolbar button, #toolbar select
-		{
-			margin-right: 4dp;
+			flex-wrap: wrap;
+			gap: 4dp;
 		}
 
 		#arranger-chain, #jump-mode, #chain-name
@@ -40,12 +35,45 @@
 
 		#arranger-lists
 		{
-			position: absolute;
-			left: 0;
-			top: 32dp;
-			right: 0;
-			bottom: 0;
+			flex: 1;
+			min-height: 0;
 			display: flex;
+		}
+
+		/* Flatten (with Options & Preferences), p. 408: the options show in place of the lists until Go Back. */
+		#flatten-options
+		{
+			flex: 1;
+			display: none;
+			padding: 8dp;
+			overflow-y: auto;
+		}
+
+		body.flattening #arranger-lists
+		{
+			display: none;
+		}
+
+		body.flattening #flatten-options
+		{
+			display: block;
+		}
+
+		.flatten-row
+		{
+			display: flex;
+			align-items: center;
+			margin-bottom: 6dp;
+		}
+
+		.flatten-row label
+		{
+			margin-left: 6dp;
+		}
+
+		.flatten-row button
+		{
+			margin-right: 6dp;
 		}
 
 		.arranger-list
@@ -453,8 +481,47 @@
 			if not editor.filling and value ~= editor.arranger.jumpMode then gnubase.arranger.setMode{jumpMode = value} end
 		end
 
+		-- The flatten options (p. 408), kept while GNUbase runs: Go Back and closing the editor keep them (p. 410).
+		-- Rename Arranger Events needs Keep Arranger Track.
+		editor.flattenOptions = editor.flattenOptions or {}
+		local flattenBoxes = {keepTrack = "flatten-keep-track", renameEvents = "flatten-rename",
+			realCopies = "flatten-real-copies", dontSplit = "flatten-dont-split"}
+
+		local function enableRename()
+			local rename = editor.document:GetElementById("flatten-rename")
+			if editor.flattenOptions.keepTrack then rename:RemoveAttribute("disabled") else rename:SetAttribute("disabled", "") end
+		end
+
+		-- A box's own change doesn't set its checked attribute again, which would change it once more.
+		function editor.setFlattenOption(option, element)
+			editor.flattenOptions[option] = element:HasAttribute("checked")
+			enableRename()
+		end
+
+		local function showFlattenOptions()
+			for option, id in pairs(flattenBoxes) do
+				local box = editor.document:GetElementById(id)
+				if editor.flattenOptions[option] then box:SetAttribute("checked", "") else box:RemoveAttribute("checked") end
+			end
+			enableRename()
+		end
+
+		function editor.showOptions(open)
+			editor.document:SetClass("flattening", open) -- the document is the body
+		end
+
+		-- Flatten Chain (p. 407), with the options set.
+		function editor.flatten()
+			local options = editor.flattenOptions
+			editor.showOptions(false)
+			gnubase.arranger.flatten{keepTrack = options.keepTrack == true,
+				renameEvents = options.keepTrack == true and options.renameEvents == true,
+				realCopies = options.realCopies == true, dontSplit = options.dontSplit == true}
+		end
+
 		function editor.load(document)
 			editor.document = document
+			showFlattenOptions()
 			if not editor.subscribed then
 				editor.subscribed = true
 				local refresh = function() editor.refresh() end
@@ -480,11 +547,19 @@
 		<button id="duplicate-chain" title="Duplicate Current Chain" onclick="gnubase.arranger.addChain{duplicate = true}">Duplicate</button>
 		<button id="remove-chain" title="Remove Current Chain" onclick="gnubase.arranger.removeChain{}">Remove</button>
 		<select id="jump-mode" title="Jump Mode" onchange="ArrangerEditor.setJumpMode(element:GetAttribute('value'))"/>
-		<button id="flatten-chain" title="Flatten Chain" onclick="gnubase.arranger.flatten{}">Flatten</button>
+		<button id="flatten-chain" title="Flatten Chain" onclick="ArrangerEditor.flatten()">Flatten</button>
+		<button id="flatten-with-options" title="Flatten (with Options &amp; Preferences)" onclick="ArrangerEditor.showOptions(true)">Flatten Options</button>
 	</div>
 	<div id="arranger-lists">
 		<div id="chain-steps" class="arranger-list" contextmenu="chain-step-menu" onmousedown="ArrangerEditor.select(event)" ondblclick="ArrangerEditor.allowRename(event)" onchange="ArrangerEditor.renameEvent(event)"/>
 		<div id="arranger-events" class="arranger-list" onmousedown="ArrangerEditor.pressEvent(event)"/>
+	</div>
+	<div id="flatten-options">
+		<div class="flatten-row"><input type="checkbox" id="flatten-keep-track" onchange="ArrangerEditor.setFlattenOption('keepTrack', element)"/><label for="flatten-keep-track">Keep Arranger Track</label></div>
+		<div class="flatten-row"><input type="checkbox" id="flatten-rename" onchange="ArrangerEditor.setFlattenOption('renameEvents', element)"/><label for="flatten-rename">Rename Arranger Events</label></div>
+		<div class="flatten-row"><input type="checkbox" id="flatten-real-copies" onchange="ArrangerEditor.setFlattenOption('realCopies', element)"/><label for="flatten-real-copies">Make Real Event Copies</label></div>
+		<div class="flatten-row"><input type="checkbox" id="flatten-dont-split" onchange="ArrangerEditor.setFlattenOption('dontSplit', element)"/><label for="flatten-dont-split">Don't Split Events</label></div>
+		<div class="flatten-row"><button id="flatten-back" onclick="ArrangerEditor.showOptions(false)">Go Back</button><button id="flatten-now" class="primary" onclick="ArrangerEditor.flatten()">Flatten</button></div>
 	</div>
 	<menu id="chain-step-menu">
 		<menuitem class="remove-selected" onclick="ArrangerEditor.removeSelected()">Remove Selected</menuitem>

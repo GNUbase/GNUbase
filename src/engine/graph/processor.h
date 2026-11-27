@@ -54,6 +54,7 @@ namespace gnubase::engine::graph
 		CountIn countIn{};
 		// The project's tempo map, for the tempo anywhere in the segments, or none: then tempo holds for the block.
 		const gnubase::time::TempoMap* tempoMap = nullptr;
+		bool cycle = false; // playback cycles between the locators: cycle mode is on, outside arranger mode
 	};
 
 	// What a processor gets for one block.

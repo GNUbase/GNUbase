@@ -2465,6 +2465,66 @@ namespace gnubase::engine
 			return gap;
 		}
 
+		// Takes a range out of the markers on the marker tracks among its tracks as deleteRange takes it out of events
+		// (#1190, reference manual p. 425): the markers in it go, a cycle marker that reaches across one of its edges
+		// gets shorter, and one that it lies inside is split in two. The piece after the range is the marker itself and
+		// keeps its number; the piece before it gets the first free number, the same name and color.
+		void cutMarkers(Project& project, const Range& range, CommandContext& context)
+		{
+			// The markers in the range go first, so that their numbers are free for the pieces before it.
+			std::vector<ObjectId> across;
+			for (auto entry = project.markers.begin(); entry != project.markers.end();)
+			{
+				const Marker& marker = entry->second;
+				const bool cycle = marker.type == MarkerType::Cycle;
+				const time::Samples from = samples(project, marker.position);
+				const time::Samples to = cycle ? samples(project, marker.end) : from;
+				if (contains(range.tracks, marker.track) && from >= range.start && from < range.end && to <= range.end)
+				{
+					const ObjectId id = entry->first;
+					entry = project.markers.erase(entry);
+					context.emit("marker.removed", {{"marker", id}});
+					continue;
+				}
+				// Only a cycle marker can reach across an edge: a position marker that isn't in the range is outside
+				// it.
+				if (contains(range.tracks, marker.track) && to > range.start && from < range.end)
+					across.push_back(entry->first);
+				++entry;
+			}
+			for (const ObjectId id : across)
+			{
+				Marker& marker = project.markers.at(id);
+				const time::Samples from = samples(project, marker.position);
+				const time::Samples to = samples(project, marker.end);
+				const time::TimeBase base = project.trackById.at(marker.track).timeBase;
+				if (from < range.start && to > range.end)
+				{
+					Marker before = marker;
+					before.id = project.newId();
+					before.end = {base, inBase(project, range.start, base)};
+					keepMinimumLength(project, before);
+					before.number = 1;
+					while (std::any_of(project.markers.begin(), project.markers.end(),
+						[&before](const auto& entry)
+						{
+							const Marker& other = entry.second;
+							return other.track == before.track && other.type == before.type &&
+								other.number == before.number;
+						}))
+						++before.number;
+					project.markers[before.id] = before;
+					context.emit("marker.added", {{"marker", toJson(before)}});
+				}
+				if (from < range.start && to <= range.end)
+					marker.end = {base, inBase(project, range.start, base)};
+				else
+					marker.position = {base, inBase(project, range.end, base)};
+				keepMinimumLength(project, marker);
+				context.emit("marker.changed", {{"marker", toJson(marker)}});
+			}
+		}
+
 		// Deletes what lies in a range; close (Delete Time) moves what comes after it back by its length (closing).
 		void deleteRange(Project& project, const Range& range, bool close, CommandContext& context)
 		{
@@ -2979,6 +3039,37 @@ namespace gnubase::engine
 			return {{"events", idsOf(pasteClipboard(project, clipboard, tracks, at, to.tick, context))}};
 		}
 
+		// Makes the parts of a section pasted again shared copies of those its first paste made, one by one: the same
+		// clipboard pastes the same items in the same order. A MIDI part takes the first one's notes and controllers,
+		// with their ids; an audio part's events are already alike.
+		void shareWith(
+			Project& project, const std::vector<Item>& first, const std::vector<Item>& again, CommandContext& context)
+		{
+			for (size_t i = 0; i < std::min(first.size(), again.size()); ++i)
+			{
+				if (first[i].part != nullptr && again[i].part != nullptr)
+				{
+					if (first[i].part->shared == 0)
+						first[i].part->shared = project.newId();
+					again[i].part->shared = first[i].part->shared;
+					again[i].part->notes = first[i].part->notes;
+					again[i].part->controllers = first[i].part->controllers;
+				}
+				else if (first[i].audioPart != nullptr && again[i].audioPart != nullptr)
+				{
+					if (first[i].audioPart->shared == 0)
+						first[i].audioPart->shared = project.newId();
+					again[i].audioPart->shared = first[i].audioPart->shared;
+				}
+				else
+				{
+					continue;
+				}
+				announce(project, context, first[i], "changed");
+				announce(project, context, again[i], "changed");
+			}
+		}
+
 		// Flatten Chain (#167, reference manual pp. 407-411): from the start of the chain's first event on, the project
 		// becomes what the chain plays, every step's event repeated, one after the other. What lies before stays.
 		// Returns where the flattened chain starts and ends, in samples. The notes that cross a section's edges are cut
@@ -3031,6 +3122,10 @@ namespace gnubase::engine
 			time::Samples at = start;
 			std::vector<ArrangerEvent> placed;
 			std::map<ObjectId, int> count; // of each event's sections so far
+			// What each event's first section pasted, whose shared copies its other sections' parts become without
+			// realCopies (Make Real Event Copies, p. 408).
+			const bool real = parameters.value("realCopies", false);
+			std::map<ObjectId, std::vector<Item>> firstPasted;
 			for (const Section& section : sections)
 			{
 				RangeClipboard copied = copyRange(original, {section.start, section.end, tracks, !dontSplit}, true);
@@ -3044,7 +3139,9 @@ namespace gnubase::engine
 							note = note->second.position + note->second.length > end ? part.notes.erase(note)
 																					 : std::next(note);
 					}
-				pasteClipboard(project, copied, tracks, at, std::nullopt, context);
+				const std::vector<Item> pasted = pasteClipboard(project, copied, tracks, at, std::nullopt, context);
+				if (const auto [first, isFirst] = firstPasted.try_emplace(section.event->id, pasted); !real && !isFirst)
+					shareWith(project, first->second, pasted, context);
 				const time::TimeBase base = section.event->position.base;
 				const int number = ++count[section.event->id];
 				placed.push_back(
@@ -3828,12 +3925,11 @@ namespace gnubase::engine
 					"back by its length, in ticks on musical tracks, and the transpose events in the range go with it, "
 					"those after it moving back too, and the transposition in force at its end goes on from its "
 					"start, unless the transpose track is locked. Locked events stay. Without "
-					"time it also takes the range out of the cycle markers that it lies in, on the marker tracks among "
-					"its tracks (reference manual p. 425): a cycle marker that starts or ends where the range does "
-					"gets shorter, and one that reaches past both of its edges is split in two, the part after the "
-					"range a new cycle marker with the first free number and the same name and color. Position markers "
-					"stay, and so do cycle markers that the range covers whole or reaches out of; with time every "
-					"marker stays.",
+					"time it also takes the range out of the markers on the marker tracks among its tracks, as out of "
+					"events (reference manual p. 425): the position and cycle markers in it go, a cycle marker that "
+					"reaches across one of its edges gets shorter, and one that reaches across both is split in two. "
+					"The piece after the range keeps the marker's id and number, the piece before it is a new cycle "
+					"marker with the first free number and the same name and color. With time every marker stays.",
 				schema(withTime, {}), {{"type", "object"}}, false},
 			"Delete",
 			[](Project& project, CommandContext& context)
@@ -3842,7 +3938,7 @@ namespace gnubase::engine
 				const bool closes = context.parameters().value("time", false);
 				deleteRange(project, range, closes, context);
 				if (!closes)
-					cutCycleMarkers(project, range.start, range.end, range.tracks, context);
+					cutMarkers(project, range, context);
 				return Json::object();
 			});
 
@@ -3882,8 +3978,8 @@ namespace gnubase::engine
 			{"range.cut", 1,
 				"Copies " + range +
 					" to the range clipboard as range.copy does, then deletes it as range.delete does; time (Cut Time) "
-					"closes the gap. Without time it cuts the range out of the cycle markers that it lies in as "
-					"range.delete does; markers don't go to the clipboard. Locked events stay where they are and "
+					"closes the gap. Without time it takes the range out of the markers as range.delete does; markers "
+					"don't go to the clipboard. Locked events stay where they are and "
 					"aren't copied." +
 					named +
 					" It removes them as event.remove does, and refuses locked ones. Returns how many events and "
@@ -3911,7 +4007,7 @@ namespace gnubase::engine
 				clipboard.cursor = cursorOf(context);
 				deleteRange(project, cut, closes, context);
 				if (!closes)
-					cutCycleMarkers(project, cut.start, cut.end, cut.tracks, context);
+					cutMarkers(project, cut, context);
 				Json result = clipboardInfo(clipboard);
 				m_clipboard = std::make_shared<const RangeClipboard>(std::move(clipboard));
 				context.emit("rangeClipboard.changed", result);
@@ -3997,7 +4093,9 @@ namespace gnubase::engine
 				"Flatten Chain (#167): makes the project play the arranger chain (default: the active one) linearly. "
 				"From the start of the chain's first event on, every track's events, parts and automation are "
 				"replaced by the chain's sections, each step's event as often as it repeats, one after the other; "
-				"what lies before stays, and so do locked events. Copies are real copies. MIDI notes that cross a "
+				"what lies before stays, and so do locked events. The parts of an event's repeats are shared copies "
+				"of those of its first section, or with realCopies (Make Real Event Copies) real copies. MIDI notes "
+				"that cross a "
 				"section's edges are cut there; with dontSplit (Don't Split Events) a section has only the notes "
 				"that start and end in it. Without keepTrack (Keep Arranger Track) the arranger track goes; with it, "
 				"it has an event per section where it now is and one chain that plays them in order, and with "
@@ -4005,7 +4103,7 @@ namespace gnubase::engine
 				"its event came so far (A 1, B 1, A 2). One undo step. Returns where the flattened chain starts and "
 				"ends, in samples.",
 				schema({{"chain", integer()}, {"keepTrack", boolean()}, {"dontSplit", boolean()},
-						   {"renameEvents", boolean()}},
+						   {"renameEvents", boolean()}, {"realCopies", boolean()}},
 					{}),
 				schema({{"start", integer()}, {"end", integer()}}, {"start", "end"}), false},
 			"Flatten arranger chain",

@@ -84,7 +84,7 @@ TEST_CASE("a MIDI editor opens with several parts on several tracks, in the trac
 			 "lanes", "showLanes", "soundSlotsLane", "collapsedGroups", "autoSelectControllers", "controllerSelection",
 			 "eventSelection", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soundNames",
 			 "soloInstrument", "showNoteLength", "gridType", "showExpression", "expressionDoubleClick",
-			 "expressionType", "acousticFeedback"})
+			 "expressionType", "acousticFeedback", "indicateTranspositions", "transpositions"})
 		shown.erase(key);
 	CHECK(shown == closed);
 

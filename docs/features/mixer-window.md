@@ -134,13 +134,14 @@ control's last step answered, its strip shows the engine's value; a refused one 
 
 An audio channel's strip has its meter next to the fader (`.mixer-meter`, reference manual p. 468), a MIDI channel's
 strip one without a fader: a `<meter>` per audio channel of the channel's meter (both sides of a mono channel on a
-stereo destination), one for a MIDI channel, its notes' velocity, -60 to +6 dB, with the peak since the last frame and
-its peak mark, and under it, beside the fader's volume, the Meter Peak Level (`.mixer-peak`), the highest of those
-maxima, which a click resets: every channel's (`meter.reset` with `meters` `channels`), not the master meter's. The bars
-come once the engine measured the channel, after it first played. The mixers read them through `ui::MeterReader`, the
-UI's one reader of the meters, which the right zone's meter display shares ([metering.md](metering.md)). A VCA fader's
-meter sums its channels' outputs after their faders and panners, whatever `meter.position` says
-([link-groups.md](link-groups.md)); busses have no meter yet.
+stereo destination), one for a MIDI channel, its notes' velocity, on the +3 dB digital scale (pp. 467-468, 1614), -60 to
++3 dB, with the peak since the last frame and its peak mark, the scale's marks (`.mixer-meter-scale`, 0 to -30 dB every
+6 dB, then -40 and -50) between the fader and the bars, and under it, beside the fader's volume, the Meter Peak Level
+(`.mixer-peak`), the highest of those maxima, which a click resets: every channel's (`meter.reset` with `meters`
+`channels`), not the master meter's. The bars come once the engine measured the channel, after it first played. The
+mixers read them through `ui::MeterReader`, the UI's one reader of the meters, which the right zone's meter display
+shares ([metering.md](metering.md)). A VCA fader's meter sums its channels' outputs after their faders and panners,
+whatever `meter.position` says ([link-groups.md](link-groups.md)); busses have no meter yet.
 
 A right click on a meter opens its Global Meter Settings (`#mixer-meter-menu`, p. 467), the user settings that every
 mixer's meters follow: Meter Peak - Hold Peaks (`meter.holdPeaks`, on by default) shows the peak marks; Meter Peak -
@@ -158,7 +159,8 @@ below their -60 dB end to silence: the UI keeps each bar's level and lowers it b
 Channel selection and the agents and Move Selected Channels commands that work on it, dragging several channels at
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
 the right zone; the channel overview, the meter bridge, Channel Latency, the inserts section (#113), routing several selected channels at once (p. 471) and the
-channel meters' colors and clipping indicators (pp. 467-468, [metering.md](metering.md)); selecting the channel that Find Track/Channel finds, channel visibility configurations, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
+channel meters' colors (the +3 dB digital scale's color handles), the scale's headroom marks (p. 534) and clipping
+indicators (pp. 467-468, [metering.md](metering.md)); selecting the channel that Find Track/Channel finds, channel visibility configurations, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
 windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspaces.md)).
 
 ## Checks
@@ -193,7 +195,8 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
 - `tests/meterpanel_tests.cpp`: an audio channel's strip meter shows no bars and `-inf` before it played, then a bar
   per side at the sine's level with its peak mark, in the frame that the master meter shows the same peak;
   a MIDI channel's has no bars until a note played and then one bar at the note's velocity, and a click on the peak
-  level resets the channels' maxima, not the master meter's. The Global Meter Settings menu: a mark that holds the peak
+  level resets the channels' maxima, not the master meter's. A strip's bars go from -60 to +3 dB, and its scale's marks
+  sit at their levels' heights beside them. The Global Meter Settings menu: a mark that holds the peak
   for the peak hold time while the level falls and then falls, Hold Forever's mark at the maximum past that time, Reset
   Meters, Hold Peaks off without marks, and Meter Position, which sets `meter.position`, follows it, and moves the bar
   to the level measured there. A strip's bar falls back from a peak by `meter.fallback`, not at once.
