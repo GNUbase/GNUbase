@@ -154,6 +154,7 @@ namespace gnubase::ui
 		engine::Json m_arrangerChain = engine::Json::object(); // the active chain's id and steps, as the list shows
 		Rml::ObserverPtr<Rml::Element> m_stepMenu;             // the chain list's context menu
 		Rml::ObserverPtr<Rml::Element> m_retrospectiveMenu;    // Retrospective Recording's pop-up menu
+		Rml::ObserverPtr<Rml::Element> m_expressionMenu;       // Note Expression's Show Additional Functions
 		int m_touchedStep = -1;                                // the step right-clicked, for Remove Touched
 		std::vector<int> m_selectedSteps; // the steps selected, by index, for Remove Selected; a chain edit clears them
 		int m_stepAnchor = -1;            // the step clicked last, where Shift selects from
@@ -163,9 +164,11 @@ namespace gnubase::ui
 		Subscription m_transportChanged;
 		size_t m_expression = 0; // the Note Expression section's expression selected, by plugin::NoteExpression
 		bool m_learning = false; // its MIDI Learn is on
-		Subscription m_activity; // midi.activity, for MIDI Learn
-		std::set<std::string> m_notInAllInputs; // "backend id" of the MIDI inputs that aren't among all MIDI inputs
-		Subscription m_portsChanged;            // midi.changed, for them
+		bool m_onlyUsed = false; // its Show only used Expressions is on (#2120)
+		std::set<std::string> m_usedExpressions; // the expressions the track's notes have points of
+		Subscription m_activity;                 // midi.activity, for MIDI Learn
+		std::set<std::string> m_notInAllInputs;  // "backend id" of the MIDI inputs that aren't among all MIDI inputs
+		Subscription m_portsChanged;             // midi.changed, for them
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }

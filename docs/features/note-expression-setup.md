@@ -1,15 +1,16 @@
 # Note expression setup of a track
 
 A MIDI or instrument track's settings for its notes' per-note expression ([note-expression.md](note-expression.md)),
-which the inspector's Note Expression section edits (#1513, reference manual pp. 1300-1302): its bypass and the input
-assignments of the expressions, each with its value range. They belong to the track and are saved with the project.
+which the inspector's Note Expression section edits (#1513, reference manual pp. 1300-1302): its bypass, the input
+assignments of the expressions, each with its value range, and which expressions the editors show. They belong to the
+track and are saved with the project.
 
 ## In the engine
 
 `noteExpression.set` changes them (MCP `noteExpression_set`, Lua `gnubase.noteExpression.set`), one undo step, "Change
 note expression setup"; what a call leaves out stays as it was. `project.get` lists them as the channel's
-`noteExpression`, `{bypass, inputs}`, and the project keeps them in its GNUbase entry (`NoteExpressionSetup`, the
-channel's `noteExpression` in `src/engine/document/document.h`).
+`noteExpression`, `{bypass, inputs, hidden}`, and the project keeps them in its GNUbase entry (`NoteExpressionSetup`,
+the channel's `noteExpression` in `src/engine/document/document.h`).
 
 - **Bypass** (p. 1300) plays the track's notes without their expression points: the render snapshot leaves them out
   (`compilePart` in `src/engine/document/rendersnapshot.cpp`), so neither the instrument nor MIDI sends before the
@@ -33,6 +34,16 @@ channel's `noteExpression` in `src/engine/document/document.h`).
   expression's input: from the inputs among all MIDI inputs (`midi.ports` `inAllInputs`) while the track's MIDI input
   is All MIDI Inputs, else none. It ends when another expression is selected or the inspector shows another track.
   Every change is a `noteExpression.set`.
+- **Visibility** (p. 1301, #2120): `hidden` lists the expressions that the key editor doesn't show, in the
+  expressions' order, none by default; a call with `hidden` replaces the list. Over a track's notes in the key editor
+  and the in-place editors, a hidden expression draws no lines, and the expression editor's Parameter Selection lists
+  only the expressions that the selected notes have points of or their tracks show (p. 1309). A change of the list
+  emits `noteExpression.changed` besides `channel.changed`, so that the editors read the notes again, which they don't
+  after a step of channels only. In the inspector each expression's row has its visibility button. The Global
+  section's Show Additional Functions (p. 1302) opens a menu: Show only used Expressions shows only the rows of the
+  expressions that the track's notes have points of, which are marked with an asterisk (\*) whether it is on or not;
+  Make all Expressions visible empties `hidden`, and Make only edited Expression visible hides all but the selected
+  expression.
 - **Live input** (p. 1303): the track's MIDI input plays each assigned message as the expression of the notes the
   input holds on the message's channel, every one of them getting the same value, over the expression's range: the
   message's lowest value plays `min`, its highest `max`. The sequencer turns them into note expression events before
@@ -59,13 +70,15 @@ that a bypassed track's note plays without its expression and plays it again wit
 plays a controller assigned to two expressions as the expression of the notes it holds, with and without the bypass,
 records an assigned controller into the notes that sound, and that `noteExpression.convert` turns a part's assigned
 controllers into its notes' points, leaves the others and those no note sounds at, and undoes in one step.
-`tests/noteexpression_ui_tests.cpp` checks Convert to Note Expression in the MIDI menu on an editor's two parts.
+`tests/noteexpression_ui_tests.cpp` checks Convert to Note Expression in the MIDI menu on an editor's two parts;
+Parameter Selection and the lines over the notes without the hidden expressions but those a note uses; and the
+inspector's visibility buttons, the used expression's asterisk and Show Additional Functions' three items. The engine
+tests check `hidden` with its order, what a call leaves out, `noteExpression.changed`, saving, loading and undo.
 
 ## Not yet
 
-- In the inspector's Note Expression section, the Global section's Show Additional Functions; the expressions'
-  visibility, which Parameter Selection in the key editor's expression editor follows (p. 1309); the parameter colors
-  (#2120).
-- Loading and saving input assignments as presets (p. 1304, #2120); Record MIDI as Note Expression, Overdub Note Exp. and
-  its Latch Buffer (p. 1302): recording into the notes of the parts that play, which the input doesn't hold (#1515);
+- In the inspector's Note Expression section, the parameter colors (p. 1301), which the key editor would draw the
+  expressions in, and Show Additional Functions' MIDI Controller Setup (pp. 1165, 1302, #737) (#2120).
+- Loading and saving input assignments as presets (p. 1304, #2120); Record MIDI as Note Expression, Overdub Note Exp.
+  and its Latch Buffer (p. 1302): recording into the notes of the parts that play, which the input doesn't hold (#1515);
   the release phases of Convert to Note Expression (p. 1316, #1515).
