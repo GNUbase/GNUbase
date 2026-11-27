@@ -2277,25 +2277,37 @@ namespace gnubase::ui
 			? m_rowOf.at(static_cast<size_t>(pitch)) - m_rowOf.at(static_cast<size_t>(m_pressedAt.second))
 			: 0;
 		const int64_t dt = delta(m_gesture, ticks, rows);
+		// With Indicate Transpositions a note dragged to another time plays with the transposition there, as after the
+		// release: the preview and the feedback show the pitch it lands on.
+		const auto landed = [this](const Note& note, int64_t start, int pitch)
+		{ return std::clamp(pitch + transposition(note.part, start), 0, g_pitches - 1); };
 		// Acoustic Feedback: the pressed note at the pitch it is dragged to.
-		if (const int now = shifted(shownPitch(*m_pressed), rows); m_view.value("acousticFeedback", false) &&
-			m_gesture == Gesture::Move && now >= 0 && m_sounding && m_sounding->second != now)
-			sound(now);
+		if (const int to = shifted(m_pressed->pitch, rows);
+			m_view.value("acousticFeedback", false) && m_gesture == Gesture::Move && to >= 0 && m_sounding)
+			if (const int now = landed(*m_pressed, m_pressed->start + dt, to); m_sounding->second != now)
+				sound(now);
 		for (int i = 0; i < notes->GetNumChildren(); ++i)
 		{
 			Rml::Element* element = notes->GetChild(i);
 			const Note* shown = noteOf(element);
 			if (shown == nullptr || !selected(*shown))
 				continue;
-			const int onRow = shownPitch(*shown);
 			if (m_gesture == Gesture::Move)
+			{
+				const int to = shifted(shown->pitch, rows);
 				place(*element, shown->start + dt, shown->length,
-					shifted(onRow, rows) >= 0 ? shifted(onRow, rows) : onRow);
+					landed(*shown, shown->start + dt, to >= 0 ? to : shown->pitch));
+			}
 			else if (m_gesture == Gesture::ResizeEnd)
-				place(*element, shown->start, std::max<int64_t>(shown->length + dt, 1), onRow);
+			{
+				place(*element, shown->start, std::max<int64_t>(shown->length + dt, 1), shownPitch(*shown));
+			}
 			else
-				place(*element, shown->start + std::min(dt, shown->length - 1),
-					shown->length - std::min(dt, shown->length - 1), onRow);
+			{
+				const int64_t moved = std::min(dt, shown->length - 1);
+				place(*element, shown->start + moved, shown->length - moved,
+					landed(*shown, shown->start + moved, shown->pitch));
+			}
 		}
 	}
 
