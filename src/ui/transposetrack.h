@@ -43,6 +43,12 @@ namespace gnubase::ui
 		Arranger,
 	};
 
+	// The event an element gets where arranger events dragged from the lane are dropped outside it, such as on the
+	// inspector's Current Arranger Chain list (reference manual p. 409): its parameter events has their ids, separated
+	// by spaces, and mouse_y where the mouse is. An element that takes them stops its propagation, and the events
+	// stay where they are; otherwise the drag moves them.
+	inline constexpr const char* g_arrangerDrop = "arrangerdrop";
+
 	// A global track's events on its lane, in an element of its own (<div class="transpose-row">, or "chord-row")
 	// placed over the lane: a .transpose-event per event in a .transpose-events, with its value in semitones (a chord
 	// event: its chord's name) as text and attribute event (its id). The draw tool adds an event at the nearest bar
@@ -129,6 +135,9 @@ namespace gnubase::ui
 		void press(Rml::Event& event);
 		void move(Rml::Event& event);
 		void release(Rml::Event& event);
+		// Drops the arranger event dragged, or the selected ones in timeline order if it is one of them, where the
+		// release is outside the lane (g_arrangerDrop); whether something took them.
+		bool dropOutside(Rml::Event& event, uint64_t dragged);
 		const Event* find(uint64_t id) const;
 		// Shows an event moved (or an arranger event's edge, m_edge) as a drag dx dp across moves it, if it moves that
 		// far; whether it does.
