@@ -17,6 +17,12 @@ and panners' engine side is in [mixer.md](mixer.md).
   reference, the lower zone's mixer and the windows don't follow each other's visibility (p. 442).
 - Views are settings, like snap: not undo steps (undo takes back a track, not what a mixer hides), saved with the
   project in GNUbase's extra entry (`mixers` in `project.get`), empty for files from before.
+- **Undo and Redo Visibility Change** (p. 457, `mixer.undoVisibility`, `mixer.redoVisibility`): each mixer keeps the
+  views before its last 10 visibility changes, `mixer.set` calls that change `hidden` or `hiddenTypes`
+  (`Project::mixerHistory`), and those it undid until the next change. A mixer that follows the track list (below)
+  also counts each change the track list makes to its channels as one, so undo takes back exactly the last; channels
+  the track list hides again right after a `mixer.set` (a folder's tracks) are part of that set's change. Not kept in
+  the file, and a loaded project has none; with nothing to undo or redo, the view stays.
 - **Notes** (p. 497): the channel's notes (`channel.set` `notes`), which the inspector's notepad edits too
   ([inspector.md](inspector.md)). **Pictures** (p. 497): `track.set` `picture`, an image file (PNG, JPEG or SVG) that
   the mixer shows on the track's channel, or empty; a relative path is taken from the working folder and kept
@@ -42,6 +48,7 @@ control's last step answered, its strip shows the engine's value; a refused one 
   .toolbar.mixer-toolbar
     #mixer-filter            Set Channel Type Filter, menu #mixer-filter-menu; .checked while a type is hidden
     #mixer-agents            Set Channel Visibility Agents, menu #mixer-agents-menu
+    #mixer-find              Find Track/Channel, the selector #mixer-find-menu
     #mixer-left-zone         Show/Hide Left Zone (windows only)
     #mixer-layout            Set up Window Layout, the setup pane #mixer-layout-pane
   .mixer-channels            the fader section, scrolled sideways
@@ -71,12 +78,17 @@ control's last step answered, its strip shows the engine's value; a refused one 
   control shows the engine's value. The dB text follows the fader as it moves.
   New strips go through `Docking::arrangeSections`, so they get the user's order and hidden sections.
 - **Visibility and filter** (pp. 442, 454–456). The channel type filter's menu has a check item per type; the agents'
-  menu has Show All Channels, which shows every hidden channel again. In a window, the left zone's Visibility tab
-  (`Mixer::showVisibility`) has a toggle button per channel (`button.mixer-visibility-item[visibility=<id>]`), checked
-  while the mixer shows it. Each sends `mixer.set` for its own mixer, and the mixer keeps the change at once, so that
-  changes made before the engine answers all count; it reads its view again once the last is answered, and ignores that
-  answer while a newer change is still out. The lower zone's mixer follows the project window's track visibility, and a
-  window does with Sync Visibility of Project and Mixer ([track-visibility.md](track-visibility.md)).
+  menu has Show All Channels, which shows every hidden channel again, and Undo and Redo Visibility Change. In a
+  window, the left zone's Visibility tab (`Mixer::showVisibility`) has a toggle button per channel
+  (`button.mixer-visibility-item[visibility=<id>]`), checked while the mixer shows it. Each sends `mixer.set` for its
+  own mixer, and the mixer keeps the change at once, so that changes made before the engine answers all count; it
+  reads its view again once the last is answered, and ignores that answer while a newer change is still out. The lower
+  zone's mixer follows the project window's track visibility, and a window does with Sync Visibility of Project and
+  Mixer ([track-visibility.md](track-visibility.md)).
+- **Find Track/Channel** (pp. 449-450) opens a selector with a search field (`input.mixer-find-search`) over the
+  channels, hidden ones too, but not those of the types the filter hides; typing narrows it to the names with the
+  text, in any case. The channel picked shows again if it was hidden, and its strip scrolls into view. The mixer has no
+  channel selection yet, so it isn't selected.
 - **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the left zone (in a
   window) and the strips' sections Pictures, Routing, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders
   them, with Show All, Reset All and presets ([docking.md](docking.md)). In a window it also shows and hides the menu
@@ -148,21 +160,24 @@ Channel selection and the agents and Move Selected Channels commands that work o
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
 the right zone; the channel overview, the meter bridge, Channel Latency, the inserts section (#113), routing several selected channels at once (p. 471) and the
 channel meters' colors (the +3 dB digital scale's color handles), the scale's headroom marks (p. 534) and clipping
-indicators (pp. 467-468, [metering.md](metering.md)); Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
+indicators (pp. 467-468, [metering.md](metering.md)); selecting the channel that Find Track/Channel finds, channel visibility configurations, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
 windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspaces.md)).
 
 ## Checks
 
 - `tests/mixerviews_tests.cpp`: each mixer's hidden channels and types, sorted and in the filter's order, kept per
   mixer, refused for unknown ids, types and mixers, not undo steps, without channels that are gone, and saved and
-  loaded; notes and pictures as undo steps, copied with a track, saved and loaded; a picture embedded in the file and
-  extracted next to it once the original is gone, kept by `media.cleanup`, and referred to relative to the file when
-  not embedded, so it loads from a folder that moved.
+  loaded; each mixer's last ten visibility changes undone and redone, without the sets that change nothing, and the track
+  list's changes to the lower mixer undone one at a time; notes
+  and pictures as undo steps, copied with a track, saved and loaded; a picture embedded in the file and extracted next
+  to it once the original is gone, kept by `media.cleanup`, and referred to relative to the file when not embedded, so
+  it loads from a folder that moved.
 - `tests/mixerwindow_tests.cpp` drives the app with `ui::Automation`: F3 opens a mixer window with the busses and the
   channels in the track list's order and closes it again; tracks added, renamed, moved and removed by the engine show at
   once; the fader, the dB text and the mute and solo buttons both ways; two windows, the Visibility tab and the type
-  filter hiding channels in one window only, Show All Channels, and `mixer.set` from the engine; Alt+F3 showing the
-  lower zone's mixer with its own view and hiding the zone again; a closed window letting go of its mixer; the setup
+  filter hiding channels in one window only, Show All Channels and undoing and redoing it, and `mixer.set` from the
+  engine; Find Track/Channel listing the channels but the filtered types, narrowing them as typed, and showing a hidden
+  channel and scrolling to channels outside the view; Alt+F3 showing the lower zone's mixer with its own view and hiding the zone again; a closed window letting go of its mixer; the setup
   pane's Pictures, Notepad and Fader, notes from the engine and typed in the notepad, and dropped when another project
   loads, kept on Escape, a save from the project window, a strip made again and the window closing, a note being typed
   making Revert ask about unsaved changes, a picture shown and removed, chosen with a double click in the mixer window's

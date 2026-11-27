@@ -119,7 +119,8 @@ namespace gnubase::engine
 	namespace
 	{
 		// Gives the mixers that follow the track visibility their state: a track's channel is hidden there while
-		// the track is. Busses keep theirs. Returns the mixers whose view changed.
+		// the track is. Busses keep theirs. Each change is a visibility change of that mixer, for Undo Visibility
+		// Change (#542). Returns the mixers whose view changed.
 		std::vector<std::string> syncMixerViews(Project& project)
 		{
 			const std::vector<ObjectId> hiddenIds = hiddenTracks(project);
@@ -143,7 +144,9 @@ namespace gnubase::engine
 				std::sort(hidden.begin(), hidden.end());
 				if (hidden == before)
 					continue;
-				project.mixers[mixer].hidden = std::move(hidden);
+				MixerView& changedView = project.mixers[mixer];
+				recordMixerView(project, mixer, changedView);
+				changedView.hidden = std::move(hidden);
 				changed.push_back(mixer);
 			}
 			return changed;
@@ -242,6 +245,7 @@ namespace gnubase::engine
 		// The mixers that follow hide the channels of the tracks inside the hidden folders, as after
 		// trackVisibility.set (#1366). The project's load announces the whole project, its mixer views too.
 		syncMixerViews(project);
+		project.mixerHistory.clear(); // a loaded project has no visibility changes to undo
 	}
 
 	void registerTrackVisibilityCommands(ProjectModel& model, Engine& engine)

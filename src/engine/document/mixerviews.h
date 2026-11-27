@@ -20,6 +20,10 @@ namespace gnubase::engine
 	// A mixer's view as mixer.get returns it: {mixer, hidden, hiddenTypes}, without the channels that are gone.
 	Json mixerViewJson(const Project& project, const std::string& mixer);
 
+	// A visibility change of the mixer from the view before (Undo Visibility Change, reference manual p. 457): kept
+	// as its last of up to 10, and nothing to redo any more. Also for the views that follow the track list (#542).
+	void recordMixerView(Project& project, const std::string& mixer, const MixerView& before);
+
 	// mixer.get and mixer.set, and the track visibility's commands (trackvisibility.h).
 	void registerMixerCommands(ProjectModel& model, Engine& engine);
 }
