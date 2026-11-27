@@ -1134,7 +1134,9 @@ TEST_CASE("a VCA channel in GNUbase's entry gets no audio, routing, pan, sends o
 			channel["slots"] = {slot};
 		}
 		else if (channel.at("id") == audio.at("id"))
+		{
 			channel["slots"] = Json::array();
+		}
 	for (Json& item : project.at("slots"))
 		if (item.at("id") == slot)
 			item["channel"] = vca;
