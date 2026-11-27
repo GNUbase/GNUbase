@@ -347,6 +347,15 @@ TEST_CASE("the on-screen keyboard plays computer keys by their places, labels th
 	CHECK(keyElement(app, 11).IsClassSet("pressed"));
 	app.shell().keyReleased(app.main(), ui::KeyPress{KI_M, 0});
 	CHECK(!keyElement(app, 11).IsClassSet("pressed"));
+	// A key that RmlUi can't map and has no place goes up: no note ends. The window losing the keyboard focus ends
+	// every one (#569).
+	app.shell().unusedKey(app.main(), ui::KeyPress{KI_M, 0});
+	app.shell().keyReleased(app.main(), ui::KeyPress{KI_UNKNOWN, 0});
+	CHECK(keyElement(app, 11).IsClassSet("pressed"));
+	ui::KeyPress lost;
+	lost.focusLost = true;
+	app.shell().keyReleased(app.main(), lost);
+	CHECK(!keyElement(app, 11).IsClassSet("pressed"));
 
 	// The octave and velocity are user settings, which last across restarts.
 	Rml::ElementDocument& document = *keyElement(app, 0).GetOwnerDocument();

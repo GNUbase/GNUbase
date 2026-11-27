@@ -35,6 +35,8 @@ namespace gnubase::ui
 		constexpr int g_largestSize = 4;
 		// Wheel turns on the tempo field that follow each other within this are one gesture.
 		constexpr std::chrono::milliseconds g_wheelPause{400};
+		// Fractions of a wheel step on a time display that stay together: a pause this long forgets them.
+		constexpr std::chrono::milliseconds g_fractionPause{1000};
 		// Taps on Tap Tempo that follow each other within this are one run; the run's tempo is set when it ends.
 		constexpr double g_tapPause = 2.0;
 		// Rewind and Forward held: how long they wait before they wind, and how many steps a second they wind.
@@ -635,7 +637,7 @@ namespace gnubase::ui
 			return;
 		const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
 		const double turned = std::clamp(-delta, -1e9F, 1e9F);
-		if (m_wheelOn != &element || now - m_wheelAt >= g_wheelPause || (m_wheelRest * turned) < 0.0)
+		if (m_wheelOn != &element || now - m_wheelAt >= g_fractionPause || (m_wheelRest * turned) < 0.0)
 			m_wheelRest = 0.0;
 		m_wheelOn = &element;
 		m_wheelAt = now;
@@ -707,7 +709,8 @@ namespace gnubase::ui
 				if (alive.expired() || result.ok())
 					return;
 				// A refused change has no transport.changed: show what the transport has instead of the turn.
-				m_sentTransport = 0;
+				if (m_sentTransport == result.request)
+					m_sentTransport = 0;
 				m_binding.send("transport.get", Json::object(),
 					[this, alive](const engine::Result& status)
 					{
@@ -924,16 +927,18 @@ namespace gnubase::ui
 
 	void Winding::start(const std::string& id, double seconds)
 	{
-		stop(id);
-		m_winds.emplace_back(id, seconds);
+		m_winds.emplace_back(id, seconds); // also one of the same command that is held by another key or button
 		m_last = Clock::now() + g_windDelay;
 		m_binding.send("transport.locate", {{"by", seconds}});
 	}
 
 	void Winding::stop(const std::string& id)
 	{
-		const auto ends = [&id](const std::pair<std::string, double>& wind) { return wind.first == id; };
-		m_winds.erase(std::remove_if(m_winds.begin(), m_winds.end(), ends), m_winds.end());
+		// The newest of that command: each key or button that held it ends one.
+		const auto ends = std::find_if(m_winds.rbegin(), m_winds.rend(),
+			[&id](const std::pair<std::string, double>& wind) { return wind.first == id; });
+		if (ends != m_winds.rend())
+			m_winds.erase(std::next(ends).base());
 	}
 
 	bool Winding::step()

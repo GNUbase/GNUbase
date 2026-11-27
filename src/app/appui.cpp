@@ -1898,32 +1898,41 @@ namespace gnubase::app
 	}
 
 	// The time display window grows and shrinks with the UI scale, as its digits do (#566): a window at the size of one
-	// of its presets stays at that one, one the user sized keeps its proportions.
+	// of its presets stays at that one, one the user sized keeps its proportions. Closed, it keeps the change for when
+	// it opens with the bounds it was closed with.
 	void AppUi::scaleTimeDisplay(float before, float after)
 	{
-		const ui::Window* window = timeDisplay();
-		if (window == nullptr || !m_timeDisplay.controls || !(before > 0.0F))
+		if (!(before > 0.0F))
 			return;
-		ui::Rect bounds = m_shell.bounds(window->id());
-		const int size = m_timeDisplay.controls->size();
-		const float ratioBefore = window->dpRatio() * before / after;
-		ui::Size sized = timeDisplaySize(m_shell, *window, size, window->dpRatio());
-		if (!(bounds.size() == timeDisplaySize(m_shell, *window, size, ratioBefore)))
-			sized = {static_cast<int>(std::lround(static_cast<float>(bounds.width) * after / before)),
-				static_cast<int>(std::lround(static_cast<float>(bounds.height) * after / before))};
+		if (const ui::Window* window = timeDisplay(); window != nullptr && m_timeDisplay.controls)
+			scaleTimeDisplayBounds(*window, m_timeDisplay.controls->size(), after / before);
+		else
+			m_timeDisplayScaling *= after / before;
+	}
+
+	void AppUi::scaleTimeDisplayBounds(const ui::Window& window, int size, float factor)
+	{
+		ui::Rect bounds = m_shell.bounds(window.id());
+		ui::Size sized = timeDisplaySize(m_shell, window, size, window.dpRatio());
+		if (!(bounds.size() == timeDisplaySize(m_shell, window, size, window.dpRatio() / factor)))
+			sized = {static_cast<int>(std::lround(static_cast<float>(bounds.width) * factor)),
+				static_cast<int>(std::lround(static_cast<float>(bounds.height) * factor))};
+		if (sized == bounds.size())
+			return;
 		bounds.width = sized.width;
 		bounds.height = sized.height;
-		m_shell.setBounds(window->id(), bounds);
+		m_shell.setBounds(window.id(), bounds);
 	}
 
 	void AppUi::toggleTimeDisplay()
 	{
 		// A new window opens at the saved size, at the main window's dp ratio and then at its own, rather than at
-		// the default size and jumping when ui.timeDisplay is read; one the user sized has its bounds (#566).
+		// the default size and jumping when ui.timeDisplay is read; one the user sized has its bounds, at the UI scale
+		// they have now (#566).
 		const bool opens = timeDisplay() == nullptr;
 		const bool saved = m_docking.bounds("timeDisplay").has_value();
 		int size = 1;
-		if (opens && !saved)
+		if (opens)
 		{
 			const engine::Result options = engine::Client(m_engine).call("settings.get", {{"key", "ui.timeDisplay"}});
 			const engine::Json value = options.ok() ? options.value.at("value") : engine::Json::object();
@@ -1933,16 +1942,21 @@ namespace gnubase::app
 		}
 		toggle(m_timeDisplay, "timeDisplay", "time-display.rml", "Time Display",
 			timeDisplaySize(m_shell, m_main, size, m_main.dpRatio()));
-		if (const ui::Window* window = timeDisplay(); opens && !saved && window != nullptr)
+		if (const ui::Window* window = timeDisplay(); opens && window != nullptr)
 		{
-			ui::Rect bounds = m_shell.bounds(window->id());
-			if (const ui::Size sized = timeDisplaySize(m_shell, *window, size, window->dpRatio());
-				!(bounds.size() == sized))
+			if (saved)
 			{
-				bounds.width = sized.width;
-				bounds.height = sized.height;
+				scaleTimeDisplayBounds(*window, size, m_timeDisplayScaling);
+			}
+			else if (ui::Rect bounds = m_shell.bounds(window->id());
+				!(bounds.size() == timeDisplaySize(m_shell, *window, size, window->dpRatio())))
+			{
+				// The main window's monitor may not be the one it opened on.
+				bounds.width = timeDisplaySize(m_shell, *window, size, window->dpRatio()).width;
+				bounds.height = timeDisplaySize(m_shell, *window, size, window->dpRatio()).height;
 				m_shell.setBounds(window->id(), bounds);
 			}
+			m_timeDisplayScaling = 1.0F;
 		}
 		m_docking.saveWindows();
 	}

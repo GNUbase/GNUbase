@@ -219,7 +219,8 @@ namespace gnubase::ui
 	// 300): start moves the project cursor by the step at once, as a click does, and after a moment winds on at four
 	// steps a second until stop. It sends transport.locate with a distance each frame; step returns whether it
 	// winds, for Shell::eachStep. Each key or button winds as its own: stopping one leaves the others that are still
-	// held winding, the one started last first (#566). Use it on the UI thread; the binding must outlive it.
+	// held winding, the one started last first, also those of one command, such as Num+ and the Forward button (#566).
+	// Use it on the UI thread; the binding must outlive it.
 	class Winding
 	{
 	public:

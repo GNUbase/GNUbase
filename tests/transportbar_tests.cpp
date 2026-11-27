@@ -1708,6 +1708,13 @@ TEST_CASE("each held Rewind or Forward key and button winds as its own, and a ke
 	mouseButton(app, false);
 	const int64_t lowest = position(app);
 	REQUIRE(waitFor(app, [lowest](const Json& state) { return state.at("position") > lowest + 96000; }));
+
+	// The Forward button, which runs the command that Num+ holds, held and released too: Num+ winds on (#566).
+	app.ui().move(std::nullopt, at("#forward"));
+	mouseButton(app, true);
+	mouseButton(app, false);
+	const int64_t both = position(app);
+	REQUIRE(waitFor(app, [both](const Json& state) { return state.at("position") > both + 96000; }));
 	app.ui().key(std::nullopt, "Num+", ui::KeyAction::Up);
 	stopped(app);
 
@@ -1847,6 +1854,14 @@ TEST_CASE("small wheel turns on a display add up to whole steps (#566, #569)", "
 	settle(app, std::chrono::milliseconds(100));
 	CHECK(position(app) == 48000);
 	CHECK(transport(app).at("left") == 0);
+
+	// A pause forgets the fractions: two halves a second apart make no step.
+	settle(app, std::chrono::milliseconds(1100));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -0.5F);
+	settle(app, std::chrono::milliseconds(1100));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -0.5F);
+	settle(app, std::chrono::milliseconds(100));
+	CHECK(position(app) == 48000);
 }
 
 namespace
@@ -2292,15 +2307,15 @@ TEST_CASE("the time display window opens at the saved size, and a window the use
 	test::UiApp app({1024, 700});
 	app.appUi().showProject();
 	app.shell().setUiScale(1.5F);
-	setTimeDisplaySize(app, 0);
+	setTimeDisplaySize(app, 2);
 	app.shell().step(std::chrono::milliseconds(0));
 
 	// At the saved size and the UI scale from the start, not at the default and then jumping when the setting is read.
 	ui::Window& display = openTimeDisplay(app);
 	const ui::WindowId window = display.id();
-	CHECK(app.shell().bounds(window).size() == ui::Size{480, 120});
-	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-0", window); }));
-	CHECK(app.shell().bounds(window).size() == ui::Size{480, 120});
+	CHECK(app.shell().bounds(window).size() == ui::Size{960, 240});
+	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-2", window); }));
+	CHECK(app.shell().bounds(window).size() == ui::Size{960, 240});
 	CHECK(digitsFit(app, display));
 
 	// The user sizes it: other options of the setting leave it as it is.
@@ -2323,6 +2338,24 @@ TEST_CASE("the time display window opens at the saved size, and a window the use
 	const ui::Window& reopened = openTimeDisplay(app);
 	REQUIRE(app.waitUntil([&app, &reopened] { return hasClass(app, "#time-display", "size-1", reopened.id()); }));
 	CHECK(app.shell().bounds(reopened.id()).size() == ui::Size{400, 100});
+
+	// The UI scale changes while the window is closed: it opens with the bounds it had at the new scale, at a preset's
+	// size if it had one.
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	CHECK(app.appUi().timeDisplay() == nullptr);
+	app.shell().setUiScale(0.75F);
+	ui::Window& scaled = openTimeDisplay(app);
+	CHECK(app.shell().bounds(scaled.id()).size() == ui::Size{200, 50});
+	setTimeDisplaySize(app, 1);
+	ui::Rect atPreset = app.shell().bounds(scaled.id());
+	atPreset.width = 360; // the preset of size 1 at that scale
+	atPreset.height = 90;
+	app.shell().setBounds(scaled.id(), atPreset);
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	app.shell().setUiScale(1.5F);
+	ui::Window& preset = openTimeDisplay(app);
+	CHECK(app.shell().bounds(preset.id()).size() == ui::Size{720, 180});
+	CHECK(digitsFit(app, preset));
 }
 
 TEST_CASE("a setup pane's buttons keep Space, also in the transport bar (#653)", "[ui]")

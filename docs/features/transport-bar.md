@@ -60,7 +60,7 @@ display at 150 % (#1450).
   the locator range it moves the right locator, not before the left one; on the pre-roll and post-roll amounts it
   changes the amount, not below 0. A display being edited ignores the wheel, a scroll sideways moves nothing, and a
   turn moves at most a billion steps (#457). A touchpad or a high-resolution wheel sends small fractions of a notch:
-  they add up, for each display and direction, and make a step when they reach a whole one; a pause of 0.4 seconds
+  they add up, for each display and direction, and make a step when they reach a whole one; a pause of a second
   forgets them. The next turn goes on from the position the last one set, also when the transport.changed of an older
   turn reaches the display first: the displays leave what an answer or event of a request older than their newest
   change says (#569). Nudge Cursor and Increase and Decrease Window Size do the same. A wheel gesture on the tempo
