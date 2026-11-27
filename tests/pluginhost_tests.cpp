@@ -1477,9 +1477,10 @@ TEST_CASE("a host whose main thread answers nothing for longer than any job gets
 
 TEST_CASE("a host whose main thread is busy with a slow call still gets new plugins", "[integration]")
 {
+	// The job deadline stays the default: a create returns once the host answers, so a long deadline costs nothing,
+	// while a loaded machine may not run the host for seconds (a 2 s deadline failed on CI that way).
 	plugins::HostManager::Options options = testOptions();
 	options.deadlines.query = 100ms;
-	options.deadlines.job = 2s;
 	plugins::HostManager manager(options);
 	const std::unique_ptr<plugin::remote::RemotePlugin> stalling = createRemote(manager, {"test:stall", "", "GNUbase"});
 	const std::unique_ptr<plugin::remote::RemotePlugin> before = createRemote(manager);
